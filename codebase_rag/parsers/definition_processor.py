@@ -47,6 +47,7 @@ from .go.link_state import GoLinkState
 from .interface_fingerprint import interface_fingerprint
 from .java.generated import generator_hint
 from .js_ts.ingest import JsTsIngestMixin
+from .js_ts.module_system import JsTsModuleSystem
 from .js_ts.overloads import folded_overload_signatures, implementation_signatures
 from .module_docstring import extract_module_docstring
 from .notebook import is_notebook_path
@@ -280,6 +281,16 @@ class DefinitionProcessor(
             go_variant_methods=self.go_variant_methods,
             go_pair_builds=self.go_pair_builds,
             go_builds=self.go_builds,
+        )
+        self.js_ts_module_system = JsTsModuleSystem(
+            host=self,
+            ingestor=ingestor,
+            repo_path=repo_path,
+            function_registry=function_registry,
+            simple_name_lookup=simple_name_lookup,
+            module_qn_to_file_path=module_qn_to_file_path,
+            import_processor=import_processor,
+            facts=self.facts,
         )
 
     def begin_run(self) -> None:
@@ -539,7 +550,7 @@ class DefinitionProcessor(
                 pre_captures=combined_captures,
             )
             if language in cs.JS_TS_LANGUAGES:
-                self._ingest_missing_import_patterns(
+                self.js_ts_module_system.ingest_missing_import_patterns(
                     root_node, module_qn, language, queries
                 )
                 # Written AFTER parse_imports, which is what fills the set, and
@@ -861,9 +872,10 @@ class DefinitionProcessor(
         language: cs.SupportedLanguage,
         queries: Mapping[cs.SupportedLanguage, LanguageQueries],
     ) -> None:
+        module_system = self.js_ts_module_system
         self._ingest_object_literal_methods(root_node, module_qn, language, queries)
-        self._ingest_commonjs_exports(root_node, module_qn, language, queries)
-        self._ingest_es6_exports(root_node, module_qn, language, queries)
+        module_system.ingest_commonjs_exports(root_node, module_qn, language, queries)
+        module_system.ingest_es6_exports(root_node, module_qn, language, queries)
         self._ingest_assignment_arrow_functions(root_node, module_qn, language, queries)
         self._ingest_prototype_inheritance(root_node, module_qn, language, queries)
         # Named passes above have claimed their function nodes;
@@ -872,10 +884,7 @@ class DefinitionProcessor(
         self._flush_deferred_js_anonymous()
         # Direct module.exports functions finalise by SPAN now that
         # every node's minted qn is recorded.
-        self._finalise_direct_module_exports(
-            module_qn, self._pending_direct_module_exports
-        )
-        self._pending_direct_module_exports = []
+        module_system.finalise_direct_module_exports(module_qn)
 
     def process_dependencies(self, filepath: Path) -> None:
         logger.debug(ls.DEF_PARSING_DEPENDENCY.format(path=filepath))

@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import textwrap
-from abc import abstractmethod
 from collections.abc import Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from loguru import logger
 from tree_sitter import Language, QueryCursor
@@ -21,7 +20,7 @@ from ...types_defs import ASTNode
 from ..definition_facts import DefinitionFacts
 from ..method_ingest import ingest_exported_function
 from ..utils import function_span_key
-from .utils import get_js_ts_language_obj
+from .utils import get_js_ts_language_obj, is_export_inside_function
 
 if TYPE_CHECKING:
     from ...services import IngestorProtocol
@@ -31,6 +30,25 @@ if TYPE_CHECKING:
         SimpleNameLookup,
     )
     from ..import_processor import ImportProcessor
+
+
+class JsTsModuleSystemHost(Protocol):
+    """What the module-system pass calls back on the definition pass: a
+    definition's docstring, and the span-claim protocol every JS/TS
+    registration path shares, under which one source function mints exactly
+    one node PER NAME (deliberate different-name twins still register)."""
+
+    def _get_docstring(
+        self, node: ASTNode, language: cs.SupportedLanguage
+    ) -> str | None: ...
+
+    def _span_claimed_for_qn(
+        self, module_qn: str, func_node: ASTNode, candidate_qn: str
+    ) -> bool: ...
+
+    def _claim_function_span(
+        self, module_qn: str, func_node: ASTNode, label: str, qualified_name: str
+    ) -> None: ...
 
 
 def _es6_declaration_name(export_function: ASTNode | None) -> str | None:
@@ -44,45 +62,47 @@ def _es6_declaration_name(export_function: ASTNode | None) -> str | None:
     return safe_decode_text(name_node)
 
 
-class JsTsModuleSystemMixin:
-    __slots__ = ("_processed_imports", "_pending_direct_module_exports")
-    ingestor: IngestorProtocol
-    repo_path: Path
-    project_name: str
-    function_registry: FunctionRegistryTrieProtocol
-    simple_name_lookup: SimpleNameLookup
-    module_qn_to_file_path: dict[str, Path]
-    import_processor: ImportProcessor
-    facts: DefinitionFacts
-    _processed_imports: set[str]
+class JsTsModuleSystem:
+    """A JS/TS file's module system: the IMPORTS a destructured `require()`
+    implies, and the functions CommonJS and ES6 exports define."""
 
-    @abstractmethod
-    def _get_docstring(
-        self, node: ASTNode, language: cs.SupportedLanguage
-    ) -> str | None: ...
+    __slots__ = (
+        "_host",
+        "ingestor",
+        "repo_path",
+        "function_registry",
+        "simple_name_lookup",
+        "module_qn_to_file_path",
+        "import_processor",
+        "facts",
+        "_processed_imports",
+        "_pending_direct_module_exports",
+    )
 
-    @abstractmethod
-    def _is_export_inside_function(self, node: ASTNode) -> bool: ...
-
-    # Span-claim protocol (implemented by FunctionIngestMixin): one source
-    # function must mint exactly one node PER NAME, so every JS/TS registration
-    # path checks the claim before registering and claims after (deliberate
-    # different-name twins still register).
-    @abstractmethod
-    def _span_claimed_for_qn(
-        self, module_qn: str, func_node: ASTNode, candidate_qn: str
-    ) -> bool: ...
-
-    @abstractmethod
-    def _claim_function_span(
-        self, module_qn: str, func_node: ASTNode, label: str, qualified_name: str
-    ) -> None: ...
-
-    def __init__(self) -> None:
-        self._processed_imports = set()
+    def __init__(
+        self,
+        *,
+        host: JsTsModuleSystemHost,
+        ingestor: IngestorProtocol,
+        repo_path: Path,
+        function_registry: FunctionRegistryTrieProtocol,
+        simple_name_lookup: SimpleNameLookup,
+        module_qn_to_file_path: dict[str, Path],
+        import_processor: ImportProcessor,
+        facts: DefinitionFacts,
+    ) -> None:
+        self._host = host
+        self.ingestor = ingestor
+        self.repo_path = repo_path
+        self.function_registry = function_registry
+        self.simple_name_lookup = simple_name_lookup
+        self.module_qn_to_file_path = module_qn_to_file_path
+        self.import_processor = import_processor
+        self.facts = facts
+        self._processed_imports: set[str] = set()
         self._pending_direct_module_exports: list[tuple[ASTNode, bool]] = []
 
-    def _ingest_missing_import_patterns(
+    def ingest_missing_import_patterns(
         self,
         root_node: ASTNode,
         module_qn: str,
@@ -220,7 +240,7 @@ class JsTsModuleSystemMixin:
         export_type: str,
         language: cs.SupportedLanguage,
     ) -> None:
-        if self._span_claimed_for_qn(
+        if self._host._span_claimed_for_qn(
             module_qn,
             export_function,
             f"{module_qn}{cs.SEPARATOR_DOT}{function_name}",
@@ -234,14 +254,14 @@ class JsTsModuleSystemMixin:
             self.ingestor,
             self.function_registry,
             self.simple_name_lookup,
-            self._get_docstring,
+            self._host._get_docstring,
             language,
-            self._is_export_inside_function,
+            is_export_inside_function,
             self.module_qn_to_file_path.get(module_qn),
             self.repo_path,
         )
         if function_qn is not None:
-            self._claim_function_span(
+            self._host._claim_function_span(
                 module_qn,
                 export_function,
                 cs.NodeLabel.FUNCTION.value,
@@ -332,7 +352,7 @@ class JsTsModuleSystemMixin:
                 continue
             if safe_decode_text(exports_prop) != cs.JS_EXPORTS_KEYWORD:
                 continue
-            if self._is_export_inside_function(export_function):
+            if is_export_inside_function(export_function):
                 # Assigned when the enclosing function runs, not at module
                 # load: neither a load-time call nor the module's export.
                 continue
@@ -380,13 +400,11 @@ class JsTsModuleSystemMixin:
         )
         return export_function, False
 
-    def _finalise_direct_module_exports(
-        self, module_qn: str, pending: list[tuple[ASTNode, bool]]
-    ) -> None:
+    def finalise_direct_module_exports(self, module_qn: str) -> None:
         # Runs AFTER the deferred anonymous flush: every function node's
         # minted qn is now in the span registry. An unregistered span means
         # the node was refused everywhere; emit nothing rather than guess.
-        for node, invoked in pending:
+        for node, invoked in self._pending_direct_module_exports:
             loc = self.facts.function_locations.get(function_span_key(module_qn, node))
             if loc is None or loc.qualified_name not in self.function_registry:
                 # No claim, or a STALE claim from before a watch-mode removal
@@ -414,8 +432,9 @@ class JsTsModuleSystemMixin:
                 self.import_processor.commonjs_direct_exports[module_qn] = (
                     loc.qualified_name
                 )
+        self._pending_direct_module_exports = []
 
-    def _ingest_commonjs_exports(
+    def ingest_commonjs_exports(
         self,
         root_node: ASTNode,
         module_qn: str,
@@ -503,7 +522,7 @@ class JsTsModuleSystemMixin:
         except Exception as e:  # noqa: BLE001 -- isolation: one unit's failure must not end the run
             logger.debug(ls.JS_ES6_EXPORTS_QUERY_FAILED, error=e)
 
-    def _ingest_es6_exports(
+    def ingest_es6_exports(
         self,
         root_node: ASTNode,
         module_qn: str,

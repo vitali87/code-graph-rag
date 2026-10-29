@@ -24,12 +24,10 @@ from ...types_defs import (
 )
 from ..definition_facts import DefinitionFacts
 from ..method_ingest import module_function_props
-from .module_system import JsTsModuleSystemMixin
 from .utils import (
     arrow_binding_name,
     get_js_ts_language_obj,
     is_class_method,
-    is_export_inside_function,
     is_inside_method_with_object_literals,
     mark_js_ts_module_private,
 )
@@ -41,7 +39,7 @@ if TYPE_CHECKING:
     from ..import_processor import ImportProcessor
 
 
-class JsTsIngestMixin(JsTsModuleSystemMixin):
+class JsTsIngestMixin:
     __slots__ = ()
     ingestor: IngestorProtocol
     repo_path: Path
@@ -57,6 +55,20 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
     def _get_docstring(
         self, node: ASTNode, language: cs.SupportedLanguage
     ) -> str | None: ...
+
+    # Span-claim protocol (implemented by FunctionIngestMixin): one source
+    # function must mint exactly one node PER NAME, so every JS/TS registration
+    # path checks the claim before registering and claims after (deliberate
+    # different-name twins still register).
+    @abstractmethod
+    def _span_claimed_for_qn(
+        self, module_qn: str, func_node: ASTNode, candidate_qn: str
+    ) -> bool: ...
+
+    @abstractmethod
+    def _claim_function_span(
+        self, module_qn: str, func_node: ASTNode, label: str, qualified_name: str
+    ) -> None: ...
 
     @abstractmethod
     def _emit_or_defer_defines(
@@ -733,9 +745,6 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
                 return True
             current = current.parent
         return False
-
-    def _is_export_inside_function(self, node: ASTNode) -> bool:
-        return is_export_inside_function(node)
 
     def _find_object_name_for_method(self, method_name_node: ASTNode) -> str | None:
         current = method_name_node.parent

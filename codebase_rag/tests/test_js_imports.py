@@ -846,7 +846,7 @@ def test_commonjs_multiple_destructured_variables_regression(
 
     This test specifically addresses the bug where multiple destructured variables
     from a single require() statement would cause IndexError due to incorrect
-    iteration logic. The bug was in _ingest_missing_import_patterns where it
+    iteration logic. The bug was in ingest_missing_import_patterns where it
     would iterate over destructured names but try to access module_names[i]
     and require_funcs[i] with the same index, causing failures when i >= 1.
 

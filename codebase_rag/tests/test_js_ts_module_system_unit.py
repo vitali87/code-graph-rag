@@ -5,27 +5,9 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.parsers.js_ts.module_system import JsTsModuleSystemMixin
+from codebase_rag.parsers.definition_facts import DefinitionFacts
+from codebase_rag.parsers.js_ts.module_system import JsTsModuleSystem
 from codebase_rag.tests.conftest import create_mock_node
-
-
-class ConcreteModuleSystemMixin(JsTsModuleSystemMixin):
-    def __init__(
-        self,
-        ingestor: MagicMock,
-        import_processor: MagicMock,
-        function_registry: MagicMock,
-        simple_name_lookup: defaultdict[str, set[str]],
-    ) -> None:
-        super().__init__()
-        self.ingestor = ingestor
-        self.import_processor = import_processor
-        self.function_registry = function_registry
-        self.simple_name_lookup = simple_name_lookup
-        self.repo_path = Path("/test/repo")
-        self.project_name = "test_project"
-        self._get_docstring = MagicMock(return_value=None)
-        self._is_export_inside_function = MagicMock(return_value=False)
 
 
 @pytest.fixture
@@ -52,16 +34,22 @@ def mock_function_registry() -> MagicMock:
 
 
 @pytest.fixture
-def mixin(
+def module_system(
     mock_ingestor: MagicMock,
     mock_import_processor: MagicMock,
     mock_function_registry: MagicMock,
-) -> ConcreteModuleSystemMixin:
-    return ConcreteModuleSystemMixin(
+) -> JsTsModuleSystem:
+    host = MagicMock()
+    host._get_docstring.return_value = None
+    return JsTsModuleSystem(
+        host=host,
         ingestor=mock_ingestor,
-        import_processor=mock_import_processor,
+        repo_path=Path("/test/repo"),
         function_registry=mock_function_registry,
         simple_name_lookup=defaultdict(set),
+        module_qn_to_file_path={},
+        import_processor=mock_import_processor,
+        facts=DefinitionFacts(),
     )
 
 
@@ -81,13 +69,13 @@ class TestProcessCommonjsImport:
 
     def test_defers_external_import_edge(
         self,
-        mixin: ConcreteModuleSystemMixin,
+        module_system: JsTsModuleSystem,
         mock_ingestor: MagicMock,
         mock_import_processor: MagicMock,
     ) -> None:
         mock_import_processor.resolve_js_module_path.return_value = "fs"
 
-        mixin._process_commonjs_import(
+        module_system._process_commonjs_import(
             "readFile", "fs", "my_module", cs.SupportedLanguage.JS
         )
 
@@ -99,7 +87,7 @@ class TestProcessCommonjsImport:
 
     def test_defers_local_import_edge(
         self,
-        mixin: ConcreteModuleSystemMixin,
+        module_system: JsTsModuleSystem,
         mock_ingestor: MagicMock,
         mock_import_processor: MagicMock,
     ) -> None:
@@ -107,7 +95,7 @@ class TestProcessCommonjsImport:
             "test_project.src.utils"
         )
 
-        mixin._process_commonjs_import(
+        module_system._process_commonjs_import(
             "helper", "./src/utils", "my_module", cs.SupportedLanguage.JS
         )
 
@@ -119,16 +107,16 @@ class TestProcessCommonjsImport:
 
     def test_skips_duplicate_imports(
         self,
-        mixin: ConcreteModuleSystemMixin,
+        module_system: JsTsModuleSystem,
         mock_ingestor: MagicMock,
         mock_import_processor: MagicMock,
     ) -> None:
         mock_import_processor.resolve_js_module_path.return_value = "fs"
 
-        mixin._process_commonjs_import(
+        module_system._process_commonjs_import(
             "readFile", "fs", "my_module", cs.SupportedLanguage.JS
         )
-        mixin._process_commonjs_import(
+        module_system._process_commonjs_import(
             "writeFile", "fs", "my_module", cs.SupportedLanguage.JS
         )
 
@@ -136,18 +124,18 @@ class TestProcessCommonjsImport:
 
     def test_a_resolution_error_reaches_the_pass_boundary(
         self,
-        mixin: ConcreteModuleSystemMixin,
+        module_system: JsTsModuleSystem,
         mock_ingestor: MagicMock,
         mock_import_processor: MagicMock,
     ) -> None:
-        # Caught once, in `_ingest_missing_import_patterns`, and reported
+        # Caught once, in `ingest_missing_import_patterns`, and reported
         # there; this helper used to swallow it at debug level as well.
         mock_import_processor.resolve_js_module_path.side_effect = Exception(
             "Resolution failed"
         )
 
         with pytest.raises(Exception, match="Resolution failed"):
-            mixin._process_commonjs_import(
+            module_system._process_commonjs_import(
                 "readFile", "fs", "my_module", cs.SupportedLanguage.JS
             )
 
@@ -158,7 +146,7 @@ class TestProcessCommonjsImport:
 class TestProcessVariableDeclaratorForCommonjs:
     def test_processes_simple_destructuring(
         self,
-        mixin: ConcreteModuleSystemMixin,
+        module_system: JsTsModuleSystem,
         mock_import_processor: MagicMock,
     ) -> None:
         mock_import_processor.resolve_js_module_path.return_value = "fs"
@@ -187,7 +175,7 @@ class TestProcessVariableDeclaratorForCommonjs:
             },
         )
 
-        mixin._process_variable_declarator_for_commonjs(
+        module_system._process_variable_declarator_for_commonjs(
             declarator, "test_module", cs.SupportedLanguage.JS
         )
 
@@ -195,7 +183,7 @@ class TestProcessVariableDeclaratorForCommonjs:
 
     def test_processes_aliased_destructuring(
         self,
-        mixin: ConcreteModuleSystemMixin,
+        module_system: JsTsModuleSystem,
         mock_import_processor: MagicMock,
     ) -> None:
         mock_import_processor.resolve_js_module_path.return_value = "fs"
@@ -230,7 +218,7 @@ class TestProcessVariableDeclaratorForCommonjs:
             },
         )
 
-        mixin._process_variable_declarator_for_commonjs(
+        module_system._process_variable_declarator_for_commonjs(
             declarator, "test_module", cs.SupportedLanguage.JS
         )
 
@@ -238,7 +226,7 @@ class TestProcessVariableDeclaratorForCommonjs:
 
     def test_skips_non_object_pattern_name(
         self,
-        mixin: ConcreteModuleSystemMixin,
+        module_system: JsTsModuleSystem,
         mock_import_processor: MagicMock,
     ) -> None:
         name_node = create_mock_node(cs.TS_IDENTIFIER, "fs")
@@ -251,7 +239,7 @@ class TestProcessVariableDeclaratorForCommonjs:
             },
         )
 
-        mixin._process_variable_declarator_for_commonjs(
+        module_system._process_variable_declarator_for_commonjs(
             declarator, "test_module", cs.SupportedLanguage.JS
         )
 
@@ -259,7 +247,7 @@ class TestProcessVariableDeclaratorForCommonjs:
 
     def test_skips_non_require_call(
         self,
-        mixin: ConcreteModuleSystemMixin,
+        module_system: JsTsModuleSystem,
         mock_import_processor: MagicMock,
     ) -> None:
         object_pattern = create_mock_node(cs.TS_OBJECT_PATTERN, children=[])
@@ -276,7 +264,7 @@ class TestProcessVariableDeclaratorForCommonjs:
             },
         )
 
-        mixin._process_variable_declarator_for_commonjs(
+        module_system._process_variable_declarator_for_commonjs(
             declarator, "test_module", cs.SupportedLanguage.JS
         )
 
@@ -284,7 +272,7 @@ class TestProcessVariableDeclaratorForCommonjs:
 
     def test_skips_empty_object_pattern(
         self,
-        mixin: ConcreteModuleSystemMixin,
+        module_system: JsTsModuleSystem,
         mock_import_processor: MagicMock,
     ) -> None:
         object_pattern = create_mock_node(cs.TS_OBJECT_PATTERN, children=[])
@@ -308,7 +296,7 @@ class TestProcessVariableDeclaratorForCommonjs:
             },
         )
 
-        mixin._process_variable_declarator_for_commonjs(
+        module_system._process_variable_declarator_for_commonjs(
             declarator, "test_module", cs.SupportedLanguage.JS
         )
 
@@ -318,10 +306,10 @@ class TestProcessVariableDeclaratorForCommonjs:
 class TestIngestMissingImportPatterns:
     def test_skips_non_js_ts_languages(
         self,
-        mixin: ConcreteModuleSystemMixin,
+        module_system: JsTsModuleSystem,
         mock_language_queries: dict[cs.SupportedLanguage, MagicMock],
     ) -> None:
-        mixin._ingest_missing_import_patterns(
+        module_system.ingest_missing_import_patterns(
             MagicMock(),
             "test_module",
             cs.SupportedLanguage.PYTHON,
@@ -330,12 +318,12 @@ class TestIngestMissingImportPatterns:
 
     def test_skips_when_no_language_obj(
         self,
-        mixin: ConcreteModuleSystemMixin,
+        module_system: JsTsModuleSystem,
     ) -> None:
         queries: dict[cs.SupportedLanguage, dict[str, MagicMock | None]] = {
             cs.SupportedLanguage.JS: {cs.QUERY_LANGUAGE: None}
         }
-        mixin._ingest_missing_import_patterns(
+        module_system.ingest_missing_import_patterns(
             MagicMock(),
             "test_module",
             cs.SupportedLanguage.JS,
@@ -346,10 +334,10 @@ class TestIngestMissingImportPatterns:
 class TestIngestCommonjsExports:
     def test_skips_non_js_ts_languages(
         self,
-        mixin: ConcreteModuleSystemMixin,
+        module_system: JsTsModuleSystem,
         mock_language_queries: dict[cs.SupportedLanguage, MagicMock],
     ) -> None:
-        mixin._ingest_commonjs_exports(
+        module_system.ingest_commonjs_exports(
             MagicMock(),
             "test_module",
             cs.SupportedLanguage.PYTHON,
@@ -358,12 +346,12 @@ class TestIngestCommonjsExports:
 
     def test_skips_when_no_language_obj(
         self,
-        mixin: ConcreteModuleSystemMixin,
+        module_system: JsTsModuleSystem,
     ) -> None:
         queries: dict[cs.SupportedLanguage, dict[str, MagicMock | None]] = {
             cs.SupportedLanguage.JS: {cs.QUERY_LANGUAGE: None}
         }
-        mixin._ingest_commonjs_exports(
+        module_system.ingest_commonjs_exports(
             MagicMock(),
             "test_module",
             cs.SupportedLanguage.JS,
@@ -374,14 +362,14 @@ class TestIngestCommonjsExports:
 class TestIngestEs6Exports:
     def test_handles_query_errors_gracefully(
         self,
-        mixin: ConcreteModuleSystemMixin,
+        module_system: JsTsModuleSystem,
     ) -> None:
         mock_lang = MagicMock()
         queries: dict[cs.SupportedLanguage, dict[str, MagicMock]] = {
             cs.SupportedLanguage.JS: {cs.QUERY_LANGUAGE: mock_lang}
         }
 
-        mixin._ingest_es6_exports(
+        module_system.ingest_es6_exports(
             MagicMock(),
             "test_module",
             cs.SupportedLanguage.JS,
@@ -392,7 +380,7 @@ class TestIngestEs6Exports:
 class TestEdgeCases:
     def test_missing_name_field_in_declarator(
         self,
-        mixin: ConcreteModuleSystemMixin,
+        module_system: JsTsModuleSystem,
         mock_import_processor: MagicMock,
     ) -> None:
         call_expr = create_mock_node(cs.TS_CALL_EXPRESSION)
@@ -401,7 +389,7 @@ class TestEdgeCases:
             fields={cs.FIELD_VALUE: call_expr},
         )
 
-        mixin._process_variable_declarator_for_commonjs(
+        module_system._process_variable_declarator_for_commonjs(
             declarator, "test_module", cs.SupportedLanguage.JS
         )
 
@@ -409,7 +397,7 @@ class TestEdgeCases:
 
     def test_missing_value_field_in_declarator(
         self,
-        mixin: ConcreteModuleSystemMixin,
+        module_system: JsTsModuleSystem,
         mock_import_processor: MagicMock,
     ) -> None:
         object_pattern = create_mock_node(cs.TS_OBJECT_PATTERN)
@@ -418,7 +406,7 @@ class TestEdgeCases:
             fields={cs.FIELD_NAME: object_pattern},
         )
 
-        mixin._process_variable_declarator_for_commonjs(
+        module_system._process_variable_declarator_for_commonjs(
             declarator, "test_module", cs.SupportedLanguage.JS
         )
 
@@ -426,7 +414,7 @@ class TestEdgeCases:
 
     def test_missing_function_field_in_call_expression(
         self,
-        mixin: ConcreteModuleSystemMixin,
+        module_system: JsTsModuleSystem,
         mock_import_processor: MagicMock,
     ) -> None:
         object_pattern = create_mock_node(cs.TS_OBJECT_PATTERN)
@@ -439,7 +427,7 @@ class TestEdgeCases:
             },
         )
 
-        mixin._process_variable_declarator_for_commonjs(
+        module_system._process_variable_declarator_for_commonjs(
             declarator, "test_module", cs.SupportedLanguage.JS
         )
 
@@ -447,7 +435,7 @@ class TestEdgeCases:
 
     def test_missing_arguments_in_require_call(
         self,
-        mixin: ConcreteModuleSystemMixin,
+        module_system: JsTsModuleSystem,
         mock_import_processor: MagicMock,
     ) -> None:
         object_pattern = create_mock_node(cs.TS_OBJECT_PATTERN, children=[])
@@ -464,7 +452,7 @@ class TestEdgeCases:
             },
         )
 
-        mixin._process_variable_declarator_for_commonjs(
+        module_system._process_variable_declarator_for_commonjs(
             declarator, "test_module", cs.SupportedLanguage.JS
         )
 
@@ -472,7 +460,7 @@ class TestEdgeCases:
 
     def test_non_string_module_argument(
         self,
-        mixin: ConcreteModuleSystemMixin,
+        module_system: JsTsModuleSystem,
         mock_import_processor: MagicMock,
     ) -> None:
         shorthand_id = create_mock_node(
@@ -499,7 +487,7 @@ class TestEdgeCases:
             },
         )
 
-        mixin._process_variable_declarator_for_commonjs(
+        module_system._process_variable_declarator_for_commonjs(
             declarator, "test_module", cs.SupportedLanguage.JS
         )
 
@@ -507,7 +495,7 @@ class TestEdgeCases:
 
     def test_pair_pattern_with_wrong_key_type(
         self,
-        mixin: ConcreteModuleSystemMixin,
+        module_system: JsTsModuleSystem,
         mock_import_processor: MagicMock,
     ) -> None:
         mock_import_processor.resolve_js_module_path.return_value = "fs"
@@ -542,7 +530,7 @@ class TestEdgeCases:
             },
         )
 
-        mixin._process_variable_declarator_for_commonjs(
+        module_system._process_variable_declarator_for_commonjs(
             declarator, "test_module", cs.SupportedLanguage.JS
         )
 
