@@ -66,9 +66,9 @@ from ..utils import (
 )
 from . import base_targets as bt
 from . import cpp_modules
+from . import definition_label as nt
 from . import identity as id_
 from . import method_override as mo
-from . import node_type as nt
 from . import parent_extraction as pe
 from . import relationships as rel
 from .utils import csharp_has_override_modifier, find_child_by_type
@@ -1461,12 +1461,12 @@ class ClassIngestMixin:
 
         class_qn, class_name, is_exported = identity
         class_start_line, class_start_col = _class_start_point(class_node, language)
-        node_type = nt.definition_label(class_node, class_name, class_qn, language)
+        label = nt.definition_label(class_node, class_name, class_qn, language)
         class_qn = self.function_registry.register_unique_qn(
             class_qn,
             class_start_line,
             class_start_col,
-            kind=node_type if language in cs.JS_TS_LANGUAGES else None,
+            kind=label if language in cs.JS_TS_LANGUAGES else None,
         )
 
         modifiers, decorators = extract_modifiers_and_decorators(
@@ -1490,7 +1490,7 @@ class ClassIngestMixin:
             ).as_posix()
             class_props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
         self._record_language_type_props(
-            class_node, class_qn, class_name, node_type, language, class_props
+            class_node, class_qn, class_name, label, language, class_props
         )
         # A container's hash covers its whole subtree, the same reading as a
         # function's: a note on a class is about the class as declared, and
@@ -1503,8 +1503,8 @@ class ClassIngestMixin:
         # this file can register them again.
         if non_method_members := _python_non_method_members(class_node, language):
             class_props[cs.KEY_NON_METHOD_MEMBERS] = non_method_members
-        self.ingestor.ensure_node_batch(node_type, class_props)
-        self.function_registry[class_qn] = node_type
+        self.ingestor.ensure_node_batch(label, class_props)
+        self.function_registry[class_qn] = label
         mark_js_ts_module_private(
             self.function_registry, class_qn, is_exported, language
         )
@@ -1529,7 +1529,7 @@ class ClassIngestMixin:
         self._emit_or_defer_defines(
             parent_label,
             parent_qn,
-            node_type,
+            label,
             class_qn,
             module_qn,
             parent_span=parent_span,
@@ -1550,7 +1550,7 @@ class ClassIngestMixin:
         emit_declared_fields(
             self.ingestor,
             self.pending_field_types,
-            node_type,
+            label,
             class_qn,
             module_qn,
             member_node,
@@ -1563,7 +1563,7 @@ class ClassIngestMixin:
         # for non-C# types or when the frontend is off -> heuristic stands.
         csharp_base_kinds = self._record_type_location(
             class_qn,
-            node_type,
+            label,
             language,
             file_path,
             class_start_line,
@@ -1573,7 +1573,7 @@ class ClassIngestMixin:
             member_node,
             class_qn,
             module_qn,
-            node_type,
+            label,
             is_exported,
             language,
             self.class_inheritance,
@@ -1587,9 +1587,9 @@ class ClassIngestMixin:
             csharp_base_kinds=csharp_base_kinds,
         )
         self._record_declared_type_members(
-            member_node, class_qn, module_qn, node_type, language, class_props
+            member_node, class_qn, module_qn, label, language, class_props
         )
-        if language == cs.SupportedLanguage.GO and node_type == cs.NodeLabel.INTERFACE:
+        if language == cs.SupportedLanguage.GO and label == cs.NodeLabel.INTERFACE:
             self._ingest_go_interface_methods(
                 class_node, class_qn, module_qn, file_path
             )
@@ -1611,7 +1611,7 @@ class ClassIngestMixin:
             sorted_func_nodes=sorted_func_nodes,
             func_node_starts=func_node_starts,
             module_qn=module_qn,
-            container_label=node_type,
+            container_label=label,
         )
 
     def _cpp_local_type_qn(
@@ -1689,7 +1689,7 @@ class ClassIngestMixin:
         class_node: Node,
         class_qn: str,
         class_name: str,
-        node_type: cs.NodeLabel,
+        label: cs.NodeLabel,
         language: cs.SupportedLanguage,
         class_props: PropertyDict,
     ) -> None:
@@ -1698,9 +1698,7 @@ class ClassIngestMixin:
         elif language == cs.SupportedLanguage.CSHARP:
             self._record_csharp_namespace(class_node, class_qn, class_props)
             self._record_csharp_arity(class_node, class_name, class_props)
-        elif (
-            language == cs.SupportedLanguage.GO and node_type == cs.NodeLabel.INTERFACE
-        ):
+        elif language == cs.SupportedLanguage.GO and label == cs.NodeLabel.INTERFACE:
             # Stored so an incremental run that does not re-parse the
             # interface still knows what its method set is built from.
             class_props.update(go_ifaces.embeds_props(class_node))
@@ -1717,20 +1715,20 @@ class ClassIngestMixin:
         member_node: Node,
         class_qn: str,
         module_qn: str,
-        node_type: cs.NodeLabel,
+        label: cs.NodeLabel,
         language: cs.SupportedLanguage,
         class_props: PropertyDict,
     ) -> None:
         # The variants ride with their enum the way fields ride with their
         # owner (issue #1807). After the relationships, because a Python enum
         # is a Class that only its resolved bases identify (issue #2583).
-        if node_type == cs.NodeLabel.ENUM or (
+        if label == cs.NodeLabel.ENUM or (
             language == cs.SupportedLanguage.PYTHON
             and is_python_enum(self.class_inheritance.get(class_qn, ()))
         ):
             emit_declared_variants(
                 self.ingestor,
-                node_type,
+                label,
                 class_qn,
                 member_node,
                 language,
@@ -1801,7 +1799,7 @@ class ClassIngestMixin:
     def _record_type_location(
         self,
         class_qn: str,
-        node_type: cs.NodeLabel,
+        label: cs.NodeLabel,
         language: cs.SupportedLanguage,
         file_path: Path | None,
         class_start_line: int,
@@ -1826,7 +1824,7 @@ class ClassIngestMixin:
             rel_path = cached_relative_path(file_path, self.repo_path).as_posix()
             self.go_type_locations[(rel_path, class_start_line, class_start_col)] = (
                 class_qn,
-                str(node_type),
+                str(label),
             )
         return csharp_base_kinds
 
@@ -2848,9 +2846,9 @@ class ClassIngestMixin:
                 continue
             base_qn = base_candidates[0]
             base_prefix = f"{base_qn}{cs.SEPARATOR_DOT}"
-            for qn, node_type in self.function_registry.find_with_prefix(base_qn):
+            for qn, label in self.function_registry.find_with_prefix(base_qn):
                 if (
-                    node_type == cs.NodeLabel.METHOD
+                    label == cs.NodeLabel.METHOD
                     and qn.startswith(base_prefix)
                     and cs.SEPARATOR_DOT
                     not in qn[len(base_prefix) :].split(cs.CHAR_PAREN_OPEN, 1)[0]

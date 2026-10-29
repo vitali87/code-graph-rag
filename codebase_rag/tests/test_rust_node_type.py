@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.parsers.class_ingest.node_type import definition_label
+from codebase_rag.parsers.class_ingest.definition_label import definition_label
 from codebase_rag.tests.conftest import (
     create_mock_node,
     get_node_names,

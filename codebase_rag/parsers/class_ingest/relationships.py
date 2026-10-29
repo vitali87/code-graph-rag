@@ -21,7 +21,7 @@ def create_class_relationships(
     class_node: Node,
     class_qn: str,
     module_qn: str,
-    node_type: cs.NodeLabel,
+    label: cs.NodeLabel,
     is_exported: bool,
     language: cs.SupportedLanguage,
     class_inheritance: dict[str, list[str]],
@@ -71,17 +71,17 @@ def create_class_relationships(
         ingestor.ensure_relationship_batch(
             (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
             cs.RelationshipType.EXPORTS,
-            (node_type, cs.KEY_QUALIFIED_NAME, class_qn),
+            (label, cs.KEY_QUALIFIED_NAME, class_qn),
         )
 
     if cpp_bases is not None and defer_cpp_inherits is not None:
-        _defer_cpp_bases(class_node, class_qn, node_type, cpp_bases, defer_cpp_inherits)
+        _defer_cpp_bases(class_node, class_qn, label, cpp_bases, defer_cpp_inherits)
     else:
         _link_parent_classes(
             parent_classes,
             class_qn,
             module_qn,
-            node_type,
+            label,
             language,
             ingestor,
             function_registry,
@@ -114,7 +114,7 @@ def create_class_relationships(
             ),
             class_qn,
             module_qn,
-            node_type,
+            label,
             language,
             ingestor,
             interface_implementers,
@@ -131,7 +131,7 @@ def _link_parent_classes(
     parent_classes: list[str],
     class_qn: str,
     module_qn: str,
-    node_type: cs.NodeLabel,
+    label: cs.NodeLabel,
     language: cs.SupportedLanguage,
     ingestor: IngestorProtocol,
     function_registry: FunctionRegistryTrieProtocol,
@@ -142,7 +142,7 @@ def _link_parent_classes(
     if defer_inherits is None:
         for base_index, parent_class_qn in enumerate(parent_classes, base_offset):
             create_inheritance_relationship(
-                node_type,
+                label,
                 class_qn,
                 parent_class_qn,
                 function_registry,
@@ -165,7 +165,7 @@ def _link_parent_classes(
                 module_qn=module_qn,
                 base_index=base_offset + position,
                 language=language,
-                child_label=str(node_type),
+                child_label=str(label),
                 written_ref=_written_ref(written_refs, position),
             )
         )
@@ -175,7 +175,7 @@ def _link_implemented_interfaces(
     interface_qns: list[str],
     class_qn: str,
     module_qn: str,
-    node_type: cs.NodeLabel,
+    label: cs.NodeLabel,
     language: cs.SupportedLanguage,
     ingestor: IngestorProtocol,
     interface_implementers: dict[str, set[str]] | None,
@@ -192,12 +192,12 @@ def _link_implemented_interfaces(
                     module_qn=module_qn,
                     base_index=0,
                     language=language,
-                    child_label=str(node_type),
+                    child_label=str(label),
                     written_ref=_written_ref(written_refs, position),
                 )
             )
         else:
-            create_implements_relationship(node_type, class_qn, interface_qn, ingestor)
+            create_implements_relationship(label, class_qn, interface_qn, ingestor)
         # Record implementers so the resolver can dispatch an interface-typed
         # call to the concrete method when the interface has exactly one impl.
         if interface_implementers is not None:
@@ -207,7 +207,7 @@ def _link_implemented_interfaces(
 def _defer_cpp_bases(
     class_node: Node,
     class_qn: str,
-    node_type: cs.NodeLabel,
+    label: cs.NodeLabel,
     cpp_bases: list[tuple[str, str]],
     defer_cpp_inherits: list[DeferredCppInherit],
 ) -> None:
@@ -219,7 +219,7 @@ def _defer_cpp_bases(
     for base_index, (written_name, guess_qn) in enumerate(cpp_bases):
         defer_cpp_inherits.append(
             DeferredCppInherit(
-                child_label=str(node_type),
+                child_label=str(label),
                 child_qn=class_qn,
                 base_name=written_name,
                 guess_qn=guess_qn,
@@ -237,12 +237,12 @@ def get_node_type_for_inheritance(
     # `implements X` and an interface's `extends X` name a type. Where a TS
     # type shares its name with a value (issue #2520) the registry entry is
     # the value's, so a type position asks for the type side instead.
-    node_type = (
+    label = (
         function_registry.type_kind(qualified_name)
         if type_position
         else function_registry.get(qualified_name)
     )
-    return str(node_type if node_type is not None else cs.NodeLabel.CLASS)
+    return str(label if label is not None else cs.NodeLabel.CLASS)
 
 
 def create_inheritance_relationship(

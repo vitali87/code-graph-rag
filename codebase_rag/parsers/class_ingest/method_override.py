@@ -217,8 +217,8 @@ def _direct_method_names(
 ) -> list[str]:
     prefix = f"{class_qn}{cs.SEPARATOR_DOT}"
     names: list[str] = []
-    for qn, node_type in function_registry.find_with_prefix(class_qn):
-        if node_type != cs.NodeLabel.METHOD or not qn.startswith(prefix):
+    for qn, label in function_registry.find_with_prefix(class_qn):
+        if label != cs.NodeLabel.METHOD or not qn.startswith(prefix):
             continue
         leaf = qn[len(prefix) :]
         if cs.SEPARATOR_DOT in leaf.split(cs.CHAR_PAREN_OPEN, 1)[0]:
@@ -300,8 +300,8 @@ def _find_override_by_arity(
     base_name = method_name.split(cs.CHAR_PAREN_OPEN, 1)[0]
     prefix = f"{parent_class}{cs.SEPARATOR_DOT}"
     matches: list[str] = []
-    for qn, node_type in function_registry.find_with_prefix(parent_class):
-        if node_type != cs.NodeLabel.METHOD or not qn.startswith(prefix):
+    for qn, label in function_registry.find_with_prefix(parent_class):
+        if label != cs.NodeLabel.METHOD or not qn.startswith(prefix):
             continue
         leaf = qn[len(prefix) :]
         if cs.SEPARATOR_DOT in leaf.split(cs.CHAR_PAREN_OPEN, 1)[0]:
