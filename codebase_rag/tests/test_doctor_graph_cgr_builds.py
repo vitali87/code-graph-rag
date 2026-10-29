@@ -28,7 +28,7 @@ from codebase_rag.doctor import graph_audit as ga
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services.protobuf_service import ProtobufFileIngestor
-from codebase_rag.tests.conftest import get_relationships
+from codebase_rag.tests.conftest import get_relationships, recorded_relationships
 from codebase_rag.types_defs import GraphNodeRecord, GraphRelRecord, ResultRow
 from evals.cgr_graph import StatefulIngestor
 
@@ -103,10 +103,7 @@ def _records(
         GraphNodeRecord(str(c.args[0]), c.args[1])
         for c in mock_ingestor.ensure_node_batch.call_args_list
     ]
-    rels = [
-        GraphRelRecord(c.args[0], str(c.args[1]), c.args[2])
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-    ]
+    rels = recorded_relationships(mock_ingestor)
     return nodes, rels
 
 

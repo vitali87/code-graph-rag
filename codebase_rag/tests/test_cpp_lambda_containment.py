@@ -11,8 +11,12 @@ from unittest.mock import MagicMock
 
 from codebase_rag import constants as cs
 from codebase_rag.doctor import graph_audit as ga
-from codebase_rag.tests.conftest import get_relationships, run_updater
-from codebase_rag.types_defs import GraphNodeRecord, GraphRelRecord
+from codebase_rag.tests.conftest import (
+    get_relationships,
+    recorded_relationships,
+    run_updater,
+)
+from codebase_rag.types_defs import GraphNodeRecord
 
 HDR = """
 #pragma once
@@ -127,10 +131,7 @@ def test_cpp_lambda_fixture_has_no_orphans_or_dangling_defines(
         GraphNodeRecord(str(c.args[0]), c.args[1])
         for c in mock_ingestor.ensure_node_batch.call_args_list
     ]
-    rels = [
-        GraphRelRecord(c.args[0], str(c.args[1]), c.args[2])
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-    ]
+    rels = recorded_relationships(mock_ingestor)
     # Orphan detection counts only edges the database would keep, so this
     # fails if the lambda's DEFINES parent is a phantom qn.
     assert ga.find_orphans(nodes, rels) == []
