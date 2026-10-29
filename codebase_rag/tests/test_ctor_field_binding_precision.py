@@ -11,6 +11,7 @@ import pytest
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import recorded_edges
 
 
 def _run_calls(tmp_path: Path, files: dict[str, str]) -> set[tuple[str, str]]:
@@ -25,11 +26,7 @@ def _run_calls(tmp_path: Path, files: dict[str, str]) -> set[tuple[str, str]]:
     GraphUpdater(
         ingestor=mock, repo_path=tmp_path, parsers=parsers, queries=queries
     ).run()
-    return {
-        (c.args[0][2], c.args[2][2])
-        for c in mock.ensure_relationship_batch.call_args_list
-        if str(c.args[1]) == "CALLS"
-    }
+    return recorded_edges(mock, "CALLS")
 
 
 def _has(calls: set[tuple[str, str]], caller_suffix: str, callee_suffix: str) -> bool:

@@ -54,14 +54,7 @@ def _node_name_counts(mock: MagicMock, label: str) -> Counter[str]:
 
 
 def _import_targets(mock: MagicMock) -> set[str]:
-    return {
-        to
-        for _from, to in {
-            (c.args[0][2], c.args[2][2])
-            for c in mock.ensure_relationship_batch.call_args_list
-            if str(c.args[1]) == IMPORTS
-        }
-    }
+    return {to for _from, to in recorded_edges(mock, IMPORTS)}
 
 
 def _defined(mock: MagicMock) -> set[str]:

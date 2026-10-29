@@ -16,7 +16,11 @@ from codebase_rag.parsers.call_processor import CallProcessor
 from codebase_rag.parsers.definition_processor import DefinitionProcessor
 from codebase_rag.parsers.import_processor import ImportProcessor
 from codebase_rag.parsers.type_inference import TypeInferenceEngine
-from codebase_rag.tests.conftest import assert_no_pass_failures, create_and_run_updater
+from codebase_rag.tests.conftest import (
+    assert_no_pass_failures,
+    create_and_run_updater,
+    recorded_edges,
+)
 
 _SOURCE = (
     "import os\n\n\ndef alpha():\n    return beta()\n\n\ndef beta():\n    return 1\n"
@@ -92,10 +96,6 @@ def test_a_clean_run_leaves_the_gate_quiet(
     (temp_repo / "m.py").write_text(_SOURCE, encoding="utf-8")
     create_and_run_updater(temp_repo, mock_ingestor)
     assert not _fail_on_swallowed_pass_errors, _fail_on_swallowed_pass_errors
-    calls = {
-        (c.args[0][2], c.args[2][2])
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    }
+    calls = recorded_edges(mock_ingestor, "CALLS")
     base = temp_repo.name
     assert (f"{base}.m.alpha", f"{base}.m.beta") in calls, calls

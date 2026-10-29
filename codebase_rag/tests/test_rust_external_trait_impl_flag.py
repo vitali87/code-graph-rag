@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from codebase_rag import constants as cs
-from codebase_rag.tests.conftest import create_and_run_updater
+from codebase_rag.tests.conftest import create_and_run_updater, recorded_edges
 
 
 def _method_props(mock_ingestor: MagicMock) -> dict[str, dict]:
@@ -228,11 +228,7 @@ def test_generic_scoped_external_trait_impl_is_flagged(
     assert _prop(props, "S.add").get(cs.KEY_OVERRIDES_EXTERNAL) is True
     # Nothing here overrides anything first-party: the only trait implemented
     # belongs to std, and `other::Add` is a stranger that shares its name.
-    overrides = {
-        (call.args[0][2], call.args[2][2])
-        for call in mock_ingestor.ensure_relationship_batch.call_args_list
-        if call.args[1] == cs.RelationshipType.OVERRIDES.value
-    }
+    overrides = recorded_edges(mock_ingestor, cs.RelationshipType.OVERRIDES.value)
     assert not overrides, overrides
 
 

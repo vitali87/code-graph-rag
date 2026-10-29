@@ -22,6 +22,7 @@ from codebase_rag.parsers.csharp_frontend.frontend import (
     _out_writes,
     csharp_frontend_available,
 )
+from codebase_rag.tests.conftest import recorded_edges
 
 FLOWS_TO = cs.RelationshipType.FLOWS_TO.value
 _CAPTURE_IO = resolve_capture([cs.CaptureGroup.IO.value])
@@ -67,11 +68,7 @@ def _flows(
         ).run()
     finally:
         settings.CSHARP_FRONTEND = previous
-    return {
-        (c.args[0][2], c.args[2][2])
-        for c in mock.ensure_relationship_batch.call_args_list
-        if str(c.args[1]) == FLOWS_TO
-    }
+    return recorded_edges(mock, FLOWS_TO)
 
 
 def test_arg_flow_rows_parse_and_malformed_rows_drop() -> None:
@@ -533,11 +530,7 @@ def _cross_project_flows(repo: Path) -> set[tuple[str, str]]:
         ).run()
     finally:
         settings.CSHARP_FRONTEND = previous
-    return {
-        (c.args[0][2], c.args[2][2])
-        for c in mock.ensure_relationship_batch.call_args_list
-        if str(c.args[1]) == FLOWS_TO
-    }
+    return recorded_edges(mock, FLOWS_TO)
 
 
 @pytest.mark.skipif(
@@ -895,11 +888,7 @@ def test_a_metadata_interface_never_resolves_to_source_implementers(
         queries=queries,
         capture=_CAPTURE_IO,
     ).run()
-    flows = {
-        (c.args[0][2], c.args[2][2])
-        for c in mock.ensure_relationship_batch.call_args_list
-        if str(c.args[1]) == FLOWS_TO
-    }
+    flows = recorded_edges(mock, FLOWS_TO)
     # Positive control first: the DIRECT call's write-back must be present,
     # proving the Roslyn frontend actually built and emitted ref facts, so
     # the absence below cannot pass vacuously on a broken build.
@@ -1096,11 +1085,7 @@ def test_conditional_variants_of_a_shared_file_are_not_collapsed(
         queries=queries,
         capture=_CAPTURE_IO,
     ).run()
-    flows = {
-        (c.args[0][2], c.args[2][2])
-        for c in mock.ensure_relationship_batch.call_args_list
-        if str(c.args[1]) == FLOWS_TO
-    }
+    flows = recorded_edges(mock, FLOWS_TO)
     # Positive control first: the non-shared LocalWriter's direct write-back
     # must be present, proving both projects loaded and ref facts flowed, so
     # the absence below cannot pass vacuously.
@@ -1288,11 +1273,7 @@ def test_a_prebuilt_plugin_implementation_keeps_the_write_unproven(
         queries=queries,
         capture=_CAPTURE_IO,
     ).run()
-    flows = {
-        (c.args[0][2], c.args[2][2])
-        for c in mock.ensure_relationship_batch.call_args_list
-        if str(c.args[1]) == FLOWS_TO
-    }
+    flows = recorded_edges(mock, FLOWS_TO)
     assert ("resource::ENV::K2", _STDOUT) in flows
     assert (_ENV_K, _STDOUT) not in flows
 

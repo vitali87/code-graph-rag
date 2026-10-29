@@ -16,6 +16,7 @@ from codebase_rag import constants as cs
 from codebase_rag.capture import resolve_capture
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import recorded_edges
 
 READS_FROM = cs.RelationshipType.READS_FROM.value
 EXPOSES = cs.RelationshipType.EXPOSES.value
@@ -39,11 +40,7 @@ def _edges(
         queries=queries,
         capture=_CAPTURE_IO,
     ).run()
-    return {
-        (c.args[0][2], c.args[2][2])
-        for c in mock.ensure_relationship_batch.call_args_list
-        if str(c.args[1]) == rel_type
-    }
+    return recorded_edges(mock, rel_type)
 
 
 def _reads(tmp_path: Path, files: dict[str, str], caller: str, resource: str) -> bool:

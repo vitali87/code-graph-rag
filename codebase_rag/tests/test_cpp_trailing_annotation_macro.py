@@ -19,7 +19,7 @@ from codebase_rag import graph_updater as gu
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.cpp.preproc_recovery import parse_with_preproc_recovery
 from codebase_rag.parsers.cpp_frontend import cpp_frontend_available
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import recorded_edges, run_updater
 
 PROJECT = "proj"
 
@@ -80,11 +80,9 @@ class _Graph:
             label = str(c.args[0])
             if label in (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD):
                 self.defs[c.args[1][cs.KEY_QUALIFIED_NAME]] = label
-        self.calls: set[tuple[str, str]] = {
-            (c.args[0][2], c.args[2][2])
-            for c in ingestor.ensure_relationship_batch.call_args_list
-            if c.args[1] == cs.RelationshipType.CALLS
-        }
+        self.calls: set[tuple[str, str]] = recorded_edges(
+            ingestor, cs.RelationshipType.CALLS
+        )
 
     def qn(self, suffix: str) -> str:
         # A lone header's module is `proj.c`, one sharing a stem with a

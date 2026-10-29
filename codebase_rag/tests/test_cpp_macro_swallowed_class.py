@@ -15,6 +15,7 @@ import pytest
 from codebase_rag.tests.conftest import (
     get_nodes,
     get_qualified_names,
+    recorded_edges,
     run_updater,
 )
 
@@ -79,11 +80,7 @@ def test_macro_swallowed_struct_keeps_member_call_edges(
     _write(root)
     run_updater(root, mock_ingestor, skip_if_missing="cpp")
 
-    calls = {
-        (c.args[0][2], c.args[2][2])
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    }
+    calls = recorded_edges(mock_ingestor, "CALLS")
     assert (
         "mscalls.ordered_map.ordered_map.at",
         "mscalls.ordered_map.ordered_map.locate",

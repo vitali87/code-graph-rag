@@ -16,6 +16,7 @@ from codebase_rag import constants as cs
 from codebase_rag.capture import resolve_capture
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import recorded_edges
 
 FLOWS_TO = cs.RelationshipType.FLOWS_TO.value
 _CAPTURE_IO = resolve_capture([cs.CaptureGroup.IO.value])
@@ -35,11 +36,7 @@ def _run_flow(tmp_path: Path, source: str) -> set[tuple[str, str]]:
         queries=queries,
         capture=_CAPTURE_IO,
     ).run()
-    return {
-        (c.args[0][2], c.args[2][2])
-        for c in mock.ensure_relationship_batch.call_args_list
-        if str(c.args[1]) == FLOWS_TO
-    }
+    return recorded_edges(mock, FLOWS_TO)
 
 
 def test_php_superglobal_get_flows_to_echo(tmp_path: Path) -> None:

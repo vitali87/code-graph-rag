@@ -15,6 +15,7 @@ from codebase_rag.capture import ALL_ENABLED
 from codebase_rag.config import settings
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import recorded_edges
 
 jedi = pytest.importorskip("jedi")
 
@@ -59,11 +60,7 @@ def _calls_edges_for(
         ).run()
     finally:
         settings.PYTHON_FRONTEND = previous
-    return {
-        (c.args[0][2], c.args[2][2])
-        for c in mock.ensure_relationship_batch.call_args_list
-        if str(c.args[1]) == CALLS
-    }
+    return recorded_edges(mock, CALLS)
 
 
 def test_reexport_chain_resolves_to_the_definition(tmp_path: Path) -> None:

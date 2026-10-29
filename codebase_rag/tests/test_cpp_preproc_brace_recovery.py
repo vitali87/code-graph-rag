@@ -16,6 +16,7 @@ import pytest
 from codebase_rag.tests.conftest import (
     get_nodes,
     get_qualified_names,
+    recorded_edges,
     run_updater,
 )
 
@@ -140,11 +141,7 @@ def test_conditional_brace_file_keeps_call_edges(
     _write(root)
     run_updater(root, mock_ingestor, skip_if_missing="cpp")
 
-    calls = {
-        (c.args[0][2], c.args[2][2])
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    }
+    calls = recorded_edges(mock_ingestor, "CALLS")
     assert (
         "brcalls.reader.detail.binary_reader.parse_bson_internal",
         "brcalls.reader.detail.binary_reader.read_one",

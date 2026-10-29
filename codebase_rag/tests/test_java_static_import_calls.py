@@ -15,6 +15,7 @@ from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.import_processor import ImportProcessor
+from codebase_rag.tests.conftest import recorded_edges
 from codebase_rag.types_defs import JavaStaticImport
 
 PROJECT = "repo"
@@ -439,11 +440,7 @@ def _build_calls(root: Path, files: dict[str, str]) -> set[tuple[str, str]]:
         queries=queries,
         project_name=PROJECT,
     ).run()
-    return {
-        (c.args[0][2], c.args[2][2])
-        for c in mock.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    }
+    return recorded_edges(mock, "CALLS")
 
 
 @pytest.fixture(scope="module")
