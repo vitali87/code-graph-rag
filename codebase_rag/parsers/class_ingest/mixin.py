@@ -80,6 +80,7 @@ if TYPE_CHECKING:
         LanguageQueries,
         SimpleNameLookup,
     )
+    from ..function_ingest import FunctionIngest
     from ..go.interface_ingest import GoInterfaceIngest
     from ..import_processor import ImportProcessor
 
@@ -367,6 +368,7 @@ class ClassIngestMixin:
     rust_impl_owner_module: dict[str, str]
     go_interfaces: dict[str, go_ifaces.GoInterfaceDecl]
     go_interface_ingest: GoInterfaceIngest
+    function_ingest: FunctionIngest
     cpp_definition_spans: dict[str, list[CppDefinitionSpan]]
     _deferred_forward_decls: list[_DeferredForwardDecl]
     _deferred_parent_links: list[DeferredParentLink]
@@ -410,34 +412,6 @@ class ClassIngestMixin:
     def _get_docstring(
         self, node: ASTNode, language: cs.SupportedLanguage
     ) -> str | None: ...
-
-    @abstractmethod
-    def _emit_or_defer_defines(
-        self,
-        parent_label: str,
-        parent_qn: str,
-        child_label: str,
-        child_qn: str,
-        module_qn: str,
-        fallback_label: str | None = None,
-        fallback_qn: str | None = None,
-        parent_span: FunctionSpanKey | None = None,
-    ) -> None: ...
-
-    @abstractmethod
-    def _determine_function_parent(
-        self,
-        func_node: Node,
-        func_qn: str,
-        module_qn: str,
-        lang_config: LanguageSpec,
-        language: cs.SupportedLanguage | None = None,
-    ) -> tuple[str, str, FunctionSpanKey | None]: ...
-
-    @abstractmethod
-    def _resolve_cpp_class_qn(
-        self, class_name: str, module_qn: str, exclude_qn: str | None = None
-    ) -> tuple[str, bool]: ...
 
     def _resolve_to_qn(
         self,
@@ -750,7 +724,7 @@ class ClassIngestMixin:
                 0, f"{entry.namespace_path}{cs.SEPARATOR_DOT}{normalized}"
             )
         for candidate in candidates:
-            parent_qn, resolved = self._resolve_cpp_class_qn(
+            parent_qn, resolved = self.function_ingest.resolve_cpp_class_qn(
                 candidate, "", exclude_qn=entry.child_qn
             )
             if resolved:
@@ -1490,11 +1464,11 @@ class ClassIngestMixin:
         parent_label, parent_qn, parent_span = (
             self._cpp_local_type_parent(class_node, local_qn, module_qn)
             if local_qn is not None
-            else self._determine_function_parent(
+            else self.function_ingest.determine_function_parent(
                 class_node, class_qn, module_qn, lang_config, language
             )
         )
-        self._emit_or_defer_defines(
+        self.function_ingest.emit_or_defer_defines(
             parent_label,
             parent_qn,
             label,

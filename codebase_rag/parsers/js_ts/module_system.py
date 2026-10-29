@@ -3,7 +3,7 @@ from __future__ import annotations
 import textwrap
 from collections.abc import Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 from loguru import logger
 from tree_sitter import Language, QueryCursor
@@ -18,7 +18,7 @@ from ...node_text import (
 )
 from ...types_defs import ASTNode
 from ..definition_facts import DefinitionFacts
-from ..method_ingest import ingest_exported_function
+from ..method_ingest import DocstringHost, ingest_exported_function
 from ..utils import function_span_key
 from .utils import get_js_ts_language_obj, is_export_inside_function
 
@@ -29,26 +29,8 @@ if TYPE_CHECKING:
         LanguageQueries,
         SimpleNameLookup,
     )
+    from ..function_ingest import FunctionIngest
     from ..import_processor import ImportProcessor
-
-
-class JsTsModuleSystemHost(Protocol):
-    """What the module-system pass calls back on the definition pass: a
-    definition's docstring, and the span-claim protocol every JS/TS
-    registration path shares, under which one source function mints exactly
-    one node PER NAME (deliberate different-name twins still register)."""
-
-    def _get_docstring(
-        self, node: ASTNode, language: cs.SupportedLanguage
-    ) -> str | None: ...
-
-    def _span_claimed_for_qn(
-        self, module_qn: str, func_node: ASTNode, candidate_qn: str
-    ) -> bool: ...
-
-    def _claim_function_span(
-        self, module_qn: str, func_node: ASTNode, label: str, qualified_name: str
-    ) -> None: ...
 
 
 def _es6_declaration_name(export_function: ASTNode | None) -> str | None:
@@ -68,6 +50,7 @@ class JsTsModuleSystem:
 
     __slots__ = (
         "_host",
+        "_function_ingest",
         "ingestor",
         "repo_path",
         "function_registry",
@@ -82,7 +65,8 @@ class JsTsModuleSystem:
     def __init__(
         self,
         *,
-        host: JsTsModuleSystemHost,
+        host: DocstringHost,
+        function_ingest: FunctionIngest,
         ingestor: IngestorProtocol,
         repo_path: Path,
         function_registry: FunctionRegistryTrieProtocol,
@@ -92,6 +76,11 @@ class JsTsModuleSystem:
         facts: DefinitionFacts,
     ) -> None:
         self._host = host
+        # The span-claim protocol every JS/TS registration path shares: one
+        # source function mints exactly one node PER NAME, so each path checks
+        # the claim before registering and claims after (deliberate
+        # different-name twins still register).
+        self._function_ingest = function_ingest
         self.ingestor = ingestor
         self.repo_path = repo_path
         self.function_registry = function_registry
@@ -240,7 +229,7 @@ class JsTsModuleSystem:
         export_type: str,
         language: cs.SupportedLanguage,
     ) -> None:
-        if self._host._span_claimed_for_qn(
+        if self._function_ingest.span_claimed_for_qn(
             module_qn,
             export_function,
             f"{module_qn}{cs.SEPARATOR_DOT}{function_name}",
@@ -261,7 +250,7 @@ class JsTsModuleSystem:
             self.repo_path,
         )
         if function_qn is not None:
-            self._host._claim_function_span(
+            self._function_ingest.claim_function_span(
                 module_qn,
                 export_function,
                 cs.NodeLabel.FUNCTION.value,

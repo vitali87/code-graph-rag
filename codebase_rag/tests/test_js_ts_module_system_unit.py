@@ -41,8 +41,11 @@ def module_system(
 ) -> JsTsModuleSystem:
     host = MagicMock()
     host._get_docstring.return_value = None
+    function_ingest = MagicMock()
+    function_ingest.span_claimed_for_qn.return_value = False
     return JsTsModuleSystem(
         host=host,
+        function_ingest=function_ingest,
         ingestor=mock_ingestor,
         repo_path=Path("/test/repo"),
         function_registry=mock_function_registry,

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 from loguru import logger
 from tree_sitter import QueryCursor
@@ -18,13 +18,11 @@ from ...node_text import (
 from ...types_defs import (
     ASTNode,
     FunctionRegistryTrieProtocol,
-    FunctionSpanKey,
     PropertyDict,
     SimpleNameLookup,
 )
 from ..definition_facts import DefinitionFacts
-from ..method_ingest import module_function_props
-from .module_system import JsTsModuleSystemHost
+from ..method_ingest import DocstringHost, module_function_props
 from .utils import (
     arrow_binding_name,
     get_js_ts_language_obj,
@@ -37,34 +35,7 @@ if TYPE_CHECKING:
     from ...language_spec import LanguageSpec
     from ...services import IngestorProtocol
     from ...types_defs import LanguageQueries
-
-
-class JsTsIngestHost(JsTsModuleSystemHost, Protocol):
-    """What the JS/TS function passes call back on the definition pass, past
-    the docstring and span claims the module-system pass reads too: the
-    lexical parent of a function, and the DEFINES edge that waits for its
-    parent to register."""
-
-    def _emit_or_defer_defines(
-        self,
-        parent_label: str,
-        parent_qn: str,
-        child_label: str,
-        child_qn: str,
-        module_qn: str,
-        fallback_label: str | None = None,
-        fallback_qn: str | None = None,
-        parent_span: FunctionSpanKey | None = None,
-    ) -> None: ...
-
-    def _determine_function_parent(
-        self,
-        func_node: ASTNode,
-        func_qn: str,
-        module_qn: str,
-        lang_config: LanguageSpec,
-        language: cs.SupportedLanguage | None = None,
-    ) -> tuple[str, str, FunctionSpanKey | None]: ...
+    from ..function_ingest import FunctionIngest
 
 
 class JsTsIngest:
@@ -74,6 +45,7 @@ class JsTsIngest:
 
     __slots__ = (
         "_host",
+        "_function_ingest",
         "ingestor",
         "repo_path",
         "function_registry",
@@ -86,7 +58,8 @@ class JsTsIngest:
     def __init__(
         self,
         *,
-        host: JsTsIngestHost,
+        host: DocstringHost,
+        function_ingest: FunctionIngest,
         ingestor: IngestorProtocol,
         repo_path: Path,
         function_registry: FunctionRegistryTrieProtocol,
@@ -96,6 +69,13 @@ class JsTsIngest:
         class_owner_module: dict[str, str],
     ) -> None:
         self._host = host
+        # The span-claim protocol every JS/TS registration path shares: one
+        # source function mints exactly one node PER NAME, so each path checks
+        # the claim before registering and claims after (deliberate
+        # different-name twins still register). The function pass also names
+        # a function's lexical parent and holds the DEFINES edge that waits
+        # for that parent to register.
+        self._function_ingest = function_ingest
         self.ingestor = ingestor
         self.repo_path = repo_path
         self.function_registry = function_registry
@@ -216,7 +196,7 @@ class JsTsIngest:
         # nested, None at top level where module parenting is already correct.
         if lang_config is None:
             return None, None
-        parent_label, parent_qn, _ = self._host._determine_function_parent(
+        parent_label, parent_qn, _ = self._function_ingest.determine_function_parent(
             func_node, child_qn, module_qn, lang_config, language
         )
         if str(parent_label) == cs.NodeLabel.MODULE.value:
@@ -248,7 +228,9 @@ class JsTsIngest:
             if constructor_name and method_name:
                 constructor_qn = f"{module_qn}{cs.SEPARATOR_DOT}{constructor_name}"
                 method_qn = f"{constructor_qn}{cs.SEPARATOR_DOT}{method_name}"
-                if self._host._span_claimed_for_qn(module_qn, func_node, method_qn):
+                if self._function_ingest.span_claimed_for_qn(
+                    module_qn, func_node, method_qn
+                ):
                     continue
                 method_qn = self.function_registry.register_unique_qn(
                     method_qn, func_node.start_point[0] + 1, func_node.start_point[1]
@@ -271,7 +253,7 @@ class JsTsIngest:
 
                 self.function_registry[method_qn] = cs.NodeLabel.FUNCTION
                 self.simple_name_lookup[method_name].add(method_qn)
-                self._host._claim_function_span(
+                self._function_ingest.claim_function_span(
                     module_qn, func_node, cs.NodeLabel.FUNCTION.value, method_qn
                 )
 
@@ -283,7 +265,7 @@ class JsTsIngest:
                 fallback_label, fallback_qn = self._lexical_defines_fallback(
                     func_node, method_qn, module_qn, lang_config, language
                 )
-                self._host._emit_or_defer_defines(
+                self._function_ingest.emit_or_defer_defines(
                     cs.NodeLabel.FUNCTION,
                     constructor_qn,
                     cs.NodeLabel.FUNCTION,
@@ -420,7 +402,9 @@ class JsTsIngest:
         lang_config: LanguageSpec | None,
         language: cs.SupportedLanguage,
     ) -> None:
-        if self._host._span_claimed_for_qn(module_qn, method_func_node, method_qn):
+        if self._function_ingest.span_claimed_for_qn(
+            module_qn, method_func_node, method_qn
+        ):
             return
         method_qn = self.function_registry.register_unique_qn(
             method_qn,
@@ -443,7 +427,7 @@ class JsTsIngest:
 
         self.function_registry[method_qn] = cs.NodeLabel.FUNCTION
         self.simple_name_lookup[method_name].add(method_qn)
-        self._host._claim_function_span(
+        self._function_ingest.claim_function_span(
             module_qn, method_func_node, cs.NodeLabel.FUNCTION.value, method_qn
         )
 
@@ -454,7 +438,7 @@ class JsTsIngest:
             method_func_node, method_qn, module_qn, lang_config, language
         )
         if fallback_label is not None and fallback_qn is not None:
-            self._host._emit_or_defer_defines(
+            self._function_ingest.emit_or_defer_defines(
                 fallback_label,
                 fallback_qn,
                 cs.NodeLabel.FUNCTION,
@@ -664,7 +648,9 @@ class JsTsIngest:
         language: cs.SupportedLanguage,
         object_member: bool = False,
     ) -> None:
-        if self._host._span_claimed_for_qn(module_qn, function_node, function_qn):
+        if self._function_ingest.span_claimed_for_qn(
+            module_qn, function_node, function_qn
+        ):
             return
         # This pass runs after the class pass, so a same-named TS `type` or
         # `interface` is already registered; the function still takes the
@@ -696,7 +682,7 @@ class JsTsIngest:
             language,
         )
         self.simple_name_lookup[function_name].add(function_qn)
-        self._host._claim_function_span(
+        self._function_ingest.claim_function_span(
             module_qn, function_node, cs.NodeLabel.FUNCTION.value, function_qn
         )
         # An assignment function nested inside another function takes its lexical
@@ -706,7 +692,7 @@ class JsTsIngest:
             function_node, function_qn, module_qn, lang_config, language
         )
         if fallback_label is not None and fallback_qn is not None:
-            self._host._emit_or_defer_defines(
+            self._function_ingest.emit_or_defer_defines(
                 fallback_label,
                 fallback_qn,
                 cs.NodeLabel.FUNCTION,

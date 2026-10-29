@@ -16,6 +16,7 @@ from ..types_defs import (
     CppDefinitionSpan,
     DeferredCppInherit,
     DeferredInherit,
+    DeferredParentLink,
     FunctionRegistryTrieProtocol,
     PendingTypeFact,
     PropertyDict,
@@ -38,7 +39,7 @@ from .definition_facts import DefinitionFacts
 from .definition_prune import RemovedFile, forget_file
 from .dependency_parser import read_manifest
 from .field_nodes import PendingFieldType
-from .function_ingest import FunctionIngestMixin
+from .function_ingest import FunctionIngest
 from .go import utils as go_utils
 from .go.builds import Expr, GoBuilds
 from .go.interface_ingest import GoInterfaceIngest
@@ -80,10 +81,7 @@ def _signature_docstring(node: ASTNode, language: cs.SupportedLanguage) -> str |
     )
 
 
-class DefinitionProcessor(
-    FunctionIngestMixin,
-    ClassIngestMixin,
-):
+class DefinitionProcessor(ClassIngestMixin):
     def __init__(
         self,
         ingestor: IngestorProtocol,
@@ -200,22 +198,10 @@ class DefinitionProcessor(
         # Alias names seen with conflicting underlying types across scopes/files;
         # dropped from type_aliases so their receivers fall back to name-only.
         self._type_alias_conflicts: set[str] = set()
-        self._deferred_cpp_methods: list = []
-        self._deferred_go_methods: list = []
-        self._deferred_cpp_containment: list = []
-        self._deferred_parent_links: list = []
+        # Non-module DEFINES held back until every parent is registered,
+        # written by the function and the class passes alike.
+        self._deferred_parent_links: list[DeferredParentLink] = []
         self._deferred_forward_decls: list = []
-        # Unnamed JS/TS function expressions held back until the named
-        # JS passes have claimed their spans (one node per source function).
-        self._deferred_js_anonymous: list = []
-        self._deferred_rust_body_local: list = []
-        # Macro-invocation-shaped C++ nodes held until every class (incl.
-        # rehydrated ones) is known; resolve_deferred_cpp_artifacts decides
-        # orphaned-ctor vs macro.
-        self._deferred_cpp_artifacts: list = []
-        # Free-function prototypes held until every bodied definition is
-        # registered; resolve_deferred_cpp_prototypes drops duplicates (#893).
-        self._deferred_cpp_prototypes: list = []
         # {rel path: [full line spans]} of every C/C++ function/method the
         # tree-sitter pass ingested; the hybrid C++ frontend's macro-use
         # CALLS resolve against these after Pass 2 (see CppDefinitionSpan).
@@ -262,6 +248,26 @@ class DefinitionProcessor(
         self.pending_parameter_types: list[PendingParameterType] = []
         self.pending_field_types: list[PendingFieldType] = []
         self.func_class_captures_cache = func_class_captures_cache
+        self.function_ingest = FunctionIngest(
+            method_host=self,
+            ingestor=ingestor,
+            repo_path=repo_path,
+            function_registry=function_registry,
+            simple_name_lookup=simple_name_lookup,
+            module_qn_to_file_path=module_qn_to_file_path,
+            facts=self.facts,
+            go_builds=self.go_builds,
+            go_methods=self.go_methods,
+            java_anon_overrides=self.java_anon_overrides,
+            cpp_definition_spans=self.cpp_definition_spans,
+            csharp_methods=self.csharp_methods,
+            csharp_override_methods=self.csharp_override_methods,
+            folded_overloads=self.folded_overloads,
+            pending_endpoints=self.pending_endpoints,
+            pending_type_facts=self.pending_type_facts,
+            pending_parameter_types=self.pending_parameter_types,
+            deferred_parent_links=self._deferred_parent_links,
+        )
         self.go_interface_ingest = GoInterfaceIngest(
             method_host=self,
             ingestor=ingestor,
@@ -283,6 +289,7 @@ class DefinitionProcessor(
         )
         self.js_ts_module_system = JsTsModuleSystem(
             host=self,
+            function_ingest=self.function_ingest,
             ingestor=ingestor,
             repo_path=repo_path,
             function_registry=function_registry,
@@ -293,6 +300,7 @@ class DefinitionProcessor(
         )
         self.js_ts_ingest = JsTsIngest(
             host=self,
+            function_ingest=self.function_ingest,
             ingestor=ingestor,
             repo_path=repo_path,
             function_registry=function_registry,
@@ -350,6 +358,36 @@ class DefinitionProcessor(
         """Swap one source's Go (interface, implementer) pairs for this
         pass's (`GoInterfaceIngest.replace_go_implementers`)."""
         self.go_interface_ingest.replace_go_implementers(previous, current, keep)
+
+    def resolve_deferred_cpp_methods(self) -> int:
+        """Ingest the out-of-class C++ methods held until every class is
+        known (`FunctionIngest.resolve_deferred_cpp_methods`)."""
+        return self.function_ingest.resolve_deferred_cpp_methods()
+
+    def resolve_deferred_cpp_artifacts(self) -> int:
+        """Decide the held-back artifact-shaped C++ nodes
+        (`FunctionIngest.resolve_deferred_cpp_artifacts`)."""
+        return self.function_ingest.resolve_deferred_cpp_artifacts()
+
+    def resolve_deferred_cpp_prototypes(self) -> int:
+        """Register the held-back C++ prototypes no definition duplicates
+        (`FunctionIngest.resolve_deferred_cpp_prototypes`)."""
+        return self.function_ingest.resolve_deferred_cpp_prototypes()
+
+    def resolve_deferred_go_methods(self) -> int:
+        """Ingest the Go receiver methods held until every receiver type is
+        registered (`FunctionIngest.resolve_deferred_go_methods`)."""
+        return self.function_ingest.resolve_deferred_go_methods()
+
+    def resolve_deferred_parent_links(self) -> int:
+        """Emit the non-module DEFINES held until every pass has registered
+        (`FunctionIngest.resolve_deferred_parent_links`)."""
+        return self.function_ingest.resolve_deferred_parent_links()
+
+    def resolve_deferred_cpp_containment(self) -> int:
+        """Emit DEFINES for functions nested in out-of-class C++ method bodies
+        (`FunctionIngest.resolve_deferred_cpp_containment`)."""
+        return self.function_ingest.resolve_deferred_cpp_containment()
 
     def reset_interface_implementers(self) -> None:
         """Forget every implementer pair, parsed or read back from the graph.
@@ -603,7 +641,7 @@ class DefinitionProcessor(
                     queries,
                     combined_captures=combined_captures,
                 )
-                self._ingest_all_functions(
+                self.function_ingest.ingest_all_functions(
                     root_node,
                     module_qn,
                     language,
@@ -618,7 +656,7 @@ class DefinitionProcessor(
                     queries,
                     combined_captures=combined_captures,
                 )
-                self._ingest_all_functions(
+                self.function_ingest.ingest_all_functions(
                     root_node,
                     module_qn,
                     language,
@@ -857,7 +895,7 @@ class DefinitionProcessor(
     def _finalise_rust_file(self, module_qn: str, root_node: ASTNode) -> None:
         # The methods above have claimed their names; a body-local item
         # may now take what is left of the one it shares.
-        self._flush_deferred_rust_body_local()
+        self.function_ingest.flush_deferred_rust_body_local()
         # Function-body uses key on the REGISTERED qn of their
         # enclosing function, knowable only now that dedup variants
         # (`natural@<line>`) have been handed out.
@@ -890,7 +928,7 @@ class DefinitionProcessor(
         # Named passes above have claimed their function nodes;
         # only genuinely anonymous spans (callbacks, IIFEs) still
         # need their held-back registration.
-        self._flush_deferred_js_anonymous()
+        self.function_ingest.flush_deferred_js_anonymous()
         # Direct module.exports functions finalise by SPAN now that
         # every node's minted qn is recorded.
         module_system.finalise_direct_module_exports(module_qn)

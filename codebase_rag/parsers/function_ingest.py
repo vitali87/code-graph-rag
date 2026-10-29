@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from abc import abstractmethod
 from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, NamedTuple
@@ -13,9 +12,7 @@ from .. import logs as ls
 from ..language_spec import LANGUAGE_FQN_SPECS, LanguageSpec
 from ..node_text import safe_decode_text
 from ..types_defs import (
-    ASTNode,
     CppDefinitionSpan,
-    DeferredCppInherit,
     DeferredParentLink,
     FunctionLocation,
     FunctionRegistryTrieProtocol,
@@ -47,7 +44,7 @@ from .go.builds import GoBuilds
 from .js_ts import utils as js_ts_utils
 from .js_ts.utils import mark_js_ts_module_private
 from .lua import utils as lua_utils
-from .method_ingest import ingest_method
+from .method_ingest import MethodIngestHost, ingest_method
 from .parameter_nodes import (
     PendingParameterType,
     csharp_call_shape,
@@ -257,40 +254,101 @@ _GO_TYPE_NODE_TYPES = frozenset(
 )
 
 
-class FunctionIngestMixin:
-    ingestor: IngestorProtocol
-    repo_path: Path
-    project_name: str
-    function_registry: FunctionRegistryTrieProtocol
-    simple_name_lookup: SimpleNameLookup
-    module_qn_to_file_path: dict[str, Path]
-    facts: DefinitionFacts
-    go_builds: GoBuilds
-    java_anon_overrides: list[tuple[str, str, str, str]]
-    pending_endpoints: list[tuple[cs.NodeLabel, str, list[str], str | None]]
-    pending_type_facts: list[PendingTypeFact]
-    pending_parameter_types: list[PendingParameterType]
-    _deferred_cpp_methods: list[_DeferredMethod]
-    _deferred_go_methods: list[_DeferredGoMethod]
-    _deferred_cpp_containment: list[_DeferredCppContainment]
-    _deferred_parent_links: list[DeferredParentLink]
-    go_methods: dict[str, go_interfaces.GoMethodSpec]
-    cpp_definition_spans: dict[str, list[CppDefinitionSpan]]
-    _deferred_js_anonymous: list[_DeferredRegistration]
-    _deferred_rust_body_local: list[_DeferredRegistration]
-    _deferred_cpp_artifacts: list[_DeferredCppArtifact]
-    _deferred_cpp_prototypes: list[_DeferredCppPrototype]
-    _deferred_cpp_inherits: list[DeferredCppInherit]
-    csharp_methods: set[str]
-    csharp_override_methods: set[str]
-    folded_overloads: dict[str, frozenset[int]]
+class FunctionIngest:
+    """Writes every Function node a file's function captures yield, and the
+    methods the function pass finds first (out-of-class C++ definitions, Go
+    receiver methods, `#if`-orphaned C# members). What waits for every type
+    to be registered is held here and resolved by the `resolve_deferred_*`
+    passes."""
 
-    @abstractmethod
-    def _get_docstring(
-        self, node: ASTNode, language: cs.SupportedLanguage
-    ) -> str | None: ...
+    __slots__ = (
+        "_method_host",
+        "ingestor",
+        "repo_path",
+        "function_registry",
+        "simple_name_lookup",
+        "module_qn_to_file_path",
+        "facts",
+        "go_builds",
+        "go_methods",
+        "java_anon_overrides",
+        "cpp_definition_spans",
+        "csharp_methods",
+        "csharp_override_methods",
+        "folded_overloads",
+        "pending_endpoints",
+        "pending_type_facts",
+        "pending_parameter_types",
+        "_deferred_parent_links",
+        "_deferred_cpp_methods",
+        "_deferred_go_methods",
+        "_deferred_cpp_containment",
+        "_deferred_js_anonymous",
+        "_deferred_rust_body_local",
+        "_deferred_cpp_artifacts",
+        "_deferred_cpp_prototypes",
+    )
 
-    def _ingest_all_functions(
+    def __init__(
+        self,
+        *,
+        method_host: MethodIngestHost,
+        ingestor: IngestorProtocol,
+        repo_path: Path,
+        function_registry: FunctionRegistryTrieProtocol,
+        simple_name_lookup: SimpleNameLookup,
+        module_qn_to_file_path: dict[str, Path],
+        facts: DefinitionFacts,
+        go_builds: GoBuilds,
+        go_methods: dict[str, go_interfaces.GoMethodSpec],
+        java_anon_overrides: list[tuple[str, str, str, str]],
+        cpp_definition_spans: dict[str, list[CppDefinitionSpan]],
+        csharp_methods: set[str],
+        csharp_override_methods: set[str],
+        folded_overloads: dict[str, frozenset[int]],
+        pending_endpoints: list[tuple[cs.NodeLabel, str, list[str], str | None]],
+        pending_type_facts: list[PendingTypeFact],
+        pending_parameter_types: list[PendingParameterType],
+        deferred_parent_links: list[DeferredParentLink],
+    ) -> None:
+        # What a method the function pass finds is written through, and
+        # where a definition's docstring is read from.
+        self._method_host = method_host
+        self.ingestor = ingestor
+        self.repo_path = repo_path
+        self.function_registry = function_registry
+        self.simple_name_lookup = simple_name_lookup
+        self.module_qn_to_file_path = module_qn_to_file_path
+        self.facts = facts
+        self.go_builds = go_builds
+        self.go_methods = go_methods
+        self.java_anon_overrides = java_anon_overrides
+        self.cpp_definition_spans = cpp_definition_spans
+        self.csharp_methods = csharp_methods
+        self.csharp_override_methods = csharp_override_methods
+        self.folded_overloads = folded_overloads
+        self.pending_endpoints = pending_endpoints
+        self.pending_type_facts = pending_type_facts
+        self.pending_parameter_types = pending_parameter_types
+        # Shared with the class pass, whose methods defer their containment
+        # here too; emptied in place by resolve_deferred_parent_links.
+        self._deferred_parent_links = deferred_parent_links
+        self._deferred_cpp_methods: list[_DeferredMethod] = []
+        self._deferred_go_methods: list[_DeferredGoMethod] = []
+        self._deferred_cpp_containment: list[_DeferredCppContainment] = []
+        # Unnamed JS/TS function expressions held back until the named
+        # JS passes have claimed their spans (one node per source function).
+        self._deferred_js_anonymous: list[_DeferredRegistration] = []
+        self._deferred_rust_body_local: list[_DeferredRegistration] = []
+        # Macro-invocation-shaped C++ nodes held until every class (incl.
+        # rehydrated ones) is known; resolve_deferred_cpp_artifacts decides
+        # orphaned-ctor vs macro.
+        self._deferred_cpp_artifacts: list[_DeferredCppArtifact] = []
+        # Free-function prototypes held until every bodied definition is
+        # registered; resolve_deferred_cpp_prototypes drops duplicates (#893).
+        self._deferred_cpp_prototypes: list[_DeferredCppPrototype] = []
+
+    def ingest_all_functions(
         self,
         root_node: Node,
         module_qn: str,
@@ -560,7 +618,7 @@ class FunctionIngestMixin:
         # this node's own.
         return function_span_key(module_qn, func_node) in self.facts.function_locations
 
-    def _span_claimed_for_qn(
+    def span_claimed_for_qn(
         self, module_qn: str, func_node: Node, candidate_qn: str
     ) -> bool:
         # A named pass re-deriving the SAME qn another pass already registered for
@@ -575,7 +633,7 @@ class FunctionIngestMixin:
         claimed_base = qn_markers.natural_qn(loc.qualified_name)
         return claimed_base == candidate_qn
 
-    def _claim_function_span(
+    def claim_function_span(
         self, module_qn: str, func_node: Node, label: str, qualified_name: str
     ) -> None:
         # First claim wins; a later pass deriving a different qn for the same
@@ -588,7 +646,7 @@ class FunctionIngestMixin:
                 container_qn=None,
             )
 
-    def _flush_deferred_rust_body_local(self) -> None:
+    def flush_deferred_rust_body_local(self) -> None:
         """Register the file's held-back Rust body-local items (issue #1037)."""
         deferred = self._deferred_rust_body_local
         self._deferred_rust_body_local = []
@@ -615,7 +673,7 @@ class FunctionIngestMixin:
             ):
                 self.facts.method_return_types[location.qualified_name] = return_type
 
-    def _flush_deferred_js_anonymous(self) -> None:
+    def flush_deferred_js_anonymous(self) -> None:
         deferred = self._deferred_js_anonymous
         self._deferred_js_anonymous = []
         for entry in deferred:
@@ -701,7 +759,7 @@ class FunctionIngestMixin:
             func_node, module_qn, language, lang_config
         )
 
-    def _resolve_cpp_class_qn(
+    def resolve_cpp_class_qn(
         self, class_name: str, module_qn: str, exclude_qn: str | None = None
     ) -> tuple[str, bool]:
         """Look up an existing Class node for *class_name* across all parsed files.
@@ -810,7 +868,7 @@ class FunctionIngestMixin:
         resolved = False
         class_qn = ""
         for candidate in candidates:
-            class_qn, resolved = self._resolve_cpp_class_qn(candidate, module_qn)
+            class_qn, resolved = self.resolve_cpp_class_qn(candidate, module_qn)
             if resolved:
                 break
         return class_qn, resolved
@@ -825,7 +883,7 @@ class FunctionIngestMixin:
         lang_queries: LanguageQueries | None,
     ) -> None:
         ingested_qn = ingest_method(
-            self,
+            self._method_host,
             func_node,
             class_qn,
             cs.NodeLabel.CLASS,
@@ -895,7 +953,9 @@ class FunctionIngestMixin:
             cs.KEY_NAME_START_LINE: _name_start_point(func_node)[0],
             cs.KEY_NAME_START_COL: _name_start_point(func_node)[1],
             cs.KEY_END_LINE: func_node.end_point[0] + 1,
-            cs.KEY_DOCSTRING: self._get_docstring(func_node, cs.SupportedLanguage.CPP),
+            cs.KEY_DOCSTRING: self._method_host._get_docstring(
+                func_node, cs.SupportedLanguage.CPP
+            ),
         }
         if file_path is not None and self.repo_path is not None:
             props[cs.KEY_PATH] = cached_relative_path(
@@ -1016,7 +1076,7 @@ class FunctionIngestMixin:
                 0, f"{entry.namespace_path}{cs.SEPARATOR_DOT}{entry.class_name}"
             )
         for candidate in candidates:
-            real_class_qn, resolved = self._resolve_cpp_class_qn(candidate, "")
+            real_class_qn, resolved = self.resolve_cpp_class_qn(candidate, "")
             if resolved:
                 return real_class_qn, True
         return entry.fallback_class_qn, False
@@ -1141,7 +1201,7 @@ class FunctionIngestMixin:
         ):
             candidates.insert(0, f"{namespace_path}{cs.SEPARATOR_DOT}{name}")
         for candidate in candidates:
-            class_qn, resolved = self._resolve_cpp_class_qn(candidate, entry.module_qn)
+            class_qn, resolved = self.resolve_cpp_class_qn(candidate, entry.module_qn)
             if resolved:
                 return class_qn
         return None
@@ -1156,7 +1216,7 @@ class FunctionIngestMixin:
         # recorded location and span let Pass-3 attribute the ctor body's calls to
         # the METHOD qn instead of re-deciding into the artifact-skip.
         method_qn = ingest_method(
-            self,
+            self._method_host,
             entry.func_node,
             class_qn,
             cs.NodeLabel.CLASS,
@@ -1282,7 +1342,7 @@ class FunctionIngestMixin:
                 container_type if container_type is not None else cs.NodeLabel.CLASS
             )
             method_qn = ingest_method(
-                self,
+                self._method_host,
                 entry.method_node,
                 container_qn,
                 container_label,
@@ -1646,7 +1706,7 @@ class FunctionIngestMixin:
             # function_body; extend the end over that body so the snippet covers the
             # whole function (no-op for every other language).
             cs.KEY_END_LINE: dart_utils.definition_end_point(func_node)[0] + 1,
-            cs.KEY_DOCSTRING: self._get_docstring(func_node, language),
+            cs.KEY_DOCSTRING: self._method_host._get_docstring(func_node, language),
             cs.KEY_IS_EXPORTED: resolution.is_exported,
         }
         if file_path is not None:
@@ -1692,10 +1752,10 @@ class FunctionIngestMixin:
         ):
             return
 
-        parent_type, parent_qn, parent_span = self._determine_function_parent(
+        parent_type, parent_qn, parent_span = self.determine_function_parent(
             func_node, resolution.qualified_name, module_qn, lang_config, language
         )
-        self._emit_or_defer_defines(
+        self.emit_or_defer_defines(
             parent_type,
             parent_qn,
             cs.NodeLabel.FUNCTION,
@@ -1992,7 +2052,7 @@ class FunctionIngestMixin:
             method_qualified_name = f"{class_qn}.{cs_name}({param_sig})"
 
         ingested_qn = ingest_method(
-            self,
+            self._method_host,
             func_node,
             class_qn,
             cs.NodeLabel.CLASS,
@@ -2058,7 +2118,7 @@ class FunctionIngestMixin:
     def _find_enclosing_function_node(
         self, func_node: Node, lang_config: LanguageSpec
     ) -> Node | None:
-        # Mirrors _determine_function_parent's walk: first function-like ancestor,
+        # Mirrors determine_function_parent's walk: first function-like ancestor,
         # stopping at the module boundary.
         current = func_node.parent
         while current is not None and current.type not in lang_config.module_node_types:
@@ -2083,7 +2143,7 @@ class FunctionIngestMixin:
         method_name = cpp_utils.extract_function_name(enclosing)
         if not class_name or not method_name:
             return False
-        # Keep the FULL written qualifier (ns::Widget): _resolve_cpp_class_qn splits
+        # Keep the FULL written qualifier (ns::Widget): resolve_cpp_class_qn splits
         # the leaf itself and its endswith guard needs the qualifier to tell
         # same-leaf classes in different namespaces apart.
         self._deferred_cpp_containment.append(
@@ -2099,7 +2159,7 @@ class FunctionIngestMixin:
         )
         return True
 
-    def _emit_or_defer_defines(
+    def emit_or_defer_defines(
         self,
         parent_label: str,
         parent_qn: str,
@@ -2239,7 +2299,7 @@ class FunctionIngestMixin:
                 (entry.child_label, cs.KEY_QUALIFIED_NAME, entry.child_qn),
             )
             emitted += 1
-        self._deferred_parent_links = []
+        self._deferred_parent_links.clear()
         return emitted
 
     def resolve_deferred_cpp_containment(self) -> int:
@@ -2268,7 +2328,7 @@ class FunctionIngestMixin:
                 entry.module_qn,
             )
             for candidate in candidates:
-                class_qn, resolved = self._resolve_cpp_class_qn(candidate, "")
+                class_qn, resolved = self.resolve_cpp_class_qn(candidate, "")
                 parent_qn = f"{class_qn}{cs.SEPARATOR_DOT}{entry.method_name}"
                 if resolved and parent_qn in self.function_registry:
                     parent_spec = (
@@ -2372,7 +2432,7 @@ class FunctionIngestMixin:
         )
         return parent_label, parent_qn, span
 
-    def _determine_function_parent(
+    def determine_function_parent(
         self,
         func_node: Node,
         func_qn: str,

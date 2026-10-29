@@ -64,7 +64,7 @@ def create_class_relationships(
     )
 
     # The DEFINES containment edge is emitted by the caller via
-    # _emit_or_defer_defines, so a non-module parent is verified against
+    # emit_or_defer_defines, so a non-module parent is verified against
     # the registry after all passes instead of risking a phantom endpoint.
 
     if is_exported and language == cs.SupportedLanguage.CPP:

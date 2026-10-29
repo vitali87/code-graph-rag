@@ -230,24 +230,37 @@ def test_container_resolution_uses_directory_for_disambiguated_modules() -> None
     # qn-prefix package comparison places it in a phantom package. Directory
     # grouping must still bind the method to the real type node.
     from codebase_rag.constants import NodeLabel
-    from codebase_rag.parsers.function_ingest import FunctionIngestMixin
+    from codebase_rag.parsers.function_ingest import FunctionIngest
+    from codebase_rag.parsers.go.builds import GoBuilds
 
-    class _Stub(FunctionIngestMixin):
-        function_registry = {"proj.svc.types.go.Point": NodeLabel.CLASS}  # type: ignore[assignment]
-        simple_name_lookup = {"Point": {"proj.svc.types.go.Point"}}
-        module_qn_to_file_path = {
+    functions = FunctionIngest(
+        method_host=MagicMock(),
+        ingestor=MagicMock(),
+        repo_path=Path("/repo"),
+        function_registry={"proj.svc.types.go.Point": NodeLabel.CLASS},  # type: ignore[arg-type]
+        simple_name_lookup={"Point": {"proj.svc.types.go.Point"}},
+        module_qn_to_file_path={
             "proj.svc.ops": Path("/repo/svc/ops.go"),
             "proj.svc.types.go": Path("/repo/svc/types.go"),
-        }
-        facts = DefinitionFacts(
+        },
+        facts=DefinitionFacts(
             go_package_names={
                 "proj.svc.ops": "shapes",
                 "proj.svc.types.go": "shapes",
             }
-        )
+        ),
+        go_builds=GoBuilds(Path("/repo")),
+        go_methods={},
+        java_anon_overrides=[],
+        cpp_definition_spans={},
+        csharp_methods=set(),
+        csharp_override_methods=set(),
+        folded_overloads={},
+        pending_endpoints=[],
+        pending_type_facts=[],
+        pending_parameter_types=[],
+        deferred_parent_links=[],
+    )
 
-        def _get_docstring(self, node: object, language: object) -> str | None:
-            return None
-
-    resolved = _Stub()._resolve_go_container_qn("proj.svc.ops", "Point")
+    resolved = functions._resolve_go_container_qn("proj.svc.ops", "Point")
     assert resolved == "proj.svc.types.go.Point", resolved

@@ -56,10 +56,20 @@ if TYPE_CHECKING:
     from .parameter_nodes import PendingParameterType
 
 
-class MethodIngestHost(Protocol):
+class DocstringHost(Protocol):
+    """Where a definition's docstring is read from, in its language's own
+    form: the definition pass."""
+
+    def _get_docstring(
+        self, node: ASTNode, language: cs.SupportedLanguage
+    ) -> str | None: ...
+
+
+class MethodIngestHost(DocstringHost, Protocol):
     """What `ingest_method` reads from the definition pass that calls it: the
-    graph and registries a method is written to, and the queues its endpoint,
-    type and parameter facts wait in until every type is registered."""
+    graph and registries a method is written to, the queues its endpoint,
+    type and parameter facts wait in until every type is registered, and its
+    docstring."""
 
     ingestor: IngestorProtocol
     function_registry: FunctionRegistryTrieProtocol
@@ -68,10 +78,6 @@ class MethodIngestHost(Protocol):
     pending_endpoints: list[tuple[cs.NodeLabel, str, list[str], str | None]]
     pending_type_facts: list[PendingTypeFact]
     pending_parameter_types: list[PendingParameterType]
-
-    def _get_docstring(
-        self, node: ASTNode, language: cs.SupportedLanguage
-    ) -> str | None: ...
 
 
 def _member_name_start_point(node: Node) -> tuple[int, int]:
