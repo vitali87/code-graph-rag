@@ -232,6 +232,10 @@ For issues or questions, check the [Troubleshooting](docs/advanced/troubleshooti
 
 If cgr is useful to you, please consider pledging support on [GitHub Sponsors](https://github.com/sponsors/vitali87). cgr links the page under `cgr --version` and, in a terminal, after most commands finish; set `CGR_SPONSOR_PLEDGE=false` to hide that line.
 
+## Accessibility
+
+[ACCESSIBILITY.md](ACCESSIBILITY.md) describes what cgr and its documentation support for people using assistive technology or alternative settings, the known limitations and their workarounds, and how to report a barrier.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
