@@ -19,6 +19,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from codebase_rag import constants as cs
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "build-binaries.yml"
 
@@ -34,7 +36,7 @@ RELEASE_TAG_ONLY = "startsWith(github.ref, 'refs/tags/v')"
 # Records each call and keeps whether the release exists in a state file, so
 # a create and a later view agree. FAKE_CREATE picks what a create does: ok,
 # lost-race (another leg created it first) or anything else (it fails).
-FAKE_GH = r"""#!/bin/bash
+FAKE_GH = r"""
 printf '%s\n' "$*" >> "$GH_LOG"
 case "$1 $2" in
   "release view") [ -e "$GH_STATE/release" ] ;;
@@ -82,37 +84,35 @@ def _run(
         f"{step['name']!r} must be a script step calling the runner's gh, "
         "not a third-party release action"
     )
-    bin_dir = work / "bin"
-    bin_dir.mkdir()
-    gh = bin_dir / "gh"
-    gh.write_text(FAKE_GH, encoding="utf-8", newline="\n")
-    gh.chmod(0o755)
+    # `gh` is a shell function running the stand-in through bash, and every
+    # path is relative to the step's directory, so the stand-in needs no
+    # executable bit, no PATH lookup and no path translation: the Windows
+    # runner's bash finds it the way Linux and macOS do.
+    (work / "fake-gh.sh").write_text(FAKE_GH, encoding="utf-8", newline="\n")
     state = work / "state"
     state.mkdir()
     if release_exists:
         (state / "release").touch()
-    log = work / "gh.log"
-    log.touch()
-    script = work / "step.sh"
-    script.write_text(_render(step["run"], values), encoding="utf-8", newline="\n")
+    (work / "gh.log").touch()
+    script = 'gh() { bash ./fake-gh.sh "$@"; }\n' + _render(step["run"], values)
+    (work / "step.sh").write_text(script, encoding="utf-8", newline="\n")
     env = {
         **os.environ,
         **{k: _render(str(v), values) for k, v in step.get("env", {}).items()},
-        "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
-        "GH_LOG": str(log),
-        "GH_STATE": str(state),
+        "GH_LOG": "gh.log",
+        "GH_STATE": "state",
         "FAKE_CREATE": create,
     }
     result = subprocess.run(
-        [bash, "--noprofile", "--norc", "-eo", "pipefail", str(script)],
+        [bash, "--noprofile", "--norc", "-eo", "pipefail", "step.sh"],
         cwd=work,
         env=env,
         capture_output=True,
-        text=True,
+        encoding=cs.ENCODING_UTF8,
         timeout=30,
         check=False,
     )
-    return result, log.read_text(encoding="utf-8").splitlines()
+    return result, (work / "gh.log").read_text(encoding="utf-8").splitlines()
 
 
 def _uploads(calls: list[str]) -> list[set[str]]:
