@@ -22,6 +22,7 @@ from codebase_rag.tests.conftest import marker_store
 
 ALPHA = "alpha__aaaa1111"
 BETA = "beta__bbbb2222"
+GAMMA = "gamma__cccc3333"
 
 
 def _marker(store: MagicMock) -> RunMarker:
@@ -53,6 +54,42 @@ def _strand(marker: RunMarker, store: MagicMock, project: str) -> None:
         )
 
 
+def _refused(marker: RunMarker, project: str) -> bool:
+    return marker.partial_graph_refusal(project, cs.MCPToolName.ASK_AGENT) is not None
+
+
+# A store OUTAGE is not an incomplete graph.
+#
+# `persisted_incomplete` answers True when it cannot reach the store, which is
+# right for a reingest (never start on an unknown state) and wrong for a read:
+# it reported every outage as "graph incomplete" and buried the real error.
+# Reads go through `says_incomplete`, which treats an unreachable store as no
+# verdict. `test_mcp_errors_are_reported_not_raised` in test_graph_query.py
+# pins this for the `_graph_query` dispatcher; seven readers bypass that
+# dispatcher, so the covered path is not the broken one (M1 CGR-3, PR #1547).
+def test_a_dead_store_is_not_reported_as_an_incomplete_graph() -> None:
+    store = marker_store()
+    marker = _marker(store)
+
+    with _store_refuses(store, "read"):
+        # The decision the seven share. False means "no verdict, carry on and
+        # let the read fail as itself" -- NOT "the graph is fine".
+        assert marker.says_incomplete(ALPHA) is False
+        assert (
+            marker.partial_graph_refusal(ALPHA, cs.MCPToolName.GET_FUNCTION_SOURCE)
+            is None
+        )
+
+
+def test_the_reingest_default_still_refuses_on_a_dead_store() -> None:
+    # The asymmetry is the point: same store, opposite answer, because a
+    # write that starts on an unknown graph cannot be undone.
+    store = marker_store()
+
+    with _store_refuses(store, "read"):
+        assert _marker(store).persisted_incomplete(ALPHA) is True
+
+
 def test_an_unreadable_store_refuses_rather_than_reporting_clear() -> None:
     """ "I cannot tell" and "nothing outstanding" are different answers.
 
@@ -71,6 +108,314 @@ def test_an_unreadable_store_refuses_rather_than_reporting_clear() -> None:
         assert marker.rows(ALPHA) is None, (
             "an unreadable store must be distinguishable from an empty one"
         )
+
+
+# One project's damage must not make every other project unreadable, and a
+# healthy project's recovery must not clear the damaged one's warning
+# (Greptile, PR #1547).
+def test_one_projects_damage_does_not_block_another() -> None:
+    marker = _marker(marker_store())
+
+    marker.invalidate(ALPHA)
+
+    assert _refused(marker, ALPHA)
+    assert not _refused(marker, BETA)
+
+
+# A successful clear for ONE project must not speak for another, and a
+# project-scoped latch must not block an unrelated project's recovery
+# (Greptile, PR #1547).
+def test_clearing_one_project_keeps_anothers_warning() -> None:
+    """ALPHA is partial in-process only; clearing healthy BETA must not heal it.
+
+    The damaging failure could not write ALPHA's durable marker, so the
+    in-process flag is the ONLY record that ALPHA is partial. A blanket
+    reset on BETA's success discards it and lets reads onto ALPHA's
+    partial graph.
+    """
+    marker = _marker(marker_store())
+    marker.invalidate(ALPHA)
+
+    assert marker.require_cleared(BETA) is None
+
+    assert marker.damage.incomplete is True, "BETA's clear healed ALPHA's flag"
+    assert marker.damage.project == ALPHA
+    assert _refused(marker, ALPHA)
+
+
+def test_clearing_a_project_still_heals_its_own_warning() -> None:
+    """The control: a clear for the project the flag is ABOUT must heal it.
+
+    Without this, scoping the reset could be implemented as "never reset",
+    which passes the test above and breaks recovery entirely.
+    """
+    marker = _marker(marker_store())
+    marker.invalidate(ALPHA)
+
+    assert marker.require_cleared(ALPHA) is None
+
+    assert marker.damage.incomplete is False
+    assert marker.damage.project is None
+    assert not _refused(marker, ALPHA)
+
+
+def test_clearing_a_project_still_heals_unattributed_damage() -> None:
+    """An unattributed flag is owned by nobody, so any clear may settle it.
+
+    This is the pre-existing behaviour for the common single-project case,
+    where the flag is set with no name and cleared by the run that earned it.
+    """
+    marker = _marker(marker_store())
+    # Staged: only a wipe in progress holds an ownerless flag; no method sets one.
+    marker.damage.incomplete = True
+
+    assert marker.require_cleared(ALPHA) is None
+
+    assert marker.damage.incomplete is False
+    assert marker.damage.project is None
+
+
+def test_two_damaged_projects_block_either_projects_clear() -> None:
+    """The two-named-projects route into the broad unattributed state.
+
+    `invalidate` widens the attribution to None when a SECOND, different
+    project is damaged. That None means "more than one project is partial",
+    and neither project's successful clear may retire it.
+
+    Distinct from the failed-wipe route asserted in
+    `test_a_successful_clear_cannot_settle_a_widened_flag`: both end at
+    `damage.project is None`, and mutating this widening was invisible
+    to every other test in the suite. Both directions are checked below,
+    because a guard reading the flag for ALPHA and not for BETA would be
+    satisfied by testing only one.
+    """
+    for clearing in (ALPHA, BETA):
+        marker = _marker(marker_store())
+        marker.invalidate(ALPHA)
+        marker.invalidate(BETA)
+
+        assert marker.damage.project is None, (
+            "fixture guard: two different damaged projects must widen the "
+            "attribution to None, or the clear takes the attributed branch "
+            "and this proves nothing"
+        )
+
+        assert marker.require_cleared(clearing) is None
+
+        assert marker.damage.incomplete is True, (
+            f"{clearing} cleared its own marker and settled a flag that "
+            "records damage to two projects"
+        )
+
+
+def test_repairing_every_damaged_project_lifts_the_refusal() -> None:
+    """The mirror-image bug: a refusal with no way out.
+
+    The first version of this guard was a BOOLEAN saying "the damage spans
+    projects". Nothing could ever lower it -- no sequence of successful
+    repairs retires a flag that counts nothing -- so once two projects were
+    damaged, every project was refused for the life of the process, including
+    projects never damaged at all, with `wipe_database` the only escape.
+
+    That is worse than the leak it fixed: a leak lets a stale read through,
+    this makes the server useless until restarted. Recording WHICH projects
+    are outstanding is what makes the flag retirable.
+
+    Asserted through the refusal rather than the field, and on a project that
+    was never damaged as well as the two that were: an over-broad latch
+    refuses GAMMA too, and only a behavioural assertion notices.
+    """
+    marker = _marker(marker_store())
+    marker.invalidate(ALPHA)
+    marker.invalidate(BETA)
+
+    # One assertion per project: a composite reports "some project did not
+    # refuse" and leaves the reader to find which, and WHICH is the whole
+    # diagnosis here -- a damaged project not refusing is a different bug
+    # from an undamaged one not refusing (SonarCloud S9073).
+    assert _refused(marker, ALPHA), (
+        "fixture guard: a damaged project must refuse before the repair below"
+    )
+    assert _refused(marker, BETA), (
+        "fixture guard: the second damaged project must refuse too"
+    )
+    assert _refused(marker, GAMMA), (
+        "fixture guard: an unattributed flag must block a project it does not "
+        "name, or the widening is not in the broad state this test needs"
+    )
+
+    marker.require_cleared(ALPHA)
+    assert _refused(marker, BETA), (
+        "repairing one of two damaged projects lifted the other's refusal"
+    )
+
+    marker.require_cleared(BETA)
+
+    assert not _refused(marker, ALPHA), (
+        "the first damaged project was repaired and its reads are still "
+        "refused; nothing short of a full wipe can clear this"
+    )
+    assert not _refused(marker, BETA), (
+        "the last damaged project was repaired and its reads are still "
+        "refused, so the outstanding set never empties"
+    )
+    assert not _refused(marker, GAMMA), (
+        "a project that was never damaged is still refused after every "
+        "damaged project was repaired"
+    )
+
+
+def test_a_third_damaged_project_is_recorded_like_the_first_two() -> None:
+    """The route into the broad state that recorded nothing.
+
+    `invalidate` notes BOTH names when the attribution widens, but a THIRD
+    project damaged afterwards takes the "already unattributed, keep it"
+    branch -- correct about the attribution, and silent about the fact
+    that another project is now outstanding.
+
+    So A, B and C damaged, then A and B repaired, and the set empties while C
+    is still partial: C's reads reopen onto a graph nothing ever finished
+    (Greptile, PR #1547). Two damaged projects was the case I tested and
+    three is the case that was broken, which is the whole lesson.
+    """
+    marker = _marker(marker_store())
+    for project in (ALPHA, BETA, GAMMA):
+        marker.invalidate(project)
+
+    assert _refused(marker, GAMMA), (
+        "fixture guard: three damaged projects must all refuse"
+    )
+
+    marker.require_cleared(ALPHA)
+    marker.require_cleared(BETA)
+
+    assert _refused(marker, GAMMA), (
+        "repairing two of three damaged projects settled the flag, so the "
+        "third project's reads reopened while it is still partial"
+    )
+
+    marker.require_cleared(GAMMA)
+    assert not _refused(marker, GAMMA), (
+        "the last outstanding project was repaired and the flag still stands"
+    )
+
+
+def test_a_recovered_marker_cannot_retire_a_flag_spanning_projects() -> None:
+    """`recover_then_persisted_incomplete`, the heal the reingest and rename
+    guards share, on the same trap.
+
+    A stranded marker that this project later recovers lifts the flag its
+    own failed clear raised. But if a SECOND project was damaged in between,
+    the flag no longer describes only this project's stranded marker, and
+    recovering the marker is evidence about one project rather than two.
+
+    The route into the state matters: the flag must be spanning at the
+    moment of recovery, with `damage.from_failed_clear` still naming this
+    project, or the guard is never reached and the test is vacuous. BETA's
+    damage is therefore an abandoned no-write run whose clear also failed:
+    that widens the attribution and, unlike `invalidate`, leaves ALPHA's
+    licence in place.
+    """
+    store = marker_store()
+    marker = _marker(store)
+
+    # ALPHA's clear fails, stranding a marker it is licensed to recover.
+    _strand(marker, store, ALPHA)
+    assert marker.damage.from_failed_clear == ALPHA, (
+        "fixture guard: ALPHA must hold the recovery licence, or the guard "
+        "under test is never reached"
+    )
+
+    # BETA is damaged too, so the flag now spans both.
+    assert marker.require(BETA, writing=False) is None
+    with _store_refuses(store, "clear"):
+        marker.abandon_before_writing(BETA)
+    assert marker.damage.projects == {ALPHA, BETA}, (
+        "fixture guard: both projects must be outstanding before the recovery"
+    )
+    assert marker.damage.from_failed_clear == ALPHA, (
+        "fixture guard: ALPHA must still hold the licence when it recovers"
+    )
+
+    # ALPHA's stranded marker says `writing=false`, so the recovery clears it.
+    assert marker.recover_then_persisted_incomplete(ALPHA) is False, (
+        "fixture guard: ALPHA's marker must recover, or the heal is never weighed"
+    )
+
+    assert marker.damage.incomplete is True, (
+        "ALPHA recovering its own stranded marker retired a flag that also "
+        "records BETA's damage"
+    )
+    # The refusal is the wanted outcome, and it is stronger evidence than a
+    # state read: ALPHA's marker is gone, so only the flag can refuse.
+    assert _refused(marker, ALPHA)
+
+
+def test_a_rollback_widening_is_recorded_like_any_other() -> None:
+    """`abandon_before_writing` widens to None too, and must say so.
+
+    It reaches the broad unattributed state by the same reasoning as
+    `invalidate` -- an owner already in place naming a different project
+    cannot be replaced, so the pair becomes None. Recording it there and not
+    here would leave one route into the state indistinguishable from a
+    never-attributed flag, which is the original bug with a different entry
+    point.
+    """
+    store = marker_store()
+    marker = _marker(store)
+    marker.invalidate(ALPHA)
+    assert marker.require(BETA, writing=False) is None
+
+    with _store_refuses(store, "clear"):
+        marker.abandon_before_writing(BETA)
+
+    assert marker.damage.project is None, (
+        "fixture guard: an abandon naming a different project, over a flag "
+        "already owned by ALPHA, must widen the attribution to None"
+    )
+    assert marker.damage.projects == {ALPHA, BETA}, (
+        "the rollback widened the attribution without recording WHICH "
+        "projects are outstanding, so the next successful clear settles it"
+    )
+
+
+def test_a_failed_clear_from_clean_attributes_the_flag_to_itself() -> None:
+    """A stuck marker on an otherwise clean registry is this project's to own.
+
+    Nothing else has claimed the flag, so the refusal and the
+    `damage.from_failed_clear` recovery are both about the project whose
+    marker is actually stuck.
+    """
+    store = marker_store()
+    marker = _marker(store)
+
+    with _store_refuses(store, "clear"):
+        assert marker.require_cleared(BETA) is not None
+
+    assert marker.damage.incomplete is True
+    assert marker.damage.project == BETA
+    assert marker.damage.from_failed_clear == BETA
+
+
+def test_a_failed_clear_does_not_steal_an_earlier_owners_flag() -> None:
+    """A flag already up records damage this run did not cause.
+
+    Claiming it would let BETA's recoverable marker lift the refusal ALPHA
+    earned: `recover_then_persisted_incomplete` heals a flag whose
+    `damage.from_failed_clear` names the project being re-ingested, so
+    attributing ALPHA's flag to BETA hands BETA the licence to clear it.
+    `abandon_before_writing` already takes exactly this care.
+    """
+    store = marker_store()
+    marker = _marker(store)
+    marker.invalidate(ALPHA)
+
+    with _store_refuses(store, "clear"):
+        assert marker.require_cleared(BETA) is not None
+
+    assert marker.damage.incomplete is True
+    assert marker.damage.project == ALPHA, "BETA stole ALPHA's attribution"
+    assert marker.damage.from_failed_clear is None, "BETA gained a licence to heal"
 
 
 def test_a_clean_clear_keeps_another_projects_licence_to_heal() -> None:
@@ -110,6 +455,79 @@ def test_a_clean_clear_keeps_another_projects_licence_to_heal() -> None:
     assert marker.damage.incomplete is False, (
         "A could not heal its own recoverable marker"
     )
+
+
+# The attribution field holds ONE project, so it can only ever narrow to a
+# name when nothing broader already owns the flag (Greptile, PR #1547).
+def test_a_second_damaged_project_widens_to_unattributed() -> None:
+    """Two damaged projects cannot both be named in a one-project field.
+
+    Keeping ALPHA would declare BETA healthy and replacing it would declare
+    ALPHA healthy, so the only safe answer is that neither is.
+    """
+    marker = _marker(marker_store())
+    marker.invalidate(ALPHA)
+
+    marker.invalidate(BETA)
+
+    assert marker.damage.incomplete is True
+    assert marker.damage.project is None
+
+
+def test_a_first_failure_still_attributes_to_its_project() -> None:
+    """The control: with no flag up, the damage IS this project's.
+
+    Without this, the widening rule could be implemented as "never
+    attribute", which passes both tests above and makes every failure block
+    every project -- the bug the scoping was added to fix.
+    """
+    marker = _marker(marker_store())
+
+    marker.invalidate(ALPHA)
+
+    assert marker.damage.incomplete is True
+    assert marker.damage.project == ALPHA
+
+
+def test_re_flagging_the_same_project_keeps_its_name() -> None:
+    """The second control: repeated damage to ONE project must not widen.
+
+    A project that fails twice is still the only damaged project, and
+    widening would block every other project for no reason.
+    """
+    marker = _marker(marker_store())
+    marker.invalidate(ALPHA)
+
+    marker.invalidate(ALPHA)
+
+    assert marker.damage.incomplete is True
+    assert marker.damage.project == ALPHA
+
+
+def test_widening_the_owner_drops_a_stale_healing_licence() -> None:
+    """A licence naming a project the flag is no longer about must not survive.
+
+    `recover_then_persisted_incomplete` keys `recoverable_here` off the
+    licence alone, so a surviving one lets that project's reingest clear a
+    flag that now covers everything. This asserts the INVARIANT over the
+    state the rollback site produces through `invalidate`.
+    """
+    store = marker_store()
+    marker = _marker(store)
+    # BETA's failed clear leaves the flag BETA's, with the licence to heal it.
+    _strand(marker, store, BETA)
+
+    # The rollback site's invalidation, for a DIFFERENT project.
+    marker.invalidate(ALPHA)
+
+    assert marker.damage.project is None
+    assert marker.damage.from_failed_clear is None, (
+        "a licence for BETA survived a widening BETA no longer owns"
+    )
+    # The consequence the licence would have had: BETA's marker recovers and
+    # the refusal still stands.
+    assert marker.recover_then_persisted_incomplete(BETA) is False
+    assert _refused(marker, BETA)
 
 
 def test_a_concurrent_runs_clear_cannot_remove_another_runs_marker() -> None:

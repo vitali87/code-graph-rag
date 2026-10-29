@@ -7,6 +7,7 @@ from mcp.types import ImageContent, TextContent
 
 from codebase_rag import constants as cs
 from codebase_rag.exceptions import ReingestAborted
+from codebase_rag.mcp import constants as mcs
 from codebase_rag.mcp.client import query_mcp_server
 from codebase_rag.mcp.tools import MCPToolsRegistry
 from codebase_rag.tests.conftest import marker_store
@@ -549,7 +550,7 @@ async def _read_refused(registry: MCPToolsRegistry, project: str | None = None) 
         )
     name = project or derive_project_name(Path(registry.project_root))
     result = await registry.query_code_graph("anything", project=project)
-    return result.get(cs.MCP_KEY_ERROR) == cs.MCP_QUERY_AFTER_FAILED_RUN.format(
+    return result.get(mcs.MCP_KEY_ERROR) == mcs.MCP_QUERY_AFTER_FAILED_RUN.format(
         project=name, tool=cs.MCPToolName.QUERY_CODE_GRAPH
     )
 
