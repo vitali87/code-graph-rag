@@ -522,7 +522,7 @@ def test_importers_absent_line_is_distinct_from_line_zero() -> None:
     or reverting it to `or 0` -- passed every test in this file. That is the
     identical collision the column fix removed, on the field that outranks it.
 
-    The branch is reachable: `_opt_int` yields `None` for any non-int the
+    The branch is reachable: `opt_int` yields `None` for any non-int the
     graph returns, so a row genuinely can arrive without a line.
     """
 

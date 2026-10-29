@@ -24,12 +24,12 @@ from typing import NamedTuple, TypedDict
 from . import constants as cs
 from . import cypher_queries as cq
 from .dead_code import (
-    _as_str_list,
-    _is_test_symbol,
-    _node_props,
-    _NodeId,
-    _rust_test_fn_spans,
-    _rust_test_modules_from_nodes,
+    NodeId,
+    as_str_list,
+    is_test_symbol,
+    node_props,
+    rust_test_fn_spans,
+    rust_test_modules_from_nodes,
 )
 from .types_defs import PropertyDict, PropertyParams, ResultRow
 from .utils.path_utils import portable_posix, project_roots_from_rows
@@ -167,7 +167,7 @@ class TestReachRow(TypedDict):
     through: str
 
 
-def _owner_check(fetch_all: QueryFn, project_name: str) -> Callable[[str], bool]:
+def owner_check(fetch_all: QueryFn, project_name: str) -> Callable[[str], bool]:
     """Whether `project_name`, and not a longer-named registered project it
     is a dotted prefix of, owns a qualified name (issue #1982).
 
@@ -177,7 +177,7 @@ def _owner_check(fetch_all: QueryFn, project_name: str) -> Callable[[str], bool]
     repair decide it; the project list is read once per call, and a failed
     read keeps the prefix rule rather than dropping every row.
     """
-    prefix = _prefix(project_name)
+    prefix = project_qn_prefix(project_name)
     names: set[str] = {project_name}
     try:
         rows = fetch_all(cq.CYPHER_LIST_PROJECTS, None)
@@ -200,11 +200,11 @@ def _owner_check(fetch_all: QueryFn, project_name: str) -> Callable[[str], bool]
     return owns
 
 
-def _prefix(project_name: str) -> str:
+def project_qn_prefix(project_name: str) -> str:
     return f"{project_name}{cs.SEPARATOR_DOT}"
 
 
-def _longer_project_prefixes(fetch_all: QueryFn, project_name: str) -> tuple[str, ...]:
+def projects_nested_under(fetch_all: QueryFn, project_name: str) -> tuple[str, ...]:
     """Return registered project names that can own a longer qualified name."""
     requested_prefix = f"{project_name}{cs.SEPARATOR_DOT}"
     names = {
@@ -220,7 +220,7 @@ def _text_qn(row: ResultRow) -> str:
     return str(row.get(cs.KEY_QUALIFIED_NAME, ""))
 
 
-def _opt_int(value: object) -> int | None:
+def opt_int(value: object) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
@@ -233,8 +233,8 @@ def _symbol_row(row: ResultRow) -> SymbolRow:
         label=str(row.get(cs.KEY_LABEL, "")),
         qualified_name=str(row.get(cs.KEY_QUALIFIED_NAME, "")),
         path=_opt_str(row.get(cs.KEY_PATH)),
-        start_line=_opt_int(row.get(cs.KEY_START_LINE)),
-        end_line=_opt_int(row.get(cs.KEY_END_LINE)),
+        start_line=opt_int(row.get(cs.KEY_START_LINE)),
+        end_line=opt_int(row.get(cs.KEY_END_LINE)),
     )
 
 
@@ -341,7 +341,7 @@ def _stored_root(fetch_all: QueryFn, project_name: str) -> str | None:
         cq.CYPHER_PROJECT_ROOT_PATH,
         {
             cs.KEY_PROJECT_NAME: project_name,
-            cs.KEY_PROJECT_PREFIX: _prefix(project_name),
+            cs.KEY_PROJECT_PREFIX: project_qn_prefix(project_name),
         },
     )
     return _opt_str(rows[0].get(cs.KEY_ROOT_PATH)) if rows else None
@@ -371,8 +371,8 @@ def resolve(fetch_all: QueryFn, project_name: str, target: str) -> list[SymbolRo
     a location returns the innermost definitions spanning that line, and
     nothing when `resolve_or_refuse` would refuse it.
     """
-    prefix = _prefix(project_name)
-    owns = _owner_check(fetch_all, project_name)
+    prefix = project_qn_prefix(project_name)
+    owns = owner_check(fetch_all, project_name)
     if parse_location(target) is not None:
         found = _resolve_location(fetch_all, project_name, target, owns)
         return found if isinstance(found, list) else []
@@ -423,7 +423,7 @@ def resolve_or_refuse(
     target is refused, or not, the same way everywhere."""
     if parse_location(target) is None:
         return resolve(fetch_all, project_name, target)
-    owns = _owner_check(fetch_all, project_name)
+    owns = owner_check(fetch_all, project_name)
     return _resolve_location(fetch_all, project_name, target, owns)
 
 
@@ -436,7 +436,7 @@ def _held_paths(
     rows = fetch_all(
         cq.CYPHER_GRAPH_LOCATION_FILES,
         {
-            cs.KEY_PROJECT_PREFIX: _prefix(project_name),
+            cs.KEY_PROJECT_PREFIX: project_qn_prefix(project_name),
             cs.CYPHER_PARAM_PATHS: sorted(set(paths)),
         },
     )
@@ -459,7 +459,7 @@ def _definitions_at(
     rows = fetch_all(
         cq.CYPHER_GRAPH_RESOLVE_LOCATION,
         {
-            cs.KEY_PROJECT_PREFIX: _prefix(project_name),
+            cs.KEY_PROJECT_PREFIX: project_qn_prefix(project_name),
             cs.KEY_PATH: location.path,
             cs.KEY_LINE: location.line,
         },
@@ -559,7 +559,7 @@ def _decorated_start(row: ResultRow, own_start: int | None) -> int | None:
     it always answered with; a value that is not a line above the definition
     cannot be a decorator of it and is not trusted.
     """
-    decorated = _opt_int(row.get(cs.KEY_DECORATED_START_LINE))
+    decorated = opt_int(row.get(cs.KEY_DECORATED_START_LINE))
     if decorated is None or own_start is None or not 0 < decorated < own_start:
         return own_start
     return decorated
@@ -576,9 +576,12 @@ def definition(
     """
     rows = fetch_all(
         cq.CYPHER_GRAPH_DEFINITION,
-        {cs.KEY_PROJECT_PREFIX: _prefix(project_name), cs.KEY_QN: qualified_name},
+        {
+            cs.KEY_PROJECT_PREFIX: project_qn_prefix(project_name),
+            cs.KEY_QN: qualified_name,
+        },
     )
-    owns = _owner_check(fetch_all, project_name)
+    owns = owner_check(fetch_all, project_name)
     rows = [r for r in rows if owns(_text_qn(r))]
     if not rows:
         return DefinitionRow(
@@ -609,8 +612,8 @@ def definition(
         path=path,
         start_line=start,
         end_line=end,
-        name_line=_opt_int(row.get(cs.KEY_NAME_START_LINE)) or own_start,
-        decorators=_as_str_list(row.get(cs.KEY_DECORATORS)),
+        name_line=opt_int(row.get(cs.KEY_NAME_START_LINE)) or own_start,
+        decorators=as_str_list(row.get(cs.KEY_DECORATORS)),
         name=_opt_str(row.get(cs.KEY_NAME)),
         docstring=_opt_str(row.get(cs.KEY_DOCSTRING)),
         source=source,
@@ -628,11 +631,11 @@ def _site_row(row: ResultRow, depth: int, through: str) -> CallSiteRow:
         qualified_name=str(row.get(cs.KEY_QUALIFIED_NAME, "")),
         path=_opt_str(row.get(cs.KEY_PATH)),
         callee_path=_opt_str(row.get(cs.KEY_CALLEE_PATH)),
-        line=_opt_int(row.get(cs.KEY_LINE)),
-        col=_opt_int(row.get(cs.KEY_COL)),
-        end_line=_opt_int(row.get(cs.KEY_END_LINE)),
-        end_col=_opt_int(row.get(cs.KEY_END_COL)),
-        arg_count=_opt_int(row.get(cs.KEY_ARG_COUNT)),
+        line=opt_int(row.get(cs.KEY_LINE)),
+        col=opt_int(row.get(cs.KEY_COL)),
+        end_line=opt_int(row.get(cs.KEY_END_LINE)),
+        end_col=opt_int(row.get(cs.KEY_END_COL)),
+        arg_count=opt_int(row.get(cs.KEY_ARG_COUNT)),
         kwarg_names=[str(k) for k in kwargs] if isinstance(kwargs, list) else None,
         resolution=_opt_str(row.get(cs.KEY_RESOLUTION)),
         depth=depth,
@@ -679,8 +682,8 @@ def _walk_sites(
     # single-node read. A node's sites appear at the depth it was first
     # reached and never again, so a cycle terminates and the output stays a
     # finite, ordered list.
-    prefix = _prefix(project_name)
-    owns = _owner_check(fetch_all, project_name)
+    prefix = project_qn_prefix(project_name)
+    owns = owner_check(fetch_all, project_name)
     seen: set[str] = {start}
     frontier: list[str] = [start]
     out: list[CallSiteRow] = []
@@ -743,9 +746,9 @@ def _related_rows(
     fetch_all: QueryFn, project_name: str, query: str, qn: str
 ) -> list[RelatedRow]:
     rows = fetch_all(
-        query, {cs.KEY_PROJECT_PREFIX: _prefix(project_name), cs.KEY_QN: qn}
+        query, {cs.KEY_PROJECT_PREFIX: project_qn_prefix(project_name), cs.KEY_QN: qn}
     )
-    owns = _owner_check(fetch_all, project_name)
+    owns = owner_check(fetch_all, project_name)
     rows = [r for r in rows if owns(_text_qn(r))]
     out = [
         RelatedRow(
@@ -774,8 +777,8 @@ def _walk_related(
     parents), and never again, so a cycle ends and the start is never its
     own subtype. A foreign row is neither listed nor a hop (issue #1982).
     """
-    prefix = _prefix(project_name)
-    owns = _owner_check(fetch_all, project_name)
+    prefix = project_qn_prefix(project_name)
+    owns = owner_check(fetch_all, project_name)
     reached = {start}
     # One list per query: each frontier is that query's own.
     frontiers = {query: [start] for query in hop_queries}
@@ -878,10 +881,10 @@ def _importer_row(r: ResultRow) -> ImporterRow:
     return ImporterRow(
         module=str(r.get(cs.KEY_QUALIFIED_NAME, "")),
         path=_opt_str(r.get(cs.KEY_PATH)),
-        line=_opt_int(r.get(cs.KEY_LINE)),
-        col=_opt_int(r.get(cs.KEY_COL)),
-        end_line=_opt_int(r.get(cs.KEY_END_LINE)),
-        end_col=_opt_int(r.get(cs.KEY_END_COL)),
+        line=opt_int(r.get(cs.KEY_LINE)),
+        col=opt_int(r.get(cs.KEY_COL)),
+        end_line=opt_int(r.get(cs.KEY_END_LINE)),
+        end_col=opt_int(r.get(cs.KEY_END_COL)),
         alias=_opt_str(r.get(cs.KEY_ALIAS)),
         imported_name=_opt_str(r.get(cs.KEY_IMPORTED_NAME)),
     )
@@ -911,9 +914,9 @@ def importers(
     """
     rows = fetch_all(
         cq.CYPHER_GRAPH_IMPORTERS,
-        {cs.KEY_PROJECT_PREFIX: _prefix(project_name), cs.KEY_QN: module_qn},
+        {cs.KEY_PROJECT_PREFIX: project_qn_prefix(project_name), cs.KEY_QN: module_qn},
     )
-    owns = _owner_check(fetch_all, project_name)
+    owns = owner_check(fetch_all, project_name)
     return sorted(
         (_importer_row(r) for r in rows if owns(_text_qn(r))), key=_importer_key
     )
@@ -1014,7 +1017,7 @@ def _reexport_hops(
     """
     rows = fetch_all(
         cq.CYPHER_GRAPH_IMPORTERS_OF,
-        {cs.KEY_PROJECT_PREFIX: _prefix(project_name), cs.KEY_QNS: qns},
+        {cs.KEY_PROJECT_PREFIX: project_qn_prefix(project_name), cs.KEY_QNS: qns},
     )
     return sorted(
         (
@@ -1089,7 +1092,7 @@ def importers_through_reexports(
     walked: dict[str, frozenset[str] | None] = {module_qn: None}
     for module, entries in frontier.items():
         walked[module] = _union_names(entry["names"] for entry in entries)
-    owns = _owner_check(fetch_all, project_name)
+    owns = owner_check(fetch_all, project_name)
     while frontier:
         hops = _reexport_hops(fetch_all, project_name, sorted(frontier), owns)
         found = _reexport_step(hops, frontier, walked, out)
@@ -1114,27 +1117,27 @@ class ReachIndex:
 
     def __init__(
         self,
-        nodes: dict[_NodeId, PropertyDict],
+        nodes: dict[NodeId, PropertyDict],
         reverse: dict[str, set[str]],
     ) -> None:
         self._by_qn: dict[str, tuple[str, PropertyDict]] = {
             str(qn): (label, props) for (label, qn), props in nodes.items()
         }
         self._reverse = reverse
-        self._rust_modules = _rust_test_modules_from_nodes(nodes)
-        self._rust_spans = _rust_test_fn_spans(nodes)
+        self._rust_modules = rust_test_modules_from_nodes(nodes)
+        self._rust_spans = rust_test_fn_spans(nodes)
 
     @classmethod
     def build(cls, fetch_all: QueryFn, project_name: str) -> ReachIndex:
-        params = {cs.KEY_PROJECT_PREFIX: _prefix(project_name)}
-        nodes: dict[_NodeId, PropertyDict] = {}
-        owns = _owner_check(fetch_all, project_name)
+        params = {cs.KEY_PROJECT_PREFIX: project_qn_prefix(project_name)}
+        nodes: dict[NodeId, PropertyDict] = {}
+        owns = owner_check(fetch_all, project_name)
         for row in fetch_all(cq.CYPHER_DEAD_CODE_NODES, params):
             qn = str(row.get(cs.KEY_QUALIFIED_NAME) or "")
             if not owns(qn):
                 continue
             if qn:
-                nodes[(str(row.get(cs.KEY_LABEL, "")), qn)] = _node_props(row)
+                nodes[(str(row.get(cs.KEY_LABEL, "")), qn)] = node_props(row)
         reverse: dict[str, set[str]] = {}
         for row in fetch_all(cq.CYPHER_DEAD_CODE_RELS, params):
             if str(row.get(cs.KEY_REL_TYPE, "")) not in _REACH_RELS:
@@ -1174,7 +1177,7 @@ class ReachIndex:
                 continue
             label, props = entry
             path = str(props.get(cs.KEY_PATH) or "")
-            if _is_test_symbol(props, qn, path, self._rust_modules, self._rust_spans):
+            if is_test_symbol(props, qn, path, self._rust_modules, self._rust_spans):
                 out.append(
                     TestReachRow(
                         label=label,
@@ -1262,7 +1265,7 @@ def endpoints(fetch_all: QueryFn, project_name: str) -> list[EndpointRow]:
     """The endpoints a project exposes, each with its handler and how many
     call sites in the whole graph reach it. Zero callers on a graph that
     holds only this project means "none indexed", not "dead"."""
-    params = {cs.KEY_PROJECT_PREFIX: _prefix(project_name)}
+    params = {cs.KEY_PROJECT_PREFIX: project_qn_prefix(project_name)}
     return [_endpoint_row(row) for row in fetch_all(cq.CYPHER_GRAPH_ENDPOINTS, params)]
 
 
@@ -1285,12 +1288,12 @@ def endpoint_callers(
     names no endpoint raises `UnknownEndpointError`: an empty answer means
     the endpoint exists and nothing reaches it (issue #3186).
     """
-    prefix = _prefix(project_name)
+    prefix = project_qn_prefix(project_name)
     # `foo.` selects `foo.bar`'s handlers too, and a concrete or re-spelled
     # target would resolve to that project's route: only this project's own
     # endpoints are matched and answered for. The callers stay unscoped, as
     # they are reported from any project.
-    owns = _owner_check(fetch_all, project_name)
+    owns = owner_check(fetch_all, project_name)
     exposed = [
         row
         for row in fetch_all(
@@ -1382,7 +1385,7 @@ def remote_dependencies(
     """Every network access a project makes, with the handler and project it
     resolves to; an unresolved row (no endpoint) is a dependency the graph
     cannot place -- a dynamic URL, or a service not indexed."""
-    params = {cs.KEY_PROJECT_PREFIX: _prefix(project_name)}
+    params = {cs.KEY_PROJECT_PREFIX: project_qn_prefix(project_name)}
     return [
         RemoteDependencyRow(
             label=str(row.get(cs.KEY_LABEL) or ""),
@@ -1459,12 +1462,12 @@ def similar_targets(
     means: close spellings of its last part under the same parent, then the
     definitions that carry that last part as their name, wherever they are.
     """
-    owns = _owner_check(fetch_all, project_name)
+    owns = owner_check(fetch_all, project_name)
     parent, _, leaf = qualified_name.rpartition(cs.SEPARATOR_DOT)
     close: list[str] = []
     # Under the project root itself the pool would be the whole project.
-    if parent.startswith(_prefix(project_name)):
-        under = _prefix(parent)
+    if parent.startswith(project_qn_prefix(project_name)):
+        under = project_qn_prefix(parent)
         rows = fetch_all(
             cq.CYPHER_GRAPH_DEFINITIONS_UNDER, {cs.KEY_PROJECT_PREFIX: under}
         )

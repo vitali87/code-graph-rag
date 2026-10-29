@@ -31,10 +31,10 @@ from .endpoints import emit_endpoints, queue_endpoints
 from .utils import (
     _decorator_tail_names,
     _is_abstract_member,
-    _is_static_decorator,
     callable_parameter_indices,
     decorated_start_props,
     extract_modifiers_and_decorators,
+    is_static_decorator,
     python_positional_parameter_names,
     safe_decode_text,
     warn_if_name_truncated,
@@ -465,7 +465,7 @@ def ingest_method(
         method_node,
         language,
         method_props,
-        has_receiver=not _is_static_decorator(decorators),
+        has_receiver=not is_static_decorator(decorators),
     )
     if pending_endpoints is not None:
         # Deferred so router mount prefixes can resolve after Pass 2 (#877).

@@ -24,7 +24,7 @@ from typing import NamedTuple, TypedDict
 from . import constants as cs
 from . import cypher_queries as cq
 from . import graph_query
-from .graph_query import QueryFn, ReachIndex
+from .graph_query import QueryFn, ReachIndex, project_qn_prefix
 from .types_defs import ResultRow, SemanticSearchResult
 from .utils.path_utils import cached_resolve_posix
 from .utils.source_extraction import extract_source_lines
@@ -69,10 +69,6 @@ class _Candidate(NamedTuple):
     @property
     def order(self) -> tuple[int, int, float, str]:
         return (self.distance, -self.hotness, -self.similarity, self.qualified_name)
-
-
-def _prefix(project: str) -> str:
-    return f"{project}{cs.SEPARATOR_DOT}"
 
 
 def _normalise(text: str) -> str:
@@ -158,7 +154,7 @@ def _hotness(fetch_all: QueryFn, project: str, qn: str) -> dict[str, int]:
     out: dict[str, int] = {}
     for row in fetch_all(
         cq.CYPHER_CONTEXT_HOTNESS,
-        {cs.KEY_PROJECT_PREFIX: _prefix(project), cs.KEY_QN: qn},
+        {cs.KEY_PROJECT_PREFIX: project_qn_prefix(project), cs.KEY_QN: qn},
     ):
         caller = str(row.get(cs.KEY_QUALIFIED_NAME) or "")
         count = row.get(cs.TRACE_PROP_CALL_COUNT)
@@ -257,7 +253,7 @@ def _type_pieces(
     out: list[_Candidate] = []
     for row in fetch_all(
         cq.CYPHER_CONTEXT_TYPES,
-        {cs.KEY_PROJECT_PREFIX: _prefix(project), cs.KEY_QN: qn},
+        {cs.KEY_PROJECT_PREFIX: project_qn_prefix(project), cs.KEY_QN: qn},
     ):
         type_qn = str(row.get(cs.KEY_QUALIFIED_NAME) or "")
         path = row.get(cs.KEY_PATH)
@@ -333,7 +329,10 @@ def _doc_pieces(
     out: list[_Candidate] = []
     rows = fetch_all(
         cq.CYPHER_CONTEXT_DOC_SECTIONS,
-        {cs.KEY_PROJECT_PREFIX: _prefix(project), cs.KEY_ABSOLUTE_PATH: absolute},
+        {
+            cs.KEY_PROJECT_PREFIX: project_qn_prefix(project),
+            cs.KEY_ABSOLUTE_PATH: absolute,
+        },
     )
     by_doc: dict[str, list[ResultRow]] = {}
     for row in rows:

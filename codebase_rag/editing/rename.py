@@ -270,7 +270,7 @@ def _go_implementers_unknown(
     if not name:
         return None
     directories = {PurePosixPath(str(found["path"])).parent for found in methods}
-    owns = graph_query._owner_check(fetch_all, project)
+    owns = graph_query.owner_check(fetch_all, project)
     rows = fetch_all(
         cq.CYPHER_GRAPH_GO_IMPLEMENTERS_UNKNOWN,
         {cs.KEY_PROJECT_PREFIX: f"{project}{cs.SEPARATOR_DOT}", cs.KEY_NAME: name},
@@ -326,7 +326,7 @@ def _csharp_partial_parts(fetch_all: QueryFn, project: str, qn: str) -> list[str
         or get_language_for_extension(Path(path).suffix) != cs.SupportedLanguage.CSHARP
     ):
         return []
-    owns = graph_query._owner_check(fetch_all, project)
+    owns = graph_query.owner_check(fetch_all, project)
     rows = fetch_all(
         cs.CYPHER_SAME_NAMED_CSHARP_TYPES,
         {cs.KEY_PROJECT_PREFIX: f"{project}{cs.SEPARATOR_DOT}", cs.KEY_NAME: name},
@@ -754,7 +754,7 @@ class Renamer:
         # Both reads below are prefix-scoped, and `foo.` selects `foo.bar`'s
         # rows too: a site in a project whose name extends this one must not
         # join this project's plan (issue #1989; the rule of #1982).
-        owns = graph_query._owner_check(self.fetch_all, self.project)
+        owns = graph_query.owner_check(self.fetch_all, self.project)
         for row in self.fetch_all(cq.CYPHER_GRAPH_REFERENCES, params):
             if not owns(str(row.get(cs.KEY_QUALIFIED_NAME) or "")):
                 continue
@@ -1315,7 +1315,7 @@ class Renamer:
         label = graph_query.definition(self.fetch_all, self.project, qn, None)["label"]
         if label is None or label in _TYPE_SPACE_LABELS:
             return []
-        owns = graph_query._owner_check(self.fetch_all, self.project)
+        owns = graph_query.owner_check(self.fetch_all, self.project)
         paths: set[str] = set()
         for twin_label in _TYPE_SPACE_LABELS:
             params = {
@@ -1618,7 +1618,7 @@ class Renamer:
         this one: the plan leaves them alone (#1989), so its cross-check
         does too. The reads are scoped to the target's label as the plan's
         are, since a TS type and a value share one name (issue #2520)."""
-        owns = graph_query._owner_check(self.fetch_all, self.project)
+        owns = graph_query.owner_check(self.fetch_all, self.project)
         paths: set[str] = set()
         for member in hierarchy:
             params = {
@@ -2081,7 +2081,7 @@ class Renamer:
             for member in (*report.hierarchy, *report.companions)
         ]
         pairs = list(parents)
-        longer_project_prefixes = graph_query._longer_project_prefixes(
+        longer_project_prefixes = graph_query.projects_nested_under(
             self.fetch_all, self.project
         )
         for row in self.fetch_all(

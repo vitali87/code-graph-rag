@@ -32,7 +32,7 @@ from .config import settings
 from .function_registry import FunctionRegistryTrie
 from .gloss_anchor import ParsedSource, parse_source
 from .gloss_repair import repair_unanchored
-from .graph_query import _longer_project_prefixes
+from .graph_query import projects_nested_under
 from .interface_skip import (
     callers_to_reparse,
     stable_interface_modules,
@@ -9649,7 +9649,7 @@ class GraphUpdater:
                 cs.KEY_PROJECT_NAME: self.project_name,
                 cs.KEY_PROJECT_PREFIX: f"{self.project_name}{cs.SEPARATOR_DOT}",
                 cs.KEY_LONGER_PROJECT_PREFIXES: list(
-                    _longer_project_prefixes(self.ingestor.fetch_all, self.project_name)
+                    projects_nested_under(self.ingestor.fetch_all, self.project_name)
                 ),
             }
             self.ingestor.execute_write(cq.CYPHER_REANCHOR_GLOSSES, scope)

@@ -31,14 +31,14 @@ from . import constants as cs
 from . import cypher_queries as cq
 from .crash_correlation import ArityError, diagnose_arity
 from .dead_code import (
-    _is_test_symbol,
-    _node_props,
-    _NodeId,
-    _rust_test_fn_spans,
-    _rust_test_modules_from_nodes,
+    NodeId,
+    is_test_symbol,
+    node_props,
+    rust_test_fn_spans,
+    rust_test_modules_from_nodes,
 )
-from .duplicates import _jaccard
-from .graph_query import QueryFn, _longer_project_prefixes, _opt_int, _prefix
+from .duplicates import jaccard
+from .graph_query import QueryFn, opt_int, project_qn_prefix, projects_nested_under
 from .language_spec import get_language_for_extension
 from .types_defs import PropertyDict, ReingestReport, ResultRow
 
@@ -305,9 +305,9 @@ def _site(row: ResultRow) -> CallSite:
         call_qualifier=qualifier if isinstance(qualifier, str) else None,
         callee=_text(row.get(cs.KEY_TO_QN)),
         callee_path=_text(row.get(cs.KEY_TO_PATH)),
-        line=_opt_int(row.get(cs.KEY_LINE)),
-        col=_opt_int(row.get(cs.KEY_COL)),
-        arg_count=_opt_int(row.get(cs.KEY_ARG_COUNT)),
+        line=opt_int(row.get(cs.KEY_LINE)),
+        col=opt_int(row.get(cs.KEY_COL)),
+        arg_count=opt_int(row.get(cs.KEY_ARG_COUNT)),
         kwarg_names=_strings(row.get(cs.KEY_KWARG_NAMES)),
         star_args=row.get(cs.KEY_STAR_ARGS) is True,
         star_kwargs=row.get(cs.KEY_STAR_KWARGS) is True,
@@ -323,8 +323,8 @@ def _binding(row: ResultRow) -> ImportBinding:
         imported_name=imported_name,
         # A wildcard binds no single name and records no alias.
         bound=_text(row.get(cs.KEY_ALIAS)) or imported_name,
-        line=_opt_int(row.get(cs.KEY_LINE)),
-        col=_opt_int(row.get(cs.KEY_COL)),
+        line=opt_int(row.get(cs.KEY_LINE)),
+        col=opt_int(row.get(cs.KEY_COL)),
         module_path=_text(row.get(cs.KEY_TO_PATH)),
     )
 
@@ -386,12 +386,12 @@ def snapshot(
     """Read the subgraph of `paths` (repo-relative) and the module imports."""
     path_list = sorted(set(paths))
     longer_prefixes = (
-        _longer_project_prefixes(fetch_all, project_name)
+        projects_nested_under(fetch_all, project_name)
         if longer_project_prefixes is None
         else longer_project_prefixes
     )
     params: PropertyDict = {
-        cs.KEY_PROJECT_PREFIX: _prefix(project_name),
+        cs.KEY_PROJECT_PREFIX: project_qn_prefix(project_name),
         cs.KEY_LONGER_PROJECT_PREFIXES: list(longer_prefixes),
         cs.CYPHER_PARAM_PATHS: list(path_list),
     }
@@ -412,7 +412,7 @@ def snapshot(
             cq.CYPHER_DELTA_DEFINITIONS_BY_QN,
             {
                 cs.KEY_QNS: missing,
-                cs.KEY_PROJECT_PREFIX: _prefix(project_name),
+                cs.KEY_PROJECT_PREFIX: project_qn_prefix(project_name),
                 cs.KEY_LONGER_PROJECT_PREFIXES: list(longer_prefixes),
             },
         ):
@@ -627,7 +627,7 @@ def _renames(
     return renames
 
 
-def _language(path: str) -> cs.SupportedLanguage | None:
+def language_of_path(path: str) -> cs.SupportedLanguage | None:
     return get_language_for_extension(Path(path).suffix) if path else None
 
 
@@ -639,7 +639,7 @@ def _params_moved(old: Definition, new: Definition) -> bool:
     """
     if old.positional_params == new.positional_params:
         return False
-    if _language(new.path) not in cs.DECLARED_ARITY_LANGUAGES:
+    if language_of_path(new.path) not in cs.DECLARED_ARITY_LANGUAGES:
         return True
     return old.positional_params is not None and new.positional_params is not None
 
@@ -1328,7 +1328,7 @@ def _index_took_over(qn: str, path: str, now: set[str]) -> bool:
     """A JS/TS file turned into a directory whose `index` the same
     extensionless specifier now resolves to (`./util` -> `util/index.ts`)."""
     return (
-        _language(path) in cs.JS_TS_LANGUAGES
+        language_of_path(path) in cs.JS_TS_LANGUAGES
         and f"{qn}{cs.SEPARATOR_DOT}{cs.JS_INDEX_STEM}" in now
     )
 
@@ -1388,7 +1388,7 @@ def _package_still_binds(
         or binding.imported_name != name
         or binding.importer == package
         or (package, name) in broken
-        or _language(path) != cs.SupportedLanguage.PYTHON
+        or language_of_path(path) != cs.SupportedLanguage.PYTHON
     ):
         return False
     module = Path(path)
@@ -1908,7 +1908,7 @@ _DEFINITE_RESOLUTIONS = frozenset(
 )
 
 
-def _is_receiver(entry: str, language: cs.SupportedLanguage | None) -> bool:
+def is_receiver(entry: str, language: cs.SupportedLanguage | None) -> bool:
     """Whether `entry` is the receiver marker of the definition's language.
 
     Only Rust writes `self` and only C# writes `this name`: elsewhere, or
@@ -1940,7 +1940,7 @@ def _declared_bounds(
     it, so the fewest runs to the last required one; a rest parameter
     lifts the most.
     """
-    receiver = bool(declared) and _is_receiver(declared[0], language)
+    receiver = bool(declared) and is_receiver(declared[0], language)
     params = declared[1:] if receiver else declared
     fixed = [p for p in params if not p.startswith(cs.POSITIONAL_REST_PREFIX)]
     fewest = max(
@@ -1976,7 +1976,7 @@ def _receiver_passed(site: CallSite, definition: Definition) -> bool | None:
     the call form stays undecided.
     """
     qualifier = site.call_qualifier
-    if _language(definition.path) == cs.SupportedLanguage.CSHARP:
+    if language_of_path(definition.path) == cs.SupportedLanguage.CSHARP:
         if qualifier is None or qualifier == _declaring_type(definition):
             return True
         return False if qualifier == "" else None
@@ -2004,7 +2004,10 @@ def _rejected(
     rule: frozenset[cs.SupportedLanguage], site: CallSite, definition: Definition
 ) -> bool:
     # Both ends: nothing checks a JavaScript caller of a TypeScript callee.
-    return _language(site.caller_path) in rule and _language(definition.path) in rule
+    return (
+        language_of_path(site.caller_path) in rule
+        and language_of_path(definition.path) in rule
+    )
 
 
 def _count_verdict(
@@ -2036,7 +2039,7 @@ def _declared_arity_verdict(site: CallSite, definition: Definition) -> tuple[int
     declared = definition.positional_params
     if declared is None:
         return -1, cs.DELTA_ARITY_UNKNOWN
-    bounds = _declared_bounds(declared, _language(definition.path))
+    bounds = _declared_bounds(declared, language_of_path(definition.path))
     passed = site.arg_count
     if passed is None or site.spread_args:
         return bounds.fixed, cs.DELTA_ARITY_UNKNOWN
@@ -2052,7 +2055,7 @@ def _declared_arity_verdict(site: CallSite, definition: Definition) -> tuple[int
 def _arity_verdict(
     site: CallSite, definition: Definition, repo_root: Path | None
 ) -> tuple[int, str]:
-    if _language(definition.path) in cs.DECLARED_ARITY_LANGUAGES:
+    if language_of_path(definition.path) in cs.DECLARED_ARITY_LANGUAGES:
         return _declared_arity_verdict(site, definition)
     declared_count, verdict = _python_count_verdict(site, definition, repo_root)
     if verdict == cs.DELTA_ARITY_TOO_MANY:
@@ -2195,7 +2198,10 @@ def _remote_callers(
     ):
         for row in fetch_all(
             query,
-            {cs.KEY_QNS: handlers, cs.KEY_PROJECT_PREFIX: _prefix(project_name)},
+            {
+                cs.KEY_QNS: handlers,
+                cs.KEY_PROJECT_PREFIX: project_qn_prefix(project_name),
+            },
         ):
             handler = _text(row.get(cs.KEY_HANDLER))
             caller = RemoteCaller(
@@ -2292,7 +2298,7 @@ def _match_duplicate_shapes(
         return cs.KIND_EXACT, 1.0
     if not candidate.branches or not other.branches:
         return None
-    similarity = _jaccard(candidate.branches, other.branches)
+    similarity = jaccard(candidate.branches, other.branches)
     if similarity >= threshold:
         return cs.KIND_SIMILAR, similarity
     return None
@@ -2354,7 +2360,7 @@ def _new_duplicates(
         for row in fetch_all(
             cq.CYPHER_DUPLICATE_FINGERPRINTS,
             {
-                cs.KEY_PROJECT_PREFIX: _prefix(project_name),
+                cs.KEY_PROJECT_PREFIX: project_qn_prefix(project_name),
                 cs.KEY_LONGER_PROJECT_PREFIXES: list(longer_project_prefixes),
             },
         )
@@ -2470,7 +2476,7 @@ def _new_import_cycles(before: Snapshot, after: Snapshot) -> list[list[str]]:
 class _Reach(NamedTuple):
     depth: dict[str, int]
     through: dict[str, str]
-    nodes: dict[_NodeId, PropertyDict]
+    nodes: dict[NodeId, PropertyDict]
 
 
 def _walk_callers(
@@ -2487,7 +2493,7 @@ def _walk_callers(
     """
     depth = dict.fromkeys(targets, 0)
     through = {qn: qn for qn in targets}
-    nodes: dict[_NodeId, PropertyDict] = {}
+    nodes: dict[NodeId, PropertyDict] = {}
     frontier = sorted(targets)
     for hop in range(1, cs.DELTA_REACH_MAX_DEPTH + 1):
         if not frontier:
@@ -2513,7 +2519,7 @@ def _walk_callers(
                 continue
             depth[qn] = hop
             through[qn] = _text(row.get(cs.KEY_TO_QN))
-            nodes[(_text(row.get(cs.KEY_LABEL)), qn)] = _node_props(row)
+            nodes[(_text(row.get(cs.KEY_LABEL)), qn)] = node_props(row)
             next_frontier.append(qn)
         frontier = next_frontier
     return _Reach(depth, through, nodes)
@@ -2522,7 +2528,7 @@ def _walk_callers(
 def _rust_inputs(
     fetch_all: QueryFn,
     prefix: str,
-    reached: dict[_NodeId, PropertyDict],
+    reached: dict[NodeId, PropertyDict],
     longer_project_prefixes: tuple[str, ...],
 ) -> tuple[set[str], dict[str, list[tuple[int, int]]]]:
     rust_paths = sorted(
@@ -2534,7 +2540,7 @@ def _rust_inputs(
     )
     if not rust_paths:
         return set(), {}
-    modules: dict[_NodeId, PropertyDict] = {}
+    modules: dict[NodeId, PropertyDict] = {}
     for row in fetch_all(
         cq.CYPHER_DELTA_RUST_MODULES,
         {
@@ -2544,8 +2550,8 @@ def _rust_inputs(
     ):
         qn = _text(row.get(cs.KEY_QUALIFIED_NAME))
         if qn:
-            modules[(_text(row.get(cs.KEY_LABEL)), qn)] = _node_props(row)
-    functions: dict[_NodeId, PropertyDict] = {}
+            modules[(_text(row.get(cs.KEY_LABEL)), qn)] = node_props(row)
+    functions: dict[NodeId, PropertyDict] = {}
     for row in fetch_all(
         cq.CYPHER_DELTA_RUST_TEST_FNS,
         {
@@ -2556,8 +2562,8 @@ def _rust_inputs(
     ):
         qn = _text(row.get(cs.KEY_QUALIFIED_NAME))
         if qn:
-            functions[(_text(row.get(cs.KEY_LABEL)), qn)] = _node_props(row)
-    return _rust_test_modules_from_nodes(modules), _rust_test_fn_spans(functions)
+            functions[(_text(row.get(cs.KEY_LABEL)), qn)] = node_props(row)
+    return rust_test_modules_from_nodes(modules), rust_test_fn_spans(functions)
 
 
 def _tests_reaching(
@@ -2566,9 +2572,9 @@ def _tests_reaching(
     targets: Iterable[str],
     longer_project_prefixes: tuple[str, ...] | None = None,
 ) -> list[TestReach]:
-    prefix = _prefix(project_name)
+    prefix = project_qn_prefix(project_name)
     longer_prefixes = (
-        _longer_project_prefixes(fetch_all, project_name)
+        projects_nested_under(fetch_all, project_name)
         if longer_project_prefixes is None
         else longer_project_prefixes
     )
@@ -2580,7 +2586,7 @@ def _tests_reaching(
     for (_label, raw_qn), props in reach.nodes.items():
         qn = str(raw_qn)
         path = str(props.get(cs.KEY_PATH) or "")
-        if _is_test_symbol(props, qn, path, rust_modules, rust_spans):
+        if is_test_symbol(props, qn, path, rust_modules, rust_spans):
             out.append(
                 TestReach(
                     qualified_name=qn,
@@ -2623,7 +2629,7 @@ def structural_delta(
     """
     started = time.perf_counter()
     longer_prefixes = (
-        _longer_project_prefixes(fetch_all, project_name)
+        projects_nested_under(fetch_all, project_name)
         if longer_project_prefixes is None
         else longer_project_prefixes
     )
@@ -2651,7 +2657,7 @@ def structural_delta(
             _module_loader(
                 fetch_all,
                 {
-                    cs.KEY_PROJECT_PREFIX: _prefix(project_name),
+                    cs.KEY_PROJECT_PREFIX: project_qn_prefix(project_name),
                     cs.KEY_LONGER_PROJECT_PREFIXES: list(longer_prefixes),
                 },
             ),
@@ -2743,7 +2749,7 @@ def observe(
     """
     path_list = sorted(set(paths))
     started = time.perf_counter()
-    longer_prefixes = _longer_project_prefixes(fetch_all, project_name)
+    longer_prefixes = projects_nested_under(fetch_all, project_name)
     before = snapshot(
         fetch_all,
         project_name,

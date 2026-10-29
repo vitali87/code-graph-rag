@@ -42,7 +42,7 @@ from . import constants as cs
 from . import cypher_queries as cq
 from . import graph_query
 from .gloss_anchor import SourceReader, TextAnchor, text_anchor
-from .graph_query import QueryFn, SymbolRow
+from .graph_query import QueryFn, SymbolRow, project_qn_prefix
 from .types_defs import PropertyDict, ResultRow
 
 if TYPE_CHECKING:
@@ -87,10 +87,6 @@ class GlossesResult(TypedDict):
     # (`x@16` -> `x@20`): the notes left unattached on the property's
     # variants are listed here rather than lost behind the stable name.
     orphaned: NotRequired[list[GlossRow]]
-
-
-def _prefix(project_name: str) -> str:
-    return f"{project_name}{cs.SEPARATOR_DOT}"
 
 
 def gloss_id(target_qn: str, kind: str, body: str) -> str:
@@ -206,7 +202,7 @@ def _resolve_descriptor(
         {
             cs.KEY_QN: qn,
             cs.KEY_VARIANT_PREFIX: _variant_prefix(qn),
-            cs.KEY_PROJECT_PREFIX: _prefix(project_name),
+            cs.KEY_PROJECT_PREFIX: project_qn_prefix(project_name),
         },
     ):
         decorators = row.get(cs.KEY_DECORATORS)
@@ -235,7 +231,7 @@ def _orphaned_on(fetch_all: QueryFn, project_name: str, target: str) -> list[Glo
         return _orphaned_under(fetch_all, project_name, natural["qualified_name"])
     params: PropertyDict = {
         cs.KEY_PROJECT_NAME: project_name,
-        cs.KEY_PROJECT_PREFIX: _prefix(project_name),
+        cs.KEY_PROJECT_PREFIX: project_qn_prefix(project_name),
         cs.KEY_QN: target,
         cs.KEY_SUFFIX: f"{cs.SEPARATOR_DOT}{target}",
     }
@@ -250,7 +246,7 @@ def _orphaned_under(
     qn = qualified_name.split(cs.DUP_QN_MARKER, 1)[0]
     params: PropertyDict = {
         cs.KEY_PROJECT_NAME: project_name,
-        cs.KEY_PROJECT_PREFIX: _prefix(project_name),
+        cs.KEY_PROJECT_PREFIX: project_qn_prefix(project_name),
         cs.KEY_QN: qn,
         cs.KEY_VARIANT_PREFIX: _variant_prefix(qn),
     }
@@ -282,7 +278,7 @@ def _target_facts(
 ) -> _TargetFacts:
     rows = fetch_all(
         cq.CYPHER_GLOSS_TARGET,
-        {cs.KEY_QN: target_qn, cs.KEY_PROJECT_PREFIX: _prefix(project_name)},
+        {cs.KEY_QN: target_qn, cs.KEY_PROJECT_PREFIX: project_qn_prefix(project_name)},
     )
     if not rows:
         return _TargetFacts(None, None)
@@ -417,7 +413,7 @@ def write_gloss(
     # lacks that property rather than carrying a placeholder.
     params: PropertyDict = {
         cs.KEY_QN: key,
-        cs.KEY_PROJECT_PREFIX: _prefix(project_name),
+        cs.KEY_PROJECT_PREFIX: project_qn_prefix(project_name),
         cs.KEY_TARGET_QN: target_qn,
         cs.KEY_MENTION_QNS: sorted({m["qualified_name"] for m in mentioned}),
         cs.KEY_KIND: kind,

@@ -28,15 +28,15 @@ from typing import NamedTuple, TypedDict
 from . import constants as cs
 from . import cypher_queries as cq
 from .dead_code import (
-    _is_test_symbol,
-    _node_props,
-    _NodeId,
-    _rust_test_fn_spans,
-    _rust_test_modules_from_nodes,
+    NodeId,
+    is_test_symbol,
+    node_props,
+    rust_test_fn_spans,
+    rust_test_modules_from_nodes,
 )
-from .graph_query import QueryFn, _longer_project_prefixes, _owner_check, _prefix
-from .parsers.utils import _is_static_decorator
-from .structural_delta import _is_receiver, _language
+from .graph_query import QueryFn, owner_check, project_qn_prefix, projects_nested_under
+from .parsers.utils import is_static_decorator
+from .structural_delta import is_receiver, language_of_path
 from .types_defs import PropertyDict, PropertyValue, ResultValue
 from .utils.path_utils import portable_posix
 
@@ -367,21 +367,21 @@ def _merge_resolution(
 
 def _owned_nodes(
     fetch_all: QueryFn, project: str, params: PropertyDict
-) -> dict[_NodeId, PropertyDict]:
-    owns = _owner_check(fetch_all, project)
-    nodes: dict[_NodeId, PropertyDict] = {}
+) -> dict[NodeId, PropertyDict]:
+    owns = owner_check(fetch_all, project)
+    nodes: dict[NodeId, PropertyDict] = {}
     for row in fetch_all(cq.CYPHER_DEAD_CODE_NODES, params):
         qualified_name = _text(row.get(cs.KEY_QUALIFIED_NAME))
         if qualified_name and owns(qualified_name):
-            nodes[(_text(row.get(cs.KEY_LABEL)), qualified_name)] = _node_props(row)
+            nodes[(_text(row.get(cs.KEY_LABEL)), qualified_name)] = node_props(row)
     return nodes
 
 
 def _load_project(fetch_all: QueryFn, project: str) -> _ProjectGraph:
-    params: PropertyDict = {cs.KEY_PROJECT_PREFIX: _prefix(project)}
+    params: PropertyDict = {cs.KEY_PROJECT_PREFIX: project_qn_prefix(project)}
     nodes = _owned_nodes(fetch_all, project, params)
-    rust_modules = _rust_test_modules_from_nodes(nodes)
-    rust_spans = _rust_test_fn_spans(nodes)
+    rust_modules = rust_test_modules_from_nodes(nodes)
+    rust_spans = rust_test_fn_spans(nodes)
     callables: dict[str, _Callable] = {}
     tests: set[str] = set()
     for (label, raw_qn), props in nodes.items():
@@ -390,7 +390,7 @@ def _load_project(fetch_all: QueryFn, project: str) -> _ProjectGraph:
         qualified_name = str(raw_qn)
         found = _callable(label, qualified_name, props)
         callables[qualified_name] = found
-        if _is_test_symbol(props, qualified_name, found.path, rust_modules, rust_spans):
+        if is_test_symbol(props, qualified_name, found.path, rust_modules, rust_spans):
             tests.add(qualified_name)
     return _ProjectGraph(
         callables, frozenset(tests), _project_calls(fetch_all, params, callables)
@@ -420,10 +420,8 @@ def _positional_params(
     fetch_all: QueryFn, project: str, paths: Iterable[str]
 ) -> dict[str, tuple[str, ...]]:
     params: PropertyDict = {
-        cs.KEY_PROJECT_PREFIX: _prefix(project),
-        cs.KEY_LONGER_PROJECT_PREFIXES: list(
-            _longer_project_prefixes(fetch_all, project)
-        ),
+        cs.KEY_PROJECT_PREFIX: project_qn_prefix(project),
+        cs.KEY_LONGER_PROJECT_PREFIXES: list(projects_nested_under(fetch_all, project)),
         cs.CYPHER_PARAM_PATHS: sorted(set(paths)),
     }
     out: dict[str, tuple[str, ...]] = {}
@@ -625,7 +623,7 @@ def _calls_parity(
 def _arity(found: _Callable, positional: tuple[str, ...] | None) -> _Arity | None:
     if positional is None:
         return None
-    language = _language(found.path)
+    language = language_of_path(found.path)
     if language == cs.SupportedLanguage.PYTHON:
         # Python records CPython's positional names, receiver included, and
         # stops at `*args` or `*`; `param_types` lists every declared
@@ -635,13 +633,13 @@ def _arity(found: _Callable, positional: tuple[str, ...] | None) -> _Arity | Non
         if (
             found.label == cs.NodeLabel.METHOD.value
             and names
-            and not _is_static_decorator(list(found.decorators))
+            and not is_static_decorator(list(found.decorators))
         ):
             names = names[1:]
         return _Arity(len(names), found.declared > len(positional))
     # Only the language that writes a receiver marker loses it: a JavaScript
     # `function f(self)` takes one argument, as its Python twin does.
-    kept = [p for p in positional if not _is_receiver(p, language)]
+    kept = [p for p in positional if not is_receiver(p, language)]
     rest = [p for p in kept if p.startswith(cs.POSITIONAL_REST_PREFIX)]
     return _Arity(len(kept) - len(rest), bool(rest))
 

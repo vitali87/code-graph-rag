@@ -39,7 +39,7 @@ _DEFINES_METHOD = cs.RelationshipType.DEFINES_METHOD.value
 _OVERRIDES = cs.RelationshipType.OVERRIDES.value
 _IMPLEMENTS = cs.RelationshipType.IMPLEMENTS.value
 _JS_TS_EXTS = cs.TS_EXTENSIONS + cs.TSX_EXTENSIONS + cs.JS_EXTENSIONS
-_NodeId = tuple[str, PropertyValue]
+NodeId = tuple[str, PropertyValue]
 _RelTuple = tuple[str, PropertyValue, str, str, PropertyValue]
 
 
@@ -185,8 +185,8 @@ def _is_rust_test_symbol(
     return _has_rust_test_attribute(props)
 
 
-def _rust_test_modules_from_nodes(
-    nodes: dict[_NodeId, PropertyDict],
+def rust_test_modules_from_nodes(
+    nodes: dict[NodeId, PropertyDict],
 ) -> set[str]:
     # Test modules by three signals, all gated to Rust files (inline `mod
     # tests` blocks carry synthesised inline paths): a test-module NAME
@@ -245,8 +245,8 @@ def _has_rust_cfg_test_gate(props: PropertyDict) -> bool:
     )
 
 
-def _rust_test_fn_spans(
-    nodes: dict[_NodeId, PropertyDict],
+def rust_test_fn_spans(
+    nodes: dict[NodeId, PropertyDict],
 ) -> dict[str, list[tuple[int, int]]]:
     # Spans of `#[test]` family functions per Rust file: a nested fn
     # registers FLAT under the module qn and a closure as
@@ -266,7 +266,7 @@ def _rust_test_fn_spans(
     return spans
 
 
-def _is_test_symbol(
+def is_test_symbol(
     props: PropertyDict,
     qn: str,
     path: str,
@@ -828,7 +828,7 @@ def _is_rooted_test_symbol(
     rust_test_modules: set[str],
     rust_test_spans: dict[str, list[tuple[int, int]]],
 ) -> bool:
-    return config.include_tests and _is_test_symbol(
+    return config.include_tests and is_test_symbol(
         props, qn, path, rust_test_modules, rust_test_spans
     )
 
@@ -918,7 +918,7 @@ def _record_module_or_class(
 
 
 def _scan_candidates(
-    nodes: dict[_NodeId, PropertyDict],
+    nodes: dict[NodeId, PropertyDict],
     labels: set[str],
     project_prefix: str,
     config: DeadCodeConfig,
@@ -936,7 +936,7 @@ def _scan_candidates(
         # infrastructure, not dead production code). Rust test code lives
         # INSIDE source files, so it is matched by attribute/module, not path
         # (issue #1008).
-        if not config.include_tests and _is_test_symbol(
+        if not config.include_tests and is_test_symbol(
             props,
             qn,
             str(props.get(cs.KEY_PATH) or ""),
@@ -989,7 +989,7 @@ def _scan_structural_rels(
 
 
 def _declaration_roots(
-    nodes: dict[_NodeId, PropertyDict], structural: _StructuralRels
+    nodes: dict[NodeId, PropertyDict], structural: _StructuralRels
 ) -> set[str]:
     """What the type checker reads as a declaration: a typing.Protocol and a
     class declared under `if TYPE_CHECKING:`, with their members. A stub
@@ -1180,7 +1180,7 @@ def _php_project_class_named(
 
 
 def _php_test_classes(
-    nodes: dict[_NodeId, PropertyDict], inherits_subclasses: dict[str, set[str]]
+    nodes: dict[NodeId, PropertyDict], inherits_subclasses: dict[str, set[str]]
 ) -> set[str]:
     # PHPUnit runs `test*`, `@test` and `#[Test]` methods (and their data
     # providers) only on a class extending its TestCase, so that ancestry,
@@ -1247,7 +1247,7 @@ def _within_php_test_class(qn: str, php_test_classes: set[str]) -> bool:
 
 def _php_test_symbols(
     scan: _CandidateScan,
-    nodes: dict[_NodeId, PropertyDict],
+    nodes: dict[NodeId, PropertyDict],
     inherits_subclasses: dict[str, set[str]],
 ) -> set[str]:
     """PHP candidates that are test code by PHPUnit's conventions (issue
@@ -1270,7 +1270,7 @@ def _php_test_symbols(
 
 
 def dead_code_from_graph(
-    nodes: dict[_NodeId, PropertyDict],
+    nodes: dict[NodeId, PropertyDict],
     rels: list[_RelTuple],
     project_prefix: str,
     config: DeadCodeConfig,
@@ -1286,12 +1286,12 @@ def dead_code_from_graph(
         traversal |= {_INSTANTIATES, _INHERITS}
         module_rels.add(_INSTANTIATES)
 
-    rust_test_modules = _rust_test_modules_from_nodes(nodes)
+    rust_test_modules = rust_test_modules_from_nodes(nodes)
     # Both polarities need the spans: excluded test fns take their nested
     # symbols with them, and INCLUDED ones must root those same symbols (a
     # fn passed as a value, `filter(is_even)`, has no CALLS edge to revive
     # it).
-    rust_test_spans = _rust_test_fn_spans(nodes)
+    rust_test_spans = rust_test_fn_spans(nodes)
     scan = _scan_candidates(
         nodes, labels, project_prefix, config, rust_test_modules, rust_test_spans
     )
@@ -1381,13 +1381,13 @@ def dead_code_from_graph(
     return dead
 
 
-def _as_str_list(value: ResultValue | None) -> list[str]:
+def as_str_list(value: ResultValue | None) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item) for item in value]
 
 
-def _node_props(row: ResultRow) -> PropertyDict:
+def node_props(row: ResultRow) -> PropertyDict:
     # Coalesce NULL column values at the fetch boundary so the engine never
     # sees None where a str/list/bool is expected. Only properties the engine
     # reads are kept; the report is built from the raw rows.
@@ -1399,7 +1399,7 @@ def _node_props(row: ResultRow) -> PropertyDict:
         cs.KEY_NAME: str(row.get(cs.KEY_NAME) or ""),
         # A PHP class's declared namespace links an imported base to it.
         cs.KEY_NAMESPACE: str(row.get(cs.KEY_NAMESPACE) or ""),
-        cs.KEY_DECORATORS: _as_str_list(row.get(cs.KEY_DECORATORS)),
+        cs.KEY_DECORATORS: as_str_list(row.get(cs.KEY_DECORATORS)),
         cs.KEY_IS_EXPORTED: row.get(cs.KEY_IS_EXPORTED) is True,
         cs.KEY_OVERRIDES_EXTERNAL: row.get(cs.KEY_OVERRIDES_EXTERNAL) is True,
         # The launcher `main` the parser judged from its declaration (#2527).
@@ -1408,12 +1408,12 @@ def _node_props(row: ResultRow) -> PropertyDict:
         # non-int values coalesce to 0 so the containment checks skip them.
         cs.KEY_START_LINE: _as_line(row.get(cs.KEY_START_LINE)),
         cs.KEY_END_LINE: _as_line(row.get(cs.KEY_END_LINE)),
-        cs.KEY_RUST_CFG_TEST_MODS: _as_str_list(row.get(cs.KEY_RUST_CFG_TEST_MODS)),
-        cs.KEY_RUST_UNGATED_MODS: _as_str_list(row.get(cs.KEY_RUST_UNGATED_MODS)),
+        cs.KEY_RUST_CFG_TEST_MODS: as_str_list(row.get(cs.KEY_RUST_CFG_TEST_MODS)),
+        cs.KEY_RUST_UNGATED_MODS: as_str_list(row.get(cs.KEY_RUST_UNGATED_MODS)),
         # The signature the C# entry-point rule checks (issue #2471).
-        cs.KEY_MODIFIERS: _as_str_list(row.get(cs.KEY_MODIFIERS)),
+        cs.KEY_MODIFIERS: as_str_list(row.get(cs.KEY_MODIFIERS)),
         cs.KEY_RETURN_TYPE: str(row.get(cs.KEY_RETURN_TYPE) or ""),
-        cs.KEY_PARAM_TYPES: _as_str_list(row.get(cs.KEY_PARAM_TYPES)),
+        cs.KEY_PARAM_TYPES: as_str_list(row.get(cs.KEY_PARAM_TYPES)),
         # The parse-time mark the declaration roots read: no edge says a
         # class exists for the type checker only.
         cs.KEY_TYPE_CHECKING_ONLY: row.get(cs.KEY_TYPE_CHECKING_ONLY) is True,
@@ -1483,8 +1483,8 @@ def collect_dead_code_with_coverage(
     params: dict[str, PropertyValue] = {cs.KEY_PROJECT_PREFIX: prefix}
 
     node_rows = ingestor.fetch_all(cq.CYPHER_DEAD_CODE_NODES, params)
-    nodes: dict[_NodeId, PropertyDict] = {
-        (str(row.get(cs.KEY_LABEL) or ""), _row_qn(row)): _node_props(row)
+    nodes: dict[NodeId, PropertyDict] = {
+        (str(row.get(cs.KEY_LABEL) or ""), _row_qn(row)): node_props(row)
         for row in node_rows
     }
 

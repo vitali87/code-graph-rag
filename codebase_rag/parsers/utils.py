@@ -485,7 +485,7 @@ def _decorator_tail_names(decorators: list[str]) -> set[str]:
     }
 
 
-def _is_static_decorator(decorators: list[str]) -> bool:
+def is_static_decorator(decorators: list[str]) -> bool:
     return bool(_decorator_tail_names(decorators) & cs.STATIC_DECORATORS)
 
 

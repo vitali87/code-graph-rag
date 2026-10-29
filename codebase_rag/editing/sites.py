@@ -57,7 +57,7 @@ def hierarchy(
     # member had a proven edge of its own, and each was renamed unasked.
     # `linked` names the members another way certainly joins (each build's
     # declaration of one Go method).
-    owns = graph_query._owner_check(fetch_all, project)
+    owns = graph_query.owner_check(fetch_all, project)
     edges: dict[str, list[tuple[str, bool]]] = {}
     # `found` keeps the members in the order reached, `seen` answers
     # membership: a list alone was quadratic in a large hierarchy.

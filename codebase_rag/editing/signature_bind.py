@@ -13,7 +13,7 @@ from itertools import product
 from tree_sitter import Node
 
 from .. import constants as cs
-from ..parsers.utils import _is_static_decorator
+from ..parsers.utils import is_static_decorator
 from .signature_spec import (
     _LITERAL_PREFIX,
     ParamSpec,
@@ -40,7 +40,7 @@ def _is_static(function: Node, source: bytes) -> bool:
     parent = function.parent
     if parent is None or parent.type != cs.TS_PY_DECORATED_DEFINITION:
         return False
-    return _is_static_decorator(
+    return is_static_decorator(
         [
             _text(child, source)
             for child in parent.children

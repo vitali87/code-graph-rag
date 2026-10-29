@@ -18,9 +18,9 @@ from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag.dead_code import (
     _is_php_test_path,
-    _node_props,
     dead_code_from_graph,
     default_dead_code_config,
+    node_props,
 )
 from evals.cgr_graph import CapturingIngestor, capture
 
@@ -98,7 +98,7 @@ def _dead(
     # Only what the dead-code fetch returns reaches the engine in
     # production, so a rule keyed on any other property would pass here and
     # do nothing against Memgraph.
-    nodes = {key: _node_props(props) for key, props in ingestor.nodes.items()}
+    nodes = {key: node_props(props) for key, props in ingestor.nodes.items()}
     return dead_code_from_graph(
         nodes,
         list(ingestor.rels),

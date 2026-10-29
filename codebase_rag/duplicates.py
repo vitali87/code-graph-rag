@@ -310,7 +310,7 @@ def _only_nested_members(
     )
 
 
-def _jaccard(first: frozenset[str], second: frozenset[str]) -> float:
+def jaccard(first: frozenset[str], second: frozenset[str]) -> float:
     union = len(first | second)
     return len(first & second) / union if union else 0.0
 
@@ -323,7 +323,7 @@ def _link_score(left: _Entry, right: _Entry, threshold: float) -> float | None:
     # overlap cannot exceed smaller/larger.
     if larger == 0 or smaller / larger < threshold:
         return None
-    score = _jaccard(first, second)
+    score = jaccard(first, second)
     if score < threshold or _only_nested_members(left.members, right.members):
         return None
     return score

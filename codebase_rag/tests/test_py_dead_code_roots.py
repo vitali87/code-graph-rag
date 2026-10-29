@@ -20,9 +20,9 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag.dead_code import (
-    _node_props,
     dead_code_from_graph,
     default_dead_code_config,
+    node_props,
 )
 from evals.cgr_graph import CapturingIngestor, capture
 
@@ -45,7 +45,7 @@ def _dead(
     # production, so a rule keyed on any other property would pass here and
     # do nothing against Memgraph. Classes are reported too: a root rule that
     # covers members must not leave their class behind.
-    nodes = {key: _node_props(props) for key, props in ingestor.nodes.items()}
+    nodes = {key: node_props(props) for key, props in ingestor.nodes.items()}
     config = default_dead_code_config(include_tests, include_classes=True)
     return dead_code_from_graph(
         nodes,
