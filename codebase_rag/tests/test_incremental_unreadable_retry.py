@@ -46,17 +46,17 @@ def test_an_unreadable_file_is_retried_by_the_next_run(
     (root / "pkg" / "__init__.py").write_text("")
     (root / "pkg" / "b.py").write_text("def b():\n    return 2\n")
     store = StatefulIngestor()
-    real = gu._hash_file_with_bytes
+    real = gu.hash_file_with_bytes
 
     # Portable unreadability: the read of `b.py` fails on this run only.
     def failing(path: Path):  # noqa: ANN202
         return None if path.name == "b.py" else real(path)
 
-    monkeypatch.setattr(gu, "_hash_file_with_bytes", failing)
+    monkeypatch.setattr(gu, "hash_file_with_bytes", failing)
     first = _updater(root, store)
     first.run(force=True)
     assert first._reparsed_file_keys == {"a.py", "pkg/__init__.py"}
-    monkeypatch.setattr(gu, "_hash_file_with_bytes", real)
+    monkeypatch.setattr(gu, "hash_file_with_bytes", real)
 
     second = _updater(root, store)
     assert second._is_already_in_sync() is False
@@ -105,16 +105,16 @@ def test_a_file_that_becomes_unreadable_after_a_healthy_run_is_retried(
     import os
 
     os.utime(edited, (cache_mtime + 1, cache_mtime + 1))
-    real = gu._hash_file_with_bytes
+    real = gu.hash_file_with_bytes
     monkeypatch.setattr(
         gu,
-        "_hash_file_with_bytes",
+        "hash_file_with_bytes",
         lambda path: None if path.name == "b.py" else real(path),
     )
     unreadable_run = _updater(root, store)
     unreadable_run.run()
     assert "pkg/b.py" not in unreadable_run._reparsed_file_keys
-    monkeypatch.setattr(gu, "_hash_file_with_bytes", real)
+    monkeypatch.setattr(gu, "hash_file_with_bytes", real)
 
     retry = _updater(root, store)
     assert retry._is_already_in_sync() is False
@@ -147,16 +147,16 @@ def test_a_symbol_renamed_while_unreadable_leaves_no_stale_entity(
     edited = root / "pkg" / "b.py"
     edited.write_text("def new_name():\n    return 2\n")
     os.utime(edited, (cache_mtime + 1, cache_mtime + 1))
-    real = gu._hash_file_with_bytes
+    real = gu.hash_file_with_bytes
     monkeypatch.setattr(
         gu,
-        "_hash_file_with_bytes",
+        "hash_file_with_bytes",
         lambda path: None if path.name == "b.py" else real(path),
     )
     _updater(root, store).run()
     cache = json.loads(state_file(root, cs.HASH_CACHE_FILENAME).read_text())
     assert cache["pkg/b.py"] == cs.HASH_CACHE_UNREADABLE
-    monkeypatch.setattr(gu, "_hash_file_with_bytes", real)
+    monkeypatch.setattr(gu, "hash_file_with_bytes", real)
 
     retry = _updater(root, store)
     assert retry._is_already_in_sync() is False

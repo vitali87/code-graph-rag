@@ -21,7 +21,8 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.graph_updater import GraphUpdater, ReingestAborted
+from codebase_rag.exceptions import ReingestAborted
+from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from evals.cgr_graph import StatefulIngestor
 

@@ -9,12 +9,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from codebase_rag import constants as cs
-from codebase_rag.graph_updater import _hash_file, _load_hash_cache, _publish_hash_cache
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.utils import safe_decode_with_fallback
 from codebase_rag.services.protobuf_service import ProtobufFileIngestor
+from codebase_rag.sync_state import hash_file, load_hash_cache, publish_hash_cache
 from codebase_rag.utils.path_utils import should_skip_path
-
 
 REPO_PATH = Path(__file__).resolve().parent.parent
 RUNS = 5
@@ -60,7 +59,7 @@ def profile_file_hashing(files):
 
     def hash_all():
         for f in files:
-            _hash_file(f)
+            hash_file(f)
 
     r = benchmark(hash_all, label=f"hash {len(files)} files ({total_bytes/1024:.0f} KB)")
     results.append(r)
@@ -73,7 +72,7 @@ def profile_file_hashing(files):
     single_sizes = [(f, f.stat().st_size) for f in files]
     single_sizes.sort(key=lambda x: x[1], reverse=True)
     for f, sz in single_sizes[:5]:
-        r2 = benchmark(_hash_file, f, runs=10, label=f"hash {f.relative_to(REPO_PATH)} ({sz}B)")
+        r2 = benchmark(hash_file, f, runs=10, label=f"hash {f.relative_to(REPO_PATH)} ({sz}B)")
         results.append(r2)
         print(f"  {r2['label']}: avg={r2['avg_ms']:.3f}ms")
 
@@ -194,7 +193,8 @@ def profile_protobuf_serialization():
         print("  protobuf schema not available, skipping")
         return results
 
-    import tempfile, shutil
+    import shutil
+    import tempfile
     tmp_dir = Path(tempfile.mkdtemp())
     try:
         ingestor = ProtobufFileIngestor(output_path=str(tmp_dir))
@@ -256,11 +256,11 @@ def profile_hash_cache_io():
         cache_data = {f"path/to/file_{i}.py": hashlib.sha256(f"content_{i}".encode()).hexdigest() for i in range(1000)}
         cache_path = tmp / ".file_hashes.json"
 
-        r = benchmark(_publish_hash_cache, cache_path, cache_data, None, runs=5, label=f"save hash cache ({len(cache_data)} entries)")
+        r = benchmark(publish_hash_cache, cache_path, cache_data, None, runs=5, label=f"save hash cache ({len(cache_data)} entries)")
         results.append(r)
         print(f"  {r['label']}: avg={r['avg_ms']:.2f}ms, size={cache_path.stat().st_size/1024:.1f}KB")
 
-        r2 = benchmark(_load_hash_cache, cache_path, runs=5, label=f"load hash cache ({len(cache_data)} entries)")
+        r2 = benchmark(load_hash_cache, cache_path, runs=5, label=f"load hash cache ({len(cache_data)} entries)")
         results.append(r2)
         print(f"  {r2['label']}: avg={r2['avg_ms']:.2f}ms")
     finally:

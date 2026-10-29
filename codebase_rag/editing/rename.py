@@ -39,8 +39,8 @@ from tree_sitter import Node
 from .. import constants as cs
 from .. import cypher_queries as cq
 from .. import graph_query
+from ..exceptions import ReingestAborted
 from ..function_registry import TYPE_SPACE_KINDS
-from ..graph_updater import ReingestAborted
 from ..language_spec import csharp_partial_key_from_graph, get_language_for_extension
 from ..parser_loader import load_parsers
 from ..parsers.go import utils as go_utils

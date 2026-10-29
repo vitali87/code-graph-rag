@@ -379,7 +379,7 @@ class TestFingerprintStamping:
         _make_updater(py_project, mock_ingestor).run()
         _fingerprint_path(py_project).write_text(STALE_FINGERPRINT, encoding="utf-8")
 
-        real_hash = graph_updater._hash_file_with_bytes
+        real_hash = graph_updater.hash_file_with_bytes
 
         def refuse_module_b(filepath: Path) -> tuple[str, bytes] | None:
             if filepath.name == "module_b.py":
@@ -387,13 +387,13 @@ class TestFingerprintStamping:
             return real_hash(filepath)
 
         updater = _make_updater(py_project, mock_ingestor)
-        monkeypatch.setattr(graph_updater, "_hash_file_with_bytes", refuse_module_b)
+        monkeypatch.setattr(graph_updater, "hash_file_with_bytes", refuse_module_b)
         updater.run()
 
         stored = _fingerprint_path(py_project).read_text(encoding="utf-8").strip()
         assert stored == compute_parser_fingerprint(repo_path=py_project)
 
-        monkeypatch.setattr(graph_updater, "_hash_file_with_bytes", real_hash)
+        monkeypatch.setattr(graph_updater, "hash_file_with_bytes", real_hash)
         retry = _make_updater(py_project, mock_ingestor)
         assert retry._is_already_in_sync() is False
         retry.run()
@@ -414,7 +414,7 @@ class TestFingerprintStamping:
         _make_updater(py_project, mock_ingestor).run()
         _fingerprint_path(py_project).write_text(STALE_FINGERPRINT, encoding="utf-8")
 
-        real_hash = graph_updater._hash_file_with_bytes
+        real_hash = graph_updater.hash_file_with_bytes
         real_vanished = graph_updater._vanished
 
         def refuse_module_b(filepath: Path) -> tuple[str, bytes] | None:
@@ -426,7 +426,7 @@ class TestFingerprintStamping:
             return filepath.name == "module_b.py" or real_vanished(filepath)
 
         updater = _make_updater(py_project, mock_ingestor)
-        monkeypatch.setattr(graph_updater, "_hash_file_with_bytes", refuse_module_b)
+        monkeypatch.setattr(graph_updater, "hash_file_with_bytes", refuse_module_b)
         monkeypatch.setattr(graph_updater, "_vanished", module_b_gone)
         updater.run()
 
@@ -601,9 +601,9 @@ class TestFingerprintStamping:
         _make_updater(py_project, mock_ingestor).run()
         _make_updater(py_project, mock_ingestor).run()
 
-        from codebase_rag.graph_updater import _load_hash_cache
+        from codebase_rag.sync_state import load_hash_cache
 
-        hashes = _load_hash_cache(state_file(py_project, cs.HASH_CACHE_FILENAME))
+        hashes = load_hash_cache(state_file(py_project, cs.HASH_CACHE_FILENAME))
         assert cs.PARSER_FINGERPRINT_FILENAME not in hashes
 
     def test_stamp_file_does_not_break_fast_path(
@@ -700,12 +700,12 @@ class TestStampIO:
     ) -> None:
         # The stamp is a best-effort safeguard: a failed write must not
         # abort the sync that just succeeded.
-        from codebase_rag.graph_updater import _save_parser_fingerprint
+        from codebase_rag.sync_state import save_parser_fingerprint
 
         stamp_dir = state_file(tmp_path, cs.PARSER_FINGERPRINT_FILENAME)
         stamp_dir.mkdir()
 
-        _save_parser_fingerprint(stamp_dir, STALE_FINGERPRINT)
+        save_parser_fingerprint(stamp_dir, STALE_FINGERPRINT)
 
         assert any(str(stamp_dir) in m for m in warnings_sink)
 

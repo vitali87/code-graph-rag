@@ -6,7 +6,7 @@ import pytest
 from mcp.types import ImageContent, TextContent
 
 from codebase_rag import constants as cs
-from codebase_rag.graph_updater import ReingestAborted
+from codebase_rag.exceptions import ReingestAborted
 from codebase_rag.mcp.client import query_mcp_server
 from codebase_rag.mcp.tools import MCPToolsRegistry
 
@@ -2682,7 +2682,8 @@ class TestIncompleteMarkerInvariant:
         A prologue failure must leave the flag False: `_hydrate_for_reingest`
         raising is converted to `ReingestAborted` before any delete or write.
         """
-        from codebase_rag.graph_updater import GraphUpdater, ReingestAborted
+        from codebase_rag.exceptions import ReingestAborted
+        from codebase_rag.graph_updater import GraphUpdater
         from codebase_rag.parser_loader import load_parsers
         from evals.recorded_graph import RecordingIngestor
 
@@ -2958,7 +2959,8 @@ class TestIncompleteMarkerInvariant:
         first `execute_write` -- the delete of the re-parsed module -- and
         that is what is ordered against here.
         """
-        from codebase_rag.graph_updater import GraphUpdater, ReingestAborted
+        from codebase_rag.exceptions import ReingestAborted
+        from codebase_rag.graph_updater import GraphUpdater
         from codebase_rag.parser_loader import load_parsers
         from evals.recorded_graph import RecordingIngestor
 

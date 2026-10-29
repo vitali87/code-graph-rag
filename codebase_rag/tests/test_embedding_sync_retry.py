@@ -477,8 +477,8 @@ def _pending(repo: Path) -> set[str]:
 
 
 def _owe(repo: Path, project: str) -> None:
-    gu._save_embeddings_owed(
-        gu._embeddings_marker(state_file(repo, ""), project), project, True
+    gu.save_embeddings_owed(
+        gu.embeddings_marker(state_file(repo, ""), project), project, True
     )
 
 
@@ -584,7 +584,7 @@ class TestEachProjectOwesItsOwn:
         # has decided what to write when svc's failed pass records its debt,
         # and other's write lands after it. svc's next sync must retry.
         _sync(repo, graph, {1: _KEEP}, source=_SOURCE_KEEP_ONLY)
-        real_save = gu._save_embeddings_owed
+        real_save = gu.save_embeddings_owed
         armed = True
 
         def save_after_svc_fails(*args: Path | str | bool | frozenset[str]) -> None:
@@ -595,7 +595,7 @@ class TestEachProjectOwesItsOwn:
                     _sync(repo, graph, {2: _KEEP}, source=_SOURCE_KEEP_EDITED)
             real_save(*args)
 
-        with patch.object(gu, "_save_embeddings_owed", save_after_svc_fails):
+        with patch.object(gu, "save_embeddings_owed", save_after_svc_fails):
             _sync(repo / _MODULE, graph, {7: _OTHER_KEEP}, project=_OTHER)
         assert armed is False
 
@@ -698,7 +698,7 @@ class TestEachProjectOwesItsOwn:
 def _no_room_for(repo: Path, project: str) -> Iterator[list[Path]]:
     """Fail the write of `project`'s marker as a full disk does, while its
     removal and every other file still go through. Yields the refused paths."""
-    target = gu._embeddings_marker(state_file(repo, ""), project)
+    target = gu.embeddings_marker(state_file(repo, ""), project)
     real_write = Path.write_text
     refused: list[Path] = []
 
@@ -723,7 +723,7 @@ class TestSplittingTheSharedMarker:
         with _store_down():
             _sync(repo, graph, {7: _OTHER_KEEP}, project=_OTHER)
         assert _pending(repo) == {_OTHER}
-        gu._embeddings_marker(state_file(repo, ""), _OTHER).unlink()
+        gu.embeddings_marker(state_file(repo, ""), _OTHER).unlink()
         _shared_marker(repo).write_text(json.dumps([_OTHER]), encoding="utf-8")
 
     def test_a_failed_write_keeps_the_shared_marker_and_the_retry(

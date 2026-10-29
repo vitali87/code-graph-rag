@@ -19,8 +19,9 @@ from codebase_rag import logs as ls
 from codebase_rag import structural_delta as sd
 from codebase_rag import tool_errors as te
 from codebase_rag.config import project_ignore_sets
+from codebase_rag.exceptions import ReingestAborted
 from codebase_rag.gloss_anchor import ParsedSource, SourceReader, parse_source
-from codebase_rag.graph_updater import GraphUpdater, ReingestAborted
+from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.models import ToolMetadata
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services import QueryProtocol

@@ -325,12 +325,12 @@ def test_jar_version_change_alone_marks_the_state_changed(
 
 
 def test_corrupt_state_file_degrades_to_the_empty_state(tmp_path: Path) -> None:
-    from codebase_rag.graph_updater import _load_delombok_state
+    from codebase_rag.sync_state import load_delombok_state
 
     state = tmp_path / "state.json"
     for payload in ('{"keys": null}', "[1, 2]", "not json", '{"identity": 5}'):
         state.write_text(payload, encoding="utf-8")
-        loaded = _load_delombok_state(state)
+        loaded = load_delombok_state(state)
         assert loaded == {"identity": "", "keys": [], "lombok": ""}
 
 

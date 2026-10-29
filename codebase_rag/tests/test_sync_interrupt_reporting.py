@@ -518,7 +518,7 @@ class TestAnInterruptAroundTheCommit:
         # Stopped part-way through saving its state, the run cannot vouch for
         # the graph; the next sync re-checks it.
         with patch(
-            "codebase_rag.graph_updater._publish_hash_cache",
+            "codebase_rag.graph_updater.publish_hash_cache",
             side_effect=KeyboardInterrupt,
         ):
             exit_code, output = _invoke_update_graph(py_project)

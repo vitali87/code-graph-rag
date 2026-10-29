@@ -26,7 +26,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag.constants import EventType
-from codebase_rag.graph_updater import ReingestAborted
+from codebase_rag.exceptions import ReingestAborted
 from codebase_rag.watch import CodeChangeEventHandler
 
 

@@ -318,3 +318,16 @@ class SyncInterrupted(KeyboardInterrupt):  # NOSONAR
     from a plain interrupt so the command can say so: that would be false of
     one that landed before the sync wrote anything.
     """
+
+
+class ReingestAborted(RuntimeError):
+    """`reingest()` gave up before its first delete or content write.
+
+    Raised for a graph read that failed while the call was still gathering
+    what it needs (the module paths, the inbound edges). Nothing has been
+    deleted and no definition has been rewritten; the only writes a fresh
+    updater may have issued by then are the idempotent Package and Folder
+    upserts of its structure hydration, which leave the graph as it was.
+    A caller keeps its updater and may simply retry, unlike a failure
+    after the deletes began.
+    """

@@ -12,17 +12,20 @@ from loguru import logger
 
 from codebase_rag import constants as cs
 from codebase_rag import graph_updater as graph_updater_module
+from codebase_rag import sync_state
 from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import (
     BoundedASTCache,
     FunctionRegistryTrie,
     GraphUpdater,
-    _hash_file,
-    _hash_file_with_bytes,
-    _load_hash_cache,
-    _publish_hash_cache,
 )
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.sync_state import (
+    hash_file,
+    hash_file_with_bytes,
+    load_hash_cache,
+    publish_hash_cache,
+)
 from codebase_rag.tests.conftest import force_mtime_after_cache
 
 
@@ -150,7 +153,7 @@ class TestHashFile:
     def test_hash_returns_hex_string(self, temp_repo: Path) -> None:
         f = temp_repo / "test.py"
         f.write_text("hello")
-        result = _hash_file(f)
+        result = hash_file(f)
         assert isinstance(result, str)
         assert len(result) == 32
 
@@ -159,56 +162,56 @@ class TestHashFile:
         f2 = temp_repo / "b.py"
         f1.write_text("same content")
         f2.write_text("same content")
-        assert _hash_file(f1) == _hash_file(f2)
+        assert hash_file(f1) == hash_file(f2)
 
     def test_different_content_different_hash(self, temp_repo: Path) -> None:
         f1 = temp_repo / "a.py"
         f2 = temp_repo / "b.py"
         f1.write_text("content one")
         f2.write_text("content two")
-        assert _hash_file(f1) != _hash_file(f2)
+        assert hash_file(f1) != hash_file(f2)
 
     def test_hash_with_bytes_returns_none_for_broken_symlink(
         self, temp_repo: Path
     ) -> None:
         link = temp_repo / "result"
         link.symlink_to(temp_repo / "missing-target")
-        assert _hash_file_with_bytes(link) is None
+        assert hash_file_with_bytes(link) is None
 
     def test_hash_with_bytes_returns_none_for_missing_file(
         self, temp_repo: Path
     ) -> None:
-        assert _hash_file_with_bytes(temp_repo / "does-not-exist") is None
+        assert hash_file_with_bytes(temp_repo / "does-not-exist") is None
 
 
 class TestHashCacheIO:
     def test_save_and_load_cache(self, temp_repo: Path) -> None:
         cache_path = state_file(temp_repo, cs.HASH_CACHE_FILENAME)
         data = {"module_a.py": "abc123", "module_b.py": "def456"}
-        _publish_hash_cache(cache_path, data, None)
+        publish_hash_cache(cache_path, data, None)
 
         assert cache_path.is_file()
-        loaded = _load_hash_cache(cache_path)
+        loaded = load_hash_cache(cache_path)
         assert loaded == data
 
     def test_load_nonexistent_returns_empty(self, temp_repo: Path) -> None:
         cache_path = state_file(temp_repo, cs.HASH_CACHE_FILENAME)
-        assert _load_hash_cache(cache_path) == {}
+        assert load_hash_cache(cache_path) == {}
 
     def test_load_corrupted_returns_empty(self, temp_repo: Path) -> None:
         cache_path = state_file(temp_repo, cs.HASH_CACHE_FILENAME)
         cache_path.write_text("not valid json {{{")
-        assert _load_hash_cache(cache_path) == {}
+        assert load_hash_cache(cache_path) == {}
 
     def test_save_creates_parent_dirs(self, temp_repo: Path) -> None:
         cache_path = temp_repo / "subdir" / "nested" / cs.HASH_CACHE_FILENAME
-        _publish_hash_cache(cache_path, {"a.py": "hash1"}, None)
+        publish_hash_cache(cache_path, {"a.py": "hash1"}, None)
         assert cache_path.is_file()
 
     def test_cache_file_is_valid_json(self, temp_repo: Path) -> None:
         cache_path = state_file(temp_repo, cs.HASH_CACHE_FILENAME)
         data = {"file.py": "sha256hash"}
-        _publish_hash_cache(cache_path, data, None)
+        publish_hash_cache(cache_path, data, None)
         with cache_path.open() as f:
             parsed = json.load(f)
         assert parsed == data
@@ -472,7 +475,7 @@ class TestCrashBetweenCacheSaveAndFlush:
         )
 
         edited = "def b():\n    return 999\n"
-        real_save = graph_updater_module._publish_hash_cache
+        real_save = graph_updater_module.publish_hash_cache
 
         reached_write_site = False
 
@@ -496,16 +499,14 @@ class TestCrashBetweenCacheSaveAndFlush:
             # advance past a cache that never landed.
             return bool(real_save(path, hashes, observed_at))
 
-        monkeypatch.setattr(
-            graph_updater_module, "_publish_hash_cache", _edit_then_save
-        )
+        monkeypatch.setattr(graph_updater_module, "publish_hash_cache", _edit_then_save)
         GraphUpdater(
             ingestor=mock_ingestor,
             repo_path=py_project,
             parsers=parsers,
             queries=queries,
         ).run()
-        monkeypatch.setattr(graph_updater_module, "_publish_hash_cache", real_save)
+        monkeypatch.setattr(graph_updater_module, "publish_hash_cache", real_save)
 
         # Three guards, each catching a different lie. The first two are what
         # caught two wrong versions of this test: an edit placed in `flush_all`
@@ -562,7 +563,7 @@ class TestCrashBetweenCacheSaveAndFlush:
         target = py_project / "module_b.py"
         target.write_text("def b():\n    return 2\n", encoding="utf-8")
 
-        real_hash = graph_updater_module._hash_file_with_bytes
+        real_hash = graph_updater_module.hash_file_with_bytes
         raced = "def b():\n    return 999\n"
         fired = False
 
@@ -583,7 +584,7 @@ class TestCrashBetweenCacheSaveAndFlush:
             return result
 
         monkeypatch.setattr(
-            graph_updater_module, "_hash_file_with_bytes", _hash_then_edit
+            graph_updater_module, "hash_file_with_bytes", _hash_then_edit
         )
         GraphUpdater(
             ingestor=mock_ingestor,
@@ -591,7 +592,7 @@ class TestCrashBetweenCacheSaveAndFlush:
             parsers=parsers,
             queries=queries,
         ).run()
-        monkeypatch.setattr(graph_updater_module, "_hash_file_with_bytes", real_hash)
+        monkeypatch.setattr(graph_updater_module, "hash_file_with_bytes", real_hash)
 
         assert fired, (
             "the wrapper never fired, so no edit raced the loop and the "
@@ -627,7 +628,7 @@ class TestCrashBetweenCacheSaveAndFlush:
         contract those tests existed for survives and is what this asserts:
         indexing work must not be forfeited because a cache could not be
         written. All three publish steps are refused, but the write is the one
-        that fires - it short-circuits `_publish_hash_cache` before the stamp
+        that fires - it short-circuits `publish_hash_cache` before the stamp
         or the rename is reached - so the `utime` and `replace` refusals stand
         as guards against a future reordering rather than as live assertions.
         The cleanup branch they leave unexercised is covered by the test
@@ -693,9 +694,9 @@ class TestCrashBetweenCacheSaveAndFlush:
             return real_replace(src, dst, **kwargs)
 
         monkeypatch.setattr(Path, "open", _refuse_open)
-        monkeypatch.setattr(graph_updater_module.os, "open", _refuse_os_open)
-        monkeypatch.setattr(graph_updater_module.os, "utime", _refuse_utime)
-        monkeypatch.setattr(graph_updater_module.os, "replace", _refuse_replace)
+        monkeypatch.setattr(sync_state.os, "open", _refuse_os_open)
+        monkeypatch.setattr(sync_state.os, "utime", _refuse_utime)
+        monkeypatch.setattr(sync_state.os, "replace", _refuse_replace)
         # Must COMPLETE: a cache that cannot be written is not a failed run.
         GraphUpdater(
             ingestor=mock_ingestor,
@@ -703,9 +704,9 @@ class TestCrashBetweenCacheSaveAndFlush:
             parsers=parsers,
             queries=queries,
         ).run()
-        monkeypatch.setattr(graph_updater_module.os, "replace", real_replace)
-        monkeypatch.setattr(graph_updater_module.os, "utime", real_utime)
-        monkeypatch.setattr(graph_updater_module.os, "open", real_os_open)
+        monkeypatch.setattr(sync_state.os, "replace", real_replace)
+        monkeypatch.setattr(sync_state.os, "utime", real_utime)
+        monkeypatch.setattr(sync_state.os, "open", real_os_open)
         monkeypatch.setattr(Path, "open", real_open)
 
         assert "write" in refused, (
@@ -851,7 +852,7 @@ class TestCrashBetweenCacheSaveAndFlush:
 
         messages: list[str] = []
         sink_id = graph_updater_module.logger.add(messages.append, level="WARNING")
-        monkeypatch.setattr(graph_updater_module.os, "replace", _refuse_replace)
+        monkeypatch.setattr(sync_state.os, "replace", _refuse_replace)
         monkeypatch.setattr(Path, "unlink", _refuse_unlink)
         GraphUpdater(
             ingestor=mock_ingestor,
@@ -860,7 +861,7 @@ class TestCrashBetweenCacheSaveAndFlush:
             queries=queries,
         ).run()
         monkeypatch.setattr(Path, "unlink", real_unlink)
-        monkeypatch.setattr(graph_updater_module.os, "replace", real_replace)
+        monkeypatch.setattr(sync_state.os, "replace", real_replace)
         # Removed here rather than left to the session: a sink that outlives
         # this test appends to `messages` for every later test that warns.
         graph_updater_module.logger.remove(sink_id)
@@ -923,8 +924,8 @@ class TestCrashBetweenCacheSaveAndFlush:
             "def added():\n    return 1\n", encoding="utf-8"
         )
 
-        real_publish = graph_updater_module._publish_hash_cache
-        real_dir_mtimes = graph_updater_module._save_dir_mtimes
+        real_publish = graph_updater_module.publish_hash_cache
+        real_dir_mtimes = graph_updater_module.save_dir_mtimes
         order: list[str] = []
 
         def _publish_unless_second(
@@ -935,7 +936,7 @@ class TestCrashBetweenCacheSaveAndFlush:
                 return bool(real_publish(path, hashes, observed_at))
             # The STOP this test models is the process dying between the two
             # publishes, not a publish that failed. Reporting success is what
-            # keeps the caller reaching `_save_dir_mtimes`, which is the call
+            # keeps the caller reaching `save_dir_mtimes`, which is the call
             # whose ordering is under test.
             return True
 
@@ -945,10 +946,10 @@ class TestCrashBetweenCacheSaveAndFlush:
                 real_dir_mtimes(path, mtimes)
 
         monkeypatch.setattr(
-            graph_updater_module, "_publish_hash_cache", _publish_unless_second
+            graph_updater_module, "publish_hash_cache", _publish_unless_second
         )
         monkeypatch.setattr(
-            graph_updater_module, "_save_dir_mtimes", _dir_mtimes_unless_second
+            graph_updater_module, "save_dir_mtimes", _dir_mtimes_unless_second
         )
         GraphUpdater(
             ingestor=mock_ingestor,
@@ -956,8 +957,8 @@ class TestCrashBetweenCacheSaveAndFlush:
             parsers=parsers,
             queries=queries,
         ).run()
-        monkeypatch.setattr(graph_updater_module, "_publish_hash_cache", real_publish)
-        monkeypatch.setattr(graph_updater_module, "_save_dir_mtimes", real_dir_mtimes)
+        monkeypatch.setattr(graph_updater_module, "publish_hash_cache", real_publish)
+        monkeypatch.setattr(graph_updater_module, "save_dir_mtimes", real_dir_mtimes)
 
         assert order == ["hash_cache", "dir_mtimes"], (
             "the commit point did not publish the hash cache first, so the "
@@ -1062,13 +1063,13 @@ class TestCrashBetweenCacheSaveAndFlush:
         mock_ingestor.execute_write = MagicMock(side_effect=_record_write)
         mock_ingestor.flush_all = MagicMock(side_effect=_record_flush)
 
-        real_publish = graph_updater_module._publish_hash_cache
+        real_publish = graph_updater_module.publish_hash_cache
 
         def _record_publish(*args: object, **kwargs: object) -> None:
             order.append("cache_commit")
             real_publish(*args, **kwargs)  # type: ignore[arg-type]
 
-        with patch.object(graph_updater_module, "_publish_hash_cache", _record_publish):
+        with patch.object(graph_updater_module, "publish_hash_cache", _record_publish):
             GraphUpdater(
                 ingestor=mock_ingestor,
                 repo_path=py_project,
@@ -1275,7 +1276,7 @@ class TestFastPathInSync:
         )
 
     def test_a_stamp_that_cannot_be_read_is_not_trusted(self, tmp_path: Path) -> None:
-        """The third answer `_trustworthy_cache_mtime` gives: unreadable.
+        """The third answer `trustworthy_cache_mtime` gives: unreadable.
 
         Both readers only reach it once `cache_path.is_file()` or the fast
         path's own checks said the cache exists, so a failing `stat` here is a
@@ -1294,7 +1295,7 @@ class TestFastPathInSync:
         with pytest.raises(OSError):
             unreadable.stat()  # fixture guard: the stat must actually fail
 
-        assert graph_updater_module._trustworthy_cache_mtime(unreadable) == 0.0
+        assert sync_state.trustworthy_cache_mtime(unreadable) == 0.0
 
         # The control: a readable, sane stamp is returned as it is, so the
         # 0.0 above is the OSError branch and not a helper that always
@@ -1302,7 +1303,7 @@ class TestFastPathInSync:
         readable = tmp_path / "cache.json"
         readable.write_text("{}", encoding="utf-8")
         os.utime(readable, (1_000_000.0, 1_000_000.0))
-        assert graph_updater_module._trustworthy_cache_mtime(readable) == 1_000_000.0
+        assert sync_state.trustworthy_cache_mtime(readable) == 1_000_000.0
 
     def test_a_future_stamp_does_not_skip_an_edit_in_the_hashing_loop(
         self, py_project: Path, mock_ingestor: MagicMock
@@ -1355,7 +1356,7 @@ class TestFastPathInSync:
         # proceeds, and it is the persisted stale hash that loses the edit for
         # every later run.
         cached = json.loads(cache.read_text(encoding="utf-8")).get("module_a.py")
-        assert cached == _hash_file(py_project / "module_a.py"), (
+        assert cached == hash_file(py_project / "module_a.py"), (
             "the hashing loop skipped the edited file against a future stamp "
             "and persisted its stale hash, so no later run sees the edit"
         )
@@ -2180,7 +2181,7 @@ class TestHashCachePublishSymlinkSafety:
         planted = cache_path.with_name(f"{cache_path.name}.{os.getpid()}.tmp")
         planted.symlink_to(victim)
 
-        published = graph_updater_module._publish_hash_cache(
+        published = sync_state.publish_hash_cache(
             cache_path, {"a.py": "deadbeef"}, None
         )
 
@@ -2219,9 +2220,7 @@ class TestHashCachePublishSymlinkSafety:
         cache_path = tmp_path / "cache.json"
         with patch.object(os, "open", _record):
             for _ in range(2):
-                graph_updater_module._publish_hash_cache(
-                    cache_path, {"a.py": "x"}, None
-                )
+                sync_state.publish_hash_cache(cache_path, {"a.py": "x"}, None)
 
         assert len(seen) == 2, (
             "two publishes to the SAME cache path reused one temporary name, "
@@ -2250,7 +2249,7 @@ class TestHashCachePublishSymlinkSafety:
         victim.write_text("precious\n", encoding="utf-8")
         before = victim.stat().st_mtime
 
-        real_open = graph_updater_module._open_exclusive_temp
+        real_open = sync_state._open_exclusive_temp
 
         def _swap_after_create(path: Path) -> tuple[int, str]:
             fd, name = real_open(path)
@@ -2258,11 +2257,9 @@ class TestHashCachePublishSymlinkSafety:
             os.symlink(victim, name)
             return fd, name
 
-        monkeypatch.setattr(
-            graph_updater_module, "_open_exclusive_temp", _swap_after_create
-        )
+        monkeypatch.setattr(sync_state, "_open_exclusive_temp", _swap_after_create)
 
-        published = graph_updater_module._publish_hash_cache(
+        published = sync_state.publish_hash_cache(
             cache_path, {"a.py": "deadbeef"}, 1_000_000.0
         )
 
@@ -2304,7 +2301,7 @@ class TestHashCachePublishSymlinkSafety:
         victim.write_text("precious\n", encoding="utf-8")
         before = victim.stat().st_mtime
 
-        real_open = graph_updater_module._open_exclusive_temp
+        real_open = sync_state._open_exclusive_temp
 
         def _swap_after_create(path: Path) -> tuple[int, str]:
             fd, name = real_open(path)
@@ -2313,19 +2310,15 @@ class TestHashCachePublishSymlinkSafety:
             return fd, name
 
         # First: the ordinary path, which must stamp.
-        assert graph_updater_module._publish_hash_cache(
-            cache_path, {"a.py": "x"}, 1_000_000.0
-        )
+        assert sync_state.publish_hash_cache(cache_path, {"a.py": "x"}, 1_000_000.0)
         assert int(cache_path.stat().st_mtime) == 1_000_000, (
             "the fallback branch did not apply the timestamp, so a later run "
             "reads the write time and may skip edits made during this one"
         )
 
         # Then: the same branch under the post-creation swap.
-        monkeypatch.setattr(
-            graph_updater_module, "_open_exclusive_temp", _swap_after_create
-        )
-        published = graph_updater_module._publish_hash_cache(
+        monkeypatch.setattr(sync_state, "_open_exclusive_temp", _swap_after_create)
+        published = sync_state.publish_hash_cache(
             tmp_path / "cache2.json", {"a.py": "y"}, 2_000_000.0
         )
         assert victim.stat().st_mtime == before, (
@@ -2363,14 +2356,14 @@ class TestHashCachePublishSymlinkSafety:
             "supports_follow_symlinks",
             frozenset(x for x in os.supports_follow_symlinks if x is not os.utime),
         )
-        monkeypatch.setattr(graph_updater_module, "_WINDOWS", True)
+        monkeypatch.setattr(sync_state, "_WINDOWS", True)
         assert os.utime not in os.supports_fd
         assert os.utime not in os.supports_follow_symlinks
 
         cache_path = tmp_path / "cache.json"
-        assert graph_updater_module._publish_hash_cache(
-            cache_path, {"a.py": "x"}, 1_000_000.0
-        ), "the Windows-shaped publish was declined"
+        assert sync_state.publish_hash_cache(cache_path, {"a.py": "x"}, 1_000_000.0), (
+            "the Windows-shaped publish was declined"
+        )
         assert int(cache_path.stat().st_mtime) == 1_000_000, (
             "the Windows-shaped publish landed without its stamp"
         )
@@ -2378,7 +2371,7 @@ class TestHashCachePublishSymlinkSafety:
         victim = tmp_path / "victim.txt"
         victim.write_text("precious\n", encoding="utf-8")
         before = victim.stat().st_mtime
-        real_open = graph_updater_module._open_exclusive_temp
+        real_open = sync_state._open_exclusive_temp
 
         def _swap_after_create(path: Path) -> tuple[int, str]:
             fd, name = real_open(path)
@@ -2386,10 +2379,8 @@ class TestHashCachePublishSymlinkSafety:
             os.symlink(victim, name)
             return fd, name
 
-        monkeypatch.setattr(
-            graph_updater_module, "_open_exclusive_temp", _swap_after_create
-        )
-        published = graph_updater_module._publish_hash_cache(
+        monkeypatch.setattr(sync_state, "_open_exclusive_temp", _swap_after_create)
+        published = sync_state.publish_hash_cache(
             tmp_path / "cache2.json", {"a.py": "y"}, 2_000_000.0
         )
         assert not published, "a publish over a swapped link must refuse"
@@ -2419,15 +2410,15 @@ class TestHashCachePublishSymlinkSafety:
         # Forced off rather than asserted: the decline branch is keyed on the
         # module flag, not on the host, so it can and should run on the
         # Windows job too (a guard here went red there, #1701 CI).
-        monkeypatch.setattr(graph_updater_module, "_WINDOWS", False)
+        monkeypatch.setattr(sync_state, "_WINDOWS", False)
         stamps: list[tuple] = []
         monkeypatch.setattr(
-            graph_updater_module.os, "utime", lambda *a, **k: stamps.append((a, k))
+            sync_state.os, "utime", lambda *a, **k: stamps.append((a, k))
         )
-        assert graph_updater_module.os.utime not in os.supports_fd, (
+        assert sync_state.os.utime not in os.supports_fd, (
             "fixture guard: the descriptor branch was not disabled"
         )
-        assert graph_updater_module.os.utime not in os.supports_follow_symlinks, (
+        assert sync_state.os.utime not in os.supports_follow_symlinks, (
             "fixture guard: the no-follow branch was not disabled"
         )
 
@@ -2437,7 +2428,7 @@ class TestHashCachePublishSymlinkSafety:
         victim.write_text("precious\n", encoding="utf-8")
         before = victim.stat().st_mtime
 
-        real_open = graph_updater_module._open_exclusive_temp
+        real_open = sync_state._open_exclusive_temp
 
         def _swap_after_create(path: Path) -> tuple[int, str]:
             fd, name = real_open(path)
@@ -2446,7 +2437,7 @@ class TestHashCachePublishSymlinkSafety:
             return fd, name
 
         # The ordinary path first: with no safe stamp there is no publish.
-        published = graph_updater_module._publish_hash_cache(
+        published = sync_state.publish_hash_cache(
             cache_path, {"a.py": "x"}, 1_000_000.0
         )
         assert not published, "a publish that could not stamp safely reported success"
@@ -2459,10 +2450,8 @@ class TestHashCachePublishSymlinkSafety:
         )
 
         # Then under the swap, which is the case the old fallback got wrong.
-        monkeypatch.setattr(
-            graph_updater_module, "_open_exclusive_temp", _swap_after_create
-        )
-        published = graph_updater_module._publish_hash_cache(
+        monkeypatch.setattr(sync_state, "_open_exclusive_temp", _swap_after_create)
+        published = sync_state.publish_hash_cache(
             tmp_path / "cache2.json", {"a.py": "y"}, 2_000_000.0
         )
         assert not published
@@ -2476,8 +2465,8 @@ class TestHashCachePublishSymlinkSafety:
 
         # And a publish that has nothing to stamp still goes through: the
         # refusal is about the stamp, not about the platform.
-        monkeypatch.setattr(graph_updater_module, "_open_exclusive_temp", real_open)
-        assert graph_updater_module._publish_hash_cache(
+        monkeypatch.setattr(sync_state, "_open_exclusive_temp", real_open)
+        assert sync_state.publish_hash_cache(
             tmp_path / "cache3.json", {"a.py": "z"}, None
         ), "an unstamped publish must not be refused"
 
@@ -2500,10 +2489,10 @@ class TestReingestHashCachePublish:
         self, temp_repo: Path
     ) -> None:
         cache_path = state_file(temp_repo, cs.HASH_CACHE_FILENAME)
-        _publish_hash_cache(cache_path, {"a.py": "old"}, 1_700_000_000.0)
+        publish_hash_cache(cache_path, {"a.py": "old"}, 1_700_000_000.0)
         self._reingest(cache_path, b"x = 1\n")
         assert cache_path.stat().st_mtime == 1_700_000_000.0
-        assert _load_hash_cache(cache_path)["a.py"] != "old"
+        assert load_hash_cache(cache_path)["a.py"] != "old"
 
     @pytest.mark.skipif(sys.platform == "win32", reason="symlinks need privilege")
     def test_a_link_at_the_cache_path_is_replaced_not_written_through(

@@ -48,11 +48,11 @@ def test_a_cached_file_that_became_unreadable_does_not_end_the_run(
             raise PermissionError(13, "Permission denied", str(path))
         return gu.hashlib.md5(path.read_bytes(), usedforsecurity=False).hexdigest()
 
-    monkeypatch.setattr(gu, "_hash_file", unreadable)
-    real_with_bytes = gu._hash_file_with_bytes
+    monkeypatch.setattr(gu, "hash_file", unreadable)
+    real_with_bytes = gu.hash_file_with_bytes
     monkeypatch.setattr(
         gu,
-        "_hash_file_with_bytes",
+        "hash_file_with_bytes",
         lambda path: None if path.name == "b.py" else real_with_bytes(path),
     )
     updater = _make_updater(root, store)

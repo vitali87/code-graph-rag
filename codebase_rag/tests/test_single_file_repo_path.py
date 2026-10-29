@@ -450,7 +450,7 @@ class TestSingleFileRunScope:
 
         The assertion is on the LATER project run's deletes, not on the cache
         contents, because the cache is written either way -- `{}` by
-        `_touch_empty_json` when suppressed, `{"module_a.py": ...}` when not.
+        `touch_empty_json` when suppressed, `{"module_a.py": ...}` when not.
         Only the consequence one run later tells the two apart, which is the
         whole point of the finding (#1619 review, round 5).
         """

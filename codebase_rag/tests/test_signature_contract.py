@@ -20,7 +20,7 @@ from codebase_rag.editing.signature_spec import (
     UnmappedSite,
 )
 from codebase_rag.editing.transaction import TransactionConflict
-from codebase_rag.graph_updater import ReingestAborted
+from codebase_rag.exceptions import ReingestAborted
 from codebase_rag.structural_delta import StructuralDelta
 from codebase_rag.types_defs import ReingestReport
 

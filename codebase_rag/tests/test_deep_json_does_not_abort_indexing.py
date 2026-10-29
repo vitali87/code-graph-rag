@@ -15,16 +15,16 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag import exceptions as ex
 from codebase_rag.checkout_state import state_file
-from codebase_rag.graph_updater import (
-    _EMPTY_DELOMBOK_STATE,
-    GraphUpdater,
-    _load_delombok_state,
-    _load_dir_mtimes,
-    _load_exclusion_state,
-    _load_hash_cache,
-    _load_project_stamps,
-)
+from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.sync_state import (
+    empty_delombok_state,
+    load_delombok_state,
+    load_dir_mtimes,
+    load_exclusion_state,
+    load_hash_cache,
+    load_project_stamps,
+)
 from codebase_rag.utils.json_io import loads_json
 from evals.cgr_graph import StatefulIngestor
 
@@ -91,8 +91,8 @@ def test_deep_state_files_read_as_absent(temp_repo: Path) -> None:
     stamp = state_file(temp_repo, cs.EXCLUSION_STATE_FILENAME)
     stamp.write_text(_DEEP, encoding="utf-8")
 
-    assert _load_hash_cache(cache) == {}
-    assert _load_dir_mtimes(cache) == {}
-    assert _load_exclusion_state(stamp) is None
-    assert _load_project_stamps(stamp) == {}
-    assert _load_delombok_state(stamp) == _EMPTY_DELOMBOK_STATE
+    assert load_hash_cache(cache) == {}
+    assert load_dir_mtimes(cache) == {}
+    assert load_exclusion_state(stamp) is None
+    assert load_project_stamps(stamp) == {}
+    assert load_delombok_state(stamp) == empty_delombok_state()

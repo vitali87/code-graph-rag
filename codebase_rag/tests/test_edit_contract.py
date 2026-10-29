@@ -21,7 +21,8 @@ from codebase_rag.editing import (
 )
 from codebase_rag.editing.rename import rename
 from codebase_rag.editing.transaction import load_history
-from codebase_rag.graph_updater import GraphUpdater, ReingestAborted
+from codebase_rag.exceptions import ReingestAborted
+from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.structural_delta import StructuralDelta
 from codebase_rag.types_defs import PropertyDict, ResultRow

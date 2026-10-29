@@ -10,8 +10,8 @@ from pathlib import Path
 from loguru import logger
 
 from .. import constants as cs
+from ..exceptions import ReingestAborted
 from ..graph_query import QueryFn
-from ..graph_updater import ReingestAborted
 from .contract import Reingest, change_signature_expectation, measure, verify
 from .signature_spec import _CALL, SignatureReport
 from .transaction import TransactionConflict, undo_transaction

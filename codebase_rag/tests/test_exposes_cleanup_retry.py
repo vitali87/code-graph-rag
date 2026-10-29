@@ -57,9 +57,9 @@ def test_a_skipped_cleanup_refuses_the_in_sync_path_until_done(tmp_path: Path) -
     # skipped the cleanup does: the marker alone must refuse the fast path,
     # not the root's mtime moving.
     mtimes_path = state_file(root, cs.DIR_MTIMES_FILENAME)
-    mtimes = gu._load_dir_mtimes(mtimes_path)
+    mtimes = gu.load_dir_mtimes(mtimes_path)
     mtimes[cs.ROOT_DIR_KEY] = os.stat(root).st_mtime
-    gu._save_dir_mtimes(mtimes_path, mtimes)
+    gu.save_dir_mtimes(mtimes_path, mtimes)
     assert _updater(root, store)._is_already_in_sync() is False
     marker.unlink()
     assert _updater(root, store)._is_already_in_sync() is True, (
@@ -67,7 +67,7 @@ def test_a_skipped_cleanup_refuses_the_in_sync_path_until_done(tmp_path: Path) -
     )
     marker.touch()
     mtimes[cs.ROOT_DIR_KEY] = os.stat(root).st_mtime
-    gu._save_dir_mtimes(mtimes_path, mtimes)
+    gu.save_dir_mtimes(mtimes_path, mtimes)
 
     # A healthy batch run does the cleanups and settles what was owed. The
     # marker lives in the repository root, so removing it moves the root's

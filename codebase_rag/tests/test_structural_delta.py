@@ -887,8 +887,8 @@ def test_indexing_two_projects_on_one_tree_does_not_reuse_fast_path(
     temp_repo: Path,
 ) -> None:
     """A repository cache must not make a sibling project look indexed."""
-    from codebase_rag.graph_updater import _load_exclusion_state
     from codebase_rag.structural_check import indexed_scope, run_check
+    from codebase_rag.sync_state import load_exclusion_state
 
     root = temp_repo / PROJECT
     for rel, text in FIXTURE.items():
@@ -988,7 +988,7 @@ def test_indexing_two_projects_on_one_tree_does_not_reuse_fast_path(
         str(properties.get(cs.KEY_QUALIFIED_NAME, "")).startswith("project_b.")
         for properties in store.nodes.values()
     )
-    assert _load_exclusion_state(state_file(root, cs.EXCLUSION_STATE_FILENAME)) == {
+    assert load_exclusion_state(state_file(root, cs.EXCLUSION_STATE_FILENAME)) == {
         "exclude": [],
         "unignore": [],
         "project": "project_a",
@@ -1037,9 +1037,9 @@ def test_unnamed_check_preserves_unnamed_stamp_after_reingest(
 ) -> None:
     import subprocess
 
-    from codebase_rag.graph_updater import _load_exclusion_state
     from codebase_rag.parser_loader import load_parsers
     from codebase_rag.structural_check import CheckError, indexed_scope, run_check
+    from codebase_rag.sync_state import load_exclusion_state
     from codebase_rag.utils.path_utils import derive_project_name
 
     root = temp_repo / PROJECT
@@ -1081,7 +1081,7 @@ def test_unnamed_check_preserves_unnamed_stamp_after_reingest(
 
     assert indexed_scope(root, project_name) == (None, None)
     # The check left the stamp as the unnamed run wrote it.
-    stamp = _load_exclusion_state(state_file(root, cs.EXCLUSION_STATE_FILENAME))
+    stamp = load_exclusion_state(state_file(root, cs.EXCLUSION_STATE_FILENAME))
     assert stamp is not None, stamp
     assert not stamp.get("named"), stamp
     with pytest.raises(CheckError):

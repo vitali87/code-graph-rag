@@ -209,14 +209,14 @@ class TestCachelessRebuild:
         state_file(repo, cs.DIR_MTIMES_FILENAME).unlink()
         import codebase_rag.graph_updater as gu
 
-        real_hash = gu._hash_file_with_bytes
+        real_hash = gu.hash_file_with_bytes
 
         def failing_hash(path: Path) -> tuple[str, bytes] | None:
             if path.name == "locked.py":
                 return None
             return real_hash(path)
 
-        monkeypatch.setattr(gu, "_hash_file_with_bytes", failing_hash)
+        monkeypatch.setattr(gu, "hash_file_with_bytes", failing_hash)
         _index(memgraph_ingestor, repo)
 
         rows = memgraph_ingestor.fetch_all(

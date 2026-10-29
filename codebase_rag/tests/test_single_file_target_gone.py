@@ -141,7 +141,7 @@ def test_a_target_deleted_during_hashing_is_a_deletion_too(temp_repo: Path) -> N
     cache_mtime = state_file(temp_repo, cs.HASH_CACHE_FILENAME).stat().st_mtime
     os.utime(target, (cache_mtime + 2, cache_mtime + 2))
     updater = _create_graph_updater(target, store)
-    real_hash = graph_updater_module._hash_file_with_bytes
+    real_hash = graph_updater_module.hash_file_with_bytes
 
     def _vanish_then_hash(path: Path):
         # The updater hashes its RESOLVED target (`/private/var/...` for a
@@ -151,7 +151,7 @@ def test_a_target_deleted_during_hashing_is_a_deletion_too(temp_repo: Path) -> N
         return real_hash(path)
 
     with (
-        patch.object(graph_updater_module, "_hash_file_with_bytes", _vanish_then_hash),
+        patch.object(graph_updater_module, "hash_file_with_bytes", _vanish_then_hash),
         patch.object(store, "execute_write", wraps=store.execute_write) as spy,
     ):
         updater.run()
@@ -192,7 +192,7 @@ def test_an_unreadable_but_present_target_is_not_treated_as_deleted(
     updater = _create_graph_updater(target, store)
 
     with (
-        patch.object(graph_updater_module, "_hash_file_with_bytes", return_value=None),
+        patch.object(graph_updater_module, "hash_file_with_bytes", return_value=None),
         patch.object(store, "execute_write", wraps=store.execute_write) as spy,
     ):
         updater.run()

@@ -46,7 +46,8 @@ from .constants import (
     WATCHER_SLEEP_INTERVAL,
     EventType,
 )
-from .graph_updater import GraphUpdater, ReingestAborted
+from .exceptions import ReingestAborted
+from .graph_updater import GraphUpdater
 from .parser_loader import load_parsers
 from .services import IngestorProtocol
 from .services.graph_service import MemgraphIngestor

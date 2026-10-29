@@ -34,9 +34,10 @@ from .capture import CaptureSelection, default_capture
 from .check_isolation import GraphStore, IsolationGuard
 from .checkout_state import state_file
 from .config import project_ignore_sets
-from .graph_updater import GraphUpdater, _load_exclusion_state, _load_project_stamps
+from .graph_updater import GraphUpdater
 from .services import QueryingIngestorProtocol
 from .structural_delta import StructuralDelta, normalise_paths, observe
+from .sync_state import load_exclusion_state, load_project_stamps
 from .types_defs import LanguageQueries, PropertyDict, ReingestReport
 from .utils.path_utils import derive_project_name, should_skip_path
 
@@ -210,14 +211,14 @@ def indexed_scope(
     files it deliberately kept.
     """
     state_path = state_file(repo_root, cs.EXCLUSION_STATE_FILENAME)
-    stored = _load_exclusion_state(state_path)
+    stored = load_exclusion_state(state_path)
     # Every project indexed from this tree keeps its own entry, so one that
     # a later project's run overwrote at the top level still has its scope
     # (issue #1987). Its ownership is judged by the same rule as the
     # top-level stamp below; with no entry that is this project's, the
     # top-level stamp decides as it did before the map existed.
     own = _own_project_stamp(
-        _load_project_stamps(state_path), repo_root, project_name, explicit
+        load_project_stamps(state_path), repo_root, project_name, explicit
     )
     if own is not None:
         stored = own

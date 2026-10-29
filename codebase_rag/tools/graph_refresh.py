@@ -18,7 +18,8 @@ from .. import constants as cs
 from .. import cypher_queries as cq
 from .. import logs as ls
 from ..config import project_ignore_sets
-from ..graph_updater import GraphUpdater, ReingestAborted
+from ..exceptions import ReingestAborted
+from ..graph_updater import GraphUpdater
 from ..parser_loader import load_parsers
 from ..services import IngestorProtocol, QueryProtocol
 from ..sync_guard import WriteMarker, marked_reingest, marked_run, sync_owner

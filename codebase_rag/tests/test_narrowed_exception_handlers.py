@@ -7,16 +7,16 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from codebase_rag.graph_updater import _load_dir_mtimes
 from codebase_rag.stack import health
 from codebase_rag.stack.health import _http_reachable
+from codebase_rag.sync_state import load_dir_mtimes
 
 
 def test_load_dir_mtimes_reads_a_valid_cache(tmp_path: Path) -> None:
     cache = tmp_path / "dir_mtimes.json"
     cache.write_text(json.dumps({"src": 1.5, "lib": 2, "bad": "x"}), encoding="utf-8")
 
-    assert _load_dir_mtimes(cache) == {"src": 1.5, "lib": 2.0}
+    assert load_dir_mtimes(cache) == {"src": 1.5, "lib": 2.0}
 
 
 @pytest.mark.parametrize(
@@ -33,7 +33,7 @@ def test_load_dir_mtimes_treats_an_unreadable_cache_as_empty(
     cache = tmp_path / "dir_mtimes.json"
     cache.write_bytes(payload)
 
-    assert _load_dir_mtimes(cache) == {}
+    assert load_dir_mtimes(cache) == {}
 
 
 def test_http_reachable_true_for_a_live_endpoint() -> None:
