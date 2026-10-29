@@ -27,8 +27,8 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.document_tier import DocumentTier, parse_front_matter
 from codebase_rag.sync.checkout_state import state_file
-from codebase_rag.tests.conftest import recorded_relationships
-from codebase_rag.types_defs import GraphNodeRecord, GraphRelRecord, PropertyDict
+from codebase_rag.tests.conftest import recorded_nodes, recorded_relationships
+from codebase_rag.types_defs import GraphRelRecord, PropertyDict
 from evals.cgr_graph import StatefulIngestor
 
 pytest.importorskip(
@@ -664,10 +664,7 @@ class TestSchemaAndDocs:
 
     def test_the_issue_repository_passes_the_audit(self, tmp_path: Path) -> None:
         mock = _run(tmp_path, ISSUE_REPO)
-        nodes = [
-            GraphNodeRecord(str(c.args[0]), c.args[1])
-            for c in mock.ensure_node_batch.call_args_list
-        ]
+        nodes = recorded_nodes(mock)
         rels = recorded_relationships(mock)
 
         assert ga.collect_violations(nodes, rels) == []

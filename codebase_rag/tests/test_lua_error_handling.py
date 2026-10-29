@@ -2,7 +2,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from codebase_rag.constants import NodeLabel
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_nodes, run_updater
 
 
 def test_lua_pcall_xpcall_patterns(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -274,11 +274,7 @@ end
 
     run_updater(project, mock_ingestor)
 
-    created_functions = [
-        c
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c[0][0] == NodeLabel.FUNCTION
-    ]
+    created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
     fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 
     safe_ops_qn = f"{project.name}.safe_ops"
@@ -652,11 +648,7 @@ end
 
     run_updater(project, mock_ingestor)
 
-    created_functions = [
-        c
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c[0][0] == NodeLabel.FUNCTION
-    ]
+    created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
     fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 
     debugger_qn = f"{project.name}.debugger"
@@ -914,11 +906,7 @@ end
 
     run_updater(project, mock_ingestor)
 
-    created_functions = [
-        c
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c[0][0] == NodeLabel.FUNCTION
-    ]
+    created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
     fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 
     exceptions_qn = f"{project.name}.exceptions"
@@ -1169,11 +1157,7 @@ print("Degraded operation result:", result, "degraded:", degraded)
 
     run_updater(project, mock_ingestor)
 
-    created_functions = [
-        c
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c[0][0] == NodeLabel.FUNCTION
-    ]
+    created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
     fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 
     resilience_qn = f"{project.name}.resilience"

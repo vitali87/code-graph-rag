@@ -2,7 +2,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from codebase_rag.constants import NodeLabel
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_nodes, run_updater
 
 
 def test_lua_basic_closures(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -122,11 +122,7 @@ print("Partial result:", add_5_10(3))  -- 5 + 10 + 3 = 18
 
     run_updater(project, mock_ingestor)
 
-    created_functions = [
-        c
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c[0][0] == NodeLabel.FUNCTION
-    ]
+    created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
     fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 
     closures_qn = f"{project.name}.closures"
@@ -363,11 +359,7 @@ print("Middleware result:", result)
 
     run_updater(project, mock_ingestor)
 
-    created_functions = [
-        c
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c[0][0] == NodeLabel.FUNCTION
-    ]
+    created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
     fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 
     decorators_qn = f"{project.name}.decorators"
@@ -591,11 +583,7 @@ events:emit("test", "Should not show regular listener")
 
     run_updater(project, mock_ingestor)
 
-    created_functions = [
-        c
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c[0][0] == NodeLabel.FUNCTION
-    ]
+    created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
     fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 
     events_qn = f"{project.name}.events"
@@ -865,11 +853,7 @@ print("Is -2 positive and even?", is_positive_and_even(-2))
 
     run_updater(project, mock_ingestor)
 
-    created_functions = [
-        c
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c[0][0] == NodeLabel.FUNCTION
-    ]
+    created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
     fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 
     functional_qn = f"{project.name}.functional"

@@ -6,7 +6,7 @@ import pytest
 from codebase_rag.constants import NodeLabel
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.tests.conftest import get_relationships
+from codebase_rag.tests.conftest import get_nodes, get_relationships
 
 
 def test_php_function_discovery(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -56,11 +56,7 @@ function standaloneFunction() {
     )
     updater.run()
 
-    created_functions = [
-        c
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c[0][0] == NodeLabel.FUNCTION
-    ]
+    created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
     fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 
     assert any(qn.endswith(".standaloneFunction") for qn in fn_qns), fn_qns
@@ -104,19 +100,11 @@ enum Role {
     )
     updater.run()
 
-    created_classes = [
-        c
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c[0][0] == NodeLabel.CLASS
-    ]
+    created_classes = get_nodes(mock_ingestor, NodeLabel.CLASS)
     class_names = {c[0][1]["qualified_name"] for c in created_classes}
     assert any("User" in n for n in class_names), class_names
 
-    created_interfaces = [
-        c
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c[0][0] == NodeLabel.INTERFACE
-    ]
+    created_interfaces = get_nodes(mock_ingestor, NodeLabel.INTERFACE)
     iface_names = {c[0][1]["qualified_name"] for c in created_interfaces}
     assert any("Serializable" in n for n in iface_names), iface_names
 

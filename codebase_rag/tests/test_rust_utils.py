@@ -12,6 +12,7 @@ from codebase_rag.parsers.rust.utils import (
     extract_impl_target,
     extract_use_imports,
 )
+from codebase_rag.tests.conftest import get_nodes
 
 
 def get_rust_parser():
@@ -455,11 +456,7 @@ impl User {
         )
         updater.run()
 
-        method_calls = [
-            call
-            for call in mock_ingestor.ensure_node_batch.call_args_list
-            if call[0][0] == "Method"
-        ]
+        method_calls = get_nodes(mock_ingestor, "Method")
 
         method_names = {call[0][1].get("qualified_name", "") for call in method_calls}
 

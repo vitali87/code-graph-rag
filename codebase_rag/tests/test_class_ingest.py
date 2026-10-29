@@ -6,7 +6,7 @@ import pytest
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.class_ingest import parent_extraction as pe
-from codebase_rag.tests.conftest import get_relationships, run_updater
+from codebase_rag.tests.conftest import get_nodes, get_relationships, run_updater
 
 
 @pytest.fixture
@@ -164,11 +164,7 @@ def test_typescript_interface_implementation(
 
     project_name = typescript_mixin_project.name
 
-    interface_nodes = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Interface"
-    ]
+    interface_nodes = get_nodes(mock_ingestor, "Interface")
 
     interface_qns = {call[0][1]["qualified_name"] for call in interface_nodes}
 
@@ -292,11 +288,7 @@ def test_rust_impl_methods_are_ingested(
 
     project_name = rust_impl_project.name
 
-    method_nodes = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Method"
-    ]
+    method_nodes = get_nodes(mock_ingestor, "Method")
 
     expected_methods = [
         f"{project_name}.lib.Point.new",
@@ -539,11 +531,7 @@ def test_java_interface_nodes_created(
 ) -> None:
     run_updater(java_interface_project, mock_ingestor, skip_if_missing="java")
 
-    interface_nodes = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Interface"
-    ]
+    interface_nodes = get_nodes(mock_ingestor, "Interface")
 
     interface_qns = {call[0][1]["qualified_name"] for call in interface_nodes}
 
@@ -603,11 +591,7 @@ def test_rust_inline_modules_are_ingested(
 ) -> None:
     run_updater(inline_module_project, mock_ingestor, skip_if_missing="rust")
 
-    module_nodes = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Module"
-    ]
+    module_nodes = get_nodes(mock_ingestor, "Module")
 
     module_names = {call[0][1].get("name", "") for call in module_nodes}
 
@@ -770,11 +754,7 @@ def test_nested_class_qualified_names(
 
     project_name = nested_class_project.name
 
-    class_nodes = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_nodes = get_nodes(mock_ingestor, "Class")
 
     class_qns = {call[0][1]["qualified_name"] for call in class_nodes}
 
@@ -796,11 +776,7 @@ def test_nested_class_method_qualified_names(
 
     project_name = nested_class_project.name
 
-    method_nodes = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Method"
-    ]
+    method_nodes = get_nodes(mock_ingestor, "Method")
 
     method_qns = {call[0][1]["qualified_name"] for call in method_nodes}
 
@@ -985,11 +961,7 @@ def test_js_class_expression_inheritance(
         js_class_expression_project, mock_ingestor, skip_if_missing="javascript"
     )
 
-    class_nodes = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_nodes = get_nodes(mock_ingestor, "Class")
 
     class_qns = {call[0][1]["qualified_name"] for call in class_nodes}
 
@@ -1003,11 +975,7 @@ def test_js_class_expression_methods(
         js_class_expression_project, mock_ingestor, skip_if_missing="javascript"
     )
 
-    method_nodes = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Method"
-    ]
+    method_nodes = get_nodes(mock_ingestor, "Method")
 
     method_names = {call[0][1].get("name", "") for call in method_nodes}
 
@@ -1090,11 +1058,7 @@ def test_cpp_template_class_methods(
 ) -> None:
     run_updater(cpp_template_class_project, mock_ingestor, skip_if_missing="cpp")
 
-    method_nodes = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Method"
-    ]
+    method_nodes = get_nodes(mock_ingestor, "Method")
 
     method_qns = {call[0][1]["qualified_name"] for call in method_nodes}
 
@@ -1257,11 +1221,7 @@ def test_go_struct_methods_are_ingested(
 
     project_name = go_struct_project.name
 
-    method_nodes = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Method"
-    ]
+    method_nodes = get_nodes(mock_ingestor, "Method")
 
     method_qns = {call[0][1]["qualified_name"] for call in method_nodes}
 
@@ -1283,11 +1243,7 @@ def test_go_interface_nodes_created(
 ) -> None:
     run_updater(go_struct_project, mock_ingestor, skip_if_missing="go")
 
-    interface_nodes = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Interface"
-    ]
+    interface_nodes = get_nodes(mock_ingestor, "Interface")
 
     interface_qns = {call[0][1]["qualified_name"] for call in interface_nodes}
 
@@ -1571,11 +1527,7 @@ def test_deeply_nested_classes_are_ingested(
 
     project_name = deeply_nested_class_project.name
 
-    class_nodes = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_nodes = get_nodes(mock_ingestor, "Class")
 
     class_qns = {call[0][1]["qualified_name"] for call in class_nodes}
 
@@ -1622,11 +1574,7 @@ def test_circular_inheritance_does_not_crash(
     )
     updater.run()
 
-    class_nodes = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_nodes = get_nodes(mock_ingestor, "Class")
 
     assert len(class_nodes) >= 3, "All three classes should be ingested"
 
@@ -1680,11 +1628,7 @@ def test_special_character_names_are_handled(
     )
     updater.run()
 
-    class_nodes = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == "Class"
-    ]
+    class_nodes = get_nodes(mock_ingestor, "Class")
 
     class_qns = {call[0][1]["qualified_name"] for call in class_nodes}
 

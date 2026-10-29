@@ -2,7 +2,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from codebase_rag.constants import NodeLabel
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_nodes, run_updater
 
 
 def test_lua_arithmetic_metamethods(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -100,11 +100,7 @@ print(tostring(scaled))
 
     run_updater(project, mock_ingestor)
 
-    created_functions = [
-        c
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c[0][0] == NodeLabel.FUNCTION
-    ]
+    created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
     fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 
     vector_qn = f"{project.name}.vector"
@@ -224,11 +220,7 @@ end
 
     run_updater(project, mock_ingestor)
 
-    created_functions = [
-        c
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c[0][0] == NodeLabel.FUNCTION
-    ]
+    created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
     fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 
     comp_qn = f"{project.name}.comparable"
@@ -392,11 +384,7 @@ print("Computed:", props.computed)
 
     run_updater(project, mock_ingestor)
 
-    created_functions = [
-        c
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c[0][0] == NodeLabel.FUNCTION
-    ]
+    created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
     fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 
     proxy_qn = f"{project.name}.proxy"
@@ -559,11 +547,7 @@ emitter("test", "Hello World")
 
     run_updater(project, mock_ingestor)
 
-    created_functions = [
-        c
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c[0][0] == NodeLabel.FUNCTION
-    ]
+    created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
     fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 
     callable_qn = f"{project.name}.callable"
@@ -766,11 +750,7 @@ print("Found by ID:", registry:get_by_id(id1).data)
 
     run_updater(project, mock_ingestor)
 
-    created_functions = [
-        c
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c[0][0] == NodeLabel.FUNCTION
-    ]
+    created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
     fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 
     weak_qn = f"{project.name}.weak_refs"

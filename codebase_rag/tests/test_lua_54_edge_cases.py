@@ -2,7 +2,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from codebase_rag.constants import NodeLabel
-from codebase_rag.tests.conftest import get_relationships, run_updater
+from codebase_rag.tests.conftest import get_nodes, get_relationships, run_updater
 
 
 def test_lua_54_goto_labels(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -220,11 +220,7 @@ print("State machine:", table.concat(machine_results, " -> "))
     try:
         pass
 
-        created_functions = [
-            c
-            for c in mock_ingestor.ensure_node_batch.call_args_list
-            if c[0][0] == NodeLabel.FUNCTION
-        ]
+        created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
         fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 
         goto_qn = f"{project.name}.goto_labels"
@@ -434,11 +430,7 @@ print("Decomposed length:", norm_results.decomposed_len)
     try:
         pass
 
-        created_functions = [
-            c
-            for c in mock_ingestor.ensure_node_batch.call_args_list
-            if c[0][0] == NodeLabel.FUNCTION
-        ]
+        created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
         fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 
         utf8_qn = f"{project.name}.utf8_lib"
@@ -688,11 +680,7 @@ end
     try:
         pass
 
-        created_functions = [
-            c
-            for c in mock_ingestor.ensure_node_batch.call_args_list
-            if c[0][0] == NodeLabel.FUNCTION
-        ]
+        created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
         fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 
         bitwise_qn = f"{project.name}.bitwise_ops"

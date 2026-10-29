@@ -2,7 +2,11 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from codebase_rag.constants import NodeLabel
-from codebase_rag.tests.conftest import create_and_run_updater, get_relationships
+from codebase_rag.tests.conftest import (
+    create_and_run_updater,
+    get_nodes,
+    get_relationships,
+)
 
 
 def test_lua_class_pattern_basic(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -153,11 +157,7 @@ local breed = myDog:getBreed()  -- Should call Dog's getBreed
     dog_qn = f"{project.name}.dog"
     main_qn = f"{project.name}.main"
 
-    created_functions = [
-        c
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c[0][0] == NodeLabel.FUNCTION
-    ]
+    created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
     fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 
     assert f"{animal_qn}.Animal:new" in fn_qns or f"{animal_qn}.Animal.new" in fn_qns
@@ -243,11 +243,7 @@ local quotient = calc.divide(20, 5)
     calc_qn = f"{project.name}.calculator"
     main_qn = f"{project.name}.main"
 
-    created_functions = [
-        c
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c[0][0] == NodeLabel.FUNCTION
-    ]
+    created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
     fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 
     assert f"{calc_qn}.Calculator.add" in fn_qns
@@ -334,11 +330,7 @@ local circle2 = shapes.createCircle(0, 0, 10)
     shape_qn = f"{project.name}.shape"
     main_qn = f"{project.name}.main"
 
-    created_functions = [
-        c
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c[0][0] == NodeLabel.FUNCTION
-    ]
+    created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
     fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 
     assert (
@@ -469,11 +461,7 @@ local name = user:getName()  -- From User itself
     user_qn = f"{project.name}.user"
     main_qn = f"{project.name}.main"
 
-    created_functions = [
-        c
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c[0][0] == NodeLabel.FUNCTION
-    ]
+    created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
     fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 
     assert (
@@ -573,11 +561,7 @@ config2:reset()
     config_qn = f"{project.name}.config"
     main_qn = f"{project.name}.main"
 
-    created_functions = [
-        c
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c[0][0] == NodeLabel.FUNCTION
-    ]
+    created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
     fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 
     assert (
