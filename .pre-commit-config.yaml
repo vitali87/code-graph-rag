@@ -76,6 +76,13 @@ repos:
         args: ["-c", "pyproject.toml", "--severity-level", "high"]
         additional_dependencies: ["bandit[toml]"]
         exclude: ^(codebase_rag/tests/|scripts/|benchmarks/|optimize/)
+  # Security audit of the workflows. It runs offline, so the audits that
+  # query GitHub (impostor commits, known-vulnerable actions) are left out.
+  - repo: https://github.com/zizmorcore/zizmor-pre-commit
+    rev: v1.31.1
+    hooks:
+      - id: zizmor
+        files: ^\.github/workflows/[^/]+\.ya?ml$
   - repo: https://github.com/compilerla/conventional-pre-commit
     rev: v4.4.0
     hooks:
