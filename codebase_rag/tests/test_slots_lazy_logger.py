@@ -28,7 +28,7 @@ SLOTS_CLASSES: list[tuple[type, tuple[str, ...]]] = [
     (FileEditor, ("project_root", "_write_lock")),
     (CodeRetriever, ("project_root", "ingestor", "_project_roots")),
     (FileReader, ("project_root",)),
-    (FileWriter, ("project_root",)),
+    (FileWriter, ("project_root", "_write_lock")),
     (DirectoryLister, ("project_root",)),
     (CommandGroup, ("commands", "operator")),
     (ShellCommander, ("project_root", "timeout", "is_yolo")),
