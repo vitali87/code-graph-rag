@@ -3241,7 +3241,7 @@ class CallResolver:
         # it as external would suppress the simple-name trie fallback that a bare
         # PHP call already relies on, dropping the call; leave it to the trie.
         # NARROWED (#1185 stage 1): the `namespace` declaration IS now tracked,
-        # in `import_processor.php_module_namespaces`, and
+        # in `import_processor.php.php_module_namespaces`, and
         # `_php_target_for_namespace_import` uses it to bind a `use function`
         # import to the module declaring that namespace. So a first-party
         # target whose namespace is declared somewhere in the repo resolves
@@ -3254,7 +3254,7 @@ class CallResolver:
         # comment described, and deferring stays the right behaviour for it --
         # treating it as external would suppress the trie fallback and drop
         # the call.
-        php_imports = self.import_processor.php_function_imports.get(module_qn)
+        php_imports = self.import_processor.php.php_function_imports.get(module_qn)
         if php_imports and call_name in php_imports:
             return False
         # A JS/TS import with a non-standard scheme (deno `ext:deno_node/x`) does
@@ -3704,7 +3704,7 @@ class CallResolver:
         if not separator or not namespace or not symbol:
             return None
         wanted = _php_fold(namespace)
-        namespaces = self.import_processor.php_module_namespaces
+        namespaces = self.import_processor.php.php_module_namespaces
         matches = [
             (module_qn, f"{module_qn}{cs.SEPARATOR_DOT}{symbol}")
             for module_qn, declared in namespaces.items()
@@ -3764,7 +3764,7 @@ class CallResolver:
         """
         if module_qn is None:
             return False
-        imported = self.import_processor.php_function_imports.get(
+        imported = self.import_processor.php.php_function_imports.get(
             module_qn, frozenset()
         )
         if call_name in imported:

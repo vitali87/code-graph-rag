@@ -6,10 +6,8 @@ from tree_sitter import Node
 
 from codebase_rag import constants as cs
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.parsers.import_processor import (
-    ImportProcessor,
-    _php_use_clause_binding,
-)
+from codebase_rag.parsers.import_processor import ImportProcessor
+from codebase_rag.parsers.php.imports import _php_use_clause_binding
 from evals.cgr_graph import capture
 
 
@@ -81,13 +79,13 @@ def test_reparse_clears_stale_php_function_imports(tmp_path: Path) -> None:
         b"<?php\nnamespace App\\Db;\nuse function App\\Support\\enum_value;\n"
     ).root_node
     processor.parse_imports(with_import, "proj.mod", cs.SupportedLanguage.PHP, queries)
-    assert "enum_value" in processor.php_function_imports.get("proj.mod", set())
+    assert "enum_value" in processor.php.php_function_imports.get("proj.mod", set())
 
     without_import = php.parse(b"<?php\nnamespace App\\Db;\n").root_node
     processor.parse_imports(
         without_import, "proj.mod", cs.SupportedLanguage.PHP, queries
     )
-    assert "enum_value" not in processor.php_function_imports.get("proj.mod", set())
+    assert "enum_value" not in processor.php.php_function_imports.get("proj.mod", set())
 
 
 def _use_clauses(source: bytes) -> list[Node]:

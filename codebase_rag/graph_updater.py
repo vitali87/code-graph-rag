@@ -2472,7 +2472,7 @@ class GraphUpdater:
                 isinstance(namespace := row.get(cs.KEY_PHP_NAMESPACE), str)
                 and namespace
             ):
-                self.factory.import_processor.php_module_namespaces[qn] = namespace
+                self.factory.import_processor.php.php_module_namespaces[qn] = namespace
 
     def _rehydrate_definition_row(self, row: ResultRow) -> bool:
         """Re-register one definition row missing locally; True when added."""

@@ -157,7 +157,9 @@ def test_an_ambiguous_namespace_target_resolves_to_nothing(tmp_path: Path) -> No
 
     resolver = object.__new__(CallResolver)
     resolver.import_processor = SimpleNamespace(
-        php_module_namespaces={"proj.one": "App.Text", "proj.two": "App.Text"}
+        php=SimpleNamespace(
+            php_module_namespaces={"proj.one": "App.Text", "proj.two": "App.Text"},
+        ),
     )
     resolver.function_registry = _registry(
         {
@@ -219,23 +221,23 @@ def test_a_reindex_replaces_the_recorded_namespace(tmp_path: Path) -> None:
         )
 
     parse(b"<?php\nnamespace App\\Text;\nfunction f(): int { return 1; }\n")
-    assert processor.php_module_namespaces["proj.svc"] == "App.Text"
+    assert processor.php.php_module_namespaces["proj.svc"] == "App.Text"
 
     parse(b"<?php\nnamespace App\\Money;\nfunction f(): int { return 1; }\n")
 
-    assert processor.php_module_namespaces["proj.svc"] == "App.Money", (
+    assert processor.php.php_module_namespaces["proj.svc"] == "App.Money", (
         "after re-parsing with a changed `namespace` declaration the module is "
         "still bound to "
-        f"{processor.php_module_namespaces['proj.svc']!r}; imports naming the "
+        f"{processor.php.php_module_namespaces['proj.svc']!r}; imports naming the "
         "old namespace would keep resolving here"
     )
 
     # And a module whose namespace declaration is REMOVED must unbind, not
     # keep the last one it ever had.
     parse(b"<?php\nfunction f(): int { return 1; }\n")
-    assert "proj.svc" not in processor.php_module_namespaces, (
+    assert "proj.svc" not in processor.php.php_module_namespaces, (
         "removing the `namespace` declaration left "
-        f"{processor.php_module_namespaces.get('proj.svc')!r} bound"
+        f"{processor.php.php_module_namespaces.get('proj.svc')!r} bound"
     )
 
 
@@ -258,10 +260,12 @@ def test_a_class_use_does_not_resolve_to_a_php_function(tmp_path: Path) -> None:
 
     resolver = object.__new__(CallResolver)
     resolver.import_processor = SimpleNamespace(
-        php_module_namespaces={"proj.text": "App.Text"},
+        php=SimpleNamespace(
+            php_module_namespaces={"proj.text": "App.Text"},
+            # The caller imported the name, but NOT via `use function`.
+            php_function_imports={"proj.caller": set()},
+        ),
         commonjs_direct_exports={},
-        # The caller imported the name, but NOT via `use function`.
-        php_function_imports={"proj.caller": set()},
     )
     resolver.function_registry = _registry({"proj.text.format": "Function"})
     import_map = {"format": "App.Text.format"}
@@ -280,7 +284,7 @@ def test_a_class_use_does_not_resolve_to_a_php_function(tmp_path: Path) -> None:
     # The paired positive: recording it as a `use function` binding DOES
     # resolve, so the None above is the binding-kind gate rather than the
     # fallback being switched off.
-    resolver.import_processor.php_function_imports = {"proj.caller": {"format"}}
+    resolver.import_processor.php.php_function_imports = {"proj.caller": {"format"}}
     assert resolver._try_resolve_direct_import(
         "format", import_map, cs.SupportedLanguage.PHP, "proj.caller"
     ) == (cs.NodeLabel.FUNCTION, "proj.text.format")
@@ -310,9 +314,11 @@ def test_a_call_through_a_use_function_alias_is_case_insensitive(
 
     resolver = object.__new__(CallResolver)
     resolver.import_processor = SimpleNamespace(
-        php_module_namespaces={"proj.text": "App.Text"},
+        php=SimpleNamespace(
+            php_module_namespaces={"proj.text": "App.Text"},
+            php_function_imports={"proj.caller": {"format"}},
+        ),
         commonjs_direct_exports={},
-        php_function_imports={"proj.caller": {"format"}},
     )
     resolver.function_registry = _registry({"proj.text.format": "Function"})
     # PRODUCTION SHAPE: the import map is keyed by the DECLARATION spelling
@@ -368,9 +374,11 @@ def test_two_import_keys_differing_only_in_case_resolve_to_nothing(
 
     resolver = object.__new__(CallResolver)
     resolver.import_processor = SimpleNamespace(
-        php_module_namespaces={"proj.text": "App.Text", "proj.money": "App.Money"},
+        php=SimpleNamespace(
+            php_module_namespaces={"proj.text": "App.Text", "proj.money": "App.Money"},
+            php_function_imports={"proj.caller": {"format", "FORMAT"}},
+        ),
         commonjs_direct_exports={},
-        php_function_imports={"proj.caller": {"format", "FORMAT"}},
     )
     resolver.function_registry = _registry(
         {"proj.text.format": "Function", "proj.money.format": "Function"}
@@ -410,9 +418,11 @@ def test_a_fully_qualified_import_resolves(tmp_path: Path) -> None:
 
     resolver = object.__new__(CallResolver)
     resolver.import_processor = SimpleNamespace(
-        php_module_namespaces={"proj.text": "App.Text"},
+        php=SimpleNamespace(
+            php_module_namespaces={"proj.text": "App.Text"},
+            php_function_imports={"proj.caller": {"format"}},
+        ),
         commonjs_direct_exports={},
-        php_function_imports={"proj.caller": {"format"}},
     )
     resolver.function_registry = _registry({"proj.text.format": "Function"})
 
@@ -448,9 +458,11 @@ def test_an_unknown_caller_module_does_not_resolve(tmp_path: Path) -> None:
 
     resolver = object.__new__(CallResolver)
     resolver.import_processor = SimpleNamespace(
-        php_module_namespaces={"proj.text": "App.Text"},
+        php=SimpleNamespace(
+            php_module_namespaces={"proj.text": "App.Text"},
+            php_function_imports={"proj.caller": {"format"}},
+        ),
         commonjs_direct_exports={},
-        php_function_imports={"proj.caller": {"format"}},
     )
     resolver.function_registry = _registry({"proj.text.format": "Function"})
 
@@ -483,7 +495,9 @@ def test_a_mixed_case_import_resolves_like_php_does(tmp_path: Path) -> None:
 
     resolver = object.__new__(CallResolver)
     resolver.import_processor = SimpleNamespace(
-        php_module_namespaces={"proj.text": "App.Text"},
+        php=SimpleNamespace(
+            php_module_namespaces={"proj.text": "App.Text"},
+        ),
         commonjs_direct_exports={},
     )
     resolver.function_registry = _registry({"proj.text.format": "Function"})
@@ -546,12 +560,14 @@ def test_a_non_php_caller_never_resolves_through_php_namespaces(
 
     resolver = object.__new__(CallResolver)
     resolver.import_processor = SimpleNamespace(
-        php_module_namespaces={"proj.text": "App.Text"},
+        php=SimpleNamespace(
+            php_module_namespaces={"proj.text": "App.Text"},
+            # `use function` bindings, which the PHP path now requires.
+            php_function_imports={"proj.caller": {"format"}},
+        ),
         # The non-PHP path falls through to the commonjs lookup, so the double
         # must carry it or the test fails on the fixture rather than the guard.
         commonjs_direct_exports={},
-        # `use function` bindings, which the PHP path now requires.
-        php_function_imports={"proj.caller": {"format"}},
     )
     resolver.function_registry = _registry({"proj.text.format": "Function"})
     import_map = {"format": "App.Text.format"}
@@ -626,7 +642,7 @@ namespace App\\Second {
         pre_captures=cursor.captures(tree.root_node),
     )
 
-    recorded = processor.php_module_namespaces.get("proj.multi")
+    recorded = processor.php.php_module_namespaces.get("proj.multi")
     assert recorded is None, (
         f"a file with two top-level namespace blocks recorded {recorded!r}; "
         "both blocks' functions share one module qn, so an import naming that "
@@ -672,7 +688,7 @@ namespace {
         pre_captures=cursor.captures(tree.root_node),
     )
 
-    recorded = processor.php_module_namespaces.get("proj.global")
+    recorded = processor.php.php_module_namespaces.get("proj.global")
     assert recorded is None, (
         "the unnamed `namespace { }` global block was recorded as "
         f"{recorded!r}; an empty namespace matches every unqualified import "
@@ -719,10 +735,10 @@ function helper(): int { return 1; }
         pre_captures=cursor.captures(tree.root_node),
     )
 
-    assert processor.php_module_namespaces.get("proj.svc") == "Vendor.Pkg.Sub", (
+    assert processor.php.php_module_namespaces.get("proj.svc") == "Vendor.Pkg.Sub", (
         "the `namespace Vendor\\Pkg\\Sub` declaration was not recorded, so an "
         "import target naming that namespace cannot be matched to this module "
-        f"(issue #1185). map={processor.php_module_namespaces}"
+        f"(issue #1185). map={processor.php.php_module_namespaces}"
     )
 
 
@@ -758,7 +774,7 @@ function helper(): int { return 1; }
         pre_captures=cursor.captures(tree.root_node),
     )
 
-    assert "proj.plain" not in processor.php_module_namespaces, (
+    assert "proj.plain" not in processor.php.php_module_namespaces, (
         "a file with no `namespace` declaration was bound to a namespace "
-        f"anyway: {processor.php_module_namespaces}"
+        f"anyway: {processor.php.php_module_namespaces}"
     )

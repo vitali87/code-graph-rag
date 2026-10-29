@@ -94,14 +94,18 @@ def test_the_rehydrated_map_is_the_one_a_parse_builds(temp_repo: Path) -> None:
     _write(root, files)
     store = StatefulIngestor()
     expected = dict(
-        _index(store, root, force=True).factory.import_processor.php_module_namespaces
+        _index(
+            store, root, force=True
+        ).factory.import_processor.php.php_module_namespaces
     )
     assert "proj.src.multi" not in expected, expected
 
     _edit(root, "src/main.php", _FILES["src/main.php"].replace(*_EDIT))
     rehydrated = _index(store, root, force=False)
 
-    assert dict(rehydrated.factory.import_processor.php_module_namespaces) == expected
+    assert (
+        dict(rehydrated.factory.import_processor.php.php_module_namespaces) == expected
+    )
 
 
 def test_an_edited_namespace_binds_as_a_fresh_index_does(temp_repo: Path) -> None:
