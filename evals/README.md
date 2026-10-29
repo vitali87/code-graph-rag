@@ -502,6 +502,30 @@ enclosing method. After the root-cause fix in `call_processor.py`
 4434/4434 = 1.0. Pinned by `codebase_rag/tests/test_static_calls_eval.py` and the
 regression `codebase_rag/tests/test_nested_method_call_qn.py`.
 
+## JARVIS micro-benchmark — CALLS precision and recall against ground truth
+
+Scores cgr's Python `CALLS` graph on the micro-benchmark of JARVIS
+([arXiv 2305.05949](https://arxiv.org/abs/2305.05949)): PyCG's programs plus
+JARVIS's context-manager and control-flow categories, 138 small programs, each
+with a hand-written call graph. Unlike the oracles above, the ground truth
+covers method dispatch, rebinding, decorators and the `with` protocol, so both
+**precision** and **recall** are graded, per category.
+
+```bash
+uv run python -m evals.jarvis_micro                        # all categories
+uv run python -m evals.jarvis_micro --category assignments
+```
+
+The dataset is cloned into `evals/results/corpora/jarvis` (gitignored) and
+checked out at a pinned commit. Only first-party edges are scored, caller and
+callee both defined in the program: cgr does not model builtins
+(`<builtin>.print`) as call targets, and counting them would measure that
+choice. cgr's qualified names are rewritten into the ground truth's spelling
+(the module itself calls as `main`, a package's `__init__` as the package).
+Scores and every program's missing and extra edges are written to
+`evals/results/jarvis_micro.json`. The dataset layout, the first-party cut and
+the spelling are pinned by `codebase_rag/tests/test_jarvis_micro_eval.py`.
+
 ## Multi-language retrieval (Go) — Go CALLS vs `go/ast`
 
 The retrieval benchmark above is Python-only. This extends file-level call
