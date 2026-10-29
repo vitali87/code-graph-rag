@@ -4017,10 +4017,10 @@ def tool_annotations(name: str) -> ToolAnnotations:
     approval rules can tell `callers` from `wipe_database` (issue #3458).
     Every tool works on this server's graph and files, never the open web."""
     return ToolAnnotations(
-        readOnlyHint=name in cs.MCP_READ_ONLY_TOOLS,
-        destructiveHint=name in cs.MCP_DESTRUCTIVE_TOOLS,
-        idempotentHint=name in cs.MCP_IDEMPOTENT_TOOLS,
-        openWorldHint=False,
+        read_only_hint=name in cs.MCP_READ_ONLY_TOOLS,
+        destructive_hint=name in cs.MCP_DESTRUCTIVE_TOOLS,
+        idempotent_hint=name in cs.MCP_IDEMPOTENT_TOOLS,
+        open_world_hint=False,
     )
 
 

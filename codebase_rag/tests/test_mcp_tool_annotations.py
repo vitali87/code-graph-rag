@@ -16,7 +16,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from mcp.shared.memory import create_connected_server_and_client_session
+from mcp import Client
 from mcp.types import CallToolResult, TextContent, Tool
 from typer.testing import CliRunner
 
@@ -73,14 +73,14 @@ def read_only(monkeypatch: pytest.MonkeyPatch) -> None:
 
 async def _tools() -> dict[str, Tool]:
     server, _ingestor = mcp_server.create_server()
-    async with create_connected_server_and_client_session(server) as client:
+    async with Client(server, mode="legacy") as client:
         listed = await client.list_tools()
     return {tool.name: tool for tool in listed.tools}
 
 
 async def _call(name: str, arguments: dict[str, str | list[str]]) -> CallToolResult:
     server, _ingestor = mcp_server.create_server()
-    async with create_connected_server_and_client_session(server) as client:
+    async with Client(server, mode="legacy") as client:
         return await client.call_tool(name, arguments)
 
 
@@ -107,8 +107,8 @@ async def test_every_listed_tool_says_whether_it_writes(
     }
     for name, tool in tools.items():
         assert tool.annotations is not None, name
-        assert tool.annotations.readOnlyHint is (name not in WRITERS), name
-        assert tool.annotations.openWorldHint is False, name
+        assert tool.annotations.read_only_hint is (name not in WRITERS), name
+        assert tool.annotations.open_world_hint is False, name
 
 
 async def test_the_destructive_tools_say_so(repo: Path, no_llm: None) -> None:
@@ -123,10 +123,10 @@ async def test_the_destructive_tools_say_so(repo: Path, no_llm: None) -> None:
     ):
         annotations = tools[name].annotations
         assert annotations is not None
-        assert annotations.destructiveHint is True, name
+        assert annotations.destructive_hint is True, name
     annotate = tools[cs.MCPToolName.ANNOTATE].annotations
     assert annotate is not None
-    assert annotate.destructiveHint is False
+    assert annotate.destructive_hint is False
 
 
 async def test_a_read_only_server_lists_no_writer(
@@ -150,7 +150,7 @@ async def test_a_read_only_server_refuses_a_writer_called_by_name(
         cs.MCPToolName.WRITE_FILE, {"file_path": "new.py", "content": "x = 1\n"}
     )
 
-    assert result.isError is True
+    assert result.is_error is True
     assert "read-only" in _text(result)
     assert not (repo / "new.py").exists()
 
@@ -165,7 +165,7 @@ async def test_a_read_only_server_refuses_change_signature(
         {"qualified_name": "proj.lib.helper", "new_params": ["a", "b"]},
     )
 
-    assert result.isError is True
+    assert result.is_error is True
     assert "read-only" in _text(result)
     assert (repo / "lib.py").read_text(encoding="utf-8") == before
 
@@ -175,7 +175,7 @@ async def test_a_read_only_server_still_reads(
 ) -> None:
     result = await _call(cs.MCPToolName.READ_FILE, {"file_path": "lib.py"})
 
-    assert result.isError is False
+    assert result.is_error is False
     assert "def helper" in _text(result)
 
 
