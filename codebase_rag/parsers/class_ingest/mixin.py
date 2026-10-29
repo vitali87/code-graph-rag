@@ -17,7 +17,6 @@ from ...language_spec import LanguageSpec, module_directory_qn
 from ...types_defs import (
     ASTNode,
     CppDefinitionSpan,
-    CSharpCallShape,
     DeferredCppInherit,
     DeferredInherit,
     FunctionLocation,
@@ -36,6 +35,7 @@ from ..csharp import utils as csharp_utils
 from ..csharp.arity import CSharpArityIndex
 from ..dart import utils as dart_utils
 from ..dart.type_inference import DartTypeInferenceEngine
+from ..definition_facts import DefinitionFacts
 from ..enum_variants import emit_declared_variants, is_python_enum
 from ..field_nodes import PendingFieldType, emit_declared_fields
 from ..go import GoTypeInferenceEngine
@@ -81,7 +81,6 @@ if TYPE_CHECKING:
         LanguageQueries,
         SimpleNameLookup,
     )
-    from ..frontends.protocol import FrontendFacts
     from ..import_processor import ImportProcessor
 
 
@@ -356,38 +355,17 @@ class ClassIngestMixin:
     module_qn_to_file_path: dict[str, Path]
     flow_capture_enabled: bool
     import_processor: ImportProcessor
-    class_inheritance: dict[str, list[str]]
+    facts: DefinitionFacts
     class_owner_module: dict[str, str]
     dart_annotated_overrides: dict[str, list[tuple[str, str]]]
-    dart_extends_type_args: dict[str, list[str]]
-    dart_constructor_qns: set[str]
-    dart_extension_on_types: dict[str, str]
-    class_field_types: dict[str, dict[str, str]]
     java_anon_overrides: list[tuple[str, str, str, str]]
     csharp_methods: set[str]
     csharp_override_methods: set[str]
-    csharp_partial_groups: dict[str, list[str]]
-    csharp_generic_methods: set[str]
-    csharp_call_shapes: dict[str, CSharpCallShape]
-    csharp_class_generic_arity: dict[str, int]
-    csharp_class_owner_module: dict[str, str]
-    csharp_class_namespaced: dict[str, str]
-    csharp_namespaced_qns: dict[str, set[str]]
-    csharp_method_return_types: dict[str, tuple[str, int]]
     _csharp_partial_index: dict[str, list[str]]
-    csharp_extension_methods: dict[str, list[tuple[str, str, str, int]]]
-    frontend_facts: FrontendFacts
     csharp_type_locations: dict[tuple[str, int], str]
     go_type_locations: dict[tuple[str, int, int], tuple[str, str]]
-    class_field_guard_inner: dict[str, dict[str, str]]
-    class_field_element_types: dict[str, dict[str, str]]
-    method_return_types: dict[str, str]
-    interface_implementers: dict[str, set[str]]
-    rehydrated_interface_implementers: dict[str, set[str]]
     rust_impl_owner_module: dict[str, str]
-    rehydrated_definition_paths: dict[str, str]
     go_interfaces: dict[str, go_ifaces.GoInterfaceDecl]
-    function_locations: dict[FunctionSpanKey, FunctionLocation]
     cpp_definition_spans: dict[str, list[CppDefinitionSpan]]
     _deferred_forward_decls: list[_DeferredForwardDecl]
     _deferred_parent_links: list[DeferredParentLink]
@@ -399,8 +377,6 @@ class ClassIngestMixin:
     cpp_module_interfaces: set[str]
     cpp_interfaces_parsed_this_run: set[str]
     _deferred_cpp_module_impls: list[tuple[str, str]]
-    declared_module_qns: set[str]
-    rust_function_modules: dict[str, str]
     pending_endpoints: list[tuple[cs.NodeLabel, str, list[str], str | None]]
     pending_type_facts: list[PendingTypeFact]
     pending_parameter_types: list[PendingParameterType]
@@ -756,7 +732,7 @@ class ClassIngestMixin:
                         module_qn, written_simple_name(entry.base_name)
                     )
                 continue
-            bases = self.class_inheritance.get(entry.child_qn)
+            bases = self.facts.class_inheritance.get(entry.child_qn)
             if bases is not None and entry.base_index < len(bases):
                 bases[entry.base_index] = parent_qn
             rel.create_inheritance_relationship(
@@ -990,7 +966,7 @@ class ClassIngestMixin:
         implements_map: dict[str, list[str]],
     ) -> bool:
         seen: set[str] = set()
-        stack = list(self.class_inheritance.get(class_qn, []))
+        stack = list(self.facts.class_inheritance.get(class_qn, []))
         stack.extend(implements_map.get(class_qn, []))
         while stack:
             ancestor = stack.pop()
@@ -1004,7 +980,7 @@ class ClassIngestMixin:
                 is not None
             ):
                 return True
-            stack.extend(self.class_inheritance.get(ancestor, []))
+            stack.extend(self.facts.class_inheritance.get(ancestor, []))
             stack.extend(implements_map.get(ancestor, []))
         return False
 
@@ -1014,13 +990,13 @@ class ClassIngestMixin:
         return bt.resolve_csharp_scoped_base(
             entry.written_ref,
             entry.child_qn,
-            self.csharp_class_namespaced.get(entry.child_qn),
+            self.facts.csharp_class_namespaced.get(entry.child_qn),
             self.import_processor.import_mapping.get(entry.module_qn, {}),
             bt.CSharpTypeIndex(
                 self.function_registry,
-                self.csharp_namespaced_qns,
-                self.csharp_class_generic_arity,
-                self.csharp_partial_groups,
+                self.facts.csharp_namespaced_qns,
+                self.facts.csharp_class_generic_arity,
+                self.facts.csharp_partial_groups,
             ),
         )
 
@@ -1273,10 +1249,10 @@ class ClassIngestMixin:
     def _csharp_arity_index(self) -> CSharpArityIndex:
         return CSharpArityIndex(
             self.function_registry,
-            self.csharp_class_generic_arity,
-            self.csharp_class_namespaced,
-            self.csharp_namespaced_qns,
-            self.csharp_partial_groups,
+            self.facts.csharp_class_generic_arity,
+            self.facts.csharp_class_namespaced,
+            self.facts.csharp_namespaced_qns,
+            self.facts.csharp_partial_groups,
         )
 
     def _csharp_base_by_arity(
@@ -1339,7 +1315,8 @@ class ClassIngestMixin:
         # partial group, pick the deterministic representative; genuine
         # distinct types keep the no-edge answer.
         groups = {
-            frozenset(self.csharp_partial_groups.get(qn, (qn,))) for qn in in_package
+            frozenset(self.facts.csharp_partial_groups.get(qn, (qn,)))
+            for qn in in_package
         }
         if len(groups) == 1:
             return min(in_package)
@@ -1576,12 +1553,12 @@ class ClassIngestMixin:
             label,
             is_exported,
             language,
-            self.class_inheritance,
+            self.facts.class_inheritance,
             self.ingestor,
             self.import_processor,
             partial(self._resolve_to_qn, language=language),
             self.function_registry,
-            self.interface_implementers,
+            self.facts.interface_implementers,
             defer_cpp_inherits=self._deferred_cpp_inherits,
             defer_inherits=self._deferred_inherits,
             csharp_base_kinds=csharp_base_kinds,
@@ -1624,7 +1601,7 @@ class ClassIngestMixin:
         if language != cs.SupportedLanguage.CPP:
             return None
         return cpp_local_types.local_type_qn(
-            class_node, module_qn, self.function_locations
+            class_node, module_qn, self.facts.function_locations
         )
 
     @staticmethod
@@ -1650,7 +1627,7 @@ class ClassIngestMixin:
         if parent is None or parent.type in cs.CPP_COMPOUND_TYPES:
             return cs.NodeLabel.CLASS, owner_qn, None
         span = function_span_key(module_qn, parent)
-        recorded = self.function_locations.get(span)
+        recorded = self.facts.function_locations.get(span)
         label = recorded.label if recorded is not None else cs.NodeLabel.METHOD
         return label, owner_qn, span
 
@@ -1724,7 +1701,7 @@ class ClassIngestMixin:
         # is a Class that only its resolved bases identify (issue #2583).
         if label == cs.NodeLabel.ENUM or (
             language == cs.SupportedLanguage.PYTHON
-            and is_python_enum(self.class_inheritance.get(class_qn, ()))
+            and is_python_enum(self.facts.class_inheritance.get(class_qn, ()))
         ):
             emit_declared_variants(
                 self.ingestor,
@@ -1746,9 +1723,9 @@ class ClassIngestMixin:
             module_qn,
             partial(self._resolve_to_qn, language=cs.SupportedLanguage.DART),
         ):
-            self.dart_extends_type_args[class_qn] = type_args
+            self.facts.dart_extends_type_args[class_qn] = type_args
         if on_type := dart_utils.extension_on_type(member_node):
-            self.dart_extension_on_types[class_qn] = on_type
+            self.facts.dart_extension_on_types[class_qn] = on_type
 
     def _record_php_namespace(
         self, class_node: Node, class_props: PropertyDict
@@ -1768,8 +1745,8 @@ class ClassIngestMixin:
         if namespace := csharp_utils.declared_namespace(class_node):
             class_props[cs.KEY_NAMESPACE] = namespace
         if namespaced := csharp_utils.namespace_qualified_name(class_node):
-            self.csharp_class_namespaced[class_qn] = namespaced
-            self.csharp_namespaced_qns.setdefault(namespaced, set()).add(class_qn)
+            self.facts.csharp_class_namespaced[class_qn] = namespaced
+            self.facts.csharp_namespaced_qns.setdefault(namespaced, set()).add(class_qn)
 
     def _record_csharp_arity(
         self, class_node: Node, class_name: str, class_props: PropertyDict
@@ -1812,7 +1789,7 @@ class ClassIngestMixin:
             # partial declaration groups join back to these Class qns after
             # Pass 2.
             self.csharp_type_locations[(rel_path, class_start_line)] = class_qn
-            csharp_base_kinds = self.frontend_facts[
+            csharp_base_kinds = self.facts.frontend_facts[
                 cs.SupportedLanguage.CSHARP
             ].base_kinds.get((rel_path, class_start_line))
         elif language == cs.SupportedLanguage.GO and file_path is not None:
@@ -1845,13 +1822,13 @@ class ClassIngestMixin:
             if field_types := CppTypeInferenceEngine().build_field_type_map(
                 member_node
             ):
-                self.class_field_types[class_qn] = field_types
+                self.facts.class_field_types[class_qn] = field_types
         elif language == cs.SupportedLanguage.GO:
             # Record Go struct field types so a field-hop receiver
             # (`engine.trees.get()`) resolves, and a local bound from such a call
             # (`root := engine.trees.get(m)`) picks up the return type.
             if field_types := GoTypeInferenceEngine().build_field_type_map(class_node):
-                self.class_field_types[class_qn] = field_types
+                self.facts.class_field_types[class_qn] = field_types
         elif language == cs.SupportedLanguage.RUST:
             self._record_rust_class_field_types(class_node, class_qn)
         elif language == cs.SupportedLanguage.DART:
@@ -1861,7 +1838,7 @@ class ClassIngestMixin:
             if field_types := DartTypeInferenceEngine().build_field_type_map(
                 class_node
             ):
-                self.class_field_types[class_qn] = field_types
+                self.facts.class_field_types[class_qn] = field_types
         elif language == cs.SupportedLanguage.CSHARP:
             self._record_csharp_class_members(
                 member_node, class_qn, module_qn, modifiers, file_path
@@ -1874,11 +1851,11 @@ class ClassIngestMixin:
         # applied only at a lock/read/borrow hop.
         rust_engine = RustTypeInferenceEngine()
         if field_types := rust_engine.build_field_type_map(class_node):
-            self.class_field_types[class_qn] = field_types
+            self.facts.class_field_types[class_qn] = field_types
         if guard_inner := rust_engine.build_field_guard_inner_map(class_node):
-            self.class_field_guard_inner[class_qn] = guard_inner
+            self.facts.class_field_guard_inner[class_qn] = guard_inner
         if elements := rust_engine.build_field_element_map(class_node):
-            self.class_field_element_types[class_qn] = elements
+            self.facts.class_field_element_types[class_qn] = elements
 
     def _record_csharp_class_members(
         self,
@@ -1896,16 +1873,16 @@ class ClassIngestMixin:
         if member_node.type == cs.TS_CSHARP_RECORD_DECLARATION:
             _csharp_record_parameter_types(member_node, field_types)
         if field_types:
-            self.class_field_types[class_qn] = field_types
+            self.facts.class_field_types[class_qn] = field_types
         # Declared type-parameter count: `Builder<TResult>` -> 1;
         # unrecorded means 0, so only generics are stored.
         arity = csharp_utils.type_parameter_count(member_node)
         if arity:
-            self.csharp_class_generic_arity[class_qn] = arity
+            self.facts.csharp_class_generic_arity[class_qn] = arity
             # The declaring module, recorded because the class qn
             # cannot yield it: a namespace pushes the qn under a
             # sibling module's qn (#1769).
-            self.csharp_class_owner_module[class_qn] = module_qn
+            self.facts.csharp_class_owner_module[class_qn] = module_qn
         # A `partial` type is split across files into N path-distinct
         # nodes; group the parts into one shared list so a typed receiver
         # resolves members and bases from any part. The key is the
@@ -1942,7 +1919,7 @@ class ClassIngestMixin:
         key = f"{directory}{cs.SEPARATOR_DOT}{declared}"
         group = self._csharp_partial_index.setdefault(key, [])
         group.append(class_qn)
-        self.csharp_partial_groups[class_qn] = group
+        self.facts.csharp_partial_groups[class_qn] = group
 
     def _emit_resolved_inherit(
         self,
@@ -1964,7 +1941,7 @@ class ClassIngestMixin:
             self.import_processor.ensure_external_module_node(parent_qn)
             external_label = cs.NodeLabel.EXTERNAL_MODULE.value
         if entry.rel_type != cs.RelationshipType.IMPLEMENTS:
-            bases = self.class_inheritance.get(entry.child_qn)
+            bases = self.facts.class_inheritance.get(entry.child_qn)
             if bases is not None and entry.base_index < len(bases):
                 bases[entry.base_index] = parent_qn
             rel.create_inheritance_relationship(
@@ -1994,7 +1971,9 @@ class ClassIngestMixin:
             interface_label=interface_label,
             resolution=resolution,
         )
-        self.interface_implementers.setdefault(parent_qn, set()).add(entry.child_qn)
+        self.facts.interface_implementers.setdefault(parent_qn, set()).add(
+            entry.child_qn
+        )
         if is_dart and not is_external:
             dart_implements.setdefault(entry.child_qn, []).append(parent_qn)
 
@@ -2170,7 +2149,7 @@ class ClassIngestMixin:
             # Record the implementer so a Rust trait call to the sole
             # concrete impl redirects, matching the class-declaration
             # IMPLEMENTS path.
-            self.interface_implementers.setdefault(trait_qn, set()).add(class_qn)
+            self.facts.interface_implementers.setdefault(trait_qn, set()).add(class_qn)
             return True
         # The trait path has no referent, so no OVERRIDES target is
         # knowable: the caller classifies these methods as inherent so the
@@ -2201,10 +2180,10 @@ class ClassIngestMixin:
             # An impl block is no module, so the method's `super::` counts
             # from the impl's own enclosing module -- the file module unless
             # the block sits in an inline `mod` (issue #1086).
-            self.rust_function_modules[ingested_qn] = owner_module_qn
+            self.facts.rust_function_modules[ingested_qn] = owner_module_qn
             span = function_span_key(module_qn, method_node)
-            if span not in self.function_locations:
-                self.function_locations[span] = FunctionLocation(
+            if span not in self.facts.function_locations:
+                self.facts.function_locations[span] = FunctionLocation(
                     label=cs.NodeLabel.METHOD.value,
                     qualified_name=ingested_qn,
                     container_qn=class_qn,
@@ -2217,9 +2196,9 @@ class ClassIngestMixin:
         if method_name and (
             return_type := rs_utils.extract_return_type_name(method_node, impl_target)
         ):
-            self.method_return_types[f"{class_qn}{cs.SEPARATOR_DOT}{method_name}"] = (
-                return_type
-            )
+            self.facts.method_return_types[
+                f"{class_qn}{cs.SEPARATOR_DOT}{method_name}"
+            ] = return_type
 
     def _ingest_class_methods(
         self,
@@ -2325,7 +2304,7 @@ class ClassIngestMixin:
         if language == cs.SupportedLanguage.PYTHON:
             external_parents = [
                 p
-                for p in self.class_inheritance.get(class_qn, [])
+                for p in self.facts.class_inheritance.get(class_qn, [])
                 if self.function_registry.get(p) is None
             ]
             if external_parents:
@@ -2348,12 +2327,12 @@ class ClassIngestMixin:
         language = scope.language
         module_qn = scope.module_qn
         if language == cs.SupportedLanguage.CSHARP:
-            self.csharp_call_shapes[ingested_qn] = csharp_call_shape(method_node)
+            self.facts.csharp_call_shapes[ingested_qn] = csharp_call_shape(method_node)
             if (
                 method_node.child_by_field_name(cs.TS_CSHARP_FIELD_TYPE_PARAMETERS)
                 is not None
             ):
-                self.csharp_generic_methods.add(ingested_qn)
+                self.facts.csharp_generic_methods.add(ingested_qn)
         # Record Dart return types (a constructor "returns" its class)
         # so a local bound from a static factory or named constructor
         # (`var s = Greeter.create()`) types from the RECORDED return
@@ -2361,13 +2340,13 @@ class ClassIngestMixin:
         if language == cs.SupportedLanguage.DART and (
             dart_return := dart_utils.return_type_name(method_node)
         ):
-            self.method_return_types[ingested_qn] = dart_return
+            self.facts.method_return_types[ingested_qn] = dart_return
             if method_node.type in cs.DART_CONSTRUCTOR_SIGNATURE_TYPES:
-                self.dart_constructor_qns.add(ingested_qn)
+                self.facts.dart_constructor_qns.add(ingested_qn)
         # Rust trait bodies reach here rather than the impl path above;
         # a trait is no module either (issue #1086).
         rs_utils.record_effective_module(
-            self.rust_function_modules,
+            self.facts.rust_function_modules,
             ingested_qn,
             method_node,
             module_qn,
@@ -2422,12 +2401,12 @@ class ClassIngestMixin:
             # Record where this member landed so the Roslyn frontend's
             # declaration-location facts (call targets, query callers)
             # resolve to the exact registered qn and label.
-            self.function_locations[function_span_key(scope.module_qn, method_node)] = (
-                FunctionLocation(
-                    label=cs.NodeLabel.METHOD.value,
-                    qualified_name=ingested_qn,
-                    container_qn=scope.class_qn,
-                )
+            self.facts.function_locations[
+                function_span_key(scope.module_qn, method_node)
+            ] = FunctionLocation(
+                label=cs.NodeLabel.METHOD.value,
+                qualified_name=ingested_qn,
+                container_qn=scope.class_qn,
             )
         self.csharp_methods.add(ingested_qn)
         if csharp_has_override_modifier(method_node):
@@ -2436,7 +2415,7 @@ class ClassIngestMixin:
         # `recv.Ext()` call binds to the static method even though it
         # lives on an unrelated static class (not in recv's hierarchy).
         csharp_utils.index_extension_method(
-            self.csharp_extension_methods, ingested_qn, method_node
+            self.facts.csharp_extension_methods, ingested_qn, method_node
         )
 
     def _record_method_location(
@@ -2454,9 +2433,9 @@ class ClassIngestMixin:
         )
         if (
             scope.language != cs.SupportedLanguage.RUST
-            or span not in self.function_locations
+            or span not in self.facts.function_locations
         ):
-            self.function_locations[span] = location
+            self.facts.function_locations[span] = location
         if scope.language == cs.SupportedLanguage.JAVA:
             self._register_java_name_alias(module_qn, method_node, location)
 
@@ -2476,7 +2455,7 @@ class ClassIngestMixin:
         # fluent surface) can type the receiver for the next hop.
         if rt_text := csharp_utils.normalize_csharp_type_name(rt_node):
             raw = csharp_utils.safe_decode_text(rt_node) or rt_text
-            self.csharp_method_return_types[ingested_qn] = (
+            self.facts.csharp_method_return_types[ingested_qn] = (
                 rt_text,
                 csharp_utils.generic_arity_of_type_text(raw),
             )
@@ -2489,9 +2468,9 @@ class ClassIngestMixin:
         if method_name and (
             return_type := cpp_utils.extract_return_type_name(method_node)
         ):
-            self.method_return_types[f"{class_qn}{cs.SEPARATOR_DOT}{method_name}"] = (
-                return_type
-            )
+            self.facts.method_return_types[
+                f"{class_qn}{cs.SEPARATOR_DOT}{method_name}"
+            ] = return_type
 
     def _register_java_name_alias(
         self, module_qn: str, method_node: Node, location: FunctionLocation
@@ -2507,7 +2486,7 @@ class ClassIngestMixin:
         name_node = method_node.child_by_field_name(cs.FIELD_NAME)
         if name_node is None:
             return
-        self.function_locations.setdefault(
+        self.facts.function_locations.setdefault(
             (module_qn, name_node.start_point[0] + 1, name_node.start_point[1]),
             location,
         )
@@ -2628,7 +2607,7 @@ class ClassIngestMixin:
         self.ingestor.ensure_node_batch(cs.NodeLabel.MODULE, module_props)
         # Record the inline module qn so deferred import verification
         # counts it as a real internal target.
-        self.declared_module_qns.add(inline_module_qn)
+        self.facts.declared_module_qns.add(inline_module_qn)
 
         # Link the inline module into the containment tree: its enclosing
         # module (file module, or an outer mod) DEFINES it. Without this the
@@ -2770,7 +2749,7 @@ class ClassIngestMixin:
         # name is looked up by its path within its module (issue #2455).
         mo.process_all_method_overrides(
             self.function_registry,
-            self.class_inheritance,
+            self.facts.class_inheritance,
             self.ingestor,
             self._override_walk_implementers(),
             self.csharp_methods,
@@ -2801,10 +2780,10 @@ class ClassIngestMixin:
         # graph still holds after an edit took it away.
         merged = {
             qn: set(impls)
-            for qn, impls in self.interface_implementers.items()
+            for qn, impls in self.facts.interface_implementers.items()
             if qn not in self.go_interfaces
         }
-        for iface, implementers in self.rehydrated_interface_implementers.items():
+        for iface, implementers in self.facts.rehydrated_interface_implementers.items():
             if walked := {qn for qn in implementers if self._walks_read_back(qn)}:
                 merged.setdefault(iface, set()).update(walked)
         return merged
@@ -2813,7 +2792,7 @@ class ClassIngestMixin:
         # Read back from a file other than Rust or Go. No recorded path means
         # this run parsed the class (its parsed pairs already cover it) or it
         # is a Rust impl target with no node of its own.
-        path = self.rehydrated_definition_paths.get(implementer_qn)
+        path = self.facts.rehydrated_definition_paths.get(implementer_qn)
         return path is not None and not path.endswith((cs.EXT_RS, cs.EXT_GO))
 
     def _resolve_java_anon_overrides(self) -> None:
@@ -2876,7 +2855,8 @@ class ClassIngestMixin:
         # C# reference only: a Python `Zeta.BaseC` is not this index's
         # business (issue #1629).
         return csharp_utils.unique_carrier(
-            self.csharp_namespaced_qns.get(class_name), self.csharp_partial_groups
+            self.facts.csharp_namespaced_qns.get(class_name),
+            self.facts.csharp_partial_groups,
         )
 
     def _get_node_type_for_inheritance(self, qualified_name: str) -> str:

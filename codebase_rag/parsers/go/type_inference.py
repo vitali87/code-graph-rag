@@ -6,8 +6,8 @@ from pathlib import Path
 from tree_sitter import Node
 
 from ... import constants as cs
-from ...types_defs import FunctionLocation, FunctionSpanKey
-from ..frontends.protocol import CallSiteKey, FrontendFacts, new_frontend_facts
+from ..definition_facts import DefinitionFacts
+from ..frontends.protocol import CallSiteKey
 from ..semantic_call_join import call_site_key, resolve_call_site
 from ..utils import safe_decode_text
 from . import utils as go_utils
@@ -252,8 +252,7 @@ class GoTypeInferenceEngine:
     # construction) resolve a call to its declared target or suppress a fabricated
     # first-party edge, with per-miss fallback to the stateless walker below.
     __slots__ = (
-        "frontend_facts",
-        "function_locations",
+        "facts",
         "module_qn_to_file_path",
         "repo_path",
         "_rel_to_module",
@@ -261,17 +260,11 @@ class GoTypeInferenceEngine:
 
     def __init__(
         self,
-        frontend_facts: FrontendFacts | None = None,
-        function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
+        facts: DefinitionFacts | None = None,
         module_qn_to_file_path: dict[str, Path] | None = None,
         repo_path: Path | None = None,
     ) -> None:
-        self.frontend_facts = (
-            frontend_facts if frontend_facts is not None else new_frontend_facts()
-        )
-        self.function_locations = (
-            function_locations if function_locations is not None else {}
-        )
+        self.facts = facts if facts is not None else DefinitionFacts()
         self.module_qn_to_file_path = (
             module_qn_to_file_path if module_qn_to_file_path is not None else {}
         )
@@ -289,10 +282,10 @@ class GoTypeInferenceEngine:
             call_node,
             module_qn,
             self._call_site_key,
-            self.frontend_facts[cs.SupportedLanguage.GO].resolved_call_sites,
-            self.frontend_facts[cs.SupportedLanguage.GO].external_sites,
+            self.facts.frontend_facts[cs.SupportedLanguage.GO].resolved_call_sites,
+            self.facts.frontend_facts[cs.SupportedLanguage.GO].external_sites,
             GO_EXTERNAL_TARGET,
-            self.function_locations,
+            self.facts.function_locations,
             self.module_qn_to_file_path,
             self.repo_path,
             self._rel_to_module,

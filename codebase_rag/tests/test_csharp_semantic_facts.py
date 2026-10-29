@@ -797,7 +797,7 @@ def test_frontend_off_clears_stale_semantic_facts(
     updater = gu.GraphUpdater(
         ingestor=MagicMock(), repo_path=temp_repo, parsers=parsers, queries=queries
     )
-    store = updater.factory.definition_processor.frontend_facts
+    store = updater.factory.definition_processor.facts.frontend_facts
     store[cs.SupportedLanguage.CSHARP] = SemanticFacts(
         resolved_call_sites={
             ("Stale.cs", 1, 0, "Old"): ResolvedCallSite("Old", "Stale.cs", 2, 0)

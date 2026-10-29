@@ -16,6 +16,7 @@ from ...types_defs import (
     PropertyDict,
     SimpleNameLookup,
 )
+from ..definition_facts import DefinitionFacts
 from ..method_ingest import module_function_props
 from ..utils import (
     get_cached_query,
@@ -49,7 +50,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
     simple_name_lookup: SimpleNameLookup
     module_qn_to_file_path: dict[str, Path]
     import_processor: ImportProcessor
-    class_inheritance: dict[str, list[str]]
+    facts: DefinitionFacts
     class_owner_module: dict[str, str]
 
     @abstractmethod
@@ -146,16 +147,16 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
                 child_qn = f"{module_qn}{cs.SEPARATOR_DOT}{child_name}"
                 parent_qn = f"{module_qn}{cs.SEPARATOR_DOT}{parent_name}"
 
-                if child_qn not in self.class_inheritance:
-                    self.class_inheritance[child_qn] = []
+                if child_qn not in self.facts.class_inheritance:
+                    self.facts.class_inheritance[child_qn] = []
                 # JS prototype inheritance writes class_inheritance WITHOUT
                 # going through class ingest, so the owner has to be recorded
                 # here too or the entry survives its file's deletion (#1772).
                 # `child_qn` is built from `module_qn` directly above, so the
                 # declaring module is exact rather than inferred.
                 self.class_owner_module[child_qn] = module_qn
-                if parent_qn not in self.class_inheritance[child_qn]:
-                    self.class_inheritance[child_qn].append(parent_qn)
+                if parent_qn not in self.facts.class_inheritance[child_qn]:
+                    self.facts.class_inheritance[child_qn].append(parent_qn)
 
                 self.ingestor.ensure_relationship_batch(
                     (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, child_qn),

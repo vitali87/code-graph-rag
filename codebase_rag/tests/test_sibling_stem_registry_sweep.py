@@ -267,7 +267,7 @@ def test_a_rehydrated_siblings_class_is_kept(tmp_path: Path) -> None:
     # recorded, but the ingest-time owner map does not know about it.
     survivor = f"{project}.a.b.Nested"
     processor.class_owner_module.pop(survivor, None)
-    processor.rehydrated_definition_paths[survivor] = "a/b.py"
+    processor.facts.rehydrated_definition_paths[survivor] = "a/b.py"
     assert survivor not in processor.class_owner_module, (
         "fixture guard: the ingest-time owner entry must be absent, or this "
         "test passes through the other branch and proves nothing"
@@ -310,7 +310,7 @@ def test_a_rehydrated_class_from_the_deleted_file_still_goes(tmp_path: Path) -> 
     doomed = f"{project}.a.Doomed"
     assert doomed in _qns(updater), "fixture guard: the class was not registered"
     processor.class_owner_module.pop(doomed, None)
-    processor.rehydrated_definition_paths[doomed] = "a.py"
+    processor.facts.rehydrated_definition_paths[doomed] = "a.py"
 
     (tmp_path / "a.py").unlink()
     updater.remove_file_from_state(tmp_path / "a.py")

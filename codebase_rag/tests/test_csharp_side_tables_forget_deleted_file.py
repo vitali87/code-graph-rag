@@ -82,10 +82,10 @@ def test_a_deleted_csharp_files_side_tables_are_forgotten(temp_repo: Path) -> No
     updater.run()
     engine = updater.factory.type_inference
 
-    generic = engine.csharp_generic_methods
-    arity = engine.csharp_class_generic_arity
-    local = engine.csharp_local_functions
-    extension = engine.csharp_extension_methods
+    generic = engine.facts.csharp_generic_methods
+    arity = engine.facts.csharp_class_generic_arity
+    local = engine.facts.csharp_local_functions
+    extension = engine.facts.csharp_extension_methods
 
     gone_generic = next((qn for qn in generic if ".K." in qn), None)
     kept_generic = next((qn for qn in generic if ".L." in qn), None)
@@ -159,7 +159,7 @@ def test_a_sibling_directory_sharing_the_deleted_files_stem_is_kept(
     (root / "A" / "B.cs").write_text(NESTED_DIR_CS, encoding="utf-8")
     updater = _create_graph_updater(root)
     updater.run()
-    arity = updater.factory.type_inference.csharp_class_generic_arity
+    arity = updater.factory.type_inference.facts.csharp_class_generic_arity
 
     gone = next((qn for qn in arity if qn.endswith(".K")), None)
     kept = next((qn for qn in arity if qn.endswith(".Nested")), None)
@@ -199,7 +199,7 @@ def test_a_nested_file_under_a_surviving_siblings_module_is_still_pruned(
     (root / "A" / "B.cs").write_text(NESTED_DIR_CS, encoding="utf-8")
     updater = _create_graph_updater(root)
     updater.run()
-    arity = updater.factory.type_inference.csharp_class_generic_arity
+    arity = updater.factory.type_inference.facts.csharp_class_generic_arity
 
     gone = next((qn for qn in arity if qn.endswith(".Nested")), None)
     kept = next((qn for qn in arity if qn.endswith(".K")), None)
@@ -269,14 +269,14 @@ def test_a_namespace_matching_a_sibling_directory_owns_by_record_not_prefix(
     (root / "Core" / "Util.cs").write_text(OTHER_NAMESPACE_CS, encoding="utf-8")
     updater = _create_graph_updater(root)
     updater.run()
-    arity = updater.factory.type_inference.csharp_class_generic_arity
+    arity = updater.factory.type_inference.facts.csharp_class_generic_arity
 
     assert set(arity) == {"proj.Core.Util.Helper", "proj.Core.Util.N.Other"}, (
         f"fixture guard: both generic classes must be recorded: {arity}"
     )
     # The shape the defect needs: the DECLARER's class qn nests under a
     # sibling module's qn, so a prefix rule attributes it to that sibling.
-    owner = updater.factory.type_inference.csharp_class_owner_module
+    owner = updater.factory.type_inference.facts.csharp_class_owner_module
     assert owner["proj.Core.Util.Helper"] == "proj.Core", (
         "fixture guard: Core.cs must own Helper despite the qn sitting under "
         f"proj.Core.Util: {owner}"
@@ -296,7 +296,7 @@ def test_dropping_the_last_owner_of_an_extension_name_removes_the_key(
 ) -> None:
     """The `del` inside the sweep is why its iteration is over `list(...)`.
 
-    `drop_csharp_side_tables` deletes an extension-method NAME once its last
+    `drop_csharp_entries` deletes an extension-method NAME once its last
     owner is gone. Deleting from a dict while iterating it directly raises
     `RuntimeError: dictionary changed size during iteration`, so the loop
     iterates a materialised list of the keys.
@@ -310,8 +310,8 @@ def test_dropping_the_last_owner_of_an_extension_name_removes_the_key(
     -- the key survives with its remaining owner rather than being dropped
     wholesale.
     """
-    engine = _create_graph_updater(temp_repo).factory.type_inference
-    engine.csharp_extension_methods = {
+    facts = _create_graph_updater(temp_repo).factory.facts
+    facts.csharp_extension_methods = {
         "Twice": [("proj.A.Ext.Twice(int)", "int", "proj.A", 0)],
         "Thrice": [
             ("proj.A.Ext.Thrice(int)", "int", "proj.A", 0),
@@ -319,17 +319,17 @@ def test_dropping_the_last_owner_of_an_extension_name_removes_the_key(
         ],
     }
 
-    engine.drop_csharp_side_tables(
+    facts.drop_csharp_entries(
         function_qns={"proj.A.Ext.Twice(int)", "proj.A.Ext.Thrice(int)"},
         class_qns=set(),
     )
 
-    assert "Twice" not in engine.csharp_extension_methods, (
+    assert "Twice" not in facts.csharp_extension_methods, (
         "a name whose only owner was removed must be dropped entirely"
     )
-    assert engine.csharp_extension_methods["Thrice"] == [
+    assert facts.csharp_extension_methods["Thrice"] == [
         ("proj.B.Ext.Thrice(int)", "int", "proj.B", 0)
     ], (
         "a name with a surviving owner must keep the key and lose only the "
-        f"removed entry: {engine.csharp_extension_methods}"
+        f"removed entry: {facts.csharp_extension_methods}"
     )

@@ -11,6 +11,7 @@ from ..types_defs import (
     SimpleNameLookup,
 )
 from .call_processor import CallProcessor
+from .definition_facts import DefinitionFacts
 from .definition_processor import DefinitionProcessor
 from .import_processor import ImportProcessor
 from .py.ast_analyzer import clear_scope_facts
@@ -36,7 +37,7 @@ class ProcessorFactory:
         "_definition_processor",
         "_type_inference",
         "_call_processor",
-        "_func_class_captures_cache",
+        "func_class_captures_cache",
     )
 
     def __init__(
@@ -64,7 +65,7 @@ class ProcessorFactory:
         self.capture = capture if capture is not None else ALL_ENABLED
 
         self.module_qn_to_file_path: dict[str, Path] = {}
-        self._func_class_captures_cache: dict[Path, dict] = {}
+        self.func_class_captures_cache: dict[Path, dict] = {}
 
         self._import_processor: ImportProcessor | None = None
         self._structure_processor: StructureProcessor | None = None
@@ -159,7 +160,7 @@ class ProcessorFactory:
                 simple_name_lookup=self.simple_name_lookup,
                 import_processor=self.import_processor,
                 module_qn_to_file_path=self.module_qn_to_file_path,
-                func_class_captures_cache=self._func_class_captures_cache,
+                func_class_captures_cache=self.func_class_captures_cache,
                 flow_capture_enabled=(
                     RelationshipType.FLOWS_TO in self.capture.enabled_rels
                 ),
@@ -167,6 +168,11 @@ class ProcessorFactory:
                 unignore_paths=self.unignore_paths,
             )
         return self._definition_processor
+
+    @property
+    def facts(self) -> DefinitionFacts:
+        """What the definition pass records for the passes after it."""
+        return self.definition_processor.facts
 
     @property
     def type_inference(self) -> TypeInferenceEngine:
@@ -179,34 +185,16 @@ class ProcessorFactory:
                 ast_cache=self.ast_cache,
                 queries=self.queries,
                 module_qn_to_file_path=self.module_qn_to_file_path,
-                class_inheritance=self.definition_processor.class_inheritance,
+                facts=self.facts,
                 simple_name_lookup=self.simple_name_lookup,
-                class_field_types=self.definition_processor.class_field_types,
-                class_field_guard_inner=self.definition_processor.class_field_guard_inner,
-                class_field_element_types=self.definition_processor.class_field_element_types,
-                method_return_types=self.definition_processor.method_return_types,
-                go_function_return_types=self.definition_processor.go_function_return_types,
-                go_package_names=self.definition_processor.go_package_names,
-                go_declaration_variants=(
-                    self.definition_processor.go_declaration_variants
-                ),
-                frontend_facts=self.definition_processor.frontend_facts,
-                csharp_partial_groups=self.definition_processor.csharp_partial_groups,
-                csharp_extension_methods=self.definition_processor.csharp_extension_methods,
-                csharp_local_functions=self.definition_processor.csharp_local_functions,
-                csharp_generic_methods=self.definition_processor.csharp_generic_methods,
-                csharp_call_shapes=self.definition_processor.csharp_call_shapes,
-                csharp_class_generic_arity=self.definition_processor.csharp_class_generic_arity,
-                csharp_class_owner_module=self.definition_processor.csharp_class_owner_module,
-                csharp_class_namespaced=self.definition_processor.csharp_class_namespaced,
-                csharp_namespaced_qns=self.definition_processor.csharp_namespaced_qns,
-                csharp_method_return_types=self.definition_processor.csharp_method_return_types,
-                function_locations=self.definition_processor.function_locations,
-                dart_extends_type_args=self.definition_processor.dart_extends_type_args,
-                dart_constructor_qns=self.definition_processor.dart_constructor_qns,
-                dart_extension_on_types=self.definition_processor.dart_extension_on_types,
             )
         return self._type_inference
+
+    @property
+    def built_call_processor(self) -> CallProcessor | None:
+        """The call processor if one was built, without building it: built
+        before the definition pass, it would snapshot half-built state."""
+        return self._call_processor
 
     @property
     def call_processor(self) -> CallProcessor:
@@ -218,25 +206,10 @@ class ProcessorFactory:
                 function_registry=self.function_registry,
                 import_processor=self.import_processor,
                 type_inference=self.type_inference,
-                class_inheritance=self.definition_processor.class_inheritance,
-                type_aliases=self.definition_processor.type_aliases,
-                interface_implementers=self.definition_processor.interface_implementers,
+                facts=self.facts,
                 capture=self.capture,
                 module_qn_to_file_path=self.module_qn_to_file_path,
-                cpp_out_of_class_methods=self.definition_processor.cpp_out_of_class_methods,
-                function_locations=self.definition_processor.function_locations,
-                macro_qns=self.definition_processor.macro_qns,
                 ast_cache=self.ast_cache,
-                go_package_names=self.definition_processor.go_package_names,
-                sql_sources=self.definition_processor.sql_sources,
-                rehydrated_definition_paths=(
-                    self.definition_processor.rehydrated_definition_paths
-                ),
-                rust_function_modules=(self.definition_processor.rust_function_modules),
-                declared_module_qns=self.definition_processor.declared_module_qns,
-                rehydrated_interface_implementers=(
-                    self.definition_processor.rehydrated_interface_implementers
-                ),
                 go_links=self.definition_processor.go_link_state(),
             )
         return self._call_processor

@@ -152,8 +152,10 @@ def test_constant_edges_do_not_depend_on_recorded_definition_locations(
     # (incremental) derives the constructor's qn the way the class pass does.
     updater = _index(temp_repo, mock_ingestor, _KIND)
     call_processor = updater.factory.call_processor
-    for key in [k for k in call_processor.function_locations if k[0] == MODULE_QN]:
-        del call_processor.function_locations[key]
+    for key in [
+        k for k in call_processor.facts.function_locations if k[0] == MODULE_QN
+    ]:
+        del call_processor.facts.function_locations[key]
     mock_ingestor.reset_mock()
     root = updater._ast_for(_source(temp_repo))
     assert root is not None

@@ -48,7 +48,7 @@ def _updater(root: Path) -> GraphUpdater:
 
 
 def _groups(updater: GraphUpdater) -> dict[str, list[str]]:
-    return updater.factory.definition_processor.csharp_partial_groups
+    return updater.factory.definition_processor.facts.csharp_partial_groups
 
 
 def test_a_re_parsed_part_is_kept_once(tmp_path: Path) -> None:

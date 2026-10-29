@@ -126,7 +126,8 @@ def test_a_reparsed_file_forgets_a_constructor_that_became_a_factory(
     store.reset_edges()
     updater.reingest([root / "lib" / "box.dart"])
     assert (
-        "proj.lib.box.Box.of" not in updater.factory.type_inference.dart_constructor_qns
+        "proj.lib.box.Box.of"
+        not in updater.factory.type_inference.facts.dart_constructor_qns
     )
     assert ("proj.lib.box.caller", "INSTANTIATES", "proj.lib.box.Box") not in {
         (str(s), k, str(t)) for _sl, s, k, _tl, t in store.edges

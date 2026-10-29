@@ -83,7 +83,7 @@ def test_go_implements_joins_across_an_unchanged_file(tmp_path: Path) -> None:
     updater = _updater(repo, graph)
     dp = updater.factory.definition_processor
     dp.go_type_locations[("pkg/impl.go", 8, 5)] = ("proj.pkg.impl.DiskStore", "Class")
-    dp.frontend_facts[cs.SupportedLanguage.GO].implements_pairs = [
+    dp.facts.frontend_facts[cs.SupportedLanguage.GO].implements_pairs = [
         ImplementsPair(
             impl_file="pkg/impl.go",
             impl_line=8,
@@ -175,11 +175,11 @@ def test_function_rehydration_keys_span_and_name_alias(tmp_path: Path) -> None:
 
     updater._rehydrate_function_locations()
 
-    span = dp.function_locations[("proj.pkg.util", 10, 0)]
-    alias = dp.function_locations[("proj.pkg.util", 10, 5)]
+    span = dp.facts.function_locations[("proj.pkg.util", 10, 0)]
+    alias = dp.facts.function_locations[("proj.pkg.util", 10, 5)]
     assert span == alias
     assert span.qualified_name == "proj.pkg.util.Do"
-    method = dp.function_locations[("proj.pkg.store", 22, 18)]
+    method = dp.facts.function_locations[("proj.pkg.store", 22, 18)]
     assert method.container_qn == "proj.pkg.store.Disk"
     assert method.label == "Method"
 
@@ -209,9 +209,9 @@ def test_alias_keys_at_the_name_tokens_own_line(tmp_path: Path) -> None:
 
     updater._rehydrate_function_locations()
 
-    assert ("proj.pkg.s", 5, 0) in dp.function_locations
-    assert ("proj.pkg.s", 7, 2) in dp.function_locations
-    assert ("proj.pkg.s", 5, 2) not in dp.function_locations
+    assert ("proj.pkg.s", 5, 0) in dp.facts.function_locations
+    assert ("proj.pkg.s", 7, 2) in dp.facts.function_locations
+    assert ("proj.pkg.s", 5, 2) not in dp.facts.function_locations
 
 
 def test_function_rehydration_never_overwrites_fresh_entries(tmp_path: Path) -> None:
@@ -236,13 +236,15 @@ def test_function_rehydration_never_overwrites_fresh_entries(tmp_path: Path) -> 
     fresh = FunctionLocation(
         label="Function", qualified_name="proj.m.fresh", container_qn=None
     )
-    dp.function_locations[("proj.m", 4, 0)] = fresh
+    dp.facts.function_locations[("proj.m", 4, 0)] = fresh
 
     updater._rehydrate_function_locations()
 
-    assert dp.function_locations[("proj.m", 4, 0)] == fresh
+    assert dp.facts.function_locations[("proj.m", 4, 0)] == fresh
     # The alias key was still free and rehydrates to the persisted record.
-    assert dp.function_locations[("proj.m", 4, 5)].qualified_name == "proj.m.stale"
+    assert (
+        dp.facts.function_locations[("proj.m", 4, 5)].qualified_name == "proj.m.stale"
+    )
 
 
 def test_nodes_persist_start_and_name_columns(tmp_path: Path) -> None:

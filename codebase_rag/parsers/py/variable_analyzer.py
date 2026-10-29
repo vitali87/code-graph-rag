@@ -10,6 +10,7 @@ from tree_sitter import QueryCursor
 from ... import constants as cs
 from ... import logs as ls
 from ...types_defs import ASTNode, FunctionRegistryTrieProtocol, LanguageQueries
+from ..definition_facts import DefinitionFacts
 from ..import_processor import ImportProcessor
 from ..utils import get_cached_query, note_query_fallback, safe_decode_text
 from .forward_refs import unquote_forward_refs
@@ -127,7 +128,7 @@ class PythonVariableAnalyzerMixin(_VarBase):
     queries: Mapping[cs.SupportedLanguage, LanguageQueries]
     _available_classes_cache: dict[str, list[str]]
     _class_member_type_cache: dict[str, dict[str, str]]
-    class_inheritance: dict[str, list[str]]
+    facts: DefinitionFacts
 
     def _infer_parameter_types(
         self, caller_node: ASTNode, local_var_types: dict[str, str], module_qn: str
@@ -838,7 +839,7 @@ class PythonVariableAnalyzerMixin(_VarBase):
     def _get_c3_mro(self, class_qn: str, stack: tuple[str, ...]) -> list[str] | None:
         if class_qn in stack or len(stack) > _MAX_ALIAS_DEPTH:
             return None
-        bases = list(self.class_inheritance.get(class_qn, []))
+        bases = list(self.facts.class_inheritance.get(class_qn, []))
         sequences: list[list[str]] = []
         for base in bases:
             linear = self._get_c3_mro(base, (*stack, class_qn))
@@ -875,7 +876,7 @@ class PythonVariableAnalyzerMixin(_VarBase):
                 continue
             seen.add(cur)
             order.append(cur)
-            queue.extend(self.class_inheritance.get(cur, []))
+            queue.extend(self.facts.class_inheritance.get(cur, []))
         return order
 
     def _get_assignment_alias(self, right: ASTNode) -> _Alias | None:

@@ -24,7 +24,6 @@ from ... import constants as cs
 from ... import logs as ls
 from ...types_defs import (
     FunctionLocation,
-    FunctionLocations,
     FunctionRegistryTrieProtocol,
     PendingTypeFact,
     PropertyDict,
@@ -35,6 +34,7 @@ from ..class_ingest.relationships import (
     create_implements_relationship,
     create_inheritance_relationship,
 )
+from ..definition_facts import DefinitionFacts
 from ..method_ingest import ingest_method
 from ..parameter_nodes import PendingParameterType
 from . import interfaces as go_ifaces
@@ -284,12 +284,9 @@ class GoInterfaceMixin:
     simple_name_lookup: SimpleNameLookup
     import_processor: ImportProcessor
     module_qn_to_file_path: dict[str, Path]
-    class_inheritance: dict[str, list[str]]
-    interface_implementers: dict[str, set[str]]
-    function_locations: FunctionLocations
+    facts: DefinitionFacts
     pending_type_facts: list[PendingTypeFact]
     pending_parameter_types: list[PendingParameterType]
-    go_package_names: dict[str, str]
     # Go method qn (receiver methods and interface method specs) -> its
     # parameter count and package, from the parse or read back.
     go_methods: dict[str, go_ifaces.GoMethodSpec]
@@ -309,16 +306,11 @@ class GoInterfaceMixin:
     # holds for it in a file both builds compile, refilled by each link
     # (shared with the call resolver).
     go_variant_methods: dict[str, dict[str, list[str]]]
-    # Go interface -> every declaration of its name that another build
-    # makes (itself included), refilled by each link (shared with the call
-    # resolver, which binds a call through it per the caller's builds).
-    go_declaration_variants: dict[str, tuple[str, ...]]
     # (Go interface, implementer) -> the builds in which the pair holds,
     # refilled by each link (shared with the call resolver, which reaches an
     # implementation only from a caller one of those builds compiles).
     go_pair_builds: dict[tuple[str, str], Expr]
     go_builds: GoBuilds
-    rehydrated_definition_paths: dict[str, str]
 
     @abstractmethod
     def _get_docstring(
@@ -336,7 +328,9 @@ class GoInterfaceMixin:
         if interface is None:
             return
         rel_file = go_utils.rel_file(file_path, self.repo_path)
-        package = go_utils.package_key(rel_file, self.go_package_names.get(module_qn))
+        package = go_utils.package_key(
+            rel_file, self.facts.go_package_names.get(module_qn)
+        )
         self.go_interfaces[interface_qn] = go_ifaces.GoInterfaceDecl(
             tuple(go_ifaces.embedded_types(interface)), package, rel_file
         )
@@ -375,7 +369,7 @@ class GoInterfaceMixin:
         if name is None:
             return
         key = (module_qn, name.start_point[0] + 1, name.start_point[1])
-        self.function_locations[key] = FunctionLocation(
+        self.facts.function_locations[key] = FunctionLocation(
             label=cs.NodeLabel.METHOD.value,
             qualified_name=method_qn,
             container_qn=interface_qn,
@@ -550,10 +544,12 @@ class GoInterfaceMixin:
         the other source holds (`keep`) stays: one guessed while go/types
         failed and proven once it ran is still an implementer."""
         for interface_qn, implementer_qn in previous - keep:
-            self.interface_implementers.get(interface_qn, set()).discard(implementer_qn)
+            self.facts.interface_implementers.get(interface_qn, set()).discard(
+                implementer_qn
+            )
         previous.clear()
         for interface_qn, implementer_qn in current:
-            self.interface_implementers.setdefault(interface_qn, set()).add(
+            self.facts.interface_implementers.setdefault(interface_qn, set()).add(
                 implementer_qn
             )
             previous.add((interface_qn, implementer_qn))
@@ -588,14 +584,14 @@ class GoInterfaceMixin:
         if not path.endswith(cs.EXT_GO):
             return None
         package = go_utils.package_key(
-            path, self.go_package_names.get(qn.rpartition(cs.SEPARATOR_DOT)[0])
+            path, self.facts.go_package_names.get(qn.rpartition(cs.SEPARATOR_DOT)[0])
         )
         return go_utils.declaration_scope(path, package)
 
     def _go_declaring_rel(self, qn: str) -> str:
         # The repo-relative file declaring package-level `qn`, read back or
         # parsed ("" when unknown).
-        return self.rehydrated_definition_paths.get(qn) or go_utils.rel_file(
+        return self.facts.rehydrated_definition_paths.get(qn) or go_utils.rel_file(
             self.module_qn_to_file_path.get(qn.rpartition(cs.SEPARATOR_DOT)[0]),
             self.repo_path,
         )
@@ -662,8 +658,8 @@ class GoInterfaceMixin:
             ):
                 groups[interface_qn] = tuple(sorted((interface_qn, *variants)))
         # In place: the call resolver holds the map.
-        self.go_declaration_variants.clear()
-        self.go_declaration_variants.update(groups)
+        self.facts.go_declaration_variants.clear()
+        self.facts.go_declaration_variants.update(groups)
 
     def _go_type_variants(
         self, type_qn: str, labels: frozenset[cs.NodeLabel] = _GO_IMPLEMENTER_TYPES
@@ -692,7 +688,9 @@ class GoInterfaceMixin:
         # The generic override walk links a method to the FIRST interface
         # declaring its name, as Java resolves it. A Go method satisfies every
         # interface its type satisfies, so each one gets its own edge.
-        for interface_qn, implementers in sorted(self.interface_implementers.items()):
+        for interface_qn, implementers in sorted(
+            self.facts.interface_implementers.items()
+        ):
             declared = method_sets.get(interface_qn)
             if not declared or interface_qn not in self.go_interfaces:
                 continue
@@ -772,7 +770,7 @@ class GoInterfaceMixin:
         for interface_qn in self.go_interfaces:
             if registry.get(interface_qn) != cs.NodeLabel.INTERFACE:
                 continue
-            found = dict.fromkeys(self.class_inheritance.get(interface_qn, ()))
+            found = dict.fromkeys(self.facts.class_inheritance.get(interface_qn, ()))
             for alternatives in embeds.get(interface_qn) or ():
                 found.update(dict.fromkeys(base for base, _ in alternatives))
             bases[interface_qn] = [
@@ -790,7 +788,7 @@ class GoInterfaceMixin:
 
     def _record_go_pair_builds(self, pair_builds: _GoPairBuilds) -> None:
         found: dict[tuple[str, str], Expr] = {}
-        for interface_qn, implementers in self.interface_implementers.items():
+        for interface_qn, implementers in self.facts.interface_implementers.items():
             if interface_qn not in self.go_interfaces:
                 continue
             for type_qn in implementers:
@@ -912,7 +910,7 @@ class GoInterfaceMixin:
         # base's package, its unqualified one the interface's own, read as
         # the parse read them. A count or name that disagrees means an embed
         # did not resolve then, so the method set is unknown.
-        stored = iter(self.class_inheritance.get(interface_qn, []))
+        stored = iter(self.facts.class_inheritance.get(interface_qn, []))
         resolved: list[go_ifaces.GoEmbedAlternatives] = []
         for text in decl.embeds:
             found = self._stored_embed(decl, text, stored)
@@ -1033,7 +1031,7 @@ class GoInterfaceMixin:
         stem = path.stem if path else module_qn.rpartition(cs.SEPARATOR_DOT)[2]
         return self._go_module_package(module_qn) == package_qn and not (
             go_utils.is_external_test(
-                self.go_package_names.get(module_qn),
+                self.facts.go_package_names.get(module_qn),
                 stem.endswith(cs.GO_TEST_FILE_SUFFIX),
             )
         )
@@ -1053,7 +1051,7 @@ class GoInterfaceMixin:
         first_party = [
             base for base in bases if base not in cs.GO_BUILTIN_INTERFACE_METHODS
         ]
-        self.class_inheritance[interface_qn] = first_party
+        self.facts.class_inheritance[interface_qn] = first_party
         for index, base in enumerate(first_party):
             create_inheritance_relationship(
                 cs.NodeLabel.INTERFACE,

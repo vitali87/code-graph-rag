@@ -54,7 +54,7 @@ class TestLazyInitialization:
     def test_call_processor_not_initialized_on_factory_creation(
         self, factory: ProcessorFactory
     ) -> None:
-        assert factory._call_processor is None
+        assert factory.built_call_processor is None
 
     def test_import_processor_initialized_on_first_access(
         self, factory: ProcessorFactory
@@ -84,7 +84,7 @@ class TestLazyInitialization:
         self, factory: ProcessorFactory
     ) -> None:
         _ = factory.call_processor
-        assert factory._call_processor is not None
+        assert factory.built_call_processor is not None
 
 
 class TestSingletonBehavior:
@@ -259,7 +259,7 @@ class TestDependencyInjection:
     ) -> None:
         engine = factory.type_inference
         definition_proc = factory.definition_processor
-        assert engine.class_inheritance is definition_proc.class_inheritance
+        assert engine.facts.class_inheritance is definition_proc.facts.class_inheritance
 
     def test_type_inference_receives_simple_name_lookup(
         self, factory: ProcessorFactory
@@ -301,7 +301,8 @@ class TestDependencyInjection:
         processor = factory.call_processor
         definition_proc = factory.definition_processor
         assert (
-            processor._resolver.class_inheritance is definition_proc.class_inheritance
+            processor._resolver.facts.class_inheritance
+            is definition_proc.facts.class_inheritance
         )
 
 
@@ -369,10 +370,12 @@ class TestSharedState:
         type_inf = factory.type_inference
         call_proc = factory.call_processor
 
-        definition_proc.class_inheritance["test.Child"] = ["test.Parent"]
+        definition_proc.facts.class_inheritance["test.Child"] = ["test.Parent"]
 
-        assert type_inf.class_inheritance["test.Child"] == ["test.Parent"]
-        assert call_proc._resolver.class_inheritance["test.Child"] == ["test.Parent"]
+        assert type_inf.facts.class_inheritance["test.Child"] == ["test.Parent"]
+        assert call_proc._resolver.facts.class_inheritance["test.Child"] == [
+            "test.Parent"
+        ]
 
     def test_function_registry_is_shared_across_processors(
         self, factory: ProcessorFactory

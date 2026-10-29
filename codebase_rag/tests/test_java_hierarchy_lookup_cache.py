@@ -27,6 +27,7 @@ from codebase_rag.ast_cache import BoundedASTCache
 from codebase_rag.function_registry import FunctionRegistryTrie
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers.definition_facts import DefinitionFacts
 from codebase_rag.parsers.import_processor import ImportProcessor
 from codebase_rag.parsers.java.type_inference import JavaTypeInferenceEngine
 from codebase_rag.parsers.java.utils import (
@@ -684,7 +685,7 @@ def _engine(cache: _TreeCache) -> JavaTypeInferenceEngine:
         ast_cache=cache,
         queries={},
         module_qn_to_file_path={_MODULE: Path("/repo/com/example/Tricky.java")},
-        class_inheritance={},
+        facts=DefinitionFacts(),
         simple_name_lookup=defaultdict(set),
     )
 

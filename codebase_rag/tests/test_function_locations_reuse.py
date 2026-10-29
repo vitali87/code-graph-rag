@@ -102,7 +102,7 @@ def test_function_locations_hold_no_entry_for_the_dead_qn(
 
     located = {
         location.qualified_name
-        for location in updater.factory.definition_processor.function_locations.values()
+        for location in updater.factory.definition_processor.facts.function_locations.values()
     }
     assert f"{name}.src.foo.S.go" in located, located
     assert f"{name}.src.foo.S.run" not in located, located

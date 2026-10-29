@@ -25,9 +25,7 @@ from ..services import IngestorProtocol
 from ..types_defs import (
     ASTCacheProtocol,
     FunctionLocation,
-    FunctionLocations,
     FunctionRegistryTrieProtocol,
-    FunctionSpanKey,
     LanguageQueries,
     PropertyDict,
     ScalaBinding,
@@ -49,6 +47,7 @@ from .csharp import type_inference as csharp_ti
 from .csharp import utils as csharp_utils
 from .dart import utils as dart_utils
 from .definition_docstring import extract_definition_docstring
+from .definition_facts import DefinitionFacts
 from .dispatch_registry import DispatchRegistryProcessor
 from .field_nodes import declared_fields
 from .flow_access import FlowProcessor
@@ -2136,11 +2135,7 @@ class CallProcessor:
         "_path_to_module_qn",
         "_package_index",
         "_package_index_size",
-        "_go_package_names",
-        "_sql_sources",
-        "cpp_out_of_class_methods",
-        "function_locations",
-        "macro_qns",
+        "facts",
         "_resolver",
         "_string_call_specs",
         "_flow_param_names",
@@ -2171,21 +2166,10 @@ class CallProcessor:
         function_registry: FunctionRegistryTrieProtocol,
         import_processor: ImportProcessor,
         type_inference: TypeInferenceEngine,
-        class_inheritance: dict[str, list[str]],
-        type_aliases: dict[str, str] | None = None,
-        interface_implementers: dict[str, set[str]] | None = None,
+        facts: DefinitionFacts,
         capture: CaptureSelection | None = None,
         module_qn_to_file_path: dict[str, Path] | None = None,
-        cpp_out_of_class_methods: dict[tuple[str, int], tuple[str, str]] | None = None,
-        function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
-        macro_qns: set[str] | None = None,
         ast_cache: ASTCacheProtocol | None = None,
-        go_package_names: Mapping[str, str] | None = None,
-        sql_sources: Mapping[Path, bytes] | None = None,
-        rehydrated_definition_paths: dict[str, str] | None = None,
-        rust_function_modules: dict[str, str] | None = None,
-        declared_module_qns: set[str] | None = None,
-        rehydrated_interface_implementers: dict[str, set[str]] | None = None,
         go_links: GoLinkState | None = None,
     ) -> None:
         self.ingestor = ingestor
@@ -2211,15 +2195,7 @@ class CallProcessor:
         # rebuilt lazily whenever the underlying map grows.
         self._package_index: dict[Path, list[str]] = {}
         self._package_index_size = -1
-        self._go_package_names: Mapping[str, str] = shared_or_new(
-            go_package_names, dict
-        )
-        # The definition pass fills this map after the processor exists, so
-        # it is held as given, never replaced by an empty copy.
-        self._sql_sources: Mapping[Path, bytes] = shared_or_new(sql_sources, dict)
-        self.cpp_out_of_class_methods = shared_or_new(cpp_out_of_class_methods, dict)
-        self.function_locations = shared_or_new(function_locations, FunctionLocations)
-        self.macro_qns = shared_or_new(macro_qns, set)
+        self.facts = facts
         # Per-module map of identifier -> introductions as (function node,
         # container) for the #988 lexical receiver resolution; built once per
         # file on first use.
@@ -2252,14 +2228,7 @@ class CallProcessor:
             function_registry=function_registry,
             import_processor=import_processor,
             type_inference=type_inference,
-            class_inheritance=class_inheritance,
-            type_aliases=type_aliases,
-            interface_implementers=interface_implementers,
-            rehydrated_definition_paths=rehydrated_definition_paths,
-            rust_function_modules=rust_function_modules,
-            declared_module_qns=declared_module_qns,
-            rehydrated_interface_implementers=rehydrated_interface_implementers,
-            go_package_names=self._go_package_names,
+            facts=self.facts,
             go_links=go_links,
         )
         # Inter-procedural callable-parameter flow: ordered params per function and
@@ -2287,7 +2256,7 @@ class CallProcessor:
             selection=selection,
             module_paths=self.module_qn_to_file_path,
             ast_cache=ast_cache,
-            go_package_names=self._go_package_names,
+            go_package_names=self.facts.go_package_names,
             project_name=project_name,
         )
         self._dispatch_registry = DispatchRegistryProcessor(
@@ -2302,8 +2271,8 @@ class CallProcessor:
             function_registry=function_registry,
             simple_name_lookup=type_inference.simple_name_lookup,
             module_paths=self.module_qn_to_file_path,
-            go_package_names=self._go_package_names,
-            go_function_return_types=type_inference.go_function_return_types,
+            go_package_names=self.facts.go_package_names,
+            go_function_return_types=type_inference.facts.go_function_return_types,
             ast_cache=ast_cache,
         )
         self._flow_processor = FlowProcessor(
@@ -2311,7 +2280,7 @@ class CallProcessor:
             import_processor,
             self._resolver,
             selection=selection,
-            function_locations=self.function_locations,
+            function_locations=self.facts.function_locations,
             project_name=project_name,
         )
 
@@ -2512,7 +2481,7 @@ class CallProcessor:
             candidate
             for candidate in bucket
             if registry.get(candidate) is not None
-            and (candidate in self.macro_qns) == want_macro
+            and (candidate in self.facts.macro_qns) == want_macro
         ]
         return matches[0] if len(matches) == 1 else None
 
@@ -3180,7 +3149,7 @@ class CallProcessor:
         # parsed from hold them, whole: a blanked statement that opens or
         # closes the file lies outside the root's span.
         path = self._call_file
-        source = self._sql_sources.get(path) if path is not None else None
+        source = self.facts.sql_sources.get(path) if path is not None else None
         if source is None:
             row, col = root_node.start_point
             return root_node.text, row, col
@@ -3818,7 +3787,7 @@ class CallProcessor:
         requester_is_test = requester is not None and requester.stem.endswith(
             cs.GO_TEST_FILE_SUFFIX
         )
-        requester_package = self._go_package_names.get(module_qn)
+        requester_package = self.facts.go_package_names.get(module_qn)
         hits: list[tuple[str, str]] = []
         for sibling_qn in self._package_modules(module_qn):
             sibling_path = self.module_qn_to_file_path[sibling_qn]
@@ -3828,7 +3797,7 @@ class CallProcessor:
                 continue
             if (
                 requester_package is not None
-                and self._go_package_names.get(sibling_qn) != requester_package
+                and self.facts.go_package_names.get(sibling_qn) != requester_package
             ):
                 continue
             container_qn = f"{sibling_qn}{cs.SEPARATOR_DOT}{receiver_type}"
@@ -3859,7 +3828,7 @@ class CallProcessor:
     ) -> FunctionLocation | None:
         # The registry membership check guards incremental runs, where an
         # unchanged file's locations were not re-recorded this run.
-        loc = self.function_locations.get(function_span_key(module_qn, func_node))
+        loc = self.facts.function_locations.get(function_span_key(module_qn, func_node))
         if loc is None or loc.qualified_name not in self._resolver.function_registry:
             return None
         return loc
@@ -3878,7 +3847,7 @@ class CallProcessor:
         # The definition pass already bound this exact definition (keyed by
         # module + start line); reuse its decision so the caller qn matches
         # the registered Method node by construction.
-        recorded = self.cpp_out_of_class_methods.get(
+        recorded = self.facts.cpp_out_of_class_methods.get(
             (module_qn, func_node.start_point[0] + 1)
         )
         if recorded is not None:
@@ -5536,7 +5505,7 @@ class CallProcessor:
         # unnamed constructor is registered under its class's simple name.
         resolver = self._resolver
         registry = resolver.function_registry
-        constructors = resolver.type_inference.dart_constructor_qns
+        constructors = resolver.type_inference.facts.dart_constructor_qns
         for delegation in dart_utils.constructor_delegations(caller_node):
             owner_qn = class_qn
             if delegation.to_super:
@@ -7035,10 +7004,10 @@ class CallProcessor:
             return False
         if not own_package:
             return True
-        requester_package = self._go_package_names.get(module_qn)
+        requester_package = self.facts.go_package_names.get(module_qn)
         return (
             requester_package is None
-            or self._go_package_names.get(declaring_qn) == requester_package
+            or self.facts.go_package_names.get(declaring_qn) == requester_package
         )
 
     def _go_package_functions(self, package_qn: str, name: str) -> list[str]:
@@ -7092,7 +7061,7 @@ class CallProcessor:
         if callee is None:
             return None
         callee_type, callee_qn = callee
-        result = self._resolver.type_inference.method_return_types.get(callee_qn)
+        result = self._resolver.type_inference.facts.method_return_types.get(callee_qn)
         if not result:
             return None
         depth = 2 if callee_type == cs.NodeLabel.METHOD else 1
@@ -7113,7 +7082,7 @@ class CallProcessor:
             # Rust and Julia macros and functions live in SEPARATE
             # namespaces: a macro invocation must not bind a same-named
             # fn and vice versa.
-            is_macro_target = callee_info[1] in self.macro_qns
+            is_macro_target = callee_info[1] in self.facts.macro_qns
             is_macro_invocation = call_node.type in (
                 cs.TS_RS_MACRO_INVOCATION,
                 cs.TS_JULIA_MACROCALL_EXPRESSION,
@@ -7171,7 +7140,9 @@ class CallProcessor:
             ):
                 lookup_name = underlying
                 best_decl_end = decl_end
-        if (lookup_name != call_name or call_name in self._resolver.type_aliases) and (
+        if (
+            lookup_name != call_name or call_name in self._resolver.facts.type_aliases
+        ) and (
             aliased_qn := self._resolver._resolve_class_name(lookup_name, ctx.module_qn)
         ):
             return (cs.NodeLabel.CLASS, aliased_qn)
@@ -7181,7 +7152,7 @@ class CallProcessor:
         # The qns the types written in each function and local type around
         # `node` are named under, innermost first.
         return cpp_local_types.scope_anchor_qns(
-            node, module_qn, self.function_locations
+            node, module_qn, self.facts.function_locations
         )
 
     def _cpp_local_type_under(self, anchors: list[str], type_name: str) -> str | None:
@@ -7428,7 +7399,7 @@ class CallProcessor:
         if (
             ctx.language == cs.SupportedLanguage.DART
             and callee_type != cs.NodeLabel.CLASS
-            and callee_qn in self._resolver.type_inference.dart_constructor_qns
+            and callee_qn in self._resolver.type_inference.facts.dart_constructor_qns
         ):
             self._instantiate_dart_named_ctor_owner(ctx, callee_qn)
 
@@ -7720,7 +7691,7 @@ class CallProcessor:
                 for variant in class_variants
                 if (node_type := self._resolver.function_registry.get(variant))
                 in (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD)
-                and variant not in self.macro_qns
+                and variant not in self.facts.macro_qns
             ]
         self._resolution = (
             cs.EdgeResolution.OVERLOAD
@@ -7978,7 +7949,7 @@ class CallProcessor:
                 cs.TS_JULIA_MACROCALL_EXPRESSION,
             )
             targets = [
-                t for t in targets if (t in self.macro_qns) == is_macro_invocation
+                t for t in targets if (t in self.facts.macro_qns) == is_macro_invocation
             ]
             if not targets:
                 return False
@@ -9350,7 +9321,7 @@ class CallProcessor:
         # Registered classes in the INHERITS closure, nearest first.
         ancestors: list[str] = []
         seen = {class_qn}
-        queue = list(self._resolver.class_inheritance.get(class_qn, []))
+        queue = list(self._resolver.facts.class_inheritance.get(class_qn, []))
         while queue:
             current = queue.pop(0)
             if current in seen:
@@ -9358,7 +9329,7 @@ class CallProcessor:
             seen.add(current)
             if self._resolver.function_registry.get(current) == cs.NodeLabel.CLASS:
                 ancestors.append(current)
-            queue.extend(self._resolver.class_inheritance.get(current, []))
+            queue.extend(self._resolver.facts.class_inheritance.get(current, []))
         return ancestors
 
     def _emit_cpp_lifecycle_targets(

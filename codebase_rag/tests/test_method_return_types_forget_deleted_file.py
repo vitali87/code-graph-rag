@@ -47,7 +47,7 @@ def _project(root: Path) -> GraphUpdater:
     (root / "pkg" / "other.go").write_text(OTHER_GO, encoding="utf-8")
     updater = _updater(root)
     updater.run()
-    recorded = updater.factory.type_inference.method_return_types
+    recorded = updater.factory.type_inference.facts.method_return_types
     assert recorded.get("proj.pkg.types.A.Clone") == "A", (
         f"fixture guard: the first run did not record Clone's return type: {recorded}"
     )
@@ -66,7 +66,7 @@ def test_a_deleted_go_files_method_return_types_are_forgotten(
     """
     root = temp_repo / "proj"
     updater = _project(root)
-    recorded = updater.factory.type_inference.method_return_types
+    recorded = updater.factory.type_inference.facts.method_return_types
 
     (root / "pkg" / "methods.go").unlink()
     updater.remove_file_from_state(root / "pkg" / "methods.go")
@@ -95,7 +95,7 @@ def test_a_method_another_file_owns_survives_its_receiver_modules_delete(
     """
     root = temp_repo / "proj"
     updater = _project(root)
-    recorded = updater.factory.type_inference.method_return_types
+    recorded = updater.factory.type_inference.facts.method_return_types
 
     (root / "pkg" / "types.go").unlink()
     updater.remove_file_from_state(root / "pkg" / "types.go")
@@ -113,7 +113,7 @@ def test_a_reparse_records_the_new_return_type(temp_repo: Path) -> None:
     """The point of forgetting: a re-parse must not be shadowed by the old."""
     root = temp_repo / "proj"
     updater = _project(root)
-    recorded = updater.factory.type_inference.method_return_types
+    recorded = updater.factory.type_inference.facts.method_return_types
 
     (root / "pkg" / "methods.go").write_text(
         "package pkg\n\nfunc (a A) Clone() B { return B{} }\n", encoding="utf-8"
@@ -138,7 +138,7 @@ def test_an_entry_whose_registry_row_is_already_gone_is_still_forgotten(
     """
     root = temp_repo / "proj"
     updater = _project(root)
-    recorded = updater.factory.type_inference.method_return_types
+    recorded = updater.factory.type_inference.facts.method_return_types
     del updater.function_registry["proj.pkg.types.A.Clone"]
 
     (root / "pkg" / "methods.go").unlink()
@@ -171,7 +171,7 @@ def test_a_qn_shared_with_a_survivor_is_forgotten_rather_than_left_stale(
     )
     updater = _updater(root)
     updater.run()
-    recorded = updater.factory.type_inference.method_return_types
+    recorded = updater.factory.type_inference.facts.method_return_types
     assert recorded.get("proj.pkg.types.A.Clone") == "B", (
         f"fixture guard: the later file did not write the shared slot: {recorded}"
     )
@@ -194,7 +194,7 @@ def test_an_entry_keyed_by_its_duplicate_name_is_forgotten_too(temp_repo: Path) 
     """
     root = temp_repo / "proj"
     updater = _project(root)
-    recorded = updater.factory.type_inference.method_return_types
+    recorded = updater.factory.type_inference.facts.method_return_types
     planted = f"proj.pkg.types.A.Clone{cs.DUP_QN_MARKER}3"
     recorded[planted] = "A"
 

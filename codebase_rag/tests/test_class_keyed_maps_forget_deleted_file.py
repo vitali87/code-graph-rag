@@ -199,8 +199,8 @@ def test_a_deleted_files_class_keyed_maps_are_forgotten(
     updater.run()
     processor = updater.factory.definition_processor
 
-    inheritance = processor.class_inheritance
-    field_types = processor.class_field_types
+    inheritance = processor.facts.class_inheritance
+    field_types = processor.facts.class_field_types
 
     gone_inherit = kept_inherit = None
     if checks_bases:
@@ -304,7 +304,7 @@ def test_a_rehydrated_class_is_pruned_with_its_file(temp_repo: Path) -> None:
     updater._rehydrate_class_inheritance_from_graph()
 
     processor = updater.factory.definition_processor
-    inheritance = processor.class_inheritance
+    inheritance = processor.facts.class_inheritance
     # These classes came from the graph, not from a parse, so they carry no
     # ingest-time owner row -- which is exactly the condition under test.
     assert "proj.a.AThing" in inheritance, (

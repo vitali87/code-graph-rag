@@ -42,7 +42,7 @@ def test_a_deleted_csharp_files_return_types_are_forgotten(temp_repo: Path) -> N
     (root / "B.cs").write_text(B_CS, encoding="utf-8")
     updater = _create_graph_updater(root)
     updater.run()
-    recorded = updater.factory.type_inference.csharp_method_return_types
+    recorded = updater.factory.type_inference.facts.csharp_method_return_types
     self_qn = next((qn for qn in recorded if qn.endswith("K.Self")), None)
     twin_qn = next((qn for qn in recorded if qn.endswith("L.Twin")), None)
     assert self_qn, f"fixture guard: A.cs recorded nothing: {recorded}"

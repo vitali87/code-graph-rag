@@ -17,6 +17,7 @@ from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.call_resolver import CallResolver
+from codebase_rag.parsers.definition_facts import DefinitionFacts
 
 TS_CLOSURE_HOLDER = (
     "export const createSseClient = () => {\n"
@@ -179,8 +180,9 @@ class TestLanguageEvidenceOnIncrementalRuns:
             function_registry=MagicMock(),
             import_processor=MagicMock(),
             type_inference=type_inference,
-            class_inheritance={},
-            rehydrated_definition_paths=rehydrated,
+            facts=DefinitionFacts(
+                class_inheritance={}, rehydrated_definition_paths=rehydrated
+            ),
         )
 
     def test_language_comes_from_the_reparsed_map_first(self) -> None:

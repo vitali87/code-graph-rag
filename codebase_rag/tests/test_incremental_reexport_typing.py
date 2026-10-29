@@ -489,8 +489,12 @@ class TestRustReexport:
         synced = _sync_after_edit(
             tmp_path, RS_FIXTURE, RS_CONSUMER, _UNRELATED_RS_FN, "rust"
         )
-        incremental = synced.updater.factory.definition_processor.method_return_types
-        clean = synced.clean_updater.factory.definition_processor.method_return_types
+        incremental = (
+            synced.updater.factory.definition_processor.facts.method_return_types
+        )
+        clean = (
+            synced.clean_updater.factory.definition_processor.facts.method_return_types
+        )
         assert incremental.get("proj.src.cmd.get.Get.new") == "Get"
         assert incremental.get("proj.src.shutdown.Shutdown.make") == "Shutdown"
         assert incremental.get("proj.src.shutdown.Shutdown.checked") == "Shutdown"
@@ -504,7 +508,9 @@ class TestRustReexport:
         synced = _sync_after_edit(
             tmp_path, RS_FIXTURE, RS_CONSUMER, _UNRELATED_RS_FN, "rust"
         )
-        incremental = synced.updater.factory.definition_processor.method_return_types
+        incremental = (
+            synced.updater.factory.definition_processor.facts.method_return_types
+        )
         assert "proj.src.shutdown.Make.make" not in incremental
         assert "proj.src.shutdown.Make.peek" not in incremental
 
@@ -629,13 +635,17 @@ class TestRustDuplicateMethodReturnTypes:
         synced = _sync_after_edit(
             tmp_path, RS_TWO_TRAIT_RUNS, "src/app.rs", _UNRELATED_RS_FN, "rust"
         )
-        clean = synced.clean_updater.factory.definition_processor.method_return_types
+        clean = (
+            synced.clean_updater.factory.definition_processor.facts.method_return_types
+        )
         clean_calls = _calls_from(synced.clean, RS_TWO_TRAIT_CALLER)
         assert clean.get(RS_TWO_TRAIT_RUN_KEY) == "Beta", (
             "fixture must let the later definition's return type stand"
         )
         assert clean_calls.get("proj.src.shapes.Beta.go") == _EXACT
-        incremental = synced.updater.factory.definition_processor.method_return_types
+        incremental = (
+            synced.updater.factory.definition_processor.facts.method_return_types
+        )
         calls = _calls_from(synced.store, RS_TWO_TRAIT_CALLER)
 
         assert incremental.get(RS_TWO_TRAIT_RUN_KEY) == "Beta"
@@ -660,7 +670,7 @@ class TestRustDuplicateMethodReturnTypes:
             _rust_row(f"{RS_TWO_TRAIT_RUN_KEY}@30_4", "Delta"),
         ]
         updater._rehydrate_rust_return_types(rows[::-1] if reverse else rows)
-        return_types = updater.factory.definition_processor.method_return_types
+        return_types = updater.factory.definition_processor.facts.method_return_types
         assert return_types.get(RS_TWO_TRAIT_RUN_KEY) == "Delta"
 
     def test_a_later_definition_with_no_type_does_not_unset_an_earlier_one(
@@ -675,12 +685,12 @@ class TestRustDuplicateMethodReturnTypes:
                 _rust_row(RS_TWO_TRAIT_RUN_KEY, "Alpha"),
             ]
         )
-        return_types = updater.factory.definition_processor.method_return_types
+        return_types = updater.factory.definition_processor.facts.method_return_types
         assert return_types.get(RS_TWO_TRAIT_RUN_KEY) == "Alpha"
 
     def test_a_reparsed_record_is_kept(self, tmp_path: Path) -> None:
         updater = _updater(StatefulIngestor(), tmp_path, "rust")
-        return_types = updater.factory.definition_processor.method_return_types
+        return_types = updater.factory.definition_processor.facts.method_return_types
         return_types[RS_TWO_TRAIT_RUN_KEY] = "Parsed"
         updater._rehydrate_rust_return_types(
             [_rust_row(f"{RS_TWO_TRAIT_RUN_KEY}@30", "Beta")]
@@ -741,13 +751,17 @@ class TestRustTwinsAcrossFiles:
         synced = _sync_after_edit(
             tmp_path, RS_TWINS_IN_TWO_FILES, edited, _UNRELATED_RS_FN, "rust"
         )
-        clean = synced.clean_updater.factory.definition_processor.method_return_types
+        clean = (
+            synced.clean_updater.factory.definition_processor.facts.method_return_types
+        )
         clean_calls = _calls_from(synced.clean, RS_TWO_TRAIT_CALLER)
         assert clean.get(RS_TWINS_KEY) == "Gamma", (
             "fixture must let the file walked last stand over a higher marker"
         )
         assert clean_calls.get("proj.src.shapes.Gamma.go") == _EXACT
-        incremental = synced.updater.factory.definition_processor.method_return_types
+        incremental = (
+            synced.updater.factory.definition_processor.facts.method_return_types
+        )
         calls = _calls_from(synced.store, RS_TWO_TRAIT_CALLER)
 
         assert incremental.get(RS_TWINS_KEY) == "Gamma"
@@ -793,7 +807,7 @@ class TestRustTwinsAcrossFiles:
             _rust_row(f"{RS_TWINS_KEY}@6", "Gamma", "src/a/mod.rs"),
         ]
         updater._rehydrate_rust_return_types(rows[::-1] if reverse else rows)
-        return_types = updater.factory.definition_processor.method_return_types
+        return_types = updater.factory.definition_processor.facts.method_return_types
         assert return_types.get(RS_TWINS_KEY) == "Gamma"
 
     @pytest.mark.parametrize("reverse", [False, True], ids=["in-order", "reversed"])
@@ -809,7 +823,7 @@ class TestRustTwinsAcrossFiles:
             _rust_row(f"{RS_TWINS_KEY}@40", "Gamma", "src/z.rs"),
         ]
         updater._rehydrate_rust_return_types(rows[::-1] if reverse else rows)
-        return_types = updater.factory.definition_processor.method_return_types
+        return_types = updater.factory.definition_processor.facts.method_return_types
         assert return_types.get(RS_TWINS_KEY) == "Beta"
 
 

@@ -51,7 +51,7 @@ def test_an_incremental_run_rehydrates_its_own_project_only(tmp_path: Path) -> N
     assert not {qn for qn in registry if qn.startswith("svc.v2.")}
     assert "svc.api.helper" in registry
     assert updater._rehydrated_module_qns == {"svc.api", "svc.caller"}
-    inheritance = updater.factory.definition_processor.class_inheritance
+    inheritance = updater.factory.definition_processor.facts.class_inheritance
     assert inheritance == {"svc.api.Child": ["svc.api.Base"]}
     assert (
         cs.NodeLabel.FUNCTION,
@@ -63,7 +63,7 @@ def test_an_incremental_run_rehydrates_its_own_project_only(tmp_path: Path) -> N
     assert "svc.v2.extra.only_here" not in registry
     assert not {
         key
-        for key in updater.factory.definition_processor.function_locations
+        for key in updater.factory.definition_processor.facts.function_locations
         if str(key[0]).startswith("svc.v2.")
     }
     # The sibling's `api.py` survives this run. Its `extra.py` does not: the

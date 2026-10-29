@@ -12,6 +12,7 @@ from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.call_resolver import CallResolver
+from codebase_rag.parsers.definition_facts import DefinitionFacts
 from codebase_rag.parsers.import_processor import ImportProcessor
 from codebase_rag.parsers.type_inference import TypeInferenceEngine
 from codebase_rag.types_defs import QualifiedName
@@ -137,7 +138,7 @@ def mock_type_inference(
         ast_cache=mock_ast_cache,
         queries={},
         module_qn_to_file_path={},
-        class_inheritance={},
+        facts=DefinitionFacts(),
         simple_name_lookup=defaultdict(set),
     )
 
@@ -152,7 +153,7 @@ def call_resolver(
         function_registry=mock_function_registry,
         import_processor=mock_import_processor,
         type_inference=mock_type_inference,
-        class_inheritance={},
+        facts=DefinitionFacts(),
     )
 
 
@@ -506,7 +507,9 @@ class TestTryMethodOnClass:
         call_resolver.function_registry["proj.models.BaseModel.validate"] = (
             cs.NodeLabel.METHOD
         )
-        call_resolver.class_inheritance["proj.models.User"] = ["proj.models.BaseModel"]
+        call_resolver.facts.class_inheritance["proj.models.User"] = [
+            "proj.models.BaseModel"
+        ]
 
         result = call_resolver._try_method_on_class(
             "proj.models.User",
@@ -646,7 +649,9 @@ class TestResolveSelfAttributeCall:
         call_resolver.function_registry["proj.models.BaseDB.close"] = (
             cs.NodeLabel.METHOD
         )
-        call_resolver.class_inheritance["proj.models.Database"] = ["proj.models.BaseDB"]
+        call_resolver.facts.class_inheritance["proj.models.Database"] = [
+            "proj.models.BaseDB"
+        ]
         import_map = {"Database": "proj.models.Database"}
         local_var_types = {"self.db": "Database"}
 
@@ -858,7 +863,7 @@ class TestResolveInheritedMethod:
         call_resolver.function_registry["proj.base.BaseClass.method"] = (
             cs.NodeLabel.METHOD
         )
-        call_resolver.class_inheritance["proj.module.ChildClass"] = [
+        call_resolver.facts.class_inheritance["proj.module.ChildClass"] = [
             "proj.base.BaseClass"
         ]
 
@@ -872,10 +877,10 @@ class TestResolveInheritedMethod:
         call_resolver.function_registry["proj.base.GrandparentClass.method"] = (
             cs.NodeLabel.METHOD
         )
-        call_resolver.class_inheritance["proj.module.ChildClass"] = [
+        call_resolver.facts.class_inheritance["proj.module.ChildClass"] = [
             "proj.base.ParentClass"
         ]
-        call_resolver.class_inheritance["proj.base.ParentClass"] = [
+        call_resolver.facts.class_inheritance["proj.base.ParentClass"] = [
             "proj.base.GrandparentClass"
         ]
 
@@ -890,7 +895,7 @@ class TestResolveInheritedMethod:
         assert result is None
 
     def test_returns_none_for_unknown_method(self, call_resolver: CallResolver) -> None:
-        call_resolver.class_inheritance["proj.module.ChildClass"] = [
+        call_resolver.facts.class_inheritance["proj.module.ChildClass"] = [
             "proj.base.ParentClass"
         ]
 
@@ -901,12 +906,12 @@ class TestResolveInheritedMethod:
 
     def test_handles_diamond_inheritance(self, call_resolver: CallResolver) -> None:
         call_resolver.function_registry["proj.base.Root.method"] = cs.NodeLabel.METHOD
-        call_resolver.class_inheritance["proj.module.Child"] = [
+        call_resolver.facts.class_inheritance["proj.module.Child"] = [
             "proj.base.ParentA",
             "proj.base.ParentB",
         ]
-        call_resolver.class_inheritance["proj.base.ParentA"] = ["proj.base.Root"]
-        call_resolver.class_inheritance["proj.base.ParentB"] = ["proj.base.Root"]
+        call_resolver.facts.class_inheritance["proj.base.ParentA"] = ["proj.base.Root"]
+        call_resolver.facts.class_inheritance["proj.base.ParentB"] = ["proj.base.Root"]
 
         result = call_resolver._resolve_inherited_method("proj.module.Child", "method")
         assert result is not None
@@ -1002,7 +1007,9 @@ class TestResolveSuperCall:
         call_resolver.function_registry["proj.base.Parent.constructor"] = (
             cs.NodeLabel.METHOD
         )
-        call_resolver.class_inheritance["proj.module.Child"] = ["proj.base.Parent"]
+        call_resolver.facts.class_inheritance["proj.module.Child"] = [
+            "proj.base.Parent"
+        ]
 
         result = call_resolver._resolve_super_call(
             cs.KEYWORD_SUPER,
@@ -1015,7 +1022,9 @@ class TestResolveSuperCall:
         call_resolver.function_registry["proj.base.Parent.validate"] = (
             cs.NodeLabel.METHOD
         )
-        call_resolver.class_inheritance["proj.module.Child"] = ["proj.base.Parent"]
+        call_resolver.facts.class_inheritance["proj.module.Child"] = [
+            "proj.base.Parent"
+        ]
 
         result = call_resolver._resolve_super_call(
             f"{cs.KEYWORD_SUPER}.validate",
@@ -1052,7 +1061,9 @@ class TestResolveFunctionCallIntegration:
         call_resolver.function_registry["proj.base.Parent.constructor"] = (
             cs.NodeLabel.METHOD
         )
-        call_resolver.class_inheritance["proj.module.Child"] = ["proj.base.Parent"]
+        call_resolver.facts.class_inheritance["proj.module.Child"] = [
+            "proj.base.Parent"
+        ]
 
         result = call_resolver.resolve_function_call(
             cs.KEYWORD_SUPER,
@@ -1101,7 +1112,7 @@ class TestDequeBfs:
         call_resolver.function_registry["proj.base.ParentB.method"] = (
             cs.NodeLabel.METHOD
         )
-        call_resolver.class_inheritance["proj.module.Child"] = [
+        call_resolver.facts.class_inheritance["proj.module.Child"] = [
             "proj.base.ParentA",
             "proj.base.ParentB",
         ]
@@ -1114,8 +1125,8 @@ class TestDequeBfs:
         call_resolver.function_registry["proj.base.Root.deep_method"] = (
             cs.NodeLabel.METHOD
         )
-        call_resolver.class_inheritance["proj.module.Child"] = ["proj.mid.Middle"]
-        call_resolver.class_inheritance["proj.mid.Middle"] = ["proj.base.Root"]
+        call_resolver.facts.class_inheritance["proj.module.Child"] = ["proj.mid.Middle"]
+        call_resolver.facts.class_inheritance["proj.mid.Middle"] = ["proj.base.Root"]
 
         result = call_resolver._resolve_inherited_method(
             "proj.module.Child", "deep_method"
@@ -1124,8 +1135,8 @@ class TestDequeBfs:
         assert result[1] == "proj.base.Root.deep_method"
 
     def test_bfs_no_infinite_loop_on_cycle(self, call_resolver: CallResolver) -> None:
-        call_resolver.class_inheritance["proj.A"] = ["proj.B"]
-        call_resolver.class_inheritance["proj.B"] = ["proj.A"]
+        call_resolver.facts.class_inheritance["proj.A"] = ["proj.B"]
+        call_resolver.facts.class_inheritance["proj.B"] = ["proj.A"]
 
         result = call_resolver._resolve_inherited_method("proj.A", "missing")
         assert result is None

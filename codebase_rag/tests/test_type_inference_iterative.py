@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.parsers.definition_facts import DefinitionFacts
 from codebase_rag.parsers.java.type_inference import JavaTypeInferenceEngine
 from codebase_rag.parsers.js_ts import JsTypeInferenceEngine
 from codebase_rag.parsers.lua.type_inference import LuaTypeInferenceEngine
@@ -80,7 +81,7 @@ def _make_engine() -> TypeInferenceEngine:
         ast_cache=MagicMock(),
         queries={},
         module_qn_to_file_path={},
-        class_inheritance={},
+        facts=DefinitionFacts(),
     )
 
 
@@ -295,7 +296,7 @@ class TestResolveClassName:
             ast_cache=MagicMock(),
             queries={},
             module_qn_to_file_path={},
-            class_inheritance={},
+            facts=DefinitionFacts(),
         )
 
         result = engine._resolve_class_name("MyClass", "proj.module")
@@ -317,7 +318,7 @@ class TestResolveClassName:
             ast_cache=MagicMock(),
             queries={},
             module_qn_to_file_path={},
-            class_inheritance={},
+            facts=DefinitionFacts(),
         )
 
         result = engine._resolve_class_name("UnknownClass", "proj.module")

@@ -54,9 +54,9 @@ def test_a_deleted_go_files_return_types_are_forgotten(temp_repo: Path) -> None:
     updater.run()
 
     engine = updater.factory.type_inference
-    assert engine.go_function_return_types.get("proj.pkg.a.New") == "A", (
+    assert engine.facts.go_function_return_types.get("proj.pkg.a.New") == "A", (
         "fixture guard: the first run did not record New's return type: "
-        f"{engine.go_function_return_types}"
+        f"{engine.facts.go_function_return_types}"
     )
     # Prime the package index the way a call from user.go does.
     assert engine._go_free_fn_return_type("New", "proj.pkg.user") == "A"
@@ -64,7 +64,7 @@ def test_a_deleted_go_files_return_types_are_forgotten(temp_repo: Path) -> None:
     (root / "pkg" / "a.go").unlink()
     updater.remove_file_from_state(root / "pkg" / "a.go")
 
-    assert "proj.pkg.a.New" not in engine.go_function_return_types, (
+    assert "proj.pkg.a.New" not in engine.facts.go_function_return_types, (
         "the deleted file's return-type entry survived remove_file_from_state"
     )
 
@@ -73,10 +73,12 @@ def test_a_deleted_go_files_return_types_are_forgotten(temp_repo: Path) -> None:
     # left the size sentinel alone would serve the stale index here. No
     # intermediate lookup, deliberately -- one would rebuild the index on the
     # size change and hide exactly that (#1668 local review).
-    engine.go_function_return_types["proj.pkg.c.New"] = "C"
-    assert len(engine.go_function_return_types) == engine._go_free_fn_index_size or (
-        engine._go_free_fn_index_size == -1
-    ), "fixture guard: the delete-then-add must land on the indexed size"
+    engine.facts.go_function_return_types["proj.pkg.c.New"] = "C"
+    assert len(
+        engine.facts.go_function_return_types
+    ) == engine._go_free_fn_index_size or (engine._go_free_fn_index_size == -1), (
+        "fixture guard: the delete-then-add must land on the indexed size"
+    )
     assert engine._go_free_fn_return_type("New", "proj.pkg.user") == "C", (
         "the sibling's return type lost to the deleted file's stale entry"
     )
@@ -112,12 +114,12 @@ def test_another_files_entries_survive_the_delete(temp_repo: Path) -> None:
     updater = _updater(root)
     updater.run()
     engine = updater.factory.type_inference
-    assert engine.go_function_return_types.get("proj.pkg.b.Make") == "B"
+    assert engine.facts.go_function_return_types.get("proj.pkg.b.Make") == "B"
 
     updater.remove_file_from_state(root / "pkg" / "a.go")
 
-    assert "proj.pkg.a.New" not in engine.go_function_return_types
-    assert engine.go_function_return_types.get("proj.pkg.b.Make") == "B", (
+    assert "proj.pkg.a.New" not in engine.facts.go_function_return_types
+    assert engine.facts.go_function_return_types.get("proj.pkg.b.Make") == "B", (
         "a sibling's entry was swept along with the deleted file's"
     )
     assert engine._go_free_fn_return_type("Make", "proj.pkg.a") == "B"

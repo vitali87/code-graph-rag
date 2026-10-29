@@ -3160,7 +3160,7 @@ class FlowProcessor:
     ) -> frozenset[str]:
         # The bind-flow fact for THIS declarator, matched on its name token;
         # empty for every other language and whenever the frontend is off.
-        flows = self._resolver.type_inference.frontend_facts[
+        flows = self._resolver.type_inference.facts.frontend_facts[
             cs.SupportedLanguage.CSHARP
         ].bind_flows
         if not flows or lean.flow.language != cs.SupportedLanguage.CSHARP:
@@ -3243,7 +3243,7 @@ class FlowProcessor:
         )
 
     def _csharp_out_write_symbols(self, node: Node, lean: _LeanCtx) -> dict[int, str]:
-        writes = self._resolver.type_inference.frontend_facts[
+        writes = self._resolver.type_inference.facts.frontend_facts[
             cs.SupportedLanguage.CSHARP
         ].out_writes
         if not writes or lean.flow.language != cs.SupportedLanguage.CSHARP:
@@ -3266,7 +3266,7 @@ class FlowProcessor:
         # The Roslyn argument-flow facts for THIS call site, keyed exactly
         # like the call facts; empty for every other language and whenever
         # the frontend is off.
-        flows = self._resolver.type_inference.frontend_facts[
+        flows = self._resolver.type_inference.facts.frontend_facts[
             cs.SupportedLanguage.CSHARP
         ].arg_flows
         if not flows or lean.flow.language != cs.SupportedLanguage.CSHARP:

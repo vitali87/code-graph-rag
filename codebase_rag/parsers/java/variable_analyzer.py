@@ -11,6 +11,7 @@ from ... import constants as cs
 from ... import logs as ls
 from ...decorators import depth_exhausted, depth_guard, recursion_guard
 from ...types_defs import ASTNode
+from ..definition_facts import DefinitionFacts
 from ..utils import safe_decode_text
 from .utils import (
     extract_class_info,
@@ -109,7 +110,7 @@ class JavaVariableAnalyzerMixin:
     __slots__ = ()
     ast_cache: ASTCacheProtocol
     module_qn_to_file_path: dict[str, Path]
-    class_inheritance: dict[str, list[str]]
+    facts: DefinitionFacts
     _lookup_cache: dict[str, str | None]
     _lookup_in_progress: set[str]
     # Annotation only, never a def: this mixin precedes JavaMethodResolverMixin
@@ -599,7 +600,7 @@ class JavaVariableAnalyzerMixin:
                 own_qn = self._resolve_java_type_name(class_name, module_qn)
                 if cs.SEPARATOR_DOT not in own_qn:
                     own_qn = f"{module_qn}{cs.SEPARATOR_DOT}{own_qn}"
-                if parents := self.class_inheritance.get(own_qn):
+                if parents := self.facts.class_inheritance.get(own_qn):
                     return parents[0]
             return class_info.get(cs.FIELD_SUPERCLASS)
         return self._lookup_variable_type(object_name, module_qn)
@@ -671,7 +672,7 @@ class JavaVariableAnalyzerMixin:
                     root_node, class_path, field_name, target_module_qn
                 ):
                     return field_type
-            parents = self.class_inheritance.get(class_qn)
+            parents = self.facts.class_inheritance.get(class_qn)
             class_qn = parents[0] if parents else None
 
         return None

@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 from codebase_rag.constants import NodeLabel
 from codebase_rag.function_registry import FunctionRegistryTrie
 from codebase_rag.parsers.call_resolver import CallResolver
+from codebase_rag.parsers.definition_facts import DefinitionFacts
 from evals.cgr_graph import capture
 
 
@@ -77,7 +78,7 @@ def test_sole_impl_targets_guard_branches() -> None:
         MagicMock(),
         MagicMock(),
         {},
-        interface_implementers={"m.Svc": {"m.Impl"}},
+        facts=DefinitionFacts(interface_implementers={"m.Svc": {"m.Impl"}}),
     )
     assert resolver.interface_sole_impl_targets("bare") == set()
     assert resolver.interface_sole_impl_targets("m.Svc.run") == set()

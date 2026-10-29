@@ -16,6 +16,7 @@ from ..language_spec import get_language_for_extension
 from ..types_defs import CppOperatorSignature, FunctionRegistryTrieProtocol
 from ..utils import qn_markers
 from .cpp import utils as cpp_utils
+from .definition_facts import DefinitionFacts
 from .go import interfaces as go_ifaces
 from .go import utils as go_utils
 from .go.builds import ALWAYS, Expr, all_of, holds_wherever, possible
@@ -32,7 +33,7 @@ from .py import resolve_class_name
 from .rs import utils as rs_utils
 from .semantic_call_join import call_site_key, declared_location
 from .type_inference import TypeInferenceEngine
-from .utils import safe_decode_text, shared_or_new
+from .utils import safe_decode_text
 
 _SEPARATOR_PATTERN = re.compile(r"[.:]|::")
 # One initializer block's scope record, as held per module by
@@ -305,15 +306,11 @@ class CallResolver:
         "function_registry",
         "import_processor",
         "type_inference",
-        "class_inheritance",
-        "type_aliases",
-        "interface_implementers",
-        "rehydrated_interface_implementers",
+        "facts",
         "guessed_implementations",
         "go_methods",
         "go_builtin_shadows",
         "go_variant_methods",
-        "go_declaration_variants",
         "go_pair_builds",
         "go_builds",
         "_interface_impl_cache",
@@ -332,10 +329,6 @@ class CallResolver:
         "_ctor_param_attrs",
         "_pending_field_bindings",
         "_module_language_cache",
-        "rehydrated_definition_paths",
-        "rust_function_modules",
-        "declared_module_qns",
-        "go_package_names",
         "_php_class_namespaces",
         "_php_cased_index",
         "_js_return_class_cache",
@@ -346,20 +339,13 @@ class CallResolver:
         function_registry: FunctionRegistryTrieProtocol,
         import_processor: ImportProcessor,
         type_inference: TypeInferenceEngine,
-        class_inheritance: dict[str, list[str]],
-        type_aliases: dict[str, str] | None = None,
-        interface_implementers: dict[str, set[str]] | None = None,
-        rehydrated_definition_paths: dict[str, str] | None = None,
-        rust_function_modules: dict[str, str] | None = None,
-        declared_module_qns: set[str] | None = None,
-        rehydrated_interface_implementers: dict[str, set[str]] | None = None,
-        go_package_names: Mapping[str, str] | None = None,
+        facts: DefinitionFacts,
         go_links: GoLinkState | None = None,
     ) -> None:
         self.function_registry = function_registry
         self.import_processor = import_processor
         self.type_inference = type_inference
-        self.class_inheritance = class_inheritance
+        self.facts = facts
         self._py_rel_to_module: dict[str, str] = {}
         # caller qn -> untyped parameters typed only by their name (#2608);
         # filled alongside python_shadowed_imports.
@@ -375,24 +361,6 @@ class CallResolver:
         # caller qn -> every name that Python function binds itself (#2666);
         # filled alongside python_shadowed_imports.
         self.python_local_names: dict[str, frozenset[str]] = {}
-        # Every inline `mod` qn the class pass ingested (shared ref). A Rust
-        # enclosing scope is an inline mod IFF it is in here: an impl target is
-        # not, and neither is registered under a type label when it is a
-        # primitive or an unindexed foreign type, so absence-of-a-type-label
-        # cannot tell the two apart (issue #1093).
-        self.declared_module_qns = shared_or_new(declared_module_qns, set)
-        # {interface_qn: [implementer_qns]} (shared ref, populated during
-        # ingestion). Used to redirect an interface-typed call to the single
-        # concrete implementer's method (call-graph accuracy; single-impl only).
-        self.interface_implementers = shared_or_new(interface_implementers, dict)
-        # The pairs of implementers an incremental run did not re-parse, read
-        # back from the graph (shared ref). A sole implementer is one across
-        # both, or re-parsing only a caller loses its edge (issue #2403).
-        self.rehydrated_interface_implementers = (
-            rehydrated_interface_implementers
-            if rehydrated_interface_implementers is not None
-            else {}
-        )
         # What the Go interface link shares, each container by reference
         # (#2483): the pairs above it matched by name, so what dispatch
         # through them reaches is a guess; each method's signature; the
@@ -407,15 +375,9 @@ class CallResolver:
         self.go_variant_methods: Mapping[str, Mapping[str, list[str]]] = (
             links.variant_methods
         )
-        self.go_declaration_variants: Mapping[str, tuple[str, ...]] = (
-            links.declaration_variants
-        )
         self.go_pair_builds: Mapping[tuple[str, str], Expr] = links.pair_builds
         self.go_builds = links.builds
         self._interface_impl_cache: dict[str, str] | None = None
-        # C++ typedef/using alias -> underlying bare type, consulted when a
-        # receiver type name is mapped to a class (empty for other languages).
-        self.type_aliases = shared_or_new(type_aliases, dict)
         self._simple_resolution_cache: dict[
             tuple[str, str, bool], tuple[str, str] | None
         ] = {}
@@ -451,21 +413,6 @@ class CallResolver:
         # {JS/TS callable qn: the class a call to it returns}, read off its
         # declaration on first use (issue #2468).
         self._js_return_class_cache: dict[tuple[str, bool], str | None] = {}
-        # {definition qn: recorded file path} for definitions an incremental
-        # run rehydrated from the graph instead of re-parsing (shared ref).
-        self.rehydrated_definition_paths = (
-            rehydrated_definition_paths
-            if rehydrated_definition_paths is not None
-            else {}
-        )
-        # {Rust function qn: containing module qn}, recorded from the AST during
-        # ingestion (shared ref). The authority on how many levels a `super::`
-        # written inside it climbs (issue #1086).
-        self.rust_function_modules = shared_or_new(rust_function_modules, dict)
-        # {Go module qn: its `package` clause} (shared ref). A directory is not
-        # a package: `package p_test` and `//go:build ignore` generators sit
-        # beside `package p`, so package scope is (directory, clause).
-        self.go_package_names: Mapping[str, str] = shared_or_new(go_package_names, dict)
 
     def record_ctor_params(self, class_qn: str, params: tuple[str, ...]) -> None:
         self._ctor_params[class_qn] = params
@@ -526,7 +473,7 @@ class CallResolver:
                 continue
             seen.add(cur)
             order.append(cur)
-            queue.extend(self.class_inheritance.get(cur, []))
+            queue.extend(self.facts.class_inheritance.get(cur, []))
         return order
 
     def record_callable_field_binding(
@@ -1303,7 +1250,7 @@ class CallResolver:
         sep = cs.SEPARATOR_DOT
         protocols: set[str] = set()
         classes_by_simple: dict[str, list[str]] = defaultdict(list)
-        for qn, bases in self.class_inheritance.items():
+        for qn, bases in self.facts.class_inheritance.items():
             classes_by_simple[qn.rsplit(sep, 1)[-1]].append(qn)
             if any(base.rsplit(sep, 1)[-1] == cs.PY_PROTOCOL for base in bases):
                 protocols.add(qn)
@@ -1326,7 +1273,7 @@ class CallResolver:
             sep = cs.SEPARATOR_DOT
             self._protocol_classes_cache = {
                 qn
-                for qn, bases in self.class_inheritance.items()
+                for qn, bases in self.facts.class_inheritance.items()
                 if any(base.rsplit(sep, 1)[-1] == cs.PY_PROTOCOL for base in bases)
             }
         return self._protocol_classes_cache
@@ -1469,7 +1416,7 @@ class CallResolver:
         pkg_dir, dsep, _file = file_module_qn.rpartition(cs.SEPARATOR_DOT)
         if not dsep:
             return set()
-        clause = self.go_package_names.get(file_module_qn)
+        clause = self.facts.go_package_names.get(file_module_qn)
         targets: set[tuple[str, str]] = set()
         for qn in self.function_registry.find_ending_with(name):
             label = self.function_registry.get(qn)
@@ -1487,7 +1434,7 @@ class CallResolver:
             # another `package` clause (a `//go:build ignore` generator's
             # `package main`) is another package too, never a build variant,
             # and its edge would carry the callee's `exact` label (#2571).
-            other_clause = self.go_package_names.get(other_module)
+            other_clause = self.facts.go_package_names.get(other_module)
             if (
                 d2
                 and other_pkg == pkg_dir
@@ -1506,7 +1453,7 @@ class CallResolver:
         declaring_qn = declaration_qn.rpartition(cs.SEPARATOR_DOT)[0]
         if (path := modules.get(declaring_qn)) is not None:
             return path
-        if rehydrated := self.rehydrated_definition_paths.get(declaration_qn):
+        if rehydrated := self.facts.rehydrated_definition_paths.get(declaration_qn):
             return self.type_inference.repo_path / rehydrated
         return None
 
@@ -1554,8 +1501,8 @@ class CallResolver:
             return False
         if not own_package:
             return True
-        requester_package = self.go_package_names.get(module_qn)
-        declaring_package = self.go_package_names.get(declaring_qn)
+        requester_package = self.facts.go_package_names.get(module_qn)
+        declaring_package = self.facts.go_package_names.get(declaring_qn)
         return (
             requester_package is None
             or declaring_package is None
@@ -1570,7 +1517,7 @@ class CallResolver:
         # directory and `package` clause, `_test.go` files for test callers
         # only. Every parsed Go file has its clause recorded, so a caller
         # without one is another language and gets no answer here.
-        if module_qn not in self.go_package_names:
+        if module_qn not in self.facts.go_package_names:
             return []
         requester = self.type_inference.module_qn_to_file_path.get(module_qn)
         if requester is None:
@@ -1672,7 +1619,7 @@ class CallResolver:
             candidates = own if own else candidates
         # An interface each build declares again is the first of its
         # variants; a call through it binds per build at emission.
-        found = go_utils.one_declaration(candidates, self.go_declaration_variants)
+        found = go_utils.one_declaration(candidates, self.facts.go_declaration_variants)
         # The Go type walker reduces a declared `*aaa.Mux` to `Mux` as well,
         # so a name that a package this file imports also declares may be
         # that one; it keeps the lookup it had before.
@@ -1743,14 +1690,14 @@ class CallResolver:
             dtor_type = self.function_registry.get(dtor_qn)
             if dtor_type is not None:
                 targets.add((dtor_type, dtor_qn))
-            stack.extend(self.class_inheritance.get(current, ()))
+            stack.extend(self.facts.class_inheritance.get(current, ()))
         return targets
 
     def cpp_braced_return_class(self, caller_qn: str, module_qn: str) -> str | None:
         # The class constructed by a `return {...};` inside caller_qn: the
         # caller's recorded return type, resolved to a registered class
         # (None for primitives/auto/unrecorded).
-        return_type = self.type_inference.method_return_types.get(caller_qn)
+        return_type = self.type_inference.facts.method_return_types.get(caller_qn)
         if not return_type:
             return None
         return self._resolve_type_to_class_qn(return_type, module_qn)
@@ -1807,8 +1754,8 @@ class CallResolver:
         if self._interface_impl_cache is None:
             implementers_of: dict[str, set[str]] = {}
             for source in (
-                self.interface_implementers,
-                self.rehydrated_interface_implementers,
+                self.facts.interface_implementers,
+                self.facts.rehydrated_interface_implementers,
             ):
                 for interface_qn, implementers in source.items():
                     implementers_of.setdefault(interface_qn, set()).update(implementers)
@@ -1851,7 +1798,7 @@ class CallResolver:
         if not sep or self.function_registry.get(class_qn) != cs.NodeLabel.INTERFACE:
             return {}
         targets: dict[tuple[str, str], dict[str, bool]] = {}
-        for implementer in self.interface_implementers.get(class_qn, ()):
+        for implementer in self.facts.interface_implementers.get(class_qn, ()):
             guessed = (class_qn, implementer) in self.guessed_implementations
             found = [
                 (cs.NodeLabel.METHOD.value, qn)
@@ -1885,7 +1832,7 @@ class CallResolver:
 
     def go_declaration_read(self, method_qn: str) -> bool:
         spec = self.go_methods.get(method_qn)
-        checked = self.type_inference.frontend_facts[cs.SupportedLanguage.GO]
+        checked = self.type_inference.facts.frontend_facts[cs.SupportedLanguage.GO]
         return spec is None or spec.file in checked.checked_files
 
     def _with_go_variants(self, bases: Iterable[str]) -> list[str]:
@@ -1897,7 +1844,7 @@ class CallResolver:
             found.append(base)
             found.extend(
                 variant
-                for variant in self.go_declaration_variants.get(base, ())
+                for variant in self.facts.go_declaration_variants.get(base, ())
                 if variant != base
             )
         return found
@@ -1914,7 +1861,7 @@ class CallResolver:
         build compiles: an exact edge true on Linux alone, and Windows'
         `M` never reached (#3360)."""
         owner, dot, name = callee_qn.rpartition(cs.SEPARATOR_DOT)
-        group = self.go_declaration_variants.get(owner)
+        group = self.facts.go_declaration_variants.get(owner)
         if not dot or not group or self.go_builds is None:
             return None
         caller = self.go_caller_rel(module_qn)
@@ -2141,7 +2088,7 @@ class CallResolver:
         for a caller at file level, a `crate::` path, and a bare path the mod
         does not resolve: the file's reading then decides, as before.
         """
-        effective = self.rust_function_modules.get(caller_qn)
+        effective = self.facts.rust_function_modules.get(caller_qn)
         if effective is None:
             # No ingest record (a rehydrated definition): the innermost
             # declared mod around the caller stands in for it.
@@ -2200,7 +2147,7 @@ class CallResolver:
         # name a module even where a value took the shared slot, #1054).
         child = f"{scope}{cs.SEPARATOR_DOT}{segment}"
         if (
-            child in self.declared_module_qns
+            child in self.facts.declared_module_qns
             or child in self.type_inference.module_qn_to_file_path
             or child in self.import_processor.import_mapping
         ):
@@ -2396,7 +2343,7 @@ class CallResolver:
         # class's cached answer for the same name would be wrong.
         use_cache = not call.local_var_types and not (
             call.language == cs.SupportedLanguage.DART
-            and call.class_context in self.type_inference.dart_extends_type_args
+            and call.class_context in self.type_inference.facts.dart_extends_type_args
         )
         # A Rust caller nested below the file module (an inline `mod` block)
         # or holding function-body `use` declarations of its own resolves
@@ -2926,9 +2873,9 @@ class CallResolver:
         # The read-back pairs too: a run that re-parsed only the caller has
         # `impl FloatErrors for u64` in them alone, and `u64::error_halfscale()`
         # lost the trait method a clean index binds (issue #2403).
-        implementers = self.interface_implementers.get(
+        implementers = self.facts.interface_implementers.get(
             owner, set()
-        ) | self.rehydrated_interface_implementers.get(owner, set())
+        ) | self.facts.rehydrated_interface_implementers.get(owner, set())
         return any(
             self._rust_owner_is(implementer, owners, names, self_type=self_type)
             for implementer in implementers
@@ -3126,7 +3073,7 @@ class CallResolver:
         # through to the unique-member gate instead.
         if not class_context:
             return None
-        type_args = self.type_inference.dart_extends_type_args.get(class_context)
+        type_args = self.type_inference.facts.dart_extends_type_args.get(class_context)
         if not type_args:
             return None
         receiver, sep, member = call_name.partition(cs.SEPARATOR_DOT)
@@ -3136,7 +3083,7 @@ class CallResolver:
             return None
         if self._dart_registered_member_named(class_context, receiver):
             return None
-        bases = self.class_inheritance.get(class_context)
+        bases = self.facts.class_inheritance.get(class_context)
         # resolve_deferred_inherits rewrote bases in place, so a registered
         # bases[0] means a first-party extends base owns its members.
         if not bases or self.function_registry.get(bases[0]) is not None:
@@ -3164,7 +3111,7 @@ class CallResolver:
             seen.add(current)
             if f"{current}{cs.SEPARATOR_DOT}{name}" in self.function_registry:
                 return True
-            stack.extend(self.class_inheritance.get(current, ()))
+            stack.extend(self.facts.class_inheritance.get(current, ()))
         return False
 
     def _resolve_js_member_call_unique(
@@ -3930,7 +3877,7 @@ class CallResolver:
                 method_qn := self._php_declared_method(owner, method_name, wanted)
             ) is not None:
                 return self.function_registry[method_qn], method_qn
-            for parent in self.class_inheritance.get(owner, []):
+            for parent in self.facts.class_inheritance.get(owner, []):
                 if parent not in seen:
                     seen.add(parent)
                     queue.append(parent)
@@ -4472,7 +4419,9 @@ class CallResolver:
         # the ordinary fallbacks keep their weaker but safe answer.
         effective_module = module_qn
         if object_path[0] != cs.RUST_CRATE_KEYWORD:
-            recorded = self.rust_function_modules.get(caller_qn) if caller_qn else None
+            recorded = (
+                self.facts.rust_function_modules.get(caller_qn) if caller_qn else None
+            )
             if recorded is not None:
                 effective_module = recorded
             elif self._rust_enclosing_mod_scopes(module_qn, caller_qn):
@@ -4524,7 +4473,7 @@ class CallResolver:
         return [
             scope
             for scope in self._rust_enclosing_scopes(module_qn, caller_qn)
-            if scope in self.declared_module_qns
+            if scope in self.facts.declared_module_qns
         ]
 
     def _rust_scoped_type(
@@ -4543,7 +4492,7 @@ class CallResolver:
         """
         if not caller_qn:
             return None
-        effective = self.rust_function_modules.get(caller_qn, module_qn)
+        effective = self.facts.rust_function_modules.get(caller_qn, module_qn)
         fn_scope = self.import_processor.rust_fn_scope_imports.get(caller_qn, {})
         target = fn_scope.get(name)
         if target is not None:
@@ -4990,7 +4939,9 @@ class CallResolver:
             # An incremental run only re-parses changed files, so an
             # unchanged module is absent above; its definitions carry the
             # file path recorded on their graph nodes instead.
-            if (rehydrated := self.rehydrated_definition_paths.get(probe)) is not None:
+            if (
+                rehydrated := self.facts.rehydrated_definition_paths.get(probe)
+            ) is not None:
                 language = _file_language(PurePath(rehydrated).suffix)
                 break
             if cs.SEPARATOR_DOT not in probe:
@@ -5157,7 +5108,7 @@ class CallResolver:
          member (`S()`) only by a `using static` naming its declaring type
         .
         """
-        declared = self.type_inference.csharp_class_namespaced
+        declared = self.type_inference.facts.csharp_class_namespaced
         bare = cs.SEPARATOR_DOT not in call_name
         containers: dict[str, str] = {}
         import_keys: dict[str, str] = {}
@@ -5736,9 +5687,9 @@ class CallResolver:
         for field in parts[1:-1]:
             if not class_qn:
                 return None
-            field_type = self.type_inference.class_field_types.get(class_qn, {}).get(
-                field
-            )
+            field_type = self.type_inference.facts.class_field_types.get(
+                class_qn, {}
+            ).get(field)
             if not field_type:
                 return None
             class_qn = self._chain_class_qn(field_type, module_qn)
@@ -5827,7 +5778,7 @@ class CallResolver:
             )
             pending.extend(
                 base
-                for base in self.class_inheritance.get(current, ())
+                for base in self.facts.class_inheritance.get(current, ())
                 if base in protocols
             )
         return names
@@ -5835,7 +5786,7 @@ class CallResolver:
     def _classes_defining_all(self, protocol_methods: set[str]) -> set[str]:
         result: set[str] = set()
         protocols = self._protocol_classes()
-        for candidate in self.class_inheritance:
+        for candidate in self.facts.class_inheritance:
             if candidate in protocols:
                 continue
             if all(
@@ -6202,7 +6153,7 @@ class CallResolver:
         # declaration on demand (issue #2468), and a `this` return names the
         # class it is called through (`receiver`). A hop's receiver is an
         # instance, so it reaches the instance member unless told otherwise.
-        recorded = self.type_inference.method_return_types.get(callable_qn)
+        recorded = self.type_inference.facts.method_return_types.get(callable_qn)
         if recorded is None and language in cs.JS_TS_LANGUAGES:
             return _bind_receiver(self._js_return_class(callable_qn, static), receiver)
         return recorded
@@ -6438,7 +6389,7 @@ class CallResolver:
         there: read in the caller's file instead, a bare `Result` bound to
         whichever `Result` the CALLER sees (PR #2804).
         """
-        return_types = self.type_inference.method_return_types
+        return_types = self.type_inference.facts.method_return_types
         own_qn = f"{class_qn}{cs.SEPARATOR_DOT}{member}"
         if own_qn in return_types or own_qn in self.function_registry:
             # An own member shadows every inherited and extension one, even
@@ -6502,7 +6453,7 @@ class CallResolver:
         receiver's class beats one `on` an ancestor. Two at the same level are
         ambiguous (a compile error in Dart) and bind nothing.
         """
-        on_types = self.type_inference.dart_extension_on_types
+        on_types = self.type_inference.facts.dart_extension_on_types
         if not on_types:
             return None
         # The `on` type is resolved from the extension's own library, where it
@@ -6562,7 +6513,7 @@ class CallResolver:
             parents = {
                 self._follow_reexports(parent)
                 for child in frontier
-                for parent in self.class_inheritance.get(child, [])
+                for parent in self.facts.class_inheritance.get(child, [])
             } - seen
             if not parents:
                 break
@@ -6735,7 +6686,7 @@ class CallResolver:
         # The type is a BARE name, qualified in the factory's OWN module: in
         # the caller another import's same-named class could win (Copilot,
         # PR #2040).
-        returned = self.type_inference.method_return_types.get(qn)
+        returned = self.type_inference.facts.method_return_types.get(qn)
         return (self._chain_class_qn(returned, target), parts[1:]) if returned else None
 
     def _dart_prefix_targets(self, prefix: str, module_qn: str) -> list[str]:
@@ -6950,7 +6901,7 @@ class CallResolver:
             )
         else:
             class_qn = self._chain_class_qn(type_name, module_qn, rust_caller)
-        ret = self.type_inference.method_return_types.get(
+        ret = self.type_inference.facts.method_return_types.get(
             f"{class_qn}{cs.SEPARATOR_DOT}{method}"
         )
         if (
@@ -7117,11 +7068,11 @@ class CallResolver:
             logger.debug(ls.CALL_SUPER_NO_CONTEXT, call_name=call_name)
             return None
 
-        if current_class_qn not in self.class_inheritance:
+        if current_class_qn not in self.facts.class_inheritance:
             logger.debug(ls.CALL_SUPER_NO_INHERITANCE, class_qn=current_class_qn)
             return None
 
-        parent_classes = self.class_inheritance[current_class_qn]
+        parent_classes = self.facts.class_inheritance[current_class_qn]
         if not parent_classes:
             logger.debug(ls.CALL_SUPER_NO_PARENTS, class_qn=current_class_qn)
             return None
@@ -7290,13 +7241,13 @@ class CallResolver:
             method_qn = f"{current}.{method_name}"
             if method_qn in self.function_registry:
                 results.add(method_qn)
-            queue.extend(self.class_inheritance.get(current, ()))
+            queue.extend(self.facts.class_inheritance.get(current, ()))
         return results
 
     def _subclass_map(self) -> dict[str, set[str]]:
         if self._subclass_map_cache is None:
             mapping: dict[str, set[str]] = defaultdict(set)
-            for subclass_qn, bases in self.class_inheritance.items():
+            for subclass_qn, bases in self.facts.class_inheritance.items():
                 for base in bases:
                     mapping[self._follow_reexports(base)].add(subclass_qn)
             self._subclass_map_cache = mapping
@@ -7342,7 +7293,7 @@ class CallResolver:
                 return None
             bases = [
                 self._follow_reexports(base)
-                for base in self.class_inheritance.get(cls, [])
+                for base in self.facts.class_inheritance.get(cls, [])
             ]
             sequences: list[list[str]] = []
             for base in bases:
@@ -7392,7 +7343,7 @@ class CallResolver:
                 return None
         if found := self._go_variant_method(class_qn, method_name):
             return found
-        if class_qn not in self.class_inheritance:
+        if class_qn not in self.facts.class_inheritance:
             return None
         # Which class binds the name first decides whether a value hides
         # it, and that order is the C3 MRO, not this walk's breadth-first
@@ -7408,7 +7359,7 @@ class CallResolver:
         # A Go interface each build declares again has the methods of every
         # build's declaration, its own and embedded; the call binds to the
         # caller's builds at emission (`go_variant_callees`).
-        for variant in self.go_declaration_variants.get(class_qn, ()):
+        for variant in self.facts.go_declaration_variants.get(class_qn, ()):
             if variant == class_qn:
                 continue
             variant_qn = f"{variant}{cs.SEPARATOR_DOT}{method_name}"
@@ -7435,7 +7386,7 @@ class CallResolver:
         self, class_qn: str, method_name: str
     ) -> tuple[str, str] | None:
         bfs_queue = deque(
-            self._with_go_variants(self.class_inheritance.get(class_qn, []))
+            self._with_go_variants(self.facts.class_inheritance.get(class_qn, []))
         )
         visited = set(bfs_queue)
 
@@ -7455,9 +7406,9 @@ class CallResolver:
                     parent_method_qn,
                 )
 
-            if parent_class_qn in self.class_inheritance:
+            if parent_class_qn in self.facts.class_inheritance:
                 for grandparent_qn in self._with_go_variants(
-                    self.class_inheritance[parent_class_qn]
+                    self.facts.class_inheritance[parent_class_qn]
                 ):
                     if grandparent_qn not in visited:
                         visited.add(grandparent_qn)
@@ -7513,9 +7464,9 @@ class CallResolver:
         # names. Bounded against an alias cycle; a no-op when the name is not an
         # alias (and always, for languages with no aliases collected).
         seen: set[str] = set()
-        while type_name in self.type_aliases and type_name not in seen:
+        while type_name in self.facts.type_aliases and type_name not in seen:
             seen.add(type_name)
-            type_name = self.type_aliases[type_name]
+            type_name = self.facts.type_aliases[type_name]
         return type_name
 
     def _resolve_class_name(self, class_name: str, module_qn: str) -> str | None:
@@ -7633,7 +7584,7 @@ class CallResolver:
         # external sentinel proving the call leaves the repo. Any miss falls
         # back to the heuristics.
         ti = self.type_inference
-        facts = ti.frontend_facts[cs.SupportedLanguage.PYTHON]
+        facts = ti.facts.frontend_facts[cs.SupportedLanguage.PYTHON]
         if not (facts.resolved_call_sites or facts.external_sites):
             return None
         name_node = self._python_callee_name_node(call_node)
@@ -7657,7 +7608,7 @@ class CallResolver:
                 fact.target_file,
                 fact.target_line,
                 fact.target_col,
-                ti.function_locations,
+                ti.facts.function_locations,
                 ti.module_qn_to_file_path,
                 ti.repo_path,
                 self._py_rel_to_module,

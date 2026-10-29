@@ -8,13 +8,12 @@ from ... import constants as cs
 from ... import logs as ls
 from ...types_defs import (
     ASTNode,
-    FunctionLocation,
     FunctionRegistryTrieProtocol,
-    FunctionSpanKey,
     LanguageQueries,
     SimpleNameLookup,
 )
-from ..frontends.protocol import CallSiteKey, FrontendFacts, new_frontend_facts
+from ..definition_facts import DefinitionFacts
+from ..frontends.protocol import CallSiteKey
 from ..import_processor import ImportProcessor
 from ..semantic_call_join import call_site_key, resolve_call_site
 from ..utils import safe_decode_text
@@ -45,13 +44,11 @@ class JavaTypeInferenceEngine(
         "ast_cache",
         "queries",
         "module_qn_to_file_path",
-        "class_inheritance",
+        "facts",
         "simple_name_lookup",
         "_lookup_cache",
         "_lookup_in_progress",
         "_fqn_to_module_qn",
-        "frontend_facts",
-        "function_locations",
         "_rel_to_module",
         "_family_picks",
         "_class_headers",
@@ -66,10 +63,8 @@ class JavaTypeInferenceEngine(
         ast_cache: "ASTCacheProtocol",
         queries: Mapping[cs.SupportedLanguage, LanguageQueries],
         module_qn_to_file_path: dict[str, Path],
-        class_inheritance: dict[str, list[str]],
+        facts: DefinitionFacts,
         simple_name_lookup: SimpleNameLookup,
-        frontend_facts: FrontendFacts | None = None,
-        function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
     ):
         self.import_processor = import_processor
         self.function_registry = function_registry
@@ -78,15 +73,9 @@ class JavaTypeInferenceEngine(
         self.ast_cache = ast_cache
         self.queries = queries
         self.module_qn_to_file_path = module_qn_to_file_path
-        self.class_inheritance = class_inheritance
+        self.facts = facts
         self.simple_name_lookup = simple_name_lookup
 
-        self.frontend_facts = (
-            frontend_facts if frontend_facts is not None else new_frontend_facts()
-        )
-        self.function_locations = (
-            function_locations if function_locations is not None else {}
-        )
         self._rel_to_module: dict[str, str] = {}
         self._family_picks: dict[str, list[tuple[str, str]]] = {}
 
@@ -113,10 +102,10 @@ class JavaTypeInferenceEngine(
             call_node,
             module_qn,
             self._java_call_site_key,
-            self.frontend_facts[cs.SupportedLanguage.JAVA].resolved_call_sites,
-            self.frontend_facts[cs.SupportedLanguage.JAVA].external_sites,
+            self.facts.frontend_facts[cs.SupportedLanguage.JAVA].resolved_call_sites,
+            self.facts.frontend_facts[cs.SupportedLanguage.JAVA].external_sites,
             JAVA_EXTERNAL_TARGET,
-            self.function_locations,
+            self.facts.function_locations,
             self.module_qn_to_file_path,
             self.repo_path,
             self._rel_to_module,

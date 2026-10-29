@@ -13,12 +13,9 @@ from ..language_spec import has_other_language_sibling, own_extension_module_qn
 from ..types_defs import (
     ASTNode,
     CppDefinitionSpan,
-    CSharpCallShape,
     DeferredCppInherit,
     DeferredInherit,
-    FunctionLocations,
     FunctionRegistryTrieProtocol,
-    FunctionSpanKey,
     PendingTypeFact,
     PropertyDict,
     RustTraitImpl,
@@ -36,9 +33,10 @@ from .class_ingest import ClassIngestMixin
 from .cpp import CppTypeInferenceEngine
 from .cpp.preproc_recovery import parse_with_preproc_recovery
 from .definition_docstring import extract_definition_docstring
+from .definition_facts import DefinitionFacts
+from .definition_prune import RemovedFile, forget_file
 from .dependency_parser import read_manifest
 from .field_nodes import PendingFieldType
-from .frontends.protocol import FrontendFacts, new_frontend_facts
 from .function_ingest import FunctionIngestMixin
 from .go import utils as go_utils
 from .go.builds import Expr, GoBuilds
@@ -121,71 +119,38 @@ class DefinitionProcessor(
         # will actually be indexed, not merely one that exists on disk.
         self.exclude_paths = exclude_paths
         self.unignore_paths = unignore_paths
-        # {go module qn: its `package` clause name}; Go package membership is
-        # (directory, clause), so receiver binding needs both.
-        self.go_package_names: dict[str, str] = {}
-        # {SQL file: the bytes its tree was parsed from}, kept only where the
-        # tree's text is the statement-isolated copy (issue #3180), which
-        # blanks the DDL the call pass reads routine references from (issue
-        # #3181). Written at every parse, an evicted tree's reload included,
-        # so they always belong to the tree the call pass walks.
-        self.sql_sources: dict[Path, bytes] = {}
+        # The maps this pass fills for type inference and the call pass.
+        self.facts = DefinitionFacts()
         # Each Go file's build constraint, for telling a name each build
         # declares again (`i_linux.go`, `i_windows.go`) from a redeclaration
         # (shared with the call resolver and type inference).
         self.go_builds = GoBuilds(repo_path)
-        self.class_inheritance: dict[str, list[str]] = {}
         # {class qn: module qn of the file that DECLARED it}, written for
-        # EVERY language at class ingest. `class_inheritance` and
-        # `class_field_types` are keyed by a class qn, and a class records
+        # EVERY language at class ingest. `facts.class_inheritance` and
+        # `facts.class_field_types` are keyed by a class qn, and a class records
         # no function span, so the span-based ownership the registry sweep
         # uses cannot attribute one. Nor can a prefix rule: a C# class qn
         # embeds its namespace, so `proj/Core.cs` with `namespace Util`
         # yields `proj.Core.Util.Helper`, sitting under the SIBLING module
         # `proj.Core.Util` (#1769). This is the C#-only
-        # `csharp_class_owner_module`'s cross-language counterpart, needed
-        # because both maps above are written by every language's ingest
-        # (#1772).
+        # `facts.csharp_class_owner_module`'s cross-language counterpart,
+        # needed because both of those maps are written by every language's
+        # ingest (#1772).
         self.class_owner_module: dict[str, str] = {}
         # {class_qn: [(method_qn, method_name)]} for Dart @override methods;
         # whether they override an EXTERNAL base is only decidable once every
         # class is registered, so resolve_deferred_inherits consumes this.
         self.dart_annotated_overrides: dict[str, list[tuple[str, str]]] = {}
-        # {class_qn: [type_arg_qns]} for a Dart `extends Base<T, ...>` clause;
-        # read at call resolution to bind a member call on an undeclared
-        # receiver against the type arguments of an EXTERNAL base (#875).
-        self.dart_extends_type_args: dict[str, list[str]] = {}
-        # {extension_qn: on_type_as_written} for `extension E on T`; resolved
-        # lazily against E's module, since T may be parsed after E, so a member
-        # call on a T receiver can reach E's members (issue #2482).
-        self.dart_extension_on_types: dict[str, str] = {}
-        # Dart constructor qns (default, named, const, factory): a named
-        # constructor call resolves to its own method, so the call pass
-        # needs this set to record the construction (issue #2012).
-        self.dart_constructor_qns: set[str] = set()
         # {module qn: start bytes of the overload declarations that fold into
         # their implementation}: Python's `@overload` stubs (issue #2590) and
         # TypeScript's overload signatures (issue #2457). Both the function and
         # the method pass skip them so the implementation owns the name.
         self.folded_overloads: dict[str, frozenset[int]] = {}
-        # {interface_qn: [implementer_class_qns]} from IMPLEMENTS edges, so the
-        # resolver can redirect an interface-typed call `I.m` to the concrete
-        # `Impl.m` when I has exactly one first-party implementer (unambiguous).
-        self.interface_implementers: dict[str, set[str]] = {}
-        # The same pairs read back from the graph on an incremental run, which
-        # parses only the changed files (issue #2403). Kept apart and rebuilt
-        # on every rehydration so a pair the graph no longer holds leaves.
-        self.rehydrated_interface_implementers: dict[str, set[str]] = {}
         # {Rust impl target qn: module of the file whose `impl Trait for T`
         # recorded its pair}. A primitive or foreign target (`u64`) has no
         # class node, so `class_owner_module` never names that file, and the
         # pair outlived the impl on a reused updater (#2403).
         self.rust_impl_owner_module: dict[str, str] = {}
-        # {class_qn: {field_name: bare_type_name}} for C++ member fields, so a
-        # member call `field_.method()` in a (possibly out-of-line, cross-file)
-        # method resolves via the field's declared type. Populated at class
-        # ingestion, read by the type-inference engine at call resolution.
-        self.class_field_types: dict[str, dict[str, str]] = {}
         # Java anonymous-class override methods: (anon_method_qn, method_name,
         # base_type_name, module_qn). An anon class `new Base(){ @Override m(){} }`
         # is not modelled as a subclass, so its overrides register under the
@@ -200,69 +165,9 @@ class DefinitionProcessor(
         # interface implementations need no modifier and are unaffected.
         self.csharp_methods: set[str] = set()
         self.csharp_override_methods: set[str] = set()
-        # C# partial-class unification. A `partial` type split across files
-        # becomes N path-distinct Class nodes; parts sharing a
-        # namespace-qualified name are one logical type. Each part qn maps to
-        # the SHARED list of all its part qns (grows as parts are ingested),
-        # so member/base resolution on any part spans the whole group. The
-        # private index groups parts by their namespace-qualified key.
-        self.csharp_partial_groups: dict[str, list[str]] = {}
+        # C# partial parts grouped by their namespace-qualified key, the
+        # index behind `facts.csharp_partial_groups`.
         self._csharp_partial_index: dict[str, list[str]] = {}
-        # C# extension methods indexed for call binding: {method simple name:
-        # [(method_qn, receiver_type_simple_name)]}. `s.WordCount()` resolves
-        # to a `static WordCount(this string s)` whose receiver type matches
-        # the call's receiver, a lookup the instance-hierarchy walk can't make
-        # (the method lives on an unrelated static class). Populated at method
-        # ingestion, read by the type-inference engine as a fallback.
-        self.csharp_extension_methods: dict[str, list[tuple[str, str, str, int]]] = {}
-        # C# local functions: {local_fn_qn: (host span key, parameter count)}.
-        # The host (method/ctor/enclosing local fn) is pinned by SPAN because
-        # at Function-pass time the host method's signatured identity may not
-        # be registered yet; the resolver joins the span to function_locations
-        # lazily. Bare-name resolution uses this to honor C# scoping: a local
-        # fn is callable only from inside its host, and shadows same-name
-        # method overloads there (Polly's PredicateBuilder.HandleInner).
-        self.csharp_local_functions: dict[str, tuple[FunctionSpanKey, int]] = {}
-        # qns of C# methods declared WITH type parameters (`M<T>(X)`), so
-        # bare-call resolution can prefer the overload whose genericness
-        # matches the callee shape (`M<TResult>(x)` vs `M(x)`) when
-        # parameter arity alone cannot tell same-name twins apart.
-        self.csharp_generic_methods: set[str] = set()
-        # {C# method qn: arguments a call must pass} -- parameters with no
-        # default and no `params` -- so a bare call that omits arguments binds
-        # only an overload whose omitted parameters are defaulted. A method
-        # with no entry (not parsed this run) is judged from its signature.
-        self.csharp_call_shapes: dict[str, CSharpCallShape] = {}
-        # {class qn: declared type-parameter count} for C# generic types,
-        # so `Builder` vs `Builder<TResult>` (same simple name) can be told
-        # apart when a type reference's written arity is known.
-        self.csharp_class_generic_arity: dict[str, int] = {}
-        # {class qn: module qn of the file that DECLARED it}. Recorded
-        # rather than derived: a C# class qn embeds its namespace, so
-        # `proj/Core.cs` with `namespace Util` yields
-        # `proj.Core.Util.Helper`, which sits under the SIBLING module
-        # `proj.Core.Util`. No prefix rule on the qn can recover the
-        # declarer, so the prune reads this map (#1769).
-        self.csharp_class_owner_module: dict[str, str] = {}
-        # {class qn: namespace-qualified name (`N1.Outer.Widget`)} for every
-        # C# type, read from the declaration at ingest: the qn leaves out a
-        # namespace the module's directory already spells (issue #1629), so
-        # the `this`-receiver matcher cannot recover the form from it.
-        self.csharp_class_namespaced: dict[str, str] = {}
-        # The reverse: {namespace-qualified name: class qns carrying it}, so
-        # a written `Zeta.BaseC` in a base list still finds the class whose
-        # qn no longer ends with those segments (#1629).
-        self.csharp_namespaced_qns: dict[str, set[str]] = {}
-        # {method qn: (normalized return type, its written generic arity)}
-        # for chained-receiver typing; separate from the cross-language
-        # method_return_types because the arity is C#-specific.
-        self.csharp_method_return_types: dict[str, tuple[str, int]] = {}
-        # What each compiler frontend (Roslyn, go/types, javac, Jedi) supplied
-        # this run, by language (issue #1178): exact call targets keyed on the
-        # callee NAME token, proofs a call leaves the repo, C# base kinds and
-        # flows, go/types implements pairs and the roots and files it checked.
-        # Readers index it on use; an off or unavailable frontend reads empty.
-        self.frontend_facts: FrontendFacts = new_frontend_facts()
         # Repo-relative prefixes of annotation-processor output (issue #1140):
         # modules under one are stamped generated with a processor hint.
         self.generated_source_prefixes: list[str] = []
@@ -291,9 +196,6 @@ class DefinitionProcessor(
         # in files its build compiles too, refilled by each link (shared with
         # the call resolver).
         self.go_variant_methods: dict[str, dict[str, list[str]]] = {}
-        # Go interface -> the declarations of its name each build makes
-        # (shared with the call resolver).
-        self.go_declaration_variants: dict[str, tuple[str, ...]] = {}
         # (Go interface, implementer) -> the builds holding the pair (shared
         # with the call resolver).
         self.go_pair_builds: dict[tuple[str, str], Expr] = {}
@@ -301,29 +203,6 @@ class DefinitionProcessor(
         # the reverse of the Roslyn fact keys, so partial declaration groups
         # join back to the Pass-2 Class nodes.
         self.csharp_type_locations: dict[tuple[str, int], str] = {}
-        # {class_qn: {field_name: inner_type}} for Rust guard-container fields
-        # (`state: Mutex<State>` -> {"state": "State"}). The field map above keeps
-        # the WRAPPER; this inner is applied only when a receiver chain reaches a
-        # lock/read/borrow guard accessor (guards do not deref-coerce).
-        self.class_field_guard_inner: dict[str, dict[str, str]] = {}
-        # {class_qn: {field_name: element_type}} for Rust sequence fields
-        # (`workers: Vec<Worker>` -> {"workers": "Worker"}), applied only when
-        # an iterator adaptor's closure parameter binds the element (#1045).
-        self.class_field_element_types: dict[str, dict[str, str]] = {}
-        # {alias_name: underlying_bare_type} for C++ typedef/using aliases, so a
-        # receiver declared with an alias resolves to the aliased class. Collected
-        # across all files (an alias in a header is used in a .cc), read by the
-        # resolver when mapping a receiver type name to a class.
-        self.type_aliases: dict[str, str] = {}
-        # {func_or_method_qn: bare_return_type_name} captured at definition
-        # ingestion, so a chained call `x.foo().bar()` can resolve `bar` on the
-        # type `foo()` returns. Read by the resolver's chained-call path.
-        self.method_return_types: dict[str, str] = {}
-        # {go_free_fn_qn: first_return_type} for typing `v, err := f()`
-        # bindings. Kept OFF method_return_types deliberately: that map
-        # feeds chained-call resolution, where a multi-return callee is
-        # uncallable and first-type recording would shift edge behavior.
-        self.go_function_return_types: dict[str, str] = {}
         # Alias names seen with conflicting underlying types across scopes/files;
         # dropped from type_aliases so their receivers fall back to name-only.
         self._type_alias_conflicts: set[str] = set()
@@ -343,15 +222,6 @@ class DefinitionProcessor(
         # Free-function prototypes held until every bodied definition is
         # registered; resolve_deferred_cpp_prototypes drops duplicates (#893).
         self._deferred_cpp_prototypes: list = []
-        # (module_qn, def start_line) -> (method_qn, class_qn) for every
-        # out-of-class C++ method the definition pass bound; Pass-3 call
-        # attribution reuses these decisions instead of re-resolving.
-        self.cpp_out_of_class_methods: dict[tuple[str, int], tuple[str, str]] = {}
-        # (module_qn, def start_line) -> location of EVERY C++ function or
-        # method node Pass 2 registered, so Pass-3 caller attribution reuses
-        # the registered label/qn instead of re-deriving them structurally
-        # (the walks diverge on preprocessor-distorted class bodies).
-        self.function_locations: FunctionLocations = FunctionLocations()
         # {rel path: [full line spans]} of every C/C++ function/method the
         # tree-sitter pass ingested; the hybrid C++ frontend's macro-use
         # CALLS resolve against these after Pass 2 (see CppDefinitionSpan).
@@ -387,14 +257,6 @@ class DefinitionProcessor(
         # WARNING the updater logs per run in place of a line per file.
         self.unparsable_manifests: dict[Path, str] = {}
         self._deferred_cpp_module_impls: list[tuple[str, str]] = []
-        # Inline (non-file) module qns, e.g. Rust `mod x {}`; deferred
-        # import verification counts them as real internal targets.
-        self.declared_module_qns: set[str] = set()
-        # {Rust function/method qn: the module qn it is contained by}, taken
-        # from the AST at ingest because qn space cannot distinguish an inline
-        # `mod` from an impl block. Pass-3 resolves `super::`/`self::` against
-        # it (issue #1086).
-        self.rust_function_modules: dict[str, str] = {}
         # Route-decorated handlers deferred from Pass 2: endpoint templates
         # need router mount prefixes, which may live in modules parsed later
         # (issue #877). (label, qn, route decorators, module_qn).
@@ -405,17 +267,7 @@ class DefinitionProcessor(
         self.pending_type_facts: list[PendingTypeFact] = []
         self.pending_parameter_types: list[PendingParameterType] = []
         self.pending_field_types: list[PendingFieldType] = []
-        # Registered qns that are macro definitions (Rust macro_rules!):
-        # macros register as Function nodes but live in a separate namespace,
-        # so Pass-3 gates macro-invocation call sites to these targets and
-        # fn-namespace call sites away from them.
-        self.macro_qns: set[str] = set()
-        # {qn: file path} for definitions rehydrated from the graph on an
-        # incremental run, whose modules are absent from module_qn_to_file_path
-        # (only re-parsed files populate it). _is_cpp_defined falls back to
-        # this so cross-file resolution into UNCHANGED headers still works.
-        self.rehydrated_definition_paths: dict[str, str] = {}
-        self._func_class_captures_cache = func_class_captures_cache
+        self.func_class_captures_cache = func_class_captures_cache
 
     def begin_run(self) -> None:
         # What a run records about itself: a reused updater must not treat
@@ -432,9 +284,15 @@ class DefinitionProcessor(
             methods=self.go_methods,
             builtin_shadows=self.go_builtin_shadows,
             variant_methods=self.go_variant_methods,
-            declaration_variants=self.go_declaration_variants,
+            declaration_variants=self.facts.go_declaration_variants,
             pair_builds=self.go_pair_builds,
             builds=self.go_builds,
+        )
+
+    def forget_file(self, removed: RemovedFile) -> None:
+        """Drop what a removed or re-parsed file recorded in this pass's maps."""
+        forget_file(
+            self.facts, self.class_owner_module, self.rust_impl_owner_module, removed
         )
 
     def reset_interface_implementers(self) -> None:
@@ -446,10 +304,10 @@ class DefinitionProcessor(
         a deleted implementer still counted: the remaining one lost the
         sole-implementer edge a fresh build emits.
         """
-        # In place: the call resolver holds both maps by reference, and the
-        # guessed Go pairs too.
-        self.interface_implementers.clear()
-        self.rehydrated_interface_implementers.clear()
+        # The Go pairs in place: the call resolver holds them through the Go
+        # link state.
+        self.facts.interface_implementers.clear()
+        self.facts.rehydrated_interface_implementers.clear()
         self.rust_impl_owner_module.clear()
         self.go_proven_pairs.clear()
         self.go_guessed_pairs.clear()
@@ -545,9 +403,9 @@ class DefinitionProcessor(
             self.function_registry,
             self.import_processor.import_mapping,
             self.project_name,
-            self.csharp_class_generic_arity,
+            self.facts.csharp_class_generic_arity,
         )
-        resolver.join_partial_groups(self.csharp_partial_groups)
+        resolver.join_partial_groups(self.facts.csharp_partial_groups)
         emitted = emit_type_edges(self.pending_type_facts, resolver, self.ingestor)
         # Parameter OF_TYPE edges resolve in the same pass, for the same
         # reason: the annotation may name a type from a later file.
@@ -606,7 +464,7 @@ class DefinitionProcessor(
             if language == cs.SupportedLanguage.GO and (
                 package_name := go_utils.extract_package_name(root_node)
             ):
-                self.go_package_names[module_qn] = package_name
+                self.facts.go_package_names[module_qn] = package_name
 
             self._ingest_module_node(
                 file_path,
@@ -626,7 +484,7 @@ class DefinitionProcessor(
             # line, col), so a function renamed in place keeps its key and the
             # first-claim guard would block the live registration, filing body
             # `use` imports under the dead qn (issue #1019).
-            self.function_locations.drop_module(module_qn)
+            self.facts.function_locations.drop_module(module_qn)
             # Before the function pass below, which would otherwise take a
             # class's plain name first (issue #2621).
             if language == cs.SupportedLanguage.PYTHON:
@@ -669,7 +527,7 @@ class DefinitionProcessor(
             if language == cs.SupportedLanguage.CPP:
                 self._ingest_cpp_module_declarations(root_node, module_qn, file_path)
                 CppTypeInferenceEngine().collect_type_aliases(
-                    root_node, self.type_aliases, self._type_alias_conflicts
+                    root_node, self.facts.type_aliases, self._type_alias_conflicts
                 )
             self._fold_overloads(
                 root_node, module_qn, language, queries, combined_captures
@@ -792,9 +650,9 @@ class DefinitionProcessor(
             and not parsed[:start].strip()
             and not parsed[end:].strip()
         ):
-            self.sql_sources.pop(file_path, None)
+            self.facts.sql_sources.pop(file_path, None)
         else:
-            self.sql_sources[file_path] = parsed
+            self.facts.sql_sources[file_path] = parsed
 
     @staticmethod
     def _warn_lost_sql_functions(
@@ -913,7 +771,7 @@ class DefinitionProcessor(
         # `proj.pkg.caller CALLS ...` beside `proj.pkg.caller.run CALLS
         # ...` (PR #1833). Absent is the honest state there, and
         # it is what the reader already falls back on.
-        if self._func_class_captures_cache is not None and (
+        if self.func_class_captures_cache is not None and (
             combined_captures is not None
         ):
             # Write unconditionally, including the EMPTY entry. The two
@@ -937,7 +795,7 @@ class DefinitionProcessor(
             for key in (cs.CAPTURE_FUNCTION, cs.CAPTURE_CLASS, cs.CAPTURE_CALL):
                 if combined_captures and key in combined_captures:
                     cache_entry[key] = combined_captures[key]
-            self._func_class_captures_cache[file_path] = cache_entry
+            self.func_class_captures_cache[file_path] = cache_entry
         return combined_captures
 
     def _finalise_rust_file(self, module_qn: str, root_node: ASTNode) -> None:
@@ -948,12 +806,12 @@ class DefinitionProcessor(
         # enclosing function, knowable only now that dedup variants
         # (`natural@<line>`) have been handed out.
         self.import_processor.finalise_rust_function_scope_uses(
-            module_qn, self.function_locations
+            module_qn, self.facts.function_locations
         )
         # Block-local items key on their own registered qn, which
         # the same pass has just handed out.
         self.import_processor.record_rust_block_items(
-            module_qn, root_node, self.function_locations
+            module_qn, root_node, self.facts.function_locations
         )
         # Inline-mod maps were visible to this file's own impl
         # ingestion above; retract them until the flush-time

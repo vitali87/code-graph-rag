@@ -146,7 +146,7 @@ def test_the_rehydrated_index_is_the_one_a_parse_builds(temp_repo: Path) -> None
     parsed = _index(store, root, force=True)
     expected = {
         name: sorted(entries)
-        for name, entries in parsed.factory.definition_processor.csharp_extension_methods.items()
+        for name, entries in parsed.factory.definition_processor.facts.csharp_extension_methods.items()
     }
     assert any(entry[3] == 1 for entry in expected["Build"]), expected
     assert all(entry[2] == "App" for entries in expected.values() for entry in entries)
@@ -160,5 +160,5 @@ def test_the_rehydrated_index_is_the_one_a_parse_builds(temp_repo: Path) -> None
 
     assert {
         name: sorted(entries)
-        for name, entries in rehydrated.factory.definition_processor.csharp_extension_methods.items()
+        for name, entries in rehydrated.factory.definition_processor.facts.csharp_extension_methods.items()
     } == expected

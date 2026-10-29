@@ -2442,10 +2442,10 @@ def test_go_pairs_read_back_stay_out_of_the_generic_override_walk(
     # still joins the walk (#2503).
     updater = _go_updater(StatefulIngestor(), temp_repo)
     dp = updater.factory.definition_processor
-    dp.rehydrated_definition_paths.update(
+    dp.facts.rehydrated_definition_paths.update(
         {"proj.square.Square": "square.go", "proj.Upper.Upper": "Upper.java"}
     )
-    dp.rehydrated_interface_implementers.update(
+    dp.facts.rehydrated_interface_implementers.update(
         {
             "proj.shape.Shape": {"proj.square.Square"},
             "proj.Strategy.Strategy": {"proj.Upper.Upper"},

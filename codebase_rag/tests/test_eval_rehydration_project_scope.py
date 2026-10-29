@@ -78,7 +78,7 @@ def test_incremental_modules_contain_only_the_requested_project(
 def test_incremental_inheritance_contains_only_the_requested_project(
     rehydrated_updater: GraphUpdater,
 ) -> None:
-    assert rehydrated_updater.factory.definition_processor.class_inheritance == {
+    assert rehydrated_updater.factory.definition_processor.facts.class_inheritance == {
         "proj.models.Child": ["proj.models.Base", "proj.models.Alternate"],
     }
 

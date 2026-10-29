@@ -1,7 +1,7 @@
 """A file that parses to no definitions must retract its old CALLS edges (#1794).
 
 `reingest` deletes a re-parsed file's Module subtree and then re-resolves its
-calls. The re-resolution reads `_func_class_captures_cache`, which was only
+calls. The re-resolution reads `func_class_captures_cache`, which was only
 WRITTEN when the new parse produced captures -- so a file emptied between runs
 skipped the write and left the PREVIOUS parse's captures in place. Those
 captures hold nodes from a tree that has since been discarded, so the call

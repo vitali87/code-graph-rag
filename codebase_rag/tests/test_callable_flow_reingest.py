@@ -143,4 +143,4 @@ def test_forgetting_a_file_does_not_build_the_call_processor(
 
     updater.remove_file_from_state(temp_repo / "main.py")
 
-    assert updater.factory._call_processor is None
+    assert updater.factory.built_call_processor is None

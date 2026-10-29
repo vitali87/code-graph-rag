@@ -11,6 +11,7 @@ from ...types_defs import (
     LanguageQueries,
     SimpleNameLookup,
 )
+from ..definition_facts import DefinitionFacts
 from ..import_processor import ImportProcessor
 from .ast_analyzer import PythonAstAnalyzerMixin
 from .expression_analyzer import PythonExpressionAnalyzerMixin
@@ -65,7 +66,7 @@ class PythonTypeInferenceEngine(
         "ast_cache",
         "queries",
         "module_qn_to_file_path",
-        "class_inheritance",
+        "facts",
         "simple_name_lookup",
         "_js_type_inference_getter",
         "_method_return_type_cache",
@@ -85,7 +86,7 @@ class PythonTypeInferenceEngine(
         ast_cache: ASTCacheProtocol,
         queries: Mapping[cs.SupportedLanguage, LanguageQueries],
         module_qn_to_file_path: dict[str, Path],
-        class_inheritance: dict[str, list[str]],
+        facts: DefinitionFacts,
         simple_name_lookup: SimpleNameLookup,
         js_type_inference_getter: Callable[[], JsTypeInferenceEngine],
     ):
@@ -96,7 +97,7 @@ class PythonTypeInferenceEngine(
         self.ast_cache = ast_cache
         self.queries = queries
         self.module_qn_to_file_path = module_qn_to_file_path
-        self.class_inheritance = class_inheritance
+        self.facts = facts
         self.simple_name_lookup = simple_name_lookup
         self._js_type_inference_getter = js_type_inference_getter
 

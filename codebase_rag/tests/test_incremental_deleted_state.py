@@ -208,7 +208,7 @@ def test_a_rehydrated_updater_forgets_a_deleted_definitions_language(
     (root / "other.py").write_text(after["other.py"], encoding="utf-8")
     _bump(root, "other.py")
     updater.run(force=False)
-    rehydrated = updater.factory.definition_processor.rehydrated_definition_paths
+    rehydrated = updater.factory.definition_processor.facts.rehydrated_definition_paths
     assert "proj.util.helper" in rehydrated, "the shape did not rehydrate"
 
     (root / "util.rs").unlink()
@@ -1046,10 +1046,10 @@ def test_a_reused_updater_joins_a_java_fact_against_the_renamed_module(
         }
         spans = sorted(
             (line, col)
-            for (mod, line, col), loc in dp.function_locations.items()
+            for (mod, line, col), loc in dp.facts.function_locations.items()
             if mod in modules and ".B.handle" in loc.qualified_name
         )
-        assert spans, (modules, sorted(dp.function_locations))
+        assert spans, (modules, sorted(dp.facts.function_locations))
         line, col = spans[0]
         return SemanticFacts(
             resolved_call_sites={

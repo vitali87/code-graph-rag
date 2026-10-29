@@ -98,7 +98,7 @@ def test_class_only_file_still_emits_its_module_level_call(tmp_path: Path) -> No
     # class-only entry (no call, no function), which is exactly the shape
     # that used to take the skip.
     disp_path = tmp_path / "pkg" / "disp.py"
-    entry = updater.factory._func_class_captures_cache[disp_path]
+    entry = updater.factory.func_class_captures_cache[disp_path]
     assert not entry.get(cs.CAPTURE_CALL)
     assert not entry.get(cs.CAPTURE_FUNCTION)
     assert entry.get(cs.CAPTURE_CLASS)

@@ -399,10 +399,10 @@ class TestResolveSuperCall:
         )
         processor = updater.factory.call_processor
 
-        processor._resolver.class_inheritance["proj.module.ChildClass"] = [
+        processor._resolver.facts.class_inheritance["proj.module.ChildClass"] = [
             "proj.module.ParentClass"
         ]
-        processor._resolver.class_inheritance["proj.module.ParentClass"] = [
+        processor._resolver.facts.class_inheritance["proj.module.ParentClass"] = [
             "proj.module.GrandparentClass"
         ]
 
@@ -533,9 +533,11 @@ class TestResolveInheritedMethod:
         )
         processor = updater.factory.call_processor
 
-        processor._resolver.class_inheritance["proj.Child"] = ["proj.Parent"]
-        processor._resolver.class_inheritance["proj.Parent"] = ["proj.Grandparent"]
-        processor._resolver.class_inheritance["proj.Grandparent"] = []
+        processor._resolver.facts.class_inheritance["proj.Child"] = ["proj.Parent"]
+        processor._resolver.facts.class_inheritance["proj.Parent"] = [
+            "proj.Grandparent"
+        ]
+        processor._resolver.facts.class_inheritance["proj.Grandparent"] = []
 
         processor._resolver.function_registry["proj.Parent.parentMethod"] = (
             cs.NodeLabel.METHOD
@@ -978,7 +980,7 @@ class TestTryResolveMethod:
             cs.NodeLabel.METHOD
         )
 
-        processor._resolver.class_inheritance["proj.models.User"] = [
+        processor._resolver.facts.class_inheritance["proj.models.User"] = [
             "proj.models.BaseModel"
         ]
 

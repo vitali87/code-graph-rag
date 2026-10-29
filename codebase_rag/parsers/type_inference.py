@@ -5,10 +5,7 @@ from typing import TYPE_CHECKING
 from .. import constants as cs
 from ..types_defs import (
     ASTNode,
-    CSharpCallShape,
-    FunctionLocation,
     FunctionRegistryTrieProtocol,
-    FunctionSpanKey,
     LanguageQueries,
     SimpleNameLookup,
 )
@@ -18,7 +15,8 @@ from .cpp import CppTypeInferenceEngine
 # processor, and a re-export would load it for every `parsers.csharp` import.
 from .csharp.type_inference import CSharpTypeInferenceEngine
 from .dart import DartTypeInferenceEngine
-from .frontends.protocol import FrontendFacts, new_frontend_facts
+from .definition_facts import DefinitionFacts
+from .definition_prune import RemovedFile, stale_go_return_types
 from .go import GoTypeInferenceEngine
 from .go import utils as go_utils
 from .import_processor import ImportProcessor
@@ -31,7 +29,7 @@ from .py.ast_analyzer import clear_scope_facts
 from .rs import RustTypeInferenceEngine
 from .rs import utils as rs_utils
 from .rs.type_inference import is_constructor_guess
-from .utils import follow_reexports, shared_or_new
+from .utils import follow_reexports
 
 if TYPE_CHECKING:
     from ..types_defs import ASTCacheProtocol
@@ -46,27 +44,8 @@ class TypeInferenceEngine:
         "ast_cache",
         "queries",
         "module_qn_to_file_path",
-        "class_inheritance",
+        "facts",
         "simple_name_lookup",
-        "class_field_types",
-        "class_field_guard_inner",
-        "class_field_element_types",
-        "method_return_types",
-        "go_function_return_types",
-        "go_package_names",
-        "go_declaration_variants",
-        "frontend_facts",
-        "csharp_partial_groups",
-        "csharp_extension_methods",
-        "csharp_local_functions",
-        "csharp_generic_methods",
-        "csharp_call_shapes",
-        "csharp_class_generic_arity",
-        "csharp_class_owner_module",
-        "csharp_class_namespaced",
-        "csharp_namespaced_qns",
-        "csharp_method_return_types",
-        "function_locations",
         "_java_type_inference",
         "_csharp_type_inference",
         "_lua_type_inference",
@@ -78,9 +57,6 @@ class TypeInferenceEngine:
         "_rust_type_inference",
         "_cpp_type_inference",
         "_dart_type_inference",
-        "dart_extends_type_args",
-        "dart_constructor_qns",
-        "dart_extension_on_types",
     )
 
     def __init__(
@@ -92,31 +68,8 @@ class TypeInferenceEngine:
         ast_cache: "ASTCacheProtocol",
         queries: Mapping[cs.SupportedLanguage, LanguageQueries],
         module_qn_to_file_path: dict[str, Path],
-        class_inheritance: dict[str, list[str]],
+        facts: DefinitionFacts,
         simple_name_lookup: SimpleNameLookup,
-        class_field_types: dict[str, dict[str, str]] | None = None,
-        class_field_guard_inner: dict[str, dict[str, str]] | None = None,
-        class_field_element_types: dict[str, dict[str, str]] | None = None,
-        method_return_types: dict[str, str] | None = None,
-        go_function_return_types: dict[str, str] | None = None,
-        go_package_names: dict[str, str] | None = None,
-        go_declaration_variants: dict[str, tuple[str, ...]] | None = None,
-        frontend_facts: FrontendFacts | None = None,
-        csharp_partial_groups: dict[str, list[str]] | None = None,
-        csharp_extension_methods: dict[str, list[tuple[str, str, str, int]]]
-        | None = None,
-        csharp_local_functions: dict[str, tuple[FunctionSpanKey, int]] | None = None,
-        csharp_generic_methods: set[str] | None = None,
-        csharp_call_shapes: dict[str, CSharpCallShape] | None = None,
-        csharp_class_generic_arity: dict[str, int] | None = None,
-        csharp_class_owner_module: dict[str, str] | None = None,
-        csharp_class_namespaced: dict[str, str] | None = None,
-        csharp_namespaced_qns: dict[str, set[str]] | None = None,
-        csharp_method_return_types: dict[str, tuple[str, int]] | None = None,
-        function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
-        dart_extends_type_args: dict[str, list[str]] | None = None,
-        dart_constructor_qns: set[str] | None = None,
-        dart_extension_on_types: dict[str, str] | None = None,
     ):
         self.import_processor = import_processor
         self.function_registry = function_registry
@@ -125,43 +78,8 @@ class TypeInferenceEngine:
         self.ast_cache = ast_cache
         self.queries = queries
         self.module_qn_to_file_path = module_qn_to_file_path
-        self.class_inheritance = class_inheritance
+        self.facts = facts
         self.simple_name_lookup = simple_name_lookup
-        # Must preserve the shared dict reference: the factory passes the
-        # DefinitionProcessor's map, empty at construction and populated later during
-        # ingestion. `or {}` would swap it for a new dict and silently lose every
-        # field type written afterward.
-        self.class_field_types = shared_or_new(class_field_types, dict)
-        # Shared reference (as with class_field_types): Rust guard-field inner types
-        # (`Shared.state` -> State for a `Mutex<State>` field), applied only at a
-        # guard-accessor hop so a direct wrapper call isn't mis-resolved to it.
-        self.class_field_guard_inner = shared_or_new(class_field_guard_inner, dict)
-        # Shared reference (as with class_field_types): Rust sequence-field
-        # element types (`Pool.workers` -> Worker for a `Vec<Worker>` field),
-        # applied only when an iterator adaptor's closure parameter binds the
-        # element (issue #1045).
-        self.class_field_element_types = shared_or_new(class_field_element_types, dict)
-        # Shared reference (as with class_field_types): DefinitionProcessor's
-        # func_qn -> return-type map, populated during ingestion and read by the
-        # resolver's chained-call path.
-        self.method_return_types = shared_or_new(method_return_types, dict)
-        # Shared reference (as with class_field_types): Go free-fn qn ->
-        # FIRST return type, read only by the single-segment binding path.
-        self.go_function_return_types = shared_or_new(go_function_return_types, dict)
-        # Shared reference (as with class_field_types): each Go file module's
-        # `package` clause, recorded as the file is parsed. A directory can
-        # hold two packages, `p` and the external test package `p_test`, so
-        # the free-function index keys by both (#2616).
-        self.go_package_names = shared_or_new(go_package_names, dict)
-        # Go interface -> the declarations of its name each build makes
-        # (shared, filled by the interface link before any call is typed).
-        self.go_declaration_variants = shared_or_new(go_declaration_variants, dict)
-        # What each compiler frontend supplied this run, by language (the
-        # definition processor's store): read on use by the per-language
-        # resolvers' semantic paths and the C# flow walk.
-        self.frontend_facts = (
-            frontend_facts if frontend_facts is not None else new_frontend_facts()
-        )
         # (directory package, name) -> {(file's `package` clause, None when
         # unrecorded; whether the file is the external test package): the
         # return types its functions of that name declare}.
@@ -169,55 +87,6 @@ class TypeInferenceEngine:
             tuple[str, str], dict[tuple[str | None, bool], set[str]]
         ] = {}
         self._go_free_fn_index_size = -1
-        # Shared reference (as with class_field_types): C# partial-class part
-        # groups, populated during ingestion and read by the C# resolver to
-        # span all parts of a split type.
-        self.csharp_partial_groups = shared_or_new(csharp_partial_groups, dict)
-        # Shared reference (as with class_field_types): C# extension-method
-        # index, populated during ingestion and read by the C# resolver's
-        # receiver-binding fallback.
-        self.csharp_extension_methods = shared_or_new(csharp_extension_methods, dict)
-        # Shared reference (as with class_field_types): C# local-function
-        # host/arity index, populated during ingestion and read by the C#
-        # resolver's bare-name path.
-        self.csharp_local_functions = shared_or_new(csharp_local_functions, dict)
-        # Shared reference (as with class_field_types): generic-method qn
-        # set, populated during ingestion, read by C# bare-call dispatch.
-        self.csharp_generic_methods = shared_or_new(csharp_generic_methods, set)
-        self.csharp_call_shapes = shared_or_new(csharp_call_shapes, dict)
-        self.csharp_class_generic_arity = shared_or_new(
-            csharp_class_generic_arity, dict
-        )
-        # The module qn of the file that DECLARED each class, recorded at
-        # ingest because it cannot be recovered from the class qn: a C#
-        # class qn embeds its namespace, so `proj/Core.cs` declaring
-        # `namespace Util` yields `proj.Core.Util.Helper`, which sits under
-        # the sibling module `proj.Core.Util` (`Core/Util.cs`). Inferring
-        # the owner by longest module prefix therefore attributes the class
-        # to the wrong file (#1769).
-        # Deliberately NOT forwarded to `CSharpTypeInferenceEngine` below:
-        # resolution never consults it. Only `remove_file_from_state`'s prune
-        # reads it, and it reads it from here. Passing it raised
-        # `unexpected keyword argument` inside the call pass, where the
-        # exception was SWALLOWED -- the arity map is populated earlier, so a
-        # probe checking only that map still looked correct (#1769).
-        self.csharp_class_owner_module = shared_or_new(csharp_class_owner_module, dict)
-        self.csharp_class_namespaced = shared_or_new(csharp_class_namespaced, dict)
-        self.csharp_namespaced_qns = shared_or_new(csharp_namespaced_qns, dict)
-        self.csharp_method_return_types = shared_or_new(
-            csharp_method_return_types, dict
-        )
-        self.function_locations = shared_or_new(function_locations, dict)
-        # Shared reference (as with class_field_types): Dart `extends Base<T>`
-        # type arguments per class qn, read by the resolver's undeclared
-        # receiver fallback (#875).
-        self.dart_extends_type_args = shared_or_new(dart_extends_type_args, dict)
-        # Constructor qns, read by the call pass to record a named
-        # constructor call as a construction (#2012).
-        self.dart_constructor_qns = shared_or_new(dart_constructor_qns, set)
-        # Extension qn -> its `on` type as written, read by the resolver when
-        # a typed receiver's class lacks the member (#2482).
-        self.dart_extension_on_types = shared_or_new(dart_extension_on_types, dict)
 
         self._java_type_inference: JavaTypeInferenceEngine | None = None
         self._csharp_type_inference: CSharpTypeInferenceEngine | None = None
@@ -233,8 +102,7 @@ class TypeInferenceEngine:
     def go_type_inference(self) -> GoTypeInferenceEngine:
         if self._go_type_inference is None:
             self._go_type_inference = GoTypeInferenceEngine(
-                frontend_facts=self.frontend_facts,
-                function_locations=self.function_locations,
+                facts=self.facts,
                 module_qn_to_file_path=self.module_qn_to_file_path,
                 repo_path=self.repo_path,
             )
@@ -263,10 +131,8 @@ class TypeInferenceEngine:
                 ast_cache=self.ast_cache,
                 queries=self.queries,
                 module_qn_to_file_path=self.module_qn_to_file_path,
-                class_inheritance=self.class_inheritance,
+                facts=self.facts,
                 simple_name_lookup=self.simple_name_lookup,
-                frontend_facts=self.frontend_facts,
-                function_locations=self.function_locations,
             )
         return self._java_type_inference
 
@@ -281,21 +147,8 @@ class TypeInferenceEngine:
                 ast_cache=self.ast_cache,
                 queries=self.queries,
                 module_qn_to_file_path=self.module_qn_to_file_path,
-                class_inheritance=self.class_inheritance,
+                facts=self.facts,
                 simple_name_lookup=self.simple_name_lookup,
-                class_field_types=self.class_field_types,
-                csharp_partial_groups=self.csharp_partial_groups,
-                csharp_extension_methods=self.csharp_extension_methods,
-                frontend_facts=self.frontend_facts,
-                csharp_local_functions=self.csharp_local_functions,
-                csharp_generic_methods=self.csharp_generic_methods,
-                csharp_call_shapes=self.csharp_call_shapes,
-                csharp_class_generic_arity=self.csharp_class_generic_arity,
-                csharp_class_namespaced=self.csharp_class_namespaced,
-                csharp_namespaced_qns=self.csharp_namespaced_qns,
-                csharp_method_return_types=self.csharp_method_return_types,
-                method_return_types=self.method_return_types,
-                function_locations=self.function_locations,
             )
         return self._csharp_type_inference
 
@@ -360,7 +213,7 @@ class TypeInferenceEngine:
                 ast_cache=self.ast_cache,
                 queries=self.queries,
                 module_qn_to_file_path=self.module_qn_to_file_path,
-                class_inheritance=self.class_inheritance,
+                facts=self.facts,
                 simple_name_lookup=self.simple_name_lookup,
                 js_type_inference_getter=lambda: self.js_type_inference,
             )
@@ -498,7 +351,7 @@ class TypeInferenceEngine:
         element_entries = engine.collect_element_entries(caller_node)
         if class_context:
             span = (caller_node.start_byte, caller_node.end_byte)
-            for field, elem in self.class_field_element_types.get(
+            for field, elem in self.facts.class_field_element_types.get(
                 class_context, {}
             ).items():
                 element_entries.append(
@@ -603,7 +456,7 @@ class TypeInferenceEngine:
             method_qn = self._dart_unique_class_member(base, member)
             if method_qn is None:
                 continue
-            recorded = self.method_return_types.get(method_qn)
+            recorded = self.facts.method_return_types.get(method_qn)
             if recorded is None:
                 var_types.pop(name, None)
             else:
@@ -672,12 +525,12 @@ class TypeInferenceEngine:
             return None
         class_qn = self._resolve_class_name(base_type, module_qn) or base_type
         for field in segments[1:-1]:
-            field_type = self.class_field_types.get(class_qn, {}).get(field)
+            field_type = self.facts.class_field_types.get(class_qn, {}).get(field)
             if not field_type:
                 return None
             class_qn = self._resolve_class_name(field_type, module_qn) or field_type
         method_qn = f"{class_qn}{cs.SEPARATOR_DOT}{segments[-1]}"
-        return_type = self.method_return_types.get(method_qn)
+        return_type = self.facts.method_return_types.get(method_qn)
         # Another package's type (`model.Item`) is spelled for the METHOD's
         # file; a local typed with that spelling resolves to nothing here and
         # would lose the edge its calls get by name, so it stays untyped.
@@ -685,14 +538,17 @@ class TypeInferenceEngine:
             return None
         return return_type
 
+    def forget_go_return_types(self, removed: RemovedFile) -> None:
+        """Drop the Go return types a removed or re-parsed file recorded."""
+        if stale := stale_go_return_types(self.facts, removed):
+            self.drop_go_return_types(stale)
+
     def drop_go_return_types(self, qns: Collection[str]) -> None:
         """Forget the Go return types recorded under `qns` and drop the index.
 
-        `GraphUpdater.remove_file_from_state` calls this for a deleted or
-        re-parsed file's definitions. The map used to keep them (issue #1668),
-        and the `(package, name)` index below is filled with `setdefault`, so a
-        surviving or new sibling defining a free function of the same name lost
-        to the stale entry and its return type was never recorded.
+        The `(package, name)` index below is filled with `setdefault`, so a
+        stale entry would beat a surviving or new sibling defining a free
+        function of the same name (issue #1668).
 
         The index is invalidated outright rather than left to the size check:
         one deletion followed by one addition leaves the size unchanged, and
@@ -700,73 +556,9 @@ class TypeInferenceEngine:
         holds the entry.
         """
         for qn in qns:
-            self.go_function_return_types.pop(qn, None)
+            self.facts.go_function_return_types.pop(qn, None)
         self._go_free_fn_index = {}
         self._go_free_fn_index_size = -1
-
-    def drop_csharp_side_tables(
-        self, function_qns: Collection[str], class_qns: Collection[str]
-    ) -> None:
-        """Forget the C# side-table entries owned by removed definitions.
-
-        `GraphUpdater.remove_file_from_state` reached the registry, both
-        return-type maps and `csharp_partial_groups`, but never these four
-        (issue #1769): a deleted file's generic methods, class arities, local
-        functions and extension methods outlived it on a reused updater and
-        went on steering resolution towards a definition that is gone.
-
-        `function_qns` are the method and function qns the caller determined
-        this file owned, under the same filter the registry sweep uses;
-        `class_qns` are the class qns, which carry no span records of their
-        own and are owned by the module recorded for them at ingest
-        (`csharp_class_owner_module`) -- their qn embeds a namespace and so
-        cannot be attributed by prefix.
-        `csharp_extension_methods` is keyed by simple NAME with a list of
-        owners, so its prune drops the owning entries from each list and
-        removes the key only once nothing is left under it.
-
-        The maps are mutated in place: the lazily built
-        `CSharpTypeInferenceEngine` shares these same objects by reference,
-        so rebinding any of them here would leave that engine reading the
-        pre-prune state.
-        """
-        function_qns = set(function_qns)
-        self.csharp_generic_methods -= function_qns
-        for qn in function_qns:
-            self.csharp_local_functions.pop(qn, None)
-            self.csharp_call_shapes.pop(qn, None)
-        for qn in class_qns:
-            self.csharp_class_generic_arity.pop(qn, None)
-            # Dropped together: an owner record for a class whose arity is
-            # gone names a file this updater no longer has, and would keep
-            # the entry alive across the next deletion of the same qn.
-            self.csharp_class_owner_module.pop(qn, None)
-        for name in list(self.csharp_extension_methods):
-            kept = [
-                entry
-                for entry in self.csharp_extension_methods[name]
-                if entry[0] not in function_qns
-            ]
-            if kept:
-                self.csharp_extension_methods[name] = kept
-            else:
-                del self.csharp_extension_methods[name]
-
-    def drop_method_return_types(self, qns: Collection[str]) -> None:
-        """Forget the return types recorded under `qns` (issues #1738, #1753).
-
-        `GraphUpdater.remove_file_from_state` calls this for a deleted or
-        re-parsed file's definitions, beside `drop_go_return_types`. Both
-        maps, the general one and the C# `(type, arity)` one, are read
-        directly, with no derived index to invalidate.
-        """
-        for qn in qns:
-            self.method_return_types.pop(qn, None)
-            self.csharp_method_return_types.pop(qn, None)
-        # A Dart constructor's qn is written by the same ingest step as its
-        # return type, so it leaves with it; a stale one would keep stamping
-        # INSTANTIATES on a call that now reaches a static factory (#2012).
-        self.dart_constructor_qns.difference_update(qns)
 
     def js_callable_return_type(self, callable_qn: str, static: bool) -> str | None:
         """The class a JS/TS method or function returns, read in its own file.
@@ -829,13 +621,13 @@ class TypeInferenceEngine:
         # file-scoped. The sibling lookup goes through a lazily rebuilt (package,
         # name) index: the shared map fills DURING ingestion, so an init-time index
         # would be empty; the size check rebuilds only when entries were added.
-        if hit := self.go_function_return_types.get(
+        if hit := self.facts.go_function_return_types.get(
             f"{module_qn}{cs.SEPARATOR_DOT}{name}"
         ):
             return hit
         if cs.SEPARATOR_DOT not in module_qn:
             return None
-        clause = self.go_package_names.get(module_qn)
+        clause = self.facts.go_package_names.get(module_qn)
         return self._go_package_fn_return_type(
             self._go_file_package(module_qn),
             name,
@@ -864,20 +656,20 @@ class TypeInferenceEngine:
         # no variant of it, so the index keeps each file's `package` clause
         # and whether it is that external test package, and `admits` picks
         # the asking package's files by them (#2616).
-        if len(self.go_function_return_types) != self._go_free_fn_index_size:
+        if len(self.facts.go_function_return_types) != self._go_free_fn_index_size:
             self._go_free_fn_index = {}
-            for qn, return_type in self.go_function_return_types.items():
+            for qn, return_type in self.facts.go_function_return_types.items():
                 module_qn, _, fn_name = qn.rpartition(cs.SEPARATOR_DOT)
                 if package := self._go_file_package(module_qn):
                     by_clause = self._go_free_fn_index.setdefault(
                         (package, fn_name), {}
                     )
                     scope = (
-                        self.go_package_names.get(module_qn),
+                        self.facts.go_package_names.get(module_qn),
                         self._go_external_test(module_qn),
                     )
                     by_clause.setdefault(scope, set()).add(return_type)
-            self._go_free_fn_index_size = len(self.go_function_return_types)
+            self._go_free_fn_index_size = len(self.facts.go_function_return_types)
         returns = {
             return_type
             for (clause, external), types in self._go_free_fn_index.get(
@@ -925,7 +717,7 @@ class TypeInferenceEngine:
                 qn.rpartition(cs.SEPARATOR_DOT)[0], package_qn
             ),
         )
-        return go_utils.one_declaration(declared, self.go_declaration_variants)
+        return go_utils.one_declaration(declared, self.facts.go_declaration_variants)
 
     def _go_imported_file(self, module_qn: str, package_qn: str) -> bool:
         # Whether Go file `module_qn` is a file of the package an import
@@ -943,7 +735,7 @@ class TypeInferenceEngine:
         path = self.module_qn_to_file_path.get(module_qn)
         stem = path.stem if path else module_qn.rpartition(cs.SEPARATOR_DOT)[2]
         return go_utils.is_external_test(
-            self.go_package_names.get(module_qn),
+            self.facts.go_package_names.get(module_qn),
             stem.endswith(cs.GO_TEST_FILE_SUFFIX),
         )
 
@@ -1031,9 +823,13 @@ class TypeInferenceEngine:
         # One field-type -> method-return -> identity hop off `class_qn`: the
         # type it yields, plus the inner type of a guard-wrapped field for a
         # guard accessor to unwrap next. None when the hop names nothing known.
-        if field_type := self.class_field_types.get(class_qn, {}).get(hop):
-            return field_type, self.class_field_guard_inner.get(class_qn, {}).get(hop)
-        next_type = self.method_return_types.get(f"{class_qn}{cs.SEPARATOR_DOT}{hop}")
+        if field_type := self.facts.class_field_types.get(class_qn, {}).get(hop):
+            return field_type, self.facts.class_field_guard_inner.get(class_qn, {}).get(
+                hop
+            )
+        next_type = self.facts.method_return_types.get(
+            f"{class_qn}{cs.SEPARATOR_DOT}{hop}"
+        )
         if next_type:
             # A method returning its own type (`fn new() -> Get`) keeps the
             # caller's spelling of it: through `pub use inner::Get as
@@ -1122,11 +918,11 @@ class TypeInferenceEngine:
             # way the answer is no type rather than the module item's, since
             # the known-external guard would delete the edge the trie fallback
             # still finds and an unresolvable binding is worse than none.
-            shadow_type = self.method_return_types.get(shadowing)
+            shadow_type = self.facts.method_return_types.get(shadowing)
             if shadow_type and self._rust_binding_type_resolves(shadow_type, module_qn):
                 return shadow_type
             return None
-        if return_type := self.method_return_types.get(
+        if return_type := self.facts.method_return_types.get(
             f"{module_qn}{cs.SEPARATOR_DOT}{name}"
         ):
             return return_type
@@ -1137,7 +933,7 @@ class TypeInferenceEngine:
                     target, node_types=(cs.NodeLabel.FUNCTION,)
                 )
             # A crate::/super::/self:: use target is already a project qn.
-            return self.method_return_types.get(target)
+            return self.facts.method_return_types.get(target)
         return None
 
     def _resolve_rust_import_path(
@@ -1185,9 +981,9 @@ class TypeInferenceEngine:
             if qn in seen:
                 return
             seen.add(qn)
-            for base in self.class_inheritance.get(qn, []):
+            for base in self.facts.class_inheritance.get(qn, []):
                 collect(base)
-            if own := self.class_field_types.get(qn):
+            if own := self.facts.class_field_types.get(qn):
                 fields.update(own)
 
         collect(class_qn)

@@ -30,6 +30,7 @@ import pytest
 from codebase_rag.constants import NodeLabel, RelationshipType
 from codebase_rag.function_registry import FunctionRegistryTrie
 from codebase_rag.parsers.call_resolver import CallResolver
+from codebase_rag.parsers.definition_facts import DefinitionFacts
 from codebase_rag.tests.conftest import (
     create_and_run_updater,
     get_nodes,
@@ -57,7 +58,7 @@ def _resolver_with_class(class_qn: str) -> CallResolver:
         function_registry=registry,
         import_processor=MagicMock(import_mapping={}),
         type_inference=MagicMock(),
-        class_inheritance={},
+        facts=DefinitionFacts(),
     )
 
 
@@ -484,7 +485,9 @@ def via_typed_local():
             function_registry=registry,
             import_processor=MagicMock(import_mapping={}),
             type_inference=MagicMock(),
-            class_inheritance={"proj.m.Derived": ["proj.m.Base"]},
+            facts=DefinitionFacts(
+                class_inheritance={"proj.m.Derived": ["proj.m.Base"]}
+            ),
         )
         assert resolver._receiver_names_a_type_or_module(
             "self", "proj.m", "proj.m.Base.Inner", class_context="proj.m.Derived"

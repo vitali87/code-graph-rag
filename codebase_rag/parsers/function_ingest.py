@@ -14,11 +14,9 @@ from ..language_spec import LANGUAGE_FQN_SPECS, LanguageSpec
 from ..types_defs import (
     ASTNode,
     CppDefinitionSpan,
-    CSharpCallShape,
     DeferredCppInherit,
     DeferredParentLink,
     FunctionLocation,
-    FunctionLocations,
     FunctionRegistryTrieProtocol,
     FunctionSpanKey,
     OverloadSignature,
@@ -35,6 +33,7 @@ from .ast_fingerprint import fingerprint_props
 from .cpp import utils as cpp_utils
 from .cpp.overloads import cpp_overload_signature
 from .dart import utils as dart_utils
+from .definition_facts import DefinitionFacts
 from .endpoints import emit_endpoints, queue_endpoints
 from .go import interfaces as go_interfaces
 from .go import utils as go_utils
@@ -263,7 +262,7 @@ class FunctionIngestMixin:
     function_registry: FunctionRegistryTrieProtocol
     simple_name_lookup: SimpleNameLookup
     module_qn_to_file_path: dict[str, Path]
-    go_package_names: dict[str, str]
+    facts: DefinitionFacts
     go_builds: GoBuilds
     java_anon_overrides: list[tuple[str, str, str, str]]
     pending_endpoints: list[tuple[cs.NodeLabel, str, list[str], str | None]]
@@ -273,28 +272,15 @@ class FunctionIngestMixin:
     _deferred_go_methods: list[_DeferredGoMethod]
     _deferred_cpp_containment: list[_DeferredCppContainment]
     _deferred_parent_links: list[DeferredParentLink]
-    method_return_types: dict[str, str]
-    go_function_return_types: dict[str, str]
     go_methods: dict[str, go_interfaces.GoMethodSpec]
-    cpp_out_of_class_methods: dict[tuple[str, int], tuple[str, str]]
-    function_locations: FunctionLocations
     cpp_definition_spans: dict[str, list[CppDefinitionSpan]]
-    macro_qns: set[str]
-    rust_function_modules: dict[str, str]
     _deferred_js_anonymous: list[_DeferredRegistration]
     _deferred_rust_body_local: list[_DeferredRegistration]
     _deferred_cpp_artifacts: list[_DeferredCppArtifact]
     _deferred_cpp_prototypes: list[_DeferredCppPrototype]
-    class_inheritance: dict[str, list[str]]
     _deferred_cpp_inherits: list[DeferredCppInherit]
-    rehydrated_definition_paths: dict[str, str]
     csharp_methods: set[str]
     csharp_override_methods: set[str]
-    csharp_extension_methods: dict[str, list[tuple[str, str, str, int]]]
-    csharp_local_functions: dict[str, tuple[FunctionSpanKey, int]]
-    csharp_generic_methods: set[str]
-    csharp_call_shapes: dict[str, CSharpCallShape]
-    csharp_method_return_types: dict[str, tuple[str, int]]
     folded_overloads: dict[str, frozenset[int]]
 
     @abstractmethod
@@ -529,7 +515,7 @@ class FunctionIngestMixin:
         if language == cs.SupportedLanguage.CPP and (
             return_type := cpp_utils.extract_return_type_name(func_node)
         ):
-            self.method_return_types[qualified_name] = return_type
+            self.facts.method_return_types[qualified_name] = return_type
 
         # Same for a free Rust fn (impl methods are recorded in class
         # ingest): a call-bound local (`let s = make()`) types from
@@ -537,7 +523,7 @@ class FunctionIngestMixin:
         if language == cs.SupportedLanguage.RUST and (
             return_type := rs_utils.extract_return_type_name(func_node, None)
         ):
-            self.method_return_types[qualified_name] = return_type
+            self.facts.method_return_types[qualified_name] = return_type
 
         # Same for a Dart free function: a call-bound local
         # (`var g = makeIt()` via the enrichment pass) types from
@@ -545,7 +531,7 @@ class FunctionIngestMixin:
         if language == cs.SupportedLanguage.DART and (
             return_type := dart_utils.return_type_name(func_node)
         ):
-            self.method_return_types[qualified_name] = return_type
+            self.facts.method_return_types[qualified_name] = return_type
 
         # Go free functions record their FIRST return type in a
         # dedicated map so `cm, err := getManager()` types cm under the
@@ -555,7 +541,7 @@ class FunctionIngestMixin:
         if language == cs.SupportedLanguage.GO and (
             return_type := go_utils.extract_first_return_type_name(func_node)
         ):
-            self.go_function_return_types[qualified_name] = return_type
+            self.facts.go_function_return_types[qualified_name] = return_type
 
         # Its SINGLE result does go there, as a Go method's does, so that
         # `NewBox().Bump()` types its receiver the way `c.Root().Run()`
@@ -564,13 +550,13 @@ class FunctionIngestMixin:
         if language == cs.SupportedLanguage.GO and (
             return_type := go_utils.extract_return_type_name(func_node)
         ):
-            self.method_return_types[qualified_name] = return_type
+            self.facts.method_return_types[qualified_name] = return_type
 
     def _function_span_claimed(self, module_qn: str, func_node: Node) -> bool:
         # A span is claimed when a pass recorded THIS function node's location;
         # the column in the key keeps a same-line neighbour's claim from masking
         # this node's own.
-        return function_span_key(module_qn, func_node) in self.function_locations
+        return function_span_key(module_qn, func_node) in self.facts.function_locations
 
     def _span_claimed_for_qn(
         self, module_qn: str, func_node: Node, candidate_qn: str
@@ -581,7 +567,7 @@ class FunctionIngestMixin:
         # `X.prototype.m = function m()` keeps both the fn-expr's own-name node and
         # the member-name node (duplicate-QN design: keep both, CALLS-to-both), so
         # it must still register.
-        loc = self.function_locations.get(function_span_key(module_qn, func_node))
+        loc = self.facts.function_locations.get(function_span_key(module_qn, func_node))
         if loc is None:
             return False
         claimed_base = qn_markers.natural_qn(loc.qualified_name)
@@ -593,8 +579,8 @@ class FunctionIngestMixin:
         # First claim wins; a later pass deriving a different qn for the same
         # source function skips registration rather than mint a twin.
         key = function_span_key(module_qn, func_node)
-        if key not in self.function_locations:
-            self.function_locations[key] = FunctionLocation(
+        if key not in self.facts.function_locations:
+            self.facts.function_locations[key] = FunctionLocation(
                 label=label,
                 qualified_name=qualified_name,
                 container_qn=None,
@@ -619,13 +605,13 @@ class FunctionIngestMixin:
             # module item of that name is the `@<line>` variant: recording
             # under the proposed qn would overwrite the module item's own
             # return type and mistype every caller of it.
-            location = self.function_locations.get(
+            location = self.facts.function_locations.get(
                 function_span_key(entry.module_qn, entry.func_node)
             )
             if location is not None and (
                 return_type := rs_utils.extract_return_type_name(entry.func_node, None)
             ):
-                self.method_return_types[location.qualified_name] = return_type
+                self.facts.method_return_types[location.qualified_name] = return_type
 
     def _flush_deferred_js_anonymous(self) -> None:
         deferred = self._deferred_js_anonymous
@@ -763,7 +749,7 @@ class FunctionIngestMixin:
         # An incremental run only populates module_qn_to_file_path for re-parsed
         # files; a definition rehydrated from the graph resolves through its node's
         # recorded file path instead.
-        if rehydrated := self.rehydrated_definition_paths.get(qn):
+        if rehydrated := self.facts.rehydrated_definition_paths.get(qn):
             suffix = Path(rehydrated).suffix
             return suffix in cs.CPP_EXTENSIONS or suffix in cs.C_EXTENSIONS
         return False
@@ -855,11 +841,13 @@ class FunctionIngestMixin:
             # not the plain one: an overload's body belongs to its `@line`
             # node (issue #2455).
             bound_qn = ingested_qn or f"{class_qn}{cs.SEPARATOR_DOT}{bound_name}"
-            self.cpp_out_of_class_methods[(module_qn, func_node.start_point[0] + 1)] = (
+            self.facts.cpp_out_of_class_methods[
+                (module_qn, func_node.start_point[0] + 1)
+            ] = (
                 bound_qn,
                 class_qn,
             )
-            self.function_locations[function_span_key(module_qn, func_node)] = (
+            self.facts.function_locations[function_span_key(module_qn, func_node)] = (
                 FunctionLocation(
                     label=cs.NodeLabel.METHOD.value,
                     qualified_name=bound_qn,
@@ -876,9 +864,9 @@ class FunctionIngestMixin:
                 bound_qn,
             )
         if return_type and (method_name := cpp_utils.extract_function_name(func_node)):
-            self.method_return_types[f"{class_qn}{cs.SEPARATOR_DOT}{method_name}"] = (
-                return_type
-            )
+            self.facts.method_return_types[
+                f"{class_qn}{cs.SEPARATOR_DOT}{method_name}"
+            ] = return_type
 
     def _defer_cpp_out_of_class(
         self,
@@ -959,11 +947,11 @@ class FunctionIngestMixin:
                 )
             # Record the binding so Pass-3 call attribution reuses this exact
             # decision rather than re-resolve and diverge.
-            self.cpp_out_of_class_methods[(entry.module_qn, entry.start_line)] = (
+            self.facts.cpp_out_of_class_methods[(entry.module_qn, entry.start_line)] = (
                 method_qn,
                 class_qn,
             )
-            self.function_locations[
+            self.facts.function_locations[
                 (entry.module_qn, entry.start_line, entry.start_col)
             ] = FunctionLocation(
                 label=cs.NodeLabel.METHOD.value,
@@ -996,7 +984,7 @@ class FunctionIngestMixin:
             self.function_registry[method_qn] = cs.NodeLabel.METHOD
             self.simple_name_lookup[entry.method_name].add(method_qn)
             if entry.return_type:
-                self.method_return_types[method_qn] = entry.return_type
+                self.facts.method_return_types[method_qn] = entry.return_type
 
             if resolved or class_qn in self.function_registry:
                 self.ingestor.ensure_relationship_batch(
@@ -1109,7 +1097,7 @@ class FunctionIngestMixin:
                 entry.lang_queries,
             )
             if return_type := cpp_utils.extract_return_type_name(entry.func_node):
-                self.method_return_types[resolution.qualified_name] = return_type
+                self.facts.method_return_types[resolution.qualified_name] = return_type
             registered += 1
         deferred.clear()
         return registered
@@ -1184,15 +1172,15 @@ class FunctionIngestMixin:
         )
         if method_qn is None:
             return False
-        self.cpp_out_of_class_methods[
+        self.facts.cpp_out_of_class_methods[
             (entry.module_qn, entry.func_node.start_point[0] + 1)
         ] = (method_qn, class_qn)
-        self.function_locations[function_span_key(entry.module_qn, entry.func_node)] = (
-            FunctionLocation(
-                label=cs.NodeLabel.METHOD.value,
-                qualified_name=method_qn,
-                container_qn=class_qn,
-            )
+        self.facts.function_locations[
+            function_span_key(entry.module_qn, entry.func_node)
+        ] = FunctionLocation(
+            label=cs.NodeLabel.METHOD.value,
+            qualified_name=method_qn,
+            container_qn=class_qn,
         )
         record_cpp_definition_span(
             self.cpp_definition_spans,
@@ -1259,8 +1247,8 @@ class FunctionIngestMixin:
             and type_file.stem.endswith(cs.GO_TEST_FILE_SUFFIX)
         ):
             return False
-        method_package = self.go_package_names.get(method_module)
-        type_package = self.go_package_names.get(type_module)
+        method_package = self.facts.go_package_names.get(method_module)
+        type_package = self.facts.go_package_names.get(type_module)
         if (
             method_package is not None
             and type_package is not None
@@ -1330,7 +1318,7 @@ class FunctionIngestMixin:
                 self.go_methods[method_qn] = go_interfaces.GoMethodSpec(
                     go_interfaces.signature(entry.method_node),
                     go_utils.package_key(
-                        rel_file, self.go_package_names.get(entry.module_qn)
+                        rel_file, self.facts.go_package_names.get(entry.module_qn)
                     ),
                     rel_file,
                 )
@@ -1340,7 +1328,7 @@ class FunctionIngestMixin:
             if method_name and (
                 return_type := go_utils.extract_return_type_name(entry.method_node)
             ):
-                self.method_return_types[
+                self.facts.method_return_types[
                     f"{container_qn}{cs.SEPARATOR_DOT}{method_name}"
                 ] = return_type
         ingested = len(deferred)
@@ -1359,7 +1347,7 @@ class FunctionIngestMixin:
         name_node = decl_node.child_by_field_name(cs.FIELD_NAME)
         if name_node is None:
             return
-        self.function_locations[
+        self.facts.function_locations[
             (module_qn, name_node.start_point[0] + 1, name_node.start_point[1])
         ] = location
 
@@ -1514,14 +1502,14 @@ class FunctionIngestMixin:
         # Keyed by the UNIQUE qn, since a collision rename above (issue #1017)
         # is the key Pass-3 will look this up by.
         rs_utils.record_effective_module(
-            self.rust_function_modules,
+            self.facts.rust_function_modules,
             resolution.qualified_name,
             func_node,
             module_qn,
             language,
         )
         if is_macro:
-            self.macro_qns.add(resolution.qualified_name)
+            self.facts.macro_qns.add(resolution.qualified_name)
         self.function_registry.mark_callable_params(
             resolution.qualified_name,
             callable_parameter_indices(func_node, language),
@@ -1538,7 +1526,9 @@ class FunctionIngestMixin:
             container_qn=None,
             is_named=not resolution.is_anonymous,
         )
-        self.function_locations[function_span_key(module_qn, func_node)] = location
+        self.facts.function_locations[function_span_key(module_qn, func_node)] = (
+            location
+        )
         if language == cs.SupportedLanguage.GO:
             self._register_go_name_alias(module_qn, func_node, location)
         # Pin a C# local function to its HOST scope (method/ctor/enclosing local
@@ -1608,7 +1598,7 @@ class FunctionIngestMixin:
             return
         from .csharp import utils as csharp_utils
 
-        self.csharp_local_functions[qualified_name] = (
+        self.facts.csharp_local_functions[qualified_name] = (
             function_span_key(module_qn, host),
             len(csharp_utils.extract_parameter_type_names(func_node)),
         )
@@ -1636,7 +1626,9 @@ class FunctionIngestMixin:
         # (the walk matches on that node).
         for child in func_node.children:
             if child.type == cs.CppNodeType.FUNCTION_DEFINITION:
-                self.function_locations[function_span_key(module_qn, child)] = location
+                self.facts.function_locations[function_span_key(module_qn, child)] = (
+                    location
+                )
                 break
 
     def _build_function_props(
@@ -2032,18 +2024,18 @@ class FunctionIngestMixin:
         )
         if ingested_qn is None:
             return False
-        self.csharp_call_shapes[ingested_qn] = csharp_call_shape(func_node)
+        self.facts.csharp_call_shapes[ingested_qn] = csharp_call_shape(func_node)
         if (
             func_node.child_by_field_name(cs.TS_CSHARP_FIELD_TYPE_PARAMETERS)
             is not None
         ):
-            self.csharp_generic_methods.add(ingested_qn)
+            self.facts.csharp_generic_methods.add(ingested_qn)
         if (
             rt_node := func_node.child_by_field_name(cs.TS_CSHARP_FIELD_RETURNS)
         ) is not None:
             if rt_text := csharp_utils.normalize_csharp_type_name(rt_node):
                 raw = safe_decode_text(rt_node) or rt_text
-                self.csharp_method_return_types[ingested_qn] = (
+                self.facts.csharp_method_return_types[ingested_qn] = (
                     rt_text,
                     csharp_utils.generic_arity_of_type_text(raw),
                 )
@@ -2060,7 +2052,7 @@ class FunctionIngestMixin:
         # Method identity instead of re-deriving a module-Function qn from the node
         # (the FQN walk sees no class ancestor, so a call inside the recovered
         # member would otherwise source a phantom, dropped edge).
-        self.function_locations[function_span_key(module_qn, func_node)] = (
+        self.facts.function_locations[function_span_key(module_qn, func_node)] = (
             FunctionLocation(
                 label=cs.NodeLabel.METHOD.value,
                 qualified_name=ingested_qn,
@@ -2075,7 +2067,7 @@ class FunctionIngestMixin:
         if csharp_has_override_modifier(func_node):
             self.csharp_override_methods.add(ingested_qn)
         csharp_utils.index_extension_method(
-            self.csharp_extension_methods, ingested_qn, func_node
+            self.facts.csharp_extension_methods, ingested_qn, func_node
         )
         return True
 
@@ -2170,7 +2162,7 @@ class FunctionIngestMixin:
         row_col = tail[len(cs.PREFIX_ANONYMOUS) :].split(cs.CHAR_UNDERSCORE)
         if len(row_col) != 2 or not all(part.isdigit() for part in row_col):
             return None
-        loc = self.function_locations.get(
+        loc = self.facts.function_locations.get(
             (module_qn, int(row_col[0]) + 1, int(row_col[1]))
         )
         if loc is None or loc.qualified_name not in self.function_registry:
@@ -2186,7 +2178,7 @@ class FunctionIngestMixin:
         # sibling overload exactly shadows).
         if entry.parent_span is None:
             return None
-        recorded = self.function_locations.get(entry.parent_span)
+        recorded = self.facts.function_locations.get(entry.parent_span)
         if recorded is None or recorded.qualified_name not in self.function_registry:
             return None
         return recorded
@@ -2356,7 +2348,7 @@ class FunctionIngestMixin:
         # fn expr registered as `t@line`), hoisting the child to the module
         # or the wrong function.
         if language in cs.JS_TS_LANGUAGES:
-            recorded = self.function_locations.get(
+            recorded = self.facts.function_locations.get(
                 function_span_key(module_qn, current)
             )
             if (

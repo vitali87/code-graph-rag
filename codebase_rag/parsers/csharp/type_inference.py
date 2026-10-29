@@ -10,14 +10,14 @@ from tree_sitter import Node
 from ... import constants as cs
 from ...types_defs import (
     CSharpCallShape,
-    FunctionLocation,
     FunctionRegistryTrieProtocol,
     FunctionSpanKey,
     LanguageQueries,
     SimpleNameLookup,
 )
 from ...utils import qn_markers
-from ..frontends.protocol import CallSiteKey, FrontendFacts, new_frontend_facts
+from ..definition_facts import DefinitionFacts
+from ..frontends.protocol import CallSiteKey
 from ..import_processor import ImportProcessor
 from ..semantic_call_join import call_site_key, resolve_call_site
 from ..utils import safe_decode_text
@@ -227,21 +227,8 @@ class CSharpTypeInferenceEngine:
         "ast_cache",
         "queries",
         "module_qn_to_file_path",
-        "class_inheritance",
+        "facts",
         "simple_name_lookup",
-        "class_field_types",
-        "csharp_partial_groups",
-        "csharp_extension_methods",
-        "frontend_facts",
-        "csharp_local_functions",
-        "csharp_generic_methods",
-        "csharp_call_shapes",
-        "csharp_class_generic_arity",
-        "csharp_class_namespaced",
-        "csharp_namespaced_qns",
-        "csharp_method_return_types",
-        "method_return_types",
-        "function_locations",
         "_rel_to_module",
         "_call_memo",
         "_methods_by_name",
@@ -256,22 +243,8 @@ class CSharpTypeInferenceEngine:
         ast_cache: ASTCacheProtocol,
         queries: Mapping[cs.SupportedLanguage, LanguageQueries],
         module_qn_to_file_path: dict[str, Path],
-        class_inheritance: dict[str, list[str]],
+        facts: DefinitionFacts,
         simple_name_lookup: SimpleNameLookup,
-        class_field_types: dict[str, dict[str, str]],
-        csharp_partial_groups: dict[str, list[str]] | None = None,
-        csharp_extension_methods: dict[str, list[tuple[str, str, str, int]]]
-        | None = None,
-        frontend_facts: FrontendFacts | None = None,
-        csharp_local_functions: dict[str, tuple[FunctionSpanKey, int]] | None = None,
-        csharp_generic_methods: set[str] | None = None,
-        csharp_call_shapes: dict[str, CSharpCallShape] | None = None,
-        csharp_class_generic_arity: dict[str, int] | None = None,
-        csharp_class_namespaced: dict[str, str] | None = None,
-        csharp_namespaced_qns: dict[str, set[str]] | None = None,
-        csharp_method_return_types: dict[str, tuple[str, int]] | None = None,
-        method_return_types: dict[str, str] | None = None,
-        function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
     ):
         # Memo for `resolve_csharp_method_call` (issue #1800). A chained
         # invocation types its receiver by resolving it, and THREE branches do
@@ -299,49 +272,8 @@ class CSharpTypeInferenceEngine:
         self.ast_cache = ast_cache
         self.queries = queries
         self.module_qn_to_file_path = module_qn_to_file_path
-        self.class_inheritance = class_inheritance
+        self.facts = facts
         self.simple_name_lookup = simple_name_lookup
-        self.class_field_types = class_field_types
-        self.csharp_partial_groups = (
-            csharp_partial_groups if csharp_partial_groups is not None else {}
-        )
-        self.csharp_extension_methods = (
-            csharp_extension_methods if csharp_extension_methods is not None else {}
-        )
-        # Shared references (populated by the Roslyn frontend / Pass 2 after
-        # this engine is constructed), so `or {}` would lose them.
-        self.frontend_facts = (
-            frontend_facts if frontend_facts is not None else new_frontend_facts()
-        )
-        self.csharp_local_functions = (
-            csharp_local_functions if csharp_local_functions is not None else {}
-        )
-        self.csharp_generic_methods = (
-            csharp_generic_methods if csharp_generic_methods is not None else set()
-        )
-        self.csharp_call_shapes = (
-            csharp_call_shapes if csharp_call_shapes is not None else {}
-        )
-        self.csharp_class_generic_arity = (
-            csharp_class_generic_arity if csharp_class_generic_arity is not None else {}
-        )
-        self.csharp_class_namespaced = (
-            csharp_class_namespaced if csharp_class_namespaced is not None else {}
-        )
-        self.csharp_namespaced_qns = (
-            csharp_namespaced_qns if csharp_namespaced_qns is not None else {}
-        )
-        self.csharp_method_return_types = (
-            csharp_method_return_types if csharp_method_return_types is not None else {}
-        )
-        # Shared reference (as above): {method qn: normalized return type},
-        # populated during ingestion, read by chained-receiver typing.
-        self.method_return_types = (
-            method_return_types if method_return_types is not None else {}
-        )
-        self.function_locations = (
-            function_locations if function_locations is not None else {}
-        )
         self._rel_to_module: dict[str, str] = {}
 
     # --- variable/field/parameter type map -------------------------------
@@ -505,16 +437,16 @@ class CSharpTypeInferenceEngine:
         # (`helper` on P1, used in a method on P2) is found; a visited guard
         # stops a malformed inheritance cycle looping.
         seen: set[str] = set()
-        queue = deque(self.csharp_partial_groups.get(class_qn) or [class_qn])
+        queue = deque(self.facts.csharp_partial_groups.get(class_qn) or [class_qn])
         while queue:
             current = queue.popleft()
             if current in seen:
                 continue
             seen.add(current)
-            fields = self.class_field_types.get(current)
+            fields = self.facts.class_field_types.get(current)
             if fields and field_name in fields:
                 return fields[field_name]
-            queue.extend(self.class_inheritance.get(current, []))
+            queue.extend(self.facts.class_inheritance.get(current, []))
         return None
 
     # --- typed method-call resolution ------------------------------------
@@ -707,14 +639,14 @@ class CSharpTypeInferenceEngine:
             return CSHARP_EXTERNAL_TARGET
         seen: set[str] = set()
         for root in self._partial_roots(class_qn):
-            for base_qn in self.class_inheritance.get(root, []):
+            for base_qn in self.facts.class_inheritance.get(root, []):
                 if hit := self._find_method_by_arity(
                     base_qn, method_name, arg_count, seen
                 ):
                     return cs.NodeLabel.METHOD.value, hit
         seen = set()
         for root in self._partial_roots(class_qn):
-            for base_qn in self.class_inheritance.get(root, []):
+            for base_qn in self.facts.class_inheritance.get(root, []):
                 if hit := self._find_method_by_name(base_qn, method_name, seen):
                     return cs.NodeLabel.METHOD.value, hit
         return CSHARP_EXTERNAL_TARGET
@@ -810,7 +742,7 @@ class CSharpTypeInferenceEngine:
             # class).
             return not self._registered_type_declares(member_type, method_name)
         if prop_qn := self.resolve_property_read(head, caller_qn):
-            if entry := self.csharp_method_return_types.get(prop_qn):
+            if entry := self.facts.csharp_method_return_types.get(prop_qn):
                 return not self._registered_type_declares(entry[0], method_name)
         # A PascalCase receiver is very often a PROPERTY or member of
         # the enclosing type (`Pipeline.Execute(...)`); anything the
@@ -852,7 +784,7 @@ class CSharpTypeInferenceEngine:
                 preferred = [
                     m
                     for m in matches
-                    if (m in self.csharp_generic_methods) == generic_call
+                    if (m in self.facts.csharp_generic_methods) == generic_call
                 ]
                 return cs.NodeLabel.METHOD.value, (preferred or matches)[0]
         # A bare object-virtual with no local declaration is
@@ -909,7 +841,9 @@ class CSharpTypeInferenceEngine:
         if len(families) == 1:
             (matches,) = families
             preferred = [
-                m for m in matches if (m in self.csharp_generic_methods) == generic_call
+                m
+                for m in matches
+                if (m in self.facts.csharp_generic_methods) == generic_call
             ]
             return cs.NodeLabel.METHOD.value, (preferred or matches)[0]
         return None
@@ -942,7 +876,11 @@ class CSharpTypeInferenceEngine:
                 generic = [
                     kept
                     for family in families
-                    if (kept := [m for m in family if m in self.csharp_generic_methods])
+                    if (
+                        kept := [
+                            m for m in family if m in self.facts.csharp_generic_methods
+                        ]
+                    )
                 ]
                 families = generic or families
             if families:
@@ -960,7 +898,7 @@ class CSharpTypeInferenceEngine:
         for root in self._partial_roots(type_qn):
             prefix = f"{root}{cs.SEPARATOR_DOT}"
             for qn in self._direct_same_name_methods(root, name):
-                shape = self.csharp_call_shapes.get(qn)
+                shape = self.facts.csharp_call_shapes.get(qn)
                 if shape is not None and not shape.is_static:
                     continue
                 leaf = qn[len(prefix) :]
@@ -1056,7 +994,7 @@ class CSharpTypeInferenceEngine:
                 # arity-blind fallback's duplicate fan-out fabricates a
                 # phantom edge onto the uncalled sibling).
                 for variant in self.function_registry.variants(candidate):
-                    entry = self.csharp_local_functions.get(variant)
+                    entry = self.facts.csharp_local_functions.get(variant)
                     if (
                         entry is not None
                         and entry[1] == arg_count
@@ -1098,7 +1036,7 @@ class CSharpTypeInferenceEngine:
         for probe_scope in dict.fromkeys((scope, stripped)):
             candidate = f"{probe_scope}{cs.SEPARATOR_DOT}{name}"
             for variant in self.function_registry.variants(candidate):
-                entry = self.csharp_local_functions.get(variant)
+                entry = self.facts.csharp_local_functions.get(variant)
                 if entry is not None and self._caller_within_host(caller_qn, entry[0]):
                     matches.append(variant)
         return matches
@@ -1109,7 +1047,7 @@ class CSharpTypeInferenceEngine:
         # fn calling across/into its own nest). Spans join lazily against
         # function_locations because the host's signatured identity was not
         # registered yet when the local function was pinned.
-        host_loc = self.function_locations.get(host_key)
+        host_loc = self.facts.function_locations.get(host_key)
         if host_loc is None:
             return False
         host_qn = host_loc.qualified_name
@@ -1119,10 +1057,10 @@ class CSharpTypeInferenceEngine:
             seen.add(current)
             if current == host_qn:
                 return True
-            entry = self.csharp_local_functions.get(current)
+            entry = self.facts.csharp_local_functions.get(current)
             if entry is None:
                 return False
-            next_loc = self.function_locations.get(entry[0])
+            next_loc = self.facts.function_locations.get(entry[0])
             if next_loc is None:
                 return False
             current = next_loc.qualified_name
@@ -1191,10 +1129,10 @@ class CSharpTypeInferenceEngine:
             call_node,
             module_qn,
             self._call_site_key,
-            self.frontend_facts[cs.SupportedLanguage.CSHARP].resolved_call_sites,
-            self.frontend_facts[cs.SupportedLanguage.CSHARP].external_sites,
+            self.facts.frontend_facts[cs.SupportedLanguage.CSHARP].resolved_call_sites,
+            self.facts.frontend_facts[cs.SupportedLanguage.CSHARP].external_sites,
             CSHARP_EXTERNAL_TARGET,
-            self.function_locations,
+            self.facts.function_locations,
             self.module_qn_to_file_path,
             self.repo_path,
             self._rel_to_module,
@@ -1249,7 +1187,7 @@ class CSharpTypeInferenceEngine:
         method_name: str,
         arg_count: int,
     ) -> str | None:
-        if not self.csharp_extension_methods:
+        if not self.facts.csharp_extension_methods:
             return None
         type_name = self._receiver_type_name(
             receiver, local_var_types, module_qn, caller_qn
@@ -1320,7 +1258,7 @@ class CSharpTypeInferenceEngine:
         )
         if inner is None:
             return None
-        if entry := self.csharp_method_return_types.get(inner[1]):
+        if entry := self.facts.csharp_method_return_types.get(inner[1]):
             rname, rarity = entry
             return f"{rname}`{rarity}" if rarity else rname
         return None
@@ -1349,7 +1287,7 @@ class CSharpTypeInferenceEngine:
         # ingest from the declaration, because a namespace the module's
         # directory spells is no longer in the qn (issue #1629); the
         # prefix-strip below is the fallback for a class ingested without it.
-        if (namespaced := self.csharp_class_namespaced.get(qn)) is not None:
+        if (namespaced := self.facts.csharp_class_namespaced.get(qn)) is not None:
             return namespaced
         if qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}"):
             return qn[len(module_qn) + 1 :]
@@ -1411,7 +1349,7 @@ class CSharpTypeInferenceEngine:
         if receiver.type == cs.TS_CSHARP_THIS:
             class_qn = self._containing_class_qn(caller_qn)
             if class_qn is not None:
-                return self.csharp_class_generic_arity.get(class_qn, 0)
+                return self.facts.csharp_class_generic_arity.get(class_qn, 0)
         return None
 
     def _invocation_return_arity(
@@ -1427,7 +1365,7 @@ class CSharpTypeInferenceEngine:
             invocation, local_var_types, module_qn, caller_qn
         )
         if inner is not None and (
-            entry := self.csharp_method_return_types.get(inner[1])
+            entry := self.facts.csharp_method_return_types.get(inner[1])
         ):
             return entry[1]
         return None
@@ -1452,7 +1390,7 @@ class CSharpTypeInferenceEngine:
         arg_count: int,
         receiver_arity: int | None = None,
     ) -> str | None:
-        candidates = self.csharp_extension_methods.get(method_name)
+        candidates = self.facts.csharp_extension_methods.get(method_name)
         if not candidates:
             return None
         recv_simple = receiver_type_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
@@ -1581,7 +1519,7 @@ class CSharpTypeInferenceEngine:
         )
         if inner is None:
             return None
-        if entry := self.csharp_method_return_types.get(inner[1]):
+        if entry := self.facts.csharp_method_return_types.get(inner[1]):
             rtype, rarity = entry
             return self._type_name_to_qn(rtype, module_qn, rarity)
         return None
@@ -1682,14 +1620,14 @@ class CSharpTypeInferenceEngine:
         # (issues #2000, #2004).
         # `Widget` and `Widget<T>` share the declared form, so the written
         # arity picks between them first.
-        carriers = self.csharp_namespaced_qns.get(expanded)
+        carriers = self.facts.csharp_namespaced_qns.get(expanded)
         if carriers and len(carriers) > 1 and generic_arity is not None:
             carriers = {
                 qn
                 for qn in carriers
-                if self.csharp_class_generic_arity.get(qn, 0) == generic_arity
+                if self.facts.csharp_class_generic_arity.get(qn, 0) == generic_arity
             } or carriers
-        if declared := unique_carrier(carriers, self.csharp_partial_groups):
+        if declared := unique_carrier(carriers, self.facts.csharp_partial_groups):
             return declared
         leaf = expanded.rsplit(cs.SEPARATOR_DOT, 1)[-1]
         candidates = [
@@ -1768,10 +1706,10 @@ class CSharpTypeInferenceEngine:
     def arity_index(self) -> CSharpArityIndex:
         return CSharpArityIndex(
             self.function_registry,
-            self.csharp_class_generic_arity,
-            self.csharp_class_namespaced,
-            self.csharp_namespaced_qns,
-            self.csharp_partial_groups,
+            self.facts.csharp_class_generic_arity,
+            self.facts.csharp_class_namespaced,
+            self.facts.csharp_namespaced_qns,
+            self.facts.csharp_partial_groups,
         )
 
     def arity_twin(self, type_qn: str, generic_arity: int) -> str:
@@ -1793,7 +1731,7 @@ class CSharpTypeInferenceEngine:
             arity_matched = [
                 qn
                 for qn in candidates
-                if self.csharp_class_generic_arity.get(qn, 0) == generic_arity
+                if self.facts.csharp_class_generic_arity.get(qn, 0) == generic_arity
             ]
             if arity_matched:
                 candidates = arity_matched
@@ -1827,7 +1765,7 @@ class CSharpTypeInferenceEngine:
             if self.function_registry.get(qn) in _TYPE_DECLS
         ]
         distinct_arities = {
-            self.csharp_class_generic_arity.get(qn, 0) for qn in same_name_decls
+            self.facts.csharp_class_generic_arity.get(qn, 0) for qn in same_name_decls
         }
         return len(same_name_decls) > 1 and len(distinct_arities) != len(
             same_name_decls
@@ -1838,10 +1776,10 @@ class CSharpTypeInferenceEngine:
         # one logical type; return its lexicographically-first part (stable
         # across runs). A candidate outside the group (its group is None) means
         # a genuine cross-type ambiguity, left unresolved.
-        group = self.csharp_partial_groups.get(candidates[0])
+        group = self.facts.csharp_partial_groups.get(candidates[0])
         if group is None:
             return None
-        if all(self.csharp_partial_groups.get(c) is group for c in candidates):
+        if all(self.facts.csharp_partial_groups.get(c) is group for c in candidates):
             return min(group)
         return None
 
@@ -1853,7 +1791,7 @@ class CSharpTypeInferenceEngine:
     # lone-same-name instance fallback. Both phases span every part of a partial
     # class (and each part's bases), so a member/base on another part binds.
     def _partial_roots(self, class_qn: str) -> list[str]:
-        return self.csharp_partial_groups.get(class_qn) or [class_qn]
+        return self.facts.csharp_partial_groups.get(class_qn) or [class_qn]
 
     def _find_arity_across_parts(
         self, class_qn: str, method_name: str, arg_count: int
@@ -1892,7 +1830,9 @@ class CSharpTypeInferenceEngine:
         compatible = self._find_compatible_matches(class_qn, method_name, arg_count)
         if generic_call:
             for tier in (exact, compatible):
-                if generic := [m for m in tier if m in self.csharp_generic_methods]:
+                if generic := [
+                    m for m in tier if m in self.facts.csharp_generic_methods
+                ]:
                     return generic
         return exact or compatible
 
@@ -1927,13 +1867,13 @@ class CSharpTypeInferenceEngine:
             for qn in self._direct_same_name_methods(class_qn, method_name)
             if (
                 _accepts_arg_count(
-                    qn[len(prefix) :], arg_count, self.csharp_call_shapes.get(qn)
+                    qn[len(prefix) :], arg_count, self.facts.csharp_call_shapes.get(qn)
                 )
                 if compatible
                 else _arity(qn[len(prefix) :]) == arg_count
             )
         )
-        for base_qn in self.class_inheritance.get(class_qn, []):
+        for base_qn in self.facts.class_inheritance.get(class_qn, []):
             self._collect_arity_matches(
                 base_qn, method_name, arg_count, seen, out, compatible
             )
@@ -1994,7 +1934,7 @@ class CSharpTypeInferenceEngine:
         method_qn = callee[1]
         if any(
             entry[0] == method_qn
-            for entries in self.csharp_extension_methods.values()
+            for entries in self.facts.csharp_extension_methods.values()
             for entry in entries
         ):
             return None
@@ -2044,7 +1984,7 @@ class CSharpTypeInferenceEngine:
                 {
                     qn
                     for root in self._partial_roots(own or "")
-                    for base in self.class_inheritance.get(root, [])
+                    for base in self.facts.class_inheritance.get(root, [])
                     for qn in self._method_group_on(base, name)
                 }
             )
@@ -2112,7 +2052,7 @@ class CSharpTypeInferenceEngine:
                 for qn in self._direct_same_name_methods(current, name)
                 if not self.function_registry.is_property(qn)
             )
-            queue.extend(self.class_inheritance.get(current, []))
+            queue.extend(self.facts.class_inheritance.get(current, []))
         return sorted(set(out))
 
     def _find_name_across_parts(self, class_qn: str, method_name: str) -> str | None:
@@ -2161,7 +2101,7 @@ class CSharpTypeInferenceEngine:
         for qn in self._direct_same_name_methods(class_qn, method_name):
             if _arity(qn[len(prefix) :]) == arg_count:
                 return qn
-        for base_qn in self.class_inheritance.get(class_qn, []):
+        for base_qn in self.facts.class_inheritance.get(class_qn, []):
             if resolved := self._find_method_by_arity(
                 base_qn, method_name, arg_count, seen
             ):
@@ -2177,7 +2117,7 @@ class CSharpTypeInferenceEngine:
         same_name = self._direct_same_name_methods(class_qn, method_name)
         if len(same_name) == 1:
             return same_name[0]
-        for base_qn in self.class_inheritance.get(class_qn, []):
+        for base_qn in self.facts.class_inheritance.get(class_qn, []):
             if resolved := self._find_method_by_name(base_qn, method_name, seen):
                 return resolved
         return None

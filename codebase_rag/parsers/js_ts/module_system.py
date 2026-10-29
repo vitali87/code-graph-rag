@@ -12,6 +12,7 @@ from tree_sitter import Language, QueryCursor
 from ... import constants as cs
 from ... import logs as ls
 from ...types_defs import ASTNode
+from ..definition_facts import DefinitionFacts
 from ..method_ingest import ingest_exported_function
 from ..utils import (
     function_span_key,
@@ -25,9 +26,7 @@ from .utils import get_js_ts_language_obj
 if TYPE_CHECKING:
     from ...services import IngestorProtocol
     from ...types_defs import (
-        FunctionLocation,
         FunctionRegistryTrieProtocol,
-        FunctionSpanKey,
         LanguageQueries,
         SimpleNameLookup,
     )
@@ -54,7 +53,7 @@ class JsTsModuleSystemMixin:
     simple_name_lookup: SimpleNameLookup
     module_qn_to_file_path: dict[str, Path]
     import_processor: ImportProcessor
-    function_locations: dict[FunctionSpanKey, FunctionLocation]
+    facts: DefinitionFacts
     _processed_imports: set[str]
 
     @abstractmethod
@@ -388,7 +387,7 @@ class JsTsModuleSystemMixin:
         # minted qn is now in the span registry. An unregistered span means
         # the node was refused everywhere; emit nothing rather than guess.
         for node, invoked in pending:
-            loc = self.function_locations.get(function_span_key(module_qn, node))
+            loc = self.facts.function_locations.get(function_span_key(module_qn, node))
             if loc is None or loc.qualified_name not in self.function_registry:
                 # No claim, or a STALE claim from before a watch-mode removal
                 # purged the registry: writing anything would resurrect a

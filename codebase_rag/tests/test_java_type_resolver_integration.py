@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from codebase_rag.parsers.definition_facts import DefinitionFacts
 from codebase_rag.parsers.import_processor import ImportProcessor
 from codebase_rag.parsers.java.type_inference import JavaTypeInferenceEngine
 from codebase_rag.parsers.java.type_resolver import collect_java_class_headers
@@ -77,7 +78,7 @@ def type_inference_engine(
         ast_cache=mock_ast_cache,
         queries={},
         module_qn_to_file_path={},
-        class_inheritance={},
+        facts=DefinitionFacts(),
         simple_name_lookup=defaultdict(set),
     )
 

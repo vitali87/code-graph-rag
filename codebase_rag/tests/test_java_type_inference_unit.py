@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.parsers.definition_facts import DefinitionFacts
 from codebase_rag.parsers.import_processor import ImportProcessor
 from codebase_rag.parsers.java.type_inference import JavaTypeInferenceEngine
 from codebase_rag.parsers.java.type_resolver import collect_java_class_headers
@@ -53,7 +54,7 @@ def type_inference_engine(
         ast_cache=mock_ast_cache,
         queries={},
         module_qn_to_file_path={},
-        class_inheritance={},
+        facts=DefinitionFacts(),
         simple_name_lookup=defaultdict(set),
     )
 
@@ -312,7 +313,7 @@ class TestJavaMethodResolverMixin:
         mock_function_registry.find_with_prefix = MagicMock(
             return_value=[("com.example.ChildClass", cs.NodeLabel.CLASS)]
         )
-        type_inference_engine.class_inheritance = {
+        type_inference_engine.facts.class_inheritance = {
             "com.example.ChildClass": ["com.example.ParentClass"]
         }
 
@@ -362,7 +363,7 @@ class TestJavaMethodResolverMixin:
     def test_find_parent_class(
         self, type_inference_engine: JavaTypeInferenceEngine
     ) -> None:
-        type_inference_engine.class_inheritance = {
+        type_inference_engine.facts.class_inheritance = {
             "com.example.Child": ["com.example.Parent", "java.io.Serializable"]
         }
 

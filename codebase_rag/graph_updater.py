@@ -56,7 +56,7 @@ from .parsers.cpp_frontend import (
 )
 from .parsers.csharp import utils as csharp_utils
 from .parsers.csharp_frontend import find_csharp_project
-from .parsers.definition_processor import DefinitionProcessor
+from .parsers.definition_prune import RemovedFile
 from .parsers.document_tier import DocumentTier, broken_link_keys
 from .parsers.endpoint_prefixes import (
     CYPHER_DELETE_HANDLER_EXPOSES,
@@ -825,65 +825,6 @@ def _added_and_modified_entries(
     return added_entries, modified_entries
 
 
-def _drop_class_keyed_entry(
-    processor: DefinitionProcessor, owner_module: dict[str, str], qn: str
-) -> None:
-    """Drop one removed class's rows from the class-keyed maps."""
-    processor.class_inheritance.pop(qn, None)
-    processor.class_field_types.pop(qn, None)
-    # A partial part leaves its group too. The group list is the
-    # very list `_csharp_partial_index` holds under the syntactic
-    # key, so removing the part there keeps both views in step;
-    # without this a re-parse appended the part again and a deleted
-    # part kept typing its siblings' members (issue #2016).
-    if (group := processor.csharp_partial_groups.pop(qn, None)) is not None:
-        # One pass, and IN PLACE: the list is the very object
-        # `_csharp_partial_index` holds, so rebinding a new list
-        # would leave that view holding the old one.
-        group[:] = [part for part in group if part != qn]
-    # Same ownership, same reason (issue #1629): every C# class has
-    # an entry, not only the generic ones #1769's sweep covers.
-    namespaced = processor.csharp_class_namespaced.pop(qn, None)
-    if namespaced is not None:
-        carriers = processor.csharp_namespaced_qns.get(namespaced)
-        if carriers is not None:
-            carriers.discard(qn)
-            if not carriers:
-                del processor.csharp_namespaced_qns[namespaced]
-    # The owner record goes with them: it names a file this updater
-    # no longer has, and keeping it would re-sweep the same qn on the
-    # next deletion of a file that happens to reuse the module qn.
-    owner_module.pop(qn, None)
-
-
-def _drop_implementers(
-    implementers_by_interface: dict[str, set[str]], removed: set[str]
-) -> None:
-    """Forget the parsed implementer pairs of classes a removed file declared."""
-    # A class that stopped implementing an interface kept its pair on a
-    # reused updater, and a call typed to the interface still reached its
-    # method as the sole implementer's (#2403). The re-parse records
-    # the pairs the class still has. In place: the call resolver holds the
-    # map by reference.
-    if not removed:
-        return
-    emptied = []
-    for interface_qn, implementers in implementers_by_interface.items():
-        implementers -= removed
-        if not implementers:
-            emptied.append(interface_qn)
-    for interface_qn in emptied:
-        del implementers_by_interface[interface_qn]
-
-
-def _pop_owned(owner_module: dict[str, str], module_qns: Collection[str]) -> set[str]:
-    """Remove and return the qns `owner_module` attributes to `module_qns`."""
-    owned = {qn for qn, module_qn in owner_module.items() if module_qn in module_qns}
-    for qn in owned:
-        del owner_module[qn]
-    return owned
-
-
 def _carried_pair_rows(
     captured: Iterable[ResultRow],
 ) -> tuple[list[ResultRow], list[ResultRow]]:
@@ -1374,7 +1315,7 @@ class GraphUpdater:
         has nothing to augment, or cannot run; the processors then fall back
         to the tree-sitter heuristics.
         """
-        store = self.factory.definition_processor.frontend_facts
+        store = self.factory.facts.frontend_facts
         store[language] = SemanticFacts()
         if off:
             return None
@@ -1418,7 +1359,7 @@ class GraphUpdater:
         # the compiler no longer proves.
         dp = self.factory.definition_processor
         proven: list[tuple[str, str]] = []
-        for pair in dp.frontend_facts[cs.SupportedLanguage.GO].implements_pairs:
+        for pair in dp.facts.frontend_facts[cs.SupportedLanguage.GO].implements_pairs:
             impl = dp.go_type_locations.get(
                 (pair.impl_file, pair.impl_line, pair.impl_col)
             )
@@ -1448,7 +1389,7 @@ class GraphUpdater:
         # when it proved none; names and arities decide only elsewhere. Keyed
         # on the modules it analysed, not on whether it returned any facts.
         dp = self.factory.definition_processor
-        facts = dp.frontend_facts[cs.SupportedLanguage.GO]
+        facts = dp.facts.frontend_facts[cs.SupportedLanguage.GO]
         dp.link_go_interfaces(
             frozenset(facts.analysed_roots),
             facts.checked_files,
@@ -1468,7 +1409,9 @@ class GraphUpdater:
         # own group). Group lists stay SHARED objects because the resolver
         # compares them by identity.
         dp = self.factory.definition_processor
-        partial_decls = dp.frontend_facts[cs.SupportedLanguage.CSHARP].partial_groups
+        partial_decls = dp.facts.frontend_facts[
+            cs.SupportedLanguage.CSHARP
+        ].partial_groups
         if not partial_decls:
             return
         groups: list[list[str]] = []
@@ -1479,14 +1422,14 @@ class GraphUpdater:
             if len(qns) > 1:
                 groups.append(qns)
         for qn in covered:
-            old = dp.csharp_partial_groups.pop(qn, None)
+            old = dp.facts.csharp_partial_groups.pop(qn, None)
             if old is not None and qn in old:
                 # Also shrink the shared syntactic list so members NOT
                 # covered by Roslyn stop spanning to this part.
                 old.remove(qn)
         for group in groups:
             for qn in group:
-                dp.csharp_partial_groups[qn] = group
+                dp.facts.csharp_partial_groups[qn] = group
         if groups:
             logger.info(ls.CSHARP_FRONTEND_PARTIALS_JOINED.format(count=len(groups)))
 
@@ -1496,7 +1439,7 @@ class GraphUpdater:
         # ends resolved through the Pass-2 function-location registry (a miss
         # on either end drops the fact rather than risk a dangling edge).
         dp = self.factory.definition_processor
-        query_calls = dp.frontend_facts[cs.SupportedLanguage.CSHARP].query_calls
+        query_calls = dp.facts.frontend_facts[cs.SupportedLanguage.CSHARP].query_calls
         if not query_calls:
             return
         rel_to_module = {
@@ -1508,7 +1451,7 @@ class GraphUpdater:
             module_qn = rel_to_module.get(rel_file)
             if module_qn is None:
                 return None
-            return dp.function_locations.get((module_qn, line, col))
+            return dp.facts.function_locations.get((module_qn, line, col))
 
         emitted = 0
         for fact in query_calls:
@@ -1924,7 +1867,7 @@ class GraphUpdater:
             module_qn,
             language,
             self.queries,
-            self.factory.definition_processor.function_locations,
+            self.factory.facts.function_locations,
         )
         return True
 
@@ -1949,7 +1892,7 @@ class GraphUpdater:
         still completes; the sync summary names them, since an exit-0 "done"
         was the only other signal that a file had lost its calls.
         """
-        processor = self.factory._call_processor
+        processor = self.factory.built_call_processor
         if processor is None:
             return []
         return sorted(processor.failed_call_files)
@@ -2646,7 +2589,7 @@ class GraphUpdater:
     ) -> tuple[cs.NodeLabel, str] | None:
         # The function this run's definition pass recorded starting at `key`.
         dp = self.factory.definition_processor
-        location = dp.function_locations.get(key)
+        location = dp.facts.function_locations.get(key)
         if location is None:
             return None
         node_type = dp.function_registry.get(location.qualified_name)
@@ -3255,7 +3198,7 @@ class GraphUpdater:
         }
         # Rebuilt, not accumulated, and cleared only once the rows are in
         # hand: the _rehydrate_module_qns posture.
-        rehydrated = self.factory.definition_processor.rehydrated_interface_implementers
+        rehydrated = self.factory.facts.rehydrated_interface_implementers
         rehydrated.clear()
         for implementer, interface in pairs:
             if not self._may_hide_rust_impls(interface, closed):
@@ -3270,7 +3213,7 @@ class GraphUpdater:
         # parsed, keeps to its parsed pairs as before. A trait parsed this run
         # has every implementer that left a trace re-parsed beside it.
         dp = self.factory.definition_processor
-        path = dp.rehydrated_definition_paths.get(interface_qn)
+        path = dp.facts.rehydrated_definition_paths.get(interface_qn)
         return (
             path is not None and path.endswith(cs.EXT_RS) and interface_qn not in closed
         )
@@ -3416,7 +3359,7 @@ class GraphUpdater:
         # macro/fn gate consults it, so a re-parsed file's invocation of a
         # macro defined elsewhere would otherwise drop.
         if row.get(cs.KEY_IS_MACRO):
-            self.factory.definition_processor.macro_qns.add(qn)
+            self.factory.facts.macro_qns.add(qn)
         # Restore the body-scoped-name set for unchanged files, or a
         # re-parsed file's bare call binds by name to a function expression
         # only its own body can call by that name (issue #2402).
@@ -3429,7 +3372,7 @@ class GraphUpdater:
             namespace = row.get(cs.KEY_EXTENSION_NAMESPACE)
             arity = row.get(cs.KEY_EXTENSION_RECEIVER_ARITY)
             csharp_utils.add_extension_method(
-                self.factory.definition_processor.csharp_extension_methods,
+                self.factory.facts.csharp_extension_methods,
                 qn,
                 receiver,
                 namespace if isinstance(namespace, str) else "",
@@ -3460,7 +3403,7 @@ class GraphUpdater:
                 continue
             path = str(row.get(cs.KEY_PATH))
             package = go_utils.package_key(
-                path, dp.go_package_names.get(self._recorded_module_qn(path))
+                path, dp.facts.go_package_names.get(self._recorded_module_qn(path))
             )
             label = row.get(cs.KEY_LABEL)
             if label == cs.NodeLabel.METHOD and isinstance(
@@ -3535,7 +3478,7 @@ class GraphUpdater:
                 )
             if name := reduced[(annotation, impl_target)]:
                 restored[key] = name
-        return_types = self.factory.definition_processor.method_return_types
+        return_types = self.factory.facts.method_return_types
         for key, name in restored.items():
             # A re-parsed file's own record is current; keep it.
             return_types.setdefault(key, name)
@@ -3573,7 +3516,7 @@ class GraphUpdater:
         self, node_type: cs.NodeLabel, qn: str, path: str, row: ResultRow
     ) -> None:
         """Restore the path-keyed state of a rehydrated definition."""
-        self.factory.definition_processor.rehydrated_definition_paths[qn] = path
+        self.factory.facts.rehydrated_definition_paths[qn] = path
         # A private declaration in an unchanged star source must stay private,
         # or it counts as re-exported and makes the exported one a barrel
         # names ambiguous.
@@ -3624,7 +3567,7 @@ class GraphUpdater:
         if path in self._go_clauses_read:
             return
         self._go_clauses_read.add(path)
-        clauses = self.factory.definition_processor.go_package_names
+        clauses = self.factory.facts.go_package_names
         module_qn = self._recorded_module_qn(path)
         if module_qn not in clauses and (
             clause := read_package_clause(self.repo_path / path)
@@ -3648,8 +3591,10 @@ class GraphUpdater:
         arity = row.get(cs.KEY_GENERIC_ARITY)
         arity = arity if isinstance(arity, int) else 0
         if arity:
-            processor.csharp_class_generic_arity[qn] = arity
-            processor.csharp_class_owner_module[qn] = self._recorded_module_qn(path)
+            processor.facts.csharp_class_generic_arity[qn] = arity
+            processor.facts.csharp_class_owner_module[qn] = self._recorded_module_qn(
+                path
+            )
         # Rejoin the partial group parsing would have given it,
         # under the same key, so a declared name spanning
         # unchanged parts stays one type; a lone type's group of
@@ -3657,10 +3602,10 @@ class GraphUpdater:
         if key := csharp_partial_key_from_graph(qn, path, self.project_name, arity):
             group = processor._csharp_partial_index.setdefault(key, [])
             group.append(qn)
-            processor.csharp_partial_groups[qn] = group
+            processor.facts.csharp_partial_groups[qn] = group
         if namespaced:
-            processor.csharp_class_namespaced[qn] = namespaced
-            processor.csharp_namespaced_qns.setdefault(namespaced, set()).add(qn)
+            processor.facts.csharp_class_namespaced[qn] = namespaced
+            processor.facts.csharp_namespaced_qns.setdefault(namespaced, set()).add(qn)
 
     def _seed_module_qns_from_graph(
         self,
@@ -3895,7 +3840,7 @@ class GraphUpdater:
         graph = self._graph
         if graph is None:
             return
-        class_inheritance = self.factory.definition_processor.class_inheritance
+        class_inheritance = self.factory.facts.class_inheritance
         try:
             rows = self._owned_rows(
                 graph.fetch_all(
@@ -4002,11 +3947,11 @@ class GraphUpdater:
         # Only rehydrated types are judged by the graph's rows: a re-parsed
         # one's row may still describe the source before the edit.
         dp = self.factory.definition_processor
-        rehydrated = dp.rehydrated_definition_paths
+        rehydrated = dp.facts.rehydrated_definition_paths
         graph = self._graph
         if graph is None or not any(
             len(group) > 1 and qn in rehydrated
-            for qn, group in dp.csharp_partial_groups.items()
+            for qn, group in dp.facts.csharp_partial_groups.items()
         ):
             return
         rows = self._owned_rows(
@@ -4024,7 +3969,7 @@ class GraphUpdater:
                 and qn in rehydrated
                 and isinstance(modifiers, list)
                 and cs.TS_CSHARP_MODIFIER_PARTIAL not in modifiers
-                and (group := dp.csharp_partial_groups.pop(qn, None)) is not None
+                and (group := dp.facts.csharp_partial_groups.pop(qn, None)) is not None
             ):
                 # In place: the list is the one `_csharp_partial_index` holds.
                 group[:] = [part for part in group if part != qn]
@@ -4088,7 +4033,7 @@ class GraphUpdater:
         graph = self._graph
         if graph is None:
             return
-        locations = self.factory.definition_processor.function_locations
+        locations = self.factory.facts.function_locations
         params = {cs.KEY_PROJECT_PREFIX: self.project_name + "."}
         restored = 0
         for query in (
@@ -4817,7 +4762,7 @@ class GraphUpdater:
         if not gone_modules:
             return set()
         definers = set()
-        for (span_module, _line, _col), location in dp.function_locations.items():
+        for (span_module, _line, _col), location in dp.facts.function_locations.items():
             if span_module in gone_modules:
                 continue
             qn = location.qualified_name
@@ -5112,7 +5057,7 @@ class GraphUpdater:
                 self.factory.definition_processor.module_qn_to_file_path.items()
             )
         }
-        for qn in self.factory.definition_processor.declared_module_qns:
+        for qn in self.factory.facts.declared_module_qns:
             known.setdefault(qn, "")
         for qn in self._rehydrated_module_qns:
             known.setdefault(qn, "")
@@ -5149,8 +5094,8 @@ class GraphUpdater:
         # building it here, before the definition pass, snapshots half-built
         # state (a C# method then ingested under a bare, unnamespaced name).
         # With no processor yet there are no records to drop.
-        if self.factory._call_processor is not None:
-            self.factory._call_processor.forget_callable_flow(file_path)
+        if self.factory.built_call_processor is not None:
+            self.factory.built_call_processor.forget_callable_flow(file_path)
 
         relative_path = cached_relative_path(file_path, self.repo_path)
         path_parts = (
@@ -5206,25 +5151,17 @@ class GraphUpdater:
             file_path, module_qn_prefixes, owned_qns, foreign_qns
         )
 
-        self._prune_go_return_types(module_qn_prefixes, qns_to_remove, foreign_qns)
-        owned_natural = self._prune_method_return_types(
-            module_qn_prefixes, qns_to_remove, owned_qns, foreign_qns
-        )
-
-        # Four more C# side tables, the same defect for four more maps (issue
-        # #1769). Extracted so this already-long sweep does not grow further.
-        self._prune_csharp_side_tables(
-            qns_to_remove=qns_to_remove,
-            owned_natural=owned_natural,
-            foreign_qns=foreign_qns,
+        removed = RemovedFile(
             module_qn_prefixes=module_qn_prefixes,
+            relative_posix=relative_path.as_posix(),
+            qns_to_remove=qns_to_remove,
+            owned_qns=owned_qns,
+            foreign_qns=foreign_qns,
         )
-
-        # The two cross-language class-keyed maps, same defect for two more
-        # (issue #1772). Separate from the C# sweep above because every
-        # language's class ingest writes these.
-        self._prune_class_keyed_maps(module_qn_prefixes, file_path)
-
+        self.factory.type_inference.forget_go_return_types(removed)
+        # Before `_drop_module_records`: the rehydrated paths it drops are how
+        # the class prune finds the file's rehydrated classes.
+        self.factory.definition_processor.forget_file(removed)
         self._drop_module_records(file_path, qns_to_remove)
 
     def _drop_module_import_state(
@@ -5303,10 +5240,13 @@ class GraphUpdater:
         # registering module, which is exactly the ownership this needs.
         owned_qns = set()
         for (
-            span_module,
-            _line,
-            _col,
-        ), location in self.factory.definition_processor.function_locations.items():
+            (
+                span_module,
+                _line,
+                _col,
+            ),
+            location,
+        ) in self.factory.facts.function_locations.items():
             if span_module in touched_modules:
                 owned_qns.add(location.qualified_name)
             else:
@@ -5370,11 +5310,11 @@ class GraphUpdater:
         # over by a REHYDRATE has no entry there and would fall back to the
         # prefix rule. `rehydrated_definition_paths` is the record for exactly
         # those, written when the row is read back from the graph, and it
-        # already serves as ownership evidence in `_prune_class_keyed_maps`.
+        # already serves as ownership evidence in `definition_prune.forget_file`.
         # Consulting both means an unchanged sibling's class is protected on
         # an incremental run too, not only on the run that parsed it (raised
         # in review of #1844; pre-existing on main, which loses it either way).
-        rehydrated = self.factory.definition_processor.rehydrated_definition_paths
+        rehydrated = self.factory.facts.rehydrated_definition_paths
         deleted_rel = cached_relative_path(file_path, self.repo_path).as_posix()
         # "Not the file being deleted" is not enough: a definition recorded
         # against a file removed EARLIER also has a different path, and would
@@ -5436,93 +5376,6 @@ class GraphUpdater:
                 qns_to_remove.add(qn)
                 del self.function_registry[qn]
 
-    def _prune_go_return_types(
-        self,
-        module_qn_prefixes: set[str],
-        qns_to_remove: set[str],
-        foreign_qns: set[str],
-    ) -> None:
-        """Drop the removed file's Go function return types."""
-        # The Go return-type map is keyed by the same function qns and was the
-        # one registry this sweep did not reach (issue #1668): a deleted Go
-        # file's entries persisted, and because the package index is filled
-        # with `setdefault`, a same-name sibling parsed later lost to the stale
-        # one. Same ownership filter as the registry sweep, so a qn another
-        # file still owns survives; the map's own keys are checked as well as
-        # `qns_to_remove` because an entry can outlive its registry row.
-        go_return_types = self.factory.type_inference.go_function_return_types
-        stale_go_qns = [
-            qn
-            for qn in go_return_types
-            if qn in qns_to_remove
-            or (
-                any(
-                    qn.startswith(f"{prefix}.") or qn == prefix
-                    for prefix in module_qn_prefixes
-                )
-                and qn not in foreign_qns
-            )
-        ]
-        if stale_go_qns:
-            self.factory.type_inference.drop_go_return_types(stale_go_qns)
-
-    def _prune_method_return_types(
-        self,
-        module_qn_prefixes: set[str],
-        qns_to_remove: set[str],
-        owned_qns: set[str],
-        foreign_qns: set[str],
-    ) -> set[str]:
-        """Drop the removed file's method return types; its owned natural qns."""
-        # `method_return_types` is the same defect for a different map (issue
-        # #1738): C++, Rust and Dart free functions, every language's methods
-        # and Go receiver methods record their return type under the
-        # definition's qn, and this sweep never reached it. A Go method is
-        # keyed by its RECEIVER's module, so its qn can sit under a prefix this
-        # file does not own. Ownership therefore comes from the SPAN records
-        # (`owned_qns`), not from the registry sweep alone: a receiver method
-        # whose registry row is already gone never enters `qns_to_remove`,
-        # and no prefix of the declaring file matches it, so its return type
-        # outlived both (#1752). The prefix arm covers an entry filed
-        # under this file's own module; `foreign_qns` protects a qn another
-        # file still owns, as it does for the registry, EXCEPT where this
-        # file owns the qn too: the map holds one value per qn, the deleted
-        # definition may be the one that wrote it, and the survivor is not
-        # re-parsed by this event, so the entry goes and the next parse of
-        # the survivor re-records it. A missing type is a degraded answer; a
-        # stale one is a wrong answer (#1752).
-        # Ownership is compared on the NATURAL qn on both sides: the map is
-        # usually keyed by it even when the registry filed the definition as
-        # a `@line` duplicate (the second declaration of one receiver method
-        # writes `...A.Clone`, its span record says `...A.Clone@3`), and a
-        # few writers (deferred Rust functions, duplicate C++ out-of-class
-        # methods) key the map by the `@line` name itself (#1752).
-        # The C# map (`csharp_method_return_types`, keyed the same way with a
-        # (type, arity) value) is the same defect for a third map (issue
-        # #1753), so both are swept by one filter.
-        type_inference = self.factory.type_inference
-        method_return_types = (
-            type_inference.method_return_types.keys()
-            | type_inference.csharp_method_return_types.keys()
-        )
-        owned_natural = {qn_markers.natural_qn(qn) for qn in owned_qns}
-        stale_method_qns = [
-            qn
-            for qn in method_return_types
-            if qn in qns_to_remove
-            or qn_markers.natural_qn(qn) in owned_natural
-            or (
-                qn not in foreign_qns
-                and any(
-                    qn.startswith(f"{prefix}.") or qn == prefix
-                    for prefix in module_qn_prefixes
-                )
-            )
-        ]
-        if stale_method_qns:
-            self.factory.type_inference.drop_method_return_types(stale_method_qns)
-        return owned_natural
-
     def _drop_module_records(self, file_path: Path, qns_to_remove: set[str]) -> None:
         """Drop the removed file's simple-name, module and rehydrated records."""
         for simple_name, qn_set in self.simple_name_lookup.items():
@@ -5555,156 +5408,9 @@ class GraphUpdater:
         # them for a definition qn, and a replacement in another language
         # (util.rs -> util.py) would otherwise still answer RUST for the qn
         # its new file re-registers (issue #1575).
-        rehydrated = self.factory.definition_processor.rehydrated_definition_paths
+        rehydrated = self.factory.facts.rehydrated_definition_paths
         for qn in qns_to_remove:
             rehydrated.pop(qn, None)
-
-    def _prune_csharp_side_tables(
-        self,
-        qns_to_remove: set[str],
-        owned_natural: set[str],
-        foreign_qns: set[str],
-        module_qn_prefixes: set[str],
-    ) -> None:
-        """Drop a removed file's entries from the four remaining C# maps.
-
-        `remove_file_from_state` reached the registry, both return-type maps
-        and `csharp_partial_groups`, but never `csharp_generic_methods`,
-        `csharp_class_generic_arity`, `csharp_local_functions` or
-        `csharp_extension_methods` (issue #1769): a deleted file's entries
-        survived on a reused updater and went on steering resolution at a
-        definition that is gone. Same defect class as #1668, #1738 and #1753.
-
-        Three of the four key by the DEFINITION's qn, so they take exactly
-        the filter the registry sweep and the return-type maps use: already
-        swept, or owned by this file's span records on the natural qn, or
-        under one of its module prefixes with `foreign_qns` excluded.
-        `csharp_class_generic_arity` keys by a CLASS qn instead. Classes
-        record no function span, so `owned_natural` can never name one and
-        `foreign_qns` is vacuous for them; ownership comes from the module
-        index instead. A class qn does sit under the module qn of its
-        declaring file, but it can equally sit under a SHORTER module qn
-        belonging to a different file: `proj/A.cs` records `proj.A` and
-        `proj/A/B.cs` records `proj.A.B`, so deleting `A.cs` on the prefix
-        alone would take `B.cs`'s `proj.A.B.N.Nested` with it. A qn under a
-        surviving module is therefore kept, whichever prefix also matches.
-        A partial type's other halves are separate qns under their own
-        modules and each is pruned by its own deletion.
-        """
-
-        def owned(qn: str) -> bool:
-            return (
-                qn in qns_to_remove
-                or qn_markers.natural_qn(qn) in owned_natural
-                or (qn not in foreign_qns and self._under(qn, module_qn_prefixes))
-            )
-
-        type_inference = self.factory.type_inference
-        extension_owners = {
-            owner
-            for entries in type_inference.csharp_extension_methods.values()
-            for owner, *_rest in entries
-        }
-        function_qns = {
-            qn
-            for qn in (
-                type_inference.csharp_generic_methods
-                | type_inference.csharp_local_functions.keys()
-                | type_inference.csharp_call_shapes.keys()
-                | extension_owners
-            )
-            if owned(qn)
-        }
-        # `foreign_qns` is built from function span records, and a class
-        # registers none, so for a class qn it is vacuously false and cannot
-        # protect anything. Ownership comes from a record written at INGEST
-        # instead of being inferred from the qn, because the qn cannot yield
-        # it: a C# class qn embeds its namespace, so `proj/Core.cs` declaring
-        # `namespace Util` produces `proj.Core.Util.Helper`, which sits under
-        # the SIBLING module `proj.Core.Util` (`proj/Core/Util.cs`). Both a
-        # prefix rule and a longest-prefix rule therefore attribute that
-        # class to the wrong file and err in both directions -- deleting the
-        # sibling drops a live class, and deleting its real declarer keeps a
-        # dead one (#1769). A class with no recorded owner (ingested
-        # before this map existed) is left alone rather than guessed at.
-        owner_module = type_inference.csharp_class_owner_module
-        class_qns = {
-            qn
-            for qn in type_inference.csharp_class_generic_arity
-            if owner_module.get(qn) in module_qn_prefixes
-        }
-        if function_qns or class_qns:
-            type_inference.drop_csharp_side_tables(function_qns, class_qns)
-
-    def _prune_class_keyed_maps(
-        self, module_qn_prefixes: set[str], file_path: Path
-    ) -> None:
-        """Drop a removed file's entries from `class_inheritance`,
-        `class_field_types`, the C# partial groups and the parsed implementer
-        pairs.
-
-        All three are keyed by a CLASS qn; the first two were never mentioned
-        in `remove_file_from_state`, so a deleted file's rows outlived it on a
-        reused updater (issue #1772), and the partial groups were not either
-        (issue #2016). That is a wrong answer rather than a
-        missing one: `class_field_types` types a receiver reached through a
-        field, and `class_inheritance` is walked to reach base-class members
-        and drives the OVERRIDES arbitration -- both at a class that is gone.
-        Same defect class as #1668, #1738, #1753 and #1769.
-
-        Unlike #1769's four maps these are written by EVERY language, so the
-        owner index consulted here is the cross-language `class_owner_module`
-        rather than the C#-only one. Ownership is read from that record and
-        never inferred from the qn, for the reason #1769's review established:
-        a C# class qn embeds its namespace, so `proj/Core.cs` declaring
-        `namespace Util` yields `proj.Core.Util.Helper`, which sits under the
-        SIBLING module `proj.Core.Util`; a prefix rule errs in both directions
-        there.
-
-        Ownership comes from two records, because two different paths write
-        `class_inheritance`. Classes this updater PARSED are keyed in
-        `class_owner_module` at ingest. Classes it only REHYDRATED from the
-        graph never reach that ingest, so an incremental run -- where most
-        classes are rehydrated rather than re-parsed -- would otherwise leave
-        every one of their entries behind, which is the very defect this
-        closes. Their declaring file is already known: the rehydrate records
-        `rehydrated_definition_paths[qn] = path`, the same map
-        `remove_file_from_state` sweeps further down. That path is relative
-        and posix-formed, so it is compared as such.
-        """
-        processor = self.factory.definition_processor
-        owner_module = processor.class_owner_module
-        stale = {
-            qn
-            for qn, module_qn in owner_module.items()
-            if module_qn in module_qn_prefixes
-        }
-        # The rehydrated half. This runs BEFORE the caller's own
-        # `rehydrated_definition_paths` sweep further down, so those rows are
-        # still present to read; moving this call after that sweep would
-        # silently stop pruning rehydrated classes.
-        relative_posix = cached_relative_path(file_path, self.repo_path).as_posix()
-        stale |= {
-            qn
-            for qn, path in processor.rehydrated_definition_paths.items()
-            if path == relative_posix
-        }
-        # A Rust impl target with no class node is attributed by its own
-        # record; it keys no class map, so it only leaves the pairs.
-        impl_targets = _pop_owned(processor.rust_impl_owner_module, module_qn_prefixes)
-        _drop_implementers(processor.interface_implementers, stale | impl_targets)
-        # Mutated in place: TypeInference and the lazily built per-language
-        # engines share these same dict objects by reference, so rebinding
-        # any of them would leave those readers on the pre-prune state.
-        for qn in stale:
-            _drop_class_keyed_entry(processor, owner_module, qn)
-
-    @staticmethod
-    def _under(qn: str, module_qn_prefixes: Collection[str]) -> bool:
-        """True when `qn` is one of the prefixes or sits beneath one."""
-        return any(
-            qn.startswith(f"{prefix}.") or qn == prefix for prefix in module_qn_prefixes
-        )
 
     def _existing_module_paths(self) -> frozenset[str] | None:
         """Paths of this project's Module nodes already in the graph.
@@ -7527,7 +7233,7 @@ class GraphUpdater:
             self.factory.definition_processor.keep_sql_source(
                 file_path, root_node, parsed
             )
-        self.factory._func_class_captures_cache.pop(file_path, None)
+        self.factory.func_class_captures_cache.pop(file_path, None)
         return (root_node, language)
 
     def _load_notebook_ast(
@@ -7548,7 +7254,7 @@ class GraphUpdater:
         root_node = parse_with_preproc_recovery(
             parser, notebook.source, cs.SupportedLanguage.PYTHON
         ).root_node
-        self.factory._func_class_captures_cache.pop(file_path, None)
+        self.factory.func_class_captures_cache.pop(file_path, None)
         return (root_node, cs.SupportedLanguage.PYTHON)
 
     def _process_function_calls(self, only: Collection[Path] | None = None) -> None:
@@ -7560,7 +7266,7 @@ class GraphUpdater:
         # whatever now sits at the old line/column.
         self.factory.call_processor.reset_js_receiver_bindings()
         self.factory.call_processor.failed_call_files.clear()
-        captures_cache = self.factory._func_class_captures_cache
+        captures_cache = self.factory.func_class_captures_cache
         # Iterate every file parsed this run, not the bounded AST cache: on a
         # large repo the cache evicts most files, and iterating it drops their
         # calls (a whole module ends up with zero CALLS edges).

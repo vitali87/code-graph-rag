@@ -16,6 +16,7 @@ from ...types_defs import (
     JavaOverloadRank,
     JavaSupertypes,
 )
+from ..definition_facts import DefinitionFacts
 from ..utils import method_signature_arity, module_qn_for_entity, safe_decode_text
 from .type_resolver import JAVA_TYPE_DECL_NODE_TYPES
 from .utils import (
@@ -606,7 +607,7 @@ class JavaMethodResolverMixin:
     project_name: str
     module_qn_to_file_path: dict[str, Path]
     ast_cache: ASTCacheProtocol
-    class_inheritance: dict[str, list[str]]
+    facts: DefinitionFacts
     simple_name_lookup: SimpleNameLookup
     _fqn_to_module_qn: dict[str, list[str]]
     # The overload family each pick of the call being resolved was weighed
@@ -869,7 +870,7 @@ class JavaMethodResolverMixin:
         return current_type
 
     def _find_parent_class(self, class_qn: str) -> str | None:
-        parent_classes = self.class_inheritance.get(class_qn, [])
+        parent_classes = self.facts.class_inheritance.get(class_qn, [])
         return parent_classes[0] if parent_classes else None
 
     def _resolve_sibling_class_qn(self, class_name: str, module_qn: str) -> str | None:
@@ -1622,7 +1623,7 @@ class JavaMethodResolverMixin:
         # class_inheritance holds a class's superclass and an interface's
         # superinterfaces, resolved against the whole repo; the interfaces a
         # class, enum or record implements are read from its declaration.
-        parents = list(self.class_inheritance.get(type_ref, ()))
+        parents = list(self.facts.class_inheritance.get(type_ref, ()))
         if (declaration := self._java_type_declaration(type_ref, owner)) is None:
             return parents, False
         parents.extend(

@@ -199,7 +199,7 @@ def test_frontend_off_clears_stale_base_kinds(
     updater = gu.GraphUpdater(
         ingestor=MagicMock(), repo_path=temp_repo, parsers=parsers, queries=queries
     )
-    facts = updater.factory.definition_processor.frontend_facts
+    facts = updater.factory.definition_processor.facts.frontend_facts
     facts[cs.SupportedLanguage.CSHARP].base_kinds = {("Stale.cs", 1): {"Old": "class"}}
     monkeypatch.setattr(gu.settings, "CSHARP_FRONTEND", cs.CSharpFrontend.TREESITTER)
 
