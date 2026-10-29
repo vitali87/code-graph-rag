@@ -1496,12 +1496,17 @@ class CallResolver:
             # another `package` clause (a `//go:build ignore` generator's
             # `package main`) is another package too, never a build variant,
             # and its edge would carry the callee's `exact` label (#2571).
+            # A module qn drops its file's extension, so a `gen.py` or
+            # `preview.js` beside the package's `.go` files looked like another
+            # build variant and `main` called their `render` too (#3026). Only
+            # Go code is in a Go package.
             other_clause = self.go_package_names.get(other_module)
             if (
                 d2
                 and other_pkg == pkg_dir
                 and not other_file.endswith(cs.GO_TEST_FILE_SUFFIX)
                 and (clause is None or other_clause in (None, clause))
+                and self._module_language(qn) == cs.SupportedLanguage.GO
             ):
                 targets.add((label, qn))
         return targets
