@@ -319,7 +319,7 @@ def watching(graph: _Graph, monkeypatch: pytest.MonkeyPatch) -> _Watch:
     from codebase_rag import watch
 
     harness = _Watch(graph)
-    monkeypatch.setattr(watch, "connect_memgraph", harness.connect)
+    monkeypatch.setattr(watch, "connect_graph", harness.connect)
     monkeypatch.setattr(watch, "Observer", harness.observer_cls)
     monkeypatch.setattr(
         watch, "time", SimpleNamespace(sleep=harness.sleep, time=lambda: 1000.0)
@@ -367,7 +367,7 @@ def _cgr_start(
         return nullcontext(graph)
 
     with (
-        patch("codebase_rag.cli.connect_memgraph", connect),
+        patch("codebase_rag.cli.connect_graph", connect),
         patch("codebase_rag.cli._update_and_validate_models"),
     ):
         return runner.invoke(
@@ -1559,7 +1559,7 @@ class TestConnectionAndStack:
         ingestor_cls = MagicMock()
         ingestor_cls.return_value.__enter__.return_value = graph
         ingestor_cls.return_value.__exit__.return_value = False
-        monkeypatch.setattr(cli_runtime, "MemgraphIngestor", ingestor_cls)
+        monkeypatch.setattr(cli_runtime, "GraphIngestor", ingestor_cls)
         monkeypatch.setattr(watch, "Observer", MagicMock())
         monkeypatch.setattr(
             watch, "time", SimpleNamespace(sleep=_interrupt, time=lambda: 1000.0)

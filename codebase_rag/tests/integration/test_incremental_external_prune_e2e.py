@@ -12,12 +12,12 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
 
-def _index(ingestor: MemgraphIngestor, project_path: Path, force: bool) -> None:
+def _index(ingestor: GraphIngestor, project_path: Path, force: bool) -> None:
     parsers, queries = load_parsers()
     GraphUpdater(
         ingestor=ingestor,
@@ -28,13 +28,13 @@ def _index(ingestor: MemgraphIngestor, project_path: Path, force: bool) -> None:
     ).run(force=force)
 
 
-def _external_module_qns(ingestor: MemgraphIngestor) -> set[str]:
+def _external_module_qns(ingestor: GraphIngestor) -> set[str]:
     rows = ingestor.fetch_all("MATCH (m:ExternalModule) RETURN m.qualified_name AS qn")
     return {r["qn"] for r in rows if r.get("qn")}
 
 
 def test_incremental_rebuild_prunes_orphaned_external_module(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     project = tmp_path / "proj"
     project.mkdir()

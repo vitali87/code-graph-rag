@@ -15,14 +15,14 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
 _API = "def helper():\n    return 1\n"
 
 
-def _index(ingestor: MemgraphIngestor, root: Path, project: str, force: bool) -> None:
+def _index(ingestor: GraphIngestor, root: Path, project: str, force: bool) -> None:
     parsers, queries = load_parsers()
     GraphUpdater(
         ingestor=ingestor,
@@ -33,13 +33,13 @@ def _index(ingestor: MemgraphIngestor, root: Path, project: str, force: bool) ->
     ).run(force=force)
 
 
-def _module_qns(ingestor: MemgraphIngestor) -> set[str]:
+def _module_qns(ingestor: GraphIngestor) -> set[str]:
     rows = ingestor.fetch_all("MATCH (m:Module) RETURN m.qualified_name AS qn")
     return {qn for r in rows if isinstance(qn := r.get("qn"), str)}
 
 
 def test_an_incremental_run_keeps_the_longer_named_projects_modules(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     for project in ("svc", "svc.v2"):
         root = tmp_path / project
@@ -58,7 +58,7 @@ def test_an_incremental_run_keeps_the_longer_named_projects_modules(
 
 
 def test_the_module_delete_query_excludes_nested_projects(
-    memgraph_ingestor: MemgraphIngestor,
+    memgraph_ingestor: GraphIngestor,
 ) -> None:
     for qn in ("svc.api", "svc.v2.api", "svc.v2", "other.api"):
         memgraph_ingestor.execute_write(
@@ -79,7 +79,7 @@ def test_the_module_delete_query_excludes_nested_projects(
 
 
 def test_the_module_delete_spares_nested_projects_without_the_parameter(
-    memgraph_ingestor: MemgraphIngestor,
+    memgraph_ingestor: GraphIngestor,
 ) -> None:
     # `$nested_projects` comes from a registry read that can fail; the query
     # reads the nested Project nodes itself, so an empty list still spares

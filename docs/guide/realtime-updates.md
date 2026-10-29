@@ -39,14 +39,16 @@ make watch REPO_PATH=/path/to/your/repo
 python realtime_updater.py /path/to/your/repo
 ```
 
-### With Custom Memgraph Settings
+### With a Graph Server
 
-`cgr watch` connects the way every `cgr` command does: `MEMGRAPH_HOST` and
-`MEMGRAPH_PORT` (and `MEMGRAPH_USERNAME` / `MEMGRAPH_PASSWORD`) from the
+`cgr watch` connects the way every `cgr` command does: to the engine
+`GRAPH_BACKEND` names, which is the embedded graph file unless set. For a
+Memgraph server, set `GRAPH_BACKEND=memgraph` with `MEMGRAPH_HOST` and
+`MEMGRAPH_PORT` (and `MEMGRAPH_USERNAME` / `MEMGRAPH_PASSWORD`) in the
 environment or `.env`. There are no separate `--host` / `--port` flags.
 
 ```bash
-MEMGRAPH_HOST=localhost MEMGRAPH_PORT=7687 cgr watch --repo-path /path/to/your/repo --batch-size 1000
+GRAPH_BACKEND=memgraph MEMGRAPH_HOST=localhost MEMGRAPH_PORT=7687 cgr watch --repo-path /path/to/your/repo --batch-size 1000
 ```
 
 ```bash

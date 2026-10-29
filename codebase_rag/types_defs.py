@@ -411,7 +411,7 @@ class CursorProtocol(Protocol):
 class ConnectionProtocol(Protocol):
     """The connection surface the graph ingestor relies on.
 
-    Deliberately DB-API-shaped: `MemgraphIngestor` was written against
+    Deliberately DB-API-shaped: `GraphIngestor` was written against
     `mgclient` connections, and `services.neo4j_driver` adapts the Neo4j
     driver to the same shape so one ingestor serves both engines.
     """

@@ -300,7 +300,7 @@ def _start(repo: Path, failed: list[Path]) -> Result:
     connection.__enter__.return_value = MagicMock()
     connection.__exit__.return_value = False
     with (
-        patch("codebase_rag.cli.connect_memgraph", return_value=connection),
+        patch("codebase_rag.cli.connect_graph", return_value=connection),
         patch("codebase_rag.graph_updater.GraphUpdater", side_effect=build),
         patch("codebase_rag.cli.load_parsers", return_value=({}, {})),
         patch("codebase_rag.cli._update_and_validate_models"),

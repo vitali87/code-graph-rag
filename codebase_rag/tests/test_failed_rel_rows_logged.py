@@ -15,7 +15,7 @@ import pytest
 from loguru import logger
 
 from codebase_rag import constants as cs
-from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.services.graph_service import GraphIngestor
 from codebase_rag.types_defs import BatchWrapper, ResultValue
 
 CALLER = "proj.app.caller"
@@ -107,7 +107,7 @@ def _flush(
     from_label: str = cs.NodeLabel.FUNCTION,
     to_label: str = cs.NodeLabel.FUNCTION,
 ) -> None:
-    ingestor = MemgraphIngestor(host="localhost", port=7687, batch_size=10_000)
+    ingestor = GraphIngestor(host="localhost", port=7687, batch_size=10_000)
     ingestor.conn = graph
     for source, target in rows:
         ingestor.ensure_relationship_batch(

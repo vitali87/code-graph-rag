@@ -26,7 +26,7 @@ from codebase_rag import cli
 from codebase_rag import cypher_queries as cq
 from codebase_rag.cli import app
 from codebase_rag.config import settings
-from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.services.graph_service import GraphIngestor
 from codebase_rag.types_defs import GraphData, GraphMetadata, ResultRow
 from codebase_rag.workspaces import WorkspaceConfig, WorkspaceRepo, save_workspace
 
@@ -56,7 +56,7 @@ def connect() -> Generator[MagicMock, None, None]:
     ingestor = MagicMock()
     ingestor.list_projects.return_value = INDEXED
     ingestor.export_graph_to_dict.return_value = GRAPH
-    with patch("codebase_rag.cli.connect_memgraph") as mock_connect:
+    with patch("codebase_rag.cli.connect_graph") as mock_connect:
         mock_connect.return_value.__enter__ = MagicMock(return_value=ingestor)
         mock_connect.return_value.__exit__ = MagicMock(return_value=False)
         yield mock_connect
@@ -346,7 +346,7 @@ def test_a_failed_export_after_a_sync_exits_outside_the_connection(
     connection.__enter__.return_value = MagicMock()
     connection.__exit__.return_value = False
     with (
-        patch("codebase_rag.cli.connect_memgraph", return_value=connection),
+        patch("codebase_rag.cli.connect_graph", return_value=connection),
         patch("codebase_rag.graph_updater.GraphUpdater"),
         patch("codebase_rag.cli.load_parsers", return_value=({}, {})),
         patch("codebase_rag.cli.export_graph_to_file", return_value=False),
@@ -423,8 +423,8 @@ def _record_queries(
 
 def test_a_scoped_export_reads_what_the_projects_own() -> None:
     seen, fetch_all = _record_queries([])
-    with patch.object(MemgraphIngestor, "fetch_all", fetch_all):
-        data = MemgraphIngestor(host="localhost", port=7687).export_graph_to_dict(
+    with patch.object(GraphIngestor, "fetch_all", fetch_all):
+        data = GraphIngestor(host="localhost", port=7687).export_graph_to_dict(
             ["alpha", "beta"]
         )
 
@@ -438,8 +438,8 @@ def test_a_scoped_export_reads_what_the_projects_own() -> None:
 
 def test_an_unscoped_export_runs_the_whole_graph_queries() -> None:
     seen, fetch_all = _record_queries([])
-    with patch.object(MemgraphIngestor, "fetch_all", fetch_all):
-        data = MemgraphIngestor(host="localhost", port=7687).export_graph_to_dict()
+    with patch.object(GraphIngestor, "fetch_all", fetch_all):
+        data = GraphIngestor(host="localhost", port=7687).export_graph_to_dict()
 
     assert seen == [
         (cq.CYPHER_EXPORT_NODES, None),

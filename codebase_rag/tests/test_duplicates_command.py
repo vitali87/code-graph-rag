@@ -87,7 +87,7 @@ class TestDuplicatesCommand:
         # five-column table at the CliRunner's default 80 columns (COLUMNS
         # overrides do not reach consoles created at import time on every
         # platform).
-        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+        with patch("codebase_rag.cli.connect_graph", return_value=mock_ingestor):
             result = runner.invoke(app, ["duplicates"])
 
         assert result.exit_code == 0
@@ -100,7 +100,7 @@ class TestDuplicatesCommand:
         mock_ingestor = _make_mock_ingestor(
             projects=["myproj"], rows=clone_rows, skipped=3
         )
-        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+        with patch("codebase_rag.cli.connect_graph", return_value=mock_ingestor):
             result = runner.invoke(app, ["duplicates", "--format", "json"])
 
         assert result.exit_code == 0
@@ -121,14 +121,14 @@ class TestDuplicatesCommand:
         self, runner: CliRunner, clone_rows: list[ResultRow]
     ) -> None:
         mock_ingestor = _make_mock_ingestor(projects=["myproj"], rows=clone_rows)
-        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+        with patch("codebase_rag.cli.connect_graph", return_value=mock_ingestor):
             result = runner.invoke(app, ["duplicates", "--fail-on-found"])
 
         assert result.exit_code == 1
 
     def test_clean_project_reports_none(self, runner: CliRunner) -> None:
         mock_ingestor = _make_mock_ingestor(projects=["myproj"], rows=[])
-        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+        with patch("codebase_rag.cli.connect_graph", return_value=mock_ingestor):
             result = runner.invoke(app, ["duplicates"])
 
         assert result.exit_code == 0
@@ -142,7 +142,7 @@ class TestDuplicatesCommand:
         # notice misdiagnoses it. The command must say the graph predates
         # structural fingerprints and recommend a re-index.
         mock_ingestor = _make_mock_ingestor(projects=["myproj"], rows=[], skipped=30190)
-        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+        with patch("codebase_rag.cli.connect_graph", return_value=mock_ingestor):
             result = runner.invoke(app, ["duplicates"])
 
         assert result.exit_code == 0
@@ -156,7 +156,7 @@ class TestDuplicatesCommand:
         # with the ordinary skipped notice for the bodiless remainder.
         lone = [dict(clone_rows[0], ast_fingerprint="one-of-a-kind")]
         mock_ingestor = _make_mock_ingestor(projects=["myproj"], rows=lone, skipped=3)
-        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+        with patch("codebase_rag.cli.connect_graph", return_value=mock_ingestor):
             result = runner.invoke(app, ["duplicates"])
 
         assert result.exit_code == 0
@@ -167,7 +167,7 @@ class TestDuplicatesCommand:
         # `-n typo` must error, not scan a nonexistent prefix and report a
         # clean project.
         mock_ingestor = _make_mock_ingestor(projects=["myproj"], rows=[])
-        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+        with patch("codebase_rag.cli.connect_graph", return_value=mock_ingestor):
             result = runner.invoke(app, ["duplicates", "-n", "typo"])
 
         assert result.exit_code == 1
@@ -178,7 +178,7 @@ class TestDuplicatesCommand:
 
     def test_no_projects_errors(self, runner: CliRunner) -> None:
         mock_ingestor = _make_mock_ingestor(projects=[], rows=[])
-        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+        with patch("codebase_rag.cli.connect_graph", return_value=mock_ingestor):
             result = runner.invoke(app, ["duplicates"])
 
         assert result.exit_code == 1
@@ -187,7 +187,7 @@ class TestDuplicatesCommand:
         self, runner: CliRunner, clone_rows: list[ResultRow]
     ) -> None:
         mock_ingestor = _make_mock_ingestor(projects=["myproj"], rows=clone_rows)
-        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+        with patch("codebase_rag.cli.connect_graph", return_value=mock_ingestor):
             result = runner.invoke(app, ["duplicates", "--min-size", "25"])
 
         assert result.exit_code == 0
@@ -201,7 +201,7 @@ class TestDuplicatesCommand:
         )
         # Rich's highlighter wraps digits and parens in their own ANSI
         # spans, so assert on an unstyled fragment of the notice.
-        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+        with patch("codebase_rag.cli.connect_graph", return_value=mock_ingestor):
             result = runner.invoke(app, ["duplicates"])
 
         assert result.exit_code == 0
@@ -276,7 +276,7 @@ class TestOpenGroup:
             projects=["myproj"], rows=clone_rows, root="/repo"
         )
         with (
-            patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor),
+            patch("codebase_rag.cli.connect_graph", return_value=mock_ingestor),
             patch("codebase_rag.cli.subprocess.Popen") as popen,
         ):
             result = runner.invoke(app, ["duplicates", "--open", "1"])
@@ -294,7 +294,7 @@ class TestOpenGroup:
             projects=["myproj"], rows=clone_rows, root="/repo"
         )
         with (
-            patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor),
+            patch("codebase_rag.cli.connect_graph", return_value=mock_ingestor),
             patch("codebase_rag.cli.subprocess.Popen") as popen,
         ):
             result = runner.invoke(app, ["duplicates", "--open", "5"])
@@ -310,7 +310,7 @@ class TestOpenGroup:
         # cannot open rather than guessing a path.
         mock_ingestor = _make_mock_ingestor(projects=["myproj"], rows=clone_rows)
         with (
-            patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor),
+            patch("codebase_rag.cli.connect_graph", return_value=mock_ingestor),
             patch("codebase_rag.cli.subprocess.Popen") as popen,
         ):
             result = runner.invoke(app, ["duplicates", "--open", "1"])
@@ -330,7 +330,7 @@ class TestOpenGroup:
             projects=["myproj"], rows=clone_rows, root="/repo"
         )
         with (
-            patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor),
+            patch("codebase_rag.cli.connect_graph", return_value=mock_ingestor),
             patch("codebase_rag.cli.subprocess.Popen") as popen,
         ):
             result = runner.invoke(app, ["duplicates", "--open", "1"])
@@ -351,7 +351,7 @@ class TestOpenGroup:
         mock_ingestor = _make_mock_ingestor(
             projects=["myproj"], rows=clone_rows, root="/repo"
         )
-        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+        with patch("codebase_rag.cli.connect_graph", return_value=mock_ingestor):
             result = runner.invoke(app, ["duplicates"])
 
         assert result.exit_code == 0

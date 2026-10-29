@@ -19,7 +19,7 @@ from codebase_rag.parser_loader import load_parsers
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
@@ -30,7 +30,7 @@ _STRUCTURE = (
 )
 
 
-def _index(ingestor: MemgraphIngestor, root: Path, name: str) -> None:
+def _index(ingestor: GraphIngestor, root: Path, name: str) -> None:
     parsers, queries = load_parsers()
     GraphUpdater(
         ingestor=ingestor,
@@ -42,7 +42,7 @@ def _index(ingestor: MemgraphIngestor, root: Path, name: str) -> None:
     ingestor.flush_all()
 
 
-def _structure(ingestor: MemgraphIngestor, name: str) -> int:
+def _structure(ingestor: GraphIngestor, name: str) -> int:
     return int(ingestor.fetch_all(_STRUCTURE, {"name": name})[0]["n"])
 
 
@@ -60,7 +60,7 @@ def _shop(root: Path) -> Path:
 
 
 def test_two_names_on_one_checkout_survive_another_sync(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     ing = memgraph_ingestor
     ing.ensure_constraints()
@@ -83,7 +83,7 @@ def test_two_names_on_one_checkout_survive_another_sync(
 
 
 def test_windows_roots_keep_the_nodes_they_share(
-    memgraph_ingestor: MemgraphIngestor,
+    memgraph_ingestor: GraphIngestor,
 ) -> None:
     # Project.root_path is the resolved path as the OS spells it, so on
     # Windows it carries backslashes, while absolute_path is always POSIX.
@@ -121,7 +121,7 @@ def test_windows_roots_keep_the_nodes_they_share(
     ids=["posix", "windows"],
 )
 def test_filesystem_roots_keep_the_nodes_they_share(
-    memgraph_ingestor: MemgraphIngestor, root: str, nested: str, app: str, main: str
+    memgraph_ingestor: GraphIngestor, root: str, nested: str, app: str, main: str
 ) -> None:
     # A project at `/` or a drive root records a root that already ends in
     # the separator; with another one appended, `//` or `C://` prefixed no
@@ -158,7 +158,7 @@ def test_filesystem_roots_keep_the_nodes_they_share(
     ids=["posix", "windows"],
 )
 def test_a_cross_directory_merge_is_still_purged(
-    memgraph_ingestor: MemgraphIngestor,
+    memgraph_ingestor: GraphIngestor,
     svc_root: str,
     cli_root: str,
     shared: str,
@@ -191,7 +191,7 @@ def test_a_cross_directory_merge_is_still_purged(
     ids=["both-rootless", "beside-an-enclosing-root"],
 )
 def test_a_node_shared_with_a_rootless_project_is_purged(
-    memgraph_ingestor: MemgraphIngestor, new_root: str | None
+    memgraph_ingestor: GraphIngestor, new_root: str | None
 ) -> None:
     # A Project written before root_path existed records no tree, so a node it
     # shares is the old key's merge. collect() drops nulls, so a detector that
@@ -214,7 +214,7 @@ def test_a_node_shared_with_a_rootless_project_is_purged(
 
 
 def test_a_rootless_owner_is_found_behind_its_package(
-    memgraph_ingestor: MemgraphIngestor,
+    memgraph_ingestor: GraphIngestor,
 ) -> None:
     # A Package records its directory as its own absolute_path, so a detector
     # that read each immediate parent's tree from it saw a File two projects

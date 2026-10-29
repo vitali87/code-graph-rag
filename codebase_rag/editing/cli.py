@@ -14,7 +14,7 @@ from .. import constants as cs
 from .transaction import TransactionConflict, entry_diff, load_history, undo_steps
 
 if TYPE_CHECKING:
-    from ..services.graph_service import MemgraphIngestor
+    from ..services.graph_service import GraphIngestor
 
 
 @click.group(
@@ -137,14 +137,14 @@ def _resync_graph(root: Path, project: str | None, paths: list[str]) -> None:
     failed undo and invite a retry that reverses one more transaction. A
     graph that cannot follow is reported with the command that resyncs it.
     """
-    from ..cli_runtime import connect_memgraph
+    from ..cli_runtime import connect_graph
     from ..config import settings
     from ..utils.path_utils import derive_project_name
 
     name = project or derive_project_name(root)
     result: bool | Exception
     try:
-        with connect_memgraph(batch_size=settings.resolve_batch_size(None)) as ingestor:
+        with connect_graph(batch_size=settings.resolve_batch_size(None)) as ingestor:
             result = _reingest_restored(ingestor, root, name, paths)
     except Exception as error:  # noqa: BLE001 -- returned to the caller, which prints the resync command
         result = error
@@ -164,7 +164,7 @@ def _resync_graph(root: Path, project: str | None, paths: list[str]) -> None:
 
 
 def _reingest_restored(
-    ingestor: MemgraphIngestor, root: Path, name: str, paths: list[str]
+    ingestor: GraphIngestor, root: Path, name: str, paths: list[str]
 ) -> bool | Exception:
     """True once re-ingested; False when the project is not in the graph.
 

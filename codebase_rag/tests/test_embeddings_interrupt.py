@@ -229,7 +229,7 @@ def cli_sync() -> Generator[_CliSync, None, None]:
     connection.__exit__.return_value = False
     updater = MagicMock(skipped_because_in_sync=False)
     with (
-        patch("codebase_rag.cli.connect_memgraph", return_value=connection),
+        patch("codebase_rag.cli.connect_graph", return_value=connection),
         patch("codebase_rag.graph_updater.GraphUpdater", return_value=updater),
         patch("codebase_rag.cli.load_parsers", return_value=({}, {})),
         patch("codebase_rag.cli.export_graph_to_file") as export,

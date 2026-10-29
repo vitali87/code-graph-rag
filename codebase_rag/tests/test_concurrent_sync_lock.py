@@ -226,7 +226,7 @@ def test_another_thread_of_the_same_process_is_refused_too(
 @pytest.fixture
 def cli_sync() -> Iterator[MagicMock]:
     with (
-        patch("codebase_rag.cli.connect_memgraph") as connect,
+        patch("codebase_rag.cli.connect_graph") as connect,
         patch("codebase_rag.cli._update_and_validate_models"),
     ):
         yield connect

@@ -24,7 +24,7 @@ write merges properties and would keep a key the check added (bot review,
 #1718).
 
 A failed re-ingest is why the restore discards the store's pending writes
-before its first delete. The batch API buffers -- `MemgraphIngestor` holds
+before its first delete. The batch API buffers -- `GraphIngestor` holds
 nodes and relationships until `flush_all` -- so a run that raises after its
 first write leaves its partial parse queued, and the restore's own flush
 would commit it right after the deletes meant to remove it, writing a
@@ -144,7 +144,7 @@ def _props(raw: object) -> PropertyDict | None:
 def _discard_pending(store: GraphStore) -> None:
     """Drop writes the store has buffered but not yet flushed.
 
-    The batch API buffers: `MemgraphIngestor` appends to `node_buffer` and
+    The batch API buffers: `GraphIngestor` appends to `node_buffer` and
     `_rel_groups` and writes at `batch_size` or on `flush_all`. After a
     re-ingest that raised, that buffer holds the partial parse, and the
     restore's own flush would commit it after the deletes meant to remove

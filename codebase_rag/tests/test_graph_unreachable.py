@@ -25,7 +25,7 @@ from typer.testing import CliRunner
 
 from codebase_rag.cli import app
 from codebase_rag.config import settings
-from codebase_rag.services.graph_service import GraphUnavailableError, MemgraphIngestor
+from codebase_rag.services.graph_service import GraphIngestor, GraphUnavailableError
 
 runner = CliRunner()
 
@@ -48,7 +48,7 @@ def nothing_listening(monkeypatch: pytest.MonkeyPatch) -> int:
 
 def test_an_unreachable_graph_raises_one_typed_error(nothing_listening: int) -> None:
     with pytest.raises(GraphUnavailableError) as raised:
-        with MemgraphIngestor(host="127.0.0.1", port=nothing_listening):
+        with GraphIngestor(host="127.0.0.1", port=nothing_listening):
             pass
 
     message = str(raised.value)
@@ -62,7 +62,7 @@ def test_rejected_credentials_name_the_credential_variables() -> None:
     refused = mgclient.OperationalError("Authentication failure")
     with patch.object(mgclient, "connect", side_effect=refused):
         with pytest.raises(GraphUnavailableError) as raised:
-            with MemgraphIngestor(
+            with GraphIngestor(
                 host="127.0.0.1", port=7687, username="me", password="wrong"
             ):
                 pass
@@ -146,13 +146,13 @@ def test_a_failure_after_connecting_is_not_reported_as_unreachable(
             pass
 
     broke = RuntimeError("query broke")
-    with patch.object(MemgraphIngestor, "open_connection", return_value=_Conn()):
+    with patch.object(GraphIngestor, "open_connection", return_value=_Conn()):
         with pytest.raises(RuntimeError, match="query broke"):
-            with MemgraphIngestor(host="127.0.0.1", port=nothing_listening):
+            with GraphIngestor(host="127.0.0.1", port=nothing_listening):
                 raise broke
 
 
-def _mcp_server(ingestor: MemgraphIngestor) -> tuple[MagicMock, MagicMock]:
+def _mcp_server(ingestor: GraphIngestor) -> tuple[MagicMock, MagicMock]:
     server = MagicMock()
     server.run = AsyncMock()
     return server, patch(
@@ -174,7 +174,7 @@ def test_an_mcp_server_that_cannot_reach_the_graph_exits_1(
     # Greptile review of PR 2504: `mcp-server` caught the connection error
     # itself (stdio), or uvicorn swallowed it in the app's lifespan (http),
     # so a server that never started exited 0 and a launcher saw success.
-    ingestor = MemgraphIngestor(host="127.0.0.1", port=nothing_listening)
+    ingestor = GraphIngestor(host="127.0.0.1", port=nothing_listening)
     _, server = _mcp_server(ingestor)
     with server:
         result = runner.invoke(app, ["mcp-server", "--transport", transport])
@@ -197,7 +197,7 @@ class _Connection:
 
 @pytest.fixture
 def graph_answers() -> Iterator[None]:
-    with patch.object(MemgraphIngestor, "open_connection", return_value=_Connection()):
+    with patch.object(GraphIngestor, "open_connection", return_value=_Connection()):
         yield
 
 
@@ -210,7 +210,7 @@ def test_a_healthy_stdio_mcp_server_still_starts(
         yield (MagicMock(), MagicMock())
 
     server, created = _mcp_server(
-        MemgraphIngestor(host="127.0.0.1", port=nothing_listening)
+        GraphIngestor(host="127.0.0.1", port=nothing_listening)
     )
     with created, patch("codebase_rag.mcp.server.stdio_server", streams):
         result = runner.invoke(app, ["mcp-server", "--transport", "stdio"])
@@ -223,7 +223,7 @@ def test_a_healthy_http_mcp_server_still_starts(
     graph_answers: None, nothing_listening: int, mcp_http_port: int
 ) -> None:
     # Negative.
-    _, created = _mcp_server(MemgraphIngestor(host="127.0.0.1", port=nothing_listening))
+    _, created = _mcp_server(GraphIngestor(host="127.0.0.1", port=nothing_listening))
     with created, patch("uvicorn.Server.serve", new_callable=AsyncMock) as serve:
         result = runner.invoke(app, ["mcp-server", "--transport", "http"])
 

@@ -16,16 +16,16 @@ import pytest
 from codebase_rag.services.resource_cleanup import prune_unanchored_resources
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
 
-def _seed(ingestor: MemgraphIngestor, cypher: str) -> None:
+def _seed(ingestor: GraphIngestor, cypher: str) -> None:
     ingestor.execute_write(cypher)
 
 
-def _remaining(ingestor: MemgraphIngestor) -> list[str]:
+def _remaining(ingestor: GraphIngestor) -> list[str]:
     rows = ingestor.fetch_all(
         "MATCH (r:Resource) RETURN r.qualified_name AS qn ORDER BY qn"
     )
@@ -33,9 +33,7 @@ def _remaining(ingestor: MemgraphIngestor) -> list[str]:
 
 
 class TestPruneUnanchoredResources:
-    def test_anchored_resource_survives(
-        self, memgraph_ingestor: MemgraphIngestor
-    ) -> None:
+    def test_anchored_resource_survives(self, memgraph_ingestor: GraphIngestor) -> None:
         _seed(
             memgraph_ingestor,
             "CREATE (f:Function {qualified_name: 'p.main'}), "
@@ -47,9 +45,7 @@ class TestPruneUnanchoredResources:
 
         assert _remaining(memgraph_ingestor) == ["env"]
 
-    def test_edgeless_resource_deleted(
-        self, memgraph_ingestor: MemgraphIngestor
-    ) -> None:
+    def test_edgeless_resource_deleted(self, memgraph_ingestor: GraphIngestor) -> None:
         _seed(
             memgraph_ingestor,
             "CREATE (:Resource {qualified_name: 'stale', kind: 'ENDPOINT'})",
@@ -60,7 +56,7 @@ class TestPruneUnanchoredResources:
         assert _remaining(memgraph_ingestor) == []
 
     def test_flow_source_anchored_through_sink_survives(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, memgraph_ingestor: GraphIngestor
     ) -> None:
         # Regression: `fmt.Println(os.Getenv(...))` emits only the derived
         # ENV -FLOWS_TO-> STDOUT edge for the source, so the ENV resource
@@ -77,9 +73,7 @@ class TestPruneUnanchoredResources:
 
         assert _remaining(memgraph_ingestor) == ["env", "stdout"]
 
-    def test_floating_flow_pair_deleted(
-        self, memgraph_ingestor: MemgraphIngestor
-    ) -> None:
+    def test_floating_flow_pair_deleted(self, memgraph_ingestor: GraphIngestor) -> None:
         # A flow edge between two resources must not keep the pair alive
         # once the code that anchored either side is gone.
         _seed(
@@ -94,7 +88,7 @@ class TestPruneUnanchoredResources:
         assert _remaining(memgraph_ingestor) == []
 
     def test_resolves_to_does_not_propagate_liveness(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, memgraph_ingestor: GraphIngestor
     ) -> None:
         # RESOLVES_TO is derived on every sync: it must neither anchor a
         # resource nor carry liveness from a live URL to a dead endpoint.
@@ -110,7 +104,7 @@ class TestPruneUnanchoredResources:
 
         assert _remaining(memgraph_ingestor) == ["url"]
 
-    def test_empty_graph_is_noop(self, memgraph_ingestor: MemgraphIngestor) -> None:
+    def test_empty_graph_is_noop(self, memgraph_ingestor: GraphIngestor) -> None:
         prune_unanchored_resources(memgraph_ingestor)
 
         assert _remaining(memgraph_ingestor) == []

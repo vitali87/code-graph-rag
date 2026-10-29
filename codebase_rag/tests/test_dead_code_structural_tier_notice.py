@@ -204,7 +204,7 @@ class TestDeadCodeCommandNotice:
             ),
         ]
         with patch(
-            "codebase_rag.cli.connect_memgraph", return_value=_mock_ingestor(ruby_only)
+            "codebase_rag.cli.connect_graph", return_value=_mock_ingestor(ruby_only)
         ):
             result = CliRunner().invoke(app, ["dead-code"])
 
@@ -221,7 +221,7 @@ class TestDeadCodeCommandNotice:
             _node(_FUNCTION, "proj.app.orphan", "orphan", "app.py"),
         ]
         with patch(
-            "codebase_rag.cli.connect_memgraph",
+            "codebase_rag.cli.connect_graph",
             return_value=_mock_ingestor(python_only),
         ):
             result = CliRunner().invoke(app, ["dead-code"])
@@ -233,7 +233,7 @@ class TestDeadCodeCommandNotice:
         # The notice must not contaminate machine-readable output.
         nodes = _ruby_and_python_nodes()
         with patch(
-            "codebase_rag.cli.connect_memgraph", return_value=_mock_ingestor(nodes)
+            "codebase_rag.cli.connect_graph", return_value=_mock_ingestor(nodes)
         ):
             result = CliRunner().invoke(app, ["dead-code", "--format", "json"])
 
@@ -246,7 +246,7 @@ class TestDeadCodeCommandNotice:
         # same disclaimer as the console: otherwise the saved copy shows an
         # empty table and reads as "this code is clean".
         with patch(
-            "codebase_rag.cli.connect_memgraph",
+            "codebase_rag.cli.connect_graph",
             return_value=_mock_ingestor(_ruby_and_python_nodes()),
         ):
             result = CliRunner().invoke(
@@ -262,7 +262,7 @@ class TestDeadCodeCommandNotice:
         # only in the human-facing table format.
         out = tmp_path / "report.json"
         with patch(
-            "codebase_rag.cli.connect_memgraph",
+            "codebase_rag.cli.connect_graph",
             return_value=_mock_ingestor(_ruby_and_python_nodes()),
         ):
             result = CliRunner().invoke(
@@ -288,7 +288,7 @@ class TestDeadCodeCommandNotice:
             ),
         ]
         with patch(
-            "codebase_rag.cli.connect_memgraph", return_value=_mock_ingestor(ruby_only)
+            "codebase_rag.cli.connect_graph", return_value=_mock_ingestor(ruby_only)
         ):
             result = CliRunner().invoke(app, ["dead-code", "--fail-on-found"])
 
@@ -298,7 +298,7 @@ class TestDeadCodeCommandNotice:
     def test_real_candidate_still_fails_the_build(self) -> None:
         # Guard the other direction: the notice must not mask a real finding.
         with patch(
-            "codebase_rag.cli.connect_memgraph",
+            "codebase_rag.cli.connect_graph",
             return_value=_mock_ingestor(_ruby_and_python_nodes()),
         ):
             result = CliRunner().invoke(app, ["dead-code", "--fail-on-found"])

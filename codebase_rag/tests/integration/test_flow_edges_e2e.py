@@ -12,7 +12,7 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.flow_access import FlowKind
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
@@ -55,7 +55,7 @@ def flow_project(tmp_path: Path) -> Path:
     return project
 
 
-def _index(ingestor: MemgraphIngestor, project: Path, *, io: bool) -> None:
+def _index(ingestor: GraphIngestor, project: Path, *, io: bool) -> None:
     parsers, queries = load_parsers()
     capture = resolve_capture([cs.CaptureGroup.IO.value]) if io else None
     GraphUpdater(
@@ -68,7 +68,7 @@ def _index(ingestor: MemgraphIngestor, project: Path, *, io: bool) -> None:
 
 
 def _build(
-    ingestor: MemgraphIngestor, tmp_path: Path, code: str, *, io: bool = True
+    ingestor: GraphIngestor, tmp_path: Path, code: str, *, io: bool = True
 ) -> None:
     project = tmp_path / "flow_project"
     project.mkdir()
@@ -76,19 +76,19 @@ def _build(
     _index(ingestor, project, io=io)
 
 
-def _resource_qns(ingestor: MemgraphIngestor) -> set[str]:
+def _resource_qns(ingestor: GraphIngestor) -> set[str]:
     rows = ingestor.fetch_all(
         f"MATCH (n:{cs.NodeLabel.RESOURCE.value}) RETURN n.qualified_name AS qn"
     )
     return {str(row["qn"]) for row in rows}
 
 
-def _rel_types(ingestor: MemgraphIngestor) -> set[str]:
+def _rel_types(ingestor: GraphIngestor) -> set[str]:
     rows = ingestor.fetch_all("MATCH ()-[r]->() RETURN DISTINCT type(r) AS t")
     return {str(row["t"]) for row in rows}
 
 
-def _flows(ingestor: MemgraphIngestor) -> list[dict[str, str | None]]:
+def _flows(ingestor: GraphIngestor) -> list[dict[str, str | None]]:
     rows = ingestor.fetch_all(
         f"MATCH (a)-[r:{cs.RelationshipType.FLOWS_TO.value}]->(b) "
         "RETURN a.qualified_name AS frm, b.qualified_name AS to, "
@@ -110,7 +110,7 @@ def _has(flows: list[dict[str, str | None]], frm: str, to: str, **props: str) ->
 
 
 def test_io_and_flow_edges_survive_the_memgraph_round_trip(
-    memgraph_ingestor: MemgraphIngestor, flow_project: Path
+    memgraph_ingestor: GraphIngestor, flow_project: Path
 ) -> None:
     _index(memgraph_ingestor, flow_project, io=True)
 
@@ -139,7 +139,7 @@ def test_io_and_flow_edges_survive_the_memgraph_round_trip(
 
 
 def test_default_capture_writes_no_resource_or_flow(
-    memgraph_ingestor: MemgraphIngestor, flow_project: Path
+    memgraph_ingestor: GraphIngestor, flow_project: Path
 ) -> None:
     _index(memgraph_ingestor, flow_project, io=False)
 
@@ -148,7 +148,7 @@ def test_default_capture_writes_no_resource_or_flow(
 
 
 def test_method_body_flow_uses_a_method_caller(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # The caller_spec inside a class body is a Method, not a Function; the
     # resource->resource edge must still round-trip from a method body.
@@ -173,7 +173,7 @@ def test_method_body_flow_uses_a_method_caller(
 
 
 def test_multi_hop_assignment_chain_reaches_sink(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # Taint must survive a chain of plain-identifier reassignments.
     _build(
@@ -190,7 +190,7 @@ def test_multi_hop_assignment_chain_reaches_sink(
 
 
 def test_retaint_tracks_latest_source_only(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # Overwriting a tainted local with a *different* source rebinds taint:
     # the sink sees the second source, never the discarded first.
@@ -209,7 +209,7 @@ def test_retaint_tracks_latest_source_only(
 
 
 def test_transitive_two_hop_return_carries_source(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # A source returned through two nested call boundaries keeps its origin
     # resource, so the outermost sink emits the full resource flow AND every hop
@@ -231,7 +231,7 @@ def test_transitive_two_hop_return_carries_source(
 
 
 def test_nested_scope_taint_does_not_leak_to_outer(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # A nested def is a scope boundary: its `x = getenv(...)` must not taint
     # the outer function's same-named `x`. The nested read still exists as its
@@ -252,7 +252,7 @@ def test_nested_scope_taint_does_not_leak_to_outer(
 
 
 def test_cooccurrence_is_not_flow(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # An unrelated read next to an untainted call is not data flow: no arg
     # edge to the callee and no resource flow to the sink.
@@ -272,7 +272,7 @@ def test_cooccurrence_is_not_flow(
 
 
 def test_go_loop_carried_flow_survives_round_trip(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # issue #714 lean-flow depth: a later loop iteration carries the ENV read
     # back to the file write of an earlier statement (two-pass loop walk).

@@ -3,8 +3,8 @@
 The watcher ships with the package as `cgr watch` (`codebase_rag/watch.py`,
 issue #2433); this script only stays so a contributor's habit keeps working.
 The repository given first becomes `--repo-path`, and every other option is
-passed to `cgr watch` unchanged. Memgraph is reached through MEMGRAPH_HOST and
-MEMGRAPH_PORT, as for every other cgr command.
+passed to `cgr watch` unchanged. It writes to the graph GRAPH_BACKEND selects,
+as every other cgr command does.
 """
 
 import sys

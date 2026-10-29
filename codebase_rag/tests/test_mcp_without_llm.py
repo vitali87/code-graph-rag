@@ -23,7 +23,7 @@ from codebase_rag import exceptions as ex
 from codebase_rag.config import ModelConfig, settings
 from codebase_rag.mcp import server as srv
 from codebase_rag.mcp.tools import MCPToolsRegistry
-from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.services.graph_service import GraphIngestor
 from codebase_rag.services.llm import CypherQueryGenerator
 from codebase_rag.tools.codebase_query import create_query_tool
 from codebase_rag.workspaces import WorkspaceConfig
@@ -68,7 +68,7 @@ def _server_without_cypher_model(
 
     def capture(
         project_root: str,
-        ingestor: MemgraphIngestor,
+        ingestor: GraphIngestor,
         cypher_gen: CypherQueryGenerator,
         workspace: WorkspaceConfig | None = None,
     ) -> MCPToolsRegistry:
@@ -98,7 +98,7 @@ def _server_without_cypher_model(
             "codebase_rag.providers.base.check_ollama_running", return_value=False
         ) as ollama_up,
         patch("codebase_rag.services.llm.Agent") as agent_cls,
-        patch.object(srv, "MemgraphIngestor", return_value=ingestor),
+        patch.object(srv, "GraphIngestor", return_value=ingestor),
         patch.object(srv, "MCPToolsRegistry", side_effect=capture),
     ):
         agent_cls.return_value.run = AsyncMock(

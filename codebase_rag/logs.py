@@ -544,7 +544,7 @@ SOURCE_RANGE_EXCEEDS = "Line range {start}-{end} exceeds file length {length} in
 SOURCE_EXTRACT_FAILED = "Failed to extract source from {path}: {error}"
 SOURCE_AST_FAILED = "AST extraction failed for {name}: {error}"
 
-# Memgraph logs
+# Graph engine logs
 MG_SET_WITHOUT_BACKEND = (
     "Memgraph settings are set but GRAPH_BACKEND is not, so cgr is using the "
     "embedded SQLite graph at {path}, now the default engine instead of "
@@ -553,7 +553,7 @@ MG_SET_WITHOUT_BACKEND = (
     "'code-graph-rag[memgraph]'; to keep the embedded graph, set "
     "GRAPH_BACKEND=sqlite. Either one silences this notice."
 )
-MG_CONNECTING = "Connecting to Memgraph at {host}:{port}..."
+MG_CONNECTING = "Connecting to the {engine} graph at {target}..."
 MG_CONNECT_FAILED = "Could not connect to Memgraph at {host}:{port}: {error}"
 MG_CONNECTED = "Connected to the {engine} graph."
 MG_EXCEPTION = "An exception occurred: {error}. Attempting best-effort flush..."
@@ -562,7 +562,7 @@ MG_DELIBERATE_EXIT = (
 )
 MG_INTERRUPTED = "Interrupted. Attempting best-effort flush..."
 MG_FLUSH_ERROR = "Failed to flush during cleanup: {error}"
-MG_DISCONNECTED = "\nDisconnected from Memgraph."
+MG_DISCONNECTED = "\nDisconnected from the {engine} graph."
 MG_CYPHER_ERROR = "!!! Cypher Error: {error}"
 MG_CYPHER_QUERY = "    Query: {query}"
 MG_CYPHER_PARAMS = "    Params: {params}"
@@ -1154,7 +1154,7 @@ MCP_SERVER_UNKNOWN_TOOL = "[GraphCode MCP] Unknown tool: {name}"
 MCP_SERVER_TOOL_ERROR = "[GraphCode MCP] Error executing tool '{name}': {error}"
 MCP_SERVER_STARTING = "[GraphCode MCP] Starting MCP server..."
 MCP_SERVER_CREATED = "[GraphCode MCP] Server created, starting stdio transport..."
-MCP_SERVER_CONNECTED = "[GraphCode MCP] Connected to Memgraph at {host}:{port}"
+MCP_SERVER_CONNECTED = "[GraphCode MCP] Connected to the {engine} graph at {target}"
 MCP_SERVER_FATAL_ERROR = "[GraphCode MCP] Fatal error: {error}"
 # The incomplete-run marker (issue #1679). Both are warnings rather than
 # errors: the run itself is unaffected, but the cross-process guard silently

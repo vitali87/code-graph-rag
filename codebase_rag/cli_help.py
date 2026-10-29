@@ -261,7 +261,7 @@ EXAMPLES_WATCH = (
     "EXAMPLES\n\n"
     "  cgr watch --repo-path ./my-repo\n\n"
     "  cgr watch --repo-path ./my-repo --debounce 2 --max-wait 10\n\n"
-    "  MEMGRAPH_PORT=7688 cgr watch --project-name my-project"
+    "  GRAPH_BACKEND=memgraph MEMGRAPH_PORT=7688 cgr watch --project-name my-project"
 )
 EXAMPLES_EXPORT = (
     "EXAMPLES\n\n"
@@ -467,7 +467,7 @@ HELP_PROJECTS = (
 )
 HELP_WORKSPACE = "Query every project defined in workspace NAME."
 
-HELP_BATCH_SIZE = "Flush to Memgraph after this many buffered nodes or relationships."
+HELP_BATCH_SIZE = "Flush to the graph after this many buffered nodes or relationships."
 HELP_MEMGRAPH_HOST = "Memgraph host."
 HELP_MEMGRAPH_PORT = "Memgraph port."
 HELP_ORCHESTRATOR = (

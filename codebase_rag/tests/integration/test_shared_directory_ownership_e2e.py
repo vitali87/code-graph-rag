@@ -18,13 +18,13 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.types_defs import ResultRow
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
 
 @pytest.fixture(params=["memgraph_ingestor", "sqlite_ingestor"])
-def ingestor(request: pytest.FixtureRequest) -> MemgraphIngestor:
+def ingestor(request: pytest.FixtureRequest) -> GraphIngestor:
     return request.getfixturevalue(request.param)
 
 
@@ -57,7 +57,7 @@ def _repo(root: Path, legacy: bool = False) -> Path:
     return repo
 
 
-def _index(ingestor: MemgraphIngestor, repo: Path, project: str) -> None:
+def _index(ingestor: GraphIngestor, repo: Path, project: str) -> None:
     parsers, queries = load_parsers()
     GraphUpdater(
         ingestor=ingestor,
@@ -75,7 +75,7 @@ def _node_row(row: ResultRow) -> tuple[str, ...]:
     return (*sorted(names), str(row["key"]))
 
 
-def _snapshot(ingestor: MemgraphIngestor) -> Snapshot:
+def _snapshot(ingestor: GraphIngestor) -> Snapshot:
     nodes = sorted(_node_row(row) for row in ingestor.fetch_all(_NODES))
     rels = sorted(
         (str(row["type"]), str(row["src"]), str(row["dst"]))
@@ -84,7 +84,7 @@ def _snapshot(ingestor: MemgraphIngestor) -> Snapshot:
     return nodes, rels
 
 
-def _wipe(ingestor: MemgraphIngestor) -> None:
+def _wipe(ingestor: GraphIngestor) -> None:
     ingestor._execute_query("MATCH (n) DETACH DELETE n")
 
 
@@ -98,7 +98,7 @@ def _counts(rows: list[ResultRow], key: str) -> dict[str, int]:
 
 
 def _scoped(
-    ingestor: MemgraphIngestor, project: str
+    ingestor: GraphIngestor, project: str
 ) -> tuple[dict[str, int], dict[str, int]]:
     params = {"project_names": [project]}
     return (
@@ -112,7 +112,7 @@ def _scoped(
     )
 
 
-def _alone(ingestor: MemgraphIngestor, repo: Path, project: str) -> Snapshot:
+def _alone(ingestor: GraphIngestor, repo: Path, project: str) -> Snapshot:
     _index(ingestor, repo, project)
     snapshot = _snapshot(ingestor)
     _wipe(ingestor)
@@ -121,7 +121,7 @@ def _alone(ingestor: MemgraphIngestor, repo: Path, project: str) -> Snapshot:
 
 @pytest.mark.parametrize(("keep", "drop"), [("shop", "old"), ("old", "shop")])
 def test_deleting_one_name_leaves_the_other_exactly_as_if_alone(
-    ingestor: MemgraphIngestor, tmp_path: Path, keep: str, drop: str
+    ingestor: GraphIngestor, tmp_path: Path, keep: str, drop: str
 ) -> None:
     repo = _repo(tmp_path)
     expected = _alone(ingestor, repo, keep)
@@ -134,7 +134,7 @@ def test_deleting_one_name_leaves_the_other_exactly_as_if_alone(
 
 
 def test_a_file_only_the_deleted_name_indexed_goes_with_it(
-    ingestor: MemgraphIngestor, tmp_path: Path
+    ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # `old` indexed legacy.py, which was removed before `shop` indexed the
     # same directory: that File hangs only off `old`'s package, so it must go
@@ -153,7 +153,7 @@ def test_a_file_only_the_deleted_name_indexed_goes_with_it(
 
 
 def test_scoped_stats_count_one_name_as_if_it_were_alone(
-    ingestor: MemgraphIngestor, tmp_path: Path
+    ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     repo = _repo(tmp_path)
     _index(ingestor, repo, "shop")
@@ -165,7 +165,7 @@ def test_scoped_stats_count_one_name_as_if_it_were_alone(
 
 
 def test_per_project_breakdown_counts_each_name_once(
-    ingestor: MemgraphIngestor, tmp_path: Path
+    ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     repo = _repo(tmp_path)
     _index(ingestor, repo, "shop")
@@ -182,7 +182,7 @@ def test_per_project_breakdown_counts_each_name_once(
 
 
 def test_a_later_sync_does_not_purge_the_shared_directory_nodes(
-    ingestor: MemgraphIngestor, tmp_path: Path
+    ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # ensure_constraints runs on every sync. Its #897 repair read any
     # Folder/File with two project parents as legacy damage and purged it,
@@ -200,7 +200,7 @@ def test_a_later_sync_does_not_purge_the_shared_directory_nodes(
 
 @pytest.mark.parametrize("outer_first", [True, False])
 def test_a_later_sync_keeps_what_a_nested_root_shares(
-    ingestor: MemgraphIngestor, tmp_path: Path, outer_first: bool
+    ingestor: GraphIngestor, tmp_path: Path, outer_first: bool
 ) -> None:
     # One project at the repository root, one at a subdirectory of it: the
     # files under the subdirectory are one File node for both, but the
@@ -230,7 +230,7 @@ def test_a_later_sync_keeps_what_a_nested_root_shares(
     ],
 )
 def test_a_sync_reads_each_root_against_the_shared_node(
-    ingestor: MemgraphIngestor,
+    ingestor: GraphIngestor,
     first: str,
     second: str,
     node: str,
@@ -251,7 +251,7 @@ def test_a_sync_reads_each_root_against_the_shared_node(
 
 
 def test_a_tree_already_cut_off_from_its_project_goes_with_it(
-    ingestor: MemgraphIngestor, tmp_path: Path
+    ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # A graph the old purge already repaired: `old`'s packages survive but no
     # containment path leads to them from `old` any more.
@@ -270,7 +270,7 @@ def test_a_tree_already_cut_off_from_its_project_goes_with_it(
 
 
 def test_a_lone_project_is_still_deleted_completely(
-    ingestor: MemgraphIngestor, tmp_path: Path
+    ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     _index(ingestor, _repo(tmp_path), "shop")
 
@@ -283,7 +283,7 @@ def test_a_lone_project_is_still_deleted_completely(
 
 
 def test_projects_in_separate_directories_are_untouched(
-    ingestor: MemgraphIngestor, tmp_path: Path
+    ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     first = _repo(tmp_path / "a")
     second = _repo(tmp_path / "b")

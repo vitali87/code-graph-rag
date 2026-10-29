@@ -1,6 +1,6 @@
 """Issue #2704: a command that exits inside `with ingestor:` exits quietly.
 
-`MemgraphIngestor.__exit__` logged every `Exception` with its traceback.
+`GraphIngestor.__exit__` logged every `Exception` with its traceback.
 `typer.Exit` is a `RuntimeError` with an empty message, so a command that
 ended with a non-zero exit code inside the block (a refused `cgr rename`,
 `cgr check` of a project that is not indexed) printed `ERROR ... An
@@ -23,7 +23,7 @@ from codebase_rag import constants as cs
 from codebase_rag import logs as ls
 from codebase_rag.cli import app
 from codebase_rag.editing.rename import RenameRefused
-from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.services.graph_service import GraphIngestor
 
 REFUSAL = "Refusing to rename proj.m.Store.get: 1 site was resolved heuristically"
 
@@ -50,9 +50,9 @@ def _levels(records: Records) -> set[str]:
 
 
 def _exit(exc: BaseException) -> MagicMock:
-    ingestor = MemgraphIngestor(host="localhost", port=7687)
+    ingestor = GraphIngestor(host="localhost", port=7687)
     ingestor.conn = MagicMock()
-    with patch.object(MemgraphIngestor, "flush_all") as flush:
+    with patch.object(GraphIngestor, "flush_all") as flush:
         ingestor.__exit__(type(exc), exc, None)
     return flush
 
@@ -61,9 +61,9 @@ def _exit(exc: BaseException) -> MagicMock:
 def offline_ingestor() -> Iterator[None]:
     # The real `__exit__` runs; only the connection and the writes are stubbed.
     with (
-        patch.object(MemgraphIngestor, "__enter__", lambda self: self),
-        patch.object(MemgraphIngestor, "flush_all"),
-        patch.object(MemgraphIngestor, "list_projects", return_value=[]),
+        patch.object(GraphIngestor, "__enter__", lambda self: self),
+        patch.object(GraphIngestor, "flush_all"),
+        patch.object(GraphIngestor, "list_projects", return_value=[]),
     ):
         yield
 
@@ -145,11 +145,11 @@ def test_ctrl_c_is_still_reported_as_an_interrupt(records: Records) -> None:
 def test_a_failed_flush_after_a_command_exit_is_logged_not_raised(
     records: Records,
 ) -> None:
-    ingestor = MemgraphIngestor(host="localhost", port=7687)
+    ingestor = GraphIngestor(host="localhost", port=7687)
     conn = ingestor.conn = MagicMock()
     exc = typer.Exit(code=1)
 
-    with patch.object(MemgraphIngestor, "flush_all", side_effect=OSError("disk")):
+    with patch.object(GraphIngestor, "flush_all", side_effect=OSError("disk")):
         ingestor.__exit__(type(exc), exc, None)
 
     assert ("ERROR", ls.MG_FLUSH_ERROR.format(error="disk")) in records

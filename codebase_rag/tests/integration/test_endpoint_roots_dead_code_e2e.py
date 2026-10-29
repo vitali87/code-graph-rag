@@ -16,7 +16,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
@@ -49,7 +49,7 @@ def bill_user(user_id: int) -> dict:
 """
 
 
-def _index(ingestor: MemgraphIngestor, repo: Path) -> None:
+def _index(ingestor: GraphIngestor, repo: Path) -> None:
     parsers, queries = load_parsers()
     GraphUpdater(
         ingestor=ingestor,
@@ -61,7 +61,7 @@ def _index(ingestor: MemgraphIngestor, repo: Path) -> None:
     ingestor.flush_all()
 
 
-def _services(ingestor: MemgraphIngestor, root: Path) -> None:
+def _services(ingestor: GraphIngestor, root: Path) -> None:
     for name, source, module in (
         ("user-service", _USER_SERVICE, "main.py"),
         ("billing-service", _BILLING_SERVICE, "bill.py"),
@@ -74,7 +74,7 @@ def _services(ingestor: MemgraphIngestor, root: Path) -> None:
     _index(ingestor, root / "billing-service")
 
 
-def _dead_names(ingestor: MemgraphIngestor, endpoint_roots: bool) -> set[str]:
+def _dead_names(ingestor: GraphIngestor, endpoint_roots: bool) -> set[str]:
     config = default_dead_code_config(include_tests=True, include_classes=False)
     rows = collect_dead_code(
         ingestor.fetch_all,
@@ -85,7 +85,7 @@ def _dead_names(ingestor: MemgraphIngestor, endpoint_roots: bool) -> set[str]:
 
 
 def test_an_uncalled_public_handler_is_reported_with_endpoint_roots_off(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     _services(memgraph_ingestor, tmp_path)
 
@@ -99,7 +99,7 @@ def test_an_uncalled_public_handler_is_reported_with_endpoint_roots_off(
 
 
 def test_endpoint_roots_on_reports_no_handler(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     _services(memgraph_ingestor, tmp_path)
 

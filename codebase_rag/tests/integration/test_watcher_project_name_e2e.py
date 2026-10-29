@@ -20,7 +20,7 @@ from watchdog.events import FileModifiedEvent
 
 from codebase_rag import watch
 from codebase_rag.cli import app
-from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.services.graph_service import GraphIngestor
 from codebase_rag.utils.path_utils import derive_project_name
 
 pytestmark = [pytest.mark.integration]
@@ -29,7 +29,7 @@ runner = CliRunner()
 
 
 def test_the_watchers_edit_reaches_the_project_cgr_start_synced(
-    memgraph_ingestor: MemgraphIngestor,
+    memgraph_ingestor: GraphIngestor,
     memgraph_container: dict[str, str | int],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -40,11 +40,11 @@ def test_the_watchers_edit_reaches_the_project_cgr_start_synced(
     source = shop / "m.py"
     source.write_text("def a():\n    return 1\n", encoding="utf-8")
 
-    def connect(batch_size: int) -> MemgraphIngestor:
-        return MemgraphIngestor(host=host, port=port, batch_size=batch_size)
+    def connect(batch_size: int) -> GraphIngestor:
+        return GraphIngestor(host=host, port=port, batch_size=batch_size)
 
     with (
-        patch("codebase_rag.cli.connect_memgraph", connect),
+        patch("codebase_rag.cli.connect_graph", connect),
         patch("codebase_rag.cli._update_and_validate_models"),
     ):
         synced = runner.invoke(
@@ -72,7 +72,7 @@ def test_the_watchers_edit_reaches_the_project_cgr_start_synced(
         handler.dispatch(FileModifiedEvent(str(source)))
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(watch, "connect_memgraph", connect)
+    monkeypatch.setattr(watch, "connect_graph", connect)
     monkeypatch.setattr(watch, "Observer", observer_cls)
     monkeypatch.setattr(
         watch, "time", SimpleNamespace(sleep=edit_then_stop, time=time.time)

@@ -255,7 +255,7 @@ class TestMcpServerProjectScope:
         from codebase_rag.mcp import server as srv
 
         with (
-            patch.object(srv, "MemgraphIngestor"),
+            patch.object(srv, "GraphIngestor"),
             patch.object(srv, "LazyCypherGenerator") as cypher_cls,
             patch.object(srv, "MCPToolsRegistry"),
         ):

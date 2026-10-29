@@ -165,7 +165,7 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 @pytest.fixture
 def graph() -> Generator[MagicMock, None, None]:
     with (
-        patch("codebase_rag.cli.connect_memgraph") as connect,
+        patch("codebase_rag.cli.connect_graph") as connect,
         patch("codebase_rag.graph_updater.GraphUpdater") as updater,
     ):
         connect.return_value.__enter__ = MagicMock(return_value=MagicMock())

@@ -9,12 +9,12 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
 
-def index_project(ingestor: MemgraphIngestor, project_path: Path) -> None:
+def index_project(ingestor: GraphIngestor, project_path: Path) -> None:
     parsers, queries = load_parsers()
     updater = GraphUpdater(
         ingestor=ingestor,
@@ -25,7 +25,7 @@ def index_project(ingestor: MemgraphIngestor, project_path: Path) -> None:
     updater.run()
 
 
-def get_imports_relationships(ingestor: MemgraphIngestor) -> list[dict]:
+def get_imports_relationships(ingestor: GraphIngestor) -> list[dict]:
     query = """
     MATCH (from:Module)-[r:IMPORTS]->(to)
     WHERE to:Module OR to:ExternalModule
@@ -34,7 +34,7 @@ def get_imports_relationships(ingestor: MemgraphIngestor) -> list[dict]:
     return ingestor.fetch_all(query)
 
 
-def get_module_qualified_names(ingestor: MemgraphIngestor) -> set[str]:
+def get_module_qualified_names(ingestor: GraphIngestor) -> set[str]:
     query = "MATCH (m) WHERE m:Module OR m:ExternalModule RETURN m.qualified_name AS qn"
     results = ingestor.fetch_all(query)
     return {r["qn"] for r in results}
@@ -290,7 +290,7 @@ def lua_imports_project(tmp_path: Path) -> Path:
 
 class TestJavaImportsRelationships:
     def test_internal_import_creates_relationship(
-        self, memgraph_ingestor: MemgraphIngestor, java_imports_project: Path
+        self, memgraph_ingestor: GraphIngestor, java_imports_project: Path
     ) -> None:
         index_project(memgraph_ingestor, java_imports_project)
 
@@ -316,7 +316,7 @@ class TestJavaImportsRelationships:
         )
 
     def test_external_import_creates_module_node(
-        self, memgraph_ingestor: MemgraphIngestor, java_imports_project: Path
+        self, memgraph_ingestor: GraphIngestor, java_imports_project: Path
     ) -> None:
         index_project(memgraph_ingestor, java_imports_project)
 
@@ -329,7 +329,7 @@ class TestJavaImportsRelationships:
         )
 
     def test_external_import_creates_relationship(
-        self, memgraph_ingestor: MemgraphIngestor, java_imports_project: Path
+        self, memgraph_ingestor: GraphIngestor, java_imports_project: Path
     ) -> None:
         index_project(memgraph_ingestor, java_imports_project)
 
@@ -351,7 +351,7 @@ class TestJavaImportsRelationships:
 
 class TestPythonImportsRelationships:
     def test_internal_import_creates_relationship(
-        self, memgraph_ingestor: MemgraphIngestor, python_imports_project: Path
+        self, memgraph_ingestor: GraphIngestor, python_imports_project: Path
     ) -> None:
         index_project(memgraph_ingestor, python_imports_project)
 
@@ -378,7 +378,7 @@ class TestPythonImportsRelationships:
         )
 
     def test_stdlib_import_creates_module_node(
-        self, memgraph_ingestor: MemgraphIngestor, python_imports_project: Path
+        self, memgraph_ingestor: GraphIngestor, python_imports_project: Path
     ) -> None:
         index_project(memgraph_ingestor, python_imports_project)
 
@@ -395,7 +395,7 @@ class TestPythonImportsRelationships:
         )
 
     def test_stdlib_import_creates_relationship(
-        self, memgraph_ingestor: MemgraphIngestor, python_imports_project: Path
+        self, memgraph_ingestor: GraphIngestor, python_imports_project: Path
     ) -> None:
         index_project(memgraph_ingestor, python_imports_project)
 
@@ -416,7 +416,7 @@ class TestPythonImportsRelationships:
 
 class TestJsImportsRelationships:
     def test_internal_import_creates_relationship(
-        self, memgraph_ingestor: MemgraphIngestor, js_imports_project: Path
+        self, memgraph_ingestor: GraphIngestor, js_imports_project: Path
     ) -> None:
         index_project(memgraph_ingestor, js_imports_project)
 
@@ -443,7 +443,7 @@ class TestJsImportsRelationships:
         )
 
     def test_external_import_creates_module_node(
-        self, memgraph_ingestor: MemgraphIngestor, js_imports_project: Path
+        self, memgraph_ingestor: GraphIngestor, js_imports_project: Path
     ) -> None:
         index_project(memgraph_ingestor, js_imports_project)
 
@@ -459,7 +459,7 @@ class TestJsImportsRelationships:
 
 class TestTsImportsRelationships:
     def test_internal_import_creates_relationship(
-        self, memgraph_ingestor: MemgraphIngestor, ts_imports_project: Path
+        self, memgraph_ingestor: GraphIngestor, ts_imports_project: Path
     ) -> None:
         index_project(memgraph_ingestor, ts_imports_project)
 
@@ -486,7 +486,7 @@ class TestTsImportsRelationships:
         )
 
     def test_external_import_creates_module_node(
-        self, memgraph_ingestor: MemgraphIngestor, ts_imports_project: Path
+        self, memgraph_ingestor: GraphIngestor, ts_imports_project: Path
     ) -> None:
         index_project(memgraph_ingestor, ts_imports_project)
 
@@ -502,7 +502,7 @@ class TestTsImportsRelationships:
 
 class TestRustImportsRelationships:
     def test_internal_import_creates_relationship(
-        self, memgraph_ingestor: MemgraphIngestor, rust_imports_project: Path
+        self, memgraph_ingestor: GraphIngestor, rust_imports_project: Path
     ) -> None:
         index_project(memgraph_ingestor, rust_imports_project)
 
@@ -529,7 +529,7 @@ class TestRustImportsRelationships:
         )
 
     def test_external_import_creates_module_node(
-        self, memgraph_ingestor: MemgraphIngestor, rust_imports_project: Path
+        self, memgraph_ingestor: GraphIngestor, rust_imports_project: Path
     ) -> None:
         index_project(memgraph_ingestor, rust_imports_project)
 
@@ -545,7 +545,7 @@ class TestRustImportsRelationships:
 
 class TestGoImportsRelationships:
     def test_internal_import_creates_relationship(
-        self, memgraph_ingestor: MemgraphIngestor, go_imports_project: Path
+        self, memgraph_ingestor: GraphIngestor, go_imports_project: Path
     ) -> None:
         index_project(memgraph_ingestor, go_imports_project)
 
@@ -572,7 +572,7 @@ class TestGoImportsRelationships:
         )
 
     def test_external_import_creates_module_node(
-        self, memgraph_ingestor: MemgraphIngestor, go_imports_project: Path
+        self, memgraph_ingestor: GraphIngestor, go_imports_project: Path
     ) -> None:
         index_project(memgraph_ingestor, go_imports_project)
 
@@ -588,7 +588,7 @@ class TestGoImportsRelationships:
 
 class TestCppImportsRelationships:
     def test_internal_include_creates_relationship(
-        self, memgraph_ingestor: MemgraphIngestor, cpp_imports_project: Path
+        self, memgraph_ingestor: GraphIngestor, cpp_imports_project: Path
     ) -> None:
         index_project(memgraph_ingestor, cpp_imports_project)
 
@@ -618,7 +618,7 @@ class TestCppImportsRelationships:
         )
 
     def test_external_include_creates_module_node(
-        self, memgraph_ingestor: MemgraphIngestor, cpp_imports_project: Path
+        self, memgraph_ingestor: GraphIngestor, cpp_imports_project: Path
     ) -> None:
         index_project(memgraph_ingestor, cpp_imports_project)
 
@@ -637,7 +637,7 @@ class TestCppImportsRelationships:
 
 class TestLuaImportsRelationships:
     def test_internal_require_creates_relationship(
-        self, memgraph_ingestor: MemgraphIngestor, lua_imports_project: Path
+        self, memgraph_ingestor: GraphIngestor, lua_imports_project: Path
     ) -> None:
         index_project(memgraph_ingestor, lua_imports_project)
 
@@ -664,7 +664,7 @@ class TestLuaImportsRelationships:
         )
 
     def test_external_require_creates_module_node(
-        self, memgraph_ingestor: MemgraphIngestor, lua_imports_project: Path
+        self, memgraph_ingestor: GraphIngestor, lua_imports_project: Path
     ) -> None:
         index_project(memgraph_ingestor, lua_imports_project)
 

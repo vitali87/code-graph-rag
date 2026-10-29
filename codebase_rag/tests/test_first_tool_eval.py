@@ -146,7 +146,7 @@ def _patch_orchestrator(
 
     monkeypatch.setattr(cgr_main, "_initialize_services_and_agent", fake_initialize)
     monkeypatch.setattr(
-        cli_runtime, "connect_memgraph", lambda batch_size: nullcontext(MagicMock())
+        cli_runtime, "connect_graph", lambda batch_size: nullcontext(MagicMock())
     )
 
 

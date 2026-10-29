@@ -19,7 +19,7 @@ from codebase_rag.tests.test_rust_inline_mod_defines_order import write_crate
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
@@ -34,7 +34,7 @@ _LEFT = "MATCH (n) WHERE n.qualified_name STARTS WITH $prefix RETURN count(n) AS
 
 
 def test_a_one_row_batch_keeps_every_inline_mod_item_contained(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     parsers, queries = load_parsers()
     if "rust" not in parsers:

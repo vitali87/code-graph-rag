@@ -843,7 +843,7 @@ def _mock_ingestor(rows: list[ResultRow]) -> MagicMock:
 
 
 def _invoke(rows: list[ResultRow], *args: str) -> tuple[int, str]:
-    with patch("codebase_rag.cli.connect_memgraph", return_value=_mock_ingestor(rows)):
+    with patch("codebase_rag.cli.connect_graph", return_value=_mock_ingestor(rows)):
         result = CliRunner().invoke(app, ["dead-code", *args])
     return result.exit_code, result.output
 

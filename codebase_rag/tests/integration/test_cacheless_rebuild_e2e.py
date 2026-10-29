@@ -20,13 +20,13 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.sync.checkout_state import state_file
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
 
 def _index(
-    ingestor: MemgraphIngestor,
+    ingestor: GraphIngestor,
     repo_path: Path,
     exclude_paths: frozenset[str] | None = None,
 ) -> None:
@@ -40,7 +40,7 @@ def _index(
     ).run()
 
 
-def _function_names(ingestor: MemgraphIngestor) -> set[str]:
+def _function_names(ingestor: GraphIngestor) -> set[str]:
     rows = ingestor.fetch_all(
         "MATCH (f:Function) WHERE f.qualified_name STARTS WITH 'renamerepo.' "
         "RETURN f.qualified_name AS qn"
@@ -50,7 +50,7 @@ def _function_names(ingestor: MemgraphIngestor) -> set[str]:
 
 class TestCachelessRebuild:
     def test_rebuild_without_cache_drops_renamed_symbols(
-        self, memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+        self, memgraph_ingestor: GraphIngestor, tmp_path: Path
     ) -> None:
         repo = tmp_path / "renamerepo"
         repo.mkdir()
@@ -73,7 +73,7 @@ class TestCachelessRebuild:
         assert not any(qn.endswith(".old_name") for qn in names), names
 
     def test_rebuild_without_cache_drops_removed_files(
-        self, memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+        self, memgraph_ingestor: GraphIngestor, tmp_path: Path
     ) -> None:
         # A file deleted between the previous index and a cacheless rebuild
         # appears nowhere: not in the (empty) old hashes and not on disk.
@@ -99,7 +99,7 @@ class TestCachelessRebuild:
         assert not any(qn.endswith(".gone") for qn in names), names
 
     def test_rebuild_without_cache_drops_newly_excluded_files(
-        self, memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+        self, memgraph_ingestor: GraphIngestor, tmp_path: Path
     ) -> None:
         # A file EXCLUDED between the previous index and a cacheless rebuild
         # still exists on disk, so orphan pruning keeps it, and the empty old
@@ -124,7 +124,7 @@ class TestCachelessRebuild:
         assert not any(qn.endswith(".gen") for qn in names), names
 
     def test_rebuild_without_cache_drops_root_init_symbols(
-        self, memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+        self, memgraph_ingestor: GraphIngestor, tmp_path: Path
     ) -> None:
         # A repository-level __init__.py's module qn IS the project name,
         # with no dot after it: a `STARTS WITH $project_prefix` scope misses
@@ -152,7 +152,7 @@ class TestCachelessRebuild:
         assert not any(qn.endswith(".old_root") for qn in names), names
 
     def test_cacheless_rebuild_spares_sibling_project_with_same_path(
-        self, memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+        self, memgraph_ingestor: GraphIngestor, tmp_path: Path
     ) -> None:
         # Two projects in the shared graph both hold lib/shared.py. The
         # delete-before-reingest of one project's cacheless rebuild must be
@@ -189,7 +189,7 @@ class TestCachelessRebuild:
 
     def test_unreadable_file_is_not_reconciled_away(
         self,
-        memgraph_ingestor: MemgraphIngestor,
+        memgraph_ingestor: GraphIngestor,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:

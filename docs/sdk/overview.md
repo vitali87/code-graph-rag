@@ -39,7 +39,7 @@ for fn in functions[:5]:
 | Import | Purpose |
 |--------|---------|
 | `from cgr import load_graph` | Load and query exported graph data |
-| `from cgr import MemgraphIngestor` | Query Memgraph with Cypher directly |
+| `from cgr import GraphIngestor` | Run Cypher against the configured graph (the embedded file, Memgraph or Neo4j); `MemgraphIngestor` is its earlier name |
 | `from cgr import CypherGenerator` | Generate Cypher from natural language |
 | `from cgr import embed_code` | Semantic code search with UniXcoder |
 | `from cgr import settings` | Configure providers programmatically |

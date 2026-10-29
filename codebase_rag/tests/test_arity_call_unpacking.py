@@ -217,7 +217,7 @@ def _check(root: Path, store: StatefulIngestor) -> Result:
     context = MagicMock()
     context.__enter__.return_value = cli_store
     context.__exit__.return_value = False
-    with patch("codebase_rag.cli.connect_memgraph", return_value=context):
+    with patch("codebase_rag.cli.connect_graph", return_value=context):
         return CliRunner().invoke(
             app,
             [

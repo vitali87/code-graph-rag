@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.services.graph_service import GraphIngestor
 
 
 def _create_ingestor_with_mocked_connection(
     batch_size: int = 2,
-) -> tuple[MemgraphIngestor, MagicMock]:
-    """Create a MemgraphIngestor with a mocked mgclient connection."""
-    ingestor = MemgraphIngestor(host="localhost", port=7687, batch_size=batch_size)
+) -> tuple[GraphIngestor, MagicMock]:
+    """Create a GraphIngestor with a mocked mgclient connection."""
+    ingestor = GraphIngestor(host="localhost", port=7687, batch_size=batch_size)
     conn_mock = MagicMock()
     cursor_mock = MagicMock()
     conn_mock.cursor.return_value = cursor_mock
@@ -70,7 +70,7 @@ def test_relationship_batch_flushes_after_threshold_and_respects_node_flush() ->
     cursor_mock.fetchall.return_value = [(1,), (1,)]
 
     with patch.object(
-        MemgraphIngestor, "flush_nodes", wraps=ingestor.flush_nodes
+        GraphIngestor, "flush_nodes", wraps=ingestor.flush_nodes
     ) as flush_nodes_spy:
         ingestor.ensure_relationship_batch(
             ("Module", "qualified_name", "proj.module1"),

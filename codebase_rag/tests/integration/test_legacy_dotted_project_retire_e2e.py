@@ -14,12 +14,12 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.utils.path_utils import derive_project_name
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
 
-def _index(ingestor: MemgraphIngestor, root: Path, project: str | None) -> None:
+def _index(ingestor: GraphIngestor, root: Path, project: str | None) -> None:
     parsers, queries = load_parsers()
     GraphUpdater(
         ingestor=ingestor,
@@ -30,25 +30,25 @@ def _index(ingestor: MemgraphIngestor, root: Path, project: str | None) -> None:
     ).run(force=True)
 
 
-def _strings(ingestor: MemgraphIngestor, query: str) -> set[str]:
+def _strings(ingestor: GraphIngestor, query: str) -> set[str]:
     rows = ingestor.fetch_all(query)
     return {value for row in rows if isinstance(value := row.get("v"), str)}
 
 
-def _modules(ingestor: MemgraphIngestor) -> set[str]:
+def _modules(ingestor: GraphIngestor) -> set[str]:
     return _strings(ingestor, "MATCH (m:Module) RETURN m.qualified_name AS v")
 
 
-def _functions(ingestor: MemgraphIngestor) -> set[str]:
+def _functions(ingestor: GraphIngestor) -> set[str]:
     return _strings(ingestor, "MATCH (f:Function) RETURN f.qualified_name AS v")
 
 
-def _projects(ingestor: MemgraphIngestor) -> set[str]:
+def _projects(ingestor: GraphIngestor) -> set[str]:
     return _strings(ingestor, "MATCH (p:Project) RETURN p.name AS v")
 
 
 def test_retiring_the_old_project_keeps_the_new_ones_nodes(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     root = tmp_path / "acme.web"
     (root / "app").mkdir(parents=True)
@@ -74,7 +74,7 @@ def test_retiring_the_old_project_keeps_the_new_ones_nodes(
 
 
 def test_a_project_named_under_the_old_one_keeps_their_shared_module(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     web = tmp_path / "acme.web"
     (web / "api").mkdir(parents=True)
@@ -94,7 +94,7 @@ def test_a_project_named_under_the_old_one_keeps_their_shared_module(
     assert "acme.web.api.views.api_view" in _functions(memgraph_ingestor)
 
 
-def _qns_of(ingestor: MemgraphIngestor, project: str) -> set[str]:
+def _qns_of(ingestor: GraphIngestor, project: str) -> set[str]:
     # The bare name (a root Package and Module) and everything under it.
     every = _strings(
         ingestor,
@@ -111,7 +111,7 @@ def _with_root_package(root: Path) -> Path:
 
 
 def test_retiring_the_old_project_takes_its_root_package_and_module(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # Greptile on PR 2497: the root Package and Module of a checkout with an
     # `__init__.py` are named `acme.web` exactly, not `acme.web.`-prefixed.
@@ -130,7 +130,7 @@ def test_retiring_the_old_project_takes_its_root_package_and_module(
 
 
 def test_retiring_the_old_project_keeps_one_whose_name_only_starts_with_it(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # Negative: `acme.webapp`'s names start with `acme.web` but are not that
     # name or under `acme.web.`. Its checkout sits inside the old one's, so

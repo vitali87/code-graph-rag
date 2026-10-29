@@ -18,7 +18,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
@@ -44,7 +44,7 @@ def _repo(root: Path, name: str, files: dict[str, str]) -> Path:
     return repo
 
 
-def _index(ingestor: MemgraphIngestor, repo: Path, name: str) -> None:
+def _index(ingestor: GraphIngestor, repo: Path, name: str) -> None:
     parsers, queries = load_parsers()
     GraphUpdater(
         ingestor=ingestor,
@@ -62,7 +62,7 @@ def _qns(rows: object) -> list[str]:
 
 
 def test_location_spellings_resolve_and_unknown_files_are_refused(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     alpha = _repo(
         tmp_path,
@@ -124,7 +124,7 @@ RETURN count(f) AS reached"""
 
 
 def test_a_file_only_another_project_indexed_from_one_root_is_refused(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     """Two projects indexed from one root share its Folder nodes, so alpha's
     containment walk reaches a file only beta indexed (bot review): alpha

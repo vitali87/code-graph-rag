@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     from pydantic_ai import Agent, Tool
     from pydantic_ai.agent import AgentRunResult
 
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
     from codebase_rag.services.llm import CypherAgent
 
 from . import constants as ec
@@ -346,7 +346,7 @@ class _MeteredAgent:
 def _build_tools(
     condition: Condition,
     root: Path,
-    ingestor: "MemgraphIngestor | None",
+    ingestor: "GraphIngestor | None",
     project_name: str,
     cypher_meter: UsageMeter,
 ) -> "list[Tool[None]]":
@@ -410,7 +410,7 @@ async def _run_condition(
     condition: Condition,
     cases: list[QACase],
     root: Path,
-    ingestor: "MemgraphIngestor | None",
+    ingestor: "GraphIngestor | None",
     project_name: str,
     records_path: Path | None = None,
 ) -> list[QARecord]:
@@ -591,7 +591,7 @@ def _init_records_file(
 
 
 def _reindex_into_memgraph(
-    root: Path, project_name: str, ingestor: "MemgraphIngestor"
+    root: Path, project_name: str, ingestor: "GraphIngestor"
 ) -> None:
     from codebase_rag.graph_updater import GraphUpdater
     from codebase_rag.parser_loader import load_parsers
@@ -675,7 +675,7 @@ def main(
         else [Condition.GRAPH, Condition.GREP]
     )
     from codebase_rag.config import settings
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
     out_dir.mkdir(parents=True, exist_ok=True)
     suffix = "" if QType(qtype) is QType.CALLS else f"_{qtype}"
@@ -700,7 +700,7 @@ def main(
     results: dict[str, dict[str, float]] = {}
     all_records: list[QARecord] = []
     if needs_graph:
-        with MemgraphIngestor(batch_size=settings.MEMGRAPH_BATCH_SIZE) as ingestor:
+        with GraphIngestor(batch_size=settings.MEMGRAPH_BATCH_SIZE) as ingestor:
             # The CLI path creates constraints and indexes before ingesting;
             # this harness must too, or every generated query runs against an
             # unindexed graph and the latency numbers measure Memgraph scans,

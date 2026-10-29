@@ -12,7 +12,7 @@ import pytest
 from loguru import logger
 
 from codebase_rag import constants as cs
-from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.services.graph_service import GraphIngestor
 from codebase_rag.types_defs import PropertyValue
 
 pytestmark = pytest.mark.integration
@@ -25,7 +25,7 @@ def _fn(qn: str) -> tuple[str, str, str]:
     return (_FUNCTION, cs.KEY_QUALIFIED_NAME, qn)
 
 
-def _flush_summary(ingestor: MemgraphIngestor) -> str:
+def _flush_summary(ingestor: GraphIngestor) -> str:
     lines: list[str] = []
     handler = logger.add(lambda m: lines.append(str(m)), level="INFO")
     try:
@@ -38,7 +38,7 @@ def _flush_summary(ingestor: MemgraphIngestor) -> str:
 
 
 def test_a_row_matching_parallel_edges_counts_once(
-    memgraph_ingestor: MemgraphIngestor,
+    memgraph_ingestor: GraphIngestor,
 ) -> None:
     memgraph_ingestor._execute_query(
         "CREATE (:Function {qualified_name: 'm.caller'}), "
@@ -68,7 +68,7 @@ def test_a_row_matching_parallel_edges_counts_once(
 
 
 def test_a_batch_of_single_edges_still_counts_every_row(
-    memgraph_ingestor: MemgraphIngestor,
+    memgraph_ingestor: GraphIngestor,
 ) -> None:
     # Negative: the common batch, one new edge per row, is unchanged.
     memgraph_ingestor._execute_query(

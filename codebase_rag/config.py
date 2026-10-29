@@ -582,7 +582,7 @@ class AppConfig(BaseSettings):
 
         Defaulting an unrecognised value to Memgraph would send Memgraph
         DDL to whatever server is actually configured, and
-        `MemgraphIngestor.ensure_constraints` swallows DDL failures -- so
+        `GraphIngestor.ensure_constraints` swallows DDL failures -- so
         a typo would surface much later as a graph built with no
         constraints rather than as a startup error.
         """

@@ -12,27 +12,27 @@ from __future__ import annotations
 import pytest
 
 from codebase_rag import exceptions as ex
-from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = pytest.mark.integration
 
 BACKENDS = ("memgraph_ingestor", "neo4j_ingestor")
 
 
-def _node_count(ingestor: MemgraphIngestor) -> int:
+def _node_count(ingestor: GraphIngestor) -> int:
     count = ingestor.fetch_all("MATCH (n) RETURN count(n) AS c")[0]["c"]
     assert isinstance(count, int)
     return count
 
 
 @pytest.fixture(params=BACKENDS)
-def ingestor(request: pytest.FixtureRequest) -> MemgraphIngestor:
-    ingestor: MemgraphIngestor = request.getfixturevalue(request.param)
+def ingestor(request: pytest.FixtureRequest) -> GraphIngestor:
+    ingestor: GraphIngestor = request.getfixturevalue(request.param)
     ingestor.execute_write("CREATE (:Function {name: 'delete'})")
     return ingestor
 
 
-def test_read_query_returns_rows(ingestor: MemgraphIngestor) -> None:
+def test_read_query_returns_rows(ingestor: GraphIngestor) -> None:
     rows = ingestor.fetch_read_only(
         "MATCH (f:Function) WHERE f.name = 'delete' RETURN f.name AS name"
     )
@@ -50,7 +50,7 @@ def test_read_query_returns_rows(ingestor: MemgraphIngestor) -> None:
     ],
 )
 def test_write_query_is_refused_and_changes_nothing(
-    ingestor: MemgraphIngestor, query: str
+    ingestor: GraphIngestor, query: str
 ) -> None:
     before = _node_count(ingestor)
     # The plan check refuses it on both engines, before anything runs; on
@@ -71,7 +71,7 @@ def test_write_query_is_refused_and_changes_nothing(
     ],
 )
 def test_memgraph_refuses_a_disguised_procedure_before_running_it(
-    memgraph_ingestor: MemgraphIngestor, query: str
+    memgraph_ingestor: GraphIngestor, query: str
 ) -> None:
     with pytest.raises(ex.ReadOnlyQueryError, match="mg.create_module_file"):
         memgraph_ingestor.fetch_read_only(query)
@@ -111,13 +111,13 @@ _ORDINARY_READS = [
 
 @pytest.mark.parametrize("query", _ORDINARY_READS)
 def test_ordinary_reads_pass_the_plan_guard(
-    ingestor: MemgraphIngestor, query: str
+    ingestor: GraphIngestor, query: str
 ) -> None:
     ingestor.fetch_read_only(query)
 
 
 def test_breadth_first_expansion_passes_on_memgraph(
-    memgraph_ingestor: MemgraphIngestor,
+    memgraph_ingestor: GraphIngestor,
 ) -> None:
     memgraph_ingestor.fetch_read_only(
         "MATCH (a:Function)-[:CALLS *BFS ..5]->(b) RETURN b.name AS n LIMIT 1"

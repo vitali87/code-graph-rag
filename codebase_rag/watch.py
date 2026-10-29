@@ -32,7 +32,7 @@ from watchdog.observers import Observer
 from . import cli_help as ch
 from . import constants as cs
 from . import logs as ls
-from .cli_runtime import connect_memgraph
+from .cli_runtime import connect_graph
 from .config import (
     CGRIGNORE_FILENAME,
     GITIGNORE_FILENAME,
@@ -43,7 +43,7 @@ from .exceptions import ReingestAborted
 from .graph_updater import GraphUpdater
 from .parser_loader import load_parsers
 from .services import IngestorProtocol
-from .services.graph_service import MemgraphIngestor
+from .services.graph_service import GraphIngestor
 from .sync.guard import (
     SyncRefusedError,
     UnfinishedSyncError,
@@ -679,7 +679,7 @@ def start_watcher(
     """
     parsers, queries = load_parsers()
     refused: SyncRefusedError | None = None
-    with connect_memgraph(batch_size) as ingestor:
+    with connect_graph(batch_size) as ingestor:
         try:
             with (
                 project_claim(
@@ -707,7 +707,7 @@ def start_watcher(
         raise refused
 
 
-def _ensure_constraints(ingestor: MemgraphIngestor, project_name: str) -> None:
+def _ensure_constraints(ingestor: GraphIngestor, project_name: str) -> None:
     """Create the graph's constraints and indexes before the first scan writes.
 
     As `cgr start` does before each sync (PR #3365): without them a

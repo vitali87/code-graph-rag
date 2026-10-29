@@ -9,7 +9,7 @@ import pytest
 from loguru import logger
 
 from codebase_rag import constants as cs
-from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
@@ -29,7 +29,7 @@ def warnings() -> Generator[list[str], None, None]:
     logger.remove(sink)
 
 
-def _flush_calls(ingestor: MemgraphIngestor, targets: list[str]) -> None:
+def _flush_calls(ingestor: GraphIngestor, targets: list[str]) -> None:
     for qn in (CALLER, "proj.app.ok_1", "proj.app.ok_2"):
         ingestor.ensure_node_batch(
             cs.NodeLabel.FUNCTION,
@@ -45,12 +45,12 @@ def _flush_calls(ingestor: MemgraphIngestor, targets: list[str]) -> None:
     ingestor.flush_relationships()
 
 
-def _called(ingestor: MemgraphIngestor) -> list[str]:
+def _called(ingestor: GraphIngestor) -> list[str]:
     return [str(r["qn"]) for r in ingestor.fetch_all(CALLS_FROM_CALLER, {"qn": CALLER})]
 
 
 def test_a_lossy_flush_names_only_the_lost_row(
-    memgraph_ingestor: MemgraphIngestor, warnings: list[str]
+    memgraph_ingestor: GraphIngestor, warnings: list[str]
 ) -> None:
     _flush_calls(memgraph_ingestor, ["proj.app.ok_1", PHANTOM, "proj.app.ok_2"])
 
@@ -63,7 +63,7 @@ def test_a_lossy_flush_names_only_the_lost_row(
 
 
 def test_a_complete_flush_warns_about_nothing(
-    memgraph_ingestor: MemgraphIngestor, warnings: list[str]
+    memgraph_ingestor: GraphIngestor, warnings: list[str]
 ) -> None:
     # Negative.
     _flush_calls(memgraph_ingestor, ["proj.app.ok_1", "proj.app.ok_2"])

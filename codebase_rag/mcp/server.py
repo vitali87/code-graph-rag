@@ -19,7 +19,7 @@ from codebase_rag import logs as ls
 from codebase_rag import tool_errors as te
 from codebase_rag.config import settings
 from codebase_rag.mcp.tools import MCPToolsRegistry
-from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.services.graph_service import GraphIngestor
 from codebase_rag.services.llm import LazyCypherGenerator
 from codebase_rag.types_defs import MCPToolArguments
 from codebase_rag.utils.path_utils import derive_project_name
@@ -81,7 +81,7 @@ def get_workspace(name: str | None = None) -> WorkspaceConfig | None:
     return config
 
 
-def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngestor]:
+def create_server(workspace: str | None = None) -> tuple[Server, GraphIngestor]:
     setup_logging()
 
     try:
@@ -105,7 +105,7 @@ def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngesto
 
     logger.info(ls.MCP_SERVER_INIT_SERVICES)
 
-    ingestor = MemgraphIngestor(batch_size=settings.MEMGRAPH_BATCH_SIZE)
+    ingestor = GraphIngestor(batch_size=settings.MEMGRAPH_BATCH_SIZE)
 
     # Scope Cypher generation to this server's project (named exactly as
     # indexing names it) so queries don't bleed into other projects sharing
@@ -204,10 +204,10 @@ def _failed_call(message: str) -> CallToolResult:
 
 
 @contextlib.contextmanager
-def _service_lifecycle(ingestor: MemgraphIngestor) -> Iterator[None]:
+def _service_lifecycle(ingestor: GraphIngestor) -> Iterator[None]:
     """Manage shared service lifetimes for the MCP server.
 
-    Opens the Memgraph ingestor connection and releases the vector store client
+    Opens the graph ingestor connection and releases the vector store client
     on shutdown, so a CLI indexing run can reuse local resources once the server
     stops.
     """
@@ -215,7 +215,7 @@ def _service_lifecycle(ingestor: MemgraphIngestor) -> Iterator[None]:
         with ingestor:
             logger.info(
                 ls.MCP_SERVER_CONNECTED.format(
-                    host=settings.MEMGRAPH_HOST, port=settings.MEMGRAPH_PORT
+                    engine=ingestor.engine, target=ingestor.target
                 )
             )
             yield

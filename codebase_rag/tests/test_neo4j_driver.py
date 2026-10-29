@@ -1,6 +1,6 @@
 """The cursor-shaped adapter over the Neo4j driver (issue #1590).
 
-`MemgraphIngestor` is written against a DB-API-ish connection/cursor, so
+`GraphIngestor` is written against a DB-API-ish connection/cursor, so
 these tests pin the adapter to exactly that contract -- including the two
 details the ingestor depends on that the Neo4j driver does not natively
 provide: `cursor.description` names, and rows that survive the cursor

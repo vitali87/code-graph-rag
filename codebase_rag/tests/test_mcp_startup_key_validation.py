@@ -141,7 +141,7 @@ class TestStartupKeyValidation:
                 "active_cypher_config",
                 property(lambda self: _local_config()),
             ),
-            patch.object(srv, "MemgraphIngestor") as ingestor,
+            patch.object(srv, "GraphIngestor") as ingestor,
             patch.object(srv, "LazyCypherGenerator") as cypher_generator,
         ):
             with pytest.raises(ValueError, match=cs.ModelRole.ORCHESTRATOR):
@@ -169,7 +169,7 @@ class TestStartupKeyValidation:
                 "active_cypher_config",
                 property(lambda self: _remote_config_without_key()),
             ),
-            patch.object(srv, "MemgraphIngestor") as ingestor,
+            patch.object(srv, "GraphIngestor") as ingestor,
             patch.object(srv, "LazyCypherGenerator") as cypher_generator,
         ):
             with pytest.raises(ValueError, match=cs.ModelRole.CYPHER):
@@ -193,7 +193,7 @@ class TestStartupKeyValidation:
                 "active_cypher_config",
                 property(lambda self: _local_config()),
             ),
-            patch.object(srv, "MemgraphIngestor"),
+            patch.object(srv, "GraphIngestor"),
             patch.object(srv, "LazyCypherGenerator"),
             patch.object(srv, "MCPToolsRegistry"),
         ):

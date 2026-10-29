@@ -12,16 +12,14 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.flow_access import FlowKind
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
 _FLOWS = cs.RelationshipType.FLOWS_TO.value
 
 
-def _build(
-    ingestor: MemgraphIngestor, tmp_path: Path, filename: str, code: str
-) -> None:
+def _build(ingestor: GraphIngestor, tmp_path: Path, filename: str, code: str) -> None:
     project = tmp_path / "flow_js"
     project.mkdir()
     (project / filename).write_text(code, encoding="utf-8")
@@ -35,7 +33,7 @@ def _build(
     ).run()
 
 
-def _flows(ingestor: MemgraphIngestor) -> list[dict[str, str | None]]:
+def _flows(ingestor: GraphIngestor) -> list[dict[str, str | None]]:
     rows = ingestor.fetch_all(
         f"MATCH (a)-[r:{_FLOWS}]->(b) "
         "RETURN a.qualified_name AS frm, b.qualified_name AS to, "
@@ -53,9 +51,7 @@ def _has(flows: list[dict[str, str | None]], frm: str, to: str, **props: str) ->
     )
 
 
-def test_env_flows_to_stdout(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
-) -> None:
+def test_env_flows_to_stdout(memgraph_ingestor: GraphIngestor, tmp_path: Path) -> None:
     _build(
         memgraph_ingestor,
         tmp_path,
@@ -74,7 +70,7 @@ def test_env_flows_to_stdout(
 
 
 def test_direct_env_argument_flows_to_stdout(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     _build(
         memgraph_ingestor,
@@ -91,7 +87,7 @@ def test_direct_env_argument_flows_to_stdout(
 
 
 def test_network_read_flows_to_file(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     _build(
         memgraph_ingestor,
@@ -111,7 +107,7 @@ def test_network_read_flows_to_file(
 
 
 def test_tainted_value_arg_edge_to_callee(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     _build(
         memgraph_ingestor,
@@ -132,7 +128,7 @@ def test_tainted_value_arg_edge_to_callee(
 
 
 def test_untainted_value_no_flow(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     _build(
         memgraph_ingestor,
@@ -145,7 +141,7 @@ def test_untainted_value_no_flow(
 
 
 def test_return_taint_flows_across_call(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # getSecret() returns process.env.SECRET; the caller assigns and logs it,
     # so the return edge and the ENV -> STDOUT flow both appear (shared fixpoint).
@@ -167,7 +163,7 @@ def test_return_taint_flows_across_call(
 
 
 def test_shadowed_console_no_flow(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # A local `console` object is not the global; logging through it must not
     # emit a resource flow.
@@ -190,7 +186,7 @@ def test_shadowed_console_no_flow(
 
 
 def test_comment_in_arguments_does_not_break_flow(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # Comments are named children; they must not shift argument indices or hide
     # the taint of a directly-passed source.
@@ -209,7 +205,7 @@ def test_comment_in_arguments_does_not_break_flow(
 
 
 def test_parenthesized_source_flows(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # A parenthesized source expression must be unwrapped like await, so
     # `console.log((process.env.SECRET))` still emits the flow.
@@ -228,7 +224,7 @@ def test_parenthesized_source_flows(
 
 
 def test_comment_before_sink_target_keeps_identity(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # A comment before the sink's target argument must not shift the positional
     # index used for the resource identity (literal_target filters comments).
@@ -250,7 +246,7 @@ def test_comment_before_sink_target_keeps_identity(
 
 
 def test_module_import_plus_local_shadow_no_flow(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # `fs` is imported module-wide, but a function-local `const fs = {}` shadows
     # it: fs.writeFileSync must not be the builtin, so no resource flow appears.
@@ -273,7 +269,7 @@ def test_module_import_plus_local_shadow_no_flow(
 
 
 def test_typescript_typed_param_shadows_source(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # A TS parameter is a required_parameter wrapper, not a bare identifier; a
     # `process` parameter must still shadow the global env source.

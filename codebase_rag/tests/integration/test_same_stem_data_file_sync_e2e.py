@@ -14,7 +14,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
@@ -32,7 +32,7 @@ def _write(root: Path, files: dict[str, str]) -> None:
         path.write_text(text, encoding="utf-8")
 
 
-def _sync(ingestor: MemgraphIngestor, root: Path, force: bool) -> None:
+def _sync(ingestor: GraphIngestor, root: Path, force: bool) -> None:
     parsers, queries = load_parsers()
     GraphUpdater(
         ingestor=ingestor,
@@ -43,7 +43,7 @@ def _sync(ingestor: MemgraphIngestor, root: Path, force: bool) -> None:
     ).run(force=force)
 
 
-def _edges(ingestor: MemgraphIngestor) -> set[tuple[str, str, str]]:
+def _edges(ingestor: GraphIngestor) -> set[tuple[str, str, str]]:
     return {
         (str(row["rel"]), str(row["src"]), str(row["dst"]))
         for row in ingestor.fetch_all(_EDGES)
@@ -51,7 +51,7 @@ def _edges(ingestor: MemgraphIngestor) -> set[tuple[str, str, str]]:
 
 
 def test_untouched_dependent_keeps_its_edges_beside_a_changed_data_file(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     root = tmp_path / "proj"
     _write(

@@ -60,7 +60,7 @@ def scans(monkeypatch: pytest.MonkeyPatch) -> list[GraphUpdater]:
 def observer(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     """Let the watcher scan, schedule its handler, then stop at the first sleep."""
     monkeypatch.setattr(
-        watch, "connect_memgraph", lambda batch_size: nullcontext(MagicMock())
+        watch, "connect_graph", lambda batch_size: nullcontext(MagicMock())
     )
     observer_cls = MagicMock()
     monkeypatch.setattr(watch, "Observer", observer_cls)
@@ -82,7 +82,7 @@ def _watch(path: str, *args: str) -> Result:
 
 def _cgr_start(repo: Path, *extra: str) -> Result:
     with (
-        patch("codebase_rag.cli.connect_memgraph"),
+        patch("codebase_rag.cli.connect_graph"),
         patch("codebase_rag.cli._update_and_validate_models"),
     ):
         return runner.invoke(

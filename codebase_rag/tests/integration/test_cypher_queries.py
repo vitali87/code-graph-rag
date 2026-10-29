@@ -20,7 +20,7 @@ from codebase_rag.dead_code import collect_dead_code
 from codebase_rag.types_defs import DeadCodeConfig
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 
 class TestBuildConstraintQueryUnit:
@@ -127,7 +127,7 @@ class TestBuildNodesByIdsQueryUnit:
 
 @pytest.mark.integration
 class TestCypherDeleteAllIntegration:
-    def test_deletes_all_nodes(self, memgraph_ingestor: MemgraphIngestor) -> None:
+    def test_deletes_all_nodes(self, memgraph_ingestor: GraphIngestor) -> None:
         memgraph_ingestor._execute_query(
             "CREATE (n:TestNode {name: 'test1'}), (m:TestNode {name: 'test2'})"
         )
@@ -148,7 +148,7 @@ class TestCypherDeleteAllIntegration:
 @pytest.mark.integration
 class TestCypherExportNodesIntegration:
     def test_exports_node_with_labels_and_properties(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, memgraph_ingestor: GraphIngestor
     ) -> None:
         memgraph_ingestor._execute_query(
             "CREATE (n:Function {qualified_name: 'module.func', name: 'func'})"
@@ -162,7 +162,7 @@ class TestCypherExportNodesIntegration:
         assert results[0]["properties"]["qualified_name"] == "module.func"
         assert results[0]["properties"]["name"] == "func"
 
-    def test_exports_multiple_nodes(self, memgraph_ingestor: MemgraphIngestor) -> None:
+    def test_exports_multiple_nodes(self, memgraph_ingestor: GraphIngestor) -> None:
         memgraph_ingestor._execute_query(
             "CREATE (a:Class {qualified_name: 'MyClass'}), "
             "(b:Method {qualified_name: 'MyClass.method'})"
@@ -179,7 +179,7 @@ class TestCypherExportNodesIntegration:
 @pytest.mark.integration
 class TestCypherExportRelationshipsIntegration:
     def test_exports_relationship_with_type(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, memgraph_ingestor: GraphIngestor
     ) -> None:
         memgraph_ingestor._execute_query(
             "CREATE (m:Module {qualified_name: 'mymodule'})-[:DEFINES]->"
@@ -197,7 +197,7 @@ class TestCypherExportRelationshipsIntegration:
 @pytest.mark.integration
 class TestCypherFindByQualifiedNameIntegration:
     def test_finds_function_by_qualified_name(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, memgraph_ingestor: GraphIngestor
     ) -> None:
         memgraph_ingestor._execute_query(
             "CREATE (m:Module {qualified_name: 'mymodule', path: 'src/mymodule.py'})"
@@ -217,7 +217,7 @@ class TestCypherFindByQualifiedNameIntegration:
         assert results[0]["path"] == "src/mymodule.py"
 
     def test_finds_module_with_no_path_to_another_module(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, memgraph_ingestor: GraphIngestor
     ) -> None:
         # `OPTIONAL MATCH (m:Module)-[*]-(n)` binds nothing here, so the
         # projection has only the matched node's own path to read (issue
@@ -235,7 +235,7 @@ class TestCypherFindByQualifiedNameIntegration:
         assert results[0]["path"] == "src/lonely.py"
 
     def test_prefers_the_matched_nodes_own_path(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, memgraph_ingestor: GraphIngestor
     ) -> None:
         # The traversal is unbounded, so the Module it reaches need not be the
         # file the matched node lives in.
@@ -255,7 +255,7 @@ class TestCypherFindByQualifiedNameIntegration:
         assert results[0]["path"] == "src/own.py"
 
     def test_falls_back_to_the_defining_module_through_nesting(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, memgraph_ingestor: GraphIngestor
     ) -> None:
         memgraph_ingestor._execute_query(
             "CREATE (m:Module {qualified_name: 'pkg.mod', path: 'src/mod.py'})"
@@ -273,7 +273,7 @@ class TestCypherFindByQualifiedNameIntegration:
         assert results[0]["path"] == "src/mod.py"
 
     def test_a_module_reached_only_through_calls_supplies_no_path(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, memgraph_ingestor: GraphIngestor
     ) -> None:
         # The unbounded `-[*]-` walked CALLS back to the caller's Module and
         # reported the caller's file as the callee's (issue #2196).
@@ -296,7 +296,7 @@ class TestCypherFindByQualifiedNameIntegration:
         assert results[0]["path"] is None
 
     def test_returns_empty_for_nonexistent_name(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, memgraph_ingestor: GraphIngestor
     ) -> None:
         results = memgraph_ingestor._execute_query(
             CYPHER_FIND_BY_QUALIFIED_NAME, {"qn": "nonexistent.func"}
@@ -308,7 +308,7 @@ class TestCypherFindByQualifiedNameIntegration:
 @pytest.mark.integration
 class TestCypherGetFunctionSourceLocationIntegration:
     def test_gets_source_location_by_node_id(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, memgraph_ingestor: GraphIngestor
     ) -> None:
         memgraph_ingestor._execute_query(
             "CREATE (m:Module {qualified_name: 'pkg.utils', path: 'pkg/utils.py'})"
@@ -335,7 +335,7 @@ class TestCypherGetFunctionSourceLocationIntegration:
 
 @pytest.mark.integration
 class TestBuildMergeNodeQueryIntegration:
-    def test_merge_creates_new_node(self, memgraph_ingestor: MemgraphIngestor) -> None:
+    def test_merge_creates_new_node(self, memgraph_ingestor: GraphIngestor) -> None:
         query = build_merge_node_query("Function", "qualified_name")
 
         memgraph_ingestor._execute_query(
@@ -361,7 +361,7 @@ class TestBuildMergeNodeQueryIntegration:
         assert results[0]["start"] == 1
 
     def test_merge_updates_existing_node(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, memgraph_ingestor: GraphIngestor
     ) -> None:
         memgraph_ingestor._execute_query(
             "CREATE (f:Function {qualified_name: 'mod.func', name: 'old_name'})"
@@ -385,7 +385,7 @@ class TestBuildMergeNodeQueryIntegration:
 @pytest.mark.integration
 class TestBuildMergeRelationshipQueryIntegration:
     def test_creates_relationship_between_nodes(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, memgraph_ingestor: GraphIngestor
     ) -> None:
         memgraph_ingestor._execute_query(
             "CREATE (m:Module {qualified_name: 'mymod'}), "
@@ -409,7 +409,7 @@ class TestBuildMergeRelationshipQueryIntegration:
         assert verify[0]["count"] == 1
 
     def test_creates_calls_relationship_with_properties(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, memgraph_ingestor: GraphIngestor
     ) -> None:
         memgraph_ingestor._execute_query(
             "CREATE (f1:Function {qualified_name: 'mod.caller'}), "
@@ -474,7 +474,7 @@ def _dead_code_config(
 
 @pytest.mark.integration
 class TestCollectDeadCodeIntegration:
-    def _seed(self, ingestor: MemgraphIngestor) -> None:
+    def _seed(self, ingestor: GraphIngestor) -> None:
         # called -> live; orphan -> dead; handler is a @task root;
         # routed is a @app.route root calling routed_callee (decorators are
         # stored @-prefixed and dotted, exactly as the parser emits them);
@@ -515,7 +515,7 @@ class TestCollectDeadCodeIntegration:
     }
 
     def test_reports_only_the_orphan_with_tests_included(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, memgraph_ingestor: GraphIngestor
     ) -> None:
         self._seed(memgraph_ingestor)
 
@@ -529,7 +529,7 @@ class TestCollectDeadCodeIntegration:
         assert names == {"proj.mod.orphan"}
 
     def test_excluding_tests_reports_orphan_and_test_only_code(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, memgraph_ingestor: GraphIngestor
     ) -> None:
         self._seed(memgraph_ingestor)
 
@@ -548,7 +548,7 @@ class TestCollectDeadCodeIntegration:
             "proj.mod.helper",
         }
 
-    def test_returns_row_shape(self, memgraph_ingestor: MemgraphIngestor) -> None:
+    def test_returns_row_shape(self, memgraph_ingestor: GraphIngestor) -> None:
         self._seed(memgraph_ingestor)
 
         rows = collect_dead_code(
@@ -565,7 +565,7 @@ class TestCollectDeadCodeIntegration:
         assert row["end_line"] == 11
 
     def test_test_module_call_is_not_a_root_when_excluding_tests(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, memgraph_ingestor: GraphIngestor
     ) -> None:
         # a function reached only from a TEST module's top-level call must NOT
         # be kept alive when --no-include-tests, else test-only code hides as
@@ -591,7 +591,7 @@ class TestCollectDeadCodeIntegration:
         assert {r["qualified_name"] for r in included} == set()
 
     def test_class_candidates_when_classes_included(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, memgraph_ingestor: GraphIngestor
     ) -> None:
         # used is a module-load root that instantiates WithInit (INSTANTIATES
         # the class plus CALLS its __init__), NoInit (INSTANTIATES only, no
@@ -645,7 +645,7 @@ class TestCollectDeadCodeIntegration:
         }
 
     def test_subclass_only_base_is_reported_when_subclass_is_unreachable(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, memgraph_ingestor: GraphIngestor
     ) -> None:
         # Base is subclassed by Derived, but nothing instantiates Derived, so
         # the traversal never reaches Derived and therefore never reaches Base
@@ -676,7 +676,7 @@ class TestCollectDeadCodeIntegration:
         }
 
     def test_no_roots_reports_everything(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, memgraph_ingestor: GraphIngestor
     ) -> None:
         # with no roots at all (nothing exported / entry-point / decorated /
         # called at module load), every function is unreachable and reported.
@@ -698,7 +698,7 @@ class TestCollectDeadCodeIntegration:
         }
 
     def test_registration_closure_and_protocol_stub_are_roots(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, memgraph_ingestor: GraphIngestor
     ) -> None:
         # a decorated closure DEFINED by a LIVE function (prompt_toolkit
         # @bindings.add, MCP @server.list_tools) is registered when its enclosing
@@ -762,7 +762,7 @@ class TestCollectDeadCodeIntegration:
         }
 
     def test_module_load_callee_is_a_root(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, memgraph_ingestor: GraphIngestor
     ) -> None:
         # a function called by a Module (e.g. `if __name__ == "__main__": main()`
         # or a bare decorator) runs at import, so it and its callees are live even
@@ -790,7 +790,7 @@ class TestCollectDeadCodeIntegration:
 
 @pytest.mark.integration
 class TestBuildNodesByIdsQueryIntegration:
-    def test_fetches_nodes_by_ids(self, memgraph_ingestor: MemgraphIngestor) -> None:
+    def test_fetches_nodes_by_ids(self, memgraph_ingestor: GraphIngestor) -> None:
         memgraph_ingestor._execute_query(
             "CREATE (f1:Function {qualified_name: 'mod.func1', name: 'func1'}), "
             "(f2:Function {qualified_name: 'mod.func2', name: 'func2'}), "
@@ -813,7 +813,7 @@ class TestBuildNodesByIdsQueryIntegration:
         assert names == {"func1", "func2"}
 
     def test_returns_empty_for_nonexistent_ids(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, memgraph_ingestor: GraphIngestor
     ) -> None:
         query = build_nodes_by_ids_query([99999, 99998])
         params = {"0": 99999, "1": 99998}
@@ -829,7 +829,7 @@ class TestFlowsToParallelProvenanceIntegration:
     edge per `via`, not collapse into a single edge under MERGE."""
 
     def test_parallel_via_edges_survive_merge(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, memgraph_ingestor: GraphIngestor
     ) -> None:
         memgraph_ingestor._execute_query(
             "CREATE (a:Function {qualified_name: 'mod.caller', name: 'caller'}), "
@@ -854,7 +854,7 @@ class TestFlowsToParallelProvenanceIntegration:
         assert [r["via"] for r in rows] == ["kw:password", "kw:username"]
 
     def test_mixed_via_and_viales_edges_do_not_collapse(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, memgraph_ingestor: GraphIngestor
     ) -> None:
         # A batch mixing rows that carry `via` with a row that does not (same
         # endpoints) must keep every edge: the via-less row must not strip

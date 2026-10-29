@@ -21,7 +21,7 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.types_defs import GraphData
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
@@ -66,7 +66,7 @@ def two():
 type Link = tuple[str, str, str]
 
 
-def _index(ingestor: MemgraphIngestor, root: Path, files: dict[str, str]) -> None:
+def _index(ingestor: GraphIngestor, root: Path, files: dict[str, str]) -> None:
     root.mkdir()
     for rel, text in files.items():
         (root / rel).write_text(text, encoding="utf-8")
@@ -97,7 +97,7 @@ def _resource_links(data: GraphData) -> set[Link]:
     }
 
 
-def _graph_resource_links(ingestor: MemgraphIngestor) -> set[Link]:
+def _graph_resource_links(ingestor: GraphIngestor) -> set[Link]:
     rows = ingestor.fetch_all(
         "MATCH (a:Resource)-[r]->(b:Resource) "
         "RETURN type(r) AS type, a.qualified_name AS a, b.qualified_name AS b"
@@ -110,7 +110,7 @@ def _ids(data: GraphData) -> set[object]:
 
 
 def test_a_project_export_keeps_its_resolves_to_and_flows_to(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     _index(
         memgraph_ingestor,
@@ -129,7 +129,7 @@ def test_a_project_export_keeps_its_resolves_to_and_flows_to(
 
 
 def test_a_client_exported_with_its_server_keeps_the_links_between_them(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     _index(memgraph_ingestor, tmp_path / "users", {"api.py": USERS_PY})
     _index(memgraph_ingestor, tmp_path / "web", {"client.py": WEB_PY})
@@ -144,7 +144,7 @@ def test_a_client_exported_with_its_server_keeps_the_links_between_them(
 
 
 def test_a_client_exported_alone_still_holds_both_ends_of_every_link(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # Negative: the server's endpoint is not in the client's file, so the
     # RESOLVES_TO into it stays out, and every relationship keeps both ends.

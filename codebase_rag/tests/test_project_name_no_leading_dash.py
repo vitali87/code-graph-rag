@@ -73,7 +73,7 @@ def test_a_qualified_name_of_such_a_project_is_accepted_as_an_argument(
     ingestor.__enter__ = MagicMock(return_value=ingestor)
     ingestor.__exit__ = MagicMock(return_value=False)
 
-    with patch("codebase_rag.cli_runtime.connect_memgraph", return_value=ingestor):
+    with patch("codebase_rag.cli_runtime.connect_graph", return_value=ingestor):
         result = CliRunner().invoke(
             app, ["graph", "callers", qn, "--repo-path", str(repo)]
         )

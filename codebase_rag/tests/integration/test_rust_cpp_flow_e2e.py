@@ -12,16 +12,14 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.flow_access import FlowKind
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
 _FLOWS = cs.RelationshipType.FLOWS_TO.value
 
 
-def _build(
-    ingestor: MemgraphIngestor, tmp_path: Path, filename: str, code: str
-) -> None:
+def _build(ingestor: GraphIngestor, tmp_path: Path, filename: str, code: str) -> None:
     project = tmp_path / "flow_rs_cpp"
     project.mkdir()
     (project / filename).write_text(code, encoding="utf-8")
@@ -35,7 +33,7 @@ def _build(
     ).run()
 
 
-def _flows(ingestor: MemgraphIngestor) -> list[dict[str, str | None]]:
+def _flows(ingestor: GraphIngestor) -> list[dict[str, str | None]]:
     rows = ingestor.fetch_all(
         f"MATCH (a)-[r:{_FLOWS}]->(b) "
         "RETURN a.qualified_name AS frm, b.qualified_name AS to, r.kind AS kind"
@@ -60,7 +58,7 @@ def _any_resource(flows: list[dict[str, str | None]]) -> bool:
 
 
 def test_rust_env_var_to_println(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # A `let` carries the env source into a println! macro sink: ENV -> STDOUT.
     _build(
@@ -80,7 +78,7 @@ def test_rust_env_var_to_println(
 
 
 def test_rust_inlined_env_in_println(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # The env read is inlined directly into the macro args: ENV -> STDOUT.
     _build(
@@ -97,7 +95,7 @@ def test_rust_inlined_env_in_println(
 
 
 def test_rust_tainted_path_name_no_over_taint(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # A local named `env` shadows nothing in the fully-qualified `std::env::var`
     # path, and only CLEAN is ever printed. The bare-identifier scan must not
@@ -119,7 +117,7 @@ def test_rust_tainted_path_name_no_over_taint(
 
 
 def test_rust_inline_format_capture_to_println(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # Rust inline format capture: `println!("{secret}")` reads the local through
     # the format string with no separate identifier token. ENV -> STDOUT.
@@ -140,7 +138,7 @@ def test_rust_inline_format_capture_to_println(
 
 
 def test_rust_untainted_println_no_flow(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # A println! of a clean literal produces no resource flow.
     _build(
@@ -155,9 +153,7 @@ def test_rust_untainted_println_no_flow(
 # C++
 
 
-def test_cpp_getenv_to_cout(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
-) -> None:
+def test_cpp_getenv_to_cout(memgraph_ingestor: GraphIngestor, tmp_path: Path) -> None:
     # A local carries getenv into a cout stream sink: ENV -> STDOUT.
     _build(
         memgraph_ingestor,
@@ -178,7 +174,7 @@ def test_cpp_getenv_to_cout(
 
 
 def test_cpp_inlined_getenv_in_cout(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # getenv inlined directly into the stream insertion: ENV -> STDOUT.
     _build(
@@ -199,7 +195,7 @@ def test_cpp_inlined_getenv_in_cout(
 
 
 def test_cpp_untainted_cout_no_flow(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # A cout of a clean literal produces no resource flow.
     _build(

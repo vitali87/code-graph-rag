@@ -147,7 +147,7 @@ def test_cli_callees_json_puts_path_and_line_on_the_call(tmp_path: Path) -> None
     ingestor.__enter__ = MagicMock(return_value=ingestor)
     ingestor.__exit__ = MagicMock(return_value=False)
     args = ["callees", REPORT, "--depth", "2", "--project", P]
-    with patch("codebase_rag.cli_runtime.connect_memgraph", return_value=ingestor):
+    with patch("codebase_rag.cli_runtime.connect_graph", return_value=ingestor):
         result = CliRunner().invoke(graph_cli, [*args, "--repo-path", str(tmp_path)])
     assert result.exit_code == 0, result.output
     rows = json.loads(result.output)

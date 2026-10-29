@@ -207,7 +207,7 @@ def graph() -> Generator[MagicMock, None, None]:
     ingestor = MagicMock()
     ingestor.fetch_all.return_value = []
     with (
-        patch("codebase_rag.cli.connect_memgraph") as connect,
+        patch("codebase_rag.cli.connect_graph") as connect,
         patch("codebase_rag.cli._update_and_validate_models"),
         patch("codebase_rag.cli.main_single_query"),
         patch("codebase_rag.graph_updater.GraphUpdater") as updater,
@@ -408,7 +408,7 @@ class _SyncedGraph(StatefulIngestor):
 
 def _owner_check(repo: Path, store: _SyncedGraph, *, assume_yes: bool = False) -> bool:
     # One sync's ownership check on its own; True when the sync may go on.
-    with patch("codebase_rag.cli.connect_memgraph", return_value=nullcontext(store)):
+    with patch("codebase_rag.cli.connect_graph", return_value=nullcontext(store)):
         try:
             _exit_if_project_owned_elsewhere(
                 10, "api2", repo, clean=False, assume_yes=assume_yes
@@ -421,7 +421,7 @@ def _owner_check(repo: Path, store: _SyncedGraph, *, assume_yes: bool = False) -
 def _write_phase(repo: Path, store: _SyncedGraph) -> None:
     # The rest of a sync whose ownership check has already run.
     with (
-        patch("codebase_rag.cli.connect_memgraph", return_value=nullcontext(store)),
+        patch("codebase_rag.cli.connect_graph", return_value=nullcontext(store)),
         patch(
             "codebase_rag.cli._exit_if_project_owned_elsewhere",
             return_value=cli._OwnerCheck(None),
@@ -487,7 +487,7 @@ def test_yes_still_takes_a_claimed_name(tmp_path: Path) -> None:
 
 def _full_sync(repo: Path, store: _SyncedGraph) -> None:
     # A whole sync, its ownership claim included.
-    with patch("codebase_rag.cli.connect_memgraph", return_value=nullcontext(store)):
+    with patch("codebase_rag.cli.connect_graph", return_value=nullcontext(store)):
         _run_graph_sync(
             repo=repo,
             project_name="api2",
@@ -537,14 +537,14 @@ def test_a_failed_resync_keeps_the_project(tmp_path: Path) -> None:
 def _claim_held_by(repo: Path, store: _SyncedGraph) -> AbstractContextManager[object]:
     # A sync that has passed its ownership check and not yet written.
     claim = cli._project_claim(10, "api2", repo, clean=False, assume_yes=False)
-    with patch("codebase_rag.cli.connect_memgraph", return_value=nullcontext(store)):
+    with patch("codebase_rag.cli.connect_graph", return_value=nullcontext(store)):
         claim.__enter__()
     return claim
 
 
 def _fail(claim: AbstractContextManager[object], store: _SyncedGraph) -> None:
     # That sync stopping before its marker, as a failed marker write does.
-    with patch("codebase_rag.cli.connect_memgraph", return_value=nullcontext(store)):
+    with patch("codebase_rag.cli.connect_graph", return_value=nullcontext(store)):
         claim.__exit__(typer.Exit, typer.Exit(1), None)
 
 

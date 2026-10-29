@@ -97,7 +97,7 @@ def test_io_enabled_lets_resource_through() -> None:
 
 class _QueryableInner:
     # A concrete class (not MagicMock) so isinstance(_, QueryProtocol) holds,
-    # matching how the real MemgraphIngestor is detected at runtime.
+    # matching how the real GraphIngestor is detected at runtime.
     def __init__(self) -> None:
         self.ensure_node_batch = MagicMock()
         self.ensure_relationship_batch = MagicMock()

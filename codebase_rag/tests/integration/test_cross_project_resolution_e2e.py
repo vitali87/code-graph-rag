@@ -11,7 +11,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
@@ -39,7 +39,7 @@ def leak():
 """
 
 
-def _index(ingestor: MemgraphIngestor, project: Path, *, io: bool) -> None:
+def _index(ingestor: GraphIngestor, project: Path, *, io: bool) -> None:
     parsers, queries = load_parsers()
     capture = resolve_capture([cs.CaptureGroup.IO.value]) if io else None
     GraphUpdater(
@@ -51,7 +51,7 @@ def _index(ingestor: MemgraphIngestor, project: Path, *, io: bool) -> None:
     ).run()
 
 
-def _cross_project_edges(ingestor: MemgraphIngestor) -> list[dict[str, str]]:
+def _cross_project_edges(ingestor: GraphIngestor) -> list[dict[str, str]]:
     rows = ingestor.fetch_all(
         "MATCH (a)-[r]->(b) "
         "WHERE a.qualified_name STARTS WITH 'caller.' "
@@ -62,7 +62,7 @@ def _cross_project_edges(ingestor: MemgraphIngestor) -> list[dict[str, str]]:
 
 
 def test_bare_name_calls_do_not_leak_into_another_project(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     collide = tmp_path / "collide"
     collide.mkdir()

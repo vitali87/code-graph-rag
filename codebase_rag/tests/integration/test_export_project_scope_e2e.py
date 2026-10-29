@@ -18,7 +18,7 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.types_defs import GraphData
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
@@ -60,7 +60,7 @@ def _repo(root: Path, name: str, source: str) -> Path:
     return repo
 
 
-def _index(ingestor: MemgraphIngestor, repo: Path) -> None:
+def _index(ingestor: GraphIngestor, repo: Path) -> None:
     parsers, queries = load_parsers()
     GraphUpdater(
         ingestor=ingestor, repo_path=repo, parsers=parsers, queries=queries
@@ -100,7 +100,7 @@ def _shape(data: GraphData) -> tuple[set[NodeKey], set[RelKey]]:
 
 
 def test_a_scoped_export_matches_the_project_exported_alone(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     _index(memgraph_ingestor, _repo(tmp_path, "alpha", ALPHA))
     alone = _shape(memgraph_ingestor.export_graph_to_dict())
@@ -114,7 +114,7 @@ def test_a_scoped_export_matches_the_project_exported_alone(
 
 
 def test_every_relationship_of_a_scoped_export_has_both_ends_in_it(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     _index(memgraph_ingestor, _repo(tmp_path, "alpha", ALPHA))
     _index(memgraph_ingestor, _repo(tmp_path, "beta", BETA))
@@ -130,7 +130,7 @@ def test_every_relationship_of_a_scoped_export_has_both_ends_in_it(
 
 
 def test_every_project_together_is_the_whole_graph(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     _index(memgraph_ingestor, _repo(tmp_path, "alpha", ALPHA))
     _index(memgraph_ingestor, _repo(tmp_path, "beta", BETA))

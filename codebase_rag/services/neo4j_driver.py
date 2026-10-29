@@ -1,6 +1,6 @@
 """A cursor-shaped adapter over the official Neo4j driver.
 
-`MemgraphIngestor` is written against a DB-API-ish surface: a connection
+`GraphIngestor` is written against a DB-API-ish surface: a connection
 with `.cursor()` and `.close()`, and a cursor with `.execute()`,
 `.description`, `.fetchall()` and `.close()` (`types_defs.CursorProtocol`).
 The Neo4j driver exposes sessions and `Result`/`Record` objects instead,

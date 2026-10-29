@@ -19,7 +19,7 @@ from codebase_rag.gloss.repair import RepairReport
 from codebase_rag.graph_dialects import DIALECT_SQLITE, get_dialect
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.services.graph_service import GraphIngestor
 from evals.cgr_graph import StatefulIngestor
 
 
@@ -97,7 +97,7 @@ def test_the_name_tier_mentions_and_grade_touch_only_the_syncing_project(
     # (no `project`) by its target's prefix. A legacy note under `app.sub.`
     # is `app.sub`'s, and `other`'s notes, attached or not, are left exactly
     # as their own syncs left them (CodeRabbit, PR #3319).
-    with MemgraphIngestor(
+    with GraphIngestor(
         dialect=get_dialect(DIALECT_SQLITE),
         sqlite_path=str(tmp_path / "graph.sqlite"),
     ) as store:

@@ -46,7 +46,7 @@ from codebase_rag.embedded_graph.limits import (
 from codebase_rag.embedded_graph.procedures import Record
 from codebase_rag.embedded_graph.types import SqlValue
 from codebase_rag.graph_dialects import DIALECT_SQLITE, get_dialect
-from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.services.graph_service import GraphIngestor
 from codebase_rag.tests.test_embedded_graph_memgraph_parity import MEMGRAPH_PROBES
 from codebase_rag.types_defs import (
     JsonValue,
@@ -740,7 +740,7 @@ def _replay(
 
     monkeypatch.setattr(native.NativeGraph, "merge_nodes", nodes)
     monkeypatch.setattr(native.NativeGraph, "merge_relationships", rels)
-    with MemgraphIngestor(
+    with GraphIngestor(
         "unused",
         0,
         batch_size=7,

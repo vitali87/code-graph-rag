@@ -12,7 +12,7 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.flow_access import FlowKind
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
@@ -20,7 +20,7 @@ ENV_K = "resource::ENV::K"
 STDOUT = "resource::STDOUT::<dynamic>"
 
 
-def _index(ingestor: MemgraphIngestor, project: Path) -> None:
+def _index(ingestor: GraphIngestor, project: Path) -> None:
     parsers, queries = load_parsers()
     GraphUpdater(
         ingestor=ingestor,
@@ -31,7 +31,7 @@ def _index(ingestor: MemgraphIngestor, project: Path) -> None:
     ).run()
 
 
-def _flows(ingestor: MemgraphIngestor) -> list[dict[str, str | None]]:
+def _flows(ingestor: GraphIngestor) -> list[dict[str, str | None]]:
     rows = ingestor.fetch_all(
         f"MATCH (a)-[r:{cs.RelationshipType.FLOWS_TO.value}]->(b) "
         "RETURN a.qualified_name AS frm, b.qualified_name AS to, "
@@ -50,7 +50,7 @@ def _has(flows: list[dict[str, str | None]], frm: str, to: str, **props: str) ->
 
 
 def test_forward_return_taint_same_file(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # caller() is defined BEFORE build(), so build's return-taint summary is
     # unknown when caller is walked. The forward return edge and the
@@ -73,7 +73,7 @@ def test_forward_return_taint_same_file(
 
 
 def test_forward_return_taint_transitive(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # top() -> mid() -> low() with every function defined before the one it
     # calls: the fixpoint must transitively carry ENV::K through both return
@@ -99,7 +99,7 @@ def test_forward_return_taint_transitive(
 
 
 def test_untainted_forward_callee_emits_no_flow(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # compute() (defined later) returns nothing tainted. Deferring caller's
     # taint must NOT fabricate a return edge or an arg edge once the fixpoint

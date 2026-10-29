@@ -14,7 +14,7 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.types_defs import PropertyDict, ResultRow
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
@@ -30,7 +30,7 @@ def _repo(root: Path, name: str, files: int) -> Path:
     return repo
 
 
-def _sync(ingestor: MemgraphIngestor, repo: Path, name: str, force: bool) -> None:
+def _sync(ingestor: GraphIngestor, repo: Path, name: str, force: bool) -> None:
     parsers, queries = load_parsers()
     GraphUpdater(
         ingestor=ingestor,
@@ -41,13 +41,13 @@ def _sync(ingestor: MemgraphIngestor, repo: Path, name: str, force: bool) -> Non
     ).run(force=force)
 
 
-def _file_keys(ingestor: MemgraphIngestor) -> set[str]:
+def _file_keys(ingestor: GraphIngestor) -> set[str]:
     rows = ingestor.fetch_all("MATCH (f:File) RETURN f.absolute_path AS k")
     return {str(r["k"]) for r in rows}
 
 
 def test_the_sync_prune_is_scoped_and_still_sweeps_a_legacy_key(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    memgraph_ingestor: GraphIngestor, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     other = _repo(tmp_path, "other", 25)
     _sync(memgraph_ingestor, other, "other", force=True)
@@ -72,7 +72,7 @@ def test_the_sync_prune_is_scoped_and_still_sweeps_a_legacy_key(
     original = ingestor_cls.fetch_all
 
     def _counting(
-        self: MemgraphIngestor, query: str, params: PropertyDict | None = None
+        self: GraphIngestor, query: str, params: PropertyDict | None = None
     ) -> list[ResultRow]:
         reads.append(query)
         return original(self, query, params)

@@ -28,7 +28,7 @@ from codebase_rag import cypher_queries as cq
 from codebase_rag.constants import VectorStoreBackend
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.services.graph_service import GraphIngestor
 from codebase_rag.types_defs import ResultRow
 from codebase_rag.utils.dependencies import (
     has_pymilvus,
@@ -125,7 +125,7 @@ def small_vectors(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None
 
 @pytest.fixture
 def ingestor() -> MagicMock:
-    mock = MagicMock(spec=MemgraphIngestor)
+    mock = MagicMock(spec=GraphIngestor)
     mock.fetch_all = MagicMock(return_value=[])
     return mock
 

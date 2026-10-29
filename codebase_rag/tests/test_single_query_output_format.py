@@ -31,7 +31,7 @@ def mock_agent_stack() -> Generator[MagicMock, None, None]:
     agent.run = AsyncMock(return_value=MagicMock(output=_ANSWER))
     with (
         patch("codebase_rag.agent_loop._setup_common_initialization"),
-        patch("codebase_rag.agent_loop.connect_memgraph") as mock_connect,
+        patch("codebase_rag.agent_loop.connect_graph") as mock_connect,
         patch(
             "codebase_rag.agent_loop._initialize_services_and_agent",
             return_value=(agent, [], ""),
@@ -68,7 +68,7 @@ def test_json_format_preserves_non_ascii(
     agent.run = AsyncMock(return_value=MagicMock(output=answer))
     with (
         patch("codebase_rag.agent_loop._setup_common_initialization"),
-        patch("codebase_rag.agent_loop.connect_memgraph") as mock_connect,
+        patch("codebase_rag.agent_loop.connect_graph") as mock_connect,
         patch(
             "codebase_rag.agent_loop._initialize_services_and_agent",
             return_value=(agent, [], ""),

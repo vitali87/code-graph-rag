@@ -132,7 +132,7 @@ def _ingestor() -> MagicMock:
 
 
 def test_the_cli_roots_the_documented_form() -> None:
-    with patch("codebase_rag.cli.connect_memgraph", return_value=_ingestor()):
+    with patch("codebase_rag.cli.connect_graph", return_value=_ingestor()):
         result = CliRunner().invoke(
             cli.app,
             [

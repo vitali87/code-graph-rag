@@ -348,7 +348,7 @@ class TestMainSingleQuery:
         mock_response.output = "The answer is 42."
 
         with (
-            patch("codebase_rag.agent_loop.connect_memgraph") as mock_conn,
+            patch("codebase_rag.agent_loop.connect_graph") as mock_conn,
             patch(
                 "codebase_rag.agent_loop._initialize_services_and_agent"
             ) as mock_init,
@@ -372,7 +372,7 @@ class TestMainSingleQuery:
         mock_response.output = "result"
 
         with (
-            patch("codebase_rag.agent_loop.connect_memgraph") as mock_conn,
+            patch("codebase_rag.agent_loop.connect_graph") as mock_conn,
             patch(
                 "codebase_rag.agent_loop._initialize_services_and_agent"
             ) as mock_init,

@@ -47,7 +47,7 @@ class TestStatsCommand:
         mock_rel_results: list[ResultRow],
     ) -> None:
         mock_ingestor = _make_mock_ingestor(mock_node_results, mock_rel_results)
-        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+        with patch("codebase_rag.cli.connect_graph", return_value=mock_ingestor):
             result = runner.invoke(app, ["stats"])
 
         assert result.exit_code == 0
@@ -62,7 +62,7 @@ class TestStatsCommand:
         mock_rel_results: list[ResultRow],
     ) -> None:
         mock_ingestor = _make_mock_ingestor(mock_node_results, mock_rel_results)
-        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+        with patch("codebase_rag.cli.connect_graph", return_value=mock_ingestor):
             result = runner.invoke(app, ["stats"])
 
         assert result.exit_code == 0
@@ -76,7 +76,7 @@ class TestStatsCommand:
         mock_rel_results: list[ResultRow],
     ) -> None:
         mock_ingestor = _make_mock_ingestor(mock_node_results, mock_rel_results)
-        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+        with patch("codebase_rag.cli.connect_graph", return_value=mock_ingestor):
             result = runner.invoke(app, ["stats"])
 
         assert result.exit_code == 0
@@ -88,7 +88,7 @@ class TestStatsCommand:
         runner: CliRunner,
     ) -> None:
         mock_ingestor = _make_mock_ingestor([], [])
-        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+        with patch("codebase_rag.cli.connect_graph", return_value=mock_ingestor):
             result = runner.invoke(app, ["stats"])
 
         assert result.exit_code == 0
@@ -99,7 +99,7 @@ class TestStatsCommand:
         runner: CliRunner,
     ) -> None:
         with patch(
-            "codebase_rag.cli.connect_memgraph",
+            "codebase_rag.cli.connect_graph",
             side_effect=ConnectionError("Cannot connect"),
         ):
             result = runner.invoke(app, ["stats"])
@@ -116,7 +116,7 @@ class TestStatsCommand:
             {"labels": ["Function", "Exported"], "count": 10},
         ]
         mock_ingestor = _make_mock_ingestor(node_results, mock_rel_results)
-        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+        with patch("codebase_rag.cli.connect_graph", return_value=mock_ingestor):
             result = runner.invoke(app, ["stats"])
 
         assert result.exit_code == 0
@@ -131,7 +131,7 @@ class TestStatsCommand:
             {"labels": [], "count": 5},
         ]
         mock_ingestor = _make_mock_ingestor(node_results, mock_rel_results)
-        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+        with patch("codebase_rag.cli.connect_graph", return_value=mock_ingestor):
             result = runner.invoke(app, ["stats"])
 
         assert result.exit_code == 0
@@ -147,7 +147,7 @@ class TestStatsCommand:
             {"labels": None, "count": 5},
         ]
         mock_ingestor = _make_mock_ingestor(node_results, mock_rel_results)
-        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+        with patch("codebase_rag.cli.connect_graph", return_value=mock_ingestor):
             result = runner.invoke(app, ["stats"])
 
         assert result.exit_code == 0

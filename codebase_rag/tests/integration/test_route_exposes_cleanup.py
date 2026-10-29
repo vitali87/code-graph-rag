@@ -16,12 +16,12 @@ import pytest
 from codebase_rag.parsers.endpoint_routes import CYPHER_DELETE_MODULE_EXPOSES
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
 
-def _exposing_qns(ingestor: MemgraphIngestor) -> list[str]:
+def _exposing_qns(ingestor: GraphIngestor) -> list[str]:
     rows = ingestor.fetch_all(
         "MATCH (f)-[:EXPOSES]->(:Resource {kind: 'ENDPOINT'}) "
         "RETURN f.qualified_name AS qn ORDER BY qn"
@@ -31,7 +31,7 @@ def _exposing_qns(ingestor: MemgraphIngestor) -> list[str]:
 
 class TestModuleExposesCleanupOwnership:
     def test_prefix_sharing_sibling_module_survives(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, memgraph_ingestor: GraphIngestor
     ) -> None:
         # project.foo is a JS module; project.foo.bar is a DIFFERENT module
         # (a Python file under a sibling foo/ package) whose function only
@@ -53,9 +53,7 @@ class TestModuleExposesCleanupOwnership:
 
         assert _exposing_qns(memgraph_ingestor) == ["project.foo.bar.handler"]
 
-    def test_module_level_edge_is_swept(
-        self, memgraph_ingestor: MemgraphIngestor
-    ) -> None:
+    def test_module_level_edge_is_swept(self, memgraph_ingestor: GraphIngestor) -> None:
         # Attribution can fall back to the module itself (zero-hop owner).
         memgraph_ingestor.execute_write(
             "CREATE (m:Module {qualified_name: 'project.server'}), "
@@ -70,7 +68,7 @@ class TestModuleExposesCleanupOwnership:
         assert _exposing_qns(memgraph_ingestor) == []
 
     def test_method_owned_through_class_is_swept(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, memgraph_ingestor: GraphIngestor
     ) -> None:
         # Ownership runs through the containment closure, including methods
         # reached via a class the module defines.
@@ -92,7 +90,7 @@ class TestModuleExposesCleanupOwnership:
 
 class TestResolvesToCleanupOwnership:
     def test_dispatch_resolution_survives_endpoint_relink(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, memgraph_ingestor: GraphIngestor
     ) -> None:
         # The PRODUCTION relink (link_endpoints) sweeps its own stale URL
         # resolutions before recomputing; RESOLVES_TO edges owned by OTHER

@@ -40,7 +40,7 @@ from codebase_rag.graph_dialects import (
     Neo4jDialect,
     get_dialect,
 )
-from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.services.graph_service import GraphIngestor
 from codebase_rag.types_defs import CypherParamValue, ResultValue
 
 # Pieces the graph audit formats into a query, not queries themselves.
@@ -282,7 +282,7 @@ class TestLimits:
         monkeypatch.setattr(
             "codebase_rag.services.graph_service.settings.QUERY_TIMEOUT_S", 0.05
         )
-        ingestor = MemgraphIngestor(
+        ingestor = GraphIngestor(
             "", 0, dialect=get_dialect(DIALECT_SQLITE), sqlite_path=path
         )
         with ingestor, pytest.raises(TimeoutError):
@@ -564,8 +564,8 @@ class TestStatistics:
 
 class TestIngestor:
     @pytest.fixture
-    def ingestor(self, tmp_path: Path) -> Iterator[MemgraphIngestor]:
-        with MemgraphIngestor(
+    def ingestor(self, tmp_path: Path) -> Iterator[GraphIngestor]:
+        with GraphIngestor(
             dialect=get_dialect(DIALECT_SQLITE),
             sqlite_path=str(tmp_path / "graph.sqlite"),
         ) as ingestor:

@@ -155,7 +155,7 @@ def _mock_connect(graph: Graph) -> MagicMock:
 
 def _cli_resolve(graph: Graph, target: str, repo: Path, project: str = P) -> Any:
     with patch(
-        "codebase_rag.cli_runtime.connect_memgraph", return_value=_mock_connect(graph)
+        "codebase_rag.cli_runtime.connect_graph", return_value=_mock_connect(graph)
     ):
         return CliRunner().invoke(
             graph_cli,

@@ -271,7 +271,7 @@ def _dialect_for_arguments(addressed: bool) -> GraphDialect:
     raise ValueError(ex.MEMGRAPH_ADDRESS_UNDER_BACKEND.format(backend=configured.name))
 
 
-class MemgraphIngestor:
+class GraphIngestor:
     __slots__ = (
         "_conn_lock",
         "_node_flush_lock",
@@ -296,6 +296,7 @@ class MemgraphIngestor:
 
     def __init__(
         self,
+        *,
         host: str | None = None,
         port: int | None = None,
         batch_size: int = 1000,
@@ -367,8 +368,8 @@ class MemgraphIngestor:
             tuple[str, str, str, str, str], list[RelBatchRow]
         ] = defaultdict(list)
 
-    def __enter__(self) -> MemgraphIngestor:
-        logger.debug(ls.MG_CONNECTING.format(host=self._host, port=self._port))
+    def __enter__(self) -> GraphIngestor:
+        logger.debug(ls.MG_CONNECTING.format(engine=self.engine, target=self.target))
         try:
             self.conn = self.open_connection()
         except GraphUnavailableError:
@@ -390,6 +391,21 @@ class MemgraphIngestor:
             )
         logger.debug(ls.MG_CONNECTED.format(engine=self._dialect.name))
         return self
+
+    @property
+    def engine(self) -> str:
+        """The graph engine this ingestor talks to."""
+        return self._dialect.name
+
+    @property
+    def target(self) -> str:
+        """Where its graph lives: the embedded file, the Neo4j URI, or the
+        Memgraph address."""
+        if self._dialect.name == DIALECT_SQLITE:
+            return self.sqlite_graph_path()
+        if self._dialect.name == DIALECT_NEO4J:
+            return settings.NEO4J_URI
+        return f"{self._host}:{self._port}"
 
     def _unavailable_message(self, error: Exception) -> str:
         # Memgraph refuses a login with the same exception type as a refused
@@ -445,14 +461,14 @@ class MemgraphIngestor:
                 self._read_conn = None
             if self.conn:
                 self.conn.close()
-                logger.debug(ls.MG_DISCONNECTED)
+                logger.debug(ls.MG_DISCONNECTED.format(engine=self.engine))
             # Sessions handed to flush workers are closed by those
             # workers; the pooled driver behind them is owned here and
             # would otherwise leak its connection pool for the life of
             # the process.
             self.close_driver()
 
-    async def __aenter__(self) -> MemgraphIngestor:
+    async def __aenter__(self) -> GraphIngestor:
         return self.__enter__()
 
     async def __aexit__(

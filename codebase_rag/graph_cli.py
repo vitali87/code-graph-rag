@@ -16,7 +16,7 @@ from . import graph_query
 from .project_selection import repo_not_indexed, unknown_project
 
 if TYPE_CHECKING:
-    from .services.graph_service import MemgraphIngestor
+    from .services.graph_service import GraphIngestor
 
 
 def _emit(payload: object) -> None:
@@ -25,12 +25,12 @@ def _emit(payload: object) -> None:
 
 def _project_and_fetch(
     project: str | None, repo_path: Path
-) -> tuple[str, graph_query.QueryFn, MemgraphIngestor]:
-    from .cli_runtime import connect_memgraph
+) -> tuple[str, graph_query.QueryFn, GraphIngestor]:
+    from .cli_runtime import connect_graph
     from .config import settings
     from .utils.path_utils import derive_project_name
 
-    ingestor = connect_memgraph(batch_size=settings.resolve_batch_size(None))
+    ingestor = connect_graph(batch_size=settings.resolve_batch_size(None))
     name = project or derive_project_name(repo_path.resolve())
     return name, ingestor.fetch_all, ingestor
 

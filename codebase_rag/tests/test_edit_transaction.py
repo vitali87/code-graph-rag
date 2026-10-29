@@ -58,7 +58,7 @@ def _no_graph(monkeypatch: pytest.MonkeyPatch) -> None:
     def unreachable(batch_size: int) -> None:
         raise ConnectionError(batch_size)
 
-    monkeypatch.setattr("codebase_rag.cli_runtime.connect_memgraph", unreachable)
+    monkeypatch.setattr("codebase_rag.cli_runtime.connect_graph", unreachable)
 
 
 # --- acceptance ----------------------------------------------------------------

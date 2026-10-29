@@ -15,7 +15,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
@@ -42,7 +42,7 @@ def plain():
 DECORATORS = ["@retry(times=3)", "@functools.lru_cache(maxsize=None)"]
 
 
-def _index(ingestor: MemgraphIngestor, repo: Path) -> str:
+def _index(ingestor: GraphIngestor, repo: Path) -> str:
     parsers, queries = load_parsers()
     updater = GraphUpdater(
         ingestor=ingestor, repo_path=repo, parsers=parsers, queries=queries
@@ -52,7 +52,7 @@ def _index(ingestor: MemgraphIngestor, repo: Path) -> str:
 
 
 def test_definition_reads_the_decorated_span_back_from_memgraph(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     repo = tmp_path / "decor"
     repo.mkdir()

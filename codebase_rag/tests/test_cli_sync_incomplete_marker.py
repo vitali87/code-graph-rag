@@ -78,7 +78,7 @@ def sync_env(
     connection.__exit__.return_value = False
 
     with (
-        patch("codebase_rag.cli.connect_memgraph", return_value=connection),
+        patch("codebase_rag.cli.connect_graph", return_value=connection),
         patch("codebase_rag.graph_updater.GraphUpdater", return_value=updater) as cls,
         patch("codebase_rag.cli.load_parsers", return_value=({}, {})),
         patch("codebase_rag.cli.clear_all_embeddings"),
@@ -224,7 +224,7 @@ def _invoke_status(
     connection, _ = _graph(projects, incomplete)
     with (
         patch("codebase_rag.cli.StackManager") as manager,
-        patch("codebase_rag.cli.connect_memgraph", return_value=connection) as connect,
+        patch("codebase_rag.cli.connect_graph", return_value=connection) as connect,
     ):
         manager.return_value.status.return_value = _status(reachable)
         result = runner.invoke(app, ["status"])
@@ -264,7 +264,7 @@ def test_status_does_not_query_an_unreachable_graph() -> None:
 def test_reading_the_graph_is_best_effort() -> None:
     connection = MagicMock()
     connection.__enter__.side_effect = ConnectionError("memgraph is down")
-    with patch("codebase_rag.cli.connect_memgraph", return_value=connection):
+    with patch("codebase_rag.cli.connect_graph", return_value=connection):
         assert _project_syncs() is None
 
 
@@ -272,7 +272,7 @@ def test_reading_the_graph_joins_projects_and_markers() -> None:
     connection, store = _graph(
         {"a": "2026-09-29T10:00:00+00:00", "b": None}, {"b", "c"}
     )
-    with patch("codebase_rag.cli.connect_memgraph", return_value=connection):
+    with patch("codebase_rag.cli.connect_graph", return_value=connection):
         syncs = _project_syncs()
 
     assert syncs == [

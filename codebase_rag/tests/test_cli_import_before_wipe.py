@@ -23,7 +23,7 @@ runner = CliRunner()
 
 @pytest.fixture
 def ingestor() -> Generator[MagicMock, None, None]:
-    with patch("codebase_rag.cli.connect_memgraph") as connect:
+    with patch("codebase_rag.cli.connect_graph") as connect:
         mock_ingestor = MagicMock()
         connect.return_value.__enter__ = MagicMock(return_value=mock_ingestor)
         connect.return_value.__exit__ = MagicMock(return_value=False)

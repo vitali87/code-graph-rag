@@ -152,7 +152,7 @@ async def test_the_chat_session_reingests_an_approved_replace_code(
         patch.object(main_mod, "_validate_provider_config"),
         patch.object(main_mod, "CypherGenerator"),
         patch.object(main_mod, "create_rag_orchestrator") as orchestrator,
-        patch.object(main_mod, "connect_memgraph", connect),
+        patch.object(main_mod, "connect_graph", connect),
         patch.object(main_mod, "run_chat_loop", one_approved_edit),
         patch.object(main_mod, "_setup_common_initialization", return_value=root),
     ):

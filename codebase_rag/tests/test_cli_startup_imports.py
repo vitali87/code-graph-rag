@@ -178,7 +178,7 @@ def test_a_graph_query_connects_without_loading_an_llm_package() -> None:
         "from unittest.mock import patch\n"
         "import codebase_rag.cli\n"
         "from codebase_rag import graph_cli\n"
-        "with patch('codebase_rag.cli_runtime.MemgraphIngestor') as ingestor:\n"
+        "with patch('codebase_rag.cli_runtime.GraphIngestor') as ingestor:\n"
         "    graph_cli._project_and_fetch('proj', Path('.'))\n"
         "assert ingestor.called"
     )

@@ -29,7 +29,7 @@ from typer.testing import CliRunner
 from codebase_rag import logs as ls
 from codebase_rag.cli import app
 from codebase_rag.graph_dialects import DIALECT_MEMGRAPH
-from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.services.graph_service import GraphIngestor
 from codebase_rag.stack.constants import StackState
 from codebase_rag.stack.manager import StackStatus
 from codebase_rag.tests.conftest import create_and_run_updater
@@ -374,7 +374,7 @@ def _memgraph(connection: _FakeConnection) -> Iterator[MagicMock]:
 
 def test_a_read_only_session_logs_nothing_at_the_default_level() -> None:
     with _memgraph(_FakeConnection()), _log_lines(_INFO) as lines:
-        with MemgraphIngestor(host="localhost", port=7687) as ingestor:
+        with GraphIngestor(host="localhost", port=7687) as ingestor:
             ingestor.fetch_all("MATCH (n) RETURN n")
 
     assert lines == []
@@ -415,7 +415,7 @@ def test_a_read_only_command_prints_only_its_report(command: str) -> None:
 def test_a_write_session_still_reports_what_it_flushed() -> None:
     connection = _FakeConnection(columns=("created",), rows=[(1,)])
     with _memgraph(connection), _log_lines(_INFO) as lines:
-        with MemgraphIngestor(host="localhost", port=7687) as ingestor:
+        with GraphIngestor(host="localhost", port=7687) as ingestor:
             ingestor.ensure_node_batch("Module", {"qualified_name": "m"})
             ingestor.ensure_node_batch("Class", {"qualified_name": "m.C"})
             ingestor.ensure_relationship_batch(
@@ -432,16 +432,16 @@ def test_a_write_session_still_reports_what_it_flushed() -> None:
 
 def test_debug_still_traces_the_connection_and_flush_lifecycle() -> None:
     with _memgraph(_FakeConnection()), _log_lines(_DEBUG) as lines:
-        with MemgraphIngestor(host="db.example", port=7699) as ingestor:
+        with GraphIngestor(host="db.example", port=7699) as ingestor:
             ingestor.fetch_all("MATCH (n) RETURN n")
 
     debug = [line.text for line in lines]
     for text in (
-        ls.MG_CONNECTING.format(host="db.example", port=7699),
+        ls.MG_CONNECTING.format(engine=DIALECT_MEMGRAPH, target="db.example:7699"),
         ls.MG_CONNECTED.format(engine=DIALECT_MEMGRAPH),
         ls.MG_FLUSH_START,
         ls.MG_FLUSH_COMPLETE,
-        ls.MG_DISCONNECTED,
+        ls.MG_DISCONNECTED.format(engine=DIALECT_MEMGRAPH),
     ):
         assert text in debug, debug
 
@@ -455,7 +455,7 @@ def test_a_failed_connection_still_names_the_server_at_the_default_level() -> No
     ):
         mgclient.connect.side_effect = ConnectionRefusedError("connection refused")
         with pytest.raises(ConnectionRefusedError):
-            with MemgraphIngestor(host="db.example", port=7699):
+            with GraphIngestor(host="db.example", port=7699):
                 pass
 
     assert any("db.example:7699" in line.text for line in lines), lines

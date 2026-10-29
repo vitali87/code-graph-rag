@@ -11,7 +11,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
@@ -19,9 +19,7 @@ _READS = cs.RelationshipType.READS_FROM.value
 _WRITES = cs.RelationshipType.WRITES_TO.value
 
 
-def _build(
-    ingestor: MemgraphIngestor, tmp_path: Path, filename: str, code: str
-) -> None:
+def _build(ingestor: GraphIngestor, tmp_path: Path, filename: str, code: str) -> None:
     project = tmp_path / "js_project"
     project.mkdir()
     (project / filename).write_text(code, encoding="utf-8")
@@ -35,7 +33,7 @@ def _build(
     ).run()
 
 
-def _io_edges(ingestor: MemgraphIngestor) -> set[tuple[str, str]]:
+def _io_edges(ingestor: GraphIngestor) -> set[tuple[str, str]]:
     rows = ingestor.fetch_all(
         f"MATCH ()-[r:{_READS}|{_WRITES}]->(res:{cs.NodeLabel.RESOURCE.value}) "
         "RETURN type(r) AS rel, res.qualified_name AS qn"
@@ -54,7 +52,7 @@ function leak(data) {
 
 
 def test_javascript_direct_io_sinks(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     _build(memgraph_ingestor, tmp_path, "app.js", _JS_CODE)
     edges = _io_edges(memgraph_ingestor)
@@ -65,7 +63,7 @@ def test_javascript_direct_io_sinks(
 
 
 def test_typescript_direct_io_sinks(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     _build(memgraph_ingestor, tmp_path, "app.ts", _JS_CODE)
     edges = _io_edges(memgraph_ingestor)
@@ -76,7 +74,7 @@ def test_typescript_direct_io_sinks(
 
 
 def test_expression_bodied_arrow_emits(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # An expression-bodied arrow has no statement block -- its body IS the call
     # expression, which must still be walked for sinks (issue #714 recall).
@@ -92,7 +90,7 @@ def test_expression_bodied_arrow_emits(
 
 
 def test_module_level_js_io_sinks(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # Top-level (module-scope) I/O: the caller is the module root, which has no
     # body field, so the walk must seed from its own statements (issue #714 P1).
@@ -108,7 +106,7 @@ def test_module_level_js_io_sinks(
 
 
 def test_shadowed_local_import_emits_no_edge(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # `fs` imported from a LOCAL module is not Node's fs: fs.writeFileSync must
     # NOT emit a FILE edge (the raw-dotted registry fallback would otherwise
@@ -124,7 +122,7 @@ def test_shadowed_local_import_emits_no_edge(
 
 
 def test_real_builtin_import_still_emits(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # The genuine `import fs from 'fs'` (maps to fs.default) must still emit.
     _build(
@@ -138,7 +136,7 @@ def test_real_builtin_import_still_emits(
 
 
 def test_commonjs_require_still_emits(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # `const fs = require('fs')` binds fs via a declarator, but it is an import
     # alias (tracked in import_map), not a shadowing local; it must still emit.
@@ -155,7 +153,7 @@ def test_commonjs_require_still_emits(
 
 
 def test_aliased_builtin_import_still_emits(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # `const myfs = require('fs')` aliases the real builtin under a new name;
     # import normalization resolves myfs.writeFileSync -> fs.writeFileSync, so
@@ -171,7 +169,7 @@ def test_aliased_builtin_import_still_emits(
 
 
 def test_module_import_plus_local_shadow_emits_no_edge(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # `fs` imported module-wide, but a function-local `const fs = {}` shadows it;
     # the local object is not Node's fs, so no FILE edge (a module import must
@@ -187,7 +185,7 @@ def test_module_import_plus_local_shadow_emits_no_edge(
 
 
 def test_node_prefixed_builtin_import_still_emits(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # `import fs from 'node:fs'` is a genuine builtin (the modern form); the
     # node: prefix must not be mistaken for a shadowing local module.
@@ -202,7 +200,7 @@ def test_node_prefixed_builtin_import_still_emits(
 
 
 def test_destructured_local_shadows_sink(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # A destructured local binding (`const { fetch } = obj`) is not the global
     # builtin, so `fetch(...)` in that scope must not emit a NETWORK edge.
@@ -218,7 +216,7 @@ def test_destructured_local_shadows_sink(
 
 
 def test_destructured_param_shadows_sink(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # A destructured parameter (`function run({ http }) {}`) binds `http`
     # locally, so `http.get(...)` must not emit a NETWORK edge.
@@ -234,7 +232,7 @@ def test_destructured_param_shadows_sink(
 
 
 def test_block_scoped_local_does_not_over_shadow(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # `const`/`let` are block-scoped: a `const fs` inside a nested block does
     # NOT shadow a `fs.writeFileSync` outside that block, so the edge stands.
@@ -251,7 +249,7 @@ def test_block_scoped_local_does_not_over_shadow(
 
 
 def test_block_local_shadows_within_its_block(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # A `const fs` used WITHIN its own block is shadowed there: no FILE edge.
     _build(
@@ -269,7 +267,7 @@ def test_block_local_shadows_within_its_block(
 
 
 def test_local_declarations_shadow_sinks(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # Names bound locally are not the builtins: a local `const fs`, a local
     # `function fetch`, and a `http` parameter must all suppress the sink match
@@ -293,7 +291,7 @@ def test_local_declarations_shadow_sinks(
 
 
 def test_esm_named_import_emits(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # `import { writeFileSync } from 'fs'` binds the bare name to fs.writeFileSync.
     _build(
@@ -307,7 +305,7 @@ def test_esm_named_import_emits(
 
 
 def test_node_prefixed_named_import_emits(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # `import { writeFileSync } from 'node:fs'` maps to node:fs.writeFileSync;
     # the node: scheme must be stripped for the sink match.
@@ -322,7 +320,7 @@ def test_node_prefixed_named_import_emits(
 
 
 def test_destructured_require_emits(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # `const { writeFileSync } = require('fs')` is a destructured CommonJS import.
     _build(
@@ -336,7 +334,7 @@ def test_destructured_require_emits(
 
 
 def test_renamed_destructured_require_emits(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # `const { writeFileSync: wf } = require('fs')` binds the local wf.
     _build(
@@ -350,7 +348,7 @@ def test_renamed_destructured_require_emits(
 
 
 def test_scoped_package_ending_in_builtin_name_no_edge(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # `import fs from 'memfs/fs'` is a third-party package, not Node's fs; its
     # path ending in `fs` must NOT make fs.writeFileSync match (JS imports are
@@ -366,7 +364,7 @@ def test_scoped_package_ending_in_builtin_name_no_edge(
 
 
 def test_js_stream_handle_methods(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # issue #714 handle walk: fs.createWriteStream binds a FILE handle; the
     # write/end methods carry the I/O.

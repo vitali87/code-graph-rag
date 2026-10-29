@@ -7,13 +7,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 from loguru import logger
 
-from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.services.graph_service import GraphIngestor
 
 
 @pytest.fixture
-def graph_service() -> MemgraphIngestor:
-    """Create a MemgraphIngestor instance with mocked database."""
-    ingestor = MemgraphIngestor(host="localhost", port=7687, batch_size=100)
+def graph_service() -> GraphIngestor:
+    """Create a GraphIngestor instance with mocked database."""
+    ingestor = GraphIngestor(host="localhost", port=7687, batch_size=100)
     ingestor.conn = MagicMock()
     return ingestor
 
@@ -32,7 +32,7 @@ def log_messages() -> Generator[list[str], None, None]:
 
 
 def test_calls_failure_logging_single_batch(
-    graph_service: MemgraphIngestor, log_messages: list[str]
+    graph_service: GraphIngestor, log_messages: list[str]
 ) -> None:
     """Test that CALLS failures are logged correctly for a single batch.
 
@@ -56,7 +56,7 @@ def test_calls_failure_logging_single_batch(
     )
 
     with patch.object(
-        MemgraphIngestor,
+        GraphIngestor,
         "_execute_batch_with_return_on",
         return_value=[{"created": 1}, {"created": 0}, {"created": 0}],
     ):
@@ -69,7 +69,7 @@ def test_calls_failure_logging_single_batch(
 
 
 def test_calls_failure_logging_multiple_batches(
-    graph_service: MemgraphIngestor, log_messages: list[str]
+    graph_service: GraphIngestor, log_messages: list[str]
 ) -> None:
     graph_service.ensure_relationship_batch(
         ("Method", "qualified_name", "project.module.ClassA.methodA()"),
@@ -103,7 +103,7 @@ def test_calls_failure_logging_multiple_batches(
         return [{"created": 1}, {"created": 0}]
 
     with patch.object(
-        MemgraphIngestor,
+        GraphIngestor,
         "_execute_batch_with_return_on",
         side_effect=mock_execute_batch,
     ):
@@ -119,7 +119,7 @@ def test_calls_failure_logging_multiple_batches(
 
 
 def test_calls_success_no_failure_logging(
-    graph_service: MemgraphIngestor, log_messages: list[str]
+    graph_service: GraphIngestor, log_messages: list[str]
 ) -> None:
     graph_service.ensure_relationship_batch(
         ("Method", "qualified_name", "project.module.ClassA.methodA()"),
@@ -133,7 +133,7 @@ def test_calls_success_no_failure_logging(
     )
 
     with patch.object(
-        MemgraphIngestor,
+        GraphIngestor,
         "_execute_batch_with_return_on",
         return_value=[{"created": 1}, {"created": 1}],
     ):
@@ -145,7 +145,7 @@ def test_calls_success_no_failure_logging(
 
 
 def test_non_calls_relationship_failures_are_reported(
-    graph_service: MemgraphIngestor, log_messages: list[str]
+    graph_service: GraphIngestor, log_messages: list[str]
 ) -> None:
     graph_service.ensure_relationship_batch(
         ("Module", "qualified_name", "project.moduleA"),
@@ -159,7 +159,7 @@ def test_non_calls_relationship_failures_are_reported(
     )
 
     with patch.object(
-        MemgraphIngestor,
+        GraphIngestor,
         "_execute_batch_with_return_on",
         return_value=[{"created": 1}, {"created": 0}],
     ):

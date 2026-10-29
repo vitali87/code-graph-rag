@@ -22,7 +22,7 @@ from codebase_rag.mcp.tools import MCPToolsRegistry
 from codebase_rag.parser_loader import load_parsers
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
     from codebase_rag.types_defs import ResultValue
 
 pytestmark = [pytest.mark.integration]
@@ -83,7 +83,7 @@ _VERB_OF_CALLER = {
 
 
 def test_every_issue_call_site_links_to_its_route_function(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     repo = tmp_path / "svc"
     for rel, content in _FILES.items():
@@ -163,7 +163,7 @@ def _int(value: ResultValue) -> int | None:
 
 
 def test_an_unchanged_module_keeps_its_inline_handlers_on_a_later_sync(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # A later sync does not re-parse an unchanged server.js, yet it sweeps
     # and re-emits that module's routes: the arrow nested in the exported
@@ -203,7 +203,7 @@ def test_an_unchanged_module_keeps_its_inline_handlers_on_a_later_sync(
     assert sync() == expected
 
 
-def _sync(ingestor: MemgraphIngestor, repo: Path, tokens: list[str]) -> None:
+def _sync(ingestor: GraphIngestor, repo: Path, tokens: list[str]) -> None:
     parsers, queries = load_parsers()
     GraphUpdater(
         ingestor=ingestor,
@@ -215,7 +215,7 @@ def _sync(ingestor: MemgraphIngestor, repo: Path, tokens: list[str]) -> None:
     ingestor.flush_all()
 
 
-def _registry(ingestor: MemgraphIngestor, repo: Path) -> MCPToolsRegistry:
+def _registry(ingestor: GraphIngestor, repo: Path) -> MCPToolsRegistry:
     with patch("codebase_rag.mcp.tools.load_parsers", return_value=({}, {})):
         return MCPToolsRegistry(
             project_root=str(repo), ingestor=ingestor, cypher_gen=MagicMock()
@@ -224,7 +224,7 @@ def _registry(ingestor: MemgraphIngestor, repo: Path) -> MCPToolsRegistry:
 
 @pytest.mark.anyio
 async def test_a_default_sync_is_named_instead_of_answering_empty(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     repo = tmp_path / "users"
     (repo / "api").mkdir(parents=True)
@@ -248,7 +248,7 @@ async def test_a_default_sync_is_named_instead_of_answering_empty(
 
 @pytest.mark.anyio
 async def test_an_io_project_with_nothing_to_expose_still_answers_empty(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     repo = tmp_path / "lib"
     repo.mkdir()

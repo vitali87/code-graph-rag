@@ -87,7 +87,7 @@ def ingestor(roots: dict[str, str | None]) -> Generator[MagicMock, None, None]:
     mock.fetch_all.side_effect = fetch
     mock.__enter__ = MagicMock(return_value=mock)
     mock.__exit__ = MagicMock(return_value=False)
-    with patch("codebase_rag.cli.connect_memgraph", return_value=mock) as connect:
+    with patch("codebase_rag.cli.connect_graph", return_value=mock) as connect:
         mock.connect = connect
         yield mock
 
@@ -293,7 +293,7 @@ class TestProjectOption:
     def test_graph(
         self, checkout: Path, click_project: str, ingestor: MagicMock
     ) -> None:
-        with patch("codebase_rag.cli_runtime.connect_memgraph", return_value=ingestor):
+        with patch("codebase_rag.cli_runtime.connect_graph", return_value=ingestor):
             result = ClickRunner().invoke(
                 graph_cli, ["resolve", "f", "-p", ACME, "--repo-path", str(checkout)]
             )

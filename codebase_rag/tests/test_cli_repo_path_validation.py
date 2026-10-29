@@ -24,7 +24,7 @@ def _plain(output: str) -> str:
 @pytest.fixture
 def mock_memgraph_connect() -> Generator[MagicMock, None, None]:
     with (
-        patch("codebase_rag.cli.connect_memgraph") as mock_connect,
+        patch("codebase_rag.cli.connect_graph") as mock_connect,
         patch("codebase_rag.cli._maybe_start_stack"),
     ):
         mock_ingestor = MagicMock()

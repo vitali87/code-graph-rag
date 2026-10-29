@@ -88,7 +88,7 @@ def _single_query(
 ) -> None:
     with (
         patch("codebase_rag.agent_loop._setup_common_initialization"),
-        patch("codebase_rag.agent_loop.connect_memgraph") as connect,
+        patch("codebase_rag.agent_loop.connect_graph") as connect,
         patch(
             "codebase_rag.agent_loop._initialize_services_and_agent",
             return_value=(agent, [], ""),

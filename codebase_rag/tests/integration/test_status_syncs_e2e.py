@@ -27,14 +27,14 @@ from codebase_rag.stack.manager import StackStatus
 from codebase_rag.utils.process_owner import process_host
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
 runner = CliRunner()
 
 
-def _sync(ingestor: MemgraphIngestor, root: Path, name: str) -> None:
+def _sync(ingestor: GraphIngestor, root: Path, name: str) -> None:
     repo = root / name
     repo.mkdir()
     (repo / "app.py").write_text("def main():\n    return 1\n", encoding="utf-8")
@@ -71,7 +71,7 @@ def _cgr(*args: str) -> str:
 
 
 def test_status_lists_the_projects_this_memgraph_holds(
-    memgraph_ingestor: MemgraphIngestor,
+    memgraph_ingestor: GraphIngestor,
     memgraph_container: dict[str, str | int],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -103,7 +103,7 @@ def test_status_lists_the_projects_this_memgraph_holds(
     assert f"- ledger: last sync {stamps['ledger']}" in listed, listed
 
 
-def _mark(ingestor: MemgraphIngestor, project: str, run_id: str, writing: bool) -> None:
+def _mark(ingestor: GraphIngestor, project: str, run_id: str, writing: bool) -> None:
     ingestor.execute_write(
         cq.CYPHER_MARK_PROJECT_INCOMPLETE,
         {
@@ -114,7 +114,7 @@ def _mark(ingestor: MemgraphIngestor, project: str, run_id: str, writing: bool) 
     )
 
 
-def _mark_cli_sync(ingestor: MemgraphIngestor, project: str, pid: int) -> None:
+def _mark_cli_sync(ingestor: GraphIngestor, project: str, pid: int) -> None:
     """A CLI sync's marker, as the sync in process `pid` on this host left it."""
     ingestor.execute_write(
         cq.CYPHER_MARK_CLI_SYNC_INCOMPLETE,
@@ -136,7 +136,7 @@ def _gone_pid() -> int:
 
 
 def test_deleting_a_project_after_a_failed_sync_takes_it_off_status(
-    memgraph_ingestor: MemgraphIngestor,
+    memgraph_ingestor: GraphIngestor,
     memgraph_container: dict[str, str | int],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

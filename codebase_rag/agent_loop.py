@@ -52,7 +52,7 @@ from rich.text import Text
 from . import constants as cs
 from . import exceptions as ex
 from . import logs as ls
-from .cli_runtime import app_context, connect_memgraph, dim, style
+from .cli_runtime import app_context, connect_graph, dim, style
 from .config import (
     ModelConfig,
     provider_env_api_key,
@@ -1940,7 +1940,7 @@ def main_single_query(
         diagnose=False,
     )
 
-    with connect_memgraph(batch_size) as ingestor:
+    with connect_graph(batch_size) as ingestor:
         rag_agent, _, _ = _initialize_services_and_agent(
             repo_path, ingestor, active_projects=active_projects
         )
@@ -1978,7 +1978,7 @@ async def main_async(
         table = create_configuration_table(repo_path)
         app_context.console.print(table)
 
-    async with connect_memgraph(batch_size) as ingestor:
+    async with connect_graph(batch_size) as ingestor:
         app_context.console.print(style(cs.MSG_CONNECTED_MEMGRAPH, cs.Color.GREEN))
         app_context.console.print(
             Panel(
@@ -2041,7 +2041,7 @@ async def main_optimize_async(
 
     effective_batch_size = settings.resolve_batch_size(batch_size)
 
-    async with connect_memgraph(effective_batch_size) as ingestor:
+    async with connect_graph(effective_batch_size) as ingestor:
         app_context.console.print(style(cs.MSG_CONNECTED_MEMGRAPH, cs.Color.GREEN))
 
         rag_agent, tool_names, system_prompt = _initialize_services_and_agent(

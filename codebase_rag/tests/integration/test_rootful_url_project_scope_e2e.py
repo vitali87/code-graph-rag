@@ -20,7 +20,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
@@ -36,7 +36,7 @@ module.exports = { order };
 """
 
 
-def _index(ingestor: MemgraphIngestor, root: Path, name: str, source: str) -> None:
+def _index(ingestor: GraphIngestor, root: Path, name: str, source: str) -> None:
     root.mkdir()
     (root / "server.js").write_text(source, encoding="utf-8")
     parsers, queries = load_parsers()
@@ -51,7 +51,7 @@ def _index(ingestor: MemgraphIngestor, root: Path, name: str, source: str) -> No
     ingestor.flush_all()
 
 
-def _links(ingestor: MemgraphIngestor) -> set[tuple[str, str]]:
+def _links(ingestor: GraphIngestor) -> set[tuple[str, str]]:
     rows = ingestor.fetch_all(
         "MATCH (c)-[:READS_FROM|WRITES_TO]->(:Resource {kind: 'NETWORK'})"
         "-[:RESOLVES_TO]->(:Resource)<-[:EXPOSES]-(h) "
@@ -61,7 +61,7 @@ def _links(ingestor: MemgraphIngestor) -> set[tuple[str, str]]:
 
 
 def test_each_client_reaches_only_its_own_handler(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     _index(memgraph_ingestor, tmp_path / "alpha", "alpha", SERVER_JS)
     _index(memgraph_ingestor, tmp_path / "beta", "beta", SERVER_JS)
@@ -77,7 +77,7 @@ def test_each_client_reaches_only_its_own_handler(
 
 
 def test_a_host_qualified_url_still_reaches_another_project(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # Negative: `http://alpha/carts/9` names alpha's host, so a third
     # project's client links to alpha's route, and only to it.

@@ -70,7 +70,7 @@ class TestPromptActiveProjectsBlock:
 
 @pytest.fixture
 def mock_memgraph_connect() -> Generator[MagicMock, None, None]:
-    with patch("codebase_rag.cli.connect_memgraph") as mock_connect:
+    with patch("codebase_rag.cli.connect_graph") as mock_connect:
         mock_ingestor = MagicMock()
         mock_connect.return_value.__enter__ = MagicMock(return_value=mock_ingestor)
         mock_connect.return_value.__exit__ = MagicMock(return_value=False)

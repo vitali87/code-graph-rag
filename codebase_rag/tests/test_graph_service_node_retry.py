@@ -8,23 +8,23 @@ import pytest
 
 from codebase_rag import cypher_queries as cq
 from codebase_rag.graph_dialects import DIALECT_MEMGRAPH, get_dialect
-from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.services.graph_service import GraphIngestor
 from codebase_rag.types_defs import BatchWrapper, PropertyValue
 
 
 @pytest.fixture(params=[False, True], ids=["serial", "parallel"])
 def graph_cursor(
     request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
-) -> Generator[tuple[MemgraphIngestor, MagicMock], None, None]:
+) -> Generator[tuple[GraphIngestor, MagicMock], None, None]:
     cursor = MagicMock()
 
-    def connect(self: MemgraphIngestor) -> MagicMock:
+    def connect(self: GraphIngestor) -> MagicMock:
         connection = MagicMock()
         connection.cursor.return_value = cursor
         return connection
 
-    monkeypatch.setattr(MemgraphIngestor, "open_connection", connect)
-    ingestor = MemgraphIngestor(
+    monkeypatch.setattr(GraphIngestor, "open_connection", connect)
+    ingestor = GraphIngestor(
         host="localhost", port=7687, dialect=get_dialect(DIALECT_MEMGRAPH)
     )
     ingestor.conn = connect(ingestor)
@@ -36,7 +36,7 @@ def graph_cursor(
 
 @pytest.mark.parametrize("use_merge", [False, True], ids=["create", "merge"])
 def test_retry_preserves_failed_nodes_without_replaying_successful_labels(
-    graph_cursor: tuple[MemgraphIngestor, MagicMock], use_merge: bool
+    graph_cursor: tuple[GraphIngestor, MagicMock], use_merge: bool
 ) -> None:
     ingestor, cursor = graph_cursor
     ingestor._use_merge = use_merge
@@ -76,7 +76,7 @@ def test_retry_preserves_failed_nodes_without_replaying_successful_labels(
 
 
 def test_node_auto_flush_propagates_failure_and_leaves_nodes_for_retry(
-    graph_cursor: tuple[MemgraphIngestor, MagicMock],
+    graph_cursor: tuple[GraphIngestor, MagicMock],
 ) -> None:
     ingestor, cursor = graph_cursor
     ingestor.batch_size = 1
@@ -97,7 +97,7 @@ def test_node_auto_flush_propagates_failure_and_leaves_nodes_for_retry(
 
 
 def test_relationship_auto_flush_retries_nodes_before_writing_edges(
-    graph_cursor: tuple[MemgraphIngestor, MagicMock],
+    graph_cursor: tuple[GraphIngestor, MagicMock],
 ) -> None:
     ingestor, cursor = graph_cursor
     ingestor.batch_size = 3
@@ -145,7 +145,7 @@ def test_relationship_auto_flush_retries_nodes_before_writing_edges(
 
 @pytest.mark.parametrize("fail", [False, True], ids=["success", "failure"])
 def test_nodes_appended_during_flush_remain_buffered(
-    graph_cursor: tuple[MemgraphIngestor, MagicMock], fail: bool
+    graph_cursor: tuple[GraphIngestor, MagicMock], fail: bool
 ) -> None:
     ingestor, cursor = graph_cursor
     started = Event()
@@ -180,7 +180,7 @@ def test_nodes_appended_during_flush_remain_buffered(
     assert ingestor.node_buffer == expected
 
 
-def _observe_lock_contention(ingestor: MemgraphIngestor, waiting: Event) -> None:
+def _observe_lock_contention(ingestor: GraphIngestor, waiting: Event) -> None:
     def observe(lock: LockType) -> MagicMock:
         def enter() -> None:
             if not lock.acquire(blocking=False):
@@ -201,7 +201,7 @@ def _observe_lock_contention(ingestor: MemgraphIngestor, waiting: Event) -> None
 @pytest.mark.parametrize("auto_flush", [False, True], ids=["explicit", "auto"])
 @pytest.mark.parametrize("fail", [False, True], ids=["success", "failure"])
 def test_overlapping_flushes_do_not_replay_nodes_or_lose_new_failures(
-    graph_cursor: tuple[MemgraphIngestor, MagicMock], auto_flush: bool, fail: bool
+    graph_cursor: tuple[GraphIngestor, MagicMock], auto_flush: bool, fail: bool
 ) -> None:
     ingestor, cursor = graph_cursor
     ingestor._use_merge = False

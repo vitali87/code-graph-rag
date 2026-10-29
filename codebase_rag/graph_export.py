@@ -11,12 +11,12 @@ from loguru import logger
 from . import constants as cs
 from . import logs as ls
 from .cli_runtime import app_context
-from .services.graph_service import MemgraphIngestor
+from .services.graph_service import GraphIngestor
 from .types_defs import GraphData
 
 
 def _write_graph_json(
-    ingestor: MemgraphIngestor, output_path: Path, project_names: Sequence[str]
+    ingestor: GraphIngestor, output_path: Path, project_names: Sequence[str]
 ) -> GraphData:
     graph_data: GraphData = ingestor.export_graph_to_dict(project_names)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -28,7 +28,7 @@ def _write_graph_json(
 
 
 def export_graph_to_file(
-    ingestor: MemgraphIngestor, output: str, project_names: Sequence[str] = ()
+    ingestor: GraphIngestor, output: str, project_names: Sequence[str] = ()
 ) -> bool:
     output_path = Path(output)
 

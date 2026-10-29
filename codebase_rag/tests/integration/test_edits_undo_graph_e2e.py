@@ -23,7 +23,7 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.utils.path_utils import derive_project_name
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
@@ -37,7 +37,7 @@ _API = (
 @pytest.fixture
 def indexed(
     tmp_path: Path,
-    memgraph_ingestor: MemgraphIngestor,
+    memgraph_ingestor: GraphIngestor,
     memgraph_container: dict[str, str | int],
     monkeypatch: pytest.MonkeyPatch,
 ) -> tuple[Path, str]:
@@ -70,7 +70,7 @@ def _cgr(*args: str) -> Result:
     return CliRunner().invoke(app, list(args))
 
 
-def _functions(ingestor: MemgraphIngestor, name: str) -> set[str]:
+def _functions(ingestor: GraphIngestor, name: str) -> set[str]:
     rows = ingestor.fetch_all(
         "MATCH (f:Function) WHERE f.qualified_name STARTS WITH $prefix "
         "RETURN f.qualified_name AS qn",
@@ -79,7 +79,7 @@ def _functions(ingestor: MemgraphIngestor, name: str) -> set[str]:
     return {str(row["qn"]) for row in rows}
 
 
-def _callees(ingestor: MemgraphIngestor, caller: str) -> set[str]:
+def _callees(ingestor: GraphIngestor, caller: str) -> set[str]:
     rows = ingestor.fetch_all(
         "MATCH (:Function {qualified_name: $qn})-[:CALLS]->(f) "
         "RETURN f.qualified_name AS qn",
@@ -93,7 +93,7 @@ def _rename(root: Path, qn: str, new_name: str) -> Result:
 
 
 def test_undo_puts_the_graph_back_on_the_restored_names(
-    indexed: tuple[Path, str], memgraph_ingestor: MemgraphIngestor
+    indexed: tuple[Path, str], memgraph_ingestor: GraphIngestor
 ) -> None:
     root, name = indexed
     old_qn, new_qn = f"{name}.pkg.core.compute_total", f"{name}.pkg.core.sum_items"
@@ -114,7 +114,7 @@ def test_undo_puts_the_graph_back_on_the_restored_names(
 
 
 def test_the_restored_name_can_be_renamed_again_right_after_the_undo(
-    indexed: tuple[Path, str], memgraph_ingestor: MemgraphIngestor
+    indexed: tuple[Path, str], memgraph_ingestor: GraphIngestor
 ) -> None:
     # The agent loop from the issue: rename, undo on a failed check, retry.
     root, name = indexed
@@ -129,7 +129,7 @@ def test_the_restored_name_can_be_renamed_again_right_after_the_undo(
 
 
 def test_a_refused_undo_leaves_files_and_graph_on_the_renamed_state(
-    indexed: tuple[Path, str], memgraph_ingestor: MemgraphIngestor
+    indexed: tuple[Path, str], memgraph_ingestor: GraphIngestor
 ) -> None:
     # Negative: an undo that refuses restores nothing, so it must re-ingest
     # nothing either; the graph keeps describing the (renamed) tree.
@@ -149,7 +149,7 @@ def test_a_refused_undo_leaves_files_and_graph_on_the_renamed_state(
 
 
 def test_undo_leaves_other_projects_in_the_graph_alone(
-    indexed: tuple[Path, str], memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    indexed: tuple[Path, str], memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # Negative: the re-ingest is scoped to the restored files of this project.
     root, name = indexed

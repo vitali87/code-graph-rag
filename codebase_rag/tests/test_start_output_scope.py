@@ -89,7 +89,7 @@ def _start(
     connection.__enter__.return_value = ingestor
     connection.__exit__.return_value = False
     with (
-        patch("codebase_rag.cli.connect_memgraph", return_value=connection),
+        patch("codebase_rag.cli.connect_graph", return_value=connection),
         patch(
             "codebase_rag.graph_updater.GraphUpdater",
             side_effect=_updater_factory(clock, in_sync),

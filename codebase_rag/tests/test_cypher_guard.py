@@ -14,7 +14,7 @@ from codebase_rag.services.cypher_guard import (
     memgraph_plan_operators,
     neo4j_plan_operators,
 )
-from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.services.graph_service import GraphIngestor
 from codebase_rag.services.llm import (
     _validate_call_procedures,
     _validate_cypher_read_only,
@@ -201,19 +201,19 @@ class TestCheckMemgraphPlan:
 class TestFetchReadOnlyOnMemgraph:
     def _ingestor(
         self, monkeypatch: pytest.MonkeyPatch, plan: list[str]
-    ) -> tuple[MemgraphIngestor, MagicMock]:
+    ) -> tuple[GraphIngestor, MagicMock]:
         executed = MagicMock()
 
         def fake_execute(
-            self: MemgraphIngestor, query: str, params: PropertyDict | None = None
+            self: GraphIngestor, query: str, params: PropertyDict | None = None
         ) -> list[dict[str, str]]:
             executed(query)
             if query.startswith(cs.CYPHER_EXPLAIN_PREFIX):
                 return [{"QUERY PLAN": row} for row in plan]
             return [{"name": "f"}]
 
-        monkeypatch.setattr(MemgraphIngestor, "_execute_query", fake_execute)
-        ingestor = MemgraphIngestor(
+        monkeypatch.setattr(GraphIngestor, "_execute_query", fake_execute)
+        ingestor = GraphIngestor(
             host="localhost", port=7687, dialect=get_dialect(DIALECT_MEMGRAPH)
         )
         return ingestor, executed

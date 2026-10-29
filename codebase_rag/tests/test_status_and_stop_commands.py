@@ -68,7 +68,7 @@ class TestStatusCommand:
         )
         with (
             patch("codebase_rag.cli.StackManager") as mock_mgr,
-            patch("codebase_rag.cli.connect_memgraph", return_value=connection),
+            patch("codebase_rag.cli.connect_graph", return_value=connection),
         ):
             mock_mgr.return_value.status.return_value = fake
             result = runner.invoke(app, ["status"])

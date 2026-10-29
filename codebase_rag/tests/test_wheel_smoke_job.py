@@ -202,10 +202,10 @@ class TestMcpServerSmokeCheck:
     ) -> None:
         # Negative test. The wheel job runs no Memgraph service, so the round
         # trip must never open the ingestor's connection.
-        def refuse_connection(self: mcp_server.MemgraphIngestor) -> None:
+        def refuse_connection(self: mcp_server.GraphIngestor) -> None:
             raise AssertionError("the MCP smoke opened a Memgraph connection")
 
-        monkeypatch.setattr(mcp_server.MemgraphIngestor, "__enter__", refuse_connection)
+        monkeypatch.setattr(mcp_server.GraphIngestor, "__enter__", refuse_connection)
 
         smoke_module.check_mcp_server_lists_tools()
 

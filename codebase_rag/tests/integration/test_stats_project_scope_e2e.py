@@ -19,7 +19,7 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.types_defs import ResultRow
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
@@ -52,7 +52,7 @@ def _repo(root: Path, name: str, source: str) -> Path:
     return repo
 
 
-def _index(ingestor: MemgraphIngestor, repo: Path) -> None:
+def _index(ingestor: GraphIngestor, repo: Path) -> None:
     parsers, queries = load_parsers()
     GraphUpdater(
         ingestor=ingestor, repo_path=repo, parsers=parsers, queries=queries
@@ -70,7 +70,7 @@ def _counts(rows: list[ResultRow], key: str) -> dict[str, int]:
 
 
 def test_scoped_counts_match_the_project_indexed_alone(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     alpha = _repo(tmp_path, "alpha", ALPHA)
     beta = _repo(tmp_path, "beta", BETA)
@@ -100,7 +100,7 @@ def test_scoped_counts_match_the_project_indexed_alone(
 
 
 def test_the_breakdown_attributes_every_project(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     _index(memgraph_ingestor, _repo(tmp_path, "alpha", ALPHA))
     _index(memgraph_ingestor, _repo(tmp_path, "beta", BETA))

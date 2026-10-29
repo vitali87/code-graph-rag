@@ -18,14 +18,14 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
 _HELPER = "def helper(x):\n    return x + 1\n"
 
 
-def _index(ingestor: MemgraphIngestor, root: Path, project: str) -> None:
+def _index(ingestor: GraphIngestor, root: Path, project: str) -> None:
     parsers, queries = load_parsers()
     GraphUpdater(
         ingestor=ingestor,
@@ -36,7 +36,7 @@ def _index(ingestor: MemgraphIngestor, root: Path, project: str) -> None:
     ).run(force=True)
 
 
-def _annotate(ingestor: MemgraphIngestor, project: str, body: str) -> None:
+def _annotate(ingestor: GraphIngestor, project: str, body: str) -> None:
     row = gloss.write_gloss(
         ingestor.fetch_all,
         ingestor.execute_write,
@@ -48,16 +48,16 @@ def _annotate(ingestor: MemgraphIngestor, project: str, body: str) -> None:
     assert row.get(cs.KEY_ANCHOR_STATE) == cs.GlossAnchorState.EXACT, row
 
 
-def _notes(ingestor: MemgraphIngestor, project: str) -> list[str]:
+def _notes(ingestor: GraphIngestor, project: str) -> list[str]:
     rows = ingestor.fetch_all(
         "MATCH (g:Gloss {project: $p}) RETURN g.body AS body", {"p": project}
     )
     return sorted(str(row["body"]) for row in rows)
 
 
-def _delete(ingestor: MemgraphIngestor, project: str) -> str:
+def _delete(ingestor: GraphIngestor, project: str) -> str:
     with (
-        patch("codebase_rag.cli.connect_memgraph", return_value=nullcontext(ingestor)),
+        patch("codebase_rag.cli.connect_graph", return_value=nullcontext(ingestor)),
         patch("codebase_rag.cli.delete_project_embeddings"),
     ):
         result = CliRunner().invoke(app, ["delete-project", "--name", project])
@@ -66,7 +66,7 @@ def _delete(ingestor: MemgraphIngestor, project: str) -> str:
 
 
 def test_cli_delete_project_removes_the_projects_glosses(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     for project in ("gd", "keep"):
         (tmp_path / project).mkdir()
@@ -82,7 +82,7 @@ def test_cli_delete_project_removes_the_projects_glosses(
 
 
 def test_reindexing_after_the_delete_starts_with_no_notes(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     (tmp_path / "a.py").write_text(_HELPER, encoding="utf-8")
     _index(memgraph_ingestor, tmp_path, "gd")

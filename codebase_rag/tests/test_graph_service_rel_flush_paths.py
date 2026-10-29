@@ -8,12 +8,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.services.graph_service import GraphIngestor
 from codebase_rag.types_defs import RelBatchRow
 
 
-def _ingestor_with_two_groups() -> MemgraphIngestor:
-    ingestor = MemgraphIngestor(host="localhost", port=7687, batch_size=100)
+def _ingestor_with_two_groups() -> GraphIngestor:
+    ingestor = GraphIngestor(host="localhost", port=7687, batch_size=100)
     ingestor.conn = MagicMock()
     ingestor.ensure_relationship_batch(
         ("Function", "qualified_name", "p.a"),
@@ -31,7 +31,7 @@ def _ingestor_with_two_groups() -> MemgraphIngestor:
 def test_serial_flush_sums_every_group() -> None:
     ingestor = _ingestor_with_two_groups()
     with patch.object(
-        MemgraphIngestor, "_flush_rel_pattern_group", return_value=1
+        GraphIngestor, "_flush_rel_pattern_group", return_value=1
     ) as flush:
         ingestor.flush_relationships()
     assert flush.call_count == 2
@@ -43,7 +43,7 @@ def test_serial_flush_runs_every_group_then_raises_the_first_failure() -> None:
     boom = RuntimeError("store refused")
     with (
         patch.object(
-            MemgraphIngestor,
+            GraphIngestor,
             "_flush_rel_pattern_group",
             side_effect=[boom, 1],
         ) as flush,
@@ -72,7 +72,7 @@ def test_parallel_flush_runs_every_group_then_raises_the_first_failure() -> None
         ingestor._executor = executor
         with (
             patch.object(
-                MemgraphIngestor,
+                GraphIngestor,
                 "_flush_rel_group_with_own_conn",
                 side_effect=flush_group,
             ),

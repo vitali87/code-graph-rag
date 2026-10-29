@@ -28,7 +28,7 @@ from codebase_rag.mcp.run_marker import RunMarker
 from codebase_rag.models import ToolMetadata
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services import QueryProtocol
-from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.services.graph_service import GraphIngestor
 from codebase_rag.services.llm import (
     CypherQueryGenerator,
     create_rag_orchestrator,
@@ -425,7 +425,7 @@ class MCPToolsRegistry:
     def __init__(
         self,
         project_root: str,
-        ingestor: MemgraphIngestor,
+        ingestor: GraphIngestor,
         cypher_gen: CypherQueryGenerator,
         workspace: WorkspaceConfig | None = None,
     ) -> None:

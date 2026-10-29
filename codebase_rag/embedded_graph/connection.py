@@ -1,6 +1,6 @@
 """DB-API-shaped connection to the embedded graph.
 
-`MemgraphIngestor` drives every engine through `ConnectionProtocol` /
+`GraphIngestor` drives every engine through `ConnectionProtocol` /
 `CursorProtocol` (types_defs); this is the embedded engine's implementation,
 so the ingestor, its batching and every query constant work unchanged.
 """

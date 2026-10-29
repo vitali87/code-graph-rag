@@ -8,7 +8,7 @@ and the database:
   procedure CALLs. They run on `mask_literals_and_comments` output, so a
   keyword inside a string literal is not a false positive and a procedure
   name hidden behind backticks or a comment is still seen.
-* The engine itself, via `MemgraphIngestor.fetch_read_only`: the query is
+* The engine itself, via `GraphIngestor.fetch_read_only`: the query is
   planned with EXPLAIN and `check_plan` refuses it unless every operator the
   planner reports is a known read operator and every procedure is allowed. The plan names what will
   actually execute, whatever the query text looks like. Neo4j also runs the

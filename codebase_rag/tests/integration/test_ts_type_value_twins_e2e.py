@@ -17,7 +17,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
@@ -40,7 +40,7 @@ export function each(): number[] {
 """
 
 
-def _index(ingestor: MemgraphIngestor, root: Path) -> str:
+def _index(ingestor: GraphIngestor, root: Path) -> str:
     parsers, queries = load_parsers()
     updater = GraphUpdater(
         ingestor=ingestor, repo_path=root, parsers=parsers, queries=queries
@@ -59,7 +59,7 @@ def twin_repo(tmp_path: Path) -> Path:
 
 
 def test_type_and_function_are_two_nodes_and_calls_hit_the_function(
-    memgraph_ingestor: MemgraphIngestor, twin_repo: Path
+    memgraph_ingestor: GraphIngestor, twin_repo: Path
 ) -> None:
     project = _index(memgraph_ingestor, twin_repo)
     qn = f"{project}.src.shape.input"
@@ -86,7 +86,7 @@ def test_type_and_function_are_two_nodes_and_calls_hit_the_function(
 
 
 def test_renaming_the_function_leaves_the_type_and_its_annotation(
-    memgraph_ingestor: MemgraphIngestor, twin_repo: Path
+    memgraph_ingestor: GraphIngestor, twin_repo: Path
 ) -> None:
     project = _index(memgraph_ingestor, twin_repo)
 

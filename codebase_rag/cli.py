@@ -43,7 +43,7 @@ from .capture import (
     split_spec,
     unknown_tokens,
 )
-from .cli_runtime import app_context, connect_memgraph, dim, style
+from .cli_runtime import app_context, connect_graph, dim, style
 from .config import (
     load_ignore_patterns,
     project_ignore_sets,
@@ -71,7 +71,7 @@ from .parser_loader import load_parsers
 from .port.cli import cli as port_cli
 from .project_selection import ProjectChoice, choose_project, scope_refusal
 from .services.graph_diff import DiffError, diff_indexes, diff_is_empty
-from .services.graph_service import GraphUnavailableError, MemgraphIngestor
+from .services.graph_service import GraphIngestor, GraphUnavailableError
 from .services.protobuf_service import ProtobufFileIngestor
 from .services.provenance import (
     capture_description,
@@ -534,7 +534,7 @@ def _clean_database_only(
     # in after the wipe would publish both, and the clean would then delete
     # them under that sync's new graph (PR #2512).
     with _sync_lock_or_exit(repo_to_clean, project_name):
-        with connect_memgraph(batch_size) as ingestor:
+        with connect_graph(batch_size) as ingestor:
             _confirm_destructive_clean(ingestor, project_name, assume_yes)
             _info(style(cs.CLI_MSG_CLEANING_DB, cs.Color.YELLOW))
             ingestor.clean_database()
@@ -852,7 +852,7 @@ def _stdin_is_interactive() -> bool:
         return False
 
 
-def _projects_in_graph(ingestor: MemgraphIngestor) -> list[str] | None:
+def _projects_in_graph(ingestor: GraphIngestor) -> list[str] | None:
     """Every project in the graph, or None when the graph cannot be read.
 
     None is NOT an empty graph: treating a failed enumeration as "no other
@@ -867,7 +867,7 @@ def _projects_in_graph(ingestor: MemgraphIngestor) -> list[str] | None:
 
 
 def _confirm_destructive_clean(
-    ingestor: MemgraphIngestor, project_name: str, assume_yes: bool
+    ingestor: GraphIngestor, project_name: str, assume_yes: bool
 ) -> None:
     """Abort unless the user accepts losing every other project in the graph."""
     if assume_yes:
@@ -929,7 +929,7 @@ def _exit_if_project_owned_elsewhere(
         return _OwnerCheck(None)
     # On its own connection: exiting inside the sync's would report the
     # refusal as a failed session.
-    with connect_memgraph(batch_size) as ingestor:
+    with connect_graph(batch_size) as ingestor:
         check = _project_owner_refusal(ingestor, project_name, repo, assume_yes)
     if check.refusal is not None:
         _exit_with_error(check.refusal)
@@ -940,7 +940,7 @@ def _release_project_claim(batch_size: int, project_name: str, repo: Path) -> No
     # On its own connection, and best effort like the release itself: the
     # sync's own failure is what is being reported.
     try:
-        with connect_memgraph(batch_size) as ingestor:
+        with connect_graph(batch_size) as ingestor:
             release_project_claim(ingestor, project_name, repo)
     except Exception as exc:  # noqa: BLE001 -- any engine's driver error; the write is retried later
         logger.warning(
@@ -971,7 +971,7 @@ def _project_claim(
 
 
 def _mark_sync_incomplete(
-    ingestor: MemgraphIngestor,
+    ingestor: GraphIngestor,
     project_name: str,
     owner: dict[str, PropertyValue],
     owned_roots: list[str] | None = None,
@@ -1045,7 +1045,7 @@ def _stopped_sync_token(owner: ResultRow) -> str | None:
     return token if stopped else None
 
 
-def _clear_stopped_sync_marker(ingestor: MemgraphIngestor, project_name: str) -> bool:
+def _clear_stopped_sync_marker(ingestor: GraphIngestor, project_name: str) -> bool:
     """Clear the CLI sync's marker if its sync stopped; True if one is kept."""
     params = _sync_marker_params(project_name)
     kept = False
@@ -1060,9 +1060,7 @@ def _clear_stopped_sync_marker(ingestor: MemgraphIngestor, project_name: str) ->
     return kept
 
 
-def _clear_deleted_project_markers(
-    ingestor: MemgraphIngestor, project_name: str
-) -> None:
+def _clear_deleted_project_markers(ingestor: GraphIngestor, project_name: str) -> None:
     """Take off the markers a deleted project no longer needs (#2444).
 
     A marker sits on its own node, out of the delete's reach, so without this
@@ -1090,7 +1088,7 @@ def _clear_deleted_project_markers(
 
 
 def _sweep_glosses_after_failed_delete(
-    ingestor: MemgraphIngestor, project_name: str
+    ingestor: GraphIngestor, project_name: str
 ) -> None:
     """Sweep the notes of a delete that raised after the project was removed.
 
@@ -1179,7 +1177,7 @@ def _run_graph_sync(
         _project_claim(
             batch_size, project_name, repo, clean=clean, assume_yes=assume_yes
         ) as owned_roots,
-        connect_memgraph(batch_size) as ingestor,
+        connect_graph(batch_size) as ingestor,
         _sync_owner() as owner,
     ):
         if clean:
@@ -1328,7 +1326,7 @@ def _resolve_and_validate_repo(repo_path: str | None) -> Path:
 
 
 def _cleanup_project_embeddings(
-    ingestor: MemgraphIngestor, project_name: str, projects: Iterable[str]
+    ingestor: GraphIngestor, project_name: str, projects: Iterable[str]
 ) -> None:
     rows = ingestor.fetch_all(
         cs.CYPHER_QUERY_PROJECT_NODE_IDS,
@@ -1849,7 +1847,7 @@ def export(
     refusal = ""
     try:
         # An export only reads, so the write buffer's size is moot.
-        with connect_memgraph(batch_size=1) as ingestor:
+        with connect_graph(batch_size=1) as ingestor:
             if requested:
                 indexed = ingestor.list_projects()
                 if missing := [name for name in requested if name not in indexed]:
@@ -1909,9 +1907,7 @@ def _requested_projects(
     )
 
 
-def _export_to_file(
-    ingestor: MemgraphIngestor, output: str, requested: list[str]
-) -> bool:
+def _export_to_file(ingestor: GraphIngestor, output: str, requested: list[str]) -> bool:
     if requested:
         _info(
             style(
@@ -2237,7 +2233,7 @@ def check_command(
     root = repo_path.resolve()
     name = project or derive_project_name(root)
     parsers, queries = load_parsers()
-    with connect_memgraph(batch_size=settings.resolve_batch_size(None)) as ingestor:
+    with connect_graph(batch_size=settings.resolve_batch_size(None)) as ingestor:
         if name not in ingestor.list_projects():
             typer.echo(cs.CHECK_NOT_INDEXED.format(project=name), err=True)
             raise typer.Exit(code=1)
@@ -2442,7 +2438,7 @@ def _project_syncs() -> list[ProjectSync] | None:
     status must still print without it.
     """
     try:
-        with connect_memgraph(1) as ingestor:
+        with connect_graph(1) as ingestor:
             projects = ingestor.fetch_all(cq.CYPHER_PROJECT_SYNC_TIMES)
             markers = ingestor.fetch_all(cq.CYPHER_PROJECTS_WITH_INCOMPLETE_RUNS)
     except Exception as exc:  # noqa: BLE001 -- any engine's driver error; the read degrades
@@ -2668,7 +2664,7 @@ def stats(
 
     refusal = ""
     try:
-        with connect_memgraph(batch_size=1) as ingestor:
+        with connect_graph(batch_size=1) as ingestor:
             projects = list(ingestor.list_projects())
             if missing := [name for name in requested if name not in projects]:
                 refusal = scope_refusal(missing, projects, repo_path, ingestor)
@@ -2696,7 +2692,7 @@ def stats(
 
 
 def _stats_rows(
-    ingestor: MemgraphIngestor, requested: list[str], project_count: int
+    ingestor: GraphIngestor, requested: list[str], project_count: int
 ) -> tuple[list[ResultRow], list[ResultRow], list[ResultRow]]:
     """Node rows, relationship rows and the per-project breakdown.
 
@@ -3083,7 +3079,7 @@ def dead_code(
     rows: list[ResultRow] = []
     structural_tier_symbols = 0
     try:
-        with connect_memgraph(batch_size=1) as ingestor:
+        with connect_graph(batch_size=1) as ingestor:
             projects = ingestor.list_projects()
             choice = choose_project(chosen, repo_path, projects, ingestor)
             if (resolved := choice.name) is not None:
@@ -3494,7 +3490,7 @@ def duplicates(
     roots: dict[str, str | None] = {}
     report = DuplicatesReport(groups=[], skipped_symbols=0, truncated=False)
     try:
-        with connect_memgraph(batch_size=1) as ingestor:
+        with connect_graph(batch_size=1) as ingestor:
             projects = ingestor.list_projects()
             # Roots ride along for clickable locations and --open; a graph
             # predating Project.root_path just degrades to plain text.
@@ -3583,7 +3579,7 @@ def delete_project(
     effective_batch_size = settings.resolve_batch_size(None)
 
     try:
-        with connect_memgraph(effective_batch_size) as ingestor:
+        with connect_graph(effective_batch_size) as ingestor:
             projects = ingestor.list_projects()
             choice = choose_project(
                 None if explicit is None else project_name,

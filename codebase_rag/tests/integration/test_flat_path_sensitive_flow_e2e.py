@@ -12,16 +12,14 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.flow_access import FlowKind
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
 _FLOWS = cs.RelationshipType.FLOWS_TO.value
 
 
-def _build(
-    ingestor: MemgraphIngestor, tmp_path: Path, filename: str, code: str
-) -> None:
+def _build(ingestor: GraphIngestor, tmp_path: Path, filename: str, code: str) -> None:
     project = tmp_path / "flat_ps"
     project.mkdir()
     (project / filename).write_text(code, encoding="utf-8")
@@ -35,7 +33,7 @@ def _build(
     ).run()
 
 
-def _flows(ingestor: MemgraphIngestor) -> list[dict[str, str | None]]:
+def _flows(ingestor: GraphIngestor) -> list[dict[str, str | None]]:
     rows = ingestor.fetch_all(
         f"MATCH (a)-[r:{_FLOWS}]->(b) "
         "RETURN a.qualified_name AS frm, b.qualified_name AS to, "
@@ -61,7 +59,7 @@ def _any_resource(flows: list[dict[str, str | None]]) -> bool:
 
 
 def test_go_kill_on_one_branch_taint_survives(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # secret is killed only inside the if; on the fall-through path it is still the
     # env source, so a MAY analysis keeps ENV -> STDOUT. The flat walk over-kills.
@@ -87,7 +85,7 @@ def test_go_kill_on_one_branch_taint_survives(
 
 
 def test_go_kill_on_all_branches_no_flow(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # secret is reassigned to a clean value on BOTH the then and else paths, so no
     # tainted path reaches the sink; MAY still yields no flow.
@@ -111,7 +109,7 @@ def test_go_kill_on_all_branches_no_flow(
 
 
 def test_go_branch_local_shadow_does_not_leak(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # `os := load()` is scoped to the if block; after the block the imported package
     # `os` is back in scope, so os.Getenv is the real env source. The flat walk grows
@@ -138,7 +136,7 @@ def test_go_branch_local_shadow_does_not_leak(
 
 
 def test_go_if_initializer_shadow_does_not_leak(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # A Go `if` initializer (`if os := load(); ...`) is scoped to the whole if
     # statement and must not leak past it, so os.Getenv AFTER the if is the real
@@ -167,7 +165,7 @@ def test_go_if_initializer_shadow_does_not_leak(
 
 
 def test_java_kill_on_one_branch_taint_survives(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # Java parity: the reassignment inside the if is one path only; the else path
     # still carries the env source, so MAY keeps ENV -> STDOUT.
@@ -193,7 +191,7 @@ def test_java_kill_on_one_branch_taint_survives(
 
 
 def test_java_kill_on_all_branches_no_flow(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # Clean reassignment on both paths -> no tainted path reaches the sink.
     _build(

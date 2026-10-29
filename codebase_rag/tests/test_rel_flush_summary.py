@@ -13,14 +13,14 @@ import pytest
 from loguru import logger
 
 from codebase_rag import constants as cs
-from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.services.graph_service import GraphIngestor
 from codebase_rag.types_defs import ConnectionProtocol, RelBatchRow
 
 _CALLS = cs.RelationshipType.CALLS.value
 
 
-def _ingestor_with_rows() -> MemgraphIngestor:
-    ingestor = MemgraphIngestor(host="127.0.0.1", port=7999)
+def _ingestor_with_rows() -> GraphIngestor:
+    ingestor = GraphIngestor(host="127.0.0.1", port=7999)
     ingestor.ensure_relationship_batch(
         ("Function", cs.KEY_QUALIFIED_NAME, "m.f"),
         _CALLS,
@@ -35,7 +35,7 @@ def _ingestor_with_rows() -> MemgraphIngestor:
     return ingestor
 
 
-def _summary(ingestor: MemgraphIngestor) -> str:
+def _summary(ingestor: GraphIngestor) -> str:
     lines: list[str] = []
     handler = logger.add(lambda m: lines.append(str(m)), level="INFO")
     try:
@@ -52,7 +52,7 @@ def test_rows_of_a_group_that_raised_count_as_failed(
     ingestor = _ingestor_with_rows()
 
     def flush(
-        self: MemgraphIngestor,
+        self: GraphIngestor,
         pattern: tuple[str, str, str, str, str],
         params_list: list[RelBatchRow],
         conn: ConnectionProtocol | None = None,
@@ -61,7 +61,7 @@ def test_rows_of_a_group_that_raised_count_as_failed(
             raise RuntimeError("write failed")
         return len(params_list)
 
-    monkeypatch.setattr(MemgraphIngestor, "_flush_rel_pattern_group", flush)
+    monkeypatch.setattr(GraphIngestor, "_flush_rel_pattern_group", flush)
     summary = _summary(ingestor)
     assert "Flushed 3 relationships (1 successful, 2 failed)." in summary, summary
 
@@ -69,7 +69,7 @@ def test_rows_of_a_group_that_raised_count_as_failed(
 def test_every_row_carries_its_own_ordinal() -> None:
     # Two identical rows are two writes; the count must not fold them into
     # one, and a row matching several edges must not count more than once.
-    ingestor = MemgraphIngestor(host="127.0.0.1", port=7999)
+    ingestor = GraphIngestor(host="127.0.0.1", port=7999)
     cursor = MagicMock()
     cursor.description = [MagicMock(name="created")]
     cursor.description[0].name = cs.KEY_CREATED

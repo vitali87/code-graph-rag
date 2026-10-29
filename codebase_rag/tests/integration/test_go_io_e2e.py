@@ -11,7 +11,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
@@ -19,7 +19,7 @@ _READS = cs.RelationshipType.READS_FROM.value
 _WRITES = cs.RelationshipType.WRITES_TO.value
 
 
-def _build(ingestor: MemgraphIngestor, tmp_path: Path, code: str) -> None:
+def _build(ingestor: GraphIngestor, tmp_path: Path, code: str) -> None:
     project = tmp_path / "go_project"
     project.mkdir()
     (project / "main.go").write_text(code, encoding="utf-8")
@@ -33,7 +33,7 @@ def _build(ingestor: MemgraphIngestor, tmp_path: Path, code: str) -> None:
     ).run()
 
 
-def _io_edges(ingestor: MemgraphIngestor) -> set[tuple[str, str]]:
+def _io_edges(ingestor: GraphIngestor) -> set[tuple[str, str]]:
     rows = ingestor.fetch_all(
         f"MATCH ()-[r:{_READS}|{_WRITES}]->(res:{cs.NodeLabel.RESOURCE.value}) "
         "RETURN type(r) AS rel, res.qualified_name AS qn"
@@ -60,9 +60,7 @@ func leak() {
 """
 
 
-def test_go_direct_io_sinks(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
-) -> None:
+def test_go_direct_io_sinks(memgraph_ingestor: GraphIngestor, tmp_path: Path) -> None:
     _build(memgraph_ingestor, tmp_path, _GO_CODE)
     edges = _io_edges(memgraph_ingestor)
     assert (_READS, "resource::ENV::SECRET") in edges
@@ -73,7 +71,7 @@ def test_go_direct_io_sinks(
 
 
 def test_go_aliased_import_emits(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # `import h "net/http"` aliases the package; h.Get must still match http.Get
     # via the resolved package name (last path segment of net/http).
@@ -89,7 +87,7 @@ def test_go_aliased_import_emits(
 
 
 def test_third_party_go_package_named_http_no_edge(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # A third-party package whose path ends in `http` is NOT net/http; keying on
     # the full import path keeps it from matching the stdlib http.Get sink.
@@ -105,7 +103,7 @@ def test_third_party_go_package_named_http_no_edge(
 
 
 def test_go_local_shadows_package(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # Go allows a local to shadow an imported package name; `os` bound locally
     # is not the stdlib package, so os.Getenv here must not emit an ENV read.
@@ -119,7 +117,7 @@ def test_go_local_shadows_package(
 
 
 def test_go_short_var_shadows_package(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # A `:=` local named `os` shadows the package within the function.
     _build(
@@ -132,7 +130,7 @@ def test_go_short_var_shadows_package(
 
 
 def test_go_var_and_range_shadow_package(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # `var os = ...` and a `range` binding also shadow the package name.
     _build(
@@ -153,7 +151,7 @@ def test_go_var_and_range_shadow_package(
 
 
 def test_go_self_referential_init_emits(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # Go scope starts AFTER the declaration (unlike Java), so in `os := os.Getenv(..)`
     # the RHS os is still the imported package: the ENV read must emit; the new
@@ -168,7 +166,7 @@ def test_go_self_referential_init_emits(
 
 
 def test_go_handle_methods_attribute_to_constructor_resource(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # issue #714 handle walk: os.OpenFile binds a FILE handle (no direct sink,
     # direction depends on flags) and sql.Open a DATABASE one; the method calls
@@ -191,7 +189,7 @@ def test_go_handle_methods_attribute_to_constructor_resource(
 
 
 def test_go_unimported_package_name_no_edge(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # A package-scope `var os` (NOT an import of stdlib os) must not match the
     # os.Getenv sink; Go stdlib packages are always imported.

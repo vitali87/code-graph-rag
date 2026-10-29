@@ -15,7 +15,7 @@ import pytest
 
 from codebase_rag.constants import NODE_UNIQUE_CONSTRAINTS
 from codebase_rag.graph_dialects import DIALECT_NEO4J
-from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = pytest.mark.integration
 
@@ -23,7 +23,7 @@ BACKENDS = ("memgraph_ingestor", "neo4j_ingestor")
 
 
 @pytest.fixture
-def ingestor(request: pytest.FixtureRequest) -> MemgraphIngestor:
+def ingestor(request: pytest.FixtureRequest) -> GraphIngestor:
     """Resolve whichever engine's ingestor this parametrisation names."""
     return request.getfixturevalue(request.param)
 
@@ -31,7 +31,7 @@ def ingestor(request: pytest.FixtureRequest) -> MemgraphIngestor:
 @pytest.mark.parametrize("ingestor", BACKENDS, indirect=True)
 class TestSchemaSetup:
     def test_the_constraints_actually_exist_afterwards(
-        self, ingestor: MemgraphIngestor
+        self, ingestor: GraphIngestor
     ) -> None:
         """The DDL must be ACCEPTED, not merely issued.
 
@@ -59,9 +59,7 @@ class TestSchemaSetup:
         ]
         assert len(matched) == len(NODE_UNIQUE_CONSTRAINTS)
 
-    def test_a_duplicate_unique_key_is_rejected(
-        self, ingestor: MemgraphIngestor
-    ) -> None:
+    def test_a_duplicate_unique_key_is_rejected(self, ingestor: GraphIngestor) -> None:
         # The parallel MERGE flush relies on the constraint for
         # correctness, so prove the server enforces it rather than
         # trusting that the DDL was accepted.
@@ -70,12 +68,12 @@ class TestSchemaSetup:
         with pytest.raises(Exception, match="(?i)constraint|already exists"):
             ingestor.execute_write("CREATE (n:Project {name: 'dup', path: '/b'})")
 
-    def test_running_it_twice_is_idempotent(self, ingestor: MemgraphIngestor) -> None:
+    def test_running_it_twice_is_idempotent(self, ingestor: GraphIngestor) -> None:
         ingestor.ensure_constraints()
         ingestor.ensure_constraints()
 
     def test_a_legacy_constraint_under_another_name_is_dropped(
-        self, ingestor: MemgraphIngestor
+        self, ingestor: GraphIngestor
     ) -> None:
         """The migration must drop the constraint that actually exists.
 
@@ -108,7 +106,7 @@ class TestSchemaSetup:
 @pytest.mark.parametrize("ingestor", BACKENDS, indirect=True)
 class TestNodesAndRelationships:
     def test_a_node_round_trips_with_its_properties(
-        self, ingestor: MemgraphIngestor
+        self, ingestor: GraphIngestor
     ) -> None:
         ingestor.ensure_constraints()
         ingestor.ensure_node_batch(
@@ -122,7 +120,7 @@ class TestNodesAndRelationships:
         assert rows == [{"name": "b", "path": "a/b.py"}]
 
     def test_merge_does_not_duplicate_on_re_ingest(
-        self, ingestor: MemgraphIngestor
+        self, ingestor: GraphIngestor
     ) -> None:
         ingestor.ensure_constraints()
         for _ in range(3):
@@ -131,7 +129,7 @@ class TestNodesAndRelationships:
         rows = ingestor.fetch_all("MATCH (m:Module) RETURN count(m) AS c")
         assert rows[0]["c"] == 1
 
-    def test_a_relationship_links_two_nodes(self, ingestor: MemgraphIngestor) -> None:
+    def test_a_relationship_links_two_nodes(self, ingestor: GraphIngestor) -> None:
         ingestor.ensure_constraints()
         ingestor.ensure_node_batch("Module", {"qualified_name": "a", "name": "a"})
         ingestor.ensure_node_batch("Module", {"qualified_name": "b", "name": "b"})
@@ -148,7 +146,7 @@ class TestNodesAndRelationships:
         )
         assert rows[0]["c"] == 1
 
-    def test_relationship_properties_survive(self, ingestor: MemgraphIngestor) -> None:
+    def test_relationship_properties_survive(self, ingestor: GraphIngestor) -> None:
         ingestor.ensure_constraints()
         ingestor.ensure_node_batch("Module", {"qualified_name": "a", "name": "a"})
         ingestor.ensure_node_batch("Module", {"qualified_name": "b", "name": "b"})
@@ -164,7 +162,7 @@ class TestNodesAndRelationships:
         assert rows == [{"line": 12}]
 
     def test_a_batch_larger_than_batch_size_is_written_whole(
-        self, ingestor: MemgraphIngestor
+        self, ingestor: GraphIngestor
     ) -> None:
         # Exercises the UNWIND $batch path and the mid-run auto-flush.
         ingestor.ensure_constraints()
@@ -179,7 +177,7 @@ class TestNodesAndRelationships:
 
 @pytest.mark.parametrize("ingestor", BACKENDS, indirect=True)
 class TestReadPath:
-    def test_fetch_all_returns_named_columns(self, ingestor: MemgraphIngestor) -> None:
+    def test_fetch_all_returns_named_columns(self, ingestor: GraphIngestor) -> None:
         # Column names come from `cursor.description`, which the Neo4j
         # adapter has to synthesise; a regression there yields positional
         # tuples or empty dicts rather than an error.
@@ -187,15 +185,15 @@ class TestReadPath:
         assert rows == [{"one": 1, "two": 2}]
 
     def test_a_query_with_no_rows_returns_an_empty_list(
-        self, ingestor: MemgraphIngestor
+        self, ingestor: GraphIngestor
     ) -> None:
         assert ingestor.fetch_all("MATCH (n:NothingHere) RETURN n") == []
 
-    def test_parameters_are_bound(self, ingestor: MemgraphIngestor) -> None:
+    def test_parameters_are_bound(self, ingestor: GraphIngestor) -> None:
         rows = ingestor.fetch_all("RETURN $value AS v", {"value": 7})
         assert rows == [{"v": 7}]
 
-    def test_execute_write_persists(self, ingestor: MemgraphIngestor) -> None:
+    def test_execute_write_persists(self, ingestor: GraphIngestor) -> None:
         ingestor.execute_write("CREATE (n:Marker {id: $id})", {"id": "x"})
         rows = ingestor.fetch_all("MATCH (n:Marker) RETURN n.id AS id")
         assert rows == [{"id": "x"}]
@@ -203,7 +201,7 @@ class TestReadPath:
 
 @pytest.mark.parametrize("ingestor", BACKENDS, indirect=True)
 class TestProjectLifecycle:
-    def test_a_project_is_listed_then_deleted(self, ingestor: MemgraphIngestor) -> None:
+    def test_a_project_is_listed_then_deleted(self, ingestor: GraphIngestor) -> None:
         ingestor.ensure_constraints()
         ingestor.ensure_node_batch("Project", {"name": "proj", "path": "/p"})
         ingestor.flush_all()
@@ -211,14 +209,14 @@ class TestProjectLifecycle:
         ingestor.delete_project("proj")
         assert "proj" not in ingestor.list_projects()
 
-    def test_clean_database_empties_the_graph(self, ingestor: MemgraphIngestor) -> None:
+    def test_clean_database_empties_the_graph(self, ingestor: GraphIngestor) -> None:
         ingestor.ensure_constraints()
         ingestor.ensure_node_batch("Module", {"qualified_name": "a", "name": "a"})
         ingestor.flush_all()
         ingestor.clean_database()
         assert ingestor.fetch_all("MATCH (n) RETURN count(n) AS c")[0]["c"] == 0
 
-    def test_export_reports_what_was_written(self, ingestor: MemgraphIngestor) -> None:
+    def test_export_reports_what_was_written(self, ingestor: GraphIngestor) -> None:
         ingestor.ensure_constraints()
         ingestor.ensure_node_batch("Module", {"qualified_name": "a", "name": "a"})
         ingestor.ensure_node_batch("Module", {"qualified_name": "b", "name": "b"})

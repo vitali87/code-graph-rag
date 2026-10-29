@@ -165,7 +165,7 @@ def test_the_server_scopes_cypher_generation_to_the_workspace(
     with (
         patch.object(mcp_server, "setup_logging"),
         patch.object(mcp_server, "load_workspace", return_value=ws),
-        patch.object(mcp_server, "MemgraphIngestor"),
+        patch.object(mcp_server, "GraphIngestor"),
         patch.object(mcp_server, "LazyCypherGenerator") as cypher,
         patch.object(mcp_server, "MCPToolsRegistry") as registry,
         patch.object(

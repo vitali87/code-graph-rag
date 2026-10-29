@@ -273,7 +273,7 @@ def _render_table(monkeypatch: pytest.MonkeyPatch, groups: list[DuplicateGroup])
 class TestReport:
     def test_json_report_names_each_function_once(self) -> None:
         with patch(
-            "codebase_rag.cli.connect_memgraph",
+            "codebase_rag.cli.connect_graph",
             return_value=_cli_ingestor(_gson_shape()),
         ):
             result = CliRunner().invoke(cli.app, ["duplicates", "--format", "json"])
@@ -391,7 +391,7 @@ class TestQualifyingPairs:
     def test_open_diffs_the_strongest_link(self) -> None:
         ingestor = _cli_ingestor(_chain_rows(), root="/repo")
         with (
-            patch("codebase_rag.cli.connect_memgraph", return_value=ingestor),
+            patch("codebase_rag.cli.connect_graph", return_value=ingestor),
             patch("codebase_rag.cli.subprocess.Popen") as popen,
         ):
             result = CliRunner().invoke(
@@ -497,7 +497,7 @@ def _clone_classes(copies: int) -> list[ResultRow]:
 def _json_groups(
     rows: list[ResultRow], *args: str
 ) -> tuple[list[DuplicateGroup], bool]:
-    with patch("codebase_rag.cli.connect_memgraph", return_value=_cli_ingestor(rows)):
+    with patch("codebase_rag.cli.connect_graph", return_value=_cli_ingestor(rows)):
         result = CliRunner().invoke(cli.app, ["duplicates", "--format", "json", *args])
     assert result.exit_code == 0
     payload = json.loads(result.output)

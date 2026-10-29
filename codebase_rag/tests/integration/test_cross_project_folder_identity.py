@@ -18,7 +18,7 @@ from codebase_rag.parser_loader import load_parsers
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
@@ -37,7 +37,7 @@ def fetch_products():
 """
 
 
-def _index(ingestor: MemgraphIngestor, project_path: Path) -> None:
+def _index(ingestor: GraphIngestor, project_path: Path) -> None:
     parsers, queries = load_parsers()
     GraphUpdater(
         ingestor=ingestor,
@@ -59,7 +59,7 @@ def _build_pair(tmp_path: Path) -> tuple[Path, Path]:
 
 class TestCrossProjectFolderIdentity:
     def test_same_layout_projects_get_distinct_folder_and_file_nodes(
-        self, memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+        self, memgraph_ingestor: GraphIngestor, tmp_path: Path
     ) -> None:
         service, client = _build_pair(tmp_path)
         _index(memgraph_ingestor, service)
@@ -76,7 +76,7 @@ class TestCrossProjectFolderIdentity:
         assert files[0]["c"] == 2
 
     def test_delete_project_spares_same_layout_sibling(
-        self, memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+        self, memgraph_ingestor: GraphIngestor, tmp_path: Path
     ) -> None:
         service, client = _build_pair(tmp_path)
         _index(memgraph_ingestor, service)
@@ -120,7 +120,7 @@ class TestLegacyPathKeyMigration:
     are purged and rebuilt by the next re-index."""
 
     def test_ensure_constraints_purges_legacy_merged_nodes(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, memgraph_ingestor: GraphIngestor
     ) -> None:
         ing = memgraph_ingestor
         # Recreate the pre-fix schema: relative-path uniqueness plus one
@@ -168,7 +168,7 @@ class TestLegacyPathKeyMigration:
         assert survivor[0]["c"] == 1
 
     def test_purge_runs_when_constraints_already_dropped(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, memgraph_ingestor: GraphIngestor
     ) -> None:
         # An earlier partial upgrade already dropped the legacy constraints
         # but left the merged nodes behind: repair must still trigger.
@@ -206,7 +206,7 @@ class TestLegacyPathKeyMigration:
         assert keyless_left[0]["c"] == 0
 
     def test_clean_database_keeps_structure_untouched(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, memgraph_ingestor: GraphIngestor
     ) -> None:
         ing = memgraph_ingestor
         ing._execute_query(

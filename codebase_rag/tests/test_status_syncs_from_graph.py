@@ -63,7 +63,7 @@ _PROJECT_TREE = frozenset(
 
 
 class _Memgraph(StatefulIngestor):
-    """One Memgraph instance, as `connect_memgraph` hands it to the CLI."""
+    """One Memgraph instance, as `connect_graph` hands it to the CLI."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -228,7 +228,7 @@ def graphs(
     )
     with (
         patch(
-            "codebase_rag.cli.connect_memgraph",
+            "codebase_rag.cli.connect_graph",
             side_effect=lambda _batch: instances[settings.MEMGRAPH_PORT],
         ),
         patch("codebase_rag.cli.StackManager") as manager,

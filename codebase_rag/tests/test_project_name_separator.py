@@ -53,7 +53,7 @@ def _temp_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 @pytest.fixture
 def sync() -> Generator[MagicMock, None, None]:
     with (
-        patch("codebase_rag.cli.connect_memgraph") as connect,
+        patch("codebase_rag.cli.connect_graph") as connect,
         patch("codebase_rag.cli._update_and_validate_models"),
         patch("codebase_rag.cli.main_single_query"),
         patch("codebase_rag.cli._run_graph_sync") as run_graph_sync,

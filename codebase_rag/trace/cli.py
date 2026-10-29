@@ -41,7 +41,7 @@ def cli() -> None:
     "--project-name", "--project", "-p", default=None, help=ch.HELP_TRACE_PROJECT_NAME
 )
 def ingest_cmd(trace_file: Path, repo_path: Path, project_name: str | None) -> None:
-    from ..cli_runtime import connect_memgraph
+    from ..cli_runtime import connect_graph
     from ..config import settings
     from ..utils.path_utils import derive_project_name
     from .ingest import ingest_trace
@@ -49,7 +49,7 @@ def ingest_cmd(trace_file: Path, repo_path: Path, project_name: str | None) -> N
 
     resolved_project = project_name or derive_project_name(repo_path)
     try:
-        with connect_memgraph(batch_size=settings.resolve_batch_size(None)) as ingestor:
+        with connect_graph(batch_size=settings.resolve_batch_size(None)) as ingestor:
             summary = ingest_trace(
                 trace_path=trace_file,
                 ingestor=ingestor,

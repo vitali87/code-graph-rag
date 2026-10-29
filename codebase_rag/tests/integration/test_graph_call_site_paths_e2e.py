@@ -10,7 +10,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
@@ -47,7 +47,7 @@ def report():
 """
 
 
-def _index(ingestor: MemgraphIngestor, repo: Path) -> None:
+def _index(ingestor: GraphIngestor, repo: Path) -> None:
     parsers, queries = load_parsers()
     GraphUpdater(
         ingestor=ingestor,
@@ -59,7 +59,7 @@ def _index(ingestor: MemgraphIngestor, repo: Path) -> None:
 
 
 @pytest.fixture
-def repo(memgraph_ingestor: MemgraphIngestor, tmp_path: Path) -> Path:
+def repo(memgraph_ingestor: GraphIngestor, tmp_path: Path) -> Path:
     root = tmp_path / PROJECT
     (root / "app").mkdir(parents=True)
     (root / "app" / "__init__.py").write_text("", encoding="utf-8")
@@ -77,7 +77,7 @@ def _line(repo: Path, path: str | None, line: int | None) -> str:
 
 
 def test_callees_path_and_line_land_on_the_call(
-    memgraph_ingestor: MemgraphIngestor, repo: Path
+    memgraph_ingestor: GraphIngestor, repo: Path
 ) -> None:
     rows = graph_query.callees(
         memgraph_ingestor.fetch_all, PROJECT, f"{PROJECT}.app.report.report"
@@ -93,7 +93,7 @@ def test_callees_path_and_line_land_on_the_call(
 
 
 def test_transitive_callee_site_is_in_the_through_nodes_file(
-    memgraph_ingestor: MemgraphIngestor, repo: Path
+    memgraph_ingestor: GraphIngestor, repo: Path
 ) -> None:
     rows = graph_query.callees(
         memgraph_ingestor.fetch_all, PROJECT, f"{PROJECT}.app.report.report", 2
@@ -108,7 +108,7 @@ def test_transitive_callee_site_is_in_the_through_nodes_file(
 
 
 def test_callers_path_stays_the_callers_file(
-    memgraph_ingestor: MemgraphIngestor, repo: Path
+    memgraph_ingestor: GraphIngestor, repo: Path
 ) -> None:
     rows = graph_query.callers(
         memgraph_ingestor.fetch_all, PROJECT, f"{PROJECT}.app.shapes.total"

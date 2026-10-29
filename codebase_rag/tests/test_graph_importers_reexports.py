@@ -584,9 +584,7 @@ def _mock_connect() -> MagicMock:
 def _cli(tmp_path: Path, *extra: str) -> str:
     args = ["importers", f"{P}.shop._client", "--project", P]
     args += ["--repo-path", str(tmp_path), *extra]
-    with patch(
-        "codebase_rag.cli_runtime.connect_memgraph", return_value=_mock_connect()
-    ):
+    with patch("codebase_rag.cli_runtime.connect_graph", return_value=_mock_connect()):
         result = CliRunner().invoke(graph_cli, args)
     assert result.exit_code == 0, result.output
     return result.output

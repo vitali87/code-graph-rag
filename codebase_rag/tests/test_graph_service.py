@@ -16,47 +16,47 @@ from codebase_rag.cypher_queries import (
     build_merge_relationship_query,
     wrap_with_unwind,
 )
-from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.services.graph_service import GraphIngestor
 
 
-class TestMemgraphIngestorInit:
+class TestGraphIngestorInit:
     def test_init_sets_host_and_port(self) -> None:
-        ingestor = MemgraphIngestor(host="testhost", port=1234)
+        ingestor = GraphIngestor(host="testhost", port=1234)
 
         assert ingestor._host == "testhost"
         assert ingestor._port == 1234
 
     def test_init_sets_default_batch_size(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor = GraphIngestor(host="localhost", port=7687)
 
         assert ingestor.batch_size == 1000
 
     def test_init_sets_custom_batch_size(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687, batch_size=500)
+        ingestor = GraphIngestor(host="localhost", port=7687, batch_size=500)
 
         assert ingestor.batch_size == 500
 
     def test_init_raises_for_zero_batch_size(self) -> None:
         with pytest.raises(ValueError, match="batch_size must be a positive integer"):
-            MemgraphIngestor(host="localhost", port=7687, batch_size=0)
+            GraphIngestor(host="localhost", port=7687, batch_size=0)
 
     def test_init_raises_for_negative_batch_size(self) -> None:
         with pytest.raises(ValueError, match="batch_size must be a positive integer"):
-            MemgraphIngestor(host="localhost", port=7687, batch_size=-1)
+            GraphIngestor(host="localhost", port=7687, batch_size=-1)
 
     def test_init_creates_empty_buffers(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor = GraphIngestor(host="localhost", port=7687)
 
         assert ingestor.node_buffer == []
         assert ingestor._rel_count == 0
 
     def test_init_conn_is_none(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor = GraphIngestor(host="localhost", port=7687)
 
         assert ingestor.conn is None
 
     def test_init_stores_auth_credentials(self) -> None:
-        ingestor = MemgraphIngestor(
+        ingestor = GraphIngestor(
             host="localhost", port=7687, username="user", password="pass"
         )
 
@@ -64,29 +64,27 @@ class TestMemgraphIngestorInit:
         assert ingestor._password == "pass"
 
     def test_init_defaults_auth_to_none(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor = GraphIngestor(host="localhost", port=7687)
 
         assert ingestor._username is None
         assert ingestor._password is None
 
     def test_init_raises_for_username_without_password(self) -> None:
         with pytest.raises(ValueError, match="Both username and password"):
-            MemgraphIngestor(host="localhost", port=7687, username="user")
+            GraphIngestor(host="localhost", port=7687, username="user")
 
     def test_init_raises_for_password_without_username(self) -> None:
         with pytest.raises(ValueError, match="Both username and password"):
-            MemgraphIngestor(host="localhost", port=7687, password="pass")
+            GraphIngestor(host="localhost", port=7687, password="pass")
 
     def test_init_normalizes_empty_strings_to_none(self) -> None:
-        ingestor = MemgraphIngestor(
-            host="localhost", port=7687, username="", password=""
-        )
+        ingestor = GraphIngestor(host="localhost", port=7687, username="", password="")
 
         assert ingestor._username is None
         assert ingestor._password is None
 
     def test_init_normalizes_whitespace_only_to_none(self) -> None:
-        ingestor = MemgraphIngestor(
+        ingestor = GraphIngestor(
             host="localhost", port=7687, username="  ", password="  "
         )
 
@@ -94,7 +92,7 @@ class TestMemgraphIngestorInit:
         assert ingestor._password is None
 
     def test_init_strips_whitespace_from_credentials(self) -> None:
-        ingestor = MemgraphIngestor(
+        ingestor = GraphIngestor(
             host="localhost", port=7687, username=" user ", password=" pass "
         )
 
@@ -103,7 +101,7 @@ class TestMemgraphIngestorInit:
 
     def test_init_raises_for_empty_password_with_valid_username(self) -> None:
         with pytest.raises(ValueError, match="Both username and password"):
-            MemgraphIngestor(host="localhost", port=7687, username="user", password="")
+            GraphIngestor(host="localhost", port=7687, username="user", password="")
 
 
 class TestContextManager:
@@ -112,7 +110,7 @@ class TestContextManager:
             mock_conn = MagicMock()
             mock_mgclient.connect.return_value = mock_conn
 
-            ingestor = MemgraphIngestor(host="testhost", port=1234)
+            ingestor = GraphIngestor(host="testhost", port=1234)
             result = ingestor.__enter__()
 
             mock_mgclient.connect.assert_called_once_with(host="testhost", port=1234)
@@ -125,7 +123,7 @@ class TestContextManager:
             mock_conn = MagicMock()
             mock_mgclient.connect.return_value = mock_conn
 
-            ingestor = MemgraphIngestor(
+            ingestor = GraphIngestor(
                 host="testhost", port=1234, username="user", password="pass"
             )
             ingestor.__enter__()
@@ -139,17 +137,17 @@ class TestContextManager:
             mock_conn = MagicMock()
             mock_mgclient.connect.return_value = mock_conn
 
-            ingestor = MemgraphIngestor(host="testhost", port=1234)
+            ingestor = GraphIngestor(host="testhost", port=1234)
             ingestor.__enter__()
 
             mock_mgclient.connect.assert_called_once_with(host="testhost", port=1234)
 
     def test_exit_flushes_and_closes_connection(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor = GraphIngestor(host="localhost", port=7687)
         mock_conn = MagicMock()
         ingestor.conn = mock_conn
 
-        with patch.object(MemgraphIngestor, "flush_all") as mock_flush:
+        with patch.object(GraphIngestor, "flush_all") as mock_flush:
             ingestor.__exit__(None, None, None)
 
             mock_flush.assert_called_once()
@@ -157,7 +155,7 @@ class TestContextManager:
 
     @staticmethod
     def _exit_log(exc: BaseException) -> tuple[list[tuple[str, str]], MagicMock]:
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor = GraphIngestor(host="localhost", port=7687)
         ingestor.conn = MagicMock()
         records: list[tuple[str, str]] = []
         sink = logger.add(
@@ -166,7 +164,7 @@ class TestContextManager:
             )
         )
         try:
-            with patch.object(MemgraphIngestor, "flush_all") as flush:
+            with patch.object(GraphIngestor, "flush_all") as flush:
                 ingestor.__exit__(type(exc), exc, None)
         finally:
             logger.remove(sink)
@@ -193,26 +191,26 @@ class TestContextManager:
         flush.assert_called_once_with()
 
     def test_exit_logs_error_on_exception(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor = GraphIngestor(host="localhost", port=7687)
         mock_conn = MagicMock()
         ingestor.conn = mock_conn
 
-        with patch.object(MemgraphIngestor, "flush_all"):
+        with patch.object(GraphIngestor, "flush_all"):
             ingestor.__exit__(ValueError, ValueError("test error"), None)
 
             mock_conn.close.assert_called_once()
 
     def test_exit_handles_none_connection(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor = GraphIngestor(host="localhost", port=7687)
         ingestor.conn = None
 
-        with patch.object(MemgraphIngestor, "flush_all"):
+        with patch.object(GraphIngestor, "flush_all"):
             ingestor.__exit__(None, None, None)
 
 
 class TestCursorToResults:
     def test_returns_empty_list_when_no_description(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor = GraphIngestor(host="localhost", port=7687)
         mock_cursor = MagicMock()
         mock_cursor.description = None
 
@@ -221,7 +219,7 @@ class TestCursorToResults:
         assert result == []
 
     def test_converts_rows_to_dicts(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor = GraphIngestor(host="localhost", port=7687)
         mock_cursor = MagicMock()
 
         col1 = MagicMock()
@@ -236,7 +234,7 @@ class TestCursorToResults:
         assert result == [{"id": 1, "name": "test"}, {"id": 2, "name": "other"}]
 
     def test_handles_single_row(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor = GraphIngestor(host="localhost", port=7687)
         mock_cursor = MagicMock()
 
         col = MagicMock()
@@ -249,7 +247,7 @@ class TestCursorToResults:
         assert result == [{"count": 42}]
 
     def test_handles_empty_result_set(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor = GraphIngestor(host="localhost", port=7687)
         mock_cursor = MagicMock()
 
         col = MagicMock()
@@ -264,14 +262,14 @@ class TestCursorToResults:
 
 class TestExecuteQuery:
     def test_raises_when_not_connected(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor = GraphIngestor(host="localhost", port=7687)
         ingestor.conn = None
 
         with pytest.raises(ConnectionError, match="Not connected to Memgraph"):
             ingestor._execute_query("MATCH (n) RETURN n")
 
     def test_executes_query_and_returns_results(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor = GraphIngestor(host="localhost", port=7687)
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
         mock_conn.cursor.return_value = mock_cursor
@@ -289,7 +287,7 @@ class TestExecuteQuery:
         assert result == [{"n": "node1"}, {"n": "node2"}]
 
     def test_passes_params_to_query(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor = GraphIngestor(host="localhost", port=7687)
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
         mock_conn.cursor.return_value = mock_cursor
@@ -303,7 +301,7 @@ class TestExecuteQuery:
         )
 
     def test_closes_cursor_on_exception(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor = GraphIngestor(host="localhost", port=7687)
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
         mock_conn.cursor.return_value = mock_cursor
@@ -316,7 +314,7 @@ class TestExecuteQuery:
         mock_cursor.close.assert_called_once()
 
     def test_suppresses_already_exists_errors_in_logs(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor = GraphIngestor(host="localhost", port=7687)
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
         mock_conn.cursor.return_value = mock_cursor
@@ -329,7 +327,7 @@ class TestExecuteQuery:
 
 class TestExecuteBatchOn:
     def test_returns_early_when_params_empty(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor = GraphIngestor(host="localhost", port=7687)
         mock_conn = MagicMock()
         ingestor.conn = mock_conn
 
@@ -338,7 +336,7 @@ class TestExecuteBatchOn:
         mock_conn.cursor.assert_not_called()
 
     def test_wraps_query_with_unwind(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor = GraphIngestor(host="localhost", port=7687)
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
         mock_conn.cursor.return_value = mock_cursor
@@ -353,7 +351,7 @@ class TestExecuteBatchOn:
         assert call_args[1] == {"batch": [{"id": 1}, {"id": 2}]}
 
     def test_closes_cursor_on_success(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor = GraphIngestor(host="localhost", port=7687)
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
         mock_conn.cursor.return_value = mock_cursor
@@ -366,9 +364,9 @@ class TestExecuteBatchOn:
 
 class TestCleanDatabase:
     def test_executes_delete_query(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor = GraphIngestor(host="localhost", port=7687)
 
-        with patch.object(MemgraphIngestor, "_execute_query") as mock_execute:
+        with patch.object(GraphIngestor, "_execute_query") as mock_execute:
             ingestor.clean_database()
 
             mock_execute.assert_called_once_with("MATCH (n) DETACH DELETE n;")
@@ -376,16 +374,14 @@ class TestCleanDatabase:
 
 class TestEnsureConstraints:
     def test_creates_constraint_for_each_node_type(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor = GraphIngestor(host="localhost", port=7687)
         executed_queries: list[str] = []
 
         def capture_query(query: str) -> list[dict]:
             executed_queries.append(query)
             return []
 
-        with patch.object(
-            MemgraphIngestor, "_execute_query", side_effect=capture_query
-        ):
+        with patch.object(GraphIngestor, "_execute_query", side_effect=capture_query):
             ingestor.ensure_constraints()
 
         for label, prop in NODE_UNIQUE_CONSTRAINTS.items():
@@ -393,7 +389,7 @@ class TestEnsureConstraints:
             assert expected in executed_queries
 
     def test_continues_on_constraint_error(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor = GraphIngestor(host="localhost", port=7687)
         call_count = 0
 
         def fail_first_create(query: str) -> list[dict]:
@@ -404,7 +400,7 @@ class TestEnsureConstraints:
             return []
 
         with patch.object(
-            MemgraphIngestor, "_execute_query", side_effect=fail_first_create
+            GraphIngestor, "_execute_query", side_effect=fail_first_create
         ):
             ingestor.ensure_constraints()
 
@@ -416,7 +412,7 @@ class TestEnsureConstraints:
     def test_continues_on_name_index_error(self) -> None:
         # A failing name-index CREATE (e.g. the index already exists) must not
         # abort the loop: every remaining name index is still attempted.
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor = GraphIngestor(host="localhost", port=7687)
         executed_queries: list[str] = []
 
         def fail_first_name_index(query: str) -> list[dict]:
@@ -426,7 +422,7 @@ class TestEnsureConstraints:
             return []
 
         with patch.object(
-            MemgraphIngestor, "_execute_query", side_effect=fail_first_name_index
+            GraphIngestor, "_execute_query", side_effect=fail_first_name_index
         ):
             ingestor.ensure_constraints()
 
@@ -434,7 +430,7 @@ class TestEnsureConstraints:
             assert f"CREATE INDEX ON :{label}(name);" in executed_queries
 
     def test_continues_on_unique_key_index_error(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor = GraphIngestor(host="localhost", port=7687)
         executed_queries: list[str] = []
         first_label, first_prop = next(iter(NODE_UNIQUE_CONSTRAINTS.items()))
 
@@ -445,7 +441,7 @@ class TestEnsureConstraints:
             return []
 
         with patch.object(
-            MemgraphIngestor, "_execute_query", side_effect=fail_first_key_index
+            GraphIngestor, "_execute_query", side_effect=fail_first_key_index
         ):
             ingestor.ensure_constraints()
 
@@ -472,7 +468,7 @@ class TestLegacyPathKeyMigration:
     ]
 
     def _run_capture(self, show_rows: list[dict], damaged: bool = False) -> list[str]:
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor = GraphIngestor(host="localhost", port=7687)
         executed: list[str] = []
 
         def capture(query: str, params: dict | None = None) -> list[dict]:
@@ -485,7 +481,7 @@ class TestLegacyPathKeyMigration:
                 return [{"purged": 2}]
             return []
 
-        with patch.object(MemgraphIngestor, "_execute_query", side_effect=capture):
+        with patch.object(GraphIngestor, "_execute_query", side_effect=capture):
             ingestor.ensure_constraints()
         return executed
 
@@ -531,7 +527,7 @@ class TestLegacyPathKeyMigration:
         assert not any("DETACH DELETE" in q for q in executed)
 
     def test_show_constraint_failure_propagates(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor = GraphIngestor(host="localhost", port=7687)
 
         def refuse(query: str, params: dict | None = None) -> list[dict]:
             if query.startswith("SHOW CONSTRAINT"):
@@ -539,7 +535,7 @@ class TestLegacyPathKeyMigration:
             return []
 
         with (
-            patch.object(MemgraphIngestor, "_execute_query", side_effect=refuse),
+            patch.object(GraphIngestor, "_execute_query", side_effect=refuse),
             pytest.raises(ConnectionError),
         ):
             ingestor.ensure_constraints()
@@ -547,7 +543,7 @@ class TestLegacyPathKeyMigration:
 
 class TestFlushNodesEdgeCases:
     def test_skips_nodes_with_unknown_label(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687, batch_size=10)
+        ingestor = GraphIngestor(host="localhost", port=7687, batch_size=10)
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
         mock_conn.cursor.return_value = mock_cursor
@@ -561,7 +557,7 @@ class TestFlushNodesEdgeCases:
         assert ingestor.node_buffer == []
 
     def test_skips_nodes_missing_id_property(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687, batch_size=10)
+        ingestor = GraphIngestor(host="localhost", port=7687, batch_size=10)
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
         mock_conn.cursor.return_value = mock_cursor
@@ -575,7 +571,7 @@ class TestFlushNodesEdgeCases:
         assert ingestor.node_buffer == []
 
     def test_processes_valid_nodes_and_skips_invalid(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687, batch_size=10)
+        ingestor = GraphIngestor(host="localhost", port=7687, batch_size=10)
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
         mock_conn.cursor.return_value = mock_cursor
@@ -595,7 +591,7 @@ class TestFlushNodesEdgeCases:
         assert batch[0]["id"] == "/valid.txt"
 
     def test_handles_empty_buffer(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor = GraphIngestor(host="localhost", port=7687)
         mock_conn = MagicMock()
         ingestor.conn = mock_conn
 
@@ -606,7 +602,7 @@ class TestFlushNodesEdgeCases:
 
 class TestExportGraphToDict:
     def test_returns_graph_data_structure(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor = GraphIngestor(host="localhost", port=7687)
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
         mock_conn.cursor.return_value = mock_cursor
@@ -632,7 +628,7 @@ class TestExportGraphToDict:
         assert "exported_at" in result["metadata"]
 
     def test_counts_nodes_and_relationships(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor = GraphIngestor(host="localhost", port=7687)
         call_count = 0
 
         def mock_fetch_all(query: str, params: dict | None = None) -> list[dict]:
@@ -642,7 +638,7 @@ class TestExportGraphToDict:
                 return [{"node_id": 1}, {"node_id": 2}, {"node_id": 3}]
             return [{"from_id": 1, "to_id": 2}]
 
-        with patch.object(MemgraphIngestor, "fetch_all", side_effect=mock_fetch_all):
+        with patch.object(GraphIngestor, "fetch_all", side_effect=mock_fetch_all):
             result = ingestor.export_graph_to_dict()
 
         assert result["metadata"]["total_nodes"] == 3
@@ -651,11 +647,11 @@ class TestExportGraphToDict:
 
 class TestFlushAll:
     def test_calls_flush_nodes_and_flush_relationships(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor = GraphIngestor(host="localhost", port=7687)
 
         with (
-            patch.object(MemgraphIngestor, "flush_nodes") as mock_nodes,
-            patch.object(MemgraphIngestor, "flush_relationships") as mock_rels,
+            patch.object(GraphIngestor, "flush_nodes") as mock_nodes,
+            patch.object(GraphIngestor, "flush_relationships") as mock_rels,
         ):
             ingestor.flush_all()
 
@@ -667,10 +663,10 @@ class TestFetchAllAndExecuteWrite:
     def test_fetch_all_delegates_to_execute_query(self) -> None:
         from codebase_rag.config import settings
 
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor = GraphIngestor(host="localhost", port=7687)
 
         with patch.object(
-            MemgraphIngestor, "_execute_query", return_value=[{"n": "result"}]
+            GraphIngestor, "_execute_query", return_value=[{"n": "result"}]
         ) as mock_exec:
             result = ingestor.fetch_all("MATCH (n) RETURN n", {"limit": 10})
 
@@ -682,19 +678,19 @@ class TestFetchAllAndExecuteWrite:
             assert result == [{"n": "result"}]
 
     def test_fetch_all_preserves_existing_memory_limit(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor = GraphIngestor(host="localhost", port=7687)
         query_with_hint = "MATCH (n) RETURN n QUERY MEMORY LIMIT 512 MB;"
 
         with patch.object(
-            MemgraphIngestor, "_execute_query", return_value=[]
+            GraphIngestor, "_execute_query", return_value=[]
         ) as mock_exec:
             ingestor.fetch_all(query_with_hint)
             mock_exec.assert_called_once_with(query_with_hint, None)
 
     def test_execute_write_delegates_to_execute_query(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor = GraphIngestor(host="localhost", port=7687)
 
-        with patch.object(MemgraphIngestor, "_execute_query") as mock_exec:
+        with patch.object(GraphIngestor, "_execute_query") as mock_exec:
             ingestor.execute_write("CREATE (n:Test)", {"name": "test"})
 
             mock_exec.assert_called_once_with("CREATE (n:Test)", {"name": "test"})
@@ -702,7 +698,7 @@ class TestFetchAllAndExecuteWrite:
 
 class TestGetCurrentTimestamp:
     def test_returns_iso_format_timestamp(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor = GraphIngestor(host="localhost", port=7687)
 
         result = ingestor._get_current_timestamp()
 
@@ -712,15 +708,15 @@ class TestGetCurrentTimestamp:
 
 class TestCreateMode:
     def test_default_use_merge_is_true(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor = GraphIngestor(host="localhost", port=7687)
         assert ingestor._use_merge is True
 
     def test_use_merge_false(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687, use_merge=False)
+        ingestor = GraphIngestor(host="localhost", port=7687, use_merge=False)
         assert ingestor._use_merge is False
 
     def test_flush_nodes_uses_merge_query_by_default(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687, batch_size=10)
+        ingestor = GraphIngestor(host="localhost", port=7687, batch_size=10)
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
         mock_conn.cursor.return_value = mock_cursor
@@ -736,7 +732,7 @@ class TestCreateMode:
         assert "CREATE" not in call_args.split("MERGE")[0]
 
     def test_flush_nodes_uses_create_query_when_merge_disabled(self) -> None:
-        ingestor = MemgraphIngestor(
+        ingestor = GraphIngestor(
             host="localhost", port=7687, batch_size=10, use_merge=False
         )
         mock_conn = MagicMock()
@@ -754,7 +750,7 @@ class TestCreateMode:
         assert "MERGE" not in call_args
 
     def test_flush_relationships_uses_merge_query_by_default(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687, batch_size=10)
+        ingestor = GraphIngestor(host="localhost", port=7687, batch_size=10)
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
         mock_conn.cursor.return_value = mock_cursor
@@ -772,7 +768,7 @@ class TestCreateMode:
         assert "MERGE" in call_args
 
     def test_flush_relationships_uses_create_query_when_merge_disabled(self) -> None:
-        ingestor = MemgraphIngestor(
+        ingestor = GraphIngestor(
             host="localhost", port=7687, batch_size=10, use_merge=False
         )
         mock_conn = MagicMock()
@@ -795,14 +791,14 @@ class TestCreateMode:
 
 class TestPreGroupedRelBuffer:
     def test_rel_groups_populated_on_ensure(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor = GraphIngestor(host="localhost", port=7687)
         ingestor.ensure_relationship_batch(
             ("File", "path", "/a.py"), "IMPORTS", ("File", "path", "/b.py")
         )
         assert len(ingestor._rel_groups) == 1
 
     def test_rel_groups_groups_by_pattern(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor = GraphIngestor(host="localhost", port=7687)
         ingestor.ensure_relationship_batch(
             ("File", "path", "/a.py"), "IMPORTS", ("File", "path", "/b.py")
         )
@@ -819,7 +815,7 @@ class TestPreGroupedRelBuffer:
         assert len(ingestor._rel_groups[pattern]) == 2
 
     def test_rel_groups_cleared_after_flush(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor = GraphIngestor(host="localhost", port=7687)
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
         mock_conn.cursor.return_value = mock_cursor
@@ -836,11 +832,11 @@ class TestPreGroupedRelBuffer:
         assert len(ingestor._rel_groups) == 0
 
     def test_rel_groups_empty_on_init(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor = GraphIngestor(host="localhost", port=7687)
         assert len(ingestor._rel_groups) == 0
 
     def test_rel_groups_correct_batch_row_values(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor = GraphIngestor(host="localhost", port=7687)
         ingestor.ensure_relationship_batch(
             ("File", "path", "/a.py"),
             "IMPORTS",
@@ -857,10 +853,10 @@ class TestPreGroupedRelBuffer:
 
 class TestSlots:
     def test_has_slots(self) -> None:
-        assert hasattr(MemgraphIngestor, "__slots__")
+        assert hasattr(GraphIngestor, "__slots__")
 
     def test_no_dict(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor = GraphIngestor(host="localhost", port=7687)
         assert not hasattr(ingestor, "__dict__")
 
 
@@ -917,7 +913,7 @@ class TestSchemaDdlFailures:
     def test_a_refused_constraint_is_reported_not_called_done(self) -> None:
         # The refusal names a constraint, which _execute_query used to keep
         # out of its log, and the run then said "Constraints checked/created."
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor = GraphIngestor(host="localhost", port=7687)
         ingestor.conn = MagicMock()
         cursor = ingestor.conn.cursor.return_value
         refusal = "Unable to create unique constraint: existing nodes violate it"
@@ -939,16 +935,14 @@ class TestSchemaDdlFailures:
         ) in records
 
     def test_an_existing_constraint_is_neither_logged_nor_counted(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor = GraphIngestor(host="localhost", port=7687)
 
         def already_there(query: str) -> list[dict]:
             if query.startswith("CREATE"):
                 raise RuntimeError("Constraint already exists")
             return []
 
-        with patch.object(
-            MemgraphIngestor, "_execute_query", side_effect=already_there
-        ):
+        with patch.object(GraphIngestor, "_execute_query", side_effect=already_there):
             records = _log_records(ingestor.ensure_constraints)
 
         messages = [message for _, message in records]
@@ -957,7 +951,7 @@ class TestSchemaDdlFailures:
         assert not [level for level, _ in records if level in ("WARNING", "ERROR")]
 
     def test_a_constraint_violation_on_a_write_is_logged(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor = GraphIngestor(host="localhost", port=7687)
         ingestor.conn = MagicMock()
         violation = "Unable to commit due to unique constraint violation"
         ingestor.conn.cursor.return_value.execute.side_effect = RuntimeError(violation)

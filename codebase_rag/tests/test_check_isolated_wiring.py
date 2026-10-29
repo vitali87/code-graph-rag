@@ -291,7 +291,7 @@ def test_the_cli_flag_reaches_the_check(tmp_path: Path, flag: list[str]) -> None
     context.__enter__.return_value = store
     context.__exit__.return_value = False
     with (
-        patch("codebase_rag.cli.connect_memgraph", return_value=context),
+        patch("codebase_rag.cli.connect_graph", return_value=context),
         patch("codebase_rag.check.command.indexed_scope", return_value=(None, None)),
         patch("codebase_rag.check.command.run_check", return_value={}) as check,
     ):

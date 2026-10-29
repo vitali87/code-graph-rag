@@ -7,7 +7,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.services.graph_service import GraphIngestor
 from codebase_rag.types_defs import EmbeddingSymbol, ResultRow
 
 MOCK_EMBEDDING = [0.1] * 768
@@ -45,7 +45,7 @@ def _no_stale_pruning() -> Generator[MagicMock, None, None]:
 
 @pytest.fixture
 def query_ingestor() -> MagicMock:
-    mock = MagicMock(spec=MemgraphIngestor)
+    mock = MagicMock(spec=GraphIngestor)
     mock.fetch_all = MagicMock(return_value=[])
     mock.execute_write = MagicMock()
     return mock

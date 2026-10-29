@@ -11,7 +11,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
@@ -19,7 +19,7 @@ _READS = cs.RelationshipType.READS_FROM.value
 _WRITES = cs.RelationshipType.WRITES_TO.value
 
 
-def _build(ingestor: MemgraphIngestor, tmp_path: Path, code: str) -> None:
+def _build(ingestor: GraphIngestor, tmp_path: Path, code: str) -> None:
     project = tmp_path / "rust_project"
     project.mkdir()
     (project / "main.rs").write_text(code, encoding="utf-8")
@@ -33,7 +33,7 @@ def _build(ingestor: MemgraphIngestor, tmp_path: Path, code: str) -> None:
     ).run()
 
 
-def _io_edges(ingestor: MemgraphIngestor) -> set[tuple[str, str]]:
+def _io_edges(ingestor: GraphIngestor) -> set[tuple[str, str]]:
     rows = ingestor.fetch_all(
         f"MATCH ()-[r:{_READS}|{_WRITES}]->(res:{cs.NodeLabel.RESOURCE.value}) "
         "RETURN type(r) AS rel, res.qualified_name AS qn"
@@ -55,9 +55,7 @@ fn leak(name: String) {
 """
 
 
-def test_rust_direct_io_sinks(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
-) -> None:
+def test_rust_direct_io_sinks(memgraph_ingestor: GraphIngestor, tmp_path: Path) -> None:
     # std::env::var reads ENV::SECRET; println!/print! macros write STDOUT and
     # eprintln!/eprint! write STDERR; std::fs::write / create_dir /
     # read_to_string are direct FILE write/read. First Rust increment of issue
@@ -73,7 +71,7 @@ def test_rust_direct_io_sinks(
 
 
 def test_rust_call_inside_print_macro_emits(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # A sink call written INLINE in macro args, e.g. `println!("{}", env::var("X"))`,
     # must still emit its READS_FROM. tree-sitter flattens macro bodies into a
@@ -93,7 +91,7 @@ def test_rust_call_inside_print_macro_emits(
 
 
 def test_rust_use_imported_short_path(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # `use std::fs;` then `fs::write(..)` is the idiomatic short form; the sink is
     # keyed on both the full `std::fs::write` and the `fs::write` short path.
@@ -112,7 +110,7 @@ def test_rust_use_imported_short_path(
 
 
 def test_rust_local_module_does_not_match_std_sink(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # A local `mod fs` with its own write() must NOT be mistaken for std::fs::write.
     # A bare short path (`fs::write`) resolves to std only when `fs` is imported
@@ -131,7 +129,7 @@ def test_rust_local_module_does_not_match_std_sink(
 
 
 def test_rust_nested_closure_not_credited(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # A macro sink inside a nested closure is not the enclosing fn's I/O; the walk
     # prunes nested scopes, and the closure is not a registered caller here.
@@ -144,7 +142,7 @@ def test_rust_nested_closure_not_credited(
 
 
 def test_rust_file_handle_methods(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # issue #714 handle walk: File::open (through `?`) and File::create
     # (through .unwrap()) bind FILE handles; read/write methods carry the I/O.

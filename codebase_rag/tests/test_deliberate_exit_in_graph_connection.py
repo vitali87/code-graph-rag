@@ -2,7 +2,7 @@
 
 `cgr delete-project` with an unknown name, a declined or refused `--clean`,
 and a refused `cgr rename` all print their own message and then raise
-`typer.Exit` inside `with connect_memgraph(...)`. The connection's `__exit__`
+`typer.Exit` inside `with connect_graph(...)`. The connection's `__exit__`
 logged every exception as a failed write, so each of those correct, safe
 endings was followed by an ERROR line and a traceback that read as a crash.
 
@@ -29,7 +29,7 @@ from codebase_rag import constants as cs
 from codebase_rag import logs as ls
 from codebase_rag.cli import app
 from codebase_rag.editing.rename import RenameRefused
-from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.services.graph_service import GraphIngestor
 
 if TYPE_CHECKING:
     from loguru import Message
@@ -74,7 +74,7 @@ def logged() -> Generator[list[_Logged], None, None]:
 @pytest.fixture
 def conn() -> Generator[MagicMock, None, None]:
     connection = MagicMock()
-    with patch.object(MemgraphIngestor, "open_connection", return_value=connection):
+    with patch.object(GraphIngestor, "open_connection", return_value=connection):
         yield connection
 
 
@@ -93,8 +93,8 @@ def _plain(text: str) -> str:
     return _ANSI_RE.sub("", text)
 
 
-def _ingestor() -> MemgraphIngestor:
-    return MemgraphIngestor(host="localhost", port=7687)
+def _ingestor() -> GraphIngestor:
+    return GraphIngestor(host="localhost", port=7687)
 
 
 _DELIBERATE_EXITS = [
@@ -205,7 +205,7 @@ class TestWhatMustNotChange:
         self, stop: BaseException | None, conn: MagicMock
     ) -> None:
         ingestor = _ingestor()
-        with patch.object(MemgraphIngestor, "flush_all") as flush:
+        with patch.object(GraphIngestor, "flush_all") as flush:
             if stop is None:
                 with ingestor:
                     pass
@@ -224,7 +224,7 @@ class TestWhatMustNotChange:
     ) -> None:
         lost = RuntimeError("write lost")
         with (
-            patch.object(MemgraphIngestor, "flush_all", side_effect=lost),
+            patch.object(GraphIngestor, "flush_all", side_effect=lost),
             pytest.raises(typer.Exit) as raised,
             _ingestor(),
         ):
@@ -239,7 +239,7 @@ class TestWhatMustNotChange:
 
 
 def _with_projects(*names: str) -> AbstractContextManager[MagicMock]:
-    return patch.object(MemgraphIngestor, "list_projects", return_value=list(names))
+    return patch.object(GraphIngestor, "list_projects", return_value=list(names))
 
 
 class TestDeletingAProjectThatIsNotThere:
@@ -262,7 +262,7 @@ class TestDeletingAProjectThatIsNotThere:
         self, conn: MagicMock, logged: list[_Logged]
     ) -> None:
         failure = ConnectionError("bolt connection lost")
-        with patch.object(MemgraphIngestor, "list_projects", side_effect=failure):
+        with patch.object(GraphIngestor, "list_projects", side_effect=failure):
             result = runner.invoke(app, ["delete-project", "-n", "click"])
 
         assert result.exit_code == 1, result.output
@@ -296,7 +296,7 @@ class TestCleanThatDoesNotGoAhead:
     def wipe(self, conn: MagicMock) -> Generator[MagicMock, None, None]:
         with (
             _with_projects(_OTHER_PROJECT, _THIS_PROJECT),
-            patch.object(MemgraphIngestor, "clean_database") as wipe,
+            patch.object(GraphIngestor, "clean_database") as wipe,
         ):
             yield wipe
 

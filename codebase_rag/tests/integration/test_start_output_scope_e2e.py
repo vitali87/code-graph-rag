@@ -22,7 +22,7 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.utils.path_utils import derive_project_name
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
@@ -57,7 +57,7 @@ def _repo(root: Path, name: str, source: str) -> Path:
     return repo
 
 
-def _index(ingestor: MemgraphIngestor, repo: Path) -> None:
+def _index(ingestor: GraphIngestor, repo: Path) -> None:
     parsers, queries = load_parsers()
     GraphUpdater(
         ingestor=ingestor, repo_path=repo, parsers=parsers, queries=queries
@@ -76,7 +76,7 @@ def _projects(path: Path) -> set[str]:
 
 @pytest.fixture
 def two_projects(
-    memgraph_ingestor: MemgraphIngestor,
+    memgraph_ingestor: GraphIngestor,
     memgraph_container: dict[str, str | int],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

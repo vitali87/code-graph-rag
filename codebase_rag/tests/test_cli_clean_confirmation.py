@@ -26,7 +26,7 @@ PROJECT_NAME = "this-repo"
 
 @pytest.fixture
 def mock_memgraph_connect() -> Generator[MagicMock, None, None]:
-    with patch("codebase_rag.cli.connect_memgraph") as mock_connect:
+    with patch("codebase_rag.cli.connect_graph") as mock_connect:
         mock_ingestor = MagicMock()
         mock_ingestor.list_projects.return_value = []
         mock_connect.return_value.__enter__ = MagicMock(return_value=mock_ingestor)

@@ -62,7 +62,7 @@ class _Graph:
 def graph(repo: Path) -> Iterator[_Graph]:
     fake = _Graph([derive_project_name(repo)])
     with (
-        patch("codebase_rag.cli_runtime.connect_memgraph", fake.connect),
+        patch("codebase_rag.cli_runtime.connect_graph", fake.connect),
         patch("codebase_rag.graph_updater.GraphUpdater", fake.updater_cls),
     ):
         yield fake

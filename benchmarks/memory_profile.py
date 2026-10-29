@@ -117,7 +117,7 @@ def measure_object_sizes() -> dict:
         "BoundedASTCache (OrderedDict): 1k entries", snap_before, snap_after
     )
 
-    # 4. node_buffer in MemgraphIngestor pattern
+    # 4. node_buffer in GraphIngestor pattern
     node_buffer: list[tuple[str, dict[str, str | int | float | bool | list[str] | None]]] = []
     gc.collect()
     tracemalloc.clear_traces()
@@ -139,7 +139,7 @@ def measure_object_sizes() -> dict:
         "node_buffer: 5k buffered nodes", snap_before, snap_after
     )
 
-    # 5. _rel_groups in MemgraphIngestor pattern
+    # 5. _rel_groups in GraphIngestor pattern
     rel_groups: defaultdict[tuple, list[dict]] = defaultdict(list)
     gc.collect()
     tracemalloc.clear_traces()

@@ -20,7 +20,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
@@ -50,7 +50,7 @@ _FULL_SCAN = re.compile(r"\*\s+ScanAll\s+\(")
 
 
 @pytest.fixture
-def indexed(memgraph_ingestor: MemgraphIngestor, tmp_path: Path) -> MemgraphIngestor:
+def indexed(memgraph_ingestor: GraphIngestor, tmp_path: Path) -> GraphIngestor:
     repo = tmp_path / PROJECT
     for rel, text in FILES.items():
         path = repo / rel
@@ -74,7 +74,7 @@ def _hops(rows: list[graph_query.CallSiteRow]) -> list[tuple[int, str, str, str]
 
 
 def test_callers_depth_two_walks_every_kind_of_caller(
-    indexed: MemgraphIngestor,
+    indexed: GraphIngestor,
 ) -> None:
     rows = graph_query.callers(indexed.fetch_all, PROJECT, REVERSE, depth=2)
     assert _hops(rows) == [
@@ -93,7 +93,7 @@ def test_callers_depth_two_walks_every_kind_of_caller(
     assert by_qn[(INDEX, TEST_INDEX)]["line"] == 5
 
 
-def test_callees_depth_two_walks_from_a_method(indexed: MemgraphIngestor) -> None:
+def test_callees_depth_two_walks_from_a_method(indexed: GraphIngestor) -> None:
     rows = graph_query.callees(indexed.fetch_all, PROJECT, DETAIL_GET, depth=2)
     assert _hops(rows) == [
         (1, DETAIL_GET, REVERSE, "Function"),
@@ -112,7 +112,7 @@ def test_callees_depth_two_walks_from_a_method(indexed: MemgraphIngestor) -> Non
     ],
 )
 def test_every_call_read_starts_from_the_label_indexes(
-    indexed: MemgraphIngestor, name: str
+    indexed: GraphIngestor, name: str
 ) -> None:
     plan = [
         str(next(iter(row.values()), ""))

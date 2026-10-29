@@ -14,7 +14,7 @@ from codebase_rag.mcp.tools import MCPToolsRegistry
 from codebase_rag.utils.path_utils import derive_project_name
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.anyio, pytest.mark.integration]
 
@@ -38,13 +38,13 @@ def _repo(root: Path, name: str, source: str) -> Path:
     return repo
 
 
-def _server(repo: Path, ingestor: MemgraphIngestor) -> MCPToolsRegistry:
+def _server(repo: Path, ingestor: GraphIngestor) -> MCPToolsRegistry:
     return MCPToolsRegistry(
         project_root=str(repo), ingestor=ingestor, cypher_gen=MagicMock()
     )
 
 
-def _functions(ingestor: MemgraphIngestor, project: str) -> list[str]:
+def _functions(ingestor: GraphIngestor, project: str) -> list[str]:
     rows = ingestor.fetch_all(
         "MATCH (f:Function) WHERE f.qualified_name STARTS WITH ($p + '.') "
         "RETURN f.qualified_name AS qn ORDER BY qn",
@@ -54,7 +54,7 @@ def _functions(ingestor: MemgraphIngestor, project: str) -> list[str]:
 
 
 async def test_indexing_one_repository_leaves_the_other_project(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     backend = _repo(tmp_path, "backend", "def serve():\n    return 1\n")
     frontend = _repo(tmp_path, "frontend", "def render():\n    return 2\n")

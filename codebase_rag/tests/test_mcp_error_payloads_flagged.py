@@ -23,7 +23,7 @@ from codebase_rag.config import settings
 from codebase_rag.mcp import server as mcp_server
 from codebase_rag.mcp.run_marker import RunMarker
 from codebase_rag.mcp.tools import MCPToolsRegistry
-from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.services.graph_service import GraphIngestor
 from codebase_rag.tests.test_mcp_tool_errors_flagged import _call, _text
 
 pytestmark = [pytest.mark.anyio]
@@ -196,7 +196,7 @@ async def test_a_failed_sync_is_flagged(
 
 async def test_a_failed_wipe_is_flagged(repo: Path, no_llm: None) -> None:
     with patch.object(
-        MemgraphIngestor,
+        GraphIngestor,
         "clean_database",
         MagicMock(side_effect=RuntimeError("store refused")),
     ):

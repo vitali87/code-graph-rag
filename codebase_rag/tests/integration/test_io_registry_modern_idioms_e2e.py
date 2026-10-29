@@ -11,7 +11,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
@@ -19,7 +19,7 @@ pytestmark = [pytest.mark.integration]
 # must produce READS_FROM / WRITES_TO edges, mirroring requests / open.
 
 
-def _build(ingestor: MemgraphIngestor, tmp_path: Path, code: str) -> None:
+def _build(ingestor: GraphIngestor, tmp_path: Path, code: str) -> None:
     project = tmp_path / "io_project"
     project.mkdir()
     (project / "io_mod.py").write_text(code, encoding="utf-8")
@@ -33,7 +33,7 @@ def _build(ingestor: MemgraphIngestor, tmp_path: Path, code: str) -> None:
     ).run()
 
 
-def _io_edges(ingestor: MemgraphIngestor) -> set[tuple[str, str]]:
+def _io_edges(ingestor: GraphIngestor) -> set[tuple[str, str]]:
     rows = ingestor.fetch_all(
         f"MATCH ()-[r:{cs.RelationshipType.READS_FROM.value}|"
         f"{cs.RelationshipType.WRITES_TO.value}]->(res:{cs.NodeLabel.RESOURCE.value}) "
@@ -47,7 +47,7 @@ _WRITES = cs.RelationshipType.WRITES_TO.value
 
 
 def test_httpx_module_level_get_and_post(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     _build(
         memgraph_ingestor,
@@ -64,7 +64,7 @@ def test_httpx_module_level_get_and_post(
 
 
 def test_httpx_client_instance_methods(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     _build(
         memgraph_ingestor,
@@ -85,7 +85,7 @@ def test_httpx_client_instance_methods(
 
 
 def test_pathlib_read_and_write(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     _build(
         memgraph_ingestor,
@@ -104,7 +104,7 @@ def test_pathlib_read_and_write(
 
 
 def test_pathlib_directory_listing_and_touch(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     _build(
         memgraph_ingestor,

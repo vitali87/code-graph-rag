@@ -16,7 +16,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
@@ -53,7 +53,7 @@ FILES = {
 
 
 @pytest.fixture
-def indexed(memgraph_ingestor: MemgraphIngestor, tmp_path: Path) -> MemgraphIngestor:
+def indexed(memgraph_ingestor: GraphIngestor, tmp_path: Path) -> GraphIngestor:
     repo = tmp_path / PROJECT
     for rel, text in FILES.items():
         path = repo / rel
@@ -86,7 +86,7 @@ def _hops(rows: Sequence[Mapping[str, object]]) -> set[tuple[object, str, str]]:
 
 
 def test_implementors_depth_reaches_the_diamond_subclass(
-    indexed: MemgraphIngestor,
+    indexed: GraphIngestor,
 ) -> None:
     target = f"{PROJECT}.nx.graph.Graph"
     direct = graph_query.implementors(indexed.fetch_all, PROJECT, target)
@@ -101,7 +101,7 @@ def test_implementors_depth_reaches_the_diamond_subclass(
 
 
 def test_overrides_depth_reaches_the_transitive_override(
-    indexed: MemgraphIngestor,
+    indexed: GraphIngestor,
 ) -> None:
     target = f"{PROJECT}.nx.graph.Graph.add_edge"
     direct = graph_query.overrides(indexed.fetch_all, PROJECT, target)
@@ -122,7 +122,7 @@ def test_overrides_depth_reaches_the_transitive_override(
 
 
 def test_overrides_depth_never_turns_back_down_into_a_sibling(
-    indexed: MemgraphIngestor,
+    indexed: GraphIngestor,
 ) -> None:
     target = f"{PROJECT}.nx.multigraph.MultiGraph.add_edge"
     rows = graph_query.overrides(indexed.fetch_all, PROJECT, target, depth=3)
@@ -139,7 +139,7 @@ def test_overrides_depth_never_turns_back_down_into_a_sibling(
 
 
 def test_implementors_depth_reaches_every_validator_through_the_base(
-    indexed: MemgraphIngestor,
+    indexed: GraphIngestor,
 ) -> None:
     target = next(
         r["qualified_name"]

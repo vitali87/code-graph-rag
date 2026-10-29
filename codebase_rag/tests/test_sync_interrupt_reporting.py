@@ -76,7 +76,7 @@ def cli_sync() -> Generator[_CliSync, None, None]:
     # every interrupt as one that landed after the run committed.
     updater = MagicMock(skipped_because_in_sync=False, committed=False)
     with (
-        patch("codebase_rag.cli.connect_memgraph", return_value=connection),
+        patch("codebase_rag.cli.connect_graph", return_value=connection),
         patch("codebase_rag.graph_updater.GraphUpdater", return_value=updater),
         patch("codebase_rag.cli.load_parsers", return_value=({}, {})),
         patch("codebase_rag.cli._update_and_validate_models"),
@@ -440,7 +440,7 @@ def real_sync(mock_ingestor: MagicMock) -> Generator[MagicMock, None, None]:
     connection.__enter__.return_value = mock_ingestor
     connection.__exit__.return_value = False
     with (
-        patch("codebase_rag.cli.connect_memgraph", return_value=connection),
+        patch("codebase_rag.cli.connect_graph", return_value=connection),
         patch("codebase_rag.cli._update_and_validate_models"),
     ):
         yield mock_ingestor

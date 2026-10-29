@@ -15,7 +15,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
@@ -55,7 +55,7 @@ FILES = {
 
 
 @pytest.fixture
-def indexed(memgraph_ingestor: MemgraphIngestor, tmp_path: Path) -> MemgraphIngestor:
+def indexed(memgraph_ingestor: GraphIngestor, tmp_path: Path) -> GraphIngestor:
     repo = tmp_path / PROJECT
     for rel, text in FILES.items():
         path = repo / rel
@@ -72,7 +72,7 @@ def indexed(memgraph_ingestor: MemgraphIngestor, tmp_path: Path) -> MemgraphInge
     return memgraph_ingestor
 
 
-def _hops(ingestor: MemgraphIngestor, target: str) -> set[tuple[str, tuple[str, ...]]]:
+def _hops(ingestor: GraphIngestor, target: str) -> set[tuple[str, tuple[str, ...]]]:
     rows = graph_query.importers_through_reexports(
         ingestor.fetch_all, PROJECT, f"{PROJECT}.{target}"
     )
@@ -85,7 +85,7 @@ def _hops(ingestor: MemgraphIngestor, target: str) -> set[tuple[str, tuple[str, 
     }
 
 
-def test_a_python_package_facade_is_followed(indexed: MemgraphIngestor) -> None:
+def test_a_python_package_facade_is_followed(indexed: GraphIngestor) -> None:
     assert _hops(indexed, "shop._client") == {
         ("shop", ()),
         ("shop._api", ()),
@@ -95,7 +95,7 @@ def test_a_python_package_facade_is_followed(indexed: MemgraphIngestor) -> None:
     }
 
 
-def test_a_rust_pub_use_is_followed(indexed: MemgraphIngestor) -> None:
+def test_a_rust_pub_use_is_followed(indexed: GraphIngestor) -> None:
     assert _hops(indexed, "src.frame") == {
         ("src.lib", ()),
         ("src.server", ()),
@@ -103,7 +103,7 @@ def test_a_rust_pub_use_is_followed(indexed: MemgraphIngestor) -> None:
     }
 
 
-def test_a_ts_barrel_is_followed(indexed: MemgraphIngestor) -> None:
+def test_a_ts_barrel_is_followed(indexed: GraphIngestor) -> None:
     assert _hops(indexed, "web.frame") == {
         ("web.index", ()),
         ("web.conn", ("web/index.ts",)),
@@ -111,7 +111,7 @@ def test_a_ts_barrel_is_followed(indexed: MemgraphIngestor) -> None:
 
 
 def test_a_ts_named_import_sharing_the_barrels_name_is_not_followed(
-    indexed: MemgraphIngestor,
+    indexed: GraphIngestor,
 ) -> None:
     # `import { index } from './index'` takes one export of the barrel, not
     # the barrel, so it does not reach what the barrel re-exports.
@@ -122,7 +122,7 @@ def test_a_ts_named_import_sharing_the_barrels_name_is_not_followed(
 
 
 def test_the_direct_query_still_lists_only_direct_importers(
-    indexed: MemgraphIngestor,
+    indexed: GraphIngestor,
 ) -> None:
     rows = graph_query.importers(indexed.fetch_all, PROJECT, f"{PROJECT}.shop._client")
     assert [r["module"] for r in rows] == [

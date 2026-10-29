@@ -29,7 +29,7 @@ from codebase_rag.trace.records import (
 from codebase_rag.types_defs import ResultScalar
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
@@ -89,7 +89,7 @@ def _write_repo(tmp_path: Path) -> Path:
     return repo
 
 
-def _updater(ingestor: MemgraphIngestor, repo: Path) -> GraphUpdater:
+def _updater(ingestor: GraphIngestor, repo: Path) -> GraphUpdater:
     parsers, queries = load_parsers()
     return GraphUpdater(
         ingestor=ingestor,
@@ -101,11 +101,11 @@ def _updater(ingestor: MemgraphIngestor, repo: Path) -> GraphUpdater:
     )
 
 
-def _sync(ingestor: MemgraphIngestor, repo: Path) -> None:
+def _sync(ingestor: GraphIngestor, repo: Path) -> None:
     _updater(ingestor, repo).run(force=False)
 
 
-def _ingest(ingestor: MemgraphIngestor, repo: Path, trace_path: Path) -> None:
+def _ingest(ingestor: GraphIngestor, repo: Path, trace_path: Path) -> None:
     header = TraceHeader(
         version=cs.TRACE_FORMAT_VERSION,
         language=cs.TRACE_LANGUAGE_PYTHON,
@@ -131,7 +131,7 @@ def _ingest(ingestor: MemgraphIngestor, repo: Path, trace_path: Path) -> None:
     ingest_trace(trace_path, ingestor, repo, _PROJECT)
 
 
-def _calls(ingestor: MemgraphIngestor) -> _Edges:
+def _calls(ingestor: GraphIngestor) -> _Edges:
     rows = ingestor.fetch_all(
         "MATCH (a)-[r:CALLS]->(b) "
         "WHERE a.qualified_name STARTS WITH 'svc.' "
@@ -149,7 +149,7 @@ def _calls(ingestor: MemgraphIngestor) -> _Edges:
     return edges
 
 
-def _traced(tmp_path: Path, ingestor: MemgraphIngestor) -> tuple[Path, _Edges]:
+def _traced(tmp_path: Path, ingestor: GraphIngestor) -> tuple[Path, _Edges]:
     repo = _write_repo(tmp_path)
     _sync(ingestor, repo)
     _ingest(ingestor, repo, tmp_path / "cgr-trace.jsonl")
@@ -162,7 +162,7 @@ def _only(edges: _Edges, caller: str, callee: str) -> _Props:
 
 
 def test_trace_ingest_leaves_the_expected_edges(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # The baseline every test below edits from: two runtime-only dispatches,
     # a static edge the trace confirmed on both its sites, and a runtime-only
@@ -183,7 +183,7 @@ def test_trace_ingest_leaves_the_expected_edges(
 
 
 def test_comment_edit_keeps_every_trace_edge_through_incremental_sync(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     repo, before = _traced(tmp_path, memgraph_ingestor)
 
@@ -197,7 +197,7 @@ def test_comment_edit_keeps_every_trace_edge_through_incremental_sync(
 
 
 def test_comment_edit_keeps_every_trace_edge_through_reingest(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # The watcher and the MCP `reingest` tool take this path, not `run()`.
     repo, before = _traced(tmp_path, memgraph_ingestor)
@@ -210,7 +210,7 @@ def test_comment_edit_keeps_every_trace_edge_through_reingest(
 
 
 def test_logic_edit_marks_only_the_edges_touching_the_changed_definition_stale(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     repo, _before = _traced(tmp_path, memgraph_ingestor)
 
@@ -232,7 +232,7 @@ def test_logic_edit_marks_only_the_edges_touching_the_changed_definition_stale(
 
 
 def test_callee_edit_marks_an_unchanged_callers_trace_edge_stale(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # runner.py did not change, but the observation its edge records is of
     # the old `dispatch`, so the edge is kept and graded stale.
@@ -259,7 +259,7 @@ def test_callee_edit_marks_an_unchanged_callers_trace_edge_stale(
 
 
 def test_call_static_analysis_now_sees_confirms_instead_of_duplicating(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # The dispatch became a direct call: the observation now confirms the
     # static edge the re-parse created instead of sitting beside it as a
@@ -288,7 +288,7 @@ def test_call_static_analysis_now_sees_confirms_instead_of_duplicating(
 
 
 def test_removed_endpoint_drops_its_trace_edge(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     repo, _before = _traced(tmp_path, memgraph_ingestor)
 
@@ -307,7 +307,7 @@ def test_removed_endpoint_drops_its_trace_edge(
 
 
 def test_fresh_trace_ingest_clears_the_stale_flag(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     repo, _before = _traced(tmp_path, memgraph_ingestor)
     (repo / "handlers.py").write_text(
@@ -323,7 +323,7 @@ def test_fresh_trace_ingest_clears_the_stale_flag(
 
 
 def test_sync_without_trace_data_adds_no_trace_properties(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     repo = _write_repo(tmp_path)
     _sync(memgraph_ingestor, repo)

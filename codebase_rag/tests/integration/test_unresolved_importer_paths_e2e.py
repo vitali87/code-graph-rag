@@ -14,13 +14,13 @@ import pytest
 from codebase_rag import constants as cs
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
 
 def test_the_query_returns_importers_of_a_module_or_its_members(
-    memgraph_ingestor: MemgraphIngestor,
+    memgraph_ingestor: GraphIngestor,
 ) -> None:
     memgraph_ingestor.execute_write(
         "CREATE (:Module {qualified_name: 'proj.a', path: 'a.py'})"

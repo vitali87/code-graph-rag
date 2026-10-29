@@ -947,7 +947,7 @@ def test_cli_accepts_min_resolution(tmp_path: Path) -> None:
     ingestor.fetch_all = MagicMock(return_value=[])
     ingestor.__enter__ = MagicMock(return_value=ingestor)
     ingestor.__exit__ = MagicMock(return_value=False)
-    with patch("codebase_rag.cli.connect_memgraph", return_value=ingestor):
+    with patch("codebase_rag.cli.connect_graph", return_value=ingestor):
         result = CliRunner().invoke(
             app,
             [
@@ -961,7 +961,7 @@ def test_cli_accepts_min_resolution(tmp_path: Path) -> None:
             ],
         )
     assert result.exit_code == 0, result.output
-    with patch("codebase_rag.cli.connect_memgraph", return_value=ingestor):
+    with patch("codebase_rag.cli.connect_graph", return_value=ingestor):
         bad = CliRunner().invoke(
             app, ["dead-code", "-n", PROJECT, "--min-resolution", "maybe"]
         )

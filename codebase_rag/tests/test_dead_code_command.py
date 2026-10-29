@@ -66,7 +66,7 @@ class TestDeadCodeCommand:
         self, runner: CliRunner, dead_rows: list[ResultRow]
     ) -> None:
         mock_ingestor = _make_mock_ingestor(projects=["myproj"], fetch_result=dead_rows)
-        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+        with patch("codebase_rag.cli.connect_graph", return_value=mock_ingestor):
             result = runner.invoke(app, ["dead-code"])
 
         assert result.exit_code == 0
@@ -77,7 +77,7 @@ class TestDeadCodeCommand:
         self, runner: CliRunner, dead_rows: list[ResultRow]
     ) -> None:
         mock_ingestor = _make_mock_ingestor(projects=["myproj"], fetch_result=dead_rows)
-        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+        with patch("codebase_rag.cli.connect_graph", return_value=mock_ingestor):
             result = runner.invoke(app, ["dead-code", "--format", "json"])
 
         assert result.exit_code == 0
@@ -110,7 +110,7 @@ class TestDeadCodeCommand:
             },
         ]
         mock_ingestor = _make_mock_ingestor(projects=["myproj"], fetch_result=rows)
-        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+        with patch("codebase_rag.cli.connect_graph", return_value=mock_ingestor):
             result = runner.invoke(
                 app, ["dead-code", "--format", "json", "--exclude", "*client/core*"]
             )
@@ -123,14 +123,14 @@ class TestDeadCodeCommand:
         self, runner: CliRunner, dead_rows: list[ResultRow]
     ) -> None:
         mock_ingestor = _make_mock_ingestor(projects=["myproj"], fetch_result=dead_rows)
-        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+        with patch("codebase_rag.cli.connect_graph", return_value=mock_ingestor):
             result = runner.invoke(app, ["dead-code", "--fail-on-found"])
 
         assert result.exit_code == 1
 
     def test_fail_on_found_exits_zero_when_clean(self, runner: CliRunner) -> None:
         mock_ingestor = _make_mock_ingestor(projects=["myproj"], fetch_result=[])
-        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+        with patch("codebase_rag.cli.connect_graph", return_value=mock_ingestor):
             result = runner.invoke(app, ["dead-code", "--fail-on-found"])
 
         assert result.exit_code == 0
@@ -141,7 +141,7 @@ class TestDeadCodeCommand:
         mock_ingestor = _make_mock_ingestor(
             projects=["myproj", "other"], fetch_result=dead_rows
         )
-        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+        with patch("codebase_rag.cli.connect_graph", return_value=mock_ingestor):
             result = runner.invoke(app, ["dead-code", "--project-name", "myproj"])
 
         assert result.exit_code == 0
@@ -163,7 +163,7 @@ class TestDeadCodeCommand:
         mock_ingestor = _make_mock_ingestor(
             projects=["myproj", "other"], fetch_result=rows
         )
-        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+        with patch("codebase_rag.cli.connect_graph", return_value=mock_ingestor):
             result = runner.invoke(
                 app, ["dead-code", "--project-name", "myproj", "--format", "json"]
             )
@@ -173,7 +173,7 @@ class TestDeadCodeCommand:
 
     def test_errors_when_project_ambiguous(self, runner: CliRunner) -> None:
         mock_ingestor = _make_mock_ingestor(projects=["a", "b"], fetch_result=[])
-        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+        with patch("codebase_rag.cli.connect_graph", return_value=mock_ingestor):
             result = runner.invoke(app, ["dead-code"])
 
         assert result.exit_code == 1
@@ -183,7 +183,7 @@ class TestDeadCodeCommand:
         # `-n typo` must error, not scan a nonexistent prefix and report a
         # clean project (the duplicates command already guards this).
         mock_ingestor = _make_mock_ingestor(projects=["myproj"], fetch_result=[])
-        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+        with patch("codebase_rag.cli.connect_graph", return_value=mock_ingestor):
             result = runner.invoke(app, ["dead-code", "-n", "typo"])
 
         assert result.exit_code == 1
@@ -194,7 +194,7 @@ class TestDeadCodeCommand:
 
     def test_errors_when_no_projects(self, runner: CliRunner) -> None:
         mock_ingestor = _make_mock_ingestor(projects=[], fetch_result=[])
-        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+        with patch("codebase_rag.cli.connect_graph", return_value=mock_ingestor):
             result = runner.invoke(app, ["dead-code"])
 
         assert result.exit_code == 1
@@ -205,7 +205,7 @@ class TestDeadCodeCommand:
         # -e marks matching qualified-name suffixes as reachable roots, so
         # only the non-matching orphan is reported.
         mock_ingestor = _make_mock_ingestor(projects=["myproj"], fetch_result=dead_rows)
-        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+        with patch("codebase_rag.cli.connect_graph", return_value=mock_ingestor):
             result = runner.invoke(
                 app, ["dead-code", "-e", "orphan_one", "--format", "json"]
             )
@@ -243,7 +243,7 @@ class TestDeadCodeCommand:
             },
         ]
         mock_ingestor = _make_mock_ingestor(projects=["myproj"], fetch_result=rows)
-        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+        with patch("codebase_rag.cli.connect_graph", return_value=mock_ingestor):
             result = runner.invoke(
                 app,
                 ["dead-code", "--decorator-root", "myhandler", "--format", "json"],
@@ -258,7 +258,7 @@ class TestDeadCodeCommand:
     ) -> None:
         out = tmp_path / "dead.json"
         mock_ingestor = _make_mock_ingestor(projects=["myproj"], fetch_result=dead_rows)
-        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+        with patch("codebase_rag.cli.connect_graph", return_value=mock_ingestor):
             result = runner.invoke(
                 app,
                 ["dead-code", "--format", "json", "--output", str(out)],
@@ -273,7 +273,7 @@ class TestDeadCodeCommand:
     ) -> None:
         out = tmp_path / "dead.txt"
         mock_ingestor = _make_mock_ingestor(projects=["myproj"], fetch_result=dead_rows)
-        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+        with patch("codebase_rag.cli.connect_graph", return_value=mock_ingestor):
             result = runner.invoke(app, ["dead-code", "--output", str(out)])
 
         assert result.exit_code == 0
@@ -282,7 +282,7 @@ class TestDeadCodeCommand:
 
     def test_handles_connection_error(self, runner: CliRunner) -> None:
         with patch(
-            "codebase_rag.cli.connect_memgraph",
+            "codebase_rag.cli.connect_graph",
             side_effect=ConnectionError("Cannot connect"),
         ):
             result = runner.invoke(app, ["dead-code"])
@@ -329,7 +329,7 @@ class TestDeadCodeCommand:
         mock_ingestor = _make_mock_ingestor(
             projects=["myproj"], fetch_result=nodes, rels=rels
         )
-        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+        with patch("codebase_rag.cli.connect_graph", return_value=mock_ingestor):
             result = runner.invoke(app, ["dead-code", "--format", "json"])
 
         assert result.exit_code == 0
@@ -345,7 +345,7 @@ class TestDeadCodeCommand:
         mock_ingestor = _make_mock_ingestor(
             projects=["myproj"], fetch_result=nodes, rels=rels
         )
-        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+        with patch("codebase_rag.cli.connect_graph", return_value=mock_ingestor):
             result = runner.invoke(
                 app, ["dead-code", "--no-include-tests", "--format", "json"]
             )
@@ -371,7 +371,7 @@ class TestDeadCodeCommand:
         mock_ingestor = _make_mock_ingestor(
             projects=["myproj"], fetch_result=self._class_rows()
         )
-        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+        with patch("codebase_rag.cli.connect_graph", return_value=mock_ingestor):
             result = runner.invoke(app, ["dead-code", "--classes", "--format", "json"])
 
         assert result.exit_code == 0
@@ -382,7 +382,7 @@ class TestDeadCodeCommand:
         mock_ingestor = _make_mock_ingestor(
             projects=["myproj"], fetch_result=self._class_rows()
         )
-        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+        with patch("codebase_rag.cli.connect_graph", return_value=mock_ingestor):
             result = runner.invoke(app, ["dead-code", "--format", "json"])
 
         assert result.exit_code == 0
@@ -395,7 +395,7 @@ def test_json_output_stays_parseable_with_the_single_project_notice(
     """The one-project notice for --no-endpoint-roots must not land in the
     JSON stream (local review on the #1603 PR): it goes to stderr."""
     mock_ingestor = _make_mock_ingestor(projects=["myproj"], fetch_result=dead_rows)
-    with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+    with patch("codebase_rag.cli.connect_graph", return_value=mock_ingestor):
         result = runner.invoke(
             app, ["dead-code", "--format", "json", "--no-endpoint-roots"]
         )

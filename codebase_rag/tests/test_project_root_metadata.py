@@ -14,7 +14,7 @@ from codebase_rag import constants as cs
 from codebase_rag.cypher_queries import CYPHER_LIST_PROJECTS
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.services.graph_service import GraphIngestor
 
 
 def test_project_node_records_root_path(
@@ -46,9 +46,9 @@ def test_list_projects_query_returns_root_path() -> None:
 
 
 def test_list_project_roots_maps_names_to_roots() -> None:
-    ingestor = MemgraphIngestor(host="localhost", port=7687)
+    ingestor = GraphIngestor(host="localhost", port=7687)
     with patch.object(
-        MemgraphIngestor,
+        GraphIngestor,
         "fetch_all",
         return_value=[
             {"name": "backend__12345678", "root_path": "/repos/backend"},
@@ -64,9 +64,9 @@ def test_list_project_roots_maps_names_to_roots() -> None:
 
 
 def test_list_projects_still_returns_names_only() -> None:
-    ingestor = MemgraphIngestor(host="localhost", port=7687)
+    ingestor = GraphIngestor(host="localhost", port=7687)
     with patch.object(
-        MemgraphIngestor,
+        GraphIngestor,
         "fetch_all",
         return_value=[
             {"name": "backend__12345678", "root_path": "/repos/backend"},

@@ -225,14 +225,14 @@ for fn in functions[:5]:
 
 ### Query the graph with Cypher
 
-`MemgraphIngestor` keeps its original name but works with whichever backend
+`GraphIngestor` keeps its original name but works with whichever backend
 `GRAPH_BACKEND` selects. On the default embedded graph, `host` and `port` are
 not used.
 
 ```python
-from cgr import MemgraphIngestor
+from cgr import GraphIngestor
 
-with MemgraphIngestor(host="localhost", port=7687) as db:
+with GraphIngestor(host="localhost", port=7687) as db:
     rows = db.fetch_all("MATCH (f:Function) RETURN f.name LIMIT 10")
     for row in rows:
         print(row)

@@ -22,7 +22,7 @@ from codebase_rag.cli import (
 from codebase_rag.config import settings
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
@@ -33,7 +33,7 @@ _FUNCTIONS = (
 )
 
 
-def _sync(ingestor: MemgraphIngestor, repo: Path) -> GraphUpdater:
+def _sync(ingestor: GraphIngestor, repo: Path) -> GraphUpdater:
     parsers, queries = load_parsers()
     updater = GraphUpdater(
         ingestor=ingestor,
@@ -49,7 +49,7 @@ def _sync(ingestor: MemgraphIngestor, repo: Path) -> GraphUpdater:
 
 
 def test_the_repo_that_lost_its_project_is_rebuilt(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     org_a = tmp_path / "orgA" / "api"
     org_b = tmp_path / "orgB" / "api"
@@ -89,7 +89,7 @@ def cli_graph(
 
 
 def test_the_second_of_two_racing_syncs_is_refused(
-    memgraph_ingestor: MemgraphIngestor,
+    memgraph_ingestor: GraphIngestor,
     cli_graph: dict[str, str | int],
     tmp_path: Path,
 ) -> None:
@@ -110,7 +110,7 @@ def test_the_second_of_two_racing_syncs_is_refused(
 
 
 def test_simultaneous_claims_let_exactly_one_sync_through(
-    memgraph_ingestor: MemgraphIngestor,
+    memgraph_ingestor: GraphIngestor,
     cli_graph: dict[str, str | int],
     tmp_path: Path,
 ) -> None:
@@ -125,7 +125,7 @@ def test_simultaneous_claims_let_exactly_one_sync_through(
         start = Barrier(len(repos))
 
         def claim(repo: Path, name: str = name, start: Barrier = start) -> bool:
-            with MemgraphIngestor(host=host, port=port) as ingestor:
+            with GraphIngestor(host=host, port=port) as ingestor:
                 start.wait()
                 check = _project_owner_refusal(ingestor, name, repo, False)
                 return check.refusal is None
@@ -157,7 +157,7 @@ def _fails_before_writing(repo: Path) -> None:
         _cli_sync(repo)
 
 
-def _claimed_by(ingestor: MemgraphIngestor) -> object:
+def _claimed_by(ingestor: GraphIngestor) -> object:
     rows = ingestor.fetch_all(
         "MATCH (p:Project {name: 'api2'}) RETURN p.root_path AS root"
     )
@@ -175,7 +175,7 @@ def _refused(repo: Path) -> bool:
 
 
 def test_a_first_sync_that_fails_before_writing_releases_its_claim(
-    memgraph_ingestor: MemgraphIngestor,
+    memgraph_ingestor: GraphIngestor,
     cli_graph: dict[str, str | int],
     tmp_path: Path,
 ) -> None:
@@ -190,7 +190,7 @@ def test_a_first_sync_that_fails_before_writing_releases_its_claim(
 
 
 def test_a_first_sync_that_fails_after_its_marker_keeps_its_claim(
-    memgraph_ingestor: MemgraphIngestor,
+    memgraph_ingestor: GraphIngestor,
     cli_graph: dict[str, str | int],
     tmp_path: Path,
 ) -> None:
@@ -209,7 +209,7 @@ def test_a_first_sync_that_fails_after_its_marker_keeps_its_claim(
 
 
 def test_a_failed_resync_keeps_the_project(
-    memgraph_ingestor: MemgraphIngestor,
+    memgraph_ingestor: GraphIngestor,
     cli_graph: dict[str, str | int],
     tmp_path: Path,
 ) -> None:
@@ -256,7 +256,7 @@ def _paused_before_marking(during: Callable[[], None]) -> Iterator[None]:
 
 
 def test_a_sync_whose_claim_was_released_under_it_is_refused(
-    memgraph_ingestor: MemgraphIngestor,
+    memgraph_ingestor: GraphIngestor,
     cli_graph: dict[str, str | int],
     tmp_path: Path,
 ) -> None:
@@ -282,7 +282,7 @@ def test_a_sync_whose_claim_was_released_under_it_is_refused(
 
 
 def test_a_sync_whose_claim_was_released_claims_it_again(
-    memgraph_ingestor: MemgraphIngestor,
+    memgraph_ingestor: GraphIngestor,
     cli_graph: dict[str, str | int],
     tmp_path: Path,
 ) -> None:

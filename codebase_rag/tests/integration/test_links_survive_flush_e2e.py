@@ -13,7 +13,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
@@ -37,7 +37,7 @@ def _repo(tmp_path: Path) -> Path:
     return repo
 
 
-def _index(ingestor: MemgraphIngestor, repo: Path, force: bool) -> None:
+def _index(ingestor: GraphIngestor, repo: Path, force: bool) -> None:
     parsers, queries = load_parsers()
     GraphUpdater(
         ingestor=ingestor,
@@ -48,13 +48,13 @@ def _index(ingestor: MemgraphIngestor, repo: Path, force: bool) -> None:
     ).run(force=force)
 
 
-def _linked(ingestor: MemgraphIngestor, module_qn: str) -> list[str]:
+def _linked(ingestor: GraphIngestor, module_qn: str) -> list[str]:
     return [str(r["path"]) for r in ingestor.fetch_all(LINKED, {"qn": module_qn})]
 
 
 @pytest.mark.parametrize("batch_size", [1, 100_000])
 def test_a_fresh_index_keeps_every_link_whatever_the_batch_size(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path, batch_size: int
+    memgraph_ingestor: GraphIngestor, tmp_path: Path, batch_size: int
 ) -> None:
     memgraph_ingestor.batch_size = batch_size
 
@@ -68,7 +68,7 @@ def test_a_fresh_index_keeps_every_link_whatever_the_batch_size(
 
 
 def test_a_link_and_its_new_target_added_in_one_sync_both_land(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     repo = _repo(tmp_path)
     memgraph_ingestor.batch_size = 1

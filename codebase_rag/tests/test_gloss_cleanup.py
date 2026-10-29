@@ -185,7 +185,7 @@ def test_the_deliberate_delete_runs_the_sweep() -> None:
 def test_the_shared_ingestor_delete_does_NOT_run_the_sweep() -> None:
     """The half that matters more, and the one my first attempt got wrong.
 
-    `MemgraphIngestor.delete_project` is called by BOTH the deliberate delete
+    `GraphIngestor.delete_project` is called by BOTH the deliberate delete
     and `_index_repository_sync`, which deletes and rebuilds. A sweep there
     runs on every reindex, and since the rebuild recreates the symbols AFTER
     the delete, every gloss is an orphan at that moment -- so the sweep would
@@ -199,7 +199,7 @@ def test_the_shared_ingestor_delete_does_NOT_run_the_sweep() -> None:
 
     from codebase_rag.services import graph_service
 
-    source = inspect.getsource(graph_service.MemgraphIngestor.delete_project)
+    source = inspect.getsource(graph_service.GraphIngestor.delete_project)
     assert "prune_orphaned_glosses" not in source, (
         "the gloss sweep is wired into the SHARED ingestor delete, which "
         "index_repository also calls -- every reindex would permanently "

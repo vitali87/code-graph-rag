@@ -973,7 +973,7 @@ def _run_cli_check(root: Path, store: StatefulIngestor) -> Result:
     context.__enter__.return_value = store
     context.__exit__.return_value = False
     with (
-        patch("codebase_rag.cli.connect_memgraph", return_value=context),
+        patch("codebase_rag.cli.connect_graph", return_value=context),
         patch.object(store, "list_projects", create=True, return_value=[PROJECT]),
     ):
         return CliRunner().invoke(

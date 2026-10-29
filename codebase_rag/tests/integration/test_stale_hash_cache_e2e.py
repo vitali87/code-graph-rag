@@ -20,7 +20,7 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.sync.checkout_state import state_file
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
@@ -38,14 +38,14 @@ def repo(tmp_path: Path) -> Path:
     return project
 
 
-def _index(ingestor: MemgraphIngestor, repo_path: Path) -> None:
+def _index(ingestor: GraphIngestor, repo_path: Path) -> None:
     parsers, queries = load_parsers()
     GraphUpdater(
         ingestor=ingestor, repo_path=repo_path, parsers=parsers, queries=queries
     ).run()
 
 
-def _module_count(ingestor: MemgraphIngestor) -> int:
+def _module_count(ingestor: GraphIngestor) -> int:
     rows = ingestor.fetch_all(
         "MATCH (m:Module) WHERE m.qualified_name STARTS WITH 'cachedrepo.' "
         "RETURN count(m) AS count"
@@ -55,7 +55,7 @@ def _module_count(ingestor: MemgraphIngestor) -> int:
 
 class TestStaleHashCache:
     def test_reindex_after_external_wipe_rebuilds_fully(
-        self, memgraph_ingestor: MemgraphIngestor, repo: Path
+        self, memgraph_ingestor: GraphIngestor, repo: Path
     ) -> None:
         _index(memgraph_ingestor, repo)
         assert _module_count(memgraph_ingestor) > 0
@@ -70,7 +70,7 @@ class TestStaleHashCache:
         assert _module_count(memgraph_ingestor) > 0
 
     def test_intact_graph_keeps_incremental_sync(
-        self, memgraph_ingestor: MemgraphIngestor, repo: Path
+        self, memgraph_ingestor: GraphIngestor, repo: Path
     ) -> None:
         _index(memgraph_ingestor, repo)
 

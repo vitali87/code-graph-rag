@@ -17,7 +17,7 @@ import pytest
 from loguru import logger
 
 from codebase_rag import constants as cs
-from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.services.graph_service import GraphIngestor
 from codebase_rag.types_defs import PropertyValue
 
 _CONFLICT = (
@@ -72,8 +72,8 @@ def errors() -> Iterator[list[str]]:
     logger.remove(sink)
 
 
-def _ingestor(conn: _Conn) -> MemgraphIngestor:
-    ingestor = MemgraphIngestor(host="127.0.0.1", port=7687)
+def _ingestor(conn: _Conn) -> GraphIngestor:
+    ingestor = GraphIngestor(host="127.0.0.1", port=7687)
     ingestor.conn = conn
     return ingestor
 

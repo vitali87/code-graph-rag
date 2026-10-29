@@ -71,7 +71,7 @@ def _ingestor(nodes: list[ResultRow]) -> MagicMock:
 
 
 def _json_rows(args: list[str], nodes: list[ResultRow] = NODES) -> list[ResultRow]:
-    with patch("codebase_rag.cli.connect_memgraph", return_value=_ingestor(nodes)):
+    with patch("codebase_rag.cli.connect_graph", return_value=_ingestor(nodes)):
         result = CliRunner().invoke(app, ["dead-code", "--format", "json", *args])
     assert result.exit_code == 0, result.output
     return json.loads(result.output)
@@ -79,7 +79,7 @@ def _json_rows(args: list[str], nodes: list[ResultRow] = NODES) -> list[ResultRo
 
 def _file_rows(tmp_path: Path) -> list[ResultRow]:
     report = tmp_path / "dead.json"
-    with patch("codebase_rag.cli.connect_memgraph", return_value=_ingestor(NODES)):
+    with patch("codebase_rag.cli.connect_graph", return_value=_ingestor(NODES)):
         result = CliRunner().invoke(
             app, ["dead-code", "--format", "json", "--output", str(report)]
         )

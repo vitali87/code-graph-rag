@@ -15,7 +15,7 @@ from codebase_rag.constants import (
     RelationshipType,
     UniqueKeyType,
 )
-from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.services.graph_service import GraphIngestor
 
 
 class TestNodeLabelCoverage:
@@ -69,7 +69,7 @@ class TestNodeLabelConstraintConsistency:
 class TestFlushNodesForAllNodeLabels:
     @pytest.mark.parametrize("label", list(NodeLabel))
     def test_each_node_label_can_be_flushed(self, label: NodeLabel) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687, batch_size=10)
+        ingestor = GraphIngestor(host="localhost", port=7687, batch_size=10)
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
         mock_conn.cursor.return_value = mock_cursor
@@ -90,7 +90,7 @@ class TestFlushRelationshipsForAllTypes:
     def test_each_relationship_type_can_be_flushed(
         self, rel_type: RelationshipType
     ) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687, batch_size=10)
+        ingestor = GraphIngestor(host="localhost", port=7687, batch_size=10)
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
         mock_conn.cursor.return_value = mock_cursor
@@ -163,7 +163,7 @@ class TestNodeBufferFlushWithMissingKey:
     def test_node_without_unique_key_is_skipped_not_crashed(
         self, label: NodeLabel
     ) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687, batch_size=10)
+        ingestor = GraphIngestor(host="localhost", port=7687, batch_size=10)
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
         mock_conn.cursor.return_value = mock_cursor
@@ -179,16 +179,14 @@ class TestNodeBufferFlushWithMissingKey:
 
 class TestEnsureConstraintsForAllLabels:
     def test_ensure_constraints_creates_all_constraints(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor = GraphIngestor(host="localhost", port=7687)
         executed_queries: list[str] = []
 
         def capture_query(query: str, params: object = None) -> list[object]:
             executed_queries.append(query)
             return []
 
-        with patch.object(
-            MemgraphIngestor, "_execute_query", side_effect=capture_query
-        ):
+        with patch.object(GraphIngestor, "_execute_query", side_effect=capture_query):
             ingestor.ensure_constraints()
 
         for label in NodeLabel:
@@ -201,16 +199,14 @@ class TestEnsureConstraintsForAllLabels:
             )
 
     def test_ensure_constraints_creates_all_indexes(self) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor = GraphIngestor(host="localhost", port=7687)
         executed_queries: list[str] = []
 
         def capture_query(query: str, params: object = None) -> list[object]:
             executed_queries.append(query)
             return []
 
-        with patch.object(
-            MemgraphIngestor, "_execute_query", side_effect=capture_query
-        ):
+        with patch.object(GraphIngestor, "_execute_query", side_effect=capture_query):
             ingestor.ensure_constraints()
 
         for label in NodeLabel:

@@ -142,12 +142,12 @@ def main(
     ] = "",
 ) -> None:
     from codebase_rag.agent_loop import _initialize_services_and_agent
-    from codebase_rag.cli_runtime import connect_memgraph
+    from codebase_rag.cli_runtime import connect_graph
     from codebase_rag.config import settings
 
     root = str(repo_path.resolve())
     projects = [project_name] if project_name else None
-    with connect_memgraph(settings.MEMGRAPH_BATCH_SIZE) as ingestor:
+    with connect_graph(settings.MEMGRAPH_BATCH_SIZE) as ingestor:
         agent, _, _ = _initialize_services_and_agent(root, ingestor, projects)
         records = asyncio.run(_record_first_tool_calls(agent))
     _print_first_tool_report(records)

@@ -13,13 +13,13 @@ import threading
 import mgclient
 import pytest
 
-from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
 
 def test_a_conflicting_write_goes_through_after_the_other_commits(
-    memgraph_ingestor: MemgraphIngestor,
+    memgraph_ingestor: GraphIngestor,
     memgraph_container: dict[str, str | int],
 ) -> None:
     memgraph_ingestor.execute_write("CREATE (:Probe {id: 1, v: 0})")
@@ -42,7 +42,7 @@ def test_a_conflicting_write_goes_through_after_the_other_commits(
 
 
 def test_a_query_error_is_still_raised_at_once(
-    memgraph_ingestor: MemgraphIngestor,
+    memgraph_ingestor: GraphIngestor,
 ) -> None:
     # Negative.
     with pytest.raises(mgclient.DatabaseError):

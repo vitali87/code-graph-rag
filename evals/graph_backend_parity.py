@@ -38,7 +38,7 @@ from loguru import logger
 import codebase_rag
 from codebase_rag import constants as cs
 from codebase_rag.graph_dialects import get_dialect
-from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.services.graph_service import GraphIngestor
 from codebase_rag.types_defs import JsonValue, PropertyValue, ResultRow, ResultValue
 
 from . import constants as ec
@@ -83,8 +83,8 @@ def read_queries() -> dict[str, str]:
     return dict(sorted(out.items()))
 
 
-def _ingestor(engine: ec.ParityEngine, sqlite_path: str | None) -> MemgraphIngestor:
-    return MemgraphIngestor(dialect=get_dialect(engine), sqlite_path=sqlite_path)
+def _ingestor(engine: ec.ParityEngine, sqlite_path: str | None) -> GraphIngestor:
+    return GraphIngestor(dialect=get_dialect(engine), sqlite_path=sqlite_path)
 
 
 def _text(row: ResultRow, column: str) -> str | None:
@@ -92,7 +92,7 @@ def _text(row: ResultRow, column: str) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def _params(ingestor: MemgraphIngestor, project: str) -> dict[str, PropertyValue]:
+def _params(ingestor: GraphIngestor, project: str) -> dict[str, PropertyValue]:
     """Parameters every query can use, picked from one project of the graph."""
     prefix = project + cs.SEPARATOR_DOT
     roots = ingestor.fetch_all(ec.PARITY_PROJECT_ROOT, {"name": project})
@@ -158,7 +158,7 @@ def dump(
     )
 
 
-def _load(ingestor: MemgraphIngestor, graph: ParityDump) -> None:
+def _load(ingestor: GraphIngestor, graph: ParityDump) -> None:
     """Write a dump through the ingestor's own batched MERGE/CREATE path."""
     keys = cs.NODE_UNIQUE_CONSTRAINTS
     ingestor.ensure_constraints()

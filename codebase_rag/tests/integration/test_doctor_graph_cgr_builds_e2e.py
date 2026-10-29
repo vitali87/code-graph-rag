@@ -21,7 +21,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
@@ -51,7 +51,7 @@ _FINDINGS = "MATCH (n:Pattern|CodeSmell|SecurityIssue) RETURN count(n) AS n"
 _ENDPOINTS = "MATCH (r:Resource {kind: 'ENDPOINT'}) RETURN r.project AS project"
 
 
-def _sync(ingestor: MemgraphIngestor, repo: Path, tokens: list[str]) -> None:
+def _sync(ingestor: GraphIngestor, repo: Path, tokens: list[str]) -> None:
     parsers, queries = load_parsers()
     GraphUpdater(
         ingestor=ingestor,
@@ -62,12 +62,12 @@ def _sync(ingestor: MemgraphIngestor, repo: Path, tokens: list[str]) -> None:
     ).run()
 
 
-def _violations(ingestor: MemgraphIngestor) -> list[str]:
+def _violations(ingestor: GraphIngestor) -> list[str]:
     return [v.detail for v in ga.collect_live_violations(ingestor.fetch_all)]
 
 
 def test_doctor_passes_after_capture_all_and_after_dropping_it(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     repo = tmp_path / "docfresh"
     (repo / "src").mkdir(parents=True)

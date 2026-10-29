@@ -17,12 +17,12 @@ from codebase_rag.sync.checkout_state import state_file
 from codebase_rag.utils import path_utils
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
 
-def _updater(ingestor: MemgraphIngestor, repo: Path, project: str) -> GraphUpdater:
+def _updater(ingestor: GraphIngestor, repo: Path, project: str) -> GraphUpdater:
     parsers, queries = load_parsers()
     return GraphUpdater(
         ingestor=ingestor,
@@ -33,7 +33,7 @@ def _updater(ingestor: MemgraphIngestor, repo: Path, project: str) -> GraphUpdat
     )
 
 
-def _packages(ingestor: MemgraphIngestor) -> set[str]:
+def _packages(ingestor: GraphIngestor) -> set[str]:
     rows = ingestor.fetch_all("MATCH (p:Package) RETURN p.qualified_name AS qn")
     return {str(row["qn"]) for row in rows}
 
@@ -47,7 +47,7 @@ def _repo(root: Path, name: str) -> Path:
 
 
 def test_an_upgraded_sync_drops_a_linked_package_and_keeps_its_target(
-    memgraph_ingestor: MemgraphIngestor,
+    memgraph_ingestor: GraphIngestor,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -75,7 +75,7 @@ def test_an_upgraded_sync_drops_a_linked_package_and_keeps_its_target(
 
 
 def test_pruning_one_project_leaves_another_projects_package(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     alpha = _repo(tmp_path, "alpha")
     beta = _repo(tmp_path, "beta")
@@ -91,7 +91,7 @@ def test_pruning_one_project_leaves_another_projects_package(
 
 
 def test_the_package_delete_query_is_scoped(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     mine = (tmp_path / "mine").as_posix()
     other = (tmp_path / "other").as_posix()
@@ -121,7 +121,7 @@ def test_the_package_delete_query_is_scoped(
 
 
 def test_a_link_to_the_other_checkouts_package_leaves_it(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # Two checkouts under one project name share the `shared.pkg` node, which
     # holds the other's path. This checkout's `pkg` links to that directory,

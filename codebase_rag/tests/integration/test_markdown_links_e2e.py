@@ -20,7 +20,7 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.sync.checkout_state import state_file
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
@@ -76,7 +76,7 @@ def _repo(tmp_path: Path) -> Path:
     return repo
 
 
-def _index(ingestor: MemgraphIngestor, repo: Path, force: bool) -> None:
+def _index(ingestor: GraphIngestor, repo: Path, force: bool) -> None:
     parsers, queries = load_parsers()
     GraphUpdater(
         ingestor=ingestor,
@@ -87,12 +87,12 @@ def _index(ingestor: MemgraphIngestor, repo: Path, force: bool) -> None:
     ).run(force=force)
 
 
-def _snapshot(ingestor: MemgraphIngestor) -> tuple[list[dict], list[dict]]:
+def _snapshot(ingestor: GraphIngestor) -> tuple[list[dict], list[dict]]:
     return ingestor.fetch_all(LINKS), ingestor.fetch_all(DOCUMENTS)
 
 
 def _clean_snapshot(
-    ingestor: MemgraphIngestor, repo: Path
+    ingestor: GraphIngestor, repo: Path
 ) -> tuple[list[dict], list[dict]]:
     ingestor._execute_query("MATCH (n) DETACH DELETE n")
     _index(ingestor, repo, force=True)
@@ -106,7 +106,7 @@ def _touch(path: Path, repo: Path) -> None:
 
 
 def test_each_link_is_its_own_edge_between_its_section_and_its_target(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     pytest.importorskip("tree_sitter_markdown")
     repo = _repo(tmp_path)
@@ -151,7 +151,7 @@ def test_each_link_is_its_own_edge_between_its_section_and_its_target(
 
 
 def test_re_indexing_keeps_one_edge_per_link(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # Negative: the site is the MERGE key, so a second full index rewrites
     # each link's edge instead of adding a parallel one.
@@ -166,7 +166,7 @@ def test_re_indexing_keeps_one_edge_per_link(
 
 
 def test_an_incremental_sync_ends_where_a_clean_index_does(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     pytest.importorskip("tree_sitter_markdown")
     repo = _repo(tmp_path)
@@ -196,7 +196,7 @@ def test_an_incremental_sync_ends_where_a_clean_index_does(
 
 
 def test_the_context_slice_finds_a_document_linking_from_a_section(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     pytest.importorskip("tree_sitter_markdown")
     repo = _repo(tmp_path)

@@ -66,21 +66,21 @@ for func in functions[:5]:
 ## Query Memgraph Directly
 
 For live queries against a running Memgraph instance. A host, port or
-login passed to `MemgraphIngestor` selects Memgraph whatever `GRAPH_BACKEND`
+login passed to `GraphIngestor` selects Memgraph whatever `GRAPH_BACKEND`
 says (under `neo4j` it is refused, since Neo4j connects through `NEO4J_URI`);
 with none, it opens the engine `GRAPH_BACKEND` selects, the embedded graph
 by default, and reads any field left out from its `MEMGRAPH_*` setting:
 
 ```python
-from cgr import MemgraphIngestor
+from cgr import GraphIngestor
 
-with MemgraphIngestor(host="localhost", port=7687) as db:
+with GraphIngestor(host="localhost", port=7687) as db:
     rows = db.fetch_all("MATCH (f:Function) RETURN f.name LIMIT 10")
     for row in rows:
         print(row)
 ```
 
-![The MemgraphIngestor snippet run against the Memgraph on localhost:7687, printing ten function names](../assets/demos/graph-loader-memgraph.gif)
+![The GraphIngestor snippet run against the Memgraph on localhost:7687, printing ten function names](../assets/demos/graph-loader-memgraph.gif)
 
 ## Use Cases
 

@@ -15,7 +15,7 @@ from codebase_rag.cli import app
 from codebase_rag.config import AppConfig, settings
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.services.graph_service import GraphIngestor
 from codebase_rag.utils.dependencies import has_torch, has_transformers
 
 runner = CliRunner()
@@ -31,7 +31,7 @@ def _has_semantic_deps() -> bool:
 
 @pytest.fixture
 def query_ingestor() -> MagicMock:
-    mock = MagicMock(spec=MemgraphIngestor)
+    mock = MagicMock(spec=GraphIngestor)
     mock.fetch_all = MagicMock(return_value=[])
     mock.execute_write = MagicMock()
     return mock
@@ -110,7 +110,7 @@ class TestCliNoEmbeddingsFlag:
     def _invoke_start(self, tmp_path: Path, *extra: str) -> MagicMock:
         with (
             patch("codebase_rag.graph_updater.GraphUpdater") as mock_updater_cls,
-            patch("codebase_rag.cli.connect_memgraph") as mock_connect,
+            patch("codebase_rag.cli.connect_graph") as mock_connect,
             patch("codebase_rag.cli.load_parsers", return_value=({}, {})),
             patch("codebase_rag.cli._update_and_validate_models"),
         ):

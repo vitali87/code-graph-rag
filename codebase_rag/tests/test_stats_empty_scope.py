@@ -35,7 +35,7 @@ def _ingestor() -> MagicMock:
 
 
 def _run(args: list[str], mock: MagicMock) -> tuple[int, str]:
-    with patch("codebase_rag.cli.connect_memgraph", return_value=mock):
+    with patch("codebase_rag.cli.connect_graph", return_value=mock):
         result = CliRunner().invoke(app, ["stats", *args])
     return result.exit_code, " ".join(click.unstyle(result.output).split())
 

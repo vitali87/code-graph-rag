@@ -12,14 +12,14 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.flow_access import FlowKind
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
 _FLOWS = cs.RelationshipType.FLOWS_TO.value
 
 
-def _build(ingestor: MemgraphIngestor, tmp_path: Path, code: str) -> None:
+def _build(ingestor: GraphIngestor, tmp_path: Path, code: str) -> None:
     project = tmp_path / "flow_go"
     project.mkdir()
     (project / "main.go").write_text(code, encoding="utf-8")
@@ -33,7 +33,7 @@ def _build(ingestor: MemgraphIngestor, tmp_path: Path, code: str) -> None:
     ).run()
 
 
-def _flows(ingestor: MemgraphIngestor) -> list[dict[str, str | None]]:
+def _flows(ingestor: GraphIngestor) -> list[dict[str, str | None]]:
     rows = ingestor.fetch_all(
         f"MATCH (a)-[r:{_FLOWS}]->(b) "
         "RETURN a.qualified_name AS frm, b.qualified_name AS to, "
@@ -52,7 +52,7 @@ def _has(flows: list[dict[str, str | None]], frm: str, to: str, **props: str) ->
 
 
 def test_go_env_flows_to_stdout(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # A `:=` local carries the env source to a later Println: ENV -> STDOUT.
     _build(
@@ -74,7 +74,7 @@ def test_go_env_flows_to_stdout(
 
 
 def test_go_direct_env_argument_flows_to_stdout(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     _build(
         memgraph_ingestor,
@@ -92,7 +92,7 @@ def test_go_direct_env_argument_flows_to_stdout(
 
 
 def test_go_network_read_flows_to_file(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     _build(
         memgraph_ingestor,
@@ -113,7 +113,7 @@ def test_go_network_read_flows_to_file(
 
 
 def test_go_tainted_value_arg_edge_to_callee(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     _build(
         memgraph_ingestor,
@@ -135,7 +135,7 @@ def test_go_tainted_value_arg_edge_to_callee(
 
 
 def test_go_untainted_value_no_flow(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     _build(
         memgraph_ingestor,
@@ -149,7 +149,7 @@ def test_go_untainted_value_no_flow(
 
 
 def test_go_return_taint_flows_across_call(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # getSecret() returns os.Getenv(...); the caller assigns and logs it, so the
     # return edge and the ENV -> STDOUT flow both appear (shared fixpoint).
@@ -175,7 +175,7 @@ def test_go_return_taint_flows_across_call(
 
 
 def test_go_two_value_assignment_flows(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # `resp, err := http.Get(url)` is the idiomatic form: the single call feeds
     # both LHS names, so the network source still reaches the file sink via resp.
@@ -199,7 +199,7 @@ def test_go_two_value_assignment_flows(
 
 
 def test_go_local_shadows_source_no_flow(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # A local `os` shadows the imported package, so os.Getenv here is not the env
     # source and nothing must flow to the Println sink.
@@ -219,7 +219,7 @@ def test_go_local_shadows_source_no_flow(
 
 
 def test_go_later_shadow_does_not_suppress_earlier_source(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # Go has no hoisting: a `os := load()` AFTER the read must not retroactively
     # shadow the earlier real os.Getenv, so the direct ENV -> STDOUT flow stands.
@@ -243,7 +243,7 @@ def test_go_later_shadow_does_not_suppress_earlier_source(
 
 
 def test_go_later_shadow_keeps_prior_variable_flow(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # A read bound to `secret`, THEN a later `os := load()` shadow, then a log of
     # secret: the import was in scope at the read, so ENV -> STDOUT must survive.
@@ -268,7 +268,7 @@ def test_go_later_shadow_keeps_prior_variable_flow(
 
 
 def test_go_parallel_assignment_preserves_rhs_taint(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # Go evaluates every RHS before any LHS update; `_, copy := "safe", secret`
     # must read `secret` as still tainted, so logging copy keeps ENV -> STDOUT.
@@ -293,7 +293,7 @@ def test_go_parallel_assignment_preserves_rhs_taint(
 
 
 def test_go_reassignment_kills_taint(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # Re-binding the tainted var to a constant kills its taint before the sink.
     _build(

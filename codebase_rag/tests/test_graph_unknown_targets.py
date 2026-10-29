@@ -202,7 +202,7 @@ def connected(graph: FakeGraph) -> Iterator[FakeGraph]:
     ingestor.fetch_all = MagicMock(side_effect=graph)
     ingestor.__enter__ = MagicMock(return_value=ingestor)
     ingestor.__exit__ = MagicMock(return_value=False)
-    with patch("codebase_rag.cli_runtime.connect_memgraph", return_value=ingestor):
+    with patch("codebase_rag.cli_runtime.connect_graph", return_value=ingestor):
         yield graph
 
 
@@ -470,7 +470,7 @@ def test_the_refusal_is_printed_outside_the_graph_connection(
     ingestor.fetch_all = MagicMock(side_effect=graph)
     ingestor.__enter__ = MagicMock(return_value=ingestor)
     ingestor.__exit__ = MagicMock(return_value=False)
-    with patch("codebase_rag.cli_runtime.connect_memgraph", return_value=ingestor):
+    with patch("codebase_rag.cli_runtime.connect_graph", return_value=ingestor):
         _graph("callers", TOTAL, "--project", "x", "--repo-path", str(tmp_path))
 
     ingestor.__exit__.assert_called_once_with(None, None, None)
@@ -587,7 +587,7 @@ def _server_with(
     tools.get_tool_handler.return_value = None if handler is None else (handler, True)
     with (
         patch.object(mcp_server, "setup_logging"),
-        patch.object(mcp_server, "MemgraphIngestor"),
+        patch.object(mcp_server, "GraphIngestor"),
         patch.object(mcp_server, "LazyCypherGenerator"),
         patch.object(mcp_server, "MCPToolsRegistry", return_value=tools),
         patch.object(

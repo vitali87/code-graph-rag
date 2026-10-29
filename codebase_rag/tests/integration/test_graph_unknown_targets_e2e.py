@@ -20,7 +20,7 @@ from codebase_rag import constants as cs
 from codebase_rag.graph_cli import cli as graph_cli
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.services.graph_service import GraphIngestor
 from codebase_rag.utils.path_utils import derive_project_name
 
 pytestmark = [pytest.mark.integration]
@@ -43,7 +43,7 @@ def unused(values):
 
 @pytest.fixture
 def indexed(
-    memgraph_ingestor: MemgraphIngestor,
+    memgraph_ingestor: GraphIngestor,
     memgraph_container: dict[str, str | int],
     tmp_path: Path,
 ) -> Iterator[tuple[Path, str]]:
@@ -62,14 +62,14 @@ def indexed(
     ).run()
     memgraph_ingestor.flush_all()
 
-    def connect(batch_size: int) -> MemgraphIngestor:
-        return MemgraphIngestor(
+    def connect(batch_size: int) -> GraphIngestor:
+        return GraphIngestor(
             host=str(memgraph_container["host"]),
             port=int(memgraph_container["port"]),
             batch_size=batch_size,
         )
 
-    with patch("codebase_rag.cli_runtime.connect_memgraph", side_effect=connect):
+    with patch("codebase_rag.cli_runtime.connect_graph", side_effect=connect):
         yield repo, project
 
 

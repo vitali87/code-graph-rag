@@ -14,7 +14,7 @@ import pytest
 from typer.testing import CliRunner
 
 from codebase_rag.graph_dialects import DIALECT_SQLITE, get_dialect
-from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.services.graph_service import GraphIngestor
 from codebase_rag.types_defs import JsonValue
 from evals import graph_backend_parity as parity
 
@@ -68,7 +68,7 @@ def test_limit_without_order_compares_only_the_count() -> None:
 @pytest.fixture
 def graph(tmp_path: Path) -> str:
     path = str(tmp_path / "source.sqlite")
-    with MemgraphIngestor(
+    with GraphIngestor(
         dialect=get_dialect(DIALECT_SQLITE), sqlite_path=path
     ) as ingestor:
         ingestor.ensure_constraints()

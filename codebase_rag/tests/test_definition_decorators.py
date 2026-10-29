@@ -224,7 +224,7 @@ def test_cli_definition_prints_the_decorated_span_and_the_decorators(
         "--repo-path",
         str(indexed.root),
     ]
-    with patch("codebase_rag.cli_runtime.connect_memgraph", return_value=ingestor):
+    with patch("codebase_rag.cli_runtime.connect_graph", return_value=ingestor):
         result = CliRunner().invoke(graph_cli, args)
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)

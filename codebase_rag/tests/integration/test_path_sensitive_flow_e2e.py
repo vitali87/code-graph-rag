@@ -12,7 +12,7 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.flow_access import FlowKind
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
@@ -20,7 +20,7 @@ ENV_K = "resource::ENV::K"
 STDOUT = "resource::STDOUT::<dynamic>"
 
 
-def _build(ingestor: MemgraphIngestor, tmp_path: Path, code: str) -> None:
+def _build(ingestor: GraphIngestor, tmp_path: Path, code: str) -> None:
     project = tmp_path / "flow_project"
     project.mkdir()
     (project / "flow.py").write_text(code, encoding="utf-8")
@@ -34,7 +34,7 @@ def _build(ingestor: MemgraphIngestor, tmp_path: Path, code: str) -> None:
     ).run()
 
 
-def _resource_flow_present(ingestor: MemgraphIngestor, frm: str, to: str) -> bool:
+def _resource_flow_present(ingestor: GraphIngestor, frm: str, to: str) -> bool:
     rows = ingestor.fetch_all(
         f"MATCH (a:{cs.NodeLabel.RESOURCE.value})-[r:{cs.RelationshipType.FLOWS_TO.value}]->"
         f"(b:{cs.NodeLabel.RESOURCE.value}) "
@@ -45,7 +45,7 @@ def _resource_flow_present(ingestor: MemgraphIngestor, frm: str, to: str) -> boo
 
 
 def test_kill_on_one_branch_still_flows(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # x tainted, killed on ONLY the if-branch; the else-path (implicit) still
     # leaks ENV::K -> STDOUT, so the flow must survive (MAY analysis).
@@ -63,7 +63,7 @@ def test_kill_on_one_branch_still_flows(
 
 
 def test_taint_on_one_branch_flows(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # x clean, tainted on ONLY the if-branch; that path leaks, so the flow
     # must appear (taint that exists on ANY path survives the merge).
@@ -81,7 +81,7 @@ def test_taint_on_one_branch_flows(
 
 
 def test_kill_on_all_branches_does_not_flow(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # x tainted, then reassigned to an untainted value on EVERY path (if AND
     # else): killed on all paths, so NO ENV::K -> STDOUT flow may remain.
@@ -101,7 +101,7 @@ def test_kill_on_all_branches_does_not_flow(
 
 
 def test_loop_carried_taint_reaches_earlier_statement(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # x is tainted at the END of the loop body; on the NEXT iteration the
     # earlier print(x) sees that taint. The two-pass loop merge must catch it.
@@ -119,7 +119,7 @@ def test_loop_carried_taint_reaches_earlier_statement(
 
 
 def test_taint_survives_except_only_kill(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    memgraph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # x killed only on the except path; the normal (no-exception) path keeps
     # the taint, so the flow must survive the try/except merge.

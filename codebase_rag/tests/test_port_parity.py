@@ -37,7 +37,7 @@ from codebase_rag.port.parity import (
     parse_pairs,
     port_check,
 )
-from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.services.graph_service import GraphIngestor
 
 PROJECT = "port_fixture"
 
@@ -118,7 +118,7 @@ def _index(parent: Path, project: str, files: dict[str, str]) -> Path:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text)
     parsers, queries = load_parsers()
-    with MemgraphIngestor() as ingestor:
+    with GraphIngestor() as ingestor:
         ingestor.ensure_constraints()
         GraphUpdater(
             ingestor=ingestor,
@@ -152,7 +152,7 @@ def _check(
     include_tests: bool = False,
     project: str = PROJECT,
 ) -> ParityReport:
-    with MemgraphIngestor() as ingestor:
+    with GraphIngestor() as ingestor:
         return port_check(
             ingestor.fetch_all,
             PortScope(project, old),
