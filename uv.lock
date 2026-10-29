@@ -273,7 +273,7 @@ wheels = [
 
 [[package]]
 name = "cgr-graph-rs"
-version = "0.1.3"
+version = "0.1.4"
 source = { directory = "rust/cgr_graph_rs" }
 
 [[package]]
