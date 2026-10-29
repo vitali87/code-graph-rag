@@ -73,6 +73,7 @@ from .php import utils as php_utils
 from .python import calls as python_calls
 from .rpc_exposure import GoRpcExposureProcessor
 from .rust import utils as rs_utils
+from .scala import calls as scala_calls
 from .scala import utils as scala_utils
 from .sql.ddl import ddl_routine_references
 from .string_call import load_string_call_specs, string_call_target
@@ -148,14 +149,6 @@ class _RefEmitScope(NamedTuple):
     caller_qn: str | None
     resolve_func: Callable[..., tuple[str, str] | None]
     ensure_rel: Callable[..., None]
-
-
-class _ScalaCallee(NamedTuple):
-    # What a Scala call binds to through the compiler's lookup. `decided`
-    # False leaves the call to the name-based resolver; True means `callee`
-    # is the answer, and None there is a known non-edge.
-    decided: bool
-    callee: tuple[str, str] | None
 
 
 class _PhpClassCallee(NamedTuple):
@@ -868,6 +861,7 @@ class CallProcessor:
         "_js",
         "_python",
         "_java",
+        "_scala",
         "_callable_flow",
         "_flow_bucket",
         "failed_call_files",
@@ -947,6 +941,7 @@ class CallProcessor:
         self._js = js_calls.JsTsCallResolution(self, self._resolver)
         self._python = python_calls.PythonCallResolution(self, self._resolver)
         self._java = java_calls.JavaCallResolution(self, self._resolver)
+        self._scala = scala_calls.ScalaCallResolution(self._resolver)
         # Inter-procedural callable-parameter flow: ordered params per function and
         # the per-call-site argument bindings, resolved to a fixpoint in finalize.
         self._flow_param_names: dict[str, list[str]] = {}
@@ -3311,7 +3306,9 @@ class CallProcessor:
             ctx.language == cs.SupportedLanguage.SCALA
             and call_node.type == cs.TS_SCALA_FIELD_EXPRESSION
         ):
-            self._ingest_scala_selection(ctx, call_node)
+            if (selected := self._scala.selection_callee(ctx, call_node)) is not None:
+                selection_name, callee_info = selected
+                self._ingest_resolved_call(ctx, call_node, selection_name, callee_info)
             return
         # A declared dispatcher (`callSp('usp_x')`) names its real callee in
         # a string, which no parser resolves as a call: without this the
@@ -3464,51 +3461,6 @@ class CallProcessor:
                     (target_label, cs.KEY_QUALIFIED_NAME, target_qn),
                 )
 
-    def _ingest_scala_selection(self, ctx: _CallScanContext, node: Node) -> None:
-        # `c.size` with no parentheses: a parameterless method call, or a
-        # field read spelled the same way. It binds only through a receiver
-        # whose class is known (issue #2450); the selection that is a call's
-        # callee is left to the call node, which names it with its args.
-        selection = scala_utils.selection(node)
-        if selection is None:
-            return
-        if ctx.scala_bindings is None:
-            ctx.scala_bindings = scala_utils.bindings(ctx.caller_node)
-        receiver, member = selection
-        binding = scala_utils.binding_at(ctx.scala_bindings, receiver, node.start_byte)
-        # A local's binding types it; an unbound name is an object named
-        # outright. A local of unknown type is neither, so it binds nothing.
-        receiver_type = binding.type_name if binding is not None else receiver
-        if receiver_type is None:
-            return
-        callee_info = self._resolver.resolve_scala_selection(
-            receiver_type, member, ctx.module_qn, ctx.class_context, node.start_byte
-        )
-        if callee_info is None:
-            return
-        call_name = f"{receiver}{cs.SEPARATOR_DOT}{member}"
-        self._ingest_resolved_call(ctx, node, call_name, callee_info)
-
-    def _emit_scala_auxiliary_ctor_calls(
-        self, ctx: _CallScanContext, class_variants: list[str]
-    ) -> None:
-        # A Scala class's primary constructor is its body, which has no node
-        # of its own; an auxiliary `def this(...)` is a method, and any of
-        # them may be the one `new C(...)` runs.
-        registry = self._resolver.function_registry
-        for class_variant in class_variants:
-            ctor_qn = (
-                f"{class_variant}{cs.SEPARATOR_DOT}{cs.SCALA_AUXILIARY_CONSTRUCTOR}"
-            )
-            if registry.get(ctor_qn) != cs.NodeLabel.METHOD:
-                continue
-            for variant in registry.variants(ctor_qn):
-                ctx.ensure_rel(
-                    ctx.caller_spec,
-                    cs.RelationshipType.CALLS,
-                    (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, variant),
-                )
-
     def _ingest_named_call(
         self, ctx: _CallScanContext, call_node: Node, call_name: str
     ) -> None:
@@ -3604,7 +3556,7 @@ class CallProcessor:
     ) -> tuple[str, str] | None:
         if (
             ctx.language == cs.SupportedLanguage.SCALA
-            and (scala := self._resolve_scala_callee(ctx, call_node, call_name)).decided
+            and (scala := self._scala.resolve_callee(ctx, call_node, call_name)).decided
         ):
             return scala.callee
         if ctx.is_java and call_node.type == cs.TS_METHOD_INVOCATION:
@@ -3671,22 +3623,6 @@ class CallProcessor:
         if ctx.is_js_ts and callee_info is not None:
             return self._js.judge_member_pick(ctx, call_node, callee_info)
         return callee_info
-
-    def _resolve_scala_callee(
-        self, ctx: _CallScanContext, call_node: Node, call_name: str
-    ) -> _ScalaCallee:
-        # Named the way the compiler looks it up: the imports in scope at
-        # the call, the file, its package's other files. A path-qualified
-        # `new shop.Cart()` names no import, so only the package index
-        # reaches it.
-        return _ScalaCallee(
-            *self._resolver.resolve_scala_callee(
-                call_name,
-                ctx.module_qn,
-                call_node.start_byte,
-                constructing=call_node.type == cs.TS_SCALA_INSTANCE_EXPRESSION,
-            )
-        )
 
     def _resolve_php_class_callee(
         self, ctx: _CallScanContext, call_node: Node, call_name: str
@@ -4205,7 +4141,9 @@ class CallProcessor:
             self._cpp.emit_ctor_calls(ctx.caller_spec, callee_qn)
             return
         if ctx.language == cs.SupportedLanguage.SCALA:
-            self._emit_scala_auxiliary_ctor_calls(ctx, class_variants)
+            self._scala.emit_auxiliary_ctor_calls(
+                ctx.caller_spec, class_variants, ctx.ensure_rel
+            )
             return
         # Every class variant INSTANTIATES above, so every one
         # takes its constructors too: `Box@8` for `class Box<T>`
