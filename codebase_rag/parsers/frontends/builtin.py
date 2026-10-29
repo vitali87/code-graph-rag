@@ -7,9 +7,9 @@ here, so the frontends package itself stays free of language packages.
 
 from __future__ import annotations
 
-from . import cpp, csharp, go, java, python
-from .registry import EMITTING_FRONTENDS, FRONTENDS
+from . import csharp, go, java, python
+from .registry import FRONTENDS
 
-BUNDLED_FRONTEND_MODULES = (cpp, csharp, go, java, python)
+BUNDLED_FRONTEND_MODULES = (csharp, go, java, python)
 
-__all__ = ["BUNDLED_FRONTEND_MODULES", "EMITTING_FRONTENDS", "FRONTENDS"]
+__all__ = ["BUNDLED_FRONTEND_MODULES", "FRONTENDS"]

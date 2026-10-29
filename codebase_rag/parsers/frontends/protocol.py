@@ -1,22 +1,14 @@
-"""The `LanguageFrontend` / `EmittingFrontend` contract and the `SemanticFacts`
-bundle (issue #1178). Generalized from the proven Roslyn/C# integration."""
+"""The `LanguageFrontend` contract and the `SemanticFacts` bundle (issue #1178).
+Generalized from the proven Roslyn/C# integration."""
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from enum import StrEnum
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from ...constants.languages import SupportedLanguage
-from ...services import IngestorProtocol
-from ...types_defs import (
-    FunctionRegistryTrieProtocol,
-    PendingExpansionCall,
-    PendingMacroCall,
-    SimpleNameLookup,
-)
 
 # Call-site join key: (rel_file, name_token_line, name_token_byte_col, simple_name).
 # The NAME token, not the expression start: nested invocations (`Make().Handle(x)`)
@@ -166,60 +158,3 @@ class LanguageFrontend(Protocol):
         files: Sequence[Path],
         rescued_files: frozenset[str] = frozenset(),
     ) -> SemanticFacts: ...
-
-
-class FrontendPhase(StrEnum):
-    # Run before the tree-sitter definition pass (libclang LIBCLANG mode emits its
-    # own Function nodes, and Pass 2 skips the files it covered).
-    BEFORE_DEFINITIONS = "before_definitions"
-    # Run after the definition pass (libclang HYBRID mode attributes macro calls to
-    # the tree-sitter spans that already exist).
-    AFTER_DEFINITIONS = "after_definitions"
-
-
-@dataclass
-class FrontendEmitContext:
-    """What an emitting frontend needs to write graph elements directly (the C++
-    libclang integration): the ingestor plus the graph's already-computed
-    registries and file-selection state (issue #1178)."""
-
-    ingestor: IngestorProtocol
-    repo_path: Path
-    project_name: str
-    compdb_dir: Path
-    function_registry: FunctionRegistryTrieProtocol | None = None
-    simple_name_lookup: SimpleNameLookup | None = None
-    structural_elements: dict[Path, str | None] | None = None
-    exclude_paths: frozenset[str] | None = None
-    unignore_paths: frozenset[str] | None = None
-    owned_qns: dict[str, set[str]] | None = None
-
-
-@dataclass
-class FrontendEmitResult:
-    """What an emitting frontend returns to the graph builder: the set of files it
-    fully covered (so the definition pass skips them, LIBCLANG mode) and any calls
-    to be joined to tree-sitter spans in a later phase (HYBRID mode)."""
-
-    covered_files: frozenset[str] = frozenset()
-    pending_macro_calls: list[PendingMacroCall] = field(default_factory=list)
-    pending_expansion_calls: list[PendingExpansionCall] = field(default_factory=list)
-
-
-@runtime_checkable
-class EmittingFrontend(Protocol):
-    """A frontend that also emits graph elements the backbone cannot produce, in a
-    declared run phase (the C++ libclang integration)."""
-
-    language: SupportedLanguage
-
-    # Read-only: the C++ frontend derives it from the configured mode, and
-    # the registry only reads it.
-    @property
-    def phase(self) -> FrontendPhase: ...
-
-    def available(self) -> bool: ...
-
-    def applies(self, repo_path: Path) -> bool: ...
-
-    def emit(self, ctx: FrontendEmitContext) -> FrontendEmitResult: ...

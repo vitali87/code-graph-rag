@@ -1,14 +1,11 @@
 """Language semantic frontends (issue #1178, roadmap #1191).
 
 Tree-sitter is the universal backbone; each language's own compiler is layered on
-top as an OPTIONAL fact provider. Two shapes are supported:
-
-- A `LanguageFrontend` returns a `SemanticFacts` bundle (the Roslyn/C# shape): the
-  compiler's answers keyed by source position, consumed by the existing processors
-  with silent per-miss fallback to the tree-sitter heuristics.
-- An `EmittingFrontend` also writes graph elements the backbone cannot produce
-  (the libclang/C++ shape: macro-expanded nodes, `#include` edges), in a declared
-  run phase.
+top as an OPTIONAL fact provider: a `LanguageFrontend` returns a `SemanticFacts`
+bundle, the compiler's answers keyed by source position, consumed by the existing
+processors with silent per-miss fallback to the tree-sitter heuristics. libclang
+for C/C++, which writes graph elements the backbone cannot produce (macro-expanded
+nodes, `#include` edges), is called by the graph builder directly.
 
 The invariant every frontend preserves: the compiler is an oracle, tree-sitter is
 the backbone, and a missing toolchain degrades to the pure tree-sitter graph --
@@ -22,34 +19,22 @@ from __future__ import annotations
 # on package import closed a cycle whenever a language package loaded first.
 from .protocol import (
     CallSiteKey,
-    EmittingFrontend,
-    FrontendEmitContext,
-    FrontendEmitResult,
-    FrontendPhase,
     LanguageFrontend,
     ResolvedCallSite,
     SemanticFacts,
     empty_facts,
 )
 from .registry import (
-    EMITTING_FRONTENDS,
     FRONTENDS,
-    register_emitting_frontend,
     register_frontend,
 )
 
 __all__ = [
-    "EMITTING_FRONTENDS",
     "FRONTENDS",
     "CallSiteKey",
-    "EmittingFrontend",
-    "FrontendEmitContext",
-    "FrontendEmitResult",
-    "FrontendPhase",
     "LanguageFrontend",
     "ResolvedCallSite",
     "SemanticFacts",
     "empty_facts",
-    "register_emitting_frontend",
     "register_frontend",
 ]

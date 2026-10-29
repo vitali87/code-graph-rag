@@ -23,12 +23,6 @@ from codebase_rag import constants as cs
 from codebase_rag.config import settings
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parsers.cpp_frontend import cpp_frontend_available
-from codebase_rag.parsers.frontends import (
-    EMITTING_FRONTENDS,
-    FrontendEmitContext,
-    FrontendEmitResult,
-    FrontendPhase,
-)
 from codebase_rag.tests.test_graph_updater_incremental_rename import (
     InMemoryGraph,
     _make_updater,
@@ -318,54 +312,6 @@ def test_an_added_same_stem_sibling_matches_a_clean_libclang_index(
     }
 
 
-class _CoveringFrontend:
-    """A BEFORE_DEFINITIONS emitting frontend that owns one file."""
-
-    language = cs.SupportedLanguage.RUST
-    phase = FrontendPhase.BEFORE_DEFINITIONS
-
-    def __init__(self, covered: str) -> None:
-        self.covered = covered
-        self.emits = 0
-
-    def available(self) -> bool:
-        return True
-
-    def applies(self, repo_path: Path) -> bool:
-        return True
-
-    def emit(self, ctx: FrontendEmitContext) -> FrontendEmitResult:
-        self.emits += 1
-        return FrontendEmitResult(covered_files=frozenset({self.covered}))
-
-
-def test_the_rerun_keeps_every_emitting_frontends_coverage(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # The LIBCLANG re-run clears the covered set, which every emitting
-    # frontend adds to, so the frontends that filled it run again with it;
-    # re-running only the C++ one left another frontend's file uncovered and
-    # its output unregenerated (CodeRabbit, PR #2247).
-    monkeypatch.setattr(settings, "CPP_FRONTEND", cs.CppFrontend.LIBCLANG)
-    frontend = _CoveringFrontend("lib.rs")
-    registry = dict(EMITTING_FRONTENDS)
-    registry[frontend.language] = frontend
-    monkeypatch.setattr("codebase_rag.graph_updater.EMITTING_FRONTENDS", registry)
-    root = tmp_path / "proj"
-    _write(root, {"lib.rs": "pub fn f() -> i32 { 1 }\n"})
-    updater = _make_updater(root, InMemoryGraph())
-    updater.run(force=True)
-
-    lib = root / "lib.rs"
-    lib.write_text("pub fn f() -> i32 { 2 }\n")
-    os.utime(lib, (time.time() + 5, time.time() + 5))
-    emits_before = frontend.emits
-    updater.run(force=False)
-
-    assert "lib.rs" in updater._cpp_frontend_covered
-    assert frontend.emits == emits_before + 2, "the re-run skipped the frontend"
-
-
 @pytest.mark.skipif(not cpp_frontend_available(), reason="libclang not available")
 @pytest.mark.parametrize("reuse", [False, True], ids=["fresh", "reused"])
 def test_an_added_covered_file_beside_an_uncovered_survivor_matches_a_clean_index(
@@ -487,36 +433,3 @@ def test_a_failed_rerun_still_rebuilds_the_deleted_files_and_raises(
         if label == cs.NodeLabel.MODULE
     }
     assert {"shape.h", "use.cpp"} <= paths, paths
-
-
-@pytest.mark.skipif(not cpp_frontend_available(), reason="libclang not available")
-def test_a_later_emitter_failure_keeps_the_cpp_rerun_coverage(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # The C++ re-run succeeded and emitted its files; a later emitter's
-    # failure must not uncover them, or the file pass rebuilds them with
-    # tree-sitter on top of that emission (CodeRabbit, PR #2247).
-    monkeypatch.setattr(settings, "CPP_FRONTEND", cs.CppFrontend.LIBCLANG)
-    root = tmp_path / "proj"
-    _write(root, _CPP)
-    _compile_commands(root, ["use.cpp"])
-    updater = _make_updater(root, InMemoryGraph())
-    updater.run(force=True)
-    (root / _CPP_ADDED[0]).write_text(_CPP_ADDED[1])
-    _compile_commands(root, ["use.cpp", _CPP_ADDED[0]])
-
-    real_emit = GraphUpdater._run_emitting_frontends
-    calls: list[int] = []
-
-    def fail_on_rerun(self: GraphUpdater, phase: FrontendPhase) -> None:
-        if phase == FrontendPhase.BEFORE_DEFINITIONS:
-            calls.append(1)
-            if len(calls) > 1:
-                raise RuntimeError("emitter re-run failed")
-        real_emit(self, phase)
-
-    monkeypatch.setattr(GraphUpdater, "_run_emitting_frontends", fail_on_rerun)
-    with pytest.raises(RuntimeError, match="emitter re-run failed"):
-        updater.run(force=False)
-
-    assert "shape.h" in updater._cpp_frontend_covered

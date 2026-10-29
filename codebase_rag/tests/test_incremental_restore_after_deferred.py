@@ -24,12 +24,7 @@ from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers import function_ingest
-from codebase_rag.parsers.frontends import (
-    FrontendEmitContext,
-    FrontendEmitResult,
-    FrontendPhase,
-)
-from codebase_rag.parsers.frontends.builtin import EMITTING_FRONTENDS
+from codebase_rag.parsers.document_tier import DocumentTier
 from codebase_rag.tests.test_incremental_inbound_deferred_targets import (
     Snapshot,
     _calls,
@@ -228,27 +223,12 @@ def test_a_run_failing_after_pass_2_bookkeeping_still_restores_the_inbound_edges
     assert _PY_MAIN_TO_SIZE in _calls(_snapshot(store))
 
 
-class _BrokenEmitter:
-    """An after-definitions emitting frontend whose emit raises."""
-
-    language = cs.SupportedLanguage.RUST
-    phase = FrontendPhase.AFTER_DEFINITIONS
-
-    def available(self) -> bool:
-        return True
-
-    def applies(self, repo_path: Path) -> bool:
-        return True
-
-    def emit(self, ctx: FrontendEmitContext) -> FrontendEmitResult:
+def _break_a_deferred_stage(patch: pytest.MonkeyPatch) -> None:
+    # Inside the deferred stages, ahead of the Go receiver methods.
+    def fail(_self: object) -> None:
         raise RuntimeError("stage failed")
 
-
-def _break_an_after_definitions_emitter(patch: pytest.MonkeyPatch) -> None:
-    # Inside the deferred stages, ahead of the Go receiver methods.
-    patched = dict(EMITTING_FRONTENDS)
-    patched[_BrokenEmitter.language] = _BrokenEmitter()
-    patch.setattr("codebase_rag.graph_updater.EMITTING_FRONTENDS", patched)
+    patch.setattr(DocumentTier, "emit_pending_links", fail)
 
 
 def _break_the_java_frontend(patch: pytest.MonkeyPatch) -> None:
@@ -261,8 +241,8 @@ def _break_the_java_frontend(patch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.parametrize(
     "break_stage",
-    [_break_an_after_definitions_emitter, _break_the_java_frontend],
-    ids=["after-definitions-emitter", "stage-before-the-deferred-ones"],
+    [_break_a_deferred_stage, _break_the_java_frontend],
+    ids=["a-deferred-stage", "stage-before-the-deferred-ones"],
 )
 def test_a_run_stopped_before_the_go_methods_register_keeps_the_edges_into_them(
     temp_repo: Path,
