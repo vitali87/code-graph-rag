@@ -53,7 +53,7 @@ class TestStandardLibraryImports:
             "name": [mock_name_node] if field == "name" else []
         }.get(field, [])
 
-        mock_updater.factory.import_processor._handle_python_import_from_statement(
+        mock_updater.factory.import_processor.python._handle_python_import_from_statement(
             mock_import_node,  # ty: ignore[invalid-argument-type]
             module_qn,
         )
@@ -86,7 +86,7 @@ class TestStandardLibraryImports:
             "name": [mock_name_node] if field == "name" else []
         }.get(field, [])
 
-        mock_updater.factory.import_processor._handle_python_import_from_statement(
+        mock_updater.factory.import_processor.python._handle_python_import_from_statement(
             mock_import_node,  # ty: ignore[invalid-argument-type]
             module_qn,
         )
@@ -121,7 +121,7 @@ class TestStandardLibraryImports:
             "name": [mock_name_node] if field == "name" else []
         }.get(field, [])
 
-        mock_updater.factory.import_processor._handle_python_import_from_statement(
+        mock_updater.factory.import_processor.python._handle_python_import_from_statement(
             mock_import_node,  # ty: ignore[invalid-argument-type]
             module_qn,
         )
@@ -154,7 +154,7 @@ class TestStandardLibraryImports:
             "name": [mock_name_node] if field == "name" else []
         }.get(field, [])
 
-        mock_updater.factory.import_processor._handle_python_import_from_statement(
+        mock_updater.factory.import_processor.python._handle_python_import_from_statement(
             mock_import_node,  # ty: ignore[invalid-argument-type]
             module_qn,
         )
@@ -189,7 +189,7 @@ class TestStandardLibraryImports:
             "name": [mock_name_node] if field == "name" else []
         }.get(field, [])
 
-        mock_updater.factory.import_processor._handle_python_import_from_statement(
+        mock_updater.factory.import_processor.python._handle_python_import_from_statement(
             mock_import_node,  # ty: ignore[invalid-argument-type]
             module_qn,
         )
@@ -222,7 +222,7 @@ class TestStandardLibraryImports:
             "name": [mock_name_node] if field == "name" else []
         }.get(field, [])
 
-        mock_updater.factory.import_processor._handle_python_import_from_statement(
+        mock_updater.factory.import_processor.python._handle_python_import_from_statement(
             mock_import_node,  # ty: ignore[invalid-argument-type]
             module_qn,
         )
@@ -245,7 +245,7 @@ class TestStandardLibraryImports:
 
         mock_import_node.named_children = [mock_dotted_name]
 
-        mock_updater.factory.import_processor._handle_python_import_statement(
+        mock_updater.factory.import_processor.python._handle_python_import_statement(
             mock_import_node,  # ty: ignore[invalid-argument-type]
             module_qn,
         )
@@ -268,7 +268,7 @@ class TestStandardLibraryImports:
 
         mock_import_node.named_children = [mock_dotted_name]
 
-        mock_updater.factory.import_processor._handle_python_import_statement(
+        mock_updater.factory.import_processor.python._handle_python_import_statement(
             mock_import_node,  # ty: ignore[invalid-argument-type]
             module_qn,
         )
@@ -293,7 +293,7 @@ class TestStandardLibraryImports:
 
         mock_import_node.named_children = [mock_dotted_name]
 
-        mock_updater.factory.import_processor._handle_python_import_statement(
+        mock_updater.factory.import_processor.python._handle_python_import_statement(
             mock_import_node,  # ty: ignore[invalid-argument-type]
             module_qn,
         )
@@ -325,7 +325,7 @@ class TestStandardLibraryImports:
 
         mock_import_node.named_children = [mock_aliased_import]
 
-        mock_updater.factory.import_processor._handle_python_import_statement(
+        mock_updater.factory.import_processor.python._handle_python_import_statement(
             mock_import_node,  # ty: ignore[invalid-argument-type]
             module_qn,
         )
@@ -357,7 +357,7 @@ class TestStandardLibraryImports:
 
         mock_import_node.named_children = [mock_aliased_import]
 
-        mock_updater.factory.import_processor._handle_python_import_statement(
+        mock_updater.factory.import_processor.python._handle_python_import_statement(
             mock_import_node,  # ty: ignore[invalid-argument-type]
             module_qn,
         )

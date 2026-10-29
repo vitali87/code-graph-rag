@@ -353,12 +353,12 @@ def test_import_rebinds_are_recorded_and_reset_on_reparse(tmp_path: Path) -> Non
         "try:\n    import tomllib\nexcept ImportError:\n    import tomli as tomllib\n"
         "import json\n"
     )
-    assert processor.python_import_rebinds[module_qn] == {
+    assert processor.python.python_import_rebinds[module_qn] == {
         "tomllib": {"tomllib", "tomli"}
     }
 
     parse("import tomllib\n")
-    assert module_qn not in processor.python_import_rebinds
+    assert module_qn not in processor.python.python_import_rebinds
 
 
 def test_module_level_class_alias_receiver_still_binds(tmp_path: Path) -> None:

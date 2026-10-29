@@ -38,7 +38,7 @@ class TestRelativeImportResolution:
 
         mock_relative_node.children = [mock_import_prefix, mock_dotted_name]
 
-        result = mock_updater.factory.import_processor._resolve_relative_import(
+        result = mock_updater.factory.import_processor.python._resolve_relative_import(
             mock_relative_node,  # ty: ignore[invalid-argument-type]
             module_qn,
         )
@@ -61,7 +61,7 @@ class TestRelativeImportResolution:
 
         mock_relative_node.children = [mock_import_prefix, mock_dotted_name]
 
-        result = mock_updater.factory.import_processor._resolve_relative_import(
+        result = mock_updater.factory.import_processor.python._resolve_relative_import(
             mock_relative_node,  # ty: ignore[invalid-argument-type]
             module_qn,
         )
@@ -84,7 +84,7 @@ class TestRelativeImportResolution:
 
         mock_relative_node.children = [mock_import_prefix, mock_dotted_name]
 
-        result = mock_updater.factory.import_processor._resolve_relative_import(
+        result = mock_updater.factory.import_processor.python._resolve_relative_import(
             mock_relative_node,  # ty: ignore[invalid-argument-type]
             module_qn,
         )
@@ -107,7 +107,7 @@ class TestRelativeImportResolution:
 
         mock_relative_node.children = [mock_import_prefix, mock_dotted_name]
 
-        result = mock_updater.factory.import_processor._resolve_relative_import(
+        result = mock_updater.factory.import_processor.python._resolve_relative_import(
             mock_relative_node,  # ty: ignore[invalid-argument-type]
             module_qn,
         )
@@ -128,7 +128,7 @@ class TestRelativeImportResolution:
 
         mock_relative_node.children = [mock_import_prefix]
 
-        result = mock_updater.factory.import_processor._resolve_relative_import(
+        result = mock_updater.factory.import_processor.python._resolve_relative_import(
             mock_relative_node,  # ty: ignore[invalid-argument-type]
             module_qn,
         )
@@ -153,7 +153,7 @@ class TestRelativeImportResolution:
 
         mock_relative_node.children = [mock_import_prefix, mock_dotted_name]
 
-        result = mock_updater.factory.import_processor._resolve_relative_import(
+        result = mock_updater.factory.import_processor.python._resolve_relative_import(
             mock_relative_node,  # ty: ignore[invalid-argument-type]
             module_qn,
         )
@@ -178,7 +178,7 @@ class TestRelativeImportResolution:
 
         mock_relative_node.children = [mock_import_prefix, mock_dotted_name]
 
-        result = mock_updater.factory.import_processor._resolve_relative_import(
+        result = mock_updater.factory.import_processor.python._resolve_relative_import(
             mock_relative_node,  # ty: ignore[invalid-argument-type]
             module_qn,
         )

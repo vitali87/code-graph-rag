@@ -7698,7 +7698,7 @@ class CallProcessor:
         if (
             local_qn != callee_qn
             and call_name
-            in self._resolver.import_processor.conditional_imports.get(
+            in self._resolver.import_processor.python.conditional_imports.get(
                 ctx.module_qn, ()
             )
             and self._resolver.function_registry.get(local_qn) == cs.NodeLabel.FUNCTION

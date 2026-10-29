@@ -44,15 +44,10 @@ class TestImportParsing:
     def test_python_import_parsing(self, graph_updater: GraphUpdater) -> None:
         """Test Python import statement parsing."""
 
-        assert hasattr(graph_updater.factory.import_processor, "_parse_python_imports")
-        assert hasattr(
-            graph_updater.factory.import_processor,
-            "_handle_python_import_statement",
-        )
-        assert hasattr(
-            graph_updater.factory.import_processor,
-            "_handle_python_import_from_statement",
-        )
+        importer = graph_updater.factory.import_processor.python
+        assert hasattr(importer, "parse_imports")
+        assert hasattr(importer, "_handle_python_import_statement")
+        assert hasattr(importer, "_handle_python_import_from_statement")
 
     def test_import_mapping_functionality(self, graph_updater: GraphUpdater) -> None:
         """Test that import mapping works correctly."""
@@ -90,11 +85,11 @@ class TestImportParsing:
     def test_relative_import_resolution(self, graph_updater: GraphUpdater) -> None:
         """Test relative import resolution methods exist."""
         assert hasattr(
-            graph_updater.factory.import_processor, "_resolve_relative_import"
+            graph_updater.factory.import_processor.python, "_resolve_relative_import"
         )
 
         method = getattr(
-            graph_updater.factory.import_processor, "_resolve_relative_import"
+            graph_updater.factory.import_processor.python, "_resolve_relative_import"
         )
         assert callable(method)
 
@@ -103,10 +98,10 @@ class TestImportParsing:
     ) -> None:
         """Test that language-specific import parsing methods exist."""
         import_processor = graph_updater.factory.import_processor
-        # JS/TS, Java, Rust and Go imports are parsed by the importers the
-        # processor builds.
+        # Each language's imports are parsed by the importer the processor
+        # builds for it.
         expected_methods = [
-            (import_processor, "_parse_python_imports"),
+            (import_processor.python, "parse_imports"),
             (import_processor.js_ts, "parse_imports"),
             (import_processor.java, "parse_imports"),
             (import_processor.rust, "parse_imports"),
@@ -191,11 +186,11 @@ class TestImportParsing:
                 import_node = tree.root_node.children[0]
 
                 if import_node.type == "import_statement":
-                    updater.factory.import_processor._handle_python_import_statement(
+                    updater.factory.import_processor.python._handle_python_import_statement(
                         import_node, module_qn
                     )
                 elif import_node.type == "import_from_statement":
-                    updater.factory.import_processor._handle_python_import_from_statement(
+                    updater.factory.import_processor.python._handle_python_import_from_statement(
                         import_node, module_qn
                     )
 
@@ -499,8 +494,8 @@ class TestIsLocalModuleCache:
             function_registry=None,
         )
 
-        assert processor._is_local_module("utils") is True
-        assert processor._is_local_module("nonexistent") is False
+        assert processor.python._is_local_module("utils") is True
+        assert processor.python._is_local_module("nonexistent") is False
 
     def test_is_local_module_cache_hits_on_repeated_calls(self, tmp_path: Path) -> None:
         (tmp_path / "models").mkdir()
@@ -513,11 +508,11 @@ class TestIsLocalModuleCache:
             function_registry=None,
         )
 
-        processor._is_local_module("models")
-        processor._is_local_module("models")
-        processor._is_local_module("models")
+        processor.python._is_local_module("models")
+        processor.python._is_local_module("models")
+        processor.python._is_local_module("models")
 
-        info = processor._is_local_module_cached.cache_info()
+        info = processor.python._is_local_module_cached.cache_info()
         assert info.hits >= 2
         assert info.misses == 1
 
@@ -531,7 +526,7 @@ class TestIsLocalModuleCache:
             function_registry=None,
         )
 
-        assert processor._is_local_module("helpers") is True
+        assert processor.python._is_local_module("helpers") is True
 
     def test_is_local_module_detects_directory(self, tmp_path: Path) -> None:
         (tmp_path / "services").mkdir()
@@ -543,7 +538,7 @@ class TestIsLocalModuleCache:
             function_registry=None,
         )
 
-        assert processor._is_local_module("services") is True
+        assert processor.python._is_local_module("services") is True
 
     def test_is_local_java_import_cache_hits(self, tmp_path: Path) -> None:
         (tmp_path / "com").mkdir()
@@ -579,9 +574,9 @@ class TestIsLocalModuleCache:
             function_registry=None,
         )
 
-        p1._is_local_module("shared")
-        p1._is_local_module("shared")
+        p1.python._is_local_module("shared")
+        p1.python._is_local_module("shared")
 
-        info2 = p2._is_local_module_cached.cache_info()
+        info2 = p2.python._is_local_module_cached.cache_info()
         assert info2.hits == 0
         assert info2.misses == 0

@@ -3472,7 +3472,7 @@ class CallResolver:
         # Every binding must be external: `try: import tomllib` / `except
         # ImportError: import tomli as tomllib` is, while a branch that binds
         # the name to first-party code leaves the fallbacks to find it.
-        rebinds = self.import_processor.python_import_rebinds.get(module_qn, {})
+        rebinds = self.import_processor.python.python_import_rebinds.get(module_qn, {})
         if not all(
             self._import_target_is_external(bound, call_name, module_qn)
             for bound in {target, *rebinds.get(head, ())}

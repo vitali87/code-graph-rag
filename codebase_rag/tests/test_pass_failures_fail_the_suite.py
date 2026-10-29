@@ -14,7 +14,7 @@ import pytest
 from codebase_rag.parsers import dependency_parser
 from codebase_rag.parsers.call_processor import CallProcessor
 from codebase_rag.parsers.function_ingest import FunctionIngest
-from codebase_rag.parsers.import_processor import ImportProcessor
+from codebase_rag.parsers.python.imports import PythonImporter
 from codebase_rag.parsers.type_inference import TypeInferenceEngine
 from codebase_rag.tests.conftest import (
     assert_no_pass_failures,
@@ -57,7 +57,7 @@ def _run_with_broken_pass(
             "Failed to infer local types in ",
         ),
         (FunctionIngest, "ingest_all_functions", "Failed to parse or ingest "),
-        (ImportProcessor, "_parse_python_imports", "Failed to parse imports in "),
+        (PythonImporter, "parse_imports", "Failed to parse imports in "),
         (dependency_parser, "_load_toml", "Error parsing "),
     ],
     ids=["calls", "local-types", "definitions", "imports", "dependencies"],
