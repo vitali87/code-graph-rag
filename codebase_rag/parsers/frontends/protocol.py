@@ -3,6 +3,7 @@ Generalized from the proven Roslyn/C# integration."""
 
 from __future__ import annotations
 
+from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -129,6 +130,16 @@ class SemanticFacts:
             or self.bind_flows
             or self.out_writes
         )
+
+
+# What each frontend supplied this run, one bundle per language. A run replaces
+# a language's bundle whole, and readers index the store on use, so no reader
+# is left holding a previous run's map; an absent language reads as empty.
+type FrontendFacts = defaultdict[SupportedLanguage, SemanticFacts]
+
+
+def new_frontend_facts() -> FrontendFacts:
+    return defaultdict(SemanticFacts)
 
 
 def empty_facts() -> SemanticFacts:

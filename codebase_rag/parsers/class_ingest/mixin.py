@@ -82,6 +82,7 @@ if TYPE_CHECKING:
         LanguageQueries,
         SimpleNameLookup,
     )
+    from ..frontends.protocol import FrontendFacts
     from ..import_processor import ImportProcessor
 
 
@@ -376,7 +377,7 @@ class ClassIngestMixin:
     csharp_method_return_types: dict[str, tuple[str, int]]
     _csharp_partial_index: dict[str, list[str]]
     csharp_extension_methods: dict[str, list[tuple[str, str, str, int]]]
-    csharp_base_kinds: dict[tuple[str, int], dict[str, str]]
+    frontend_facts: FrontendFacts
     csharp_type_locations: dict[tuple[str, int], str]
     go_type_locations: dict[tuple[str, int, int], tuple[str, str]]
     class_field_guard_inner: dict[str, dict[str, str]]
@@ -1817,10 +1818,9 @@ class ClassIngestMixin:
             # partial declaration groups join back to these Class qns after
             # Pass 2.
             self.csharp_type_locations[(rel_path, class_start_line)] = class_qn
-            if self.csharp_base_kinds:
-                csharp_base_kinds = self.csharp_base_kinds.get(
-                    (rel_path, class_start_line)
-                )
+            csharp_base_kinds = self.frontend_facts[
+                cs.SupportedLanguage.CSHARP
+            ].base_kinds.get((rel_path, class_start_line))
         elif language == cs.SupportedLanguage.GO and file_path is not None:
             # Reverse index for the go/types frontend's implements facts: each
             # ImplementsPair end (a declaring identifier position) joins back to

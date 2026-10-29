@@ -797,16 +797,16 @@ def test_frontend_off_clears_stale_semantic_facts(
     updater = gu.GraphUpdater(
         ingestor=MagicMock(), repo_path=temp_repo, parsers=parsers, queries=queries
     )
-    dp = updater.factory.definition_processor
-    dp.csharp_call_sites[("Stale.cs", 1, 0, "Old")] = ResolvedCallSite(
-        "Old", "Stale.cs", 2, 0
+    store = updater.factory.definition_processor.frontend_facts
+    store[cs.SupportedLanguage.CSHARP] = SemanticFacts(
+        resolved_call_sites={
+            ("Stale.cs", 1, 0, "Old"): ResolvedCallSite("Old", "Stale.cs", 2, 0)
+        },
+        partial_groups=[[("Stale.cs", 1)]],
+        query_calls=[QueryCall("Stale.cs", 1, 0, "Stale.cs", 2, 0)],
     )
-    updater._csharp_partial_decls = [[("Stale.cs", 1)]]
-    updater._csharp_query_calls = [QueryCall("Stale.cs", 1, 0, "Stale.cs", 2, 0)]
     monkeypatch.setattr(gu.settings, "CSHARP_FRONTEND", cs.CSharpFrontend.TREESITTER)
 
     updater._run_csharp_frontend()
 
-    assert dp.csharp_call_sites == {}
-    assert updater._csharp_partial_decls == []
-    assert updater._csharp_query_calls == []
+    assert store[cs.SupportedLanguage.CSHARP].is_empty()

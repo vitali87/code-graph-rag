@@ -14,7 +14,7 @@ from ...types_defs import (
     LanguageQueries,
     SimpleNameLookup,
 )
-from ..frontends.protocol import CallSiteKey, ResolvedCallSite
+from ..frontends.protocol import CallSiteKey, FrontendFacts, new_frontend_facts
 from ..import_processor import ImportProcessor
 from ..semantic_call_join import call_site_key, resolve_call_site
 from ..utils import safe_decode_text
@@ -50,8 +50,7 @@ class JavaTypeInferenceEngine(
         "_lookup_cache",
         "_lookup_in_progress",
         "_fqn_to_module_qn",
-        "java_call_sites",
-        "java_external_sites",
+        "frontend_facts",
         "function_locations",
         "_rel_to_module",
         "_family_picks",
@@ -69,8 +68,7 @@ class JavaTypeInferenceEngine(
         module_qn_to_file_path: dict[str, Path],
         class_inheritance: dict[str, list[str]],
         simple_name_lookup: SimpleNameLookup,
-        java_call_sites: dict[CallSiteKey, ResolvedCallSite] | None = None,
-        java_external_sites: set[CallSiteKey] | None = None,
+        frontend_facts: FrontendFacts | None = None,
         function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
     ):
         self.import_processor = import_processor
@@ -83,9 +81,8 @@ class JavaTypeInferenceEngine(
         self.class_inheritance = class_inheritance
         self.simple_name_lookup = simple_name_lookup
 
-        self.java_call_sites = java_call_sites if java_call_sites is not None else {}
-        self.java_external_sites = (
-            java_external_sites if java_external_sites is not None else set()
+        self.frontend_facts = (
+            frontend_facts if frontend_facts is not None else new_frontend_facts()
         )
         self.function_locations = (
             function_locations if function_locations is not None else {}
@@ -116,8 +113,8 @@ class JavaTypeInferenceEngine(
             call_node,
             module_qn,
             self._java_call_site_key,
-            self.java_call_sites,
-            self.java_external_sites,
+            self.frontend_facts[cs.SupportedLanguage.JAVA].resolved_call_sites,
+            self.frontend_facts[cs.SupportedLanguage.JAVA].external_sites,
             JAVA_EXTERNAL_TARGET,
             self.function_locations,
             self.module_qn_to_file_path,

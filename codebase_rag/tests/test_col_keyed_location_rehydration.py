@@ -83,7 +83,7 @@ def test_go_implements_joins_across_an_unchanged_file(tmp_path: Path) -> None:
     updater = _updater(repo, graph)
     dp = updater.factory.definition_processor
     dp.go_type_locations[("pkg/impl.go", 8, 5)] = ("proj.pkg.impl.DiskStore", "Class")
-    dp.go_implements = [
+    dp.frontend_facts[cs.SupportedLanguage.GO].implements_pairs = [
         ImplementsPair(
             impl_file="pkg/impl.go",
             impl_line=8,

@@ -19,7 +19,7 @@ from .cpp import CppTypeInferenceEngine
 # processor, and a re-export would load it for every `parsers.csharp` import.
 from .csharp.type_inference import CSharpTypeInferenceEngine
 from .dart import DartTypeInferenceEngine
-from .frontends.protocol import CallSiteKey, ResolvedCallSite
+from .frontends.protocol import FrontendFacts, new_frontend_facts
 from .go import GoTypeInferenceEngine
 from .go import utils as go_utils
 from .import_processor import ImportProcessor
@@ -63,19 +63,9 @@ class TypeInferenceEngine:
         "go_function_return_types",
         "go_package_names",
         "go_declaration_variants",
-        "go_call_sites",
-        "go_external_sites",
-        "java_call_sites",
-        "java_external_sites",
-        "python_call_sites",
-        "python_external_sites",
+        "frontend_facts",
         "csharp_partial_groups",
         "csharp_extension_methods",
-        "csharp_call_sites",
-        "csharp_arg_flows",
-        "csharp_bind_flows",
-        "csharp_out_writes",
-        "csharp_external_sites",
         "csharp_local_functions",
         "csharp_generic_methods",
         "csharp_call_shapes",
@@ -119,20 +109,10 @@ class TypeInferenceEngine:
         go_function_return_types: dict[str, str] | None = None,
         go_package_names: dict[str, str] | None = None,
         go_declaration_variants: dict[str, tuple[str, ...]] | None = None,
-        go_call_sites: dict[CallSiteKey, ResolvedCallSite] | None = None,
-        go_external_sites: set[CallSiteKey] | None = None,
-        java_call_sites: dict[CallSiteKey, ResolvedCallSite] | None = None,
-        java_external_sites: set[CallSiteKey] | None = None,
-        python_call_sites: dict[CallSiteKey, ResolvedCallSite] | None = None,
-        python_external_sites: set[CallSiteKey] | None = None,
+        frontend_facts: FrontendFacts | None = None,
         csharp_partial_groups: dict[str, list[str]] | None = None,
         csharp_extension_methods: dict[str, list[tuple[str, str, str, int]]]
         | None = None,
-        csharp_call_sites: dict[CallSiteKey, ResolvedCallSite] | None = None,
-        csharp_arg_flows: dict[CallSiteKey, dict[int, frozenset[str]]] | None = None,
-        csharp_bind_flows: dict[CallSiteKey, frozenset[str]] | None = None,
-        csharp_out_writes: dict[CallSiteKey, dict[int, str]] | None = None,
-        csharp_external_sites: set[CallSiteKey] | None = None,
         csharp_local_functions: dict[str, tuple[FunctionSpanKey, int]] | None = None,
         csharp_generic_methods: set[str] | None = None,
         csharp_call_shapes: dict[str, CSharpCallShape] | None = None,
@@ -184,17 +164,12 @@ class TypeInferenceEngine:
         # Go interface -> the declarations of its name each build makes
         # (shared, filled by the interface link before any call is typed).
         self.go_declaration_variants = _shared(go_declaration_variants, dict)
-        # Shared references (as with csharp_call_sites): the go/types call-site
-        # facts and external sites, populated after construction and read by the
-        # Go resolver's semantic path (issue #1179).
-        self.go_call_sites = _shared(go_call_sites, dict)
-        self.go_external_sites = _shared(go_external_sites, set)
-        self.java_call_sites = _shared(java_call_sites, dict)
-        self.java_external_sites = _shared(java_external_sites, set)
-        # Shared references, same discipline: the Jedi call-site facts and
-        # external proofs (issue #1183), populated after construction.
-        self.python_call_sites = _shared(python_call_sites, dict)
-        self.python_external_sites = _shared(python_external_sites, set)
+        # What each compiler frontend supplied this run, by language (the
+        # definition processor's store): read on use by the per-language
+        # resolvers' semantic paths and the C# flow walk.
+        self.frontend_facts = (
+            frontend_facts if frontend_facts is not None else new_frontend_facts()
+        )
         # (directory package, name) -> {(file's `package` clause, None when
         # unrecorded; whether the file is the external test package): the
         # return types its functions of that name declare}.
@@ -210,16 +185,6 @@ class TypeInferenceEngine:
         # index, populated during ingestion and read by the C# resolver's
         # receiver-binding fallback.
         self.csharp_extension_methods = _shared(csharp_extension_methods, dict)
-        # Shared references (as with class_field_types): the Roslyn call-site
-        # facts and the Pass-2 function-location registry, both populated
-        # after construction and read by the C# resolver's semantic path.
-        self.csharp_call_sites = _shared(csharp_call_sites, dict)
-        # Shared reference (as with csharp_call_sites): Roslyn argument-flow
-        # facts, read by the C# path of the lean flow walk (issue #1187).
-        self.csharp_arg_flows = _shared(csharp_arg_flows, dict)
-        self.csharp_out_writes = _shared(csharp_out_writes, dict)
-        self.csharp_bind_flows = _shared(csharp_bind_flows, dict)
-        self.csharp_external_sites = _shared(csharp_external_sites, set)
         # Shared reference (as with class_field_types): C# local-function
         # host/arity index, populated during ingestion and read by the C#
         # resolver's bare-name path.
@@ -272,8 +237,7 @@ class TypeInferenceEngine:
     def go_type_inference(self) -> GoTypeInferenceEngine:
         if self._go_type_inference is None:
             self._go_type_inference = GoTypeInferenceEngine(
-                go_call_sites=self.go_call_sites,
-                go_external_sites=self.go_external_sites,
+                frontend_facts=self.frontend_facts,
                 function_locations=self.function_locations,
                 module_qn_to_file_path=self.module_qn_to_file_path,
                 repo_path=self.repo_path,
@@ -305,8 +269,7 @@ class TypeInferenceEngine:
                 module_qn_to_file_path=self.module_qn_to_file_path,
                 class_inheritance=self.class_inheritance,
                 simple_name_lookup=self.simple_name_lookup,
-                java_call_sites=self.java_call_sites,
-                java_external_sites=self.java_external_sites,
+                frontend_facts=self.frontend_facts,
                 function_locations=self.function_locations,
             )
         return self._java_type_inference
@@ -327,8 +290,7 @@ class TypeInferenceEngine:
                 class_field_types=self.class_field_types,
                 csharp_partial_groups=self.csharp_partial_groups,
                 csharp_extension_methods=self.csharp_extension_methods,
-                csharp_call_sites=self.csharp_call_sites,
-                csharp_external_sites=self.csharp_external_sites,
+                frontend_facts=self.frontend_facts,
                 csharp_local_functions=self.csharp_local_functions,
                 csharp_generic_methods=self.csharp_generic_methods,
                 csharp_call_shapes=self.csharp_call_shapes,

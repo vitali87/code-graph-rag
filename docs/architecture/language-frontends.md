@@ -180,10 +180,13 @@ fails the build if you forget, so this is enforced rather than advisory.
 4. Build keys with byte columns, re-measuring if your tool reports otherwise.
 5. Omit rather than guess whenever resolution is ambiguous.
 6. Register at module scope with `register_frontend(...)` and import the
-   module in `frontends/builtin.py`. Registration alone does not run it yet:
-   add a `_run_<lang>_frontend` step to `GraphUpdater` that calls
-   `_run_semantic_frontend` and applies the facts where that language's
-   processors read them.
+   module in `frontends/builtin.py`. Then add a `_run_<lang>_frontend` step to
+   `GraphUpdater`, before or after the definition pass as your facts need,
+   that calls `_run_frontend`. That is the one policy every frontend shares:
+   it skips a frontend that is off or does not apply, says why when the
+   toolchain is missing, and stores the bundle in
+   `DefinitionProcessor.frontend_facts[language]`, where that language's
+   resolver reads it. Nothing else needs a new field or a reset.
 7. Add a per-language enum and a `parser_fingerprint.py` registration.
 8. Write fixtures with a non-ASCII character **before the asserted token on the
    same line** (byte columns are line-relative), and prove they fail when

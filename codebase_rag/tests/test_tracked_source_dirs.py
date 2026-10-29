@@ -343,7 +343,8 @@ def test_javac_compiles_tracked_source_and_nothing_else_under_its_name(
 
     _store, updater = _index(defex)
 
-    sites = updater.factory.definition_processor.java_call_sites
+    facts = updater.factory.definition_processor.frontend_facts
+    sites = facts[cs.SupportedLanguage.JAVA].resolved_call_sites
     assert {key[0] for key in sites} == {"out/demo/Caller.java"}
     assert {site.target_file for site in sites.values()} == {"out/demo/Base.java"}
 

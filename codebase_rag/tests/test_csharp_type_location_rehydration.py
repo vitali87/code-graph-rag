@@ -80,7 +80,9 @@ def test_rehydration_lets_partial_group_span_an_unchanged_file(tmp_path: Path) -
     # Pass-2 result for the re-parsed file only.
     dp.csharp_type_locations[("dirA/W.cs", 5)] = "proj.dirA.W"
     # Roslyn says these two locations are the same partial symbol.
-    updater._csharp_partial_decls = [[("dirA/W.cs", 5), ("dirB/W.cs", 3)]]
+    dp.frontend_facts[cs.SupportedLanguage.CSHARP].partial_groups = [
+        [("dirA/W.cs", 5), ("dirB/W.cs", 3)]
+    ]
 
     updater._rehydrate_csharp_type_locations()
     updater._join_csharp_partials()
@@ -100,7 +102,9 @@ def test_without_rehydration_the_unchanged_part_is_dropped(tmp_path: Path) -> No
     dp = updater.factory.definition_processor
 
     dp.csharp_type_locations[("dirA/W.cs", 5)] = "proj.dirA.W"
-    updater._csharp_partial_decls = [[("dirA/W.cs", 5), ("dirB/W.cs", 3)]]
+    dp.frontend_facts[cs.SupportedLanguage.CSHARP].partial_groups = [
+        [("dirA/W.cs", 5), ("dirB/W.cs", 3)]
+    ]
 
     updater._rehydrate_csharp_type_locations()
     updater._join_csharp_partials()

@@ -172,23 +172,24 @@ def test_frontend_off_clears_stale_go_facts(
     updater = gu.GraphUpdater(
         ingestor=MagicMock(), repo_path=temp_repo, parsers=parsers, queries=queries
     )
-    dp = updater.factory.definition_processor
-    dp.go_call_sites[("stale.go", 1, 0, "Old")] = ResolvedCallSite(
-        "Old", "stale.go", 2, 0
+    store = updater.factory.definition_processor.frontend_facts
+    store[cs.SupportedLanguage.GO] = SemanticFacts(
+        resolved_call_sites={
+            ("stale.go", 1, 0, "Old"): ResolvedCallSite("Old", "stale.go", 2, 0)
+        },
+        external_sites={("stale.go", 3, 0, "Ext")},
+        implements_pairs=[ImplementsPair("stale.go", 4, 0, "stale.go", 5, 0)],
+        analysed_roots=(".",),
+        checked_files=frozenset({"stale.go"}),
     )
-    dp.go_external_sites.add(("stale.go", 3, 0, "Ext"))
-    dp.go_implements.append(ImplementsPair("stale.go", 4, 0, "stale.go", 5, 0))
-    dp.go_analysed_roots.add(".")
-    dp.go_checked_files.add("stale.go")
     monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
 
     updater._run_go_frontend()
 
-    assert dp.go_call_sites == {}
-    assert dp.go_external_sites == set()
-    assert dp.go_implements == []
-    assert dp.go_analysed_roots == set()
-    assert dp.go_checked_files == set()
+    facts = store[cs.SupportedLanguage.GO]
+    assert facts.is_empty()
+    assert facts.analysed_roots == ()
+    assert facts.checked_files == frozenset()
 
 
 def test_auto_without_toolchain_matches_frontend_off(

@@ -7,7 +7,7 @@ from tree_sitter import Node
 
 from ... import constants as cs
 from ...types_defs import FunctionLocation, FunctionSpanKey
-from ..frontends.protocol import CallSiteKey, ResolvedCallSite
+from ..frontends.protocol import CallSiteKey, FrontendFacts, new_frontend_facts
 from ..semantic_call_join import call_site_key, resolve_call_site
 from ..utils import safe_decode_text
 from . import utils as go_utils
@@ -248,12 +248,11 @@ class GoTypeInferenceEngine:
     # (issue #2483).
     #
     # The go/types semantic frontend (issue #1179) adds an exact-callee join on top:
-    # the shared go_call_sites / go_external_sites facts (populated after
+    # the go/types facts in the shared frontend store (populated after
     # construction) resolve a call to its declared target or suppress a fabricated
     # first-party edge, with per-miss fallback to the stateless walker below.
     __slots__ = (
-        "go_call_sites",
-        "go_external_sites",
+        "frontend_facts",
         "function_locations",
         "module_qn_to_file_path",
         "repo_path",
@@ -262,15 +261,13 @@ class GoTypeInferenceEngine:
 
     def __init__(
         self,
-        go_call_sites: dict[CallSiteKey, ResolvedCallSite] | None = None,
-        go_external_sites: set[CallSiteKey] | None = None,
+        frontend_facts: FrontendFacts | None = None,
         function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
         module_qn_to_file_path: dict[str, Path] | None = None,
         repo_path: Path | None = None,
     ) -> None:
-        self.go_call_sites = go_call_sites if go_call_sites is not None else {}
-        self.go_external_sites = (
-            go_external_sites if go_external_sites is not None else set()
+        self.frontend_facts = (
+            frontend_facts if frontend_facts is not None else new_frontend_facts()
         )
         self.function_locations = (
             function_locations if function_locations is not None else {}
@@ -292,8 +289,8 @@ class GoTypeInferenceEngine:
             call_node,
             module_qn,
             self._call_site_key,
-            self.go_call_sites,
-            self.go_external_sites,
+            self.frontend_facts[cs.SupportedLanguage.GO].resolved_call_sites,
+            self.frontend_facts[cs.SupportedLanguage.GO].external_sites,
             GO_EXTERNAL_TARGET,
             self.function_locations,
             self.module_qn_to_file_path,

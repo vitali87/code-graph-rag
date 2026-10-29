@@ -87,7 +87,6 @@ from .parsers.factory import ProcessorFactory
 from .parsers.field_nodes import PendingFieldType
 from .parsers.frontends import SemanticFacts
 from .parsers.frontends.builtin import FRONTENDS
-from .parsers.frontends.protocol import QueryCall
 from .parsers.go import interfaces as go_ifaces
 from .parsers.go import read_package_clause
 from .parsers.go import utils as go_utils
@@ -1797,11 +1796,6 @@ class GraphUpdater:
         # an expansion call's CALLEE may live in an UNCHANGED file whose
         # spans Pass 2 never recorded this run.
         self._rehydrated_cpp_spans: dict[str, list[CppDefinitionSpan]] = {}
-        # C# Roslyn hybrid facts awaiting their join point: partial
-        # declaration groups join to Class qns after Pass 2, and LINQ
-        # query-operator calls join to function locations after Pass 3.
-        self._csharp_partial_decls: list[list[tuple[str, int]]] = []
-        self._csharp_query_calls: list[QueryCall] = []
         # Files (re)parsed by Pass 2 this run: the only files whose
         # definition spans exist for hybrid macro-call attribution.
         self._reparsed_file_keys: set[str] = set()
@@ -1928,20 +1922,13 @@ class GraphUpdater:
         )
 
     def _run_csharp_frontend(self) -> None:
-        # Optional Roslyn semantic pre-pass. ROSLYN/HYBRID: load the repo's
-        # real .csproj/.sln via MSBuildWorkspace and collect facts syntax
-        # alone cannot derive: exact INHERITS-vs-IMPLEMENTS base kinds (Pass
-        # 2), exact per-invocation call targets (Pass 3), partial-type
-        # identity groups (joined after Pass 2), and LINQ query-operator
-        # calls (after Pass 3). Missing dotnet, project, or a build/restore
-        # failure all fall back to pure tree-sitter (empty facts). Reset first
-        # so a reused updater (watch mode) that previously ran hybrid does not
-        # keep applying stale facts on a later run with the frontend off.
-        # csharp_call_sites is mutated in place because the type-inference
-        # engine holds a reference.
-        self._reset_semantic_facts()
+        # Roslyn before Pass 2: its exact base kinds (INHERITS vs IMPLEMENTS)
+        # are read while each type's bases are ingested; its call targets in
+        # Pass 3; its partial groups and LINQ query calls join after Pass 2
+        # and Pass 3. No dotnet, no project, or a failed build or restore
+        # leaves the tree-sitter graph.
         mode = settings.CSHARP_FRONTEND
-        facts = self._run_semantic_frontend(
+        facts = self._run_frontend(
             cs.SupportedLanguage.CSHARP,
             off=mode == cs.CSharpFrontend.TREESITTER,
             auto=mode == cs.CSharpFrontend.AUTO,
@@ -1952,7 +1939,6 @@ class GraphUpdater:
         )
         if facts is None:
             return
-        self._apply_semantic_facts(facts)
         logger.info(ls.CSHARP_FRONTEND_TYPES.format(count=len(facts.base_kinds)))
         logger.info(
             ls.CSHARP_FRONTEND_FACTS.format(
@@ -1963,19 +1949,89 @@ class GraphUpdater:
             )
         )
 
-    def _run_semantic_frontend(
+    def _run_go_frontend(self) -> None:
+        # go/types before Pass 2 (issue #1179): exact first-party call targets
+        # for Pass 3, the sites that leave the module, and the implements
+        # pairs the interface link joins once Pass 2 located every type.
+        mode = settings.GO_FRONTEND
+        facts = self._run_frontend(
+            cs.SupportedLanguage.GO,
+            off=mode == cs.GoFrontend.TREESITTER,
+            auto=mode == cs.GoFrontend.AUTO,
+            find_root=find_go_module,
+            auto_fallback_log=ls.GO_FRONTEND_AUTO_FALLBACK,
+            unavailable_log=ls.GO_FRONTEND_UNAVAILABLE,
+            running_log=ls.GO_FRONTEND_RUNNING,
+        )
+        if facts is not None:
+            logger.info(
+                ls.GO_FRONTEND_FACTS.format(
+                    calls=len(facts.resolved_call_sites),
+                    externals=len(facts.external_sites),
+                )
+            )
+
+    def _run_java_frontend(self) -> None:
+        # javac AFTER Pass 2 (issue #1181), like Jedi: its call facts join
+        # against the function_locations Pass 2 just filled, including the
+        # name-token alias the Java method registration adds.
+        facts = self._run_frontend(
+            cs.SupportedLanguage.JAVA,
+            off=settings.JAVA_FRONTEND == cs.JavaFrontend.HEURISTIC,
+            unavailable_log=ls.JAVA_FRONTEND_UNAVAILABLE,
+        )
+        if facts is not None:
+            logger.info(
+                ls.JAVA_FRONTEND_FACTS.format(
+                    calls=len(facts.resolved_call_sites),
+                    externals=len(facts.external_sites),
+                )
+            )
+
+    def _run_python_frontend(self) -> None:
+        # In-process Jedi facts after Pass 2 (issue #1183), over the Python
+        # files this run parsed: exact first-party callees through
+        # re-exports and decorators, and proofs that a call leaves the repo.
+        files = tuple(
+            fp for fp, lang in self._parsed_files if lang == cs.SupportedLanguage.PYTHON
+        )
+        facts = self._run_frontend(
+            cs.SupportedLanguage.PYTHON,
+            off=settings.PYTHON_FRONTEND == cs.PythonFrontend.HEURISTIC or not files,
+            unavailable_log=ls.PY_FRONTEND_UNAVAILABLE,
+            running_log=ls.PY_FRONTEND_RUNNING,
+            files=files,
+        )
+        if facts is not None:
+            logger.info(
+                ls.PY_FRONTEND_FACTS.format(
+                    calls=len(facts.resolved_call_sites),
+                    externals=len(facts.external_sites),
+                )
+            )
+
+    def _run_frontend(
         self,
         language: cs.SupportedLanguage,
         *,
         off: bool,
-        auto: bool,
-        find_root: Callable[[Path], Path | None],
-        auto_fallback_log: str,
         unavailable_log: str,
-        running_log: str,
+        auto: bool = False,
+        find_root: Callable[[Path], Path | None] | None = None,
+        auto_fallback_log: str | None = None,
+        running_log: str | None = None,
+        files: tuple[Path, ...] = (),
     ) -> SemanticFacts | None:
-        # The facts of a registered LanguageFrontend pre-pass, or None when it
-        # is off, has nothing to augment, or cannot run.
+        """Run a registered `LanguageFrontend` and store what it supplied.
+
+        The language's bundle is replaced first, so a reused updater (watch
+        mode) whose frontend ran before never applies a previous run's facts
+        once it is off. Returns the facts, or None when the frontend is off,
+        has nothing to augment, or cannot run; the processors then fall back
+        to the tree-sitter heuristics.
+        """
+        store = self.factory.definition_processor.frontend_facts
+        store[language] = SemanticFacts()
         if off:
             return None
         frontend = FRONTENDS.get(language)
@@ -1988,154 +2044,23 @@ class GraphUpdater:
             # AUTO promises the compiler only where the toolchain exists, so a
             # missing toolchain is the expected fallback (info); an EXPLICIT
             # request that cannot run stays a warning.
-            if auto:
+            if auto and auto_fallback_log is not None:
                 logger.info(auto_fallback_log)
             else:
                 logger.warning(unavailable_log)
             return None
-        logger.info(running_log.format(path=find_root(self.repo_path)))
-        return frontend.run(self.repo_path, (), rescued_files=self._rescued_files())
+        if running_log is not None:
+            root = find_root(self.repo_path) if find_root is not None else None
+            logger.info(running_log.format(path=root))
+        facts = frontend.run(self.repo_path, files, rescued_files=self._rescued_files())
+        store[language] = facts
+        return facts
 
     def _rescued_files(self) -> frozenset[str]:
         # The compiler tools skip the default-excluded names on their own; the
         # files this walk keeps under one (a tracked `pkg/out/out.go`, a `!`
         # line) must reach them, or they are parsed without their facts.
         return rescued_files(self.repo_path, self.exclude_paths, self.unignore_paths)
-
-    def _reset_semantic_facts(self) -> None:
-        # A reused updater (watch mode) that previously ran a frontend must not
-        # keep applying stale facts on a later run with it off. csharp_call_sites
-        # is mutated in place because the type-inference engine holds a reference.
-        dp = self.factory.definition_processor
-        dp.csharp_base_kinds = {}
-        dp.csharp_call_sites.clear()
-        dp.csharp_arg_flows.clear()
-        dp.csharp_bind_flows.clear()
-        dp.csharp_out_writes.clear()
-        dp.csharp_external_sites.clear()
-        self._csharp_partial_decls = []
-        self._csharp_query_calls = []
-
-    def _apply_semantic_facts(self, facts: SemanticFacts) -> None:
-        # Copy each fact family into the processor state the existing consumers
-        # read, with per-miss fallback to the tree-sitter heuristics (issue #1178).
-        dp = self.factory.definition_processor
-        dp.csharp_base_kinds = facts.base_kinds
-        dp.csharp_call_sites.update(facts.resolved_call_sites)
-        dp.csharp_arg_flows.update(facts.arg_flows)
-        dp.csharp_bind_flows.update(facts.bind_flows)
-        dp.csharp_out_writes.update(facts.out_writes)
-        dp.csharp_external_sites.update(facts.external_sites)
-        self._csharp_partial_decls = facts.partial_groups
-        self._csharp_query_calls = facts.query_calls
-
-    def _run_go_frontend(self) -> None:
-        # Optional go/types semantic pre-pass (issue #1179). GOTYPES/AUTO: load
-        # the module with go/packages and collect exact first-party call targets
-        # (Pass 3) and external sites the tree-sitter name trie cannot derive.
-        # Missing go, no go.mod, or a build failure all fall back to pure
-        # tree-sitter (empty facts). Reset first so a reused updater (watch mode)
-        # that previously ran the frontend does not keep applying stale facts on
-        # a later run with it off; the maps are mutated in place because the
-        # type-inference engine holds a reference.
-        self._reset_go_semantic_facts()
-        mode = settings.GO_FRONTEND
-        facts = self._run_semantic_frontend(
-            cs.SupportedLanguage.GO,
-            off=mode == cs.GoFrontend.TREESITTER,
-            auto=mode == cs.GoFrontend.AUTO,
-            find_root=find_go_module,
-            auto_fallback_log=ls.GO_FRONTEND_AUTO_FALLBACK,
-            unavailable_log=ls.GO_FRONTEND_UNAVAILABLE,
-            running_log=ls.GO_FRONTEND_RUNNING,
-        )
-        if facts is None:
-            return
-        self._apply_go_semantic_facts(facts)
-        logger.info(
-            ls.GO_FRONTEND_FACTS.format(
-                calls=len(facts.resolved_call_sites),
-                externals=len(facts.external_sites),
-            )
-        )
-
-    def _run_java_frontend(self) -> None:
-        # The javac frontend (issue #1181) runs AFTER Pass 2, like the Jedi one:
-        # its call facts join against the function_locations Pass 2 just filled,
-        # including the name-token alias the Java method registration adds.
-        # Reset first so a reused updater (watch mode) that previously ran the
-        # frontend does not keep applying stale facts on a later run with it
-        # off; the maps are mutated in place because the type-inference engine
-        # holds a reference.
-        dp = self.factory.definition_processor
-        dp.java_call_sites.clear()
-        dp.java_external_sites.clear()
-        if settings.JAVA_FRONTEND == cs.JavaFrontend.HEURISTIC:
-            return
-        frontend = FRONTENDS.get(cs.SupportedLanguage.JAVA)
-        if frontend is None or not frontend.applies(self.repo_path):
-            return
-        if not frontend.available():
-            logger.warning(ls.JAVA_FRONTEND_UNAVAILABLE)
-            return
-        facts = frontend.run(self.repo_path, (), rescued_files=self._rescued_files())
-        dp.java_call_sites.update(facts.resolved_call_sites)
-        dp.java_external_sites.update(facts.external_sites)
-        logger.info(
-            ls.JAVA_FRONTEND_FACTS.format(
-                calls=len(facts.resolved_call_sites),
-                externals=len(facts.external_sites),
-            )
-        )
-
-    def _run_python_frontend(self) -> None:
-        # In-process Jedi facts (issue #1183): exact first-party callees
-        # through re-exports/decorators and external proofs for calls leaving
-        # the repo. Off (HEURISTIC) or unavailable degrades to the tree-sitter
-        # heuristics; reset first so a reused updater does not keep stale
-        # facts when the setting flips between runs.
-        dp = self.factory.definition_processor
-        dp.python_call_sites.clear()
-        dp.python_external_sites.clear()
-        if settings.PYTHON_FRONTEND == cs.PythonFrontend.HEURISTIC:
-            return
-        frontend = FRONTENDS.get(cs.SupportedLanguage.PYTHON)
-        if frontend is None or not frontend.available():
-            logger.warning(ls.PY_FRONTEND_UNAVAILABLE)
-            return
-        files = [
-            fp for fp, lang in self._parsed_files if lang == cs.SupportedLanguage.PYTHON
-        ]
-        if not files:
-            return
-        logger.info(ls.PY_FRONTEND_RUNNING)
-        facts = frontend.run(self.repo_path, files)
-        dp.python_call_sites.update(facts.resolved_call_sites)
-        dp.python_external_sites.update(facts.external_sites)
-        logger.info(
-            ls.PY_FRONTEND_FACTS.format(
-                calls=len(facts.resolved_call_sites),
-                externals=len(facts.external_sites),
-            )
-        )
-
-    def _reset_go_semantic_facts(self) -> None:
-        dp = self.factory.definition_processor
-        dp.go_call_sites.clear()
-        dp.go_external_sites.clear()
-        dp.go_implements.clear()
-        dp.go_analysed_roots.clear()
-        dp.go_checked_files.clear()
-        dp.go_compared_types.clear()
-
-    def _apply_go_semantic_facts(self, facts: SemanticFacts) -> None:
-        dp = self.factory.definition_processor
-        dp.go_call_sites.update(facts.resolved_call_sites)
-        dp.go_external_sites.update(facts.external_sites)
-        dp.go_implements.extend(facts.implements_pairs)
-        dp.go_analysed_roots.update(facts.analysed_roots)
-        dp.go_checked_files.update(facts.checked_files)
-        dp.go_compared_types.update(facts.compared_types)
 
     def _join_go_implements(self) -> None:
         # go/types proved each implementer->interface pair structurally; both
@@ -2149,7 +2074,7 @@ class GraphUpdater:
         # the compiler no longer proves.
         dp = self.factory.definition_processor
         proven: list[tuple[str, str]] = []
-        for pair in dp.go_implements:
+        for pair in dp.frontend_facts[cs.SupportedLanguage.GO].implements_pairs:
             impl = dp.go_type_locations.get(
                 (pair.impl_file, pair.impl_line, pair.impl_col)
             )
@@ -2179,12 +2104,13 @@ class GraphUpdater:
         # when it proved none; names and arities decide only elsewhere. Keyed
         # on the modules it analysed, not on whether it returned any facts.
         dp = self.factory.definition_processor
+        facts = dp.frontend_facts[cs.SupportedLanguage.GO]
         dp.link_go_interfaces(
-            frozenset(dp.go_analysed_roots),
-            frozenset(dp.go_checked_files),
+            frozenset(facts.analysed_roots),
+            facts.checked_files,
             frozenset(
                 located[0]
-                for position in dp.go_compared_types
+                for position in facts.compared_types
                 if (located := dp.go_type_locations.get(position)) is not None
             ),
         )
@@ -2197,12 +2123,13 @@ class GraphUpdater:
         # syntactic merge would conflate split apart (each arrives as its
         # own group). Group lists stay SHARED objects because the resolver
         # compares them by identity.
-        if not self._csharp_partial_decls:
-            return
         dp = self.factory.definition_processor
+        partial_decls = dp.frontend_facts[cs.SupportedLanguage.CSHARP].partial_groups
+        if not partial_decls:
+            return
         groups: list[list[str]] = []
         covered: set[str] = set()
-        for decls in self._csharp_partial_decls:
+        for decls in partial_decls:
             qns = sorted({qn for d in decls if (qn := dp.csharp_type_locations.get(d))})
             covered.update(qns)
             if len(qns) > 1:
@@ -2224,9 +2151,10 @@ class GraphUpdater:
         # each Roslyn query-operator fact becomes a direct CALLS edge, both
         # ends resolved through the Pass-2 function-location registry (a miss
         # on either end drops the fact rather than risk a dangling edge).
-        if not self._csharp_query_calls:
-            return
         dp = self.factory.definition_processor
+        query_calls = dp.frontend_facts[cs.SupportedLanguage.CSHARP].query_calls
+        if not query_calls:
+            return
         rel_to_module = {
             cached_relative_path(path, self.repo_path).as_posix(): qn
             for qn, path in dp.module_qn_to_file_path.items()
@@ -2239,7 +2167,7 @@ class GraphUpdater:
             return dp.function_locations.get((module_qn, line, col))
 
         emitted = 0
-        for fact in self._csharp_query_calls:
+        for fact in query_calls:
             caller = located(fact.caller_file, fact.caller_line, fact.caller_col)
             target = located(fact.target_file, fact.target_line, fact.target_col)
             if caller is None or target is None:

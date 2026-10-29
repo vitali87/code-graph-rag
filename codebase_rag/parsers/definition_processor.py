@@ -38,7 +38,7 @@ from .cpp.preproc_recovery import parse_with_preproc_recovery
 from .definition_docstring import extract_definition_docstring
 from .dependency_parser import read_manifest
 from .field_nodes import PendingFieldType
-from .frontends.protocol import CallSiteKey, ImplementsPair, ResolvedCallSite
+from .frontends.protocol import FrontendFacts, new_frontend_facts
 from .function_ingest import FunctionIngestMixin
 from .go import utils as go_utils
 from .go.builds import Expr, GoBuilds
@@ -261,48 +261,12 @@ class DefinitionProcessor(
         # for chained-receiver typing; separate from the cross-language
         # method_return_types because the arity is C#-specific.
         self.csharp_method_return_types: dict[str, tuple[str, int]] = {}
-        # C# Roslyn hybrid frontend (issue #738): {(rel_file, type_start_line):
-        # {base_simple_name: "class"|"interface"}}. When the opt-in Roslyn
-        # frontend ran, split_csharp_bases reads a base's kind here (exact,
-        # from the semantic model) instead of guessing by the I-prefix
-        # convention; empty when the frontend is off or unavailable.
-        self.csharp_base_kinds: dict[tuple[str, int], dict[str, str]] = {}
-        # C# Roslyn hybrid frontend (issue #738): per-invocation exact call
-        # targets keyed on the callee NAME token location. The C# resolver
-        # consults this before any heuristic; MUTATED IN PLACE across runs
-        # because the type-inference engine holds a reference.
-        self.csharp_call_sites: dict[CallSiteKey, ResolvedCallSite] = {}
-        # Sites Roslyn resolved to METADATA (external) methods: the resolver
-        # returns the external sentinel there instead of letting the
-        # name-trie fabricate a first-party edge. Same in-place mutation
-        # discipline as csharp_call_sites.
-        self.csharp_external_sites: set[CallSiteKey] = set()
-        # Roslyn argument-flow facts (issue #1187): per call site and
-        # argument index, the locals/parameters the compiler proves reach it.
-        self.csharp_arg_flows: dict[CallSiteKey, dict[int, frozenset[str]]] = {}
-        self.csharp_bind_flows: dict[CallSiteKey, frozenset[str]] = {}
-        self.csharp_out_writes: dict[CallSiteKey, dict[int, str]] = {}
-        # Go go/types frontend (issue #1179): the same two call families as C#
-        # -- per-invocation exact first-party call targets keyed on the callee
-        # NAME token location, and sites the compiler resolved OUTSIDE the module
-        # (stdlib, deps). Same in-place mutation discipline; the Go type-inference
-        # engine holds the reference.
-        self.go_call_sites: dict[CallSiteKey, ResolvedCallSite] = {}
-        self.go_external_sites: set[CallSiteKey] = set()
-        # javac frontend facts (issue #1181): an exact first-party callee the
-        # name-and-arity heuristics cannot pick, and the proofs that a call
-        # leaves the repo. Empty when the frontend is off.
-        self.java_call_sites: dict[CallSiteKey, ResolvedCallSite] = {}
-        self.java_external_sites: set[CallSiteKey] = set()
-        # go/types-proven implementer->interface pairs (each end a declaring
-        # identifier position), stashed here at frontend time and resolved to
-        # IMPLEMENTS edges after Pass 2 fills go_type_locations below.
-        self.go_implements: list[ImplementsPair] = []
-        # Jedi Python frontend (issue #1183): the same two call families,
-        # keyed on the callee NAME token like C#/Go. Same in-place mutation
-        # discipline; the resolver reads these references directly.
-        self.python_call_sites: dict[CallSiteKey, ResolvedCallSite] = {}
-        self.python_external_sites: set[CallSiteKey] = set()
+        # What each compiler frontend (Roslyn, go/types, javac, Jedi) supplied
+        # this run, by language (issue #1178): exact call targets keyed on the
+        # callee NAME token, proofs a call leaves the repo, C# base kinds and
+        # flows, go/types implements pairs and the roots and files it checked.
+        # Readers index it on use; an off or unavailable frontend reads empty.
+        self.frontend_facts: FrontendFacts = new_frontend_facts()
         # Repo-relative prefixes of annotation-processor output (issue #1140):
         # modules under one are stamped generated with a processor hint.
         self.generated_source_prefixes: list[str] = []
@@ -322,15 +286,6 @@ class DefinitionProcessor(
         # labelled heuristic, and which the resolver reads to say so).
         self.go_proven_pairs: set[tuple[str, str]] = set()
         self.go_guessed_pairs: set[tuple[str, str]] = set()
-        # The module roots the go/types frontend analysed in this run (`.`
-        # for the repository's own): their pairs are the compiler's alone.
-        self.go_analysed_roots: set[str] = set()
-        # The repo-relative files those runs type-checked: a pair resting on
-        # a file the build left out was never compared by the compiler.
-        self.go_checked_files: set[str] = set()
-        # The declarations (file, line, col) of the types and interfaces
-        # those runs compared; a generic one in a checked file was not.
-        self.go_compared_types: set[tuple[str, int, int]] = set()
         # Go package (`dir:clause`, or its test files' scope) -> the
         # predeclared type names (`int`, `error`) it declares itself, refilled
         # by each link (shared with the call resolver): there the name is the
@@ -480,7 +435,6 @@ class DefinitionProcessor(
         return GoLinkState(
             guessed_implementations=self.go_guessed_pairs,
             methods=self.go_methods,
-            checked_files=self.go_checked_files,
             builtin_shadows=self.go_builtin_shadows,
             variant_methods=self.go_variant_methods,
             declaration_variants=self.go_declaration_variants,

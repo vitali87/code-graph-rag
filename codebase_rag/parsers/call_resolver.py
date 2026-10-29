@@ -311,7 +311,6 @@ class CallResolver:
         "rehydrated_interface_implementers",
         "guessed_implementations",
         "go_methods",
-        "go_checked_files",
         "go_builtin_shadows",
         "go_variant_methods",
         "go_declaration_variants",
@@ -408,7 +407,6 @@ class CallResolver:
         links = go_links if go_links is not None else GoLinkState()
         self.guessed_implementations = links.guessed_implementations
         self.go_methods: Mapping[str, GoMethodSpec] = links.methods
-        self.go_checked_files = links.checked_files
         self.go_builtin_shadows: Mapping[str, frozenset[str]] = links.builtin_shadows
         self.go_variant_methods: Mapping[str, Mapping[str, list[str]]] = (
             links.variant_methods
@@ -1895,7 +1893,8 @@ class CallResolver:
 
     def go_declaration_read(self, method_qn: str) -> bool:
         spec = self.go_methods.get(method_qn)
-        return spec is None or spec.file in self.go_checked_files
+        checked = self.type_inference.frontend_facts[cs.SupportedLanguage.GO]
+        return spec is None or spec.file in checked.checked_files
 
     def _with_go_variants(self, bases: Iterable[str]) -> list[str]:
         # A Go interface embedding a name each build declares again embeds
@@ -7637,7 +7636,8 @@ class CallResolver:
         # external sentinel proving the call leaves the repo. Any miss falls
         # back to the heuristics.
         ti = self.type_inference
-        if not (ti.python_call_sites or ti.python_external_sites):
+        facts = ti.frontend_facts[cs.SupportedLanguage.PYTHON]
+        if not (facts.resolved_call_sites or facts.external_sites):
             return None
         name_node = self._python_callee_name_node(call_node)
         if name_node is None:
@@ -7654,7 +7654,7 @@ class CallResolver:
         )
         if key is None:
             return None
-        fact = ti.python_call_sites.get(key)
+        fact = facts.resolved_call_sites.get(key)
         if fact is not None:
             return declared_location(
                 fact.target_file,
@@ -7665,7 +7665,7 @@ class CallResolver:
                 ti.repo_path,
                 self._py_rel_to_module,
             )
-        if key in ti.python_external_sites:
+        if key in facts.external_sites:
             return PY_EXTERNAL_TARGET
         return None
 

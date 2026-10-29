@@ -3158,7 +3158,9 @@ class FlowProcessor:
     ) -> frozenset[str]:
         # The bind-flow fact for THIS declarator, matched on its name token;
         # empty for every other language and whenever the frontend is off.
-        flows = self._resolver.type_inference.csharp_bind_flows
+        flows = self._resolver.type_inference.frontend_facts[
+            cs.SupportedLanguage.CSHARP
+        ].bind_flows
         if not flows or lean.flow.language != cs.SupportedLanguage.CSHARP:
             return frozenset()
         name_node = self._csharp_declarator_name_node(node, name)
@@ -3239,7 +3241,9 @@ class FlowProcessor:
         )
 
     def _csharp_out_write_symbols(self, node: Node, lean: _LeanCtx) -> dict[int, str]:
-        writes = self._resolver.type_inference.csharp_out_writes
+        writes = self._resolver.type_inference.frontend_facts[
+            cs.SupportedLanguage.CSHARP
+        ].out_writes
         if not writes or lean.flow.language != cs.SupportedLanguage.CSHARP:
             return {}
         name_node = self._csharp_callee_name_node(node)
@@ -3260,7 +3264,9 @@ class FlowProcessor:
         # The Roslyn argument-flow facts for THIS call site, keyed exactly
         # like the call facts; empty for every other language and whenever
         # the frontend is off.
-        flows = self._resolver.type_inference.csharp_arg_flows
+        flows = self._resolver.type_inference.frontend_facts[
+            cs.SupportedLanguage.CSHARP
+        ].arg_flows
         if not flows or lean.flow.language != cs.SupportedLanguage.CSHARP:
             return {}
         name_node = self._csharp_callee_name_node(node)

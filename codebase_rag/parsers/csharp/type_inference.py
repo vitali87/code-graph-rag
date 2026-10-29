@@ -18,7 +18,7 @@ from ...types_defs import (
     SimpleNameLookup,
 )
 from ...utils import qn_markers
-from ..frontends.protocol import CallSiteKey, ResolvedCallSite
+from ..frontends.protocol import CallSiteKey, FrontendFacts, new_frontend_facts
 from ..import_processor import ImportProcessor
 from ..semantic_call_join import call_site_key, resolve_call_site
 from ..utils import safe_decode_text
@@ -233,8 +233,7 @@ class CSharpTypeInferenceEngine:
         "class_field_types",
         "csharp_partial_groups",
         "csharp_extension_methods",
-        "csharp_call_sites",
-        "csharp_external_sites",
+        "frontend_facts",
         "csharp_local_functions",
         "csharp_generic_methods",
         "csharp_call_shapes",
@@ -264,8 +263,7 @@ class CSharpTypeInferenceEngine:
         csharp_partial_groups: dict[str, list[str]] | None = None,
         csharp_extension_methods: dict[str, list[tuple[str, str, str, int]]]
         | None = None,
-        csharp_call_sites: dict[CallSiteKey, ResolvedCallSite] | None = None,
-        csharp_external_sites: set[CallSiteKey] | None = None,
+        frontend_facts: FrontendFacts | None = None,
         csharp_local_functions: dict[str, tuple[FunctionSpanKey, int]] | None = None,
         csharp_generic_methods: set[str] | None = None,
         csharp_call_shapes: dict[str, CSharpCallShape] | None = None,
@@ -313,11 +311,8 @@ class CSharpTypeInferenceEngine:
         )
         # Shared references (populated by the Roslyn frontend / Pass 2 after
         # this engine is constructed), so `or {}` would lose them.
-        self.csharp_call_sites = (
-            csharp_call_sites if csharp_call_sites is not None else {}
-        )
-        self.csharp_external_sites = (
-            csharp_external_sites if csharp_external_sites is not None else set()
+        self.frontend_facts = (
+            frontend_facts if frontend_facts is not None else new_frontend_facts()
         )
         self.csharp_local_functions = (
             csharp_local_functions if csharp_local_functions is not None else {}
@@ -1197,8 +1192,8 @@ class CSharpTypeInferenceEngine:
             call_node,
             module_qn,
             self._call_site_key,
-            self.csharp_call_sites,
-            self.csharp_external_sites,
+            self.frontend_facts[cs.SupportedLanguage.CSHARP].resolved_call_sites,
+            self.frontend_facts[cs.SupportedLanguage.CSHARP].external_sites,
             CSHARP_EXTERNAL_TARGET,
             self.function_locations,
             self.module_qn_to_file_path,
