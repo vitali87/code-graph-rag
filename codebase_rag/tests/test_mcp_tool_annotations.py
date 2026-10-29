@@ -78,7 +78,7 @@ async def _tools() -> dict[str, Tool]:
     return {tool.name: tool for tool in listed.tools}
 
 
-async def _call(name: str, arguments: dict[str, object]) -> CallToolResult:
+async def _call(name: str, arguments: dict[str, str | list[str]]) -> CallToolResult:
     server, _ingestor = mcp_server.create_server()
     async with create_connected_server_and_client_session(server) as client:
         return await client.call_tool(name, arguments)
