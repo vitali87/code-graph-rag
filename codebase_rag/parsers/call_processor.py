@@ -51,7 +51,7 @@ from .cpp.function_values import (
     c_function_value_identifiers,
     local_enumerator_names,
 )
-from .csharp import type_inference as csharp_ti
+from .csharp import calls as csharp_calls
 from .csharp import utils as csharp_utils
 from .dart import calls as dart_calls
 from .dart import utils as dart_utils
@@ -85,7 +85,6 @@ from .utils import (
     enclosing_class_node,
     function_span_key,
     get_function_captures,
-    module_qn_for_entity,
     node_site_properties,
     shared_or_new,
     written_simple_name,
@@ -1067,6 +1066,7 @@ class CallProcessor:
         "_go",
         "_cpp",
         "_dart",
+        "_csharp",
         "_callable_flow",
         "_flow_bucket",
         "failed_call_files",
@@ -1164,6 +1164,9 @@ class CallProcessor:
         )
         self._cpp = cpp_calls.CppCallResolution(self, self._resolver, self.facts)
         self._dart = dart_calls.DartCallResolution(self, self._resolver)
+        self._csharp = csharp_calls.CSharpCallResolution(
+            self, self._resolver, project_name, self.module_qn_to_file_path
+        )
         # Inter-procedural callable-parameter flow: ordered params per function and
         # the per-call-site argument bindings, resolved to a fixpoint in finalize.
         self._flow_param_names: dict[str, list[str]] = {}
@@ -3261,7 +3264,7 @@ class CallProcessor:
                 # it; an unknown-type receiver falls back to the bare
                 # method-name trie. `name` is the method, `expression` the
                 # receiver.
-                return self._csharp_member_access_call_name(func_child)
+                return csharp_calls.member_access_call_name(func_child)
             case cs.TS_CSHARP_CONDITIONAL_ACCESS_EXPRESSION if (
                 language == cs.SupportedLanguage.CSHARP
             ):
@@ -3269,7 +3272,7 @@ class CallProcessor:
                 # lives on the member_binding child. Emit the same
                 # `recv.Method` chain as the unconditional form so the
                 # resolver (or its exact Roslyn call fact) can bind it.
-                return self._csharp_conditional_access_call_name(func_child)
+                return csharp_calls.conditional_access_call_name(func_child)
             case callee_type if (
                 callee_type in cs.TS_JS_PREFIXED_CALLEES
                 and language in _JS_TS_LANGUAGES
@@ -3285,50 +3288,6 @@ class CallProcessor:
                 # plain call-of-a-call (`getFactory()()`) stays unnamed, then
                 # peel to a fixpoint for chained binds / interleaved casts.
                 return self._bound_function_call_name(func_child)
-        return None
-
-    @staticmethod
-    def _csharp_member_access_call_name(func_child: Node) -> str | None:
-        name_node = func_child.child_by_field_name(cs.FIELD_NAME)
-        expr_node = func_child.child_by_field_name(cs.TS_CSHARP_FIELD_EXPRESSION)
-        if name_node and name_node.text:
-            method = decode_node_text(name_node.text)
-            # A generic member (`recv.Handle<T>`) registers
-            # generic-free; strip the type arguments so the
-            # name-keyed fallbacks can match.
-            method = method.split(cs.CHAR_ANGLE_OPEN, 1)[0]
-            if expr_node and expr_node.text:
-                receiver = decode_node_text(expr_node.text)
-                return f"{receiver}{cs.SEPARATOR_DOT}{method}"
-            return method
-        return None
-
-    @staticmethod
-    def _csharp_conditional_access_call_name(func_child: Node) -> str | None:
-        binding = next(
-            (
-                child
-                for child in func_child.children
-                if child.type == cs.TS_CSHARP_MEMBER_BINDING_EXPRESSION
-            ),
-            None,
-        )
-        name_node = (
-            binding.child_by_field_name(cs.FIELD_NAME) if binding is not None else None
-        )
-        if name_node and name_node.text:
-            method = decode_node_text(name_node.text)
-            receiver_node = (
-                func_child.named_children[0] if (func_child.named_children) else None
-            )
-            if (
-                receiver_node is not None
-                and receiver_node is not binding
-                and receiver_node.text
-            ):
-                receiver = decode_node_text(receiver_node.text)
-                return f"{receiver}{cs.SEPARATOR_DOT}{method}"
-            return method
         return None
 
     def _bound_function_call_name(self, func_child: Node) -> str | None:
@@ -3365,7 +3324,7 @@ class CallProcessor:
                 # C# 9 target-typed `new()` has no `type` field; the
                 # constructed type is named by the enclosing declaration
                 # (issue #773).
-                return self._csharp_target_typed_new_name(call_node)
+                return csharp_calls.target_typed_new_name(call_node)
         if (name := self._construction_call_name(call_node, language)) is not None:
             return name
         if (name := self._operator_call_name(call_node, language)) is not None:
@@ -3472,74 +3431,6 @@ class CallProcessor:
                 return method_name
             object_text = decode_node_text(object_node.text)
             return f"{object_text}{cs.SEPARATOR_DOT}{method_name}"
-        return None
-
-    def _csharp_target_typed_new_name(self, creation_node: Node) -> str | None:
-        type_node = self._csharp_target_type_node(creation_node)
-        if type_node is None or type_node.text is None:
-            return None
-        return type_node.text.decode(cs.ENCODING_UTF8).split(cs.CHAR_ANGLE_OPEN, 1)[0]
-
-    def _csharp_target_type_node(self, creation_node: Node) -> Node | None:
-        # The target type of a bare `new()` is named by the enclosing
-        # declaration: a local/field `T x = new()` (initializer hangs directly
-        # off the variable_declarator), a property initializer
-        # `public T P { get; } = new()`, or a return position (`return new();`
-        # / `=> new()`) typed by the enclosing member. Any other position (an
-        # argument, an operand) needs overload resolution tree-sitter cannot
-        # do: bail rather than guess.
-        node = creation_node.parent
-        while node is not None and node.type in (
-            cs.TS_CSHARP_VARIABLE_DECLARATOR,
-            cs.TS_CSHARP_EQUALS_VALUE_CLAUSE,
-            cs.TS_PARENTHESIZED_EXPRESSION,
-        ):
-            node = node.parent
-        if node is None:
-            return None
-        if node.type in (
-            cs.TS_CSHARP_VARIABLE_DECLARATION,
-            cs.TS_CSHARP_PROPERTY_DECLARATION,
-        ):
-            type_node = node.child_by_field_name(cs.FIELD_TYPE)
-        elif node.type in (
-            cs.TS_RETURN_STATEMENT,
-            cs.TS_CSHARP_ARROW_EXPRESSION_CLAUSE,
-        ):
-            type_node = self._csharp_enclosing_return_type(node)
-        else:
-            return None
-        if (
-            type_node is None
-            or type_node.text is None
-            # `var x = new();` is ill-formed C# (no target type); if it
-            # appears anyway, "var" is not a class name.
-            or type_node.type == cs.TS_CSHARP_IMPLICIT_TYPE
-        ):
-            return None
-        return type_node
-
-    def _csharp_enclosing_return_type(self, node: Node) -> Node | None:
-        # A return position is typed by the nearest enclosing callable:
-        # methods and local functions name it in `returns`, a property or
-        # indexer (or their accessor bodies) in `type`. A lambda/anonymous
-        # method carries no syntactic return type, so a `new()` returned from
-        # one is unresolvable.
-        ancestor = node.parent
-        while ancestor is not None:
-            if ancestor.type in (
-                cs.TS_CSHARP_METHOD_DECLARATION,
-                cs.TS_CSHARP_LOCAL_FUNCTION_STATEMENT,
-            ):
-                return ancestor.child_by_field_name(cs.TS_CSHARP_FIELD_RETURNS)
-            if ancestor.type in (
-                cs.TS_CSHARP_PROPERTY_DECLARATION,
-                cs.TS_CSHARP_INDEXER_DECLARATION,
-            ):
-                return ancestor.child_by_field_name(cs.FIELD_TYPE)
-            if ancestor.type in cs.TS_CSHARP_NESTED_SCOPE_TYPES:
-                return None
-            ancestor = ancestor.parent
         return None
 
     def _get_iife_target_name(self, parenthesized_expr: Node) -> str | None:
@@ -3960,7 +3851,7 @@ class CallProcessor:
         if language == cs.SupportedLanguage.CSHARP and (
             csharp_prop_names := self._resolver.function_registry.property_names()
         ):
-            self._ingest_csharp_property_reads(
+            self._csharp.ingest_property_reads(
                 caller_node,
                 caller_spec,
                 caller_qn,
@@ -4366,26 +4257,10 @@ class CallProcessor:
                 and ctx.is_csharp
                 and call_node.type == cs.TS_CSHARP_IMPLICIT_OBJECT_CREATION_EXPRESSION
             ):
-                call_name = self._csharp_argument_target_name(ctx, call_node)
+                call_name = self._csharp.argument_target_name(ctx, call_node)
             if ctx.call_name_cache is not None:
                 ctx.call_name_cache[node_id] = call_name
         return call_name
-
-    def _csharp_argument_target_name(
-        self, ctx: _CallScanContext, creation_node: Node
-    ) -> str | None:
-        # `Use(new(4))`: an argument's `new(...)` constructs the type of the
-        # parameter it binds, which only the resolved callee can say
-        # (issue #2579).
-        argument = creation_node.parent
-        while argument is not None and argument.type == cs.TS_PARENTHESIZED_EXPRESSION:
-            argument = argument.parent
-        if argument is None or argument.type != cs.TS_CSHARP_ARGUMENT:
-            return None
-        engine = self._resolver.type_inference.csharp_type_inference
-        return engine.argument_parameter_type(
-            argument, ctx.local_var_types, ctx.module_qn, ctx.caller_qn
-        )
 
     def _emit_string_call_edges(
         self, ctx: _CallScanContext, call_node: Node, call_name: str
@@ -4623,8 +4498,13 @@ class CallProcessor:
         if ctx.is_java and call_node.type == cs.TS_METHOD_INVOCATION:
             return self._resolve_java_callee(ctx, call_node)
         if ctx.is_csharp and call_node.type == cs.TS_CSHARP_INVOCATION_EXPRESSION:
-            return self._resolve_csharp_callee(
-                ctx, call_node, call_name, call_var_types
+            return self._csharp.resolve_callee(
+                ctx,
+                call_node,
+                call_name,
+                call_var_types,
+                ctx.ensure_rel,
+                call_node.type in _OBJECT_CREATION_NODE_TYPES,
             )
         if (
             ctx.language == cs.SupportedLanguage.PYTHON
@@ -4675,40 +4555,10 @@ class CallProcessor:
     ) -> tuple[str, str] | None:
         # What the name lookup found, checked against what the call site says.
         if ctx.is_csharp and call_node.type in _OBJECT_CREATION_NODE_TYPES:
-            return self._csharp_construction_by_arity(call_node, call_name, callee_info)
+            return self._csharp.construction_by_arity(call_node, call_name, callee_info)
         if ctx.is_js_ts and callee_info is not None:
             return self._judge_js_member_pick(ctx, call_node, callee_info)
         return callee_info
-
-    def _csharp_construction_by_arity(
-        self,
-        creation_node: Node,
-        call_name: str,
-        callee_info: tuple[str, str] | None,
-    ) -> tuple[str, str] | None:
-        # The name lookup ignores type arguments, so `new PB<int>(...)` and
-        # `new PB(...)` land on one of the twins `PB` and `PB<TResult>`; the
-        # written arity moves it to the type C# constructs (issue #2579).
-        if callee_info is None or callee_info[0] != cs.NodeLabel.CLASS:
-            return callee_info
-        engine = self._resolver.type_inference.csharp_type_inference
-        if creation_node.type == cs.TS_OBJECT_CREATION_EXPRESSION:
-            type_node = creation_node.child_by_field_name(cs.FIELD_TYPE)
-        elif (type_node := self._csharp_target_type_node(creation_node)) is None:
-            # An argument's `new(...)`, typed by a parameter whose signature
-            # spells no arity: a name with a twin of another arity stays
-            # unresolved rather than guessed.
-            if engine.arity_index().has_twin(callee_info[1]):
-                return None
-            return callee_info
-        if type_node is None or not (written := safe_decode_text(type_node)):
-            return callee_info
-        # Only a written path the call name spells whole: `new Outer<int>.Inner()`
-        # is looked up as `Outer`, whose arity the text does not give.
-        if csharp_utils.normalize_csharp_type_name(type_node) != call_name:
-            return callee_info
-        arity = csharp_utils.generic_arity_of_type_text(written)
-        return callee_info[0], engine.arity_twin(callee_info[1], arity)
 
     def _judge_js_member_pick(
         self, ctx: _CallScanContext, call_node: Node, callee_info: tuple[str, str]
@@ -5274,63 +5124,6 @@ class CallProcessor:
         finally:
             self._resolution = prev_resolution
 
-    def _resolve_csharp_callee(
-        self,
-        ctx: _CallScanContext,
-        call_node: Node,
-        call_name: str,
-        call_var_types: dict[str, str] | None,
-    ) -> tuple[str, str] | None:
-        callee_info = self._resolver.resolve_csharp_method_call(
-            call_node, ctx.module_qn, call_var_types, ctx.caller_qn
-        )
-        if (
-            callee_info is not None
-            and callee_info != csharp_ti.CSHARP_EXTERNAL_TARGET
-            and (fn_node := call_node.child_by_field_name(cs.TS_FIELD_FUNCTION))
-            is not None
-            and fn_node.type in (cs.TS_CSHARP_IDENTIFIER, cs.TS_CSHARP_GENERIC_NAME)
-        ):
-            # A bare call resolved by ARITY may have same-arity
-            # siblings differing only in parameter types (Serilog's
-            # FormatExactNumericValue switch dispatch); keep the
-            # whole family reachable. NOT when a Roslyn fact pinned
-            # the site: that is the compiler's exact overload
-            # choice, and widening it would revive dead siblings.
-            engine = self._resolver.type_inference.csharp_type_inference
-            if not engine.semantic_fact_resolved(call_node, ctx.module_qn):
-                for sibling_qn in engine.csharp_same_arity_family(callee_info[1]):
-                    ctx.ensure_rel(
-                        ctx.caller_spec,
-                        cs.RelationshipType.CALLS,
-                        (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, sibling_qn),
-                    )
-        if callee_info == csharp_ti.CSHARP_EXTERNAL_TARGET:
-            # Provably external (base.X() with an external base, a
-            # static call on an unregistered type, an object
-            # virtual on an untyped receiver): no edge, and no
-            # name-trie fallback that would fabricate one onto an
-            # unrelated same-name first-party member.
-            callee_info = None
-        elif callee_info is None and (
-            (fn_node := call_node.child_by_field_name(cs.TS_FIELD_FUNCTION)) is None
-            or fn_node.type not in (cs.TS_CSHARP_IDENTIFIER, cs.TS_CSHARP_GENERIC_NAME)
-        ):
-            # An untyped C# MEMBER call retains the generic fallback. A
-            # bare call has already exhausted C#'s legitimate scopes
-            # (local function, enclosing type, and static import), so a
-            # miss is external rather than a name-wide guess (#2005).
-            callee_info = ctx.resolve_func(
-                call_name,
-                ctx.module_qn,
-                call_var_types,
-                ctx.class_context,
-                ctx.caller_qn,
-                ctx.language,
-                constructing=call_node.type in _OBJECT_CREATION_NODE_TYPES,
-            )
-        return callee_info
-
     def _resolve_python_callee(
         self,
         ctx: _CallScanContext,
@@ -5523,7 +5316,7 @@ class CallProcessor:
         callee_type, callee_qn = callee_info
 
         if ctx.language == cs.SupportedLanguage.CSHARP:
-            self._record_csharp_cross_module_use(ctx.module_qn, callee_qn)
+            self._csharp.record_cross_module_use(ctx.module_qn, callee_qn)
 
         if (
             ctx.language == cs.SupportedLanguage.DART
@@ -7724,7 +7517,7 @@ class CallProcessor:
             # `Callback<int>` passes the method group with explicit type
             # arguments; methods register generic-free, so strip them.
             arg_text = arg_text.split(cs.CHAR_ANGLE_OPEN, 1)[0]
-            if self._emit_csharp_method_group(
+            if self._csharp.emit_method_group(
                 arg_node,
                 arg_text,
                 source_spec,
@@ -7824,72 +7617,6 @@ class CallProcessor:
             return None
         return cs.NodeLabel.METHOD, init_qn
 
-    def _emit_csharp_method_group(
-        self,
-        arg_node: Node,
-        arg_text: str,
-        source_spec: tuple[str, str, str],
-        module_qn: str,
-        local_var_types: dict[str, str] | None,
-        caller_qn: str | None,
-        ensure_rel: Callable[..., None],
-        rel_type: cs.RelationshipType,
-    ) -> bool:
-        # True when the C# argument was handled as a method group (edges
-        # emitted, or deliberately none); False falls through to resolution.
-        # A bare method-group name binds the ENCLOSING type's method
-        # group; reference the whole overload family (the delegate
-        # type that selects one overload is invisible to syntax, and
-        # the trie's lexicographic pick can even land on a sibling
-        # class, Polly's EmptyAction). Falls through when the enclosing
-        # type has no such member.
-        if cs.SEPARATOR_DOT not in arg_text:
-            engine = self._resolver.type_inference.csharp_type_inference
-            # An in-scope LOCAL FUNCTION shadows any same-name member
-            # (C# scoping) and the trie cannot see it at all: reference
-            # the local group first (Serilog's CreateLogger passes its
-            # Dispose/DisposeAsync locals to the Logger ctor).
-            if locals_group := engine.csharp_local_function_group(
-                arg_text, caller_qn, module_qn
-            ):
-                for target_qn in locals_group:
-                    ensure_rel(
-                        source_spec,
-                        rel_type,
-                        (
-                            cs.NodeLabel.FUNCTION,
-                            cs.KEY_QUALIFIED_NAME,
-                            target_qn,
-                        ),
-                    )
-                return True
-            if family := engine.csharp_method_group_family(arg_text, caller_qn):
-                for target_qn in family:
-                    ensure_rel(
-                        source_spec,
-                        rel_type,
-                        (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, target_qn),
-                    )
-                    self._record_csharp_cross_module_use(module_qn, target_qn)
-                return True
-        else:
-            # `recv.Name` is a method group only on a receiver the engine
-            # can type; nothing else about it reaches the simple-name
-            # fallback, which bound an untyped `@override.Value` to a
-            # same-named first-party property (issue #1998).
-            engine = self._resolver.type_inference.csharp_type_inference
-            for target_qn in engine.csharp_member_group_argument(
-                arg_node, local_var_types or {}, module_qn, caller_qn
-            ):
-                ensure_rel(
-                    source_spec,
-                    rel_type,
-                    (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, target_qn),
-                )
-                self._record_csharp_cross_module_use(module_qn, target_qn)
-            return True
-        return False
-
     def _emit_callback_targets(
         self,
         source_spec: tuple[str, str, str],
@@ -7942,21 +7669,9 @@ class CallProcessor:
                     (target_type, cs.KEY_QUALIFIED_NAME, target_qn),
                 )
                 if language == cs.SupportedLanguage.CSHARP:
-                    self._record_csharp_cross_module_use(module_qn, target_qn)
+                    self._csharp.record_cross_module_use(module_qn, target_qn)
         finally:
             self._resolution = prev_resolution
-
-    def _record_csharp_cross_module_use(self, module_qn: str, entity_qn: str) -> None:
-        # A resolved first-party entity pins the C# namespace import to the
-        # module that defines it (issue #1347); external resolutions (stdlib,
-        # builtins) never carry the project prefix and are skipped.
-        if not entity_qn.startswith(f"{self.project_name}{cs.SEPARATOR_DOT}"):
-            return
-        target_module = module_qn_for_entity(entity_qn, self.module_qn_to_file_path)
-        if target_module is not None and target_module != module_qn:
-            self._resolver.import_processor.csharp.record_resolved_cross_module_use(
-                module_qn, target_module
-            )
 
     def _ingest_callable_param_calls(
         self,
@@ -8619,251 +8334,6 @@ class CallProcessor:
                         cs.RelationshipType.CALLS,
                         (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, target_qn),
                     )
-
-    def _csharp_read_identifier(self, receiver: Node | None) -> str | None:
-        # The identifier actually being READ in receiver position: unwrap
-        # parens, a cast's VALUE (`((IDictionary<...>)WrappedDictionary)`),
-        # and a null-forgiving postfix (`s!`) down to a bare identifier.
-        while receiver is not None:
-            if receiver.type == cs.TS_PARENTHESIZED_EXPRESSION:
-                receiver = (
-                    receiver.named_children[0] if receiver.named_children else None
-                )
-                continue
-            if receiver.type == cs.TS_CSHARP_CAST_EXPRESSION:
-                receiver = receiver.child_by_field_name(cs.FIELD_VALUE)
-                continue
-            if receiver.type == cs.TS_CSHARP_POSTFIX_UNARY_EXPRESSION:
-                receiver = (
-                    receiver.named_children[0] if receiver.named_children else None
-                )
-                continue
-            break
-        if receiver is not None and receiver.type == cs.TS_CSHARP_IDENTIFIER:
-            return safe_decode_text(receiver)
-        return None
-
-    def _csharp_shadow_spans(
-        self,
-        caller_node: Node,
-        function_types: tuple[str, ...],
-        class_types: tuple[str, ...],
-    ) -> dict[str, list[tuple[int, int]]]:
-        # {declared name: [byte span of each declaring SCOPE]} for every
-        # declaration in the scopes the READ WALK descends into (locals
-        # incl. untyped `var x = 3`, parameters, and a simple lambda's
-        # bare implicit_parameter). A declaration shadows a same-name
-        # property only for reads INSIDE its declaring scope: a lambda
-        # param or a sibling block's local must not suppress an outer
-        # read, while an in-lambda shadowed read must not fabricate a
-        # property reference. The two walks skip the SAME nested
-        # function/class scopes (each has its own pass).
-        def scope_span(decl: Node) -> tuple[int, int]:
-            anc = decl.parent
-            while anc is not None and anc != caller_node:
-                if anc.type in (cs.TS_CSHARP_BLOCK, cs.TS_CSHARP_LAMBDA_EXPRESSION):
-                    return (anc.start_byte, anc.end_byte)
-                anc = anc.parent
-            return (caller_node.start_byte, caller_node.end_byte)
-
-        spans: dict[str, list[tuple[int, int]]] = {}
-        stack = list(caller_node.children)
-        while stack:
-            node = stack.pop()
-            node_type = node.type
-            if node_type in function_types or node_type in class_types:
-                continue
-            name = None
-            if node_type in (cs.TS_CSHARP_VARIABLE_DECLARATOR, cs.TS_CSHARP_PARAMETER):
-                name = safe_decode_text(node.child_by_field_name(cs.FIELD_NAME))
-            elif node_type == cs.TS_CSHARP_IMPLICIT_PARAMETER:
-                name = safe_decode_text(node)
-            if name:
-                spans.setdefault(name, []).append(scope_span(node))
-            stack.extend(node.children)
-        return spans
-
-    @_site_scoped
-    def _ingest_csharp_property_reads(
-        self,
-        caller_node: Node,
-        caller_spec: tuple[str, str, str],
-        caller_qn: str,
-        module_qn: str,
-        local_var_types: dict[str, str] | None,
-        lang_config: LanguageSpec,
-        prop_names: set[str],
-    ) -> None:
-        # Emit a REFERENCES edge (a read is not an invocation; the call
-        # graph stays invocation-only) from the caller to each property of
-        # its enclosing type read in receiver position. Registry-guarded via
-        # resolve_property_read, which accepts only marked properties.
-        engine = self._resolver.type_inference.csharp_type_inference
-        function_types = lang_config.function_node_types
-        class_types = lang_config.class_node_types
-        shadow_cell: list[dict[str, list[tuple[int, int]]]] = []
-        seen: set[str] = set()
-
-        def shadow_spans() -> dict[str, list[tuple[int, int]]]:
-            # Built lazily on the first candidate read; most callers have none.
-            if not shadow_cell:
-                shadow_cell.append(
-                    self._csharp_shadow_spans(caller_node, function_types, class_types)
-                )
-            return shadow_cell[0]
-
-        def try_emit(name: str | None, read_node: Node, this_read: bool) -> None:
-            self._csharp_try_emit_read(
-                name,
-                read_node,
-                this_read,
-                engine,
-                caller_spec,
-                caller_qn,
-                module_qn,
-                prop_names,
-                seen,
-                shadow_spans,
-            )
-
-        stack = list(caller_node.children)
-        while stack:
-            node = self._site_node = stack.pop()
-            node_type = node.type
-            if node_type in function_types or node_type in class_types:
-                continue
-            if node_type == cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
-                self._csharp_member_access_reads(
-                    node,
-                    try_emit,
-                    engine,
-                    caller_spec,
-                    caller_qn,
-                    module_qn,
-                    local_var_types,
-                    prop_names,
-                    seen,
-                )
-            elif node_type == cs.TS_CSHARP_IDENTIFIER:
-                # A bare identifier expression (`return Size;`, `Use(Size)`,
-                # `var n = Size;`) reads the getter just the same. NOT a
-                # read: any member-access position (receiver/name handled
-                # above), a parent's NAME field (a declarator/parameter's
-                # own name, a named-argument label `Use(Size: 3)`), or a
-                # parent's TYPE field (`new Size()`, `(Size)x`).
-                # `==`, not `is`: child_by_field_name returns a fresh Node
-                # wrapper each call, so identity never matches.
-                parent = node.parent
-                if (
-                    parent is not None
-                    and parent.type != cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION
-                    and parent.child_by_field_name(cs.FIELD_NAME) != node
-                    and parent.child_by_field_name(cs.FIELD_TYPE) != node
-                ):
-                    try_emit(safe_decode_text(node), node, False)
-            stack.extend(node.children)
-
-    def _csharp_try_emit_read(
-        self,
-        name: str | None,
-        read_node: Node,
-        this_read: bool,
-        engine: csharp_ti.CSharpTypeInferenceEngine,
-        caller_spec: tuple[str, str, str],
-        caller_qn: str,
-        module_qn: str,
-        prop_names: set[str],
-        seen: set[str],
-        shadow_spans: Callable[[], dict[str, list[tuple[int, int]]]],
-    ) -> None:
-        # One candidate read of an enclosing-type property; a bare read a local
-        # declaration shadows is not the member, a `this.`-qualified one always is.
-        if not name or name not in prop_names or name in seen:
-            return
-        shadowed = shadow_spans()
-        pos = read_node.start_byte
-        is_shadowed = any(lo <= pos < hi for lo, hi in shadowed.get(name, ()))
-        if (this_read or not is_shadowed) and (
-            prop_qn := engine.resolve_property_read(name, caller_qn)
-        ):
-            seen.add(name)
-            if prop_qn != caller_qn:
-                self._emit_rel(
-                    caller_spec,
-                    cs.RelationshipType.REFERENCES,
-                    (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, prop_qn),
-                )
-                self._record_csharp_cross_module_use(module_qn, prop_qn)
-
-    def _csharp_member_access_reads(
-        self,
-        node: Node,
-        try_emit: Callable[[str | None, Node, bool], None],
-        engine: csharp_ti.CSharpTypeInferenceEngine,
-        caller_spec: tuple[str, str, str],
-        caller_qn: str,
-        module_qn: str,
-        local_var_types: dict[str, str] | None,
-        prop_names: set[str],
-        seen: set[str],
-    ) -> None:
-        receiver = node.child_by_field_name(cs.TS_CSHARP_FIELD_EXPRESSION)
-        # `this.Size` is ALWAYS the member (a local can never
-        # shadow a this-qualified read), so the read is the NAME
-        # field and the shadow check does not apply.
-        this_read = receiver is not None and receiver.type == cs.TS_CSHARP_THIS
-        if this_read:
-            try_emit(
-                safe_decode_text(node.child_by_field_name(cs.FIELD_NAME)),
-                node,
-                True,
-            )
-        else:
-            recv_name = self._csharp_read_identifier(receiver)
-            try_emit(recv_name, node, False)
-            # The NAME field can be a property of the RECEIVER's
-            # type: `Cfg.Value` (static, class-name receiver),
-            # `w.Inner` (instance, local of inferred type), or
-            # `N.Cfg.Value` (namespace/type-qualified: a dotted
-            # receiver of all-PascalCase segments names a type, a
-            # camelCase head is an expression chain and is skipped).
-            # An unresolvable receiver yields nothing, so unrelated
-            # chains never fabricate an edge.
-            member = safe_decode_text(node.child_by_field_name(cs.FIELD_NAME))
-            recv_type = self._csharp_member_receiver_type(
-                receiver, recv_name, local_var_types
-            )
-            if recv_type and member and member in prop_names:
-                prop_qn = engine.resolve_member_property_read(
-                    recv_type, member, module_qn
-                )
-                if prop_qn is not None and prop_qn != caller_qn and prop_qn not in seen:
-                    seen.add(prop_qn)
-                    self._emit_rel(
-                        caller_spec,
-                        cs.RelationshipType.REFERENCES,
-                        (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, prop_qn),
-                    )
-
-    @staticmethod
-    def _csharp_member_receiver_type(
-        receiver: Node | None,
-        recv_name: str | None,
-        local_var_types: dict[str, str] | None,
-    ) -> str | None:
-        recv_type = None
-        if recv_name:
-            recv_type = (local_var_types or {}).get(recv_name, recv_name)
-        elif (
-            receiver is not None
-            and receiver.type == cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION
-        ):
-            dotted = safe_decode_text(receiver)
-            if dotted and all(
-                seg[:1].isupper() for seg in dotted.split(cs.SEPARATOR_DOT)
-            ):
-                recv_type = dotted
-        return recv_type
 
     @staticmethod
     def _js_ts_member_is_write_target(node: Node) -> bool:

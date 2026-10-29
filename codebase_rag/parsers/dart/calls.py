@@ -340,7 +340,7 @@ def _shadow_spans(
     # {declared name: [byte span of each declaring SCOPE]} for parameters
     # and locals. A declaration shadows a same-name getter only for bare
     # reads INSIDE its declaring scope: a closure's parameter must not
-    # suppress the enclosing method's read (cf. _csharp_shadow_spans).
+    # suppress the enclosing method's read (cf. csharp.calls._shadow_spans).
     # Method parameters live in the SIGNATURE, outside the walked body,
     # so their scope walk falls through to the whole body.
     spans: dict[str, list[tuple[int, int]]] = {}
