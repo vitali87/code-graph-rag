@@ -2981,8 +2981,10 @@ def test_a_marker_that_cannot_be_written_is_REPORTED() -> None:
     ):
         payload = handler._run_rename(ALPHA, "p.m.f", "g", False, False)
 
-    assert cs.DICT_KEY_ERROR in payload
-    assert ALPHA in payload[cs.DICT_KEY_ERROR]
+    # Reported beside the applied rename as a warning: an `error` would flag
+    # the call failed, and the rename was applied.
+    assert cs.DICT_KEY_ERROR not in payload
+    assert ALPHA in payload[cs.DICT_KEY_WARNING]
 
 
 def test_a_clean_rename_marks_NOTHING() -> None:

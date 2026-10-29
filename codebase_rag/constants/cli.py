@@ -1151,10 +1151,10 @@ GREP_SUGGESTION = " Use 'rg' instead of 'grep' for text searching."
 QUERY_NOT_AVAILABLE = "N/A"
 DICT_KEY_RESULTS = "results"
 DICT_KEY_ERROR = "error"
-# The fields a JSON tool result reports completed work in: an applied rename or
-# a deleted project that also carries an error did its work (issue #2802).
-DICT_KEY_APPLIED = "applied"
-DICT_KEY_SUCCESS = "success"
+# A problem beside completed work (an applied rename whose marker could not be
+# recorded): never `error`, which a JSON tool result carries only when it
+# failed (issue #2802).
+DICT_KEY_WARNING = "warning"
 DICT_KEY_QUERY_USED = "query_used"
 TIKTOKEN_ENCODING = "cl100k_base"
 # Without the encoding's BPE file, which tiktoken downloads on first use, a

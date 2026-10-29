@@ -185,20 +185,12 @@ def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngesto
 
 
 def _reports_failure(result: object) -> bool:
-    """Whether a JSON tool result is a refusal.
-
-    A JSON tool refuses with an `error`, alone (an unknown project or name, a
-    partial graph) or beside empty data: `reingest`'s `reparsed: []`, the
-    sites a refused `rename` lists, `delete_project`'s `success: false`
-    (issues #2802, #2785). One that reports work done beside an error, such
-    as an applied rename reporting a marker it could not clear, did its work.
-    """
-    if not isinstance(result, dict) or not result.get(cs.DICT_KEY_ERROR):
-        return False
-    return not (
-        result.get(cs.DICT_KEY_APPLIED) is True
-        or result.get(cs.DICT_KEY_SUCCESS) is True
-    )
+    """Whether a JSON tool result is a refusal: it carries a non-empty
+    `error`, alone (an unknown project or name, a partial graph) or beside
+    empty data (`reingest`'s `reparsed: []`, the sites a refused `rename`
+    lists; issues #2802, #2785). Work done beside a problem reports the
+    problem as a `warning`."""
+    return isinstance(result, dict) and bool(result.get(cs.DICT_KEY_ERROR))
 
 
 def _failed_call(message: str) -> CallToolResult:

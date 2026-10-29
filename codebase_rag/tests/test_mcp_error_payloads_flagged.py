@@ -132,8 +132,8 @@ async def test_a_text_tool_refusal_is_flagged(
             "rename",
             cs.MCPToolName.RENAME,
             {"qualified_name": "a.b", "new_name": "c"},
-            {"applied": True, "error": "could not record the marker", "sites": []},
-            id="applied-rename-with-marker-error",
+            {"applied": True, "warning": "could not record the marker", "sites": []},
+            id="applied-rename-with-marker-warning",
         ),
         pytest.param(
             "delete_project",

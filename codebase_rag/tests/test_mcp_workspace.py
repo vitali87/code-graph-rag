@@ -346,7 +346,7 @@ async def test_the_agents_tools_are_held_to_the_workspace(tmp_path: Path) -> Non
     # The direct MCP handlers share the guard (local review P1): the same
     # inputs are refused there too, before the graph is consulted.
     direct = await registry.get_code_snippet("other__9999.pkg.g")
-    assert direct["error_message"] == refused
+    assert direct["error"] == refused
     assert direct["found"] is False
     assert await registry.get_function_source(8) == refused
     assert (await registry.get_code_snippet(f"{BETA}.pkg.f"))["found"] is True
@@ -372,7 +372,7 @@ async def test_the_direct_handlers_refuse_with_the_real_tools_wrapped_once(
         name="other__9999.pkg.g", workspace="ws", known=f"{ALPHA}, {BETA}"
     )
     snippet = await registry.get_code_snippet("other__9999.pkg.g")
-    assert snippet["error_message"] == refused
+    assert snippet["error"] == refused
     assert snippet["found"] is False
     assert await registry.get_function_source(8) == refused
 
@@ -396,7 +396,7 @@ async def test_a_name_under_a_longer_indexed_project_is_refused(
     assert registry._workspace_name_refusal("foo.pkg.fn") is None
     assert registry._workspace_name_refusal("foo") is None
     snippet = await registry.get_code_snippet("foo.bar.pkg.fn")
-    assert snippet["error_message"] == refused
+    assert snippet["error"] == refused
 
 
 def test_without_a_default_the_agents_graph_query_refuses(tmp_path: Path) -> None:

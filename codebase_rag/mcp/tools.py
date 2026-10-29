@@ -100,6 +100,11 @@ if TYPE_CHECKING:
     )
 
 
+def _query_refusal(error: str) -> QueryResultDict:
+    # The error once: a failed query has no query and no rows to summarise.
+    return QueryResultDict(error=error, query_used=cs.QUERY_NOT_AVAILABLE, results=[])
+
+
 def _found_nothing(result: object) -> bool:
     """An empty walk, or a lookup that answered `found: false`."""
     return result == [] or (
@@ -3743,8 +3748,9 @@ class MCPToolsRegistry:
         if payload_marker_error is not None:
             # The graph is partial AND the record of it could not be written.
             # Reported, never swallowed: this needs operational recovery and
-            # a restarted process cannot infer it.
-            payload[cs.DICT_KEY_ERROR] = payload_marker_error
+            # a restarted process cannot infer it. A warning, not an error:
+            # the rename itself was applied.
+            payload[cs.DICT_KEY_WARNING] = payload_marker_error
         return payload
 
     async def query_code_graph(
@@ -3757,22 +3763,12 @@ class MCPToolsRegistry:
             # indistinguishable from a genuine empty result.
             project, scope_error = self._workspace_scope(project)
             if scope_error is not None:
-                return QueryResultDict(
-                    error=scope_error,
-                    query_used=cs.QUERY_NOT_AVAILABLE,
-                    results=[],
-                    summary=scope_error,
-                )
+                return _query_refusal(scope_error)
             if project is not None:
                 known = await _run_in_thread(self.ingestor.list_projects)
                 if project not in known:
                     unknown = self._unknown_project_error(project, known)
-                    return QueryResultDict(
-                        error=unknown,
-                        query_used=cs.QUERY_NOT_AVAILABLE,
-                        results=[],
-                        summary=unknown,
-                    )
+                    return _query_refusal(unknown)
             # The same refusal the eight `_graph_query` tools apply. This one
             # does not share that path -- it binds a per-request query tool
             # below -- so the check is repeated here rather than inherited.
@@ -3808,12 +3804,7 @@ class MCPToolsRegistry:
                     project_name,
                     cs.MCPToolName.QUERY_CODE_GRAPH,
                 ):
-                    return QueryResultDict(
-                        error=refusal,
-                        query_used=cs.QUERY_NOT_AVAILABLE,
-                        results=[],
-                        summary=refusal,
-                    )
+                    return _query_refusal(refusal)
                 graph_data = await _plain_function(query_tool)(natural_language_query)
             result_dict: QueryResultDict = graph_data.model_dump()
             # The error key marks a scoping refusal; absent it means success,
@@ -3828,13 +3819,10 @@ class MCPToolsRegistry:
             return result_dict
         except Exception as e:
             logger.exception(ls.MCP_ERROR_QUERY.format(error=e))
-            return QueryResultDict(
-                error=str(e),
-                query_used=cs.QUERY_NOT_AVAILABLE,
-                results=[],
-                summary=cs.MCP_TOOL_EXEC_ERROR.format(
+            return _query_refusal(
+                cs.MCP_TOOL_EXEC_ERROR.format(
                     name=cs.MCPToolName.QUERY_CODE_GRAPH, error=e
-                ),
+                )
             )
 
     async def get_code_snippet(self, qualified_name: str) -> CodeSnippetResultDict:
@@ -3851,17 +3839,13 @@ class MCPToolsRegistry:
                     project_name,
                     cs.MCPToolName.GET_CODE_SNIPPET,
                 ):
-                    return CodeSnippetResultDict(
-                        error=refusal, found=False, error_message=refusal
-                    )
+                    return CodeSnippetResultDict(error=refusal, found=False)
                 snippet = await _plain_function(self._code_tool)(
                     qualified_name=qualified_name
                 )
                 if isinstance(snippet, str):
                     # The workspace guard answered instead of the retriever.
-                    return CodeSnippetResultDict(
-                        error=snippet, found=False, error_message=snippet
-                    )
+                    return CodeSnippetResultDict(error=snippet, found=False)
                 result: CodeSnippetResultDict = snippet.model_dump()
                 if result.get(cs.MCP_KEY_FOUND) is False:
                     # No snippet is a refusal, worded as `callers` words an
@@ -3877,11 +3861,7 @@ class MCPToolsRegistry:
             return result
         except Exception as e:
             logger.error(ls.MCP_ERROR_CODE_SNIPPET.format(error=e))
-            return CodeSnippetResultDict(
-                error=str(e),
-                found=False,
-                error_message=str(e),
-            )
+            return CodeSnippetResultDict(error=str(e), found=False)
 
     async def surgical_replace_code(
         self, file_path: str, target_code: str, replacement_code: str
