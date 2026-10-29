@@ -13,20 +13,21 @@ from pydantic_ai.tools import ToolFuncPlain
 
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
-from codebase_rag import gloss, graph_query
+from codebase_rag import graph_query
 from codebase_rag import logs as ls
 from codebase_rag import structural_delta as sd
 from codebase_rag import tool_errors as te
 from codebase_rag.config import project_ignore_sets
 from codebase_rag.exceptions import ReingestAborted
-from codebase_rag.gloss_anchor import ParsedSource, SourceReader, parse_source
+from codebase_rag.gloss import notes as gloss
+from codebase_rag.gloss.anchor import ParsedSource, SourceReader, parse_source
+from codebase_rag.gloss.cleanup import prune_orphaned_glosses
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.mcp.graph_damage import GraphDamage
 from codebase_rag.mcp.run_marker import RunMarker
 from codebase_rag.models import ToolMetadata
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services import QueryProtocol
-from codebase_rag.services.gloss_cleanup import prune_orphaned_glosses
 from codebase_rag.services.graph_service import MemgraphIngestor
 from codebase_rag.services.llm import (
     CypherQueryGenerator,

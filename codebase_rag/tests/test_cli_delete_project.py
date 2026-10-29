@@ -176,7 +176,7 @@ def test_delete_project_sweeps_the_projects_glosses_after_the_delete(
     mock_delete_embeddings: MagicMock,
     mock_memgraph_connect: MagicMock,
 ) -> None:
-    from codebase_rag.services.gloss_cleanup import CYPHER_DELETE_ORPHANED_GLOSSES
+    from codebase_rag.gloss.cleanup import CYPHER_DELETE_ORPHANED_GLOSSES
 
     result = runner.invoke(app, ["delete-project", "--name", "platform"])
 
@@ -228,7 +228,7 @@ def test_a_missing_project_sweeps_nothing(
 
 
 def _gloss_sweep(project_name: str) -> object:
-    from codebase_rag.services.gloss_cleanup import CYPHER_DELETE_ORPHANED_GLOSSES
+    from codebase_rag.gloss.cleanup import CYPHER_DELETE_ORPHANED_GLOSSES
 
     return call.execute_write(
         CYPHER_DELETE_ORPHANED_GLOSSES,

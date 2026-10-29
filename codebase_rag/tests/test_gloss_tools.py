@@ -18,7 +18,7 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
-from codebase_rag import gloss
+from codebase_rag.gloss import notes as gloss
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.mcp.tools import MCPToolsRegistry
 from codebase_rag.tools import tool_descriptions as td
@@ -1129,7 +1129,7 @@ APP_PY = (
 
 
 def _reader(files: dict[str, str]) -> tuple[list[tuple[str, str]], Any]:
-    from codebase_rag.gloss_anchor import ParsedSource, parse_source
+    from codebase_rag.gloss.anchor import ParsedSource, parse_source
     from codebase_rag.parser_loader import load_parsers
 
     parsers, _ = load_parsers()
@@ -1146,7 +1146,7 @@ def _reader(files: dict[str, str]) -> tuple[list[tuple[str, str]], Any]:
 
 
 def test_a_note_records_its_subjects_text_quote_when_the_source_is_readable() -> None:
-    from codebase_rag.gloss_anchor import text_anchor
+    from codebase_rag.gloss.anchor import text_anchor
 
     graph = FakeGraph()
     calls, read = _reader({"app.py": APP_PY})

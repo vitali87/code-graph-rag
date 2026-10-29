@@ -23,7 +23,7 @@ also asks whether the note was written about the project just deleted.
 from __future__ import annotations
 
 from codebase_rag import constants as cs
-from codebase_rag.services.gloss_cleanup import (
+from codebase_rag.gloss.cleanup import (
     CYPHER_DELETE_ORPHANED_GLOSSES,
     prune_orphaned_glosses,
 )

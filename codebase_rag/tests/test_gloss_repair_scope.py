@@ -15,7 +15,7 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag import graph_updater
-from codebase_rag.gloss_repair import RepairReport
+from codebase_rag.gloss.repair import RepairReport
 from codebase_rag.graph_dialects import DIALECT_SQLITE, get_dialect
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers

@@ -1,6 +1,6 @@
 """The repair tiers below the name match (issue #1808, stage four).
 
-The fake store answers exactly the fixed queries `gloss_repair` issues and
+The fake store answers exactly the fixed queries `gloss.repair` issues and
 raises on anything else, so a lookup the tests do not model cannot pass by
 returning an empty list. Its writes are applied to its own state, which is
 what lets a second pass be run over the result of the first.
@@ -14,13 +14,13 @@ from pathlib import Path
 
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
-from codebase_rag.gloss_anchor import (
+from codebase_rag.gloss.anchor import (
     ParsedSource,
     TextAnchor,
     parse_source,
     text_anchor,
 )
-from codebase_rag.gloss_repair import RepairReport, repair_unanchored
+from codebase_rag.gloss.repair import RepairReport, repair_unanchored
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.types_defs import PropertyDict, ResultRow
 

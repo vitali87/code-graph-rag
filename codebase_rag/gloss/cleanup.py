@@ -36,7 +36,7 @@ from .. import constants as cs
 from .. import logs as ls
 
 if TYPE_CHECKING:
-    from . import QueryProtocol
+    from ..services import QueryProtocol
 
 # A gloss is live when its ANNOTATES edge still reaches a node. `DETACH
 # DELETE` on the subject removes the edge as well, so an orphaned gloss has

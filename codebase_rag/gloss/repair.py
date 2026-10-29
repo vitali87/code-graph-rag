@@ -38,17 +38,17 @@ from collections import defaultdict
 from collections.abc import Callable
 from typing import NamedTuple
 
-from . import constants as cs
-from . import cypher_queries as cq
-from .gloss_anchor import (
+from .. import constants as cs
+from .. import cypher_queries as cq
+from ..graph_query import QueryFn
+from ..types_defs import PropertyDict, ResultRow
+from .anchor import (
     ParsedSource,
     SourceReader,
     TextAnchor,
     is_comparable_quote,
     text_anchor,
 )
-from .graph_query import QueryFn
-from .types_defs import PropertyDict, ResultRow
 
 WriteFn = Callable[[str, PropertyDict | None], None]
 

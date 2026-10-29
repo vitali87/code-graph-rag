@@ -12,7 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from codebase_rag import constants as cs
-from codebase_rag.gloss_anchor import ParsedSource, parse_source, text_anchor
+from codebase_rag.gloss.anchor import ParsedSource, parse_source, text_anchor
 from codebase_rag.parser_loader import load_parsers
 
 _PARSERS, _ = load_parsers()

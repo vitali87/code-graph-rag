@@ -33,10 +33,10 @@ from typing import NamedTuple, TypeGuard
 
 from tree_sitter import Node, Parser, Tree
 
-from . import constants as cs
-from .language_spec import get_language_for_extension
-from .parsers.cpp.preproc_recovery import parse_with_preproc_recovery
-from .types_defs import ResultValue
+from .. import constants as cs
+from ..language_spec import get_language_for_extension
+from ..parsers.cpp.preproc_recovery import parse_with_preproc_recovery
+from ..types_defs import ResultValue
 
 
 class ParsedSource(NamedTuple):

@@ -63,6 +63,7 @@ from .editor_links import (
     url_template_problem,
 )
 from .exclude_prompt import prompt_for_unignored_directories
+from .gloss.cleanup import prune_orphaned_glosses
 from .graph_cli import cli as graph_cli
 from .graph_dialects import DIALECT_MEMGRAPH
 from .graph_export import export_graph_to_file
@@ -70,7 +71,6 @@ from .language.cli import cli as language_cli
 from .parser_loader import load_parsers
 from .port.cli import cli as port_cli
 from .project_selection import ProjectChoice, choose_project, scope_refusal
-from .services.gloss_cleanup import prune_orphaned_glosses
 from .services.graph_diff import DiffError, diff_indexes, diff_is_empty
 from .services.graph_service import GraphUnavailableError, MemgraphIngestor
 from .services.protobuf_service import ProtobufFileIngestor

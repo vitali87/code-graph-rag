@@ -24,7 +24,7 @@ A gloss is EXACT at the moment it is written and records the subject's
 `anchor_hash` (see `parsers/anchor_hash.py`); after every sync the graph
 updater compares the two and grades the note EXACT or STALE, so a reader
 knows whether the code under a note has changed since it was made. A note
-whose subject's name is gone is repaired by content hash (`gloss_repair`):
+whose subject's name is gone is repaired by content hash (`gloss.repair`):
 MOVED when one definition carries it, AMBIGUOUS or LOST otherwise, and the
 unattached ones stay readable through `glosses_for` on the old name. The
 text-quote anchor is the next stage.
@@ -38,12 +38,12 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, NamedTuple, NotRequired, TypedDict
 
-from . import constants as cs
-from . import cypher_queries as cq
-from . import graph_query
-from .gloss_anchor import SourceReader, TextAnchor, text_anchor
-from .graph_query import QueryFn, SymbolRow, project_qn_prefix
-from .types_defs import PropertyDict, ResultRow
+from .. import constants as cs
+from .. import cypher_queries as cq
+from .. import graph_query
+from ..graph_query import QueryFn, SymbolRow, project_qn_prefix
+from ..types_defs import PropertyDict, ResultRow
+from .anchor import SourceReader, TextAnchor, text_anchor
 
 if TYPE_CHECKING:
     # Annotation-only: TypeIs reaches `typing` in 3.13, and the checker reads
@@ -377,7 +377,7 @@ def write_gloss(
     comma-separated list of further definitions the note talks about; each
     becomes a `MENTIONS` edge and each is held to the same resolution rule as
     the subject. `read_source` supplies the subject's file text so the note
-    can record its text-quote anchor (`gloss_anchor`); without it, or when
+    can record its text-quote anchor (`gloss.anchor`); without it, or when
     the file cannot be read, the note simply carries no quote.
     """
     text = body.strip()

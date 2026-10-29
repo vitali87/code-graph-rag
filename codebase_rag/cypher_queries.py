@@ -1170,7 +1170,7 @@ _STATE_STALE = GlossAnchorState.STALE.value
 # (`mention_qns`) as properties, so when a rebuild has deleted and recreated
 # the definitions, or an inbound-edge capture could not be read, the edges are
 # rebuilt from the note's own record rather than lost. A subject whose name is
-# gone stays unattached here; `gloss_repair` then grades it MOVED, AMBIGUOUS
+# gone stays unattached here; `gloss.repair` then grades it MOVED, AMBIGUOUS
 # or LOST by content hash. Nothing here re-binds a note to a different name.
 # Re-attaching by name resets the state: a note the previous run graded LOST
 # or AMBIGUOUS whose name has come back is EXACT again (grading may demote it
@@ -1181,7 +1181,7 @@ _STATE_STALE = GlossAnchorState.STALE.value
 # Every post-sync pass reads the syncing project's notes alone (issue #3236):
 # by the recorded `project`, or for a note written before that property
 # existed by the longest registered project prefixing its target, as
-# `gloss_repair` assigns it. Another project's note changes state only when
+# `gloss.repair` assigns it. Another project's note changes state only when
 # its own definitions do, on that project's sync.
 _GLOSS_OF_SYNCING_PROJECT = """(g.project = $project_name
        OR (g.project IS NULL AND g.target_qn STARTS WITH $project_prefix
@@ -1199,7 +1199,7 @@ SET g.anchor_state = CASE WHEN g.moved_from IS NULL
     THEN '{_STATE_EXACT}' ELSE '{_STATE_MOVED}' END,
     g.candidate_qns = null"""
 # The repair tiers below the name match (issue #1808, stage four), driven by
-# `gloss_repair.repair_unanchored`: the notes still unattached after the
+# `gloss.repair.repair_unanchored`: the notes still unattached after the
 # query above, the definitions in a project carrying a set of content hashes,
 # and the two outcomes -- follow the hash to its one new home (MOVED) or
 # record why the note could not be placed (AMBIGUOUS with its candidates,

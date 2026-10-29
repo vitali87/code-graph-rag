@@ -27,8 +27,8 @@ from .capture import CaptureSelection, default_capture
 from .checkout_state import prepare_state_dir, state_dir
 from .config import settings
 from .function_registry import FunctionRegistryTrie
-from .gloss_anchor import ParsedSource, parse_source
-from .gloss_repair import repair_unanchored
+from .gloss.anchor import ParsedSource, parse_source
+from .gloss.repair import repair_unanchored
 from .graph_query import projects_nested_under
 from .interface_skip import (
     callers_to_reparse,
@@ -3033,7 +3033,7 @@ class GraphUpdater:
         of, owns `qn`. Every rehydration read is scoped by `STARTS WITH
         $project_prefix`, and `svc.` selects `svc.v2`'s rows too; the owner
         is the LONGEST registered project name the qn sits under, the way
-        `gloss_repair._projects_of` decides it (issue #1970)."""
+        `gloss.repair._projects_of` decides it (issue #1970)."""
         if qn != self.project_name and not qn.startswith(
             f"{self.project_name}{cs.SEPARATOR_DOT}"
         ):

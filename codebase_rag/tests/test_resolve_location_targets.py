@@ -23,7 +23,8 @@ from click.testing import CliRunner
 
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
-from codebase_rag import gloss, graph_query
+from codebase_rag import graph_query
+from codebase_rag.gloss import notes as gloss
 from codebase_rag.graph_cli import cli as graph_cli
 from codebase_rag.mcp.tools import MCPToolsRegistry
 from codebase_rag.tests import test_gloss_tools as gt
