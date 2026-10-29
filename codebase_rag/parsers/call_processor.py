@@ -71,6 +71,7 @@ from .php import class_names as php_class_names
 from .php import utils as php_utils
 from .python import calls as python_calls
 from .rpc_exposure import GoRpcExposureProcessor
+from .rust import calls as rs_calls
 from .rust import utils as rs_utils
 from .scala import calls as scala_calls
 from .scala import utils as scala_utils
@@ -521,43 +522,6 @@ def _body_function_nodes(
         return None
     captures = sorted_captures(QueryCursor(function_query), body_node)
     return captures.get(cs.CAPTURE_FUNCTION, [])
-
-
-def _next_macro_token(token: Node) -> Node | None:
-    # The token after `token` in a macro's stream, comments skipped.
-    following = token.next_sibling
-    while following is not None and following.type in cs.RS_COMMENT_TYPES:
-        following = following.next_sibling
-    return following
-
-
-def _macro_turbofish_reaches_args(ident: Node) -> bool:
-    """Whether a macro-token identifier is a call, through any turbofish.
-
-    `make::<u64>()` in a macro is the flat stream `make :: < u64 > ( )`, so
-    the query's identifier-then-`(` shape missed it and every turbofish call
-    inside `assert!`/`println!` lost its edge (issue #3212). An identifier
-    followed by `::<` is a call only when the generic arguments close straight
-    into an argument group; `a::<B>::c()` continues the path instead. A
-    comment between them (`make::<u64> /* type */ ()`) is a token too.
-    """
-    scope = _next_macro_token(ident)
-    if scope is None or scope.type != cs.TS_RS_TOKEN_SCOPE:
-        return True
-    depth = 0
-    token = _next_macro_token(scope)
-    while token is not None:
-        depth += cs.RS_MACRO_ANGLE_DEPTH.get(token.type, 0)
-        if depth <= 0:
-            break
-        token = _next_macro_token(token)
-    if token is None or depth != 0 or (args := _next_macro_token(token)) is None:
-        return False
-    return (
-        args.type == cs.TS_RS_TOKEN_TREE
-        and args.child_count > 0
-        and args.children[0].type == cs.CHAR_PAREN_OPEN
-    )
 
 
 def _find_call_arguments_node(call_node: Node) -> Node | None:
@@ -2042,20 +2006,17 @@ class CallProcessor:
             return None
         return loc
 
-    def _get_rust_impl_class_name(self, class_node: Node) -> str | None:
-        # Use the same bare-type extraction as the definition pass
-        # (rs_utils.extract_impl_target), which strips generic arguments
-        # (`Chars<'a>` -> `Chars`). _get_node_name returns the full generic
-        # text, so a call inside a generic impl block was attributed to a caller
-        # qn bearing the generics (crate.lib.Chars<'a>.go) matching no
-        # registered node, silently dropping the CALLS edge.
-        return rs_utils.extract_impl_target(class_node)
-
     def _get_class_name_for_node(
         self, class_node: Node, language: cs.SupportedLanguage
     ) -> str | None:
         if language == cs.SupportedLanguage.RUST and class_node.type == cs.TS_IMPL_ITEM:
-            return self._get_rust_impl_class_name(class_node)
+            # Use the same bare-type extraction as the definition pass
+            # (rs_utils.extract_impl_target), which strips generic arguments
+            # (`Chars<'a>` -> `Chars`). _get_node_name returns the full generic
+            # text, so a call inside a generic impl block was attributed to a
+            # caller qn bearing the generics (crate.lib.Chars<'a>.go) matching
+            # no registered node, silently dropping the CALLS edge.
+            return rs_utils.extract_impl_target(class_node)
         if language == cs.SupportedLanguage.PHP and (
             anonymous_name := php_utils.anonymous_class_name(class_node)
         ):
@@ -2409,66 +2370,6 @@ class CallProcessor:
             }
         return {**local_var_types, base: best[1]}
 
-    def _macro_call_name(self, ident: Node) -> str | None:
-        # Rebuild the callee a macro token stream spells, walking the method
-        # identifier's preceding siblings, into the name the same call gets
-        # outside a macro: `server . run` -> "server.run", `Config :: load` ->
-        # "Config::load", `Circle :: new ( 2.0 ) . area` ->
-        # "Circle::new(2.0).area". Stopping at `::` dropped `Type::assoc()` and
-        # anything chained on it, since a bare method name never binds (issue
-        # #2698). A method with no preceding `.` or `::` stays bare.
-        if not (method := ident.text.decode(cs.ENCODING_UTF8) if ident.text else None):
-            return None
-        parts = [method]
-        cur = ident.prev_sibling
-        while cur is not None and cur.type in cs.RS_MACRO_CHAIN_SEPARATORS:
-            if (receiver := self._macro_receiver(cur)) is None:
-                break
-            text, head = receiver
-            parts += [cur.type, text]
-            cur = head.prev_sibling
-        parts.reverse()
-        return "".join(parts)
-
-    @staticmethod
-    def _macro_receiver(sep: Node) -> tuple[str, Node] | None:
-        # The receiver token(s) just before a `.` / `::` in a macro token
-        # stream, as (text, first token): a path segment (`Config`, `Self`,
-        # `crate`, `super`) before `::`; before `.`, an identifier or `self`,
-        # or a call result `new ( 2.0 )` (callee plus its argument group).
-        if (recv := sep.prev_sibling) is None or not recv.text:
-            return None
-        if sep.type == cs.TS_RS_TOKEN_SCOPE:
-            if recv.type not in cs.RS_MACRO_PATH_SEGMENT_TYPES:
-                return None
-            return recv.text.decode(cs.ENCODING_UTF8), recv
-        if recv.type in cs.RS_MACRO_RECEIVER_TYPES:
-            return recv.text.decode(cs.ENCODING_UTF8), recv
-        if (
-            recv.type == cs.TS_RS_TOKEN_TREE
-            and recv.child_count > 0
-            and recv.children[0].type == cs.CHAR_PAREN_OPEN
-            and (callee := recv.prev_sibling) is not None
-            and callee.type == cs.TS_IDENTIFIER
-            and callee.text
-        ):
-            return (
-                callee.text.decode(cs.ENCODING_UTF8)
-                + recv.text.decode(cs.ENCODING_UTF8),
-                callee,
-            )
-        return None
-
-    def _macro_token_call_name(self, ident: Node) -> str | None:
-        # Attribute arguments share the token_tree shape (`skip(self)` in
-        # `#[instrument(skip(self))]`) but name no function; binding them
-        # by bare name invented module-level CALLS (issue #2541).
-        if rs_utils.in_attribute_arguments(ident):
-            return None
-        if not _macro_turbofish_reaches_args(ident):
-            return None
-        return self._macro_call_name(ident)
-
     def _get_call_target_name(
         self, call_node: Node, language: cs.SupportedLanguage | None = None
     ) -> str | None:
@@ -2480,7 +2381,7 @@ class CallProcessor:
         # mis-resolves (`server.run()` in tokio::select! to the same-module free
         # fn `run` instead of Listener.run).
         if call_node.type == cs.TS_IDENTIFIER and call_node.text is not None:
-            return self._macro_token_call_name(call_node)
+            return rs_calls.macro_token_call_name(call_node)
         # A SQL `invocation` names its routine through an unnamed
         # `object_reference` child (no `function` or `name` field), so every
         # SQL call site fell through nameless and was dropped (issue #2449).

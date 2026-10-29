@@ -1577,5 +1577,7 @@ class TestGetRustImplClassName:
         impl_node = find_first_node_of_type(root, "impl_item")
         assert impl_node is not None
 
-        result = call_processor._get_rust_impl_class_name(impl_node)
+        result = call_processor._get_class_name_for_node(
+            impl_node, cs.SupportedLanguage.RUST
+        )
         assert result is not None

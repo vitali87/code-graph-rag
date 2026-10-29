@@ -562,7 +562,7 @@ precision/recall 0.91/0.65 to 0.94/0.95. (1) A method in a generic impl block
 (`impl<'a> Thing for Chars<'a>`) was attributed to a caller qn that carried the
 impl's generics (`crate.lib.Chars<'a>.go`), but the method node is registered on
 the bare type (`crate.lib.Chars.go`), so every such `CALLS` edge had a dangling
-caller and was dropped; fixed by routing `_get_rust_impl_class_name` through the
+caller and was dropped; fixed by routing the call pass's impl class name through the
 same `rs_utils.extract_impl_target` the definition pass uses (recovered 44 of 58
 missing edges). (2) A regression from the externally-imported-name fix:
 `_is_external_import` mistook Rust relative imports (`use super::b::helper`, whose
