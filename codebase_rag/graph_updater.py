@@ -104,7 +104,6 @@ from .parsers.java_lombok import (
 )
 from .parsers.notebook import NotebookSkipped, is_notebook_path, read_notebook
 from .parsers.parameter_nodes import PendingParameterType
-from .parsers.py.ast_analyzer import clear_scope_facts
 from .parsers.rs import utils as rs_utils
 from .parsers.stdlib_extractor import flush_stdlib_cache
 from .parsers.structure_processor import StructureProcessor
@@ -1631,6 +1630,65 @@ def _package_modules(module_files: Mapping[str, Path]) -> frozenset[str]:
     )
 
 
+@dataclass(slots=True)
+class _SyncRun:
+    """What one `run()` or `reingest()` call learns and still owes.
+
+    Replaced whole at the start of each call, so an updater reused across
+    calls (the MCP server's, the watcher's) never answers from a previous
+    call's state and a new field cannot be left out of a reset.
+    """
+
+    # The call re-parses EVERY file (no cache, or force): it re-resolves
+    # all edges itself, so graph reads may degrade on failure; an
+    # incremental run's correctness depends on them.
+    is_full_build: bool = False
+    # Registered project names, read once per call (issue #1970), and
+    # whether that read failed: the list then holds this project alone,
+    # which cannot tell a nested project's rows from this one's.
+    registered_projects: list[str] | None = None
+    registry_unread: bool = False
+    exposes_cleanup_skipped: bool = False
+    prune_settled: bool = False
+    # An orphaned cache could not be deleted: the file is still on disk,
+    # so this call ignores it in memory rather than trust it (issue #1647).
+    cache_discarded_in_memory: bool = False
+    # A parser input changed since the graph was built (issue #1977): the
+    # hash cache describes files parsed by other inputs, so the call
+    # ignores it and re-parses every file once.
+    parser_changed: bool = False
+    # Whether the exclusion set matches the last completed run's stamp.
+    # Project provenance can match while the exclusion set changes; the
+    # old cache is kept then so newly excluded files can be removed.
+    exclusion_match: bool | None = None
+    cache_project_match: bool | None = None
+    # The graph's module paths could not be read: the reconciliation they
+    # were needed for may not have happened, so the exclusion set must not
+    # be stamped as reconciled.
+    graph_state_unknown: bool = False
+    # Sync state written at the post-flush commit point in `run`, never
+    # inside `_process_files` (issues #1615, #1634): a build that dies
+    # before its final flush must not leave state claiming it finished.
+    pending_hash_cache: tuple[Path, FileHashCache] | None = None
+    pending_dir_mtimes: tuple[Path, DirMtimesCache] | None = None
+    pending_cache_observed_at: float | None = None
+    pending_parser_fingerprint: str | None = None
+    # The trace-derived CALLS edges read before the re-parsed subtrees are
+    # deleted, re-applied once Pass 3 rebuilt the static edges (issue
+    # #2429), and the files deleted, whose edges must not follow their
+    # qualified names onto a same-stem survivor.
+    captured_trace_edges: list[CapturedTraceEdge] = field(default_factory=list)
+    trace_gone_paths: frozenset[str] = frozenset()
+    # The edges into re-indexed files that `_process_files` captured, held
+    # until the deferred stages registered every re-parsed definition
+    # (issue #3270).
+    pending_inbound_edges: list[ResultRow] = field(default_factory=list)
+    embeddings_interrupted: bool = False
+    # The bytes a scoped re-ingest judged a file's interface on, which its
+    # re-parse then reads instead of the disk (issue #2531).
+    reingest_pinned_sources: dict[str, bytes] = field(default_factory=dict)
+
+
 class GraphUpdater:
     """Drive a full or incremental ingest of a repository into the graph.
 
@@ -1654,6 +1712,7 @@ class GraphUpdater:
         state_dir: Path | None = None,
     ):
         self.capture = capture if capture is not None else default_capture()
+        self._run = _SyncRun()
         # Where the incremental-sync state (hash cache, dir mtimes, exclusion
         # stamp, parser fingerprint, pending markers) is read and written.
         # None resolves on first use to this checkout's directory under
@@ -1670,10 +1729,6 @@ class GraphUpdater:
         self.ingestor = ingestor
         self._sink: IngestorProtocol = filtering_ingestor(ingestor, self.capture)
         self._single_file: Path | None = None
-        # True while the current sync re-parses EVERY file (no cache/force):
-        # such a run re-resolves all edges itself, so graph reads may degrade
-        # on failure; an incremental run's correctness depends on them.
-        self._is_full_build = False
         # path -> module qualified name as the graph records it, read once
         # per rehydration for the requeues (issue #1935).
         self._module_qns_by_path: dict[str, str] | None = None
@@ -1720,7 +1775,6 @@ class GraphUpdater:
         self.skip_embeddings = (
             settings.SKIP_EMBEDDINGS if skip_embeddings is None else skip_embeddings
         )
-        self._embeddings_interrupted = False
         self.skipped_because_in_sync = False
         # Whether the current run has saved its graph and sync state; see
         # `run`. A caller interrupted mid-run reads it to tell a partial graph
@@ -1749,19 +1803,6 @@ class GraphUpdater:
         # Files (re)parsed by Pass 2 this run: the only files whose
         # definition spans exist for hybrid macro-call attribution.
         self._reparsed_file_keys: set[str] = set()
-        # The bytes a scoped re-ingest judged a file's interface on, which its
-        # re-parse then reads instead of the disk (issue #2531).
-        self._reingest_pinned_sources: dict[str, bytes] = {}
-        # The trace-derived CALLS edges `run()` read before deleting the
-        # re-parsed subtrees, re-applied once Pass 3 has rebuilt the static
-        # edges (issue #2429), and the files the run deleted, whose edges must
-        # not follow their qualified names onto a same-stem survivor.
-        self._captured_trace_edges: list[CapturedTraceEdge] = []
-        self._trace_gone_paths: frozenset[str] = frozenset()
-        # The edges into re-indexed files that `_process_files` captured, held
-        # for `run()` to restore once the deferred stages have registered
-        # every re-parsed definition (issue #3270).
-        self._pending_inbound_edges: list[ResultRow] = []
         # The file keys the current `reingest` call will delete and re-parse
         # (changed, deleted, dependents, same-stem survivors), published right
         # before `before_write` runs so a caller can capture exactly that set
@@ -1769,33 +1810,6 @@ class GraphUpdater:
         # `before_write` runs; empty before and after, whether the hook
         # returned, refused or was never given.
         self.reingest_scope: tuple[str, ...] = ()
-        self._exclusion_match: bool | None = None
-        # Project provenance can match while the exclusion set changes. Keep
-        # the old cache in that case so newly excluded files can be removed.
-        self._cache_project_match: bool | None = None
-        # Set when a run that needed the graph's module paths could not read
-        # them: the reconciliation it was meant to do may not have happened,
-        # so that run must not stamp its exclusion set as reconciled.
-        self._graph_state_unknown: bool = False
-        # Set when an orphaned cache could not be deleted: the file is still on
-        # disk, so this run must ignore it in memory rather than trust it
-        # (issue #1647).
-        self._cache_discarded_in_memory: bool = False
-        # A parser input changed since the graph was built (issue #1977):
-        # the hash cache describes files parsed by other inputs, so this run
-        # ignores it and re-parses every file once. Set per run.
-        self._parser_changed: bool = False
-        # Written at the post-flush commit point in `run`, never inside
-        # `_process_files` (issue #1615).
-        self._pending_hash_cache: tuple[Path, FileHashCache] | None = None
-        self._pending_dir_mtimes: tuple[Path, DirMtimesCache] | None = None
-        self._pending_cache_observed_at: float | None = None
-        # The parser fingerprint a full build will stamp, also deferred to the
-        # commit point (issue #1634): stamped inside `_process_files` it
-        # outlived a build that died before its final flush, and the next run
-        # then found the stamp equal to its own and never warned that the
-        # graph was built by different parser code.
-        self._pending_parser_fingerprint: str | None = None
         # Package paths read from the graph before Pass 1 of an incremental
         # run; None on a full build or when the graph could not be read.
         self._packages_before_run: set[str] | None = None
@@ -1807,13 +1821,6 @@ class GraphUpdater:
         self._rehydrated_module_qns: set[str] = set()
         # Go files whose `package` clause a rehydration already read back.
         self._go_clauses_read: set[str] = set()
-        # Registered project names, read once per run (issue #1970).
-        self._registered_projects: list[str] | None = None
-        # Whether that read failed: the list then holds this project alone,
-        # which cannot tell a nested project's rows from this one's.
-        self._registry_unread = False
-        self._exposes_cleanup_skipped = False
-        self._prune_settled = False
 
         self.factory = ProcessorFactory(
             ingestor=self._sink,
@@ -2754,17 +2761,14 @@ class GraphUpdater:
         # First, so an interrupt anywhere below reads this run's answer, not
         # a reused updater's previous one.
         self.committed = False
-        self._clear_python_inference_caches()
+        self._run = _SyncRun()
+        # The built passes drop what they recorded about the previous run.
+        self.factory.begin_run()
         # Reset per-run parse tracking so a reused updater does not reprocess
         # a previous run's files in Pass 3.
         self._parsed_files.clear()
         # Per-run for the same reason: the warning names THIS run's files.
         self.ast_grep_tier.reset_unparsed()
-        # Per-run for the same reason: the set records what THIS run parsed,
-        # so a reused updater must not treat a previous run's interfaces as
-        # unflushed writes that rehydration has to preserve.
-        self.factory.definition_processor.cpp_interfaces_parsed_this_run.clear()
-        self.factory.definition_processor.unparsable_manifests.clear()
         # Per-run for the same reason: set on the in-sync early return below
         # and previously cleared only in `__init__`, so a reused instance kept
         # reporting a previous run's skip. `cli.py` reads it to decide what to
@@ -2781,11 +2785,6 @@ class GraphUpdater:
             and (self.prepared_state_dir / cs.HASH_CACHE_FILENAME).is_file()
             else None
         )
-        self._embeddings_interrupted = False
-        # Per-run as well: an in-sync run walks no calls, and must not report
-        # a previous run's failures as its own.
-        if self.factory._call_processor is not None:
-            self.factory._call_processor.failed_call_files.clear()
         self._sink.ensure_node_batch(
             cs.NODE_PROJECT,
             {
@@ -2800,15 +2799,6 @@ class GraphUpdater:
         )
         logger.info(ls.ENSURING_PROJECT, name=self.project_name)
 
-        # Reset BEFORE the discard below, which is what SETS it: a reset after
-        # that call would clear the flag it just raised and make the in-memory
-        # discard dead code (issue #1647).
-        self._cache_discarded_in_memory = False
-        self._parser_changed = False
-        self._registered_projects = None
-        self._registry_unread = False
-        self._exposes_cleanup_skipped = False
-        self._prune_settled = False
         if not force and self._single_file is None:
             self._drop_cache_if_graph_lost(previous_root)
             self._reparse_all_if_parser_changed()
@@ -2817,31 +2807,11 @@ class GraphUpdater:
         # since the cached run changes the eligible set, and the check walks
         # with the same unignore patterns the indexing pass will use.
         self._register_generated_sources()
-        # Per-run, and reset here rather than in __init__: the memo answers
-        # "did the set move since the last COMPLETED run", and this run writes
-        # a new stamp at the end, so an instance used for a second run must
-        # re-read rather than reuse an answer about the stamp its own previous
-        # run replaced. Reset after _register_generated_sources so the answer
-        # is always computed against the effective unignore set.
-        self._exclusion_match = None
-        self._cache_project_match = None
-        self._graph_state_unknown = False
-        # Per-run for the same reason (issue #1620's shape): a run that raised
-        # between `_process_files` and the commit point leaves its cache
-        # stashed on the instance. `_process_files` has exactly one raise, the
-        # deferred first parse failure, and it sits AFTER the observed-at
-        # stash and BEFORE the two cache stashes, so a raising run leaves
-        # `_pending_cache_observed_at` set and the other two None; `run`
-        # returns only at the in-sync fast path below, above the commit
-        # point. This reset is what makes that leftover harmless on a reused
-        # instance, and the first early `return` added to either function
-        # is covered by it too.
-        self._pending_hash_cache = None
-        self._pending_dir_mtimes = None
-        self._pending_cache_observed_at = None
-        self._pending_parser_fingerprint = None
-        self._captured_trace_edges = []
-        self._trace_gone_paths = frozenset()
+        # The checks above may already have answered these against the
+        # unignore set discovery just replaced, so they are asked again.
+        self._run.exclusion_match = None
+        self._run.cache_project_match = None
+        self._run.graph_state_unknown = False
         if not force and self._is_already_in_sync():
             self._finish_in_sync_run()
             self._retire_legacy_dotted_project()
@@ -2896,7 +2866,7 @@ class GraphUpdater:
             # files are already present and take precedence. A cacheless full build
             # (force=False but _is_full_build) already re-parsed every file, so the
             # project-wide query would be wasted work -- skip it.
-            if not force and not self._is_full_build:
+            if not force and not self._run.is_full_build:
                 self._rehydrate_csharp_type_locations()
                 # Same posture for the col-keyed indexes (issue #1240): the Go
                 # IMPLEMENTS and semantic-call joins below resolve against
@@ -2957,7 +2927,7 @@ class GraphUpdater:
         # file deleted since would otherwise keep emitting its call sites'
         # edges. An incremental run keeps them, since finalize still needs the
         # seeds of files it does not re-walk.
-        if self._is_full_build:
+        if self._run.is_full_build:
             self.factory.call_processor.reset_callable_flow()
         logger.info(ls.PASS_3_CALLS)
         self.factory.import_processor.recover_unparsed_csharp_state(known_module_paths)
@@ -3003,8 +2973,10 @@ class GraphUpdater:
         self.ingestor.flush_all()
         # After that flush: the carry reads the static edges Pass 3 just
         # wrote to decide which observations confirm one (issue #2429).
-        self._carry_trace_edges(self._captured_trace_edges, self._trace_gone_paths)
-        self._captured_trace_edges = []
+        self._carry_trace_edges(
+            self._run.captured_trace_edges, self._run.trace_gone_paths
+        )
+        self._run.captured_trace_edges = []
 
         self._link_endpoint_resources()
 
@@ -3026,7 +2998,7 @@ class GraphUpdater:
         self._generate_semantic_embeddings()
 
         self._commit_run_state()
-        if self._embeddings_interrupted:
+        if self._run.embeddings_interrupted:
             raise ex.EmbeddingsInterrupted
         self._retire_legacy_dotted_project()
 
@@ -3059,16 +3031,6 @@ class GraphUpdater:
                 ls.SYNC_TIME_NOT_RECORDED.format(project=self.project_name, error=exc)
             )
 
-    def _clear_python_inference_caches(self) -> None:
-        py_engine = self.factory.type_inference._python_type_inference
-        if py_engine is not None:
-            py_engine._available_classes_cache.clear()
-            py_engine._return_stmt_cache.clear()
-            py_engine._method_return_type_cache.clear()
-            py_engine._self_assignment_cache.clear()
-            py_engine._class_member_type_cache.clear()
-        clear_scope_facts()
-
     def _finish_in_sync_run(self) -> None:
         logger.info(ls.GRAPH_ALREADY_IN_SYNC)
         self.skipped_because_in_sync = True
@@ -3079,7 +3041,7 @@ class GraphUpdater:
         # statements, no-ops when every note is attached (issue #1808).
         self._reanchor_glosses()
         self.ingestor.flush_all()
-        if self._single_file is None and not self._graph_state_unknown:
+        if self._single_file is None and not self._run.graph_state_unknown:
             self._stamp_exclusion_state(only_if_changed=True)
         self._record_sync_time()
         # Nothing to save on this path, and nothing left half-written.
@@ -3106,12 +3068,12 @@ class GraphUpdater:
         # for. Set by a full build or a parser-changed re-index
         # (`_process_files`), so ordinary incremental runs keep the stale
         # stamp and the warning with it.
-        if self._pending_parser_fingerprint is not None:
+        if self._run.pending_parser_fingerprint is not None:
             _save_parser_fingerprint(
                 self.prepared_state_dir / cs.PARSER_FINGERPRINT_FILENAME,
-                self._pending_parser_fingerprint,
+                self._run.pending_parser_fingerprint,
             )
-            self._pending_parser_fingerprint = None
+            self._run.pending_parser_fingerprint = None
 
         # Same commit point, for the same reason. The module deletions a newly
         # excluded file triggers are execute_write calls that only become
@@ -3138,7 +3100,7 @@ class GraphUpdater:
         # hashes, which stays true; the withheld exclusion stamp is what tells
         # the next run that deletions were not reconciled, and that alone both
         # fails the sync check and turns graph-backed reconciliation on.
-        observed_at = self._pending_cache_observed_at
+        observed_at = self._run.pending_cache_observed_at
         # Hash cache FIRST, directory mtimes LAST, because a stop between the
         # two leaves a mismatched pair that is only detected in one direction.
         # `_is_already_in_sync` iterates the entries the map RECORDS, so it
@@ -3164,8 +3126,8 @@ class GraphUpdater:
         # added during the run would never be indexed. Withholding the map
         # keeps both artefacts one run behind, which only costs a rescan.
         hash_cache_published = True
-        if self._pending_hash_cache is not None:
-            cache_path, new_hashes = self._pending_hash_cache
+        if self._run.pending_hash_cache is not None:
+            cache_path, new_hashes = self._run.pending_hash_cache
             # A single-file run may UPDATE an existing cache but must never
             # CREATE one, for the same reason it does not record the
             # exclusion state below: it walked one file and cannot describe
@@ -3189,14 +3151,14 @@ class GraphUpdater:
                 hash_cache_published = _publish_hash_cache(
                     cache_path, new_hashes, observed_at
                 )
-            self._pending_hash_cache = None
-        if self._pending_dir_mtimes is not None and hash_cache_published:
-            _save_dir_mtimes(*self._pending_dir_mtimes)
-        self._pending_dir_mtimes = None
-        self._pending_cache_observed_at = None
+            self._run.pending_hash_cache = None
+        if self._run.pending_dir_mtimes is not None and hash_cache_published:
+            _save_dir_mtimes(*self._run.pending_dir_mtimes)
+        self._run.pending_dir_mtimes = None
+        self._run.pending_cache_observed_at = None
 
         if self._single_file is None:
-            if self._graph_state_unknown:
+            if self._run.graph_state_unknown:
                 logger.warning(ls.EXCLUSION_STATE_NOT_RECORDED)
             else:
                 self._stamp_exclusion_state()
@@ -3257,7 +3219,7 @@ class GraphUpdater:
         # A mount-only incremental change re-parses just the mounting module;
         # the unchanged handlers must still re-emit under the new prefix, so
         # they come back from the graph. A full build queued them all already.
-        if not self._is_full_build:
+        if not self._run.is_full_build:
             entries.extend(
                 self._rehydrated_endpoint_entries(
                     entries, only, known_files, module_asts
@@ -3336,14 +3298,14 @@ class GraphUpdater:
         # a sibling project's modules the same way), so no delete runs at all;
         # emission only MERGEs, and the next healthy run cleans up
         # (CodeRabbit, PR #2129).
-        if self._registry_unread:
-            self._exposes_cleanup_skipped = True
+        if self._run.registry_unread:
+            self._run.exposes_cleanup_skipped = True
             return
         try:
             self.ingestor.execute_write(query, params)
         except Exception:
             # A delete that failed is owed exactly like one that was skipped.
-            self._exposes_cleanup_skipped = True
+            self._run.exposes_cleanup_skipped = True
             logger.debug(ls.EXPOSES_CLEANUP_UNAVAILABLE)
 
     def _record_prune_pending(self, pending: bool) -> None:
@@ -3354,7 +3316,7 @@ class GraphUpdater:
         so it settles whatever an earlier run left, but not until its deletes
         are flushed (`_settle_prune_marker`).
         """
-        self._prune_settled = not pending
+        self._run.prune_settled = not pending
         if not pending:
             return
         try:
@@ -3366,9 +3328,9 @@ class GraphUpdater:
 
     def _settle_prune_marker(self) -> None:
         """Remove an owed-prune marker once a complete prune's deletes flush."""
-        if not self._prune_settled:
+        if not self._run.prune_settled:
             return
-        self._prune_settled = False
+        self._run.prune_settled = False
         try:
             (self.prepared_state_dir / cs.PRUNE_PENDING_FILENAME).unlink(
                 missing_ok=True
@@ -3385,7 +3347,7 @@ class GraphUpdater:
         """
         marker = self.prepared_state_dir / cs.EXPOSES_CLEANUP_PENDING_FILENAME
         try:
-            if self._exposes_cleanup_skipped:
+            if self._run.exposes_cleanup_skipped:
                 marker.touch()
             elif cleared_by_this_run:
                 marker.unlink(missing_ok=True)
@@ -3594,7 +3556,7 @@ class GraphUpdater:
         # unread, ownership degrades to the prefix rule and `svc.v2`'s
         # modules pass as `svc`'s, so read nothing, as a failed module read
         # does; the next healthy run cleans up (CodeRabbit, PR #2129).
-        if self._registry_unread:
+        if self._run.registry_unread:
             return []
         return out
 
@@ -3752,7 +3714,7 @@ class GraphUpdater:
                 },
             )
         except Exception as exc:
-            if not self._is_full_build:
+            if not self._run.is_full_build:
                 # The module paths are unknown, the same outage the reingest
                 # guard reports, so it says so rather than leaking the raw error.
                 raise RuntimeError(ls.REINGEST_MODULE_PATHS_UNKNOWN) from exc
@@ -3817,7 +3779,7 @@ class GraphUpdater:
         # holds every unchanged definition, a fresh one holds none -- and both
         # were tried first.
         if (
-            self._is_full_build
+            self._run.is_full_build
             or not self.capture.rel_enabled(cs.RelationshipType.OF_TYPE)
             or not isinstance(self.ingestor, QueryProtocol)
         ):
@@ -3853,8 +3815,8 @@ class GraphUpdater:
     def _registered_project_names(self) -> list[str]:
         """Every project the graph holds, longest name first, read once per
         run. Degrades to this project alone, which keeps the prefix rule."""
-        if self._registered_projects is not None:
-            return self._registered_projects
+        if self._run.registered_projects is not None:
+            return self._run.registered_projects
         names: set[str] = {self.project_name}
         try:
             rows = self._graph_rows(cq.CYPHER_LIST_PROJECTS, None)
@@ -3862,14 +3824,14 @@ class GraphUpdater:
             logger.warning(
                 ls.PRUNE_QUERY_FAILED, label="registered projects", error=exc
             )
-            self._registry_unread = True
+            self._run.registry_unread = True
             rows = []
         for row in rows:
             name = row.get(cs.KEY_NAME)
             if isinstance(name, str) and name:
                 names.add(name)
         registered = sorted(names, key=str.__len__, reverse=True)
-        self._registered_projects = registered
+        self._run.registered_projects = registered
         return registered
 
     def _owns(self, qn: str) -> bool:
@@ -3940,7 +3902,7 @@ class GraphUpdater:
             # did not re-parse: a FULL build parsed them all, so it degrades
             # to the freshly parsed registry; an incremental run would drop
             # cross-file edges, so the outage aborts it.
-            if not self._is_full_build:
+            if not self._run.is_full_build:
                 raise
             logger.warning(ls.REHYDRATE_QUERY_FAILED)
             return
@@ -3963,7 +3925,7 @@ class GraphUpdater:
                 cs.KEY_QUALIFIED_NAME,
             )
         except Exception:
-            if not self._is_full_build:
+            if not self._run.is_full_build:
                 raise
             logger.warning(ls.REHYDRATE_QUERY_FAILED)
             return
@@ -3975,7 +3937,7 @@ class GraphUpdater:
         # the graph yet: the held rows count as read, as reingest's captured
         # ones do.
         self._rehydrate_interface_implementers(
-            project_params, carried=self._pending_inbound_edges
+            project_params, carried=self._run.pending_inbound_edges
         )
         dp = self.factory.definition_processor
         self._requeue_member_types(
@@ -4018,7 +3980,7 @@ class GraphUpdater:
                 cs.KEY_QUALIFIED_NAME,
             )
         except Exception:
-            if not self._is_full_build:
+            if not self._run.is_full_build:
                 raise
             logger.warning(ls.REHYDRATE_QUERY_FAILED)
             return
@@ -4686,7 +4648,7 @@ class GraphUpdater:
                 cs.KEY_CHILD_QN,
             )
         except Exception:
-            if not self._is_full_build:
+            if not self._run.is_full_build:
                 raise
             logger.warning(ls.REHYDRATE_QUERY_FAILED)
             return
@@ -4747,7 +4709,7 @@ class GraphUpdater:
                 cs.KEY_QUALIFIED_NAME,
             )
         except Exception:
-            if not self._is_full_build:
+            if not self._run.is_full_build:
                 raise
             logger.warning(ls.REHYDRATE_QUERY_FAILED)
             return
@@ -4827,7 +4789,7 @@ class GraphUpdater:
                 cs.KEY_QUALIFIED_NAME,
             )
         except Exception:
-            if not self._is_full_build:
+            if not self._run.is_full_build:
                 raise
             logger.warning(ls.REHYDRATE_QUERY_FAILED)
             return
@@ -4877,7 +4839,7 @@ class GraphUpdater:
                     self.ingestor.fetch_all(query, params), cs.KEY_QUALIFIED_NAME
                 )
             except Exception:
-                if not self._is_full_build:
+                if not self._run.is_full_build:
                     raise
                 logger.warning(ls.REHYDRATE_QUERY_FAILED)
                 return
@@ -5053,7 +5015,9 @@ class GraphUpdater:
         Empty on a full build (every file re-parses anyway) and while a
         capture group outside the ones the fingerprint models is enabled.
         """
-        if self._is_full_build or (self.capture.enabled_rels - cs.INTERFACE_SKIP_RELS):
+        if self._run.is_full_build or (
+            self.capture.enabled_rels - cs.INTERFACE_SKIP_RELS
+        ):
             return {}
         fresh = {
             key: fingerprint
@@ -5229,7 +5193,7 @@ class GraphUpdater:
         re-parses, so an edit that keeps the name (a dependency bump) sends
         none. A failed read degrades to the previous behaviour, never worse.
         """
-        if self._is_full_build or not isinstance(self.ingestor, QueryProtocol):
+        if self._run.is_full_build or not isinstance(self.ingestor, QueryProtocol):
             return set()
         if all(PurePosixPath(key).name != cs.DEP_FILE_PUBSPEC for key in keys):
             return set()
@@ -5538,7 +5502,7 @@ class GraphUpdater:
             # module, so an incremental run that read an outage as "none"
             # lost them for good under a completed hash commit; it aborts, as
             # the inbound capture does. A full build re-parses every file.
-            if not self._is_full_build:
+            if not self._run.is_full_build:
                 raise
             logger.warning(ls.PRUNE_QUERY_FAILED, label="foreign members", error=exc)
             return []
@@ -5714,7 +5678,7 @@ class GraphUpdater:
             # by `_reanchor_glosses` at the end of the run. An incremental run
             # cannot re-resolve edges from files it will not parse, so there
             # the outage aborts the run.
-            if not self._is_full_build:
+            if not self._run.is_full_build:
                 raise
             logger.warning(ls.INBOUND_CAPTURE_FAILED)
             return []
@@ -5734,7 +5698,7 @@ class GraphUpdater:
             # The inbound capture's posture: a full build may go on over an
             # unreadable graph, saying what it lost; an incremental run
             # aborts rather than drop the observations without a word.
-            if not self._is_full_build:
+            if not self._run.is_full_build:
                 raise
             logger.warning(ls.TRACE_CARRY_CAPTURE_FAILED)
             return []
@@ -5798,7 +5762,7 @@ class GraphUpdater:
         )
 
     def _restore_pending_inbound_edges(self) -> None:
-        captured, self._pending_inbound_edges = self._pending_inbound_edges, []
+        captured, self._run.pending_inbound_edges = self._run.pending_inbound_edges, []
         try:
             if captured:
                 # A run stopped before the deferred stages reached the Go receiver
@@ -6808,7 +6772,7 @@ class GraphUpdater:
                 # the run indexes nothing, and the next run repeats it forever
                 # because the graph is still empty. Ignoring the cache in
                 # memory gives this run the full rebuild the discard intended.
-                self._cache_discarded_in_memory = True
+                self._run.cache_discarded_in_memory = True
                 logger.warning(ls.HASH_CACHE_DISCARD_FAILED, path=stale, error=e)
 
     def _previous_build_unfinished(self) -> bool:
@@ -6861,15 +6825,15 @@ class GraphUpdater:
             capture=self.capture,
             state_dir=self.prepared_state_dir,
         ):
-            self._parser_changed = True
+            self._run.parser_changed = True
             logger.warning(ls.PARSER_FINGERPRINT_MISMATCH)
 
     def _exclusions_match_last_run(self) -> bool:
         # Memoised: `_process_files` asks again to decide whether the graph's
         # own module paths must join reconciliation, and the answer must be
         # the same one the sync check acted on, logged once.
-        if self._exclusion_match is not None:
-            return self._exclusion_match
+        if self._run.exclusion_match is not None:
+            return self._run.exclusion_match
         stored = _load_exclusion_state(
             self.prepared_state_dir / cs.EXCLUSION_STATE_FILENAME
         )
@@ -6880,13 +6844,13 @@ class GraphUpdater:
             # project cannot authorize this project's in-sync fast path
             # (issue #1987).
             if stored.get("project") != self.project_name:
-                self._cache_project_match = False
+                self._run.cache_project_match = False
                 logger.info(
                     ls.EXCLUSION_SET_CHANGED.format(previous=stored, current=current)
                 )
-                self._exclusion_match = False
+                self._run.exclusion_match = False
                 return False
-            self._cache_project_match = True
+            self._run.cache_project_match = True
             # `named` stays informational for readers such as `cgr check`;
             # the sync decision compares the scope itself. Leaving `named` in
             # the comparison made every run with --project-name miss the
@@ -6895,7 +6859,7 @@ class GraphUpdater:
                 k: v for k, v in stored.items() if k not in _EXCLUSION_READER_KEYS
             }
         if stored == current:
-            self._exclusion_match = True
+            self._run.exclusion_match = True
             return True
         # A missing stamp means an index built before it existed, whose
         # exclusion set is unknown rather than known-equal -- the posture
@@ -6903,7 +6867,7 @@ class GraphUpdater:
         # apart from a real change so a user seeing an unexpected full pass
         # can tell which of the two they are looking at.
         if stored is None:
-            self._cache_project_match = False
+            self._run.cache_project_match = False
             # Only an index built before the stamp existed is being upgraded;
             # a repository never indexed has nothing to re-run "once", and a
             # first-time user was told otherwise (issue #2404).
@@ -6915,7 +6879,7 @@ class GraphUpdater:
             logger.info(
                 ls.EXCLUSION_SET_CHANGED.format(previous=stored, current=current)
             )
-        self._exclusion_match = False
+        self._run.exclusion_match = False
         return False
 
     def _is_already_in_sync(self) -> bool:
@@ -6926,7 +6890,7 @@ class GraphUpdater:
         dir_mtimes_path = self.prepared_state_dir / cs.DIR_MTIMES_FILENAME
         old_hashes = (
             {}
-            if self._cache_discarded_in_memory or self._parser_changed
+            if self._run.cache_discarded_in_memory or self._run.parser_changed
             else _load_hash_cache(cache_path)
         )
         old_dir_mtimes = _load_dir_mtimes(dir_mtimes_path)
@@ -7130,7 +7094,7 @@ class GraphUpdater:
         # Capturing here rather than after the loop also covers a file edited
         # between its own hash and the end of the loop. Erring early only ever
         # costs a redundant rehash; erring late loses an edit.
-        self._pending_cache_observed_at = time.time()
+        self._run.pending_cache_observed_at = time.time()
 
         # A single-file target that existed at construction and is gone by
         # now is a DELETION, not an unreadable file (issue #1737). Left on the
@@ -7243,10 +7207,10 @@ class GraphUpdater:
         # survivor (issue #1569).
         deleted_set = set(deleted_before_parse)
         captured_inbound = self._captured_inbound_edges(reindexed_keys, deleted_set)
-        self._captured_trace_edges = self._capture_trace_edges(
+        self._run.captured_trace_edges = self._capture_trace_edges(
             (*reindexed_keys, *deleted_before_parse)
         )
-        self._trace_gone_paths = frozenset(deleted_set)
+        self._run.trace_gone_paths = frozenset(deleted_set)
         self._reparsed_file_keys = {
             file_key for _fp, file_key, _new, _b in scan.changed_entries
         }
@@ -7338,7 +7302,7 @@ class GraphUpdater:
         # receiver method joins the registry only there, so every edge into
         # one was dropped as a target the re-index had not recreated, and
         # the unchanged caller is never re-parsed to rebuild it (#3270).
-        self._pending_inbound_edges = captured_inbound
+        self._run.pending_inbound_edges = captured_inbound
 
         self._log_process_counts(scan, changed_count)
         self._log_unparsable_manifests()
@@ -7384,7 +7348,7 @@ class GraphUpdater:
         # file, so treat it as gone for this run (issue #1647). Without this the
         # mtime fast path below skips every file against hashes known dead, and
         # the run indexes nothing on every subsequent run too.
-        cache_is_dead = self._cache_discarded_in_memory
+        cache_is_dead = self._run.cache_discarded_in_memory
         # A repository cache can contain hashes from another project. Reusing
         # those hashes would skip every unchanged file even though this
         # project has not been parsed into the graph. Exclusion-set changes
@@ -7393,7 +7357,7 @@ class GraphUpdater:
         self._exclusions_match_last_run()
         old_hashes = (
             _load_hash_cache(cache_path)
-            if not (force or cache_is_dead or self._cache_project_match is False)
+            if not (force or cache_is_dead or self._run.cache_project_match is False)
             else {}
         )
         # Snapshot for the single-file merge, read from DISK and independently
@@ -7425,7 +7389,7 @@ class GraphUpdater:
             _load_hash_cache(cache_path)
             if self._single_file is not None
             and not cache_is_dead
-            and self._cache_project_match is not False
+            and self._run.cache_project_match is not False
             else {}
         )
         # Remembered BEFORE the pop: a key forced through re-parse by a
@@ -7451,7 +7415,7 @@ class GraphUpdater:
         # (corrupt JSON, or one this run already discarded) leaves nothing to
         # force, and that run stays the full build it always was, asking the
         # graph what it holds (bot review).
-        reindex_all = self._parser_changed and bool(old_hashes)
+        reindex_all = self._run.parser_changed and bool(old_hashes)
         if reindex_all:
             forced_reparse_keys |= set(old_hashes)
             old_hashes.clear()
@@ -7468,7 +7432,7 @@ class GraphUpdater:
         is_full_build = (
             force or (not old_hashes and not reindex_all)
         ) and self._single_file is None
-        self._is_full_build = is_full_build
+        self._run.is_full_build = is_full_build
         cache_mtime = (
             _trustworthy_cache_mtime(cache_path) if cache_path.is_file() else 0.0
         )
@@ -7585,7 +7549,7 @@ class GraphUpdater:
         # and would stamp, and every later run would fast-path over the
         # surviving subtree. Remembering the failure keeps the stamp back.
         if preexisting_paths is None:
-            self._graph_state_unknown = True
+            self._run.graph_state_unknown = True
         return preexisting_paths
 
     def _single_target_gone_before_scan(
@@ -8027,7 +7991,7 @@ class GraphUpdater:
         pristine_hashes = baseline.pristine_hashes
         cache_mtime = baseline.cache_mtime
         if self._single_file is None:
-            self._pending_hash_cache = (cache_path, new_hashes)
+            self._run.pending_hash_cache = (cache_path, new_hashes)
             # A file this run could not read carries the unreadable mark in
             # the cache: the next run's in-sync check refuses on it and the
             # pass hashes it whatever its mtime, so it is retried as a KNOWN
@@ -8036,7 +8000,7 @@ class GraphUpdater:
                 logger.warning(
                     ls.INCREMENTAL_UNREADABLE_RETRY, count=len(unreadable_keys)
                 )
-            self._pending_dir_mtimes = (dir_mtimes_path, self._collected_dir_mtimes)
+            self._run.pending_dir_mtimes = (dir_mtimes_path, self._collected_dir_mtimes)
         else:
             # Two different remedies, because the run has different standing
             # on each (#1619). It DID hash its one file, so that hash is worth
@@ -8063,7 +8027,7 @@ class GraphUpdater:
                 # project run reads it as indexed and never reconciles the
                 # graph (#1737).
                 merged_hashes.pop(single_gone_key, None)
-            self._pending_hash_cache = (
+            self._run.pending_hash_cache = (
                 (cache_path, merged_hashes) if pristine_hashes else None
             )
             # And it must carry the PREVIOUS cache's mtime forward rather
@@ -8087,7 +8051,7 @@ class GraphUpdater:
             # which is the honest claim for a run whose predecessor's stamp
             # could not be trusted; None vouches for now, and loses a sibling
             # edited before this run, permanently.
-            self._pending_cache_observed_at = cache_mtime or 0.0
+            self._run.pending_cache_observed_at = cache_mtime or 0.0
 
     def _stash_parser_fingerprint(self, scan: _FileScan, is_full_build: bool) -> None:
         """Stash the parser fingerprint when this run covered the project."""
@@ -8098,11 +8062,13 @@ class GraphUpdater:
             for key in unreadable_keys
             if new_hashes.get(key) != cs.HASH_CACHE_UNREADABLE
         }
-        covered_the_project = not unmarked_unreadable and not self._graph_state_unknown
+        covered_the_project = (
+            not unmarked_unreadable and not self._run.graph_state_unknown
+        )
         if covered_the_project and (
-            is_full_build or (self._parser_changed and self._single_file is None)
+            is_full_build or (self._run.parser_changed and self._single_file is None)
         ):
-            self._pending_parser_fingerprint = compute_parser_fingerprint(
+            self._run.pending_parser_fingerprint = compute_parser_fingerprint(
                 repo_path=self.repo_path,
                 capture=self.capture,
                 state_dir=self.prepared_state_dir,
@@ -9073,13 +9039,13 @@ class GraphUpdater:
             (present[key], key, self._delombok_overlay.get(key, data))
             for key, data in judged.items()
         )
-        self._reingest_pinned_sources = {key: judged[key] for key in stable}
+        self._run.reingest_pinned_sources = {key: judged[key] for key in stable}
         return stable
 
     def _reingest_source(self, key: str, path: Path) -> bytes:
         """The bytes to re-parse `key` from: those its interface was judged
         on, when it was."""
-        pinned = self._reingest_pinned_sources.pop(key, None)
+        pinned = self._run.reingest_pinned_sources.pop(key, None)
         return path.read_bytes() if pinned is None else pinned
 
     def _reingest_delete(
@@ -9383,22 +9349,16 @@ class GraphUpdater:
         # long-lived updater the MCP server, the watcher and rename hold, an
         # edited function's old return type would re-resolve its dependents,
         # and the Node-keyed entries would pin every re-parsed tree (#2927).
-        self._clear_python_inference_caches()
-        # A scoped re-ingest is never a full build, whatever the previous
-        # run() was: the flag decides whether a failed inbound-edge capture
-        # aborts (it must, or the run drops cross-file edges under a
-        # success log) and whether unchanged handlers rehydrate.
-        self._is_full_build = False
-        # A project registered since the last run must not read as owned.
-        self._registered_projects = None
-        self._registry_unread = False
-        self._exposes_cleanup_skipped = False
-        self._prune_settled = False
+        self.factory.clear_inference_caches()
+        # Fresh per-call state: a scoped re-ingest is never a full build,
+        # whatever the previous run() was (the flag decides whether a failed
+        # inbound-edge capture aborts, and whether unchanged handlers
+        # rehydrate), and a project registered since must not read as owned.
+        self._run = _SyncRun()
         # Per call: a caller holding this updater across many events must see
         # THIS call's answer, not the last one's.
         self.reingest_mutated = False
         self.reingest_scope = ()
-        self._reingest_pinned_sources = {}
         self.ast_grep_tier.reset_unparsed()
         present, gone, skipped = self._reingest_split(paths, deleted)
         if skipped:
@@ -9882,7 +9842,7 @@ class GraphUpdater:
         # still prune.
         if isinstance(qn, str) and qn:
             owned = self._owns(qn)
-            if self._registry_unread:
+            if self._run.registry_unread:
                 tally.registry_skipped += 1
                 return None
             if not owned:
@@ -10350,7 +10310,7 @@ class GraphUpdater:
         one's, so nothing goes until a sync that reads it.
         """
         nested = self._nested_project_names()
-        if self._registry_unread:
+        if self._run.registry_unread:
             logger.warning(ls.EMBEDDING_STALE_SKIPPED.format(project=self.project_name))
             return False
         try:
@@ -10388,7 +10348,7 @@ class GraphUpdater:
         self._record_embeddings_pending(True)
         get_embedding_cache().save()
         close_qdrant_client()
-        self._embeddings_interrupted = True
+        self._run.embeddings_interrupted = True
 
     def _reconcile_embeddings(
         self,

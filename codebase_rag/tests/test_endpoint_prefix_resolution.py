@@ -358,7 +358,7 @@ class TestIncrementalMountChanges:
             queries=queries,
             capture=_CAPTURE_IO,
         )
-        updater._is_full_build = False
+        updater._run.is_full_build = False
         assert not updater.factory.definition_processor.pending_endpoints
 
         updater._emit_pending_endpoints()

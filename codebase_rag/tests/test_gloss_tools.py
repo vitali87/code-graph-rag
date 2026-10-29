@@ -904,7 +904,7 @@ def test_a_capture_outage_aborts_an_incremental_run(tmp_path: Path) -> None:
         parsers={},
         queries={},
     )
-    updater._is_full_build = False
+    updater._run.is_full_build = False
     with pytest.raises(RuntimeError, match="store down"):
         updater._capture_inbound_edges(["app.py"])
 
@@ -928,7 +928,7 @@ def test_a_capture_outage_on_a_full_build_warns_and_continues(tmp_path: Path) ->
         parsers={},
         queries={},
     )
-    updater._is_full_build = True
+    updater._run.is_full_build = True
     with patch("codebase_rag.graph_updater.logger") as log:
         assert updater._capture_inbound_edges(["app.py"]) == []
     log.warning.assert_called_once_with(lg.INBOUND_CAPTURE_FAILED)

@@ -61,7 +61,7 @@ def _updater(ingestor: _WriteOnlyIngestor, tmp_path: Path) -> GraphUpdater:
 def test_registered_projects_fall_back_to_this_project(tmp_path: Path) -> None:
     updater = _updater(_WriteOnlyIngestor(), tmp_path)
     assert updater._registered_project_names() == ["proj"]
-    assert updater._registry_unread
+    assert updater._run.registry_unread
 
 
 def test_known_names_mark_every_file_fully_known(tmp_path: Path) -> None:
@@ -80,4 +80,4 @@ def test_file_ownership_is_never_confirmed(tmp_path: Path) -> None:
 def test_a_readable_graph_is_still_read(tmp_path: Path) -> None:
     updater = _updater(_ReadableIngestor([{"name": "proj.sub"}]), tmp_path)
     assert updater._registered_project_names() == ["proj.sub", "proj"]
-    assert not updater._registry_unread
+    assert not updater._run.registry_unread

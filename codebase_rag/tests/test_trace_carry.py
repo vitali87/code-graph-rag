@@ -358,7 +358,7 @@ def test_carry_logs_quietly_when_every_edge_is_current(tmp_path: Path) -> None:
 
 def _updater(store: _Store, tmp_path: Path, full_build: bool) -> GraphUpdater:
     updater = GraphUpdater(ingestor=store, repo_path=tmp_path, parsers={}, queries={})
-    updater._is_full_build = full_build
+    updater._run.is_full_build = full_build
     return updater
 
 

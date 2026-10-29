@@ -141,14 +141,14 @@ def test_neither_exposes_cleanup_deletes_when_the_registry_is_unread(
 
     store = _RecordingStore()
     updater = _updater(tmp_path, store, "svc")
-    updater._registry_unread = True
+    updater._run.registry_unread = True
     updater._drop_stale_handler_exposes(["svc.v2.api.items"])
     updater._drop_stale_module_exposes(["svc.v2.routes"])
     assert not {CYPHER_DELETE_HANDLER_EXPOSES, CYPHER_DELETE_MODULE_EXPOSES} & set(
         store.written
     ), store.written
 
-    updater._registry_unread = False
+    updater._run.registry_unread = False
     updater._drop_stale_handler_exposes(["svc.api.items"])
     updater._drop_stale_module_exposes(["svc.routes"])
     assert {CYPHER_DELETE_HANDLER_EXPOSES, CYPHER_DELETE_MODULE_EXPOSES} <= set(

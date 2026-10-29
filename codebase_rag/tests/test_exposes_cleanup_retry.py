@@ -49,7 +49,7 @@ def test_a_skipped_cleanup_refuses_the_in_sync_path_until_done(tmp_path: Path) -
     down = _RegistryDown()
     down.__dict__.update(store.__dict__)
     blind = _updater(root, down)
-    blind._registry_unread = True
+    blind._run.registry_unread = True
     blind._drop_stale_handler_exposes(["proj.api.items"])
     blind._record_exposes_cleanup(cleared_by_this_run=True)
     assert marker.exists()

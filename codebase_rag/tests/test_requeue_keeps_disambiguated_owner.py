@@ -203,10 +203,10 @@ def test_a_failed_module_read_degrades_on_a_full_build_and_aborts_an_incremental
         parsers={},
         queries={},
     )
-    updater._is_full_build = True
+    updater._run.is_full_build = True
     assert updater._recorded_module_qn("settings.py") == "proj.settings"
     updater._module_qns_by_path = None
-    updater._is_full_build = False
+    updater._run.is_full_build = False
     with pytest.raises(RuntimeError):
         updater._recorded_module_qn("settings.py")
 

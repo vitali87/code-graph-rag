@@ -29,6 +29,7 @@ from .js_ts import JsTypeInferenceEngine
 from .js_ts import utils as js_ts_utils
 from .lua import LuaTypeInferenceEngine
 from .py import PythonTypeInferenceEngine, resolve_class_name
+from .py.ast_analyzer import clear_scope_facts
 from .rs import RustTypeInferenceEngine
 from .rs import utils as rs_utils
 from .rs.type_inference import is_constructor_guess
@@ -382,6 +383,14 @@ class TypeInferenceEngine:
                 queries=self.queries,
             )
         return self._js_type_inference
+
+    def clear_pass_caches(self) -> None:
+        # The Python engine memoises per pass, and the scope walks it reads
+        # are cached per process; neither may outlive the pass that built
+        # them on a reused updater.
+        if self._python_type_inference is not None:
+            self._python_type_inference.clear_pass_caches()
+        clear_scope_facts()
 
     @property
     def python_type_inference(self) -> PythonTypeInferenceEngine:

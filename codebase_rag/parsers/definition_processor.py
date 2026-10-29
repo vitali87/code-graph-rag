@@ -468,6 +468,13 @@ class DefinitionProcessor(
         self._handler = get_handler(cs.SupportedLanguage.PYTHON)
         self._func_class_captures_cache = func_class_captures_cache
 
+    def begin_run(self) -> None:
+        # What a run records about itself: a reused updater must not treat
+        # a previous run's interfaces as unflushed writes rehydration has to
+        # keep, nor report its unreadable manifests again.
+        self.cpp_interfaces_parsed_this_run.clear()
+        self.unparsable_manifests.clear()
+
     def go_link_state(self) -> GoLinkState:
         """The Go interface link's containers call resolution reads, by
         reference: the link refills them in place."""

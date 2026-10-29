@@ -174,7 +174,7 @@ def test_rehydration_reraises_query_error_on_incremental(tmp_path: Path) -> None
     updater = gu.GraphUpdater(
         ingestor=_RaisingGraph(), repo_path=repo, parsers=parsers, queries=queries
     )
-    updater._is_full_build = False
+    updater._run.is_full_build = False
 
     with pytest.raises(RuntimeError):
         updater._rehydrate_csharp_type_locations()
@@ -189,7 +189,7 @@ def test_rehydration_tolerates_query_error_on_full_build(tmp_path: Path) -> None
     updater = gu.GraphUpdater(
         ingestor=_RaisingGraph(), repo_path=repo, parsers=parsers, queries=queries
     )
-    updater._is_full_build = True
+    updater._run.is_full_build = True
 
     updater._rehydrate_csharp_type_locations()  # must not raise
 

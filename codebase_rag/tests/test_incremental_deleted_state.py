@@ -353,7 +353,7 @@ def test_a_failed_module_query_leaves_the_rehydrated_set_intact(
 
     store.fetch_all = _boom  # type: ignore[method-assign]
     try:
-        updater._is_full_build = True
+        updater._run.is_full_build = True
         updater._rehydrate_registry_from_graph()
     finally:
         store.fetch_all = original  # type: ignore[method-assign]

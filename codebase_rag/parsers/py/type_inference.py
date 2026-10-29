@@ -111,6 +111,16 @@ class PythonTypeInferenceEngine(
         self._self_assignment_cache: dict[tuple[Node, str], dict[str, str] | None] = {}
         self._class_member_type_cache: dict[str, dict[str, str]] = {}
 
+    def clear_pass_caches(self) -> None:
+        """Drop the per-pass memos: on a long-lived updater an edited
+        function's old return type would re-resolve its dependents, and the
+        Node-keyed entries would pin every re-parsed tree (#2927)."""
+        self._available_classes_cache.clear()
+        self._return_stmt_cache.clear()
+        self._method_return_type_cache.clear()
+        self._self_assignment_cache.clear()
+        self._class_member_type_cache.clear()
+
     @staticmethod
     def _first_parameter_name(def_node: Node) -> str | None:
         params = def_node.child_by_field_name(cs.FIELD_PARAMETERS)

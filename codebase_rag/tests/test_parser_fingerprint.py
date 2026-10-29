@@ -451,7 +451,7 @@ class TestFingerprintStamping:
         _fingerprint_path(py_project).write_text(STALE_FINGERPRINT, encoding="utf-8")
         updater.run()
 
-        assert updater._is_full_build is False
+        assert updater._run.is_full_build is False
         assert updater._reparsed_file_keys == {"module_a.py"}
         qn = f"{base_module_qn(Path('module_a.py'), py_project.name)}.func_a"
         functions = sorted(
@@ -531,7 +531,7 @@ class TestFingerprintStamping:
         _fingerprint_path(py_project).write_text(STALE_FINGERPRINT, encoding="utf-8")
         updater.run()
 
-        assert updater._is_full_build is True
+        assert updater._run.is_full_build is True
         qn = f"{base_module_qn(Path('module_a.py'), py_project.name)}.func_a"
         functions = sorted(
             name for label, name in store.nodes if label == cs.NodeLabel.FUNCTION.value
@@ -561,7 +561,7 @@ class TestFingerprintStamping:
         _fingerprint_path(py_project).write_text(STALE_FINGERPRINT, encoding="utf-8")
         updater.run()
 
-        assert updater._is_full_build is False
+        assert updater._run.is_full_build is False
         qn = f"{base_module_qn(Path('module_b.py'), py_project.name)}.func_b"
         functions = sorted(
             name

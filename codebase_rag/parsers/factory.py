@@ -13,6 +13,7 @@ from ..types_defs import (
 from .call_processor import CallProcessor
 from .definition_processor import DefinitionProcessor
 from .import_processor import ImportProcessor
+from .py.ast_analyzer import clear_scope_facts
 from .structure_processor import StructureProcessor
 from .type_inference import TypeInferenceEngine
 
@@ -102,6 +103,23 @@ class ProcessorFactory:
             built.unignore_paths = resolved
             updated.append(slot)
         return tuple(updated)
+
+    def clear_inference_caches(self) -> None:
+        """Drop the type-inference memos a previous pass left. Clears what
+        is built and builds nothing."""
+        if self._type_inference is not None:
+            self._type_inference.clear_pass_caches()
+        else:
+            clear_scope_facts()
+
+    def begin_run(self) -> None:
+        """Start a full run: the inference memos go, and each built pass
+        forgets what it recorded about the previous run."""
+        self.clear_inference_caches()
+        if self._definition_processor is not None:
+            self._definition_processor.begin_run()
+        if self._call_processor is not None:
+            self._call_processor.begin_run()
 
     @property
     def import_processor(self) -> ImportProcessor:

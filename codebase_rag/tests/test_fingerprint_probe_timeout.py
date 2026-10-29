@@ -214,7 +214,7 @@ class TestATimedOutProbeIsNotAMissingTool:
         later = _sync(repo, mock_ingestor)
 
         assert _mismatch_warnings(warnings_sink) == []
-        assert later._parser_changed is False
+        assert later._run.parser_changed is False
         # Answered from the earlier process's answer: one bounded attempt and
         # no retry.
         assert go_probe.timeouts == [cs.TOOL_VERSION_PROBE_TIMEOUT]
@@ -310,7 +310,7 @@ class TestATimedOutProbeIsNotAMissingTool:
         later = _sync(repo, mock_ingestor)
 
         assert _mismatch_warnings(warnings_sink) == []
-        assert later._parser_changed is False
+        assert later._run.parser_changed is False
 
 
 class TestRealChangesStillChangeTheFingerprint:
@@ -490,7 +490,7 @@ class TestRealChangesStillChangeTheFingerprint:
 
         later = _sync(repo, mock_ingestor, resolve_capture(["io"]))
 
-        assert later._parser_changed is True
+        assert later._run.parser_changed is True
         assert len(_mismatch_warnings(warnings_sink)) == 1
 
 

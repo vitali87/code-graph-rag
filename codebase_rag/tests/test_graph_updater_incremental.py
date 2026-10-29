@@ -1917,7 +1917,7 @@ class TestFastPathInSync:
         )
         mock_ingestor.reset_mock()
         updater.run()
-        assert updater._exclusion_match is False, (
+        assert updater._run.exclusion_match is False, (
             "an index with no stamp carries an unknown set, not a matching one"
         )
         assert updater.skipped_because_in_sync is False
@@ -1927,7 +1927,7 @@ class TestFastPathInSync:
 
         mock_ingestor.reset_mock()
         updater.run()
-        assert updater._exclusion_match is True, (
+        assert updater._run.exclusion_match is True, (
             "the stamp this instance wrote at the end of its own previous run "
             "must be re-read, not answered from the memo it invalidated"
         )
@@ -1955,14 +1955,14 @@ class TestFastPathInSync:
         updater.run()
         mock_ingestor.reset_mock()
         updater.run()
-        assert updater._exclusion_match is True
+        assert updater._run.exclusion_match is True
 
         state_file(excludable_project, cs.EXCLUSION_STATE_FILENAME).write_text(
             json.dumps({"exclude": ["module_a.py"], "unignore": []})
         )
         mock_ingestor.reset_mock()
         updater.run()
-        assert updater._exclusion_match is False, (
+        assert updater._run.exclusion_match is False, (
             "the stamp on disk no longer matches this run's set, so the "
             "instance must reconcile rather than reuse its own True"
         )

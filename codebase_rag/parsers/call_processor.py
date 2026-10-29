@@ -12134,6 +12134,11 @@ class CallProcessor:
         # records; left in place they keep emitting its call sites' edges.
         self._callable_flow.pop(file_path, None)
 
+    def begin_run(self) -> None:
+        # A run that walks no calls (in sync) must not report a previous
+        # run's failures as its own.
+        self.failed_call_files.clear()
+
     def reset_callable_flow(self) -> None:
         # For a pass that re-walks every file: records of a file deleted
         # since the last pass would otherwise outlive it.
