@@ -38,7 +38,7 @@ def log_messages() -> Generator[list[str], None, None]:
 class TestReconcileEmbeddings:
     def test_noop_when_expected_empty(self, updater: GraphUpdater) -> None:
         mock_fn = MagicMock()
-        updater._reconcile_embeddings({}, mock_fn)
+        updater.embedding_sync._reconcile_embeddings({}, mock_fn)
         mock_fn.assert_not_called()
 
     def test_logs_ok_when_all_found(
@@ -47,7 +47,7 @@ class TestReconcileEmbeddings:
         expected = _symbols(1, 2, 3)
         mock_fn = MagicMock(return_value={1, 2, 3})
 
-        updater._reconcile_embeddings(expected, mock_fn)
+        updater.embedding_sync._reconcile_embeddings(expected, mock_fn)
 
         mock_fn.assert_called_once_with(updater.project_name, expected)
         combined = "\n".join(log_messages)
@@ -59,7 +59,7 @@ class TestReconcileEmbeddings:
         expected = _symbols(1, 2, 3, 4, 5)
         mock_fn = MagicMock(return_value={1, 3})
 
-        updater._reconcile_embeddings(expected, mock_fn)
+        updater.embedding_sync._reconcile_embeddings(expected, mock_fn)
 
         combined = "\n".join(log_messages)
         assert "3 of 5 embeddings missing" in combined
@@ -70,7 +70,7 @@ class TestReconcileEmbeddings:
         expected = _symbols(10, 20, 30)
         mock_fn = MagicMock(return_value={10})
 
-        updater._reconcile_embeddings(expected, mock_fn)
+        updater.embedding_sync._reconcile_embeddings(expected, mock_fn)
 
         combined = "\n".join(log_messages)
         assert "20" in combined
@@ -81,7 +81,7 @@ class TestReconcileEmbeddings:
     ) -> None:
         mock_fn = MagicMock(side_effect=RuntimeError("connection lost"))
 
-        updater._reconcile_embeddings(_symbols(1, 2), mock_fn)
+        updater.embedding_sync._reconcile_embeddings(_symbols(1, 2), mock_fn)
 
         combined = "\n".join(log_messages).lower()
         assert "reconciliation check failed" in combined
@@ -92,7 +92,7 @@ class TestReconcileEmbeddings:
         expected = _symbols(*range(20))
         mock_fn = MagicMock(return_value=set())
 
-        updater._reconcile_embeddings(expected, mock_fn)
+        updater.embedding_sync._reconcile_embeddings(expected, mock_fn)
 
         combined = "\n".join(log_messages)
         assert "20 of 20 embeddings missing" in combined

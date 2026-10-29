@@ -18,7 +18,7 @@ def _fake_embed_batch(snippets: list[str], **_kwargs: object) -> list[list[float
 
 
 _PATCH_DEPS = patch(
-    "codebase_rag.graph_updater.has_semantic_dependencies", return_value=True
+    "codebase_rag.vectors.embedding_sync.has_semantic_dependencies", return_value=True
 )
 _PATCH_EMBED_BATCH = patch(
     "codebase_rag.vectors.embedder.embed_code_batch", side_effect=_fake_embed_batch
@@ -41,6 +41,12 @@ def _no_stale_pruning() -> Generator[MagicMock, None, None]:
         "codebase_rag.vectors.store.delete_stale_embeddings", return_value=0
     ) as prune:
         yield prune
+
+
+def _generate(updater: GraphUpdater) -> None:
+    updater.embedding_sync.generate_semantic_embeddings(
+        updater._run, updater.prepared_state_dir
+    )
 
 
 @pytest.fixture
@@ -116,7 +122,7 @@ class TestGenerateSemanticEmbeddings:
         query_ingestor: MagicMock,
     ) -> None:
         query_ingestor.fetch_all.return_value = []
-        updater_with_query._generate_semantic_embeddings()
+        _generate(updater_with_query)
 
         params = query_ingestor.fetch_all.call_args[0][1]
         project_name_param = params["project_name"]
@@ -138,19 +144,22 @@ class TestGenerateSemanticEmbeddings:
         query_ingestor: MagicMock,
     ) -> None:
         query_ingestor.fetch_all.return_value = []
-        updater_with_query._generate_semantic_embeddings()
+        _generate(updater_with_query)
 
         query_arg = query_ingestor.fetch_all.call_args[0][0]
         assert query_arg == cs.CYPHER_QUERY_EMBEDDINGS
 
-    @patch("codebase_rag.graph_updater.has_semantic_dependencies", return_value=False)
+    @patch(
+        "codebase_rag.vectors.embedding_sync.has_semantic_dependencies",
+        return_value=False,
+    )
     def test_skips_when_no_semantic_dependencies(
         self,
         _mock_deps: MagicMock,
         updater_with_query: GraphUpdater,
         query_ingestor: MagicMock,
     ) -> None:
-        updater_with_query._generate_semantic_embeddings()
+        _generate(updater_with_query)
         query_ingestor.fetch_all.assert_not_called()
 
     @_PATCH_DEPS
@@ -167,7 +176,7 @@ class TestGenerateSemanticEmbeddings:
         query_ingestor: MagicMock,
     ) -> None:
         query_ingestor.fetch_all.return_value = []
-        updater_with_query._generate_semantic_embeddings()
+        _generate(updater_with_query)
         mock_store_batch.assert_not_called()
 
     @_PATCH_DEPS
@@ -195,7 +204,7 @@ class TestGenerateSemanticEmbeddings:
         }
         query_ingestor.fetch_all.return_value = [row]
 
-        updater_with_query._generate_semantic_embeddings()
+        _generate(updater_with_query)
 
         mock_embed_batch.assert_called_once()
         snippets_arg = mock_embed_batch.call_args[0][0]
@@ -230,12 +239,15 @@ class TestGenerateSemanticEmbeddings:
         }
         query_ingestor.fetch_all.return_value = [row]
 
-        updater_with_query._generate_semantic_embeddings()
+        _generate(updater_with_query)
 
         mock_embed_batch.assert_not_called()
         mock_store_batch.assert_not_called()
 
-    @patch("codebase_rag.graph_updater.has_semantic_dependencies", return_value=True)
+    @patch(
+        "codebase_rag.vectors.embedding_sync.has_semantic_dependencies",
+        return_value=True,
+    )
     @patch(
         "codebase_rag.vectors.embedder.embed_code_batch",
         side_effect=RuntimeError("model error"),
@@ -263,7 +275,7 @@ class TestGenerateSemanticEmbeddings:
         }
         query_ingestor.fetch_all.return_value = [row]
 
-        updater_with_query._generate_semantic_embeddings()
+        _generate(updater_with_query)
 
         mock_store_batch.assert_not_called()
 
@@ -287,7 +299,7 @@ class TestGenerateSemanticEmbeddings:
         }
         query_ingestor.fetch_all.return_value = [bad_row]
 
-        updater_with_query._generate_semantic_embeddings()
+        _generate(updater_with_query)
 
         mock_embed_batch.assert_not_called()
         mock_store_batch.assert_not_called()
@@ -318,7 +330,7 @@ class TestGenerateSemanticEmbeddings:
         }
         query_ingestor.fetch_all.return_value = [row]
 
-        updater_with_query._generate_semantic_embeddings()
+        _generate(updater_with_query)
 
         mock_embed_batch.assert_not_called()
         mock_store_batch.assert_not_called()
@@ -357,7 +369,7 @@ class TestGenerateSemanticEmbeddings:
         ]
         query_ingestor.fetch_all.return_value = rows
 
-        updater_with_query._generate_semantic_embeddings()
+        _generate(updater_with_query)
 
         method = EmbeddingSymbol(cs.NodeLabel.METHOD, "proj.clock.Clock.now")
         function = EmbeddingSymbol(cs.NodeLabel.FUNCTION, "proj.clock.Clock.now")
@@ -404,7 +416,7 @@ class TestGenerateSemanticEmbeddings:
         ]
         query_ingestor.fetch_all.return_value = rows
 
-        updater_with_query._generate_semantic_embeddings()
+        _generate(updater_with_query)
 
         mock_embed_batch.assert_called_once()
         snippets_arg = mock_embed_batch.call_args[0][0]
@@ -445,7 +457,7 @@ class TestBatchedEmbeddingDispatch:
         ]
         query_ingestor.fetch_all.return_value = rows
 
-        updater_with_query._generate_semantic_embeddings()
+        _generate(updater_with_query)
 
         assert mock_embed_batch.call_count == 1
         snippets_arg = mock_embed_batch.call_args[0][0]

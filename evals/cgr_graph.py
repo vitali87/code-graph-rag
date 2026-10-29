@@ -153,7 +153,7 @@ _GO_TYPE_LABELS = _CSHARP_TYPE_LABELS | {
 # `CYPHER_QUERY_EMBEDDINGS` drives Pass 4, which reads function bodies and
 # writes vectors to Qdrant. The double models the graph, not the vector store,
 # and its caller already treats an empty result as "no functions to embed" and
-# returns -- verified at graph_updater's embeddings pass, not assumed. An
+# returns -- verified at the embeddings pass (`EmbeddingSync`), not assumed. An
 # emulation would invite the double into work it cannot represent.
 #
 # `CYPHER_UNANCHORED_GLOSSES` opens the gloss repair pass at the end of every

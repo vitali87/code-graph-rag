@@ -31,7 +31,7 @@ class TestParseEmbeddingResult:
             cs.KEY_PATH: "src/module.py",
         }
 
-        result = graph_updater._parse_embedding_result(row)
+        result = graph_updater.embedding_sync._parse_embedding_result(row)
 
         assert result is not None
         assert result[cs.KEY_NODE_ID] == 42
@@ -50,7 +50,7 @@ class TestParseEmbeddingResult:
             cs.KEY_LABEL: cs.NodeLabel.FUNCTION,
         }
 
-        result = graph_updater._parse_embedding_result(row)
+        result = graph_updater.embedding_sync._parse_embedding_result(row)
 
         assert result is not None
         assert result[cs.KEY_NODE_ID] == 1
@@ -66,7 +66,7 @@ class TestParseEmbeddingResult:
             cs.KEY_START_LINE: 5,
         }
 
-        result = graph_updater._parse_embedding_result(row)
+        result = graph_updater.embedding_sync._parse_embedding_result(row)
 
         assert result is None
 
@@ -78,7 +78,7 @@ class TestParseEmbeddingResult:
             cs.KEY_START_LINE: 5,
         }
 
-        result = graph_updater._parse_embedding_result(row)
+        result = graph_updater.embedding_sync._parse_embedding_result(row)
 
         assert result is None
 
@@ -89,7 +89,7 @@ class TestParseEmbeddingResult:
             cs.KEY_LABEL: cs.NodeLabel.FUNCTION,
         }
 
-        result = graph_updater._parse_embedding_result(row)
+        result = graph_updater.embedding_sync._parse_embedding_result(row)
 
         assert result is None
 
@@ -102,7 +102,7 @@ class TestParseEmbeddingResult:
             cs.KEY_LABEL: cs.NodeLabel.FUNCTION,
         }
 
-        result = graph_updater._parse_embedding_result(row)
+        result = graph_updater.embedding_sync._parse_embedding_result(row)
 
         assert result is None
 
@@ -116,7 +116,7 @@ class TestParseEmbeddingResult:
             cs.KEY_END_LINE: 2,
         }
 
-        result = graph_updater._parse_embedding_result(row)
+        result = graph_updater.embedding_sync._parse_embedding_result(row)
 
         assert result is None
 
@@ -132,7 +132,7 @@ class TestParseEmbeddingResult:
             cs.KEY_LABEL: label,
         }
 
-        result = graph_updater._parse_embedding_result(row)
+        result = graph_updater.embedding_sync._parse_embedding_result(row)
 
         assert result is None
 
@@ -144,7 +144,7 @@ class TestParseEmbeddingResult:
             cs.KEY_LABEL: "Method",
         }
 
-        result = graph_updater._parse_embedding_result(row)
+        result = graph_updater.embedding_sync._parse_embedding_result(row)
 
         assert result is not None
         assert result[cs.KEY_LABEL] is cs.NodeLabel.METHOD
@@ -158,7 +158,7 @@ class TestParseEmbeddingResult:
             cs.KEY_END_LINE: 20,
         }
 
-        result = graph_updater._parse_embedding_result(row)
+        result = graph_updater.embedding_sync._parse_embedding_result(row)
 
         assert result is not None
         assert result[cs.KEY_START_LINE] is None
@@ -173,7 +173,7 @@ class TestParseEmbeddingResult:
             cs.KEY_END_LINE: "twenty",
         }
 
-        result = graph_updater._parse_embedding_result(row)
+        result = graph_updater.embedding_sync._parse_embedding_result(row)
 
         assert result is not None
         assert result[cs.KEY_START_LINE] == 10
@@ -187,7 +187,7 @@ class TestParseEmbeddingResult:
             cs.KEY_PATH: 12345,
         }
 
-        result = graph_updater._parse_embedding_result(row)
+        result = graph_updater.embedding_sync._parse_embedding_result(row)
 
         assert result is not None
         assert result[cs.KEY_PATH] is None
@@ -195,7 +195,7 @@ class TestParseEmbeddingResult:
     def test_empty_dict_returns_none(self, graph_updater: GraphUpdater) -> None:
         row: ResultRow = {}
 
-        result = graph_updater._parse_embedding_result(row)
+        result = graph_updater.embedding_sync._parse_embedding_result(row)
 
         assert result is None
 
@@ -208,7 +208,7 @@ class TestParseEmbeddingResult:
             cs.KEY_LABEL: cs.NodeLabel.FUNCTION,
         }
 
-        result = graph_updater._parse_embedding_result(row)
+        result = graph_updater.embedding_sync._parse_embedding_result(row)
 
         assert result is None
 
@@ -221,7 +221,7 @@ class TestParseEmbeddingResult:
             cs.KEY_LABEL: cs.NodeLabel.FUNCTION,
         }
 
-        result = graph_updater._parse_embedding_result(row)
+        result = graph_updater.embedding_sync._parse_embedding_result(row)
 
         assert result is not None
         expected: EmbeddingQueryResult = {

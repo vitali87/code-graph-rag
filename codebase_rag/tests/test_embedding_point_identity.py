@@ -150,6 +150,12 @@ def _updater(
     )
 
 
+def _generate(updater: GraphUpdater) -> None:
+    updater.embedding_sync.generate_semantic_embeddings(
+        updater._run, updater.prepared_state_dir
+    )
+
+
 def _sync(
     repo: Path,
     ingestor: MagicMock,
@@ -190,11 +196,12 @@ def _sync(
     )
     with (
         patch(
-            "codebase_rag.graph_updater.has_semantic_dependencies", return_value=True
+            "codebase_rag.vectors.embedding_sync.has_semantic_dependencies",
+            return_value=True,
         ),
         patch("codebase_rag.vectors.embedder.embed_code_batch", side_effect=embed),
     ):
-        _updater(repo, ingestor, project)._generate_semantic_embeddings()
+        _generate(_updater(repo, ingestor, project))
 
 
 @contextmanager
@@ -334,7 +341,7 @@ class TestASyncKeepsOnePointPerSymbol:
         ingestor.fetch_all.return_value = [_row(1, _KEEP), _row(2, _DELETE)]
         with (
             patch(
-                "codebase_rag.graph_updater.has_semantic_dependencies",
+                "codebase_rag.vectors.embedding_sync.has_semantic_dependencies",
                 return_value=True,
             ),
             patch(
@@ -342,7 +349,7 @@ class TestASyncKeepsOnePointPerSymbol:
                 side_effect=RuntimeError("model unavailable"),
             ),
         ):
-            _updater(repo, ingestor)._generate_semantic_embeddings()
+            _generate(_updater(repo, ingestor))
 
         assert _points() == [(_DELETE, 2), (_KEEP, 1)]
 
@@ -353,7 +360,7 @@ class TestASyncKeepsOnePointPerSymbol:
         _sync(repo, ingestor, {1: _KEEP, 2: _DELETE})
         ingestor.fetch_all.return_value = [_row(3, _KEEP)]
 
-        _updater(repo, ingestor, skip_embeddings=True)._generate_semantic_embeddings()
+        _generate(_updater(repo, ingestor, skip_embeddings=True))
 
         assert _points() == [(_DELETE, 2), (_KEEP, 1)]
 

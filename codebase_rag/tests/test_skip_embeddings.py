@@ -21,7 +21,7 @@ from codebase_rag.utils.dependencies import has_torch, has_transformers
 runner = CliRunner()
 
 _PATCH_DEPS = patch(
-    "codebase_rag.graph_updater.has_semantic_dependencies", return_value=True
+    "codebase_rag.vectors.embedding_sync.has_semantic_dependencies", return_value=True
 )
 
 
@@ -50,6 +50,12 @@ def _make_updater(
     )
 
 
+def _generate(updater: GraphUpdater) -> None:
+    updater.embedding_sync.generate_semantic_embeddings(
+        updater._run, updater.prepared_state_dir
+    )
+
+
 def _embedding_reads(ingestor: MagicMock) -> int:
     # The pass also reads the registered projects, to leave a nested
     # project's functions to that project (issue #2447).
@@ -66,7 +72,7 @@ class TestGraphUpdaterSkipEmbeddings:
         self, _deps: MagicMock, temp_repo: Path, query_ingestor: MagicMock
     ) -> None:
         updater = _make_updater(temp_repo, query_ingestor, skip_embeddings=True)
-        updater._generate_semantic_embeddings()
+        _generate(updater)
         query_ingestor.fetch_all.assert_not_called()
 
     @_PATCH_DEPS
@@ -75,7 +81,7 @@ class TestGraphUpdaterSkipEmbeddings:
     ) -> None:
         updater = _make_updater(temp_repo, query_ingestor)
         assert updater.skip_embeddings is False
-        updater._generate_semantic_embeddings()
+        _generate(updater)
         assert _embedding_reads(query_ingestor) == 1
 
     @_PATCH_DEPS
@@ -89,7 +95,7 @@ class TestGraphUpdaterSkipEmbeddings:
         monkeypatch.setattr(settings, "SKIP_EMBEDDINGS", True)
         updater = _make_updater(temp_repo, query_ingestor)
         assert updater.skip_embeddings is True
-        updater._generate_semantic_embeddings()
+        _generate(updater)
         query_ingestor.fetch_all.assert_not_called()
 
     @_PATCH_DEPS
@@ -102,7 +108,7 @@ class TestGraphUpdaterSkipEmbeddings:
     ) -> None:
         monkeypatch.setattr(settings, "SKIP_EMBEDDINGS", True)
         updater = _make_updater(temp_repo, query_ingestor, skip_embeddings=False)
-        updater._generate_semantic_embeddings()
+        _generate(updater)
         assert _embedding_reads(query_ingestor) == 1
 
 

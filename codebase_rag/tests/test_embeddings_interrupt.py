@@ -39,7 +39,8 @@ def embedding_io() -> Generator[tuple[MagicMock, MagicMock], None, None]:
     cache = MagicMock()
     with (
         patch(
-            "codebase_rag.graph_updater.has_semantic_dependencies", return_value=True
+            "codebase_rag.vectors.embedding_sync.has_semantic_dependencies",
+            return_value=True,
         ),
         patch("codebase_rag.vectors.embedder.get_embedding_cache", return_value=cache),
         patch("codebase_rag.vectors.store.close_qdrant_client") as close_client,

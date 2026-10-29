@@ -30,7 +30,6 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag import exceptions as ex
-from codebase_rag import graph_updater as gu
 from codebase_rag.constants import VectorStoreBackend
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
@@ -41,6 +40,7 @@ from codebase_rag.utils.dependencies import (
     has_qdrant_client,
     has_sqlite_vec,
 )
+from codebase_rag.vectors import embedding_sync as es
 from codebase_rag.vectors import store as vs
 from codebase_rag.vectors.sqlite import extensions_loadable
 from evals.cgr_graph import StatefulIngestor
@@ -149,7 +149,8 @@ def _updater(
 def _semantic_extra() -> Iterator[None]:
     # The embedding model is faked, so the run need not have torch to embed.
     with patch(
-        "codebase_rag.graph_updater.has_semantic_dependencies", return_value=True
+        "codebase_rag.vectors.embedding_sync.has_semantic_dependencies",
+        return_value=True,
     ):
         yield
 
@@ -477,8 +478,8 @@ def _pending(repo: Path) -> set[str]:
 
 
 def _owe(repo: Path, project: str) -> None:
-    gu.save_embeddings_owed(
-        gu.embeddings_marker(state_file(repo, ""), project), project, True
+    es.save_embeddings_owed(
+        es.embeddings_marker(state_file(repo, ""), project), project, True
     )
 
 
@@ -584,7 +585,7 @@ class TestEachProjectOwesItsOwn:
         # has decided what to write when svc's failed pass records its debt,
         # and other's write lands after it. svc's next sync must retry.
         _sync(repo, graph, {1: _KEEP}, source=_SOURCE_KEEP_ONLY)
-        real_save = gu.save_embeddings_owed
+        real_save = es.save_embeddings_owed
         armed = True
 
         def save_after_svc_fails(*args: Path | str | bool | frozenset[str]) -> None:
@@ -595,7 +596,7 @@ class TestEachProjectOwesItsOwn:
                     _sync(repo, graph, {2: _KEEP}, source=_SOURCE_KEEP_EDITED)
             real_save(*args)
 
-        with patch.object(gu, "save_embeddings_owed", save_after_svc_fails):
+        with patch.object(es, "save_embeddings_owed", save_after_svc_fails):
             _sync(repo / _MODULE, graph, {7: _OTHER_KEEP}, project=_OTHER)
         assert armed is False
 
@@ -698,7 +699,7 @@ class TestEachProjectOwesItsOwn:
 def _no_room_for(repo: Path, project: str) -> Iterator[list[Path]]:
     """Fail the write of `project`'s marker as a full disk does, while its
     removal and every other file still go through. Yields the refused paths."""
-    target = gu.embeddings_marker(state_file(repo, ""), project)
+    target = es.embeddings_marker(state_file(repo, ""), project)
     real_write = Path.write_text
     refused: list[Path] = []
 
@@ -723,7 +724,7 @@ class TestSplittingTheSharedMarker:
         with _store_down():
             _sync(repo, graph, {7: _OTHER_KEEP}, project=_OTHER)
         assert _pending(repo) == {_OTHER}
-        gu.embeddings_marker(state_file(repo, ""), _OTHER).unlink()
+        es.embeddings_marker(state_file(repo, ""), _OTHER).unlink()
         _shared_marker(repo).write_text(json.dumps([_OTHER]), encoding="utf-8")
 
     def test_a_failed_write_keeps_the_shared_marker_and_the_retry(

@@ -364,9 +364,9 @@ def test_failed_run_never_commits_the_overlay_state(
         capture=ALL_ENABLED,
     )
     monkeypatch.setattr(
-        updater,
-        "_generate_semantic_embeddings",
-        lambda: (_ for _ in ()).throw(RuntimeError("boom")),
+        updater.embedding_sync,
+        "generate_semantic_embeddings",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("boom")),
     )
     with pytest.raises(RuntimeError):
         updater.run()
