@@ -245,9 +245,8 @@ def test_reprocessed_module_drops_stale_facts(tmp_path: Path) -> None:
 
     class _Registry:
         def get(self, qn: str):  # noqa: ANN201
-            from codebase_rag.types_defs import NodeType
 
-            return NodeType.FUNCTION if qn.endswith(".run_things") else None
+            return cs.NodeLabel.FUNCTION if qn.endswith(".run_things") else None
 
     ingestor = MagicMock()
     processor = DispatchRegistryProcessor(
@@ -300,9 +299,8 @@ def test_finalize_seeds_registrations_from_database(tmp_path: Path) -> None:
 
     class _Registry:
         def get(self, qn: str):  # noqa: ANN201
-            from codebase_rag.types_defs import NodeType
 
-            return NodeType.FUNCTION if qn.endswith(".schedule") else None
+            return cs.NodeLabel.FUNCTION if qn.endswith(".schedule") else None
 
     ingestor = _QueryIngestor()
     processor = DispatchRegistryProcessor(
@@ -332,7 +330,6 @@ def test_registration_seed_tolerates_unreadable_graph(tmp_path: Path) -> None:
     from codebase_rag import constants as cs2
     from codebase_rag.capture import ALL_ENABLED
     from codebase_rag.parsers.dispatch_registry import DispatchRegistryProcessor
-    from codebase_rag.types_defs import NodeType
 
     parsers, _ = load_parsers()
 
@@ -345,7 +342,7 @@ def test_registration_seed_tolerates_unreadable_graph(tmp_path: Path) -> None:
 
     class _Registry:
         def get(self, qn: str):  # noqa: ANN201
-            return NodeType.FUNCTION if qn.endswith(".schedule") else None
+            return cs.NodeLabel.FUNCTION if qn.endswith(".schedule") else None
 
     processor = DispatchRegistryProcessor(
         ingestor=_DownIngestor(),

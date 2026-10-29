@@ -108,10 +108,10 @@ def test_frontend_owned_registrations_survive_a_prefixing_sibling_sweep(
     base = project.name
     touched_qn = f"{base}.src.app.go"
     sibling_qn = f"{base}.src.app.util.helper"
-    from codebase_rag.types_defs import NodeType
+    from codebase_rag.constants import NodeLabel
 
-    updater.function_registry[touched_qn] = NodeType.FUNCTION
-    updater.function_registry[sibling_qn] = NodeType.FUNCTION
+    updater.function_registry[touched_qn] = NodeLabel.FUNCTION
+    updater.function_registry[sibling_qn] = NodeLabel.FUNCTION
     updater._frontend_owned_qns["src/app.cpp"] = {touched_qn}
     updater._frontend_owned_qns["src/app_util.cpp"] = {sibling_qn}
 
@@ -138,10 +138,10 @@ def test_incremental_cleanup_spares_freshly_registered_frontend_state(
         parsers=parsers,
         queries=queries,
     )
-    from codebase_rag.types_defs import NodeType
+    from codebase_rag.constants import NodeLabel
 
     qn = f"{project.name}.src.app.go"
-    updater.function_registry[qn] = NodeType.FUNCTION
+    updater.function_registry[qn] = NodeLabel.FUNCTION
     updater._frontend_owned_qns["src/app.cpp"] = {qn}
 
     updater.remove_file_from_state(project / "src" / "app.cpp", frontend_current=True)

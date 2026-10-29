@@ -8,7 +8,6 @@ from codebase_rag import constants as cs
 from codebase_rag.parsers.import_processor import ImportProcessor
 from codebase_rag.parsers.py.type_inference import PythonTypeInferenceEngine
 from codebase_rag.tests.conftest import create_mock_node
-from codebase_rag.types_defs import NodeType
 
 
 @pytest.fixture
@@ -124,7 +123,7 @@ class TestInferTypeFromParameterName:
         # Even a class spelled exactly like the receiver: `self` IS the
         # enclosing class.
         mock_function_registry.find_with_prefix.return_value = [
-            (f"test.module.{receiver.title()}", NodeType.CLASS)
+            (f"test.module.{receiver.title()}", cs.NodeLabel.CLASS)
         ]
         assert engine._infer_type_from_parameter_name(receiver, "test.module") is None
 
@@ -132,7 +131,7 @@ class TestInferTypeFromParameterName:
         self, engine: PythonTypeInferenceEngine, mock_function_registry: MagicMock
     ) -> None:
         mock_function_registry.find_with_prefix.return_value = [
-            ("test.module.Payload", NodeType.CLASS)
+            ("test.module.Payload", cs.NodeLabel.CLASS)
         ]
         result = engine._infer_type_from_parameter_name("payload", "test.module")
         assert result == "Payload"
@@ -317,9 +316,9 @@ class TestCollectAvailableClasses:
         self, engine: PythonTypeInferenceEngine, mock_function_registry: MagicMock
     ) -> None:
         mock_function_registry.find_with_prefix.return_value = [
-            ("test.module.User", NodeType.CLASS),
-            ("test.module.Account", NodeType.CLASS),
-            ("test.module.helper", NodeType.FUNCTION),
+            ("test.module.User", cs.NodeLabel.CLASS),
+            ("test.module.Account", cs.NodeLabel.CLASS),
+            ("test.module.helper", cs.NodeLabel.FUNCTION),
         ]
 
         result = engine._collect_available_classes("test.module")
@@ -337,7 +336,7 @@ class TestCollectAvailableClasses:
         mock_import_processor.import_mapping = {
             "test.module": {"User": "other.module.User"}
         }
-        mock_function_registry.get.return_value = NodeType.CLASS
+        mock_function_registry.get.return_value = cs.NodeLabel.CLASS
 
         result = engine._collect_available_classes("test.module")
 

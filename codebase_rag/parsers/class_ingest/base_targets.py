@@ -19,25 +19,25 @@ from collections.abc import Mapping
 from typing import NamedTuple
 
 from ... import constants as cs
-from ...types_defs import FunctionRegistryTrieProtocol, NodeType
+from ...types_defs import FunctionRegistryTrieProtocol
 from ..csharp import utils as csharp_utils
 
 _TYPE_KINDS = frozenset(
     {
-        NodeType.CLASS,
-        NodeType.INTERFACE,
-        NodeType.ENUM,
-        NodeType.TYPE,
-        NodeType.UNION,
+        cs.NodeLabel.CLASS,
+        cs.NodeLabel.INTERFACE,
+        cs.NodeLabel.ENUM,
+        cs.NodeLabel.TYPE,
+        cs.NodeLabel.UNION,
     }
 )
 # An ES5 constructor function is a legal `extends` target
 # (`class A extends Base` over `function Base() {}`); nowhere else is a
 # function a base.
-_TYPE_OR_CONSTRUCTOR_KINDS = _TYPE_KINDS | {NodeType.FUNCTION}
+_TYPE_OR_CONSTRUCTOR_KINDS = _TYPE_KINDS | {cs.NodeLabel.FUNCTION}
 
 
-def base_target_kinds(language: cs.SupportedLanguage | None) -> frozenset[NodeType]:
+def base_target_kinds(language: cs.SupportedLanguage | None) -> frozenset[cs.NodeLabel]:
     if language in cs.JS_TS_LANGUAGES:
         return _TYPE_OR_CONSTRUCTOR_KINDS
     return _TYPE_KINDS

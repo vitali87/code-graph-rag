@@ -19,7 +19,6 @@ from codebase_rag.tests.test_rust_crate_path_trait_linking import (
     _write,
     create_and_run_updater,
 )
-from codebase_rag.types_defs import NodeType
 
 # Both block items need a variant, because the module-level `make` owns the
 # natural qn, and both are written on one line.
@@ -94,9 +93,9 @@ def test_registry_variant_distinguishes_same_line_registrations() -> None:
     # registration on a line that already holds one gets a distinct name.
     registry = FunctionRegistryTrie()
     natural = "p.m.make"
-    registry.insert(natural, NodeType.FUNCTION)
+    registry.insert(natural, cs.NodeLabel.FUNCTION)
     first = registry.register_unique_qn(natural, 9, 4)
-    registry.insert(first, NodeType.FUNCTION)
+    registry.insert(first, cs.NodeLabel.FUNCTION)
     second = registry.register_unique_qn(natural, 9, 44)
     assert first != second, (first, second)
     assert first.startswith(f"{natural}{cs.DUP_QN_MARKER}9"), first
@@ -114,12 +113,12 @@ def test_registering_one_definition_twice_keeps_one_name() -> None:
     # fan every caller of the natural qn out onto it.
     registry = FunctionRegistryTrie()
     natural = "p.m.f"
-    registry.insert(natural, NodeType.FUNCTION)
+    registry.insert(natural, cs.NodeLabel.FUNCTION)
     first = registry.register_unique_qn(natural, 9, 4)
-    registry.insert(first, NodeType.FUNCTION)
+    registry.insert(first, cs.NodeLabel.FUNCTION)
     assert registry.register_unique_qn(natural, 9, 4) == first
     twin = registry.register_unique_qn(natural, 9, 44)
-    registry.insert(twin, NodeType.FUNCTION)
+    registry.insert(twin, cs.NodeLabel.FUNCTION)
     assert twin != first, (first, twin)
     assert registry.register_unique_qn(natural, 9, 44) == twin
     assert registry.variants(natural) == [natural, first, twin]
@@ -167,8 +166,8 @@ def test_deleting_a_variant_frees_the_line_it_claimed() -> None:
     # with different qualified names on a re-run.
     registry = FunctionRegistryTrie()
     natural = "p.m.f"
-    registry.insert(natural, NodeType.FUNCTION)
+    registry.insert(natural, cs.NodeLabel.FUNCTION)
     first = registry.register_unique_qn(natural, 9, 4)
-    registry.insert(first, NodeType.FUNCTION)
+    registry.insert(first, cs.NodeLabel.FUNCTION)
     del registry[first]
     assert registry.register_unique_qn(natural, 9, 44) == first, first

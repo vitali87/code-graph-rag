@@ -9,7 +9,6 @@ from collections.abc import Callable, ItemsView, Iterable, KeysView
 from . import constants as cs
 from .types_defs import (
     FunctionRegistry,
-    NodeType,
     OverloadSignature,
     QualifiedName,
     SimpleNameLookup,
@@ -31,7 +30,7 @@ def _variant_position(qualified_name: QualifiedName) -> tuple[int, int]:
 
 # The kinds that live only in TypeScript's type declaration space. A class or
 # an enum declares a type too, but it is also a value, so it is a value here.
-TYPE_SPACE_KINDS = frozenset({NodeType.TYPE, NodeType.INTERFACE})
+TYPE_SPACE_KINDS = frozenset({cs.NodeLabel.TYPE, cs.NodeLabel.INTERFACE})
 
 
 class FunctionRegistryTrie:
@@ -82,7 +81,7 @@ class FunctionRegistryTrie:
         # holds `_entries` (issue #2520). Kept out of `_duplicates`, so no
         # call fans out onto it, and out of `_entries`, so a call binds the
         # value; only a type position asks for it, through `type_kind`.
-        self._type_twins: dict[QualifiedName, NodeType] = {}
+        self._type_twins: dict[QualifiedName, cs.NodeLabel] = {}
         self._properties: set[QualifiedName] = set()
         self._property_names: set[str] = set()
         # `Class.run` -> the methods a class body bound `run` to (issue
@@ -170,7 +169,7 @@ class FunctionRegistryTrie:
         natural_qn: QualifiedName,
         start_line: int,
         start_col: int = 0,
-        kind: NodeType | None = None,
+        kind: cs.NodeLabel | None = None,
         origin: str | None = None,
     ) -> QualifiedName:
         """A name for this definition that no other definition holds.
@@ -254,7 +253,7 @@ class FunctionRegistryTrie:
         # whichever files this run happened to re-parse.
         bucket[1:] = sorted(bucket[1:], key=_variant_position)
 
-    def claim_other_space(self, natural_qn: QualifiedName, kind: NodeType) -> bool:
+    def claim_other_space(self, natural_qn: QualifiedName, kind: cs.NodeLabel) -> bool:
         """Let `kind` share `natural_qn` if its holder is in the other space.
 
         TypeScript lets `type input<T>` and `function input` coexist, and Zod
@@ -279,7 +278,7 @@ class FunctionRegistryTrie:
         self._type_twins[natural_qn] = kind if incoming_is_type else held
         return True
 
-    def type_kind(self, qualified_name: QualifiedName) -> NodeType | None:
+    def type_kind(self, qualified_name: QualifiedName) -> cs.NodeLabel | None:
         """The kind a TYPE position binds `qualified_name` to.
 
         The type-space twin when a value shares the name (issue #2520),
@@ -392,7 +391,7 @@ class FunctionRegistryTrie:
         # does (#2403): once, and in line order whatever order rows arrive in.
         self.restore_variant(qualified_name)
 
-    def insert(self, qualified_name: QualifiedName, func_type: NodeType) -> None:
+    def insert(self, qualified_name: QualifiedName, func_type: cs.NodeLabel) -> None:
         qualified_name = sys.intern(qualified_name)
         held = self._entries.get(qualified_name)
         if (
@@ -449,17 +448,19 @@ class FunctionRegistryTrie:
         self._invalidate_ending_with_cache(name)
 
     def get(
-        self, qualified_name: QualifiedName, default: NodeType | None = None
-    ) -> NodeType | None:
+        self, qualified_name: QualifiedName, default: cs.NodeLabel | None = None
+    ) -> cs.NodeLabel | None:
         return self._entries.get(qualified_name, default)
 
     def __contains__(self, qualified_name: QualifiedName) -> bool:
         return qualified_name in self._entries
 
-    def __getitem__(self, qualified_name: QualifiedName) -> NodeType:
+    def __getitem__(self, qualified_name: QualifiedName) -> cs.NodeLabel:
         return self._entries[qualified_name]
 
-    def __setitem__(self, qualified_name: QualifiedName, func_type: NodeType) -> None:
+    def __setitem__(
+        self, qualified_name: QualifiedName, func_type: cs.NodeLabel
+    ) -> None:
         self.insert(qualified_name, func_type)
 
     def __delitem__(self, qualified_name: QualifiedName) -> None:
@@ -542,14 +543,14 @@ class FunctionRegistryTrie:
         self,
         node: TrieNode,
         filter_fn: Callable[[QualifiedName], bool] | None = None,
-    ) -> list[tuple[QualifiedName, NodeType]]:
-        results: list[tuple[QualifiedName, NodeType]] = []
+    ) -> list[tuple[QualifiedName, cs.NodeLabel]]:
+        results: list[tuple[QualifiedName, cs.NodeLabel]] = []
 
         def dfs(n: TrieNode) -> None:
             if cs.TRIE_QN_KEY in n:
                 qn = n[cs.TRIE_QN_KEY]
                 func_type = n[cs.TRIE_TYPE_KEY]
-                assert isinstance(qn, str) and isinstance(func_type, NodeType)
+                assert isinstance(qn, str) and isinstance(func_type, cs.NodeLabel)
                 if filter_fn is None or filter_fn(qn):
                     results.append((qn, func_type))
 
@@ -564,7 +565,7 @@ class FunctionRegistryTrie:
     def keys(self) -> KeysView[QualifiedName]:
         return self._entries.keys()
 
-    def items(self) -> ItemsView[QualifiedName, NodeType]:
+    def items(self) -> ItemsView[QualifiedName, cs.NodeLabel]:
         return self._entries.items()
 
     def __len__(self) -> int:
@@ -622,7 +623,7 @@ class FunctionRegistryTrie:
             self._ending_with_tails.setdefault(tail, set()).add(suffix)
         return result
 
-    def find_with_prefix(self, prefix: str) -> list[tuple[QualifiedName, NodeType]]:
+    def find_with_prefix(self, prefix: str) -> list[tuple[QualifiedName, cs.NodeLabel]]:
         node = self._navigate_to_prefix(prefix)
         return [] if node is None else self._collect_from_subtree(node)
 

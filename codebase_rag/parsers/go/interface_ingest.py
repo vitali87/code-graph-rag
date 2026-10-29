@@ -26,7 +26,6 @@ from ...types_defs import (
     FunctionLocation,
     FunctionLocations,
     FunctionRegistryTrieProtocol,
-    NodeType,
     PendingTypeFact,
     PropertyDict,
     SimpleNameLookup,
@@ -61,8 +60,8 @@ if TYPE_CHECKING:
 
 # The labels a Go type that can carry methods is registered under: a struct
 # (Class) or any other defined type (Type, as `type HandlerFunc func()`).
-_GO_IMPLEMENTER_TYPES = frozenset({NodeType.CLASS, NodeType.TYPE})
-_GO_METHOD_OWNER_TYPES = _GO_IMPLEMENTER_TYPES | {NodeType.INTERFACE}
+_GO_IMPLEMENTER_TYPES = frozenset({cs.NodeLabel.CLASS, cs.NodeLabel.TYPE})
+_GO_METHOD_OWNER_TYPES = _GO_IMPLEMENTER_TYPES | {cs.NodeLabel.INTERFACE}
 
 
 class _GoMethodOwners(NamedTuple):
@@ -583,7 +582,7 @@ class GoInterfaceMixin:
     def _go_declaration_scope(self, qn: str) -> str | None:
         # The files that see Go declaration `qn`, read back or parsed, when it
         # is package-level: its file module is the qn above it.
-        if self.function_registry.get(qn) == NodeType.METHOD:
+        if self.function_registry.get(qn) == cs.NodeLabel.METHOD:
             return None
         path = self._go_declaring_rel(qn)
         if not path.endswith(cs.EXT_GO):
@@ -605,7 +604,7 @@ class GoInterfaceMixin:
         owners = _GoMethodOwners({}, {}, {}, {})
         registry = self.function_registry
         for method_qn, declared in self.go_methods.items():
-            if registry.get(method_qn) != NodeType.METHOD:
+            if registry.get(method_qn) != cs.NodeLabel.METHOD:
                 continue
             owner, _, name = method_qn.rpartition(cs.SEPARATOR_DOT)
             if registry.get(owner) not in _GO_METHOD_OWNER_TYPES:
@@ -656,10 +655,10 @@ class GoInterfaceMixin:
     def _record_go_interface_variants(self) -> None:
         groups: dict[str, tuple[str, ...]] = {}
         for interface_qn in self.go_interfaces:
-            if self.function_registry.get(interface_qn) != NodeType.INTERFACE:
+            if self.function_registry.get(interface_qn) != cs.NodeLabel.INTERFACE:
                 continue
             if variants := self._go_type_variants(
-                interface_qn, frozenset({NodeType.INTERFACE})
+                interface_qn, frozenset({cs.NodeLabel.INTERFACE})
             ):
                 groups[interface_qn] = tuple(sorted((interface_qn, *variants)))
         # In place: the call resolver holds the map.
@@ -667,7 +666,7 @@ class GoInterfaceMixin:
         self.go_declaration_variants.update(groups)
 
     def _go_type_variants(
-        self, type_qn: str, labels: frozenset[NodeType] = _GO_IMPLEMENTER_TYPES
+        self, type_qn: str, labels: frozenset[cs.NodeLabel] = _GO_IMPLEMENTER_TYPES
     ) -> list[str]:
         # The other declarations of `type_qn`'s name in its package that no
         # build compiles with it.
@@ -771,7 +770,7 @@ class GoInterfaceMixin:
         registry = self.function_registry
         bases: dict[str, list[str]] = {}
         for interface_qn in self.go_interfaces:
-            if registry.get(interface_qn) != NodeType.INTERFACE:
+            if registry.get(interface_qn) != cs.NodeLabel.INTERFACE:
                 continue
             found = dict.fromkeys(self.class_inheritance.get(interface_qn, ()))
             for alternatives in embeds.get(interface_qn) or ():
@@ -847,8 +846,8 @@ class GoInterfaceMixin:
     ) -> None:
         registry = self.function_registry
         if (
-            registry.get(method_qn) != NodeType.METHOD
-            or registry.get(interface_method_qn) != NodeType.METHOD
+            registry.get(method_qn) != cs.NodeLabel.METHOD
+            or registry.get(interface_method_qn) != cs.NodeLabel.METHOD
         ):
             return
         # A pair matched by name and arity alone carries that on the edge,
@@ -872,7 +871,7 @@ class GoInterfaceMixin:
         None when one does not resolve to an interface."""
         resolved: dict[str, tuple[go_ifaces.GoEmbedAlternatives, ...] | None] = {}
         for interface_qn, decl in self.go_interfaces.items():
-            if self.function_registry.get(interface_qn) != NodeType.INTERFACE:
+            if self.function_registry.get(interface_qn) != cs.NodeLabel.INTERFACE:
                 continue
             module_qn = self.go_interfaces_parsed.get(interface_qn)
             resolved[interface_qn] = (
@@ -979,7 +978,7 @@ class GoInterfaceMixin:
             else go_utils.package_level_definitions(
                 self.function_registry,
                 name,
-                {NodeType.INTERFACE},
+                {cs.NodeLabel.INTERFACE},
                 lambda qn: self._go_imported_file(
                     qn.rpartition(cs.SEPARATOR_DOT)[0], package_qn
                 ),
@@ -995,7 +994,7 @@ class GoInterfaceMixin:
             )
         )
         if found is None or any(
-            self.function_registry.get(qn) != NodeType.INTERFACE for qn in found
+            self.function_registry.get(qn) != cs.NodeLabel.INTERFACE for qn in found
         ):
             return None
         meanings = [

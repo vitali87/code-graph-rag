@@ -29,7 +29,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.type_facts import TypeReferenceResolver
 from codebase_rag.tests.conftest import get_relationships, run_updater
-from codebase_rag.types_defs import NodeType, PropertyDict, ResultRow
+from codebase_rag.types_defs import PropertyDict, ResultRow
 from evals.cgr_graph import StatefulIngestor
 
 SKIP = "c_sharp"
@@ -392,7 +392,7 @@ PARTS = ["p.Order.Tax.Shop.Order", "p.Order.Shop.Order"]
 def _resolver(*others: str, joined: bool) -> TypeReferenceResolver:
     registry = FunctionRegistryTrie()
     for qn in (*PARTS, *others):
-        registry[qn] = NodeType.CLASS
+        registry[qn] = cs.NodeLabel.CLASS
     resolver = TypeReferenceResolver(registry, {}, "p")
     if joined:
         resolver.join_partial_groups({qn: PARTS for qn in PARTS})

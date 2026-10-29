@@ -10,7 +10,7 @@ from loguru import logger
 
 from ... import constants as cs
 from ... import logs as ls
-from ...types_defs import NodeType, OverloadSignature
+from ...types_defs import OverloadSignature
 from ...utils import qn_markers
 from ...utils.cpp_signatures import (
     ClassLookups,
@@ -22,11 +22,11 @@ from ..utils import method_signature_arity
 # The graph's type nodes. Every one but a Type alias is a distinct type.
 _TYPE_KINDS = frozenset(
     {
-        NodeType.CLASS,
-        NodeType.TYPE,
-        NodeType.ENUM,
-        NodeType.UNION,
-        NodeType.INTERFACE,
+        cs.NodeLabel.CLASS,
+        cs.NodeLabel.TYPE,
+        cs.NodeLabel.ENUM,
+        cs.NodeLabel.UNION,
+        cs.NodeLabel.INTERFACE,
     }
 )
 
@@ -55,7 +55,7 @@ def process_all_method_overrides(
     implemented_interfaces = _invert_implementers(interface_implementers or {})
     type_scopes = TypeScopes(function_registry, module_qns)
     for method_qn in function_registry.keys():
-        if function_registry[method_qn] != NodeType.METHOD:
+        if function_registry[method_qn] != cs.NodeLabel.METHOD:
             continue
         # A dotless qn has no class to walk from; rpartition leaves class_qn
         # empty for it, which is the same set the membership test used to skip.
@@ -218,7 +218,7 @@ def _direct_method_names(
     prefix = f"{class_qn}{cs.SEPARATOR_DOT}"
     names: list[str] = []
     for qn, node_type in function_registry.find_with_prefix(class_qn):
-        if node_type != NodeType.METHOD or not qn.startswith(prefix):
+        if node_type != cs.NodeLabel.METHOD or not qn.startswith(prefix):
             continue
         leaf = qn[len(prefix) :]
         if cs.SEPARATOR_DOT in leaf.split(cs.CHAR_PAREN_OPEN, 1)[0]:
@@ -251,7 +251,7 @@ def _emit_recorded_impl_override(
     # name, and would empty out a C# verbatim identifier like `@event`.
     method_name = qn_markers.strip_dup_marker(method_name)
     parent_method_qn = f"{trait_qn}{cs.SEPARATOR_DOT}{method_name}"
-    if function_registry.get(parent_method_qn) != NodeType.METHOD:
+    if function_registry.get(parent_method_qn) != cs.NodeLabel.METHOD:
         # An inherent method, or one the trait declares nowhere: the walk has
         # nothing to be wrong about, so let it run.
         return False
@@ -301,7 +301,7 @@ def _find_override_by_arity(
     prefix = f"{parent_class}{cs.SEPARATOR_DOT}"
     matches: list[str] = []
     for qn, node_type in function_registry.find_with_prefix(parent_class):
-        if node_type != NodeType.METHOD or not qn.startswith(prefix):
+        if node_type != cs.NodeLabel.METHOD or not qn.startswith(prefix):
             continue
         leaf = qn[len(prefix) :]
         if cs.SEPARATOR_DOT in leaf.split(cs.CHAR_PAREN_OPEN, 1)[0]:
@@ -344,7 +344,7 @@ def _signed_base_overloads(
     )
     overloads: list[tuple[str, OverloadSignature]] = []
     for candidate in function_registry.variants(natural):
-        if function_registry.get(candidate) != NodeType.METHOD:
+        if function_registry.get(candidate) != cs.NodeLabel.METHOD:
             continue
         known = function_registry.overload_signature(candidate)
         if known is None:
@@ -370,7 +370,7 @@ class TypeScopes:
     ) -> None:
         self._registry = function_registry
         self._module_qns = frozenset(module_qns)
-        self._kinds: dict[str, set[NodeType]] | None = None
+        self._kinds: dict[str, set[cs.NodeLabel]] | None = None
 
     def namespace_path(self, qualified_name: str) -> str:
         # The qn without its module: the longest prefix naming a module. A
@@ -398,12 +398,12 @@ class TypeScopes:
         while True:
             path = f"{scope}{cs.SEPARATOR_DOT}{dotted}" if scope else dotted
             if (kinds := kinds_by_path.get(path)) is not None:
-                return NodeType.TYPE not in kinds
+                return cs.NodeLabel.TYPE not in kinds
             if not scope:
                 return False
             scope = scope.rpartition(cs.SEPARATOR_DOT)[0]
 
-    def _type_kinds(self) -> dict[str, set[NodeType]]:
+    def _type_kinds(self) -> dict[str, set[cs.NodeLabel]]:
         if self._kinds is None:
             self._kinds = {}
             for qualified_name, kind in self._registry.items():
@@ -480,7 +480,7 @@ def _parent_method_qn(
     # inherits its encloser (node::inner_node : node) shares its name with the
     # nested CLASS registered at parent.name, and an OVERRIDES onto that class
     # qn is a label-mismatched phantom.
-    if function_registry.get(parent_method_qn) == NodeType.METHOD:
+    if function_registry.get(parent_method_qn) == cs.NodeLabel.METHOD:
         return parent_method_qn
     return None
 
@@ -531,7 +531,7 @@ def check_method_overrides(
         # may still implement an interface member deeper.
         if parent_method_qn is not None and (
             not csharp_gated
-            or function_registry.get(current_class) == NodeType.INTERFACE
+            or function_registry.get(current_class) == cs.NodeLabel.INTERFACE
         ):
             ingestor.ensure_relationship_batch(
                 (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, method_qn),

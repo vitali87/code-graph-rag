@@ -4,10 +4,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from codebase_rag.constants import NodeLabel
 from codebase_rag.function_registry import FunctionRegistryTrie
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.types_defs import NodeType, SimpleNameLookup
+from codebase_rag.types_defs import SimpleNameLookup
 
 
 class TestTrieOptimization:
@@ -17,14 +18,14 @@ class TestTrieOptimization:
         """Test basic Trie operations work correctly."""
         trie = FunctionRegistryTrie()
 
-        trie.insert("com.example.utils.Logger", NodeType.CLASS)
-        trie.insert("com.example.utils.Logger.info", NodeType.FUNCTION)
-        trie.insert("com.example.models.User", NodeType.CLASS)
-        trie.insert("com.example.models.User.get_name", NodeType.FUNCTION)
-        trie.insert("com.example.models.User.set_name", NodeType.FUNCTION)
+        trie.insert("com.example.utils.Logger", NodeLabel.CLASS)
+        trie.insert("com.example.utils.Logger.info", NodeLabel.FUNCTION)
+        trie.insert("com.example.models.User", NodeLabel.CLASS)
+        trie.insert("com.example.models.User.get_name", NodeLabel.FUNCTION)
+        trie.insert("com.example.models.User.set_name", NodeLabel.FUNCTION)
 
-        assert trie.get("com.example.utils.Logger") == NodeType.CLASS
-        assert trie.get("com.example.models.User.get_name") == NodeType.FUNCTION
+        assert trie.get("com.example.utils.Logger") == NodeLabel.CLASS
+        assert trie.get("com.example.models.User.get_name") == NodeLabel.FUNCTION
         assert trie.get("nonexistent") is None
 
         assert "com.example.utils.Logger" in trie
@@ -48,7 +49,7 @@ class TestTrieOptimization:
         ]
 
         for func in functions:
-            trie.insert(func, NodeType.FUNCTION)
+            trie.insert(func, NodeLabel.FUNCTION)
 
         results = trie.find_with_prefix_and_suffix("project.services", "create_user")
         expected = [
@@ -72,8 +73,8 @@ class TestTrieOptimization:
         # must fall back to the linear scan instead of returning [].
         lookup: SimpleNameLookup = defaultdict(set)
         trie = FunctionRegistryTrie(simple_name_lookup=lookup)
-        trie.insert("proj.mod.Class.method", NodeType.FUNCTION)
-        trie.insert("proj.other.Class.unrelated", NodeType.FUNCTION)
+        trie.insert("proj.mod.Class.method", NodeLabel.FUNCTION)
+        trie.insert("proj.other.Class.unrelated", NodeLabel.FUNCTION)
 
         assert trie.find_ending_with("Class.method") == ["proj.mod.Class.method"]
         # dot-free misses stay on the O(1) path: the index holds every
@@ -82,7 +83,7 @@ class TestTrieOptimization:
 
         # cached dotted results must be invalidated by inserts/deletes
         # (incremental updates), not just simple-name cache entries.
-        trie.insert("pkg.sub.Class.method", NodeType.FUNCTION)
+        trie.insert("pkg.sub.Class.method", NodeLabel.FUNCTION)
         assert trie.find_ending_with("Class.method") == [
             "pkg.sub.Class.method",
             "proj.mod.Class.method",
@@ -103,11 +104,11 @@ class TestTrieOptimization:
             for sub in submodules:
                 for cls in classes:
                     class_qn = f"{base}.{sub}.{cls}"
-                    trie.insert(class_qn, NodeType.CLASS)
+                    trie.insert(class_qn, NodeLabel.CLASS)
 
                     for method in methods:
                         method_qn = f"{class_qn}.{method}"
-                        trie.insert(method_qn, NodeType.FUNCTION)
+                        trie.insert(method_qn, NodeLabel.FUNCTION)
 
         results = trie.find_with_prefix_and_suffix("com.example.services", "create")
         assert len(results) > 0
@@ -129,12 +130,12 @@ class TestTrieOptimization:
         )
 
         test_functions = [
-            ("test.services.user.UserService.create_user", NodeType.FUNCTION),
-            ("test.services.user.UserService.find_user", NodeType.FUNCTION),
-            ("test.models.user.User.get_name", NodeType.FUNCTION),
-            ("test.models.user.User.validate", NodeType.FUNCTION),
-            ("test.utils.helper.Helper.process", NodeType.FUNCTION),
-            ("test.controllers.user.UserController.handle_request", NodeType.FUNCTION),
+            ("test.services.user.UserService.create_user", NodeLabel.FUNCTION),
+            ("test.services.user.UserService.find_user", NodeLabel.FUNCTION),
+            ("test.models.user.User.get_name", NodeLabel.FUNCTION),
+            ("test.models.user.User.validate", NodeLabel.FUNCTION),
+            ("test.utils.helper.Helper.process", NodeLabel.FUNCTION),
+            ("test.controllers.user.UserController.handle_request", NodeLabel.FUNCTION),
         ]
 
         for qn, func_type in test_functions:
@@ -174,14 +175,14 @@ class TestTrieOptimization:
         updater = graph_updater_with_trie
         registry = updater.function_registry
 
-        assert registry["test.models.user.User.get_name"] == NodeType.FUNCTION
+        assert registry["test.models.user.User.get_name"] == NodeLabel.FUNCTION
 
         all_qns = list(registry.keys())
         assert "test.models.user.User.get_name" in all_qns
 
         all_items = list(registry.items())
-        assert ("test.models.user.User.get_name", NodeType.FUNCTION) in all_items
+        assert ("test.models.user.User.get_name", NodeLabel.FUNCTION) in all_items
 
-        registry["new.function.test"] = NodeType.FUNCTION
+        registry["new.function.test"] = NodeLabel.FUNCTION
         assert "new.function.test" in registry
-        assert registry["new.function.test"] == NodeType.FUNCTION
+        assert registry["new.function.test"] == NodeLabel.FUNCTION

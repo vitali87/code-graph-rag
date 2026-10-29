@@ -9,7 +9,7 @@ from tree_sitter import Node
 from ... import constants as cs
 from ... import logs as ls
 from ...decorators import recursion_guard
-from ...types_defs import FunctionRegistryTrieProtocol, NodeType, SimpleNameLookup
+from ...types_defs import FunctionRegistryTrieProtocol, SimpleNameLookup
 from ...utils import qn_markers
 from ..import_processor import ImportProcessor
 from ..utils import follow_reexports, safe_decode_text
@@ -296,9 +296,9 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
             if (kinds := self._class_and_def_twins(qn)) is not None:
                 return self._live_binding_type(qn, kinds)
             match self.function_registry.get(qn):
-                case NodeType.CLASS:
+                case cs.NodeLabel.CLASS:
                     return qn
-                case NodeType.FUNCTION:
+                case cs.NodeLabel.FUNCTION:
                     return self._get_function_return_type_from_ast(qn)
                 case _:
                     continue
@@ -311,18 +311,21 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
             self._class_and_def_twins(f"{module_qn}{cs.SEPARATOR_DOT}{callee}") is None
         )
 
-    def _class_and_def_twins(self, qn: str) -> dict[str, NodeType | None] | None:
+    def _class_and_def_twins(self, qn: str) -> dict[str, cs.NodeLabel | None] | None:
         """The kind of each variant when a class and a def share `qn`."""
         variants = self.function_registry.variants(qn)
         if len(variants) < 2:
             return None
         kinds = {variant: self.function_registry.get(variant) for variant in variants}
-        if NodeType.CLASS in kinds.values() and NodeType.FUNCTION in kinds.values():
+        if (
+            cs.NodeLabel.CLASS in kinds.values()
+            and cs.NodeLabel.FUNCTION in kinds.values()
+        ):
             return kinds
         return None
 
     def _live_binding_type(
-        self, qn: str, kinds: dict[str, NodeType | None]
+        self, qn: str, kinds: dict[str, cs.NodeLabel | None]
     ) -> str | None:
         """The one type `name()` has under every binding a caller may see.
 
@@ -346,9 +349,9 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
         for node, _ in live:
             if (variant := _variant_at(node, kinds)) is None:
                 continue
-            if kinds[variant] == NodeType.CLASS:
+            if kinds[variant] == cs.NodeLabel.CLASS:
                 types.add(variant)
-            elif kinds[variant] == NodeType.FUNCTION and (
+            elif kinds[variant] == cs.NodeLabel.FUNCTION and (
                 returned := self._get_function_return_type_from_ast(variant, node)
             ):
                 types.add(returned)
@@ -679,10 +682,10 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
         return None
 
     def _try_resolve_method(self, class_qn: str, method_name: str) -> str | None:
-        if self.function_registry.get(class_qn) != NodeType.CLASS:
+        if self.function_registry.get(class_qn) != cs.NodeLabel.CLASS:
             return None
         method_qn = f"{class_qn}{cs.SEPARATOR_DOT}{method_name}"
-        if self.function_registry.get(method_qn) == NodeType.METHOD:
+        if self.function_registry.get(method_qn) == cs.NodeLabel.METHOD:
             return method_qn
         return None
 
@@ -731,17 +734,17 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
 
     def _find_class_in_scope(self, class_name: str, module_qn: str) -> str | None:
         local_class_qn = f"{module_qn}{cs.SEPARATOR_DOT}{class_name}"
-        if self.function_registry.get(local_class_qn) == NodeType.CLASS:
+        if self.function_registry.get(local_class_qn) == cs.NodeLabel.CLASS:
             return class_name
 
         import_mapping = self.import_processor.import_mapping.get(module_qn, {})
         if (
             imported_qn := import_mapping.get(class_name)
-        ) and self.function_registry.get(imported_qn) == NodeType.CLASS:
+        ) and self.function_registry.get(imported_qn) == cs.NodeLabel.CLASS:
             return class_name
 
         if any(
-            self.function_registry.get(qn) == NodeType.CLASS
+            self.function_registry.get(qn) == cs.NodeLabel.CLASS
             for qn in self.simple_name_lookup.get(class_name, [])
         ):
             return class_name
@@ -788,7 +791,7 @@ def _called_callee(text: str) -> str | None:
     return None
 
 
-def _variant_at(node: Node, kinds: dict[str, NodeType | None]) -> str | None:
+def _variant_at(node: Node, kinds: dict[str, cs.NodeLabel | None]) -> str | None:
     # A twin registered after the first carries its start line as `@line`;
     # the definition holding the plain name is the one no marker names.
     line = node.start_point[0] + 1

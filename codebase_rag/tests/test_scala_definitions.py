@@ -24,12 +24,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from codebase_rag.constants import NodeLabel
 from codebase_rag.tests.conftest import (
     get_node_names,
     get_relationships,
     run_updater,
 )
-from codebase_rag.types_defs import NodeType
 
 SKIP = "scala"
 
@@ -75,7 +75,7 @@ case class Point(x: Int, y: Int)
 
     run_updater(scala_project, mock_ingestor, skip_if_missing=SKIP)
 
-    classes = get_node_names(mock_ingestor, NodeType.CLASS)
+    classes = get_node_names(mock_ingestor, NodeLabel.CLASS)
     for expected in ("Greeter", "EnglishGreeter", "Registry", "Point"):
         assert _endswith_any(classes, expected), (expected, sorted(classes))
 
@@ -105,7 +105,7 @@ object Helper {
 
     run_updater(scala_project, mock_ingestor, skip_if_missing=SKIP)
 
-    methods = get_node_names(mock_ingestor, NodeType.METHOD)
+    methods = get_node_names(mock_ingestor, NodeLabel.METHOD)
     assert _endswith_any(methods, "Service.handle"), sorted(methods)
     assert _endswith_any(methods, "Helper.assist"), sorted(methods)
 
@@ -199,7 +199,7 @@ object Solo {
 
     run_updater(scala_project, mock_ingestor, skip_if_missing=SKIP)
 
-    modules = get_node_names(mock_ingestor, NodeType.MODULE)
+    modules = get_node_names(mock_ingestor, NodeLabel.MODULE)
     assert _endswith_any(modules, "mod"), sorted(modules)
 
 

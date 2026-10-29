@@ -19,7 +19,6 @@ from ..types_defs import (
     DeferredParentLink,
     FunctionRegistryTrieProtocol,
     LanguageQueries,
-    NodeType,
     OverloadSignature,
     PropertyDict,
     SimpleNameLookup,
@@ -166,8 +165,8 @@ def _method_container_label(
         return container_type
     container_label = container_type
     registered = function_registry.get(container_qn)
-    if registered is not None and registered != NodeType.METHOD:
-        container_label = cs.NodeLabel(registered.value)
+    if registered is not None and registered != cs.NodeLabel.METHOD:
+        container_label = registered
     return container_label
 
 
@@ -247,7 +246,7 @@ def _register_method_qn(
         )
         return cpp_member.qualified_name, cpp_member
     # TypeScript keeps a type and a same-named value as two nodes (#2520).
-    kind = NodeType.METHOD if language in cs.JS_TS_LANGUAGES else None
+    kind = cs.NodeLabel.METHOD if language in cs.JS_TS_LANGUAGES else None
     # A Go method's natural qn is its receiver type's, which each build file
     # declaring the method again shares (#3360 review).
     origin = (
@@ -483,7 +482,7 @@ def ingest_method(
             method_qn,
             method_props.get(cs.KEY_DECORATORS),
         )
-    function_registry[method_qn] = NodeType.METHOD
+    function_registry[method_qn] = cs.NodeLabel.METHOD
     if is_property:
         function_registry.mark_property(method_qn)
     if _is_abstract_member(decorators, method_node, language):
@@ -631,7 +630,7 @@ def ingest_exported_function(
         function_qn,
         function_props.get(cs.KEY_DECORATORS),
     )
-    function_registry[function_qn] = NodeType.FUNCTION
+    function_registry[function_qn] = cs.NodeLabel.FUNCTION
     simple_name_lookup[function_name].add(function_qn)
     ingestor.ensure_relationship_batch(
         (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),

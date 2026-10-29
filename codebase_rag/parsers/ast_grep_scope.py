@@ -31,7 +31,6 @@ from typing import NamedTuple
 
 from .. import constants as cs
 from ..function_registry import FunctionRegistryTrie
-from ..types_defs import NodeType
 
 # Balanced generic argument lists, innermost first (`Map<K, List<V>>`).
 _GENERIC_ARGS_RE = re.compile(r"<[^<>]*>")
@@ -198,7 +197,7 @@ def place_declarations(
             decl.start_line,
             decl.start_col,
         )
-        registry.insert(qualified_name, NodeType(label.value))
+        registry.insert(qualified_name, label)
         parent_label, parent_qn, relationship = _definer(
             label, owner, open_scopes, module_qn
         )

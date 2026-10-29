@@ -15,11 +15,11 @@ from collections.abc import Iterable, Mapping
 from typing import NamedTuple
 
 from ... import constants as cs
-from ...types_defs import FunctionRegistryTrieProtocol, NodeType
+from ...types_defs import FunctionRegistryTrieProtocol
 from ...utils import qn_markers
 from . import utils as csharp_utils
 
-TYPE_DECLS = (NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM)
+TYPE_DECLS = (cs.NodeLabel.CLASS, cs.NodeLabel.INTERFACE, cs.NodeLabel.ENUM)
 
 
 class CSharpArityIndex(NamedTuple):

@@ -22,7 +22,6 @@ from ...types_defs import (
     DeferredInherit,
     FunctionLocation,
     FunctionSpanKey,
-    NodeType,
     PendingTypeFact,
     PropertyDict,
     RustTraitImpl,
@@ -902,7 +901,7 @@ class ClassIngestMixin:
         if resolved is None or resolved[1]:
             return
         trait_qn = resolved[0]
-        if self.function_registry.get(trait_qn) != NodeType.INTERFACE:
+        if self.function_registry.get(trait_qn) != cs.NodeLabel.INTERFACE:
             return
         for method_qn in impl.method_qns:
             self.rust_impl_method_traits[method_qn] = trait_qn
@@ -919,7 +918,7 @@ class ClassIngestMixin:
         if (
             resolved is not None
             and not resolved[1]
-            and self.function_registry.get(resolved[0]) == NodeType.INTERFACE
+            and self.function_registry.get(resolved[0]) == cs.NodeLabel.INTERFACE
         ):
             # A registered first-party TRAIT dispatches through OVERRIDES
             # liveness, which already covers its impls. The node kind has to
@@ -1257,7 +1256,7 @@ class ClassIngestMixin:
         # package must also EXPOSE the name (its __init__ imports it
         # explicitly or star-imports the defining module); a same-named
         # internal class the package never re-exports is not the referent.
-        type_decls = (NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM)
+        type_decls = (cs.NodeLabel.CLASS, cs.NodeLabel.INTERFACE, cs.NodeLabel.ENUM)
         package_qn = package_prefix[: -len(cs.SEPARATOR_DOT)]
         package_matches = {
             qn
@@ -1302,7 +1301,7 @@ class ClassIngestMixin:
         # ambiguity keeps the no-edge answer rather than guessing.
         if entry.language != cs.SupportedLanguage.CSHARP:
             return None
-        type_decls = (NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM)
+        type_decls = (cs.NodeLabel.CLASS, cs.NodeLabel.INTERFACE, cs.NodeLabel.ENUM)
         # The written arity names the sibling (issue #764): a twin in the
         # same file carries it in its qn (`Foo`1`, issue #2579), one in
         # another file shares the child's declared form.
@@ -1462,7 +1461,7 @@ class ClassIngestMixin:
 
         class_qn, class_name, is_exported = identity
         class_start_line, class_start_col = _class_start_point(class_node, language)
-        node_type = nt.determine_node_type(class_node, class_name, class_qn, language)
+        node_type = nt.definition_label(class_node, class_name, class_qn, language)
         class_qn = self.function_registry.register_unique_qn(
             class_qn,
             class_start_line,
@@ -1551,10 +1550,7 @@ class ClassIngestMixin:
         emit_declared_fields(
             self.ingestor,
             self.pending_field_types,
-            # `determine_node_type` returns a NodeType; every member's value is a
-            # NodeLabel value (checked when this was written), so the owner
-            # label is the same name in the graph's own enum.
-            cs.NodeLabel(node_type.value),
+            node_type,
             class_qn,
             module_qn,
             member_node,
@@ -1593,7 +1589,7 @@ class ClassIngestMixin:
         self._record_declared_type_members(
             member_node, class_qn, module_qn, node_type, language, class_props
         )
-        if language == cs.SupportedLanguage.GO and node_type == NodeType.INTERFACE:
+        if language == cs.SupportedLanguage.GO and node_type == cs.NodeLabel.INTERFACE:
             self._ingest_go_interface_methods(
                 class_node, class_qn, module_qn, file_path
             )
@@ -1615,7 +1611,7 @@ class ClassIngestMixin:
             sorted_func_nodes=sorted_func_nodes,
             func_node_starts=func_node_starts,
             module_qn=module_qn,
-            container_label=cs.NodeLabel(node_type.value),
+            container_label=node_type,
         )
 
     def _cpp_local_type_qn(
@@ -1693,7 +1689,7 @@ class ClassIngestMixin:
         class_node: Node,
         class_qn: str,
         class_name: str,
-        node_type: NodeType,
+        node_type: cs.NodeLabel,
         language: cs.SupportedLanguage,
         class_props: PropertyDict,
     ) -> None:
@@ -1702,7 +1698,9 @@ class ClassIngestMixin:
         elif language == cs.SupportedLanguage.CSHARP:
             self._record_csharp_namespace(class_node, class_qn, class_props)
             self._record_csharp_arity(class_node, class_name, class_props)
-        elif language == cs.SupportedLanguage.GO and node_type == NodeType.INTERFACE:
+        elif (
+            language == cs.SupportedLanguage.GO and node_type == cs.NodeLabel.INTERFACE
+        ):
             # Stored so an incremental run that does not re-parse the
             # interface still knows what its method set is built from.
             class_props.update(go_ifaces.embeds_props(class_node))
@@ -1719,20 +1717,20 @@ class ClassIngestMixin:
         member_node: Node,
         class_qn: str,
         module_qn: str,
-        node_type: NodeType,
+        node_type: cs.NodeLabel,
         language: cs.SupportedLanguage,
         class_props: PropertyDict,
     ) -> None:
         # The variants ride with their enum the way fields ride with their
         # owner (issue #1807). After the relationships, because a Python enum
         # is a Class that only its resolved bases identify (issue #2583).
-        if node_type == NodeType.ENUM or (
+        if node_type == cs.NodeLabel.ENUM or (
             language == cs.SupportedLanguage.PYTHON
             and is_python_enum(self.class_inheritance.get(class_qn, ()))
         ):
             emit_declared_variants(
                 self.ingestor,
-                cs.NodeLabel(node_type.value),
+                node_type,
                 class_qn,
                 member_node,
                 language,
@@ -1803,7 +1801,7 @@ class ClassIngestMixin:
     def _record_type_location(
         self,
         class_qn: str,
-        node_type: NodeType,
+        node_type: cs.NodeLabel,
         language: cs.SupportedLanguage,
         file_path: Path | None,
         class_start_line: int,
@@ -2829,7 +2827,7 @@ class ClassIngestMixin:
         # directly on the base whose simple name matches gets an OVERRIDES edge from
         # the anon override, so override-reachability keeps the dispatch-only method
         # live when the base is reachable.
-        type_decls = (NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM)
+        type_decls = (cs.NodeLabel.CLASS, cs.NodeLabel.INTERFACE, cs.NodeLabel.ENUM)
         for anon_qn, method_name, base_type, _module_qn in self.java_anon_overrides:
             # A method-body anonymous override is registered as a FUNCTION (via the
             # function-ingest path), a field-initializer one as a METHOD. The graph
@@ -2840,7 +2838,7 @@ class ClassIngestMixin:
             anon_type = self.function_registry.get(anon_qn)
             if anon_type is None:
                 continue
-            anon_label = cs.NodeLabel(anon_type.value)
+            anon_label = anon_type
             base_candidates = [
                 qn
                 for qn in self.function_registry.find_ending_with(base_type)
@@ -2852,7 +2850,7 @@ class ClassIngestMixin:
             base_prefix = f"{base_qn}{cs.SEPARATOR_DOT}"
             for qn, node_type in self.function_registry.find_with_prefix(base_qn):
                 if (
-                    node_type == NodeType.METHOD
+                    node_type == cs.NodeLabel.METHOD
                     and qn.startswith(base_prefix)
                     and cs.SEPARATOR_DOT
                     not in qn[len(base_prefix) :].split(cs.CHAR_PAREN_OPEN, 1)[0]

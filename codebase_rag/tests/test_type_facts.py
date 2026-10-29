@@ -17,7 +17,6 @@ from codebase_rag.parsers.type_facts import (
     type_reference_names,
 )
 from codebase_rag.tests.conftest import create_and_run_updater
-from codebase_rag.types_defs import NodeType
 
 
 def _props(mock: MagicMock, label: str) -> dict[str, dict]:
@@ -308,7 +307,7 @@ def test_type_reference_names_strip_generics_and_paths() -> None:
 
 
 def _resolver(
-    entries: dict[str, NodeType], imports: dict[str, dict[str, str]]
+    entries: dict[str, cs.NodeLabel], imports: dict[str, dict[str, str]]
 ) -> TypeReferenceResolver:
     registry = FunctionRegistryTrie()
     for qn, node_type in entries.items():
@@ -319,10 +318,10 @@ def _resolver(
 def test_resolver_prefers_imports_then_scope_then_unique_suffix() -> None:
     resolver = _resolver(
         {
-            "p.models.Item": NodeType.CLASS,
-            "p.app.Item": NodeType.CLASS,
-            "p.other.Lone": NodeType.INTERFACE,
-            "p.app.helper": NodeType.FUNCTION,
+            "p.models.Item": cs.NodeLabel.CLASS,
+            "p.app.Item": cs.NodeLabel.CLASS,
+            "p.other.Lone": cs.NodeLabel.INTERFACE,
+            "p.app.helper": cs.NodeLabel.FUNCTION,
         },
         {"p.svc": {"Item": "p.models.Item"}},
     )
@@ -342,7 +341,7 @@ def test_resolver_prefers_imports_then_scope_then_unique_suffix() -> None:
 
 def test_resolver_names_the_label_a_resolved_type_is_registered_under() -> None:
     resolver = _resolver(
-        {"p.models.Item": NodeType.CLASS, "p.models.Shape": NodeType.INTERFACE},
+        {"p.models.Item": cs.NodeLabel.CLASS, "p.models.Shape": cs.NodeLabel.INTERFACE},
         {},
     )
     assert resolver.label_for("p.models.Item") == cs.NodeLabel.CLASS.value
@@ -361,7 +360,10 @@ def test_resolver_maps_a_rust_crate_root_path_to_the_project() -> None:
     # the module by its path under the project, so the marker must not
     # block the scoped and suffix resolution.
     resolver = _resolver(
-        {"p.src.model.Item": NodeType.CLASS, "p.src.lib.load": NodeType.FUNCTION},
+        {
+            "p.src.model.Item": cs.NodeLabel.CLASS,
+            "p.src.lib.load": cs.NodeLabel.FUNCTION,
+        },
         {},
     )
     assert resolver.resolve("crate.model.Item", "p.src.lib") == "p.src.model.Item"
@@ -373,19 +375,24 @@ def test_resolver_does_not_bind_a_crate_root_path_to_a_nearer_module() -> None:
     # src/deep/model.rs over the crate's own src/model.rs, and two equally
     # plausible suffix matches stay unresolved rather than guessed.
     resolver = _resolver(
-        {"p.src.model.Item": NodeType.CLASS, "p.src.deep.model.Item": NodeType.CLASS},
+        {
+            "p.src.model.Item": cs.NodeLabel.CLASS,
+            "p.src.deep.model.Item": cs.NodeLabel.CLASS,
+        },
         {},
     )
     assert resolver.resolve("crate.model.Item", "p.src.deep.m") == "p.src.model.Item"
     # Two candidates at the same depth from the root: unresolved, not guessed.
     resolver = _resolver(
-        {"p.a.model.Item": NodeType.CLASS, "p.b.model.Item": NodeType.CLASS}, {}
+        {"p.a.model.Item": cs.NodeLabel.CLASS, "p.b.model.Item": cs.NodeLabel.CLASS}, {}
     )
     assert resolver.resolve("crate.model.Item", "p.a.m") is None
 
 
 def test_resolver_prefers_the_nearest_package_among_candidates() -> None:
-    resolver = _resolver({"p.a.x.Item": NodeType.CLASS, "p.b.Item": NodeType.CLASS}, {})
+    resolver = _resolver(
+        {"p.a.x.Item": cs.NodeLabel.CLASS, "p.b.Item": cs.NodeLabel.CLASS}, {}
+    )
     assert resolver.resolve("Item", "p.a.y") == "p.a.x.Item"
 
 

@@ -10,7 +10,6 @@ from ..types_defs import (
     FunctionRegistryTrieProtocol,
     FunctionSpanKey,
     LanguageQueries,
-    NodeType,
     SimpleNameLookup,
 )
 from .cpp import CppTypeInferenceEngine
@@ -563,7 +562,7 @@ class TypeInferenceEngine:
                 if p not in cs.RS_PATH_KEYWORDS
             ]
             qn = self._resolve_rust_import_path(
-                spelling, node_types=(NodeType.INTERFACE,)
+                spelling, node_types=(cs.NodeLabel.INTERFACE,)
             )
             suffix = cs.SEPARATOR_DOT + cs.SEPARATOR_DOT.join(parts)
             if qn.endswith(suffix) and self._rust_registered_trait(qn):
@@ -584,7 +583,7 @@ class TypeInferenceEngine:
     def _rust_registered_trait(self, qn: str) -> bool:
         # A Rust bound always names a trait, which registers as INTERFACE;
         # a same-named struct/enum must never satisfy it.
-        return self.function_registry.get(qn) == NodeType.INTERFACE
+        return self.function_registry.get(qn) == cs.NodeLabel.INTERFACE
 
     def _rust_binding_type_resolves(self, type_name: str, module_qn: str) -> bool:
         qn = self._resolve_rust_type_qn(type_name, module_qn)
@@ -785,13 +784,13 @@ class TypeInferenceEngine:
         """
         kind = self.function_registry.get(callable_qn)
         if (
-            kind not in (NodeType.METHOD, NodeType.FUNCTION)
+            kind not in (cs.NodeLabel.METHOD, cs.NodeLabel.FUNCTION)
             or (located := self._js_qn_path(callable_qn)) is None
         ):
             return None
         root, language, module_qn, path = located
         # A method's path holds its class; a function is read at module level.
-        if (kind == NodeType.FUNCTION) != (len(path) == 1):
+        if (kind == cs.NodeLabel.FUNCTION) != (len(path) == 1):
             return None
         return self.js_type_inference.callable_return_type(
             root, path, module_qn, language, static
@@ -1138,7 +1137,7 @@ class TypeInferenceEngine:
         if target := import_map.get(name):
             if cs.SEPARATOR_DOUBLE_COLON in target:
                 target = self._resolve_rust_import_path(
-                    target, node_types=(NodeType.FUNCTION,)
+                    target, node_types=(cs.NodeLabel.FUNCTION,)
                 )
             # A crate::/super::/self:: use target is already a project qn.
             return self.method_return_types.get(target)
@@ -1147,10 +1146,10 @@ class TypeInferenceEngine:
     def _resolve_rust_import_path(
         self,
         target: str,
-        node_types: tuple[NodeType, ...] = (
-            NodeType.CLASS,
-            NodeType.ENUM,
-            NodeType.TYPE,
+        node_types: tuple[cs.NodeLabel, ...] = (
+            cs.NodeLabel.CLASS,
+            cs.NodeLabel.ENUM,
+            cs.NodeLabel.TYPE,
         ),
     ) -> str:
         # Map a `use` target (`crate::cmd::Command`) to its registry qn. Prefer the

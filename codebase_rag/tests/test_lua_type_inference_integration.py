@@ -6,7 +6,6 @@ from codebase_rag import constants as cs
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.import_processor import ImportProcessor
 from codebase_rag.parsers.lua.type_inference import LuaTypeInferenceEngine
-from codebase_rag.types_defs import NodeType
 
 
 @pytest.fixture(scope="module")
@@ -206,8 +205,8 @@ end
         mock_function_registry.__contains__ = MagicMock(return_value=False)
         mock_function_registry.find_with_prefix = MagicMock(
             return_value=[
-                ("myapp.main.Widget:init", NodeType.METHOD),
-                ("myapp.main.Widget:render", NodeType.METHOD),
+                ("myapp.main.Widget:init", cs.NodeLabel.METHOD),
+                ("myapp.main.Widget:render", cs.NodeLabel.METHOD),
             ]
         )
 

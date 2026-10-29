@@ -3,8 +3,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from codebase_rag.constants import NodeLabel
 from codebase_rag.tests.conftest import get_node_names, get_qualified_names, run_updater
-from codebase_rag.types_defs import NodeType
 
 
 @pytest.fixture
@@ -1493,8 +1493,8 @@ enum Priority {
     run_updater(java_collections_project, mock_ingestor, skip_if_missing="java")
 
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
-    class_calls = [call for call in all_calls if call[0][0] == NodeType.CLASS]
-    enum_calls = [call for call in all_calls if call[0][0] == NodeType.ENUM]
+    class_calls = [call for call in all_calls if call[0][0] == NodeLabel.CLASS]
+    enum_calls = [call for call in all_calls if call[0][0] == NodeLabel.ENUM]
 
     created_classes = get_qualified_names(class_calls)
     created_enums = get_qualified_names(enum_calls)

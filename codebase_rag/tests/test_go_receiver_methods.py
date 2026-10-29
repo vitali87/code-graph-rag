@@ -228,11 +228,11 @@ def test_container_resolution_uses_directory_for_disambiguated_modules() -> None
     # (`proj.svc.types.go` beside a same-stem file of another language), so
     # qn-prefix package comparison places it in a phantom package. Directory
     # grouping must still bind the method to the real type node.
+    from codebase_rag.constants import NodeLabel
     from codebase_rag.parsers.function_ingest import FunctionIngestMixin
-    from codebase_rag.types_defs import NodeType
 
     class _Stub(FunctionIngestMixin):
-        function_registry = {"proj.svc.types.go.Point": NodeType.CLASS}  # type: ignore[assignment]
+        function_registry = {"proj.svc.types.go.Point": NodeLabel.CLASS}  # type: ignore[assignment]
         simple_name_lookup = {"Point": {"proj.svc.types.go.Point"}}
         module_qn_to_file_path = {
             "proj.svc.ops": Path("/repo/svc/ops.go"),

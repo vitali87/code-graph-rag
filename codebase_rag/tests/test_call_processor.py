@@ -9,7 +9,6 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.types_defs import NodeType
 
 if TYPE_CHECKING:
     from tree_sitter import Node, Parser
@@ -408,14 +407,14 @@ class TestResolveSuperCall:
         ]
 
         processor._resolver.function_registry["proj.module.ParentClass.constructor"] = (
-            NodeType.METHOD
+            cs.NodeLabel.METHOD
         )
         processor._resolver.function_registry["proj.module.ParentClass.someMethod"] = (
-            NodeType.METHOD
+            cs.NodeLabel.METHOD
         )
         processor._resolver.function_registry[
             "proj.module.GrandparentClass.inheritedMethod"
-        ] = NodeType.METHOD
+        ] = cs.NodeLabel.METHOD
 
         return processor
 
@@ -510,7 +509,7 @@ class TestResolveCppOperatorCall:
         processor = updater.factory.call_processor
 
         processor._resolver.function_registry["proj.module.MyClass.operator_custom"] = (
-            NodeType.METHOD
+            cs.NodeLabel.METHOD
         )
 
         result = processor._resolver.resolve_cpp_operator_call(
@@ -539,10 +538,10 @@ class TestResolveInheritedMethod:
         processor._resolver.class_inheritance["proj.Grandparent"] = []
 
         processor._resolver.function_registry["proj.Parent.parentMethod"] = (
-            NodeType.METHOD
+            cs.NodeLabel.METHOD
         )
         processor._resolver.function_registry["proj.Grandparent.grandparentMethod"] = (
-            NodeType.METHOD
+            cs.NodeLabel.METHOD
         )
 
         return processor
@@ -798,15 +797,17 @@ class TestResolveFunctionCall:
         processor = updater.factory.call_processor
 
         processor._resolver.function_registry["proj.module.local_func"] = (
-            NodeType.FUNCTION
+            cs.NodeLabel.FUNCTION
         )
         processor._resolver.function_registry["proj.module.MyClass.method"] = (
-            NodeType.METHOD
+            cs.NodeLabel.METHOD
         )
         processor._resolver.function_registry["proj.other.other_func"] = (
-            NodeType.FUNCTION
+            cs.NodeLabel.FUNCTION
         )
-        processor._resolver.function_registry["proj.utils.helper"] = NodeType.FUNCTION
+        processor._resolver.function_registry["proj.utils.helper"] = (
+            cs.NodeLabel.FUNCTION
+        )
 
         processor._resolver.import_processor.import_mapping["proj.module"] = {
             "other_func": "proj.other.other_func",
@@ -863,7 +864,9 @@ class TestResolveFunctionCall:
         )
         processor = updater.factory.call_processor
 
-        processor._resolver.function_registry["proj.models.User.save"] = NodeType.METHOD
+        processor._resolver.function_registry["proj.models.User.save"] = (
+            cs.NodeLabel.METHOD
+        )
         processor._resolver.import_processor.import_mapping["proj.service"] = {
             "User": "proj.models.User"
         }
@@ -889,7 +892,7 @@ class TestResolveFunctionCall:
         processor = updater.factory.call_processor
 
         iife_qn = "proj.module.__iife_func_1_5"
-        processor._resolver.function_registry[iife_qn] = NodeType.FUNCTION
+        processor._resolver.function_registry[iife_qn] = cs.NodeLabel.FUNCTION
 
         result = processor._resolver.resolve_function_call(
             "__iife_func_1_5", "proj.module"
@@ -913,13 +916,13 @@ class TestResolveChainedCall:
         processor = updater.factory.call_processor
 
         processor._resolver.function_registry["proj.models.QuerySet.filter"] = (
-            NodeType.METHOD
+            cs.NodeLabel.METHOD
         )
         processor._resolver.function_registry["proj.models.QuerySet.all"] = (
-            NodeType.METHOD
+            cs.NodeLabel.METHOD
         )
         processor._resolver.function_registry["proj.models.User.objects"] = (
-            NodeType.METHOD
+            cs.NodeLabel.METHOD
         )
 
         processor._resolver.import_processor.import_mapping["proj.views"] = {
@@ -968,9 +971,11 @@ class TestTryResolveMethod:
         )
         processor = updater.factory.call_processor
 
-        processor._resolver.function_registry["proj.models.User.save"] = NodeType.METHOD
+        processor._resolver.function_registry["proj.models.User.save"] = (
+            cs.NodeLabel.METHOD
+        )
         processor._resolver.function_registry["proj.models.BaseModel.validate"] = (
-            NodeType.METHOD
+            cs.NodeLabel.METHOD
         )
 
         processor._resolver.class_inheritance["proj.models.User"] = [
@@ -1020,7 +1025,7 @@ class TestResolveClassQnFromType:
         )
         processor = updater.factory.call_processor
 
-        processor._resolver.function_registry["proj.models.User"] = NodeType.CLASS
+        processor._resolver.function_registry["proj.models.User"] = cs.NodeLabel.CLASS
         processor._resolver.import_processor.import_mapping["proj.service"] = {
             "User": "proj.models.User"
         }

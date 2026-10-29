@@ -8,13 +8,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from codebase_rag.constants import NodeLabel
 from codebase_rag.tests.conftest import (
     get_node_names,
     get_nodes,
     get_relationships,
     run_updater,
 )
-from codebase_rag.types_defs import NodeType
 
 SKIP = "dart"
 
@@ -57,10 +57,10 @@ enum Planet {
     )
     run_updater(dart_project, mock_ingestor, skip_if_missing=SKIP)
 
-    classes = get_node_names(mock_ingestor, NodeType.CLASS)
+    classes = get_node_names(mock_ingestor, NodeLabel.CLASS)
     for name in ("types.Plain", "types.Shape", "types.Swimmer", "types.StringExt"):
         assert _endswith_any(classes, name), f"missing {name}: {classes}"
-    enums = get_node_names(mock_ingestor, NodeType.ENUM)
+    enums = get_node_names(mock_ingestor, NodeLabel.ENUM)
     assert _endswith_any(enums, "types.Color")
     assert _endswith_any(enums, "types.Planet")
 
@@ -89,8 +89,8 @@ class Repo {
     )
     run_updater(dart_project, mock_ingestor, skip_if_missing=SKIP)
 
-    funcs = get_node_names(mock_ingestor, NodeType.FUNCTION) | get_node_names(
-        mock_ingestor, NodeType.METHOD
+    funcs = get_node_names(mock_ingestor, NodeLabel.FUNCTION) | get_node_names(
+        mock_ingestor, NodeLabel.METHOD
     )
     for name in (
         "funcs.add",
@@ -124,7 +124,7 @@ mixin Swimmer {
     )
     run_updater(dart_project, mock_ingestor, skip_if_missing=SKIP)
 
-    methods = get_node_names(mock_ingestor, NodeType.METHOD)
+    methods = get_node_names(mock_ingestor, NodeLabel.METHOD)
     assert _endswith_any(methods, "mixed.Swimmer.speed"), sorted(methods)
     assert _endswith_any(methods, "mixed.Swimmer.swim"), sorted(methods)
     defines = {
@@ -153,7 +153,7 @@ def test_function_span_covers_body(
     )
     run_updater(dart_project, mock_ingestor, skip_if_missing=SKIP)
 
-    props = _props_for(mock_ingestor, NodeType.FUNCTION, "span.compute")
+    props = _props_for(mock_ingestor, NodeLabel.FUNCTION, "span.compute")
     assert props["start_line"] == 1
     assert props["end_line"] == 4, props
 

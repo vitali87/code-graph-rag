@@ -17,7 +17,6 @@ from codebase_rag.tests.conftest import (
     get_relationships,
     run_updater,
 )
-from codebase_rag.types_defs import NodeType
 
 if TYPE_CHECKING:
     from tree_sitter import Node, Parser
@@ -43,7 +42,7 @@ def julia_parser() -> "Parser":
     return parser
 
 
-def _props_for(mock_ingestor: MagicMock, node_type: NodeType, suffix: str) -> dict:
+def _props_for(mock_ingestor: MagicMock, node_type: cs.NodeLabel, suffix: str) -> dict:
     for call in get_nodes(mock_ingestor, node_type):
         props = call[0][1]
         if props["qualified_name"].endswith(suffix):
@@ -70,7 +69,7 @@ end
     )
     run_updater(julia_project, mock_ingestor, skip_if_missing=SKIP)
 
-    qns = get_node_names(mock_ingestor, NodeType.FUNCTION)
+    qns = get_node_names(mock_ingestor, cs.NodeLabel.FUNCTION)
     assert any(qn.endswith(".add") for qn in qns), qns
     assert any(qn.endswith(".identity2") for qn in qns), qns
     assert any(qn.endswith(".typed") for qn in qns), qns
@@ -94,7 +93,7 @@ named(a::Int = 1, b = "x") = a
     )
     run_updater(julia_project, mock_ingestor, skip_if_missing=SKIP)
 
-    qns = get_node_names(mock_ingestor, NodeType.FUNCTION)
+    qns = get_node_names(mock_ingestor, cs.NodeLabel.FUNCTION)
     assert any(qn.endswith(".first_fn") for qn in qns), qns
     assert any(qn.endswith(".addw") for qn in qns), qns
     assert any(qn.endswith(".function_begin") for qn in qns), qns
@@ -115,7 +114,7 @@ quad(x)::Int where T = x * 4
     )
     run_updater(julia_project, mock_ingestor, skip_if_missing=SKIP)
 
-    qns = get_node_names(mock_ingestor, NodeType.FUNCTION)
+    qns = get_node_names(mock_ingestor, cs.NodeLabel.FUNCTION)
     assert any(qn.endswith(".double") for qn in qns), qns
     assert any(qn.endswith(".quad") for qn in qns), qns
     assert not any("::" in qn or "where" in qn for qn in qns), qns
@@ -136,7 +135,7 @@ global G = 0
     )
     run_updater(julia_project, mock_ingestor, skip_if_missing=SKIP)
 
-    qns = get_node_names(mock_ingestor, NodeType.FUNCTION)
+    qns = get_node_names(mock_ingestor, cs.NodeLabel.FUNCTION)
     assert not any(qn.endswith(".x") for qn in qns), qns
     assert not any(qn.endswith(".y") for qn in qns), qns
     assert not any(qn.endswith(".C") for qn in qns), qns
@@ -152,7 +151,7 @@ Base.show(io, x) = print(io, x)
     )
     run_updater(julia_project, mock_ingestor, skip_if_missing=SKIP)
 
-    qns = get_node_names(mock_ingestor, NodeType.FUNCTION)
+    qns = get_node_names(mock_ingestor, cs.NodeLabel.FUNCTION)
     assert any(qn.endswith(".Base.show") for qn in qns), qns
 
 
@@ -173,9 +172,9 @@ end
     )
     run_updater(julia_project, mock_ingestor, skip_if_missing=SKIP)
 
-    props = _props_for(mock_ingestor, NodeType.FUNCTION, ".build")
+    props = _props_for(mock_ingestor, cs.NodeLabel.FUNCTION, ".build")
     assert props.get("is_macro") is True, props
-    props_plain = _props_for(mock_ingestor, NodeType.FUNCTION, ".plain")
+    props_plain = _props_for(mock_ingestor, cs.NodeLabel.FUNCTION, ".plain")
     assert props_plain.get("is_macro") is True, props_plain
 
     # A non-macro function must NOT carry the flag.
@@ -187,7 +186,7 @@ fn(x) = x
     )
     mock_ingestor.reset_mock()
     run_updater(julia_project, mock_ingestor, skip_if_missing=SKIP)
-    props_fn = _props_for(mock_ingestor, NodeType.FUNCTION, ".fn")
+    props_fn = _props_for(mock_ingestor, cs.NodeLabel.FUNCTION, ".fn")
     assert not props_fn.get("is_macro"), props_fn
 
 
@@ -202,7 +201,7 @@ M.f = x -> x + 1
     )
     run_updater(julia_project, mock_ingestor, skip_if_missing=SKIP)
 
-    qns = get_node_names(mock_ingestor, NodeType.FUNCTION)
+    qns = get_node_names(mock_ingestor, cs.NodeLabel.FUNCTION)
     assert any(qn.endswith(".sq") for qn in qns), qns
     assert any(qn.endswith(".M.f") for qn in qns), qns
 
@@ -240,7 +239,7 @@ end
     )
     run_updater(julia_project, mock_ingestor, skip_if_missing=SKIP)
 
-    class_qns = get_node_names(mock_ingestor, NodeType.CLASS)
+    class_qns = get_node_names(mock_ingestor, cs.NodeLabel.CLASS)
     for suffix in (".Animal", ".MyFloat", ".Point", ".Dog", ".Cat", ".Pair"):
         assert any(qn.endswith(suffix) for qn in class_qns), (suffix, class_qns)
     # Type parameters must not leak into the qn.
@@ -273,7 +272,7 @@ end
     )
     run_updater(julia_project, mock_ingestor, skip_if_missing=SKIP)
 
-    qns = get_node_names(mock_ingestor, NodeType.FUNCTION)
+    qns = get_node_names(mock_ingestor, cs.NodeLabel.FUNCTION)
     # C#/Java constructor convention: the type scope is part of the qn.
     assert any(qn.endswith(".Point.Point") for qn in qns), qns
 
@@ -297,7 +296,7 @@ end
     )
     run_updater(julia_project, mock_ingestor, skip_if_missing=SKIP)
 
-    qns = get_node_names(mock_ingestor, NodeType.FUNCTION)
+    qns = get_node_names(mock_ingestor, cs.NodeLabel.FUNCTION)
     assert any(qn.endswith(".Box.Box") for qn in qns), qns
     box_qns = [qn for qn in qns if ".Box" in qn]
     assert all("{" not in qn and "(" not in qn for qn in box_qns), box_qns
@@ -322,8 +321,8 @@ end
     )
     run_updater(julia_project, mock_ingestor, skip_if_missing=SKIP)
 
-    fn_qns = get_node_names(mock_ingestor, NodeType.FUNCTION)
-    class_qns = get_node_names(mock_ingestor, NodeType.CLASS)
+    fn_qns = get_node_names(mock_ingestor, cs.NodeLabel.FUNCTION)
+    class_qns = get_node_names(mock_ingestor, cs.NodeLabel.CLASS)
     module_qn = f"{julia_project.name}.main"
     assert f"{module_qn}.Differential" in class_qns, class_qns
     assert any(
@@ -346,7 +345,7 @@ end
     )
     run_updater(julia_project, mock_ingestor, skip_if_missing=SKIP)
 
-    qns = get_node_names(mock_ingestor, NodeType.FUNCTION)
+    qns = get_node_names(mock_ingestor, cs.NodeLabel.FUNCTION)
     assert any(qn.endswith(".op") for qn in qns), qns
     assert not any("$" in qn or "(" in qn for qn in qns), qns
 
@@ -378,8 +377,8 @@ end
     )
     run_updater(julia_project, mock_ingestor, skip_if_missing=SKIP)
 
-    fn_qns = get_node_names(mock_ingestor, NodeType.FUNCTION)
-    class_qns = get_node_names(mock_ingestor, NodeType.CLASS)
+    fn_qns = get_node_names(mock_ingestor, cs.NodeLabel.FUNCTION)
+    class_qns = get_node_names(mock_ingestor, cs.NodeLabel.CLASS)
     module_qn = f"{julia_project.name}.main"
     assert f"{module_qn}.Arr" in class_qns, class_qns
     assert not any(
@@ -456,11 +455,11 @@ end
     )
     run_updater(julia_project, mock_ingestor, skip_if_missing=SKIP)
 
-    for node_type in (NodeType.FUNCTION, NodeType.CLASS):
+    for node_type in (cs.NodeLabel.FUNCTION, cs.NodeLabel.CLASS):
         for qn in get_node_names(mock_ingestor, node_type):
             assert "\n" not in qn, qn
             assert len(qn) < 200, qn
-    qns = get_node_names(mock_ingestor, NodeType.FUNCTION)
+    qns = get_node_names(mock_ingestor, cs.NodeLabel.FUNCTION)
     assert any(qn.endswith(".after_fn") for qn in qns), qns
     assert any(qn.endswith(".after_helper") for qn in qns), qns
 
@@ -481,7 +480,7 @@ outer_fn(x) = x
     )
     run_updater(julia_project, mock_ingestor, skip_if_missing=SKIP)
 
-    qns = get_node_names(mock_ingestor, NodeType.FUNCTION)
+    qns = get_node_names(mock_ingestor, cs.NodeLabel.FUNCTION)
     assert any(qn.endswith(".Inner.inner_fn") for qn in qns), qns
     assert any(qn.endswith(".Inner.inner_explicit") for qn in qns), qns
     assert any(qn.endswith(".outer_fn") and ".Inner." not in qn for qn in qns), qns
@@ -502,7 +501,7 @@ primitive type MyFloat <: Signed 32 end
     )
     run_updater(julia_project, mock_ingestor, skip_if_missing=SKIP)
 
-    class_qns = get_node_names(mock_ingestor, NodeType.CLASS)
+    class_qns = get_node_names(mock_ingestor, cs.NodeLabel.CLASS)
     assert any(qn.endswith(".MyFloat") for qn in class_qns), class_qns
     inherits = {
         (c.args[0][2].split(".")[-1], c.args[2][2].split(".")[-1])
@@ -523,7 +522,7 @@ def test_arrow_in_call_not_registered_as_function(
     )
     run_updater(julia_project, mock_ingestor, skip_if_missing=SKIP)
 
-    fn_qns = get_node_names(mock_ingestor, NodeType.FUNCTION)
+    fn_qns = get_node_names(mock_ingestor, cs.NodeLabel.FUNCTION)
     assert not any(qn.endswith(".ys") for qn in fn_qns), fn_qns
 
 
@@ -586,7 +585,7 @@ x = 1
     )
     run_updater(julia_project, mock_ingestor, skip_if_missing=SKIP)
 
-    props = _props_for(mock_ingestor, NodeType.MODULE, ".main")
+    props = _props_for(mock_ingestor, cs.NodeLabel.MODULE, ".main")
     assert props.get("docstring") in (None, ""), props
 
 
@@ -606,7 +605,7 @@ end
     )
     run_updater(julia_project, mock_ingestor, skip_if_missing=SKIP)
 
-    fn_qns = get_node_names(mock_ingestor, NodeType.FUNCTION)
+    fn_qns = get_node_names(mock_ingestor, cs.NodeLabel.FUNCTION)
     assert not any(qn.endswith(".x") for qn in fn_qns), fn_qns
 
 

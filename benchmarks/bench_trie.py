@@ -3,8 +3,9 @@ import time
 from collections import defaultdict
 from pathlib import Path
 
+from codebase_rag.constants import NodeLabel
 from codebase_rag.function_registry import FunctionRegistryTrie
-from codebase_rag.types_defs import NodeType, SimpleNameLookup
+from codebase_rag.types_defs import SimpleNameLookup
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import harness  # noqa: E402
@@ -30,7 +31,7 @@ def generate_qualified_names(count: int) -> list[str]:
 def bench_insert(trie: FunctionRegistryTrie, names: list[str]) -> float:
     start = time.perf_counter()
     for name in names:
-        trie.insert(name, NodeType.FUNCTION)
+        trie.insert(name, NodeLabel.FUNCTION)
     return time.perf_counter() - start
 
 
@@ -42,7 +43,15 @@ def bench_lookup(trie: FunctionRegistryTrie, names: list[str]) -> float:
 
 
 def bench_find_ending_with(trie: FunctionRegistryTrie) -> float:
-    suffixes = ["process", "handle", "create", "build", "resolve", "validate", "execute"]
+    suffixes = [
+        "process",
+        "handle",
+        "create",
+        "build",
+        "resolve",
+        "validate",
+        "execute",
+    ]
     start = time.perf_counter()
     for suffix in suffixes:
         _ = trie.find_ending_with(suffix)
@@ -61,12 +70,12 @@ def bench_delete(names: list[str]) -> float:
     simple_lookup: SimpleNameLookup = defaultdict(set)
     trie = FunctionRegistryTrie(simple_name_lookup=simple_lookup)
     for name in names:
-        trie.insert(name, NodeType.FUNCTION)
+        trie.insert(name, NodeLabel.FUNCTION)
         simple_name = name.split(".")[-1]
         simple_lookup[simple_name].add(name)
 
     start = time.perf_counter()
-    for name in names[:len(names) // 4]:
+    for name in names[: len(names) // 4]:
         del trie[name]
     return time.perf_counter() - start
 
@@ -85,9 +94,9 @@ def main() -> None:
     sizes = [1000, 5000, 10000, 50000]
 
     for size in sizes:
-        print(f"\n{'='*105}")
+        print(f"\n{'=' * 105}")
         print(f"FunctionRegistryTrie Benchmark (n={size})")
-        print(f"{'='*105}")
+        print(f"{'=' * 105}")
 
         names = generate_qualified_names(size)
 

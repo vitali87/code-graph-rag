@@ -3,8 +3,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from codebase_rag.constants import NodeLabel
 from codebase_rag.tests.conftest import get_node_names, get_qualified_names, run_updater
-from codebase_rag.types_defs import NodeType
 
 
 @pytest.fixture
@@ -341,8 +341,8 @@ class WindowsTextField implements TextField {
     run_updater(java_real_world_project, mock_ingestor, skip_if_missing="java")
 
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
-    class_calls = [call for call in all_calls if call[0][0] == NodeType.CLASS]
-    interface_calls = [call for call in all_calls if call[0][0] == NodeType.INTERFACE]
+    class_calls = [call for call in all_calls if call[0][0] == NodeLabel.CLASS]
+    interface_calls = [call for call in all_calls if call[0][0] == NodeLabel.INTERFACE]
 
     created_classes = get_qualified_names(class_calls)
     created_interfaces = get_qualified_names(interface_calls)
@@ -569,8 +569,8 @@ class PaymentContext {
     run_updater(java_real_world_project, mock_ingestor, skip_if_missing="java")
 
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
-    class_calls = [call for call in all_calls if call[0][0] == NodeType.CLASS]
-    interface_calls = [call for call in all_calls if call[0][0] == NodeType.INTERFACE]
+    class_calls = [call for call in all_calls if call[0][0] == NodeLabel.CLASS]
+    interface_calls = [call for call in all_calls if call[0][0] == NodeLabel.INTERFACE]
 
     created_classes = get_qualified_names(class_calls)
     created_interfaces = get_qualified_names(interface_calls)
@@ -828,8 +828,8 @@ class CustomerRepository {
     run_updater(java_real_world_project, mock_ingestor, skip_if_missing="java")
 
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
-    class_calls = [call for call in all_calls if call[0][0] == NodeType.CLASS]
-    interface_calls = [call for call in all_calls if call[0][0] == NodeType.INTERFACE]
+    class_calls = [call for call in all_calls if call[0][0] == NodeLabel.CLASS]
+    interface_calls = [call for call in all_calls if call[0][0] == NodeLabel.INTERFACE]
 
     created_classes = get_qualified_names(class_calls)
     created_interfaces = get_qualified_names(interface_calls)
@@ -1027,8 +1027,8 @@ class SmtpEmailService implements EmailService {
     run_updater(java_real_world_project, mock_ingestor, skip_if_missing="java")
 
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
-    class_calls = [call for call in all_calls if call[0][0] == NodeType.CLASS]
-    interface_calls = [call for call in all_calls if call[0][0] == NodeType.INTERFACE]
+    class_calls = [call for call in all_calls if call[0][0] == NodeLabel.CLASS]
+    interface_calls = [call for call in all_calls if call[0][0] == NodeLabel.INTERFACE]
 
     created_classes = get_qualified_names(class_calls)
     created_interfaces = get_qualified_names(interface_calls)

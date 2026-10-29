@@ -25,7 +25,6 @@ from codebase_rag.language_spec import (
     LANGUAGE_SPECS,
     get_language_for_extension,
 )
-from codebase_rag.types_defs import NodeType
 
 
 class TestSupportedLanguageCoverage:
@@ -117,15 +116,6 @@ class TestAllExtensionsHaveLanguage:
             assert get_language_for_extension(ext) == lang
 
 
-class TestNodeTypesForLanguages:
-    @pytest.mark.parametrize("node_type", list(NodeType))
-    def test_all_node_types_have_constraints(self, node_type: NodeType) -> None:
-        assert node_type.value in NODE_UNIQUE_CONSTRAINTS, (
-            f"NodeType.{node_type.name} ({node_type.value}) missing from constraints. "
-            "Nodes of this type will be silently dropped."
-        )
-
-
 class TestNodeLabelStringValues:
     @pytest.mark.parametrize("label", list(NodeLabel))
     def test_node_label_value_is_pascal_case(self, label: NodeLabel) -> None:
@@ -135,18 +125,6 @@ class TestNodeLabelStringValues:
         )
         assert "_" not in value, (
             f"NodeLabel.{label.name} value '{value}' should be PascalCase, not snake_case"
-        )
-
-
-class TestNodeTypeStringValues:
-    @pytest.mark.parametrize("node_type", list(NodeType))
-    def test_node_type_value_is_pascal_case(self, node_type: NodeType) -> None:
-        value = node_type.value
-        assert value[0].isupper(), (
-            f"NodeType.{node_type.name} value '{value}' should start with uppercase"
-        )
-        assert "_" not in value, (
-            f"NodeType.{node_type.name} value '{value}' should be PascalCase"
         )
 
 

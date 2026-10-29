@@ -11,7 +11,6 @@ from collections.abc import (
     Sequence,
 )
 from dataclasses import dataclass
-from enum import StrEnum
 from pathlib import Path
 from types import MappingProxyType
 from typing import (
@@ -244,20 +243,8 @@ type DescribedNode = tuple[
 ]
 
 
-class NodeType(StrEnum):
-    FUNCTION = "Function"
-    METHOD = "Method"
-    CLASS = "Class"
-    MODULE = "Module"
-    INTERFACE = "Interface"
-    PACKAGE = "Package"
-    ENUM = "Enum"
-    TYPE = "Type"
-    UNION = "Union"
-
-
-type TrieNode = dict[str, TrieNode | QualifiedName | NodeType]
-type FunctionRegistry = dict[QualifiedName, NodeType]
+type TrieNode = dict[str, TrieNode | QualifiedName | NodeLabel]
+type FunctionRegistry = dict[QualifiedName, NodeLabel]
 
 
 class OverloadSignature(NamedTuple):
@@ -271,18 +258,20 @@ class OverloadSignature(NamedTuple):
 
 class FunctionRegistryTrieProtocol(Protocol):
     def __contains__(self, qualified_name: QualifiedName) -> bool: ...
-    def __getitem__(self, qualified_name: QualifiedName) -> NodeType: ...
+    def __getitem__(self, qualified_name: QualifiedName) -> NodeLabel: ...
 
     def __setitem__(
-        self, qualified_name: QualifiedName, func_type: NodeType
+        self, qualified_name: QualifiedName, func_type: NodeLabel
     ) -> None: ...
 
     def get(
-        self, qualified_name: QualifiedName, default: NodeType | None = None
-    ) -> NodeType | None: ...
+        self, qualified_name: QualifiedName, default: NodeLabel | None = None
+    ) -> NodeLabel | None: ...
     def keys(self) -> KeysView[QualifiedName]: ...
-    def items(self) -> ItemsView[QualifiedName, NodeType]: ...
-    def find_with_prefix(self, prefix: str) -> list[tuple[QualifiedName, NodeType]]: ...
+    def items(self) -> ItemsView[QualifiedName, NodeLabel]: ...
+    def find_with_prefix(
+        self, prefix: str
+    ) -> list[tuple[QualifiedName, NodeLabel]]: ...
 
     def find_with_prefix_and_suffix(
         self, prefix: str, suffix: str
@@ -295,13 +284,13 @@ class FunctionRegistryTrieProtocol(Protocol):
         natural_qn: QualifiedName,
         start_line: int,
         start_col: int = 0,
-        kind: NodeType | None = None,
+        kind: NodeLabel | None = None,
         origin: str | None = None,
     ) -> QualifiedName: ...
 
-    def claim_other_space(self, natural_qn: QualifiedName, kind: NodeType) -> bool: ...
+    def claim_other_space(self, natural_qn: QualifiedName, kind: NodeLabel) -> bool: ...
 
-    def type_kind(self, qualified_name: QualifiedName) -> NodeType | None: ...
+    def type_kind(self, qualified_name: QualifiedName) -> NodeLabel | None: ...
 
     def variants(self, qualified_name: QualifiedName) -> list[QualifiedName]: ...
 

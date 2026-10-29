@@ -25,7 +25,6 @@ from codebase_rag.parsers import method_ingest
 from codebase_rag.parsers.class_ingest import mixin as class_mixin
 from codebase_rag.services.protobuf_service import ProtobufFileIngestor
 from codebase_rag.tests.conftest import get_relationships, run_updater
-from codebase_rag.types_defs import NodeType
 from codec import schema_pb2 as pb
 from evals.cgr_graph import StatefulIngestor
 
@@ -610,41 +609,41 @@ def test_same_names_in_different_modules_are_unchanged(
 class TestRegistryDeclarationSpaces:
     def test_a_type_joins_a_value_without_a_variant(self) -> None:
         registry = FunctionRegistryTrie()
-        registry["m.input"] = NodeType.FUNCTION
-        qn = registry.register_unique_qn("m.input", 1, kind=NodeType.TYPE)
-        registry[qn] = NodeType.TYPE
+        registry["m.input"] = cs.NodeLabel.FUNCTION
+        qn = registry.register_unique_qn("m.input", 1, kind=cs.NodeLabel.TYPE)
+        registry[qn] = cs.NodeLabel.TYPE
 
         assert qn == "m.input"
-        assert registry.get("m.input") == NodeType.FUNCTION
-        assert registry.type_kind("m.input") == NodeType.TYPE
+        assert registry.get("m.input") == cs.NodeLabel.FUNCTION
+        assert registry.type_kind("m.input") == cs.NodeLabel.TYPE
         assert registry.variants("m.input") == ["m.input"]
 
     def test_a_value_takes_over_the_entry_from_an_earlier_type(self) -> None:
         registry = FunctionRegistryTrie()
-        registry["m.Box"] = NodeType.INTERFACE
-        qn = registry.register_unique_qn("m.Box", 3, kind=NodeType.CLASS)
-        registry[qn] = NodeType.CLASS
+        registry["m.Box"] = cs.NodeLabel.INTERFACE
+        qn = registry.register_unique_qn("m.Box", 3, kind=cs.NodeLabel.CLASS)
+        registry[qn] = cs.NodeLabel.CLASS
 
         assert qn == "m.Box"
-        assert registry.get("m.Box") == NodeType.CLASS
-        assert registry.type_kind("m.Box") == NodeType.INTERFACE
+        assert registry.get("m.Box") == cs.NodeLabel.CLASS
+        assert registry.type_kind("m.Box") == cs.NodeLabel.INTERFACE
         assert registry.variants("m.Box") == ["m.Box"]
 
     def test_the_same_space_still_takes_a_variant(self) -> None:
         registry = FunctionRegistryTrie()
-        registry["m.f"] = NodeType.FUNCTION
-        qn = registry.register_unique_qn("m.f", 5, kind=NodeType.FUNCTION)
+        registry["m.f"] = cs.NodeLabel.FUNCTION
+        qn = registry.register_unique_qn("m.f", 5, kind=cs.NodeLabel.FUNCTION)
 
         assert qn == f"m.f{cs.DUP_QN_MARKER}5"
         assert registry.variants("m.f") == ["m.f", qn]
 
     def test_a_third_declaration_after_the_pair_takes_a_variant(self) -> None:
         registry = FunctionRegistryTrie()
-        registry["m.input"] = NodeType.FUNCTION
-        registry[registry.register_unique_qn("m.input", 1, kind=NodeType.TYPE)] = (
-            NodeType.TYPE
+        registry["m.input"] = cs.NodeLabel.FUNCTION
+        registry[registry.register_unique_qn("m.input", 1, kind=cs.NodeLabel.TYPE)] = (
+            cs.NodeLabel.TYPE
         )
-        qn = registry.register_unique_qn("m.input", 9, kind=NodeType.INTERFACE)
+        qn = registry.register_unique_qn("m.input", 9, kind=cs.NodeLabel.INTERFACE)
 
         assert qn == f"m.input{cs.DUP_QN_MARKER}9"
 
@@ -652,16 +651,16 @@ class TestRegistryDeclarationSpaces:
         # Only the TS passes opt in; every other language's collision between a
         # type and a value is decided exactly as before.
         registry = FunctionRegistryTrie()
-        registry["m.input"] = NodeType.FUNCTION
+        registry["m.input"] = cs.NodeLabel.FUNCTION
         qn = registry.register_unique_qn("m.input", 1)
 
         assert qn == f"m.input{cs.DUP_QN_MARKER}1"
 
     def test_deleting_the_name_forgets_both_sides(self) -> None:
         registry = FunctionRegistryTrie()
-        registry["m.input"] = NodeType.FUNCTION
-        registry[registry.register_unique_qn("m.input", 1, kind=NodeType.TYPE)] = (
-            NodeType.TYPE
+        registry["m.input"] = cs.NodeLabel.FUNCTION
+        registry[registry.register_unique_qn("m.input", 1, kind=cs.NodeLabel.TYPE)] = (
+            cs.NodeLabel.TYPE
         )
         del registry["m.input"]
 
@@ -698,11 +697,11 @@ class TestMethodContainerOnATwin:
     # pick the parent: an interface member stays on the Interface node.
 
     @staticmethod
-    def _registry(value_kind: NodeType, qn: str) -> FunctionRegistryTrie:
+    def _registry(value_kind: cs.NodeLabel, qn: str) -> FunctionRegistryTrie:
         registry = FunctionRegistryTrie()
         registry[qn] = value_kind
-        registry[registry.register_unique_qn(qn, 1, kind=NodeType.INTERFACE)] = (
-            NodeType.INTERFACE
+        registry[registry.register_unique_qn(qn, 1, kind=cs.NodeLabel.INTERFACE)] = (
+            cs.NodeLabel.INTERFACE
         )
         return registry
 
@@ -732,10 +731,12 @@ class TestMethodContainerOnATwin:
         ]
 
     @pytest.mark.parametrize(
-        "value_kind", [NodeType.FUNCTION, NodeType.CLASS], ids=["function", "class"]
+        "value_kind",
+        [cs.NodeLabel.FUNCTION, cs.NodeLabel.CLASS],
+        ids=["function", "class"],
     )
     def test_an_interface_member_stays_on_the_interface(
-        self, value_kind: NodeType
+        self, value_kind: cs.NodeLabel
     ) -> None:
         registry = self._registry(value_kind, "m.Opts")
 
@@ -748,7 +749,7 @@ class TestMethodContainerOnATwin:
     def test_the_value_side_keeps_its_own_members(self) -> None:
         # `class Box` merged with `interface Box`: the class's members stay on
         # the Class node.
-        registry = self._registry(NodeType.CLASS, "m.Box")
+        registry = self._registry(cs.NodeLabel.CLASS, "m.Box")
 
         parents = self._defines_method_parents(registry, "m.Box", cs.NodeLabel.CLASS)
 
@@ -758,7 +759,7 @@ class TestMethodContainerOnATwin:
         # A caller that only knows "some type" passes Class; the registered
         # label still wins when no twin shares the name.
         registry = FunctionRegistryTrie()
-        registry["m.Opts"] = NodeType.INTERFACE
+        registry["m.Opts"] = cs.NodeLabel.INTERFACE
 
         parents = self._defines_method_parents(registry, "m.Opts", cs.NodeLabel.CLASS)
 

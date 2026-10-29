@@ -3,6 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from codebase_rag.constants import NodeLabel
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.tests.conftest import (
@@ -10,7 +11,6 @@ from codebase_rag.tests.conftest import (
     get_qualified_names,
     get_relationships,
 )
-from codebase_rag.types_defs import NodeType
 
 
 @pytest.fixture
@@ -420,8 +420,8 @@ public class InterfaceExample {
 
     all_calls = mock_ingestor.ensure_node_batch.call_args_list
 
-    class_calls = [call for call in all_calls if call[0][0] == NodeType.CLASS]
-    interface_calls = [call for call in all_calls if call[0][0] == NodeType.INTERFACE]
+    class_calls = [call for call in all_calls if call[0][0] == NodeLabel.CLASS]
+    interface_calls = [call for call in all_calls if call[0][0] == NodeLabel.INTERFACE]
 
     created_classes = get_qualified_names(class_calls)
     created_interfaces = get_qualified_names(interface_calls)

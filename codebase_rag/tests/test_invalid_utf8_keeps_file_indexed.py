@@ -36,7 +36,7 @@ from codebase_rag.tests.conftest import (
     get_node_names,
     get_relationships,
 )
-from codebase_rag.types_defs import NodeType, RelationshipType
+from codebase_rag.types_defs import RelationshipType
 
 # The bad bytes precede the dot, so they land inside the node
 # `_generic_get_name` decodes AS A WHOLE. That is what makes the decode raise
@@ -59,8 +59,8 @@ _UNTOUCHED_SIBLING = "proj.a.other"
 
 def _definitions(mock_ingestor: MagicMock) -> set[str]:
     """Every Function/Method qualified name written to the graph."""
-    return get_node_names(mock_ingestor, NodeType.FUNCTION.value) | get_node_names(
-        mock_ingestor, NodeType.METHOD.value
+    return get_node_names(mock_ingestor, cs.NodeLabel.FUNCTION.value) | get_node_names(
+        mock_ingestor, cs.NodeLabel.METHOD.value
     )
 
 
@@ -136,5 +136,5 @@ def test_a_bad_byte_in_a_decorator_does_not_drop_the_file(
     project.mkdir(parents=True, exist_ok=True)
     (project / "a.py").write_bytes(_BAD_DECORATOR)
     create_and_run_updater(project, mock_ingestor)
-    found = get_node_names(mock_ingestor, NodeType.FUNCTION.value)
+    found = get_node_names(mock_ingestor, cs.NodeLabel.FUNCTION.value)
     assert {"pyproj.a.f", "pyproj.a.other"} <= found

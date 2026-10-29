@@ -4,9 +4,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.constants import SEPARATOR_DOT
+from codebase_rag.constants import SEPARATOR_DOT, NodeLabel
 from codebase_rag.tests.conftest import get_node_names, get_relationships, run_updater
-from codebase_rag.types_defs import NodeType
 
 
 @pytest.fixture
@@ -1336,7 +1335,7 @@ console.log(dog.eat('bone')); // Works due to prototype chain
     )
 
     all_nodes = mock_ingestor.ensure_node_batch.call_args_list
-    function_nodes = [call for call in all_nodes if call[0][0] == NodeType.FUNCTION]
+    function_nodes = [call for call in all_nodes if call[0][0] == NodeLabel.FUNCTION]
 
     comprehensive_functions = [
         call

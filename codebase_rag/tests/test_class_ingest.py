@@ -1426,11 +1426,11 @@ class TestGetNodeTypeForInheritance:
             parsers=parsers,
             queries=queries,
         )
-        from codebase_rag.types_defs import NodeType
+        from codebase_rag.constants import NodeLabel
 
-        updater.factory.function_registry["my.module.BaseClass"] = NodeType.CLASS
-        updater.factory.function_registry["my.module.IInterface"] = NodeType.INTERFACE
-        updater.factory.function_registry["my.module.MyEnum"] = NodeType.ENUM
+        updater.factory.function_registry["my.module.BaseClass"] = NodeLabel.CLASS
+        updater.factory.function_registry["my.module.IInterface"] = NodeLabel.INTERFACE
+        updater.factory.function_registry["my.module.MyEnum"] = NodeLabel.ENUM
         return updater
 
     def test_returns_class_for_known_class(self, mixin_instance: GraphUpdater) -> None:

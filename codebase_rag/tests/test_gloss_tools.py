@@ -22,7 +22,7 @@ from codebase_rag import gloss
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.mcp.tools import MCPToolsRegistry
 from codebase_rag.tools import tool_descriptions as td
-from codebase_rag.types_defs import NodeType, PropertyDict, ResultRow
+from codebase_rag.types_defs import PropertyDict, ResultRow
 
 P = "proj"
 RUN = f"{P}.app.run"
@@ -868,7 +868,7 @@ def test_restoring_a_gloss_edge_bypasses_the_capture_filter(tmp_path: Path) -> N
         ingestor=ingestor, repo_path=tmp_path, parsers={}, queries={}
     )
     assert not updater.capture.rel_enabled(cs.RelationshipType.ANNOTATES)
-    updater.function_registry[RUN] = NodeType.FUNCTION
+    updater.function_registry[RUN] = cs.NodeLabel.FUNCTION
     updater._restore_inbound_edges(
         [
             _captured("Gloss", "gloss:abc", "ANNOTATES", RUN),

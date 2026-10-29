@@ -383,8 +383,8 @@ class TestIngestion:
         parser alone: a correct parser whose output is never attached would
         satisfy every test in the class above and change nothing observable.
         """
+        from codebase_rag.constants import NodeLabel
         from codebase_rag.tests.conftest import run_updater
-        from codebase_rag.types_defs import NodeType
 
         project = temp_repo / "md_fm"
         project.mkdir()
@@ -398,7 +398,7 @@ class TestIngestion:
         modules = [
             call.args[1]
             for call in mock_ingestor.ensure_node_batch.call_args_list
-            if call.args[0] == NodeType.MODULE
+            if call.args[0] == NodeLabel.MODULE
             and str(call.args[1].get("qualified_name", "")).endswith("plan_md")
         ]
 
@@ -429,8 +429,8 @@ class TestIngestion:
         it read correctly against a single ingest and left the re-ingest path
         broken, which is where the defect lives (reported on #1488).
         """
+        from codebase_rag.constants import NodeLabel
         from codebase_rag.tests.conftest import run_updater
-        from codebase_rag.types_defs import NodeType
 
         project = temp_repo / "md_plain"
         project.mkdir()
@@ -441,7 +441,7 @@ class TestIngestion:
         modules = [
             call.args[1]
             for call in mock_ingestor.ensure_node_batch.call_args_list
-            if call.args[0] == NodeType.MODULE
+            if call.args[0] == NodeLabel.MODULE
             and str(call.args[1].get("qualified_name", "")).endswith("notes_md")
         ]
 
@@ -462,17 +462,17 @@ class TestIngestion:
         differing from the first -- "changed" would also be satisfied by
         writing some other wrong value.
         """
+        from codebase_rag.constants import NodeLabel
         from codebase_rag.tests.conftest import (
             force_mtime_after_cache,
             run_updater,
         )
-        from codebase_rag.types_defs import NodeType
 
         def module_props(ingestor: MagicMock) -> list[dict]:
             return [
                 call.args[1]
                 for call in ingestor.ensure_node_batch.call_args_list
-                if call.args[0] == NodeType.MODULE
+                if call.args[0] == NodeLabel.MODULE
                 and str(call.args[1].get("qualified_name", "")).endswith("doc_md")
             ]
 

@@ -1,8 +1,8 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from codebase_rag.constants import NodeLabel
 from codebase_rag.tests.conftest import run_updater
-from codebase_rag.types_defs import NodeType
 
 
 def test_lua_arithmetic_metamethods(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -103,7 +103,7 @@ print(tostring(scaled))
     created_functions = [
         c
         for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c[0][0] == NodeType.FUNCTION
+        if c[0][0] == NodeLabel.FUNCTION
     ]
     fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 
@@ -227,7 +227,7 @@ end
     created_functions = [
         c
         for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c[0][0] == NodeType.FUNCTION
+        if c[0][0] == NodeLabel.FUNCTION
     ]
     fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 
@@ -395,7 +395,7 @@ print("Computed:", props.computed)
     created_functions = [
         c
         for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c[0][0] == NodeType.FUNCTION
+        if c[0][0] == NodeLabel.FUNCTION
     ]
     fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 
@@ -562,7 +562,7 @@ emitter("test", "Hello World")
     created_functions = [
         c
         for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c[0][0] == NodeType.FUNCTION
+        if c[0][0] == NodeLabel.FUNCTION
     ]
     fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 
@@ -769,7 +769,7 @@ print("Found by ID:", registry:get_by_id(id1).data)
     created_functions = [
         c
         for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c[0][0] == NodeType.FUNCTION
+        if c[0][0] == NodeLabel.FUNCTION
     ]
     fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 

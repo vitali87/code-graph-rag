@@ -10,7 +10,7 @@ from tree_sitter import Node, QueryCursor
 
 from ... import constants as cs
 from ... import logs as ls
-from ...types_defs import ASTNode, FunctionRegistryTrieProtocol, NodeType
+from ...types_defs import ASTNode, FunctionRegistryTrieProtocol
 from ..utils import get_cached_query, safe_decode_text, unparenthesized
 from . import utils as ut
 
@@ -388,7 +388,7 @@ class JsTypeInferenceEngine:
             (
                 qn
                 for qn in candidates
-                if self.function_registry.get(qn) == NodeType.INTERFACE
+                if self.function_registry.get(qn) == cs.NodeLabel.INTERFACE
             ),
             None,
         )
@@ -899,7 +899,7 @@ class JsTypeInferenceEngine:
                 full_class_qn = f"{imported_qn}{cs.SEPARATOR_DOT}{class_name}"
                 if (
                     full_class_qn in self.function_registry
-                    and self.function_registry[full_class_qn] == NodeType.CLASS
+                    and self.function_registry[full_class_qn] == cs.NodeLabel.CLASS
                 ):
                     return full_class_qn
 
@@ -908,7 +908,7 @@ class JsTypeInferenceEngine:
         local_class_qn = f"{module_qn}{cs.SEPARATOR_DOT}{class_name}"
         if (
             local_class_qn in self.function_registry
-            and self.function_registry[local_class_qn] == NodeType.CLASS
+            and self.function_registry[local_class_qn] == cs.NodeLabel.CLASS
         ):
             return local_class_qn
 

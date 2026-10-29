@@ -6,7 +6,6 @@ from codebase_rag import constants as cs
 from codebase_rag.parsers.import_processor import ImportProcessor
 from codebase_rag.parsers.lua.type_inference import LuaTypeInferenceEngine
 from codebase_rag.tests.conftest import MockNode, create_mock_node
-from codebase_rag.types_defs import NodeType
 
 
 def create_lua_variable_declaration(
@@ -110,8 +109,8 @@ class TestResolveLuaClassName:
         mock_function_registry.__contains__ = MagicMock(return_value=False)
         mock_function_registry.find_with_prefix = MagicMock(
             return_value=[
-                ("myapp.main.Application:new", NodeType.METHOD),
-                ("myapp.main.Application:run", NodeType.METHOD),
+                ("myapp.main.Application:new", cs.NodeLabel.METHOD),
+                ("myapp.main.Application:run", cs.NodeLabel.METHOD),
             ]
         )
 
@@ -366,7 +365,7 @@ class TestLuaTypeInferenceEdgeCases:
         mock_function_registry.__contains__ = MagicMock(return_value=False)
         mock_function_registry.find_with_prefix = MagicMock(
             return_value=[
-                ("myapp.main.Utils.staticMethod", NodeType.FUNCTION),
+                ("myapp.main.Utils.staticMethod", cs.NodeLabel.FUNCTION),
             ]
         )
 
@@ -382,7 +381,7 @@ class TestLuaTypeInferenceEdgeCases:
         mock_function_registry.__contains__ = MagicMock(return_value=False)
         mock_function_registry.find_with_prefix = MagicMock(
             return_value=[
-                ("myapp.main.Widget:init", NodeType.METHOD),
+                ("myapp.main.Widget:init", cs.NodeLabel.METHOD),
             ]
         )
 

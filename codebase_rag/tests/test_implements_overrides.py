@@ -13,9 +13,9 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from codebase_rag.constants import NodeLabel
 from codebase_rag.function_registry import FunctionRegistryTrie
 from codebase_rag.parsers.class_ingest.method_override import check_method_overrides
-from codebase_rag.types_defs import NodeType
 from evals.cgr_graph import capture
 from evals.dead_code import cgr_dead_code, default_dead_code_config
 
@@ -133,7 +133,7 @@ def test_guard_skips_method_of_unregistered_class() -> None:
     # unchanged file on an incremental run has no local entry) has no
     # hierarchy to walk; the guard must bail without emitting anything.
     registry = FunctionRegistryTrie()
-    registry["m.Impl.run"] = NodeType.METHOD
+    registry["m.Impl.run"] = NodeLabel.METHOD
     ingestor = MagicMock()
     check_method_overrides("m.Impl.run", "run", "m.Impl", registry, {}, ingestor)
     ingestor.ensure_relationship_batch.assert_not_called()
@@ -141,7 +141,7 @@ def test_guard_skips_method_of_unregistered_class() -> None:
     # The same class known ONLY as an implementer (empty class_inheritance)
     # must pass the guard and reach the interface method through the
     # implemented-interfaces side of the walk.
-    registry["m.Svc.run"] = NodeType.METHOD
+    registry["m.Svc.run"] = NodeLabel.METHOD
     check_method_overrides(
         "m.Impl.run", "run", "m.Impl", registry, {}, ingestor, {"m.Impl": ["m.Svc"]}
     )

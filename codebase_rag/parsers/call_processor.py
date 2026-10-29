@@ -28,7 +28,6 @@ from ..types_defs import (
     FunctionRegistryTrieProtocol,
     FunctionSpanKey,
     LanguageQueries,
-    NodeType,
     PropertyDict,
     ScalaBinding,
 )
@@ -242,7 +241,9 @@ _TYPED_LANGUAGES = frozenset(
 # declarator-aware extractor rather than a plain child_by_field_name("name").
 _C_FAMILY_LANGUAGES = frozenset({cs.SupportedLanguage.C, cs.SupportedLanguage.CPP})
 # The node kinds a C++ type written in a function body registers as.
-_CPP_LOCAL_TYPE_NODE_TYPES = frozenset({NodeType.CLASS, NodeType.UNION, NodeType.ENUM})
+_CPP_LOCAL_TYPE_NODE_TYPES = frozenset(
+    {cs.NodeLabel.CLASS, cs.NodeLabel.UNION, cs.NodeLabel.ENUM}
+)
 _JS_TS_LANGUAGES = cs.JS_TS_LANGUAGES
 # Python callers whose own bindings shadow module and class names for the
 # whole body (issue #2666); a class body or module is excluded on purpose.
@@ -2622,9 +2623,9 @@ class CallProcessor:
             for variant in variants:
                 targets: list[tuple[str, str]] = []
                 match registry.get(variant):
-                    case NodeType.FUNCTION | NodeType.METHOD as kind:
-                        targets.append((cs.NodeLabel(kind.value), variant))
-                    case NodeType.CLASS:
+                    case cs.NodeLabel.FUNCTION | cs.NodeLabel.METHOD as kind:
+                        targets.append((kind, variant))
+                    case cs.NodeLabel.CLASS:
                         # `_emit_rel` writes a CALLS to a Class as INSTANTIATES.
                         targets.append((cs.NodeLabel.CLASS, variant))
                         init_qn = f"{variant}{cs.SEPARATOR_DOT}{cs.PY_METHOD_INIT}"
@@ -5552,7 +5553,7 @@ class CallProcessor:
             )
             target_qn = f"{owner_qn}{cs.SEPARATOR_DOT}{delegation.name or simple}"
             if (
-                registry.get(target_qn) != NodeType.METHOD
+                registry.get(target_qn) != cs.NodeLabel.METHOD
                 or target_qn not in constructors
             ):
                 continue
@@ -5822,11 +5823,11 @@ class CallProcessor:
                 # callable takes the edge, under its OWN label — a
                 # mislabeled edge is a phantom the database drops.
                 target_type = self._resolver.function_registry.get(target_qn)
-                if target_type not in (NodeType.FUNCTION, NodeType.METHOD):
+                if target_type not in (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD):
                     continue
                 target_label = (
                     cs.NodeLabel.METHOD
-                    if target_type == NodeType.METHOD
+                    if target_type == cs.NodeLabel.METHOD
                     else cs.NodeLabel.FUNCTION
                 )
                 ctx.ensure_rel(
@@ -5873,7 +5874,7 @@ class CallProcessor:
             ctor_qn = (
                 f"{class_variant}{cs.SEPARATOR_DOT}{cs.SCALA_AUXILIARY_CONSTRUCTOR}"
             )
-            if registry.get(ctor_qn) != NodeType.METHOD:
+            if registry.get(ctor_qn) != cs.NodeLabel.METHOD:
                 continue
             for variant in registry.variants(ctor_qn):
                 ctx.ensure_rel(
@@ -6905,11 +6906,11 @@ class CallProcessor:
             return None
         root_callee = self._resolve_go_callee(ctx, root, root_name, call_var_types)
         if root_callee is None or root_callee[0] not in (
-            NodeType.FUNCTION,
-            NodeType.METHOD,
+            cs.NodeLabel.FUNCTION,
+            cs.NodeLabel.METHOD,
         ):
             return None
-        owned = root_callee[0] == NodeType.FUNCTION
+        owned = root_callee[0] == cs.NodeLabel.FUNCTION
         if self._resolver.last_resolution != cs.EdgeResolution.EXACT:
             return owned, None
         return owned, self._go_result_class(root_callee)
@@ -7000,7 +7001,7 @@ class CallProcessor:
             # Build-variant files may each declare the function; they count as
             # one when every copy returns the same struct.
             results = {
-                self._go_result_class((NodeType.FUNCTION, qn))
+                self._go_result_class((cs.NodeLabel.FUNCTION, qn))
                 for qn in self._go_package_functions(package_qn, lookup.name)
                 if self._go_function_visible_to(
                     qn.rpartition(cs.SEPARATOR_DOT)[0], module_qn, own_package
@@ -7049,7 +7050,7 @@ class CallProcessor:
         return [
             qn
             for qn in registry.find_with_prefix_and_suffix(package_qn, name)
-            if registry.get(qn) == NodeType.FUNCTION
+            if registry.get(qn) == cs.NodeLabel.FUNCTION
             and qn.count(cs.SEPARATOR_DOT) == depth
         ]
 
@@ -7094,7 +7095,7 @@ class CallProcessor:
         result = self._resolver.type_inference.method_return_types.get(callee_qn)
         if not result:
             return None
-        depth = 2 if callee_type == NodeType.METHOD else 1
+        depth = 2 if callee_type == cs.NodeLabel.METHOD else 1
         declaring_module = callee_qn.rsplit(cs.SEPARATOR_DOT, depth)[0]
         return self._go_struct_class(result, declaring_module)
 
@@ -7293,7 +7294,7 @@ class CallProcessor:
         # constructs a class (`Cmp(x)`); only a class is a functor.
         if (
             class_qn is None
-            or self._resolver.function_registry.get(class_qn) != NodeType.CLASS
+            or self._resolver.function_registry.get(class_qn) != cs.NodeLabel.CLASS
         ):
             return None
         return class_qn
@@ -7507,7 +7508,7 @@ class CallProcessor:
         owner_variants = [
             variant
             for variant in self._resolver.function_registry.variants(owner_qn)
-            if self._resolver.function_registry.get(variant) == NodeType.CLASS
+            if self._resolver.function_registry.get(variant) == cs.NodeLabel.CLASS
         ]
         # Twin classes take the same stamp the class branch gives a
         # two-candidate construction (local review).
@@ -7712,13 +7713,13 @@ class CallProcessor:
         # Julia call syntax dispatches in the FUNCTION namespace:
         # a same-named free function wins over the type (no
         # INSTANTIATES) and a macro is not a call target.
-        julia_fn_variants: list[tuple[NodeType, str]] = []
+        julia_fn_variants: list[tuple[cs.NodeLabel, str]] = []
         if ctx.language == cs.SupportedLanguage.JULIA:
             julia_fn_variants = [
                 (node_type, variant)
                 for variant in class_variants
                 if (node_type := self._resolver.function_registry.get(variant))
-                in (NodeType.FUNCTION, NodeType.METHOD)
+                in (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD)
                 and variant not in self.macro_qns
             ]
         self._resolution = (
@@ -7733,7 +7734,7 @@ class CallProcessor:
             # variants are instantiable, and a mismatched label is
             # a phantom the database drops (issue #652).
             variant_type = self._resolver.function_registry.get(class_variant)
-            if variant_type is not None and variant_type != NodeType.CLASS:
+            if variant_type is not None and variant_type != cs.NodeLabel.CLASS:
                 if ctx.is_python:
                     self._emit_python_binding_twin(ctx, class_variant, variant_type)
                 continue
@@ -7790,7 +7791,7 @@ class CallProcessor:
         self,
         ctx: _CallScanContext,
         callee_qn: str,
-        fn_variants: list[tuple[NodeType, str]],
+        fn_variants: list[tuple[cs.NodeLabel, str]],
     ) -> None:
         # A shadowing free function wins, else the inner same-name
         # constructor (like Java/C#). The resolution describes the
@@ -7851,7 +7852,7 @@ class CallProcessor:
             (ctor_type, variant)
             for class_variant in class_variants
             if self._resolver.function_registry.get(class_variant)
-            in (None, NodeType.CLASS)
+            in (None, cs.NodeLabel.CLASS)
             for ctor_type, ctor_qn in sorted(
                 self._resolver.java_constructor_targets(class_variant)
             )
@@ -7893,7 +7894,7 @@ class CallProcessor:
             for target_type, target_qn in targets
             for variant in registry.variants(target_qn)
             if (label := registry.get(variant) or target_type)
-            in (NodeType.FUNCTION, NodeType.METHOD)
+            in (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD)
         ]
         if not edges:
             # Java sees same-package definitions without an import, so the
@@ -7936,7 +7937,7 @@ class CallProcessor:
         if callee is None:
             self._note_unresolved(ctx.module_qn, written_simple_name(type_name))
             return
-        if self._resolver.function_registry.get(callee[1]) == NodeType.CLASS:
+        if self._resolver.function_registry.get(callee[1]) == cs.NodeLabel.CLASS:
             self._redirect_construction(
                 ctx, callee[1], ctor_rel=cs.RelationshipType.REFERENCES
             )
@@ -8026,8 +8027,8 @@ class CallProcessor:
         # register).
         target_type = self._resolver.function_registry.get(target_qn)
         if target_type is not None and target_type not in (
-            NodeType.FUNCTION,
-            NodeType.METHOD,
+            cs.NodeLabel.FUNCTION,
+            cs.NodeLabel.METHOD,
         ):
             if ctx.is_python:
                 self._emit_python_binding_twin(ctx, target_qn, target_type)
@@ -8036,7 +8037,7 @@ class CallProcessor:
         # or anonymous-object member registers as a Function beside the
         # class's same-named Method, and the primary's label on the other is
         # the same phantom (issue #2848).
-        label = callee_type if target_type is None else cs.NodeLabel(target_type.value)
+        label = callee_type if target_type is None else target_type
         ctx.ensure_rel(
             ctx.caller_spec,
             cs.RelationshipType.CALLS,
@@ -8066,20 +8067,20 @@ class CallProcessor:
         }
 
     def _emit_python_binding_twin(
-        self, ctx: _CallScanContext, twin_qn: str, twin_type: NodeType
+        self, ctx: _CallScanContext, twin_qn: str, twin_type: cs.NodeLabel
     ) -> None:
         # A Python name holds one binding at a time, so a class and a
         # same-named def (a docs shim, an ImportError fallback) are both what
         # `Tool()` may run. Skipping the twin of the other kind bound every
         # construction to the shim alone (issue #2621).
-        if twin_type in (NodeType.FUNCTION, NodeType.METHOD):
+        if twin_type in (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD):
             ctx.ensure_rel(
                 ctx.caller_spec,
                 cs.RelationshipType.CALLS,
-                (cs.NodeLabel(twin_type.value), cs.KEY_QUALIFIED_NAME, twin_qn),
+                (twin_type, cs.KEY_QUALIFIED_NAME, twin_qn),
             )
             return
-        if twin_type != NodeType.CLASS:
+        if twin_type != cs.NodeLabel.CLASS:
             return
         ctx.ensure_rel(
             ctx.caller_spec,
@@ -8293,7 +8294,7 @@ class CallProcessor:
             in self._resolver.import_processor.conditional_imports.get(
                 ctx.module_qn, ()
             )
-            and self._resolver.function_registry.get(local_qn) == NodeType.FUNCTION
+            and self._resolver.function_registry.get(local_qn) == cs.NodeLabel.FUNCTION
         ):
             for variant in self._resolver.function_registry.variants(local_qn):
                 ctx.ensure_rel(
@@ -9122,7 +9123,7 @@ class CallProcessor:
         registry = self._resolver.function_registry
         # The file's own definition is what the name denotes, static or not.
         own_qn = f"{module_qn}{cs.SEPARATOR_DOT}{name}"
-        if registry.get(own_qn) == NodeType.FUNCTION:
+        if registry.get(own_qn) == cs.NodeLabel.FUNCTION:
             variants = registry.variants(own_qn)
             return variants, (
                 cs.EdgeResolution.OVERLOAD
@@ -9141,7 +9142,7 @@ class CallProcessor:
         targets = [
             variant
             for qn in registry.find_ending_with(name)
-            if registry.get(qn) == NodeType.FUNCTION
+            if registry.get(qn) == cs.NodeLabel.FUNCTION
             and self._c_links_externally(qn, name, module_qn)
             for variant in registry.variants(qn)
         ]
@@ -9239,7 +9240,7 @@ class CallProcessor:
         self._site_node = node
         for class_variant in registry.variants(class_qn):
             variant_type = registry.get(class_variant)
-            if variant_type is not None and variant_type != NodeType.CLASS:
+            if variant_type is not None and variant_type != cs.NodeLabel.CLASS:
                 continue
             ensure_rel(
                 caller_spec,
@@ -9313,7 +9314,7 @@ class CallProcessor:
             return
         registry = self._resolver.function_registry
         class_qn, sep, leaf = caller_qn.rpartition(cs.SEPARATOR_DOT)
-        if not sep or registry.get(class_qn) != NodeType.CLASS:
+        if not sep or registry.get(class_qn) != cs.NodeLabel.CLASS:
             return
         simple = qn_markers.strip_dup_marker(class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1])
         is_ctor = leaf == simple
@@ -9355,7 +9356,7 @@ class CallProcessor:
             if current in seen:
                 continue
             seen.add(current)
-            if self._resolver.function_registry.get(current) == NodeType.CLASS:
+            if self._resolver.function_registry.get(current) == cs.NodeLabel.CLASS:
                 ancestors.append(current)
             queue.extend(self._resolver.class_inheritance.get(current, []))
         return ancestors
@@ -9451,7 +9452,7 @@ class CallProcessor:
         registry = self._resolver.function_registry
         for class_variant in registry.variants(class_qn):
             variant_type = registry.get(class_variant)
-            if variant_type is not None and variant_type != NodeType.CLASS:
+            if variant_type is not None and variant_type != cs.NodeLabel.CLASS:
                 continue
             self._emit_rel(
                 caller_spec,
@@ -9481,7 +9482,7 @@ class CallProcessor:
         emitted_target_qns: set[tuple[str, str]] = set()
         for class_variant in registry.variants(class_qn):
             variant_type = registry.get(class_variant)
-            if variant_type is not None and variant_type != NodeType.CLASS:
+            if variant_type is not None and variant_type != cs.NodeLabel.CLASS:
                 continue
             targets = self._resolver.java_constructor_targets(
                 class_variant
@@ -9560,7 +9561,7 @@ class CallProcessor:
             for class_variant in self._go_visible_class_variants(
                 class_qn, module_qn, node
             ):
-                if registry.get(class_variant) != NodeType.CLASS:
+                if registry.get(class_variant) != cs.NodeLabel.CLASS:
                     continue
                 ensure_rel(
                     caller_spec,
@@ -9623,7 +9624,7 @@ class CallProcessor:
         candidates = [
             qn
             for qn in registry.find_with_prefix_and_suffix(package_qn, name)
-            if registry.get(qn) == NodeType.CLASS
+            if registry.get(qn) == cs.NodeLabel.CLASS
             and qn.count(cs.SEPARATOR_DOT) == depth
             and self._resolver.go_declaration_is_visible(qn, module_qn)
         ]
@@ -10445,7 +10446,7 @@ class CallProcessor:
         # class has no `__init__` node to reference.
         registry = self._resolver.function_registry
         if any(
-            registry.get(variant) in (NodeType.FUNCTION, NodeType.METHOD)
+            registry.get(variant) in (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD)
             for variant in registry.variants(class_qn)
         ):
             # A same-named def is passed on with the class (issue
@@ -10569,11 +10570,11 @@ class CallProcessor:
                 # it (issue #2621). A class is passed on through its __init__,
                 # as `_emit_callback_edge` passes a lone class.
                 match registry.get(variant):
-                    case NodeType.FUNCTION | NodeType.METHOD as kind:
-                        target_type, target_qn = cs.NodeLabel(kind.value), variant
+                    case cs.NodeLabel.FUNCTION | cs.NodeLabel.METHOD as kind:
+                        target_type, target_qn = kind, variant
                     case None:
                         target_type, target_qn = res_type, variant
-                    case NodeType.CLASS if (
+                    case cs.NodeLabel.CLASS if (
                         init_qn := f"{variant}{cs.SEPARATOR_DOT}{cs.PY_METHOD_INIT}"
                     ) in registry:
                         target_type, target_qn = cs.NodeLabel.METHOD, init_qn
@@ -12333,11 +12334,11 @@ class CallProcessor:
             if candidate not in registry:
                 continue
             node_type = registry[candidate]
-            if node_type == NodeType.CLASS:
+            if node_type == cs.NodeLabel.CLASS:
                 return candidate
             if (
                 allow_constructor_function
-                and node_type == NodeType.FUNCTION
+                and node_type == cs.NodeLabel.FUNCTION
                 and self._js_has_prototype_members(candidate)
             ):
                 return candidate
@@ -12350,7 +12351,7 @@ class CallProcessor:
         # `Fn.prototype.<method> = ...` evidence before the qn may be
         # treated as callable from outside.
         registry = self._resolver.function_registry
-        if class_qn in registry and registry[class_qn] == NodeType.CLASS:
+        if class_qn in registry and registry[class_qn] == cs.NodeLabel.CLASS:
             return True
         return self._js_has_prototype_members(class_qn, member=method)
 
@@ -12748,7 +12749,8 @@ class CallProcessor:
         fan: list[tuple[str, str]] = [
             (registry[qn], qn)
             for qn in sorted(name_matches)
-            if qn in registry and registry[qn] in (NodeType.FUNCTION, NodeType.METHOD)
+            if qn in registry
+            and registry[qn] in (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD)
         ]
         return fan, False
 

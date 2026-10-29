@@ -34,7 +34,7 @@ from codebase_rag.tests.conftest import (
     get_relationships,
     run_updater,
 )
-from codebase_rag.types_defs import NodeType, OverloadSignature
+from codebase_rag.types_defs import OverloadSignature
 from codebase_rag.utils.cpp_signatures import (
     ClassLookups,
     _split_signature,
@@ -807,7 +807,7 @@ def test_a_definition_of_another_arity_is_not_paired_with_the_lone_declaration()
     qn = registry.register_overload_qn(
         "p.C.f", OverloadSignature("(int)", 1), 3, declared_in_class=True
     )
-    registry[qn] = NodeType.METHOD
+    registry[qn] = cs.NodeLabel.METHOD
     assert (
         registry.register_overload_qn("p.C.f", OverloadSignature("(int,int)", 2), 9)
         == "p.C.f@9"
@@ -1050,7 +1050,7 @@ def test_a_member_from_a_graph_without_signatures_stays_one_node() -> None:
     # member back with no signature: it keeps standing for every overload
     # instead of a re-parsed definition splitting off a node beside it.
     registry = FunctionRegistryTrie()
-    registry["p.h.Sep.g"] = NodeType.METHOD
+    registry["p.h.Sep.g"] = cs.NodeLabel.METHOD
     for line, text in ((2, "(int)"), (3, "(double)")):
         qn = registry.register_overload_qn(
             "p.h.Sep.g", OverloadSignature(text, 1), line
@@ -1073,7 +1073,7 @@ def test_overloads_read_back_in_any_order_list_once_in_line_order(order: str) ->
     registry = FunctionRegistryTrie()
     rows = (("p.h.C.f@9", "(long)"), ("p.h.C.f", "(int)"), ("p.h.C.f@4", "(double)"))
     for qn, text in rows:
-        registry[qn] = NodeType.METHOD
+        registry[qn] = cs.NodeLabel.METHOD
         if order == "variant-then-overload":
             registry.restore_variant(qn)
         registry.restore_overload(qn, text, True)
@@ -1101,7 +1101,7 @@ def test_a_definition_matching_no_declaration_is_not_guessed_onto_one() -> None:
         qn = registry.register_overload_qn(
             "p.C.f", OverloadSignature(text, arity), line, declared_in_class=True
         )
-        registry[qn] = NodeType.METHOD
+        registry[qn] = cs.NodeLabel.METHOD
     assert registry.variants("p.C.f") == ["p.C.f", "p.C.f@4", "p.C.f@5"]
 
     # Two declarations take one argument: neither is guessed.

@@ -16,7 +16,7 @@ from codebase_rag.function_registry import FunctionRegistryTrie
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.utils import follow_reexports
-from codebase_rag.types_defs import NodeType, PropertyDict, PropertyValue
+from codebase_rag.types_defs import PropertyDict, PropertyValue
 
 _PROJECT = "proj"
 
@@ -129,7 +129,7 @@ def test_method_call_on_a_class_from_a_star_barrel_resolves_exactly(
 def _registry(*qns: str) -> FunctionRegistryTrie:
     registry = FunctionRegistryTrie()
     for qn in qns:
-        registry[qn] = NodeType.CLASS
+        registry[qn] = cs.NodeLabel.CLASS
     return registry
 
 

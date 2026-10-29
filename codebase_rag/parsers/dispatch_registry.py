@@ -24,7 +24,7 @@ from tree_sitter import Node
 from .. import constants as cs
 from ..capture import CaptureSelection
 from ..services import IngestorProtocol, QueryProtocol
-from ..types_defs import FunctionRegistryTrieProtocol, NodeType
+from ..types_defs import FunctionRegistryTrieProtocol
 from .io_access.constants import (
     DISPATCH_DEPLOYMENT_SEPARATOR,
     DISPATCH_NAME_KEYWORD,
@@ -37,8 +37,8 @@ from .io_access.constants import (
 from .utils import safe_decode_text
 
 _HANDLER_NODE_LABELS = {
-    NodeType.FUNCTION: cs.NodeLabel.FUNCTION,
-    NodeType.METHOD: cs.NodeLabel.METHOD,
+    cs.NodeLabel.FUNCTION: cs.NodeLabel.FUNCTION,
+    cs.NodeLabel.METHOD: cs.NodeLabel.METHOD,
 }
 
 
@@ -81,7 +81,7 @@ class DispatchRegistryProcessor:
         self._resolves_enabled = selection.rel_enabled(cs.RelationshipType.RESOLVES_TO)
         # All bookkeeping is PER MODULE and replaced wholesale on re-process,
         # so a watch-mode re-parse cannot replay facts removed from source.
-        self._module_registrations: dict[str, list[tuple[str, NodeType, str]]] = {}
+        self._module_registrations: dict[str, list[tuple[str, cs.NodeLabel, str]]] = {}
         self._module_producers: dict[str, list[tuple[tuple[str, str, str], str]]] = {}
         self._module_constants: dict[str, dict[str, str]] = {}
         self._module_deferred: dict[str, list[_DeferredProducer]] = {}
@@ -281,7 +281,7 @@ class DispatchRegistryProcessor:
         return (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn)
 
     def _emit_registration(
-        self, module_qn: str, handler_qn: str, node_type: NodeType, key: str
+        self, module_qn: str, handler_qn: str, node_type: cs.NodeLabel, key: str
     ) -> None:
         self._module_registrations[module_qn].append((handler_qn, node_type, key))
         if not self._exposes_enabled:

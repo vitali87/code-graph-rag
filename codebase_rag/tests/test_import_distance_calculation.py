@@ -3,8 +3,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from codebase_rag.constants import NodeLabel
 from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.types_defs import NodeType
 
 
 class TestImportDistanceCalculation:
@@ -24,7 +24,7 @@ class TestImportDistanceCalculation:
     ) -> None:
         """Test that functions in sibling modules receive the proximity bonus."""
         function_qn = "proj.pkg.sibling_mod.some_func"
-        mock_updater.function_registry[function_qn] = NodeType.FUNCTION
+        mock_updater.function_registry[function_qn] = NodeLabel.FUNCTION
 
         caller_module = "proj.pkg.caller_mod"
 
@@ -41,7 +41,7 @@ class TestImportDistanceCalculation:
     def test_sibling_module_bonus_for_methods(self, mock_updater: GraphUpdater) -> None:
         """Test that methods in sibling modules receive the proximity bonus."""
         method_qn = "proj.pkg.sibling_mod.SomeClass.some_method"
-        mock_updater.function_registry[method_qn] = NodeType.METHOD
+        mock_updater.function_registry[method_qn] = NodeLabel.METHOD
 
         caller_module = "proj.pkg.caller_mod"
 
@@ -61,8 +61,8 @@ class TestImportDistanceCalculation:
         """Test that the distance difference between functions and methods is predictable."""
         function_qn = "proj.pkg.sibling_mod.some_func"
         method_qn = "proj.pkg.sibling_mod.SomeClass.some_method"
-        mock_updater.function_registry[function_qn] = NodeType.FUNCTION
-        mock_updater.function_registry[method_qn] = NodeType.METHOD
+        mock_updater.function_registry[function_qn] = NodeLabel.FUNCTION
+        mock_updater.function_registry[method_qn] = NodeLabel.METHOD
 
         caller_module = "proj.pkg.caller_mod"
 
@@ -87,8 +87,8 @@ class TestImportDistanceCalculation:
         """Test that non-sibling modules don't receive the proximity bonus."""
         function_qn = "proj.other_pkg.other_mod.some_func"
         method_qn = "proj.other_pkg.other_mod.SomeClass.some_method"
-        mock_updater.function_registry[function_qn] = NodeType.FUNCTION
-        mock_updater.function_registry[method_qn] = NodeType.METHOD
+        mock_updater.function_registry[function_qn] = NodeLabel.FUNCTION
+        mock_updater.function_registry[method_qn] = NodeLabel.METHOD
 
         caller_module = "proj.pkg.caller_mod"
 
@@ -114,8 +114,8 @@ class TestImportDistanceCalculation:
         """Test distance calculation for candidates in the same module as caller."""
         function_qn = "proj.pkg.caller_mod.local_func"
         method_qn = "proj.pkg.caller_mod.LocalClass.local_method"
-        mock_updater.function_registry[function_qn] = NodeType.FUNCTION
-        mock_updater.function_registry[method_qn] = NodeType.METHOD
+        mock_updater.function_registry[function_qn] = NodeLabel.FUNCTION
+        mock_updater.function_registry[method_qn] = NodeLabel.METHOD
 
         caller_module = "proj.pkg.caller_mod"
 
@@ -155,10 +155,10 @@ class TestImportDistanceCalculation:
     def test_method_detection_correctness(self, mock_updater: GraphUpdater) -> None:
         """Test that the method detection logic correctly identifies methods vs functions."""
         method_qn = "proj.pkg.sibling_mod.SomeClass.some_method"
-        mock_updater.function_registry[method_qn] = NodeType.METHOD
+        mock_updater.function_registry[method_qn] = NodeLabel.METHOD
 
         function_qn = "proj.pkg.sibling_mod.some_func"
-        mock_updater.function_registry[function_qn] = NodeType.FUNCTION
+        mock_updater.function_registry[function_qn] = NodeLabel.FUNCTION
 
         caller_module = "proj.pkg.caller_mod"
 

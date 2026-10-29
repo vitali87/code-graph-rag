@@ -377,14 +377,14 @@ class TestSharedState:
     def test_function_registry_is_shared_across_processors(
         self, factory: ProcessorFactory
     ) -> None:
-        from codebase_rag.types_defs import NodeType
+        from codebase_rag.constants import NodeLabel
 
         import_proc = factory.import_processor
         definition_proc = factory.definition_processor
         type_inf = factory.type_inference
         call_proc = factory.call_processor
 
-        factory.function_registry["test.module.func"] = NodeType.FUNCTION
+        factory.function_registry["test.module.func"] = NodeLabel.FUNCTION
 
         assert "test.module.func" in import_proc.function_registry
         assert "test.module.func" in definition_proc.function_registry

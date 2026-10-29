@@ -9,7 +9,6 @@ from codebase_rag.parsers.import_processor import ImportProcessor
 from codebase_rag.parsers.java.type_inference import JavaTypeInferenceEngine
 from codebase_rag.parsers.java.type_resolver import collect_java_class_headers
 from codebase_rag.tests.conftest import create_mock_node
-from codebase_rag.types_defs import NodeType
 
 
 @pytest.fixture
@@ -188,7 +187,7 @@ class TestJavaTypeResolverMixin:
         mock_function_registry.__contains__ = MagicMock(
             side_effect=lambda x: x == "com.example.Helper"
         )
-        mock_function_registry.__getitem__ = MagicMock(return_value=NodeType.CLASS)
+        mock_function_registry.__getitem__ = MagicMock(return_value=cs.NodeLabel.CLASS)
 
         result = type_inference_engine._resolve_java_type_name("Helper", "com.example")
         assert result == "com.example.Helper"
@@ -245,8 +244,8 @@ class TestJavaTypeResolverMixin:
     ) -> None:
         mock_function_registry.find_with_prefix = MagicMock(
             return_value=[
-                ("com.example.Helper.method1", NodeType.METHOD),
-                ("com.example.Helper.method2", NodeType.METHOD),
+                ("com.example.Helper.method1", cs.NodeLabel.METHOD),
+                ("com.example.Helper.method2", cs.NodeLabel.METHOD),
             ]
         )
 
@@ -263,9 +262,9 @@ class TestJavaTypeResolverMixin:
         mock_function_registry.find_with_prefix = MagicMock(return_value=[])
         mock_function_registry.items = MagicMock(
             return_value=[
-                ("com.example.Helper.method1", NodeType.METHOD),
-                ("com.example.Helper.method2", NodeType.METHOD),
-                ("com.example.Other.method3", NodeType.METHOD),
+                ("com.example.Helper.method1", cs.NodeLabel.METHOD),
+                ("com.example.Helper.method2", cs.NodeLabel.METHOD),
+                ("com.example.Other.method3", cs.NodeLabel.METHOD),
             ]
         )
 
@@ -297,7 +296,7 @@ class TestJavaMethodResolverMixin:
         mock_function_registry: MagicMock,
     ) -> None:
         mock_function_registry.find_with_prefix = MagicMock(
-            return_value=[("com.example.MyClass", NodeType.CLASS)]
+            return_value=[("com.example.MyClass", cs.NodeLabel.CLASS)]
         )
 
         result = type_inference_engine._resolve_java_object_type(
@@ -311,7 +310,7 @@ class TestJavaMethodResolverMixin:
         mock_function_registry: MagicMock,
     ) -> None:
         mock_function_registry.find_with_prefix = MagicMock(
-            return_value=[("com.example.ChildClass", NodeType.CLASS)]
+            return_value=[("com.example.ChildClass", cs.NodeLabel.CLASS)]
         )
         type_inference_engine.class_inheritance = {
             "com.example.ChildClass": ["com.example.ParentClass"]
@@ -344,7 +343,7 @@ class TestJavaMethodResolverMixin:
         mock_function_registry.__contains__ = MagicMock(
             side_effect=lambda x: x == "com.example.Utils"
         )
-        mock_function_registry.__getitem__ = MagicMock(return_value=NodeType.CLASS)
+        mock_function_registry.__getitem__ = MagicMock(return_value=cs.NodeLabel.CLASS)
         mock_function_registry.find_with_prefix = MagicMock(return_value=[])
 
         result = type_inference_engine._resolve_java_object_type(
@@ -383,8 +382,8 @@ class TestJavaMethodResolverMixin:
     ) -> None:
         mock_function_registry.find_with_prefix = MagicMock(
             return_value=[
-                ("com.example.MyClass.helperMethod(String)", NodeType.METHOD),
-                ("com.example.MyClass.otherMethod()", NodeType.METHOD),
+                ("com.example.MyClass.helperMethod(String)", cs.NodeLabel.METHOD),
+                ("com.example.MyClass.otherMethod()", cs.NodeLabel.METHOD),
             ]
         )
 
@@ -392,7 +391,7 @@ class TestJavaMethodResolverMixin:
             "helperMethod", "com.example"
         )
         assert result is not None
-        assert result[0] == NodeType.METHOD
+        assert result[0] == cs.NodeLabel.METHOD
 
     def test_resolve_static_or_local_method_not_found(
         self,

@@ -15,7 +15,6 @@ from ...types_defs import (
     FunctionRegistryTrieProtocol,
     LanguageQueries,
     NativeScopeFacts,
-    NodeType,
     ScopeFacts,
 )
 from .. import native_trees
@@ -1016,7 +1015,7 @@ class PythonAstAnalyzerMixin(_AstBase):
         import_map = self.import_processor.import_mapping.get(module_qn, {})
         if (
             name not in import_map
-            or self.function_registry.get(own_class) != NodeType.CLASS
+            or self.function_registry.get(own_class) != cs.NodeLabel.CLASS
         ):
             return False
         file_path = self.module_qn_to_file_path.get(module_qn)
@@ -1705,7 +1704,7 @@ class PythonAstAnalyzerMixin(_AstBase):
         # Dispatch on the registry label: a FUNCTION qn is module.func (module is
         # everything before the LAST dot); anything else keeps the method-shaped
         # module.Class.method lookup.
-        if self.function_registry.get(qn) == NodeType.FUNCTION:
+        if self.function_registry.get(qn) == cs.NodeLabel.FUNCTION:
             return self._find_function_ast_node(qn)
         return self._find_method_ast_node(qn)
 
@@ -1975,7 +1974,9 @@ class PythonAstAnalyzerMixin(_AstBase):
             # the body (issue #1901). The seed is inert for a free function.
             owner = method_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
             class_context = (
-                owner if self.function_registry.get(owner) == NodeType.CLASS else None
+                owner
+                if self.function_registry.get(owner) == cs.NodeLabel.CLASS
+                else None
             )
             try:
                 local_vars = self.build_local_variable_type_map(

@@ -15,7 +15,6 @@ from ...types_defs import (
     JavaCandidateLookups,
     JavaOverloadRank,
     JavaSupertypes,
-    NodeType,
 )
 from ..utils import method_signature_arity, module_qn_for_entity, safe_decode_text
 from .type_resolver import JAVA_TYPE_DECL_NODE_TYPES
@@ -41,7 +40,7 @@ if TYPE_CHECKING:
 
 # The registry kinds a Java type declaration takes; records and annotation
 # types register as CLASS.
-_JAVA_TYPE_NODE_TYPES = (NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM)
+_JAVA_TYPE_NODE_TYPES = (cs.NodeLabel.CLASS, cs.NodeLabel.INTERFACE, cs.NodeLabel.ENUM)
 # The declarations that name every supertype they have. An enum, a record and
 # an annotation type also extend a JDK type nobody wrote down.
 _JAVA_FULLY_DECLARED_TYPES = frozenset(
@@ -678,7 +677,7 @@ class JavaMethodResolverMixin:
                 for qn, entity_type in self.function_registry.find_with_prefix(
                     module_qn
                 )
-                if entity_type == NodeType.CLASS
+                if entity_type == cs.NodeLabel.CLASS
             ),
             None,
         )
@@ -693,7 +692,7 @@ class JavaMethodResolverMixin:
         ):
             return parent_qn
         for qn, entity_type in self.function_registry.find_with_prefix(module_qn):
-            if entity_type == NodeType.CLASS and (
+            if entity_type == cs.NodeLabel.CLASS and (
                 parent_qn := self._find_parent_class(qn)
             ):
                 return parent_qn
@@ -735,7 +734,7 @@ class JavaMethodResolverMixin:
         simple_class_qn = f"{module_qn}{cs.SEPARATOR_DOT}{object_ref}"
         if (
             simple_class_qn in self.function_registry
-            and self.function_registry[simple_class_qn] == NodeType.CLASS
+            and self.function_registry[simple_class_qn] == cs.NodeLabel.CLASS
         ):
             return simple_class_qn
 
@@ -745,9 +744,9 @@ class JavaMethodResolverMixin:
         # nested-aware type resolver so the static-field access chain resolves.
         nested_qn = self._resolve_java_type_name(object_ref, module_qn)
         if nested_qn != object_ref and self.function_registry.get(nested_qn) in (
-            NodeType.CLASS,
-            NodeType.INTERFACE,
-            NodeType.ENUM,
+            cs.NodeLabel.CLASS,
+            cs.NodeLabel.INTERFACE,
+            cs.NodeLabel.ENUM,
         ):
             return nested_qn
 
@@ -889,7 +888,7 @@ class JavaMethodResolverMixin:
             candidate_qn = f"{candidate_module}{cs.SEPARATOR_DOT}{class_name}"
             if candidate_qn not in self.function_registry or self.function_registry[
                 candidate_qn
-            ] not in (NodeType.CLASS, NodeType.INTERFACE):
+            ] not in (cs.NodeLabel.CLASS, cs.NodeLabel.INTERFACE):
                 continue
             candidate_file = self.module_qn_to_file_path.get(candidate_module)
             if candidate_file and candidate_file.parent == current_dir:

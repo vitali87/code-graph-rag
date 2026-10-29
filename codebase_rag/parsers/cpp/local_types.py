@@ -22,7 +22,7 @@ from tree_sitter import Node
 
 from ... import constants as cs
 from ...function_registry import FunctionRegistryTrie
-from ...types_defs import FunctionLocation, FunctionSpanKey, NodeType
+from ...types_defs import FunctionLocation, FunctionSpanKey
 from ..utils import function_span_key, safe_decode_text
 from . import utils as cpp_utils
 from .overloads import cpp_overload_signature
@@ -284,7 +284,7 @@ def _register_overload(
             declared_in_class=in_class,
         )
     )
-    registry[registered] = NodeType.METHOD
+    registry[registered] = cs.NodeLabel.METHOD
     return registered
 
 

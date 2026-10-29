@@ -3,10 +3,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from codebase_rag.constants import NodeLabel
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.tests.conftest import get_relationships
-from codebase_rag.types_defs import NodeType
 
 
 def test_lua_function_discovery(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -63,7 +63,7 @@ local r = compute(4, 2)
     created_functions = [
         c
         for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c[0][0] == NodeType.FUNCTION
+        if c[0][0] == NodeLabel.FUNCTION
     ]
 
     fn_qns = {c[0][1]["qualified_name"] for c in created_functions}

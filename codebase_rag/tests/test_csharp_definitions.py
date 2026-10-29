@@ -4,8 +4,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from codebase_rag.constants import NodeLabel
 from codebase_rag.tests.conftest import get_node_names, get_relationships, run_updater
-from codebase_rag.types_defs import NodeType
 
 SKIP = "c_sharp"
 
@@ -34,9 +34,9 @@ def test_file_scoped_and_block_namespace_fold_identically(
     )
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
-    classes = get_node_names(mock_ingestor, NodeType.CLASS)
-    methods = get_node_names(mock_ingestor, NodeType.METHOD) | get_node_names(
-        mock_ingestor, NodeType.FUNCTION
+    classes = get_node_names(mock_ingestor, NodeLabel.CLASS)
+    methods = get_node_names(mock_ingestor, NodeLabel.METHOD) | get_node_names(
+        mock_ingestor, NodeLabel.FUNCTION
     )
     # Both spellings must place the type under the Foo.Bar namespace.
     assert _endswith_any(classes, "Foo.Bar.Widget")
@@ -61,12 +61,12 @@ public record struct RS(int Z);
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
     # class, struct and records map to Class; interface -> Interface;
-    # enum -> Enum (C# reuses determine_node_type's node-type mapping).
-    classes = get_node_names(mock_ingestor, NodeType.CLASS)
+    # enum -> Enum (C# reuses definition_label's mapping).
+    classes = get_node_names(mock_ingestor, NodeLabel.CLASS)
     for name in ("N.C", "N.S", "N.R", "N.RS"):
         assert _endswith_any(classes, name), f"missing type {name}: {classes}"
-    assert _endswith_any(get_node_names(mock_ingestor, NodeType.INTERFACE), "N.I")
-    assert _endswith_any(get_node_names(mock_ingestor, NodeType.ENUM), "N.E")
+    assert _endswith_any(get_node_names(mock_ingestor, NodeLabel.INTERFACE), "N.I")
+    assert _endswith_any(get_node_names(mock_ingestor, NodeLabel.ENUM), "N.E")
 
 
 def test_members_generics_and_operators(
@@ -87,9 +87,9 @@ public class Box<T> {
     )
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
-    classes = get_node_names(mock_ingestor, NodeType.CLASS)
-    members = get_node_names(mock_ingestor, NodeType.METHOD) | get_node_names(
-        mock_ingestor, NodeType.FUNCTION
+    classes = get_node_names(mock_ingestor, NodeLabel.CLASS)
+    members = get_node_names(mock_ingestor, NodeLabel.METHOD) | get_node_names(
+        mock_ingestor, NodeLabel.FUNCTION
     )
     # Generic type parameters must not leak into names; methods with
     # parameters carry a signature so overloads stay distinct (Phase 3).
@@ -124,8 +124,8 @@ public struct Vec {
     )
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
-    members = get_node_names(mock_ingestor, NodeType.METHOD) | get_node_names(
-        mock_ingestor, NodeType.FUNCTION
+    members = get_node_names(mock_ingestor, NodeLabel.METHOD) | get_node_names(
+        mock_ingestor, NodeLabel.FUNCTION
     )
     # Two `operator +` overloads differ only by parameter type, so the
     # signature must keep them as two nodes (not one @line-suffixed collision).
@@ -143,9 +143,9 @@ def test_nested_types(csharp_project: Path, mock_ingestor: MagicMock) -> None:
     )
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
-    classes = get_node_names(mock_ingestor, NodeType.CLASS)
-    methods = get_node_names(mock_ingestor, NodeType.METHOD) | get_node_names(
-        mock_ingestor, NodeType.FUNCTION
+    classes = get_node_names(mock_ingestor, NodeLabel.CLASS)
+    methods = get_node_names(mock_ingestor, NodeLabel.METHOD) | get_node_names(
+        mock_ingestor, NodeLabel.FUNCTION
     )
     assert _endswith_any(classes, "N.Outer.Inner")
     assert _endswith_any(methods, "N.Outer.Inner.M")

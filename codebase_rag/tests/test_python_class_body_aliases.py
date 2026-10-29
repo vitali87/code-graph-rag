@@ -38,7 +38,7 @@ from codebase_rag.function_registry import FunctionRegistryTrie
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.tests.conftest import create_and_run_updater
-from codebase_rag.types_defs import NodeType, ResultRow
+from codebase_rag.types_defs import ResultRow
 from evals.cgr_graph import StatefulIngestor
 
 PROJECT = "aliasproj"
@@ -650,8 +650,8 @@ class TestNeighboursUnchanged:
         # A re-parsed file registers its aliases again with its methods, so a
         # swept method must not leave a stale alias behind.
         registry = FunctionRegistryTrie()
-        registry[f"{CLS}._fast"] = NodeType.METHOD
-        registry[f"{CLS}._slow"] = NodeType.METHOD
+        registry[f"{CLS}._fast"] = cs.NodeLabel.METHOD
+        registry[f"{CLS}._slow"] = cs.NodeLabel.METHOD
         registry.add_member_alias(f"{CLS}.__call__", f"{CLS}._fast")
         registry.add_member_alias(f"{CLS}.__call__", f"{CLS}._slow")
         registry.add_member_alias(f"{CLS}.run", f"{CLS}._fast")
@@ -666,8 +666,8 @@ class TestNeighboursUnchanged:
         # the C3 MRO, so a swept alias stops counting; one with a target
         # left still counts.
         registry = FunctionRegistryTrie()
-        registry[f"{CLS}._fast"] = NodeType.METHOD
-        registry[f"{CLS}._slow"] = NodeType.METHOD
+        registry[f"{CLS}._fast"] = cs.NodeLabel.METHOD
+        registry[f"{CLS}._slow"] = cs.NodeLabel.METHOD
         registry.add_member_alias(f"{CLS}.__call__", f"{CLS}._fast")
         registry.add_member_alias(f"{CLS}.__call__", f"{CLS}._slow")
         registry.add_member_alias(f"{CLS}.run", f"{CLS}._fast")
@@ -835,7 +835,7 @@ class TestSubclassBindingHidesInheritedMember:
 
     def test_removing_a_class_drops_its_non_method_members(self) -> None:
         registry = FunctionRegistryTrie()
-        registry[SUB] = NodeType.CLASS
+        registry[SUB] = cs.NodeLabel.CLASS
         registry.set_non_method_members(SUB, ("run",))
         assert registry.binds_non_method(SUB, "run")
 

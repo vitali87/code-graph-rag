@@ -29,7 +29,7 @@ from codebase_rag.parsers.js_ts.commonjs_exports import (
 )
 from codebase_rag.parsers.js_ts.reexports import JsExport, follow_js_reexports
 from codebase_rag.parsers.utils import follow_reexports
-from codebase_rag.types_defs import NodeType, PropertyDict, PropertyValue
+from codebase_rag.types_defs import PropertyDict, PropertyValue
 
 _PROJECT = "proj"
 _PREFIX = f"{_PROJECT}{cs.SEPARATOR_DOT}"
@@ -1050,7 +1050,7 @@ def test_star_paths_keep_their_rules(
 def _registry(*qns: str) -> FunctionRegistryTrie:
     registry = FunctionRegistryTrie()
     for qn in qns:
-        registry[qn] = NodeType.CLASS
+        registry[qn] = cs.NodeLabel.CLASS
     return registry
 
 
@@ -1112,7 +1112,7 @@ class _CountingRegistry(FunctionRegistryTrie):
     def __init__(self, *qns: str) -> None:
         super().__init__()
         for qn in qns:
-            self[qn] = NodeType.CLASS
+            self[qn] = cs.NodeLabel.CLASS
         self.lookups = 0
 
     def __contains__(self, qualified_name: str) -> bool:

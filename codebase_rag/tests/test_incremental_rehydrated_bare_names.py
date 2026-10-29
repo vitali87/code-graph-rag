@@ -21,7 +21,6 @@ from codebase_rag.checkout_state import state_file
 from codebase_rag.function_registry import FunctionRegistryTrie
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.types_defs import NodeType
 from evals.cgr_graph import StatefulIngestor
 
 _FILES = {
@@ -125,7 +124,7 @@ def test_a_name_indexed_late_reaches_a_lookup_already_cached() -> None:
     # A name lookup made before rehydration (a Pass 2 resolution, say) must
     # not keep answering from its cache once the name gains a definition.
     registry = FunctionRegistryTrie(simple_name_lookup=defaultdict(set))
-    registry["p.ILog.Info(string)"] = NodeType.METHOD
+    registry["p.ILog.Info(string)"] = cs.NodeLabel.METHOD
     assert registry.find_ending_with("Info") == []
 
     registry.index_name("p.ILog.Info(string)", "Info")

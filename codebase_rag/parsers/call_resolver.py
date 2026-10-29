@@ -13,7 +13,7 @@ from tree_sitter import Node
 from .. import constants as cs
 from .. import logs as ls
 from ..language_spec import get_language_for_extension
-from ..types_defs import CppOperatorSignature, FunctionRegistryTrieProtocol, NodeType
+from ..types_defs import CppOperatorSignature, FunctionRegistryTrieProtocol
 from ..utils import qn_markers
 from .cpp import utils as cpp_utils
 from .go import interfaces as go_ifaces
@@ -76,25 +76,25 @@ _CHAIN_CLOSE_BRACKETS = ")]}"
 # enum, a type alias, or a trait (Interface, when the receiver is typed to a
 # `dyn`/`impl` trait or a trait-returning factory); all can carry methods.
 _RS_TYPE_NODE_TYPES = frozenset(
-    {NodeType.CLASS, NodeType.ENUM, NodeType.TYPE, NodeType.INTERFACE}
+    {cs.NodeLabel.CLASS, cs.NodeLabel.ENUM, cs.NodeLabel.TYPE, cs.NodeLabel.INTERFACE}
 )
 # Registry kinds a CONSTRUCTION hop may name. Same members as the Rust set
 # above, kept separate because that one is about Rust receiver types while
 # this gates the import-prefix fold for every language (issue #2033).
 _CONSTRUCTIBLE_NODE_TYPES = frozenset(
-    {NodeType.CLASS, NodeType.ENUM, NodeType.TYPE, NodeType.INTERFACE}
+    {cs.NodeLabel.CLASS, cs.NodeLabel.ENUM, cs.NodeLabel.TYPE, cs.NodeLabel.INTERFACE}
 )
 # An unqualified Go call names a package-level function: a method needs its
 # receiver.
-_GO_PACKAGE_FUNCTION_TYPES = frozenset({NodeType.FUNCTION})
+_GO_PACKAGE_FUNCTION_TYPES = frozenset({cs.NodeLabel.FUNCTION})
 # A definition nested inside one of these is scoped to that body, so the
 # simple-name fallback prefers candidates that are not (issue #945).
-_SCOPING_PARENT_TYPES = frozenset({NodeType.FUNCTION, NodeType.METHOD})
+_SCOPING_PARENT_TYPES = frozenset({cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD})
 # Registry kinds a Rust `Type::f()` qualifier may name and read methods off:
 # the type alias of the receiver set is missing because its target, which
 # owns the methods, is not recorded.
 _RS_OWNER_NODE_TYPES = frozenset(
-    {NodeType.CLASS, NodeType.ENUM, NodeType.UNION, NodeType.INTERFACE}
+    {cs.NodeLabel.CLASS, cs.NodeLabel.ENUM, cs.NodeLabel.UNION, cs.NodeLabel.INTERFACE}
 )
 _PY_SELF_RECEIVERS = frozenset({cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS})
 
@@ -1571,7 +1571,7 @@ class CallResolver:
         )
 
     def _go_package_scope(
-        self, name: str, module_qn: str, labels: frozenset[NodeType]
+        self, name: str, module_qn: str, labels: frozenset[cs.NodeLabel]
     ) -> list[str]:
         # The `labels` definitions an unqualified `name` in Go file `module_qn`
         # can bind through its package block: declared in any file of the same
@@ -1856,7 +1856,7 @@ class CallResolver:
         # (a pair matched by name and arity), which its edge then says rather
         # than borrowing the call's own label.
         class_qn, sep, method_name = callee_qn.rpartition(cs.SEPARATOR_DOT)
-        if not sep or self.function_registry.get(class_qn) != NodeType.INTERFACE:
+        if not sep or self.function_registry.get(class_qn) != cs.NodeLabel.INTERFACE:
             return {}
         targets: dict[tuple[str, str], dict[str, bool]] = {}
         for implementer in self.interface_implementers.get(class_qn, ()):
@@ -2929,7 +2929,7 @@ class CallResolver:
         owner = method_qn.rpartition(cs.SEPARATOR_DOT)[0]
         if self._rust_owner_is(owner, owners, names, method_qn, self_type):
             return True
-        if self.function_registry.get(owner) != NodeType.INTERFACE:
+        if self.function_registry.get(owner) != cs.NodeLabel.INTERFACE:
             return False
         # The read-back pairs too: a run that re-parsed only the caller has
         # `impl FloatErrors for u64` in them alone, and `u64::error_halfscale()`
@@ -3238,7 +3238,7 @@ class CallResolver:
         if self.function_registry.is_abstract(qn):
             return True
         owner_qn = qn.rpartition(cs.SEPARATOR_DOT)[0]
-        return self.function_registry.get(owner_qn) == NodeType.INTERFACE
+        return self.function_registry.get(owner_qn) == cs.NodeLabel.INTERFACE
 
     def _is_external_path_import(self, call_name: str, module_qn: str) -> bool:
         # True when the dotted call's object segment is imported from a target
@@ -3699,7 +3699,7 @@ class CallResolver:
         return self._try_resolve_wildcard_imports(call_name, import_map)
 
     def _php_target_for_namespace_import(
-        self, imported_path: str, kind: NodeType | None = None
+        self, imported_path: str, kind: cs.NodeLabel | None = None
     ) -> str | None:
         """Map a PHP `use function A\\B\\c` target onto the qn that registers it.
 
@@ -3836,7 +3836,7 @@ class CallResolver:
         *namespace, symbol = path
         if namespace and (
             class_qn := self._php_target_for_namespace_import(
-                cs.SEPARATOR_DOT.join(path), kind=NodeType.CLASS
+                cs.SEPARATOR_DOT.join(path), kind=cs.NodeLabel.CLASS
             )
         ):
             return self.function_registry[class_qn], class_qn
@@ -3875,7 +3875,7 @@ class CallResolver:
                 *self._php_cased_definitions().classes.get(folded, ()),
             ]
         )
-        return [qn for qn in found if self.function_registry[qn] == NodeType.CLASS]
+        return [qn for qn in found if self.function_registry[qn] == cs.NodeLabel.CLASS]
 
     def _php_declared_namespace(self, class_qn: str) -> PhpClassPath | None:
         # The ASCII-folded namespace PHP declares `class_qn` in; None when its
@@ -3949,7 +3949,7 @@ class CallResolver:
     ) -> str | None:
         for spelling in (method_name, folded):
             method_qn = f"{owner_qn}{cs.SEPARATOR_DOT}{spelling}"
-            if self.function_registry.get(method_qn) == NodeType.METHOD:
+            if self.function_registry.get(method_qn) == cs.NodeLabel.METHOD:
                 return method_qn
         return self._php_cased_definitions().methods.get((owner_qn, folded))
 
@@ -3962,14 +3962,14 @@ class CallResolver:
         if self._php_cased_index is None:
             index = _PhpCasedIndex({}, {})
             for qn, kind in self.function_registry.items():
-                if kind not in (NodeType.CLASS, NodeType.METHOD):
+                if kind not in (cs.NodeLabel.CLASS, cs.NodeLabel.METHOD):
                     continue
                 owner_qn, _, leaf = qn.rpartition(cs.SEPARATOR_DOT)
                 if (folded := _php_fold(leaf)) == leaf or (
                     self._module_language(owner_qn) != cs.SupportedLanguage.PHP
                 ):
                     continue
-                if kind == NodeType.METHOD:
+                if kind == cs.NodeLabel.METHOD:
                     index.methods.setdefault((owner_qn, folded), qn)
                 else:
                     index.classes.setdefault(folded, []).append(qn)
@@ -4953,7 +4953,7 @@ class CallResolver:
         targets: dict[str, None] = {}
         for qn in registry.find_ending_with(call_name):
             for variant in registry.variants(qn):
-                if variant in targets or registry.get(variant) != NodeType.FUNCTION:
+                if variant in targets or registry.get(variant) != cs.NodeLabel.FUNCTION:
                     continue
                 module_qn = self._sql_module_of(variant)
                 if module_qn is None:
@@ -5831,7 +5831,7 @@ class CallResolver:
             names.update(
                 qn_markers.strip_dup_marker(qn.rsplit(sep, 1)[-1])
                 for qn, node_type in self.function_registry.find_with_prefix(current)
-                if node_type == NodeType.METHOD and qn.rsplit(sep, 1)[0] == current
+                if node_type == cs.NodeLabel.METHOD and qn.rsplit(sep, 1)[0] == current
             )
             pending.extend(
                 base
@@ -5877,7 +5877,7 @@ class CallResolver:
         if class_qn is None:
             return None
         result = self._try_resolve_method(class_qn, member)
-        if result is None or result[0] != NodeType.METHOD:
+        if result is None or result[0] != cs.NodeLabel.METHOD:
             return None
         return result
 
@@ -5886,7 +5886,10 @@ class CallResolver:
     ) -> str | None:
         """The registered class a type name written in a Scala file names."""
         class_qn = self.import_processor.scala_type_qn(module_qn, written, position)
-        if class_qn is None or self.function_registry.get(class_qn) != NodeType.CLASS:
+        if (
+            class_qn is None
+            or self.function_registry.get(class_qn) != cs.NodeLabel.CLASS
+        ):
             return None
         return class_qn
 
@@ -5911,7 +5914,7 @@ class CallResolver:
             return False, None
         target = f"{imported}{cs.SEPARATOR_DOT}{rest}" if rest else imported
         kind = self.function_registry.get(target)
-        if kind is None or (constructing and kind != NodeType.CLASS):
+        if kind is None or (constructing and kind != cs.NodeLabel.CLASS):
             return True, None
         return True, (kind, target)
 
@@ -6283,7 +6286,7 @@ class CallResolver:
             else None
         )
         if class_qn is not None and self.function_registry.get(class_qn) != (
-            NodeType.CLASS
+            cs.NodeLabel.CLASS
         ):
             class_qn = None
         self._js_return_class_cache[key] = class_qn
@@ -6386,7 +6389,9 @@ class CallResolver:
             return None
         class_qn = self._follow_reexports(class_qn)
         return (
-            class_qn if self.function_registry.get(class_qn) == NodeType.CLASS else None
+            class_qn
+            if self.function_registry.get(class_qn) == cs.NodeLabel.CLASS
+            else None
         )
 
     def _exact_first_hop(self, base: str, method: str, call: _CallSite) -> str | None:
@@ -6755,7 +6760,7 @@ class CallResolver:
 
     def _unique_prefixed_definition(
         self, targets: list[str], name: str
-    ) -> tuple[str, str, NodeType] | None:
+    ) -> tuple[str, str, cs.NodeLabel] | None:
         # Imports sharing a prefix are searched together, and `p.Box` names
         # the ONE library defining `Box`; a name several of them define is
         # an ambiguous import, so neither is guessed (CodeRabbit, PR #2040).
@@ -7276,7 +7281,7 @@ class CallResolver:
             return set()
         import_map = self.import_processor.import_mapping.get(module_qn, {})
         class_qn = self._resolve_class_qn_from_type(returned, import_map, module_qn)
-        if not class_qn or self.function_registry.get(class_qn) != NodeType.CLASS:
+        if not class_qn or self.function_registry.get(class_qn) != cs.NodeLabel.CLASS:
             return set()
         hit = self._try_resolve_method(class_qn, cs.PY_DUNDER_CALL)
         return {hit} if hit else set()

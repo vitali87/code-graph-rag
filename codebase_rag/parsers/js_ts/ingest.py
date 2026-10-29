@@ -13,7 +13,6 @@ from ... import logs as ls
 from ...types_defs import (
     ASTNode,
     FunctionRegistryTrieProtocol,
-    NodeType,
     PropertyDict,
     SimpleNameLookup,
 )
@@ -256,7 +255,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
                 )
                 self.ingestor.ensure_node_batch(cs.NodeLabel.FUNCTION, method_props)
 
-                self.function_registry[method_qn] = NodeType.FUNCTION
+                self.function_registry[method_qn] = cs.NodeLabel.FUNCTION
                 self.simple_name_lookup[method_name].add(method_qn)
                 self._claim_function_span(
                     module_qn, func_node, cs.NodeLabel.FUNCTION.value, method_qn
@@ -428,7 +427,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         )
         self.ingestor.ensure_node_batch(cs.NodeLabel.FUNCTION, method_props)
 
-        self.function_registry[method_qn] = NodeType.FUNCTION
+        self.function_registry[method_qn] = cs.NodeLabel.FUNCTION
         self.simple_name_lookup[method_name].add(method_qn)
         self._claim_function_span(
             module_qn, method_func_node, cs.NodeLabel.FUNCTION.value, method_qn
@@ -660,7 +659,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
             function_qn,
             function_node.start_point[0] + 1,
             function_node.start_point[1],
-            kind=NodeType.FUNCTION,
+            kind=cs.NodeLabel.FUNCTION,
         )
         function_props = module_function_props(
             function_qn,
@@ -675,7 +674,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
 
         logger.debug(log_message, function_name=function_name, function_qn=function_qn)
         self.ingestor.ensure_node_batch(cs.NodeLabel.FUNCTION, function_props)
-        self.function_registry[function_qn] = NodeType.FUNCTION
+        self.function_registry[function_qn] = cs.NodeLabel.FUNCTION
         mark_js_ts_module_private(
             self.function_registry,
             function_qn,

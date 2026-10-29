@@ -7,7 +7,7 @@ from tree_sitter import Node
 
 from ... import constants as cs
 from ... import logs as ls
-from ...types_defs import FunctionRegistryTrieProtocol, NodeType
+from ...types_defs import FunctionRegistryTrieProtocol
 from ..import_processor import ImportProcessor
 from ..utils import follow_reexports, safe_decode_text
 from .utils import resolve_class_name, resolve_dotted_class
@@ -268,7 +268,7 @@ class PythonWithBindingMixin(_WithBase):
         import_mapping = self.import_processor.import_mapping
         if cs.SEPARATOR_DOT in type_name:
             qn = follow_reexports(type_name, import_mapping, self.function_registry)
-            if self.function_registry.get(qn) == NodeType.CLASS:
+            if self.function_registry.get(qn) == cs.NodeLabel.CLASS:
                 return qn
             return resolve_dotted_class(
                 type_name,
@@ -285,4 +285,4 @@ class PythonWithBindingMixin(_WithBase):
         if not qn:
             return None
         qn = follow_reexports(qn, import_mapping, self.function_registry)
-        return qn if self.function_registry.get(qn) == NodeType.CLASS else None
+        return qn if self.function_registry.get(qn) == cs.NodeLabel.CLASS else None

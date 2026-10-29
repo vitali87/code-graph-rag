@@ -1,9 +1,9 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from codebase_rag.constants import NodeLabel
 from codebase_rag.function_registry import FunctionRegistryTrie
 from codebase_rag.parsers.call_resolver import CallResolver
-from codebase_rag.types_defs import NodeType
 from evals.cgr_graph import capture
 
 
@@ -71,7 +71,7 @@ def test_sole_impl_targets_guard_branches() -> None:
     # defines nor inherits the method offers no concrete target; both
     # return empty rather than fabricating an edge.
     registry = FunctionRegistryTrie()
-    registry["m.Svc.run"] = NodeType.METHOD
+    registry["m.Svc.run"] = NodeLabel.METHOD
     resolver = CallResolver(
         registry,
         MagicMock(),

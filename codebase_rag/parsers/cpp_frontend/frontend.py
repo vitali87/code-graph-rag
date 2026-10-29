@@ -8,7 +8,6 @@ from ...config import settings
 from ...services import IngestorProtocol
 from ...types_defs import (
     FunctionRegistryTrieProtocol,
-    NodeType,
     PendingExpansionCall,
     PendingMacroCall,
     PropertyDict,
@@ -702,7 +701,7 @@ class _Collector:
         qn = props[cs.KEY_QUALIFIED_NAME]
         if not isinstance(qn, str):
             return
-        self.function_registry[qn] = NodeType(label)
+        self.function_registry[qn] = cs.NodeLabel(label)
         if self.owned_qns is not None and isinstance(
             path := props.get(cs.KEY_PATH), str
         ):

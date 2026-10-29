@@ -25,7 +25,6 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.function_registry import FunctionRegistryTrie
 from codebase_rag.tests.conftest import get_relationships, run_updater
-from codebase_rag.types_defs import NodeType
 
 SKIP = "php"
 
@@ -44,7 +43,7 @@ def _registry(entries: dict[str, str]) -> FunctionRegistryTrie:
     """
     trie = FunctionRegistryTrie()
     for qn in entries:
-        trie[qn] = NodeType.FUNCTION
+        trie[qn] = cs.NodeLabel.FUNCTION
     return trie
 
 
@@ -284,7 +283,7 @@ def test_a_class_use_does_not_resolve_to_a_php_function(tmp_path: Path) -> None:
     resolver.import_processor.php_function_imports = {"proj.caller": {"format"}}
     assert resolver._try_resolve_direct_import(
         "format", import_map, cs.SupportedLanguage.PHP, "proj.caller"
-    ) == (NodeType.FUNCTION, "proj.text.format")
+    ) == (cs.NodeLabel.FUNCTION, "proj.text.format")
 
 
 def test_a_call_through_a_use_function_alias_is_case_insensitive(
@@ -331,7 +330,7 @@ def test_a_call_through_a_use_function_alias_is_case_insensitive(
     for spelling in ("format", "FORMAT", "Format"):
         assert resolver._try_resolve_direct_import(
             spelling, import_map, cs.SupportedLanguage.PHP, "proj.caller"
-        ) == (NodeType.FUNCTION, "proj.text.format"), (
+        ) == (cs.NodeLabel.FUNCTION, "proj.text.format"), (
             f"calling the alias as {spelling!r} did not resolve; PHP function "
             "names are case-insensitive at the call site, so this call is "
             "valid and runs"
@@ -422,7 +421,7 @@ def test_a_fully_qualified_import_resolves(tmp_path: Path) -> None:
         {"format": ".App.Text.format"},
         cs.SupportedLanguage.PHP,
         "proj.caller",
-    ) == (NodeType.FUNCTION, "proj.text.format"), (
+    ) == (cs.NodeLabel.FUNCTION, "proj.text.format"), (
         "a fully-qualified `use function \\App\\Text\\format` did not resolve; "
         "the leading separator from the backslash was compared against a "
         "namespace declared without one"
@@ -435,7 +434,7 @@ def test_a_fully_qualified_import_resolves(tmp_path: Path) -> None:
         {"format": "App.Text.format"},
         cs.SupportedLanguage.PHP,
         "proj.caller",
-    ) == (NodeType.FUNCTION, "proj.text.format")
+    ) == (cs.NodeLabel.FUNCTION, "proj.text.format")
 
 
 def test_an_unknown_caller_module_does_not_resolve(tmp_path: Path) -> None:
@@ -575,7 +574,7 @@ def test_a_non_php_caller_never_resolves_through_php_namespaces(
 
     assert resolver._try_resolve_direct_import(
         "format", import_map, cs.SupportedLanguage.PHP, "proj.caller"
-    ) == (NodeType.FUNCTION, "proj.text.format"), (
+    ) == (cs.NodeLabel.FUNCTION, "proj.text.format"), (
         "the PHP caller stopped resolving too, so the guard disabled the "
         "feature rather than scoping it"
     )

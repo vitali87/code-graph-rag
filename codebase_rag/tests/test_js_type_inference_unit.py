@@ -6,7 +6,6 @@ from codebase_rag import constants as cs
 from codebase_rag.parsers.import_processor import ImportProcessor
 from codebase_rag.parsers.js_ts.type_inference import JsTypeInferenceEngine
 from codebase_rag.tests.conftest import MockNode, create_mock_node
-from codebase_rag.types_defs import NodeType
 
 
 def create_js_variable_declarator(
@@ -118,7 +117,7 @@ class TestResolveJsClassName:
         mock_function_registry.__contains__ = MagicMock(
             side_effect=lambda x: x == "myapp.models.Person"
         )
-        mock_function_registry.__getitem__ = MagicMock(return_value=NodeType.CLASS)
+        mock_function_registry.__getitem__ = MagicMock(return_value=cs.NodeLabel.CLASS)
 
         result = js_type_engine._resolve_js_class_name("Person", "myapp.main")
 
@@ -132,7 +131,7 @@ class TestResolveJsClassName:
         mock_function_registry.__contains__ = MagicMock(
             side_effect=lambda x: x == "myapp.main.Helper"
         )
-        mock_function_registry.__getitem__ = MagicMock(return_value=NodeType.CLASS)
+        mock_function_registry.__getitem__ = MagicMock(return_value=cs.NodeLabel.CLASS)
 
         result = js_type_engine._resolve_js_class_name("Helper", "myapp.main")
 
@@ -161,7 +160,7 @@ class TestResolveJsClassName:
         mock_function_registry.__contains__ = MagicMock(
             side_effect=lambda x: x == "myapp.main.Person"
         )
-        mock_function_registry.__getitem__ = MagicMock(return_value=NodeType.CLASS)
+        mock_function_registry.__getitem__ = MagicMock(return_value=cs.NodeLabel.CLASS)
 
         result = js_type_engine._resolve_js_class_name("Person", "myapp.main")
 
@@ -190,7 +189,7 @@ class TestInferJsVariableTypeFromValue:
         mock_function_registry.__contains__ = MagicMock(
             side_effect=lambda x: x == "myapp.main.MyClass"
         )
-        mock_function_registry.__getitem__ = MagicMock(return_value=NodeType.CLASS)
+        mock_function_registry.__getitem__ = MagicMock(return_value=cs.NodeLabel.CLASS)
         value_node = create_new_expression("MyClass")
 
         result = js_type_engine._infer_js_variable_type_from_value(
@@ -268,7 +267,7 @@ class TestInferJsMethodReturnType:
         mock_function_registry.__contains__ = MagicMock(
             side_effect=lambda x: x == "myapp.main.MyClass"
         )
-        mock_function_registry.__getitem__ = MagicMock(return_value=NodeType.CLASS)
+        mock_function_registry.__getitem__ = MagicMock(return_value=cs.NodeLabel.CLASS)
         mock_find_method_ast_node.return_value = None
 
         result = js_type_engine._infer_js_method_return_type(

@@ -6,28 +6,27 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.parsers.class_ingest.node_type import determine_node_type
+from codebase_rag.parsers.class_ingest.node_type import definition_label
 from codebase_rag.tests.conftest import (
     create_mock_node,
     get_node_names,
     run_updater,
 )
-from codebase_rag.types_defs import NodeType
 
 
 @pytest.mark.parametrize(
     ("ts_node_type", "expected"),
     [
-        (cs.TS_RS_ENUM_ITEM, NodeType.ENUM),
-        (cs.TS_RS_TRAIT_ITEM, NodeType.INTERFACE),
-        (cs.TS_RS_TYPE_ITEM, NodeType.TYPE),
-        (cs.TS_RS_UNION_ITEM, NodeType.UNION),
-        (cs.TS_RS_STRUCT_ITEM, NodeType.CLASS),
+        (cs.TS_RS_ENUM_ITEM, cs.NodeLabel.ENUM),
+        (cs.TS_RS_TRAIT_ITEM, cs.NodeLabel.INTERFACE),
+        (cs.TS_RS_TYPE_ITEM, cs.NodeLabel.TYPE),
+        (cs.TS_RS_UNION_ITEM, cs.NodeLabel.UNION),
+        (cs.TS_RS_STRUCT_ITEM, cs.NodeLabel.CLASS),
     ],
 )
-def test_determine_node_type_rust(ts_node_type: str, expected: NodeType) -> None:
+def test_definition_label_rust(ts_node_type: str, expected: cs.NodeLabel) -> None:
     node = create_mock_node(ts_node_type)
-    result = determine_node_type(node, "Foo", "crate::Foo", cs.SupportedLanguage.RUST)
+    result = definition_label(node, "Foo", "crate::Foo", cs.SupportedLanguage.RUST)
     assert result == expected
 
 
@@ -58,7 +57,7 @@ def test_rust_enum_label(
     rust_node_type_project: Path, mock_ingestor: MagicMock
 ) -> None:
     run_updater(rust_node_type_project, mock_ingestor, skip_if_missing="rust")
-    enum_names = get_node_names(mock_ingestor, NodeType.ENUM)
+    enum_names = get_node_names(mock_ingestor, cs.NodeLabel.ENUM)
     assert len(enum_names) == 1
     assert enum_names.pop().endswith(".Color")
 
@@ -67,7 +66,7 @@ def test_rust_trait_label(
     rust_node_type_project: Path, mock_ingestor: MagicMock
 ) -> None:
     run_updater(rust_node_type_project, mock_ingestor, skip_if_missing="rust")
-    interface_names = get_node_names(mock_ingestor, NodeType.INTERFACE)
+    interface_names = get_node_names(mock_ingestor, cs.NodeLabel.INTERFACE)
     assert len(interface_names) == 1
     assert interface_names.pop().endswith(".Drawable")
 
@@ -76,7 +75,7 @@ def test_rust_type_alias_label(
     rust_node_type_project: Path, mock_ingestor: MagicMock
 ) -> None:
     run_updater(rust_node_type_project, mock_ingestor, skip_if_missing="rust")
-    type_names = get_node_names(mock_ingestor, NodeType.TYPE)
+    type_names = get_node_names(mock_ingestor, cs.NodeLabel.TYPE)
     assert len(type_names) == 1
     assert type_names.pop().endswith(".Pair")
 
@@ -85,7 +84,7 @@ def test_rust_union_label(
     rust_node_type_project: Path, mock_ingestor: MagicMock
 ) -> None:
     run_updater(rust_node_type_project, mock_ingestor, skip_if_missing="rust")
-    union_names = get_node_names(mock_ingestor, NodeType.UNION)
+    union_names = get_node_names(mock_ingestor, cs.NodeLabel.UNION)
     assert len(union_names) == 1
     assert union_names.pop().endswith(".IntOrFloat")
 
@@ -94,6 +93,6 @@ def test_rust_struct_label(
     rust_node_type_project: Path, mock_ingestor: MagicMock
 ) -> None:
     run_updater(rust_node_type_project, mock_ingestor, skip_if_missing="rust")
-    class_names = get_node_names(mock_ingestor, NodeType.CLASS)
+    class_names = get_node_names(mock_ingestor, cs.NodeLabel.CLASS)
     assert len(class_names) == 1
     assert class_names.pop().endswith(".Point")

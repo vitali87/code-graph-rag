@@ -6,7 +6,6 @@ from codebase_rag import constants as cs
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.import_processor import ImportProcessor
 from codebase_rag.parsers.js_ts.type_inference import JsTypeInferenceEngine
-from codebase_rag.types_defs import NodeType
 
 
 @pytest.fixture(scope="module")
@@ -233,7 +232,7 @@ const handler = () => {
         mock_function_registry.__contains__ = MagicMock(
             side_effect=lambda x: x == "myapp.models.Person"
         )
-        mock_function_registry.__getitem__ = MagicMock(return_value=NodeType.CLASS)
+        mock_function_registry.__getitem__ = MagicMock(return_value=cs.NodeLabel.CLASS)
 
         code = b"const person = new Person();"
         tree = js_parser.parse(code)
@@ -254,7 +253,7 @@ const handler = () => {
         mock_function_registry.__contains__ = MagicMock(
             side_effect=lambda x: x == "myapp.main.LocalClass"
         )
-        mock_function_registry.__getitem__ = MagicMock(return_value=NodeType.CLASS)
+        mock_function_registry.__getitem__ = MagicMock(return_value=cs.NodeLabel.CLASS)
 
         code = b"const local = new LocalClass();"
         tree = js_parser.parse(code)
@@ -363,7 +362,7 @@ class TestTsTypeInferenceWithRealParsing:
         mock_function_registry.__contains__ = MagicMock(
             side_effect=lambda x: x == "myapp.main.UserService"
         )
-        mock_function_registry.__getitem__ = MagicMock(return_value=NodeType.CLASS)
+        mock_function_registry.__getitem__ = MagicMock(return_value=cs.NodeLabel.CLASS)
 
         code = b"""
 interface IService {
@@ -715,7 +714,7 @@ export class Screen {
     found = {
         (c[0][0][2], c[0][2][2])
         for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c[0]) >= 3 and c[0][1] == "CALLS" and c[0][2][0] == NodeType.METHOD
+        if len(c[0]) >= 3 and c[0][1] == "CALLS" and c[0][2][0] == cs.NodeLabel.METHOD
     }
     render = f"{project_name}.app.Widget.render"
     decoy = f"{project_name}.app.Banner.render"

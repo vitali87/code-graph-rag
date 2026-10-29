@@ -6,11 +6,11 @@ import pytest
 import tree_sitter_python as tsp
 from tree_sitter import Language, Parser
 
+from codebase_rag.constants import NodeLabel
 from codebase_rag.function_registry import FunctionRegistryTrie
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.import_processor import ImportProcessor
-from codebase_rag.types_defs import NodeType
 
 
 @pytest.fixture
@@ -74,17 +74,17 @@ class TestImportParsing:
 
     def test_function_registry_integration(self, graph_updater: GraphUpdater) -> None:
         """Test integration between import parsing and function registry."""
-        graph_updater.function_registry["test.models.user.User"] = NodeType.CLASS
+        graph_updater.function_registry["test.models.user.User"] = NodeLabel.CLASS
         graph_updater.function_registry["test.models.user.User.get_name"] = (
-            NodeType.FUNCTION
+            NodeLabel.FUNCTION
         )
         graph_updater.function_registry["test.utils.logger.Logger.info"] = (
-            NodeType.FUNCTION
+            NodeLabel.FUNCTION
         )
 
         assert "test.models.user.User" in graph_updater.function_registry
         assert (
-            graph_updater.function_registry["test.models.user.User"] == NodeType.CLASS
+            graph_updater.function_registry["test.models.user.User"] == NodeLabel.CLASS
         )
 
     def test_relative_import_resolution(self, graph_updater: GraphUpdater) -> None:

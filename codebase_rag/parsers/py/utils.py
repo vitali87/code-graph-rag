@@ -3,8 +3,8 @@ from __future__ import annotations
 from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
-from ...constants import SEPARATOR_DOT
-from ...types_defs import FunctionRegistryTrieProtocol, NodeType
+from ...constants import SEPARATOR_DOT, NodeLabel
+from ...types_defs import FunctionRegistryTrieProtocol
 from ..utils import follow_reexports
 
 if TYPE_CHECKING:
@@ -42,7 +42,7 @@ def resolve_dotted_class(
         qn = follow_reexports(
             f"{base}{SEPARATOR_DOT}{rest}", import_mapping, function_registry
         )
-        if function_registry.get(qn) == NodeType.CLASS:
+        if function_registry.get(qn) == NodeLabel.CLASS:
             return qn
     return None
 
@@ -71,7 +71,7 @@ def resolve_class_name(
     import_processor: ImportProcessor,
     function_registry: FunctionRegistryTrieProtocol,
     require_registered: bool = False,
-    kinds: frozenset[NodeType] | None = None,
+    kinds: frozenset[NodeLabel] | None = None,
 ) -> str | None:
     """The class qn `class_name` names from `module_qn`: import map first, then
     the module and its enclosing packages, then the registry's name search.
@@ -96,7 +96,7 @@ def resolve_class_name(
 def _is_wanted_kind(
     qualified_name: str,
     function_registry: FunctionRegistryTrieProtocol,
-    kinds: frozenset[NodeType] | None,
+    kinds: frozenset[NodeLabel] | None,
 ) -> bool:
     if kinds is None:
         return qualified_name in function_registry
@@ -129,7 +129,7 @@ def _class_in_module_or_enclosing_package(
     class_name: str,
     module_qn: str,
     function_registry: FunctionRegistryTrieProtocol,
-    kinds: frozenset[NodeType] | None = None,
+    kinds: frozenset[NodeLabel] | None = None,
 ) -> str | None:
     same_module_qn = f"{module_qn}.{class_name}"
     if _is_wanted_kind(same_module_qn, function_registry, kinds):
@@ -147,7 +147,7 @@ def _class_by_simple_name(
     class_name: str,
     module_qn: str,
     function_registry: FunctionRegistryTrieProtocol,
-    kinds: frozenset[NodeType] | None = None,
+    kinds: frozenset[NodeLabel] | None = None,
 ) -> str | None:
     matches = [
         match

@@ -11,7 +11,6 @@ from codebase_rag import constants as cs
 from codebase_rag.parsers.import_processor import ImportProcessor
 from codebase_rag.parsers.py import ast_analyzer, variable_analyzer
 from codebase_rag.parsers.py.type_inference import PythonTypeInferenceEngine
-from codebase_rag.types_defs import NodeType
 
 if TYPE_CHECKING:
     from tree_sitter import Language, Parser, Query
@@ -365,7 +364,7 @@ class TestSelfAssignmentAnalysisWithRealParsing:
             "Cache": "models.Cache",
         }
         engine.function_registry.get.side_effect = lambda name: (
-            NodeType.CLASS if name in {"models.Store", "models.Cache"} else None
+            cs.NodeLabel.CLASS if name in {"models.Store", "models.Cache"} else None
         )
         if use_query:
             engine.queries = {

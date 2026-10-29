@@ -11,7 +11,6 @@ from codebase_rag.tests.conftest import (
     get_relationships,
     run_updater,
 )
-from codebase_rag.types_defs import NodeType
 
 
 @pytest.fixture
@@ -48,14 +47,14 @@ public interface Interface {
     )
     run_updater(java_label_collision_project, mock_ingestor, skip_if_missing="java")
 
-    interface_nodes = get_nodes(mock_ingestor, NodeType.INTERFACE)
+    interface_nodes = get_nodes(mock_ingestor, NodeLabel.INTERFACE)
     interface_qns = get_qualified_names(interface_nodes)
 
     assert _has_qn_ending(interface_qns, ".Interface"), (
         f"Interface named 'Interface' not found in Interface nodes. Got: {interface_qns}"
     )
 
-    class_qns = get_node_names(mock_ingestor, NodeType.CLASS)
+    class_qns = get_node_names(mock_ingestor, NodeLabel.CLASS)
     interface_in_class = [qn for qn in class_qns if qn.endswith(".Interface")]
     assert not interface_in_class, (
         f"Interface named 'Interface' should not appear as a Class node. Got: {interface_in_class}"
@@ -81,14 +80,14 @@ public enum Enum {
     )
     run_updater(java_label_collision_project, mock_ingestor, skip_if_missing="java")
 
-    enum_nodes = get_nodes(mock_ingestor, NodeType.ENUM)
+    enum_nodes = get_nodes(mock_ingestor, NodeLabel.ENUM)
     enum_qns = get_qualified_names(enum_nodes)
 
     assert _has_qn_ending(enum_qns, ".Enum"), (
         f"Enum named 'Enum' not found in Enum nodes. Got: {enum_qns}"
     )
 
-    class_qns = get_node_names(mock_ingestor, NodeType.CLASS)
+    class_qns = get_node_names(mock_ingestor, NodeLabel.CLASS)
     enum_in_class = [qn for qn in class_qns if qn.endswith(".Enum")]
     assert not enum_in_class, (
         f"Enum named 'Enum' should not appear as a Class node. Got: {enum_in_class}"
@@ -112,7 +111,7 @@ public class Class {
     )
     run_updater(java_label_collision_project, mock_ingestor, skip_if_missing="java")
 
-    class_nodes = get_nodes(mock_ingestor, NodeType.CLASS)
+    class_nodes = get_nodes(mock_ingestor, NodeLabel.CLASS)
     class_qns = get_qualified_names(class_nodes)
 
     assert _has_qn_ending(class_qns, ".Class"), (
@@ -164,7 +163,7 @@ public interface Interface {
                 to_label = to_spec[0]
                 to_qn = str(to_spec[2])
                 if to_qn.endswith(".Interface"):
-                    assert to_label == NodeType.INTERFACE, (
+                    assert to_label == NodeLabel.INTERFACE, (
                         f"DEFINES target label should be 'Interface', got '{to_label}'"
                     )
                     found_defines = True
@@ -201,7 +200,7 @@ public enum Enum {
                 to_label = to_spec[0]
                 to_qn = str(to_spec[2])
                 if to_qn.endswith(".Enum"):
-                    assert to_label == NodeType.ENUM, (
+                    assert to_label == NodeLabel.ENUM, (
                         f"DEFINES target label should be 'Enum', got '{to_label}'"
                     )
                     found_defines = True
@@ -238,10 +237,10 @@ public class Implementor implements Interface {
     )
     run_updater(java_label_collision_project, mock_ingestor, skip_if_missing="java")
 
-    interface_qns = get_node_names(mock_ingestor, NodeType.INTERFACE)
+    interface_qns = get_node_names(mock_ingestor, NodeLabel.INTERFACE)
     assert _has_qn_ending(interface_qns, ".Interface")
 
-    class_qns = get_node_names(mock_ingestor, NodeType.CLASS)
+    class_qns = get_node_names(mock_ingestor, NodeLabel.CLASS)
     assert _has_qn_ending(class_qns, ".Implementor")
 
     implements_rels = get_relationships(mock_ingestor, "IMPLEMENTS")
@@ -296,13 +295,13 @@ public class Module {
     )
     run_updater(java_label_collision_project, mock_ingestor, skip_if_missing="java")
 
-    class_qns = get_node_names(mock_ingestor, NodeType.CLASS)
+    class_qns = get_node_names(mock_ingestor, NodeLabel.CLASS)
     assert _has_qn_ending(class_qns, ".Function")
     assert _has_qn_ending(class_qns, ".Method")
     assert _has_qn_ending(class_qns, ".Module")
 
-    function_qns = get_node_names(mock_ingestor, NodeType.FUNCTION)
-    method_qns = get_node_names(mock_ingestor, NodeType.METHOD)
+    function_qns = get_node_names(mock_ingestor, NodeLabel.FUNCTION)
+    method_qns = get_node_names(mock_ingestor, NodeLabel.METHOD)
     non_class_qns = function_qns | method_qns
     collisions = [
         qn

@@ -1,8 +1,8 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from codebase_rag.constants import NodeLabel
 from codebase_rag.tests.conftest import run_updater
-from codebase_rag.types_defs import NodeType
 
 
 def test_lua_pcall_xpcall_patterns(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -277,7 +277,7 @@ end
     created_functions = [
         c
         for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c[0][0] == NodeType.FUNCTION
+        if c[0][0] == NodeLabel.FUNCTION
     ]
     fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 
@@ -655,7 +655,7 @@ end
     created_functions = [
         c
         for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c[0][0] == NodeType.FUNCTION
+        if c[0][0] == NodeLabel.FUNCTION
     ]
     fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 
@@ -917,7 +917,7 @@ end
     created_functions = [
         c
         for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c[0][0] == NodeType.FUNCTION
+        if c[0][0] == NodeLabel.FUNCTION
     ]
     fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 
@@ -1172,7 +1172,7 @@ print("Degraded operation result:", result, "degraded:", degraded)
     created_functions = [
         c
         for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c[0][0] == NodeType.FUNCTION
+        if c[0][0] == NodeLabel.FUNCTION
     ]
     fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
 

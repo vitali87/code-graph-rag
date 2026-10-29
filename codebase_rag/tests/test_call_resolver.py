@@ -14,7 +14,7 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.call_resolver import CallResolver
 from codebase_rag.parsers.import_processor import ImportProcessor
 from codebase_rag.parsers.type_inference import TypeInferenceEngine
-from codebase_rag.types_defs import NodeType, QualifiedName
+from codebase_rag.types_defs import QualifiedName
 
 if TYPE_CHECKING:
     from codebase_rag.parsers.call_processor import CallProcessor
@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 class MockFunctionRegistry:
     def __init__(self) -> None:
-        self._data: dict[QualifiedName, NodeType] = {}
+        self._data: dict[QualifiedName, cs.NodeLabel] = {}
         self._suffix_index: dict[str, list[QualifiedName]] = defaultdict(list)
         self._properties: set[QualifiedName] = set()
         self._property_names: set[str] = set()
@@ -31,10 +31,10 @@ class MockFunctionRegistry:
     def __contains__(self, qn: QualifiedName) -> bool:
         return qn in self._data
 
-    def __getitem__(self, qn: QualifiedName) -> NodeType:
+    def __getitem__(self, qn: QualifiedName) -> cs.NodeLabel:
         return self._data[qn]
 
-    def __setitem__(self, qn: QualifiedName, func_type: NodeType) -> None:
+    def __setitem__(self, qn: QualifiedName, func_type: cs.NodeLabel) -> None:
         self._data[qn] = func_type
         parts = qn.split(cs.SEPARATOR_DOT)
         for i in range(len(parts)):
@@ -43,17 +43,17 @@ class MockFunctionRegistry:
                 self._suffix_index[suffix].append(qn)
 
     def get(
-        self, qn: QualifiedName, default: NodeType | None = None
-    ) -> NodeType | None:
+        self, qn: QualifiedName, default: cs.NodeLabel | None = None
+    ) -> cs.NodeLabel | None:
         return self._data.get(qn, default)
 
     def keys(self) -> KeysView[QualifiedName]:
         return self._data.keys()
 
-    def items(self) -> ItemsView[QualifiedName, NodeType]:
+    def items(self) -> ItemsView[QualifiedName, cs.NodeLabel]:
         return self._data.items()
 
-    def find_with_prefix(self, prefix: str) -> list[tuple[QualifiedName, NodeType]]:
+    def find_with_prefix(self, prefix: str) -> list[tuple[QualifiedName, cs.NodeLabel]]:
         return [(k, v) for k, v in self._data.items() if k.startswith(prefix)]
 
     def find_ending_with(self, suffix: str) -> list[QualifiedName]:
@@ -170,7 +170,9 @@ def call_processor(temp_repo: Path, mock_ingestor: MagicMock) -> CallProcessor:
 
 class TestTryResolveIife:
     def test_resolves_iife_function_prefix(self, call_resolver: CallResolver) -> None:
-        call_resolver.function_registry["proj.module.iife_func_1_5"] = NodeType.FUNCTION
+        call_resolver.function_registry["proj.module.iife_func_1_5"] = (
+            cs.NodeLabel.FUNCTION
+        )
 
         result = call_resolver._try_resolve_iife("iife_func_1_5", "proj.module")
         assert result is not None
@@ -178,7 +180,7 @@ class TestTryResolveIife:
 
     def test_resolves_iife_arrow_prefix(self, call_resolver: CallResolver) -> None:
         call_resolver.function_registry["proj.module.iife_arrow_2_10"] = (
-            NodeType.FUNCTION
+            cs.NodeLabel.FUNCTION
         )
 
         result = call_resolver._try_resolve_iife("iife_arrow_2_10", "proj.module")
@@ -186,7 +188,9 @@ class TestTryResolveIife:
         assert result[1] == "proj.module.iife_arrow_2_10"
 
     def test_returns_none_for_non_iife(self, call_resolver: CallResolver) -> None:
-        call_resolver.function_registry["proj.module.regular_func"] = NodeType.FUNCTION
+        call_resolver.function_registry["proj.module.regular_func"] = (
+            cs.NodeLabel.FUNCTION
+        )
 
         result = call_resolver._try_resolve_iife("regular_func", "proj.module")
         assert result is None
@@ -252,7 +256,7 @@ class TestGetSeparator:
 
 class TestTryResolveDirectImport:
     def test_resolves_direct_import(self, call_resolver: CallResolver) -> None:
-        call_resolver.function_registry["external.module.func"] = NodeType.FUNCTION
+        call_resolver.function_registry["external.module.func"] = cs.NodeLabel.FUNCTION
         import_map = {"func": "external.module.func"}
 
         result = call_resolver._try_resolve_direct_import("func", import_map)
@@ -276,7 +280,7 @@ class TestTryResolveDirectImport:
 
 class TestTryResolveSameModule:
     def test_resolves_same_module_function(self, call_resolver: CallResolver) -> None:
-        call_resolver.function_registry["proj.module.my_func"] = NodeType.FUNCTION
+        call_resolver.function_registry["proj.module.my_func"] = cs.NodeLabel.FUNCTION
 
         result = call_resolver._try_resolve_same_module("my_func", "proj.module")
         assert result is not None
@@ -291,8 +295,8 @@ class TestTryResolveSameModule:
 
 class TestTryResolveViaTrie:
     def test_resolves_via_trie_match(self, call_resolver: CallResolver) -> None:
-        call_resolver.function_registry["proj.utils.helper"] = NodeType.FUNCTION
-        call_resolver.function_registry["proj.other.helper"] = NodeType.FUNCTION
+        call_resolver.function_registry["proj.utils.helper"] = cs.NodeLabel.FUNCTION
+        call_resolver.function_registry["proj.other.helper"] = cs.NodeLabel.FUNCTION
 
         result = call_resolver._try_resolve_via_trie("helper", "proj.utils")
         assert result is not None
@@ -303,7 +307,9 @@ class TestTryResolveViaTrie:
         assert result is None
 
     def test_handles_qualified_call_name(self, call_resolver: CallResolver) -> None:
-        call_resolver.function_registry["proj.module.Class.method"] = NodeType.METHOD
+        call_resolver.function_registry["proj.module.Class.method"] = (
+            cs.NodeLabel.METHOD
+        )
 
         result = call_resolver._try_resolve_via_trie("Class.method", "proj.module")
         assert result is not None
@@ -312,7 +318,7 @@ class TestTryResolveViaTrie:
 
 class TestTryResolveWildcardImports:
     def test_resolves_wildcard_import(self, call_resolver: CallResolver) -> None:
-        call_resolver.function_registry["external.utils.helper"] = NodeType.FUNCTION
+        call_resolver.function_registry["external.utils.helper"] = cs.NodeLabel.FUNCTION
         import_map = {"*utils": "external.utils"}
 
         result = call_resolver._try_resolve_wildcard_imports("helper", import_map)
@@ -328,7 +334,7 @@ class TestTryResolveWildcardImports:
         assert result is None
 
     def test_skips_non_wildcard_imports(self, call_resolver: CallResolver) -> None:
-        call_resolver.function_registry["external.utils.helper"] = NodeType.FUNCTION
+        call_resolver.function_registry["external.utils.helper"] = cs.NodeLabel.FUNCTION
         import_map = {"utils": "external.utils"}
 
         result = call_resolver._try_resolve_wildcard_imports("helper", import_map)
@@ -337,14 +343,14 @@ class TestTryResolveWildcardImports:
 
 class TestTryWildcardQns:
     def test_dot_separated_qn(self, call_resolver: CallResolver) -> None:
-        call_resolver.function_registry["external.utils.helper"] = NodeType.FUNCTION
+        call_resolver.function_registry["external.utils.helper"] = cs.NodeLabel.FUNCTION
 
         result = call_resolver._try_wildcard_qns("helper", "external.utils")
         assert result is not None
         assert result[1] == "external.utils.helper"
 
     def test_double_colon_separated_qn(self, call_resolver: CallResolver) -> None:
-        call_resolver.function_registry["crate::module::func"] = NodeType.FUNCTION
+        call_resolver.function_registry["crate::module::func"] = cs.NodeLabel.FUNCTION
 
         result = call_resolver._try_wildcard_qns("func", "crate::module")
         assert result is not None
@@ -356,7 +362,7 @@ class TestTryWildcardQns:
 
 class TestTryResolveViaImports:
     def test_resolves_direct_import(self, call_resolver: CallResolver) -> None:
-        call_resolver.function_registry["external.func"] = NodeType.FUNCTION
+        call_resolver.function_registry["external.func"] = cs.NodeLabel.FUNCTION
         call_resolver.import_processor.import_mapping["proj.module"] = {
             "func": "external.func"
         }
@@ -372,7 +378,9 @@ class TestTryResolveViaImports:
 
 class TestResolveTwoPartCall:
     def test_resolves_imported_class_method(self, call_resolver: CallResolver) -> None:
-        call_resolver.function_registry["proj.models.MyClass.method"] = NodeType.METHOD
+        call_resolver.function_registry["proj.models.MyClass.method"] = (
+            cs.NodeLabel.METHOD
+        )
         import_map = {"MyClass": "proj.models.MyClass"}
 
         result = call_resolver._resolve_two_part_call(
@@ -387,7 +395,7 @@ class TestResolveTwoPartCall:
         assert result[1] == "proj.models.MyClass.method"
 
     def test_resolves_local_variable_method(self, call_resolver: CallResolver) -> None:
-        call_resolver.function_registry["proj.models.User.save"] = NodeType.METHOD
+        call_resolver.function_registry["proj.models.User.save"] = cs.NodeLabel.METHOD
         import_map = {"User": "proj.models.User"}
         local_var_types = {"user": "User"}
 
@@ -403,7 +411,7 @@ class TestResolveTwoPartCall:
         assert result[1] == "proj.models.User.save"
 
     def test_resolves_module_method_fallback(self, call_resolver: CallResolver) -> None:
-        call_resolver.function_registry["proj.views.method"] = NodeType.FUNCTION
+        call_resolver.function_registry["proj.views.method"] = cs.NodeLabel.FUNCTION
         import_map: dict[str, str] = {}
 
         result = call_resolver._resolve_two_part_call(
@@ -420,7 +428,7 @@ class TestResolveTwoPartCall:
 
 class TestTryResolveViaLocalType:
     def test_resolves_via_local_type(self, call_resolver: CallResolver) -> None:
-        call_resolver.function_registry["proj.models.User.save"] = NodeType.METHOD
+        call_resolver.function_registry["proj.models.User.save"] = cs.NodeLabel.METHOD
         import_map = {"User": "proj.models.User"}
         local_var_types = {"user": "User"}
 
@@ -481,7 +489,7 @@ class TestTryResolveViaLocalType:
 
 class TestTryMethodOnClass:
     def test_resolves_method_on_class(self, call_resolver: CallResolver) -> None:
-        call_resolver.function_registry["proj.models.User.save"] = NodeType.METHOD
+        call_resolver.function_registry["proj.models.User.save"] = cs.NodeLabel.METHOD
 
         result = call_resolver._try_method_on_class(
             "proj.models.User",
@@ -496,7 +504,7 @@ class TestTryMethodOnClass:
 
     def test_resolves_inherited_method(self, call_resolver: CallResolver) -> None:
         call_resolver.function_registry["proj.models.BaseModel.validate"] = (
-            NodeType.METHOD
+            cs.NodeLabel.METHOD
         )
         call_resolver.class_inheritance["proj.models.User"] = ["proj.models.BaseModel"]
 
@@ -528,7 +536,7 @@ class TestTryResolveViaImport:
         self, call_resolver: CallResolver
     ) -> None:
         call_resolver.function_registry["proj.utils.StringUtils.format"] = (
-            NodeType.METHOD
+            cs.NodeLabel.METHOD
         )
         import_map = {"StringUtils": "proj.utils.StringUtils"}
 
@@ -559,7 +567,9 @@ class TestResolveImportedClassQn:
     def test_returns_class_qn_for_matching_method(
         self, call_resolver: CallResolver
     ) -> None:
-        call_resolver.function_registry["proj.models.User.User.save"] = NodeType.METHOD
+        call_resolver.function_registry["proj.models.User.User.save"] = (
+            cs.NodeLabel.METHOD
+        )
 
         result = call_resolver._resolve_imported_class_qn(
             "proj.models.User",
@@ -581,7 +591,7 @@ class TestResolveImportedClassQn:
 
 class TestResolveRustClassQn:
     def test_resolves_rust_class_qn(self, call_resolver: CallResolver) -> None:
-        call_resolver.function_registry["crate.module.MyStruct"] = NodeType.CLASS
+        call_resolver.function_registry["crate.module.MyStruct"] = cs.NodeLabel.CLASS
 
         result = call_resolver._resolve_rust_class_qn("crate::module::MyStruct")
         assert result == "crate.module.MyStruct"
@@ -593,7 +603,7 @@ class TestResolveRustClassQn:
 
 class TestTryResolveModuleMethod:
     def test_resolves_module_method(self, call_resolver: CallResolver) -> None:
-        call_resolver.function_registry["proj.module.helper"] = NodeType.FUNCTION
+        call_resolver.function_registry["proj.module.helper"] = cs.NodeLabel.FUNCTION
 
         result = call_resolver._try_resolve_module_method(
             "helper",
@@ -614,7 +624,9 @@ class TestTryResolveModuleMethod:
 
 class TestResolveSelfAttributeCall:
     def test_resolves_self_attribute_method(self, call_resolver: CallResolver) -> None:
-        call_resolver.function_registry["proj.models.Database.query"] = NodeType.METHOD
+        call_resolver.function_registry["proj.models.Database.query"] = (
+            cs.NodeLabel.METHOD
+        )
         import_map = {"Database": "proj.models.Database"}
         local_var_types = {"self.db": "Database"}
 
@@ -631,7 +643,9 @@ class TestResolveSelfAttributeCall:
     def test_resolves_inherited_self_attribute_method(
         self, call_resolver: CallResolver
     ) -> None:
-        call_resolver.function_registry["proj.models.BaseDB.close"] = NodeType.METHOD
+        call_resolver.function_registry["proj.models.BaseDB.close"] = (
+            cs.NodeLabel.METHOD
+        )
         call_resolver.class_inheritance["proj.models.Database"] = ["proj.models.BaseDB"]
         import_map = {"Database": "proj.models.Database"}
         local_var_types = {"self.db": "Database"}
@@ -662,7 +676,7 @@ class TestResolveMultiPartCall:
         self, call_resolver: CallResolver
     ) -> None:
         call_resolver.function_registry["proj.utils.Config.settings.get"] = (
-            NodeType.METHOD
+            cs.NodeLabel.METHOD
         )
         import_map = {"Config": "proj.utils.Config"}
 
@@ -678,7 +692,7 @@ class TestResolveMultiPartCall:
 
     def test_resolves_via_local_type(self, call_resolver: CallResolver) -> None:
         call_resolver.function_registry["proj.models.User.profile.update"] = (
-            NodeType.METHOD
+            cs.NodeLabel.METHOD
         )
         import_map = {"User": "proj.models.User"}
         local_var_types = {"user": "User"}
@@ -706,7 +720,7 @@ class TestResolveMultiPartCall:
 
 class TestTryResolveQualifiedCall:
     def test_two_part_call(self, call_resolver: CallResolver) -> None:
-        call_resolver.function_registry["proj.models.User.save"] = NodeType.METHOD
+        call_resolver.function_registry["proj.models.User.save"] = cs.NodeLabel.METHOD
         import_map = {"User": "proj.models.User"}
 
         result = call_resolver._try_resolve_qualified_call(
@@ -719,7 +733,7 @@ class TestTryResolveQualifiedCall:
         assert result[1] == "proj.models.User.save"
 
     def test_self_attribute_call(self, call_resolver: CallResolver) -> None:
-        call_resolver.function_registry["proj.models.DB.query"] = NodeType.METHOD
+        call_resolver.function_registry["proj.models.DB.query"] = cs.NodeLabel.METHOD
         import_map = {"DB": "proj.models.DB"}
         local_var_types = {"self.db": "DB"}
 
@@ -764,7 +778,7 @@ class TestResolveClassQnFromType:
     def test_falls_back_to_class_name_resolution(
         self, call_resolver: CallResolver
     ) -> None:
-        call_resolver.function_registry["proj.views.LocalClass"] = NodeType.CLASS
+        call_resolver.function_registry["proj.views.LocalClass"] = cs.NodeLabel.CLASS
 
         result = call_resolver._resolve_class_qn_from_type(
             "LocalClass",
@@ -789,7 +803,9 @@ class TestResolveJavaMethodCall:
             queries=queries,
         )
         resolver = updater.factory.call_processor._resolver
-        resolver.function_registry["com.example.MyClass.doSomething"] = NodeType.METHOD
+        resolver.function_registry["com.example.MyClass.doSomething"] = (
+            cs.NodeLabel.METHOD
+        )
         resolver.import_processor.import_mapping["com.example.App"] = {
             "MyClass": "com.example.MyClass"
         }
@@ -839,7 +855,9 @@ class TestResolveJavaMethodCall:
 
 class TestResolveInheritedMethod:
     def test_finds_method_in_parent(self, call_resolver: CallResolver) -> None:
-        call_resolver.function_registry["proj.base.BaseClass.method"] = NodeType.METHOD
+        call_resolver.function_registry["proj.base.BaseClass.method"] = (
+            cs.NodeLabel.METHOD
+        )
         call_resolver.class_inheritance["proj.module.ChildClass"] = [
             "proj.base.BaseClass"
         ]
@@ -852,7 +870,7 @@ class TestResolveInheritedMethod:
 
     def test_finds_method_in_grandparent(self, call_resolver: CallResolver) -> None:
         call_resolver.function_registry["proj.base.GrandparentClass.method"] = (
-            NodeType.METHOD
+            cs.NodeLabel.METHOD
         )
         call_resolver.class_inheritance["proj.module.ChildClass"] = [
             "proj.base.ParentClass"
@@ -882,7 +900,7 @@ class TestResolveInheritedMethod:
         assert result is None
 
     def test_handles_diamond_inheritance(self, call_resolver: CallResolver) -> None:
-        call_resolver.function_registry["proj.base.Root.method"] = NodeType.METHOD
+        call_resolver.function_registry["proj.base.Root.method"] = cs.NodeLabel.METHOD
         call_resolver.class_inheritance["proj.module.Child"] = [
             "proj.base.ParentA",
             "proj.base.ParentB",
@@ -948,10 +966,10 @@ class TestResolveChainedCall:
         )
         processor = updater.factory.call_processor
         processor._resolver.function_registry["proj.models.QuerySet.filter"] = (
-            NodeType.METHOD
+            cs.NodeLabel.METHOD
         )
         processor._resolver.function_registry["proj.models.QuerySet.all"] = (
-            NodeType.METHOD
+            cs.NodeLabel.METHOD
         )
         processor._resolver.type_inference.python_type_inference._method_return_type_cache[
             "proj.models.QuerySet.all"
@@ -982,7 +1000,7 @@ class TestResolveChainedCall:
 class TestResolveSuperCall:
     def test_super_constructor_call(self, call_resolver: CallResolver) -> None:
         call_resolver.function_registry["proj.base.Parent.constructor"] = (
-            NodeType.METHOD
+            cs.NodeLabel.METHOD
         )
         call_resolver.class_inheritance["proj.module.Child"] = ["proj.base.Parent"]
 
@@ -994,7 +1012,9 @@ class TestResolveSuperCall:
         assert result[1] == "proj.base.Parent.constructor"
 
     def test_super_method_call(self, call_resolver: CallResolver) -> None:
-        call_resolver.function_registry["proj.base.Parent.validate"] = NodeType.METHOD
+        call_resolver.function_registry["proj.base.Parent.validate"] = (
+            cs.NodeLabel.METHOD
+        )
         call_resolver.class_inheritance["proj.module.Child"] = ["proj.base.Parent"]
 
         result = call_resolver._resolve_super_call(
@@ -1021,7 +1041,7 @@ class TestResolveSuperCall:
 class TestResolveFunctionCallIntegration:
     def test_resolves_iife_priority(self, call_resolver: CallResolver) -> None:
         call_resolver.function_registry["proj.module.__iife_func_1_5"] = (
-            NodeType.FUNCTION
+            cs.NodeLabel.FUNCTION
         )
 
         result = call_resolver.resolve_function_call("__iife_func_1_5", "proj.module")
@@ -1030,7 +1050,7 @@ class TestResolveFunctionCallIntegration:
 
     def test_resolves_super_call(self, call_resolver: CallResolver) -> None:
         call_resolver.function_registry["proj.base.Parent.constructor"] = (
-            NodeType.METHOD
+            cs.NodeLabel.METHOD
         )
         call_resolver.class_inheritance["proj.module.Child"] = ["proj.base.Parent"]
 
@@ -1043,7 +1063,7 @@ class TestResolveFunctionCallIntegration:
         assert result[1] == "proj.base.Parent.constructor"
 
     def test_resolves_imported_function(self, call_resolver: CallResolver) -> None:
-        call_resolver.function_registry["proj.utils.helper"] = NodeType.FUNCTION
+        call_resolver.function_registry["proj.utils.helper"] = cs.NodeLabel.FUNCTION
         call_resolver.import_processor.import_mapping["proj.module"] = {
             "helper": "proj.utils.helper"
         }
@@ -1053,14 +1073,16 @@ class TestResolveFunctionCallIntegration:
         assert result[1] == "proj.utils.helper"
 
     def test_resolves_same_module_function(self, call_resolver: CallResolver) -> None:
-        call_resolver.function_registry["proj.module.local_func"] = NodeType.FUNCTION
+        call_resolver.function_registry["proj.module.local_func"] = (
+            cs.NodeLabel.FUNCTION
+        )
 
         result = call_resolver.resolve_function_call("local_func", "proj.module")
         assert result is not None
         assert result[1] == "proj.module.local_func"
 
     def test_falls_back_to_trie(self, call_resolver: CallResolver) -> None:
-        call_resolver.function_registry["proj.other.helper"] = NodeType.FUNCTION
+        call_resolver.function_registry["proj.other.helper"] = cs.NodeLabel.FUNCTION
 
         result = call_resolver.resolve_function_call("helper", "proj.module")
         assert result is not None
@@ -1073,8 +1095,12 @@ class TestResolveFunctionCallIntegration:
 
 class TestDequeBfs:
     def test_bfs_order_prefers_closer_parent(self, call_resolver: CallResolver) -> None:
-        call_resolver.function_registry["proj.base.ParentA.method"] = NodeType.METHOD
-        call_resolver.function_registry["proj.base.ParentB.method"] = NodeType.METHOD
+        call_resolver.function_registry["proj.base.ParentA.method"] = (
+            cs.NodeLabel.METHOD
+        )
+        call_resolver.function_registry["proj.base.ParentB.method"] = (
+            cs.NodeLabel.METHOD
+        )
         call_resolver.class_inheritance["proj.module.Child"] = [
             "proj.base.ParentA",
             "proj.base.ParentB",
@@ -1085,7 +1111,9 @@ class TestDequeBfs:
         assert result[1] == "proj.base.ParentA.method"
 
     def test_bfs_finds_deep_ancestor_method(self, call_resolver: CallResolver) -> None:
-        call_resolver.function_registry["proj.base.Root.deep_method"] = NodeType.METHOD
+        call_resolver.function_registry["proj.base.Root.deep_method"] = (
+            cs.NodeLabel.METHOD
+        )
         call_resolver.class_inheritance["proj.module.Child"] = ["proj.mid.Middle"]
         call_resolver.class_inheritance["proj.mid.Middle"] = ["proj.base.Root"]
 
@@ -1163,9 +1191,15 @@ class TestDeterministicResolution:
     def test_trie_tiebreak_by_qualified_name(self, call_resolver: CallResolver) -> None:
         # Register multiple functions with the same simple name in different modules
         # at equal import distance from the caller
-        call_resolver.function_registry["proj.alpha.utils.helper"] = NodeType.FUNCTION
-        call_resolver.function_registry["proj.beta.utils.helper"] = NodeType.FUNCTION
-        call_resolver.function_registry["proj.gamma.utils.helper"] = NodeType.FUNCTION
+        call_resolver.function_registry["proj.alpha.utils.helper"] = (
+            cs.NodeLabel.FUNCTION
+        )
+        call_resolver.function_registry["proj.beta.utils.helper"] = (
+            cs.NodeLabel.FUNCTION
+        )
+        call_resolver.function_registry["proj.gamma.utils.helper"] = (
+            cs.NodeLabel.FUNCTION
+        )
 
         results = []
         for _ in range(20):
@@ -1181,9 +1215,9 @@ class TestDeterministicResolution:
         self, call_resolver: CallResolver
     ) -> None:
         # Deliberately insert in reverse lexicographic order
-        call_resolver.function_registry["proj.zoo.compute"] = NodeType.FUNCTION
-        call_resolver.function_registry["proj.mid.compute"] = NodeType.FUNCTION
-        call_resolver.function_registry["proj.aaa.compute"] = NodeType.FUNCTION
+        call_resolver.function_registry["proj.zoo.compute"] = cs.NodeLabel.FUNCTION
+        call_resolver.function_registry["proj.mid.compute"] = cs.NodeLabel.FUNCTION
+        call_resolver.function_registry["proj.aaa.compute"] = cs.NodeLabel.FUNCTION
 
         result = call_resolver._try_resolve_via_trie("compute", "other.module")
         assert result is not None
@@ -1193,8 +1227,8 @@ class TestDeterministicResolution:
         self, call_resolver: CallResolver
     ) -> None:
         # Closer module should win even if lexicographically later
-        call_resolver.function_registry["proj.far.away.process"] = NodeType.FUNCTION
-        call_resolver.function_registry["proj.module.process"] = NodeType.FUNCTION
+        call_resolver.function_registry["proj.far.away.process"] = cs.NodeLabel.FUNCTION
+        call_resolver.function_registry["proj.module.process"] = cs.NodeLabel.FUNCTION
 
         result = call_resolver._try_resolve_via_trie("process", "proj.module.caller")
         assert result is not None
@@ -1218,7 +1252,7 @@ class TestDeterministicResolution:
             "proj.m10.run",
         ]
         for name in names:
-            call_resolver.function_registry[name] = NodeType.FUNCTION
+            call_resolver.function_registry[name] = cs.NodeLabel.FUNCTION
 
         result = call_resolver._try_resolve_via_trie("run", "other.caller")
         assert result is not None
@@ -1227,9 +1261,9 @@ class TestDeterministicResolution:
     def test_resolve_function_call_deterministic_across_runs(
         self, call_resolver: CallResolver
     ) -> None:
-        call_resolver.function_registry["pkg.svc_a.validate"] = NodeType.FUNCTION
-        call_resolver.function_registry["pkg.svc_b.validate"] = NodeType.FUNCTION
-        call_resolver.function_registry["pkg.svc_c.validate"] = NodeType.FUNCTION
+        call_resolver.function_registry["pkg.svc_a.validate"] = cs.NodeLabel.FUNCTION
+        call_resolver.function_registry["pkg.svc_b.validate"] = cs.NodeLabel.FUNCTION
+        call_resolver.function_registry["pkg.svc_c.validate"] = cs.NodeLabel.FUNCTION
 
         results = set()
         for _ in range(10):

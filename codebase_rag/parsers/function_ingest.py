@@ -21,7 +21,6 @@ from ..types_defs import (
     FunctionLocations,
     FunctionRegistryTrieProtocol,
     FunctionSpanKey,
-    NodeType,
     OverloadSignature,
     PendingTypeFact,
     PropertyDict,
@@ -256,7 +255,9 @@ class _DeferredCppContainment(NamedTuple):
 # Go node labels a receiver type can resolve to (struct -> Class, defined
 # type/alias -> Type, interface -> Interface); picks the declaring type out of
 # same-named candidates when binding a cross-file method.
-_GO_TYPE_NODE_TYPES = frozenset({NodeType.CLASS, NodeType.TYPE, NodeType.INTERFACE})
+_GO_TYPE_NODE_TYPES = frozenset(
+    {cs.NodeLabel.CLASS, cs.NodeLabel.TYPE, cs.NodeLabel.INTERFACE}
+)
 
 
 class FunctionIngestMixin:
@@ -737,7 +738,7 @@ class FunctionIngestMixin:
                 if candidate_qn == exclude_qn:
                     continue
                 node_type = self.function_registry.get(candidate_qn)
-                if node_type in {NodeType.CLASS, NodeType.TYPE}:
+                if node_type in {cs.NodeLabel.CLASS, cs.NodeLabel.TYPE}:
                     # An out-of-class nested definition keeps `Outer::Inner` as
                     # one qn segment; normalise before the suffix check or
                     # `::Inner` never matches `.Inner`.
@@ -996,7 +997,7 @@ class FunctionIngestMixin:
                 method_qn,
                 props.get(cs.KEY_DECORATORS),
             )
-            self.function_registry[method_qn] = NodeType.METHOD
+            self.function_registry[method_qn] = cs.NodeLabel.METHOD
             self.simple_name_lookup[entry.method_name].add(method_qn)
             if entry.return_type:
                 self.method_return_types[method_qn] = entry.return_type
@@ -1099,7 +1100,7 @@ class FunctionIngestMixin:
             suffix = f"{cs.SEPARATOR_DOT}{ns_qn}"
             if any(
                 candidate.endswith(suffix)
-                and self.function_registry.get(candidate) == NodeType.FUNCTION
+                and self.function_registry.get(candidate) == cs.NodeLabel.FUNCTION
                 for candidate in self.function_registry.find_ending_with(simple)
             ):
                 continue
@@ -1298,9 +1299,7 @@ class FunctionIngestMixin:
             )
             container_type = self.function_registry.get(container_qn)
             container_label = (
-                cs.NodeLabel(container_type.value)
-                if container_type is not None
-                else cs.NodeLabel.CLASS
+                container_type if container_type is not None else cs.NodeLabel.CLASS
             )
             method_qn = ingest_method(
                 method_node=entry.method_node,
@@ -1452,7 +1451,7 @@ class FunctionIngestMixin:
             resolution.qualified_name,
             func_node.start_point[0] + 1,
             func_node.start_point[1],
-            kind=NodeType.FUNCTION if language in cs.JS_TS_LANGUAGES else None,
+            kind=cs.NodeLabel.FUNCTION if language in cs.JS_TS_LANGUAGES else None,
         )
         if unique_qn != resolution.qualified_name:
             resolution = resolution._replace(qualified_name=unique_qn)
@@ -1509,7 +1508,7 @@ class FunctionIngestMixin:
             module_qn,
         )
 
-        self.function_registry[resolution.qualified_name] = NodeType.FUNCTION
+        self.function_registry[resolution.qualified_name] = cs.NodeLabel.FUNCTION
         mark_js_ts_module_private(
             self.function_registry,
             resolution.qualified_name,
@@ -2215,7 +2214,7 @@ class FunctionIngestMixin:
                 rel_type = entry.rel_type
             elif registered := self.function_registry.get(entry.parent_qn):
                 parent_spec = (
-                    cs.NodeLabel(registered.value),
+                    registered,
                     cs.KEY_QUALIFIED_NAME,
                     entry.parent_qn,
                 )

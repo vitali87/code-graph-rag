@@ -16,7 +16,7 @@ from tree_sitter import Node
 from .. import constants as cs
 from ..capture import CaptureSelection
 from ..services import IngestorProtocol
-from ..types_defs import ASTCacheProtocol, FunctionRegistryTrieProtocol, NodeType
+from ..types_defs import ASTCacheProtocol, FunctionRegistryTrieProtocol
 from .go import utils as go_utils
 from .go.type_inference import GoTypeInferenceEngine
 from .import_processor import ImportProcessor
@@ -474,7 +474,7 @@ class GoRpcExposureProcessor:
             return None
         visited[impl_qn] = depth
         method_qn = f"{impl_qn}{cs.SEPARATOR_DOT}{method}"
-        if self._function_registry.get(method_qn) is NodeType.METHOD:
+        if self._function_registry.get(method_qn) is cs.NodeLabel.METHOD:
             return method_qn
         for embedded_qn in self._embedded_type_qns(impl_qn):
             if source := self._method_source_qn(

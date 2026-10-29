@@ -26,7 +26,6 @@ from codebase_rag.checkout_state import state_file
 from codebase_rag.function_registry import FunctionRegistryTrie
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.types_defs import NodeType
 from evals.cgr_graph import StatefulIngestor
 
 PROJECT = "proj"
@@ -295,8 +294,8 @@ def test_a_type_named_twice_stays_ambiguous_after_a_sync(temp_repo: Path) -> Non
 class TestIndexName:
     def test_a_variant_is_found_by_the_name_it_was_written_with(self) -> None:
         registry = FunctionRegistryTrie(simple_name_lookup=defaultdict(set))
-        registry["p.Limb"] = NodeType.TYPE
-        registry["p.Limb@6"] = NodeType.TYPE
+        registry["p.Limb"] = cs.NodeLabel.TYPE
+        registry["p.Limb@6"] = cs.NodeLabel.TYPE
         # Warm the cache first: the index change must invalidate it.
         assert registry.find_ending_with("Limb") == ["p.Limb"]
         registry.index_name("p.Limb@6", "Limb")
@@ -304,7 +303,7 @@ class TestIndexName:
 
     def test_a_signatured_method_is_found_by_its_bare_name(self) -> None:
         registry = FunctionRegistryTrie(simple_name_lookup=defaultdict(set))
-        registry["p.C.m(String)"] = NodeType.METHOD
+        registry["p.C.m(String)"] = cs.NodeLabel.METHOD
         registry.index_name("p.C.m(String)", "m")
         assert registry.find_ending_with("m") == ["p.C.m(String)"]
         assert registry.find_ending_with("m(String)") == ["p.C.m(String)"]
@@ -312,7 +311,7 @@ class TestIndexName:
     def test_an_empty_name_indexes_nothing(self) -> None:
         lookup: defaultdict[str, set[str]] = defaultdict(set)
         registry = FunctionRegistryTrie(simple_name_lookup=lookup)
-        registry["p.f"] = NodeType.FUNCTION
+        registry["p.f"] = cs.NodeLabel.FUNCTION
         registry.index_name("p.f", "")
         assert "" not in lookup
 
@@ -321,14 +320,14 @@ class TestRestoreVariant:
     def test_rejoins_variants_to_their_natural_qn_in_line_order(self) -> None:
         registry = FunctionRegistryTrie()
         for qn in ("p.f@30", "p.f@12_8", "p.f", "p.f@12"):
-            registry[qn] = NodeType.FUNCTION
+            registry[qn] = cs.NodeLabel.FUNCTION
             registry.restore_variant(qn)
         assert registry.variants("p.f") == ["p.f", "p.f@12", "p.f@12_8", "p.f@30"]
 
     def test_is_idempotent(self) -> None:
         registry = FunctionRegistryTrie()
-        registry["p.f"] = NodeType.FUNCTION
-        registry["p.f@9"] = NodeType.FUNCTION
+        registry["p.f"] = cs.NodeLabel.FUNCTION
+        registry["p.f@9"] = cs.NodeLabel.FUNCTION
         registry.restore_variant("p.f@9")
         registry.restore_variant("p.f@9")
         assert registry.variants("p.f") == ["p.f", "p.f@9"]
@@ -337,10 +336,10 @@ class TestRestoreVariant:
         # A re-parsed file's variants were bucketed by register_unique_qn;
         # one read back from another file joins them rather than replacing.
         registry = FunctionRegistryTrie()
-        registry["p.f"] = NodeType.FUNCTION
+        registry["p.f"] = cs.NodeLabel.FUNCTION
         parsed = registry.register_unique_qn("p.f", 20)
-        registry[parsed] = NodeType.FUNCTION
-        registry["p.f@5"] = NodeType.FUNCTION
+        registry[parsed] = cs.NodeLabel.FUNCTION
+        registry["p.f@5"] = cs.NodeLabel.FUNCTION
         registry.restore_variant("p.f@5")
         assert registry.variants("p.f") == ["p.f", "p.f@5", "p.f@20"]
 
@@ -357,7 +356,7 @@ class TestRestoreVariant:
     )
     def test_a_name_without_a_trailing_marker_stays_alone(self, qn: str) -> None:
         registry = FunctionRegistryTrie()
-        registry[qn] = NodeType.FUNCTION
+        registry[qn] = cs.NodeLabel.FUNCTION
         registry.restore_variant(qn)
         assert registry.variants(qn) == [qn]
 

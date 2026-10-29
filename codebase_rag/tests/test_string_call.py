@@ -191,14 +191,14 @@ class TestQualifiedTargetResolution:
     def _registry(self):
         from collections import defaultdict
 
+        from codebase_rag.constants import NodeLabel
         from codebase_rag.function_registry import FunctionRegistryTrie
-        from codebase_rag.types_defs import NodeType
 
         # The ingestion wires a simple-name index in (issue #513's fast path);
         # use one here so the test walks the production lookup route.
         registry = FunctionRegistryTrie(simple_name_lookup=defaultdict(set))
-        registry.insert("proj.db.app.usp_invoice_list", NodeType.FUNCTION)
-        registry.insert("proj.db.audit.usp_invoice_list", NodeType.FUNCTION)
+        registry.insert("proj.db.app.usp_invoice_list", NodeLabel.FUNCTION)
+        registry.insert("proj.db.audit.usp_invoice_list", NodeLabel.FUNCTION)
         return registry
 
     def test_qualified_target_does_not_fan_out_across_schemas(self) -> None:

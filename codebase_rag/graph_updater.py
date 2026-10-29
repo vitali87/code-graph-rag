@@ -130,7 +130,6 @@ from .types_defs import (
     FunctionSpanKey,
     JsonValue,
     LanguageQueries,
-    NodeType,
     PendingExpansionCall,
     PendingMacroCall,
     PendingTypeFact,
@@ -218,9 +217,11 @@ def _owning_module_qn(qn: str, module_qns: set[str]) -> str | None:
     return owner
 
 
-def _route_label(node_type: NodeType) -> cs.NodeLabel:
+def _route_label(node_type: cs.NodeLabel) -> cs.NodeLabel:
     return (
-        cs.NodeLabel.METHOD if node_type == NodeType.METHOD else cs.NodeLabel.FUNCTION
+        cs.NodeLabel.METHOD
+        if node_type == cs.NodeLabel.METHOD
+        else cs.NodeLabel.FUNCTION
     )
 
 
@@ -3629,9 +3630,9 @@ class GraphUpdater:
         return found
 
     def _requeue_type_facts(
-        self, node_type: NodeType, qn: str, path: str, row: ResultRow
+        self, node_type: cs.NodeLabel, qn: str, path: str, row: ResultRow
     ) -> None:
-        if node_type not in (NodeType.FUNCTION, NodeType.METHOD):
+        if node_type not in (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD):
             return
         return_type = row.get(cs.KEY_RETURN_TYPE)
         param_types = row.get(cs.KEY_PARAM_TYPES)
@@ -3930,7 +3931,7 @@ class GraphUpdater:
             if (
                 implementer
                 and implementer not in self.function_registry
-                and self.function_registry.get(trait) == NodeType.INTERFACE
+                and self.function_registry.get(trait) == cs.NodeLabel.INTERFACE
             ):
                 yield implementer, trait
 
@@ -3984,7 +3985,7 @@ class GraphUpdater:
         if self._is_reread_cpp_definition(row):
             return False
         try:
-            node_type = NodeType(label)
+            node_type = cs.NodeLabel(label)
         except ValueError:
             return False
         # A TS type and a value hold one qualified name under two labels
@@ -4202,12 +4203,12 @@ class GraphUpdater:
         # natural qn spells, and records none for a trait's own methods.
         natural = qn_markers.natural_qn(qn)
         owner = natural.rpartition(cs.SEPARATOR_DOT)[0]
-        if self.function_registry.get(owner) == NodeType.INTERFACE:
+        if self.function_registry.get(owner) == cs.NodeLabel.INTERFACE:
             return None
         return natural, annotation, owner.rpartition(cs.SEPARATOR_DOT)[2]
 
     def _rehydrate_definition_path(
-        self, node_type: NodeType, qn: str, path: str, row: ResultRow
+        self, node_type: cs.NodeLabel, qn: str, path: str, row: ResultRow
     ) -> None:
         """Restore the path-keyed state of a rehydrated definition."""
         self.factory.definition_processor.rehydrated_definition_paths[qn] = path
@@ -4226,8 +4227,8 @@ class GraphUpdater:
         # parsing; an unchanged type must stay reachable by `N.Widget`
         # from a re-parsed base list or receiver (bot review).
         if node_type not in (
-            NodeType.FUNCTION,
-            NodeType.METHOD,
+            cs.NodeLabel.FUNCTION,
+            cs.NodeLabel.METHOD,
         ) and path.endswith(cs.EXT_CS):
             self._rehydrate_csharp_declared_form(qn, path, row)
         # Persisted annotations of UNCHANGED definitions rejoin the
@@ -4240,7 +4241,7 @@ class GraphUpdater:
         start = row.get(cs.KEY_START_LINE)
         end = row.get(cs.KEY_END_LINE)
         if (
-            node_type in (NodeType.FUNCTION, NodeType.METHOD)
+            node_type in (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD)
             and isinstance(start, int)
             and isinstance(end, int)
             and os.path.splitext(path)[1].lower() in _CPP_SPAN_FILE_EXTENSIONS

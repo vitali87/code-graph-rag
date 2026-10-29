@@ -9,12 +9,7 @@ from tree_sitter import QueryCursor
 
 from ... import constants as cs
 from ... import logs as ls
-from ...types_defs import (
-    ASTNode,
-    FunctionRegistryTrieProtocol,
-    LanguageQueries,
-    NodeType,
-)
+from ...types_defs import ASTNode, FunctionRegistryTrieProtocol, LanguageQueries
 from ..import_processor import ImportProcessor
 from ..utils import get_cached_query, note_query_fallback, safe_decode_text
 from .forward_refs import unquote_forward_refs
@@ -211,7 +206,7 @@ class PythonVariableAnalyzerMixin(_VarBase):
             return self._available_classes_cache[module_qn]
         available_class_names: list[str] = []
         for qn, node_type in self.function_registry.find_with_prefix(module_qn):
-            if node_type != NodeType.CLASS:
+            if node_type != cs.NodeLabel.CLASS:
                 continue
             if cs.SEPARATOR_DOT.join(qn.split(cs.SEPARATOR_DOT)[:-1]) == module_qn:
                 available_class_names.append(qn.split(cs.SEPARATOR_DOT)[-1])
@@ -223,7 +218,7 @@ class PythonVariableAnalyzerMixin(_VarBase):
         for local_name, imported_qn in self.import_processor.import_mapping[
             module_qn
         ].items():
-            if self.function_registry.get(imported_qn) == NodeType.CLASS:
+            if self.function_registry.get(imported_qn) == cs.NodeLabel.CLASS:
                 available_class_names.append(local_name)
 
         self._available_classes_cache[module_qn] = available_class_names
@@ -788,7 +783,7 @@ class PythonVariableAnalyzerMixin(_VarBase):
         registry is what separates a class we can read from one we cannot.
         """
         class_qn = self._class_qn_of_type(type_name, module_qn)
-        if not class_qn or self.function_registry.get(class_qn) != NodeType.CLASS:
+        if not class_qn or self.function_registry.get(class_qn) != cs.NodeLabel.CLASS:
             return None
         return class_qn
 

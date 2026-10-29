@@ -14,7 +14,6 @@ from ...types_defs import (
     FunctionRegistryTrieProtocol,
     FunctionSpanKey,
     LanguageQueries,
-    NodeType,
     SimpleNameLookup,
 )
 from ...utils import qn_markers
@@ -37,7 +36,7 @@ from .utils import (
 if TYPE_CHECKING:
     from ...types_defs import ASTCacheProtocol
 
-_TYPE_DECLS = (NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM)
+_TYPE_DECLS = (cs.NodeLabel.CLASS, cs.NodeLabel.INTERFACE, cs.NodeLabel.ENUM)
 
 # Sentinel: the call's target is provably EXTERNAL (a BCL/base member, a
 # static call on an unregistered type). The dispatcher must emit nothing
@@ -2141,7 +2140,7 @@ class CSharpTypeInferenceEngine:
         prefix = f"{class_qn}{cs.SEPARATOR_DOT}"
         grouped: dict[str, list[str]] = {}
         for qn, node_type in self.function_registry.find_with_prefix(class_qn):
-            if node_type != NodeType.METHOD or not qn.startswith(prefix):
+            if node_type != cs.NodeLabel.METHOD or not qn.startswith(prefix):
                 continue
             leaf = qn[len(prefix) :]
             base = leaf.split(cs.CHAR_PAREN_OPEN, 1)[0]

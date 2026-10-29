@@ -4,7 +4,7 @@ from collections.abc import Iterable
 from typing import TYPE_CHECKING, NamedTuple
 
 from ... import constants as cs
-from ...types_defs import ASTNode, NodeType
+from ...types_defs import ASTNode
 from .utils import find_package_start_index, safe_decode_text
 
 if TYPE_CHECKING:
@@ -15,7 +15,11 @@ if TYPE_CHECKING:
 
 # Node types an imported Java name can declare (records and annotation types
 # register as CLASS).
-JAVA_TYPE_DECL_NODE_TYPES = (NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM)
+JAVA_TYPE_DECL_NODE_TYPES = (
+    cs.NodeLabel.CLASS,
+    cs.NodeLabel.INTERFACE,
+    cs.NodeLabel.ENUM,
+)
 
 # The declarations a module's "current class" is read from: the first of
 # these in the file.
@@ -249,7 +253,7 @@ class JavaTypeResolverMixin:
         same_package_qn = f"{module_qn}{cs.SEPARATOR_DOT}{type_name}"
         if same_package_qn in self.function_registry and self.function_registry[
             same_package_qn
-        ] in [NodeType.CLASS, NodeType.INTERFACE]:
+        ] in [cs.NodeLabel.CLASS, cs.NodeLabel.INTERFACE]:
             return same_package_qn
 
         # A nested class referenced by its simple name from within the same file
@@ -265,7 +269,7 @@ class JavaTypeResolverMixin:
             qn
             for qn, entity_type in self.function_registry.find_with_prefix(module_qn)
             if qn.endswith(suffix)
-            and entity_type in (NodeType.CLASS, NodeType.INTERFACE)
+            and entity_type in (cs.NodeLabel.CLASS, cs.NodeLabel.INTERFACE)
         ]
         if len(nested) == 1:
             return nested[0]

@@ -16,7 +16,6 @@ from codebase_rag.constants import (
     UniqueKeyType,
 )
 from codebase_rag.services.graph_service import MemgraphIngestor
-from codebase_rag.types_defs import NodeType
 
 
 class TestNodeLabelCoverage:
@@ -35,16 +34,6 @@ class TestNodeLabelCoverage:
 
         assert not missing, (
             f"NodeLabel value(s) missing from NODE_UNIQUE_CONSTRAINTS: {missing}. "
-            "This would cause nodes to be silently dropped during flush."
-        )
-
-    def test_all_node_types_in_constraints(self) -> None:
-        missing = {node_type.value for node_type in NodeType} - set(
-            NODE_UNIQUE_CONSTRAINTS.keys()
-        )
-
-        assert not missing, (
-            f"NodeType value(s) missing from NODE_UNIQUE_CONSTRAINTS: {missing}. "
             "This would cause nodes to be silently dropped during flush."
         )
 
@@ -76,13 +65,6 @@ class TestNodeLabelConstraintConsistency:
             "This would cause nodes of this type to be silently dropped."
         )
 
-    @pytest.mark.parametrize("node_type", list(NodeType))
-    def test_each_node_type_has_constraint(self, node_type: NodeType) -> None:
-        assert node_type.value in NODE_UNIQUE_CONSTRAINTS, (
-            f"NodeType.{node_type.name} ({node_type.value}) missing from NODE_UNIQUE_CONSTRAINTS. "
-            "This would cause nodes of this type to be silently dropped."
-        )
-
 
 class TestFlushNodesForAllNodeLabels:
     @pytest.mark.parametrize("label", list(NodeLabel))
@@ -97,23 +79,6 @@ class TestFlushNodesForAllNodeLabels:
         node_props = {unique_key: f"test_{label.value}_id", KEY_NAME: "test"}
 
         ingestor.node_buffer.append((label.value, node_props))
-        ingestor.flush_nodes()
-
-        mock_cursor.execute.assert_called_once()
-        assert ingestor.node_buffer == []
-
-    @pytest.mark.parametrize("node_type", list(NodeType))
-    def test_each_node_type_can_be_flushed(self, node_type: NodeType) -> None:
-        ingestor = MemgraphIngestor(host="localhost", port=7687, batch_size=10)
-        mock_conn = MagicMock()
-        mock_cursor = MagicMock()
-        mock_conn.cursor.return_value = mock_cursor
-        ingestor.conn = mock_conn
-
-        unique_key = NODE_UNIQUE_CONSTRAINTS[node_type.value]
-        node_props = {unique_key: f"test_{node_type.value}_id", KEY_NAME: "test"}
-
-        ingestor.node_buffer.append((node_type.value, node_props))
         ingestor.flush_nodes()
 
         mock_cursor.execute.assert_called_once()
@@ -174,17 +139,6 @@ class TestNodeLabelEnumCompleteness:
             f"NodeLabel has {len(NodeLabel)} values but "
             f"NODE_UNIQUE_CONSTRAINTS has {len(NODE_UNIQUE_CONSTRAINTS)} entries. "
             "These must match."
-        )
-
-    def test_node_type_is_subset_of_node_label(self) -> None:
-        node_type_values = {t.value for t in NodeType}
-        node_label_values = {label.value for label in NodeLabel}
-
-        extra_in_node_type = node_type_values - node_label_values
-
-        assert not extra_in_node_type, (
-            f"NodeType has values not in NodeLabel: {extra_in_node_type}. "
-            "NodeType must be a subset of NodeLabel."
         )
 
 

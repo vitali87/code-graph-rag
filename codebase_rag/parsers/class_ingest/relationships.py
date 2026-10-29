@@ -7,7 +7,7 @@ from tree_sitter import Node
 
 from ... import constants as cs
 from ...function_registry import TYPE_SPACE_KINDS
-from ...types_defs import DeferredCppInherit, DeferredInherit, NodeType, PropertyDict
+from ...types_defs import DeferredCppInherit, DeferredInherit, PropertyDict
 from ..cpp import utils as cpp_utils
 from . import parent_extraction as pe
 
@@ -21,7 +21,7 @@ def create_class_relationships(
     class_node: Node,
     class_qn: str,
     module_qn: str,
-    node_type: NodeType,
+    node_type: cs.NodeLabel,
     is_exported: bool,
     language: cs.SupportedLanguage,
     class_inheritance: dict[str, list[str]],
@@ -131,7 +131,7 @@ def _link_parent_classes(
     parent_classes: list[str],
     class_qn: str,
     module_qn: str,
-    node_type: NodeType,
+    node_type: cs.NodeLabel,
     language: cs.SupportedLanguage,
     ingestor: IngestorProtocol,
     function_registry: FunctionRegistryTrieProtocol,
@@ -175,7 +175,7 @@ def _link_implemented_interfaces(
     interface_qns: list[str],
     class_qn: str,
     module_qn: str,
-    node_type: NodeType,
+    node_type: cs.NodeLabel,
     language: cs.SupportedLanguage,
     ingestor: IngestorProtocol,
     interface_implementers: dict[str, set[str]] | None,
@@ -207,7 +207,7 @@ def _link_implemented_interfaces(
 def _defer_cpp_bases(
     class_node: Node,
     class_qn: str,
-    node_type: NodeType,
+    node_type: cs.NodeLabel,
     cpp_bases: list[tuple[str, str]],
     defer_cpp_inherits: list[DeferredCppInherit],
 ) -> None:
@@ -242,7 +242,7 @@ def get_node_type_for_inheritance(
         if type_position
         else function_registry.get(qualified_name)
     )
-    return str(node_type if node_type is not None else NodeType.CLASS)
+    return str(node_type if node_type is not None else cs.NodeLabel.CLASS)
 
 
 def create_inheritance_relationship(

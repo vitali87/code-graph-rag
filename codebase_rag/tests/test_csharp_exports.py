@@ -5,8 +5,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from codebase_rag.constants import NodeLabel
 from codebase_rag.tests.conftest import get_node_names, get_nodes, run_updater
-from codebase_rag.types_defs import NodeType
 
 SKIP = "c_sharp"
 
@@ -20,7 +20,7 @@ def csharp_project(temp_repo: Path) -> Path:
 
 def _exported_by_suffix(mock_ingestor: MagicMock) -> dict[str, bool]:
     result: dict[str, bool] = {}
-    for label in (NodeType.METHOD, NodeType.FUNCTION):
+    for label in (NodeLabel.METHOD, NodeLabel.FUNCTION):
         for call in get_nodes(mock_ingestor, label):
             props = call[0][1]
             result[props["qualified_name"]] = props.get("is_exported", False)
@@ -123,7 +123,7 @@ public class C : IThing {
 
 def _class_exported(mock_ingestor: MagicMock) -> dict[str, bool]:
     result: dict[str, bool] = {}
-    for call in get_nodes(mock_ingestor, NodeType.CLASS):
+    for call in get_nodes(mock_ingestor, NodeLabel.CLASS):
         props = call[0][1]
         result[props["qualified_name"]] = props.get("is_exported", False)
     return result
@@ -155,5 +155,5 @@ public class Exposed {}
     # Sanity: the nested type actually registered.
     assert any(
         qn.endswith("N.TopLevel.Nested")
-        for qn in get_node_names(mock_ingestor, NodeType.CLASS)
+        for qn in get_node_names(mock_ingestor, NodeLabel.CLASS)
     )

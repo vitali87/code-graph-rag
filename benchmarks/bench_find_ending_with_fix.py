@@ -3,8 +3,9 @@ import time
 from collections import defaultdict
 from pathlib import Path
 
+from codebase_rag.constants import NodeLabel
 from codebase_rag.function_registry import FunctionRegistryTrie
-from codebase_rag.types_defs import NodeType, SimpleNameLookup
+from codebase_rag.types_defs import SimpleNameLookup
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import harness  # noqa: E402
@@ -16,25 +17,54 @@ BENCH_RUNS = 30
 def generate_realistic_registry(count: int) -> tuple[list[str], list[str]]:
     modules = ["codebase_rag", "utils", "parsers", "services", "tools", "models"]
     submodules = ["core", "api", "handlers", "helpers", "base", "factory"]
-    classes = ["Handler", "Manager", "Factory", "Builder", "Processor", "Resolver",
-               "Analyzer", "Extractor", "Generator", "Validator"]
-    methods = ["process", "handle", "create", "build", "resolve", "validate",
-               "execute", "parse", "extract", "transform", "analyze", "generate",
-               "find", "get", "set", "update", "delete", "check"]
+    classes = [
+        "Handler",
+        "Manager",
+        "Factory",
+        "Builder",
+        "Processor",
+        "Resolver",
+        "Analyzer",
+        "Extractor",
+        "Generator",
+        "Validator",
+    ]
+    methods = [
+        "process",
+        "handle",
+        "create",
+        "build",
+        "resolve",
+        "validate",
+        "execute",
+        "parse",
+        "extract",
+        "transform",
+        "analyze",
+        "generate",
+        "find",
+        "get",
+        "set",
+        "update",
+        "delete",
+        "check",
+    ]
 
     qualified_names = []
     for i in range(count):
         mod = modules[i % len(modules)]
         sub = submodules[(i // len(modules)) % len(submodules)]
         cls = classes[(i // (len(modules) * len(submodules))) % len(classes)]
-        meth = methods[(i // (len(modules) * len(submodules) * len(classes))) % len(methods)]
+        meth = methods[
+            (i // (len(modules) * len(submodules) * len(classes))) % len(methods)
+        ]
         qualified_names.append(f"{mod}.{sub}.{cls}.method_{i}.{meth}")
 
     lookup_suffixes = methods + [f"method_{i}" for i in range(0, count, count // 20)]
     return qualified_names, lookup_suffixes
 
 
-def bench_linear_scan_endswith(entries: dict[str, NodeType], suffix: str) -> float:
+def bench_linear_scan_endswith(entries: dict[str, NodeLabel], suffix: str) -> float:
     start = time.perf_counter()
     _ = [qn for qn in entries.keys() if qn.endswith(f".{suffix}")]
     return time.perf_counter() - start
@@ -55,7 +85,9 @@ def bench_trie_find_ending_with_all(
     return time.perf_counter() - start
 
 
-def bench_linear_scan_batch(entries: dict[str, NodeType], suffixes: list[str]) -> float:
+def bench_linear_scan_batch(
+    entries: dict[str, NodeLabel], suffixes: list[str]
+) -> float:
     start = time.perf_counter()
     for suffix in suffixes:
         _ = [qn for qn in entries.keys() if qn.endswith(f".{suffix}")]
@@ -98,16 +130,16 @@ def main() -> None:
     sizes = [1000, 4500, 10000]
 
     for size in sizes:
-        print(f"\n{'='*125}")
+        print(f"\n{'=' * 125}")
         print(f"Registry size: {size} entries")
-        print(f"{'='*125}")
+        print(f"{'=' * 125}")
 
         qualified_names, lookup_suffixes = generate_realistic_registry(size)
 
         simple_lookup: SimpleNameLookup = defaultdict(set)
         trie = FunctionRegistryTrie(simple_name_lookup=simple_lookup)
         for qn in qualified_names:
-            trie.insert(qn, NodeType.FUNCTION)
+            trie.insert(qn, NodeLabel.FUNCTION)
             simple_name = qn.rsplit(".", 1)[-1]
             simple_lookup[simple_name].add(qn)
 
@@ -118,13 +150,17 @@ def main() -> None:
         print(f"\nSingle-suffix operations (on '{lookup_suffixes[0]}'):")
         r = run_benchmark(
             f"LINEAR SCAN endswith ({size} entries)",
-            bench_linear_scan_endswith, dict(trie.items()), lookup_suffixes[0],
+            bench_linear_scan_endswith,
+            dict(trie.items()),
+            lookup_suffixes[0],
         )
         results.append(r)
 
         r = run_benchmark(
             f"INDEXED lookup (hit) ({size} entries)",
-            bench_indexed_lookup, simple_lookup, lookup_suffixes[0],
+            bench_indexed_lookup,
+            simple_lookup,
+            lookup_suffixes[0],
         )
         results.append(r)
 
@@ -135,37 +171,51 @@ def main() -> None:
 
         results = []
         num_queries = len(lookup_suffixes)
-        print(f"\nBatch operations ({num_queries} queries, simulating call resolution):")
+        print(
+            f"\nBatch operations ({num_queries} queries, simulating call resolution):"
+        )
 
         r = run_benchmark(
             f"LINEAR SCAN batch ({num_queries}q, {size} entries)",
-            bench_linear_scan_batch, dict(trie.items()), lookup_suffixes,
+            bench_linear_scan_batch,
+            dict(trie.items()),
+            lookup_suffixes,
         )
         results.append(r)
 
         r = run_benchmark(
             f"PARTIAL INDEX batch ({num_queries}q, {size} entries)",
-            bench_trie_find_ending_with_all, trie, lookup_suffixes,
+            bench_trie_find_ending_with_all,
+            trie,
+            lookup_suffixes,
         )
         results.append(r)
 
         r = run_benchmark(
             f"FULL SUFFIX INDEX batch ({num_queries}q, {size} entries)",
-            bench_full_suffix_index_batch, full_suffix_index, lookup_suffixes,
+            bench_full_suffix_index_batch,
+            full_suffix_index,
+            lookup_suffixes,
         )
         results.append(r)
 
         print_results(results)
 
         if results[2]["median_ms"] > 0:
-            print(f"\n  -> Linear scan vs full index: {results[0]['median_ms'] / results[2]['median_ms']:.0f}x speedup")
-            print(f"  -> Partial index vs full index: {results[1]['median_ms'] / results[2]['median_ms']:.1f}x speedup")
+            print(
+                f"\n  -> Linear scan vs full index: {results[0]['median_ms'] / results[2]['median_ms']:.0f}x speedup"
+            )
+            print(
+                f"  -> Partial index vs full index: {results[1]['median_ms'] / results[2]['median_ms']:.1f}x speedup"
+            )
 
-    print(f"\n\n{'='*125}")
-    print("CONCLUSION: The 48.3% CPU hotspot is caused by linear scans on index misses.")
+    print(f"\n\n{'=' * 125}")
+    print(
+        "CONCLUSION: The 48.3% CPU hotspot is caused by linear scans on index misses."
+    )
     print("Building a complete suffix index eliminates the bottleneck entirely.")
     print("This is a pure Python fix requiring zero FFI, zero new dependencies.")
-    print(f"{'='*125}")
+    print(f"{'=' * 125}")
 
 
 if __name__ == "__main__":
