@@ -81,6 +81,8 @@ from .sync_guard import SyncRefusedError, mark_sync_incomplete, release_project_
 from .sync_guard import clear_sync_incomplete as _clear_sync_incomplete
 from .sync_guard import partial_graph_refusal as _partial_graph_refusal
 from .sync_guard import project_owner_refusal as _project_owner_refusal
+from .sync_guard import retire_stranded_runs as _retire_stranded_runs
+from .sync_guard import stranded_runs as _stranded_runs
 from .sync_guard import sync_marker_params as _sync_marker_params
 from .sync_guard import sync_owner as _sync_owner
 from .sync_lock import SyncLockError, repo_sync_lock
@@ -1107,16 +1109,17 @@ def _sweep_glosses_after_failed_delete(
 
 
 def _run_updater_deferring_interrupt(
-    updater: "GraphUpdater",
+    updater: "GraphUpdater", *, rebuild: bool = False
 ) -> KeyboardInterrupt | None:
     """Run the sync's graph update; return a Ctrl+C that landed after its commit.
 
     The run stamps the sync time as part of its commit (#2444), and the
     caller clears its marker before re-raising what this returns; a Ctrl+C
-    before the commit raises `SyncInterrupted` instead.
+    before the commit raises `SyncInterrupted` instead. `rebuild` forces a
+    full re-index over runs another writer left part-way.
     """
     try:
-        updater.run()
+        updater.run(force=rebuild)
     except ex.EmbeddingsInterrupted as stop:
         # Raised only after the run committed, so the graph is whole and
         # the sync is recorded like any other; the interrupt then ends
@@ -1186,6 +1189,15 @@ def _run_graph_sync(
             # hits and can map onto unrelated nodes in the rebuilt graph.
             clear_all_embeddings()
 
+        # Read before this sync marks: the runs whose markers its rebuild
+        # supersedes (review of PR #3493).
+        stranded = _stranded_runs(ingestor, project_name, cs.CLI_SYNC_RUN_ID)
+        if stranded:
+            logger.warning(
+                ls.REBUILD_OVER_STRANDED_RUNS.format(
+                    project=project_name, count=len(stranded)
+                )
+            )
         # After the wipe, which would delete the marker with everything else,
         # and before `ensure_constraints`, whose migration can already purge.
         _mark_sync_incomplete(ingestor, project_name, owner, owned_roots)
@@ -1205,8 +1217,9 @@ def _run_graph_sync(
             capture=_capture_selection(capture),
             skip_embeddings=skip_embeddings,
         )
-        interrupted = _run_updater_deferring_interrupt(updater)
+        interrupted = _run_updater_deferring_interrupt(updater, rebuild=bool(stranded))
         _clear_sync_incomplete(ingestor, project_name)
+        _retire_stranded_runs(ingestor, project_name, stranded)
         # Taken before the export: counting it made a no-op sync of a small
         # repo report the time to dump the whole shared graph (issue #2440).
         elapsed = time.monotonic() - elapsed

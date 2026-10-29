@@ -283,7 +283,9 @@ KEY_RUN_ID = "run_id"
 # Who wrote the CLI sync's incomplete-run marker (PR #2532 review): the host
 # (machine and pid namespace) and pid of its process, and a token unique to
 # that one sync, so `delete-project` clears it only once that sync provably
-# stopped, and only if no newer sync has re-marked it since.
+# stopped, and only if no newer sync has re-marked it since. The MCP
+# server's and `cgr check`'s markers name the host and pid too, so a full
+# rebuild retires one only once its process exited (review of PR #3496).
 KEY_OWNER_HOST = "owner_host"
 KEY_OWNER_PID = "owner_pid"
 KEY_OWNER_TOKEN = "owner_token"
