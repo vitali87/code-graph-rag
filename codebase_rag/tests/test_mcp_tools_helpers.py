@@ -6,9 +6,11 @@ _PATCH_DELETE = "codebase_rag.mcp.tools.delete_project_embeddings"
 
 
 def _make_registry(mock_ingestor: MagicMock) -> MagicMock:
+    from codebase_rag.mcp.run_marker import RunMarker
     from codebase_rag.mcp.tools import MCPToolsRegistry
 
     registry = MagicMock(spec=MCPToolsRegistry)
+    registry.marker = MagicMock(spec=RunMarker)
     registry.ingestor = mock_ingestor
     registry._get_project_node_ids = MCPToolsRegistry._get_project_node_ids.__get__(
         registry

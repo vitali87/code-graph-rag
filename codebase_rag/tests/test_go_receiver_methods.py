@@ -10,6 +10,7 @@ from codebase_rag.constants import (
     NodeLabel,
     RelationshipType,
 )
+from codebase_rag.parsers.definition_facts import DefinitionFacts
 from codebase_rag.tests.conftest import (
     create_and_run_updater,
     get_nodes,
@@ -238,10 +239,12 @@ def test_container_resolution_uses_directory_for_disambiguated_modules() -> None
             "proj.svc.ops": Path("/repo/svc/ops.go"),
             "proj.svc.types.go": Path("/repo/svc/types.go"),
         }
-        go_package_names = {
-            "proj.svc.ops": "shapes",
-            "proj.svc.types.go": "shapes",
-        }
+        facts = DefinitionFacts(
+            go_package_names={
+                "proj.svc.ops": "shapes",
+                "proj.svc.types.go": "shapes",
+            }
+        )
 
         def _get_docstring(self, node: object, language: object) -> str | None:
             return None

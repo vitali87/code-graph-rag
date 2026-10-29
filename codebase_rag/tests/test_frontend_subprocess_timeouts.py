@@ -24,17 +24,17 @@ _FRONTEND_DIRS = (
     "go_frontend",
     "java_frontend",
     "csharp_frontend",
-    "py_frontend",
+    "python_frontend",
     "cpp_frontend",
 )
 
-# Parser helpers that also invoke external language tools but sit directly
-# under `parsers/` rather than in a *_frontend package. Both are bounded today;
+# Parser helpers that also invoke external language tools but sit outside a
+# *_frontend package. Both are bounded today;
 # they are scanned so that STAYS true, which is the point of a gate rather than
 # a sweep. Greptile found them missing by adding an unbounded call to each and
 # observing the test still passed.
 _FRONTEND_FILES = (
-    "java_lombok.py",
+    "java/lombok.py",
     "stdlib_extractor.py",
 )
 

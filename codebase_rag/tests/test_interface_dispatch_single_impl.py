@@ -77,7 +77,6 @@ def test_sole_impl_targets_guard_branches() -> None:
         registry,
         MagicMock(),
         MagicMock(),
-        {},
         facts=DefinitionFacts(interface_implementers={"m.Svc": {"m.Impl"}}),
     )
     assert resolver.interface_sole_impl_targets("bare") == set()

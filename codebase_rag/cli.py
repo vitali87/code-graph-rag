@@ -201,7 +201,7 @@ def _import_vector_store() -> None:
     # The embedding forwarders import lazily. A clean run resolves the module
     # before it wipes anything, so a broken install stops with the graph
     # intact rather than after `clean_database`.
-    importlib.import_module(".vector_store", __package__)
+    importlib.import_module(".vectors.store", __package__)
 
 
 class _CgrGroup(TyperGroup):
