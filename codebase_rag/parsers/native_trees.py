@@ -3,7 +3,7 @@
 The definitions pass hashes every definition it ingests twice over, once
 for its anchor (`anchor_hash.py`) and once for its clone-detection skeleton
 (`ast_fingerprint.py`), and call resolution and type inference ask which
-names each Python function binds (`py/ast_analyzer.py`). Each walks the
+names each Python function binds (`python/ast_analyzer.py`). Each walks the
 subtree node by node through py-tree-sitter: every `node.children`,
 `node.type` and `node.text` crosses into C and builds a Python object.
 `TreeBridge` (rust/cgr_graph_rs/src/trees) walks the same subtree in Rust. It is handed the Python `Node` itself and
@@ -202,8 +202,8 @@ def _node_disagreement(bridge: TreeBridge, node: Node) -> cs.TreeBridgeCheck | N
     # Imported here: these modules ask this one for the bridge.
     from .anchor_hash import python_anchor_hash
     from .ast_fingerprint import python_ast_fingerprint
-    from .py.ast_analyzer import python_inner_scope_only_names, python_scope_facts
-    from .py.ast_analyzer import scope_facts_from_native as native_facts
+    from .python.ast_analyzer import python_inner_scope_only_names, python_scope_facts
+    from .python.ast_analyzer import scope_facts_from_native as native_facts
 
     if bridge.anchor_hash(node, ()) != python_anchor_hash(node, ()):
         return cs.TreeBridgeCheck.ANCHOR_HASH

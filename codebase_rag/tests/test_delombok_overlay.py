@@ -16,7 +16,7 @@ from codebase_rag import constants as cs
 from codebase_rag.capture import ALL_ENABLED
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.parsers import java_lombok
+from codebase_rag.parsers.java import lombok as java_lombok
 from codebase_rag.sync.checkout_state import state_file
 
 _RAW = (

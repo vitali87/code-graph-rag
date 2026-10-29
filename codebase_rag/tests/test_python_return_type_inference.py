@@ -587,7 +587,7 @@ def test_homogeneous_element_rules():
     # A heterogeneous tuple guarantees nothing about a given element, so it
     # must never type a loop variable as its first member (the untyped frame
     # then falls to the resolver's pre-existing bare-name behaviour).
-    from codebase_rag.parsers.py.ast_analyzer import _homogeneous_element
+    from codebase_rag.parsers.python.ast_analyzer import _homogeneous_element
 
     assert _homogeneous_element("tuple", "Widget") == "Widget"
     assert _homogeneous_element("tuple", "Widget, ...") == "Widget"

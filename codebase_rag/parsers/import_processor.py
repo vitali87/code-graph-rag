@@ -66,9 +66,9 @@ from .js_ts.tsconfig import (
 )
 from .lua import utils as lua_utils
 from .php.namespaces import declared_namespace
-from .python_source_roots import discover_python_source_roots, resolve_via_source_roots
-from .rs import cargo_semver
-from .rs import utils as rs_utils
+from .python.source_roots import discover_python_source_roots, resolve_via_source_roots
+from .rust import cargo_semver
+from .rust import utils as rs_utils
 from .scala import utils as scala_utils
 from .stdlib_extractor import (
     StdlibCacheStats,

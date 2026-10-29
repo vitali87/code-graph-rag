@@ -45,14 +45,14 @@ from ..js_ts import utils as js_ts_utils
 from ..method_ingest import ingest_method
 from ..parameter_nodes import PendingParameterType, csharp_call_shape
 from ..php import namespaces as php_namespaces
-from ..py import (
+from ..python import (
     external_stdlib_base_method_names,
     resolve_class_name,
     under_type_checking,
 )
-from ..py.class_aliases import scan_class_body_aliases
-from ..rs import RustTypeInferenceEngine
-from ..rs import utils as rs_utils
+from ..python.class_aliases import scan_class_body_aliases
+from ..rust import RustTypeInferenceEngine
+from ..rust import utils as rs_utils
 from ..utils import (
     decorated_start_props,
     extract_modifiers_and_decorators,

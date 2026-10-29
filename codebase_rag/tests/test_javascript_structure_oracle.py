@@ -1,4 +1,4 @@
-# Covers the JavaScript structure oracle harness (evals/oracles/ts_oracle over
+# Covers the JavaScript structure oracle harness (evals/oracles/typescript_oracle over
 # .js/.jsx + evals/js_l1.py): the TS-compiler-API oracle is authoritative ground
 # truth; cgr's captured JavaScript nodes are graded against it on (kind, file,
 # start_line).

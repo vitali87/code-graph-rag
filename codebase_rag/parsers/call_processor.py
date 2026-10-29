@@ -63,10 +63,10 @@ from .julia import utils as julia_utils
 from .lua import utils as lua_utils
 from .php import class_names as php_class_names
 from .php import utils as php_utils
-from .py.class_aliases import scan_class_body_aliases
-from .py.receiver_rebinding import ReceiverRebinding, receiver_rebinding
+from .python.class_aliases import scan_class_body_aliases
+from .python.receiver_rebinding import ReceiverRebinding, receiver_rebinding
 from .rpc_exposure import GoRpcExposureProcessor
-from .rs import utils as rs_utils
+from .rust import utils as rs_utils
 from .scala import utils as scala_utils
 from .sql_ddl import ddl_routine_references
 from .string_call import load_string_call_specs, string_call_target

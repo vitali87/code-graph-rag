@@ -216,7 +216,7 @@ def test_single_module_root_maps_to_module_path(tmp_path: Path) -> None:
     # The discovery map must key a single-module file to the module's OWN dotted
     # path (…src.mymod), not its containing directory (…src), or resolution
     # returns a directory QN and downstream lookups depend on trie luck.
-    from codebase_rag.parsers.python_source_roots import (
+    from codebase_rag.parsers.python.source_roots import (
         discover_python_source_roots,
         resolve_via_source_roots,
     )

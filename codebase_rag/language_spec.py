@@ -36,7 +36,7 @@ def decode_node_text(raw: bytes) -> str:
     losing data on the same input.
 
     `errors="replace"` keeps the rest of the file indexable and leaves a
-    visibly mangled identifier, matching what `document_tier`, `java_lombok`
+    visibly mangled identifier, matching what `document_tier`, `java.lombok`
     and `build_lock` already do with the same class of input.
     """
     return raw.decode(cs.ENCODING_UTF8, errors="replace")
@@ -162,7 +162,7 @@ def _rust_get_name(node: Node) -> str | None:
         # target type anchors its methods' qns (owner_module.Foo.method).
         # Without this the scope walk drops `Foo`, so a nested fn in an impl
         # method binds to a phantom parent qn.
-        from .parsers.rs import utils as rs_utils
+        from .parsers.rust import utils as rs_utils
 
         return rs_utils.extract_impl_target(node)
 

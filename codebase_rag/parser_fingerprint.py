@@ -479,9 +479,9 @@ def _frontend_settings() -> list[str]:
     from .parsers.cpp_frontend import resolve_cpp_frontend
     from .parsers.csharp_frontend import resolve_csharp_frontend
     from .parsers.go_frontend import resolve_go_frontend
+    from .parsers.java.lombok import current_lombok_version
     from .parsers.java_frontend import resolve_java_frontend
-    from .parsers.java_lombok import current_lombok_version
-    from .parsers.py_frontend import resolve_python_frontend
+    from .parsers.python_frontend import resolve_python_frontend
 
     return [
         f"CPP_FRONTEND={resolve_cpp_frontend().value}",

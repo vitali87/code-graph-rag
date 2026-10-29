@@ -16,7 +16,7 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.parsers.rs.utils import extract_impl_target_path
+from codebase_rag.parsers.rust.utils import extract_impl_target_path
 from codebase_rag.tests.conftest import (
     create_and_run_updater,
     get_nodes,

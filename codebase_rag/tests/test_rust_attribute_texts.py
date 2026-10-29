@@ -6,7 +6,7 @@ import pytest
 from tree_sitter import Language, Parser
 
 from codebase_rag import constants as cs
-from codebase_rag.parsers.rs.utils import attribute_texts
+from codebase_rag.parsers.rust.utils import attribute_texts
 
 tsrust = pytest.importorskip("tree_sitter_rust")
 

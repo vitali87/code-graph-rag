@@ -12,7 +12,6 @@ from ...types_defs import (
     SimpleNameLookup,
 )
 from ..definition_facts import DefinitionFacts
-from ..import_processor import ImportProcessor
 from .ast_analyzer import PythonAstAnalyzerMixin
 from .expression_analyzer import PythonExpressionAnalyzerMixin
 from .variable_analyzer import PythonVariableAnalyzerMixin
@@ -22,6 +21,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
     from ...types_defs import ASTCacheProtocol
+    from ..import_processor import ImportProcessor
     from ..js_ts import JsTypeInferenceEngine
 
 

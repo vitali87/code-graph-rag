@@ -620,7 +620,7 @@ def test_py_generated_chain_past_the_cap_does_not_recurse_per_hop(
     # Typing `b.with_(1)....` a hop at a time recursed once per hop. Past the
     # receiver cap (#2262) that overflowed the stack on every assignment's
     # inference, and the swallowed RecursionError cost a deep unwind each time.
-    from codebase_rag.parsers.py.expression_analyzer import (
+    from codebase_rag.parsers.python.expression_analyzer import (
         PythonExpressionAnalyzerMixin,
     )
 

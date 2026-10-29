@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.parsers.py import external_stdlib_base_method_names
+from codebase_rag.parsers.python import external_stdlib_base_method_names
 from codebase_rag.tests.conftest import create_and_run_updater
 
 

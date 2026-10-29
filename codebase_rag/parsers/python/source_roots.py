@@ -6,8 +6,8 @@ from pathlib import Path
 
 from loguru import logger
 
-from .. import constants as cs
-from .. import logs as ls
+from ... import constants as cs
+from ... import logs as ls
 
 
 def _dotted(rel_dir: Path) -> str:

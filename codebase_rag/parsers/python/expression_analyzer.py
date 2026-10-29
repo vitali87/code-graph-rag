@@ -11,7 +11,6 @@ from ... import logs as ls
 from ...decorators import recursion_guard
 from ...types_defs import FunctionRegistryTrieProtocol, SimpleNameLookup
 from ...utils import qn_markers
-from ..import_processor import ImportProcessor
 from ..utils import follow_reexports, safe_decode_text
 from .utils import resolve_class_name, resolve_dotted_class
 
@@ -45,6 +44,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from ...types_defs import ASTCacheProtocol
+    from ..import_processor import ImportProcessor
     from .variable_analyzer import _Alias
 
     # A plain class, not a Protocol: a protocol's stub methods count as

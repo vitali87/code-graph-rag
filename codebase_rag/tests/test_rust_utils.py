@@ -7,7 +7,7 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.parsers.rs.utils import (
+from codebase_rag.parsers.rust.utils import (
     build_module_path,
     extract_impl_target,
     extract_use_imports,

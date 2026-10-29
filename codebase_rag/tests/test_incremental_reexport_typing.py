@@ -21,7 +21,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater, _file_module_holding
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.parsers.rs import utils as rs_utils
+from codebase_rag.parsers.rust import utils as rs_utils
 from codebase_rag.tests.conftest import force_mtime_after_cache
 from codebase_rag.types_defs import PropertyValue
 from evals.cgr_graph import StatefulIngestor

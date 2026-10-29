@@ -12,8 +12,8 @@ from ._common import (
     run_node_oracle_payload,
 )
 
-_ORACLE_DIR = Path(__file__).parent / ec.TS_ORACLE_DIRNAME
-_SCRIPT = _ORACLE_DIR / ec.TS_ORACLE_SCRIPT
+_ORACLE_DIR = Path(__file__).parent / ec.TYPESCRIPT_ORACLE_DIRNAME
+_SCRIPT = _ORACLE_DIR / ec.TYPESCRIPT_ORACLE_SCRIPT
 
 
 def typescript_oracle_available() -> bool:

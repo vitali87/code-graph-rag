@@ -10,7 +10,7 @@ from ...language_spec import LANGUAGE_FQN_SPECS
 from ...utils.fqn_resolver import scoped_name_parts
 from .. import export_detection
 from ..cpp import utils as cpp_utils
-from ..rs import utils as rs_utils
+from ..rust import utils as rs_utils
 from ..utils import safe_decode_text, warn_if_name_truncated
 
 if TYPE_CHECKING:

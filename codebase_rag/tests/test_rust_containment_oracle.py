@@ -1,6 +1,6 @@
 # Covers Rust containment-edge validation: cgr's DEFINES (module to item or
 # nested module) and DEFINES_METHOD (struct/trait to method) edges are graded
-# against the independent syn oracle (evals/oracles/rs_oracle), joined on
+# against the independent syn oracle (evals/oracles/rust_oracle), joined on
 # (kind, file, line) endpoints. Exercises an inherent impl, a trait method,
 # and an impl inside a nested `mod`.
 from __future__ import annotations

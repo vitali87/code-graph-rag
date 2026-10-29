@@ -14,7 +14,7 @@ from .call_processor import CallProcessor
 from .definition_facts import DefinitionFacts
 from .definition_processor import DefinitionProcessor
 from .import_processor import ImportProcessor
-from .py.ast_analyzer import clear_scope_facts
+from .python.ast_analyzer import clear_scope_facts
 from .structure_processor import StructureProcessor
 from .type_inference import TypeInferenceEngine
 

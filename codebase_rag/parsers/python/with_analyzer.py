@@ -8,7 +8,6 @@ from tree_sitter import Node
 from ... import constants as cs
 from ... import logs as ls
 from ...types_defs import FunctionRegistryTrieProtocol
-from ..import_processor import ImportProcessor
 from ..utils import follow_reexports, safe_decode_text
 from .utils import resolve_class_name, resolve_dotted_class
 
@@ -26,6 +25,8 @@ class WithTarget(NamedTuple):
 
 
 if TYPE_CHECKING:
+    from ..import_processor import ImportProcessor
+
     # A plain class, not a Protocol: a protocol's stub methods count as
     # abstract, and this base sits ahead of the mixins that implement them in
     # the engine's MRO. It exists for the checker only.

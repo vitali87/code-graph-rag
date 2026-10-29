@@ -215,7 +215,7 @@ class TreeRules(TypedDict):
 
 class ScopeFacts(NamedTuple):
     """What one Python scope's own body binds, read once per scope by the
-    scope walks in parsers/py/ast_analyzer.py (issue #3473)."""
+    scope walks in parsers/python/ast_analyzer.py (issue #3473)."""
 
     # Its parameters, in order.
     params: tuple[str, ...]

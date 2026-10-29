@@ -11,7 +11,6 @@ from ... import constants as cs
 from ... import logs as ls
 from ...types_defs import ASTNode, FunctionRegistryTrieProtocol, LanguageQueries
 from ..definition_facts import DefinitionFacts
-from ..import_processor import ImportProcessor
 from ..utils import get_cached_query, note_query_fallback, safe_decode_text
 from .forward_refs import unquote_forward_refs
 from .utils import resolve_class_name, resolve_dotted_class
@@ -43,6 +42,8 @@ class _Alias(NamedTuple):
 
 
 if TYPE_CHECKING:
+    from ..import_processor import ImportProcessor
+
     # A plain class, not a Protocol: a protocol's stub methods count as
     # abstract, and this base sits ahead of the mixins that implement them in
     # the engine's MRO. It exists for the checker only.

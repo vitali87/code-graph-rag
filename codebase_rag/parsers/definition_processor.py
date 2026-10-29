@@ -44,14 +44,14 @@ from .go.interface_ingest import GoInterfaceMixin
 from .go.interfaces import GoInterfaceDecl, GoMethodSpec
 from .go.link_state import GoLinkState
 from .interface_fingerprint import interface_fingerprint
-from .java_generated import generator_hint
+from .java.generated import generator_hint
 from .js_ts.ingest import JsTsIngestMixin
 from .js_ts.overloads import folded_overload_signatures, implementation_signatures
 from .module_docstring import extract_module_docstring
 from .notebook import is_notebook_path
 from .parameter_nodes import PendingParameterType
 from .php.namespaces import declared_namespace
-from .py.overloads import folded_overload_stubs
+from .python.overloads import folded_overload_stubs
 from .sql_recovery import lost_sql_functions
 from .utils import (
     get_function_captures,

@@ -1,4 +1,4 @@
-# Covers the TypeScript structure oracle harness (evals/oracles/ts_oracle +
+# Covers the TypeScript structure oracle harness (evals/oracles/typescript_oracle +
 # evals/ts_l1.py): the TS-compiler-API oracle is authoritative ground truth,
 # and cgr's captured TypeScript nodes are graded against it on
 # (kind, file, start_line).

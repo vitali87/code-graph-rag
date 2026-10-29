@@ -17,7 +17,7 @@ import pytest
 from tree_sitter import Language, Node, Parser
 
 from codebase_rag import constants as cs
-from codebase_rag.parsers.rs.utils import in_attribute_arguments
+from codebase_rag.parsers.rust.utils import in_attribute_arguments
 from codebase_rag.tests.conftest import create_and_run_updater
 from codebase_rag.types_defs import PropertyDict
 from evals.dead_code import cgr_dead_code, default_dead_code_config

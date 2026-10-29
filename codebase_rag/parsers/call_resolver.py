@@ -29,8 +29,8 @@ from .parameter_nodes import c_family_parameter_list
 from .php import class_names as php_class_names
 from .php.class_names import ClassPath as PhpClassPath
 from .php.class_names import ascii_fold as _php_fold
-from .py import resolve_class_name
-from .rs import utils as rs_utils
+from .python import resolve_class_name
+from .rust import utils as rs_utils
 from .semantic_call_join import call_site_key, declared_location
 from .type_inference import TypeInferenceEngine
 from .utils import safe_decode_text

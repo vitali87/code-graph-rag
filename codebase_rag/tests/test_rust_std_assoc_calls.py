@@ -15,7 +15,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.parsers.rs.utils import literal_receiver_types
+from codebase_rag.parsers.rust.utils import literal_receiver_types
 from codebase_rag.tests.test_rust_crate_path_trait_linking import (
     _write,
     create_and_run_updater,

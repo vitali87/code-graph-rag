@@ -1,7 +1,7 @@
 # The syn Rust oracle must build its binary ONCE (serialized across parallel
 # pytest-xdist workers by a file lock) and then exec that binary directly.
 # The old code shelled out to `cargo run` on every call, which re-links
-# target/release/rs_oracle each time; concurrent workers raced the link step
+# target/release/rust_oracle each time; concurrent workers raced the link step
 # (one exec'd the binary while another rewrote it -> ETXTBSY, cargo exit 101),
 # an intermittent CI flake on the macos-py3.12 runner. This pins the fix.
 from __future__ import annotations
@@ -18,11 +18,11 @@ from evals.oracles import rust_oracle as ro
 def test_oracle_builds_once_then_execs_binary_directly(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    binary = tmp_path / ec.RS_ORACLE_BIN
+    binary = tmp_path / ec.RUST_ORACLE_BIN
     # Bypass `cargo metadata` resolution and the mtime guard so the test pins
     # only the build-once/exec-directly contract, deterministically.
     monkeypatch.setattr(ro, "_binary_path", lambda: binary)
-    monkeypatch.setattr(ro, "_BUILD_LOCK", tmp_path / ec.RS_ORACLE_BUILD_LOCK)
+    monkeypatch.setattr(ro, "_BUILD_LOCK", tmp_path / ec.RUST_ORACLE_BUILD_LOCK)
     monkeypatch.setattr(ro, "_sources_newer_than", lambda _binary: False)
 
     commands: list[list[str]] = []
@@ -56,6 +56,6 @@ def test_oracle_builds_once_then_execs_binary_directly(
 def test_binary_path_uses_platform_exe_suffix(
     os_name: str, expected_suffix: str
 ) -> None:
-    # Cargo emits rs_oracle.exe on Windows; direct exec must target the real
+    # Cargo emits rust_oracle.exe on Windows; direct exec must target the real
     # filename or Windows workers build then fail to exec a nonexistent path.
     assert ro._exe_suffix(os_name) == expected_suffix

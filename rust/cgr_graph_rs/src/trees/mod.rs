@@ -14,7 +14,7 @@
 //! - `ast_fingerprint`: `compute_ast_fingerprint` in
 //!   `codebase_rag/parsers/ast_fingerprint.py`;
 //! - `scopes`: the Python scope walks in
-//!   `codebase_rag/parsers/py/ast_analyzer.py`.
+//!   `codebase_rag/parsers/python/ast_analyzer.py`.
 //!
 //! What they classify (which node types are punctuation, identifiers,
 //! literals, blocks, bindings, ...) is not spelled here: Python hands over

@@ -1,7 +1,7 @@
 # Covers Rust closure containment: a closure is DEFINEd by its nearest
 # enclosing function-like scope (impl/trait method -> Method, free fn or outer
 # closure -> Function). cgr routes closures through its free-function path; the
-# syn oracle (evals/oracles/rs_oracle) emits the matching DEFINES via a stack
+# syn oracle (evals/oracles/rust_oracle) emits the matching DEFINES via a stack
 # of enclosing function-likes. Joined on (kind, file, line) endpoints.
 from __future__ import annotations
 

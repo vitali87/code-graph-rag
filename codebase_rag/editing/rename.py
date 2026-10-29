@@ -47,7 +47,7 @@ from ..parsers.go import utils as go_utils
 from ..parsers.go.builds import GoBuilds
 from ..parsers.go.module_paths import read_package_clause
 from ..parsers.js_ts.overloads import overload_signatures
-from ..parsers.py.overloads import overload_stub_names
+from ..parsers.python.overloads import overload_stub_names
 from ..types_defs import QueryFn, ResultRow
 from ..utils import qn_markers
 from ..utils.path_utils import (

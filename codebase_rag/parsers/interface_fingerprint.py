@@ -73,7 +73,7 @@ from tree_sitter import Node
 
 from .. import constants as cs
 from ..language_spec import LANGUAGE_SPECS
-from .py.ast_analyzer import local_names, names_bound_within
+from .python.ast_analyzer import local_names, names_bound_within
 from .utils import callable_parameter_indices, safe_decode_text
 
 

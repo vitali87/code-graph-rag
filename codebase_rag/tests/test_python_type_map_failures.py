@@ -12,7 +12,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from codebase_rag import constants as cs
-from codebase_rag.parsers.py.type_inference import PythonTypeInferenceEngine
+from codebase_rag.parsers.python.type_inference import PythonTypeInferenceEngine
 from codebase_rag.tests.conftest import create_and_run_updater
 from codebase_rag.types_defs import ASTNode
 

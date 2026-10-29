@@ -21,7 +21,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "rs_oracle"
+name = "rust_oracle"
 version = "0.1.0"
 dependencies = [
  "proc-macro2",

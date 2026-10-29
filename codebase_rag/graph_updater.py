@@ -89,19 +89,19 @@ from .parsers.go import utils as go_utils
 from .parsers.go.interfaces import GoInterfaceDecl, GoMethodSpec, GoSignature
 from .parsers.go_frontend import find_go_module
 from .parsers.interface_fingerprint import INTERFACE_LANGUAGES, interface_fingerprint
-from .parsers.java_generated import (
+from .parsers.java.generated import (
     discover_generated_source_roots,
     generated_prefixes_for,
     unignore_patterns_for,
 )
-from .parsers.java_lombok import (
+from .parsers.java.lombok import (
     build_delombok_overlay,
     current_lombok_identity,
     overlay_identity,
 )
 from .parsers.notebook import NotebookSkipped, is_notebook_path, read_notebook
 from .parsers.parameter_nodes import PendingParameterType
-from .parsers.rs import utils as rs_utils
+from .parsers.rust import utils as rs_utils
 from .parsers.stdlib_extractor import flush_stdlib_cache
 from .parsers.structure_processor import StructureProcessor
 from .parsers.utils import mark_js_ts_module_private, sorted_captures

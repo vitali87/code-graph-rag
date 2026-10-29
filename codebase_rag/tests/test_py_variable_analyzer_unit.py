@@ -7,7 +7,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.parsers.definition_facts import DefinitionFacts
 from codebase_rag.parsers.import_processor import ImportProcessor
-from codebase_rag.parsers.py.type_inference import PythonTypeInferenceEngine
+from codebase_rag.parsers.python.type_inference import PythonTypeInferenceEngine
 from codebase_rag.tests.conftest import create_mock_node
 
 

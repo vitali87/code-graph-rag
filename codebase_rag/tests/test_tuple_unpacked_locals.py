@@ -22,7 +22,7 @@ from tree_sitter import Node
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.parsers.py.type_inference import PythonTypeInferenceEngine
+from codebase_rag.parsers.python.type_inference import PythonTypeInferenceEngine
 from evals.cgr_graph import StatefulIngestor
 
 # Every case holds on the Rust scope walks and on their Python twins.

@@ -21,7 +21,7 @@ from codebase_rag import constants as cs
 from codebase_rag.dead_code import collect_dead_code, default_dead_code_config
 from codebase_rag.editing.rename import RenameRefused, rename
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.parsers.py.overloads import (
+from codebase_rag.parsers.python.overloads import (
     folded_overload_stubs,
     overload_stub_names,
 )

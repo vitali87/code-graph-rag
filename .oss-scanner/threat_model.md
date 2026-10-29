@@ -65,7 +65,7 @@ These matter most.
   (`parsers/go_frontend/`, on by default when `go` is installed), the libclang
   layer of the C/C++ frontend (`parsers/cpp_frontend/`, on by default with the
   `cpp` extra and a compilation database), Lombok preprocessing
-  (`parsers/java_lombok.py`, which runs delombok in the default Java mode
+  (`parsers/java/lombok.py`, which runs delombok in the default Java mode
   whenever a Lombok JAR is configured or found in `~/.m2` and the repository's
   build files mention Lombok), and `parsers/stdlib_extractor.py`. The javac
   frontend (`JAVA_FRONTEND=javac`) is opt-in but passes `-proc:none`, so it

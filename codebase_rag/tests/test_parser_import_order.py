@@ -33,7 +33,7 @@ def _run(code: str) -> subprocess.CompletedProcess[str]:
     [
         "codebase_rag.parsers.go_frontend",
         "codebase_rag.parsers.java_frontend",
-        "codebase_rag.parsers.py_frontend",
+        "codebase_rag.parsers.python_frontend",
         "codebase_rag.parsers.semantic_call_join",
         "codebase_rag.language.catalog",
     ],

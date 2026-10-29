@@ -16,8 +16,8 @@ import pytest
 from tree_sitter import Language, Parser
 
 from codebase_rag import constants as cs
-from codebase_rag.parsers.rs import type_inference as rs_ti
-from codebase_rag.parsers.rs import utils as rs_utils
+from codebase_rag.parsers.rust import type_inference as rs_ti
+from codebase_rag.parsers.rust import utils as rs_utils
 from codebase_rag.tests.conftest import run_updater
 from evals.dead_code import cgr_dead_code, default_dead_code_config
 

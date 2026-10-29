@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from codebase_rag.parsers.py.forward_refs import unquote_forward_refs
+from codebase_rag.parsers.python.forward_refs import unquote_forward_refs
 from codebase_rag.tests.test_js_ts_separate_export_class_members import (
     _dead,
     _index,

@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 from codebase_rag.capture import ALL_ENABLED
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.parsers.java_generated import (
+from codebase_rag.parsers.java.generated import (
     discover_generated_source_roots,
     generated_prefixes_for,
     generator_hint,

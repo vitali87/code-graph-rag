@@ -475,7 +475,7 @@ PY_AST_EVAL_MODE = "eval"
 PY_TYPING_LITERAL = "Literal"
 PY_TYPING_ANNOTATED = "Annotated"
 
-# The Python scope walks (parsers/py/ast_analyzer.py), which the Rust tree
+# The Python scope walks (parsers/python/ast_analyzer.py), which the Rust tree
 # bridge applies too (native_trees.rules).
 # The def, class or module whose body a node sits in directly.
 PY_SCOPE_TYPES = frozenset(

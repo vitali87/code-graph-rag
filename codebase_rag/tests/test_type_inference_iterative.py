@@ -12,7 +12,7 @@ from codebase_rag.parsers.definition_facts import DefinitionFacts
 from codebase_rag.parsers.java.type_inference import JavaTypeInferenceEngine
 from codebase_rag.parsers.js_ts import JsTypeInferenceEngine
 from codebase_rag.parsers.lua.type_inference import LuaTypeInferenceEngine
-from codebase_rag.parsers.py import PythonTypeInferenceEngine
+from codebase_rag.parsers.python import PythonTypeInferenceEngine
 from codebase_rag.parsers.type_inference import TypeInferenceEngine
 
 

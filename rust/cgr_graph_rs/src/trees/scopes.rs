@@ -1,6 +1,6 @@
 //! Which names a Python body binds, computed on the trees the indexer parsed.
 //!
-//! Ports of the scope walks in `codebase_rag/parsers/py/ast_analyzer.py`,
+//! Ports of the scope walks in `codebase_rag/parsers/python/ast_analyzer.py`,
 //! which call resolution and type inference ask about every function they
 //! read (issue #3473):
 //!

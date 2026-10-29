@@ -17,7 +17,7 @@ import pytest
 
 from codebase_rag.parsers.dependency_parser import read_manifest
 from codebase_rag.parsers.js_ts.module_paths import _read_manifest as _read_package_json
-from codebase_rag.parsers.python_source_roots import _setuptools_package_dir
+from codebase_rag.parsers.python.source_roots import _setuptools_package_dir
 
 BOM = b"\xef\xbb\xbf"
 

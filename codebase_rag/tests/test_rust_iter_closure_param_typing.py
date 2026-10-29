@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 import pytest
 import tree_sitter
 
-from codebase_rag.parsers.rs.type_inference import RustTypeInferenceEngine
+from codebase_rag.parsers.rust.type_inference import RustTypeInferenceEngine
 from codebase_rag.tests.test_rust_crate_path_trait_linking import (
     _calls,
     _write,

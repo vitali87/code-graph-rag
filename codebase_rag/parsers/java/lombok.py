@@ -22,10 +22,10 @@ from pathlib import Path
 
 from loguru import logger
 
-from .. import constants as cs
-from .. import logs as ls
-from ..config import settings
-from .java_generated import _build_dirs
+from ... import constants as cs
+from ... import logs as ls
+from ...config import settings
+from .generated import _build_dirs
 
 _LOMBOK_MARKER = "lombok"
 _DELOMBOK_TIMEOUT = 300

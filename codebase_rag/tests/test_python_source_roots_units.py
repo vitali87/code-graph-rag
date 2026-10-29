@@ -8,7 +8,7 @@ smaller pieces (#1669) without a behaviour change hiding in the seams.
 
 from pathlib import Path
 
-from codebase_rag.parsers.python_source_roots import (
+from codebase_rag.parsers.python.source_roots import (
     _package_dir_remaps,
     discover_python_source_roots,
     resolve_via_source_roots,

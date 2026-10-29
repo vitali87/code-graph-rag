@@ -15,9 +15,9 @@ from .. import constants as ec
 from ..types_defs import CallOracle, GraphData, OraclePayload
 from ._common import payload_call_edges, payload_to_graph
 
-_ORACLE_DIR = Path(__file__).parent / ec.RS_ORACLE_DIRNAME
+_ORACLE_DIR = Path(__file__).parent / ec.RUST_ORACLE_DIRNAME
 _MANIFEST = _ORACLE_DIR / "Cargo.toml"
-_BUILD_LOCK = _ORACLE_DIR / ec.RS_ORACLE_BUILD_LOCK
+_BUILD_LOCK = _ORACLE_DIR / ec.RUST_ORACLE_BUILD_LOCK
 
 
 def rust_oracle_available() -> bool:
@@ -27,7 +27,7 @@ def rust_oracle_available() -> bool:
 @lru_cache(maxsize=1)
 def _binary_path() -> Path:
     # Ask cargo where the release binary lands rather than hardcoding
-    # `target/release/rs_oracle`: a user/global cargo config (e.g. the macOS
+    # `target/release/rust_oracle`: a user/global cargo config (e.g. the macOS
     # `build.target-dir = "target.noindex"` Spotlight workaround) or
     # CARGO_TARGET_DIR redirects it elsewhere. `cargo metadata` is read-only and
     # memoized so it runs once per process.
@@ -47,7 +47,7 @@ def _binary_path() -> Path:
         check=True,
     )
     target_dir = Path(json.loads(proc.stdout)[ec.CARGO_META_TARGET_DIR_KEY])
-    return target_dir / ec.CARGO_RELEASE_DIRNAME / (ec.RS_ORACLE_BIN + _exe_suffix())
+    return target_dir / ec.CARGO_RELEASE_DIRNAME / (ec.RUST_ORACLE_BIN + _exe_suffix())
 
 
 def _exe_suffix(os_name: str = os.name) -> str:

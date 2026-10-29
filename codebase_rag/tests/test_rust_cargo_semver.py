@@ -8,7 +8,7 @@ anything it cannot read.
 
 import pytest
 
-from codebase_rag.parsers.rs.cargo_semver import (
+from codebase_rag.parsers.rust.cargo_semver import (
     all_below,
     requirements_disjoint,
     satisfies,

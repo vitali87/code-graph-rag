@@ -14,7 +14,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from ..utils.path_utils import should_keep_dir
+from ...utils.path_utils import should_keep_dir
 
 _BUILD_FILES = ("pom.xml", "build.gradle", "build.gradle.kts")
 _MAVEN_GENERATED = ("target", "generated-sources")

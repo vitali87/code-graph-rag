@@ -24,8 +24,8 @@ from codebase_rag import constants as cs
 from codebase_rag.embedded_graph.extension import rust_extension
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers import native_trees
-from codebase_rag.parsers.py import ast_analyzer
-from codebase_rag.parsers.py.ast_analyzer import (
+from codebase_rag.parsers.python import ast_analyzer
+from codebase_rag.parsers.python.ast_analyzer import (
     clear_scope_facts,
     local_names,
     python_inner_scope_only_names,
@@ -36,7 +36,7 @@ from codebase_rag.parsers.py.ast_analyzer import (
 from codebase_rag.types_defs import ScopeFacts
 
 RUST = rust_extension()
-ANALYZER = importlib.import_module("codebase_rag.parsers.py.ast_analyzer")
+ANALYZER = importlib.import_module("codebase_rag.parsers.python.ast_analyzer")
 PARSERS, _ = load_parsers()
 PACKAGE_DIR = Path(native_trees.__file__).parents[1]
 

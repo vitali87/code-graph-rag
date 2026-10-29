@@ -48,7 +48,7 @@ from .parameter_nodes import (
 )
 from .php import utils as php_utils
 from .positional_params import declared_positional_params
-from .rs import utils as rs_utils
+from .rust import utils as rs_utils
 from .type_facts import extract_type_facts, queue_type_facts, type_facts_props
 from .utils import (
     callable_parameter_indices,

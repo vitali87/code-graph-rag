@@ -285,7 +285,7 @@ INHERITANCE_NAME_EDGE_TYPE_VALUES: frozenset[str] = frozenset(
 )
 
 # Rust structure eval: cgr nodes graded against the syn oracle
-# (evals/oracles/rs_oracle), joined on (kind, file, start_line).
+# (evals/oracles/rust_oracle), joined on (kind, file, start_line).
 RS_SUFFIX = ".rs"
 RS_SCORED_NODE_KINDS: tuple[cs.NodeLabel, ...] = (
     cs.NodeLabel.FUNCTION,
@@ -299,9 +299,9 @@ RS_SCORED_NODE_KINDS: tuple[cs.NodeLabel, ...] = (
 RS_SCORED_NODE_KIND_VALUES: frozenset[str] = frozenset(
     k.value for k in RS_SCORED_NODE_KINDS
 )
-RS_ORACLE_DIRNAME = "rs_oracle"
-RS_ORACLE_BIN = "rs_oracle"
-RS_ORACLE_BUILD_LOCK = ".build.lock"
+RUST_ORACLE_DIRNAME = "rust_oracle"
+RUST_ORACLE_BIN = "rust_oracle"
+RUST_ORACLE_BUILD_LOCK = ".build.lock"
 EXE_SUFFIX_WINDOWS = ".exe"
 OS_NT = "nt"
 CARGO_BIN = "cargo"
@@ -323,7 +323,7 @@ RS_SCORES_FILENAME = "rs_scores.csv"
 RS_DIFF_FILENAME = "rs_diff.json"
 
 # TypeScript structure eval: cgr nodes graded against the TS-compiler-API
-# oracle (evals/oracles/ts_oracle), joined on (kind, file, start_line).
+# oracle (evals/oracles/typescript_oracle), joined on (kind, file, start_line).
 TS_SUFFIXES: tuple[str, ...] = (".ts", ".tsx")
 TS_SCORED_NODE_KINDS: tuple[cs.NodeLabel, ...] = (
     cs.NodeLabel.FUNCTION,
@@ -336,8 +336,8 @@ TS_SCORED_NODE_KINDS: tuple[cs.NodeLabel, ...] = (
 TS_SCORED_NODE_KIND_VALUES: frozenset[str] = frozenset(
     k.value for k in TS_SCORED_NODE_KINDS
 )
-TS_ORACLE_DIRNAME = "ts_oracle"
-TS_ORACLE_SCRIPT = "ts_ast.js"
+TYPESCRIPT_ORACLE_DIRNAME = "typescript_oracle"
+TYPESCRIPT_ORACLE_SCRIPT = "ts_ast.js"
 NODE_BIN = "node"
 # Run instead of trusting `which node` (issue #1639). `@ruby/prism` is ESM-only,
 # so a Node too old to `require()` an ES module satisfies a presence check and

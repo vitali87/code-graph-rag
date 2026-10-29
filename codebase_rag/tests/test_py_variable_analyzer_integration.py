@@ -10,8 +10,8 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.parsers.definition_facts import DefinitionFacts
 from codebase_rag.parsers.import_processor import ImportProcessor
-from codebase_rag.parsers.py import ast_analyzer, variable_analyzer
-from codebase_rag.parsers.py.type_inference import PythonTypeInferenceEngine
+from codebase_rag.parsers.python import ast_analyzer, variable_analyzer
+from codebase_rag.parsers.python.type_inference import PythonTypeInferenceEngine
 
 if TYPE_CHECKING:
     from tree_sitter import Language, Parser, Query

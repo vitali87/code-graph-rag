@@ -24,11 +24,11 @@ from .java import JavaTypeInferenceEngine
 from .js_ts import JsTypeInferenceEngine
 from .js_ts import utils as js_ts_utils
 from .lua import LuaTypeInferenceEngine
-from .py import PythonTypeInferenceEngine, resolve_class_name
-from .py.ast_analyzer import clear_scope_facts
-from .rs import RustTypeInferenceEngine
-from .rs import utils as rs_utils
-from .rs.type_inference import is_constructor_guess
+from .python import PythonTypeInferenceEngine, resolve_class_name
+from .python.ast_analyzer import clear_scope_facts
+from .rust import RustTypeInferenceEngine
+from .rust import utils as rs_utils
+from .rust.type_inference import is_constructor_guess
 from .utils import follow_reexports
 
 if TYPE_CHECKING:

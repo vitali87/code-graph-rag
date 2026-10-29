@@ -26,8 +26,8 @@ def _isolated_jedi_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(jedi.settings, "cache_directory", str(tmp_path / "jedi-cache"))
 
 
-from codebase_rag.parsers.py_frontend import frontend as py_fe  # noqa: E402
-from codebase_rag.parsers.py_frontend.frontend import (  # noqa: E402
+from codebase_rag.parsers.python_frontend import frontend as py_fe  # noqa: E402
+from codebase_rag.parsers.python_frontend.frontend import (  # noqa: E402
     _byte_to_char_col,
     _CallSite,
     _char_to_byte_col,

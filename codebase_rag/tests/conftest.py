@@ -25,7 +25,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.language_spec import LANGUAGE_SPECS, get_language_for_extension
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers import native_trees
-from codebase_rag.parsers.py.ast_analyzer import clear_scope_facts
+from codebase_rag.parsers.python.ast_analyzer import clear_scope_facts
 from codebase_rag.sync.checkout_state import state_file
 from codebase_rag.types_defs import GraphNodeRecord, GraphRelRecord
 

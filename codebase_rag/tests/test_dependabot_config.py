@@ -22,8 +22,8 @@ _WATCHED_MANIFESTS = [
     ("npm", "/evals/oracles/lua_oracle"),
     ("npm", "/evals/oracles/php_oracle"),
     ("npm", "/evals/oracles/ruby_oracle"),
-    ("npm", "/evals/oracles/ts_oracle"),
-    ("cargo", "/evals/oracles/rs_oracle"),
+    ("npm", "/evals/oracles/typescript_oracle"),
+    ("cargo", "/evals/oracles/rust_oracle"),
     ("gomod", "/codebase_rag/parsers/go_frontend/gotypes"),
     ("nuget", "/codebase_rag/parsers/csharp_frontend/roslyn"),
 ]
@@ -71,14 +71,14 @@ def _ignores_for(ecosystem: str, directory: str) -> list[dict[str, object]]:
 def test_the_ts_oracle_is_held_below_typescript_7() -> None:
     # TypeScript 7 is the native port: its package no longer exports the
     # compiler API (`createSourceFile`, `ScriptTarget`) the oracle is built on.
-    ignores = _ignores_for("npm", "/evals/oracles/ts_oracle")
+    ignores = _ignores_for("npm", "/evals/oracles/typescript_oracle")
     assert {"dependency-name": "typescript", "versions": [">=7"]} in ignores
 
 
 def test_typescript_6_updates_still_reach_the_ts_oracle() -> None:
     # Negative: the hold is on the major that broke the API, not on every
     # TypeScript release, so 6.x patches keep arriving.
-    ignores = _ignores_for("npm", "/evals/oracles/ts_oracle")
+    ignores = _ignores_for("npm", "/evals/oracles/typescript_oracle")
     typescript = [i for i in ignores if i.get("dependency-name") == "typescript"]
     assert all(i.get("versions") == [">=7"] for i in typescript)
     assert all("update-types" not in i for i in typescript)
