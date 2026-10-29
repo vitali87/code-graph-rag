@@ -80,6 +80,7 @@ if TYPE_CHECKING:
         LanguageQueries,
         SimpleNameLookup,
     )
+    from ..go.interface_ingest import GoInterfaceIngest
     from ..import_processor import ImportProcessor
 
 
@@ -365,6 +366,7 @@ class ClassIngestMixin:
     go_type_locations: dict[tuple[str, int, int], tuple[str, str]]
     rust_impl_owner_module: dict[str, str]
     go_interfaces: dict[str, go_ifaces.GoInterfaceDecl]
+    go_interface_ingest: GoInterfaceIngest
     cpp_definition_spans: dict[str, list[CppDefinitionSpan]]
     _deferred_forward_decls: list[_DeferredForwardDecl]
     _deferred_parent_links: list[DeferredParentLink]
@@ -408,16 +410,6 @@ class ClassIngestMixin:
     def _get_docstring(
         self, node: ASTNode, language: cs.SupportedLanguage
     ) -> str | None: ...
-
-    @abstractmethod
-    @abstractmethod
-    def _ingest_go_interface_methods(
-        self,
-        type_spec: Node,
-        interface_qn: str,
-        module_qn: str,
-        file_path: Path | None,
-    ) -> None: ...
 
     @abstractmethod
     def _emit_or_defer_defines(
@@ -1566,7 +1558,7 @@ class ClassIngestMixin:
             member_node, class_qn, module_qn, label, language, class_props
         )
         if language == cs.SupportedLanguage.GO and label == cs.NodeLabel.INTERFACE:
-            self._ingest_go_interface_methods(
+            self.go_interface_ingest.ingest_interface_methods(
                 class_node, class_qn, module_qn, file_path
             )
         self._record_class_field_types(

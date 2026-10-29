@@ -41,7 +41,7 @@ from .field_nodes import PendingFieldType
 from .function_ingest import FunctionIngestMixin
 from .go import utils as go_utils
 from .go.builds import Expr, GoBuilds
-from .go.interface_ingest import GoInterfaceMixin
+from .go.interface_ingest import GoInterfaceIngest
 from .go.interfaces import GoInterfaceDecl, GoMethodSpec
 from .go.link_state import GoLinkState
 from .interface_fingerprint import interface_fingerprint
@@ -81,9 +81,6 @@ def _signature_docstring(node: ASTNode, language: cs.SupportedLanguage) -> str |
 
 class DefinitionProcessor(
     FunctionIngestMixin,
-    # Before ClassIngestMixin, whose abstract stub for the Go interface
-    # ingest would otherwise shadow the implementation.
-    GoInterfaceMixin,
     ClassIngestMixin,
     JsTsIngestMixin,
 ):
@@ -265,6 +262,25 @@ class DefinitionProcessor(
         self.pending_parameter_types: list[PendingParameterType] = []
         self.pending_field_types: list[PendingFieldType] = []
         self.func_class_captures_cache = func_class_captures_cache
+        self.go_interface_ingest = GoInterfaceIngest(
+            method_host=self,
+            ingestor=ingestor,
+            repo_path=repo_path,
+            project_name=project_name,
+            function_registry=function_registry,
+            import_processor=import_processor,
+            module_qn_to_file_path=module_qn_to_file_path,
+            facts=self.facts,
+            go_methods=self.go_methods,
+            go_interfaces=self.go_interfaces,
+            go_interfaces_parsed=self.go_interfaces_parsed,
+            go_proven_pairs=self.go_proven_pairs,
+            go_guessed_pairs=self.go_guessed_pairs,
+            go_builtin_shadows=self.go_builtin_shadows,
+            go_variant_methods=self.go_variant_methods,
+            go_pair_builds=self.go_pair_builds,
+            go_builds=self.go_builds,
+        )
 
     def begin_run(self) -> None:
         # What a run records about itself: a reused updater must not treat
@@ -291,6 +307,29 @@ class DefinitionProcessor(
         forget_file(
             self.facts, self.class_owner_module, self.rust_impl_owner_module, removed
         )
+
+    def link_go_interfaces(
+        self,
+        analysed_roots: frozenset[str],
+        checked_files: frozenset[str],
+        compared: frozenset[str],
+    ) -> int:
+        """Link Go embedding, implicit satisfaction and the overrides it
+        implies (`GoInterfaceIngest.link_go_interfaces`); returns the number of
+        IMPLEMENTS edges written."""
+        return self.go_interface_ingest.link_go_interfaces(
+            analysed_roots, checked_files, compared
+        )
+
+    def replace_go_implementers(
+        self,
+        previous: set[tuple[str, str]],
+        current: list[tuple[str, str]],
+        keep: set[tuple[str, str]],
+    ) -> None:
+        """Swap one source's Go (interface, implementer) pairs for this
+        pass's (`GoInterfaceIngest.replace_go_implementers`)."""
+        self.go_interface_ingest.replace_go_implementers(previous, current, keep)
 
     def reset_interface_implementers(self) -> None:
         """Forget every implementer pair, parsed or read back from the graph.
