@@ -10,7 +10,7 @@ from ... import logs as lg
 from ...types_defs import FunctionRegistryTrieProtocol, NodeType
 from ..import_processor import ImportProcessor
 from ..utils import follow_reexports, safe_decode_text
-from .utils import resolve_class_name, resolve_dotted_class
+from .utils import annotation_text, resolve_class_name, resolve_dotted_class
 
 
 class WithTarget(NamedTuple):
@@ -71,9 +71,14 @@ def _receiver_parameter(method: Node) -> tuple[str | None, str | None]:
         (c for c in first.named_children if c.type == cs.TS_PY_IDENTIFIER), None
     )
     annotation = first.child_by_field_name(cs.FIELD_TYPE)
+    # Read as the return annotation is, through any `Annotated[T, ...]`, so
+    # `self: Annotated[T, m]` still matches `-> Annotated[T, m]` (Greptile,
+    # PR #2955).
     return (
         safe_decode_text(ident) if ident is not None else None,
-        safe_decode_text(annotation) if annotation is not None else None,
+        (annotation_text(annotation) or "").strip().strip("\"'")
+        if annotation is not None
+        else None,
     )
 
 
@@ -196,7 +201,7 @@ class PythonWithBindingMixin(_WithBase):
         owner_module = method_qn.rsplit(cs.SEPARATOR_DOT, 2)[0]
         receiver, receiver_annotation = _receiver_parameter(method)
         if (annotation := method.child_by_field_name(cs.FIELD_RETURN_TYPE)) is not None:
-            text = (safe_decode_text(annotation) or "").strip().strip("\"'")
+            text = (annotation_text(annotation) or "").strip().strip("\"'")
             # `-> Self`, or the pre-3.11 idiom `def __enter__(self: T) -> T`.
             if (
                 text.rsplit(cs.SEPARATOR_DOT, 1)[-1] == cs.PY_ANNOTATION_SELF

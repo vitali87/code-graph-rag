@@ -65,6 +65,7 @@ from .julia import utils as julia_utils
 from .lua import utils as lua_utils
 from .php import class_names as php_class_names
 from .php import utils as php_utils
+from .py import utils as py_utils
 from .py.class_aliases import scan_class_body_aliases
 from .py.receiver_rebinding import ReceiverRebinding, receiver_rebinding
 from .rpc_exposure import GoRpcExposureProcessor
@@ -5122,6 +5123,22 @@ class CallProcessor:
             captures = sorted_captures(cursor, caller_node)
             call_nodes = captures.get(cs.CAPTURE_CALL, [])
 
+        if language == cs.SupportedLanguage.PYTHON and (
+            spans := py_utils.unrun_annotation_spans(
+                caller_node, queries[language][cs.QUERY_LANGUAGE]
+            )
+        ):
+            # A call in the caller's own annotations runs when its `def` does,
+            # and one in a local's annotation never runs: neither is a call
+            # the caller makes (issue #2873).
+            call_nodes = [
+                node
+                for node in call_nodes
+                if not any(
+                    start <= node.start_byte and node.end_byte <= end
+                    for start, end in spans
+                )
+            ]
         if not call_nodes:
             return
 
