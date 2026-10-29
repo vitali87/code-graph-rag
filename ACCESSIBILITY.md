@@ -27,7 +27,7 @@ WCAG was written for web content and does not map cleanly onto a terminal. For `
 - `NO_COLOR=1` turns colour off. Output written to a file or a pipe has no colour or escape sequences, and cgr does not hard-wrap plain messages there, so each message stays on one line.
 - `TERM=dumb` also turns off animation. The interactive session then draws no spinner or status bar, and its input prompt falls back to plain line editing with the same key bindings.
 - `cgr doctor` marks each check with ✓ or ✗ as well as colouring it. When the terminal's encoding cannot show those characters it prints `PASS` or `FAIL` instead.
-- `cgr --quiet <command>` hides banners and informational logs. It does not yet silence every progress line: `cgr dead-code` and `cgr duplicates` still print one while they connect.
+- `cgr --quiet <command>` hides progress output, banners and informational logs.
 - `cgr start --ask-agent "<question>"` asks one question, writes the answer to standard output and exits, so you can get an answer without the interactive session.
 - `cgr dead-code --format json`, `cgr duplicates --format json` and `cgr start --ask-agent "<question>" --output-format json` print JSON in place of a table.
 - The interactive session needs only the keyboard. Shift+Tab switches the permission mode and Ctrl+C ends the session.
