@@ -17,7 +17,6 @@ from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import click
 import pytest
 from rich.console import Console
 from typer.testing import CliRunner
@@ -29,6 +28,7 @@ from codebase_rag.cli import app
 from codebase_rag.graph_cli import cli as graph_cli
 from codebase_rag.mcp.tools import MCPToolsRegistry
 from codebase_rag.sync.checkout_state import state_file
+from codebase_rag.tests.cli_output import unstyle
 from codebase_rag.types_defs import DuplicatesReport, PropertyParams, ResultRow
 from codebase_rag.utils.path_utils import derive_project_name
 
@@ -122,7 +122,7 @@ def embeddings() -> Generator[MagicMock, None, None]:
 
 def _run(args: list[str]) -> tuple[int, str]:
     result = CliRunner().invoke(app, args)
-    return result.exit_code, click.unstyle(result.output)
+    return result.exit_code, unstyle(result.output)
 
 
 def _scanned(scan: MagicMock) -> str:

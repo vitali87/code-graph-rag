@@ -12,12 +12,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import click
 import pytest
 from typer.testing import CliRunner
 
 from codebase_rag.cli import app
 from codebase_rag.graph_loader import GraphFileFormatError, load_graph
+from codebase_rag.tests.cli_output import unstyle
 
 runner = CliRunner()
 
@@ -91,7 +91,7 @@ def test_the_cli_prints_the_reason_once(tmp_path: Path) -> None:
 
     result = runner.invoke(app, ["graph-loader", str(path)])
 
-    output = " ".join(click.unstyle(result.output).split())
+    output = " ".join(unstyle(result.output).split())
     assert result.exit_code == 1, output
     assert output.count("is not a cgr graph export") == 1, output
     assert "'nodes'" not in output
@@ -103,7 +103,7 @@ def test_the_cli_summarises_a_graph_without_metadata(tmp_path: Path) -> None:
     result = runner.invoke(app, ["graph-loader", str(path)])
 
     assert result.exit_code == 0, result.output
-    assert "Exported at: unknown" in click.unstyle(result.output)
+    assert "Exported at: unknown" in unstyle(result.output)
 
 
 def test_a_full_export_loads_unchanged(tmp_path: Path) -> None:

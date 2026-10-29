@@ -15,8 +15,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from click.testing import Result
-from typer.testing import CliRunner
+from typer.testing import CliRunner, Result
 
 from codebase_rag.check.delta import StructuralDelta, has_findings, observe
 from codebase_rag.cli import app

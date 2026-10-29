@@ -17,7 +17,6 @@ import copy
 import re
 from collections.abc import Callable
 
-import click
 import pytest
 import typer
 from typer.core import TyperCommand
@@ -136,7 +135,10 @@ class TestWhicheverClickTyperUses:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         # The vendoring typer's condition, emulated for whichever typer is
-        # installed: no option typer builds descends from `click.Option`.
+        # installed: no option typer builds descends from `click.Option`. cgr
+        # does not depend on the click package; without it there is no class
+        # to hinge on.
+        click = pytest.importorskip("click")
         start = cli_option_command(ch.CLICommandName.START)
 
         class UnrelatedOption:

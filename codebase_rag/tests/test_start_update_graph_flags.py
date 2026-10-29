@@ -17,13 +17,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import click
 import pytest
 from typer.testing import CliRunner
 
 from codebase_rag import cli_help as ch
 from codebase_rag import constants as cs
 from codebase_rag.cli import app
+from codebase_rag.tests.cli_output import unstyle
 from codebase_rag.utils.path_utils import derive_project_name
 
 runner = CliRunner()
@@ -52,7 +52,7 @@ def start() -> Generator[_Start, None, None]:
 
 def _invoke(repo: Path, *extra: str) -> tuple[int, str]:
     result = runner.invoke(app, ["start", "--repo-path", str(repo), *extra])
-    return result.exit_code, " ".join(click.unstyle(result.output).split())
+    return result.exit_code, " ".join(unstyle(result.output).split())
 
 
 @pytest.mark.parametrize(
@@ -125,7 +125,7 @@ def test_project_name_help_limits_uniqueness_to_one_machine() -> None:
 def test_rendered_start_help_shows_the_new_texts() -> None:
     # Wide enough that rich never folds a word of the help column.
     result = runner.invoke(app, ["start", "--help"], env={"COLUMNS": "200"})
-    output = " ".join(click.unstyle(result.output).replace("│", " ").split())
+    output = " ".join(unstyle(result.output).replace("│", " ").split())
 
     assert result.exit_code == 0
     assert "before continuing" not in output

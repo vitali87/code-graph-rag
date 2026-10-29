@@ -55,7 +55,6 @@ dependencies = [
     "typer>=0.21.1",
     "rich>=14.2.0",
     "prompt-toolkit>=3.0.52",
-    "click>=8.3.3",
     "protobuf>=6.33.5",
     "defusedxml>=0.7.1",
     # Imported at the top of the CLI's stack module, so every `cgr` needs it.

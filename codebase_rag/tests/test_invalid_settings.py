@@ -14,7 +14,6 @@ from collections.abc import Iterator, MutableMapping
 from pathlib import Path
 from unittest.mock import patch
 
-import click
 import pytest
 from dotenv import load_dotenv
 from pydantic import ValidationError
@@ -23,6 +22,7 @@ from typer.testing import CliRunner
 
 from codebase_rag import cli, config
 from codebase_rag import constants as cs
+from codebase_rag.tests.cli_output import unstyle
 
 # The `cgr` entry point is `codebase_rag.cli:app`.
 _CLI = "from codebase_rag.cli import app; app()"
@@ -727,7 +727,7 @@ class TestWhatStaysTheSame:
         with patch.object(cli, "settings_errors", errors):
             result = CliRunner().invoke(cli.app, ["help", "start"])
         # CI forces colour, so rich wraps each option name in ANSI spans.
-        help_text = click.unstyle(result.output)
+        help_text = unstyle(result.output)
 
         assert result.exit_code == 0, result.output
         assert "--batch-size" in help_text

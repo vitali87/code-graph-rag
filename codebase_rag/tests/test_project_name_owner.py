@@ -15,7 +15,6 @@ from contextlib import AbstractContextManager, contextmanager, nullcontext
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import click
 import pytest
 import typer
 from typer.testing import CliRunner
@@ -34,6 +33,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services.protobuf_service import ProtobufFileIngestor
 from codebase_rag.sync.checkout_state import state_file
+from codebase_rag.tests.cli_output import unstyle
 from codebase_rag.workspaces import WorkspaceConfig, WorkspaceRepo
 from evals.cgr_graph import StatefulIngestor
 
@@ -262,7 +262,7 @@ def test_start_refuses_a_name_that_indexes_another_repo(
     result = runner.invoke(app, _start(org_b))
 
     assert result.exit_code == 1, result.output
-    output = "".join(click.unstyle(result.output).split())
+    output = "".join(unstyle(result.output).split())
     assert str(org_a) in output
     assert "--yes" in output
     graph.updater.assert_not_called()
@@ -311,7 +311,7 @@ def test_start_refuses_when_the_owner_cannot_be_read(
     result = runner.invoke(app, _start(org_b))
 
     assert result.exit_code == 1, result.output
-    output = " ".join(click.unstyle(result.output).split())
+    output = " ".join(unstyle(result.output).split())
     assert "lost connection" in output
     assert "--yes" in output
     graph.updater.assert_not_called()

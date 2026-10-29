@@ -438,7 +438,6 @@ source = { editable = "." }
 dependencies = [
     { name = "certifi" },
     { name = "cgr-graph-rs", marker = "(platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'AMD64' and platform_python_implementation == 'CPython' and sys_platform == 'win32') or (platform_python_implementation == 'CPython' and sys_platform == 'darwin')" },
-    { name = "click" },
     { name = "defusedxml" },
     { name = "genai-prices" },
     { name = "httpx" },
@@ -558,7 +557,6 @@ requires-dist = [
     { name = "ast-grep-py", marker = "extra == 'test'", specifier = ">=0.51.0" },
     { name = "certifi", specifier = ">=2026.10.23" },
     { name = "cgr-graph-rs", marker = "(platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'AMD64' and platform_python_implementation == 'CPython' and sys_platform == 'win32') or (platform_python_implementation == 'CPython' and sys_platform == 'darwin')", directory = "rust/cgr_graph_rs" },
-    { name = "click", specifier = ">=8.3.3" },
     { name = "defusedxml", specifier = ">=0.7.1" },
     { name = "filelock", marker = "extra == 'test'", specifier = ">=3.12" },
     { name = "genai-prices", specifier = ">=0.1.9,<0.2" },

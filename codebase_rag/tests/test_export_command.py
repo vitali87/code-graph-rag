@@ -14,19 +14,18 @@ from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import click
 import pytest
 import typer
-from click.testing import Result
 from loguru import logger
 from rich.console import Console
-from typer.testing import CliRunner
+from typer.testing import CliRunner, Result
 
 from codebase_rag import cli
 from codebase_rag import cypher_queries as cq
 from codebase_rag.cli import app
 from codebase_rag.config import settings
 from codebase_rag.services.graph_service import GraphIngestor
+from codebase_rag.tests.cli_output import unstyle
 from codebase_rag.types_defs import GraphData, GraphMetadata, ResultRow
 from codebase_rag.workspaces import WorkspaceConfig, WorkspaceRepo, save_workspace
 
@@ -227,7 +226,7 @@ def test_no_json_says_the_option_is_deprecated(
 def test_the_help_lists_the_scope_and_hides_the_deprecated_options() -> None:
     result = _run(["export", "--help"])
     # CI forces colour, so rich wraps each option name in ANSI spans.
-    help_text = click.unstyle(result.output)
+    help_text = unstyle(result.output)
 
     assert result.exit_code == 0
     assert "--project" in help_text

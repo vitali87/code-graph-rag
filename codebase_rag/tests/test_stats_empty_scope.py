@@ -12,13 +12,13 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import click
 import pytest
 from typer.testing import CliRunner
 
 from codebase_rag import cypher_queries as cq
 from codebase_rag.cli import app
 from codebase_rag.config import settings
+from codebase_rag.tests.cli_output import unstyle
 from codebase_rag.types_defs import ResultRow
 from codebase_rag.workspaces import WorkspaceConfig, WorkspaceRepo, save_workspace
 
@@ -37,7 +37,7 @@ def _ingestor() -> MagicMock:
 def _run(args: list[str], mock: MagicMock) -> tuple[int, str]:
     with patch("codebase_rag.cli.connect_graph", return_value=mock):
         result = CliRunner().invoke(app, ["stats", *args])
-    return result.exit_code, " ".join(click.unstyle(result.output).split())
+    return result.exit_code, " ".join(unstyle(result.output).split())
 
 
 def _whole_graph_queried(mock: MagicMock) -> bool:

@@ -16,15 +16,14 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-import click
 import pytest
-from click.testing import Result
-from typer.testing import CliRunner
+from typer.testing import CliRunner, Result
 
 from codebase_rag import watch
 from codebase_rag.cli import app
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.cli_output import unstyle
 from codebase_rag.utils.path_utils import derive_project_name
 from codebase_rag.watch import CodeChangeEventHandler
 
@@ -204,7 +203,7 @@ def test_an_invalid_option_is_still_refused_before_scanning(
     watched = _watch(str(shop), "--debounce", "-1")
 
     assert watched.exit_code == 2
-    assert "--debounce" in click.unstyle(watched.output)
+    assert "--debounce" in unstyle(watched.output)
     assert scans == []
 
 

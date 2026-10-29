@@ -25,7 +25,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import click
 import pytest
 from loguru import logger
 from typer.testing import CliRunner
@@ -47,6 +46,7 @@ from codebase_rag.sync.lock import (
     UnsafeSyncLockError,
     repo_sync_lock,
 )
+from codebase_rag.tests.cli_output import unstyle
 
 runner = CliRunner()
 
@@ -253,7 +253,7 @@ def test_the_cli_stops_before_connecting_while_a_sync_runs(
             ],
         )
 
-    output = " ".join(click.unstyle(result.output).split())
+    output = " ".join(unstyle(result.output).split())
     assert result.exit_code == 1, output
     assert str(holder.pid) in output
     assert "click__a4231746" in output
@@ -813,7 +813,7 @@ def test_the_cli_says_why_it_cannot_take_the_lock(
             ],
         )
 
-    output = "".join(click.unstyle(result.output).split())
+    output = "".join(unstyle(result.output).split())
     assert result.exit_code == 1, output
     assert "".join(str(lock_path).split()) in output
     assert "Traceback" not in output
@@ -998,7 +998,7 @@ def test_cgr_index_says_why_it_stopped(repo: Path, tmp_path: Path) -> None:
     with _held_elsewhere(repo, "click__a4231746") as holder:
         result = runner.invoke(app, ["index", "--repo-path", str(repo), "-o", str(out)])
 
-    output = " ".join(click.unstyle(result.output).split())
+    output = " ".join(unstyle(result.output).split())
     assert result.exit_code == 1, output
     assert str(holder.pid) in output
     assert "Traceback" not in output
@@ -1228,7 +1228,7 @@ class TestPlantedLockLink:
             ],
         )
 
-        output = " ".join(click.unstyle(result.output).split())
+        output = " ".join(unstyle(result.output).split())
         assert result.exit_code == 1, output
         assert "symbolic link" in output
         assert "Traceback" not in output

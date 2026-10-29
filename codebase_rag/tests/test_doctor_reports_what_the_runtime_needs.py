@@ -20,9 +20,8 @@ from __future__ import annotations
 import io
 
 import pytest
-from click.testing import Result
 from rich.console import Console
-from typer.testing import CliRunner
+from typer.testing import CliRunner, Result
 
 from codebase_rag import cli as cli_module
 from codebase_rag import constants as cs

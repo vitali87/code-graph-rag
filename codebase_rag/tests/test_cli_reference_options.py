@@ -10,11 +10,11 @@ page and compare it with the commands' own Click parameters.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 
-import click
 import pytest
 import typer
-from typer.core import TyperGroup
+from typer.core import TyperCommand, TyperGroup
 
 from codebase_rag import cli as cgr_cli
 from codebase_rag import cli_help as ch
@@ -47,11 +47,11 @@ INLINE_CGR_COMMAND = re.compile(r"`cgr ([a-z][a-z-]*)")
 FENCED_CGR_COMMAND = re.compile(r"^\s*(?:\$ )?cgr ([a-z][a-z-]*)", re.MULTILINE)
 
 
-def _commands() -> dict[str, click.Command]:
+def _commands() -> Mapping[str, TyperCommand | TyperGroup]:
     return typer.main.get_group(cgr_cli.app).commands
 
 
-def visible_flags(command: click.Command) -> list[str]:
+def visible_flags(command: TyperCommand | TyperGroup) -> list[str]:
     # Duck-typed on `param_type_name`: a typer that vendors click builds
     # options that are not `click.Option`, and an isinstance filter would then
     # find no options and pass every check here vacuously (#1409).

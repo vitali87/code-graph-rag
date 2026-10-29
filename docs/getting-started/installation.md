@@ -306,7 +306,6 @@ This checks that all required dependencies and services are available.
 - **typer**: Typer, build great CLIs. Easy to code. Based on Python type hints.
 - **rich**: Render rich text, tables, progress bars, syntax highlighting, markdown and more to the terminal
 - **prompt-toolkit**: Library for building powerful interactive command lines in Python
-- **click**: Composable command line interface toolkit
 - **protobuf**
 - **defusedxml**: XML bomb protection for Python stdlib modules
 - **pyyaml**: YAML parser and emitter for Python

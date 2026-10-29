@@ -16,7 +16,6 @@ from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import click
 import pytest
 import typer
 from typer.testing import CliRunner
@@ -25,6 +24,7 @@ from codebase_rag import cli_help as ch
 from codebase_rag import constants as cs
 from codebase_rag.cli import _launch_session, _run_graph_sync, app
 from codebase_rag.cli_runtime import app_context
+from codebase_rag.tests.cli_output import unstyle
 from codebase_rag.workspaces import (
     WorkspaceRepo,
     add_repo,
@@ -116,7 +116,7 @@ def test_a_workspace_holding_a_dotted_project_name_syncs_nothing(
     )
 
     assert result.exit_code == 1, result.output
-    assert "acme_web" in click.unstyle(result.output)
+    assert "acme_web" in unstyle(result.output)
     sync.assert_not_called()
 
 
@@ -138,7 +138,7 @@ def test_options_a_workspace_sync_cannot_honour_are_refused(
     )
 
     assert result.exit_code == 1, result.output
-    assert option in click.unstyle(result.output)
+    assert option in unstyle(result.output)
     sync.assert_not_called()
 
 
@@ -380,7 +380,7 @@ _NOT_A_GIT_REPO = "--repo-path is not a Git repository"
 
 
 def _words(text: str) -> str:
-    return " ".join(click.unstyle(text).split())
+    return " ".join(unstyle(text).split())
 
 
 def test_a_json_answer_from_outside_git_is_all_of_stdout(
@@ -509,7 +509,7 @@ def test_a_repository_update_graph_still_refuses_what_it_would_drop(
     # Negative: without `--workspace`, #2478's refusals stand.
     result = runner.invoke(app, _start(tmp_path, "--update-graph", *extra))
 
-    out = " ".join(click.unstyle(result.output).split())
+    out = " ".join(unstyle(result.output).split())
     assert result.exit_code == 1, out
     assert f"{option} cannot be combined with --update-graph" in out
     sync.assert_not_called()
@@ -527,7 +527,7 @@ def test_a_workspace_update_graph_still_refuses_no_sync(
         _start(elsewhere, "--workspace", "shop", "--update-graph", "--no-sync"),
     )
 
-    out = " ".join(click.unstyle(result.output).split())
+    out = " ".join(unstyle(result.output).split())
     assert result.exit_code == 1, out
     assert "--no-sync cannot be combined with --workspace --update-graph" in out
     # #2478's wording is for a repository's sync; this one opens the assistant.
@@ -579,7 +579,7 @@ def test_yes_reaches_each_repository_of_a_workspace_sync(
         graph.return_value.run.assert_called_once()
     else:
         assert result.exit_code == 1, result.output
-        assert "refusing to index" in click.unstyle(result.output)
+        assert "refusing to index" in unstyle(result.output)
         graph.assert_not_called()
 
 
@@ -635,7 +635,7 @@ def test_an_empty_workspace_opens_no_assistant(
     # Its `--update-graph` synced nothing and reported a completed update.
     result = runner.invoke(app, _start(empty, "--workspace", "empty", *extra))
 
-    out = " ".join(click.unstyle(result.output).split())
+    out = " ".join(unstyle(result.output).split())
     assert result.exit_code == 1, out
     assert "'empty' has no repositories" in out
     assert "Graph update completed" not in out

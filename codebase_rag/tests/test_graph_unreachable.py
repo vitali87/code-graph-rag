@@ -17,7 +17,6 @@ from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import click
 import mgclient
 import pytest
 from loguru import logger
@@ -26,6 +25,7 @@ from typer.testing import CliRunner
 from codebase_rag.cli import app
 from codebase_rag.config import settings
 from codebase_rag.services.graph_service import GraphIngestor, GraphUnavailableError
+from codebase_rag.tests.cli_output import unstyle
 
 runner = CliRunner()
 
@@ -102,7 +102,7 @@ def test_a_command_prints_one_line_and_exits_1(
     finally:
         logger.remove(sink)
 
-    output = "".join(click.unstyle(result.output).split())
+    output = "".join(unstyle(result.output).split())
     assert result.exit_code == 1, output
     assert output.count(f"127.0.0.1:{nothing_listening}") == 1, output
     assert "Traceback" not in output
@@ -128,7 +128,7 @@ def test_a_sync_prints_one_line_and_exits_1(
         ],
     )
 
-    output = click.unstyle(result.output)
+    output = unstyle(result.output)
     assert result.exit_code == 1, output
     assert "cgr daemon up" in " ".join(output.split())
     assert not isinstance(result.exception, mgclient.Error)
@@ -179,7 +179,7 @@ def test_an_mcp_server_that_cannot_reach_the_graph_exits_1(
     with server:
         result = runner.invoke(app, ["mcp-server", "--transport", transport])
 
-    output = " ".join(click.unstyle(result.output).split())
+    output = " ".join(unstyle(result.output).split())
     assert result.exit_code == 1, output
     assert output.count(f"127.0.0.1:{nothing_listening}") == 1, output
     assert "cgr daemon up" in output

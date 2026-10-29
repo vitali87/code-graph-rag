@@ -16,7 +16,6 @@ from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import click
 import pytest
 from loguru import logger
 from typer.testing import CliRunner
@@ -25,6 +24,7 @@ from codebase_rag import constants as cs
 from codebase_rag.capture import capture_help, default_capture, resolve_capture
 from codebase_rag.cli import _capture_selection, app
 from codebase_rag.config import settings
+from codebase_rag.tests.cli_output import unstyle
 
 runner = CliRunner()
 
@@ -74,7 +74,7 @@ def test_start_refuses_an_unknown_capture_token(
         ],
     )
 
-    output = " ".join(click.unstyle(result.output).split())
+    output = " ".join(unstyle(result.output).split())
     assert result.exit_code == 2, output
     assert token in output
     assert "structure" in output

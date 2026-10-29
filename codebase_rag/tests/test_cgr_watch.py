@@ -31,12 +31,10 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
-import click
 import pytest
 import typer
-from click.testing import Result
 from loguru import logger
-from typer.testing import CliRunner
+from typer.testing import CliRunner, Result
 from watchdog.events import (
     FileClosedEvent,
     FileCreatedEvent,
@@ -51,6 +49,7 @@ from codebase_rag.cli import app
 from codebase_rag.config import settings
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.sync.lock import SyncInProgressError, repo_sync_lock
+from codebase_rag.tests.cli_output import unstyle
 from codebase_rag.types_defs import (
     PropertyDict,
     PropertyValue,
@@ -400,12 +399,12 @@ def _edit(handler: CodeChangeEventHandler, source: Path) -> None:
 
 
 def _output(result: Result) -> str:
-    return " ".join(click.unstyle(result.output).split())
+    return " ".join(unstyle(result.output).split())
 
 
 def _squashed(text: str) -> str:
     # Without any whitespace, so a path the console wrapped still matches.
-    return "".join(click.unstyle(text).split())
+    return "".join(unstyle(text).split())
 
 
 def _project_root(graph: _Graph, project: str) -> PropertyValue:
