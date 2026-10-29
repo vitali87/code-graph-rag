@@ -86,7 +86,7 @@ BULLET_SHAPED = re.compile(r"^[-*]\s+\S")
 # the README's "Latest News" can render that whole block instead of a fixed
 # top-N (a fixed three once hid two of the five v0.0.720 highlights). This
 # script must stay stdlib-only, so the literal is duplicated in
-# codebase_rag.readme_sections; a test asserts the two never drift.
+# scripts.readme_sections; a test asserts the two never drift.
 LATEST_RELEASE_MARKER = "<!-- latest-release-end -->"
 
 # Latest News is for user-facing features, never CI, developer tooling,

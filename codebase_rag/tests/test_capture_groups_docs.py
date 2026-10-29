@@ -27,9 +27,9 @@ from codebase_rag import cli as cgr_cli
 from codebase_rag import constants as cs
 from codebase_rag.capture import capture_help, resolve_capture, split_spec
 from codebase_rag.config import settings
-from codebase_rag.readme_sections import format_capture_groups_table
 from codebase_rag.types_defs import NODE_SCHEMAS, RELATIONSHIP_SCHEMAS
 from scripts.generate_readme import PROJECT_ROOT
+from scripts.readme_sections import format_capture_groups_table
 
 SCHEMA_PAGE = PROJECT_ROOT / "docs" / "architecture" / "graph-schema.md"
 CONFIG_PAGE = PROJECT_ROOT / "docs" / "getting-started" / "configuration.md"

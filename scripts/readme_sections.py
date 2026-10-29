@@ -15,10 +15,10 @@ import typer
 from loguru import logger
 from typer.core import TyperCommand, TyperOption
 
-from . import capture as cp
-from . import cli_help as ch
-from .cli import app as cli_app
-from .constants import (
+from codebase_rag import capture as cp
+from codebase_rag import cli_help as ch
+from codebase_rag.cli import app as cli_app
+from codebase_rag.constants import (
     ENCODING_UTF8,
     IGNORE_PATTERNS,
     LANGUAGE_METADATA,
@@ -27,9 +27,9 @@ from .constants import (
     LanguageStatus,
     SupportedLanguage,
 )
-from .language_spec import LANGUAGE_SPECS
-from .tools.tool_descriptions import AGENTIC_TOOLS, MCP_TOOLS
-from .types_defs import NODE_SCHEMAS, RELATIONSHIP_SCHEMAS
+from codebase_rag.language_spec import LANGUAGE_SPECS
+from codebase_rag.tools.tool_descriptions import AGENTIC_TOOLS, MCP_TOOLS
+from codebase_rag.types_defs import NODE_SCHEMAS, RELATIONSHIP_SCHEMAS
 
 PYPI_CACHE_FILE = Path(__file__).parent.parent / ".pypi_cache.json"
 PYPI_CACHE_TTL_SECONDS = 86400

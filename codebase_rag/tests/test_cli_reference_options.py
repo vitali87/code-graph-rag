@@ -18,7 +18,7 @@ from typer.core import TyperGroup
 
 from codebase_rag import cli as cgr_cli
 from codebase_rag import cli_help as ch
-from codebase_rag import readme_sections
+from scripts import readme_sections
 from scripts.generate_readme import PROJECT_ROOT
 
 REFERENCE_PAGE = PROJECT_ROOT / "docs" / "guide" / "cli-reference.md"

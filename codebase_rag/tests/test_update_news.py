@@ -430,8 +430,8 @@ class TestPrependNews:
 
     def test_marker_matches_readme_renderer(self) -> None:
         # scripts/update_news.py must stay stdlib-only, so the marker literal
-        # is duplicated in codebase_rag.readme_sections; they must never drift.
-        from codebase_rag.readme_sections import (
+        # is duplicated in scripts.readme_sections; they must never drift.
+        from scripts.readme_sections import (
             LATEST_RELEASE_MARKER as RENDER_MARKER,
         )
 

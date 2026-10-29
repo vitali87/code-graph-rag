@@ -5,9 +5,7 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import cli_help as ch
-from codebase_rag import readme_sections
-from codebase_rag.readme_sections import format_cli_commands_table, format_latest_news
-from scripts import generate_readme
+from scripts import generate_readme, readme_sections
 from scripts.generate_readme import (
     PROJECT_ROOT,
     SECTION_PATTERN,
@@ -17,6 +15,7 @@ from scripts.generate_readme import (
     unconsumed_sections,
     update_file,
 )
+from scripts.readme_sections import format_cli_commands_table, format_latest_news
 
 
 class TestReplaceSections:
@@ -239,7 +238,7 @@ class TestEveryGeneratedSectionReachesAMarker:
     discarded, because no target file carried their marker."""
 
     def test_every_generated_section_has_a_marker_in_some_target_file(self) -> None:
-        from codebase_rag.readme_sections import generate_all_sections
+        from scripts.readme_sections import generate_all_sections
 
         # The expected side is what the FILES carry, scanned independently
         # of the generator, so the assertion cannot be satisfied by the
@@ -277,7 +276,7 @@ class TestEveryGeneratedSectionReachesAMarker:
         monkeypatch.setattr(generate_readme, "PROJECT_ROOT", tmp_path)
         monkeypatch.setattr(generate_readme, "TARGET_FILES", ("page.md",))
         monkeypatch.setattr(
-            "codebase_rag.readme_sections.generate_all_sections",
+            "scripts.readme_sections.generate_all_sections",
             lambda _root: {"foo": "new", "orphan": "dropped"},
         )
         with pytest.raises(SystemExit) as raised:

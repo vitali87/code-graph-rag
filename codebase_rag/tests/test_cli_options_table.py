@@ -23,20 +23,20 @@ import typer
 from typer.core import TyperCommand
 
 from codebase_rag import cli_help as ch
-from codebase_rag import readme_sections
-from codebase_rag.readme_sections import (
+from codebase_rag.tests.test_cli_reference_options import (
+    REFERENCE_PAGE,
+    reference_sections,
+    table_flags,
+)
+from scripts import readme_sections
+from scripts.generate_readme import PROJECT_ROOT, replace_sections, stale_sections
+from scripts.readme_sections import (
     CLI_OPTION_COMMANDS,
     cli_option_command,
     cli_options_section_name,
     format_cli_options_table,
     generate_all_sections,
 )
-from codebase_rag.tests.test_cli_reference_options import (
-    REFERENCE_PAGE,
-    reference_sections,
-    table_flags,
-)
-from scripts.generate_readme import PROJECT_ROOT, replace_sections, stale_sections
 
 START_SECTION = cli_options_section_name(ch.CLICommandName.START)
 OPTION_PARAM_TYPE = "option"

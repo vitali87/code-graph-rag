@@ -2,12 +2,18 @@
 from __future__ import annotations
 
 import re
+import sys
 from collections.abc import Iterable
 from pathlib import Path
 
 from loguru import logger
 
 PROJECT_ROOT = Path(__file__).parent.parent
+# Run as `python scripts/generate_readme.py`, so the repository root, which
+# holds the `scripts` package this imports its section builders from, is not
+# on the path by itself.
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 TARGET_FILES = (
     "README.md",
@@ -82,7 +88,7 @@ def update_file(path: Path, sections: dict[str, str]) -> bool:
 
 
 def main() -> None:
-    from codebase_rag.readme_sections import generate_all_sections
+    from scripts.readme_sections import generate_all_sections
 
     sections = generate_all_sections(PROJECT_ROOT)
     targets = [PROJECT_ROOT / relative_path for relative_path in TARGET_FILES]

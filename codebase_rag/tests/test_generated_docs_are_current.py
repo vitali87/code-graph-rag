@@ -12,13 +12,13 @@ from __future__ import annotations
 
 import pytest
 
-from codebase_rag.readme_sections import generate_all_sections
 from scripts.generate_readme import (
     PROJECT_ROOT,
     SECTION_PATTERN,
     TARGET_FILES,
     stale_sections,
 )
+from scripts.readme_sections import generate_all_sections
 
 REGENERATE = "uv run python scripts/generate_readme.py"
 
