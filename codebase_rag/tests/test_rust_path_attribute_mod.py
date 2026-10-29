@@ -479,14 +479,15 @@ def test_a_new_redirect_moves_its_target_for_the_watcher(
     updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
     processor = updater.factory.import_processor
     target = "rs_path_attr_super_watch.src.fixtures.rig"
-    assert processor._rust_logical_parent(target) is None
+    assert processor.rust._rust_logical_parent(target) is None
     engine = project / "src" / "engine.rs"
     engine.write_text(
         '#[path = "fixtures/rig.rs"]\npub mod rig;\npub mod sib;\n', encoding="utf-8"
     )
-    processor.refresh_rust_path_caches_for(engine, created=False)
+    processor.rust.refresh_rust_path_caches_for(engine, created=False)
     assert (
-        processor._rust_logical_parent(target) == "rs_path_attr_super_watch.src.engine"
+        processor.rust._rust_logical_parent(target)
+        == "rs_path_attr_super_watch.src.engine"
     )
 
 

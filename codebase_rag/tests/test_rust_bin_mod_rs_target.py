@@ -40,7 +40,10 @@ def test_src_bin_mod_rs_roots_its_own_crate(tmp_path: Path) -> None:
     (tmp_path / "src" / "bin").mkdir(parents=True)
     (tmp_path / "src" / "bin" / "mod.rs").write_text(BIN_MOD_SOURCE)
     processor = _processor(tmp_path)
-    assert processor._rust_crate_root("proj.src.bin") == ("dir_file", ["src", "bin"])
+    assert processor.rust._rust_crate_root("proj.src.bin") == (
+        "dir_file",
+        ["src", "bin"],
+    )
 
 
 def test_src_bin_mod_rs_crate_paths_resolve_to_the_directory_qn(
@@ -67,7 +70,10 @@ def test_explicit_mod_rs_target_roots_its_own_crate(tmp_path: Path) -> None:
     (tmp_path / "src" / "tool").mkdir(parents=True)
     (tmp_path / "src" / "tool" / "mod.rs").write_text("fn main() {}\n")
     processor = _processor(tmp_path)
-    assert processor._rust_crate_root("proj.src.tool") == ("dir_file", ["src", "tool"])
+    assert processor.rust._rust_crate_root("proj.src.tool") == (
+        "dir_file",
+        ["src", "tool"],
+    )
 
 
 def test_mod_rs_sibling_does_not_unroot_src_bin_main(tmp_path: Path) -> None:
@@ -76,7 +82,7 @@ def test_mod_rs_sibling_does_not_unroot_src_bin_main(tmp_path: Path) -> None:
     (tmp_path / "src" / "bin" / "main.rs").write_text("fn main() {}\n")
     (tmp_path / "src" / "bin" / "mod.rs").write_text("fn main() {}\n")
     processor = _processor(tmp_path)
-    assert processor._rust_is_crate_root_dir(["src", "bin"]) is True
+    assert processor.rust._rust_is_crate_root_dir(["src", "bin"]) is True
 
 
 def test_ordinary_module_directory_mod_rs_stays_a_module(tmp_path: Path) -> None:
@@ -85,8 +91,8 @@ def test_ordinary_module_directory_mod_rs_stays_a_module(tmp_path: Path) -> None
     (tmp_path / "src" / "lib.rs").write_text("pub mod foo;\n")
     (tmp_path / "src" / "foo" / "mod.rs").write_text("pub fn f() {}\n")
     processor = _processor(tmp_path)
-    assert processor._rust_crate_root("proj.src.foo") == ("classic", ["src"])
-    assert processor._rust_is_crate_root_dir(["src", "foo"]) is False
+    assert processor.rust._rust_crate_root("proj.src.foo") == ("classic", ["src"])
+    assert processor.rust._rust_is_crate_root_dir(["src", "foo"]) is False
 
 
 def test_mod_rs_root_redirects_read_mod_rs_not_a_dir_shadow(
@@ -152,7 +158,7 @@ def test_descendant_module_roots_at_the_mod_rs_target(
         "use crate::helper as h;\npub fn use_it() -> u32 { h() }\n"
     )
     processor = _processor(tmp_path)
-    assert processor._rust_crate_root("proj.src.bin.child") == (
+    assert processor.rust._rust_crate_root("proj.src.bin.child") == (
         "dir_file",
         ["src", "bin"],
     )
@@ -177,7 +183,7 @@ def test_root_level_explicit_mod_rs_target_roots_the_project_qn(
     _manifest(tmp_path, '\n[[bin]]\nname = "tool"\npath = "mod.rs"\n')
     (tmp_path / "mod.rs").write_text("fn main() {}\n")
     processor = _processor(tmp_path)
-    assert processor._rust_crate_root("proj") == ("dir_file", [])
+    assert processor.rust._rust_crate_root("proj") == ("dir_file", [])
 
 
 def test_src_bin_main_keeps_its_own_crate_beside_mod_rs(
@@ -194,7 +200,7 @@ def test_src_bin_main_keeps_its_own_crate_beside_mod_rs(
         "fn main() { let _ = o(); }\n"
     )
     processor = _processor(tmp_path)
-    assert processor._rust_crate_root("proj.src.bin.main") == (
+    assert processor.rust._rust_crate_root("proj.src.bin.main") == (
         "file",
         ["src", "bin", "main"],
     )
@@ -252,7 +258,7 @@ def test_explicit_main_target_keeps_its_crate_beside_explicit_mod_target(
         "fn main() { let _ = o(); }\n"
     )
     processor = _processor(tmp_path)
-    assert processor._rust_crate_root("proj.src.tools.main") == (
+    assert processor.rust._rust_crate_root("proj.src.tools.main") == (
         "entry",
         ["src", "tools", "main"],
     )

@@ -71,7 +71,7 @@ def test_an_excluded_declaring_neighbour_no_longer_suppresses_the_redirect(
     )
 
     processor = updater.factory.import_processor
-    assert not processor._rust_module_is_declared(["src", "fixtures", "rig"])
+    assert not processor.rust._rust_module_is_declared(["src", "fixtures", "rig"])
 
     # The Module node stays keyed by the file's own path; it is the `super::`
     # climb inside it that follows the redirect instead of the physical tree.
@@ -106,7 +106,7 @@ def test_excluded_entry_file_declarations_do_not_shape_resolution(
         exclude_paths=frozenset({"src/main.rs"}),
     )
 
-    decls = updater.factory.import_processor._rust_entry_decls(["src"])
+    decls = updater.factory.import_processor.rust._rust_entry_decls(["src"])
     assert "main" not in decls, decls
     assert "lib" in decls, decls
 
@@ -129,7 +129,7 @@ def test_unexcluded_entry_files_still_contribute_declarations(
 
     updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
 
-    decls = updater.factory.import_processor._rust_entry_decls(["src"])
+    decls = updater.factory.import_processor.rust._rust_entry_decls(["src"])
     assert {"lib", "main"} <= set(decls), decls
     assert "beta" in decls["main"].mods, decls
 
@@ -161,7 +161,7 @@ def test_an_excluded_sibling_file_falls_through_to_mod_rs(
         exclude_paths=frozenset({"src/engine.rs"}),
     )
 
-    found = updater.factory.import_processor._rust_module_decls(
+    found = updater.factory.import_processor.rust._rust_module_decls(
         ["src", "engine"], want_mods=True
     )
     assert found is not None
@@ -198,11 +198,13 @@ def test_watch_refresh_does_not_cache_an_excluded_entry_file(
     # Establish the precondition explicitly: the refresh only writes when the
     # entry-declaration cache already holds this directory, so without this
     # the assertion below could hold for the wrong reason.
-    primed = processor._rust_entry_decls(["src"])
+    primed = processor.rust._rust_entry_decls(["src"])
     assert "lib" in primed, primed
     assert "main" not in primed, primed
 
-    processor.refresh_rust_path_caches_for(project / "src" / "main.rs", created=False)
+    processor.rust.refresh_rust_path_caches_for(
+        project / "src" / "main.rs", created=False
+    )
 
-    decls = processor._rust_entry_decls(["src"])
+    decls = processor.rust._rust_entry_decls(["src"])
     assert "main" not in decls, decls

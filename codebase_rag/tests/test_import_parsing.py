@@ -102,20 +102,20 @@ class TestImportParsing:
         self, graph_updater: GraphUpdater
     ) -> None:
         """Test that language-specific import parsing methods exist."""
+        import_processor = graph_updater.factory.import_processor
+        # Rust's imports are parsed by the importer the processor builds.
         expected_methods = [
-            "_parse_python_imports",
-            "_parse_js_ts_imports",
-            "_parse_java_imports",
-            "_parse_rust_imports",
-            "_parse_go_imports",
-            "_parse_generic_imports",
+            (import_processor, "_parse_python_imports"),
+            (import_processor, "_parse_js_ts_imports"),
+            (import_processor, "_parse_java_imports"),
+            (import_processor.rust, "parse_imports"),
+            (import_processor, "_parse_go_imports"),
+            (import_processor, "_parse_generic_imports"),
         ]
 
-        for method_name in expected_methods:
-            assert hasattr(graph_updater.factory.import_processor, method_name), (
-                f"Missing method: {method_name}"
-            )
-            method = getattr(graph_updater.factory.import_processor, method_name)
+        for owner, method_name in expected_methods:
+            assert hasattr(owner, method_name), f"Missing method: {method_name}"
+            method = getattr(owner, method_name)
             assert callable(method), f"Method {method_name} is not callable"
 
     def test_import_processing_doesnt_crash(self, graph_updater: GraphUpdater) -> None:
@@ -351,7 +351,7 @@ class TestRustCrateResolution:
             function_registry=None,
         )
 
-        result = processor.rewrite_rust_local_use_path(
+        result = processor.rust.rewrite_rust_local_use_path(
             "crate::utils::helper",
             module_qn="test_project.src.subdir.nested",
         )
@@ -375,7 +375,7 @@ class TestRustCrateResolution:
             function_registry=None,
         )
 
-        result = processor.rewrite_rust_local_use_path(
+        result = processor.rust.rewrite_rust_local_use_path(
             "crate::flags::Flag",
             module_qn="test_project.crates.core.flags.defs",
         )

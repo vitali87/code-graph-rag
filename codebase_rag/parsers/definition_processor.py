@@ -802,18 +802,18 @@ class DefinitionProcessor(
         # Function-body uses key on the REGISTERED qn of their
         # enclosing function, knowable only now that dedup variants
         # (`natural@<line>`) have been handed out.
-        self.import_processor.finalise_rust_function_scope_uses(
+        self.import_processor.rust.finalise_rust_function_scope_uses(
             module_qn, self.facts.function_locations
         )
         # Block-local items key on their own registered qn, which
         # the same pass has just handed out.
-        self.import_processor.record_rust_block_items(
+        self.import_processor.rust.record_rust_block_items(
             module_qn, root_node, self.facts.function_locations
         )
         # Inline-mod maps were visible to this file's own impl
         # ingestion above; retract them until the flush-time
         # arbitration decides key ownership across all files.
-        self.import_processor.retract_rust_mod_scope_uses(module_qn)
+        self.import_processor.rust.retract_rust_mod_scope_uses(module_qn)
 
     def _ingest_js_ts_module_extras(
         self,

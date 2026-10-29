@@ -52,7 +52,7 @@ def test_a_redirect_declared_in_an_excluded_subtree_claims_nothing(
         skip_if_missing="rust",
         exclude_paths=frozenset({"tools/"}),
     )
-    parents = updater.factory.import_processor._rust_redirect_parent_map()
+    parents = updater.factory.import_processor.rust._rust_redirect_parent_map()
     assert parents == {}, parents
     calls = _calls(mock_ingestor)
     caller = "rs_sweep_excluded_dir.src.fixtures.rig.build"

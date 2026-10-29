@@ -334,6 +334,23 @@ def node_site_properties(node: Node) -> PropertyDict:
     }
 
 
+def import_site_props(
+    node: Node, local_name: str, imported_name: str | None
+) -> PropertyDict:
+    # Sentinel keys (`*pkg` wildcards, Go `.pkg` dot-imports) bind no name,
+    # so they carry no alias.
+    site = node_site_properties(node)
+    if not local_name.startswith((cs.IMPORTED_NAME_WILDCARD, cs.SEPARATOR_DOT)):
+        site[cs.KEY_ALIAS] = local_name
+    if imported_name:
+        site[cs.KEY_IMPORTED_NAME] = imported_name
+    return site
+
+
+def is_project_qn(qn: str, project_name: str) -> bool:
+    return qn == project_name or qn.startswith(f"{project_name}{cs.SEPARATOR_DOT}")
+
+
 def contains_node(parent: ASTNode, target: ASTNode) -> bool:
     return parent == target or any(
         contains_node(child, target) for child in parent.children

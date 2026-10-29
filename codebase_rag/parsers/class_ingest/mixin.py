@@ -492,7 +492,7 @@ class ClassIngestMixin:
         if not tail:
             return anchored, None
         if head in (cs.RUST_CRATE_KEYWORD, cs.KEYWORD_SELF, cs.KEYWORD_SUPER):
-            rewritten = self.import_processor.rewrite_rust_local_use_path(
+            rewritten = self.import_processor.rust.rewrite_rust_local_use_path(
                 path, module_qn
             )
             if rewritten == cs.RUST_UNRESOLVABLE_QN:
@@ -517,7 +517,7 @@ class ClassIngestMixin:
             )
         crate = expanded.split(cs.SEPARATOR_DOUBLE_COLON, 1)[0]
         if crate in cs.RS_STDLIB_CRATES or (
-            self.import_processor.rust_head_is_external_dep(crate, module_qn)
+            self.import_processor.rust.rust_head_is_external_dep(crate, module_qn)
         ):
             return expanded, None
         return anchored, None
@@ -902,13 +902,13 @@ class ClassIngestMixin:
             # for the prelude trait and would silence every `impl Default`.
             return False
         head, scoped = self._rust_trait_head(impl.spelling, module_qn)
-        if self.import_processor.rust_head_is_repo_crate(head):
+        if self.import_processor.rust.rust_head_is_repo_crate(head):
             # The crate is indexed here whatever the manifest says about
             # fetching it, so its traits are first-party.
             return False
         if (
             head in cs.RS_STDLIB_CRATES
-            or self.import_processor.rust_head_is_external_dep(head, module_qn)
+            or self.import_processor.rust.rust_head_is_external_dep(head, module_qn)
         ):
             return True
         # A bare name with no import and no first-party declaration is in
@@ -1024,7 +1024,7 @@ class ClassIngestMixin:
             qn = (
                 bound
                 if bound.startswith(f"{self.project_name}{cs.SEPARATOR_DOT}")
-                else self.import_processor.rust_resolve_relative(
+                else self.import_processor.rust.rust_resolve_relative(
                     owner, bound.split(cs.SEPARATOR_DOUBLE_COLON), owner
                 )
             )
@@ -2010,7 +2010,7 @@ class ClassIngestMixin:
         class_qn = f"{owner_module_qn}.{impl_target}"
         written_path = rs_utils.extract_impl_target_path(class_node)
         if written_path:
-            self.import_processor.record_rust_impl_self_path(
+            self.import_processor.rust.record_rust_impl_self_path(
                 module_qn, class_qn, written_path
             )
 
@@ -2078,7 +2078,7 @@ class ClassIngestMixin:
         # so each method keeps its own block's self type (#2595).
         if written_path:
             for method_qn in impl_method_qns:
-                self.import_processor.record_rust_impl_self_path(
+                self.import_processor.rust.record_rust_impl_self_path(
                     module_qn, method_qn, written_path
                 )
 
@@ -2669,7 +2669,7 @@ class ClassIngestMixin:
             # where the qn scheme keys the module, so the name-derived
             # spellings below back nothing at all here (issue #1035).
             return {redirect}
-        resolved_candidate = self.import_processor.rust_resolve_relative(
+        resolved_candidate = self.import_processor.rust.rust_resolve_relative(
             module_qn, [*chain, module_name], module_qn
         )
         # An unrepresentable #[path] target yields no candidate qn (issue

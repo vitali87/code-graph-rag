@@ -37,7 +37,7 @@ from .type_inference import TypeInferenceEngine
 
 _SEPARATOR_PATTERN = re.compile(r"[.:]|::")
 # One initializer block's scope record, as held per module by
-# `ImportProcessor.rust_block_scope_imports`: (start, end, imports,
+# `RustImporter.rust_block_scope_imports`: (start, end, imports,
 # mod_holes, fn_holes, item_scopes).
 _RustBlockScope = tuple[
     int,
@@ -2143,7 +2143,7 @@ class CallResolver:
         while depth < len(parts) and parts[depth] == cs.KEYWORD_SUPER:
             depth += 1
         if depth:
-            current: str | None = self.import_processor.rust_super_base(
+            current: str | None = self.import_processor.rust.rust_super_base(
                 effective, depth
             )
             rest = parts[depth:]
@@ -2170,7 +2170,7 @@ class CallResolver:
         ):
             return child
         imports = self.import_processor
-        mapped = imports.rust_self_module_imports.get(scope, {}).get(
+        mapped = imports.rust.rust_self_module_imports.get(scope, {}).get(
             segment
         ) or imports.import_mapping.get(scope, {}).get(segment)
         if mapped is None or mapped == cs.RUST_UNRESOLVABLE_QN:
@@ -2260,7 +2260,7 @@ class CallResolver:
         # shapes: the bare call and the `First::rest` path whose
         # first segment it binds (`use crate::delta::T; T::assoc()`).
         if defers and (
-            strong := self.import_processor.rust_fn_scope_imports.get(
+            strong := self.import_processor.rust.rust_fn_scope_imports.get(
                 caller_qn, {}
             ).get(first)
         ):
@@ -2380,13 +2380,13 @@ class CallResolver:
             call.language == cs.SupportedLanguage.RUST
             and caller_qn
             and (
-                module_qn in self.import_processor.rust_block_scope_imports
-                or module_qn in self.import_processor.rust_block_items
+                module_qn in self.import_processor.rust.rust_block_scope_imports
+                or module_qn in self.import_processor.rust.rust_block_items
                 or (
                     caller_qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}")
                     and (
                         cs.SEPARATOR_DOT in caller_qn[len(module_qn) + 1 :]
-                        or caller_qn in self.import_processor.rust_fn_scope_imports
+                        or caller_qn in self.import_processor.rust.rust_fn_scope_imports
                     )
                 )
             )
@@ -2933,7 +2933,7 @@ class CallResolver:
         no recorded path, and its bare type name stands in for one.
         """
         impl_module, _sep, name = owner.rpartition(cs.SEPARATOR_DOT)
-        paths = self.import_processor.rust_impl_self_paths
+        paths = self.import_processor.rust.rust_impl_self_paths
         written = (
             (paths.get(method_qn) if method_qn else None) or paths.get(owner) or {name}
         )
@@ -2973,7 +2973,7 @@ class CallResolver:
         nothing.
         """
         impl_module = owner.rpartition(cs.SEPARATOR_DOT)[0]
-        paths = self.import_processor.rust_impl_self_paths
+        paths = self.import_processor.rust.rust_impl_self_paths
         # The method's own block when known: two blocks of one module share
         # `owner` while naming different types.
         written = (paths.get(method_qn) if method_qn else None) or paths.get(owner)
@@ -3022,9 +3022,9 @@ class CallResolver:
         # { version = "1", package = "my-base" }`) fetches the crate the repo
         # holds, so its head is first-party though no lib bears the name.
         return crate in cs.RS_STDLIB_CRATES or (
-            not self.import_processor.rust_head_is_repo_crate(crate)
-            and not self.import_processor.rust_head_is_member_dep(crate, module_qn)
-            and self.import_processor.rust_head_is_external_dep(crate, module_qn)
+            not self.import_processor.rust.rust_head_is_repo_crate(crate)
+            and not self.import_processor.rust.rust_head_is_member_dep(crate, module_qn)
+            and self.import_processor.rust.rust_head_is_external_dep(crate, module_qn)
         )
 
     def _rust_head_binding(
@@ -3042,7 +3042,7 @@ class CallResolver:
         if self_module := self._rust_self_module_head(head, module_qn, caller_qn):
             return self_module[0]
         if caller_qn and (
-            target := self.import_processor.rust_fn_scope_imports.get(
+            target := self.import_processor.rust.rust_fn_scope_imports.get(
                 caller_qn, {}
             ).get(head)
         ):
@@ -4260,9 +4260,9 @@ class CallResolver:
             or not caller_qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}")
         ):
             return None
-        target = self.import_processor.rust_fn_scope_imports.get(caller_qn, {}).get(
-            call_name
-        )
+        target = self.import_processor.rust.rust_fn_scope_imports.get(
+            caller_qn, {}
+        ).get(call_name)
         if target is None:
             local, target = self._rust_walk_enclosing_scopes(
                 call_name, module_qn, caller_qn, call_point
@@ -4283,9 +4283,9 @@ class CallResolver:
         binding found on the way out is handed back for following.
         """
         import_mapping = self.import_processor.import_mapping
-        weak = self.import_processor.rust_fn_scope_mod_imports.get(caller_qn, {}).get(
-            call_name
-        )
+        weak = self.import_processor.rust.rust_fn_scope_mod_imports.get(
+            caller_qn, {}
+        ).get(call_name)
         scope = caller_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
         while len(scope) > len(module_qn):
             # The scope segment may be an impl target whose method a
@@ -4321,11 +4321,14 @@ class CallResolver:
         unplaceable site keeps the item reachable rather than losing the
         edge outright.
         """
-        if call_point is None or qn not in self.import_processor.rust_block_item_qns:
+        if (
+            call_point is None
+            or qn not in self.import_processor.rust.rust_block_item_qns
+        ):
             return False
         return not any(
             start <= call_point < end and qn in items.values()
-            for start, end, items in self.import_processor.rust_block_items.get(
+            for start, end, items in self.import_processor.rust.rust_block_items.get(
                 module_qn, ()
             )
         )
@@ -4341,7 +4344,7 @@ class CallResolver:
         block, so its own body binds the block's items too.
         """
         return rs_utils.block_item_at(
-            self.import_processor.rust_block_items.get(module_qn, ()),
+            self.import_processor.rust.rust_block_items.get(module_qn, ()),
             self.function_registry,
             name,
             call_point,
@@ -4410,7 +4413,7 @@ class CallResolver:
             return self._decide_rust_module_item(
                 mapped, object_path[1:], item, module_qn
             )
-        base = self.import_processor.rust_resolve_relative(
+        base = self.import_processor.rust.rust_resolve_relative(
             module_qn, list(object_path), module_qn
         )
         return self._decide_rust_base(base, item)
@@ -4423,7 +4426,7 @@ class CallResolver:
         # went to a value of the same name, which Rust's separate namespaces
         # allow (issue #1054). Innermost scope first, like every other Rust
         # name lookup here.
-        self_modules = self.import_processor.rust_self_module_imports
+        self_modules = self.import_processor.rust.rust_self_module_imports
         for scope in (*self._rust_enclosing_scopes(module_qn, caller_qn), module_qn):
             if mapped := self_modules.get(scope, {}).get(head):
                 return mapped, scope
@@ -4453,7 +4456,7 @@ class CallResolver:
                 effective_module = recorded
             elif self._rust_enclosing_mod_scopes(module_qn, caller_qn):
                 return None, False
-        base = self.import_processor.rewrite_rust_local_use_path(
+        base = self.import_processor.rust.rewrite_rust_local_use_path(
             cs.SEPARATOR_DOUBLE_COLON.join(object_path), effective_module
         )
         if base == cs.RUST_UNRESOLVABLE_QN:
@@ -4520,7 +4523,7 @@ class CallResolver:
         if not caller_qn:
             return None
         effective = self.facts.rust_function_modules.get(caller_qn, module_qn)
-        fn_scope = self.import_processor.rust_fn_scope_imports.get(caller_qn, {})
+        fn_scope = self.import_processor.rust.rust_fn_scope_imports.get(caller_qn, {})
         target = fn_scope.get(name)
         if target is not None:
             return self._rust_scoped_use_type(target, effective, module_qn)
@@ -4538,7 +4541,7 @@ class CallResolver:
         the caller's effective module rather than that scope.
         """
         imports = self.import_processor
-        weak = imports.rust_fn_scope_mod_imports.get(caller_qn, {}).get(name)
+        weak = imports.rust.rust_fn_scope_mod_imports.get(caller_qn, {}).get(name)
         for scope in self._rust_enclosing_scopes(module_qn, caller_qn):
             local = f"{scope}{cs.SEPARATOR_DOT}{name}"
             if self.function_registry.get(local) in _RS_TYPE_NODE_TYPES:
@@ -4595,11 +4598,11 @@ class CallResolver:
         )
 
     def _rust_crate_is_external(self, crate: str, module_qn: str) -> bool:
-        imports = self.import_processor
+        rust = self.import_processor.rust
         return crate in cs.RS_STDLIB_CRATES or (
-            not imports.rust_head_is_repo_crate(crate)
-            and not imports.rust_head_is_member_dep(crate, module_qn)
-            and imports.rust_head_is_external_dep(crate, module_qn)
+            not rust.rust_head_is_repo_crate(crate)
+            and not rust.rust_head_is_member_dep(crate, module_qn)
+            and rust.rust_head_is_external_dep(crate, module_qn)
         )
 
     def _rust_file_use_is_external(self, name: str, module_qn: str) -> bool:
@@ -4618,7 +4621,7 @@ class CallResolver:
         if resolved is None:
             head = mapped.split(cs.SEPARATOR_DOUBLE_COLON, 1)[0]
             if head in cs.RS_STDLIB_CRATES or (
-                self.import_processor.rust_head_is_external_dep(head, owner)
+                self.import_processor.rust.rust_head_is_external_dep(head, owner)
             ):
                 # A standard-library head, or one the importer's own
                 # manifest binds outside the repo (a registry version),
@@ -4664,14 +4667,16 @@ class CallResolver:
         if cs.SEPARATOR_DOUBLE_COLON not in value and cs.SEPARATOR_DOT in value:
             return value
         segments = value.split(cs.SEPARATOR_DOUBLE_COLON)
-        head_qn = self.import_processor.rust_resolve_relative(
+        head_qn = self.import_processor.rust.rust_resolve_relative(
             owner, segments[:1], owner
         )
         if (
             head_qn in self.type_inference.module_qn_to_file_path
             or head_qn in self.import_processor.import_mapping
         ):
-            return self.import_processor.rust_resolve_relative(owner, segments, owner)
+            return self.import_processor.rust.rust_resolve_relative(
+                owner, segments, owner
+            )
         return None
 
     def _follow_rust_scope_target(self, target: str) -> tuple[str, str] | None:
@@ -4725,7 +4730,7 @@ class CallResolver:
         # the module whose glob reached `owner`.
         if via_glob_from is None:
             return frozenset()
-        restricted = self.import_processor.rust_restricted_use_names.get(owner)
+        restricted = self.import_processor.rust.rust_restricted_use_names.get(owner)
         if not restricted:
             return frozenset()
         return frozenset(
@@ -4797,7 +4802,7 @@ class CallResolver:
         """
         if call_point is None:
             return None
-        blocks = self.import_processor.rust_block_scope_imports.get(module_qn)
+        blocks = self.import_processor.rust.rust_block_scope_imports.get(module_qn)
         if not blocks:
             return None
         best_size: int | None = None
@@ -5544,7 +5549,7 @@ class CallResolver:
         came first (PR #2791). None when the path leads to no type.
         """
         imports = self.import_processor
-        target: str | None = imports.rewrite_rust_local_use_path(path, module_qn)
+        target: str | None = imports.rust.rewrite_rust_local_use_path(path, module_qn)
         if target is not None and cs.SEPARATOR_DOUBLE_COLON in target:
             target = self._rust_local_qn(path, module_qn)
         if target is None:
@@ -7535,7 +7540,7 @@ class CallResolver:
             or self._module_language(target_qn) != cs.SupportedLanguage.RUST
         ):
             return True
-        return self.import_processor.rust_crate_reaches(module_qn, target_qn)
+        return self.import_processor.rust.rust_crate_reaches(module_qn, target_qn)
 
     def resolve_java_method_call(
         self,

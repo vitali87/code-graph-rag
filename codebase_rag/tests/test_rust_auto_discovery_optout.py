@@ -42,7 +42,7 @@ def test_disabled_kind_stops_auto_classification(
     (tmp_path / dir_name).mkdir()
     (tmp_path / dir_name / "probe.rs").write_text("fn main() {}\n")
     processor = _processor(tmp_path)
-    assert processor._rust_is_auto_target_dir([dir_name], "probe") is False
+    assert processor.rust._rust_is_auto_target_dir([dir_name], "probe") is False
 
 
 @pytest.mark.parametrize(
@@ -60,7 +60,7 @@ def test_enabled_kind_keeps_auto_classification(
     (tmp_path / dir_name).mkdir()
     (tmp_path / dir_name / "probe.rs").write_text("fn main() {}\n")
     processor = _processor(tmp_path)
-    assert processor._rust_is_auto_target_dir([dir_name], "probe") is True
+    assert processor.rust._rust_is_auto_target_dir([dir_name], "probe") is True
 
 
 def test_disabled_kind_still_roots_an_explicit_target(tmp_path: Path) -> None:
@@ -71,8 +71,8 @@ def test_disabled_kind_still_roots_an_explicit_target(tmp_path: Path) -> None:
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "probe.rs").write_text("fn main() {}\n")
     processor = _processor(tmp_path)
-    assert processor._rust_is_auto_target_dir(["tests"], "probe") is False
-    assert processor._rust_is_explicit_target(["tests"], "probe") is True
+    assert processor.rust._rust_is_auto_target_dir(["tests"], "probe") is False
+    assert processor.rust._rust_is_explicit_target(["tests"], "probe") is True
 
 
 def test_autobins_false_stops_src_bin_classification(tmp_path: Path) -> None:
@@ -80,7 +80,7 @@ def test_autobins_false_stops_src_bin_classification(tmp_path: Path) -> None:
     (tmp_path / "src" / "bin").mkdir(parents=True)
     (tmp_path / "src" / "bin" / "tool.rs").write_text("fn main() {}\n")
     processor = _processor(tmp_path)
-    assert processor._rust_is_auto_target_dir(["src", "bin"], "tool") is False
+    assert processor.rust._rust_is_auto_target_dir(["src", "bin"], "tool") is False
 
 
 def test_autobins_default_keeps_src_bin_classification(tmp_path: Path) -> None:
@@ -88,33 +88,33 @@ def test_autobins_default_keeps_src_bin_classification(tmp_path: Path) -> None:
     (tmp_path / "src" / "bin").mkdir(parents=True)
     (tmp_path / "src" / "bin" / "tool.rs").write_text("fn main() {}\n")
     processor = _processor(tmp_path)
-    assert processor._rust_is_auto_target_dir(["src", "bin"], "tool") is True
+    assert processor.rust._rust_is_auto_target_dir(["src", "bin"], "tool") is True
 
 
 def test_build_false_stops_build_script_classification(tmp_path: Path) -> None:
     _package(tmp_path, "build = false\n")
     (tmp_path / "build.rs").write_text("fn main() {}\n")
     processor = _processor(tmp_path)
-    assert processor._rust_is_auto_target_dir([], "build") is False
+    assert processor.rust._rust_is_auto_target_dir([], "build") is False
 
 
 def test_build_default_keeps_build_script_classification(tmp_path: Path) -> None:
     _package(tmp_path)
     (tmp_path / "build.rs").write_text("fn main() {}\n")
     processor = _processor(tmp_path)
-    assert processor._rust_is_auto_target_dir([], "build") is True
+    assert processor.rust._rust_is_auto_target_dir([], "build") is True
 
 
 def test_autolib_false_stops_crate_root_dir_classification(tmp_path: Path) -> None:
     _package(tmp_path, "autolib = false\n")
     processor = _processor(tmp_path)
-    assert processor._rust_is_crate_root_dir(["src"]) is False
+    assert processor.rust._rust_is_crate_root_dir(["src"]) is False
 
 
 def test_autolib_false_with_explicit_lib_target_still_roots(tmp_path: Path) -> None:
     _package(tmp_path, 'autolib = false\n\n[lib]\npath = "src/lib.rs"\n')
     processor = _processor(tmp_path)
-    assert processor._rust_is_crate_root_dir(["src"]) is True
+    assert processor.rust._rust_is_crate_root_dir(["src"]) is True
 
 
 def test_autobins_false_alone_stops_main_rooting_the_dir(tmp_path: Path) -> None:
@@ -124,21 +124,21 @@ def test_autobins_false_alone_stops_main_rooting_the_dir(tmp_path: Path) -> None
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "main.rs").write_text("fn main() {}\n")
     processor = _processor(tmp_path)
-    assert processor._rust_is_crate_root_dir(["src"]) is False
+    assert processor.rust._rust_is_crate_root_dir(["src"]) is False
 
 
 def test_default_flags_keep_crate_root_dir_classification(tmp_path: Path) -> None:
     _package(tmp_path)
     processor = _processor(tmp_path)
-    assert processor._rust_is_crate_root_dir(["src"]) is True
+    assert processor.rust._rust_is_crate_root_dir(["src"]) is True
 
 
 def test_pathless_lib_table_survives_autolib_false(tmp_path: Path) -> None:
     """[lib] with no path is an explicit target at the default src/lib.rs."""
     _package(tmp_path, 'autolib = false\n\n[lib]\nname = "fixture"\n')
     processor = _processor(tmp_path)
-    assert processor._rust_is_crate_root_dir(["src"]) is True
-    assert "lib" in processor._rust_entry_decls(["src"])
+    assert processor.rust._rust_is_crate_root_dir(["src"]) is True
+    assert "lib" in processor.rust._rust_entry_decls(["src"])
 
 
 def test_pathless_bin_table_survives_autobins_false(tmp_path: Path) -> None:
@@ -146,7 +146,7 @@ def test_pathless_bin_table_survives_autobins_false(tmp_path: Path) -> None:
     (tmp_path / "src" / "bin").mkdir(parents=True)
     (tmp_path / "src" / "bin" / "tool.rs").write_text("fn main() {}\n")
     processor = _processor(tmp_path)
-    assert processor._rust_is_explicit_target(["src", "bin"], "tool") is True
+    assert processor.rust._rust_is_explicit_target(["src", "bin"], "tool") is True
 
 
 def test_autolib_false_member_is_not_an_importable_lib(tmp_path: Path) -> None:
@@ -158,8 +158,8 @@ def test_autolib_false_member_is_not_an_importable_lib(tmp_path: Path) -> None:
     )
     (member / "src" / "lib.rs").write_text("pub fn f() {}\n")
     processor = _processor(tmp_path)
-    manifest = processor._rust_read_manifest(member)
-    assert processor._rust_member_lib_root(member, manifest) is None
+    manifest = processor.rust._rust_read_manifest(member)
+    assert processor.rust._rust_member_lib_root(member, manifest) is None
 
 
 def test_pathless_lib_member_stays_importable_under_autolib_false(
@@ -174,8 +174,8 @@ def test_pathless_lib_member_stays_importable_under_autolib_false(
     )
     (member / "src" / "lib.rs").write_text("pub fn f() {}\n")
     processor = _processor(tmp_path)
-    manifest = processor._rust_read_manifest(member)
-    assert processor._rust_member_lib_root(member, manifest) == (
+    manifest = processor.rust._rust_read_manifest(member)
+    assert processor.rust._rust_member_lib_root(member, manifest) == (
         ("member", "src"),
         "lib",
     )
@@ -188,7 +188,7 @@ def test_autobins_false_stops_multi_file_bin_dir(tmp_path: Path) -> None:
     tool.mkdir(parents=True)
     (tool / "main.rs").write_text("fn main() {}\n")
     processor = _processor(tmp_path)
-    assert processor._rust_is_crate_root_dir(["src", "bin", "tool"]) is False
+    assert processor.rust._rust_is_crate_root_dir(["src", "bin", "tool"]) is False
 
 
 def test_autotests_false_stops_multi_file_test_dir(tmp_path: Path) -> None:
@@ -197,7 +197,7 @@ def test_autotests_false_stops_multi_file_test_dir(tmp_path: Path) -> None:
     suite.mkdir(parents=True)
     (suite / "main.rs").write_text("fn main() {}\n")
     processor = _processor(tmp_path)
-    assert processor._rust_is_crate_root_dir(["tests", "suite"]) is False
+    assert processor.rust._rust_is_crate_root_dir(["tests", "suite"]) is False
 
 
 def test_default_flags_keep_multi_file_target_dirs(tmp_path: Path) -> None:
@@ -209,8 +209,8 @@ def test_default_flags_keep_multi_file_target_dirs(tmp_path: Path) -> None:
     suite.mkdir(parents=True)
     (suite / "main.rs").write_text("fn main() {}\n")
     processor = _processor(tmp_path)
-    assert processor._rust_is_crate_root_dir(["src", "bin", "tool"]) is True
-    assert processor._rust_is_crate_root_dir(["tests", "suite"]) is True
+    assert processor.rust._rust_is_crate_root_dir(["src", "bin", "tool"]) is True
+    assert processor.rust._rust_is_crate_root_dir(["tests", "suite"]) is True
 
 
 def test_pathless_package_name_bin_resolves_to_src_main(tmp_path: Path) -> None:
@@ -218,8 +218,8 @@ def test_pathless_package_name_bin_resolves_to_src_main(tmp_path: Path) -> None:
     _package(tmp_path, 'autobins = false\n\n[[bin]]\nname = "fixture"\n')
     (tmp_path / "src" / "main.rs").write_text("fn main() {}\n")
     processor = _processor(tmp_path)
-    assert processor._rust_is_explicit_target(["src"], "main") is True
-    assert processor._rust_is_crate_root_dir(["src"]) is True
+    assert processor.rust._rust_is_explicit_target(["src"], "main") is True
+    assert processor.rust._rust_is_crate_root_dir(["src"]) is True
 
 
 def test_pathless_bin_resolves_to_multi_file_target(tmp_path: Path) -> None:
@@ -228,7 +228,9 @@ def test_pathless_bin_resolves_to_multi_file_target(tmp_path: Path) -> None:
     tool.mkdir(parents=True)
     (tool / "main.rs").write_text("fn main() {}\n")
     processor = _processor(tmp_path)
-    assert processor._rust_is_explicit_target(["src", "bin", "tool"], "main") is True
+    assert (
+        processor.rust._rust_is_explicit_target(["src", "bin", "tool"], "main") is True
+    )
 
 
 def test_ambiguous_pathless_bin_resolves_nowhere(tmp_path: Path) -> None:
@@ -238,8 +240,10 @@ def test_ambiguous_pathless_bin_resolves_nowhere(tmp_path: Path) -> None:
     (tmp_path / "src" / "bin" / "tool.rs").write_text("fn main() {}\n")
     (tmp_path / "src" / "bin" / "tool" / "main.rs").write_text("fn main() {}\n")
     processor = _processor(tmp_path)
-    assert processor._rust_is_explicit_target(["src", "bin"], "tool") is False
-    assert processor._rust_is_explicit_target(["src", "bin", "tool"], "main") is False
+    assert processor.rust._rust_is_explicit_target(["src", "bin"], "tool") is False
+    assert (
+        processor.rust._rust_is_explicit_target(["src", "bin", "tool"], "main") is False
+    )
 
 
 def test_autobins_false_stops_direct_src_bin_main(tmp_path: Path) -> None:
@@ -248,7 +252,7 @@ def test_autobins_false_stops_direct_src_bin_main(tmp_path: Path) -> None:
     (tmp_path / "src" / "bin").mkdir(parents=True)
     (tmp_path / "src" / "bin" / "main.rs").write_text("fn main() {}\n")
     processor = _processor(tmp_path)
-    assert processor._rust_is_crate_root_dir(["src", "bin"]) is False
+    assert processor.rust._rust_is_crate_root_dir(["src", "bin"]) is False
 
 
 def test_autoexamples_false_stops_direct_examples_main(tmp_path: Path) -> None:
@@ -256,7 +260,7 @@ def test_autoexamples_false_stops_direct_examples_main(tmp_path: Path) -> None:
     (tmp_path / "examples").mkdir()
     (tmp_path / "examples" / "main.rs").write_text("fn main() {}\n")
     processor = _processor(tmp_path)
-    assert processor._rust_is_crate_root_dir(["examples"]) is False
+    assert processor.rust._rust_is_crate_root_dir(["examples"]) is False
 
 
 def test_autoexamples_false_stops_direct_examples_lib(tmp_path: Path) -> None:
@@ -265,7 +269,7 @@ def test_autoexamples_false_stops_direct_examples_lib(tmp_path: Path) -> None:
     (tmp_path / "examples").mkdir()
     (tmp_path / "examples" / "lib.rs").write_text("fn main() {}\n")
     processor = _processor(tmp_path)
-    assert processor._rust_is_crate_root_dir(["examples"]) is False
+    assert processor.rust._rust_is_crate_root_dir(["examples"]) is False
 
 
 def test_default_direct_examples_main_still_roots(tmp_path: Path) -> None:
@@ -273,7 +277,7 @@ def test_default_direct_examples_main_still_roots(tmp_path: Path) -> None:
     (tmp_path / "examples").mkdir()
     (tmp_path / "examples" / "main.rs").write_text("fn main() {}\n")
     processor = _processor(tmp_path)
-    assert processor._rust_is_crate_root_dir(["examples"]) is True
+    assert processor.rust._rust_is_crate_root_dir(["examples"]) is True
 
 
 def test_nested_lib_rs_is_never_a_target(tmp_path: Path) -> None:
@@ -284,7 +288,7 @@ def test_nested_lib_rs_is_never_a_target(tmp_path: Path) -> None:
     tool.mkdir(parents=True)
     (tool / "lib.rs").write_text("pub fn f() {}\n")
     processor = _processor(tmp_path)
-    assert processor._rust_is_crate_root_dir(["src", "bin", "tool"]) is False
+    assert processor.rust._rust_is_crate_root_dir(["src", "bin", "tool"]) is False
 
 
 def test_autolib_false_drops_lib_from_the_entry_scan(tmp_path: Path) -> None:
@@ -292,7 +296,7 @@ def test_autolib_false_drops_lib_from_the_entry_scan(tmp_path: Path) -> None:
     (tmp_path / "src" / "lib.rs").write_text("pub mod foo;\n")
     (tmp_path / "src" / "foo.rs").write_text("pub fn f() {}\n")
     processor = _processor(tmp_path)
-    assert "lib" not in processor._rust_entry_decls(["src"])
+    assert "lib" not in processor.rust._rust_entry_decls(["src"])
 
 
 def test_autolib_default_keeps_lib_in_the_entry_scan(tmp_path: Path) -> None:
@@ -300,7 +304,7 @@ def test_autolib_default_keeps_lib_in_the_entry_scan(tmp_path: Path) -> None:
     (tmp_path / "src" / "lib.rs").write_text("pub mod foo;\n")
     (tmp_path / "src" / "foo.rs").write_text("pub fn f() {}\n")
     processor = _processor(tmp_path)
-    assert "lib" in processor._rust_entry_decls(["src"])
+    assert "lib" in processor.rust._rust_entry_decls(["src"])
 
 
 def test_manifest_refresh_evicts_newly_disabled_entry_stems(tmp_path: Path) -> None:
@@ -309,7 +313,7 @@ def test_manifest_refresh_evicts_newly_disabled_entry_stems(tmp_path: Path) -> N
     _package(tmp_path)
     (tmp_path / "src" / "main.rs").write_text("fn main() {}\n")
     processor = _processor(tmp_path)
-    warmed = processor._rust_entry_decls(["src"])
+    warmed = processor.rust._rust_entry_decls(["src"])
     assert "lib" in warmed
     assert "main" in warmed
 
@@ -317,9 +321,9 @@ def test_manifest_refresh_evicts_newly_disabled_entry_stems(tmp_path: Path) -> N
         '[package]\nname = "fixture"\nversion = "0.1.0"\n'
         "autolib = false\nautobins = false\n"
     )
-    processor.refresh_rust_path_caches_for(tmp_path / "Cargo.toml", created=False)
-    refreshed = processor._rust_entry_decls(["src"])
+    processor.rust.refresh_rust_path_caches_for(tmp_path / "Cargo.toml", created=False)
+    refreshed = processor.rust._rust_entry_decls(["src"])
     assert "lib" not in refreshed
     assert "main" not in refreshed
-    fresh = _processor(tmp_path)._rust_entry_decls(["src"])
+    fresh = _processor(tmp_path).rust._rust_entry_decls(["src"])
     assert set(refreshed) == set(fresh)

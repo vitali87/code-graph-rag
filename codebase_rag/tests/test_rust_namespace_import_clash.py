@@ -273,7 +273,7 @@ def test_self_module_binding_still_yields_to_a_later_external_use(
     )
     assert _slot(updater, _APP, "io") == "other::io"
     processor = updater.factory.import_processor
-    assert processor.rust_self_module_imports[_APP]["io"] == "rsns.src.io"
+    assert processor.rust.rust_self_module_imports[_APP]["io"] == "rsns.src.io"
 
 
 def test_repeated_use_of_one_path_writes_one_imports_row(

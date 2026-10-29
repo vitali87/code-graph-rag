@@ -906,7 +906,7 @@ class TypeInferenceEngine:
         # owns the natural qn, so the site decides which of the two is meant
         # (issue #1069).
         if shadowing := rs_utils.block_item_at(
-            self.import_processor.rust_block_items.get(module_qn, ()),
+            self.import_processor.rust.rust_block_items.get(module_qn, ()),
             self.function_registry,
             name,
             call_point,

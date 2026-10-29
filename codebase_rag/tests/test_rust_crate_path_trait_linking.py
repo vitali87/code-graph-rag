@@ -1605,7 +1605,7 @@ def test_duplicate_method_qn_owns_its_body_use_and_its_calls(
     # Attribution moves calls, it does not copy them: a variant that collected
     # BOTH methods' calls would satisfy every assertion above.
     assert (f"{base}.foo.S.run@13", f"{base}.foo.other") not in calls, calls
-    scope_uses = updater.factory.import_processor.rust_fn_scope_imports.get(
+    scope_uses = updater.factory.import_processor.rust.rust_fn_scope_imports.get(
         f"{base}.foo.S.run@13"
     )
     assert scope_uses == {"other": f"{base}.alpha.other"}, scope_uses
@@ -1844,7 +1844,7 @@ def test_reparse_of_declaring_file_keeps_submodule_import_map(
     module_map = processor.import_mapping.get(f"{base}.foo.run")
     assert module_map == {"helper": f"{base}.beta.helper"}, module_map
     # Simulate the start of a re-parse of foo.rs alone.
-    processor._parse_rust_imports({}, f"{base}.foo")
+    processor.rust.parse_imports({}, f"{base}.foo")
     module_map = processor.import_mapping.get(f"{base}.foo.run")
     assert module_map == {"helper": f"{base}.beta.helper"}, module_map
 
@@ -2221,11 +2221,11 @@ def test_fn_local_mod_sharing_submodule_name_does_not_wipe_its_map(
     assert (f"{base}.foo.run.go", f"{base}.beta.helper") in calls, calls
 
     processor = updater.factory.import_processor
-    tracked = processor._rust_inline_scope_keys.get(f"{base}.foo", set())
+    tracked = processor.rust._rust_inline_scope_keys.get(f"{base}.foo", set())
     assert f"{base}.foo.run" not in tracked, tracked
     # Simulate the start of a re-parse of foo.rs alone: run.rs's module
     # import map must survive.
-    processor._parse_rust_imports({}, f"{base}.foo")
+    processor.rust.parse_imports({}, f"{base}.foo")
     module_map = processor.import_mapping.get(f"{base}.foo.run")
     assert module_map == {"helper": f"{base}.beta.helper"}, module_map
 
@@ -2331,9 +2331,9 @@ def test_nested_fn_local_mod_collision_does_not_wipe_submodule_map(
 
     processor = updater.factory.import_processor
     base = "rs_nested_submod_clash.src"
-    tracked = processor._rust_inline_scope_keys.get(f"{base}.foo", set())
+    tracked = processor.rust._rust_inline_scope_keys.get(f"{base}.foo", set())
     assert f"{base}.foo.outer.run" not in tracked, tracked
-    processor._parse_rust_imports({}, f"{base}.foo")
+    processor.rust.parse_imports({}, f"{base}.foo")
     module_map = processor.import_mapping.get(f"{base}.foo.outer.run")
     assert module_map == {"helper": f"{base}.beta.helper"}, module_map
 
@@ -2384,9 +2384,9 @@ def _assert_submodule_map_survives(
     updater: object, file_qn: str, submodule_qn: str, expected: dict[str, str]
 ) -> None:
     processor = updater.factory.import_processor  # type: ignore[attr-defined]
-    tracked = processor._rust_inline_scope_keys.get(file_qn, set())
+    tracked = processor.rust._rust_inline_scope_keys.get(file_qn, set())
     assert submodule_qn not in tracked, tracked
-    processor._parse_rust_imports({}, file_qn)
+    processor.rust.parse_imports({}, file_qn)
     module_map = processor.import_mapping.get(submodule_qn)
     assert module_map == expected, module_map
 
@@ -6081,7 +6081,7 @@ def test_watch_modify_of_an_already_deleted_file_leaves_the_listing_alone(
     gamma2.unlink()
     handler.dispatch(FileModifiedEvent(str(gamma2)))
 
-    listing = updater.factory.import_processor._rust_dir_listing.get(
+    listing = updater.factory.import_processor.rust._rust_dir_listing.get(
         str(project / "src")
     )
     assert listing is not None, "the full run should have cached the src listing"

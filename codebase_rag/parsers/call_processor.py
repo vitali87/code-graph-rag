@@ -7388,10 +7388,11 @@ class CallProcessor:
             ]
             if not targets:
                 return False
-        if len(
-            targets
-        ) > 1 and not self._resolver.import_processor.rust_block_item_qns.isdisjoint(
-            targets
+        if (
+            len(targets) > 1
+            and not self._resolver.import_processor.rust.rust_block_item_qns.isdisjoint(
+                targets
+            )
         ):
             # The dedup bucket holds a Rust block-local item beside an
             # item of another scope. Those are different functions

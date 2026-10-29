@@ -1397,7 +1397,9 @@ class GraphUpdater:
         # Inline-mod import maps commit BEFORE the deferred inheritance
         # pass below: it re-resolves module-anchored trait guesses through
         # them.
-        self.factory.import_processor.finalise_rust_mod_scope_uses(known_module_paths)
+        self.factory.import_processor.rust.finalise_rust_mod_scope_uses(
+            known_module_paths
+        )
         # Same for Scala: a package import resolves only once every module
         # declaring a package is known, rehydrated ones included (#2450).
         self.factory.import_processor.resolve_scala_project_imports(known_module_paths)
@@ -1484,7 +1486,7 @@ class GraphUpdater:
             # (`use crate::api::inner::Widget`) leads on from there.
             targets = [
                 *mapping.get(scope, {}).values(),
-                *import_processor.rust_mod_scope_targets(scope),
+                *import_processor.rust.rust_mod_scope_targets(scope),
             ]
             for target in targets:
                 holder = _file_module_holding(target, module_paths)
@@ -4312,7 +4314,7 @@ class GraphUpdater:
             qn_to_path = self.factory.definition_processor.module_qn_to_file_path
             for qn, path in qn_to_path.items():
                 if path == file_path:
-                    self.factory.import_processor.drop_rust_module_import_state(qn)
+                    self.factory.import_processor.rust.drop_rust_module_import_state(qn)
 
         # Same discipline for C#: a deleted file's namespaces, identifier
         # evidence, and using entries must not survive into the next flush
@@ -5046,7 +5048,7 @@ class GraphUpdater:
         return eligible
 
     def _process_files(self, force: bool = False) -> None:
-        self.factory.import_processor.reset_rust_path_caches()
+        self.factory.import_processor.rust.reset_rust_path_caches()
         self.factory.import_processor.reset_java_path_caches()
         self.factory.import_processor.reset_julia_path_caches()
         self.factory.import_processor.reset_dart_path_caches()
@@ -7071,7 +7073,7 @@ class GraphUpdater:
             # The Rust path caches were filled by the last run; a created or
             # modified file must be re-observed before crate::/super:: paths
             # resolve against them.
-            import_processor.refresh_rust_path_caches_for(
+            import_processor.rust.refresh_rust_path_caches_for(
                 path, created=key not in hashes
             )
             # Julia's stem/declared-module indices are the same kind of
