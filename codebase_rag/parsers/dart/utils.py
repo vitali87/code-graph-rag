@@ -878,7 +878,7 @@ def _pattern_bound_names(node: Node) -> list[str]:
     """`var (alpha, beta) = rhs` binds every identifier inside the *_pattern
     subtree; the RHS expression binds nothing.
 
-    Mirrors `call_processor._dart_pattern_bound_names`. Omitting it left a
+    Mirrors `dart.calls._pattern_bound_names`. Omitting it left a
     pattern binding invisible to the shadow check while the older
     `local_var_types` guard could not see it either (it has no inferable
     type), so `var (p, q) = (1, 2)` reproduced the very defect the span
