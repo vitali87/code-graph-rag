@@ -12,11 +12,7 @@ from ... import constants as cs
 from ... import logs as ls
 from ...types_defs import OverloadSignature
 from ...utils import qn_markers
-from ...utils.cpp_signatures import (
-    ClassLookups,
-    parameter_types_may_match,
-    pick_overload,
-)
+from ..cpp.signatures import ClassLookups, parameter_types_may_match, pick_overload
 from ..utils import method_signature_arity
 
 # The graph's type nodes. Every one but a Type alias is a distinct type.

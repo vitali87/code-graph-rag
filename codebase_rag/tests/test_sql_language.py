@@ -132,7 +132,7 @@ class TestSqlGetName:
         # separator: "billing.v1" is one schema name. The embedded dot is
         # encoded (QUOTED_DOT) so the canonical key cannot collide with a
         # genuinely qualified billing.v1.
-        from codebase_rag.sql_names import QUOTED_DOT
+        from codebase_rag.parsers.sql.names import QUOTED_DOT
 
         node = _create_function_node(
             'CREATE FUNCTION "billing.v1".usp_total() RETURNS int '
@@ -145,7 +145,7 @@ class TestSqlGetName:
         # "billing.v1".usp_total and billing."v1.usp_total" are different
         # objects; one canonical key for both would register the second as a
         # duplicate and let a qualified call resolve to whichever came first.
-        from codebase_rag.sql_names import normalize_sql_reference
+        from codebase_rag.parsers.sql.names import normalize_sql_reference
 
         assert normalize_sql_reference('"billing.v1".usp_total') != (
             normalize_sql_reference('billing."v1.usp_total"')
@@ -155,7 +155,7 @@ class TestSqlGetName:
         # PostgreSQL permits the leader characters themselves inside quoted
         # identifiers, so the encoding must not let "a.b", "a․b" (U+2024) or
         # repeated dots collapse onto one key.
-        from codebase_rag.sql_names import normalize_sql_reference
+        from codebase_rag.parsers.sql.names import normalize_sql_reference
 
         keys = {
             normalize_sql_reference(reference)
@@ -168,7 +168,7 @@ class TestSqlGetName:
         # tokenize a doubled quote inside a quoted identifier (it yields an
         # ERROR node), but the string-call side feeds the normalizer directly
         # and must agree with PostgreSQL.
-        from codebase_rag.sql_names import normalize_sql_reference
+        from codebase_rag.parsers.sql.names import normalize_sql_reference
 
         assert normalize_sql_reference('"a""b"') == 'a"b'
         assert normalize_sql_reference('app."a""b"') == 'app.a"b'

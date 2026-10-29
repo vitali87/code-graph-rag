@@ -73,7 +73,7 @@ def test_default_type_arg_is_not_collected_as_template_param() -> None:
     # parameter names (SAX, T, Ts) are collected across default, plain and variadic
     # forms; a non-type value param (`int N`) contributes no type name.
     from codebase_rag.parser_loader import load_parsers
-    from codebase_rag.parsers.cpp import CppTypeInferenceEngine
+    from codebase_rag.parsers.cpp.type_inference import CppTypeInferenceEngine
 
     parsers, _ = load_parsers()
     src = b"template<typename SAX = Real, class T, typename... Ts, int N, MyEnum E>\nbool f() { return true; }\n"

@@ -77,7 +77,7 @@ from .python.receiver_rebinding import ReceiverRebinding, receiver_rebinding
 from .rpc_exposure import GoRpcExposureProcessor
 from .rust import utils as rs_utils
 from .scala import utils as scala_utils
-from .sql_ddl import ddl_routine_references
+from .sql.ddl import ddl_routine_references
 from .string_call import load_string_call_specs, string_call_target
 from .type_inference import TypeInferenceEngine
 from .utils import (

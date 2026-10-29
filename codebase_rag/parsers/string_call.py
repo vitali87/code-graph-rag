@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
-from ..sql_names import normalize_sql_reference
+from .sql.names import normalize_sql_reference
 
 if TYPE_CHECKING:
     from tree_sitter import Node

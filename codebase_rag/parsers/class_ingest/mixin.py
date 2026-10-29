@@ -29,9 +29,9 @@ from ...types_defs import (
 from ...utils import qn_markers
 from ...utils.path_utils import cached_relative_path, cached_resolve_posix
 from ..anchor_hash import anchor_hash_props
-from ..cpp import CppTypeInferenceEngine
 from ..cpp import local_types as cpp_local_types
 from ..cpp import utils as cpp_utils
+from ..cpp.type_inference import CppTypeInferenceEngine
 from ..cpp.utils import record_cpp_definition_span
 from ..csharp import utils as csharp_utils
 from ..csharp.arity import CSharpArityIndex

@@ -31,8 +31,8 @@ from ..utils.path_utils import (
 )
 from ..utils.source_encoding import grammar_bytes
 from .class_ingest import ClassIngestMixin
-from .cpp import CppTypeInferenceEngine
 from .cpp.preproc_recovery import parse_with_preproc_recovery
+from .cpp.type_inference import CppTypeInferenceEngine
 from .definition_docstring import extract_definition_docstring
 from .definition_facts import DefinitionFacts
 from .definition_prune import RemovedFile, forget_file
@@ -53,7 +53,7 @@ from .notebook import is_notebook_path
 from .parameter_nodes import PendingParameterType
 from .php.namespaces import declared_namespace
 from .python.overloads import folded_overload_stubs
-from .sql_recovery import lost_sql_functions
+from .sql.recovery import lost_sql_functions
 from .utils import get_function_captures
 
 if TYPE_CHECKING:

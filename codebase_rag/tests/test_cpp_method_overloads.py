@@ -25,6 +25,14 @@ from codebase_rag.function_registry import FunctionRegistryTrie
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.cpp import overloads as cpp_overloads
+from codebase_rag.parsers.cpp.signatures import (
+    ClassLookups,
+    _split_signature,
+    _type_units,
+    _TypeUnit,
+    parameter_types_may_match,
+    signature_arity,
+)
 from codebase_rag.parsers.cpp_frontend import cpp_frontend_available, run_cpp_frontend
 from codebase_rag.services.protobuf_service import ProtobufFileIngestor
 from codebase_rag.sync.checkout_state import state_file
@@ -35,14 +43,6 @@ from codebase_rag.tests.conftest import (
     run_updater,
 )
 from codebase_rag.types_defs import OverloadSignature
-from codebase_rag.utils.cpp_signatures import (
-    ClassLookups,
-    _split_signature,
-    _type_units,
-    _TypeUnit,
-    parameter_types_may_match,
-    signature_arity,
-)
 from evals.cgr_graph import StatefulIngestor
 from evals.recorded_graph import RecordingIngestor
 

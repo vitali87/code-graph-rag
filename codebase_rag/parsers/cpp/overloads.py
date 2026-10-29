@@ -8,7 +8,7 @@ the cv and ref qualifiers that make `at(int)` and `at(int) const` two
 overloads, with only what can never tell two overloads apart dropped:
 parameter names, default arguments, spacing, `struct`/`class`/`typename`
 keywords and a leading global `::`. Namespace qualifiers stay, since
-`f(a::T)` and `f(b::T)` are two members; `utils.cpp_signatures` pairs
+`f(a::T)` and `f(b::T)` are two members; `cpp.signatures` pairs
 `std::string` with `string` when nothing closer matches.
 """
 

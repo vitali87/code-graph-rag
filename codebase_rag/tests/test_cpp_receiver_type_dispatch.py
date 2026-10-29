@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.parsers.cpp import CppTypeInferenceEngine
+from codebase_rag.parsers.cpp.type_inference import CppTypeInferenceEngine
 from codebase_rag.tests.conftest import (
     get_relationships,
     run_updater,

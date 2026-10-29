@@ -10,7 +10,6 @@ from loguru import logger
 from . import constants as cs
 from .models import FQNSpec, LanguageSpec
 from .node_text import decode_node_text
-from .sql_names import normalize_sql_reference
 from .utils import path_utils
 from .utils.path_utils import module_extension, module_stem, should_skip_path
 from .utils.qn_markers import strip_arity_marker, strip_dup_marker, with_leaf_arity
@@ -100,6 +99,8 @@ def sql_object_reference_name(node: Node) -> str | None:
     routine. The registry indexes the last dotted segment, so an unqualified
     caller still finds a qualified definition.
     """
+    from .parsers.sql.names import normalize_sql_reference
+
     for child in node.named_children:
         if child.type != cs.TS_SQL_OBJECT_REFERENCE:
             continue

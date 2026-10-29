@@ -35,7 +35,7 @@ from typing import NamedTuple
 
 from tree_sitter import Node, Parser, Tree
 
-from .. import constants as cs
+from ... import constants as cs
 
 _IDENT_BYTE = re.compile(rb"[\w$\x80-\xff]")
 _DOLLAR_TAG = re.compile(rb"\$(?:[A-Za-z_\x80-\xff][\w\x80-\xff]*)?\$")

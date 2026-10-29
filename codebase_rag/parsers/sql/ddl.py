@@ -22,9 +22,9 @@ from bisect import bisect_right
 from collections.abc import Iterator
 from typing import NamedTuple
 
-from .. import constants as cs
-from ..sql_names import normalize_sql_reference
-from ..types_defs import PropertyDict
+from ... import constants as cs
+from ...types_defs import PropertyDict
+from .names import normalize_sql_reference
 
 # One (possibly quoted, possibly schema-qualified) routine name.
 _IDENT = rb'(?:"(?:[^"]|"")+"|[A-Za-z_\x80-\xff][\w$\x80-\xff]*)'

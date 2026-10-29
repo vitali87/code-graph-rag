@@ -16,8 +16,8 @@ import re
 from collections.abc import Callable, Sequence
 from typing import NamedTuple
 
-from .. import constants as cs
-from ..types_defs import OverloadSignature
+from ... import constants as cs
+from ...types_defs import OverloadSignature
 
 # A qualified name (`std::string`, `a::T`) is ONE token, so a qualifier is
 # compared as part of the name it qualifies; every other character stands

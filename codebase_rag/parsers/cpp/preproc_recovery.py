@@ -16,7 +16,7 @@ import re
 from tree_sitter import Node, Parser, Tree
 
 from ... import constants as cs
-from ..sql_recovery import parse_sql
+from ..sql.recovery import parse_sql
 from .class_macro import retry_without_class_name_macros
 from .trailing_annotation import retry_without_trailing_annotations
 

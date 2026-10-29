@@ -7,6 +7,7 @@ import sys
 from collections.abc import Callable, ItemsView, Iterable, KeysView
 
 from . import constants as cs
+from .parsers.cpp.signatures import overload_signature_from_text, pick_overload
 from .types_defs import (
     FunctionRegistry,
     OverloadSignature,
@@ -15,7 +16,6 @@ from .types_defs import (
     TrieNode,
 )
 from .utils import qn_markers
-from .utils.cpp_signatures import overload_signature_from_text, pick_overload
 
 # A column no source line reaches: a same-position duplicate in another file
 # takes the next multiple of it past its own column (`register_unique_qn`).

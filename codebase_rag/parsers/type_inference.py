@@ -9,7 +9,7 @@ from ..types_defs import (
     LanguageQueries,
     SimpleNameLookup,
 )
-from .cpp import CppTypeInferenceEngine
+from .cpp.type_inference import CppTypeInferenceEngine
 
 # From its module, not the package: the C# engine imports the import
 # processor, and a re-export would load it for every `parsers.csharp` import.
