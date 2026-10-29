@@ -542,7 +542,7 @@ def _create_release(
             "--norc",
             "-e",
             "-c",
-            RELEASE_STUBS + step["run"].replace("/tmp/", f"{tmp_path}/"),
+            RELEASE_STUBS + step["run"].replace("/tmp/", "./"),
         ],
         cwd=tmp_path,
         env={
@@ -569,7 +569,7 @@ def test_a_release_whose_ci_is_not_proven_is_created_as_a_draft(
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert (
-        f"gh release create v0.0.951 --title v0.0.951 --notes-file {tmp_path}/body.md"
+        "gh release create v0.0.951 --title v0.0.951 --notes-file ./body.md"
         f" --verify-tag --draft={draft}"
     ) in calls
 
