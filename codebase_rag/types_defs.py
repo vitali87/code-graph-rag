@@ -1786,8 +1786,10 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         RelationshipType.FLOWS_TO,
         (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.RESOURCE),
     ),
+    # A module EXPOSES a route whose handler it registers but does not define
+    # (an imported function): naming that handler would mint a phantom node.
     RelationshipSchema(
-        (NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.FILE),
+        (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.FILE),
         RelationshipType.EXPOSES,
         (NodeLabel.RESOURCE,),
     ),

@@ -88,7 +88,7 @@ Every relationship type belongs to exactly one [capture group](#capture-groups).
 | Module, Function, Method | READS_FROM (opt-in: [`io`](#capture-groups)) | Resource |
 | Module, Function, Method | WRITES_TO (opt-in: [`io`](#capture-groups)) | Resource |
 | Module, Function, Method, Resource | FLOWS_TO (opt-in: [`io`](#capture-groups)) | Module, Function, Method, Resource |
-| Function, Method, File | EXPOSES (opt-in: [`io`](#capture-groups)) | Resource |
+| Module, Function, Method, File | EXPOSES (opt-in: [`io`](#capture-groups)) | Resource |
 | Resource | RESOLVES_TO (opt-in: [`io`](#capture-groups)) | Resource |
 | Module | IMPLEMENTS_PATTERN (opt-in: [`findings`](#capture-groups)) | Pattern |
 | Module | HAS_SMELL (opt-in: [`findings`](#capture-groups)) | CodeSmell |
