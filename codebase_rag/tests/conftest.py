@@ -28,12 +28,15 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers import native_trees
 from codebase_rag.parsers.py.ast_analyzer import clear_scope_facts
 from codebase_rag.types_defs import GraphNodeRecord, GraphRelRecord
-from evals.recorded_graph import RecordingIngestor
 
 if TYPE_CHECKING:
     pass  # ty: ignore[unresolved-import]
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
+
+# After the path insert: `evals` is a top-level directory, not an installed
+# package, so a bare `pytest` finds it only through the repository root.
+from evals.recorded_graph import RecordingIngestor  # noqa: E402
 
 # pytester drives the cgr-trace pytest plugin end-to-end in its own sessions.
 pytest_plugins = ["pytester"]
