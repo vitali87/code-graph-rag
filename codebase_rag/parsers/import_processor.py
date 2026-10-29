@@ -14,7 +14,7 @@ from ..language_spec import (
     language_family,
     own_extension_module_qn,
 )
-from ..node_text import safe_decode_text, safe_decode_with_fallback, sorted_captures
+from ..node_text import safe_decode_text, sorted_captures
 from ..services import IngestorProtocol
 from ..types_defs import (
     DeferredImportEdge,
@@ -34,7 +34,7 @@ from ..utils.path_utils import (
 from .cpp.imports import CppImporter
 from .csharp.imports import CSharpImporter
 from .dart.imports import DartImporter
-from .go import discover_go_module_paths, resolve_go_import_path
+from .go.imports import GoImporter
 from .java.imports import JavaImporter
 from .js_ts.imports import JsTsImporter
 from .js_ts.reexports import js_ts_module_qn
@@ -141,7 +141,6 @@ class ImportProcessor:
         "_is_local_module_cached",
         "_project_named_package",
         "_map_py_source_root",
-        "_map_go_import_path",
         "_deferred_import_edges",
         "unresolved_references",
         "_import_sites",
@@ -157,6 +156,7 @@ class ImportProcessor:
         "lua",
         "julia",
         "cpp",
+        "go",
     )
 
     def __init__(
@@ -334,18 +334,16 @@ class ImportProcessor:
 
         self._map_py_source_root = _map_py_source_root_cached
 
-        # Go import paths are module-path-prefixed (github.com/acme/tool/pkg), never
-        # repo-relative, so no local Go import resolves by the name == path
-        # assumption. Map each go.mod module directive to its directory once so local
-        # imports rewrite to project-prefixed qns and unmapped (external) paths stay
-        # recognisably slash-separated.
-        go_module_paths = discover_go_module_paths(repo_path)
-
-        @lru_cache(maxsize=4096)
-        def _map_go_import_path_cached(import_path: str) -> str | None:
-            return resolve_go_import_path(go_module_paths, import_path)
-
-        self._map_go_import_path = _map_go_import_path_cached
+        # Go's import parsing and the go.mod layout that rewrites a local
+        # import path to its package's qn: the importer writes the import map
+        # above and records its sites through this processor. Built after
+        # the Python layout above, whose discovery logs first.
+        self.go = GoImporter(
+            self,
+            repo_path=repo_path,
+            project_name=project_name,
+            import_mapping=self.import_mapping,
+        )
 
         # JS/TS's import and `require` parsing, its tsconfig and workspace
         # layout, and the per-module export tables and package names the call
@@ -537,7 +535,7 @@ class ImportProcessor:
                 case cs.SupportedLanguage.RUST:
                     self.rust.parse_imports(captures, module_qn)
                 case cs.SupportedLanguage.GO:
-                    self._parse_go_imports(captures, module_qn)
+                    self.go.parse_imports(captures, module_qn)
                 # C shares the include grammar and the resolver: without its
                 # own arm here a `.c` file's `#include "foo.h"` never reached
                 # the import map, so it emitted no IMPORTS edge while a `.h`
@@ -1498,59 +1496,6 @@ class ImportProcessor:
         if separator and js_ts_module_qn(module_qn, module_paths) is not None:
             return self.js_ts.follow_js_reexports(qn, module_paths, function_registry)
         return follow_reexports(qn, self.import_mapping, function_registry)
-
-    def _parse_go_imports(
-        self, captures: dict[str, list[Node]], module_qn: str
-    ) -> None:
-        for import_node in captures.get(cs.CAPTURE_IMPORT, []):
-            if import_node.type == cs.TS_GO_IMPORT_DECLARATION:
-                self._parse_go_import_declaration(import_node, module_qn)
-
-    def _parse_go_import_declaration(self, import_node: Node, module_qn: str) -> None:
-        for child in import_node.children:
-            if child.type == cs.TS_IMPORT_SPEC:
-                self._parse_go_import_spec(child, module_qn)
-            elif child.type == cs.TS_IMPORT_SPEC_LIST:
-                for grandchild in child.children:
-                    if grandchild.type == cs.TS_IMPORT_SPEC:
-                        self._parse_go_import_spec(grandchild, module_qn)
-
-    def _parse_go_import_spec(self, spec_node: Node, module_qn: str) -> None:
-        alias_name = None
-        import_path = None
-        is_dot_import = False
-
-        for child in spec_node.children:
-            if child.type == cs.TS_PACKAGE_IDENTIFIER:
-                alias_name = safe_decode_with_fallback(child)
-            elif child.type == cs.TS_GO_DOT:
-                is_dot_import = True
-            elif child.type == cs.TS_INTERPRETED_STRING_LITERAL:
-                import_path = safe_decode_with_fallback(child).strip('"')
-
-        if import_path:
-            package_name = alias_name or import_path.split(cs.SEPARATOR_SLASH)[-1]
-            # A path under a local go.mod module rewrites to the package dir's
-            # project qn ('' remainder = the module root package itself), so both the
-            # IMPORTS edge and call resolution bind first-party. External paths stay
-            # raw.
-            if (mapped := self._map_go_import_path(import_path)) is not None:
-                import_path = (
-                    f"{self.project_name}{cs.SEPARATOR_DOT}{mapped}"
-                    if mapped
-                    else self.project_name
-                )
-            if is_dot_import:
-                # `import . "fmt"` binds the package's exported names, not the
-                # package identifier; a `.`-prefixed sentinel key (no identifier
-                # can contain a dot) lets bare-callee lookups re-qualify.
-                dot_key = f"{cs.SEPARATOR_DOT}{package_name}"
-                self.import_mapping[module_qn][dot_key] = import_path
-                self._record_import_site(module_qn, dot_key, spec_node)
-            else:
-                self.import_mapping[module_qn][package_name] = import_path
-                self._record_import_site(module_qn, package_name, spec_node)
-            logger.debug(ls.IMP_GO, package=package_name, path=import_path)
 
     def _parse_generic_imports(
         self, captures: dict[str, list[Node]], lang_config: LanguageSpec

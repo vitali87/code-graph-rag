@@ -103,14 +103,14 @@ class TestImportParsing:
     ) -> None:
         """Test that language-specific import parsing methods exist."""
         import_processor = graph_updater.factory.import_processor
-        # JS/TS, Java and Rust imports are parsed by the importers the processor
-        # builds.
+        # JS/TS, Java, Rust and Go imports are parsed by the importers the
+        # processor builds.
         expected_methods = [
             (import_processor, "_parse_python_imports"),
             (import_processor.js_ts, "parse_imports"),
             (import_processor.java, "parse_imports"),
             (import_processor.rust, "parse_imports"),
-            (import_processor, "_parse_go_imports"),
+            (import_processor.go, "parse_imports"),
             (import_processor, "_parse_generic_imports"),
         ]
 
