@@ -12,7 +12,7 @@
 from __future__ import annotations
 
 from codebase_rag import constants as cs
-from codec import schema_pb2 as pb
+from codebase_rag.codec import schema_pb2 as pb
 
 # The zero value is protobuf's required unset sentinel, not a relationship.
 _UNSPECIFIED = "RELATIONSHIP_TYPE_UNSPECIFIED"
@@ -28,14 +28,14 @@ def test_every_python_relationship_type_exists_in_the_proto_schema() -> None:
     """A type missing here exports as UNSPECIFIED and loses its identity.
 
     This is the assertion that makes the drift class unrepresentable: adding a
-    member to `RelationshipType` without adding it to `codec/schema.proto` is
+    member to `RelationshipType` without adding it to `codebase_rag/codec/schema.proto` is
     otherwise a one-line change with no signal attached.
     """
     python_names = {member.name for member in cs.RelationshipType}
     missing = sorted(python_names - _proto_relationship_names())
 
     assert not missing, (
-        f"relationship types absent from codec/schema.proto: {missing}. "
+        f"relationship types absent from codebase_rag/codec/schema.proto: {missing}. "
         "Add them to the RelationshipType enum, regenerate the bindings, and "
         "keep the numbering append-only."
     )

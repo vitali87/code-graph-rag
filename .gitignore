@@ -72,3 +72,7 @@ evals/results/logs/
 .cgr-parser-fingerprint
 .cgr-exclusion-state.json
 .cgr-*.tmp
+
+# Written by benchmarks/memory_profile.py on each run.
+benchmarks/memory_profile_results.json
+benchmarks/_tmp_graph.json

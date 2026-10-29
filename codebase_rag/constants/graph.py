@@ -313,7 +313,7 @@ DIFF_ERR_NO_MANIFEST = (
 )
 DIFF_ERR_NO_SCHEMA_HASH = (
     "schema metadata missing: {manifest} records no codec_schema_sha256 because "
-    "the cgr that wrote it could not find codec/schema.proto; "
+    "the cgr that wrote it could not find codebase_rag/codec/schema.proto; "
     "upgrade code-graph-rag and re-index before diffing"
 )
 

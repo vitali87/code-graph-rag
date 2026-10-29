@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import codec.schema_pb2 as pb
+import codebase_rag.codec.schema_pb2 as pb
 from codebase_rag import constants as cs
 from codebase_rag.cypher_queries import build_merge_relationship_query
 from codebase_rag.services.graph_diff import _rel_map

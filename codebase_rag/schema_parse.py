@@ -9,7 +9,7 @@ That is the blocker for an embedded graph backend. Kuzu requires an explicit
 table per label and rejects any property not declared in it, so a Kuzu
 `CREATE NODE TABLE` cannot be written without a parsed schema. It is also why
 `Pattern`, `CodeSmell` and `SecurityIssue` could drift out of
-`codec/schema.proto` unnoticed (#1452): the declaration existed but was not in
+`codebase_rag/codec/schema.proto` unnoticed (#1452): the declaration existed but was not in
 a form anything could compare.
 
 This parses the existing strings rather than replacing them. The prose is the

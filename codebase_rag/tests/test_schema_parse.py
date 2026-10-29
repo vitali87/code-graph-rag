@@ -3,7 +3,7 @@
 # NODE_SCHEMAS declares each label's properties as prose consumed by README
 # generation and LLM prompts. Nothing parsed it, so nothing could check it or
 # generate from it -- which is why three labels drifted out of
-# codec/schema.proto unnoticed (#1452), and why a Kuzu backend (which requires
+# codebase_rag/codec/schema.proto unnoticed (#1452), and why a Kuzu backend (which requires
 # an explicit table per label) could not be written.
 from __future__ import annotations
 

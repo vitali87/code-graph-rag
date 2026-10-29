@@ -18,6 +18,7 @@ from typer.testing import CliRunner
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag.cli import app
+from codebase_rag.codec import schema_pb2 as pb
 from codebase_rag.config import settings
 from codebase_rag.dead_code import (
     collect_dead_code,
@@ -33,7 +34,6 @@ from codebase_rag.types_defs import (
     PropertyValue,
     ResultRow,
 )
-from codec import schema_pb2 as pb
 from evals.cgr_graph import CapturingIngestor
 
 _PROJECT = "proj"

@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-import codec.schema_pb2 as pb
+import codebase_rag.codec.schema_pb2 as pb
 from codebase_rag.cli import app
 from codebase_rag.constants import (
     PROTOBUF_INDEX_FILE,

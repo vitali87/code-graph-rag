@@ -21,7 +21,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import codec.schema_pb2 as pb
+import codebase_rag.codec.schema_pb2 as pb
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers

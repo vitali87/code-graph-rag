@@ -1,4 +1,4 @@
-# Guards node properties in NODE_SCHEMAS against codec/schema.proto (#1490).
+# Guards node properties in NODE_SCHEMAS against codebase_rag/codec/schema.proto (#1490).
 #
 # The sibling `test_protobuf_relationship_parity.py` guards the relationship
 # ENUM. Nothing guarded node PROPERTIES, and the failure mode is the same
@@ -21,9 +21,9 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any
 
+from codebase_rag.codec import schema_pb2 as pb
 from codebase_rag.schema_parse import parse_properties
 from codebase_rag.types_defs import NODE_SCHEMAS
-from codec import schema_pb2 as pb
 
 # Properties that exist in NODE_SCHEMAS and deliberately have no proto field.
 #
@@ -202,7 +202,7 @@ def test_every_declared_property_is_exported_or_declared_unexported() -> None:
 
     assert not undeclared, (
         f"{len(undeclared)} node propert(ies) are declared in NODE_SCHEMAS but "
-        "have no field in codec/schema.proto and are not listed in "
+        "have no field in codebase_rag/codec/schema.proto and are not listed in "
         "_NOT_EXPORTED:\n"
         + "\n".join(undeclared)
         + "\n\nAdd the proto field and regenerate the bindings, or add the "

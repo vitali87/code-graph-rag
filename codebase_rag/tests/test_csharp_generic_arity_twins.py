@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 from tree_sitter import Parser
 
-import codec.schema_pb2 as pb
+import codebase_rag.codec.schema_pb2 as pb
 from codebase_rag import constants as cs
 from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater

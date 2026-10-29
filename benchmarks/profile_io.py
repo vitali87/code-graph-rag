@@ -188,7 +188,7 @@ def profile_protobuf_serialization():
     print("\n=== PROTOBUF SERIALIZATION ===")
     results = []
     try:
-        import codec.schema_pb2 as pb
+        import codebase_rag.codec.schema_pb2 as pb
     except ImportError:
         print("  protobuf schema not available, skipping")
         return results

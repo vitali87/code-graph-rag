@@ -5,7 +5,7 @@ from pathlib import Path
 from google.protobuf.message import Message
 from loguru import logger
 
-import codec.schema_pb2 as pb
+import codebase_rag.codec.schema_pb2 as pb
 
 from .. import constants as cs
 from .. import logs as ls

@@ -17,7 +17,7 @@ import pytest
 from loguru import logger
 from typer.testing import CliRunner
 
-import codec.schema_pb2 as pb
+import codebase_rag.codec.schema_pb2 as pb
 from codebase_rag import constants as cs
 from codebase_rag import logs as ls
 from codebase_rag.checkout_state import state_dir

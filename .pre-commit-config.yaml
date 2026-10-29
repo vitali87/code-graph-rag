@@ -33,17 +33,17 @@ repos:
     hooks:
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix]
-        exclude: ^(codec/schema_pb2\.(py|pyi)|benchmarks/|optimize/)$
+        exclude: ^(codebase_rag/codec/schema_pb2\.(py|pyi)|benchmarks/)$
       - id: ruff-format
-        exclude: ^(codec/schema_pb2\.(py|pyi)|benchmarks/|optimize/)$
+        exclude: ^(codebase_rag/codec/schema_pb2\.(py|pyi)|benchmarks/)$
   - repo: local
     hooks:
       - id: ty
         name: ty check
-        entry: uv run --frozen --no-sync ty check --exclude codebase_rag/tests/ --exclude benchmarks/ --exclude optimize/ --exclude codec/ --exclude grammars/ --exclude query_modules/ --exclude fuzz/
+        entry: uv run --frozen --no-sync ty check --exclude codebase_rag/tests/ --exclude benchmarks/ --exclude codebase_rag/codec/ --exclude grammars/ --exclude query_modules/ --exclude fuzz/
         language: system
         types: [python]
-        exclude: ^(codec/.*_pb2\.py|benchmarks/|optimize/|grammars/|query_modules/|fuzz/)$
+        exclude: ^(codebase_rag/codec/.*_pb2\.py|benchmarks/|grammars/|query_modules/|fuzz/)$
         pass_filenames: false
   - repo: local
     hooks:
@@ -75,7 +75,7 @@ repos:
       - id: bandit
         args: ["-c", "pyproject.toml", "--severity-level", "high"]
         additional_dependencies: ["bandit[toml]"]
-        exclude: ^(codebase_rag/tests/|scripts/|benchmarks/|optimize/)
+        exclude: ^(codebase_rag/tests/|scripts/|benchmarks/)
   - repo: https://github.com/compilerla/conventional-pre-commit
     rev: v4.4.0
     hooks:

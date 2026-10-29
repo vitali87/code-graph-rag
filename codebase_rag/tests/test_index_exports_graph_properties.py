@@ -1,7 +1,7 @@
 """`cgr index` carries what the graph carries (issue #3206).
 
 The protobuf writer keeps a property only when the label's message declares
-a field of that name, and `codec/schema.proto` had fallen behind: an
+a field of that name, and `codebase_rag/codec/schema.proto` had fallen behind: an
 Interface, Enum or Type kept no line span, docstring or `is_exported`, and
 Functions, Methods and Classes lost `path`, `modifiers`, `start_col`,
 `positional_params` and more. `diff-index` could not see a type that moved,
@@ -16,7 +16,7 @@ from unittest.mock import MagicMock
 import pytest
 from typer.testing import CliRunner
 
-import codec.schema_pb2 as pb
+import codebase_rag.codec.schema_pb2 as pb
 from codebase_rag import constants as cs
 from codebase_rag.cli import app
 from codebase_rag.services.graph_diff import diff_indexes

@@ -152,10 +152,10 @@ def _warnings_while(action: Callable[[], Path]) -> tuple[Path, list[str]]:
 def test_a_missing_codec_schema_still_writes_the_manifest_and_warns(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Issue #2399: an install without codec/schema.proto wrote a null hash in
+    # Issue #2399: an install without codebase_rag/codec/schema.proto wrote a null hash in
     # silence, and the user found out only when diff-index refused the index
     # later. Indexing must still succeed, but say why the index is undiffable.
-    missing = tmp_path / "site-packages" / "codec" / "schema.proto"
+    missing = tmp_path / "site-packages" / "codebase_rag" / "codec" / "schema.proto"
     monkeypatch.setattr(provenance, "_SCHEMA_FILE", missing)
     out = tmp_path / "out"
     out.mkdir()

@@ -323,7 +323,7 @@ def test_default_capture_reports_modules_uncovered(
 
 def test_protobuf_export_preserves_flow_coverage(tmp_path: Path) -> None:
     """Full round trip: serialize to disk, reload, and read the property."""
-    import codec.schema_pb2 as pb
+    import codebase_rag.codec.schema_pb2 as pb
     from codebase_rag import constants as cs
     from codebase_rag.services.protobuf_service import ProtobufFileIngestor
 

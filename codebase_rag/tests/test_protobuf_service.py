@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Any, cast
 
-import codec.schema_pb2 as pb
+import codebase_rag.codec.schema_pb2 as pb
 from codebase_rag.constants import NodeLabel
 from codebase_rag.services.protobuf_service import ProtobufFileIngestor
 

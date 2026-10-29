@@ -145,7 +145,7 @@ def _diff_error(old: Path, new: Path) -> str:
 def test_a_null_schema_hash_blames_the_install_not_the_manifest(
     tmp_path: Path,
 ) -> None:
-    # Issue #2399: a cgr installed without codec/schema.proto writes a manifest
+    # Issue #2399: a cgr installed without codebase_rag/codec/schema.proto writes a manifest
     # whose hash is null. Telling the user to "re-export with a manifest" sent
     # them round a loop, since the index had one and re-exporting from the
     # same install wrote the same null.

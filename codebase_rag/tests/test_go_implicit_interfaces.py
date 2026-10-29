@@ -5780,8 +5780,8 @@ def test_the_implementers_unknown_mark_travels_in_a_protobuf_export(
     temp_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # A graph imported from the export must refuse the same renames.
+    from codebase_rag.codec import schema_pb2 as pb
     from codebase_rag.services.protobuf_service import ProtobufFileIngestor
-    from codec import schema_pb2 as pb
 
     monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
     root = _variant_repo(temp_repo / "proj", _tagged_embeds(7))

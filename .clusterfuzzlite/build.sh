@@ -23,7 +23,7 @@ env -u CFLAGS -u CXXFLAGS -u CPPFLAGS -u LDFLAGS -u RUSTFLAGS \
   python3 -m pip install --break-system-packages ./rust/cgr_graph_rs ".[treesitter-full]"
 
 # `evals` is NOT part of the installed wheel -- pyproject's package discovery
-# includes only codebase_rag*, codec* and cgr* -- but fuzz_incremental_update
+# includes only codebase_rag* and cgr* -- but fuzz_incremental_update
 # imports evals.cgr_graph for the in-memory graph store it compares against.
 # Without the repo root on PYTHONPATH, pyinstaller cannot resolve that import
 # and the target builds into something that fails on first run, which reads as

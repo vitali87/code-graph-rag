@@ -1,5 +1,5 @@
 # Issue #2399: `cgr diff-index` refused every index an installed cgr wrote.
-# The provenance manifest hashes codec/schema.proto, pyproject declared
+# The provenance manifest hashes codebase_rag/codec/schema.proto, pyproject declared
 # package-data only for `codebase_rag`, so the wheel shipped no schema, every
 # manifest recorded `codec_schema_sha256: null`, and diff-index worked only
 # from a source checkout. These tests look at what the wheel actually holds
@@ -46,12 +46,12 @@ _BUILD_WHEEL = (
     "backend.build_wheel(sys.argv[1])\n"
 )
 
-# Runs from an unpacked wheel, so `codec` and `codebase_rag` resolve exactly
+# Runs from an unpacked wheel, so `codebase_rag` and its codec resolve exactly
 # as they do in site-packages after `pip install`.
 _INSTALLED_PROBE = (
     "import json, sys\n"
     "from pathlib import Path\n"
-    "import codec\n"
+    "from codebase_rag import codec\n"
     "from codebase_rag.services import provenance\n"
     "manifest = provenance.build_manifest(Path(sys.argv[1]), {}, {})\n"
     "print(json.dumps([codec.__file__, provenance.__file__,"
@@ -162,7 +162,7 @@ def wheel_names(built_wheel: Path) -> frozenset[str]:
 def test_the_codec_schema_ships_in_the_wheel(wheel_names: frozenset[str]) -> None:
     schema = provenance._SCHEMA_FILE.resolve().relative_to(_ROOT).as_posix()
     assert schema in wheel_names, sorted(
-        name for name in wheel_names if name.startswith("codec/")
+        name for name in wheel_names if name.startswith("codebase_rag/codec/")
     )
 
 

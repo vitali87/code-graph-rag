@@ -1,6 +1,6 @@
 from pathlib import Path
 
-import codec.schema_pb2 as pb
+import codebase_rag.codec.schema_pb2 as pb
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services.protobuf_service import ProtobufFileIngestor

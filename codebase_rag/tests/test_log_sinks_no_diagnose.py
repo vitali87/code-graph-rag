@@ -25,7 +25,7 @@ _SECRET = "sk-test-not-a-real-key-2362"
 def _production_sources() -> list[Path]:
     sources = [
         path
-        for package in ("codebase_rag", "cgr", "codec")
+        for package in ("codebase_rag", "cgr")
         for path in (_REPO_ROOT / package).rglob("*.py")
         if "tests" not in path.relative_to(_REPO_ROOT).parts
     ]

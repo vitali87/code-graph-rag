@@ -122,11 +122,15 @@ tree-sitter-c = { git = "https://github.com/vitali87/tree-sitter-c", rev = "fa32
 tree-sitter-cpp = { git = "https://github.com/vitali87/tree-sitter-cpp", rev = "b4a7be2f62f36dd460a14b2d1728d42d81d2c486" }
 
 [tool.setuptools.packages.find]
-include = ["codebase_rag*", "codec*", "cgr*"]
+include = ["codebase_rag*", "cgr*"]
 exclude = ["*.tests", "*.tests.*"]
 
 [tool.setuptools.package-data]
 codebase_rag = [
+    # The provenance manifest hashes this file to stamp each index with its
+    # codec schema; without it every installed build writes a null hash and
+    # `cgr diff-index` refuses its indexes (issue #2399).
+    "codec/schema.proto",
     "docker-compose.yaml",
     "parsers/csharp_frontend/roslyn/*.cs",
     "parsers/csharp_frontend/roslyn/*.csproj",
@@ -141,10 +145,6 @@ codebase_rag = [
     # Julia modifier/decorator extraction (issue #1882 review).
     "queries/highlights/*.scm",
 ]
-# The provenance manifest hashes this file to stamp each index with its codec
-# schema; without it every installed build writes a null hash and
-# `cgr diff-index` refuses its indexes (issue #2399).
-codec = ["schema.proto"]
 
 [project.optional-dependencies]
 test = [
@@ -245,7 +245,7 @@ python-semantics = [
 [tool.ruff]
 line-length = 88
 target-version = "py312"
-exclude = ["codec/", "benchmarks/", "optimize/"]
+exclude = ["codebase_rag/codec/", "benchmarks/"]
 
 [tool.ruff.lint]
 # BLE: every broad `except Exception` either narrows or says why it is broad
@@ -291,7 +291,7 @@ quote-style = "double"
 python-version = "3.12"
 
 [tool.ty.src]
-exclude = ["codebase_rag/tests/test_cypher_queries.py", "codebase_rag/tests/test_code_retrieval.py", "codebase_rag/tests/test_call_resolver.py", "benchmarks/", "optimize/"]
+exclude = ["codebase_rag/tests/test_cypher_queries.py", "codebase_rag/tests/test_code_retrieval.py", "codebase_rag/tests/test_call_resolver.py", "benchmarks/", "codebase_rag/codec/"]
 
 [tool.coverage.run]
 # `codebase_rag/constants/` is excluded because coverage cannot say anything
@@ -370,5 +370,5 @@ rust-wheels = [
 ]
 
 [tool.bandit]
-exclude_dirs = ["codebase_rag/tests", "scripts", "benchmarks", "optimize"]
+exclude_dirs = ["codebase_rag/tests", "scripts", "benchmarks"]
 skips = ["B101"]

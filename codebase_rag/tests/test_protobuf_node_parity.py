@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 from codebase_rag import constants as cs
-from codec import schema_pb2 as pb
+from codebase_rag.codec import schema_pb2 as pb
 
 # NodeLabel members with no protobuf payload, by deliberate decision rather
 # than drift. Empty today; an entry here needs a comment saying why the label
@@ -33,7 +33,7 @@ def test_every_node_label_has_a_proto_payload() -> None:
     missing = sorted(labels - _proto_payload_names() - _NOT_IN_PROTO)
 
     assert not missing, (
-        f"node labels absent from codec/schema.proto: {missing}. Add a payload "
+        f"node labels absent from codebase_rag/codec/schema.proto: {missing}. Add a payload "
         "message and a LABEL_TO_ONEOF_FIELD mapping, or record the label in "
         "_NOT_IN_PROTO with the reason it cannot be represented."
     )

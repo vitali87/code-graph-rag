@@ -62,7 +62,6 @@ WORKDIR /app
 COPY --from=builder --chown=appuser:appuser /app/.uv-python /app/.uv-python
 COPY --from=builder --chown=appuser:appuser /app/.venv /app/.venv
 COPY --from=builder --chown=appuser:appuser /app/codebase_rag /app/codebase_rag
-COPY --from=builder --chown=appuser:appuser /app/codec /app/codec
 COPY --from=builder --chown=appuser:appuser /app/cgr /app/cgr
 COPY --from=builder --chown=appuser:appuser /app/pyproject.toml /app/pyproject.toml
 

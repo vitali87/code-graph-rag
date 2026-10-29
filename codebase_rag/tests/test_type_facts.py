@@ -491,7 +491,7 @@ def test_incremental_run_requeues_unchanged_definitions(temp_repo: Path) -> None
 
 
 def test_protobuf_export_carries_the_annotations(tmp_path: Path) -> None:
-    import codec.schema_pb2 as pb
+    import codebase_rag.codec.schema_pb2 as pb
     from codebase_rag.services.protobuf_service import ProtobufFileIngestor
 
     ingestor = ProtobufFileIngestor(str(tmp_path), split_index=False)

@@ -393,7 +393,7 @@ class TestFileHandling:
 
 def _export_index(tmp_path: Path, document: str = NESTED):
     """Index a document through the protobuf sink and read the artifact back."""
-    import codec.schema_pb2 as pb
+    import codebase_rag.codec.schema_pb2 as pb
     from codebase_rag.services.protobuf_service import ProtobufFileIngestor
 
     project_dir = tmp_path / "proj"
@@ -444,7 +444,7 @@ class TestProtobufExport:
         assert sections["Subtask A"].path == "d.md"
 
     def test_contains_section_edges_are_typed(self, tmp_path: Path) -> None:
-        import codec.schema_pb2 as pb
+        import codebase_rag.codec.schema_pb2 as pb
 
         index = _export_index(tmp_path)
         section_rels = [r for r in index.relationships if r.target_label == SECTION]

@@ -159,7 +159,7 @@ def test_vanished_generated_roots_stop_rescuing(tmp_path: Path) -> None:
 def test_generated_provenance_survives_the_protobuf_round_trip(
     tmp_path: Path,
 ) -> None:
-    import codec.schema_pb2 as pb
+    import codebase_rag.codec.schema_pb2 as pb
     from codebase_rag.services.protobuf_service import ProtobufFileIngestor
 
     repo = tmp_path / "proj"

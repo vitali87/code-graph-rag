@@ -5,7 +5,6 @@ on:
     types: [opened, synchronize]
     paths:
       - "codebase_rag/**/*.py"
-      - "codec/**/*.py"
       - "scripts/**/*.py"
       - "*.py"
       - "pyproject.toml"

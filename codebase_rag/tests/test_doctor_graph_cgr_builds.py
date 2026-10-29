@@ -20,7 +20,7 @@ from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import codec.schema_pb2 as pb
+import codebase_rag.codec.schema_pb2 as pb
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag.capture import resolve_capture

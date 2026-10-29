@@ -311,7 +311,7 @@ def measure_graph_loader_json() -> dict:
         },
     }
 
-    tmp_path = PROJECT_ROOT / "optimize" / "_tmp_graph.json"
+    tmp_path = PROJECT_ROOT / "benchmarks" / "_tmp_graph.json"
     with open(tmp_path, "w") as f:
         json.dump(graph_data, f)
 
@@ -650,7 +650,7 @@ def main() -> None:
                     after = value[f"gc_gen{gen}_after"]
                     print(f"    Gen{gen}: collections {before['collections']} -> {after['collections']}, collected {before['collected']} -> {after['collected']}")
 
-    output_path = PROJECT_ROOT / "optimize" / "memory_profile_results.json"
+    output_path = PROJECT_ROOT / "benchmarks" / "memory_profile_results.json"
     with open(output_path, "w") as f:
         json.dump(all_results, f, indent=2, default=str)
     print(f"\nDetailed results saved to: {output_path}")

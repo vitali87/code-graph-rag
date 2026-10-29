@@ -503,7 +503,7 @@ def test_build_script_makes_unpackaged_imports_resolvable() -> None:
     """`evals` is not in the wheel, so the build must put it on the path.
 
     `fuzz_incremental_update` imports `evals.cgr_graph`, but pyproject's
-    package discovery includes only `codebase_rag*`, `codec*` and `cgr*`. In
+    package discovery includes only `codebase_rag*` and `cgr*`. In
     the ClusterFuzzLite image pyinstaller freezes each harness from the
     INSTALLED packages, so without the repo root on the path that import is
     unresolvable and the target builds into something that fails on first

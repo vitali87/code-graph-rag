@@ -97,7 +97,7 @@ These matter less but are still in scope.
 - Watch mode, workspaces (`codebase_rag/workspaces/`), exports and the
   remaining CLI commands.
 
-The least important are `docs/`, `benchmarks/`, `optimize/`, `evals/`,
+The least important are `docs/`, `benchmarks/`, `evals/`,
 `examples/`, `scripts/` other than the release path, `fuzz/`, and
 `codebase_rag/tests/`.
 
@@ -206,5 +206,5 @@ text in `codebase_rag/tool_errors.py`), and a regression test under
   per-user authorisation.
 - Defects in dependencies (tree-sitter grammars, libclang, the MCP SDK,
   SQLite) that no code-graph-rag code path reaches.
-- `docs/`, `benchmarks/`, `optimize/`, `evals/`, `examples/` and
+- `docs/`, `benchmarks/`, `evals/`, `examples/` and
   `codebase_rag/tests/`.

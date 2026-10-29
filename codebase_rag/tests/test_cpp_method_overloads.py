@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-import codec.schema_pb2 as pb
+import codebase_rag.codec.schema_pb2 as pb
 from codebase_rag import constants as cs
 from codebase_rag.checkout_state import state_file
 from codebase_rag.config import settings

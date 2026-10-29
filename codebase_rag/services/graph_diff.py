@@ -19,7 +19,7 @@ from typing import NamedTuple, TypedDict
 
 from google.protobuf.message import Message
 
-import codec.schema_pb2 as pb
+import codebase_rag.codec.schema_pb2 as pb
 
 from .. import constants as cs
 from .provenance import MANIFEST_FILE, _coverage_from_nodes
@@ -95,7 +95,7 @@ def _schema_hash(index_dir: Path) -> str:
     value = manifest.get("codec_schema_sha256") if isinstance(manifest, dict) else None
     if not isinstance(value, str):
         # The manifest is there, so "write one" is the wrong advice: the cgr
-        # that wrote it had no codec/schema.proto to hash, and re-exporting
+        # that wrote it had no codebase_rag/codec/schema.proto to hash, and re-exporting
         # from that same install writes the same null again (#2399).
         raise DiffError(cs.DIFF_ERR_NO_SCHEMA_HASH.format(manifest=manifest_path))
     return value

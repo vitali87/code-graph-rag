@@ -17,6 +17,7 @@ import pytest
 from tree_sitter import Node
 
 from codebase_rag import constants as cs
+from codebase_rag.codec import schema_pb2 as pb
 from codebase_rag.editing.rename import RenameRefused, rename
 from codebase_rag.function_registry import FunctionRegistryTrie
 from codebase_rag.graph_updater import GraphUpdater
@@ -25,7 +26,6 @@ from codebase_rag.parsers import method_ingest
 from codebase_rag.parsers.class_ingest import mixin as class_mixin
 from codebase_rag.services.protobuf_service import ProtobufFileIngestor
 from codebase_rag.tests.conftest import get_relationships, run_updater
-from codec import schema_pb2 as pb
 from evals.cgr_graph import StatefulIngestor
 
 TYPE_AND_FUNCTION_TS = """export type input<T> = { value: T };
