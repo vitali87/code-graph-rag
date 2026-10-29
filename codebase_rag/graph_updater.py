@@ -2315,7 +2315,8 @@ class GraphUpdater:
         Runs before anything this sync buffers, so the orphan sweep cannot
         race a re-add: a package still declared is MERGEd back afterwards.
         """
-        if not isinstance(self.ingestor, QueryProtocol):
+        graph = self._graph
+        if graph is None:
             return
         if not any(
             self._is_dependency_file(PurePosixPath(key).name, Path(key))
@@ -2323,11 +2324,11 @@ class GraphUpdater:
         ):
             return
         logger.info(ls.DEPENDENCIES_RESYNC, project=self.project_name)
-        self.ingestor.execute_write(
+        graph.execute_write(
             cs.CYPHER_DELETE_PROJECT_DEPENDENCIES,
             {cs.KEY_PROJECT_NAME: self.project_name},
         )
-        self.ingestor.execute_write(cs.CYPHER_DELETE_ORPHAN_EXTERNAL_PACKAGES)
+        graph.execute_write(cs.CYPHER_DELETE_ORPHAN_EXTERNAL_PACKAGES)
         if manifests is None:
             manifests = (
                 (Path(f"{dirpath}/{fname}"), rel_path)
@@ -2906,12 +2907,11 @@ class GraphUpdater:
         file up to date, not the project, and a write-only sink has no graph
         to stamp. Best effort: the sync is complete and durable by now.
         """
-        if self._single_file is not None or not isinstance(
-            self.ingestor, QueryProtocol
-        ):
+        graph = self._graph
+        if self._single_file is not None or graph is None:
             return
         try:
-            self.ingestor.execute_write(
+            graph.execute_write(
                 cq.CYPHER_RECORD_PROJECT_SYNC,
                 {
                     cs.KEY_PROJECT_NAME: self.project_name,
@@ -3183,7 +3183,8 @@ class GraphUpdater:
         self._drop_stale_exposes(CYPHER_DELETE_HANDLER_EXPOSES, {"qns": handler_qns})
 
     def _drop_stale_exposes(self, query: str, params: PropertyParams) -> None:
-        if not isinstance(self.ingestor, QueryProtocol):
+        graph = self._graph
+        if graph is None:
             return
         # With the registry unread, ownership degrades to the prefix rule and
         # `svc.v2`'s handlers can pass as `svc`'s (a seeded module map can hold
@@ -3194,7 +3195,7 @@ class GraphUpdater:
             self._run.exposes_cleanup_skipped = True
             return
         try:
-            self.ingestor.execute_write(query, params)
+            graph.execute_write(query, params)
         except Exception:
             # A delete that failed is owed exactly like one that was skipped.
             self._run.exposes_cleanup_skipped = True
@@ -3313,10 +3314,11 @@ class GraphUpdater:
     def _graph_function_starts(
         self, module_qns: set[str]
     ) -> dict[FunctionSpanKey, tuple[cs.NodeLabel, str]]:
-        if not isinstance(self.ingestor, QueryProtocol):
+        graph = self._graph
+        if graph is None:
             return {}
         try:
-            rows = self.ingestor.fetch_all(
+            rows = graph.fetch_all(
                 CYPHER_MODULE_FUNCTION_STARTS, {"module_qns": sorted(module_qns)}
             )
         except Exception:
@@ -3425,14 +3427,15 @@ class GraphUpdater:
     def _graph_route_module_paths(self) -> list[tuple[str, Path]]:
         # Unchanged modules come back from the graph on an incremental run,
         # already narrowed to route-capable extensions at the query.
-        if not isinstance(self.ingestor, QueryProtocol):
+        graph = self._graph
+        if graph is None:
             return []
         params = {
             cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT,
             "extensions": list(ROUTE_MODULE_EXTENSIONS),
         }
         try:
-            rows = list(self.ingestor.fetch_all(CYPHER_PROJECT_MODULES, params))
+            rows = list(graph.fetch_all(CYPHER_PROJECT_MODULES, params))
         except Exception as exc:
             logger.debug(ls.GRAPH_READ_UNAVAILABLE, label="route modules", error=exc)
             return []
@@ -3477,11 +3480,12 @@ class GraphUpdater:
     def _rehydrated_route_handlers(
         self, already_pending: set[str], module_qns: set[str]
     ) -> list[tuple[cs.NodeLabel, str, list[str], str | None]]:
-        if not isinstance(self.ingestor, QueryProtocol):
+        graph = self._graph
+        if graph is None:
             return []
         params = {cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT}
         try:
-            rows = list(self.ingestor.fetch_all(CYPHER_PROJECT_ROUTE_HANDLERS, params))
+            rows = list(graph.fetch_all(CYPHER_PROJECT_ROUTE_HANDLERS, params))
         except Exception as exc:
             logger.debug(ls.GRAPH_READ_UNAVAILABLE, label="route handlers", error=exc)
             return []
@@ -3518,11 +3522,12 @@ class GraphUpdater:
         return asts
 
     def _graph_python_modules(self) -> list[tuple[str, Path]]:
-        if not isinstance(self.ingestor, QueryProtocol):
+        graph = self._graph
+        if graph is None:
             return []
         params = {cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT}
         try:
-            rows = list(self.ingestor.fetch_all(CYPHER_PROJECT_PY_MODULES, params))
+            rows = list(graph.fetch_all(CYPHER_PROJECT_PY_MODULES, params))
         except Exception as exc:
             logger.debug(ls.GRAPH_READ_UNAVAILABLE, label="Python modules", error=exc)
             return []
@@ -3591,14 +3596,15 @@ class GraphUpdater:
         # shortest wins here and the requeue agrees with a clean index
         # (bot review on PR #1967: keyed on the last row returned, an
         # unrelated edit rehydrated `alpha.make` under `beta`).
-        if not isinstance(self.ingestor, QueryProtocol):
+        graph = self._graph
+        if graph is None:
             return {}
         # The same posture as every other read in `_rehydrate_registry_from_graph`
         # (local review): a full build parsed every file and degrades to the
         # bare derivation with a warning; an incremental run would requeue
         # under the wrong owner, so the outage aborts it.
         try:
-            rows = self.ingestor.fetch_all(
+            rows = graph.fetch_all(
                 cs.CYPHER_PROJECT_MODULE_PATHS,
                 {
                     cs.KEY_PROJECT_NAME: self.project_name,
@@ -3670,15 +3676,16 @@ class GraphUpdater:
         # loop restored" can tell the two apart -- a reused updater already
         # holds every unchanged definition, a fresh one holds none -- and both
         # were tried first.
+        graph = self._graph
         if (
             self._run.is_full_build
             or not self.capture.rel_enabled(cs.RelationshipType.OF_TYPE)
-            or not isinstance(self.ingestor, QueryProtocol)
+            or graph is None
         ):
             # A full build re-parses every file: ingest queues everything.
             return
         rows = self._owned_rows(
-            self.ingestor.fetch_all(query, project_params),
+            graph.fetch_all(query, project_params),
             cs.KEY_QUALIFIED_NAME,
         )
         for row in rows:
@@ -3695,14 +3702,23 @@ class GraphUpdater:
                 continue
             pending.append(make(qn, self._recorded_module_qn(path), type_name, path))
 
+    @property
+    def _graph(self) -> QueryProtocol | None:
+        """The sink as a graph this run can read back, or None for a
+        write-only sink (the protobuf exporter): every read then takes its
+        safe answer instead of querying."""
+        ingestor = self.ingestor
+        return ingestor if isinstance(ingestor, QueryProtocol) else None
+
     def _graph_rows(self, query: str, params: PropertyParams | None) -> list[ResultRow]:
         # A write-only sink (the protobuf exporter) has no graph to read, and
         # every caller already handles a failed read with its safe answer.
-        if not isinstance(self.ingestor, QueryProtocol):
+        graph = self._graph
+        if graph is None:
             raise TypeError(
                 ex.INGESTOR_NOT_QUERYABLE.format(kind=type(self.ingestor).__name__)
             )
-        return self.ingestor.fetch_all(query, params)
+        return graph.fetch_all(query, params)
 
     def _registered_project_names(self) -> list[str]:
         """Every project the graph holds, longest name first, read once per
@@ -3757,10 +3773,11 @@ class GraphUpdater:
         repo sync ten times slower beside thirty other projects (issue
         #2404). Raises when the read fails; callers decide what that means.
         """
-        if not isinstance(self.ingestor, QueryProtocol):
+        graph = self._graph
+        if graph is None:
             return []
         return self._owned_rows(
-            self.ingestor.fetch_all(
+            graph.fetch_all(
                 cs.CYPHER_PROJECT_MODULE_PATHS,
                 {
                     cs.KEY_PROJECT_PREFIX: f"{self.project_name}{cs.SEPARATOR_DOT}",
@@ -3777,7 +3794,8 @@ class GraphUpdater:
         # into files that were not re-parsed still resolve and their edges are
         # re-emitted. Without this, editing one file drops cross-file CALLS /
         # INSTANTIATES into any unchanged file (issue #532, outbound half).
-        if not isinstance(self.ingestor, QueryProtocol):
+        graph = self._graph
+        if graph is None:
             return
         self._go_clauses_read.clear()
         # Read afresh each run: a module may have gained or lost its suffix
@@ -3786,7 +3804,7 @@ class GraphUpdater:
         project_params = {cs.KEY_PROJECT_PREFIX: self.project_name + "."}
         try:
             rows = self._owned_rows(
-                self.ingestor.fetch_all(cs.CYPHER_ALL_DEFINITION_QNS, project_params),
+                graph.fetch_all(cs.CYPHER_ALL_DEFINITION_QNS, project_params),
                 cs.KEY_QUALIFIED_NAME,
             )
         except Exception:
@@ -3813,7 +3831,7 @@ class GraphUpdater:
         # an incremental run would drop edges a clean index emits.
         try:
             module_rows = self._owned_rows(
-                self.ingestor.fetch_all(cs.CYPHER_ALL_MODULE_QNS, project_params),
+                graph.fetch_all(cs.CYPHER_ALL_MODULE_QNS, project_params),
                 cs.KEY_QUALIFIED_NAME,
             )
         except Exception:
@@ -3854,19 +3872,20 @@ class GraphUpdater:
         # saw no implementer and dropped the edge a clean index emits: gson's
         # getFieldNames into FieldNamingPolicy, serde_json's
         # u64::error_halfscale() (issue #2403).
-        if not isinstance(self.ingestor, QueryProtocol):
+        graph = self._graph
+        if graph is None:
             return
         try:
             implements = self._owned_rows(
-                self.ingestor.fetch_all(cs.CYPHER_ALL_IMPLEMENTS, project_params),
+                graph.fetch_all(cs.CYPHER_ALL_IMPLEMENTS, project_params),
                 cs.KEY_CHILD_QN,
             )
             rust_overrides = self._owned_rows(
-                self.ingestor.fetch_all(cs.CYPHER_ALL_RUST_OVERRIDES, project_params),
+                graph.fetch_all(cs.CYPHER_ALL_RUST_OVERRIDES, project_params),
                 cs.KEY_FROM_QN,
             )
             required = self._owned_rows(
-                self.ingestor.fetch_all(
+                graph.fetch_all(
                     cs.CYPHER_RUST_TRAITS_WITH_REQUIRED_METHODS, project_params
                 ),
                 cs.KEY_QUALIFIED_NAME,
@@ -4313,13 +4332,14 @@ class GraphUpdater:
         # and overwrite the existing module under the qualified_name
         # constraint. Seed the qn->file map from the graph BEFORE processing so
         # the disambiguator sees taken qns; a re-parsed file keeps its bare qn.
-        if not isinstance(self.ingestor, QueryProtocol):
+        graph = self._graph
+        if graph is None:
             return
         module_map = self.factory.definition_processor.module_qn_to_file_path
         # Only incremental runs seed (full builds process every file), so a
         # failed read here always aborts: a missing seed can silently let an
         # added file overwrite a sibling module's qn.
-        for row in self.ingestor.fetch_all(cs.CYPHER_ALL_MODULE_PATHS_INTERNAL):
+        for row in graph.fetch_all(cs.CYPHER_ALL_MODULE_PATHS_INTERNAL):
             qn = row.get(cs.KEY_QUALIFIED_NAME)
             path = row.get(cs.KEY_PATH)
             if not isinstance(qn, str) or not isinstance(path, str) or not path:
@@ -4479,7 +4499,8 @@ class GraphUpdater:
         shrink -- the accumulation #1712 is about, in a fix that looks
         correct and does nothing from the second call onwards.
         """
-        if not isinstance(self.ingestor, QueryProtocol):
+        graph = self._graph
+        if graph is None:
             return
         dp = self.factory.definition_processor
         module_map = dp.module_qn_to_file_path
@@ -4528,12 +4549,13 @@ class GraphUpdater:
         # is ordered by base_index, so a rehydrated class's bases keep their
         # original source order (multiple inheritance resolves the same base a
         # clean index would).
-        if not isinstance(self.ingestor, QueryProtocol):
+        graph = self._graph
+        if graph is None:
             return
         class_inheritance = self.factory.definition_processor.class_inheritance
         try:
             rows = self._owned_rows(
-                self.ingestor.fetch_all(
+                graph.fetch_all(
                     cs.CYPHER_ALL_INHERITS,
                     {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
                 ),
@@ -4589,12 +4611,13 @@ class GraphUpdater:
         # unchanged file still joins its group (issue #1229). A re-parsed file's
         # fresh Pass-2 entry is kept (not overwritten); a stale rehydrated
         # position for a type that moved is simply never queried by the join.
-        if not isinstance(self.ingestor, QueryProtocol):
+        graph = self._graph
+        if graph is None:
             return
         locations = self.factory.definition_processor.csharp_type_locations
         try:
             rows = self._owned_rows(
-                self.ingestor.fetch_all(
+                graph.fetch_all(
                     cs.CYPHER_ALL_CSHARP_TYPE_LOCATIONS,
                     {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
                 ),
@@ -4637,13 +4660,14 @@ class GraphUpdater:
         # one's row may still describe the source before the edit.
         dp = self.factory.definition_processor
         rehydrated = dp.rehydrated_definition_paths
-        if not isinstance(self.ingestor, QueryProtocol) or not any(
+        graph = self._graph
+        if graph is None or not any(
             len(group) > 1 and qn in rehydrated
             for qn, group in dp.csharp_partial_groups.items()
         ):
             return
         rows = self._owned_rows(
-            self.ingestor.fetch_all(
+            graph.fetch_all(
                 cs.CYPHER_ALL_CSHARP_TYPE_LOCATIONS,
                 {cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT},
             ),
@@ -4669,12 +4693,13 @@ class GraphUpdater:
         # files from the persisted graph (issue #1240). A pre-#1240 graph has
         # no start_col: those rows are skipped and behavior degrades to
         # today's until a re-index.
-        if not isinstance(self.ingestor, QueryProtocol):
+        graph = self._graph
+        if graph is None:
             return
         locations = self.factory.definition_processor.go_type_locations
         try:
             rows = self._owned_rows(
-                self.ingestor.fetch_all(
+                graph.fetch_all(
                     cs.CYPHER_ALL_GO_TYPE_LOCATIONS,
                     {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
                 ),
@@ -4717,7 +4742,8 @@ class GraphUpdater:
         # files exclusively), so a METHOD's container comes from the query
         # and is_named stays True (generated qns never persist under Module
         # DEFINES).
-        if not isinstance(self.ingestor, QueryProtocol):
+        graph = self._graph
+        if graph is None:
             return
         locations = self.factory.definition_processor.function_locations
         params = {cs.KEY_PROJECT_PREFIX: self.project_name + "."}
@@ -4728,7 +4754,7 @@ class GraphUpdater:
         ):
             try:
                 rows = self._owned_rows(
-                    self.ingestor.fetch_all(query, params), cs.KEY_QUALIFIED_NAME
+                    graph.fetch_all(query, params), cs.KEY_QUALIFIED_NAME
                 )
             except Exception:
                 if not self._run.is_full_build:
@@ -4795,7 +4821,8 @@ class GraphUpdater:
         unchanged, so bindings in ITS callers cannot move. A failed read
         degrades to today's verbatim restore, never worse.
         """
-        if not reindexed_keys or not isinstance(self.ingestor, QueryProtocol):
+        graph = self._graph
+        if not reindexed_keys or graph is None:
             return []
         rows = self._project_read(
             cs.CYPHER_AFFECTED_CALLER_PATHS,
@@ -4812,10 +4839,11 @@ class GraphUpdater:
         """A read scoped to this project, its prefix added to `params`; None,
         reported, when the graph cannot answer it. Empty for a sink with no
         query surface, which holds nothing to read back."""
-        if not isinstance(self.ingestor, QueryProtocol):
+        graph = self._graph
+        if graph is None:
             return []
         try:
-            return self.ingestor.fetch_all(
+            return graph.fetch_all(
                 query,
                 {**params, cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT},
             )
@@ -4883,10 +4911,11 @@ class GraphUpdater:
     ) -> set[str]:
         """The `candidates` that must re-parse anyway; all of them when the
         edges between them and the stable files cannot be read."""
-        if not candidates or not isinstance(self.ingestor, QueryProtocol):
+        graph = self._graph
+        if not candidates or graph is None:
             return candidates
         try:
-            rows = self.ingestor.fetch_all(
+            rows = graph.fetch_all(
                 cs.CYPHER_INTERFACE_BOUNDARY_EDGES,
                 {
                     cs.CYPHER_PARAM_PATHS: sorted(stable),
@@ -4916,11 +4945,12 @@ class GraphUpdater:
             for path, key, data in sources
             if (fingerprint := self._source_interface_fingerprint(path, data))
         }
-        if not fresh or not isinstance(self.ingestor, QueryProtocol):
+        graph = self._graph
+        if not fresh or graph is None:
             return {}
         prefix = self.project_name + cs.SEPARATOR_DOT
         try:
-            rows = self.ingestor.fetch_all(
+            rows = graph.fetch_all(
                 cs.CYPHER_INTERFACE_FINGERPRINTS,
                 {
                     cs.CYPHER_PARAM_PATHS: sorted(fresh),
@@ -4941,10 +4971,11 @@ class GraphUpdater:
     def _without_flow_sources(self, stable: dict[str, str]) -> dict[str, str]:
         """`stable` less the files whose callback flow edges other files'
         parses write; none at all when that cannot be read."""
-        if not stable or not isinstance(self.ingestor, QueryProtocol):
+        graph = self._graph
+        if not stable or graph is None:
             return stable
         try:
-            rows = self.ingestor.fetch_all(
+            rows = graph.fetch_all(
                 cs.CYPHER_INTERFACE_FLOW_SOURCE_PATHS,
                 {cs.CYPHER_PARAM_PATHS: sorted(stable)},
             )
@@ -5054,7 +5085,8 @@ class GraphUpdater:
 
         A failed read degrades to the previous behaviour, never worse.
         """
-        if not present_keys or not isinstance(self.ingestor, QueryProtocol):
+        graph = self._graph
+        if not present_keys or graph is None:
             return []
         module_names = self._module_names_for(present_keys)
         if not module_names:
@@ -5085,7 +5117,8 @@ class GraphUpdater:
         re-parses, so an edit that keeps the name (a dependency bump) sends
         none. A failed read degrades to the previous behaviour, never worse.
         """
-        if self._run.is_full_build or not isinstance(self.ingestor, QueryProtocol):
+        graph = self._graph
+        if self._run.is_full_build or graph is None:
             return set()
         if all(PurePosixPath(key).name != cs.DEP_FILE_PUBSPEC for key in keys):
             return set()
@@ -5130,7 +5163,8 @@ class GraphUpdater:
         review on PR #1979). A failed read degrades to the previous
         behaviour, never worse (issue #1568).
         """
-        if not isinstance(self.ingestor, QueryProtocol):
+        graph = self._graph
+        if graph is None:
             return []
         names: set[str] = set(self._module_names_for([key for key, _b in added]))
         prefixes: set[str] = set()
@@ -5280,17 +5314,18 @@ class GraphUpdater:
                 cleared.append(module_qn)
         if not cleared and not pending:
             return
-        if not isinstance(self.ingestor, QueryProtocol):
+        graph = self._graph
+        if graph is None:
             self._update_unresolved_reference_nodes(cleared, pending)
             return
         self.ingestor.flush_all()
         try:
             if cleared:
-                self.ingestor.execute_write(
+                graph.execute_write(
                     cs.CYPHER_CLEAR_UNRESOLVED_REFERENCES, {cs.KEY_QNS: cleared}
                 )
             for module_qn, names in pending:
-                self.ingestor.execute_write(
+                graph.execute_write(
                     cs.CYPHER_SET_UNRESOLVED_REFERENCES,
                     {cs.KEY_QN: module_qn, cs.CYPHER_PARAM_NAMES: names},
                 )
@@ -5378,10 +5413,11 @@ class GraphUpdater:
         return candidate
 
     def _foreign_member_keys(self, keys: list[str]) -> list[str]:
-        if not keys or not isinstance(self.ingestor, QueryProtocol):
+        graph = self._graph
+        if not keys or graph is None:
             return []
         try:
-            rows = self.ingestor.fetch_all(
+            rows = graph.fetch_all(
                 cs.CYPHER_FOREIGN_MEMBER_PATHS,
                 {
                     cs.CYPHER_PARAM_PATHS: keys,
@@ -5510,11 +5546,12 @@ class GraphUpdater:
 
     def _package_paths(self) -> set[str] | None:
         """Relative paths of this project's Package nodes, None if unreadable."""
-        if not isinstance(self.ingestor, QueryProtocol):
+        graph = self._graph
+        if graph is None:
             return set()
         try:
             # Scoped: every sync read every project's Packages (issue #2405).
-            rows = self.ingestor.fetch_all(
+            rows = graph.fetch_all(
                 cs.CYPHER_PROJECT_PACKAGE_PATHS,
                 {
                     cs.KEY_PROJECT_NAME: self.project_name,
@@ -5554,10 +5591,11 @@ class GraphUpdater:
         # deleted. Restoring the exact edges avoids re-resolving the callers,
         # whose resolution would diverge from a clean index (cgr resolution is
         # context-sensitive).
-        if not reindexed_keys or not isinstance(self.ingestor, QueryProtocol):
+        graph = self._graph
+        if not reindexed_keys or graph is None:
             return []
         try:
-            return self.ingestor.fetch_all(
+            return graph.fetch_all(
                 cs.CYPHER_INBOUND_EDGES, {cs.CYPHER_PARAM_PATHS: reindexed_keys}
             )
         except Exception:
@@ -5580,11 +5618,12 @@ class GraphUpdater:
         # observation lives only in the graph, so the delete would otherwise
         # take it for good (issue #2429).
         paths = sorted(set(keys))
-        if not paths or not isinstance(self.ingestor, QueryProtocol):
+        graph = self._graph
+        if not paths or graph is None:
             return []
         try:
             return capture_trace_edges(
-                self.ingestor, paths, self.project_name + cs.SEPARATOR_DOT
+                graph, paths, self.project_name + cs.SEPARATOR_DOT
             )
         except Exception:
             # The inbound capture's posture: a full build may go on over an
@@ -6373,8 +6412,9 @@ class GraphUpdater:
         DETACH) must be removed first; otherwise renamed-away Function/Class/
         Method nodes and their edges linger alongside the new ones.
         """
-        if isinstance(self.ingestor, QueryProtocol):
-            self.ingestor.execute_write(
+        graph = self._graph
+        if graph is not None:
+            graph.execute_write(
                 cs.CYPHER_DELETE_MODULE,
                 {
                     cs.KEY_PATH: file_key,
@@ -6457,7 +6497,8 @@ class GraphUpdater:
         the Project write that follows replaces the root that shows it
         (review of PR 2499). A write-only sink holds no project to own.
         """
-        if not isinstance(self.ingestor, QueryProtocol):
+        graph = self._graph
+        if graph is None:
             return None
         rows = self._graph_rows(
             cq.CYPHER_PROJECT_ROOT_PATH, {cs.KEY_PROJECT_NAME: self.project_name}
@@ -7803,6 +7844,7 @@ class GraphUpdater:
         self, deleted_keys: set[str], deleted_set: set[str]
     ) -> None:
         """Delete each reconciled file's state, subtree and File node."""
+        graph = self._graph
         if deleted_keys:
             logger.info(ls.INCREMENTAL_DELETED, count=len(deleted_keys))
             for deleted_key in deleted_keys:
@@ -7815,13 +7857,13 @@ class GraphUpdater:
                 if deleted_key not in deleted_set:
                     self.remove_file_from_state(deleted_path)
                     self._delete_module_entities(deleted_key)
-                if isinstance(self.ingestor, QueryProtocol):
+                if graph is not None:
                     # Keyed on the absolute path: a sibling project's File
                     # node can share the relative path (issue #897). The
                     # entry's own identity, as the File was indexed: a file
                     # replaced by a link resolves to the link's target, whose
                     # File this deleted instead (#2451 review).
-                    self.ingestor.execute_write(
+                    graph.execute_write(
                         cs.CYPHER_DELETE_FILE,
                         {cs.KEY_PATH: cached_file_identity_posix(deleted_path)},
                     )
@@ -8589,10 +8631,11 @@ class GraphUpdater:
         detected, and the whole fix was inert on the path it exists for
         (greptile-local, PR #1835).
         """
-        if not isinstance(self.ingestor, QueryProtocol):
+        graph = self._graph
+        if graph is None:
             return set()
         try:
-            rows = self.ingestor.fetch_all(
+            rows = graph.fetch_all(
                 cs.CYPHER_CONTAINER_KIND,
                 {cs.KEY_PATH: cached_resolve_posix(directory)},
             )
@@ -8753,10 +8796,11 @@ class GraphUpdater:
         configuration the whole scoped path already tolerates, and treating
         it as unknown aborted every re-ingest against one.
         """
-        if not isinstance(self.ingestor, QueryProtocol):
+        graph = self._graph
+        if graph is None:
             return set()
         try:
-            rows = self.ingestor.fetch_all(
+            rows = graph.fetch_all(
                 cs.CYPHER_CONTAINER_KIND,
                 {cs.KEY_PATH: cached_resolve_posix(directory)},
             )
@@ -8821,7 +8865,8 @@ class GraphUpdater:
         earned -- it walked a handful of files and cannot say what the project
         still holds.
         """
-        if not flipped_dirs or not isinstance(self.ingestor, QueryProtocol):
+        graph = self._graph
+        if not flipped_dirs or graph is None:
             return
         elements = self.factory.structure_processor.structural_elements
         for rel in sorted(flipped_dirs):
@@ -8836,7 +8881,7 @@ class GraphUpdater:
             stale = (
                 cs.CYPHER_DELETE_FOLDER if is_package_now else cs.CYPHER_DELETE_PACKAGE
             )
-            self.ingestor.execute_write(stale, {cs.KEY_PATH: absolute})
+            graph.execute_write(stale, {cs.KEY_PATH: absolute})
 
     def _reingest_dependents(
         self,
@@ -8985,6 +9030,7 @@ class GraphUpdater:
             # A pubspec's `name:` is what Dart `package:` imports resolve by.
             if path.name == cs.DEP_FILE_PUBSPEC:
                 import_processor.reset_dart_path_caches()
+        graph = self._graph
         for key, path in gone.items():
             self.remove_file_from_state(path)
             self._delete_module_entities(key)
@@ -8993,12 +9039,12 @@ class GraphUpdater:
                 import_processor.reset_julia_path_caches()
             if path.name == cs.DEP_FILE_PUBSPEC:
                 import_processor.reset_dart_path_caches()
-            if isinstance(self.ingestor, QueryProtocol):
+            if graph is not None:
                 # Keyed on the absolute path: a sibling project's File node
                 # can share the relative path (issue #897). The entry's own
                 # identity, as the File was indexed: a file replaced by a
                 # link resolves to the link's target (#2451 review).
-                self.ingestor.execute_write(
+                graph.execute_write(
                     cs.CYPHER_DELETE_FILE,
                     {cs.KEY_PATH: cached_file_identity_posix(path)},
                 )
@@ -9099,8 +9145,9 @@ class GraphUpdater:
         # cleanup but never settle one owed from elsewhere.
         self._record_exposes_cleanup(cleared_by_this_run=False)
         self._restore_inbound_edges(captured)
-        if isinstance(self.ingestor, QueryProtocol):
-            self.ingestor.execute_write(cs.CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES)
+        graph = self._graph
+        if graph is not None:
+            graph.execute_write(cs.CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES)
         # Flush FIRST: the re-parsed definitions are still buffered in the
         # ingestor here, and the grading statement compares a note against
         # its subject's current `anchor_hash` in the store. Graded before the
@@ -9480,7 +9527,8 @@ class GraphUpdater:
         and an unattached note is recoverable by the next run, so a failure
         here is logged rather than reported as a failed sync.
         """
-        if not isinstance(self.ingestor, QueryProtocol):
+        graph = self._graph
+        if graph is None:
             return
         try:
             # Only this project's definitions changed (issue #3236).
@@ -9488,24 +9536,24 @@ class GraphUpdater:
                 cs.KEY_PROJECT_NAME: self.project_name,
                 cs.KEY_PROJECT_PREFIX: f"{self.project_name}{cs.SEPARATOR_DOT}",
                 cs.KEY_LONGER_PROJECT_PREFIXES: list(
-                    projects_nested_under(self.ingestor.fetch_all, self.project_name)
+                    projects_nested_under(graph.fetch_all, self.project_name)
                 ),
             }
-            self.ingestor.execute_write(cq.CYPHER_REANCHOR_GLOSSES, scope)
+            graph.execute_write(cq.CYPHER_REANCHOR_GLOSSES, scope)
             # A note whose name did not come back is placed by content hash
             # (MOVED) or marked AMBIGUOUS / LOST. Before the mentions restore,
             # so a note that moved gets its MENTIONS edges back this run.
             repair_unanchored(
-                self.ingestor.fetch_all,
-                self.ingestor.execute_write,
+                graph.fetch_all,
+                graph.execute_write,
                 self._read_project_source,
                 project_name=self.project_name,
             )
-            self.ingestor.execute_write(cq.CYPHER_REANCHOR_GLOSS_MENTIONS, scope)
+            graph.execute_write(cq.CYPHER_REANCHOR_GLOSS_MENTIONS, scope)
             # Then grade: the subject's `anchor_hash` was just re-emitted by
             # the parse, so comparing it with the note's recorded hash here
             # is what makes a note about changed code read STALE.
-            self.ingestor.execute_write(cq.CYPHER_GRADE_GLOSS_ANCHORS, scope)
+            graph.execute_write(cq.CYPHER_GRADE_GLOSS_ANCHORS, scope)
         except Exception as error:  # noqa: BLE001 -- see docstring
             logger.warning(ls.GLOSS_REANCHOR_FAILED.format(error=error))
 
@@ -9531,7 +9579,8 @@ class GraphUpdater:
 
     def _prune_orphan_nodes(self) -> None:
         """Remove graph nodes whose files/folders no longer exist on disk."""
-        if not isinstance(self.ingestor, QueryProtocol):
+        graph = self._graph
+        if graph is None:
             return
         if self._single_file is not None:
             # A single-file run walked one file and cannot say what the
@@ -9580,8 +9629,8 @@ class GraphUpdater:
             # re-ingests its target's entities, which is exactly what strands
             # an ExternalModule whose import was removed or a Resource whose
             # endpoint was (#1756 review).
-            self.ingestor.execute_write(cs.CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES)
-            prune_unanchored_resources(self.ingestor)
+            graph.execute_write(cs.CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES)
+            prune_unanchored_resources(graph)
             return
 
         logger.info(ls.PRUNE_START)
@@ -9631,7 +9680,7 @@ class GraphUpdater:
         read_failed = False
         for query_all, scope, delete_query, label in prune_specs:
             try:
-                rows = self.ingestor.fetch_all(query_all, scope)
+                rows = graph.fetch_all(query_all, scope)
             except Exception as exc:
                 # A graph that cannot be read cannot be pruned safely; the
                 # next healthy run sweeps whatever this one left behind.
@@ -9639,9 +9688,7 @@ class GraphUpdater:
                 read_failed = True
                 continue
             orphans = self._orphan_rows(rows, label, repo_abs, packages_now, tally)
-            total_pruned += self._delete_orphans(
-                self.ingestor, orphans, label, delete_query
-            )
+            total_pruned += self._delete_orphans(graph, orphans, label, delete_query)
 
         # Rows left for the next healthy run are only swept by one that
         # actually prunes, so owe it through a marker the in-sync fast path
@@ -9657,11 +9704,11 @@ class GraphUpdater:
 
         # Drop external import-target modules that no module imports anymore,
         # e.g. an imported name renamed/removed on an incremental rebuild.
-        self.ingestor.execute_write(cs.CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES)
+        graph.execute_write(cs.CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES)
 
         # Drop shared Resource nodes whose component no longer reaches any
         # code node, e.g. an endpoint whose route changed on a rebuild.
-        prune_unanchored_resources(self.ingestor)
+        prune_unanchored_resources(graph)
 
         if tally.registry_skipped:
             logger.warning(
@@ -9862,7 +9909,8 @@ class GraphUpdater:
         project's File used to be a candidate, each vetoed after its own
         round trip: 5,697 of them for a one-line edit (issue #2405).
         """
-        if not isinstance(self.ingestor, QueryProtocol):
+        graph = self._graph
+        if graph is None:
             return 0
         repo_abs = self.repo_path.resolve().as_posix()
         try:
@@ -9897,7 +9945,7 @@ class GraphUpdater:
             if abs_path not in owned:
                 continue
             logger.debug(ls.PRUNE_DELETING, label="File", path=path)
-            self.ingestor.execute_write(cs.CYPHER_DELETE_FILE, {cs.KEY_PATH: abs_path})
+            graph.execute_write(cs.CYPHER_DELETE_FILE, {cs.KEY_PATH: abs_path})
             swept += 1
         if swept:
             logger.info(ls.PRUNE_LEGACY_IDENTITIES, count=swept)
@@ -9986,9 +10034,8 @@ class GraphUpdater:
         # Only a run that embeds can pay what an earlier one owes, so a run
         # without embeddings keeps the fast path and leaves the marker for
         # the next run that has them.
-        return self._embeddings_off_reason() is None and isinstance(
-            self.ingestor, QueryProtocol
-        )
+        graph = self._graph
+        return self._embeddings_off_reason() is None and graph is not None
 
     def _owes_embeddings(self) -> bool:
         if _embeddings_marker(self.prepared_state_dir, self.project_name).exists():
@@ -10071,7 +10118,8 @@ class GraphUpdater:
             logger.info(off_reason)
             return
 
-        if not isinstance(self.ingestor, QueryProtocol):
+        graph = self._graph
+        if graph is None:
             logger.info(ls.INGESTOR_NO_QUERY)
             return
 
@@ -10091,7 +10139,7 @@ class GraphUpdater:
             nested = self._nested_project_names()
             results = [
                 row
-                for row in self.ingestor.fetch_all(
+                for row in graph.fetch_all(
                     cs.CYPHER_QUERY_EMBEDDINGS, {"project_name": self.project_name}
                 )
                 if not _under_any_project(row.get(cs.KEY_QUALIFIED_NAME), nested)
