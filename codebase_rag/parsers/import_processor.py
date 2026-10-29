@@ -93,6 +93,7 @@ from .utils import (
     node_site_properties,
     safe_decode_text,
     safe_decode_with_fallback,
+    shared_or_new,
     sorted_captures,
 )
 
@@ -1219,8 +1220,8 @@ class ImportProcessor:
         # imports are parsed. A JS/TS relative specifier resolves against the
         # importer's DIRECTORY, which only the file path spells reliably: a
         # dotted stem (`url.test.ts`) keeps its dots in the qn (issue #2565).
-        self.module_qn_to_file_path: dict[str, Path] = (
-            module_qn_to_file_path if module_qn_to_file_path is not None else {}
+        self.module_qn_to_file_path: dict[str, Path] = shared_or_new(
+            module_qn_to_file_path, dict
         )
         self.import_mapping: dict[str, dict[str, str]] = {}
         # `using static N.T;` brings T's MEMBERS into bare-call scope, which

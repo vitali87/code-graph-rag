@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 from ... import constants as cs
 from ...capture import CaptureSelection
 from ...services import IngestorProtocol
+from ...types_defs import FunctionLocations
 from ..call_resolver import CallResolver
 from ..dart.utils import dart_body_node, dart_call_name, dart_member_read_name
 from ..import_processor import ImportProcessor
@@ -82,6 +83,7 @@ from ..utils import (
     rust_positional_parameter_slots,
     safe_decode_text,
     scala_positional_parameter_slots,
+    shared_or_new,
 )
 from .constants import (
     KEY_KIND,
@@ -890,7 +892,7 @@ class FlowProcessor:
         # uses the SAME (suffix-aware) qn the definition pass assigned, matching the
         # qn its own walk is keyed under; without it a duplicate-named nested def
         # would record under a reconstructed unsuffixed qn that never composes.
-        self._function_locations = function_locations or {}
+        self._function_locations = shared_or_new(function_locations, FunctionLocations)
         self._enabled = selection.rel_enabled(cs.RelationshipType.FLOWS_TO)
         # Per-function return-taint SUMMARY collected during the walk: caller QN
         # -> the Taint it returns (resolved origins + pending callee QNs whose

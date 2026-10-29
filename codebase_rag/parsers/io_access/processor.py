@@ -12,7 +12,7 @@ from ...capture import CaptureSelection
 from ...services import IngestorProtocol
 from ...types_defs import ASTCacheProtocol
 from ..import_processor import ImportProcessor
-from ..utils import cpp_declarator_name, safe_decode_text
+from ..utils import cpp_declarator_name, safe_decode_text, shared_or_new
 from .constants import (
     DYNAMIC_TARGET,
     HTTP_METHOD_OPTION_KEY,
@@ -349,12 +349,14 @@ class IOAccessProcessor:
         self._enabled = selection.io_enabled
         # Sibling-file lookups for the package-level field map: Go splits a
         # struct declaration and its method files across one directory.
-        self._module_paths = module_paths or {}
+        self._module_paths = shared_or_new(module_paths, dict)
         self._ast_cache = ast_cache
         # Go module qn -> `package` clause; membership is (directory, clause),
         # so an external `package svc_test` file shares a directory with
         # `package svc` production files without sharing their fields.
-        self._go_package_names: Mapping[str, str] = go_package_names or {}
+        self._go_package_names: Mapping[str, str] = shared_or_new(
+            go_package_names, dict
+        )
         # (package_qn, sorted root ids of every participating file) ->
         # {field name: service stem} for connect-client-typed struct fields
         # (issue #912). Fingerprinting EVERY root id keys out stale entries

@@ -25,6 +25,7 @@ from ..services import IngestorProtocol
 from ..types_defs import (
     ASTCacheProtocol,
     FunctionLocation,
+    FunctionLocations,
     FunctionRegistryTrieProtocol,
     FunctionSpanKey,
     LanguageQueries,
@@ -84,6 +85,7 @@ from .utils import (
     node_site_properties,
     python_parameter_names,
     safe_decode_text,
+    shared_or_new,
     sorted_captures,
     written_simple_name,
 )
@@ -2203,21 +2205,21 @@ class CallProcessor:
         # Dispatchers that name their callee in a string argument, declared in
         # the repository's .cgr.toml. Empty unless the project opts in.
         self._string_call_specs = load_string_call_specs(repo_path)
-        self.module_qn_to_file_path = module_qn_to_file_path or {}
+        self.module_qn_to_file_path = shared_or_new(module_qn_to_file_path, dict)
         self._path_to_module_qn: dict[Path, str] | None = None
         # Package-prefix index over module_qn_to_file_path (issue #930),
         # rebuilt lazily whenever the underlying map grows.
         self._package_index: dict[Path, list[str]] = {}
         self._package_index_size = -1
-        self._go_package_names: Mapping[str, str] = go_package_names or {}
+        self._go_package_names: Mapping[str, str] = shared_or_new(
+            go_package_names, dict
+        )
         # The definition pass fills this map after the processor exists, so
         # it is held as given, never replaced by an empty copy.
-        self._sql_sources: Mapping[Path, bytes] = (
-            sql_sources if sql_sources is not None else {}
-        )
-        self.cpp_out_of_class_methods = cpp_out_of_class_methods or {}
-        self.function_locations = function_locations or {}
-        self.macro_qns = macro_qns if macro_qns is not None else set()
+        self._sql_sources: Mapping[Path, bytes] = shared_or_new(sql_sources, dict)
+        self.cpp_out_of_class_methods = shared_or_new(cpp_out_of_class_methods, dict)
+        self.function_locations = shared_or_new(function_locations, FunctionLocations)
+        self.macro_qns = shared_or_new(macro_qns, set)
         # Per-module map of identifier -> introductions as (function node,
         # container) for the #988 lexical receiver resolution; built once per
         # file on first use.

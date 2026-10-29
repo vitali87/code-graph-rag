@@ -31,17 +31,10 @@ from .py.ast_analyzer import clear_scope_facts
 from .rs import RustTypeInferenceEngine
 from .rs import utils as rs_utils
 from .rs.type_inference import is_constructor_guess
-from .utils import follow_reexports
+from .utils import follow_reexports, shared_or_new
 
 if TYPE_CHECKING:
     from ..types_defs import ASTCacheProtocol
-
-
-def _shared[T](value: T | None, empty: Callable[[], T]) -> T:
-    # Keep the caller's container (a shared reference populated after
-    # construction); only a missing one gets a fresh empty container. `or`
-    # would swap an empty-but-shared dict for a new one and lose later writes.
-    return value if value is not None else empty()
 
 
 class TypeInferenceEngine:
@@ -138,31 +131,31 @@ class TypeInferenceEngine:
         # DefinitionProcessor's map, empty at construction and populated later during
         # ingestion. `or {}` would swap it for a new dict and silently lose every
         # field type written afterward.
-        self.class_field_types = _shared(class_field_types, dict)
+        self.class_field_types = shared_or_new(class_field_types, dict)
         # Shared reference (as with class_field_types): Rust guard-field inner types
         # (`Shared.state` -> State for a `Mutex<State>` field), applied only at a
         # guard-accessor hop so a direct wrapper call isn't mis-resolved to it.
-        self.class_field_guard_inner = _shared(class_field_guard_inner, dict)
+        self.class_field_guard_inner = shared_or_new(class_field_guard_inner, dict)
         # Shared reference (as with class_field_types): Rust sequence-field
         # element types (`Pool.workers` -> Worker for a `Vec<Worker>` field),
         # applied only when an iterator adaptor's closure parameter binds the
         # element (issue #1045).
-        self.class_field_element_types = _shared(class_field_element_types, dict)
+        self.class_field_element_types = shared_or_new(class_field_element_types, dict)
         # Shared reference (as with class_field_types): DefinitionProcessor's
         # func_qn -> return-type map, populated during ingestion and read by the
         # resolver's chained-call path.
-        self.method_return_types = _shared(method_return_types, dict)
+        self.method_return_types = shared_or_new(method_return_types, dict)
         # Shared reference (as with class_field_types): Go free-fn qn ->
         # FIRST return type, read only by the single-segment binding path.
-        self.go_function_return_types = _shared(go_function_return_types, dict)
+        self.go_function_return_types = shared_or_new(go_function_return_types, dict)
         # Shared reference (as with class_field_types): each Go file module's
         # `package` clause, recorded as the file is parsed. A directory can
         # hold two packages, `p` and the external test package `p_test`, so
         # the free-function index keys by both (#2616 review).
-        self.go_package_names = _shared(go_package_names, dict)
+        self.go_package_names = shared_or_new(go_package_names, dict)
         # Go interface -> the declarations of its name each build makes
         # (shared, filled by the interface link before any call is typed).
-        self.go_declaration_variants = _shared(go_declaration_variants, dict)
+        self.go_declaration_variants = shared_or_new(go_declaration_variants, dict)
         # What each compiler frontend supplied this run, by language (the
         # definition processor's store): read on use by the per-language
         # resolvers' semantic paths and the C# flow walk.
@@ -179,20 +172,22 @@ class TypeInferenceEngine:
         # Shared reference (as with class_field_types): C# partial-class part
         # groups, populated during ingestion and read by the C# resolver to
         # span all parts of a split type.
-        self.csharp_partial_groups = _shared(csharp_partial_groups, dict)
+        self.csharp_partial_groups = shared_or_new(csharp_partial_groups, dict)
         # Shared reference (as with class_field_types): C# extension-method
         # index, populated during ingestion and read by the C# resolver's
         # receiver-binding fallback.
-        self.csharp_extension_methods = _shared(csharp_extension_methods, dict)
+        self.csharp_extension_methods = shared_or_new(csharp_extension_methods, dict)
         # Shared reference (as with class_field_types): C# local-function
         # host/arity index, populated during ingestion and read by the C#
         # resolver's bare-name path.
-        self.csharp_local_functions = _shared(csharp_local_functions, dict)
+        self.csharp_local_functions = shared_or_new(csharp_local_functions, dict)
         # Shared reference (as with class_field_types): generic-method qn
         # set, populated during ingestion, read by C# bare-call dispatch.
-        self.csharp_generic_methods = _shared(csharp_generic_methods, set)
-        self.csharp_call_shapes = _shared(csharp_call_shapes, dict)
-        self.csharp_class_generic_arity = _shared(csharp_class_generic_arity, dict)
+        self.csharp_generic_methods = shared_or_new(csharp_generic_methods, set)
+        self.csharp_call_shapes = shared_or_new(csharp_call_shapes, dict)
+        self.csharp_class_generic_arity = shared_or_new(
+            csharp_class_generic_arity, dict
+        )
         # The module qn of the file that DECLARED each class, recorded at
         # ingest because it cannot be recovered from the class qn: a C#
         # class qn embeds its namespace, so `proj/Core.cs` declaring
@@ -206,21 +201,23 @@ class TypeInferenceEngine:
         # `unexpected keyword argument` inside the call pass, where the
         # exception was SWALLOWED -- the arity map is populated earlier, so a
         # probe checking only that map still looked correct (#1769 review).
-        self.csharp_class_owner_module = _shared(csharp_class_owner_module, dict)
-        self.csharp_class_namespaced = _shared(csharp_class_namespaced, dict)
-        self.csharp_namespaced_qns = _shared(csharp_namespaced_qns, dict)
-        self.csharp_method_return_types = _shared(csharp_method_return_types, dict)
-        self.function_locations = _shared(function_locations, dict)
+        self.csharp_class_owner_module = shared_or_new(csharp_class_owner_module, dict)
+        self.csharp_class_namespaced = shared_or_new(csharp_class_namespaced, dict)
+        self.csharp_namespaced_qns = shared_or_new(csharp_namespaced_qns, dict)
+        self.csharp_method_return_types = shared_or_new(
+            csharp_method_return_types, dict
+        )
+        self.function_locations = shared_or_new(function_locations, dict)
         # Shared reference (as with class_field_types): Dart `extends Base<T>`
         # type arguments per class qn, read by the resolver's undeclared
         # receiver fallback (#875).
-        self.dart_extends_type_args = _shared(dart_extends_type_args, dict)
+        self.dart_extends_type_args = shared_or_new(dart_extends_type_args, dict)
         # Constructor qns, read by the call pass to record a named
         # constructor call as a construction (#2012).
-        self.dart_constructor_qns = _shared(dart_constructor_qns, set)
+        self.dart_constructor_qns = shared_or_new(dart_constructor_qns, set)
         # Extension qn -> its `on` type as written, read by the resolver when
         # a typed receiver's class lacks the member (#2482).
-        self.dart_extension_on_types = _shared(dart_extension_on_types, dict)
+        self.dart_extension_on_types = shared_or_new(dart_extension_on_types, dict)
 
         self._java_type_inference: JavaTypeInferenceEngine | None = None
         self._csharp_type_inference: CSharpTypeInferenceEngine | None = None

@@ -32,7 +32,7 @@ from .py import resolve_class_name
 from .rs import utils as rs_utils
 from .semantic_call_join import call_site_key, declared_location
 from .type_inference import TypeInferenceEngine
-from .utils import safe_decode_text
+from .utils import safe_decode_text, shared_or_new
 
 _SEPARATOR_PATTERN = re.compile(r"[.:]|::")
 # One initializer block's scope record, as held per module by
@@ -380,15 +380,11 @@ class CallResolver:
         # not, and neither is registered under a type label when it is a
         # primitive or an unindexed foreign type, so absence-of-a-type-label
         # cannot tell the two apart (issue #1093 review).
-        self.declared_module_qns = (
-            declared_module_qns if declared_module_qns is not None else set()
-        )
+        self.declared_module_qns = shared_or_new(declared_module_qns, set)
         # {interface_qn: [implementer_qns]} (shared ref, populated during
         # ingestion). Used to redirect an interface-typed call to the single
         # concrete implementer's method (call-graph accuracy; single-impl only).
-        self.interface_implementers = (
-            interface_implementers if interface_implementers is not None else {}
-        )
+        self.interface_implementers = shared_or_new(interface_implementers, dict)
         # The pairs of implementers an incremental run did not re-parse, read
         # back from the graph (shared ref). A sole implementer is one across
         # both, or re-parsing only a caller loses its edge (issue #2403).
@@ -419,7 +415,7 @@ class CallResolver:
         self._interface_impl_cache: dict[str, str] | None = None
         # C++ typedef/using alias -> underlying bare type, consulted when a
         # receiver type name is mapped to a class (empty for other languages).
-        self.type_aliases = type_aliases if type_aliases is not None else {}
+        self.type_aliases = shared_or_new(type_aliases, dict)
         self._simple_resolution_cache: dict[
             tuple[str, str, bool], tuple[str, str] | None
         ] = {}
@@ -465,15 +461,11 @@ class CallResolver:
         # {Rust function qn: containing module qn}, recorded from the AST during
         # ingestion (shared ref). The authority on how many levels a `super::`
         # written inside it climbs (issue #1086).
-        self.rust_function_modules = (
-            rust_function_modules if rust_function_modules is not None else {}
-        )
+        self.rust_function_modules = shared_or_new(rust_function_modules, dict)
         # {Go module qn: its `package` clause} (shared ref). A directory is not
         # a package: `package p_test` and `//go:build ignore` generators sit
         # beside `package p`, so package scope is (directory, clause).
-        self.go_package_names: Mapping[str, str] = (
-            go_package_names if go_package_names is not None else {}
-        )
+        self.go_package_names: Mapping[str, str] = shared_or_new(go_package_names, dict)
 
     def record_ctor_params(self, class_qn: str, params: tuple[str, ...]) -> None:
         self._ctor_params[class_qn] = params

@@ -27,6 +27,17 @@ if TYPE_CHECKING:
     from ..types_defs import FunctionRegistryTrieProtocol
 
 
+def shared_or_new[T](value: T | None, empty: Callable[[], T]) -> T:
+    """The caller's container, or a fresh empty one when none was given.
+
+    Passes share their index maps by reference and fill them after one
+    another is built, so the given container must be kept even when it is
+    empty: `value or {}` would swap an empty-but-shared map for a new one and
+    lose every later write.
+    """
+    return value if value is not None else empty()
+
+
 def follow_reexports(
     qn: str,
     import_mapping: dict[str, dict[str, str]],
