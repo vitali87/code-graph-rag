@@ -285,6 +285,7 @@ class GoInterfaceMixin:
     import_processor: ImportProcessor
     module_qn_to_file_path: dict[str, Path]
     facts: DefinitionFacts
+    pending_endpoints: list[tuple[cs.NodeLabel, str, list[str], str | None]]
     pending_type_facts: list[PendingTypeFact]
     pending_parameter_types: list[PendingParameterType]
     # Go method qn (receiver methods and interface method specs) -> its
@@ -337,19 +338,13 @@ class GoInterfaceMixin:
         self.go_interfaces_parsed[interface_qn] = module_qn
         for method in go_ifaces.interface_methods(interface):
             method_qn = ingest_method(
+                self,
                 method,
                 interface_qn,
                 cs.NodeLabel.INTERFACE,
-                self.ingestor,
-                self.function_registry,
-                self.simple_name_lookup,
-                self._get_docstring,
                 cs.SupportedLanguage.GO,
                 file_path=file_path,
-                repo_path=self.repo_path,
                 module_qn=module_qn,
-                type_fact_sink=self.pending_type_facts,
-                parameter_type_sink=self.pending_parameter_types,
             )
             if method_qn is not None:
                 self.go_methods[method_qn] = go_ifaces.GoMethodSpec(

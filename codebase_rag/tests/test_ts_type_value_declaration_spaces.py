@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -714,15 +715,18 @@ class TestMethodContainerOnATwin:
         member = _first_of_type(tree.root_node, cs.TS_METHOD_SIGNATURE)
         assert member is not None
         ingestor = MagicMock()
+        host = SimpleNamespace(
+            ingestor=ingestor,
+            function_registry=registry,
+            simple_name_lookup=defaultdict(set),
+            repo_path=None,
+            pending_endpoints=[],
+            pending_type_facts=[],
+            pending_parameter_types=[],
+            _get_docstring=lambda _node, _lang: None,
+        )
         method_ingest.ingest_method(
-            member,
-            container_qn,
-            label,
-            ingestor,
-            registry,
-            defaultdict(set),
-            lambda _node, _lang: None,
-            cs.SupportedLanguage.TS,
+            host, member, container_qn, label, cs.SupportedLanguage.TS
         )
         return [
             c.args[0]
@@ -777,6 +781,7 @@ def test_the_class_pass_hands_members_their_owners_declared_label(
     real_ingest_method = class_mixin.ingest_method
 
     def recording_ingest_method(
+        host: object,
         method_node: Node,
         container_qn: str,
         container_type: cs.NodeLabel,
@@ -785,7 +790,7 @@ def test_the_class_pass_hands_members_their_owners_declared_label(
     ) -> str | None:
         seen[container_qn] = container_type
         return real_ingest_method(
-            method_node, container_qn, container_type, *args, **kwargs
+            host, method_node, container_qn, container_type, *args, **kwargs
         )
 
     monkeypatch.setattr(class_mixin, "ingest_method", recording_ingest_method)

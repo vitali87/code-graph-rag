@@ -2048,25 +2048,18 @@ class ClassIngestMixin:
             if _skip_method(method_node, class_node, body_node, lang_config):
                 continue
             ingested_qn = ingest_method(
+                self,
                 method_node,
                 class_qn,
                 cs.NodeLabel.CLASS,
-                self.ingestor,
-                self.function_registry,
-                self.simple_name_lookup,
-                self._get_docstring,
                 language,
                 file_path=file_path,
-                repo_path=self.repo_path,
                 # The impl target may be a primitive (`impl From<Foo> for u8`)
                 # or a type registered later in the pass; defer the containment
                 # edge so it verifies against the registry (module fallback for
                 # primitives) instead of dangling on a phantom Class qn.
                 defer_containment=self._deferred_parent_links,
                 module_qn=owner_module_qn,
-                pending_endpoints=self.pending_endpoints,
-                type_fact_sink=self.pending_type_facts,
-                parameter_type_sink=self.pending_parameter_types,
             )
             self._record_rust_impl_method(
                 method_node,
@@ -2252,26 +2245,17 @@ class ClassIngestMixin:
             )
 
             ingested_qn = ingest_method(
+                self,
                 method_node,
                 class_qn,
-                # The declared label, not just Class: a TS interface sharing
-                # its name with a value keeps its members (issue #2520).
                 container_label,
-                self.ingestor,
-                self.function_registry,
-                self.simple_name_lookup,
-                self._get_docstring,
                 language,
                 lang_queries=lang_queries,
                 method_qualified_name=method_qualified_name,
                 file_path=file_path,
-                repo_path=self.repo_path,
                 module_qn=module_qn,
                 external_override_names=external_override_names,
                 annotated_override_sink=annotated_override_sink,
-                pending_endpoints=self.pending_endpoints,
-                type_fact_sink=self.pending_type_facts,
-                parameter_type_sink=self.pending_parameter_types,
                 member_aliases=member_aliases.get(method_node.id, ()),
             )
             if ingested_qn is not None:

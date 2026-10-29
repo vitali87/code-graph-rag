@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, NamedTuple, Protocol
 
 from loguru import logger
 from tree_sitter import Node
@@ -24,10 +24,19 @@ from ..types_defs import (
     SimpleNameLookup,
 )
 from ..utils.path_utils import cached_relative_path, cached_resolve_posix
+from . import export_detection
 from .anchor_hash import anchor_hash_props
 from .ast_fingerprint import fingerprint_props
+from .cpp import overloads as cpp_overloads
+from .cpp import utils as cpp_utils
+from .csharp import utils as csharp_utils
+from .dart import utils as dart_utils
 from .endpoints import emit_endpoints, queue_endpoints
+from .java import utils as java_utils
 from .node_text import safe_decode_text
+from .parameter_nodes import emit_declared_parameters
+from .positional_params import declared_positional_params
+from .type_facts import extract_type_facts, queue_type_facts, type_facts_props
 from .utils import (
     _decorator_tail_names,
     _is_abstract_member,
@@ -41,6 +50,26 @@ from .utils import (
 
 if TYPE_CHECKING:
     from ..services import IngestorProtocol
+    from ..types_defs import PendingTypeFact
+    from .parameter_nodes import PendingParameterType
+
+
+class MethodIngestHost(Protocol):
+    """What `ingest_method` reads from the definition pass that calls it: the
+    graph and registries a method is written to, and the queues its endpoint,
+    type and parameter facts wait in until every type is registered."""
+
+    ingestor: IngestorProtocol
+    function_registry: FunctionRegistryTrieProtocol
+    simple_name_lookup: SimpleNameLookup
+    repo_path: Path
+    pending_endpoints: list[tuple[cs.NodeLabel, str, list[str], str | None]]
+    pending_type_facts: list[PendingTypeFact]
+    pending_parameter_types: list[PendingParameterType]
+
+    def _get_docstring(
+        self, node: ASTNode, language: cs.SupportedLanguage
+    ) -> str | None: ...
 
 
 def _member_name_start_point(node: Node) -> tuple[int, int]:
@@ -55,8 +84,6 @@ def _member_name_start_point(node: Node) -> tuple[int, int]:
 
 def _method_end_line(node: ASTNode, language: cs.SupportedLanguage | None) -> int:
     if language == cs.SupportedLanguage.DART:
-        from .dart import utils as dart_utils
-
         return dart_utils.definition_end_point(node)[0] + 1
     return node.end_point[0] + 1
 
@@ -65,8 +92,6 @@ def _resolve_method_name(
     method_node: ASTNode, language: cs.SupportedLanguage, skip_cpp_artifact_check: bool
 ) -> str | None:
     if language == cs.SupportedLanguage.CPP:
-        from .cpp import utils as cpp_utils
-
         # Inside an intact class body a macro invocation parsed as a type-less
         # member (`FMT_CATCH(...) {}`) can never be a ctor of another class, so
         # the shape check alone is decisive here. skip_cpp_artifact_check: the
@@ -81,13 +106,11 @@ def _resolve_method_name(
         # Operators expose no `name` field (they would be dropped) and a
         # destructor's `name` field collides with the constructor; synthesize
         # the leaf so both register with the same name the FQN walk uses.
-        from .csharp import utils as csharp_utils
 
         return csharp_utils.synthesize_method_name(method_node) or None
     if language == cs.SupportedLanguage.DART:
         # Constructors/factories expose no `name` field; take the last bare
         # identifier (`factory C.empty` -> `empty`) so they are not dropped.
-        from .dart import utils as dart_utils
 
         return dart_utils.get_name(method_node) or None
     if (method_name_node := method_node.child_by_field_name(cs.FIELD_NAME)) is None:
@@ -106,7 +129,6 @@ def _method_start_point(
     if language == cs.SupportedLanguage.CSHARP:
         # Skip a leading `#if [Attr] #endif` directive so the start line is the
         # conditional attribute, not the `#if` line (matches Roslyn's span).
-        from .csharp import utils as csharp_utils
 
         return csharp_utils.definition_start_point(method_node)
     return method_node.start_point[0] + 1, method_node.start_point[1]
@@ -213,11 +235,9 @@ def _register_cpp_member_qn(
     # `@line` dedup would split one member in two; the signature keeps one
     # node per overload instead (issue #2455). Without a readable parameter
     # list the plain name stands, as it did for every member before.
-    # Local import: cpp.overloads imports this module for its decode helper.
-    from .cpp.overloads import cpp_overload_signature, declared_in_class_body
 
-    declared = declared_in_class_body(method_node)
-    signature = cpp_overload_signature(method_node)
+    declared = cpp_overloads.declared_in_class_body(method_node)
+    signature = cpp_overloads.cpp_overload_signature(method_node)
     if signature is None:
         return _CppMember(natural_qn, None, declared)
     qualified_name = function_registry.register_overload_qn(
@@ -304,8 +324,6 @@ def _method_positional_params_props(
         return {
             cs.KEY_POSITIONAL_PARAMS: python_positional_parameter_names(method_node)
         }
-    # Local import: positional_params imports this module for its decoder.
-    from .positional_params import declared_positional_params
 
     declared = declared_positional_params(method_node, language)
     return {} if declared is None else {cs.KEY_POSITIONAL_PARAMS: declared}
@@ -316,42 +334,38 @@ def _language_method_props(
 ) -> PropertyDict:
     """The Method properties only one language records."""
     if language == cs.SupportedLanguage.CSHARP:
-        # Local import: the C# helpers import this module.
-        from .csharp import utils as csharp_utils
-
         return csharp_utils.extension_method_props(method_node)
     if language == cs.SupportedLanguage.JAVA:
-        # Local import: the Java helpers import this module.
-        from .java import utils as java_utils
-
         if java_utils.is_main_declaration(method_node):
             return {cs.KEY_IS_PROGRAM_MAIN: True}
     return {}
 
 
 def ingest_method(
+    host: MethodIngestHost,
     method_node: ASTNode,
     container_qn: str,
     container_type: cs.NodeLabel,
-    ingestor: IngestorProtocol,
-    function_registry: FunctionRegistryTrieProtocol,
-    simple_name_lookup: SimpleNameLookup,
-    get_docstring_func: Callable[[ASTNode, cs.SupportedLanguage], str | None],
     language: cs.SupportedLanguage,
+    *,
     lang_queries: LanguageQueries | None = None,
     method_qualified_name: str | None = None,
     file_path: Path | None = None,
-    repo_path: Path | None = None,
     defer_containment: list[DeferredParentLink] | None = None,
     module_qn: str | None = None,
     external_override_names: frozenset[str] = frozenset(),
     annotated_override_sink: dict[str, list[tuple[str, str]]] | None = None,
     skip_cpp_artifact_check: bool = False,
-    pending_endpoints: list | None = None,
-    type_fact_sink: list | None = None,
-    parameter_type_sink: list | None = None,
     member_aliases: tuple[str, ...] = (),
 ) -> str | None:
+    ingestor = host.ingestor
+    function_registry = host.function_registry
+    simple_name_lookup = host.simple_name_lookup
+    get_docstring_func = host._get_docstring
+    repo_path = host.repo_path
+    pending_endpoints = host.pending_endpoints
+    type_fact_sink = host.pending_type_facts
+    parameter_type_sink = host.pending_parameter_types
     # Returns the registered method qn (post register_unique_qn, so with any
     # @line dedup suffix) so a caller can wire further edges to the exact node,
     # e.g. an anonymous-class override method's OVERRIDES edge to its base. Returns
@@ -384,9 +398,6 @@ def ingest_method(
             method_node, lang_queries
         )
 
-    # Local import breaks the export_detection -> cpp.utils -> utils cycle.
-    from . import export_detection
-
     method_props: PropertyDict = {
         cs.KEY_QUALIFIED_NAME: method_qn,
         cs.KEY_NAME: method_name,
@@ -411,8 +422,6 @@ def ingest_method(
         method_props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
     method_props.update(_cpp_member_props(cpp_member))
     method_props.update(_method_positional_params_props(method_node, language))
-    # Local import: type_facts imports this module for safe_decode_with_fallback.
-    from .type_facts import extract_type_facts, queue_type_facts, type_facts_props
 
     type_facts = extract_type_facts(method_node, language)
     method_props.update(type_facts_props(type_facts))
@@ -451,10 +460,7 @@ def ingest_method(
     ingestor.ensure_node_batch(cs.NodeLabel.METHOD, method_props)
     # AFTER the Method node is queued: a batch flush writes nodes before
     # relationships, and a HAS_PARAMETER whose owner is still pending would
-    # match nothing and be dropped. Local import for the same reason as
-    # type_facts above.
-    from .parameter_nodes import emit_declared_parameters
-
+    # match nothing and be dropped.
     emit_declared_parameters(
         ingestor,
         parameter_type_sink,
@@ -466,22 +472,14 @@ def ingest_method(
         method_props,
         has_receiver=not is_static_decorator(decorators),
     )
-    if pending_endpoints is not None:
-        # Deferred so router mount prefixes can resolve after Pass 2 (#877).
-        queue_endpoints(
-            pending_endpoints,
-            cs.NodeLabel.METHOD,
-            method_qn,
-            method_props.get(cs.KEY_DECORATORS),
-            module_qn,
-        )
-    else:
-        emit_endpoints(
-            ingestor,
-            cs.NodeLabel.METHOD,
-            method_qn,
-            method_props.get(cs.KEY_DECORATORS),
-        )
+    # Deferred so router mount prefixes can resolve after Pass 2 (#877).
+    queue_endpoints(
+        pending_endpoints,
+        cs.NodeLabel.METHOD,
+        method_qn,
+        method_props.get(cs.KEY_DECORATORS),
+        module_qn,
+    )
     function_registry[method_qn] = cs.NodeLabel.METHOD
     if is_property:
         function_registry.mark_property(method_qn)
@@ -529,9 +527,6 @@ def module_function_props(
     repo_path: Path | None,
 ) -> PropertyDict:
     """Standard Function node properties for module-scoped JS/TS functions."""
-    # Lazy import: export_detection reaches back into this module through
-    # cpp.utils, so a top-level import would be circular.
-    from . import export_detection
 
     props: PropertyDict = {
         cs.KEY_QUALIFIED_NAME: function_qn,
@@ -555,7 +550,6 @@ def module_function_props(
         props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
     # Local import: positional_params imports this module for its decoder.
     # One reader serves both grammars, whose parameter node types differ.
-    from .positional_params import declared_positional_params
 
     declared = declared_positional_params(function_node, cs.SupportedLanguage.JS)
     if declared is not None:

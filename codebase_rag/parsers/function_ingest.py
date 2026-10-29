@@ -823,17 +823,14 @@ class FunctionIngestMixin:
         lang_queries: LanguageQueries | None,
     ) -> None:
         ingested_qn = ingest_method(
-            method_node=func_node,
-            container_qn=class_qn,
-            container_type=cs.NodeLabel.CLASS,
-            ingestor=self.ingestor,
-            function_registry=self.function_registry,
-            simple_name_lookup=self.simple_name_lookup,
-            get_docstring_func=self._get_docstring,
-            language=cs.SupportedLanguage.CPP,
+            self,
+            func_node,
+            class_qn,
+            cs.NodeLabel.CLASS,
+            cs.SupportedLanguage.CPP,
             lang_queries=lang_queries,
             file_path=file_path,
-            repo_path=self.repo_path,
+            module_qn=module_qn,
         )
         if bound_name := cpp_utils.extract_function_name(func_node):
             # Record the binding so Pass-3 call attribution reuses this exact
@@ -1157,17 +1154,14 @@ class FunctionIngestMixin:
         # recorded location and span let Pass-3 attribute the ctor body's calls to
         # the METHOD qn instead of re-deciding into the artifact-skip.
         method_qn = ingest_method(
-            method_node=entry.func_node,
-            container_qn=class_qn,
-            container_type=cs.NodeLabel.CLASS,
-            ingestor=self.ingestor,
-            function_registry=self.function_registry,
-            simple_name_lookup=self.simple_name_lookup,
-            get_docstring_func=self._get_docstring,
-            language=cs.SupportedLanguage.CPP,
+            self,
+            entry.func_node,
+            class_qn,
+            cs.NodeLabel.CLASS,
+            cs.SupportedLanguage.CPP,
             lang_queries=entry.lang_queries,
             file_path=file_path,
-            repo_path=self.repo_path,
+            module_qn=entry.module_qn,
             skip_cpp_artifact_check=True,
         )
         if method_qn is None:
@@ -1286,23 +1280,17 @@ class FunctionIngestMixin:
                 container_type if container_type is not None else cs.NodeLabel.CLASS
             )
             method_qn = ingest_method(
-                method_node=entry.method_node,
-                container_qn=container_qn,
-                container_type=container_label,
-                ingestor=self.ingestor,
-                function_registry=self.function_registry,
-                simple_name_lookup=self.simple_name_lookup,
-                get_docstring_func=self._get_docstring,
-                language=cs.SupportedLanguage.GO,
+                self,
+                entry.method_node,
+                container_qn,
+                container_label,
+                cs.SupportedLanguage.GO,
                 file_path=entry.file_path,
-                repo_path=self.repo_path,
                 # An undeclared receiver keeps the same-file fallback qn; the
                 # deferred link verifies the container and anchors to the
                 # module instead of a phantom the database would drop.
                 defer_containment=self._deferred_parent_links,
                 module_qn=entry.module_qn,
-                type_fact_sink=self.pending_type_facts,
-                parameter_type_sink=self.pending_parameter_types,
             )
             if method_qn is not None:
                 self._register_go_name_alias(
@@ -2002,25 +1990,19 @@ class FunctionIngestMixin:
             method_qualified_name = f"{class_qn}.{cs_name}({param_sig})"
 
         ingested_qn = ingest_method(
+            self,
             func_node,
             class_qn,
             cs.NodeLabel.CLASS,
-            self.ingestor,
-            self.function_registry,
-            self.simple_name_lookup,
-            self._get_docstring,
             cs.SupportedLanguage.CSHARP,
             lang_queries=lang_queries,
             method_qualified_name=method_qualified_name,
             file_path=file_path,
-            repo_path=self.repo_path,
             # The class node was parse-truncated; defer the containment so it
             # resolves to DEFINES_METHOD if the class registered, else an audit-safe
             # module DEFINES (never a dangling edge).
             defer_containment=self._deferred_parent_links,
             module_qn=module_qn,
-            type_fact_sink=self.pending_type_facts,
-            parameter_type_sink=self.pending_parameter_types,
         )
         if ingested_qn is None:
             return False
