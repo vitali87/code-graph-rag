@@ -18,8 +18,7 @@ from ...types_defs import (
     SimpleNameLookup,
 )
 from ...utils import qn_markers
-from ..csharp_frontend import CallSiteKey
-from ..frontends.protocol import ResolvedCallSite
+from ..frontends.protocol import CallSiteKey, ResolvedCallSite
 from ..import_processor import ImportProcessor
 from ..semantic_call_join import call_site_key, resolve_call_site
 from ..utils import safe_decode_text

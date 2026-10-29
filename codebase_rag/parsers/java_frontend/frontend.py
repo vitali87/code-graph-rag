@@ -22,7 +22,6 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import NamedTuple
 
 from loguru import logger
 
@@ -31,7 +30,7 @@ from ... import logs as ls
 from ...config import settings
 from ..build_lock import build_cached_artifact, toolchain_runs
 from ..frontend_mode import resolve_frontend_mode
-from ..frontends.protocol import CallSiteKey
+from ..frontends.protocol import CallSiteKey, ResolvedCallSite, SemanticFacts
 
 _TOOL_SRC = Path(__file__).parent / "javac"
 _TOOL_SOURCE = "cgr/Frontend.java"
@@ -50,26 +49,10 @@ _RUN_TIMEOUT = 900
 _PROBE_TIMEOUT = 10.0
 
 
-class JavaCallSite(NamedTuple):
-    """The declaration a call binds to, per javac's attribution."""
-
-    name: str
-    target_file: str
-    target_line: int
-    target_col: int
-
-
-class JavaSemanticFacts(NamedTuple):
-    """Everything one javac run learned about the repo."""
-
-    call_sites: dict[CallSiteKey, JavaCallSite]
-    external_sites: set[CallSiteKey]
-
-
-def _empty_facts() -> JavaSemanticFacts:
+def _empty_facts() -> SemanticFacts:
     # A fresh instance per failure path: the maps are handed to mutable
     # processor state, so a shared constant would alias across runs.
-    return JavaSemanticFacts({}, set())
+    return SemanticFacts()
 
 
 def _toolchain_runs(binary: str) -> bool:
@@ -154,7 +137,7 @@ def _compile_tool(javac: str, cache: Path, out_dir: Path) -> bool:
     return True
 
 
-def _parse_payload(stdout: str, stderr: str = "") -> JavaSemanticFacts:
+def _parse_payload(stdout: str, stderr: str = "") -> SemanticFacts:
     lines = [line for line in stdout.splitlines() if line.strip()]
     if not lines:
         logger.error(ls.JAVA_FRONTEND_PARSE_FAILED.format(stdout=stdout, stderr=stderr))
@@ -183,7 +166,7 @@ def _parse_payload(stdout: str, stderr: str = "") -> JavaSemanticFacts:
                 int(site["col"]),
                 site["name"],
             )
-            facts.call_sites[key] = JavaCallSite(
+            facts.resolved_call_sites[key] = ResolvedCallSite(
                 site["name"],
                 site["tfile"],
                 int(site["tline"]),
@@ -205,7 +188,7 @@ def _parse_payload(stdout: str, stderr: str = "") -> JavaSemanticFacts:
 
 def run_java_frontend(
     repo_path: Path, rescued_files: frozenset[str] = frozenset()
-) -> JavaSemanticFacts:
+) -> SemanticFacts:
     """javac facts for the repo's sources plus the rescued ones.
 
     The tool still skips every default-excluded name and compiles each rescued

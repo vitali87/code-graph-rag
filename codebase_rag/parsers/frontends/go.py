@@ -1,6 +1,5 @@
-"""The Go (go/packages) `LanguageFrontend` adapter (issue #1179). A thin
-projection of the `run_go_frontend` fact bundle onto the generic `SemanticFacts`
-contract -- zero behaviour change; the gotypes tool contract is untouched."""
+"""The Go (go/packages) `LanguageFrontend` registration (issue #1179): the
+bundled gotypes fact provider, whose run already answers in `SemanticFacts`."""
 
 from __future__ import annotations
 
@@ -10,43 +9,12 @@ from pathlib import Path
 from ...constants.languages import SupportedLanguage
 from ...utils.path_utils import frontend_ignored_dirs
 from ..go_frontend import (
-    GoSemanticFacts,
     find_go_module,
     go_frontend_available,
     run_go_frontend,
 )
-from .protocol import ImplementsPair, ResolvedCallSite, SemanticFacts
+from .protocol import SemanticFacts
 from .registry import register_frontend
-
-
-def _adapt_go_semantic_facts(facts: GoSemanticFacts) -> SemanticFacts:
-    # GoCallSite and ResolvedCallSite are structurally identical (name +
-    # target_file/line/col), and GoImplements maps 1:1 onto ImplementsPair. The
-    # Go frontend fills the two call families plus implements_pairs;
-    # base_kinds/partial_groups/query_calls stay at their empty defaults.
-    return SemanticFacts(
-        resolved_call_sites={
-            key: ResolvedCallSite(
-                site.name, site.target_file, site.target_line, site.target_col
-            )
-            for key, site in facts.call_sites.items()
-        },
-        external_sites=set(facts.external_sites),
-        implements_pairs=[
-            ImplementsPair(
-                pair.impl_file,
-                pair.impl_line,
-                pair.impl_col,
-                pair.iface_file,
-                pair.iface_line,
-                pair.iface_col,
-            )
-            for pair in facts.implements
-        ],
-        analysed_roots=facts.analysed_modules,
-        checked_files=facts.checked_files,
-        compared_types=facts.compared_types,
-    )
 
 
 class GoFrontend:
@@ -69,10 +37,8 @@ class GoFrontend:
         # The frontend loads the whole project in one run: a narrowed file
         # list cannot bind calls whose targets live in the files it omits.
         del files
-        return _adapt_go_semantic_facts(
-            run_go_frontend(
-                repo_path, ignored_dirs=frontend_ignored_dirs(rescued_files)
-            )
+        return run_go_frontend(
+            repo_path, ignored_dirs=frontend_ignored_dirs(rescued_files)
         )
 
 

@@ -254,14 +254,14 @@ def test_roslyn_frontend_corrects_base_classification(
 
 
 def _button_facts() -> object:
-    from codebase_rag.parsers.csharp_frontend import CSharpSemanticFacts
+    from codebase_rag.parsers.frontends.protocol import SemanticFacts
 
     line = next(
         i for i, text in enumerate(_TYPES.splitlines(), 1) if "class Button" in text
     )
-    return CSharpSemanticFacts(
+    return SemanticFacts(
         base_kinds={("Types.cs", line): {"IWidget": "class", "Renderer": "interface"}},
-        call_sites={},
+        resolved_call_sites={},
         partial_groups=[],
         query_calls=[],
         external_sites=set(),

@@ -182,7 +182,7 @@ def test_first_party_assembly_reference_is_not_marked_external(
         pytest.skip(f"dotnet build unavailable in this environment: {build.stderr}")
 
     facts = run_csharp_frontend(temp_repo)
-    if not facts.call_sites:
+    if not facts.resolved_call_sites:
         pytest.skip("Roslyn frontend could not build/restore in this environment")
 
     sample_externals = [k for k in facts.external_sites if k[0] == "Samples/Sample.cs"]
@@ -206,10 +206,10 @@ def test_roslyn_facts_cover_projects_outside_the_solution(temp_repo: Path) -> No
 
     _solution_repo(temp_repo, "Repo.sln", _SLN)
     facts = run_csharp_frontend(temp_repo)
-    if not facts.call_sites:
+    if not facts.resolved_call_sites:
         pytest.skip("Roslyn frontend could not build/restore in this environment")
 
-    main_calls = [k for k in facts.call_sites if k[0] == "Main/Lib.cs"]
-    sample_calls = [k for k in facts.call_sites if k[0] == "Samples/Sample.cs"]
-    assert main_calls, facts.call_sites
-    assert any(k[3] == "Helper" for k in sample_calls), facts.call_sites
+    main_calls = [k for k in facts.resolved_call_sites if k[0] == "Main/Lib.cs"]
+    sample_calls = [k for k in facts.resolved_call_sites if k[0] == "Samples/Sample.cs"]
+    assert main_calls, facts.resolved_call_sites
+    assert any(k[3] == "Helper" for k in sample_calls), facts.resolved_call_sites

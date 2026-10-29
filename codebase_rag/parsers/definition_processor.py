@@ -35,11 +35,10 @@ from ..utils.source_encoding import grammar_bytes
 from .class_ingest import ClassIngestMixin
 from .cpp import CppTypeInferenceEngine
 from .cpp.preproc_recovery import parse_with_preproc_recovery
-from .csharp_frontend import CallSiteKey
 from .definition_docstring import extract_definition_docstring
 from .dependency_parser import read_manifest
 from .field_nodes import PendingFieldType
-from .frontends.protocol import ImplementsPair, ResolvedCallSite
+from .frontends.protocol import CallSiteKey, ImplementsPair, ResolvedCallSite
 from .function_ingest import FunctionIngestMixin
 from .go import utils as go_utils
 from .go.builds import Expr, GoBuilds

@@ -10,8 +10,8 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag import graph_updater as gu
-from codebase_rag.parsers.csharp_frontend import CSharpSemanticFacts
 from codebase_rag.parsers.frontends import csharp as csharp_fe
+from codebase_rag.parsers.frontends.protocol import SemanticFacts
 from codebase_rag.tests.conftest import get_relationships, run_updater
 
 CSHARP = "c_sharp"
@@ -338,9 +338,9 @@ class TestCSharpHybridFrontendSharesTheLookup:
         # target is still looked up by the tree-sitter resolver, so it had
         # the same property binding. The toolchain is faked (no .NET here).
         _write(project, {**ISSUE_FILES, "Acme.csproj": _CSPROJ})
-        facts = CSharpSemanticFacts(
+        facts = SemanticFacts(
             base_kinds={("tests/HandlerTests.cs", 2): {"NotificationHandler": "class"}},
-            call_sites={},
+            resolved_call_sites={},
             partial_groups=[],
             query_calls=[],
             external_sites=set(),

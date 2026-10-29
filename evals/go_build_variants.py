@@ -543,11 +543,11 @@ def ground_truth(root: Path, builds: tuple[Build, ...]) -> dict[str, BuildFacts]
             facts.checked_files,
             {
                 ((p.impl_file, p.impl_line), (p.iface_file, p.iface_line))
-                for p in facts.implements
+                for p in facts.implements_pairs
             },
             {
                 (key[0], key[1]): (site.target_file, site.target_line)
-                for key, site in facts.call_sites.items()
+                for key, site in facts.resolved_call_sites.items()
             },
         )
     return truth

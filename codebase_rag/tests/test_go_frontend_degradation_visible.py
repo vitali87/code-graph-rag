@@ -79,8 +79,8 @@ def test_a_failed_anchor_is_recorded_in_the_facts(
 
     facts = run_go_frontend(repo)
 
-    assert facts.degraded_modules, "a failed anchor left no record"
-    assert facts.call_sites, "the surviving module's facts were discarded"
+    assert facts.degraded_roots, "a failed anchor left no record"
+    assert facts.resolved_call_sites, "the surviving module's facts were discarded"
 
 
 def test_a_fully_successful_run_records_no_degradation(
@@ -105,7 +105,7 @@ def test_a_fully_successful_run_records_no_degradation(
 
     facts = run_go_frontend(repo)
 
-    assert not facts.degraded_modules, facts.degraded_modules
+    assert not facts.degraded_roots, facts.degraded_roots
 
 
 def test_a_module_with_no_facts_is_not_recorded_as_degraded(
@@ -128,7 +128,7 @@ def test_a_module_with_no_facts_is_not_recorded_as_degraded(
 
     facts = run_go_frontend(repo)
 
-    assert not facts.degraded_modules, facts.degraded_modules
+    assert not facts.degraded_roots, facts.degraded_roots
 
 
 def test_a_crashed_tool_is_recorded_as_degraded(
@@ -152,8 +152,8 @@ def test_a_crashed_tool_is_recorded_as_degraded(
 
     facts = run_go_frontend(repo)
 
-    assert facts.degraded_modules, "a crashed tool left no record"
-    assert facts.call_sites, "the surviving module's facts were discarded"
+    assert facts.degraded_roots, "a crashed tool left no record"
+    assert facts.resolved_call_sites, "the surviving module's facts were discarded"
 
 
 @pytest.mark.parametrize(
@@ -187,4 +187,4 @@ def test_every_parse_failure_is_recorded_as_degraded(
 
     facts = run_go_frontend(repo)
 
-    assert facts.degraded_modules, f"{why} left no record"
+    assert facts.degraded_roots, f"{why} left no record"

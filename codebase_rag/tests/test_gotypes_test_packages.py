@@ -26,8 +26,9 @@ from loguru import logger
 from codebase_rag import constants as cs
 from codebase_rag import graph_updater as gu
 from codebase_rag import logs as ls
-from codebase_rag.parsers.go_frontend import GoCallSite, run_go_frontend
+from codebase_rag.parsers.frontends.protocol import ResolvedCallSite
 from codebase_rag.parsers.go_frontend import frontend as go_frontend
+from codebase_rag.parsers.go_frontend import run_go_frontend
 from codebase_rag.tests.conftest import get_relationships, run_updater
 
 # The tests that run the real go/types helper share its build, and the
@@ -183,9 +184,9 @@ def _site(file: str, source: str, needle: str, name: str) -> tuple[str, int, int
     return (file, line, col + needle.index(name), name)
 
 
-def _target(file: str, source: str, needle: str, name: str) -> GoCallSite:
+def _target(file: str, source: str, needle: str, name: str) -> ResolvedCallSite:
     line, col = _loc(source, needle)
-    return GoCallSite(name, file, line, col + needle.index(name))
+    return ResolvedCallSite(name, file, line, col + needle.index(name))
 
 
 # --- red ------------------------------------------------------------------------
@@ -200,7 +201,7 @@ def test_test_files_get_compiler_facts(tmp_path: Path) -> None:
     new_router = _target("gotest/router.go", ROUTER, "NewRouter()", "NewRouter")
     get = _target("gotest/router.go", ROUTER, "Get(p string)", "Get")
     do = _target("gotest/router.go", ROUTER, "Do() string", "Do")
-    sites = facts.call_sites
+    sites = facts.resolved_call_sites
     assert sites[
         _site("gotest/router_test.go", ROUTER_TEST, "NewRouter()", "NewRouter")
     ] == (new_router)

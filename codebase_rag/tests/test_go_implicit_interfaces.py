@@ -33,9 +33,13 @@ from codebase_rag.editing.rename import RenameRefused, rename
 from codebase_rag.graph_query import QueryFn
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers.frontends.protocol import (
+    ImplementsPair,
+    ResolvedCallSite,
+    SemanticFacts,
+)
 from codebase_rag.parsers.go import interfaces as go_ifaces
 from codebase_rag.parsers.go.builds import Expr
-from codebase_rag.parsers.go_frontend import GoCallSite, GoImplements, GoSemanticFacts
 from codebase_rag.tests.conftest import (
     create_and_run_updater,
     get_relationships,
@@ -543,14 +547,14 @@ def _compared(rel: str, source: str) -> frozenset[tuple[str, int, int]]:
 
 def _gotypes(
     monkeypatch: pytest.MonkeyPatch,
-    call_sites: dict[tuple[str, int, int, str], GoCallSite],
+    call_sites: dict[tuple[str, int, int, str], ResolvedCallSite],
     implementers: tuple[str, ...],
 ) -> None:
     from codebase_rag.parsers.frontends import go as go_fe
 
     shape_line, shape_col = _position(SHAPES, "Shape interface")
     implements = [
-        GoImplements(
+        ImplementsPair(
             "shapes.go",
             *_position(SHAPES, f"{name} struct"),
             "shapes.go",
@@ -559,11 +563,11 @@ def _gotypes(
         )
         for name in implementers
     ]
-    facts = GoSemanticFacts(
-        call_sites=call_sites,
+    facts = SemanticFacts(
+        resolved_call_sites=call_sites,
         external_sites=set(),
-        implements=implements,
-        analysed_modules=(".",),
+        implements_pairs=implements,
+        analysed_roots=(".",),
         checked_files=frozenset({"shapes.go"}),
         compared_types=_compared("shapes.go", SHAPES),
     )
@@ -593,7 +597,7 @@ def test_a_go_types_call_through_the_interface_reaches_its_implementers(
     _gotypes(
         monkeypatch,
         {
-            ("shapes.go", call_line, call_col, "Area"): GoCallSite(
+            ("shapes.go", call_line, call_col, "Area"): ResolvedCallSite(
                 "Area", "shapes.go", target_line, target_col
             )
         },
@@ -1079,7 +1083,7 @@ func (b Box) Put(v Celsius) {}
 """
 
 
-def _gotypes_facts(monkeypatch: pytest.MonkeyPatch, facts: GoSemanticFacts) -> None:
+def _gotypes_facts(monkeypatch: pytest.MonkeyPatch, facts: SemanticFacts) -> None:
     from codebase_rag.parsers.frontends import go as go_fe
 
     monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.GOTYPES)
@@ -1099,11 +1103,11 @@ def test_a_go_types_run_that_proves_no_pair_adds_no_name_match(
     (root / "sink.go").write_text(SINK, encoding="utf-8")
     _gotypes_facts(
         monkeypatch,
-        GoSemanticFacts(
-            call_sites={},
+        SemanticFacts(
+            resolved_call_sites={},
             external_sites=set(),
-            implements=[],
-            analysed_modules=(".",),
+            implements_pairs=[],
+            analysed_roots=(".",),
             checked_files=frozenset({"sink.go"}),
             compared_types=_compared("sink.go", SINK),
         ),
@@ -1155,11 +1159,11 @@ def test_a_degraded_module_keeps_the_fallback_and_an_analysed_one_does_not(
     square_line, square_col = _position(SHAPES, "Square struct")
     _gotypes_facts(
         monkeypatch,
-        GoSemanticFacts(
-            call_sites={},
+        SemanticFacts(
+            resolved_call_sites={},
             external_sites=set(),
-            implements=[
-                GoImplements(
+            implements_pairs=[
+                ImplementsPair(
                     "shapes.go",
                     square_line,
                     square_col,
@@ -1168,8 +1172,8 @@ def test_a_degraded_module_keeps_the_fallback_and_an_analysed_one_does_not(
                     shape_col,
                 )
             ],
-            degraded_modules=("legacy",),
-            analysed_modules=(".",),
+            degraded_roots=("legacy",),
+            analysed_roots=(".",),
             checked_files=frozenset({"shapes.go"}),
             compared_types=_compared("shapes.go", SHAPES),
         ),
@@ -1213,7 +1217,7 @@ def test_the_real_go_types_run_proving_no_pair_adds_none(
     root.mkdir()
     (root / "go.mod").write_text("module gosink\n\ngo 1.22\n", encoding="utf-8")
     (root / "sink.go").write_text(SINK, encoding="utf-8")
-    if run_go_frontend(root).analysed_modules != (".",):
+    if run_go_frontend(root).analysed_roots != (".",):
         pytest.skip("gotypes frontend could not build in this environment")
     monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.GOTYPES)
     create_and_run_updater(root, mock_ingestor, skip_if_missing="go")
@@ -1291,15 +1295,15 @@ def test_a_proven_override_and_sole_target_rename_without_opt_in(
     count_line, count_col = _position(PROVEN_GETTER, "Count struct")
     _gotypes_facts(
         monkeypatch,
-        GoSemanticFacts(
-            call_sites={},
+        SemanticFacts(
+            resolved_call_sites={},
             external_sites=set(),
-            implements=[
-                GoImplements(
+            implements_pairs=[
+                ImplementsPair(
                     "app.go", count_line, count_col, "app.go", getter_line, getter_col
                 )
             ],
-            analysed_modules=(".",),
+            analysed_roots=(".",),
             checked_files=frozenset({"app.go"}),
             compared_types=_compared("app.go", PROVEN_GETTER),
         ),
@@ -1578,18 +1582,21 @@ def test_a_pair_that_changes_source_stays_an_implementer(
     getter_line, getter_col = _position(PROVEN_GETTER, "Getter interface")
     count_line, count_col = _position(PROVEN_GETTER, "Count struct")
     facts = {
-        "degraded": GoSemanticFacts(
-            call_sites={}, external_sites=set(), implements=[], degraded_modules=(".",)
-        ),
-        "analysed": GoSemanticFacts(
-            call_sites={},
+        "degraded": SemanticFacts(
+            resolved_call_sites={},
             external_sites=set(),
-            implements=[
-                GoImplements(
+            implements_pairs=[],
+            degraded_roots=(".",),
+        ),
+        "analysed": SemanticFacts(
+            resolved_call_sites={},
+            external_sites=set(),
+            implements_pairs=[
+                ImplementsPair(
                     "app.go", count_line, count_col, "app.go", getter_line, getter_col
                 )
             ],
-            analysed_modules=(".",),
+            analysed_roots=(".",),
             checked_files=frozenset({"app.go"}),
             compared_types=_compared("app.go", PROVEN_GETTER),
         ),
@@ -2128,7 +2135,7 @@ _REAL_RUNS: list[Path] = []
 
 def _real_go_frontend(
     root: Path, ignored_dirs: frozenset[str] = cs.IGNORE_PATTERNS
-) -> GoSemanticFacts:
+) -> SemanticFacts:
     from codebase_rag.parsers.go_frontend import frontend
 
     return frontend.run_go_frontend(root, ignored_dirs=ignored_dirs)
@@ -2140,7 +2147,7 @@ def _real_gotypes_files_or_skip(root: Path, checked: set[str]) -> None:
     if shutil.which("go") is None or not go_frontend_available():
         pytest.skip("go toolchain not available")
     facts = _real_go_frontend(root)
-    if facts.analysed_modules != (".",):
+    if facts.analysed_roots != (".",):
         pytest.skip("gotypes frontend could not build in this environment")
     assert facts.checked_files == checked
 
@@ -2156,7 +2163,7 @@ def _one_real_go_run_per_tree(
 
     def once(
         binary: Path, module_root: Path, ignored_dirs: frozenset[str]
-    ) -> GoSemanticFacts | None:
+    ) -> SemanticFacts | None:
         key = hashlib.sha256(
             "\0".join(
                 (
@@ -2178,7 +2185,7 @@ def _one_real_go_run_per_tree(
             captured: list[tuple[str, str]] = []
             parse = frontend._parse_payload
 
-            def keep(stdout: str, stderr: str) -> GoSemanticFacts:
+            def keep(stdout: str, stderr: str) -> SemanticFacts:
                 captured.append((stdout, stderr))
                 return parse(stdout, stderr)
 
@@ -2246,18 +2253,18 @@ def _recorded_gotypes(monkeypatch: pytest.MonkeyPatch) -> None:
     # Square, while Wrong's Area() Celsius is no Area() float64.
     _gotypes_facts(
         monkeypatch,
-        GoSemanticFacts(
-            call_sites={},
+        SemanticFacts(
+            resolved_call_sites={},
             external_sites=set(),
-            implements=[
-                GoImplements(
+            implements_pairs=[
+                ImplementsPair(
                     "shapes.go",
                     *_position(BUILT, "Square struct"),
                     "shapes.go",
                     *_position(BUILT, "Shape interface"),
                 )
             ],
-            analysed_modules=(".",),
+            analysed_roots=(".",),
             checked_files=frozenset({"shapes.go"}),
             compared_types=_compared("shapes.go", BUILT),
         ),
@@ -2708,11 +2715,11 @@ def _recorded_variant_gotypes(monkeypatch: pytest.MonkeyPatch) -> None:
     shape_at = _position(VARIANT_SHAPE, "Shape interface")
     _gotypes_facts(
         monkeypatch,
-        GoSemanticFacts(
-            call_sites={},
+        SemanticFacts(
+            resolved_call_sites={},
             external_sites=set(),
-            implements=[
-                GoImplements(
+            implements_pairs=[
+                ImplementsPair(
                     "shape.go",
                     *_position(VARIANT_SHAPE, f"{name} struct"),
                     "shape.go",
@@ -2720,7 +2727,7 @@ def _recorded_variant_gotypes(monkeypatch: pytest.MonkeyPatch) -> None:
                 )
                 for name in ("T", "Square")
             ],
-            analysed_modules=(".",),
+            analysed_roots=(".",),
             checked_files=frozenset({"shape.go", "t_other.go"}),
             compared_types=_compared("shape.go", VARIANT_SHAPE),
         ),
@@ -2933,7 +2940,7 @@ def _sig_frontend(monkeypatch: pytest.MonkeyPatch, frontend: str, root: Path) ->
 
         if shutil.which("go") is None or not go_frontend_available():
             pytest.skip("go toolchain not available")
-        if run_go_frontend(root).analysed_modules != (".",):
+        if run_go_frontend(root).analysed_roots != (".",):
             pytest.skip("gotypes frontend could not build in this environment")
         monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.GOTYPES)
     else:
@@ -3077,18 +3084,18 @@ def test_a_go_types_proof_is_never_vetoed_by_the_signature_check(
     shape_at = _position(VARIANT_SHAPE, "Shape interface")
     _gotypes_facts(
         monkeypatch,
-        GoSemanticFacts(
-            call_sites={},
+        SemanticFacts(
+            resolved_call_sites={},
             external_sites=set(),
-            implements=[
-                GoImplements(
+            implements_pairs=[
+                ImplementsPair(
                     "shape.go",
                     *_position(VARIANT_SHAPE, "U struct"),
                     "shape.go",
                     *shape_at,
                 )
             ],
-            analysed_modules=(".",),
+            analysed_roots=(".",),
             checked_files=frozenset({"shape.go", "t_other.go"}),
             compared_types=_compared("shape.go", VARIANT_SHAPE),
         ),
@@ -3375,24 +3382,24 @@ def _two_modules(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _write(root, "modb/b.go", MODULE_B)
     _gotypes_facts(
         monkeypatch,
-        GoSemanticFacts(
-            call_sites={},
+        SemanticFacts(
+            resolved_call_sites={},
             external_sites=set(),
-            implements=[
-                GoImplements(
+            implements_pairs=[
+                ImplementsPair(
                     "a.go",
                     *_position(MODULE_A, "T1 struct"),
                     "a.go",
                     *_position(MODULE_A, "I1 interface"),
                 ),
-                GoImplements(
+                ImplementsPair(
                     "modb/b.go",
                     *_position(MODULE_B, "T2 struct"),
                     "modb/b.go",
                     *_position(MODULE_B, "I2 interface"),
                 ),
             ],
-            analysed_modules=(".", "modb"),
+            analysed_roots=(".", "modb"),
             checked_files=frozenset({"a.go", "modb/b.go"}),
             compared_types=_compared("a.go", MODULE_A)
             | _compared("modb/b.go", MODULE_B),
@@ -3449,18 +3456,18 @@ def test_a_proven_hierarchy_renames_without_the_opt_in(
     _write(temp_repo, "a.go", MODULE_A)
     _gotypes_facts(
         monkeypatch,
-        GoSemanticFacts(
-            call_sites={},
+        SemanticFacts(
+            resolved_call_sites={},
             external_sites=set(),
-            implements=[
-                GoImplements(
+            implements_pairs=[
+                ImplementsPair(
                     "a.go",
                     *_position(MODULE_A, "T1 struct"),
                     "a.go",
                     *_position(MODULE_A, "I1 interface"),
                 )
             ],
-            analysed_modules=(".",),
+            analysed_roots=(".",),
             checked_files=frozenset({"a.go"}),
             compared_types=_compared("a.go", MODULE_A),
         ),
@@ -3982,11 +3989,11 @@ def test_a_generic_type_or_interface_keeps_the_name_match(
     elif facts == "recorded":
         _gotypes_facts(
             monkeypatch,
-            GoSemanticFacts(
-                call_sites={},
+            SemanticFacts(
+                resolved_call_sites={},
                 external_sites=set(),
-                implements=[],
-                analysed_modules=(".",),
+                implements_pairs=[],
+                analysed_roots=(".",),
                 checked_files=frozenset({"gen.go"}),
                 compared_types=_compared("gen.go", GENERIC),
             ),
@@ -4260,11 +4267,11 @@ def _differing_gotypes(monkeypatch: pytest.MonkeyPatch, goos: str) -> None:
     read = {rel: text for rel, text in DIFFERING_FILES.items() if other not in rel}
     _gotypes_facts(
         monkeypatch,
-        GoSemanticFacts(
-            call_sites={},
+        SemanticFacts(
+            resolved_call_sites={},
             external_sites=set(),
-            implements=[
-                GoImplements(
+            implements_pairs=[
+                ImplementsPair(
                     impl_file,
                     *_position(DIFFERING_FILES[impl_file], f"{impl} struct"),
                     iface_file,
@@ -4272,7 +4279,7 @@ def _differing_gotypes(monkeypatch: pytest.MonkeyPatch, goos: str) -> None:
                 )
                 for impl_file, impl, iface_file, iface in _DIFFERING_PROOFS[goos]
             ],
-            analysed_modules=(".",),
+            analysed_roots=(".",),
             checked_files=frozenset(read),
             compared_types=frozenset().union(
                 *(_compared(rel, text) for rel, text in read.items())
@@ -4356,24 +4363,24 @@ def test_an_interface_each_build_declares_apart_links_each_builds_implementers(
 def _recorded_identical_gotypes(monkeypatch: pytest.MonkeyPatch) -> None:
     _gotypes_facts(
         monkeypatch,
-        GoSemanticFacts(
-            call_sites={},
+        SemanticFacts(
+            resolved_call_sites={},
             external_sites=set(),
-            implements=[
-                GoImplements(
+            implements_pairs=[
+                ImplementsPair(
                     "q/q.go",
                     *_position(VARIANT_EMBEDDER, "T struct"),
                     "q/q.go",
                     *_position(VARIANT_EMBEDDER, "J interface"),
                 ),
-                GoImplements(
+                ImplementsPair(
                     "q/q.go",
                     *_position(VARIANT_EMBEDDER, "T struct"),
                     "p/i_linux.go",
                     *_position(VARIANT_I, "I interface"),
                 ),
             ],
-            analysed_modules=(".",),
+            analysed_roots=(".",),
             checked_files=frozenset({"p/i_linux.go", "q/q.go"}),
             compared_types=_compared("p/i_linux.go", VARIANT_I)
             | _compared("q/q.go", VARIANT_EMBEDDER),
@@ -4732,18 +4739,18 @@ def _combined_gotypes(monkeypatch: pytest.MonkeyPatch) -> None:
     t_file, j_file = COMBINED_FILES["p/t.go"], COMBINED_FILES["p/j.go"]
     _gotypes_facts(
         monkeypatch,
-        GoSemanticFacts(
-            call_sites={},
+        SemanticFacts(
+            resolved_call_sites={},
             external_sites=set(),
-            implements=[
-                GoImplements(
+            implements_pairs=[
+                ImplementsPair(
                     "p/t.go",
                     *_position(t_file, "T struct"),
                     "p/j.go",
                     *_position(j_file, "J interface"),
                 )
             ],
-            analysed_modules=(".",),
+            analysed_roots=(".",),
             checked_files=frozenset(linux),
             compared_types=frozenset().union(
                 *(_compared(rel, text) for rel, text in linux.items())

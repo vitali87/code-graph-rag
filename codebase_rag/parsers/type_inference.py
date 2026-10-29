@@ -18,9 +18,8 @@ from .cpp import CppTypeInferenceEngine
 # From its module, not the package: the C# engine imports the import
 # processor, and a re-export would load it for every `parsers.csharp` import.
 from .csharp.type_inference import CSharpTypeInferenceEngine
-from .csharp_frontend import CallSiteKey
 from .dart import DartTypeInferenceEngine
-from .frontends.protocol import ResolvedCallSite
+from .frontends.protocol import CallSiteKey, ResolvedCallSite
 from .go import GoTypeInferenceEngine
 from .go import utils as go_utils
 from .import_processor import ImportProcessor

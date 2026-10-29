@@ -12,21 +12,14 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.parsers.frontends import SemanticFacts
 from codebase_rag.parsers.frontends.builtin import FRONTENDS
-from codebase_rag.parsers.frontends.go import GoFrontend, _adapt_go_semantic_facts
+from codebase_rag.parsers.frontends.go import GoFrontend
 from codebase_rag.parsers.frontends.protocol import (
     ImplementsPair,
     LanguageFrontend,
     ResolvedCallSite,
 )
-from codebase_rag.parsers.go_frontend import (
-    GoCallSite,
-    GoImplements,
-    GoSemanticFacts,
-    find_go_module,
-    run_go_frontend,
-)
+from codebase_rag.parsers.go_frontend import find_go_module, run_go_frontend
 from codebase_rag.parsers.go_frontend.frontend import _build_tool, _parse_payload
 
 _FIXTURE = """package main
@@ -97,11 +90,11 @@ def test_parse_payload_reads_call_and_external_sections() -> None:
     )
     facts = _parse_payload(payload)
     assert facts is not None
-    assert facts.call_sites[("a.go", 5, 8, "Handle")] == GoCallSite(
+    assert facts.resolved_call_sites[("a.go", 5, 8, "Handle")] == ResolvedCallSite(
         "Handle", "b.go", 3, 4
     )
     assert facts.external_sites == {("a.go", 11, 8, "Println")}
-    assert facts.implements == [GoImplements("a.go", 9, 5, "b.go", 5, 5)]
+    assert facts.implements_pairs == [ImplementsPair("a.go", 9, 5, "b.go", 5, 5)]
     assert facts.checked_files == {"a.go", "b.go"}
     assert facts.compared_types == {("a.go", 9, 5)}
 
@@ -111,9 +104,9 @@ def test_parse_payload_without_sections_yields_empty_facts() -> None:
     # families must default to empty instead of raising.
     facts = _parse_payload(json.dumps({}))
     assert facts is not None
-    assert facts.call_sites == {}
+    assert facts.resolved_call_sites == {}
     assert facts.external_sites == set()
-    assert facts.implements == []
+    assert facts.implements_pairs == []
     # No file listed is no file type-checked: every pair keeps the fallback.
     assert facts.checked_files == frozenset()
     assert facts.compared_types == frozenset()
@@ -159,34 +152,6 @@ def test_applies_requires_a_go_module(tmp_path: Path) -> None:
     assert frontend.applies(tmp_path) is True
 
 
-def test_adapter_maps_go_facts_to_semantic_facts() -> None:
-    facts = GoSemanticFacts(
-        call_sites={("a.go", 5, 8, "Handle"): GoCallSite("Handle", "b.go", 3, 4)},
-        external_sites={("a.go", 11, 8, "Println")},
-        implements=[GoImplements("a.go", 9, 5, "b.go", 5, 5)],
-        checked_files=frozenset({"a.go", "b.go"}),
-        compared_types=frozenset({("a.go", 9, 5)}),
-    )
-    adapted = _adapt_go_semantic_facts(facts)
-    assert isinstance(adapted, SemanticFacts)
-    assert adapted.resolved_call_sites[("a.go", 5, 8, "Handle")] == ResolvedCallSite(
-        "Handle", "b.go", 3, 4
-    )
-    assert adapted.external_sites == {("a.go", 11, 8, "Println")}
-    # GoImplements maps 1:1 onto the generic implements_pairs family.
-    assert adapted.implements_pairs == [ImplementsPair("a.go", 9, 5, "b.go", 5, 5)]
-    assert adapted.checked_files == {"a.go", "b.go"}
-    assert adapted.compared_types == {("a.go", 9, 5)}
-    # The Go frontend leaves the C#-specific families empty.
-    assert adapted.base_kinds == {}
-    assert adapted.partial_groups == []
-    assert adapted.query_calls == []
-
-
-def test_adapter_of_empty_facts_is_empty() -> None:
-    assert _adapt_go_semantic_facts(GoSemanticFacts({}, set(), [])).is_empty()
-
-
 @pytest.mark.usefixtures(
     "one_go_helper_per_session", "fingerprint_inputs_once_per_session"
 )
@@ -217,13 +182,13 @@ def test_gotypes_tool_emits_call_and_external_facts(tmp_path: Path) -> None:
     call_text = _FIXTURE.splitlines()[call_line - 1]
     hello_col = len(call_text[: call_text.index("Hello")].encode("utf-8"))
     target_line, target_col = _byte_loc(_FIXTURE, "Hello() string")
-    assert facts.call_sites[("main.go", call_line, hello_col, "Hello")] == GoCallSite(
-        "Hello", "main.go", target_line, target_col
-    )
+    assert facts.resolved_call_sites[
+        ("main.go", call_line, hello_col, "Hello")
+    ] == ResolvedCallSite("Hello", "main.go", target_line, target_col)
 
     println_line, println_col = _byte_loc(_FIXTURE, "Println")
     assert ("main.go", println_line, println_col, "Println") in facts.external_sites
-    assert not any(key[3] == "Println" for key in facts.call_sites)
+    assert not any(key[3] == "Println" for key in facts.resolved_call_sites)
 
 
 _IMPLEMENTS_FIXTURE = """package main
@@ -269,8 +234,8 @@ def test_gotypes_tool_emits_implements_and_skips_generics(tmp_path: Path) -> Non
     iface_line, iface_col = _byte_loc(_IMPLEMENTS_FIXTURE, "Speaker interface")
     # Exactly one pair: Dog -> Speaker. The generic Box[T] structurally
     # satisfies Speaker too, so its absence here proves the generic skip.
-    assert facts.implements == [
-        GoImplements("main.go", dog_line, dog_col, "main.go", iface_line, iface_col)
+    assert facts.implements_pairs == [
+        ImplementsPair("main.go", dog_line, dog_col, "main.go", iface_line, iface_col)
     ]
 
 
@@ -362,15 +327,15 @@ def test_nested_modules_each_get_a_tool_run_with_reanchored_paths(
     facts = run_go_frontend(repo)
 
     assert sorted(fake.invoked) == ["", "sub/tool"]
-    assert facts.call_sites[("main.go", 5, 2, "Run")] == GoCallSite(
+    assert facts.resolved_call_sites[("main.go", 5, 2, "Run")] == ResolvedCallSite(
         "Run", "lib.go", 3, 5
     )
-    assert facts.call_sites[("sub/tool/cmd.go", 8, 1, "Go")] == GoCallSite(
-        "Go", "sub/tool/cmd.go", 2, 5
-    )
+    assert facts.resolved_call_sites[
+        ("sub/tool/cmd.go", 8, 1, "Go")
+    ] == ResolvedCallSite("Go", "sub/tool/cmd.go", 2, 5)
     assert facts.external_sites == {("sub/tool/cmd.go", 9, 1, "Printf")}
-    assert facts.implements == [
-        GoImplements("sub/tool/cmd.go", 12, 5, "sub/tool/iface.go", 4, 5)
+    assert facts.implements_pairs == [
+        ImplementsPair("sub/tool/cmd.go", 12, 5, "sub/tool/iface.go", 4, 5)
     ]
     assert facts.checked_files == {
         "main.go",
@@ -449,11 +414,11 @@ def test_one_failing_module_degrades_only_itself(
 
     facts = run_go_frontend(repo)
 
-    assert facts.call_sites == {
-        ("sub/s.go", 3, 1, "Do"): GoCallSite("Do", "sub/s.go", 1, 5)
+    assert facts.resolved_call_sites == {
+        ("sub/s.go", 3, 1, "Do"): ResolvedCallSite("Do", "sub/s.go", 1, 5)
     }
     assert facts.external_sites == set()
-    assert facts.implements == []
+    assert facts.implements_pairs == []
     assert invoked == [repo, repo / "sub"]
 
 

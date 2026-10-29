@@ -13,8 +13,11 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag import graph_updater as gu
-from codebase_rag.parsers.frontends.protocol import ImplementsPair
-from codebase_rag.parsers.go_frontend import GoCallSite, GoImplements, GoSemanticFacts
+from codebase_rag.parsers.frontends.protocol import (
+    ImplementsPair,
+    ResolvedCallSite,
+    SemanticFacts,
+)
 from codebase_rag.tests.conftest import get_relationships, run_updater
 
 # The tests that run the real go/types helper share its build, and the
@@ -47,7 +50,7 @@ def _has(pairs: set[tuple[str, str]], caller_suffix: str, callee_suffix: str) ->
     )
 
 
-def _gotypes(monkeypatch: pytest.MonkeyPatch, facts: GoSemanticFacts) -> None:
+def _gotypes(monkeypatch: pytest.MonkeyPatch, facts: SemanticFacts) -> None:
     # The Go frontend runs behind the LanguageFrontend registry, so patch the
     # toolchain gate and the runner where the ADAPTER binds them.
     from codebase_rag.parsers.frontends import go as go_fe
@@ -93,14 +96,14 @@ def test_call_fact_overrides_heuristic_to_exact_implementation(
     hcall_text = _AMBIGUOUS_SRC.splitlines()[hcall_line - 1]
     hcall_col = len(hcall_text[: hcall_text.index("Handle")].encode("utf-8"))
     target_line, target_col = _byte_loc(_AMBIGUOUS_SRC, 'Handle() string { return "b"')
-    facts = GoSemanticFacts(
-        call_sites={
-            ("sample.go", hcall_line, hcall_col, "Handle"): GoCallSite(
+    facts = SemanticFacts(
+        resolved_call_sites={
+            ("sample.go", hcall_line, hcall_col, "Handle"): ResolvedCallSite(
                 "Handle", "sample.go", target_line, target_col
             )
         },
         external_sites=set(),
-        implements=[],
+        implements_pairs=[],
     )
     _gotypes(monkeypatch, facts)
 
@@ -142,10 +145,10 @@ def test_external_site_fact_suppresses_name_trie_fallback(
     close_line, _ = _byte_loc(_EXTERNAL_SRC, "c.Close()")
     close_text = _EXTERNAL_SRC.splitlines()[close_line - 1]
     close_col = len(close_text[: close_text.index("Close")].encode("utf-8"))
-    facts = GoSemanticFacts(
-        call_sites={},
+    facts = SemanticFacts(
+        resolved_call_sites={},
         external_sites={("sample.go", close_line, close_col, "Close")},
-        implements=[],
+        implements_pairs=[],
     )
     _gotypes(monkeypatch, facts)
 
@@ -264,13 +267,13 @@ def test_gotypes_end_to_end_binds_promoted_call_through_real_facts(
     (root / "sample.go").write_text(_E2E_SRC, encoding="utf-8")
 
     facts = run_go_frontend(root)
-    if not facts.call_sites:
+    if not facts.resolved_call_sites:
         pytest.skip("gotypes frontend could not build in this environment")
 
     # Guard the linchpin: the emitted target col is the NAME-node position, not
     # the func-keyword span start (they differ for Go).
-    do_key = next(k for k in facts.call_sites if k[3] == "Do")
-    do_target = facts.call_sites[do_key]
+    do_key = next(k for k in facts.resolved_call_sites if k[3] == "Do")
+    do_target = facts.resolved_call_sites[do_key]
     name_line, name_col = _byte_loc(_E2E_SRC, "Do() string")
     assert (do_target.target_line, do_target.target_col) == (name_line, name_col)
 
@@ -297,15 +300,15 @@ func Run(s Speaker) {
 """
 
 
-def _impl_facts(implements: list[GoImplements]) -> GoSemanticFacts:
+def _impl_facts(implements: list[ImplementsPair]) -> SemanticFacts:
     # As the tool reports a run that analysed the root module: its pairs are
     # then the whole answer there, and no name-and-arity match stands in for
     # one it dropped (issue #2483).
-    return GoSemanticFacts(
-        call_sites={},
+    return SemanticFacts(
+        resolved_call_sites={},
         external_sites=set(),
-        implements=implements,
-        analysed_modules=(".",),
+        implements_pairs=implements,
+        analysed_roots=(".",),
         checked_files=frozenset({"sample.go"}),
         compared_types=frozenset(
             ("sample.go", *_byte_loc(_IMPLEMENTS_SRC, name))
@@ -328,7 +331,7 @@ def test_implements_fact_emits_edge_to_the_pass2_type_nodes(
     dog_line, dog_col = _byte_loc(_IMPLEMENTS_SRC, "Dog struct")
     spk_line, spk_col = _byte_loc(_IMPLEMENTS_SRC, "Speaker interface")
     facts = _impl_facts(
-        [GoImplements("sample.go", dog_line, dog_col, "sample.go", spk_line, spk_col)]
+        [ImplementsPair("sample.go", dog_line, dog_col, "sample.go", spk_line, spk_col)]
     )
     _gotypes(monkeypatch, facts)
 
@@ -358,7 +361,7 @@ def test_implements_position_miss_drops_the_edge(
 
     spk_line, spk_col = _byte_loc(_IMPLEMENTS_SRC, "Speaker interface")
     facts = _impl_facts(
-        [GoImplements("sample.go", 999, 0, "sample.go", spk_line, spk_col)]
+        [ImplementsPair("sample.go", 999, 0, "sample.go", spk_line, spk_col)]
     )
     _gotypes(monkeypatch, facts)
 

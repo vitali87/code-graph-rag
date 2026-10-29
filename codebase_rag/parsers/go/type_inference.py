@@ -7,8 +7,7 @@ from tree_sitter import Node
 
 from ... import constants as cs
 from ...types_defs import FunctionLocation, FunctionSpanKey
-from ..csharp_frontend import CallSiteKey
-from ..frontends.protocol import ResolvedCallSite
+from ..frontends.protocol import CallSiteKey, ResolvedCallSite
 from ..semantic_call_join import call_site_key, resolve_call_site
 from ..utils import safe_decode_text
 from . import utils as go_utils

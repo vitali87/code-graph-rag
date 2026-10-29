@@ -98,6 +98,10 @@ class SemanticFacts:
     # hold (Go #2483); a root missing here was never analysed, or its run
     # failed. Not counted by `is_empty`: a run can analyse and find nothing.
     analysed_roots: tuple[str, ...] = ()
+    # The roots whose run FAILED (timeout, crash, unparseable output) and so
+    # dropped to the heuristics alone (Go #1462). Recorded so a graph that is
+    # compiler-accurate for some roots and heuristic for others says which.
+    degraded_roots: tuple[str, ...] = ()
     # The repo-relative files those analyses type-checked: a build reads only
     # the files its GOOS and tags select, so a pair resting on any other file
     # was never compared, and the fallback keeps it (PR #3360 review).

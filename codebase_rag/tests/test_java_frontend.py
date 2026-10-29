@@ -63,14 +63,14 @@ def test_parse_payload_reads_both_sections() -> None:
         ' "tfile": "B.java", "tline": 3, "tcol": 4}],'
         ' "externals": [{"file": "A.java", "line": 9, "col": 2, "name": "add"}]}'
     )
-    assert facts.call_sites[("A.java", 5, 8, "handle")].target_line == 3
+    assert facts.resolved_call_sites[("A.java", 5, 8, "handle")].target_line == 3
     assert facts.external_sites == {("A.java", 9, 2, "add")}
 
 
 def test_parse_payload_degrades_on_bad_output() -> None:
     for payload in ("", "not json", "[1, 2]", "{}"):
         facts = _parse_payload(payload)
-        assert facts.call_sites == {}
+        assert facts.resolved_call_sites == {}
         assert facts.external_sites == set()
 
 
@@ -82,14 +82,14 @@ def test_parse_payload_drops_malformed_rows() -> None:
         ' "tfile": "B.java", "tline": 3, "tcol": 4}],'
         ' "externals": [{"file": "A.java", "name": "broken"}]}'
     )
-    assert list(facts.call_sites) == [("A.java", 5, 8, "h")]
+    assert list(facts.resolved_call_sites) == [("A.java", 5, 8, "h")]
     assert facts.external_sites == set()
 
 
 def test_parse_payload_rejects_non_list_sections() -> None:
     for payload in ('{"calls": null}', '{"externals": 5}', '{"calls": {}}'):
         facts = _parse_payload(payload)
-        assert facts.call_sites == {}
+        assert facts.resolved_call_sites == {}
         assert facts.external_sites == set()
 
 
@@ -108,7 +108,7 @@ def test_same_arity_overloads_bind_by_argument_type(tmp_path: Path) -> None:
     widget = "src/main/java/com/app/Widget.java"
     targets = {
         key[1]: (site.target_file, site.target_line)
-        for key, site in facts.call_sites.items()
+        for key, site in facts.resolved_call_sites.items()
         if key[0] == caller and key[3] == "handle"
     }
     # Same name, same arity: only attribution can tell these apart.
@@ -126,7 +126,7 @@ def test_jdk_calls_become_external_proofs(tmp_path: Path) -> None:
     external_names = {key[3] for key in facts.external_sites}
     assert {"add", "valueOf"} <= external_names
     # A proven-external site must never also carry a first-party target.
-    assert not {key for key in facts.call_sites if key in facts.external_sites}
+    assert not {key for key in facts.resolved_call_sites if key in facts.external_sites}
 
 
 @pytest.mark.skipif(
@@ -143,7 +143,7 @@ def test_same_position_in_two_files_keeps_both_sites(tmp_path: Path) -> None:
     facts = run_java_frontend(repo)
     bound = {
         key[0]: site.target_file
-        for key, site in facts.call_sites.items()
+        for key, site in facts.resolved_call_sites.items()
         if key[3] == "make"
     }
     assert bound == {
@@ -175,7 +175,9 @@ def test_declaration_name_wins_over_a_same_named_annotation(tmp_path: Path) -> N
         encoding="utf-8",
     )
     facts = run_java_frontend(repo)
-    site = facts.call_sites[("src/main/java/com/app/Annotated.java", 10, 15, "make")]
+    site = facts.resolved_call_sites[
+        ("src/main/java/com/app/Annotated.java", 10, 15, "make")
+    ]
     assert (site.target_file, site.target_line) == (
         "src/main/java/com/app/Annotated.java",
         5,
@@ -198,7 +200,7 @@ def test_non_ascii_identifiers_survive_the_wire(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     facts = run_java_frontend(repo)
-    names = {key[3] for key in facts.call_sites}
+    names = {key[3] for key in facts.resolved_call_sites}
     assert "gr\u00fc\u00dfe" in names
 
 
@@ -286,7 +288,9 @@ def test_a_comment_inside_the_annotation_does_not_hide_it(tmp_path: Path) -> Non
         encoding="utf-8",
     )
     facts = run_java_frontend(repo)
-    site = facts.call_sites[("src/main/java/com/app/Commented.java", 10, 15, "make")]
+    site = facts.resolved_call_sites[
+        ("src/main/java/com/app/Commented.java", 10, 15, "make")
+    ]
     assert site.target_line == 5
 
 

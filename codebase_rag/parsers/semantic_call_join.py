@@ -14,10 +14,7 @@ from tree_sitter import Node
 
 from ..types_defs import FunctionLocation, FunctionSpanKey
 from ..utils.path_utils import cached_relative_path
-from .frontends.protocol import ResolvedCallSite
-
-# (rel_file, name_token_line, name_token_byte_col, simple_name).
-CallSiteKey = tuple[str, int, int, str]
+from .frontends.protocol import CallSiteKey, ResolvedCallSite
 
 
 def call_site_key(

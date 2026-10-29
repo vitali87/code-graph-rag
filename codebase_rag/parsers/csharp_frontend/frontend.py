@@ -16,7 +16,6 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
-from typing import NamedTuple
 
 from defusedxml import DefusedXmlException, ElementTree
 from loguru import logger
@@ -26,69 +25,18 @@ from ... import logs as ls
 from ...config import settings
 from ..build_lock import artifact_fresh, build_cached_artifact, newest_source_mtime
 from ..frontend_mode import resolve_frontend_mode
-
-# Base-classification join key: (rel_file, type_start_line) -> {base_simple_name: kind}.
-BaseKindMap = dict[tuple[str, int], dict[str, str]]
-
-# Call-site join key: (rel_file, name_token_line, name_token_col, simple_name).
-# The NAME token, not the expression start: nested invocations
-# (`Make().Handle(x)` wraps `Make()`) share a start position, but their name
-# tokens never collide. Columns are BYTE offsets on both sides: the tool
-# re-measures Roslyn's UTF-16 columns in UTF-8 bytes to match tree-sitter.
-CallSiteKey = tuple[str, int, int, str]
+from ..frontends.protocol import (
+    CallSiteKey,
+    QueryCall,
+    ResolvedCallSite,
+    SemanticFacts,
+)
 
 
-class CSharpCallSite(NamedTuple):
-    """Resolved target of one invocation: the declaration cgr ingested."""
-
-    name: str
-    target_file: str
-    target_line: int
-    target_col: int
-
-
-class CSharpQueryCall(NamedTuple):
-    """One LINQ query operator call, keyed on the enclosing member's decl."""
-
-    caller_file: str
-    caller_line: int
-    caller_col: int
-    target_file: str
-    target_line: int
-    target_col: int
-
-
-class CSharpSemanticFacts(NamedTuple):
-    """Everything one Roslyn frontend run learned about the repo."""
-
-    base_kinds: BaseKindMap
-    call_sites: dict[CallSiteKey, CSharpCallSite]
-    partial_groups: list[list[tuple[str, int]]]
-    query_calls: list[CSharpQueryCall]
-    # Sites Roslyn resolved to a METADATA method (no first-party
-    # declaration): the compiler proof that the call leaves the repo, so
-    # the name-trie fallback must not fabricate a first-party edge there.
-    external_sites: set[CallSiteKey]
-    # Per invocation argument, the locals/parameters Roslyn's definite-
-    # assignment analysis proves reach it (issue #1187): the compiler's
-    # answer where the lexical flow walk guesses from syntax.
-    arg_flows: dict[CallSiteKey, dict[int, frozenset[str]]]
-    # Per local declarator, the locals/parameters that reach its INITIALIZER:
-    # without these the tainted value stops at the initializer expression and
-    # the bound variable looks clean to every later read.
-    bind_flows: dict[CallSiteKey, frozenset[str]]
-
-    # Per call site, the argument INDEX -> the local/parameter the callee writes
-    # through an `out`/`ref` parameter. The mirror of arg_flows: without these a
-    # variable filled by `TryParse(s, out var n)` looks untouched, so a sink fed
-    # from it has no edge.
-    out_writes: dict[CallSiteKey, dict[int, str]]
-
-
-def _empty_facts() -> CSharpSemanticFacts:
+def _empty_facts() -> SemanticFacts:
     # A fresh instance per failure path: the maps are handed to mutable
     # processor state, so a shared constant would alias across runs.
-    return CSharpSemanticFacts({}, {}, [], [], set(), {}, {}, {})
+    return SemanticFacts()
 
 
 _DOTNET = "dotnet"
@@ -278,7 +226,7 @@ def _restore(dotnet: str, project: Path) -> None:
         return
 
 
-def _parse_payload(stdout: str, stderr: str = "") -> CSharpSemanticFacts:
+def _parse_payload(stdout: str, stderr: str = "") -> SemanticFacts:
     lines = [line for line in stdout.splitlines() if line.strip()]
     if not lines:
         # No output at all: the tool crashed before printing its JSON line.
@@ -295,20 +243,20 @@ def _parse_payload(stdout: str, stderr: str = "") -> CSharpSemanticFacts:
             ls.CSHARP_FRONTEND_PARSE_FAILED.format(stdout=stdout, stderr=stderr)
         )
         return _empty_facts()
-    facts = CSharpSemanticFacts(
+    facts = SemanticFacts(
         base_kinds={
             (type_fact["file"], int(type_fact["line"])): _base_kinds(
                 type_fact.get("bases", [])
             )
             for type_fact in payload.get("types", [])
         },
-        call_sites={
+        resolved_call_sites={
             (
                 site["file"],
                 int(site["line"]),
                 int(site["col"]),
                 site["name"],
-            ): CSharpCallSite(
+            ): ResolvedCallSite(
                 site["name"], site["tfile"], int(site["tline"]), int(site["tcol"])
             )
             for site in payload.get("calls", [])
@@ -318,7 +266,7 @@ def _parse_payload(stdout: str, stderr: str = "") -> CSharpSemanticFacts:
             for group in payload.get("partials", [])
         ],
         query_calls=[
-            CSharpQueryCall(
+            QueryCall(
                 query["file"],
                 int(query["line"]),
                 int(query["col"]),
@@ -336,7 +284,7 @@ def _parse_payload(stdout: str, stderr: str = "") -> CSharpSemanticFacts:
         bind_flows=_bind_flows(payload.get("bind_flows", [])),
         out_writes=_out_writes(payload.get("out_writes", [])),
     )
-    if not any(facts) and stderr.strip():
+    if facts.is_empty() and stderr.strip():
         # A well-formed but entirely empty payload means the workspace load
         # went wrong (SDK pin mismatch, unloadable solution); surface the
         # tool's diagnostics instead of looking identical to success.
@@ -433,7 +381,7 @@ def _base_kinds(bases: list[dict[str, str]]) -> dict[str, str]:
 
 def run_csharp_frontend(
     repo_path: Path, ignored_dirs: frozenset[str] = cs.IGNORE_PATTERNS
-) -> CSharpSemanticFacts:
+) -> SemanticFacts:
     dotnet = shutil.which(_DOTNET)
     if dotnet is None:
         return _empty_facts()

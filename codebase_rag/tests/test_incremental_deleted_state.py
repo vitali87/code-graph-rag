@@ -21,8 +21,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.frontends import go as go_fe
 from codebase_rag.parsers.frontends import java as java_fe
-from codebase_rag.parsers.go_frontend import GoCallSite, GoSemanticFacts
-from codebase_rag.parsers.java_frontend import JavaCallSite, JavaSemanticFacts
+from codebase_rag.parsers.frontends.protocol import ResolvedCallSite, SemanticFacts
 from evals.cgr_graph import StatefulIngestor
 
 _ABSOLUTE = {cs.NodeLabel.FOLDER.value, cs.NodeLabel.PACKAGE.value}
@@ -957,11 +956,13 @@ GO_CALL_KEY = ("iface.go", 6, len("\t_ = h."), "Handle")
 GO_TARGET = (5, len("func (b B) "))
 
 
-def _go_facts(target_file: str) -> GoSemanticFacts:
-    return GoSemanticFacts(
-        call_sites={GO_CALL_KEY: GoCallSite("Handle", target_file, *GO_TARGET)},
+def _go_facts(target_file: str) -> SemanticFacts:
+    return SemanticFacts(
+        resolved_call_sites={
+            GO_CALL_KEY: ResolvedCallSite("Handle", target_file, *GO_TARGET)
+        },
         external_sites=set(),
-        implements=[],
+        implements_pairs=[],
     )
 
 
@@ -1034,7 +1035,7 @@ def test_a_reused_updater_joins_a_java_fact_against_the_renamed_module(
     root = temp_repo / "proj"
     holder: dict[str, object] = {"target_file": "B.java"}
 
-    def facts(repo_path: Path, rescued_files: frozenset[str]) -> JavaSemanticFacts:
+    def facts(repo_path: Path, rescued_files: frozenset[str]) -> SemanticFacts:
         updater = holder["updater"]
         assert isinstance(updater, GraphUpdater)
         target_file = str(holder["target_file"])
@@ -1050,8 +1051,10 @@ def test_a_reused_updater_joins_a_java_fact_against_the_renamed_module(
         )
         assert spans, (modules, sorted(dp.function_locations))
         line, col = spans[0]
-        return JavaSemanticFacts(
-            call_sites={JAVA_CALL_KEY: JavaCallSite("handle", target_file, line, col)},
+        return SemanticFacts(
+            resolved_call_sites={
+                JAVA_CALL_KEY: ResolvedCallSite("handle", target_file, line, col)
+            },
             external_sites=set(),
         )
 

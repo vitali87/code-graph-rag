@@ -14,12 +14,12 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag import graph_updater as gu
 from codebase_rag.capture import ALL_ENABLED, CaptureSelection
-from codebase_rag.parsers.csharp_frontend import (
-    CSharpCallSite,
-    CSharpQueryCall,
-    CSharpSemanticFacts,
-)
 from codebase_rag.parsers.csharp_frontend.frontend import _parse_payload
+from codebase_rag.parsers.frontends.protocol import (
+    QueryCall,
+    ResolvedCallSite,
+    SemanticFacts,
+)
 from codebase_rag.tests.conftest import (
     create_and_run_updater,
     get_relationships,
@@ -57,7 +57,7 @@ def _has(pairs: set[tuple[str, str]], caller_suffix: str, callee_suffix: str) ->
     )
 
 
-def _hybrid(monkeypatch: pytest.MonkeyPatch, facts: CSharpSemanticFacts) -> None:
+def _hybrid(monkeypatch: pytest.MonkeyPatch, facts: SemanticFacts) -> None:
     # The C# frontend now runs behind the LanguageFrontend registry (issue #1178),
     # so patch the toolchain gate and the Roslyn runner where the ADAPTER binds them.
     from codebase_rag.parsers.frontends import csharp as csharp_fe
@@ -108,11 +108,11 @@ def test_parse_payload_reads_semantic_fact_sections() -> None:
     )
     facts = _parse_payload(payload)
     assert facts.base_kinds[("F.cs", 3)]["Widget"] == "class"
-    assert facts.call_sites[("A.cs", 5, 8, "Handle")] == CSharpCallSite(
+    assert facts.resolved_call_sites[("A.cs", 5, 8, "Handle")] == ResolvedCallSite(
         "Handle", "B.cs", 3, 4
     )
     assert facts.partial_groups == [[("A.cs", 1), ("C.cs", 2)]]
-    assert facts.query_calls == [CSharpQueryCall("A.cs", 9, 4, "B.cs", 7, 4)]
+    assert facts.query_calls == [QueryCall("A.cs", 9, 4, "B.cs", 7, 4)]
     assert facts.external_sites == {("A.cs", 11, 8, "WriteLine")}
 
 
@@ -120,7 +120,7 @@ def test_parse_payload_without_new_sections_yields_empty_facts() -> None:
     # An older tool build (stale cached DLL) emits only `types`; the new
     # sections must default to empty instead of raising.
     facts = _parse_payload(json.dumps({"types": []}))
-    assert facts.call_sites == {}
+    assert facts.resolved_call_sites == {}
     assert facts.partial_groups == []
     assert facts.query_calls == []
 
@@ -165,10 +165,10 @@ def test_call_fact_resolves_chained_receiver_to_exact_overload(
 
     call_line, call_col = _loc(_OVERLOAD_SRC, 'Handle("x")')
     target_line, target_col = _loc(_OVERLOAD_SRC, "public void Handle(string s)")
-    facts = CSharpSemanticFacts(
+    facts = SemanticFacts(
         base_kinds={},
-        call_sites={
-            ("Code.cs", call_line, call_col, "Handle"): CSharpCallSite(
+        resolved_call_sites={
+            ("Code.cs", call_line, call_col, "Handle"): ResolvedCallSite(
                 "Handle", "Code.cs", target_line, target_col
             )
         },
@@ -207,10 +207,10 @@ def test_call_fact_resolves_conditional_access_invocation(
 
     call_line, call_col = _loc(_OVERLOAD_SRC, 'Handle("y")')
     target_line, target_col = _loc(_OVERLOAD_SRC, "public void Handle(string s)")
-    facts = CSharpSemanticFacts(
+    facts = SemanticFacts(
         base_kinds={},
-        call_sites={
-            ("Code.cs", call_line, call_col, "Handle"): CSharpCallSite(
+        resolved_call_sites={
+            ("Code.cs", call_line, call_col, "Handle"): ResolvedCallSite(
                 "Handle", "Code.cs", target_line, target_col
             )
         },
@@ -261,10 +261,10 @@ def test_call_fact_suppresses_same_arity_family_fanout(
 
     call_line, call_col = _loc(_BARE_FANOUT_SRC, "Format(1)")
     target_line, target_col = _loc(_BARE_FANOUT_SRC, "public void Format(int i)")
-    facts = CSharpSemanticFacts(
+    facts = SemanticFacts(
         base_kinds={},
-        call_sites={
-            ("Code.cs", call_line, call_col, "Format"): CSharpCallSite(
+        resolved_call_sites={
+            ("Code.cs", call_line, call_col, "Format"): ResolvedCallSite(
                 "Format", "Code.cs", target_line, target_col
             )
         },
@@ -322,9 +322,9 @@ def test_external_site_fact_suppresses_name_trie_fallback(
     (root / "Sample.csproj").write_text(_CSPROJ, encoding="utf-8")
 
     call_line, call_col = _loc(_EXTERNAL_SITE_SRC, "Dispose();")
-    facts = CSharpSemanticFacts(
+    facts = SemanticFacts(
         base_kinds={},
-        call_sites={},
+        resolved_call_sites={},
         partial_groups=[],
         query_calls=[],
         external_sites={("Code.cs", call_line, call_col, "Dispose")},
@@ -394,9 +394,9 @@ def test_partial_fact_merges_parts_across_directories(
 
     line_a, _ = _loc(_PART_A, "public partial class W")
     line_b, _ = _loc(_PART_B, "public partial class W")
-    facts = CSharpSemanticFacts(
+    facts = SemanticFacts(
         base_kinds={},
-        call_sites={},
+        resolved_call_sites={},
         partial_groups=[[("dirA/Part1.cs", line_a), ("dirB/Part2.cs", line_b)]],
         query_calls=[],
         external_sites=set(),
@@ -459,12 +459,12 @@ def test_query_fact_emits_calls_edge_for_linq_operator(
 
     caller_line, caller_col = _loc(_LINQ_QUERY, "public object Go(Src s)")
     target_line, target_col = _loc(_LINQ_OPS, "public static object Select")
-    facts = CSharpSemanticFacts(
+    facts = SemanticFacts(
         base_kinds={},
-        call_sites={},
+        resolved_call_sites={},
         partial_groups=[],
         query_calls=[
-            CSharpQueryCall(
+            QueryCall(
                 "Q.cs", caller_line, caller_col, "Ops.cs", target_line, target_col
             )
         ],
@@ -498,12 +498,12 @@ def test_query_fact_edge_respects_capture_excluding_calls(
 
     caller_line, caller_col = _loc(_LINQ_QUERY, "public object Go(Src s)")
     target_line, target_col = _loc(_LINQ_OPS, "public static object Select")
-    facts = CSharpSemanticFacts(
+    facts = SemanticFacts(
         base_kinds={},
-        call_sites={},
+        resolved_call_sites={},
         partial_groups=[],
         query_calls=[
-            CSharpQueryCall(
+            QueryCall(
                 "Q.cs", caller_line, caller_col, "Ops.cs", target_line, target_col
             )
         ],
@@ -631,23 +631,23 @@ def test_roslyn_tool_emits_semantic_facts(temp_repo: Path) -> None:
     facts = run_csharp_frontend(root)
     if not (
         facts.base_kinds
-        or facts.call_sites
+        or facts.resolved_call_sites
         or facts.partial_groups
         or facts.query_calls
     ):
         pytest.skip("Roslyn frontend could not build/restore in this environment")
 
     handle_line, _ = _loc(_E2E_CODE, "public void Handle(string s)")
-    handle = [f for k, f in facts.call_sites.items() if k[3] == "Handle"]
+    handle = [f for k, f in facts.resolved_call_sites.items() if k[3] == "Handle"]
     assert any(
         f.target_file == "E2E.cs" and f.target_line == handle_line for f in handle
-    ), facts.call_sites
+    ), facts.resolved_call_sites
 
     twice_line, _ = _loc(_E2E_CODE, "public static int Twice(this C c)")
-    twice = [f for k, f in facts.call_sites.items() if k[3] == "Twice"]
+    twice = [f for k, f in facts.resolved_call_sites.items() if k[3] == "Twice"]
     assert any(
         f.target_file == "E2E.cs" and f.target_line == twice_line for f in twice
-    ), facts.call_sites
+    ), facts.resolved_call_sites
 
     line_a, _ = _loc(_PART_A, "public partial class W")
     line_b, _ = _loc(_PART_B, "public partial class W")
@@ -673,7 +673,9 @@ def test_roslyn_tool_emits_semantic_facts(temp_repo: Path) -> None:
         k[0] == "E2E.cs" and k[1] == writeline_line and k[3] == "WriteLine"
         for k in facts.external_sites
     ), facts.external_sites
-    assert not any(k[3] == "WriteLine" for k in facts.call_sites), facts.call_sites
+    assert not any(k[3] == "WriteLine" for k in facts.resolved_call_sites), (
+        facts.resolved_call_sites
+    )
 
     # A [LoggerMessage] partial's IMPLEMENTATION lives in a generated tree,
     # but its DEFINITION is first-party (Polly's Log.cs): the call must be
@@ -682,9 +684,9 @@ def test_roslyn_tool_emits_semantic_facts(temp_repo: Path) -> None:
     # and tree-sitter's method_declaration include the attribute list, so
     # that line is what the location join matches.
     hi_line, _ = _loc(_E2E_LOGGER_MESSAGE, "[LoggerMessage(EventId = 1")
-    hi = [f for k, f in facts.call_sites.items() if k[3] == "Hi"]
+    hi = [f for k, f in facts.resolved_call_sites.items() if k[3] == "Hi"]
     assert any(f.target_file == "Gen.cs" and f.target_line == hi_line for f in hi), (
-        facts.call_sites,
+        facts.resolved_call_sites,
         facts.external_sites,
     )
     assert not any(k[3] == "Hi" for k in facts.external_sites), facts.external_sites
@@ -714,7 +716,7 @@ def test_hybrid_end_to_end_produces_semantic_edges(
     (root / "Sample.csproj").write_text(_CSPROJ, encoding="utf-8")
 
     facts = run_csharp_frontend(root)
-    if not facts.call_sites:
+    if not facts.resolved_call_sites:
         pytest.skip("Roslyn frontend could not build/restore in this environment")
 
     monkeypatch.setattr(gu.settings, "CSHARP_FRONTEND", cs.CSharpFrontend.HYBRID)
@@ -772,7 +774,7 @@ def test_call_fact_survives_non_ascii_prefix_on_line(
     (root / "Sample.csproj").write_text(_CSPROJ, encoding="utf-8")
 
     facts = run_csharp_frontend(root)
-    if not facts.call_sites:
+    if not facts.resolved_call_sites:
         pytest.skip("Roslyn frontend could not build/restore in this environment")
 
     monkeypatch.setattr(gu.settings, "CSHARP_FRONTEND", cs.CSharpFrontend.HYBRID)
@@ -796,11 +798,11 @@ def test_frontend_off_clears_stale_semantic_facts(
         ingestor=MagicMock(), repo_path=temp_repo, parsers=parsers, queries=queries
     )
     dp = updater.factory.definition_processor
-    dp.csharp_call_sites[("Stale.cs", 1, 0, "Old")] = CSharpCallSite(
+    dp.csharp_call_sites[("Stale.cs", 1, 0, "Old")] = ResolvedCallSite(
         "Old", "Stale.cs", 2, 0
     )
     updater._csharp_partial_decls = [[("Stale.cs", 1)]]
-    updater._csharp_query_calls = [CSharpQueryCall("Stale.cs", 1, 0, "Stale.cs", 2, 0)]
+    updater._csharp_query_calls = [QueryCall("Stale.cs", 1, 0, "Stale.cs", 2, 0)]
     monkeypatch.setattr(gu.settings, "CSHARP_FRONTEND", cs.CSharpFrontend.TREESITTER)
 
     updater._run_csharp_frontend()

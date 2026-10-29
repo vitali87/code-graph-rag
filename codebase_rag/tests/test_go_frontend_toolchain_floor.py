@@ -23,6 +23,7 @@ from loguru import logger
 from codebase_rag import constants as cs
 from codebase_rag.config import settings
 from codebase_rag.parsers import build_lock
+from codebase_rag.parsers.frontends.protocol import SemanticFacts
 from codebase_rag.parsers.go_frontend import frontend as fe
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -148,7 +149,7 @@ def cgr_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def _run(
     monkeypatch: pytest.MonkeyPatch, repo: Path, fake: _FakeGo
-) -> tuple[fe.GoSemanticFacts, list[str]]:
+) -> tuple[SemanticFacts, list[str]]:
     monkeypatch.setattr(fe.subprocess, "run", fake)
     warnings: list[str] = []
     sink = logger.add(warnings.append, level="WARNING", format="{message}")
@@ -292,7 +293,7 @@ def test_an_old_go_is_named_once_and_never_built(
     facts, warnings = _run(monkeypatch, go_repo, fake)
 
     assert fake.builds == 0
-    assert not facts.call_sites
+    assert not facts.resolved_call_sites
     assert len(warnings) == 1
     assert found in warnings[0]
     assert "1.27.2" in warnings[0]
@@ -483,7 +484,7 @@ def test_a_cached_helper_is_not_handed_to_an_older_go(
 
     assert older.builds == 0
     assert older.runs == 0
-    assert not facts.call_sites
+    assert not facts.resolved_call_sites
     assert len(warnings) == 1
     assert "1.27.1" in warnings[0]
     assert "1.27.2" in warnings[0]
@@ -535,4 +536,4 @@ def test_an_alias_is_not_a_second_implementer(tmp_path: Path) -> None:
 
     facts = fe.run_go_frontend(tmp_path)
 
-    assert [pair.impl_line for pair in facts.implements] == [5]
+    assert [pair.impl_line for pair in facts.implements_pairs] == [5]

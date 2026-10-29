@@ -17,7 +17,6 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
-from typing import NamedTuple
 
 from loguru import logger
 
@@ -26,85 +25,14 @@ from ... import logs as ls
 from ...config import settings
 from ..build_lock import artifact_fresh, build_cached_artifact, newest_source_mtime
 from ..frontend_mode import resolve_frontend_mode
+from ..frontends.protocol import ImplementsPair, ResolvedCallSite, SemanticFacts
 from ..go.module_paths import discover_go_module_paths
 
-# Call-site join key: (rel_file, name_token_line, name_token_byte_col, simple_name).
-# The NAME token, not the call-expression start: nested calls (`make().Handle(x)`
-# wrap `make()`) share a start position, but their name tokens never collide.
-# Columns are 0-based BYTE offsets on both sides, matching tree-sitter.
-CallSiteKey = tuple[str, int, int, str]
 
-
-class GoCallSite(NamedTuple):
-    """Resolved target of one call: the first-party declaration cgr ingested."""
-
-    name: str
-    target_file: str
-    target_line: int
-    target_col: int
-
-
-class GoImplements(NamedTuple):
-    """A types.Implements-proven IMPLEMENTS edge: the implementer and the
-    interface each as the declaring identifier's (file, line, col). A pure
-    position-join -- Go reuses simple type names across packages, so the
-    consumer resolves both ends by location, never by name."""
-
-    impl_file: str
-    impl_line: int
-    impl_col: int
-    iface_file: str
-    iface_line: int
-    iface_col: int
-
-
-class GoSemanticFacts(NamedTuple):
-    """Everything one gotypes run learned about the module."""
-
-    call_sites: dict[CallSiteKey, GoCallSite]
-    # Sites go/types resolved to a callee OUTSIDE the module (stdlib, deps): the
-    # compiler proof the call leaves the repo, so the name-trie fallback must
-    # not fabricate a first-party edge there.
-    external_sites: set[CallSiteKey]
-    # First-party concrete-type -> first-party interface pairs the compiler
-    # proved. With them loaded they are the only Go IMPLEMENTS edges; without
-    # them, the tree-sitter path matches method names and arities instead
-    # (issue #2483), since there is no syntactic base list to read.
-    implements: list[GoImplements]
-    # Module anchors whose tool run FAILED (timeout, crash, unparseable
-    # output). A failed anchor drops only its own module to the heuristics,
-    # which is deliberate -- one wedged build must not blind a ten-module repo
-    # -- but the degradation has to be recorded or it is invisible: a module
-    # the tool never analysed is otherwise indistinguishable from one it
-    # analysed and found nothing in, and the graph ends up compiler-accurate
-    # for some modules and heuristic for others with nothing saying which
-    # (issue #1462). Empty on a fully successful run, so a reader can trust it.
-    #
-    # A TUPLE, not a list, and that is why it can carry a default at all: a
-    # NamedTuple default is one shared object, so a mutable `[]` would alias
-    # across every run that omitted it -- the aliasing `_empty_facts` exists to
-    # avoid. An empty tuple is immutable and safe to share.
-    degraded_modules: tuple[str, ...] = ()
-    # Module anchors whose tool run SUCCEEDED, spelled as `degraded_modules`
-    # is. Within one, the implements pairs above are the whole answer, even
-    # an empty one; the name-and-arity fallback keeps to the rest (#2483).
-    analysed_modules: tuple[str, ...] = ()
-    # The repo-relative files those runs type-checked. A run sees only the
-    # files the current build selects, so a file for another GOOS or build
-    # tag, or one of a package that failed to type-check, was never compared:
-    # the pairs above are the answer only where every file a pair rests on
-    # is here (PR #3360 review).
-    checked_files: frozenset[str] = frozenset()
-    # The declarations (file, line, col) of the types and interfaces the
-    # runs compared. A checked file can declare one they skip, a generic
-    # type or interface, and no pair says anything of it.
-    compared_types: frozenset[tuple[str, int, int]] = frozenset()
-
-
-def _empty_facts() -> GoSemanticFacts:
+def _empty_facts() -> SemanticFacts:
     # A fresh instance per failure path: the maps are handed to mutable
     # processor state, so a shared constant would alias across runs.
-    return GoSemanticFacts({}, set(), [])
+    return SemanticFacts()
 
 
 _GO = "go"
@@ -408,7 +336,7 @@ def _build_tool(go: str) -> Path | None:
     )
 
 
-def _parse_payload(stdout: str, stderr: str = "") -> GoSemanticFacts | None:
+def _parse_payload(stdout: str, stderr: str = "") -> SemanticFacts | None:
     """Facts from one tool run, or None when the OUTPUT was unusable.
 
     None rather than empty facts for every failure path below: empty facts is
@@ -432,14 +360,14 @@ def _parse_payload(stdout: str, stderr: str = "") -> GoSemanticFacts | None:
         logger.error(ls.GO_FRONTEND_PARSE_FAILED.format(stdout=stdout, stderr=stderr))
         return None
     try:
-        facts = GoSemanticFacts(
-            call_sites={
+        facts = SemanticFacts(
+            resolved_call_sites={
                 (
                     site["file"],
                     int(site["line"]),
                     int(site["col"]),
                     site["name"],
-                ): GoCallSite(
+                ): ResolvedCallSite(
                     site["name"], site["tfile"], int(site["tline"]), int(site["tcol"])
                 )
                 for site in payload.get("calls", [])
@@ -448,8 +376,8 @@ def _parse_payload(stdout: str, stderr: str = "") -> GoSemanticFacts | None:
                 (site["file"], int(site["line"]), int(site["col"]), site["name"])
                 for site in payload.get("externals", [])
             },
-            implements=[
-                GoImplements(
+            implements_pairs=[
+                ImplementsPair(
                     pair["file"],
                     int(pair["line"]),
                     int(pair["col"]),
@@ -473,9 +401,9 @@ def _parse_payload(stdout: str, stderr: str = "") -> GoSemanticFacts | None:
         logger.error(ls.GO_FRONTEND_PARSE_FAILED.format(stdout=stdout, stderr=stderr))
         return None
     if (
-        not facts.call_sites
+        not facts.resolved_call_sites
         and not facts.external_sites
-        and not facts.implements
+        and not facts.implements_pairs
         and stderr.strip()
     ):
         # A well-formed but entirely empty payload with diagnostics means the
@@ -499,26 +427,26 @@ def _checked_file(path: object) -> str:
     return path
 
 
-def _prefix_facts(facts: GoSemanticFacts, prefix: str) -> GoSemanticFacts:
+def _prefix_facts(facts: SemanticFacts, prefix: str) -> SemanticFacts:
     if not prefix:
         return facts
 
     def _rel(path: str) -> str:
         return f"{prefix}/{path}"
 
-    return GoSemanticFacts(
-        call_sites={
-            (_rel(file), line, col, name): GoCallSite(
+    return SemanticFacts(
+        resolved_call_sites={
+            (_rel(file), line, col, name): ResolvedCallSite(
                 site.name, _rel(site.target_file), site.target_line, site.target_col
             )
-            for (file, line, col, name), site in facts.call_sites.items()
+            for (file, line, col, name), site in facts.resolved_call_sites.items()
         },
         external_sites={
             (_rel(file), line, col, name)
             for file, line, col, name in facts.external_sites
         },
-        implements=[
-            GoImplements(
+        implements_pairs=[
+            ImplementsPair(
                 _rel(pair.impl_file),
                 pair.impl_line,
                 pair.impl_col,
@@ -526,7 +454,7 @@ def _prefix_facts(facts: GoSemanticFacts, prefix: str) -> GoSemanticFacts:
                 pair.iface_line,
                 pair.iface_col,
             )
-            for pair in facts.implements
+            for pair in facts.implements_pairs
         ],
         checked_files=frozenset(_rel(path) for path in facts.checked_files),
         compared_types=frozenset(
@@ -537,7 +465,7 @@ def _prefix_facts(facts: GoSemanticFacts, prefix: str) -> GoSemanticFacts:
 
 def _run_tool_once(
     binary: Path, module_root: Path, ignored_dirs: frozenset[str]
-) -> GoSemanticFacts | None:
+) -> SemanticFacts | None:
     """Facts for one module anchor, or None when the tool run FAILED.
 
     None rather than empty facts, because they are different facts and the
@@ -575,7 +503,7 @@ def _run_tool_once(
 
 def run_go_frontend(
     repo_path: Path, ignored_dirs: frozenset[str] = cs.IGNORE_PATTERNS
-) -> GoSemanticFacts:
+) -> SemanticFacts:
     go = shutil.which(_GO)
     if go is None:
         return _empty_facts()
@@ -605,14 +533,13 @@ def run_go_frontend(
             continue
         analysed.append(prefix or ".")
         facts = _prefix_facts(raw, prefix)
-        merged.call_sites.update(facts.call_sites)
+        merged.resolved_call_sites.update(facts.resolved_call_sites)
         merged.external_sites.update(facts.external_sites)
-        merged.implements.extend(facts.implements)
+        merged.implements_pairs.extend(facts.implements_pairs)
         checked.update(facts.checked_files)
         compared.update(facts.compared_types)
-    return merged._replace(
-        degraded_modules=tuple(degraded),
-        analysed_modules=tuple(analysed),
-        checked_files=frozenset(checked),
-        compared_types=frozenset(compared),
-    )
+    merged.degraded_roots = tuple(degraded)
+    merged.analysed_roots = tuple(analysed)
+    merged.checked_files = frozenset(checked)
+    merged.compared_types = frozenset(compared)
+    return merged
