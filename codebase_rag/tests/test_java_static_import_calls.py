@@ -752,7 +752,7 @@ def test_static_imports_recorded_apart_from_type_imports(tmp_path: Path) -> None
         .root_node
     )
     processor.parse_imports(root, "repo.p.A", cs.SupportedLanguage.JAVA, queries)
-    assert processor.java_static_imports["repo.p.A"] == [
+    assert processor.java.java_static_imports["repo.p.A"] == [
         JavaStaticImport(class_path="java.lang.Math", member="max"),
         JavaStaticImport(class_path="org.junit.Assert", member=None),
     ]
@@ -770,9 +770,9 @@ def test_reparse_drops_removed_static_imports(tmp_path: Path) -> None:
     processor.parse_imports(
         with_import.root_node, "repo.p.A", cs.SupportedLanguage.JAVA, queries
     )
-    assert processor.java_static_imports.get("repo.p.A")
+    assert processor.java.java_static_imports.get("repo.p.A")
     without_import = java.parse(b"package p;\nimport java.util.List;\n")
     processor.parse_imports(
         without_import.root_node, "repo.p.A", cs.SupportedLanguage.JAVA, queries
     )
-    assert "repo.p.A" not in processor.java_static_imports
+    assert "repo.p.A" not in processor.java.java_static_imports

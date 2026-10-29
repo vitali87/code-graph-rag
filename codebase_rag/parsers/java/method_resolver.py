@@ -1020,7 +1020,7 @@ class JavaMethodResolver:
     ) -> tuple[bool, tuple[str, str] | None]:
         # (decided, callee). Undecided means no static import settles the
         # call, which leaves it to the module-wide scan as before.
-        imports = self.import_processor.java_static_imports.get(module_qn, ())
+        imports = self.import_processor.java.java_static_imports.get(module_qn, ())
         named = [imp.class_path for imp in imports if imp.member == method_name]
         on_demand = [imp.class_path for imp in imports if imp.member is None]
         if not (named or on_demand):

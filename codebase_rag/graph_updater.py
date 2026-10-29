@@ -4940,7 +4940,7 @@ class GraphUpdater:
         roots = discover_generated_source_roots(self.repo_path)
         dp = self.factory.definition_processor
         dp.generated_source_prefixes = generated_prefixes_for(roots)
-        self.factory.import_processor.set_java_generated_roots(roots)
+        self.factory.import_processor.java.set_java_generated_roots(roots)
         # Rebuilt from the CONFIGURED base every run, never accumulated: a
         # root that vanished (target/ cleaned) must stop rescuing its subtree.
         patterns = unignore_patterns_for(roots)
@@ -5049,7 +5049,7 @@ class GraphUpdater:
 
     def _process_files(self, force: bool = False) -> None:
         self.factory.import_processor.rust.reset_rust_path_caches()
-        self.factory.import_processor.reset_java_path_caches()
+        self.factory.import_processor.java.reset_java_path_caches()
         self.factory.import_processor.reset_julia_path_caches()
         self.factory.import_processor.reset_dart_path_caches()
         cache_path = self.prepared_state_dir / cs.HASH_CACHE_FILENAME

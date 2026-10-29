@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -12,7 +14,6 @@ from ...types_defs import (
 )
 from ..definition_facts import DefinitionFacts
 from ..frontends.protocol import CallSiteKey
-from ..import_processor import ImportProcessor
 from ..semantic_call_join import call_site_key, resolve_call_site
 from .method_resolver import JavaMethodResolver
 from .type_resolver import JavaClassHeaders, JavaTypeResolver
@@ -21,6 +22,7 @@ from .variable_analyzer import JavaVariableAnalyzer
 
 if TYPE_CHECKING:
     from ...types_defs import ASTCacheProtocol
+    from ..import_processor import ImportProcessor
 
 
 # The sentinel a proven-external call resolves to: not a target, an instruction
@@ -48,7 +50,7 @@ class JavaTypeInferenceEngine:
         function_registry: FunctionRegistryTrieProtocol,
         repo_path: Path,
         project_name: str,
-        ast_cache: "ASTCacheProtocol",
+        ast_cache: ASTCacheProtocol,
         queries: Mapping[cs.SupportedLanguage, LanguageQueries],
         module_qn_to_file_path: dict[str, Path],
         facts: DefinitionFacts,

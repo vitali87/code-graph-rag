@@ -32,6 +32,9 @@ def _run(code: str) -> subprocess.CompletedProcess[str]:
     "module",
     [
         "codebase_rag.parsers.go.frontend",
+        # The import processor builds the language packages' importers, and
+        # those packages' type inference names the processor back.
+        "codebase_rag.parsers.import_processor",
         "codebase_rag.parsers.java.frontend",
         "codebase_rag.parsers.python.frontend",
         "codebase_rag.parsers.semantic_call_join",

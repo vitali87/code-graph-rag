@@ -103,11 +103,12 @@ class TestImportParsing:
     ) -> None:
         """Test that language-specific import parsing methods exist."""
         import_processor = graph_updater.factory.import_processor
-        # JS/TS and Rust imports are parsed by the importers the processor builds.
+        # JS/TS, Java and Rust imports are parsed by the importers the processor
+        # builds.
         expected_methods = [
             (import_processor, "_parse_python_imports"),
             (import_processor.js_ts, "parse_imports"),
-            (import_processor, "_parse_java_imports"),
+            (import_processor.java, "parse_imports"),
             (import_processor.rust, "parse_imports"),
             (import_processor, "_parse_go_imports"),
             (import_processor, "_parse_generic_imports"),
@@ -554,11 +555,11 @@ class TestIsLocalModuleCache:
             function_registry=None,
         )
 
-        processor._is_local_java_import("com.example.Service")
-        processor._is_local_java_import("com.example.Service")
-        processor._is_local_java_import("com.example.Service")
+        processor.java._is_local_java_import("com.example.Service")
+        processor.java._is_local_java_import("com.example.Service")
+        processor.java._is_local_java_import("com.example.Service")
 
-        info = processor._java_source_root_prefix_cached.cache_info()
+        info = processor.java._java_source_root_prefix_cached.cache_info()
         assert info.hits >= 2
         assert info.misses == 1
 

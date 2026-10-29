@@ -26,7 +26,6 @@ from ..types_defs import (
     FunctionLocation,
     FunctionRegistryTrieProtocol,
     FunctionSpanKey,
-    JavaStaticImport,
     LanguageFamily,
     LanguageQueries,
     PropertyDict,
@@ -50,6 +49,7 @@ from .cpp.qn import build_module_qn_map
 from .dart import discover_dart_packages
 from .dart import utils as dart_utils
 from .go import discover_go_module_paths, resolve_go_import_path
+from .java.imports import JavaImporter
 from .js_ts.imports import JsTsImporter
 from .js_ts.reexports import js_ts_module_qn
 from .lua import utils as lua_utils
@@ -270,21 +270,6 @@ def _lua_relative_module(import_path: str, current_module: str) -> str:
     return cs.SEPARATOR_DOT.join(parts)
 
 
-def _java_import_shape(import_node: Node) -> tuple[str | None, bool, bool]:
-    # (imported path, is static, is wildcard) of a Java import declaration.
-    imported_path = None
-    is_static = False
-    is_wildcard = False
-    for child in import_node.children:
-        if child.type == cs.TS_STATIC:
-            is_static = True
-        elif child.type == cs.TS_SCOPED_IDENTIFIER:
-            imported_path = safe_decode_with_fallback(child)
-        elif child.type == cs.TS_ASTERISK:
-            is_wildcard = True
-    return imported_path, is_static, is_wildcard
-
-
 def _cpp_import_module_name(template_args: Node) -> str | None:
     # The module a C++ `import<...>` names; the last type identifier wins,
     # reading a type_descriptor's first type identifier.
@@ -312,7 +297,6 @@ class ImportProcessor:
         "import_mapping",
         "csharp_static_imports",
         "csharp_global_static_imports",
-        "java_static_imports",
         "commonjs_direct_exports",
         "conditional_imports",
         "python_import_rebinds",
@@ -320,9 +304,6 @@ class ImportProcessor:
         "php_module_namespaces",
         "stdlib_extractor",
         "_is_local_module_cached",
-        "_is_local_java_import_cached",
-        "_java_source_root_prefix_cached",
-        "java_generated_roots",
         "_project_named_package",
         "_map_py_source_root",
         "_map_go_import_path",
@@ -344,6 +325,7 @@ class ImportProcessor:
         "_dart_packages",
         "rust",
         "js_ts",
+        "java",
         "dart_prefix_shadows",
         "dart_import_aliases",
         "dart_exposed_libraries",
@@ -386,13 +368,6 @@ class ImportProcessor:
         # compilation. Keyed by the DECLARING module, so a re-parse or a
         # removal of that file drops exactly its own directives.
         self.csharp_global_static_imports: dict[str, set[str]] = {}
-        # Java `import static` brings a class's static MEMBERS into bare-call
-        # scope. import_mapping keys `import static C.m;` like a type import,
-        # and files `import static C.*;` (members of CLASS C) under the same
-        # `*path` key as `import p.*;` (types of PACKAGE p), so a bare `m()`
-        # cannot tell from it whether any static import names it. Module qn ->
-        # its static imports in source order (issue #2544).
-        self.java_static_imports: dict[str, list[JavaStaticImport]] = {}
         # CommonJS modules whose ENTIRE export is one function
         # (`module.exports = function (...) {...}`): module qn -> the
         # exported function's qn, so a whole-module require alias called
@@ -479,6 +454,15 @@ class ImportProcessor:
             project_name=project_name,
             import_mapping=self.import_mapping,
             import_sites=self._import_sites,
+        )
+        # Java's import and `import static` parsing and the source-root
+        # layout a local import's qn carries: the importer writes the import
+        # map above and records its sites through this processor.
+        self.java = JavaImporter(
+            self,
+            repo_path=repo_path,
+            project_name=project_name,
+            import_mapping=self.import_mapping,
         )
         # Dart: {module qn: {import prefix: [byte spans where a local or
         # parameter of that name shadows it]}} (issue #2033).
@@ -596,48 +580,7 @@ class ImportProcessor:
                 for ext in cs.PY_EXTENSIONS
             )
 
-        # Discovered annotation-processor roots (issue #1140): mutated via
-        # set_java_generated_roots, which clears the probe cache below.
-        self.java_generated_roots: tuple[tuple[str, ...], ...] = ()
-
-        @lru_cache(maxsize=4096)
-        def _java_source_root_prefix_cached(import_path: str) -> str | None:
-            # The registered Module qns carry the build-tool source root
-            # (src.main.java.), so a local import's qn must too; a flat
-            # layout keeps the empty prefix and is unchanged (issue #1121).
-            # Resolution probes the COMPLETE import target under each root:
-            # an external import sharing a local top-level segment
-            # (com.fasterxml under a repo with src/main/java/com) stays
-            # external, and a test-only class binds to src/test/java even
-            # when src/main/java also contains the top-level package. The
-            # target may be a package dir or any class-file ancestor: a
-            # static member (Utility.run) sits one segment past its file and
-            # a nested-class member (Outer.Inner.CONSTANT) two or more, so
-            # every ancestor is probed.
-            parts = import_path.split(cs.SEPARATOR_DOT)
-            for root in (
-                (),
-                *cs.JAVA_MAVEN_SOURCE_ROOTS,
-                *self.java_generated_roots,
-            ):
-                base = repo_path.joinpath(*root)
-                if base.joinpath(*parts).is_dir() or any(
-                    base.joinpath(
-                        *parts[: end - 1], f"{parts[end - 1]}{cs.EXT_JAVA}"
-                    ).is_file()
-                    for end in range(len(parts), 0, -1)
-                ):
-                    return (
-                        cs.SEPARATOR_DOT.join(root) + cs.SEPARATOR_DOT if root else ""
-                    )
-            return None
-
-        def _is_local_java_import_cached(import_path: str) -> bool:
-            return _java_source_root_prefix_cached(import_path) is not None
-
         self._is_local_module_cached = _is_local_module_cached
-        self._is_local_java_import_cached = _is_local_java_import_cached
-        self._java_source_root_prefix_cached = _java_source_root_prefix_cached
 
     @staticmethod
     def flush_stdlib_cache() -> None:
@@ -666,7 +609,7 @@ class ImportProcessor:
         self._scala_block_imports.pop(module_qn, None)
         self.csharp_static_imports.pop(module_qn, None)
         self.csharp_global_static_imports.pop(module_qn, None)
-        self.java_static_imports.pop(module_qn, None)
+        self.java.java_static_imports.pop(module_qn, None)
         self._julia_scope_map_keys.pop(module_qn, None)
         # Cleared with the mapping it shadows: these entries ADD edges, so a
         # stale one would resurrect an include the edited file has removed
@@ -845,7 +788,7 @@ class ImportProcessor:
                 ):
                     self.js_ts.parse_imports(captures, module_qn, root_node)
                 case cs.SupportedLanguage.JAVA:
-                    self._parse_java_imports(captures, module_qn)
+                    self.java.parse_imports(captures, module_qn)
                 case cs.SupportedLanguage.RUST:
                     self.rust.parse_imports(captures, module_qn)
                 case cs.SupportedLanguage.GO:
@@ -1248,12 +1191,6 @@ class ImportProcessor:
         self._inferred_module_imports.setdefault(importing_module_qn, set()).add(
             target_module_qn
         )
-
-    def set_java_generated_roots(self, roots: list[tuple[str, ...]]) -> None:
-        # The probe closure reads the attribute late-bound, but its lru cache
-        # may hold pre-discovery misses; clear so generated imports resolve.
-        self.java_generated_roots = tuple(roots)
-        self._java_source_root_prefix_cached.cache_clear()
 
     def flush_deferred_import_edges(self, known_module_paths: dict[str, str]) -> int:
         """Emit IMPORTS edges now that every file is parsed.
@@ -2089,34 +2026,6 @@ class ImportProcessor:
     def _is_local_module(self, module_name: str) -> bool:
         return self._is_local_module_cached(module_name)
 
-    def _is_local_java_import(self, import_path: str) -> bool:
-        return self._is_local_java_import_cached(import_path)
-
-    def _resolve_java_import_path(self, import_path: str) -> str:
-        prefix = self._java_source_root_prefix_cached(import_path)
-        if prefix is not None:
-            return f"{self.project_name}{cs.SEPARATOR_DOT}{prefix}{import_path}"
-        return import_path
-
-    def _java_owning_module_qn(self, full_name: str) -> str:
-        # A static or nested-class import carries symbol segments past the
-        # class file (Utility.run, Outer.Inner.CONSTANT). The import map keeps
-        # the full path for call resolution, but the IMPORTS edge must land on
-        # the owning file-level Module, so truncate to the deepest ancestor
-        # whose .java file exists. Package (wildcard) and file-level targets
-        # come back unchanged.
-        project_prefix = self.project_name + cs.SEPARATOR_DOT
-        segments = full_name[len(project_prefix) :].split(cs.SEPARATOR_DOT)
-        for end in range(len(segments), 0, -1):
-            candidate = segments[:end]
-            if self.repo_path.joinpath(*candidate).is_dir():
-                break
-            if self.repo_path.joinpath(
-                *candidate[:-1], f"{candidate[-1]}{cs.EXT_JAVA}"
-            ).is_file():
-                return project_prefix + cs.SEPARATOR_DOT.join(candidate)
-        return full_name
-
     def _is_local_js_import(self, full_name: str) -> bool:
         return full_name.startswith(self.project_name + cs.SEPARATOR_DOT)
 
@@ -2179,7 +2088,7 @@ class ImportProcessor:
             # asymmetry is intentional.
             case cs.SupportedLanguage.JAVA:
                 if full_name.startswith(project_prefix):
-                    return self._java_owning_module_qn(full_name)
+                    return self.java.java_owning_module_qn(full_name)
             case (
                 cs.SupportedLanguage.JS
                 | cs.SupportedLanguage.TS
@@ -2362,65 +2271,6 @@ class ImportProcessor:
             return self.js_ts.follow_js_reexports(qn, module_paths, function_registry)
         return follow_reexports(qn, self.import_mapping, function_registry)
 
-    def _parse_java_imports(
-        self, captures: dict[str, list[Node]], module_qn: str
-    ) -> None:
-        for import_node in captures.get(cs.CAPTURE_IMPORT, []):
-            if import_node.type != cs.TS_IMPORT_DECLARATION:
-                continue
-            imported_path, is_static, is_wildcard = _java_import_shape(import_node)
-            if imported_path:
-                self._record_java_import(
-                    import_node,
-                    module_qn,
-                    self._resolve_java_import_path(imported_path),
-                    is_static,
-                    is_wildcard,
-                )
-
-    def _record_java_import(
-        self,
-        import_node: Node,
-        module_qn: str,
-        resolved_path: str,
-        is_static: bool,
-        is_wildcard: bool,
-    ) -> None:
-        if is_static:
-            self._record_java_static_import(module_qn, resolved_path, is_wildcard)
-        if is_wildcard:
-            logger.debug(ls.IMP_JAVA_WILDCARD, path=resolved_path)
-            self.import_mapping[module_qn][f"*{resolved_path}"] = resolved_path
-            self._record_import_site(
-                module_qn,
-                f"*{resolved_path}",
-                import_node,
-                cs.IMPORTED_NAME_WILDCARD,
-            )
-            return
-        imported_name = resolved_path.rsplit(cs.SEPARATOR_DOT, maxsplit=1)[-1]
-        self.import_mapping[module_qn][imported_name] = resolved_path
-        self._record_import_site(module_qn, imported_name, import_node, imported_name)
-        logger.debug(
-            ls.IMP_JAVA_STATIC if is_static else ls.IMP_JAVA_IMPORT,
-            name=imported_name,
-            path=resolved_path,
-        )
-
-    def _record_java_static_import(
-        self, module_qn: str, resolved_path: str, is_wildcard: bool
-    ) -> None:
-        # The on-demand form names the class itself; the single-member form
-        # names one member past it.
-        if is_wildcard:
-            entry = JavaStaticImport(class_path=resolved_path, member=None)
-        else:
-            class_path, _, member = resolved_path.rpartition(cs.SEPARATOR_DOT)
-            if not class_path:
-                return
-            entry = JavaStaticImport(class_path=class_path, member=member)
-        self.java_static_imports.setdefault(module_qn, []).append(entry)
-
     @staticmethod
     def _csharp_using_target(import_node: Node) -> tuple[str, Node | None] | None:
         # `using Alias = Target;` marks the alias with a `name` field; the
@@ -2518,11 +2368,6 @@ class ImportProcessor:
                 imported_path.split(cs.SEPARATOR_DOT)[-1],
             )
             logger.debug(ls.IMP_CSHARP, name=local_name, path=imported_path)
-
-    def reset_java_path_caches(self) -> None:
-        # Same contract as reset_rust_path_caches: the filesystem may have
-        # gained or lost files since the layout decisions were cached.
-        self._java_source_root_prefix_cached.cache_clear()
 
     def reset_julia_path_caches(self) -> None:
         # Same contract as reset_rust_path_caches: the stem and declared-
