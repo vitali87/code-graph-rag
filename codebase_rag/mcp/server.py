@@ -4,7 +4,7 @@ import contextlib
 import json
 import os
 import sys
-from collections.abc import Iterator
+from collections.abc import Generator
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -249,7 +249,7 @@ def _failed_call(message: str) -> CallToolResult:
 
 
 @contextlib.contextmanager
-def _service_lifecycle(ingestor: MemgraphIngestor) -> Iterator[None]:
+def _service_lifecycle(ingestor: MemgraphIngestor) -> Generator[None]:
     """Manage shared service lifetimes for the MCP server.
 
     Opens the Memgraph ingestor connection and releases the vector store client

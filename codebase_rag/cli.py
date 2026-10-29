@@ -8,7 +8,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Callable, Coroutine, Iterable, Iterator
+from collections.abc import Callable, Coroutine, Generator, Iterable
 from contextlib import ExitStack, contextmanager
 from fnmatch import fnmatch
 from functools import partial, wraps
@@ -574,7 +574,7 @@ def _start_active_projects(
 
 
 @contextmanager
-def _console_on_stderr() -> Iterator[None]:
+def _console_on_stderr() -> Generator[None]:
     console = app_context.console
     app_context.console = terminal_aware_console(stderr=True)
     try:
@@ -946,7 +946,7 @@ def _release_project_claim(batch_size: int, project_name: str, repo: Path) -> No
 @contextmanager
 def _project_claim(
     batch_size: int, project_name: str, repo: Path, *, clean: bool, assume_yes: bool
-) -> Iterator[list[str] | None]:
+) -> Generator[list[str] | None]:
     """Hold this sync's claim on its project name while the sync runs (#2411).
 
     Yields the roots `_mark_sync_incomplete` must still find on the Project.
@@ -984,7 +984,7 @@ def _mark_sync_incomplete(
 
 
 @contextmanager
-def _sync_lock_or_exit(repo: Path, project_name: str) -> Iterator[None]:
+def _sync_lock_or_exit(repo: Path, project_name: str) -> Generator[None]:
     """Hold the checkout's sync lock for the whole sync, or stop first (#2441).
 
     Taken before the `--clean` wipe and the `:IncompleteRun` marker, so a
@@ -2262,7 +2262,7 @@ EditReingest = Callable[[list[str]], ReingestReport]
 @contextmanager
 def _guarded_edit_reingest(
     ingestor: MemgraphIngestor, updater: "GraphUpdater", project_name: str, repo: Path
-) -> Iterator[tuple[EditReingest, "WriteMarker"]]:
+) -> Generator[tuple[EditReingest, "WriteMarker"]]:
     """The re-ingest an applied edit is measured through, behind the marker.
 
     Refuses before anything is planned when a run left the project's graph

@@ -13,7 +13,7 @@ live here.
 
 import os
 import uuid
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import NamedTuple
@@ -119,7 +119,7 @@ def release_project_claim(
 @contextmanager
 def project_claim(
     ingestor: QueryProtocol, project_name: str, repo: Path, *, assume_yes: bool
-) -> Iterator[list[str] | None]:
+) -> Generator[list[str] | None]:
     """Claim the project on `ingestor` for as long as the writer runs (#2411).
 
     Raises `SyncRefusedError`, before anything is written, when the name is
@@ -151,7 +151,7 @@ RUNNING_SYNC_TOKENS: set[str] = set()
 
 
 @contextmanager
-def sync_owner() -> Iterator[dict[str, PropertyValue]]:
+def sync_owner() -> Generator[dict[str, PropertyValue]]:
     """Who this sync is, for its marker; registered as running while held."""
     token = uuid.uuid4().hex
     RUNNING_SYNC_TOKENS.add(token)
