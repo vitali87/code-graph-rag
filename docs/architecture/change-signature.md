@@ -23,8 +23,32 @@ The MCP tool of the same name takes `qualified_name`, `new_params` (a list
 of strings) and the optional `mapping` (an object), `allow_heuristic`,
 `dry_run` and `project` fields, and returns the same report as JSON.
 
-Python only for now. A definition in another language refuses with a
-message naming the language, and the follow-up is issue #1908.
+Python and JavaScript definitions are supported. A definition in another
+language refuses, and the follow-up is issue #1908. A call site written in
+another language than the definition stays unmapped.
+
+### JavaScript
+
+JavaScript has no keyword arguments, so every site is rewritten
+positionally:
+
+- A function declaration or a class method qualifies. Each parameter must
+  be a name or a name with a default; a rest parameter (`...rest`) or a
+  destructured one (`{ a }`) refuses. A constructor refuses, since its call
+  sites are `new` expressions, and so does a getter or setter.
+- A new parameter is written `n` or `n = 0`.
+- A default the site skips is passed as `undefined`, which selects the
+  default as leaving the argument out does: `helper(2)` with a new `c`
+  mapped after the defaulted `b` becomes `helper(2, undefined, 5)`.
+- A site stays unmapped when it spreads an array (`helper(...xs)`), passes
+  more arguments than declared, calls through `.call` or `.apply`, or
+  passes arguments that run code when the new order would run them in
+  another order. A name, a number, a string, `true`, `false`, `null`,
+  `undefined` and `this` run no code and may move.
+- Renaming a parameter refuses for now. A body that reads `arguments`
+  refuses, and so does dropping a parameter the body or another default
+  still mentions, or adding one under a name it already mentions. Nested
+  functions count, so a closure that binds the same name refuses too.
 
 ## The new parameter list
 
