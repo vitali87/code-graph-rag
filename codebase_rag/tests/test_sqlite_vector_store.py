@@ -23,17 +23,17 @@ from loguru import logger
 
 from codebase_rag import constants as cs
 from codebase_rag import exceptions as ex
-from codebase_rag import vector_store as vs
 from codebase_rag.config import AppConfig
 from codebase_rag.constants import VectorStoreBackend
-from codebase_rag.sqlite_vectors import (
+from codebase_rag.types_defs import EmbeddingPoint, EmbeddingSymbol
+from codebase_rag.utils.dependencies import has_sqlite_vec
+from codebase_rag.vectors import store as vs
+from codebase_rag.vectors.sqlite import (
     SqliteVectorPoint,
     SqliteVectorRow,
     extensions_loadable,
     open_sqlite_vector_client,
 )
-from codebase_rag.types_defs import EmbeddingPoint, EmbeddingSymbol
-from codebase_rag.utils.dependencies import has_sqlite_vec
 
 pytestmark = [
     pytest.mark.skipif(not has_sqlite_vec(), reason="sqlite-vec not installed"),
@@ -529,7 +529,7 @@ class TestFailures:
                 vs.get_sqlite_vector_client()
 
     def test_a_python_that_cannot_load_extensions_is_named(self) -> None:
-        from codebase_rag import sqlite_vectors
+        from codebase_rag.vectors import sqlite as sqlite_vectors
 
         with patch.object(sqlite_vectors, "extensions_loadable", return_value=False):
             with pytest.raises(RuntimeError, match="extension loading"):
@@ -543,8 +543,8 @@ class TestFailures:
         # As without sqlite-vec: semantic search is off, so a sync does not
         # owe a pass it can never pay, and `--clean` does not fail after the
         # graph is already wiped. The reason is logged once.
-        from codebase_rag import sqlite_vectors
         from codebase_rag.utils import dependencies
+        from codebase_rag.vectors import sqlite as sqlite_vectors
 
         dependencies._warn_sqlite_extensions_unsupported.cache_clear()
         messages: list[str] = []
@@ -695,7 +695,7 @@ def test_importing_the_vector_store_does_not_load_sqlite_vec() -> None:
         [
             sys.executable,
             "-c",
-            "import sys, codebase_rag.vector_store; print('sqlite_vec' in sys.modules)",
+            "import sys, codebase_rag.vectors.store; print('sqlite_vec' in sys.modules)",
         ],
         capture_output=True,
         text=True,

@@ -67,7 +67,7 @@ def function_snippets(target: Path, project: str) -> dict[str, str]:
 def cgr_semantic_ranking(
     target: Path, project: str, queries: list[str], top_k: int
 ) -> dict[str, list[str]]:
-    from codebase_rag.embedder import embed_code_batch
+    from codebase_rag.vectors.embedder import embed_code_batch
 
     snippets = function_snippets(target, project)
     qns = list(snippets)

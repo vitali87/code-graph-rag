@@ -1,6 +1,6 @@
 """A deferred import must fail before `start --clean` wipes anything (#2253).
 
-`cli` imports `graph_updater` and `vector_store` lazily to keep start-up fast.
+`cli` imports `graph_updater` and `vectors.store` lazily to keep start-up fast.
 If either cannot be imported (a broken or partial install), the command must
 stop before `clean_database`, not after it with the graph already gone.
 """
@@ -60,7 +60,7 @@ class TestCleanOnly:
     def test_an_unimportable_vector_store_stops_before_the_wipe(
         self, ingestor: MagicMock, tmp_path: Path
     ) -> None:
-        with _unimportable("codebase_rag.vector_store"):
+        with _unimportable("codebase_rag.vectors.store"):
             result = runner.invoke(
                 app, ["start", "--clean", "--repo-path", str(tmp_path)]
             )
@@ -88,7 +88,7 @@ class TestCleanWithUpdateGraph:
         ingestor.clean_database.assert_called_once()
 
     @pytest.mark.parametrize(
-        "module", ["codebase_rag.graph_updater", "codebase_rag.vector_store"]
+        "module", ["codebase_rag.graph_updater", "codebase_rag.vectors.store"]
     )
     def test_an_unimportable_module_stops_before_the_wipe(
         self, ingestor: MagicMock, tmp_path: Path, module: str

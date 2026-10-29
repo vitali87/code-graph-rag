@@ -12,7 +12,7 @@ from pathlib import Path
 
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
-from codebase_rag.check_isolation import IsolationGuard
+from codebase_rag.check.isolation import IsolationGuard
 from codebase_rag.types_defs import PropertyDict, PropertyValue, ResultRow
 from codebase_rag.utils.path_utils import (
     cached_file_identity_posix,

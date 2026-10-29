@@ -61,8 +61,8 @@ def test_semantic_code_search_returns_empty_without_dependencies() -> None:
 @patch(
     "codebase_rag.tools.semantic_search.has_semantic_dependencies", return_value=True
 )
-@patch("codebase_rag.vector_store.search_embeddings")
-@patch("codebase_rag.embedder.embed_code")
+@patch("codebase_rag.vectors.store.search_embeddings")
+@patch("codebase_rag.vectors.embedder.embed_code")
 def test_semantic_code_search_reuses_injected_ingestor(
     mock_embed: MagicMock, mock_search: MagicMock, _deps: MagicMock
 ) -> None:
@@ -98,8 +98,8 @@ def test_semantic_code_search_reuses_injected_ingestor(
 @patch(
     "codebase_rag.tools.semantic_search.has_semantic_dependencies", return_value=True
 )
-@patch("codebase_rag.vector_store.search_embeddings")
-@patch("codebase_rag.embedder.embed_code")
+@patch("codebase_rag.vectors.store.search_embeddings")
+@patch("codebase_rag.vectors.embedder.embed_code")
 def test_semantic_code_search_tolerates_missing_result_fields(
     mock_embed: MagicMock, mock_search: MagicMock, _deps: MagicMock
 ) -> None:
@@ -130,8 +130,8 @@ def test_semantic_code_search_returns_formatted_results(
     from codebase_rag.tools.semantic_search import semantic_code_search
 
     with (
-        patch("codebase_rag.embedder.embed_code", mock_embed_code),
-        patch("codebase_rag.vector_store.search_embeddings", mock_search_embeddings),
+        patch("codebase_rag.vectors.embedder.embed_code", mock_embed_code),
+        patch("codebase_rag.vectors.store.search_embeddings", mock_search_embeddings),
     ):
         results = semantic_code_search(
             mock_ingestor, "find authentication code", top_k=3
@@ -155,8 +155,8 @@ def test_semantic_code_search_calls_embed_code_with_query(
     from codebase_rag.tools.semantic_search import semantic_code_search
 
     with (
-        patch("codebase_rag.embedder.embed_code", mock_embed_code),
-        patch("codebase_rag.vector_store.search_embeddings", mock_search_embeddings),
+        patch("codebase_rag.vectors.embedder.embed_code", mock_embed_code),
+        patch("codebase_rag.vectors.store.search_embeddings", mock_search_embeddings),
     ):
         semantic_code_search(mock_ingestor, "database operations")
 
@@ -174,8 +174,8 @@ def test_semantic_code_search_passes_top_k_to_search(
     from codebase_rag.tools.semantic_search import semantic_code_search
 
     with (
-        patch("codebase_rag.embedder.embed_code", mock_embed_code),
-        patch("codebase_rag.vector_store.search_embeddings", mock_search_embeddings),
+        patch("codebase_rag.vectors.embedder.embed_code", mock_embed_code),
+        patch("codebase_rag.vectors.store.search_embeddings", mock_search_embeddings),
     ):
         semantic_code_search(mock_ingestor, "file handling", top_k=10)
 
@@ -193,8 +193,8 @@ def test_semantic_code_search_returns_empty_when_no_matches(
     mock_search_empty = MagicMock(return_value=[])
 
     with (
-        patch("codebase_rag.embedder.embed_code", mock_embed_code),
-        patch("codebase_rag.vector_store.search_embeddings", mock_search_empty),
+        patch("codebase_rag.vectors.embedder.embed_code", mock_embed_code),
+        patch("codebase_rag.vectors.store.search_embeddings", mock_search_empty),
     ):
         results = semantic_code_search(MagicMock(), "nonexistent functionality")
 
@@ -212,7 +212,7 @@ def test_semantic_code_search_propagates_a_failing_embedder(
     mock_embed_code.side_effect = Exception("Embedding failed")
 
     with (
-        patch("codebase_rag.embedder.embed_code", mock_embed_code),
+        patch("codebase_rag.vectors.embedder.embed_code", mock_embed_code),
         pytest.raises(Exception, match="Embedding failed"),
     ):
         semantic_code_search(MagicMock(), "some query")
@@ -230,8 +230,8 @@ def test_semantic_code_search_preserves_score_order(
     mock_search = MagicMock(return_value=[(3, 0.99), (1, 0.80), (2, 0.70)])
 
     with (
-        patch("codebase_rag.embedder.embed_code", mock_embed_code),
-        patch("codebase_rag.vector_store.search_embeddings", mock_search),
+        patch("codebase_rag.vectors.embedder.embed_code", mock_embed_code),
+        patch("codebase_rag.vectors.store.search_embeddings", mock_search),
     ):
         results = semantic_code_search(mock_ingestor, "test query")
 
@@ -374,8 +374,8 @@ async def test_semantic_search_tool_formats_results(
     tool = create_semantic_search_tool(mock_ingestor)
 
     with (
-        patch("codebase_rag.embedder.embed_code", mock_embed_code),
-        patch("codebase_rag.vector_store.search_embeddings", mock_search_embeddings),
+        patch("codebase_rag.vectors.embedder.embed_code", mock_embed_code),
+        patch("codebase_rag.vectors.store.search_embeddings", mock_search_embeddings),
     ):
         result = await tool.function("find handlers")
 
@@ -398,8 +398,8 @@ async def test_semantic_search_tool_handles_no_results(
     tool = create_semantic_search_tool(MagicMock())
 
     with (
-        patch("codebase_rag.embedder.embed_code", mock_embed_code),
-        patch("codebase_rag.vector_store.search_embeddings", mock_search_empty),
+        patch("codebase_rag.vectors.embedder.embed_code", mock_embed_code),
+        patch("codebase_rag.vectors.store.search_embeddings", mock_search_empty),
     ):
         result = await tool.function("nonexistent")
 
@@ -493,8 +493,8 @@ def test_get_function_source_code_rejects_non_integer_lines(
 @patch(
     "codebase_rag.tools.semantic_search.has_semantic_dependencies", return_value=True
 )
-@patch("codebase_rag.vector_store.search_embeddings")
-@patch("codebase_rag.embedder.embed_code")
+@patch("codebase_rag.vectors.store.search_embeddings")
+@patch("codebase_rag.vectors.embedder.embed_code")
 def test_semantic_code_search_reports_a_non_text_label_as_unknown(
     mock_embed: MagicMock, mock_search: MagicMock, _deps: MagicMock
 ) -> None:

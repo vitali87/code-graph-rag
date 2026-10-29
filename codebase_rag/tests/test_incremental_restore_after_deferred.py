@@ -20,11 +20,11 @@ import pytest
 from tree_sitter import Node
 
 from codebase_rag import constants as cs
-from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers import function_ingest
 from codebase_rag.parsers.document_tier import DocumentTier
+from codebase_rag.sync.checkout_state import state_file
 from codebase_rag.tests.test_incremental_inbound_deferred_targets import (
     Snapshot,
     _calls,

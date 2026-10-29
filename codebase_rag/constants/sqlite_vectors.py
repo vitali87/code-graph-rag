@@ -1,7 +1,7 @@
 # The `sqlite` vector store: a sqlite-vec vec0 table beside a plain one.
 #
 # vec0 keys a vector by an integer rowid alone, while a point is keyed by its
-# symbol (vector_store.embedding_point_id), as Qdrant's are since issue #2447.
+# symbol (vectors.store.embedding_point_id), as Qdrant's are since issue #2447.
 # The plain table holds that key and the payload the other backends keep
 # beside each vector, and its integer primary key is the vector's rowid.
 

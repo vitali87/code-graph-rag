@@ -18,10 +18,10 @@ import pytest
 from click.testing import Result
 from typer.testing import CliRunner
 
+from codebase_rag.check.delta import StructuralDelta, has_findings, observe
 from codebase_rag.cli import app
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.structural_delta import StructuralDelta, has_findings, observe
 from evals.cgr_graph import StatefulIngestor
 
 PROJECT = "reexport_fixture"
@@ -572,7 +572,7 @@ def test_walrus_in_a_class_keyword_binds_the_module_name(
 def test_a_re_export_cycle_binds_nothing_and_terminates() -> None:
     # `a` and `b` each import `helper` from the other and neither defines
     # it: following the chain must stop, and the name is not bound.
-    from codebase_rag.structural_delta import ImportBinding, Snapshot, _AfterBindings
+    from codebase_rag.check.delta import ImportBinding, Snapshot, _AfterBindings
 
     def binding(importer: str, module: str) -> ImportBinding:
         return ImportBinding(

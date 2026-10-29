@@ -18,10 +18,10 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
-from codebase_rag.checkout_state import state_file
+from codebase_rag.check.command import _measure_then_restore
+from codebase_rag.check.delta import StructuralDelta
 from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.structural_check import _measure_then_restore
-from codebase_rag.structural_delta import StructuralDelta
+from codebase_rag.sync.checkout_state import state_file
 from codebase_rag.types_defs import PropertyDict, ReingestReport, ResultRow
 
 

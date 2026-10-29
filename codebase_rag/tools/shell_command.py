@@ -1252,7 +1252,7 @@ def _sed_script_construct(arg: str, ambiguous: bool) -> str | None:
             # This slot holds a script only under the BSD reading of
             # `-i SUFFIX FILE`; under GNU it is an input FILENAME. The
             # exec anchors cannot survive that ambiguity: `e` matches
-            # after any `/`, so `sed -i 's/a/b/' codebase_rag/embedder.py`
+            # after any `/`, so `sed -i 's/a/b/' codebase_rag/vectors/embedder.py`
             # -- an ordinary in-place edit, verified confined on GNU sed
             # 4.9 -- was refused "via e command", along with 10.7% of this
             # repo's own slash-bearing paths. An exec command cannot

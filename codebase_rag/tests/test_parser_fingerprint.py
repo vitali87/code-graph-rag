@@ -20,11 +20,11 @@ from codebase_rag import constants as cs
 from codebase_rag import graph_updater
 from codebase_rag import logs as ls
 from codebase_rag.capture import CaptureSelection, resolve_capture
-from codebase_rag.checkout_state import state_file
 from codebase_rag.cli import _delete_hash_cache
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_fingerprint import compute_parser_fingerprint
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.sync.checkout_state import state_file
 from codebase_rag.types_defs import PropertyDict
 from codebase_rag.utils.path_utils import base_module_qn
 
@@ -601,7 +601,7 @@ class TestFingerprintStamping:
         _make_updater(py_project, mock_ingestor).run()
         _make_updater(py_project, mock_ingestor).run()
 
-        from codebase_rag.sync_state import load_hash_cache
+        from codebase_rag.sync.state import load_hash_cache
 
         hashes = load_hash_cache(state_file(py_project, cs.HASH_CACHE_FILENAME))
         assert cs.PARSER_FINGERPRINT_FILENAME not in hashes
@@ -700,7 +700,7 @@ class TestStampIO:
     ) -> None:
         # The stamp is a best-effort safeguard: a failed write must not
         # abort the sync that just succeeded.
-        from codebase_rag.sync_state import save_parser_fingerprint
+        from codebase_rag.sync.state import save_parser_fingerprint
 
         stamp_dir = state_file(tmp_path, cs.PARSER_FINGERPRINT_FILENAME)
         stamp_dir.mkdir()

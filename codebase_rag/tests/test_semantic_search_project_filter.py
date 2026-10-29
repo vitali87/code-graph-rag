@@ -30,7 +30,7 @@ def _qdrant_point(node_id: int, qualified_name: str, score: float) -> MagicMock:
 
 @pytest.mark.skipif(not has_qdrant_client(), reason="qdrant-client not installed")
 def test_qdrant_search_filters_by_project_prefix() -> None:
-    import codebase_rag.vector_store as vs
+    import codebase_rag.vectors.store as vs
 
     mock_client = MagicMock()
     mock_result = MagicMock()
@@ -43,7 +43,7 @@ def test_qdrant_search_filters_by_project_prefix() -> None:
 
     with (
         patch.object(vs.settings, "VECTOR_STORE_BACKEND", VectorStoreBackend.QDRANT),
-        patch("codebase_rag.vector_store.get_qdrant_client", return_value=mock_client),
+        patch("codebase_rag.vectors.store.get_qdrant_client", return_value=mock_client),
     ):
         vs.close_vector_store_client()
         results = vs.search_embeddings(
@@ -56,7 +56,7 @@ def test_qdrant_search_filters_by_project_prefix() -> None:
 
 @pytest.mark.skipif(not has_qdrant_client(), reason="qdrant-client not installed")
 def test_qdrant_search_overfetches_when_project_given() -> None:
-    import codebase_rag.vector_store as vs
+    import codebase_rag.vectors.store as vs
 
     mock_client = MagicMock()
     mock_result = MagicMock()
@@ -65,7 +65,7 @@ def test_qdrant_search_overfetches_when_project_given() -> None:
 
     with (
         patch.object(vs.settings, "VECTOR_STORE_BACKEND", VectorStoreBackend.QDRANT),
-        patch("codebase_rag.vector_store.get_qdrant_client", return_value=mock_client),
+        patch("codebase_rag.vectors.store.get_qdrant_client", return_value=mock_client),
     ):
         vs.close_vector_store_client()
         vs.search_embeddings(_EMBEDDING, top_k=5, project="proj__12345678")
@@ -77,7 +77,7 @@ def test_qdrant_search_overfetches_when_project_given() -> None:
 
 @pytest.mark.skipif(not has_qdrant_client(), reason="qdrant-client not installed")
 def test_qdrant_search_without_project_keeps_plain_limit() -> None:
-    import codebase_rag.vector_store as vs
+    import codebase_rag.vectors.store as vs
 
     mock_client = MagicMock()
     mock_result = MagicMock()
@@ -86,7 +86,7 @@ def test_qdrant_search_without_project_keeps_plain_limit() -> None:
 
     with (
         patch.object(vs.settings, "VECTOR_STORE_BACKEND", VectorStoreBackend.QDRANT),
-        patch("codebase_rag.vector_store.get_qdrant_client", return_value=mock_client),
+        patch("codebase_rag.vectors.store.get_qdrant_client", return_value=mock_client),
     ):
         vs.close_vector_store_client()
         vs.search_embeddings(_EMBEDDING, top_k=5)
@@ -105,7 +105,7 @@ def _milvus_hit(node_id: int, qualified_name: str, distance: float) -> dict:
 
 @pytest.mark.skipif(not has_pymilvus(), reason="pymilvus not installed")
 def test_milvus_search_filters_by_project_prefix() -> None:
-    import codebase_rag.vector_store as vs
+    import codebase_rag.vectors.store as vs
 
     mock_client = MagicMock()
     mock_client.search.return_value = [
@@ -118,7 +118,7 @@ def test_milvus_search_filters_by_project_prefix() -> None:
 
     with (
         patch.object(vs.settings, "VECTOR_STORE_BACKEND", VectorStoreBackend.MILVUS),
-        patch("codebase_rag.vector_store.get_milvus_client", return_value=mock_client),
+        patch("codebase_rag.vectors.store.get_milvus_client", return_value=mock_client),
     ):
         vs.close_vector_store_client()
         results = vs.search_embeddings(
@@ -137,8 +137,8 @@ def test_semantic_code_search_passes_project_to_vector_search() -> None:
 
     mock_search = MagicMock(return_value=[])
     with (
-        patch("codebase_rag.embedder.embed_code", return_value=_EMBEDDING),
-        patch("codebase_rag.vector_store.search_embeddings", mock_search),
+        patch("codebase_rag.vectors.embedder.embed_code", return_value=_EMBEDDING),
+        patch("codebase_rag.vectors.store.search_embeddings", mock_search),
     ):
         semantic_code_search(
             MagicMock(), "find user handler", top_k=7, project="proj__12345678"
@@ -152,7 +152,7 @@ def test_semantic_code_search_passes_project_to_vector_search() -> None:
 def test_qdrant_widens_window_until_project_matches_found() -> None:
     # The first over-fetch window may hold only other projects' neighbors;
     # the search must widen the window instead of returning nothing.
-    import codebase_rag.vector_store as vs
+    import codebase_rag.vectors.store as vs
 
     other = [
         _qdrant_point(i, f"noise__00000000.mod.f{i}", 0.9 - i * 0.001)
@@ -173,7 +173,7 @@ def test_qdrant_widens_window_until_project_matches_found() -> None:
 
     with (
         patch.object(vs.settings, "VECTOR_STORE_BACKEND", VectorStoreBackend.QDRANT),
-        patch("codebase_rag.vector_store.get_qdrant_client", return_value=mock_client),
+        patch("codebase_rag.vectors.store.get_qdrant_client", return_value=mock_client),
     ):
         vs.close_vector_store_client()
         results = vs.search_embeddings(

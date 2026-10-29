@@ -14,11 +14,11 @@ from unittest.mock import patch
 import pytest
 import yaml
 
-from codebase_rag import vector_store as vs
 from codebase_rag.config import settings
 from codebase_rag.constants import NodeLabel, VectorStoreBackend
 from codebase_rag.stack import constants as stack_cs
 from codebase_rag.types_defs import EmbeddingSymbol
+from codebase_rag.vectors import store as vs
 
 pytestmark = [pytest.mark.integration]
 

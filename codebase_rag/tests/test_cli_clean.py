@@ -9,9 +9,9 @@ import pytest
 from typer.testing import CliRunner
 
 from codebase_rag import constants as cs
-from codebase_rag.checkout_state import state_file
 from codebase_rag.cli import app
 from codebase_rag.config import CgrignorePatterns
+from codebase_rag.sync.checkout_state import state_file
 
 runner = CliRunner()
 

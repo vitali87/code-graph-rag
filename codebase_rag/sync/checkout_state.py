@@ -16,7 +16,7 @@ several `--project-name`s shares one hash cache, and the exclusion stamp
 keeps each project's entry inside that one file.
 
 Nothing here is specific to one state file: what each sync file holds,
-and how it is read and written, is `sync_state`'s. Every name in
+and how it is read and written, is `sync.state`'s. Every name in
 `CGR_STATE_FILENAMES` that an older cgr left in the checkout root is moved
 into the directory the first time the checkout's state is reached, so an
 upgrade keeps its hash cache (and the mtime the in-sync check compares
@@ -60,11 +60,11 @@ from typing import IO
 
 from loguru import logger
 
-from . import constants as cs
-from . import logs as ls
-from .config import settings
-from .types_defs import JsonValue
-from .utils.path_utils import derive_project_name
+from .. import constants as cs
+from .. import logs as ls
+from ..config import settings
+from ..types_defs import JsonValue
+from ..utils.path_utils import derive_project_name
 
 
 def state_dir(repo_path: Path) -> Path:

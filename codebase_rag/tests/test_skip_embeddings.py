@@ -158,7 +158,7 @@ class TestEmbeddingDeviceOverride:
     def test_override_wins_when_available(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from codebase_rag.embedder import _select_device
+        from codebase_rag.vectors.embedder import _select_device
 
         monkeypatch.setattr(settings, "EMBEDDING_DEVICE", cs.EmbeddingDevice.CPU)
         assert _select_device() == cs.EmbeddingDevice.CPU
@@ -171,7 +171,7 @@ class TestEmbeddingDeviceOverride:
     ) -> None:
         import torch
 
-        from codebase_rag.embedder import _select_device
+        from codebase_rag.vectors.embedder import _select_device
 
         monkeypatch.setattr(settings, "EMBEDDING_DEVICE", override)
         with (

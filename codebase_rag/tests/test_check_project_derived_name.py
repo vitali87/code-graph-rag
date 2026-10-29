@@ -14,9 +14,9 @@ from pathlib import Path
 
 import pytest
 
+from codebase_rag.check.command import CheckError, indexed_scope
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.structural_check import CheckError, indexed_scope
 from codebase_rag.utils.path_utils import derive_project_name
 from evals.cgr_graph import StatefulIngestor
 

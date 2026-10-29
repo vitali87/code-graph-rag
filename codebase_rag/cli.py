@@ -43,7 +43,6 @@ from .capture import (
     split_spec,
     unknown_tokens,
 )
-from .checkout_state import prepare_state_dir
 from .cli_runtime import app_context, connect_memgraph, dim, style
 from .config import (
     load_ignore_patterns,
@@ -84,20 +83,21 @@ from .stack import StackManager
 from .stack.cli import cli as daemon_cli
 from .stack.constants import SERVICE_MEMGRAPH, SERVICE_QDRANT, StackState
 from .stack.manager import StackError
-from .sync_guard import RUNNING_SYNC_TOKENS as _RUNNING_SYNC_TOKENS
-from .sync_guard import OwnerCheck as _OwnerCheck
-from .sync_guard import (
+from .sync.checkout_state import prepare_state_dir
+from .sync.guard import RUNNING_SYNC_TOKENS as _RUNNING_SYNC_TOKENS
+from .sync.guard import OwnerCheck as _OwnerCheck
+from .sync.guard import (
     SyncRefusedError,
     WriteMarker,
     mark_sync_incomplete,
     marked_reingest,
     release_project_claim,
 )
-from .sync_guard import clear_sync_incomplete as _clear_sync_incomplete
-from .sync_guard import project_owner_refusal as _project_owner_refusal
-from .sync_guard import sync_marker_params as _sync_marker_params
-from .sync_guard import sync_owner as _sync_owner
-from .sync_lock import SyncLockError, repo_sync_lock
+from .sync.guard import clear_sync_incomplete as _clear_sync_incomplete
+from .sync.guard import project_owner_refusal as _project_owner_refusal
+from .sync.guard import sync_marker_params as _sync_marker_params
+from .sync.guard import sync_owner as _sync_owner
+from .sync.lock import SyncLockError, repo_sync_lock
 from .trace.cli import cli as trace_cli
 from .types_defs import (
     DeadCodeConfig,
@@ -145,7 +145,7 @@ _CLICK_EXCEPTIONS = (click.ClickException, _vendored_click_exception())
 
 
 # `codebase_rag.agent_loop` imports pydantic-ai and every provider SDK, and
-# `codebase_rag.vector_store` imports the Qdrant and Milvus clients; together
+# `codebase_rag.vectors.store` imports the Qdrant and Milvus clients; together
 # they cost over a second, and every `cgr` invocation imports this module
 # (issue #2253). The checker sees the real functions; at runtime these
 # forwarders defer the imports to the commands that need them and keep the
@@ -158,16 +158,16 @@ if TYPE_CHECKING:
         main_single_query,
         update_model_settings,
     )
-    from .vector_store import clear_all_embeddings, delete_project_embeddings
+    from .vectors.store import clear_all_embeddings, delete_project_embeddings
 else:
 
     def clear_all_embeddings(*args, **kwargs):
-        from .vector_store import clear_all_embeddings as impl
+        from .vectors.store import clear_all_embeddings as impl
 
         return impl(*args, **kwargs)
 
     def delete_project_embeddings(*args, **kwargs):
-        from .vector_store import delete_project_embeddings as impl
+        from .vectors.store import delete_project_embeddings as impl
 
         return impl(*args, **kwargs)
 
@@ -2230,8 +2230,8 @@ def check_command(
     ),
     isolated: bool = typer.Option(False, "--isolated", help=ch.HELP_CHECK_ISOLATED),
 ) -> None:
-    from .structural_check import CheckError, indexed_scope, run_check
-    from .structural_delta import has_findings
+    from .check.command import CheckError, indexed_scope, run_check
+    from .check.delta import has_findings
     from .utils.path_utils import derive_project_name
 
     root = repo_path.resolve()

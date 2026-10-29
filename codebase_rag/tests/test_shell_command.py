@@ -3499,13 +3499,13 @@ def test_exec_anchors_never_run_in_the_filename_slot() -> None:
     The second `-i` operand slot holds a script only under BSD; under GNU it
     is an input filename. Running the exec anchors there matched the `e` in
     any path component after a `/`, refusing 10.7% of this repo's own
-    slash-bearing paths -- `codebase_rag/embedder.py` among them, verified
+    slash-bearing paths -- `codebase_rag/vectors/embedder.py` among them, verified
     editing in place and writing nothing else on GNU sed 4.9.
     """
     allowlist = ", ".join(sorted(settings.SHELL_COMMAND_ALLOWLIST))
 
     for path in (
-        "codebase_rag/embedder.py",
+        "codebase_rag/vectors/embedder.py",
         "evals/l3.py",
         "src/engine.py",
         "requirements/dev.txt",

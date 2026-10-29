@@ -451,7 +451,7 @@ SHELL_SED_FILE_ESCAPING = r"(?:^|[;{\n]|[\d/%+!~,IM$])\s*[wWrR](?:\s+\S|[^\s;]*/
 # them would block ordinary filenames like `report.csv` for no gain.
 # Anchors a FILENAME can trip by accident, and so must not run in the `-i`
 # operand slot where the token may be one. Both match a lone letter after a
-# path separator: `e` fired on `codebase_rag/embedder.py` and `[wWrR]` on
+# path separator: `e` fired on `codebase_rag/vectors/embedder.py` and `[wWrR]` on
 # `web/app.py`. Every OTHER anchor requires an `s///` construct, which no
 # filename contains, so those keep running here -- `sed -i bak 's/a/b/w
 # /tmp/x'` was verified writing outside the CWD with rc=0 on BSD.

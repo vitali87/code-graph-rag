@@ -4,9 +4,9 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
+from codebase_rag.check.delta import Definition, Snapshot, _symbols
 from codebase_rag.editing.rename import rename
 from codebase_rag.editing.transaction import EditTransaction, StagedFile, load_history
-from codebase_rag.structural_delta import Definition, Snapshot, _symbols
 from codebase_rag.tests.test_edit_contract import PROJECT, _real_project
 from codebase_rag.types_defs import PropertyDict, ReingestReport, ResultRow
 

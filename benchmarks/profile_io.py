@@ -12,7 +12,7 @@ from codebase_rag import constants as cs
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.utils import safe_decode_with_fallback
 from codebase_rag.services.protobuf_service import ProtobufFileIngestor
-from codebase_rag.sync_state import hash_file, load_hash_cache, publish_hash_cache
+from codebase_rag.sync.state import hash_file, load_hash_cache, publish_hash_cache
 from codebase_rag.utils.path_utils import should_skip_path
 
 REPO_PATH = Path(__file__).resolve().parent.parent
@@ -337,7 +337,7 @@ def profile_embedding_cache_io():
     results = []
     import tempfile
 
-    from codebase_rag.embedder import EmbeddingCache
+    from codebase_rag.vectors.embedder import EmbeddingCache
 
     tmp = Path(tempfile.mkdtemp())
     try:

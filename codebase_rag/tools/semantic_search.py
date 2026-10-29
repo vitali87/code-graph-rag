@@ -41,8 +41,8 @@ def semantic_code_search(
 
     # No catch-all: a failing embedder, vector store or graph read must reach
     # the caller as a failure, not as an empty list that reads "no matches".
-    from ..embedder import embed_code
-    from ..vector_store import search_embeddings
+    from ..vectors.embedder import embed_code
+    from ..vectors.store import search_embeddings
 
     query_embedding = embed_code(query)
 

@@ -23,6 +23,16 @@ from typer.testing import CliRunner, Result
 
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
+from codebase_rag.check.command import run_check
+from codebase_rag.check.delta import (
+    CallSite,
+    Definition,
+    StructuralDelta,
+    _declared_arity_verdict,
+    _filled_counts,
+    _site,
+    has_findings,
+)
 from codebase_rag.cli import app
 from codebase_rag.crash_correlation import (
     CYPHER_CRASH_POSITIONAL_PARAMS,
@@ -33,16 +43,6 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.call_processor import call_site_properties
 from codebase_rag.parsers.positional_params import declared_positional_params
 from codebase_rag.services.graph_diff import _SITE_PROPS
-from codebase_rag.structural_check import run_check
-from codebase_rag.structural_delta import (
-    CallSite,
-    Definition,
-    StructuralDelta,
-    _declared_arity_verdict,
-    _filled_counts,
-    _site,
-    has_findings,
-)
 from evals.cgr_graph import StatefulIngestor
 
 PROJECT = "sigs"

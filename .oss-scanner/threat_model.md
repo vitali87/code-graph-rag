@@ -90,7 +90,7 @@ These matter less but are still in scope.
 - The research and web search tools (`tools/research.py`, `tools/web_search.py`)
   and the taint gate in `codebase_rag/taint.py`, beyond the limits that
   security.md already concedes.
-- The vector stores (`vector_store.py`, `sqlite_vectors.py`) and the
+- The vector stores (`vectors/store.py`, `vectors/sqlite.py`) and the
   Memgraph and Neo4j adapters, including filters built from project names.
 - `cgr daemon` and the Compose stack it renders (`codebase_rag/stack/`,
   `codebase_rag/docker-compose.yaml`), which must bind loopback by default.

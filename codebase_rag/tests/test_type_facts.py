@@ -10,12 +10,12 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.checkout_state import state_file
 from codebase_rag.function_registry import FunctionRegistryTrie
 from codebase_rag.parsers.type_facts import (
     TypeReferenceResolver,
     type_reference_names,
 )
+from codebase_rag.sync.checkout_state import state_file
 from codebase_rag.tests.conftest import create_and_run_updater
 
 

@@ -24,7 +24,6 @@ from . import logs as ls
 from .analyzers import FindingAnalyzer
 from .ast_cache import BoundedASTCache
 from .capture import CaptureSelection, default_capture
-from .checkout_state import prepare_state_dir, state_dir
 from .config import settings
 from .function_registry import FunctionRegistryTrie
 from .gloss.anchor import ParsedSource, parse_source
@@ -115,8 +114,9 @@ from .services import (
 )
 from .services.filtering import filtering_ingestor
 from .services.resource_cleanup import prune_unanchored_resources
-from .sync_lock import holds_sync_lock
-from .sync_state import (
+from .sync.checkout_state import prepare_state_dir, state_dir
+from .sync.lock import holds_sync_lock
+from .sync.state import (
     DirMtimesCache,
     FileHashCache,
     content_digest,
@@ -4500,7 +4500,7 @@ class GraphUpdater:
         known: dict[str, set[str]] = {}
         prefix = self.project_name + cs.SEPARATOR_DOT
         # The query excludes rows a longer project (`proj.sub`) owns, the
-        # scoping `structural_delta.snapshot` passes too; without the list
+        # scoping `check.delta.snapshot` passes too; without the list
         # Memgraph rejects the read on every incremental sync (issue #2392).
         longer_project_prefixes = [
             name for name in self._registered_project_names() if name.startswith(prefix)
@@ -5668,7 +5668,7 @@ class GraphUpdater:
         ]
         if not node_ids:
             return True
-        from .vector_store import delete_project_embeddings
+        from .vectors.store import delete_project_embeddings
 
         return delete_project_embeddings(legacy, node_ids)
 
@@ -9133,8 +9133,8 @@ class GraphUpdater:
             return
 
         try:
-            from .embedder import embed_code_batch, get_embedding_cache
-            from .vector_store import (
+            from .vectors.embedder import embed_code_batch, get_embedding_cache
+            from .vectors.store import (
                 close_qdrant_client,
                 delete_stale_embeddings,
                 store_embedding_batch,
@@ -9277,8 +9277,8 @@ class GraphUpdater:
         #3358). The next sync embeds every function again, and saving the
         embedding cache lets it reuse the vectors this pass already computed.
         """
-        from .embedder import get_embedding_cache
-        from .vector_store import close_qdrant_client
+        from .vectors.embedder import get_embedding_cache
+        from .vectors.store import close_qdrant_client
 
         logger.warning(ls.EMBEDDINGS_INTERRUPTED)
         self._record_embeddings_pending(True)

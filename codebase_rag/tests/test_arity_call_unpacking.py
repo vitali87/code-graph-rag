@@ -26,13 +26,13 @@ from typer.testing import CliRunner, Result
 
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
+from codebase_rag.check.command import run_check
+from codebase_rag.check.delta import StructuralDelta, has_findings, observe
 from codebase_rag.cli import app
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.call_processor import call_site_properties
 from codebase_rag.services.graph_diff import _SITE_PROPS
-from codebase_rag.structural_check import run_check
-from codebase_rag.structural_delta import StructuralDelta, has_findings, observe
 from codebase_rag.types_defs import PropertyDict
 from evals.cgr_graph import StatefulIngestor
 

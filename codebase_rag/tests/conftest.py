@@ -20,13 +20,13 @@ from loguru import logger
 
 from codebase_rag import constants as rag_cs
 from codebase_rag.capture import CaptureSelection
-from codebase_rag.checkout_state import state_file
 from codebase_rag.doctor import graph_audit
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.language_spec import LANGUAGE_SPECS, get_language_for_extension
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers import native_trees
 from codebase_rag.parsers.py.ast_analyzer import clear_scope_facts
+from codebase_rag.sync.checkout_state import state_file
 from codebase_rag.types_defs import GraphNodeRecord, GraphRelRecord
 
 if TYPE_CHECKING:
@@ -1007,7 +1007,7 @@ def cleanup_qdrant_client() -> Generator[None, None, None]:
     yield
 
     try:
-        import codebase_rag.vector_store as vs
+        import codebase_rag.vectors.store as vs
 
         vs.close_vector_store_client()
     except Exception:

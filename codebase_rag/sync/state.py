@@ -1,6 +1,6 @@
 """Read and write the sync state cgr keeps between runs of one checkout.
 
-`checkout_state` decides WHERE that state lives; this module owns WHAT is in
+`sync.checkout_state` decides WHERE that state lives; this module owns WHAT is in
 each file and how it is read back: the file hash cache and its atomic,
 no-follow publish, the directory mtimes, the exclusion stamp, the parser
 fingerprint, the delombok overlay state and the embeddings markers.
@@ -19,11 +19,11 @@ from pathlib import Path
 
 from loguru import logger
 
-from . import constants as cs
-from . import logs as ls
-from .config import settings
-from .types_defs import JsonValue
-from .utils.json_io import load_json, loads_json
+from .. import constants as cs
+from .. import logs as ls
+from ..config import settings
+from ..types_defs import JsonValue
+from ..utils.json_io import load_json, loads_json
 
 type FileHashCache = dict[str, str]
 type DirMtimesCache = dict[str, float]

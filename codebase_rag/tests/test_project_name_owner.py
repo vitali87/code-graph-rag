@@ -23,7 +23,6 @@ from typer.testing import CliRunner
 from codebase_rag import cli
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
-from codebase_rag.checkout_state import state_file
 from codebase_rag.cli import (
     _exit_if_project_owned_elsewhere,
     _pre_chat_sync,
@@ -34,6 +33,7 @@ from codebase_rag.cli_help import HELP_PROJECT_NAME
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services.protobuf_service import ProtobufFileIngestor
+from codebase_rag.sync.checkout_state import state_file
 from codebase_rag.workspaces import WorkspaceConfig, WorkspaceRepo
 from evals.cgr_graph import StatefulIngestor
 

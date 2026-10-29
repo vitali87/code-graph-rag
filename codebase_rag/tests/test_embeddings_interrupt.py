@@ -19,10 +19,10 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag import exceptions as ex
-from codebase_rag.checkout_state import state_dir
 from codebase_rag.cli import _run_graph_sync
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.sync.checkout_state import state_dir
 from codebase_rag.types_defs import PropertyParams, ResultRow
 
 
@@ -41,8 +41,8 @@ def embedding_io() -> Generator[tuple[MagicMock, MagicMock], None, None]:
         patch(
             "codebase_rag.graph_updater.has_semantic_dependencies", return_value=True
         ),
-        patch("codebase_rag.embedder.get_embedding_cache", return_value=cache),
-        patch("codebase_rag.vector_store.close_qdrant_client") as close_client,
+        patch("codebase_rag.vectors.embedder.get_embedding_cache", return_value=cache),
+        patch("codebase_rag.vectors.store.close_qdrant_client") as close_client,
     ):
         yield cache, close_client
 

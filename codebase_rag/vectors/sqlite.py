@@ -1,7 +1,7 @@
 """The SQLite file behind the `sqlite` vector store, through sqlite-vec.
 
 The other backends talk to a client library; this module is that client for
-a vec0 table, so `vector_store` can drive all three the same way. Its layout
+a vec0 table, so `vectors.store` can drive all three the same way. Its layout
 is in `constants/sqlite_vectors.py`.
 """
 
@@ -15,8 +15,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import NamedTuple
 
-from . import constants as cs
-from . import exceptions as ex
+from .. import constants as cs
+from .. import exceptions as ex
 
 
 class SqliteVectorRow(NamedTuple):

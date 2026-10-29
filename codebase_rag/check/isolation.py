@@ -47,10 +47,10 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Protocol, cast
 
-from . import constants as cs
-from . import cypher_queries as cq
-from .types_defs import PropertyDict, PropertyValue, ResultRow
-from .utils.path_utils import cached_file_identity_posix, cached_resolve_posix
+from .. import constants as cs
+from .. import cypher_queries as cq
+from ..types_defs import PropertyDict, PropertyValue, ResultRow
+from ..utils.path_utils import cached_file_identity_posix, cached_resolve_posix
 
 
 class GraphStore(Protocol):

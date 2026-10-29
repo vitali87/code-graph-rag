@@ -1,7 +1,7 @@
 """What an MCP server knows, in process, about damage to the graph it serves.
 
 A run that dies part way leaves the graph partial. Its durable record is the
-`:IncompleteRun` marker (`sync_guard`), one per project; this is the
+`:IncompleteRun` marker (`sync.guard`), one per project; this is the
 in-process one, which also covers what no marker can describe: a wipe that
 spans every project, and a failure whose own marker could not be written.
 Reads refuse while it is up, and a scoped reingest will not hydrate from a

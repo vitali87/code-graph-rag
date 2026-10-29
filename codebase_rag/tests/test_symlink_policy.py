@@ -26,13 +26,13 @@ from loguru import logger
 from watchdog.events import FileCreatedEvent, FileDeletedEvent
 
 from codebase_rag import constants as cs
-from codebase_rag.checkout_state import state_file
 from codebase_rag.exclude_prompt import detect_excludable_directories
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.language_spec import has_other_language_sibling
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers import structure_processor
 from codebase_rag.parsers.contracts import discover_contract_operations
+from codebase_rag.sync.checkout_state import state_file
 from codebase_rag.tests.conftest import (
     create_and_run_updater,
     force_mtime_after_cache,

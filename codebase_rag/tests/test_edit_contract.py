@@ -12,6 +12,7 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
+from codebase_rag.check.delta import StructuralDelta
 from codebase_rag.editing import (
     Expectation,
     change_signature_expectation,
@@ -24,7 +25,6 @@ from codebase_rag.editing.transaction import load_history
 from codebase_rag.exceptions import ReingestAborted
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.structural_delta import StructuralDelta
 from codebase_rag.types_defs import PropertyDict, ResultRow
 from evals.cgr_graph import StatefulIngestor
 
@@ -1365,7 +1365,7 @@ def _snapshot(
     definition whose fingerprint is empty. A fixture without one produces
     add + remove rather than a rename, so a move never reads as one.
     """
-    from codebase_rag.structural_delta import Definition, Snapshot
+    from codebase_rag.check.delta import Definition, Snapshot
 
     return Snapshot(
         paths=frozenset(definitions.values()),
@@ -1401,7 +1401,7 @@ def _renamed(old: str, new: str) -> dict:
 
 
 def test_an_importer_of_a_vacated_module_is_reported() -> None:
-    from codebase_rag.structural_delta import _stale_importers
+    from codebase_rag.check.delta import _stale_importers
 
     after = _snapshot(
         definitions={"p.pkg.core.helper": "pkg/core.py"},
@@ -1419,7 +1419,7 @@ def test_a_module_that_still_defines_something_is_not_vacated() -> None:
     Without this the check reports every importer of everything left behind,
     which would make the contract unusable on any real move.
     """
-    from codebase_rag.structural_delta import _stale_importers
+    from codebase_rag.check.delta import _stale_importers
 
     after = _snapshot(
         definitions={
@@ -1449,7 +1449,7 @@ def test_a_plain_rename_vacates_no_module() -> None:
     left the test green: it could not tell which guard was working
     (measured, #1825).
     """
-    from codebase_rag.structural_delta import _stale_importers
+    from codebase_rag.check.delta import _stale_importers
 
     after = _snapshot(
         definitions={"p.other.thing": "other.py"},
@@ -1464,7 +1464,7 @@ def test_a_plain_rename_vacates_no_module() -> None:
 
 def test_an_importer_of_an_untouched_module_is_not_reported() -> None:
     """The control: only the VACATED module's importers count."""
-    from codebase_rag.structural_delta import _stale_importers
+    from codebase_rag.check.delta import _stale_importers
 
     after = _snapshot(
         definitions={"p.pkg.core.helper": "pkg/core.py"},
@@ -1488,7 +1488,7 @@ def test_the_assembled_delta_actually_carries_stale_importers() -> None:
 
     Drives the real assembler and asserts the field arrives populated.
     """
-    from codebase_rag.structural_delta import structural_delta
+    from codebase_rag.check.delta import structural_delta
 
     # Same name, same body, different file: `_pair_by_move` reads that as a
     # move, which is what makes `renamed` carry the pair the producer needs.
@@ -1515,7 +1515,7 @@ def test_the_assembled_delta_reports_none_when_nothing_moved() -> None:
 
     Without this, "always report every importer" satisfies the test above.
     """
-    from codebase_rag.structural_delta import structural_delta
+    from codebase_rag.check.delta import structural_delta
 
     snapshot = _snapshot(
         definitions={"p.pkg.util.helper": "pkg/util.py"},

@@ -26,10 +26,10 @@ from typer.testing import CliRunner
 from codebase_rag import cli
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
-from codebase_rag.checkout_state import state_file
 from codebase_rag.cli import app
 from codebase_rag.graph_cli import cli as graph_cli
 from codebase_rag.mcp.tools import MCPToolsRegistry
+from codebase_rag.sync.checkout_state import state_file
 from codebase_rag.types_defs import DuplicatesReport, PropertyParams, ResultRow
 from codebase_rag.utils.path_utils import derive_project_name
 

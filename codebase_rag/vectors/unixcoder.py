@@ -6,7 +6,7 @@ import torch
 from torch import nn
 from transformers import RobertaConfig, RobertaModel, RobertaTokenizer
 
-from . import constants as cs
+from .. import constants as cs
 
 
 class UniXcoder(nn.Module):

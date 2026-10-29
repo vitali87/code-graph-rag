@@ -9,11 +9,11 @@ from pathlib import Path
 import httpx
 from loguru import logger
 
-from . import constants as cs
-from . import exceptions as ex
-from . import logs as ls
-from .config import API_KEY_INFO, normalised_credential, settings
-from .utils.dependencies import has_torch, has_transformers
+from .. import constants as cs
+from .. import exceptions as ex
+from .. import logs as ls
+from ..config import API_KEY_INFO, normalised_credential, settings
+from ..utils.dependencies import has_torch, has_transformers
 
 
 def _cache_namespace(max_length: int | None = None) -> str:
@@ -109,7 +109,7 @@ _embedding_cache: EmbeddingCache | None = None
 def get_embedding_cache() -> EmbeddingCache:
     global _embedding_cache
     if _embedding_cache is None:
-        from .vector_store import embedding_cache_dir
+        from .store import embedding_cache_dir
 
         cache_path = embedding_cache_dir() / cs.EMBEDDING_CACHE_FILENAME
         _embedding_cache = EmbeddingCache(path=cache_path)

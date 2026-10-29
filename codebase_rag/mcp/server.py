@@ -23,7 +23,7 @@ from codebase_rag.services.graph_service import MemgraphIngestor
 from codebase_rag.services.llm import LazyCypherGenerator
 from codebase_rag.types_defs import MCPToolArguments
 from codebase_rag.utils.path_utils import derive_project_name
-from codebase_rag.vector_store import close_qdrant_client
+from codebase_rag.vectors.store import close_qdrant_client
 from codebase_rag.workspaces import WorkspaceConfig, WorkspaceError, load_workspace
 
 if TYPE_CHECKING:

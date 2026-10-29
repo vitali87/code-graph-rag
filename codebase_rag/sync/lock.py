@@ -68,11 +68,11 @@ from typing import Concatenate, Protocol
 
 from loguru import logger
 
-from . import constants as cs
-from . import exceptions as ex
-from . import logs as ls
+from .. import constants as cs
+from .. import exceptions as ex
+from .. import logs as ls
+from ..utils.process_owner import pid_has_exited
 from .checkout_state import prepare_state_dir
-from .utils.process_owner import pid_has_exited
 
 if sys.platform == cs.PLATFORM_WINDOWS:  # pragma: no cover - platform
     import msvcrt

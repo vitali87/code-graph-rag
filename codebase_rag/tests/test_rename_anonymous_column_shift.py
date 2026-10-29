@@ -13,11 +13,11 @@ from pathlib import Path
 
 import pytest
 
+from codebase_rag.check.delta import RenameFinding, StructuralDelta
 from codebase_rag.editing import rename_expectation, verify
 from codebase_rag.editing.rename import rename
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.structural_delta import RenameFinding, StructuralDelta
 from codebase_rag.types_defs import PropertyParams, ResultRow
 from evals.cgr_graph import StatefulIngestor
 

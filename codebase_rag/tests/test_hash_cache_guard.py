@@ -14,7 +14,7 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag import graph_updater as graph_updater_module
-from codebase_rag.checkout_state import state_file
+from codebase_rag.sync.checkout_state import state_file
 from codebase_rag.tests.conftest import create_and_run_updater
 
 

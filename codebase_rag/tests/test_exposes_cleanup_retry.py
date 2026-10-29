@@ -14,9 +14,9 @@ from pathlib import Path
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag import graph_updater as gu
-from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.sync.checkout_state import state_file
 from evals.cgr_graph import StatefulIngestor
 
 ROUTES = '@app.get("/items")\ndef items():\n    return 1\n'

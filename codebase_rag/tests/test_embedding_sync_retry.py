@@ -31,18 +31,18 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag import exceptions as ex
 from codebase_rag import graph_updater as gu
-from codebase_rag import vector_store as vs
-from codebase_rag.checkout_state import state_file
 from codebase_rag.constants import VectorStoreBackend
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.sqlite_vectors import extensions_loadable
+from codebase_rag.sync.checkout_state import state_file
 from codebase_rag.types_defs import PropertyParams, ResultRow
 from codebase_rag.utils.dependencies import (
     has_pymilvus,
     has_qdrant_client,
     has_sqlite_vec,
 )
+from codebase_rag.vectors import store as vs
+from codebase_rag.vectors.sqlite import extensions_loadable
 from evals.cgr_graph import StatefulIngestor
 
 pytestmark = pytest.mark.skipif(
@@ -176,7 +176,7 @@ def _sync(
     updater = _updater(repo, graph, skip_embeddings, project)
     with (
         _semantic_extra(),
-        patch("codebase_rag.embedder.embed_code_batch", side_effect=embed),
+        patch("codebase_rag.vectors.embedder.embed_code_batch", side_effect=embed),
     ):
         updater.run()
     return updater

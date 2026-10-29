@@ -33,8 +33,8 @@ from loguru import logger
 
 from .. import constants as cs
 from .. import logs as ls
-from ..checkout_state import EditLock, state_file, write_history
 from ..config import load_ignore_patterns
+from ..sync.checkout_state import EditLock, state_file, write_history
 from ..utils.path_utils import should_skip_path
 from ..utils.source_encoding import decode_source
 

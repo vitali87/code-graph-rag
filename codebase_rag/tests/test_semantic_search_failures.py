@@ -33,9 +33,9 @@ async def test_a_failing_vector_store_is_a_tool_failure() -> None:
     tool = create_semantic_search_tool(MagicMock())
 
     with (
-        patch("codebase_rag.embedder.embed_code", return_value=[0.1] * 768),
+        patch("codebase_rag.vectors.embedder.embed_code", return_value=[0.1] * 768),
         patch(
-            "codebase_rag.vector_store.search_embeddings",
+            "codebase_rag.vectors.store.search_embeddings",
             side_effect=ValueError("dimension mismatch: re-index with --clean"),
         ),
     ):
@@ -50,7 +50,8 @@ async def test_a_failing_embedder_is_a_tool_failure() -> None:
     tool = create_semantic_search_tool(MagicMock())
 
     with patch(
-        "codebase_rag.embedder.embed_code", side_effect=RuntimeError("bad API key")
+        "codebase_rag.vectors.embedder.embed_code",
+        side_effect=RuntimeError("bad API key"),
     ):
         result = await tool.function("find handlers")
 
@@ -76,8 +77,8 @@ async def test_no_matches_is_still_a_plain_answer() -> None:
     tool = create_semantic_search_tool(MagicMock())
 
     with (
-        patch("codebase_rag.embedder.embed_code", return_value=[0.1] * 768),
-        patch("codebase_rag.vector_store.search_embeddings", return_value=[]),
+        patch("codebase_rag.vectors.embedder.embed_code", return_value=[0.1] * 768),
+        patch("codebase_rag.vectors.store.search_embeddings", return_value=[]),
     ):
         result = await tool.function("nothing like this")
 

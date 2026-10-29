@@ -12,8 +12,8 @@ pytestmark = pytest.mark.skipif(
     not has_qdrant_client(), reason="qdrant-client not installed"
 )
 
-_PATCH_CLIENT = "codebase_rag.vector_store.get_qdrant_client"
-_PATCH_SLEEP = "codebase_rag.vector_store.time.sleep"
+_PATCH_CLIENT = "codebase_rag.vectors.store.get_qdrant_client"
+_PATCH_SLEEP = "codebase_rag.vectors.store.time.sleep"
 
 
 def _fn(qualified_name: str) -> EmbeddingSymbol:
@@ -26,7 +26,7 @@ def _method(qualified_name: str) -> EmbeddingSymbol:
 
 @pytest.fixture(autouse=True)
 def use_qdrant_backend() -> Generator[None, None, None]:
-    import codebase_rag.vector_store as vs
+    import codebase_rag.vectors.store as vs
 
     with patch.object(vs.settings, "VECTOR_STORE_BACKEND", VectorStoreBackend.QDRANT):
         yield
@@ -34,7 +34,7 @@ def use_qdrant_backend() -> Generator[None, None, None]:
 
 class TestUpsertWithRetry:
     def test_succeeds_on_first_attempt(self) -> None:
-        from codebase_rag.vector_store import _upsert_with_retry
+        from codebase_rag.vectors.store import _upsert_with_retry
 
         mock_client = MagicMock()
         mock_point = MagicMock()
@@ -45,7 +45,7 @@ class TestUpsertWithRetry:
         mock_client.upsert.assert_called_once()
 
     def test_retries_on_failure_then_succeeds(self) -> None:
-        from codebase_rag.vector_store import _upsert_with_retry
+        from codebase_rag.vectors.store import _upsert_with_retry
 
         mock_client = MagicMock()
         mock_client.upsert.side_effect = [
@@ -63,7 +63,7 @@ class TestUpsertWithRetry:
         mock_sleep.assert_called_once()
 
     def test_raises_after_exhausting_retries(self) -> None:
-        from codebase_rag.vector_store import _upsert_with_retry
+        from codebase_rag.vectors.store import _upsert_with_retry
 
         mock_client = MagicMock()
         mock_client.upsert.side_effect = ConnectionError("timeout")
@@ -77,7 +77,7 @@ class TestUpsertWithRetry:
             _upsert_with_retry(points)
 
     def test_exponential_backoff_delays(self) -> None:
-        from codebase_rag.vector_store import _upsert_with_retry
+        from codebase_rag.vectors.store import _upsert_with_retry
 
         mock_client = MagicMock()
         mock_client.upsert.side_effect = [
@@ -98,7 +98,7 @@ class TestUpsertWithRetry:
 
 class TestStoreEmbeddingBatch:
     def test_returns_count_on_success(self) -> None:
-        from codebase_rag.vector_store import store_embedding_batch
+        from codebase_rag.vectors.store import store_embedding_batch
 
         mock_client = MagicMock()
         points = [
@@ -112,13 +112,13 @@ class TestStoreEmbeddingBatch:
         assert result == 2
 
     def test_returns_zero_on_empty(self) -> None:
-        from codebase_rag.vector_store import store_embedding_batch
+        from codebase_rag.vectors.store import store_embedding_batch
 
         result = store_embedding_batch("mod", [])
         assert result == 0
 
     def test_returns_zero_on_failure(self) -> None:
-        from codebase_rag.vector_store import store_embedding_batch
+        from codebase_rag.vectors.store import store_embedding_batch
 
         mock_client = MagicMock()
         mock_client.upsert.side_effect = Exception("fail")
@@ -132,7 +132,7 @@ class TestStoreEmbeddingBatch:
         assert result == 0
 
     def test_builds_correct_point_structs(self) -> None:
-        from codebase_rag.vector_store import embedding_point_id, store_embedding_batch
+        from codebase_rag.vectors.store import embedding_point_id, store_embedding_batch
 
         mock_client = MagicMock()
         embedding = [0.5] * 768
@@ -157,7 +157,7 @@ class TestEmbeddingPointId:
     def test_is_a_uuid_fixed_by_project_and_name(self) -> None:
         import uuid
 
-        from codebase_rag.vector_store import embedding_point_id
+        from codebase_rag.vectors.store import embedding_point_id
 
         point_id = embedding_point_id("pkg", _fn("pkg.module.fn"))
 
@@ -168,7 +168,7 @@ class TestEmbeddingPointId:
         # Pinned: a sync in a later process must find the point an earlier
         # one stored, so the derivation may not depend on anything but the
         # symbol (no hash seed, no enum identity).
-        from codebase_rag.vector_store import embedding_point_id
+        from codebase_rag.vectors.store import embedding_point_id
 
         point_id = embedding_point_id("pkg", _fn("pkg.module.fn"))
 
@@ -178,7 +178,7 @@ class TestEmbeddingPointId:
         # A Function and a Method may share a qualified name (C++ spells
         # `Clock::now` both ways across an `#if`); neither may overwrite the
         # other's point (bot review).
-        from codebase_rag.vector_store import embedding_point_id
+        from codebase_rag.vectors.store import embedding_point_id
 
         point_id = embedding_point_id("pkg", _fn("pkg.m.Clock.now"))
 
@@ -187,7 +187,7 @@ class TestEmbeddingPointId:
     def test_differs_by_name_and_by_project(self) -> None:
         # Negative: neither another function nor another project's function
         # of the same name may overwrite this one's point.
-        from codebase_rag.vector_store import embedding_point_id
+        from codebase_rag.vectors.store import embedding_point_id
 
         point_id = embedding_point_id("pkg", _fn("pkg.module.fn"))
 
@@ -210,7 +210,7 @@ def _point(point_id: int | str, **payload: int | str) -> MagicMock:
 
 class TestDeleteProjectEmbeddings:
     def test_deletes_given_ids_and_the_projects_stored_points(self) -> None:
-        from codebase_rag.vector_store import delete_project_embeddings
+        from codebase_rag.vectors.store import delete_project_embeddings
 
         mock_client = MagicMock()
         # The project's points keyed by symbol, then the unowned ones.
@@ -232,7 +232,7 @@ class TestDeleteProjectEmbeddings:
         assert call_kwargs["points_selector"] == [1, 2, 3, "a-uuid", 7]
 
     def test_noop_when_nothing_is_stored(self) -> None:
-        from codebase_rag.vector_store import delete_project_embeddings
+        from codebase_rag.vectors.store import delete_project_embeddings
 
         mock_client = MagicMock()
         _scrolling(mock_client, [], [])
@@ -243,7 +243,7 @@ class TestDeleteProjectEmbeddings:
         mock_client.delete.assert_not_called()
 
     def test_handles_exception_gracefully(self) -> None:
-        from codebase_rag.vector_store import delete_project_embeddings
+        from codebase_rag.vectors.store import delete_project_embeddings
 
         mock_client = MagicMock()
         _scrolling(mock_client, [], [])
@@ -253,7 +253,7 @@ class TestDeleteProjectEmbeddings:
             delete_project_embeddings("myproject", [1, 2])
 
     def test_handles_a_failed_lookup_gracefully(self) -> None:
-        from codebase_rag.vector_store import delete_project_embeddings
+        from codebase_rag.vectors.store import delete_project_embeddings
 
         mock_client = MagicMock()
         mock_client.scroll.side_effect = Exception("connection lost")
@@ -268,7 +268,7 @@ class TestDeleteProjectEmbeddings:
     def test_reports_a_failed_delete(self) -> None:
         # Review of PR 2497: retiring a project must know its vectors are
         # still there, or it deletes the node ids they are keyed by.
-        from codebase_rag.vector_store import delete_project_embeddings
+        from codebase_rag.vectors.store import delete_project_embeddings
 
         mock_client = MagicMock()
         _scrolling(mock_client, [], [])
@@ -281,7 +281,7 @@ class TestDeleteProjectEmbeddings:
 
     def test_reports_a_successful_delete(self) -> None:
         # Negative.
-        from codebase_rag.vector_store import delete_project_embeddings
+        from codebase_rag.vectors.store import delete_project_embeddings
 
         mock_client = MagicMock()
         _scrolling(mock_client, [], [])
@@ -292,7 +292,7 @@ class TestDeleteProjectEmbeddings:
         assert deleted is True
 
     def test_reports_nothing_to_delete_as_done(self) -> None:
-        from codebase_rag.vector_store import delete_project_embeddings
+        from codebase_rag.vectors.store import delete_project_embeddings
 
         mock_client = MagicMock()
         _scrolling(mock_client, [], [])
@@ -304,7 +304,7 @@ class TestDeleteProjectEmbeddings:
 
     def test_reports_no_vector_store_as_done(self) -> None:
         # A run without a vector store wrote no vectors to delete.
-        import codebase_rag.vector_store as vs
+        import codebase_rag.vectors.store as vs
 
         with patch.object(vs, "_get_vector_store", return_value=None):
             deleted = vs.delete_project_embeddings("myproject", [1, 2])
@@ -314,7 +314,7 @@ class TestDeleteProjectEmbeddings:
 
 class TestDeleteStaleEmbeddings:
     def test_deletes_what_no_longer_matches_the_graph(self) -> None:
-        from codebase_rag.vector_store import (
+        from codebase_rag.vectors.store import (
             delete_stale_embeddings,
             embedding_point_id,
         )
@@ -342,7 +342,7 @@ class TestDeleteStaleEmbeddings:
 
     def test_deletes_nothing_when_everything_matches(self) -> None:
         # Negative: a sync that changed nothing deletes nothing.
-        from codebase_rag.vector_store import (
+        from codebase_rag.vectors.store import (
             delete_stale_embeddings,
             embedding_point_id,
         )
@@ -362,7 +362,7 @@ class TestDeleteStaleEmbeddings:
 
     def test_keeps_a_function_and_a_method_that_share_a_name(self) -> None:
         # Negative: two live nodes, two points, nothing stale.
-        from codebase_rag.vector_store import (
+        from codebase_rag.vectors.store import (
             delete_stale_embeddings,
             embedding_point_id,
         )
@@ -385,7 +385,7 @@ class TestDeleteStaleEmbeddings:
         assert removed == 0
 
     def test_drops_the_method_the_graph_lost_beside_its_namesake(self) -> None:
-        from codebase_rag.vector_store import (
+        from codebase_rag.vectors.store import (
             delete_stale_embeddings,
             embedding_point_id,
         )
@@ -408,7 +408,7 @@ class TestDeleteStaleEmbeddings:
     def test_drops_a_point_that_names_no_node(self) -> None:
         # A point that names no node, under a key the graph no longer
         # expects: two missing node ids must not compare as a match.
-        from codebase_rag.vector_store import (
+        from codebase_rag.vectors.store import (
             delete_stale_embeddings,
             embedding_point_id,
         )
@@ -426,7 +426,7 @@ class TestDeleteStaleEmbeddings:
 
 class TestVerifyStoredIds:
     def test_returns_found_ids(self) -> None:
-        from codebase_rag.vector_store import embedding_point_id, verify_stored_ids
+        from codebase_rag.vectors.store import embedding_point_id, verify_stored_ids
 
         mock_client = MagicMock()
         mock_client.retrieve.return_value = [
@@ -443,7 +443,7 @@ class TestVerifyStoredIds:
 
     def test_a_point_that_names_another_node_is_not_found(self) -> None:
         # The symbol's point still names the node it had before a re-parse.
-        from codebase_rag.vector_store import embedding_point_id, verify_stored_ids
+        from codebase_rag.vectors.store import embedding_point_id, verify_stored_ids
 
         mock_client = MagicMock()
         mock_client.retrieve.return_value = [
@@ -456,7 +456,7 @@ class TestVerifyStoredIds:
         assert result == set()
 
     def test_finds_a_function_and_a_method_that_share_a_name(self) -> None:
-        from codebase_rag.vector_store import embedding_point_id, verify_stored_ids
+        from codebase_rag.vectors.store import embedding_point_id, verify_stored_ids
 
         function, method = _fn("p.m.C.f"), _method("p.m.C.f")
         mock_client = MagicMock()
@@ -471,13 +471,13 @@ class TestVerifyStoredIds:
         assert result == {1, 2}
 
     def test_returns_empty_for_empty_input(self) -> None:
-        from codebase_rag.vector_store import verify_stored_ids
+        from codebase_rag.vectors.store import verify_stored_ids
 
         result = verify_stored_ids("p", {})
         assert result == set()
 
     def test_raises_on_exception(self) -> None:
-        from codebase_rag.vector_store import verify_stored_ids
+        from codebase_rag.vectors.store import verify_stored_ids
 
         mock_client = MagicMock()
         mock_client.retrieve.side_effect = Exception("fail")
@@ -490,7 +490,7 @@ class TestVerifyStoredIds:
             verify_stored_ids("p", ids)
 
     def test_batches_large_id_sets(self) -> None:
-        from codebase_rag.vector_store import _RETRIEVE_BATCH_SIZE, verify_stored_ids
+        from codebase_rag.vectors.store import _RETRIEVE_BATCH_SIZE, verify_stored_ids
 
         mock_client = MagicMock()
         mock_client.retrieve.return_value = []
@@ -503,7 +503,7 @@ class TestVerifyStoredIds:
         assert mock_client.retrieve.call_count == 2
 
     def test_retrieve_called_with_correct_params(self) -> None:
-        from codebase_rag.vector_store import embedding_point_id, verify_stored_ids
+        from codebase_rag.vectors.store import embedding_point_id, verify_stored_ids
 
         mock_client = MagicMock()
         mock_client.retrieve.return_value = []

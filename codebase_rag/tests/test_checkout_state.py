@@ -33,16 +33,9 @@ from unittest.mock import MagicMock
 import pytest
 from loguru import logger
 
-from codebase_rag import checkout_state
 from codebase_rag import constants as cs
 from codebase_rag import logs as ls
-from codebase_rag.checkout_state import (
-    _lock_file,
-    _unlock_file,
-    prepare_state_dir,
-    state_dir,
-    state_file,
-)
+from codebase_rag.check.command import changed_since
 from codebase_rag.cli import _delete_hash_cache
 from codebase_rag.config import settings
 from codebase_rag.editing.transaction import (
@@ -55,7 +48,14 @@ from codebase_rag.editing.transaction import (
 )
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.structural_check import changed_since
+from codebase_rag.sync import checkout_state
+from codebase_rag.sync.checkout_state import (
+    _lock_file,
+    _unlock_file,
+    prepare_state_dir,
+    state_dir,
+    state_file,
+)
 from evals.cgr_graph import StatefulIngestor
 
 SOURCES = {
@@ -399,7 +399,7 @@ def _replace_fails_for(
             raise error
         real_replace(src, dst)
 
-    monkeypatch.setattr("codebase_rag.checkout_state.os.replace", replace)
+    monkeypatch.setattr("codebase_rag.sync.checkout_state.os.replace", replace)
 
 
 def _warnings_during(action: Callable[[], object]) -> list[str]:
@@ -476,7 +476,7 @@ def test_state_another_process_moved_first_is_not_moved_again(
             os.replace(left, target)
         return real_copy2(src, dst)
 
-    monkeypatch.setattr("codebase_rag.checkout_state.shutil.copy2", raced)
+    monkeypatch.setattr("codebase_rag.sync.checkout_state.shutil.copy2", raced)
     notes: list[str] = []
     sink = logger.add(notes.append, level="INFO", format="{message}")
     try:
@@ -504,7 +504,7 @@ def test_a_failed_copy_keeps_the_state_in_the_tree_and_leaves_no_temp_file(
         Path(dst).write_bytes(b"{")
         raise OSError(errno.ENOSPC, "No space left on device")
 
-    monkeypatch.setattr("codebase_rag.checkout_state.shutil.copy2", disk_full)
+    monkeypatch.setattr("codebase_rag.sync.checkout_state.shutil.copy2", disk_full)
 
     warnings = _warnings_during(lambda: prepare_state_dir(repo))
 
@@ -546,7 +546,7 @@ def _no_hard_links(monkeypatch: pytest.MonkeyPatch) -> None:
     def link(src: object, dst: object, **kwargs: object) -> None:
         raise PermissionError(errno.EPERM, "Operation not permitted")
 
-    monkeypatch.setattr("codebase_rag.checkout_state.os.link", link)
+    monkeypatch.setattr("codebase_rag.sync.checkout_state.os.link", link)
 
 
 def test_state_a_sync_published_after_the_check_is_never_replaced(
@@ -623,7 +623,9 @@ def test_a_failed_exclusive_copy_keeps_the_state_in_the_tree(
     def disk_full(source: object, target: object) -> None:
         raise OSError(errno.ENOSPC, "No space left on device")
 
-    monkeypatch.setattr("codebase_rag.checkout_state.shutil.copyfileobj", disk_full)
+    monkeypatch.setattr(
+        "codebase_rag.sync.checkout_state.shutil.copyfileobj", disk_full
+    )
 
     warnings = _warnings_during(lambda: prepare_state_dir(repo))
 
@@ -661,7 +663,7 @@ def test_a_failed_exclusive_copy_never_deletes_state_another_process_published(
         raise OSError(errno.EIO, "Input/output error")
 
     monkeypatch.setattr(
-        "codebase_rag.checkout_state.shutil.copystat", published_then_failed
+        "codebase_rag.sync.checkout_state.shutil.copystat", published_then_failed
     )
 
     prepare_state_dir(repo)
@@ -683,7 +685,7 @@ def test_a_move_that_loses_its_destination_keeps_the_state_in_the_tree(
     def gone(src: object, dst: object, **kwargs: object) -> None:
         raise FileNotFoundError(errno.ENOENT, "No such file or directory")
 
-    monkeypatch.setattr("codebase_rag.checkout_state.os.link", gone)
+    monkeypatch.setattr("codebase_rag.sync.checkout_state.os.link", gone)
 
     warnings = _warnings_during(lambda: prepare_state_dir(repo))
 
@@ -1518,7 +1520,7 @@ def _replace_fails_for_target(target: Path, monkeypatch: pytest.MonkeyPatch) -> 
             raise OSError(errno.ENOSPC, "No space left on device")
         real_replace(src, dst)
 
-    monkeypatch.setattr("codebase_rag.checkout_state.os.replace", replace)
+    monkeypatch.setattr("codebase_rag.sync.checkout_state.os.replace", replace)
 
 
 def test_an_unwritable_cgr_home_leaves_an_older_cgrs_history_in_the_tree(

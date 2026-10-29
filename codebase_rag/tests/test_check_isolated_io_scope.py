@@ -17,10 +17,10 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag.capture import resolve_capture
+from codebase_rag.check.command import CheckError, run_check
 from codebase_rag.embedded_graph.connection import EmbeddedConnection
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services import QueryingIngestorProtocol
-from codebase_rag.structural_check import CheckError, run_check
 from codebase_rag.tests.test_check_isolated_wiring import (
     PROJECT,
     _edit,

@@ -50,7 +50,7 @@ from codebase_rag import cypher_queries as cq
 from codebase_rag.cli import app
 from codebase_rag.config import settings
 from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.sync_lock import SyncInProgressError, repo_sync_lock
+from codebase_rag.sync.lock import SyncInProgressError, repo_sync_lock
 from codebase_rag.types_defs import (
     PropertyDict,
     PropertyValue,
@@ -77,7 +77,7 @@ _HOLDER = """
 import os
 import sys
 from pathlib import Path
-from codebase_rag.sync_lock import repo_sync_lock
+from codebase_rag.sync.lock import repo_sync_lock
 with repo_sync_lock(Path(sys.argv[1]), sys.argv[2]):
     print("held", os.getpid(), flush=True)
     sys.stdin.readline()
@@ -1629,7 +1629,7 @@ def lock_polls(monkeypatch: pytest.MonkeyPatch) -> list[Callable[[], None]]:
     In place of the lock's poll sleep, so a waiter is seen to wait, and the
     holder is let go, without timing anything.
     """
-    from codebase_rag import sync_lock
+    from codebase_rag.sync import lock as sync_lock
 
     actions: list[Callable[[], None]] = []
     polls = [0]

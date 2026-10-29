@@ -57,7 +57,7 @@ def sqlite_vec_loadable() -> bool:
     without the package: semantic search is off rather than failing in every
     sync and on `--clean`, and the reason is logged once.
     """
-    from codebase_rag.sqlite_vectors import extensions_loadable
+    from codebase_rag.vectors.sqlite import extensions_loadable
 
     if extensions_loadable():
         return True

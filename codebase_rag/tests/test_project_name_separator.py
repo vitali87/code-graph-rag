@@ -23,10 +23,10 @@ from typer.testing import CliRunner
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag import logs as ls
+from codebase_rag.check.command import indexed_scope
 from codebase_rag.cli import app
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.structural_check import indexed_scope
 from codebase_rag.types_defs import PropertyDict, ResultRow
 from codebase_rag.utils.path_utils import derive_project_name, project_name_error
 from codebase_rag.workspaces import (
@@ -498,7 +498,7 @@ def test_the_old_projects_vectors_go_before_its_nodes(dotted_checkout: Path) -> 
         return True
 
     with patch(
-        "codebase_rag.vector_store.delete_project_embeddings",
+        "codebase_rag.vectors.store.delete_project_embeddings",
         side_effect=delete_vectors,
     ):
         _index(dotted_checkout, store, None)
@@ -541,7 +541,7 @@ def vector_client() -> Generator[MagicMock, None, None]:
     # base install, which has no qdrant-client, runs it too. The store holds
     # no points beyond those the node ids key: its scroll lookups (#2447)
     # build qdrant-client filter models, which the base install lacks.
-    from codebase_rag import vector_store
+    from codebase_rag.vectors import store as vector_store
 
     client = MagicMock()
     with (

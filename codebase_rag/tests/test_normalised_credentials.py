@@ -22,8 +22,8 @@ from codebase_rag.config import (
     normalised_credential,
     settings,
 )
-from codebase_rag.embedder import _openai_client
 from codebase_rag.providers.base import _resolve_api_key
+from codebase_rag.vectors.embedder import _openai_client
 
 NOT_A_KEY = ["", "   ", "\t\n", cs.DEFAULT_API_KEY, f"  {cs.DEFAULT_API_KEY} "]
 REAL_KEY = "sk-real-key"

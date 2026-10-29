@@ -12,9 +12,9 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag import graph_query
+from codebase_rag.check.delta import _tests_reaching as delta_tests_reaching
 from codebase_rag.dead_code import collect_dead_code, default_dead_code_config
 from codebase_rag.path_filters import matches_test_path
-from codebase_rag.structural_delta import _tests_reaching as delta_tests_reaching
 from codebase_rag.types_defs import PropertyDict, ResultRow
 
 P = "proj"

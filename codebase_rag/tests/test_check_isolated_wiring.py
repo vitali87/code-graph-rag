@@ -21,17 +21,17 @@ from typer.testing import CliRunner
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag.capture import resolve_capture
-from codebase_rag.checkout_state import state_file
-from codebase_rag.cli import app
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
-from codebase_rag.structural_check import (
+from codebase_rag.check.command import (
     CheckError,
     _FileSnapshot,
     _refuse_project_holding_io_links,
     _refuse_unrestorable_capture,
     run_check,
 )
+from codebase_rag.cli import app
+from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.parser_loader import load_parsers
+from codebase_rag.sync.checkout_state import state_file
 from codebase_rag.tests.conftest import git_env
 from codebase_rag.types_defs import PropertyDict, ResultRow
 from evals.cgr_graph import StatefulIngestor
@@ -292,8 +292,8 @@ def test_the_cli_flag_reaches_the_check(tmp_path: Path, flag: list[str]) -> None
     context.__exit__.return_value = False
     with (
         patch("codebase_rag.cli.connect_memgraph", return_value=context),
-        patch("codebase_rag.structural_check.indexed_scope", return_value=(None, None)),
-        patch("codebase_rag.structural_check.run_check", return_value={}) as check,
+        patch("codebase_rag.check.command.indexed_scope", return_value=(None, None)),
+        patch("codebase_rag.check.command.run_check", return_value={}) as check,
     ):
         result = CliRunner().invoke(
             app,

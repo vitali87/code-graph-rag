@@ -14,7 +14,7 @@ whole working tree, for CI and pre-commit.
 
 ## How it is computed
 
-`codebase_rag.structural_delta` is the in-memory twin of
+`codebase_rag.check.delta` is the in-memory twin of
 `services/graph_diff.py`, which diffs exported indexes offline. It reads
 the touched files' subgraph twice, immediately before and after the
 re-ingest, with fixed Cypher queries scoped to the project:

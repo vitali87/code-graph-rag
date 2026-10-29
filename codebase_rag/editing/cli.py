@@ -176,7 +176,7 @@ def _reingest_restored(
     from ..config import project_ignore_sets
     from ..graph_updater import GraphUpdater
     from ..parser_loader import load_parsers
-    from ..sync_guard import WriteMarker, marked_reingest, sync_owner
+    from ..sync.guard import WriteMarker, marked_reingest, sync_owner
 
     try:
         if name not in ingestor.list_projects():

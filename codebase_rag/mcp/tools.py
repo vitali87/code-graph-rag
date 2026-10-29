@@ -15,8 +15,8 @@ from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag import graph_query
 from codebase_rag import logs as ls
-from codebase_rag import structural_delta as sd
 from codebase_rag import tool_errors as te
+from codebase_rag.check import delta as sd
 from codebase_rag.config import project_ignore_sets
 from codebase_rag.exceptions import ReingestAborted
 from codebase_rag.gloss import notes as gloss
@@ -35,7 +35,7 @@ from codebase_rag.services.llm import (
     run_to_text_answer,
 )
 from codebase_rag.services.provenance import head_commit
-from codebase_rag.sync_lock import repo_sync_lock
+from codebase_rag.sync.lock import repo_sync_lock
 from codebase_rag.tools import tool_descriptions as td
 from codebase_rag.tools.ast_grep_service import AstGrepService
 from codebase_rag.tools.code_retrieval import (
@@ -90,7 +90,7 @@ from codebase_rag.utils.path_utils import (
 )
 from codebase_rag.utils.source_encoding import source_codec
 from codebase_rag.utils.terminal_console import terminal_aware_console
-from codebase_rag.vector_store import clear_all_embeddings, delete_project_embeddings
+from codebase_rag.vectors.store import clear_all_embeddings, delete_project_embeddings
 from codebase_rag.workspaces import WorkspaceConfig
 
 if TYPE_CHECKING:

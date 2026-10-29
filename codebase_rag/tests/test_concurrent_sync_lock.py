@@ -33,14 +33,14 @@ from typer.testing import CliRunner
 from codebase_rag import constants as cs
 from codebase_rag import exceptions as ex
 from codebase_rag import logs as ls
-from codebase_rag import sync_lock
-from codebase_rag.checkout_state import state_dir
 from codebase_rag.cli import app
 from codebase_rag.config import settings
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.mcp.tools import MCPToolsRegistry
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.sync_lock import (
+from codebase_rag.sync import lock as sync_lock
+from codebase_rag.sync.checkout_state import state_dir
+from codebase_rag.sync.lock import (
     SyncInProgressError,
     SyncLockError,
     SyncLockUnavailableError,
@@ -56,7 +56,7 @@ _HOLDER = """
 import os
 import sys
 from pathlib import Path
-from codebase_rag.sync_lock import repo_sync_lock
+from codebase_rag.sync.lock import repo_sync_lock
 with repo_sync_lock(Path(sys.argv[1]), sys.argv[2]):
     print("held", os.getpid(), flush=True)
     sys.stdin.readline()
@@ -69,8 +69,8 @@ _HOLDER_AFTER_STATE_MOVE = """
 import os
 import sys
 from pathlib import Path
-from codebase_rag.checkout_state import prepare_state_dir
-from codebase_rag.sync_lock import repo_sync_lock
+from codebase_rag.sync.checkout_state import prepare_state_dir
+from codebase_rag.sync.lock import repo_sync_lock
 repo = Path(sys.argv[1])
 with repo_sync_lock(repo, sys.argv[2]):
     prepare_state_dir(repo)
@@ -400,7 +400,7 @@ def _lock_still_held(
             return False
         return real_try_lock(fd)
 
-    with patch("codebase_rag.sync_lock._try_lock", side_effect=try_lock) as attempts:
+    with patch("codebase_rag.sync.lock._try_lock", side_effect=try_lock) as attempts:
         yield attempts
 
 
@@ -442,7 +442,7 @@ class TestALockItsKilledHolderHasNotReleasedYet:
         with (
             _held_elsewhere(repo, "click__a4231746") as holder,
             patch(
-                "codebase_rag.sync_lock._try_lock", side_effect=sync_lock._try_lock
+                "codebase_rag.sync.lock._try_lock", side_effect=sync_lock._try_lock
             ) as attempts,
         ):
             started = time.monotonic()
@@ -571,7 +571,7 @@ def _lock_open_denied(repo: Path, code: int = errno.EACCES) -> Iterator[Path]:
             raise OSError(code, os.strerror(code), str(path))
         return real_open(path, flags, *args)
 
-    with patch("codebase_rag.sync_lock.os.open", side_effect=open_):
+    with patch("codebase_rag.sync.lock.os.open", side_effect=open_):
         yield lock_path
 
 
@@ -611,7 +611,7 @@ def _read_write_open_fails(repo: Path, code: int) -> Iterator[Path]:
             raise OSError(code, os.strerror(code), str(path))
         return real_open(path, flags, *args)
 
-    with patch("codebase_rag.sync_lock.os.open", side_effect=open_):
+    with patch("codebase_rag.sync.lock.os.open", side_effect=open_):
         yield lock_path
 
 
@@ -619,7 +619,7 @@ def _read_write_open_fails(repo: Path, code: int) -> Iterator[Path]:
 _CONTENDER = """
 import sys
 from pathlib import Path
-from codebase_rag.sync_lock import SyncInProgressError, repo_sync_lock
+from codebase_rag.sync.lock import SyncInProgressError, repo_sync_lock
 try:
     with repo_sync_lock(Path(sys.argv[1]), "contender"):
         print("acquired", flush=True)
@@ -748,13 +748,13 @@ def _lock_call_fails(code: int) -> Iterator[_FailedLockCall]:
         real_close(fd)
 
     lock_call = (
-        "codebase_rag.sync_lock.msvcrt.locking"
+        "codebase_rag.sync.lock.msvcrt.locking"
         if sys.platform == cs.PLATFORM_WINDOWS
-        else "codebase_rag.sync_lock.fcntl.flock"
+        else "codebase_rag.sync.lock.fcntl.flock"
     )
     with (
         patch(lock_call, side_effect=lock),
-        patch("codebase_rag.sync_lock.os.close", side_effect=close),
+        patch("codebase_rag.sync.lock.os.close", side_effect=close),
     ):
         yield calls
 
@@ -786,7 +786,7 @@ def test_a_waiting_reingest_does_not_wait_on_a_failed_lock_call(
     updater = _updater(repo, mock_ingestor)
     with (
         _lock_call_fails(errno.ENOLCK) as calls,
-        patch("codebase_rag.sync_lock.time") as clock,
+        patch("codebase_rag.sync.lock.time") as clock,
     ):
         clock.sleep.side_effect = AssertionError("waited for a sync nobody runs")
         with pytest.raises(SyncLockUnavailableError):

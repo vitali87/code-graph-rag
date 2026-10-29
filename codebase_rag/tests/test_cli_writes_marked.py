@@ -17,7 +17,7 @@ import pytest
 
 from codebase_rag import cypher_queries as cq
 from codebase_rag.editing.cli import _reingest_restored
-from codebase_rag.sync_guard import (
+from codebase_rag.sync.guard import (
     UnfinishedSyncError,
     WriteMarker,
     marked_reingest,

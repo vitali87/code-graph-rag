@@ -44,7 +44,7 @@ from .graph_updater import GraphUpdater
 from .parser_loader import load_parsers
 from .services import IngestorProtocol
 from .services.graph_service import MemgraphIngestor
-from .sync_guard import (
+from .sync.guard import (
     SyncRefusedError,
     UnfinishedSyncError,
     WriteMarker,
@@ -52,7 +52,7 @@ from .sync_guard import (
     project_claim,
     sync_owner,
 )
-from .sync_lock import repo_sync_lock
+from .sync.lock import repo_sync_lock
 from .types_defs import (
     CgrignorePatterns,
     LanguageQueries,

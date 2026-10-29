@@ -17,6 +17,8 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.check.command import run_check
+from codebase_rag.check.delta import has_findings
 from codebase_rag.dead_code import collect_dead_code, default_dead_code_config
 from codebase_rag.editing.rename import RenameRefused, rename
 from codebase_rag.graph_updater import GraphUpdater
@@ -25,8 +27,6 @@ from codebase_rag.parsers.js_ts.overloads import (
     implementation_signatures,
     overload_signatures,
 )
-from codebase_rag.structural_check import run_check
-from codebase_rag.structural_delta import has_findings
 from codebase_rag.types_defs import PropertyValue
 from evals.cgr_graph import StatefulIngestor
 from evals.incremental import run_neutral_edit_scenario

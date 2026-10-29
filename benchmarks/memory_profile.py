@@ -359,7 +359,7 @@ def measure_embedding_cache() -> dict:
     results = {}
 
     try:
-        from codebase_rag.embedder import EmbeddingCache
+        from codebase_rag.vectors.embedder import EmbeddingCache
 
         cache = EmbeddingCache()
         gc.collect()

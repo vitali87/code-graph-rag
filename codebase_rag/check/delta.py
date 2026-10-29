@@ -27,20 +27,20 @@ from typing import NamedTuple, TypedDict
 
 from tree_sitter import Node, Tree
 
-from . import constants as cs
-from . import cypher_queries as cq
-from .crash_correlation import ArityError, diagnose_arity
-from .dead_code import (
+from .. import constants as cs
+from .. import cypher_queries as cq
+from ..crash_correlation import ArityError, diagnose_arity
+from ..dead_code import (
     NodeId,
     is_test_symbol,
     node_props,
     rust_test_fn_spans,
     rust_test_modules_from_nodes,
 )
-from .duplicates import jaccard
-from .graph_query import QueryFn, opt_int, project_qn_prefix, projects_nested_under
-from .language_spec import get_language_for_extension
-from .types_defs import PropertyDict, ReingestReport, ResultRow
+from ..duplicates import jaccard
+from ..graph_query import QueryFn, opt_int, project_qn_prefix, projects_nested_under
+from ..language_spec import get_language_for_extension
+from ..types_defs import PropertyDict, ReingestReport, ResultRow
 
 _METHOD_LABELS = frozenset({cs.NodeLabel.METHOD.value})
 
@@ -1557,7 +1557,7 @@ _PY_BOUND_RECEIVERS = frozenset({cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS})
 def _python_tree(path: str, mtime_ns: int, size: int) -> Tree | None:
     """One parse per version of a source file, shared by every site in it."""
     # Local import: parser_loader pulls in the language grammars.
-    from .parser_loader import load_parsers
+    from ..parser_loader import load_parsers
 
     parser = load_parsers()[0].get(cs.SupportedLanguage.PYTHON)
     if parser is None:
@@ -1819,7 +1819,7 @@ def _call_starting_at(root: Node, row: int, col: int) -> Node | None:
     # a graph indexed before that recorded the node's start, so both name it.
     # Local import: this module loads at `cgr` start-up (through editing),
     # which imports nothing from the parsers package.
-    from .parsers.utils import call_site_start
+    from ..parsers.utils import call_site_start
 
     point = (row, col)
     node: Node | None = root.descendant_for_point_range(point, point)

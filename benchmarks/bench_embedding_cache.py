@@ -5,7 +5,7 @@ import sys
 import time
 from pathlib import Path
 
-from codebase_rag.embedder import EmbeddingCache
+from codebase_rag.vectors.embedder import EmbeddingCache
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import harness  # noqa: E402

@@ -21,7 +21,7 @@ class TestCgrShimExports:
         assert cgr.settings is settings
 
     def test_embed_code_is_canonical_function(self) -> None:
-        from codebase_rag.embedder import embed_code
+        from codebase_rag.vectors.embedder import embed_code
 
         assert cgr.embed_code is embed_code
 

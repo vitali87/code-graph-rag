@@ -16,17 +16,17 @@ import pytest
 from typer.testing import CliRunner
 
 from codebase_rag import constants as cs
-from codebase_rag.checkout_state import state_file
-from codebase_rag.cli import app
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
-from codebase_rag.structural_delta import (
+from codebase_rag.check.delta import (
     StructuralDelta,
     has_findings,
     normalise_paths,
     observe,
     strongly_connected,
 )
+from codebase_rag.cli import app
+from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.parser_loader import load_parsers
+from codebase_rag.sync.checkout_state import state_file
 from evals.cgr_graph import StatefulIngestor
 
 PROJECT = "delta_fixture"
@@ -407,7 +407,7 @@ def test_signature_change_lists_the_remote_callers_of_its_endpoint(
 def test_a_caller_both_query_shapes_return_is_listed_once() -> None:
     """The indirect and the direct query are each DISTINCT within
     themselves; a row both return is one caller (bot review on PR #1978)."""
-    from codebase_rag.structural_delta import _remote_callers
+    from codebase_rag.check.delta import _remote_callers
 
     row = {
         cs.KEY_HANDLER: "svc.h",
@@ -750,8 +750,8 @@ def test_check_reports_the_delta_since_a_git_ref(
 ) -> None:
     import subprocess
 
+    from codebase_rag.check.command import changed_since, run_check
     from codebase_rag.parser_loader import load_parsers
-    from codebase_rag.structural_check import changed_since, run_check
 
     root, store, _updater = indexed
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
@@ -788,7 +788,7 @@ def test_check_reports_the_delta_since_a_git_ref(
 
 
 def test_check_rejects_a_dash_prefixed_base(temp_repo: Path) -> None:
-    from codebase_rag.structural_check import CheckError, changed_since
+    from codebase_rag.check.command import CheckError, changed_since
 
     root = temp_repo / PROJECT
     for rel, text in FIXTURE.items():
@@ -813,7 +813,7 @@ def test_check_rejects_a_dash_prefixed_base(temp_repo: Path) -> None:
 def test_check_reads_paths_git_would_c_quote(temp_repo: Path) -> None:
     import subprocess
 
-    from codebase_rag.structural_check import changed_since
+    from codebase_rag.check.command import changed_since
 
     root = temp_repo / PROJECT
     for rel, text in FIXTURE.items():
@@ -836,7 +836,7 @@ def test_check_reads_paths_git_would_c_quote(temp_repo: Path) -> None:
 
 
 def test_check_uses_the_scope_the_graph_was_indexed_under(temp_repo: Path) -> None:
-    from codebase_rag.structural_check import indexed_scope
+    from codebase_rag.check.command import indexed_scope
 
     root = temp_repo / PROJECT
     for rel, text in FIXTURE.items():
@@ -871,7 +871,7 @@ def test_check_uses_the_scope_the_graph_was_indexed_under(temp_repo: Path) -> No
         queries=queries,
         project_name="other_project",
     ).run(force=True)
-    from codebase_rag.structural_check import CheckError
+    from codebase_rag.check.command import CheckError
 
     assert indexed_scope(root, PROJECT) == (
         frozenset({"generated_src"}),
@@ -887,8 +887,8 @@ def test_indexing_two_projects_on_one_tree_does_not_reuse_fast_path(
     temp_repo: Path,
 ) -> None:
     """A repository cache must not make a sibling project look indexed."""
-    from codebase_rag.structural_check import indexed_scope, run_check
-    from codebase_rag.sync_state import load_exclusion_state
+    from codebase_rag.check.command import indexed_scope, run_check
+    from codebase_rag.sync.state import load_exclusion_state
 
     root = temp_repo / PROJECT
     for rel, text in FIXTURE.items():
@@ -1001,8 +1001,8 @@ def test_check_keeps_excluded_files_out_of_the_graph(
 ) -> None:
     import subprocess
 
+    from codebase_rag.check.command import run_check
     from codebase_rag.parser_loader import load_parsers
-    from codebase_rag.structural_check import run_check
 
     root = temp_repo / PROJECT
     for rel, text in FIXTURE.items():
@@ -1037,9 +1037,9 @@ def test_unnamed_check_preserves_unnamed_stamp_after_reingest(
 ) -> None:
     import subprocess
 
+    from codebase_rag.check.command import CheckError, indexed_scope, run_check
     from codebase_rag.parser_loader import load_parsers
-    from codebase_rag.structural_check import CheckError, indexed_scope, run_check
-    from codebase_rag.sync_state import load_exclusion_state
+    from codebase_rag.sync.state import load_exclusion_state
     from codebase_rag.utils.path_utils import derive_project_name
 
     root = temp_repo / PROJECT
@@ -1093,8 +1093,8 @@ def test_check_works_when_the_project_is_below_the_git_toplevel(
 ) -> None:
     import subprocess
 
+    from codebase_rag.check.command import changed_since, run_check
     from codebase_rag.parser_loader import load_parsers
-    from codebase_rag.structural_check import changed_since, run_check
 
     top = temp_repo / "mono"
     root = top / "svc"
@@ -1130,8 +1130,8 @@ def test_check_ignores_cgr_state_files(
 ) -> None:
     import subprocess
 
+    from codebase_rag.check.command import changed_since, run_check
     from codebase_rag.parser_loader import load_parsers
-    from codebase_rag.structural_check import changed_since, run_check
 
     root = temp_repo / PROJECT
     for rel, text in FIXTURE.items():
@@ -1199,7 +1199,7 @@ def test_moved_definition_is_paired_across_files(
 def test_check_accepts_a_stamp_written_under_the_repositorys_default_name(
     temp_repo: Path,
 ) -> None:
-    from codebase_rag.structural_check import CheckError, indexed_scope
+    from codebase_rag.check.command import CheckError, indexed_scope
     from codebase_rag.utils.path_utils import derive_project_name
 
     root = temp_repo / PROJECT
@@ -1251,7 +1251,7 @@ def test_check_refuses_the_default_names_stamp_for_a_named_project(
     DIFFERENT explicitly requested project applies one project's exclusions
     to another's graph.
     """
-    from codebase_rag.structural_check import CheckError, indexed_scope
+    from codebase_rag.check.command import CheckError, indexed_scope
     from codebase_rag.utils.path_utils import derive_project_name
 
     root = temp_repo / PROJECT
@@ -1293,7 +1293,7 @@ def test_a_callee_lookup_does_not_reach_another_project() -> None:
     definition from another project would otherwise answer it and supply
     the parameter list the arity verdict is computed from.
     """
-    from codebase_rag.structural_delta import snapshot
+    from codebase_rag.check.delta import snapshot
 
     store = StatefulIngestor()
     store.ensure_node_batch(
@@ -1334,7 +1334,7 @@ def test_a_callee_lookup_does_not_reach_another_project() -> None:
 
 def test_snapshot_uses_the_longest_registered_project_owner() -> None:
     """A dotted project name must not leak into its shorter sibling scope."""
-    from codebase_rag.structural_delta import snapshot
+    from codebase_rag.check.delta import snapshot
 
     store = StatefulIngestor()
     for project_name in ("proj", "proj.extra"):
@@ -1463,7 +1463,7 @@ def test_check_refuses_a_named_projects_stamp_for_the_default_project(
     so the name alone cannot say which it was. The stamp records it, and
     the default (digest-derived) project must not inherit that scope.
     """
-    from codebase_rag.structural_check import CheckError, indexed_scope
+    from codebase_rag.check.command import CheckError, indexed_scope
     from codebase_rag.utils.path_utils import derive_project_name
 
     root = temp_repo / PROJECT
@@ -1504,7 +1504,7 @@ def test_check_refuses_an_unnamed_stamp_for_a_named_project(
     scope is not recoverable, so the check must refuse rather than apply
     the unnamed run's.
     """
-    from codebase_rag.structural_check import CheckError, indexed_scope
+    from codebase_rag.check.command import CheckError, indexed_scope
     from codebase_rag.utils.path_utils import derive_project_name
 
     root = temp_repo / PROJECT
@@ -1536,7 +1536,7 @@ def test_check_refuses_an_unnamed_stamp_for_a_named_project(
 def test_check_refuses_a_base_that_is_not_one_commit(
     temp_repo: Path, base: str
 ) -> None:
-    from codebase_rag.structural_check import CheckError, changed_since
+    from codebase_rag.check.command import CheckError, changed_since
 
     root = temp_repo / PROJECT
     for rel, text in FIXTURE.items():

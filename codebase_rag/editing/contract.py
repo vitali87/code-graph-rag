@@ -20,8 +20,8 @@ from pathlib import Path
 from typing import NamedTuple
 
 from .. import constants as cs
+from ..check.delta import StructuralDelta, TestReach, observe
 from ..graph_query import QueryFn
-from ..structural_delta import StructuralDelta, TestReach, observe
 from ..types_defs import ReingestReport
 
 Reingest = Callable[[list[str]], ReingestReport]

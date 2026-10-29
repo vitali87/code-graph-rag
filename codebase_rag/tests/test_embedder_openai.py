@@ -9,7 +9,7 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag.config import AppConfig, settings
-from codebase_rag.embedder import clear_embedding_cache
+from codebase_rag.vectors.embedder import clear_embedding_cache
 
 
 class RecordingHandler:
@@ -65,11 +65,12 @@ def test_default_embedding_provider_is_unixcoder() -> None:
 def test_openai_batch_returns_embeddings_in_request_order(
     openai_provider: None,
 ) -> None:
-    from codebase_rag.embedder import embed_code_batch
+    from codebase_rag.vectors.embedder import embed_code_batch
 
     handler = RecordingHandler()
     with patch(
-        "codebase_rag.embedder._openai_client", side_effect=lambda: _client_for(handler)
+        "codebase_rag.vectors.embedder._openai_client",
+        side_effect=lambda: _client_for(handler),
     ):
         results = embed_code_batch(["def a(): pass", "def b(): pass"])
 
@@ -82,12 +83,13 @@ def test_openai_batch_returns_embeddings_in_request_order(
 def test_openai_batch_respects_batch_size(
     openai_provider: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from codebase_rag.embedder import embed_code_batch
+    from codebase_rag.vectors.embedder import embed_code_batch
 
     monkeypatch.setattr(settings, "OPENAI_EMBEDDING_BATCH_SIZE", 2)
     handler = RecordingHandler()
     with patch(
-        "codebase_rag.embedder._openai_client", side_effect=lambda: _client_for(handler)
+        "codebase_rag.vectors.embedder._openai_client",
+        side_effect=lambda: _client_for(handler),
     ):
         results = embed_code_batch([f"def f{i}(): pass" for i in range(5)])
 
@@ -96,11 +98,12 @@ def test_openai_batch_respects_batch_size(
 
 
 def test_openai_single_embed_uses_endpoint(openai_provider: None) -> None:
-    from codebase_rag.embedder import embed_code
+    from codebase_rag.vectors.embedder import embed_code
 
     handler = RecordingHandler()
     with patch(
-        "codebase_rag.embedder._openai_client", side_effect=lambda: _client_for(handler)
+        "codebase_rag.vectors.embedder._openai_client",
+        side_effect=lambda: _client_for(handler),
     ):
         result = embed_code("def solo(): pass")
 
@@ -109,11 +112,12 @@ def test_openai_single_embed_uses_endpoint(openai_provider: None) -> None:
 
 
 def test_openai_embeddings_are_cached(openai_provider: None) -> None:
-    from codebase_rag.embedder import embed_code
+    from codebase_rag.vectors.embedder import embed_code
 
     handler = RecordingHandler()
     with patch(
-        "codebase_rag.embedder._openai_client", side_effect=lambda: _client_for(handler)
+        "codebase_rag.vectors.embedder._openai_client",
+        side_effect=lambda: _client_for(handler),
     ):
         first = embed_code("def cached(): pass")
         second = embed_code("def cached(): pass")
@@ -125,11 +129,12 @@ def test_openai_embeddings_are_cached(openai_provider: None) -> None:
 def test_openai_cache_is_namespaced_by_model(
     openai_provider: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from codebase_rag.embedder import embed_code
+    from codebase_rag.vectors.embedder import embed_code
 
     handler = RecordingHandler()
     with patch(
-        "codebase_rag.embedder._openai_client", side_effect=lambda: _client_for(handler)
+        "codebase_rag.vectors.embedder._openai_client",
+        side_effect=lambda: _client_for(handler),
     ):
         embed_code("def ns(): pass")
         monkeypatch.setattr(settings, "OPENAI_EMBEDDING_MODEL", "other-embed")
@@ -141,12 +146,13 @@ def test_openai_cache_is_namespaced_by_model(
 def test_openai_dimensions_forwarded_when_set(
     openai_provider: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from codebase_rag.embedder import embed_code
+    from codebase_rag.vectors.embedder import embed_code
 
     monkeypatch.setattr(settings, "OPENAI_EMBEDDING_DIMENSIONS", 4)
     handler = RecordingHandler()
     with patch(
-        "codebase_rag.embedder._openai_client", side_effect=lambda: _client_for(handler)
+        "codebase_rag.vectors.embedder._openai_client",
+        side_effect=lambda: _client_for(handler),
     ):
         embed_code("def dims(): pass")
 
@@ -154,11 +160,12 @@ def test_openai_dimensions_forwarded_when_set(
 
 
 def test_openai_dimensions_omitted_by_default(openai_provider: None) -> None:
-    from codebase_rag.embedder import embed_code
+    from codebase_rag.vectors.embedder import embed_code
 
     handler = RecordingHandler()
     with patch(
-        "codebase_rag.embedder._openai_client", side_effect=lambda: _client_for(handler)
+        "codebase_rag.vectors.embedder._openai_client",
+        side_effect=lambda: _client_for(handler),
     ):
         embed_code("def nodims(): pass")
 
@@ -166,18 +173,19 @@ def test_openai_dimensions_omitted_by_default(openai_provider: None) -> None:
 
 
 def test_openai_http_error_raises_runtime_error(openai_provider: None) -> None:
-    from codebase_rag.embedder import embed_code_batch
+    from codebase_rag.vectors.embedder import embed_code_batch
 
     handler = RecordingHandler(status_code=500)
     with patch(
-        "codebase_rag.embedder._openai_client", side_effect=lambda: _client_for(handler)
+        "codebase_rag.vectors.embedder._openai_client",
+        side_effect=lambda: _client_for(handler),
     ):
         with pytest.raises(RuntimeError, match="500"):
             embed_code_batch(["def broken(): pass"])
 
 
 def test_openai_count_mismatch_raises_runtime_error(openai_provider: None) -> None:
-    from codebase_rag.embedder import embed_code_batch
+    from codebase_rag.vectors.embedder import embed_code_batch
 
     def short_handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"data": [{"index": 0, "embedding": [1.0]}]})
@@ -185,7 +193,7 @@ def test_openai_count_mismatch_raises_runtime_error(openai_provider: None) -> No
     client = httpx.Client(
         transport=httpx.MockTransport(short_handler), base_url="http://embeddings.test"
     )
-    with patch("codebase_rag.embedder._openai_client", return_value=client):
+    with patch("codebase_rag.vectors.embedder._openai_client", return_value=client):
         with pytest.raises(RuntimeError, match="2"):
             embed_code_batch(["def a(): pass", "def b(): pass"])
 
@@ -193,7 +201,7 @@ def test_openai_count_mismatch_raises_runtime_error(openai_provider: None) -> No
 def test_openai_client_sends_bearer_token_when_key_set(
     openai_provider: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from codebase_rag.embedder import _openai_client
+    from codebase_rag.vectors.embedder import _openai_client
 
     monkeypatch.setattr(settings, "OPENAI_EMBEDDING_API_KEY", "sk-test-123")
     with _openai_client() as client:
@@ -203,7 +211,7 @@ def test_openai_client_sends_bearer_token_when_key_set(
 def test_openai_client_falls_back_to_openai_api_key_env(
     openai_provider: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from codebase_rag.embedder import _openai_client
+    from codebase_rag.vectors.embedder import _openai_client
 
     monkeypatch.setenv("OPENAI_API_KEY", "sk-env-456")
     with _openai_client() as client:
@@ -213,7 +221,7 @@ def test_openai_client_falls_back_to_openai_api_key_env(
 def test_openai_client_omits_auth_header_without_key(
     openai_provider: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from codebase_rag.embedder import _openai_client
+    from codebase_rag.vectors.embedder import _openai_client
 
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     with _openai_client() as client:
@@ -223,7 +231,7 @@ def test_openai_client_omits_auth_header_without_key(
 def test_openai_client_uses_configured_base_url(
     openai_provider: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from codebase_rag.embedder import _openai_client
+    from codebase_rag.vectors.embedder import _openai_client
 
     monkeypatch.setattr(
         settings, "OPENAI_EMBEDDING_BASE_URL", "http://localhost:11434/v1"
@@ -259,11 +267,12 @@ def test_semantic_dependencies_still_require_torch_for_unixcoder(
 def test_openai_cache_namespace_includes_dimensions(
     openai_provider: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from codebase_rag.embedder import embed_code
+    from codebase_rag.vectors.embedder import embed_code
 
     handler = RecordingHandler()
     with patch(
-        "codebase_rag.embedder._openai_client", side_effect=lambda: _client_for(handler)
+        "codebase_rag.vectors.embedder._openai_client",
+        side_effect=lambda: _client_for(handler),
     ):
         embed_code("def dimswitch(): pass")
         monkeypatch.setattr(settings, "OPENAI_EMBEDDING_DIMENSIONS", 4)
@@ -273,7 +282,7 @@ def test_openai_cache_namespace_includes_dimensions(
 
 
 def test_openai_request_url_joins_base_path(openai_provider: None) -> None:
-    from codebase_rag.embedder import embed_code
+    from codebase_rag.vectors.embedder import embed_code
 
     seen_urls: list[str] = []
 
@@ -284,14 +293,14 @@ def test_openai_request_url_joins_base_path(openai_provider: None) -> None:
     client = httpx.Client(
         transport=httpx.MockTransport(handler), base_url="http://embeddings.test/v1"
     )
-    with patch("codebase_rag.embedder._openai_client", return_value=client):
+    with patch("codebase_rag.vectors.embedder._openai_client", return_value=client):
         embed_code("def urljoin(): pass")
 
     assert seen_urls == ["http://embeddings.test/v1/embeddings"]
 
 
 def test_openai_non_json_response_raises_runtime_error(openai_provider: None) -> None:
-    from codebase_rag.embedder import embed_code_batch
+    from codebase_rag.vectors.embedder import embed_code_batch
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, text="<html>gateway error</html>")
@@ -299,13 +308,13 @@ def test_openai_non_json_response_raises_runtime_error(openai_provider: None) ->
     client = httpx.Client(
         transport=httpx.MockTransport(handler), base_url="http://embeddings.test"
     )
-    with patch("codebase_rag.embedder._openai_client", return_value=client):
+    with patch("codebase_rag.vectors.embedder._openai_client", return_value=client):
         with pytest.raises(RuntimeError, match="malformed"):
             embed_code_batch(["def a(): pass"])
 
 
 def test_openai_missing_data_key_raises_runtime_error(openai_provider: None) -> None:
-    from codebase_rag.embedder import embed_code_batch
+    from codebase_rag.vectors.embedder import embed_code_batch
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"error": "wrong shape"})
@@ -313,13 +322,13 @@ def test_openai_missing_data_key_raises_runtime_error(openai_provider: None) -> 
     client = httpx.Client(
         transport=httpx.MockTransport(handler), base_url="http://embeddings.test"
     )
-    with patch("codebase_rag.embedder._openai_client", return_value=client):
+    with patch("codebase_rag.vectors.embedder._openai_client", return_value=client):
         with pytest.raises(RuntimeError, match="malformed"):
             embed_code_batch(["def a(): pass"])
 
 
 def test_openai_duplicate_index_raises_runtime_error(openai_provider: None) -> None:
-    from codebase_rag.embedder import embed_code_batch
+    from codebase_rag.vectors.embedder import embed_code_batch
 
     def handler(request: httpx.Request) -> httpx.Response:
         rows = [
@@ -331,13 +340,13 @@ def test_openai_duplicate_index_raises_runtime_error(openai_provider: None) -> N
     client = httpx.Client(
         transport=httpx.MockTransport(handler), base_url="http://embeddings.test"
     )
-    with patch("codebase_rag.embedder._openai_client", return_value=client):
+    with patch("codebase_rag.vectors.embedder._openai_client", return_value=client):
         with pytest.raises(RuntimeError, match="index"):
             embed_code_batch(["def a(): pass", "def b(): pass"])
 
 
 def test_openai_out_of_range_index_raises_runtime_error(openai_provider: None) -> None:
-    from codebase_rag.embedder import embed_code_batch
+    from codebase_rag.vectors.embedder import embed_code_batch
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"data": [{"index": 5, "embedding": [1.0]}]})
@@ -345,17 +354,18 @@ def test_openai_out_of_range_index_raises_runtime_error(openai_provider: None) -
     client = httpx.Client(
         transport=httpx.MockTransport(handler), base_url="http://embeddings.test"
     )
-    with patch("codebase_rag.embedder._openai_client", return_value=client):
+    with patch("codebase_rag.vectors.embedder._openai_client", return_value=client):
         with pytest.raises(RuntimeError, match="index"):
             embed_code_batch(["def a(): pass"])
 
 
 def test_openai_batch_mixes_cache_hits_and_misses(openai_provider: None) -> None:
-    from codebase_rag.embedder import embed_code_batch
+    from codebase_rag.vectors.embedder import embed_code_batch
 
     handler = RecordingHandler()
     with patch(
-        "codebase_rag.embedder._openai_client", side_effect=lambda: _client_for(handler)
+        "codebase_rag.vectors.embedder._openai_client",
+        side_effect=lambda: _client_for(handler),
     ):
         first = embed_code_batch(["def a(): pass", "def b(): pass"])
         second = embed_code_batch(["def a(): pass", "def c(): pass"])

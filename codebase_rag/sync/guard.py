@@ -22,16 +22,16 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from loguru import logger
 
-from . import constants as cs
-from . import cypher_queries as cq
-from . import logs as ls
-from .services import QueryProtocol
-from .types_defs import PropertyValue
-from .utils.process_owner import process_host
+from .. import constants as cs
+from .. import cypher_queries as cq
+from .. import logs as ls
+from ..services import QueryProtocol
+from ..types_defs import PropertyValue
+from ..utils.process_owner import process_host
 
 if TYPE_CHECKING:
-    from .graph_updater import GraphUpdater
-    from .types_defs import ReingestReport
+    from ..graph_updater import GraphUpdater
+    from ..types_defs import ReingestReport
 
 
 class SyncRefusedError(RuntimeError):

@@ -13,7 +13,6 @@ import pytest
 from click.testing import CliRunner
 
 from codebase_rag import constants as cs
-from codebase_rag.checkout_state import state_file
 from codebase_rag.editing import (
     EditTransaction,
     StagedTree,
@@ -25,6 +24,7 @@ from codebase_rag.editing import (
 )
 from codebase_rag.editing.cli import cli as edits_cli
 from codebase_rag.editing.transaction import load_history
+from codebase_rag.sync.checkout_state import state_file
 
 
 def _tree_digest(root: Path) -> dict[str, str]:

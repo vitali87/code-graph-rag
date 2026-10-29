@@ -26,7 +26,7 @@ from pathlib import Path
 from loguru import logger
 
 from codebase_rag import constants as cs
-from codebase_rag.checkout_state import state_dir
+from codebase_rag.sync.checkout_state import state_dir
 
 NEUTRAL_EDIT = "# bench edit\n"
 DEFAULT_ITERATIONS = 20
@@ -98,7 +98,7 @@ def measure_reingest(
     # Imported here so `--help` stays cheap.
     from codebase_rag.graph_updater import GraphUpdater
     from codebase_rag.parser_loader import load_parsers
-    from codebase_rag.structural_delta import observe
+    from codebase_rag.check.delta import observe
     from evals.cgr_graph import StatefulIngestor
 
     if iterations <= 0:

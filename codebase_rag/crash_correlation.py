@@ -571,7 +571,7 @@ class _CrashGraph:
             cs.KEY_PROJECT_NAME: project_name,
         }
         # Deferred: trace.ingest imports the parser stack, which the CLI would
-        # otherwise load at start-up through editing -> structural_delta
+        # otherwise load at start-up through editing -> check.delta
         # (issue #2253).
         from .trace.ingest import load_callables
 

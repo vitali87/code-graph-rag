@@ -12,6 +12,7 @@ from typing import cast
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.check.delta import StructuralDelta
 from codebase_rag.editing import signature_contract
 from codebase_rag.editing.signature_contract import enforce_contract
 from codebase_rag.editing.signature_spec import (
@@ -21,7 +22,6 @@ from codebase_rag.editing.signature_spec import (
 )
 from codebase_rag.editing.transaction import TransactionConflict
 from codebase_rag.exceptions import ReingestAborted
-from codebase_rag.structural_delta import StructuralDelta
 from codebase_rag.types_defs import ReingestReport
 
 ROOT = Path("/repo")

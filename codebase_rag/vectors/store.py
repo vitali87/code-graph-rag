@@ -13,22 +13,22 @@ from urllib.parse import urlsplit
 
 from loguru import logger
 
-from . import constants as cs
-from . import exceptions as ex
-from . import logs as ls
-from .config import settings
-from .sqlite_vectors import (
-    SqliteVectorClient,
-    SqliteVectorPoint,
-    SqliteVectorRow,
-    open_sqlite_vector_client,
-)
-from .types_defs import EmbeddingPoint, EmbeddingSymbol
-from .utils.dependencies import (
+from .. import constants as cs
+from .. import exceptions as ex
+from .. import logs as ls
+from ..config import settings
+from ..types_defs import EmbeddingPoint, EmbeddingSymbol
+from ..utils.dependencies import (
     has_pymilvus,
     has_qdrant_client,
     has_sqlite_vec,
     sqlite_vec_loadable,
+)
+from .sqlite import (
+    SqliteVectorClient,
+    SqliteVectorPoint,
+    SqliteVectorRow,
+    open_sqlite_vector_client,
 )
 
 if TYPE_CHECKING:
@@ -297,7 +297,7 @@ def _bundled_qdrant_url() -> str | None:
     ):
         return None
     if not _BUNDLED_QDRANT_PROBED:
-        from . import stack
+        from .. import stack
 
         _BUNDLED_QDRANT = stack.bundled_qdrant_url()
         _BUNDLED_QDRANT_PROBED = True

@@ -27,7 +27,7 @@ def _fn(qualified_name: str) -> EmbeddingSymbol:
 
 @pytest.fixture(autouse=True)
 def use_qdrant_backend() -> Generator[None, None, None]:
-    import codebase_rag.vector_store as vs
+    import codebase_rag.vectors.store as vs
 
     with patch.object(vs.settings, "VECTOR_STORE_BACKEND", VectorStoreBackend.QDRANT):
         yield
@@ -42,7 +42,7 @@ def mock_qdrant_client() -> MagicMock:
 
 @pytest.fixture
 def reset_global_client() -> Generator[None, None, None]:
-    import codebase_rag.vector_store as vs
+    import codebase_rag.vectors.store as vs
 
     vs.close_vector_store_client()
 
@@ -68,7 +68,7 @@ def integration_client(
     from qdrant_client import QdrantClient as QC
     from qdrant_client.models import Distance, VectorParams
 
-    import codebase_rag.vector_store as vs
+    import codebase_rag.vectors.store as vs
 
     client = QC(path=str(temp_qdrant_path))
     client.create_collection(
@@ -84,10 +84,10 @@ def integration_client(
 
 
 def test_get_qdrant_client_uses_url_when_set(reset_global_client: None) -> None:
-    import codebase_rag.vector_store as vs
+    import codebase_rag.vectors.store as vs
 
     with patch.object(vs.settings, "QDRANT_URL", "http://localhost:6333"):
-        with patch("codebase_rag.vector_store.QdrantClient") as mock_client_cls:
+        with patch("codebase_rag.vectors.store.QdrantClient") as mock_client_cls:
             instance = MagicMock()
             instance.collection_exists.return_value = True
             mock_client_cls.return_value = instance
@@ -99,12 +99,12 @@ def test_get_qdrant_client_uses_url_when_set(reset_global_client: None) -> None:
 def test_get_qdrant_client_passes_api_key_to_server(
     reset_global_client: None,
 ) -> None:
-    import codebase_rag.vector_store as vs
+    import codebase_rag.vectors.store as vs
 
     with (
         patch.object(vs.settings, "QDRANT_URL", "https://qdrant.example:6333"),
         patch.object(vs.settings, "QDRANT_API_KEY", "secret-key"),
-        patch("codebase_rag.vector_store.QdrantClient") as mock_client_cls,
+        patch("codebase_rag.vectors.store.QdrantClient") as mock_client_cls,
     ):
         mock_client_cls.return_value.collection_exists.return_value = True
         vs.get_qdrant_client()
@@ -117,13 +117,13 @@ def test_get_qdrant_client_passes_api_key_to_server(
 def test_get_qdrant_client_refuses_api_key_over_http(
     reset_global_client: None,
 ) -> None:
-    import codebase_rag.vector_store as vs
+    import codebase_rag.vectors.store as vs
 
     with (
         patch.object(vs.settings, "QDRANT_URL", "http://qdrant.example:6333"),
         patch.object(vs.settings, "QDRANT_API_KEY", "secret-key"),
         patch.object(vs.settings, "QDRANT_ALLOW_INSECURE_API_KEY", False),
-        patch("codebase_rag.vector_store.QdrantClient") as mock_client_cls,
+        patch("codebase_rag.vectors.store.QdrantClient") as mock_client_cls,
     ):
         with pytest.raises(ValueError, match="QDRANT_ALLOW_INSECURE_API_KEY"):
             vs.get_qdrant_client()
@@ -134,13 +134,13 @@ def test_get_qdrant_client_refuses_api_key_over_http(
 def test_get_qdrant_client_sends_api_key_over_http_when_allowed(
     reset_global_client: None,
 ) -> None:
-    import codebase_rag.vector_store as vs
+    import codebase_rag.vectors.store as vs
 
     with (
         patch.object(vs.settings, "QDRANT_URL", "http://localhost:6333"),
         patch.object(vs.settings, "QDRANT_API_KEY", "secret-key"),
         patch.object(vs.settings, "QDRANT_ALLOW_INSECURE_API_KEY", True),
-        patch("codebase_rag.vector_store.QdrantClient") as mock_client_cls,
+        patch("codebase_rag.vectors.store.QdrantClient") as mock_client_cls,
     ):
         mock_client_cls.return_value.collection_exists.return_value = True
         vs.get_qdrant_client()
@@ -153,12 +153,12 @@ def test_get_qdrant_client_sends_api_key_over_http_when_allowed(
 def test_get_qdrant_client_treats_blank_api_key_as_unset(
     reset_global_client: None,
 ) -> None:
-    import codebase_rag.vector_store as vs
+    import codebase_rag.vectors.store as vs
 
     with (
         patch.object(vs.settings, "QDRANT_URL", "http://localhost:6333"),
         patch.object(vs.settings, "QDRANT_API_KEY", ""),
-        patch("codebase_rag.vector_store.QdrantClient") as mock_client_cls,
+        patch("codebase_rag.vectors.store.QdrantClient") as mock_client_cls,
     ):
         mock_client_cls.return_value.collection_exists.return_value = True
         vs.get_qdrant_client()
@@ -169,13 +169,13 @@ def test_get_qdrant_client_treats_blank_api_key_as_unset(
 def test_get_qdrant_client_ignores_api_key_in_local_mode(
     reset_global_client: None,
 ) -> None:
-    import codebase_rag.vector_store as vs
+    import codebase_rag.vectors.store as vs
 
     with (
         patch.object(vs.settings, "QDRANT_URL", None),
         patch.object(vs.settings, "QDRANT_DB_PATH", "/tmp/qd"),
         patch.object(vs.settings, "QDRANT_API_KEY", "secret-key"),
-        patch("codebase_rag.vector_store.QdrantClient") as mock_client_cls,
+        patch("codebase_rag.vectors.store.QdrantClient") as mock_client_cls,
     ):
         mock_client_cls.return_value.collection_exists.return_value = True
         vs.get_qdrant_client()
@@ -186,11 +186,11 @@ def test_get_qdrant_client_ignores_api_key_in_local_mode(
 def test_get_qdrant_client_uses_path_when_url_unset(
     reset_global_client: None,
 ) -> None:
-    import codebase_rag.vector_store as vs
+    import codebase_rag.vectors.store as vs
 
     with patch.object(vs.settings, "QDRANT_URL", None):
         with patch.object(vs.settings, "QDRANT_DB_PATH", "/tmp/qd"):
-            with patch("codebase_rag.vector_store.QdrantClient") as mock_client_cls:
+            with patch("codebase_rag.vectors.store.QdrantClient") as mock_client_cls:
                 instance = MagicMock()
                 instance.collection_exists.return_value = True
                 mock_client_cls.return_value = instance
@@ -202,15 +202,15 @@ def test_get_qdrant_client_uses_path_when_url_unset(
 def test_get_qdrant_client_logs_and_reraises_on_lock_error(
     reset_global_client: None,
 ) -> None:
-    import codebase_rag.vector_store as vs
+    import codebase_rag.vectors.store as vs
 
     with patch.object(vs.settings, "QDRANT_URL", None):
         with patch.object(vs.settings, "QDRANT_DB_PATH", "/tmp/qd_locked"):
-            with patch("codebase_rag.vector_store.QdrantClient") as mock_client_cls:
+            with patch("codebase_rag.vectors.store.QdrantClient") as mock_client_cls:
                 mock_client_cls.side_effect = RuntimeError(
                     "Storage folder is already accessed by another instance"
                 )
-                with patch("codebase_rag.vector_store.logger") as mock_logger:
+                with patch("codebase_rag.vectors.store.logger") as mock_logger:
                     with pytest.raises(RuntimeError):
                         vs.get_qdrant_client()
 
@@ -235,7 +235,7 @@ def _open_local_qdrant_with_existing_collection(path: Path, size: int) -> None:
 def test_get_qdrant_client_rejects_existing_collection_with_other_dim(
     temp_qdrant_path: Path, reset_global_client: None
 ) -> None:
-    import codebase_rag.vector_store as vs
+    import codebase_rag.vectors.store as vs
 
     _open_local_qdrant_with_existing_collection(temp_qdrant_path, size=1536)
 
@@ -254,7 +254,7 @@ def test_get_qdrant_client_rejects_existing_collection_with_other_dim(
 def test_get_qdrant_client_accepts_existing_collection_with_same_dim(
     temp_qdrant_path: Path, reset_global_client: None
 ) -> None:
-    import codebase_rag.vector_store as vs
+    import codebase_rag.vectors.store as vs
 
     _open_local_qdrant_with_existing_collection(temp_qdrant_path, size=1536)
 
@@ -270,7 +270,7 @@ def test_get_qdrant_client_accepts_existing_collection_with_same_dim(
 def test_clear_all_embeddings_recreates_collection_with_other_dim(
     temp_qdrant_path: Path, reset_global_client: None
 ) -> None:
-    import codebase_rag.vector_store as vs
+    import codebase_rag.vectors.store as vs
 
     _open_local_qdrant_with_existing_collection(temp_qdrant_path, size=1536)
 
@@ -289,14 +289,14 @@ def test_clear_all_embeddings_recreates_collection_with_other_dim(
 def test_a_failed_clear_does_not_leave_its_unvalidated_client_cached(
     reset_global_client: None, failing: str
 ) -> None:
-    import codebase_rag.vector_store as vs
+    import codebase_rag.vectors.store as vs
 
     instance = MagicMock()
     instance.collection_exists.return_value = True
     getattr(instance, failing).side_effect = RuntimeError("store is down")
     store = vs.QdrantVectorStore()
     with patch.object(vs.settings, "QDRANT_URL", "http://localhost:6333"):
-        with patch("codebase_rag.vector_store.QdrantClient", return_value=instance):
+        with patch("codebase_rag.vectors.store.QdrantClient", return_value=instance):
             with pytest.raises(RuntimeError):
                 store.clear_all_embeddings()
 
@@ -308,14 +308,14 @@ def test_a_failed_clear_does_not_leave_its_unvalidated_client_cached(
 def test_store_embedding_calls_upsert(
     mock_qdrant_client: MagicMock, reset_global_client: None
 ) -> None:
-    from codebase_rag.vector_store import embedding_point_id, store_embedding
+    from codebase_rag.vectors.store import embedding_point_id, store_embedding
 
     node_id = 123
     embedding = [0.1] * 768
     symbol = _fn("myproject.module.function")
 
     with patch(
-        "codebase_rag.vector_store.get_qdrant_client",
+        "codebase_rag.vectors.store.get_qdrant_client",
         return_value=mock_qdrant_client,
     ):
         store_embedding("myproject", node_id, embedding, symbol)
@@ -336,12 +336,12 @@ def test_store_embedding_calls_upsert(
 def test_store_embedding_handles_exception(
     mock_qdrant_client: MagicMock, reset_global_client: None
 ) -> None:
-    from codebase_rag.vector_store import store_embedding
+    from codebase_rag.vectors.store import store_embedding
 
     mock_qdrant_client.upsert.side_effect = Exception("Connection failed")
 
     with patch(
-        "codebase_rag.vector_store.get_qdrant_client",
+        "codebase_rag.vectors.store.get_qdrant_client",
         return_value=mock_qdrant_client,
     ):
         store_embedding("test", 123, [0.1] * 768, _fn("test.func"))
@@ -351,7 +351,7 @@ def test_store_embedding_handles_exception(
 def test_search_embeddings_calls_query_points(
     mock_qdrant_client: MagicMock, reset_global_client: None
 ) -> None:
-    from codebase_rag.vector_store import search_embeddings
+    from codebase_rag.vectors.store import search_embeddings
 
     mock_point1 = MagicMock()
     mock_point1.payload = {"node_id": 1}
@@ -368,7 +368,7 @@ def test_search_embeddings_calls_query_points(
     query_embedding = [0.2] * 768
 
     with patch(
-        "codebase_rag.vector_store.get_qdrant_client",
+        "codebase_rag.vectors.store.get_qdrant_client",
         return_value=mock_qdrant_client,
     ):
         results = search_embeddings(query_embedding, top_k=5)
@@ -383,7 +383,7 @@ def test_search_embeddings_calls_query_points(
 def test_search_embeddings_filters_null_payloads(
     mock_qdrant_client: MagicMock, reset_global_client: None
 ) -> None:
-    from codebase_rag.vector_store import search_embeddings
+    from codebase_rag.vectors.store import search_embeddings
 
     mock_point1 = MagicMock()
     mock_point1.payload = {"node_id": 1}
@@ -398,7 +398,7 @@ def test_search_embeddings_filters_null_payloads(
     mock_qdrant_client.query_points.return_value = mock_result
 
     with patch(
-        "codebase_rag.vector_store.get_qdrant_client",
+        "codebase_rag.vectors.store.get_qdrant_client",
         return_value=mock_qdrant_client,
     ):
         results = search_embeddings([0.2] * 768)
@@ -410,13 +410,13 @@ def test_search_embeddings_filters_null_payloads(
 def test_search_embeddings_propagates_a_failing_query(
     mock_qdrant_client: MagicMock, reset_global_client: None
 ) -> None:
-    from codebase_rag.vector_store import search_embeddings
+    from codebase_rag.vectors.store import search_embeddings
 
     mock_qdrant_client.query_points.side_effect = Exception("Connection failed")
 
     with (
         patch(
-            "codebase_rag.vector_store.get_qdrant_client",
+            "codebase_rag.vectors.store.get_qdrant_client",
             return_value=mock_qdrant_client,
         ),
         pytest.raises(Exception, match="Connection failed"),
@@ -428,14 +428,14 @@ def test_search_embeddings_propagates_a_failing_query(
 def test_search_embeddings_default_top_k(
     mock_qdrant_client: MagicMock, reset_global_client: None
 ) -> None:
-    from codebase_rag.vector_store import search_embeddings
+    from codebase_rag.vectors.store import search_embeddings
 
     mock_result = MagicMock()
     mock_result.points = []
     mock_qdrant_client.query_points.return_value = mock_result
 
     with patch(
-        "codebase_rag.vector_store.get_qdrant_client",
+        "codebase_rag.vectors.store.get_qdrant_client",
         return_value=mock_qdrant_client,
     ):
         search_embeddings([0.2] * 768)
@@ -447,7 +447,7 @@ def test_search_embeddings_default_top_k(
 
 @pytest.mark.skipif(not has_qdrant_client(), reason="qdrant-client not installed")
 def test_store_and_search_roundtrip(integration_client: QdrantClient) -> None:
-    from codebase_rag.vector_store import search_embeddings, store_embedding
+    from codebase_rag.vectors.store import search_embeddings, store_embedding
 
     embedding1 = [1.0] + [0.0] * 767
     embedding2 = [0.0, 1.0] + [0.0] * 766
@@ -468,7 +468,7 @@ def test_store_and_search_roundtrip(integration_client: QdrantClient) -> None:
 
 @pytest.mark.skipif(not has_qdrant_client(), reason="qdrant-client not installed")
 def test_upsert_updates_existing(integration_client: QdrantClient) -> None:
-    from codebase_rag.vector_store import search_embeddings, store_embedding
+    from codebase_rag.vectors.store import search_embeddings, store_embedding
 
     embedding_v1 = [1.0] + [0.0] * 767
     embedding_v2 = [0.0, 1.0] + [0.0] * 766
@@ -487,7 +487,7 @@ def test_upsert_updates_existing(integration_client: QdrantClient) -> None:
 
 @pytest.mark.skipif(not has_qdrant_client(), reason="qdrant-client not installed")
 def test_empty_search_returns_empty_list(integration_client: QdrantClient) -> None:
-    from codebase_rag.vector_store import search_embeddings
+    from codebase_rag.vectors.store import search_embeddings
 
     results = search_embeddings([0.5] * 768, top_k=5)
     assert results == []
@@ -495,7 +495,7 @@ def test_empty_search_returns_empty_list(integration_client: QdrantClient) -> No
 
 @pytest.mark.skipif(not has_pymilvus(), reason="pymilvus not installed")
 def test_get_milvus_client_uses_uri_token_and_db(reset_global_client: None) -> None:
-    import codebase_rag.vector_store as vs
+    import codebase_rag.vectors.store as vs
 
     mock_client = MagicMock()
     mock_client.has_collection.return_value = True
@@ -512,7 +512,7 @@ def test_get_milvus_client_uses_uri_token_and_db(reset_global_client: None) -> N
         patch.object(vs.settings, "MILVUS_TOKEN", "root:Milvus"),
         patch.object(vs.settings, "MILVUS_DB_NAME", "default"),
         patch(
-            "codebase_rag.vector_store.MilvusClient", return_value=mock_client
+            "codebase_rag.vectors.store.MilvusClient", return_value=mock_client
         ) as mock_client_cls,
     ):
         client = vs.get_milvus_client()
@@ -528,7 +528,7 @@ def test_get_milvus_client_uses_uri_token_and_db(reset_global_client: None) -> N
 def test_milvus_client_omits_unset_credentials() -> None:
     # Negative: an unset token or database must not reach the client at all,
     # so the client's own defaults stay in force.
-    import codebase_rag.vector_store as vs
+    import codebase_rag.vectors.store as vs
 
     with (
         patch.object(vs.settings, "MILVUS_URI", "http://localhost:19530"),
@@ -541,7 +541,7 @@ def test_milvus_client_omits_unset_credentials() -> None:
 def test_a_milvus_token_is_refused_over_plain_http() -> None:
     # The Qdrant key was refused over http:// while a Milvus token went out
     # unencrypted to any http:// MILVUS_URI.
-    import codebase_rag.vector_store as vs
+    import codebase_rag.vectors.store as vs
 
     with (
         patch.object(vs.settings, "MILVUS_URI", "http://milvus.example:19530"),
@@ -560,7 +560,7 @@ def test_a_milvus_token_is_refused_over_plain_http() -> None:
 def test_a_milvus_token_is_sent_over_https_or_when_allowed(
     uri: str, allowed: bool
 ) -> None:
-    import codebase_rag.vector_store as vs
+    import codebase_rag.vectors.store as vs
 
     with (
         patch.object(vs.settings, "MILVUS_URI", uri),
@@ -572,14 +572,14 @@ def test_a_milvus_token_is_sent_over_https_or_when_allowed(
 
 
 def test_milvus_empty_search_response_returns_empty_list() -> None:
-    import codebase_rag.vector_store as vs
+    import codebase_rag.vectors.store as vs
 
     mock_client = MagicMock()
     mock_client.search.return_value = []
 
     with (
-        patch("codebase_rag.vector_store.get_milvus_client", return_value=mock_client),
-        patch("codebase_rag.vector_store.logger") as mock_logger,
+        patch("codebase_rag.vectors.store.get_milvus_client", return_value=mock_client),
+        patch("codebase_rag.vectors.store.logger") as mock_logger,
     ):
         results = vs.MilvusVectorStore().search_embeddings([0.2] * 768, top_k=5)
 
@@ -594,11 +594,11 @@ def test_milvus_empty_search_response_returns_empty_list() -> None:
 def test_milvus_lite_30_cosine_workaround_versions(
     lite_version: str, expected: bool
 ) -> None:
-    import codebase_rag.vector_store as vs
+    import codebase_rag.vectors.store as vs
 
     with (
         patch.object(vs.settings, "MILVUS_URI", "./milvus.db"),
-        patch("codebase_rag.vector_store.version", return_value=lite_version),
+        patch("codebase_rag.vectors.store.version", return_value=lite_version),
     ):
         assert vs._uses_milvus_lite_30_cosine_distance() is expected
 
@@ -617,7 +617,7 @@ def _has_milvus_lite() -> bool:
 def test_milvus_store_search_verify_delete_roundtrip(
     tmp_path: Path, reset_global_client: None
 ) -> None:
-    import codebase_rag.vector_store as vs
+    import codebase_rag.vectors.store as vs
 
     collection_name = "code_embeddings_test"
     with (
@@ -661,7 +661,7 @@ def test_milvus_store_search_verify_delete_roundtrip(
 def test_milvus_clean_rebuilds_a_collection_of_the_wrong_size(
     tmp_path: Path, reset_global_client: None
 ) -> None:
-    import codebase_rag.vector_store as vs
+    import codebase_rag.vectors.store as vs
 
     # A collection left by an embedder with a different output size must be
     # repairable with --clean; validating before the drop made that fail.
@@ -696,13 +696,13 @@ def test_milvus_clean_rebuilds_a_collection_of_the_wrong_size(
 def test_a_failed_milvus_clean_does_not_leave_its_unvalidated_client_cached(
     reset_global_client: None,
 ) -> None:
-    import codebase_rag.vector_store as vs
+    import codebase_rag.vectors.store as vs
 
     instance = MagicMock()
     instance.has_collection.return_value = True
     instance.drop_collection.side_effect = RuntimeError("store is down")
     store = vs.MilvusVectorStore()
-    with patch("codebase_rag.vector_store.MilvusClient", return_value=instance):
+    with patch("codebase_rag.vectors.store.MilvusClient", return_value=instance):
         with pytest.raises(RuntimeError):
             store.clear_all_embeddings()
 
@@ -714,10 +714,12 @@ def test_a_failed_milvus_clean_does_not_leave_its_unvalidated_client_cached(
 def test_clear_all_embeddings_qdrant_drops_and_recreates_collection(
     reset_global_client: None,
 ) -> None:
-    import codebase_rag.vector_store as vs
+    import codebase_rag.vectors.store as vs
 
     mock_client = MagicMock()
-    with patch("codebase_rag.vector_store.get_qdrant_client", return_value=mock_client):
+    with patch(
+        "codebase_rag.vectors.store.get_qdrant_client", return_value=mock_client
+    ):
         vs.QdrantVectorStore().clear_all_embeddings()
 
     mock_client.delete_collection.assert_called_once_with(
@@ -729,12 +731,12 @@ def test_clear_all_embeddings_qdrant_drops_and_recreates_collection(
 def test_clear_all_embeddings_milvus_drops_and_recreates_collection(
     reset_global_client: None,
 ) -> None:
-    import codebase_rag.vector_store as vs
+    import codebase_rag.vectors.store as vs
 
     mock_client = MagicMock()
     with (
-        patch("codebase_rag.vector_store.get_milvus_client", return_value=mock_client),
-        patch("codebase_rag.vector_store._ensure_milvus_collection") as mock_ensure,
+        patch("codebase_rag.vectors.store.get_milvus_client", return_value=mock_client),
+        patch("codebase_rag.vectors.store._ensure_milvus_collection") as mock_ensure,
     ):
         vs.MilvusVectorStore().clear_all_embeddings()
 
@@ -745,19 +747,19 @@ def test_clear_all_embeddings_milvus_drops_and_recreates_collection(
 
 
 def test_module_clear_all_embeddings_dispatches_to_backend() -> None:
-    import codebase_rag.vector_store as vs
+    import codebase_rag.vectors.store as vs
 
     store = MagicMock()
-    with patch("codebase_rag.vector_store._get_vector_store", return_value=store):
+    with patch("codebase_rag.vectors.store._get_vector_store", return_value=store):
         vs.clear_all_embeddings()
 
     store.clear_all_embeddings.assert_called_once_with()
 
 
 def test_module_clear_all_embeddings_noop_without_backend() -> None:
-    import codebase_rag.vector_store as vs
+    import codebase_rag.vectors.store as vs
 
-    with patch("codebase_rag.vector_store._get_vector_store", return_value=None):
+    with patch("codebase_rag.vectors.store._get_vector_store", return_value=None):
         vs.clear_all_embeddings()
 
 
@@ -766,11 +768,13 @@ def test_clear_all_embeddings_qdrant_propagates_failure(
 ) -> None:
     # A swallowed purge failure would let clean report success while stale
     # vectors keep resolving to unrelated nodes in the rebuilt graph.
-    import codebase_rag.vector_store as vs
+    import codebase_rag.vectors.store as vs
 
     mock_client = MagicMock()
     mock_client.delete_collection.side_effect = RuntimeError("qdrant down")
-    with patch("codebase_rag.vector_store.get_qdrant_client", return_value=mock_client):
+    with patch(
+        "codebase_rag.vectors.store.get_qdrant_client", return_value=mock_client
+    ):
         store = vs.QdrantVectorStore()
         with pytest.raises(RuntimeError, match="qdrant down"):
             store.clear_all_embeddings()
@@ -779,11 +783,13 @@ def test_clear_all_embeddings_qdrant_propagates_failure(
 def test_clear_all_embeddings_milvus_propagates_failure(
     reset_global_client: None,
 ) -> None:
-    import codebase_rag.vector_store as vs
+    import codebase_rag.vectors.store as vs
 
     mock_client = MagicMock()
     mock_client.drop_collection.side_effect = RuntimeError("milvus down")
-    with patch("codebase_rag.vector_store.get_milvus_client", return_value=mock_client):
+    with patch(
+        "codebase_rag.vectors.store.get_milvus_client", return_value=mock_client
+    ):
         store = vs.MilvusVectorStore()
         with pytest.raises(RuntimeError, match="milvus down"):
             store.clear_all_embeddings()
@@ -799,7 +805,7 @@ def test_process_exit_closes_local_client_cleanly(temp_qdrant_path: Path) -> Non
         pytest.skip("qdrant-client not installed")
 
     script = (
-        "from codebase_rag.vector_store import get_qdrant_client; get_qdrant_client()"
+        "from codebase_rag.vectors.store import get_qdrant_client; get_qdrant_client()"
     )
     result = subprocess.run(
         [sys.executable, "-c", script],
@@ -837,7 +843,7 @@ def test_process_exit_closes_local_client_cleanly(temp_qdrant_path: Path) -> Non
 def test_storing_vectors_of_the_wrong_size_names_the_setting_to_change(
     backend: VectorStoreBackend, setting: str
 ) -> None:
-    import codebase_rag.vector_store as vs
+    import codebase_rag.vectors.store as vs
 
     store = MagicMock()
     store.backend = backend
@@ -853,7 +859,7 @@ def test_storing_vectors_of_the_wrong_size_names_the_setting_to_change(
 
 
 def test_vectors_of_the_configured_size_reach_the_store() -> None:
-    import codebase_rag.vector_store as vs
+    import codebase_rag.vectors.store as vs
 
     store = MagicMock()
     store.backend = VectorStoreBackend.QDRANT
@@ -869,7 +875,7 @@ def test_vectors_of_the_configured_size_reach_the_store() -> None:
 
 
 def test_a_query_of_the_wrong_size_names_the_setting_to_change() -> None:
-    import codebase_rag.vector_store as vs
+    import codebase_rag.vectors.store as vs
 
     store = MagicMock()
     store.backend = VectorStoreBackend.QDRANT

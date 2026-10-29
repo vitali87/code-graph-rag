@@ -12,15 +12,15 @@ from loguru import logger
 
 from codebase_rag import constants as cs
 from codebase_rag import graph_updater as graph_updater_module
-from codebase_rag import sync_state
-from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import (
     BoundedASTCache,
     FunctionRegistryTrie,
     GraphUpdater,
 )
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.sync_state import (
+from codebase_rag.sync import state as sync_state
+from codebase_rag.sync.checkout_state import state_file
+from codebase_rag.sync.state import (
     hash_file,
     hash_file_with_bytes,
     load_hash_cache,

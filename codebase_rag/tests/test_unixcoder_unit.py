@@ -12,7 +12,7 @@ import pytest
 # still fails collection instead of hiding as a skip.
 torch = pytest.importorskip("torch")
 pytest.importorskip("transformers")
-_unixcoder = importlib.import_module("codebase_rag.unixcoder")
+_unixcoder = importlib.import_module("codebase_rag.vectors.unixcoder")
 
 nn = torch.nn
 Beam = _unixcoder.Beam

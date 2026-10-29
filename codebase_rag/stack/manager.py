@@ -497,7 +497,7 @@ class StackManager:
     def serves_vectors(self) -> bool:
         """Whether the app's embeddings go to this stack's Qdrant.
 
-        The choice `vector_store` makes: a QDRANT_URL naming where Compose
+        The choice `vectors.store` makes: a QDRANT_URL naming where Compose
         publishes Qdrant, or, with neither QDRANT_URL nor QDRANT_DB_PATH
         chosen, a stack set up here. Then `cgr start` starts the stack even
         for a graph backend that needs nothing from it.

@@ -36,9 +36,9 @@ from rich.table import Table
 
 from codebase_rag import constants as cs
 from codebase_rag.capture import resolve_capture
-from codebase_rag.checkout_state import state_dir
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.sync.checkout_state import state_dir
 
 CORPUS_DIR = Path(__file__).parent / "flows_corpus"
 EXPECTED_FILE = CORPUS_DIR / "expected.json"

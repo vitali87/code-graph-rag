@@ -27,9 +27,9 @@ import pytest
 from loguru import logger
 
 from codebase_rag import constants as cs
-from codebase_rag import vector_store as vs
 from codebase_rag.config import AppConfig, settings
 from codebase_rag.stack import constants as stack_cs
+from codebase_rag.vectors import store as vs
 
 _DB_PATH_SETTING = "QDRANT_DB_PATH"
 # What a real Qdrant 1.19 answers on `GET /`.
@@ -231,7 +231,7 @@ def _fresh_client() -> Generator[None, None, None]:
 
 
 def _client_kwargs() -> dict[str, object]:
-    with patch("codebase_rag.vector_store.QdrantClient") as client_cls:
+    with patch("codebase_rag.vectors.store.QdrantClient") as client_cls:
         client_cls.return_value = MagicMock(**{"collection_exists.return_value": True})
         vs.get_qdrant_client()
     client_cls.assert_called_once()
@@ -642,7 +642,7 @@ class _serve_then_stop:
 
 @pytest.fixture
 def fresh_embedding_cache() -> Generator[None, None, None]:
-    from codebase_rag import embedder
+    from codebase_rag.vectors import embedder
 
     embedder.clear_embedding_cache()
     yield
@@ -650,7 +650,7 @@ def fresh_embedding_cache() -> Generator[None, None, None]:
 
 
 def _cache_path() -> Path:
-    from codebase_rag import embedder
+    from codebase_rag.vectors import embedder
 
     path = embedder.get_embedding_cache()._path
     assert path is not None

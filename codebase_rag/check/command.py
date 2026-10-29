@@ -28,18 +28,18 @@ from pathlib import Path
 
 from tree_sitter import Parser
 
-from . import constants as cs
-from . import cypher_queries as cq
-from .capture import CaptureSelection, default_capture
-from .check_isolation import GraphStore, IsolationGuard
-from .checkout_state import state_file
-from .config import project_ignore_sets
-from .graph_updater import GraphUpdater
-from .services import QueryingIngestorProtocol
-from .structural_delta import StructuralDelta, normalise_paths, observe
-from .sync_state import load_exclusion_state, load_project_stamps
-from .types_defs import LanguageQueries, PropertyDict, ReingestReport
-from .utils.path_utils import derive_project_name, should_skip_path
+from .. import constants as cs
+from .. import cypher_queries as cq
+from ..capture import CaptureSelection, default_capture
+from ..config import project_ignore_sets
+from ..graph_updater import GraphUpdater
+from ..services import QueryingIngestorProtocol
+from ..sync.checkout_state import state_file
+from ..sync.state import load_exclusion_state, load_project_stamps
+from ..types_defs import LanguageQueries, PropertyDict, ReingestReport
+from ..utils.path_utils import derive_project_name, should_skip_path
+from .delta import StructuralDelta, normalise_paths, observe
+from .isolation import GraphStore, IsolationGuard
 
 _GIT_DELETED = "D"
 
@@ -424,7 +424,7 @@ def run_check(
     `exclude_paths` and `unignore_paths` are the project's indexing scope
     (the `.cgrignore` file plus any CLI excludes): a changed file outside
     that scope must not enter the graph through the check. With `isolated`
-    the re-ingest is measured and then undone (see `check_isolation`).
+    the re-ingest is measured and then undone (see `check.isolation`).
     """
     changed, deleted = changed_since(repo_root, base)
 

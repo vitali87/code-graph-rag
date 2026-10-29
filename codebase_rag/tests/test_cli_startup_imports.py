@@ -140,7 +140,7 @@ def test_importing_the_library_leaves_the_banner_setting_alone() -> None:
 
 def test_the_probe_sees_a_vector_client_when_one_is_imported() -> None:
     pytest.importorskip("qdrant_client")
-    assert "qdrant_client" in _modules_loaded_by("import codebase_rag.vector_store")
+    assert "qdrant_client" in _modules_loaded_by("import codebase_rag.vectors.store")
 
 
 def test_importing_the_cli_loads_no_heavy_package() -> None:

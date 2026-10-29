@@ -17,9 +17,9 @@ from loguru import logger
 
 from codebase_rag import constants as cs
 from codebase_rag import logs as ls
-from codebase_rag.checkout_state import state_dir
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.sync.checkout_state import state_dir
 from codebase_rag.types_defs import PropertyDict, ResultRow
 from evals.cgr_graph import StatefulIngestor
 

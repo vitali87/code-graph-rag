@@ -17,10 +17,10 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.check.command import run_check
+from codebase_rag.check.delta import StructuralDelta, has_findings, observe
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.structural_check import run_check
-from codebase_rag.structural_delta import StructuralDelta, has_findings, observe
 from evals.cgr_graph import StatefulIngestor
 
 PROJECT = "cl"

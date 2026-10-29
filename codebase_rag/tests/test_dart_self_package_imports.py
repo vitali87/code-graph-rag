@@ -17,9 +17,9 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.sync.checkout_state import state_file
 from codebase_rag.tests.conftest import create_and_run_updater
 from codebase_rag.tests.test_incremental_deleted_dependents import (
     _materialise,

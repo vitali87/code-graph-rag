@@ -20,7 +20,6 @@ import pytest
 
 import codebase_rag.codec.schema_pb2 as pb
 from codebase_rag import constants as cs
-from codebase_rag.checkout_state import state_file
 from codebase_rag.config import settings
 from codebase_rag.function_registry import FunctionRegistryTrie
 from codebase_rag.graph_updater import GraphUpdater
@@ -28,6 +27,7 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.cpp import overloads as cpp_overloads
 from codebase_rag.parsers.cpp_frontend import cpp_frontend_available, run_cpp_frontend
 from codebase_rag.services.protobuf_service import ProtobufFileIngestor
+from codebase_rag.sync.checkout_state import state_file
 from codebase_rag.tests.conftest import (
     get_nodes,
     get_qualified_names,

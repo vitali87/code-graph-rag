@@ -19,11 +19,11 @@ import pytest
 from tree_sitter import Node
 
 from codebase_rag import constants as cs
-from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.import_processor import ImportProcessor
 from codebase_rag.parsers.scala import utils as scala_utils
+from codebase_rag.sync.checkout_state import state_file
 from codebase_rag.tests.conftest import (
     create_and_run_updater,
     get_nodes,

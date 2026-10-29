@@ -18,15 +18,15 @@ import pytest
 from typer.testing import CliRunner, Result
 
 from codebase_rag import constants as cs
-from codebase_rag.cli import app
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
-from codebase_rag.structural_delta import (
+from codebase_rag.check.delta import (
     DanglingImporter,
     StructuralDelta,
     has_findings,
     observe,
 )
+from codebase_rag.cli import app
+from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.parser_loader import load_parsers
 from codebase_rag.types_defs import PropertyParams, ResultRow
 from evals.cgr_graph import StatefulIngestor
 

@@ -20,10 +20,10 @@ import pytest
 from typer.testing import CliRunner, Result
 
 from codebase_rag import constants as cs
+from codebase_rag.check.delta import StructuralDelta, has_findings
 from codebase_rag.cli import app
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.structural_delta import StructuralDelta, has_findings
 from evals.cgr_graph import StatefulIngestor
 
 PROJECT = "reqp"

@@ -15,9 +15,9 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
-from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.sync.checkout_state import state_file
 
 if TYPE_CHECKING:
     from codebase_rag.services.graph_service import MemgraphIngestor

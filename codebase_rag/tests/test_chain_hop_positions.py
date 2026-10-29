@@ -14,8 +14,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.check.delta import _call_starting_at
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.structural_delta import _call_starting_at
 from codebase_rag.tests.conftest import create_and_run_updater, get_relationships
 
 _CSHARP = """\

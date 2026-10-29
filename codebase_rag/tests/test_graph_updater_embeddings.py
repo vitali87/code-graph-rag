@@ -21,14 +21,14 @@ _PATCH_DEPS = patch(
     "codebase_rag.graph_updater.has_semantic_dependencies", return_value=True
 )
 _PATCH_EMBED_BATCH = patch(
-    "codebase_rag.embedder.embed_code_batch", side_effect=_fake_embed_batch
+    "codebase_rag.vectors.embedder.embed_code_batch", side_effect=_fake_embed_batch
 )
 _PATCH_STORE_BATCH = patch(
-    "codebase_rag.vector_store.store_embedding_batch",
+    "codebase_rag.vectors.store.store_embedding_batch",
     side_effect=lambda _project, points: len(points),
 )
 _PATCH_RECONCILE = patch(
-    "codebase_rag.vector_store.verify_stored_ids",
+    "codebase_rag.vectors.store.verify_stored_ids",
     side_effect=lambda _project, expected: set(expected),
 )
 
@@ -38,7 +38,7 @@ def _no_stale_pruning() -> Generator[MagicMock, None, None]:
     # The pass also prunes the project's stale vectors; these tests are about
     # what it embeds, so the store is not opened for that.
     with patch(
-        "codebase_rag.vector_store.delete_stale_embeddings", return_value=0
+        "codebase_rag.vectors.store.delete_stale_embeddings", return_value=0
     ) as prune:
         yield prune
 
@@ -237,7 +237,7 @@ class TestGenerateSemanticEmbeddings:
 
     @patch("codebase_rag.graph_updater.has_semantic_dependencies", return_value=True)
     @patch(
-        "codebase_rag.embedder.embed_code_batch",
+        "codebase_rag.vectors.embedder.embed_code_batch",
         side_effect=RuntimeError("model error"),
     )
     @_PATCH_STORE_BATCH

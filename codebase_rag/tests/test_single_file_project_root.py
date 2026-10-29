@@ -29,9 +29,9 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.checkout_state import state_dir, state_file
 from codebase_rag.graph_updater import GraphUpdater, _project_root_for_single_file
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.sync.checkout_state import state_dir, state_file
 
 PY = cs.SupportedLanguage.PYTHON
 
