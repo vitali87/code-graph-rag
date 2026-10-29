@@ -422,10 +422,6 @@ def _ranked_section(report: "RootCauseReport") -> dict:
 
 
 class MCPToolsRegistry:
-    # The workspace served, if any (issue #1494). A class default so a
-    # registry built without __init__ (the test doubles do) still has it.
-    workspace: WorkspaceConfig | None = None
-
     def __init__(
         self,
         project_root: str,

@@ -107,13 +107,13 @@ class MockNode:
 
 def bare_registry() -> MCPToolsRegistry:
     """An MCP registry built without `__init__`, for a test that sets only
-    the fields the handler under test reads. Its damage record is fresh, as
-    `__init__` would leave it: the record is mutable, so no class default can
-    stand in for it."""
+    the fields the handler under test reads. It serves no workspace and its
+    damage record is fresh, as `__init__` would leave them."""
     from codebase_rag.mcp.graph_damage import GraphDamage
     from codebase_rag.mcp.tools import MCPToolsRegistry
 
     registry = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    registry.workspace = None
     registry._damage = GraphDamage()
     return registry
 
