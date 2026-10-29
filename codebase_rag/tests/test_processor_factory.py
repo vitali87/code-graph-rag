@@ -535,6 +535,31 @@ class TestTheUnignorePolicyReachesEveryProcessor:
 
         assert not importer._julia_candidate_excluded(rel_file)
 
+    def test_the_cpp_importer_resolves_includes_with_the_updated_policy(
+        self, factory: ProcessorFactory
+    ) -> None:
+        """The C/C++ importer resolves a quoted include against the indexer's
+        own walk, taken with the policy it reads through the processor that
+        built it: once the update lands (and the replayed walk is rebuilt), a
+        header in a rescued tree is the repo file the include names, not a
+        third-party one (issue #1088)."""
+        importer = factory.import_processor.cpp
+        rel = Path("target", "generated-sources", "annotations", "gen.h")
+        header = factory.repo_path / rel
+        header.parent.mkdir(parents=True)
+        header.write_text("#pragma once\n", encoding="utf-8")
+        includer = f"{factory.project_name}.main"
+        assert importer._resolve_cpp_include_target("gen.h", includer) is None
+
+        factory.propagate_unignore_paths(
+            frozenset({"target/generated-sources/annotations/**"})
+        )
+        importer.forget_module_qn_map()
+
+        assert importer._resolve_cpp_include_target(
+            "gen.h", includer
+        ) == base_module_qn(rel, factory.project_name)
+
     def test_a_processor_built_after_the_update_sees_the_new_policy(
         self, factory: ProcessorFactory
     ) -> None:

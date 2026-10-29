@@ -8578,7 +8578,7 @@ class CallProcessor:
         import_mapping = imports.import_mapping
         # A header a later include displaced from its local name is still
         # included, so its `static inline`s compile into this file too.
-        displaced = imports.displaced_include_targets()
+        displaced = imports.cpp.displaced_include_targets()
         reached: set[str] = set()
         pending = [module_qn]
         while pending:

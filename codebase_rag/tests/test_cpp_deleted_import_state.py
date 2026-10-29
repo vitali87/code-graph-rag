@@ -44,11 +44,11 @@ def test_deleted_c_cpp_file_retracts_imports(tmp_path: Path, suffix: str) -> Non
     gone_qn = _module_qn(updater, gone)
     kept_qn = _module_qn(updater, kept)
     assert processor.import_mapping[gone_qn]
-    assert (gone_qn, "std.widget") in processor._cpp_shadowed_include_targets
+    assert (gone_qn, "std.widget") in processor.cpp._cpp_shadowed_include_targets
     kept_mapping = processor.import_mapping[kept_qn].copy()
     kept_shadowed = {
         entry
-        for entry in processor._cpp_shadowed_include_targets
+        for entry in processor.cpp._cpp_shadowed_include_targets
         if entry[0] == kept_qn
     }
     assert kept_shadowed
@@ -58,7 +58,7 @@ def test_deleted_c_cpp_file_retracts_imports(tmp_path: Path, suffix: str) -> Non
     updater.remove_file_from_state(gone)
 
     assert gone_qn not in processor.import_mapping
-    assert processor._cpp_shadowed_include_targets == kept_shadowed
+    assert processor.cpp._cpp_shadowed_include_targets == kept_shadowed
     assert processor.import_mapping[kept_qn] == kept_mapping
 
 
@@ -71,14 +71,14 @@ def test_deleted_module_declaration_retracts_its_exemption(tmp_path: Path) -> No
     processor = updater.factory.import_processor
     gone_qn = _module_qn(updater, gone)
     kept_qn = _module_qn(updater, kept)
-    assert (gone_qn, "proj.removed") in processor._cpp_declaration_mappings
-    assert (kept_qn, "proj.retained") in processor._cpp_declaration_mappings
+    assert (gone_qn, "proj.removed") in processor.cpp._cpp_declaration_mappings
+    assert (kept_qn, "proj.retained") in processor.cpp._cpp_declaration_mappings
 
     gone.unlink()
     updater.remove_file_from_state(gone)
 
     assert gone_qn not in processor.import_mapping
-    assert processor._cpp_declaration_mappings == {(kept_qn, "proj.retained")}
+    assert processor.cpp._cpp_declaration_mappings == {(kept_qn, "proj.retained")}
     assert processor.import_mapping[kept_qn]
 
 
@@ -103,7 +103,7 @@ def test_deleted_same_stem_file_uses_its_recorded_module(tmp_path: Path) -> None
     assert gone_qn not in processor.import_mapping
     assert processor.import_mapping["proj.unit"] == kept_mapping
     assert all(
-        entry[0] == "proj.unit" for entry in processor._cpp_shadowed_include_targets
+        entry[0] == "proj.unit" for entry in processor.cpp._cpp_shadowed_include_targets
     )
 
 
@@ -127,7 +127,7 @@ def test_deleted_header_refreshes_cached_include_resolution(
     gone_qn = _module_qn(updater, gone)
     kept_qn = _module_qn(updater, kept)
     assert processor.import_mapping[consumer_qn]["widget"] == gone_qn
-    assert processor._cpp_module_qn_map is not None
+    assert processor.cpp._cpp_module_qn_map is not None
 
     gone.unlink()
     updater.remove_file_from_state(gone)

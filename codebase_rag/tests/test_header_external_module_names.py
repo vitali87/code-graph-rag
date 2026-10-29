@@ -211,7 +211,7 @@ def test_a_removed_module_declaration_does_not_suppress_a_later_include_edge(
 
     # v1 declares module `foo`, registering the exemption.
     parse("export module foo;\n")
-    assert (module_qn, "proj.foo") in processor._cpp_declaration_mappings, (
+    assert (module_qn, "proj.foo") in processor.cpp._cpp_declaration_mappings, (
         "fixture guard: the declaration must register an exemption, or there "
         "is no stale entry for the re-parse to leave behind"
     )
@@ -221,7 +221,7 @@ def test_a_removed_module_declaration_does_not_suppress_a_later_include_edge(
     # its edge. `foo.h` resolves to `proj.foo` -- the very qn the stale
     # exemption names.
     parse('#include "foo.h"\n#include "sub/foo.h"\n')
-    assert (module_qn, "proj.foo") not in processor._cpp_declaration_mappings, (
+    assert (module_qn, "proj.foo") not in processor.cpp._cpp_declaration_mappings, (
         "the removed declaration's exemption survived the re-parse, so the "
         "sweep will veto the include that resolves to the same qn"
     )
@@ -243,7 +243,7 @@ def test_two_spellings_of_one_header_path_share_a_qualified_name() -> None:
     Asserted rather than left implicit so that if someone later needs the two
     kept apart, this test names the decision being reversed.
     """
-    from codebase_rag.parsers.import_processor import _dotted_include_path
+    from codebase_rag.parsers.cpp.imports import _dotted_include_path
 
     assert _dotted_include_path("sys/types.h") == _dotted_include_path("sys.types.h")
     # And the separator really is what collapses: distinct DIRECTORIES stay
