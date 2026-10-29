@@ -654,3 +654,48 @@ def analyze_return_expression(expr_node: Node, method_qn: str) -> str | None:
 
         case _:
             return None
+
+
+def is_inside_method_with_object_literals(node: Node) -> bool:
+    """Whether `node` sits in an object literal inside a class method, with
+    no class body in between."""
+    current = node.parent
+    found_object = False
+    while current:
+        if current.type == cs.TS_OBJECT:
+            found_object = True
+        elif current.type == cs.TS_METHOD_DEFINITION and found_object:
+            return True
+        elif current.type == cs.TS_CLASS_BODY:
+            break
+        current = current.parent
+    return False
+
+
+def is_class_method(node: Node) -> bool:
+    """Whether `node` is inside a class body."""
+    current = node.parent
+    while current:
+        if current.type == cs.TS_CLASS_BODY:
+            return True
+        if current.type in (cs.TS_PROGRAM, cs.TS_MODULE):
+            return False
+        current = current.parent
+    return False
+
+
+def is_export_inside_function(node: Node) -> bool:
+    """Whether an export statement or assignment is nested in a function."""
+    current = node.parent
+    while current:
+        if current.type in (
+            cs.TS_FUNCTION_DECLARATION,
+            cs.TS_FUNCTION_EXPRESSION,
+            cs.TS_ARROW_FUNCTION,
+            cs.TS_METHOD_DEFINITION,
+        ):
+            return True
+        if current.type in (cs.TS_PROGRAM, cs.TS_MODULE):
+            return False
+        current = current.parent
+    return False

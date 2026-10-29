@@ -8,6 +8,7 @@ from tree_sitter import Language, Parser
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers.js_ts import utils as js_ts_utils
 from codebase_rag.tests.conftest import run_updater
 
 try:
@@ -168,10 +169,7 @@ class MyClass {
         assert class_body is not None
         method_node = class_body.children[1]
 
-        from codebase_rag.parsers.handlers.js_ts import JsTsHandler
-
-        handler = JsTsHandler()
-        result = handler.is_class_method(method_node)
+        result = js_ts_utils.is_class_method(method_node)
         assert result is True
 
     def test_standalone_function_returns_false(self, js_parser: Parser) -> None:
@@ -179,10 +177,7 @@ class MyClass {
         tree = js_parser.parse(code)
         func_node = tree.root_node.children[0]
 
-        from codebase_rag.parsers.handlers.js_ts import JsTsHandler
-
-        handler = JsTsHandler()
-        result = handler.is_class_method(func_node)
+        result = js_ts_utils.is_class_method(func_node)
         assert result is False
 
 
@@ -193,10 +188,7 @@ class TestIsExportInsideFunction:
         tree = js_parser.parse(code)
         export_node = tree.root_node.children[0]
 
-        from codebase_rag.parsers.handlers.js_ts import JsTsHandler
-
-        handler = JsTsHandler()
-        result = handler.is_export_inside_function(export_node)
+        result = js_ts_utils.is_export_inside_function(export_node)
         assert result is False
 
     def test_export_inside_function_returns_true(self, js_parser: Parser) -> None:
@@ -211,10 +203,7 @@ function outer() {
         assert body is not None
         expr_stmt = body.children[1]
 
-        from codebase_rag.parsers.handlers.js_ts import JsTsHandler
-
-        handler = JsTsHandler()
-        result = handler.is_export_inside_function(expr_stmt)
+        result = js_ts_utils.is_export_inside_function(expr_stmt)
         assert result is True
 
 
@@ -293,10 +282,7 @@ class MyClass {
         pair = obj.children[1]
         nested_func = pair.children[0]
 
-        from codebase_rag.parsers.handlers.js_ts import JsTsHandler
-
-        handler = JsTsHandler()
-        result = handler.is_inside_method_with_object_literals(nested_func)
+        result = js_ts_utils.is_inside_method_with_object_literals(nested_func)
         assert result is True
 
     def test_standalone_object_returns_false(self, js_parser: Parser) -> None:
@@ -314,10 +300,7 @@ const obj = {
         assert obj is not None
         pair = obj.children[1]
 
-        from codebase_rag.parsers.handlers.js_ts import JsTsHandler
-
-        handler = JsTsHandler()
-        result = handler.is_inside_method_with_object_literals(pair)
+        result = js_ts_utils.is_inside_method_with_object_literals(pair)
         assert result is False
 
 

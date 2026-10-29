@@ -73,7 +73,6 @@ from .utils import (
 if TYPE_CHECKING:
     from ..services import IngestorProtocol
     from ..types_defs import LanguageQueries
-    from .handlers import LanguageHandler
 
 
 def _name_start_point(func_node: Node) -> tuple[int, int]:
@@ -273,7 +272,6 @@ class FunctionIngestMixin:
     pending_endpoints: list[tuple[cs.NodeLabel, str, list[str], str | None]]
     pending_type_facts: list[PendingTypeFact]
     pending_parameter_types: list[PendingParameterType]
-    _handler: LanguageHandler
     _deferred_cpp_methods: list[_DeferredMethod]
     _deferred_go_methods: list[_DeferredGoMethod]
     _deferred_cpp_containment: list[_DeferredCppContainment]

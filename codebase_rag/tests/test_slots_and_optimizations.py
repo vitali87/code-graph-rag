@@ -13,52 +13,8 @@ from codebase_rag.parsers.dependency_parser import (
     PyProjectTomlParser,
     RequirementsTxtParser,
 )
-from codebase_rag.parsers.handlers.base import BaseLanguageHandler
-from codebase_rag.parsers.handlers.cpp import CppHandler
-from codebase_rag.parsers.handlers.java import JavaHandler
-from codebase_rag.parsers.handlers.js_ts import JsTsHandler
-from codebase_rag.parsers.handlers.lua import LuaHandler
-from codebase_rag.parsers.handlers.protocol import LanguageHandler
-from codebase_rag.parsers.handlers.python import PythonHandler
-from codebase_rag.parsers.handlers.rust import RustHandler
 from codebase_rag.parsers.stdlib_extractor import StdlibExtractor
 from codebase_rag.parsers.utils import _cached_decode_bytes
-
-
-class TestHandlerSlots:
-    @pytest.mark.parametrize(
-        "handler_cls",
-        [
-            BaseLanguageHandler,
-            PythonHandler,
-            JavaHandler,
-            JsTsHandler,
-            CppHandler,
-            RustHandler,
-            LuaHandler,
-        ],
-    )
-    def test_handler_has_slots(self, handler_cls: type) -> None:
-        assert hasattr(handler_cls, "__slots__")
-
-    @pytest.mark.parametrize(
-        "handler_cls",
-        [
-            BaseLanguageHandler,
-            PythonHandler,
-            JavaHandler,
-            JsTsHandler,
-            CppHandler,
-            RustHandler,
-            LuaHandler,
-        ],
-    )
-    def test_handler_no_instance_dict(self, handler_cls: type) -> None:
-        instance = handler_cls()
-        assert not hasattr(instance, "__dict__")
-
-    def test_protocol_has_slots(self) -> None:
-        assert hasattr(LanguageHandler, "__slots__")
 
 
 class TestDependencyParserSlots:

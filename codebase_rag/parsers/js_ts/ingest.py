@@ -26,13 +26,18 @@ from ..utils import (
     sorted_captures,
 )
 from .module_system import JsTsModuleSystemMixin
-from .utils import arrow_binding_name, get_js_ts_language_obj
+from .utils import (
+    arrow_binding_name,
+    get_js_ts_language_obj,
+    is_class_method,
+    is_export_inside_function,
+    is_inside_method_with_object_literals,
+)
 
 if TYPE_CHECKING:
     from ...language_spec import LanguageSpec
     from ...services import IngestorProtocol
     from ...types_defs import LanguageQueries
-    from ..handlers import LanguageHandler
     from ..import_processor import ImportProcessor
 
 
@@ -47,7 +52,6 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
     import_processor: ImportProcessor
     class_inheritance: dict[str, list[str]]
     class_owner_module: dict[str, str]
-    _handler: LanguageHandler
 
     @abstractmethod
     def _get_docstring(
@@ -361,9 +365,9 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         if not method_name:
             return
 
-        if self._handler.is_class_method(
+        if is_class_method(
             method_func_node
-        ) and not self._handler.is_inside_method_with_object_literals(method_func_node):
+        ) and not is_inside_method_with_object_literals(method_func_node):
             return
 
         method_qn = self._resolve_object_method_qn(
@@ -731,7 +735,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         return False
 
     def _is_export_inside_function(self, node: ASTNode) -> bool:
-        return self._handler.is_export_inside_function(node)
+        return is_export_inside_function(node)
 
     def _find_object_name_for_method(self, method_name_node: ASTNode) -> str | None:
         current = method_name_node.parent

@@ -1,8 +1,6 @@
-# L3 finding from the evals/ harness: DefinitionProcessor._extract_decorators calls
-# self._handler.extract_decorators(node), where _handler is annotated as the Protocol
-# LanguageHandler but assigned dynamically via get_handler(language). The runtime type
-# is one of several conformers, so the call graph emits an edge to extract_decorators
-# on every conformer (capturing the traced PythonHandler edge), never the stub.
+# L3 finding from the evals/ harness: a call through an attribute annotated
+# with a Protocol but assigned one of several conformers at runtime must emit
+# an edge to the method on every conformer, never only to the Protocol stub.
 from __future__ import annotations
 
 from pathlib import Path

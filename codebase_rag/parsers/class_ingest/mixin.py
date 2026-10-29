@@ -436,8 +436,6 @@ class ClassIngestMixin:
     ) -> str | None: ...
 
     @abstractmethod
-    def _extract_decorators(self, node: ASTNode) -> list[str]: ...
-
     @abstractmethod
     def _ingest_go_interface_methods(
         self,
@@ -2534,7 +2532,7 @@ class ClassIngestMixin:
             if not module_name_node.text:
                 continue
 
-            decorators = self._extract_decorators(module_node)
+            decorators = rs_utils.attribute_texts(module_node)
             gated = any(
                 "".join(str(decorator).split()) == cs.RS_CFG_TEST_ATTRIBUTE
                 for decorator in decorators

@@ -45,7 +45,6 @@ from .go.builds import Expr, GoBuilds
 from .go.interface_ingest import GoInterfaceMixin
 from .go.interfaces import GoInterfaceDecl, GoMethodSpec
 from .go.link_state import GoLinkState
-from .handlers import get_handler
 from .interface_fingerprint import interface_fingerprint
 from .java_generated import generator_hint
 from .js_ts.ingest import JsTsIngestMixin
@@ -65,7 +64,6 @@ from .utils import (
 if TYPE_CHECKING:
     from ..services import IngestorProtocol
     from ..types_defs import LanguageQueries
-    from .handlers import LanguageHandler
     from .import_processor import ImportProcessor
 from .io_access import FLOW_REGISTERED_LANGUAGES
 
@@ -94,8 +92,6 @@ class DefinitionProcessor(
     ClassIngestMixin,
     JsTsIngestMixin,
 ):
-    _handler: LanguageHandler
-
     def __init__(
         self,
         ingestor: IngestorProtocol,
@@ -419,7 +415,6 @@ class DefinitionProcessor(
         # (only re-parsed files populate it). _is_cpp_defined falls back to
         # this so cross-file resolution into UNCHANGED headers still works.
         self.rehydrated_definition_paths: dict[str, str] = {}
-        self._handler = get_handler(cs.SupportedLanguage.PYTHON)
         self._func_class_captures_cache = func_class_captures_cache
 
     def begin_run(self) -> None:
@@ -593,7 +588,6 @@ class DefinitionProcessor(
                 )
                 return None
 
-            self._handler = get_handler(language)
             source_bytes = self._read_sql_once(file_path, language, source_bytes)
             parsed = self._parse_file_root(
                 file_path, language, queries, source_bytes, pre_parsed
@@ -1076,6 +1070,3 @@ class DefinitionProcessor(
                 ).strip(cs.DOCSTRING_STRIP_CHARS)
                 return result
         return None
-
-    def _extract_decorators(self, node: ASTNode) -> list[str]:
-        return self._handler.extract_decorators(node)

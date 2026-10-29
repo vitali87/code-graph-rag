@@ -72,12 +72,11 @@ line needs language-specific code that someone has written:
 | Modules and files | Import resolution and aliasing |
 | Call sites | Qualified-name construction rules |
 
-That code does not have to be a `LanguageHandler`. C# and Dart use the base
-handler and still emit inheritance and import edges, through dedicated
-extraction paths (`split_csharp_bases` and `extract_dart_parent_classes` in
+C# and Dart show where that code lives: dedicated extraction paths
+(`split_csharp_bases` and `extract_dart_parent_classes` in
 `class_ingest/parent_extraction.py`; `_parse_csharp_imports` and
-`_parse_dart_imports` in `import_processor.py`). A handler is one place such
-code lives, not the only one.
+`_parse_dart_imports` in `import_processor.py`), with the language's own
+helpers in its package under `codebase_rag/parsers/<language>/`.
 
 What matters is that **somebody wrote it for that language**. `add-grammar`
 does not, and cannot: the shape of an `extends` clause or an import alias is
@@ -101,14 +100,14 @@ the code.
 
 So treat `add-grammar` as *"parse this language"*, not *"support this
 language"*. If you need inheritance or import edges, someone has to write the
-language-specific extraction — in a handler under
-`codebase_rag/parsers/handlers/`, or in the per-language branches of
+language-specific extraction — in the language's package under
+`codebase_rag/parsers/`, reached from the per-language branches of
 `class_ingest/parent_extraction.py` and `import_processor.py`, as C# and Dart
 do.
 
 The [support matrix](../architecture/language-support.md) is the authority on
-what each shipped language actually provides; the presence or absence of a
-handler is not. For compiler-backed facts on top of the Tree-sitter
+what each shipped language actually provides; the files in a language's
+package are not. For compiler-backed facts on top of the Tree-sitter
 backbone, see [Adding a Language Frontend](../architecture/language-frontends.md).
 
 ## Example: Adding C# Support

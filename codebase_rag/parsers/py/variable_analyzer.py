@@ -595,7 +595,7 @@ class PythonVariableAnalyzerMixin(_VarBase):
     def _infer_class_annotation_types(
         self, caller_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        # A class-level annotation (_handler: LanguageHandler) declares an instance
+        # A class-level annotation (`_store: Store`) declares an instance
         # attribute's type even when it is assigned from a factory call whose return
         # type cannot be inferred, so seed self.<name> from the annotation.
         if (class_node := self._enclosing_class_node(caller_node)) is None:

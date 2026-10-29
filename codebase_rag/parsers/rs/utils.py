@@ -851,3 +851,36 @@ def _is_raw_attribute_group(group: Node) -> bool:
     if marker is not None and marker.type == cs.TS_RS_TOKEN_BANG:
         marker = marker.prev_sibling
     return marker is not None and marker.type == cs.TS_RS_TOKEN_HASH
+
+
+def _outer_attribute_texts(node: Node) -> list[str]:
+    # Doc comments are named siblings that may sit BETWEEN an attribute
+    # and its item (`#[cfg(test)]` above `/// docs` above `mod m;` is
+    # legal and the attribute still applies), so the walk skips them
+    # rather than stopping.
+    texts: list[str] = []
+    sibling = node.prev_named_sibling
+    while sibling and sibling.type in (cs.TS_RS_ATTRIBUTE_ITEM, *cs.RS_COMMENT_TYPES):
+        if sibling.type == cs.TS_RS_ATTRIBUTE_ITEM and (
+            attr_text := safe_decode_text(sibling)
+        ):
+            texts.append(attr_text)
+        sibling = sibling.prev_named_sibling
+    texts.reverse()
+    return texts
+
+
+def attribute_texts(node: Node) -> list[str]:
+    """The `#[...]` attributes above an item and the `#![...]` ones inside
+    it or its body, as written."""
+    texts = _outer_attribute_texts(node)
+    nodes_to_search = [node]
+    if body_node := node.child_by_field_name(cs.FIELD_BODY):
+        nodes_to_search.append(body_node)
+    for search_node in nodes_to_search:
+        for child in search_node.children:
+            if child.type == cs.TS_RS_INNER_ATTRIBUTE_ITEM and (
+                attr_text := safe_decode_text(child)
+            ):
+                texts.append(attr_text)
+    return texts
