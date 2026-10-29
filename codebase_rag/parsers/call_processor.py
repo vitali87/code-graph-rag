@@ -61,7 +61,7 @@ from .go import calls as go_calls
 from .go.link_state import GoLinkState
 from .import_processor import ImportProcessor
 from .io_access import IOAccessProcessor
-from .java import type_inference as java_ti
+from .java import calls as java_calls
 from .java import utils as java_utils
 from .js_ts import bindings as js_bindings
 from .js_ts import calls as js_calls
@@ -867,6 +867,7 @@ class CallProcessor:
         "_csharp",
         "_js",
         "_python",
+        "_java",
         "_callable_flow",
         "_flow_bucket",
         "failed_call_files",
@@ -945,6 +946,7 @@ class CallProcessor:
         )
         self._js = js_calls.JsTsCallResolution(self, self._resolver)
         self._python = python_calls.PythonCallResolution(self, self._resolver)
+        self._java = java_calls.JavaCallResolution(self, self._resolver)
         # Inter-procedural callable-parameter flow: ordered params per function and
         # the per-call-site argument bindings, resolved to a fixpoint in finalize.
         self._flow_param_names: dict[str, list[str]] = {}
@@ -2228,23 +2230,12 @@ class CallProcessor:
         if path_parts:
             joined = cs.SEPARATOR_DOT.join([*path_parts, func_name])
             return f"{class_qn}{cs.SEPARATOR_DOT}{joined}", cs.NodeLabel.FUNCTION
-        member = self._java_method_member(func_node, func_name, language)
+        member = (
+            java_calls.method_member(func_node, func_name)
+            if language == cs.SupportedLanguage.JAVA
+            else func_name
+        )
         return f"{class_qn}{cs.SEPARATOR_DOT}{member}", cs.NodeLabel.METHOD
-
-    def _java_method_member(
-        self, func_node: Node, func_name: str, language: str
-    ) -> str:
-        # A Java Method node is registered with its parameter signature
-        # (definition pass: class_qn.name(params)), so the caller endpoint of a
-        # CALLS edge must carry the same signature to join that node. Mirrors
-        # class_ingest.ingest's method-qn build exactly.
-        if language != cs.SupportedLanguage.JAVA:
-            return func_name
-        info = java_utils.extract_method_info(func_node)
-        name = info.get(cs.KEY_NAME) or func_name
-        parameters = info.get(cs.KEY_PARAMETERS, [])
-        param_sig = f"({','.join(parameters)})" if parameters else cs.EMPTY_PARENS
-        return f"{name}{param_sig}"
 
     @staticmethod
     def _method_in_class_body(
@@ -3308,7 +3299,12 @@ class CallProcessor:
         # label the previous call node left behind (issue #1526).
         self._verdict = cs.EdgeResolution.EXACT
         if ctx.is_java and call_node.type == cs.TS_JAVA_METHOD_REFERENCE:
-            self._ingest_java_method_reference(ctx, call_node)
+            if (
+                receiver := self._java.ingest_method_reference(
+                    ctx, call_node, ctx.ensure_rel
+                )
+            ) is not None:
+                self._ingest_java_constructor_reference(ctx, call_node, receiver)
             return
         call_name = self._scan_call_name(ctx, call_node)
         if (
@@ -3612,7 +3608,7 @@ class CallProcessor:
         ):
             return scala.callee
         if ctx.is_java and call_node.type == cs.TS_METHOD_INVOCATION:
-            return self._resolve_java_callee(ctx, call_node)
+            return self._java.resolve_callee(ctx, call_node, ctx.ensure_rel)
         if ctx.is_csharp and call_node.type == cs.TS_CSHARP_INVOCATION_EXPRESSION:
             return self._csharp.resolve_callee(
                 ctx,
@@ -3732,59 +3728,6 @@ class CallProcessor:
                 path, call_name, ctx.module_qn
             )
         )
-
-    def _resolve_java_callee(
-        self, ctx: _CallScanContext, call_node: Node
-    ) -> tuple[str, str] | None:
-        # The javac frontend (issue #1181): a HIT is the declaration the
-        # compiler bound this call to, which the ARGUMENT TYPES select
-        # and name-and-arity matching cannot; the external sentinel is
-        # its proof that the call leaves the repo, so no first-party
-        # edge is fabricated. Any miss (incl. the frontend being off, so
-        # both fact maps are empty) falls back to today's Java resolver.
-        callee_info = self._resolver.resolve_java_call_site(call_node, ctx.module_qn)
-        if callee_info == java_ti.JAVA_EXTERNAL_TARGET:
-            callee_info = None
-        elif callee_info is None:
-            callee_info = self._resolver.resolve_java_method_call(
-                call_node, ctx.module_qn, ctx.local_var_types, ctx.caller_qn
-            )
-            if callee_info is not None:
-                self._link_java_overload_ties(ctx, call_node, callee_info[1])
-        return callee_info
-
-    def _link_java_overload_ties(
-        self, ctx: _CallScanContext, call_node: Node, callee_qn: str
-    ) -> None:
-        # Same-arity overloads the argument types cannot tell apart were
-        # bound by declaration order, which is no evidence for any one of
-        # them: link each, labelled `overload`, as a constructor family is
-        # (issue #2548). The resolver's verdict carries the label onto the
-        # primary edge, which the caller emits after the argument passes;
-        # the edge label proper is scoped to the siblings, so the argument
-        # references emitted in between keep their own.
-        java = self._resolver.type_inference.java_type_inference
-        ties = java.method_resolver.java_overload_ties(
-            call_node, callee_qn, ctx.local_var_types, ctx.module_qn
-        )
-        if not ties:
-            return
-        self._verdict = cs.EdgeResolution.OVERLOAD
-        prev_resolution = self._resolution
-        self._resolution = cs.EdgeResolution.OVERLOAD
-        registry = self._resolver.function_registry
-        try:
-            for target_type, target_qn in ties:
-                if target_qn == callee_qn:
-                    continue
-                for variant in registry.variants(target_qn):
-                    ctx.ensure_rel(
-                        ctx.caller_spec,
-                        cs.RelationshipType.CALLS,
-                        (target_type, cs.KEY_QUALIFIED_NAME, variant),
-                    )
-        finally:
-            self._resolution = prev_resolution
 
     def _fallback_callee(
         self,
@@ -4292,46 +4235,6 @@ class CallProcessor:
                 ctx.caller_spec,
                 ctor_rel,
                 (ctor_type, cs.KEY_QUALIFIED_NAME, variant),
-            )
-
-    def _ingest_java_method_reference(
-        self, ctx: _CallScanContext, ref_node: Node
-    ) -> None:
-        # `Type::m`, `expr::m`, `this::m`, `super::m` hand a method over as a
-        # value and nothing runs at this site, so the edge is REFERENCES: what
-        # a C# method group and a callback argument get in every other
-        # language, which keeps the method reachable without asserting a
-        # call the graph cannot see (issue #2546).
-        if (parts := java_utils.method_reference_parts(ref_node)) is None:
-            return
-        if parts.method_name is None:
-            self._ingest_java_constructor_reference(ctx, ref_node, parts.receiver)
-            return
-        java = self._resolver.type_inference.java_type_inference
-        targets = java.method_resolver.java_method_reference_targets(
-            parts.receiver, parts.method_name, ctx.local_var_types, ctx.module_qn
-        )
-        registry = self._resolver.function_registry
-        edges = [
-            (label, variant)
-            for target_type, target_qn in targets
-            for variant in registry.variants(target_qn)
-            if (label := registry.get(variant) or target_type)
-            in (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD)
-        ]
-        if not edges:
-            # Java sees same-package definitions without an import, so the
-            # name is the only link to a file that may define it later.
-            self._note_unresolved(ctx.module_qn, parts.method_name)
-            return
-        self._resolution = (
-            cs.EdgeResolution.OVERLOAD if len(edges) > 1 else self._verdict
-        )
-        for label, target_qn in edges:
-            ctx.ensure_rel(
-                ctx.caller_spec,
-                cs.RelationshipType.REFERENCES,
-                (label, cs.KEY_QUALIFIED_NAME, target_qn),
             )
 
     def _ingest_java_constructor_reference(
