@@ -63,10 +63,9 @@ class MyClass {
         assert class_body is not None
         method_node = class_body.children[1]
 
-        from codebase_rag.parsers.js_ts.ingest import JsTsIngestMixin
+        from codebase_rag.parsers.js_ts.ingest import JsTsIngest
 
-        mixin = JsTsIngestMixin()
-        result = mixin._is_static_method_in_class(method_node)
+        result = JsTsIngest._is_static_method_in_class(method_node)
         assert result is True
 
     def test_instance_method_returns_false(self, js_parser: Parser) -> None:
@@ -82,10 +81,9 @@ class MyClass {
         assert class_body is not None
         method_node = class_body.children[1]
 
-        from codebase_rag.parsers.js_ts.ingest import JsTsIngestMixin
+        from codebase_rag.parsers.js_ts.ingest import JsTsIngest
 
-        mixin = JsTsIngestMixin()
-        result = mixin._is_static_method_in_class(method_node)
+        result = JsTsIngest._is_static_method_in_class(method_node)
         assert result is False
 
     def test_non_method_returns_false(self, js_parser: Parser) -> None:
@@ -93,10 +91,9 @@ class MyClass {
         tree = js_parser.parse(code)
         func_node = tree.root_node.children[0]
 
-        from codebase_rag.parsers.js_ts.ingest import JsTsIngestMixin
+        from codebase_rag.parsers.js_ts.ingest import JsTsIngest
 
-        mixin = JsTsIngestMixin()
-        result = mixin._is_static_method_in_class(func_node)
+        result = JsTsIngest._is_static_method_in_class(func_node)
         assert result is False
 
 
@@ -115,10 +112,9 @@ class MyClass {
         assert class_body is not None
         method_node = class_body.children[1]
 
-        from codebase_rag.parsers.js_ts.ingest import JsTsIngestMixin
+        from codebase_rag.parsers.js_ts.ingest import JsTsIngest
 
-        mixin = JsTsIngestMixin()
-        result = mixin._is_method_in_class(method_node)
+        result = JsTsIngest._is_method_in_class(method_node)
         assert result is True
 
     def test_standalone_function_returns_false(self, js_parser: Parser) -> None:
@@ -126,10 +122,9 @@ class MyClass {
         tree = js_parser.parse(code)
         func_node = tree.root_node.children[0]
 
-        from codebase_rag.parsers.js_ts.ingest import JsTsIngestMixin
+        from codebase_rag.parsers.js_ts.ingest import JsTsIngest
 
-        mixin = JsTsIngestMixin()
-        result = mixin._is_method_in_class(func_node)
+        result = JsTsIngest._is_method_in_class(func_node)
         assert result is False
 
     def test_object_method_returns_false(self, js_parser: Parser) -> None:
@@ -147,10 +142,9 @@ const obj = {
         assert obj is not None
         method_node = obj.children[1]
 
-        from codebase_rag.parsers.js_ts.ingest import JsTsIngestMixin
+        from codebase_rag.parsers.js_ts.ingest import JsTsIngest
 
-        mixin = JsTsIngestMixin()
-        result = mixin._is_method_in_class(method_node)
+        result = JsTsIngest._is_method_in_class(method_node)
         assert result is False
 
 
@@ -227,10 +221,9 @@ const myObject = {
         pair = obj.children[1]
         method_name_node = pair.children[0]
 
-        from codebase_rag.parsers.js_ts.ingest import JsTsIngestMixin
+        from codebase_rag.parsers.js_ts.ingest import JsTsIngest
 
-        mixin = JsTsIngestMixin()
-        result = mixin._find_object_name_for_method(method_name_node)
+        result = JsTsIngest._find_object_name_for_method(method_name_node)
         assert result == "myObject"
 
     def test_returns_none_for_anonymous_object(self, js_parser: Parser) -> None:
@@ -250,10 +243,9 @@ doSomething({
         pair = obj.children[1]
         method_name_node = pair.children[0]
 
-        from codebase_rag.parsers.js_ts.ingest import JsTsIngestMixin
+        from codebase_rag.parsers.js_ts.ingest import JsTsIngest
 
-        mixin = JsTsIngestMixin()
-        result = mixin._find_object_name_for_method(method_name_node)
+        result = JsTsIngest._find_object_name_for_method(method_name_node)
         assert result is None
 
 

@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from abc import abstractmethod
 from collections.abc import Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from loguru import logger
 from tree_sitter import QueryCursor
@@ -19,11 +18,13 @@ from ...node_text import (
 from ...types_defs import (
     ASTNode,
     FunctionRegistryTrieProtocol,
+    FunctionSpanKey,
     PropertyDict,
     SimpleNameLookup,
 )
 from ..definition_facts import DefinitionFacts
 from ..method_ingest import module_function_props
+from .module_system import JsTsModuleSystemHost
 from .utils import (
     arrow_binding_name,
     get_js_ts_language_obj,
@@ -36,41 +37,14 @@ if TYPE_CHECKING:
     from ...language_spec import LanguageSpec
     from ...services import IngestorProtocol
     from ...types_defs import LanguageQueries
-    from ..import_processor import ImportProcessor
 
 
-class JsTsIngestMixin:
-    __slots__ = ()
-    ingestor: IngestorProtocol
-    repo_path: Path
-    project_name: str
-    function_registry: FunctionRegistryTrieProtocol
-    simple_name_lookup: SimpleNameLookup
-    module_qn_to_file_path: dict[str, Path]
-    import_processor: ImportProcessor
-    facts: DefinitionFacts
-    class_owner_module: dict[str, str]
+class JsTsIngestHost(JsTsModuleSystemHost, Protocol):
+    """What the JS/TS function passes call back on the definition pass, past
+    the docstring and span claims the module-system pass reads too: the
+    lexical parent of a function, and the DEFINES edge that waits for its
+    parent to register."""
 
-    @abstractmethod
-    def _get_docstring(
-        self, node: ASTNode, language: cs.SupportedLanguage
-    ) -> str | None: ...
-
-    # Span-claim protocol (implemented by FunctionIngestMixin): one source
-    # function must mint exactly one node PER NAME, so every JS/TS registration
-    # path checks the claim before registering and claims after (deliberate
-    # different-name twins still register).
-    @abstractmethod
-    def _span_claimed_for_qn(
-        self, module_qn: str, func_node: ASTNode, candidate_qn: str
-    ) -> bool: ...
-
-    @abstractmethod
-    def _claim_function_span(
-        self, module_qn: str, func_node: ASTNode, label: str, qualified_name: str
-    ) -> None: ...
-
-    @abstractmethod
     def _emit_or_defer_defines(
         self,
         parent_label: str,
@@ -80,20 +54,9 @@ class JsTsIngestMixin:
         module_qn: str,
         fallback_label: str | None = None,
         fallback_qn: str | None = None,
-        parent_span: tuple[str, int, int] | None = None,
+        parent_span: FunctionSpanKey | None = None,
     ) -> None: ...
 
-    @abstractmethod
-    def _build_nested_qualified_name(
-        self,
-        func_node: ASTNode,
-        module_qn: str,
-        func_name: str,
-        lang_config: LanguageSpec,
-        skip_classes: bool = False,
-    ) -> str | None: ...
-
-    @abstractmethod
     def _determine_function_parent(
         self,
         func_node: ASTNode,
@@ -101,9 +64,47 @@ class JsTsIngestMixin:
         module_qn: str,
         lang_config: LanguageSpec,
         language: cs.SupportedLanguage | None = None,
-    ) -> tuple[str, str, tuple[str, int, int] | None]: ...
+    ) -> tuple[str, str, FunctionSpanKey | None]: ...
 
-    def _ingest_prototype_inheritance(
+
+class JsTsIngest:
+    """The JS/TS functions the generic function pass cannot name: prototype
+    inheritance and prototype methods, object-literal methods, and arrow
+    functions and function expressions bound by assignment."""
+
+    __slots__ = (
+        "_host",
+        "ingestor",
+        "repo_path",
+        "function_registry",
+        "simple_name_lookup",
+        "module_qn_to_file_path",
+        "facts",
+        "class_owner_module",
+    )
+
+    def __init__(
+        self,
+        *,
+        host: JsTsIngestHost,
+        ingestor: IngestorProtocol,
+        repo_path: Path,
+        function_registry: FunctionRegistryTrieProtocol,
+        simple_name_lookup: SimpleNameLookup,
+        module_qn_to_file_path: dict[str, Path],
+        facts: DefinitionFacts,
+        class_owner_module: dict[str, str],
+    ) -> None:
+        self._host = host
+        self.ingestor = ingestor
+        self.repo_path = repo_path
+        self.function_registry = function_registry
+        self.simple_name_lookup = simple_name_lookup
+        self.module_qn_to_file_path = module_qn_to_file_path
+        self.facts = facts
+        self.class_owner_module = class_owner_module
+
+    def ingest_prototype_inheritance(
         self,
         root_node: ASTNode,
         module_qn: str,
@@ -215,7 +216,7 @@ class JsTsIngestMixin:
         # nested, None at top level where module parenting is already correct.
         if lang_config is None:
             return None, None
-        parent_label, parent_qn, _ = self._determine_function_parent(
+        parent_label, parent_qn, _ = self._host._determine_function_parent(
             func_node, child_qn, module_qn, lang_config, language
         )
         if str(parent_label) == cs.NodeLabel.MODULE.value:
@@ -247,7 +248,7 @@ class JsTsIngestMixin:
             if constructor_name and method_name:
                 constructor_qn = f"{module_qn}{cs.SEPARATOR_DOT}{constructor_name}"
                 method_qn = f"{constructor_qn}{cs.SEPARATOR_DOT}{method_name}"
-                if self._span_claimed_for_qn(module_qn, func_node, method_qn):
+                if self._host._span_claimed_for_qn(module_qn, func_node, method_qn):
                     continue
                 method_qn = self.function_registry.register_unique_qn(
                     method_qn, func_node.start_point[0] + 1, func_node.start_point[1]
@@ -257,7 +258,7 @@ class JsTsIngestMixin:
                     method_qn,
                     method_name,
                     func_node,
-                    self._get_docstring(func_node, language),
+                    self._host._get_docstring(func_node, language),
                     self.module_qn_to_file_path.get(module_qn),
                     self.repo_path,
                 )
@@ -270,7 +271,7 @@ class JsTsIngestMixin:
 
                 self.function_registry[method_qn] = cs.NodeLabel.FUNCTION
                 self.simple_name_lookup[method_name].add(method_qn)
-                self._claim_function_span(
+                self._host._claim_function_span(
                     module_qn, func_node, cs.NodeLabel.FUNCTION.value, method_qn
                 )
 
@@ -282,7 +283,7 @@ class JsTsIngestMixin:
                 fallback_label, fallback_qn = self._lexical_defines_fallback(
                     func_node, method_qn, module_qn, lang_config, language
                 )
-                self._emit_or_defer_defines(
+                self._host._emit_or_defer_defines(
                     cs.NodeLabel.FUNCTION,
                     constructor_qn,
                     cs.NodeLabel.FUNCTION,
@@ -298,7 +299,7 @@ class JsTsIngestMixin:
                     method_qn=method_qn,
                 )
 
-    def _ingest_object_literal_methods(
+    def ingest_object_literal_methods(
         self,
         root_node: ASTNode,
         module_qn: str,
@@ -419,7 +420,7 @@ class JsTsIngestMixin:
         lang_config: LanguageSpec | None,
         language: cs.SupportedLanguage,
     ) -> None:
-        if self._span_claimed_for_qn(module_qn, method_func_node, method_qn):
+        if self._host._span_claimed_for_qn(module_qn, method_func_node, method_qn):
             return
         method_qn = self.function_registry.register_unique_qn(
             method_qn,
@@ -430,7 +431,7 @@ class JsTsIngestMixin:
             method_qn,
             method_name,
             method_func_node,
-            self._get_docstring(method_func_node, language),
+            self._host._get_docstring(method_func_node, language),
             self.module_qn_to_file_path.get(module_qn),
             self.repo_path,
         )
@@ -442,7 +443,7 @@ class JsTsIngestMixin:
 
         self.function_registry[method_qn] = cs.NodeLabel.FUNCTION
         self.simple_name_lookup[method_name].add(method_qn)
-        self._claim_function_span(
+        self._host._claim_function_span(
             module_qn, method_func_node, cs.NodeLabel.FUNCTION.value, method_qn
         )
 
@@ -453,7 +454,7 @@ class JsTsIngestMixin:
             method_func_node, method_qn, module_qn, lang_config, language
         )
         if fallback_label is not None and fallback_qn is not None:
-            self._emit_or_defer_defines(
+            self._host._emit_or_defer_defines(
                 fallback_label,
                 fallback_qn,
                 cs.NodeLabel.FUNCTION,
@@ -467,7 +468,7 @@ class JsTsIngestMixin:
                 (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, method_qn),
             )
 
-    def _ingest_assignment_arrow_functions(
+    def ingest_assignment_arrow_functions(
         self,
         root_node: ASTNode,
         module_qn: str,
@@ -663,7 +664,7 @@ class JsTsIngestMixin:
         language: cs.SupportedLanguage,
         object_member: bool = False,
     ) -> None:
-        if self._span_claimed_for_qn(module_qn, function_node, function_qn):
+        if self._host._span_claimed_for_qn(module_qn, function_node, function_qn):
             return
         # This pass runs after the class pass, so a same-named TS `type` or
         # `interface` is already registered; the function still takes the
@@ -678,7 +679,7 @@ class JsTsIngestMixin:
             function_qn,
             function_name,
             function_node,
-            self._get_docstring(function_node, language),
+            self._host._get_docstring(function_node, language),
             self.module_qn_to_file_path.get(module_qn),
             self.repo_path,
         )
@@ -695,7 +696,7 @@ class JsTsIngestMixin:
             language,
         )
         self.simple_name_lookup[function_name].add(function_qn)
-        self._claim_function_span(
+        self._host._claim_function_span(
             module_qn, function_node, cs.NodeLabel.FUNCTION.value, function_qn
         )
         # An assignment function nested inside another function takes its lexical
@@ -705,7 +706,7 @@ class JsTsIngestMixin:
             function_node, function_qn, module_qn, lang_config, language
         )
         if fallback_label is not None and fallback_qn is not None:
-            self._emit_or_defer_defines(
+            self._host._emit_or_defer_defines(
                 fallback_label,
                 fallback_qn,
                 cs.NodeLabel.FUNCTION,
@@ -729,7 +730,8 @@ class JsTsIngestMixin:
         props[cs.KEY_IS_OBJECT_MEMBER] = True
         self.function_registry.mark_object_member(qualified_name)
 
-    def _is_static_method_in_class(self, method_node: ASTNode) -> bool:
+    @staticmethod
+    def _is_static_method_in_class(method_node: ASTNode) -> bool:
         if method_node.type == cs.TS_METHOD_DEFINITION:
             parent = method_node.parent
             if parent and parent.type == cs.TS_CLASS_BODY:
@@ -738,7 +740,8 @@ class JsTsIngestMixin:
                         return True
         return False
 
-    def _is_method_in_class(self, method_node: ASTNode) -> bool:
+    @staticmethod
+    def _is_method_in_class(method_node: ASTNode) -> bool:
         current = method_node.parent
         while current:
             if current.type == cs.TS_CLASS_BODY:
@@ -746,7 +749,8 @@ class JsTsIngestMixin:
             current = current.parent
         return False
 
-    def _find_object_name_for_method(self, method_name_node: ASTNode) -> str | None:
+    @staticmethod
+    def _find_object_name_for_method(method_name_node: ASTNode) -> str | None:
         current = method_name_node.parent
         while current:
             if current.type == cs.TS_VARIABLE_DECLARATOR:

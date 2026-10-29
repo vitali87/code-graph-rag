@@ -46,7 +46,7 @@ from .go.interfaces import GoInterfaceDecl, GoMethodSpec
 from .go.link_state import GoLinkState
 from .interface_fingerprint import interface_fingerprint
 from .java.generated import generator_hint
-from .js_ts.ingest import JsTsIngestMixin
+from .js_ts.ingest import JsTsIngest
 from .js_ts.module_system import JsTsModuleSystem
 from .js_ts.overloads import folded_overload_signatures, implementation_signatures
 from .module_docstring import extract_module_docstring
@@ -83,7 +83,6 @@ def _signature_docstring(node: ASTNode, language: cs.SupportedLanguage) -> str |
 class DefinitionProcessor(
     FunctionIngestMixin,
     ClassIngestMixin,
-    JsTsIngestMixin,
 ):
     def __init__(
         self,
@@ -291,6 +290,16 @@ class DefinitionProcessor(
             module_qn_to_file_path=module_qn_to_file_path,
             import_processor=import_processor,
             facts=self.facts,
+        )
+        self.js_ts_ingest = JsTsIngest(
+            host=self,
+            ingestor=ingestor,
+            repo_path=repo_path,
+            function_registry=function_registry,
+            simple_name_lookup=simple_name_lookup,
+            module_qn_to_file_path=module_qn_to_file_path,
+            facts=self.facts,
+            class_owner_module=self.class_owner_module,
         )
 
     def begin_run(self) -> None:
@@ -872,12 +881,12 @@ class DefinitionProcessor(
         language: cs.SupportedLanguage,
         queries: Mapping[cs.SupportedLanguage, LanguageQueries],
     ) -> None:
-        module_system = self.js_ts_module_system
-        self._ingest_object_literal_methods(root_node, module_qn, language, queries)
+        js_ts, module_system = self.js_ts_ingest, self.js_ts_module_system
+        js_ts.ingest_object_literal_methods(root_node, module_qn, language, queries)
         module_system.ingest_commonjs_exports(root_node, module_qn, language, queries)
         module_system.ingest_es6_exports(root_node, module_qn, language, queries)
-        self._ingest_assignment_arrow_functions(root_node, module_qn, language, queries)
-        self._ingest_prototype_inheritance(root_node, module_qn, language, queries)
+        js_ts.ingest_assignment_arrow_functions(root_node, module_qn, language, queries)
+        js_ts.ingest_prototype_inheritance(root_node, module_qn, language, queries)
         # Named passes above have claimed their function nodes;
         # only genuinely anonymous spans (callbacks, IIFEs) still
         # need their held-back registration.
