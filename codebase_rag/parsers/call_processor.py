@@ -66,6 +66,7 @@ from .lua import utils as lua_utils
 from .php import class_names as php_class_names
 from .php import utils as php_utils
 from .py.class_aliases import scan_class_body_aliases
+from .py.flow_bindings import Binding, BindingKind, FlowBindings, call_base
 from .py.receiver_rebinding import ReceiverRebinding, receiver_rebinding
 from .rpc_exposure import GoRpcExposureProcessor
 from .rs import utils as rs_utils
@@ -220,6 +221,52 @@ class _CallScanContext:
     cpp_local_aliases: dict[str, list[tuple[str, int, int]]] | None = None
     php_scope_classes: php_class_names.ScopeCache | None = None
     cpp_indirection: dict[str, int] | None = None
+    py_flow: FlowBindings | None = None
+
+
+class _FlowTargets(NamedTuple):
+    # What the bindings reaching a Python call decide: the callables a bare
+    # call through a rebound local goes to, or one type view per type a
+    # rebound receiver can hold there. Either is the whole answer.
+    callees: tuple[tuple[str, str], ...]
+    views: tuple[dict[str, str], ...]
+
+
+# A binding a bare call goes through names something callable.
+_FLOW_CALLABLE_LABELS = frozenset({NodeType.FUNCTION, NodeType.METHOD, NodeType.CLASS})
+# The receiver name a with statement's manager is resolved through. Not a
+# Python identifier, so it can never collide with a real local.
+_WITH_MANAGER_PROBE = "with-manager"
+
+
+def _python_with_managers(caller: Node) -> list[tuple[Node, bool]]:
+    """Each context manager expression a body enters, with whether its with
+    statement is `async`; nested defs and classes are their own callers."""
+    found: list[tuple[Node, bool]] = []
+    stack = list(caller.children)
+    while stack:
+        node = stack.pop()
+        if node.type in (
+            cs.TS_PY_FUNCTION_DEFINITION,
+            cs.TS_PY_CLASS_DEFINITION,
+            cs.TS_PY_LAMBDA,
+        ):
+            continue
+        if node.type == cs.TS_PY_WITH_STATEMENT:
+            is_async = any(c.type == cs.TS_PY_ASYNC for c in node.children)
+            items = [n for n in node.named_children if n.type != cs.TS_PY_BLOCK]
+            while items:
+                item = items.pop()
+                if item.type != cs.TS_PY_WITH_ITEM:
+                    items.extend(item.named_children)
+                    continue
+                value = item.child_by_field_name(cs.FIELD_VALUE)
+                if value is not None and value.type == cs.TS_PY_AS_PATTERN:
+                    value = value.named_children[0] if value.named_children else None
+                if value is not None:
+                    found.append((value, is_async))
+        stack.extend(node.children)
+    return found
 
 
 _TYPED_LANGUAGES = frozenset(
@@ -5139,10 +5186,57 @@ class CallProcessor:
             caller_params,
         )
         self._ingest_call_nodes(ctx, call_nodes, cpp_spans)
+        if ctx.is_python:
+            self._ingest_python_with_protocol(ctx)
         # Edges the later passes emit (decorators, property reads, operator
         # dispatch) are exact bindings; they must not carry the verdict the
         # last call node of this loop left behind.
         self._resolution = cs.EdgeResolution.EXACT
+
+    def _ingest_python_with_protocol(self, ctx: _CallScanContext) -> None:
+        """`with m:` calls `type(m).__enter__` on entry and `__exit__` on the
+        way out (`__aenter__` / `__aexit__` under `async with`).
+
+        No call node spells either, so a manager's dunders had no caller and
+        read as dead code, and the body that enters it showed no edge to
+        them. JARVIS models the protocol; the dunders resolve through the
+        manager's class and its bases like any method call on it.
+        """
+        if b"with" not in (ctx.caller_node.text or b""):
+            # Most bodies enter no manager; the bytes test spares them the walk.
+            return
+        engine = self._resolver.type_inference.python_type_inference
+        local_types = ctx.local_var_types or {}
+        for manager, is_async in _python_with_managers(ctx.caller_node):
+            if manager.type == cs.TS_PY_IDENTIFIER:
+                manager_type = local_types.get(safe_decode_text(manager) or "")
+            else:
+                manager_type = engine.expression_type(
+                    manager, ctx.module_qn, local_types
+                )
+            if not manager_type:
+                continue
+            view = {**local_types, _WITH_MANAGER_PROBE: manager_type}
+            dunders = (
+                (cs.PY_DUNDER_AENTER, cs.PY_DUNDER_AEXIT)
+                if is_async
+                else (cs.PY_DUNDER_ENTER, cs.PY_DUNDER_EXIT)
+            )
+            for dunder in dunders:
+                call_name = f"{_WITH_MANAGER_PROBE}{cs.SEPARATOR_DOT}{dunder}"
+                callee = ctx.resolve_func(
+                    call_name,
+                    ctx.module_qn,
+                    view,
+                    ctx.class_context,
+                    ctx.caller_qn,
+                    ctx.language,
+                    call_point=manager.start_byte,
+                )
+                # Only a dunder the project defines: one inherited from the
+                # stdlib (contextlib's) has no node to reach.
+                if callee is not None and callee[1] in self._resolver.function_registry:
+                    self._ingest_resolved_call(ctx, manager, call_name, callee)
 
     def _caller_local_types(
         self,
@@ -5989,6 +6083,25 @@ class CallProcessor:
             ):
                 self._ingest_resolved_call(ctx, call_node, call_name, callee_info)
             return
+        if ctx.is_python and (
+            flow := self._python_flow_targets(ctx, call_node, call_name, call_var_types)
+        ):
+            # The bindings that reach this call decide it, not the one the
+            # flat map settled on for the whole body.
+            for callee_info in flow.callees:
+                self._ingest_resolved_call(ctx, call_node, call_name, callee_info)
+            for var_types in flow.views:
+                self._ingest_call_with_types(ctx, call_node, call_name, var_types)
+            return
+        self._ingest_call_with_types(ctx, call_node, call_name, call_var_types)
+
+    def _ingest_call_with_types(
+        self,
+        ctx: _CallScanContext,
+        call_node: Node,
+        call_name: str,
+        call_var_types: dict[str, str] | None,
+    ) -> None:
         callee_info = self._resolve_call_callee(
             ctx, call_node, call_name, call_var_types
         )
@@ -5998,7 +6111,7 @@ class CallProcessor:
             # recv.field(...) where field is a callable struct field:
             # resolve to the functions bound to it at construction sites.
             self._ingest_callable_field_calls(
-                call_name, ctx.caller_spec, ctx.local_var_types, ctx.ensure_rel
+                call_name, ctx.caller_spec, call_var_types, ctx.ensure_rel
             )
 
         if ctx.is_python and call_name.rsplit(cs.SEPARATOR_DOT, 1)[-1] in (
@@ -6021,6 +6134,112 @@ class CallProcessor:
             self._ingest_unresolved_call(ctx, call_node, call_name)
             return
         self._ingest_resolved_call(ctx, call_node, call_name, callee_info)
+
+    def _python_flow_targets(
+        self,
+        ctx: _CallScanContext,
+        call_node: Node,
+        call_name: str,
+        call_var_types: dict[str, str] | None,
+    ) -> _FlowTargets | None:
+        """What the bindings reaching a call through a rebound local decide.
+
+        A bare `a()` goes to each callable a reaching binding names; a
+        receiver call `c.m()` is resolved once per type a reaching binding
+        gives `c`. Every reaching binding must be one this can follow (an
+        assignment or a def in this body): when one is a parameter, an
+        import, a loop target or anything else untyped here, the call is
+        left to the flat map exactly as before, so a body that never
+        rebinds a name resolves as it always did.
+        """
+        base, dot, _rest = call_name.partition(cs.SEPARATOR_DOT)
+        # Gates that need no analysis, so a body is walked only when one of
+        # its calls goes through a local that can be decided: a receiver the
+        # flat map typed at all (every binding of an untyped one is untyped
+        # too), or a bare name the function binds itself.
+        if dot:
+            if not call_var_types or base not in call_var_types:
+                return None
+        elif ctx.caller_node.type != cs.TS_PY_MODULE and (
+            base not in self._resolver.python_local_names.get(ctx.caller_qn, ())
+        ):
+            return None
+        if ctx.py_flow is None:
+            ctx.py_flow = FlowBindings.of(ctx.caller_node)
+        bindings = ctx.py_flow.at(call_node)
+        if not bindings or base != call_base(call_node):
+            return None
+        if not dot:
+            callees = self._flow_callees(ctx, bindings, set())
+            return _FlowTargets(tuple(callees), ()) if callees else None
+        if base not in ctx.py_flow.rebound:
+            # One binding: the flat map's passes type it from annotations and
+            # with-targets too, which a lone value expression cannot.
+            return None
+        types: list[str] = []
+        flat = {k: v for k, v in (call_var_types or {}).items() if k != base}
+        engine = self._resolver.type_inference.python_type_inference
+        for binding in bindings:
+            if binding.kind != BindingKind.ASSIGN or binding.value is None:
+                return None
+            bound = engine.expression_type(binding.value, ctx.module_qn, flat)
+            if not bound:
+                return None
+            if bound not in types:
+                types.append(bound)
+        if call_var_types and types == [call_var_types.get(base)]:
+            return None
+        return _FlowTargets((), tuple({**flat, base: t} for t in types))
+
+    def _flow_callees(
+        self, ctx: _CallScanContext, bindings: frozenset[Binding], seen: set[int]
+    ) -> list[tuple[str, str]] | None:
+        callees: list[tuple[str, str]] = []
+        for binding in sorted(bindings, key=lambda b: b.site):
+            if binding.site in seen:
+                continue
+            seen.add(binding.site)
+            found = self._flow_binding_callees(ctx, binding, seen)
+            if found is None:
+                return None
+            callees += [c for c in found if c not in callees]
+        return callees
+
+    def _flow_binding_callees(
+        self, ctx: _CallScanContext, binding: Binding, seen: set[int]
+    ) -> list[tuple[str, str]] | None:
+        registry = self._resolver.function_registry
+        if binding.kind == BindingKind.DEFINITION and binding.definition is not None:
+            name = safe_decode_text(
+                binding.definition.child_by_field_name(cs.FIELD_NAME)
+            )
+            qn = f"{ctx.caller_qn}{cs.SEPARATOR_DOT}{name}"
+            return [(registry[qn], qn)] if name and qn in registry else None
+        value = binding.value
+        if binding.kind != BindingKind.ASSIGN or value is None:
+            return None
+        if value.type == cs.TS_PY_IDENTIFIER and ctx.py_flow is not None:
+            if (upstream := ctx.py_flow.name_at(value)) is not None:
+                if any(b.kind == BindingKind.ENTRY for b in upstream):
+                    return None
+                return self._flow_callees(ctx, upstream, seen)
+        if value.type not in (cs.TS_PY_IDENTIFIER, cs.TS_PY_ATTRIBUTE):
+            return None
+        text = safe_decode_text(value)
+        if not text:
+            return None
+        callee = ctx.resolve_func(
+            text,
+            ctx.module_qn,
+            None,
+            ctx.class_context,
+            ctx.caller_qn,
+            ctx.language,
+            call_point=value.start_byte,
+        )
+        if callee is None or callee[0] not in _FLOW_CALLABLE_LABELS:
+            return None
+        return [callee]
 
     def _emit_cpp_template_dispatch(
         self,

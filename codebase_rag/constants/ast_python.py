@@ -49,6 +49,9 @@ TS_PY_ASYNC = "async"
 # target is bound to: `with` calls `__enter__`, `async with` awaits `__aenter__`.
 PY_DUNDER_ENTER = "__enter__"
 PY_DUNDER_AENTER = "__aenter__"
+# ...and what it calls when the block is left, however it is left.
+PY_DUNDER_EXIT = "__exit__"
+PY_DUNDER_AEXIT = "__aexit__"
 # The `if TYPE_CHECKING:` guard (bare or `typing.`-qualified): its body is
 # read by type checkers only and binds nothing at runtime.
 PY_TYPE_CHECKING = "TYPE_CHECKING"
