@@ -574,42 +574,35 @@ def main(
 typer.run(main)
 ```
 
-#### Click for Nested Command Groups
+#### Typer Sub-Apps for Nested Command Groups
 
-Use `click` with `@click.group()` for nested subcommand groups that integrate with a typer main app:
+Build a nested subcommand group as its own `typer.Typer` and mount it on the main app with `add_typer()`:
 
-- Typer's `add_typer()` requires more boilerplate for this pattern
-- Bridge typer → click via `ctx.args` and `standalone_mode=False`
-- Use `click.echo()`/`click.secho()` for user-facing CLI output (not logging)
+- Do not build one with the `click` package: typer vendors its own click, so a group of the real one runs beside it, and its usage errors and aborts escape typer's handling as tracebacks
+- Share an option between commands as an `Annotated` type rather than a decorator
+- Use `typer.echo()`/`typer.secho()` for user-facing CLI output (not logging)
 - Add `loguru` for actual error logging in exception handlers
+- Give a new top-level command or sub-app a `CLICommandName` member: their order is the order `cgr --help` lists them in
 
 ```python
-# subcommands.py - click subcommand group
-@click.group(help="Manage resources")
-def cli() -> None:
-    pass
+# subcommands.py - typer sub-app
+cli = typer.Typer(help="Manage resources", no_args_is_help=True)
 
 
-@cli.command(help="Add a new resource.")
+@cli.command("add", help="Add a new resource.")
 def add(name: str) -> None:
     try:
         do_add(name)
-        click.echo(f"Added {name}")
+        typer.echo(f"Added {name}")
     except Exception as e:
         logger.error(f"Failed to add: {e}")  # loguru for logging
-        click.secho(f"Error: {e}", fg="red")  # click for user output
+        typer.secho(f"Error: {e}", fg="red")  # typer for user output
 
 
-# main.py - typer main app bridges to click
+# main.py - mounted on the typer main app
 from .subcommands import cli as subcommand_cli
 
-
-@app.command(
-    name="resource",
-    context_settings={"allow_extra_args": True, "allow_interspersed_args": False},
-)
-def resource_command(ctx: typer.Context) -> None:
-    subcommand_cli(ctx.args, standalone_mode=False)
+app.add_typer(subcommand_cli, name="resource", rich_help_panel="Manage cgr")
 ```
 
 #### No Lambdas as Dict Values
