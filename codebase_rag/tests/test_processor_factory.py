@@ -519,6 +519,22 @@ class TestTheUnignorePolicyReachesEveryProcessor:
             "gen": f"{factory.project_name}.target.generated-sources.annotations.lib"
         }
 
+    def test_the_julia_importer_filters_candidates_with_the_updated_policy(
+        self, factory: ProcessorFactory
+    ) -> None:
+        """The Julia importer filters import candidates with the policy it
+        reads through the processor that built it, so a rescued tree's files
+        can win import resolution once the update lands (issue #1088)."""
+        importer = factory.import_processor.julia
+        rel_file = "target/generated-sources/annotations/Gen.jl"
+        assert importer._julia_candidate_excluded(rel_file)
+
+        factory.propagate_unignore_paths(
+            frozenset({"target/generated-sources/annotations/**"})
+        )
+
+        assert not importer._julia_candidate_excluded(rel_file)
+
     def test_a_processor_built_after_the_update_sees_the_new_policy(
         self, factory: ProcessorFactory
     ) -> None:

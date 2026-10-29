@@ -5055,7 +5055,7 @@ class GraphUpdater:
     def _process_files(self, force: bool = False) -> None:
         self.factory.import_processor.rust.reset_rust_path_caches()
         self.factory.import_processor.java.reset_java_path_caches()
-        self.factory.import_processor.reset_julia_path_caches()
+        self.factory.import_processor.julia.reset_julia_path_caches()
         self.factory.import_processor.dart.reset_dart_path_caches()
         cache_path = self.prepared_state_dir / cs.HASH_CACHE_FILENAME
         dir_mtimes_path = self.prepared_state_dir / cs.DIR_MTIMES_FILENAME
@@ -7084,7 +7084,7 @@ class GraphUpdater:
             # Julia's stem/declared-module indices are the same kind of
             # per-layout cache: any .jl change invalidates the whole set.
             if path.suffix == cs.EXT_JL:
-                import_processor.reset_julia_path_caches()
+                import_processor.julia.reset_julia_path_caches()
             # A pubspec's `name:` is what Dart `package:` imports resolve by.
             if path.name == cs.DEP_FILE_PUBSPEC:
                 import_processor.dart.reset_dart_path_caches()
@@ -7094,7 +7094,7 @@ class GraphUpdater:
             self._delete_module_entities(key)
             # A deleted .jl file invalidates the same path caches reparse does.
             if path.suffix == cs.EXT_JL:
-                import_processor.reset_julia_path_caches()
+                import_processor.julia.reset_julia_path_caches()
             if path.name == cs.DEP_FILE_PUBSPEC:
                 import_processor.dart.reset_dart_path_caches()
             if graph is not None:

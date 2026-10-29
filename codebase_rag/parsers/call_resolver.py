@@ -4027,7 +4027,7 @@ class CallResolver:
             # A Julia selected import (`using .api: alpha`) binds the local
             # name to the source MODULE; resolve the member exactly before
             # the name trie, or a same-named function soaks the edge.
-            for member in self.import_processor.julia_member_qn_candidates(
+            for member in self.import_processor.julia.julia_member_qn_candidates(
                 imported_qn, call_name
             ):
                 if member in self.function_registry:

@@ -808,6 +808,7 @@ def test_a_reparse_drops_the_dart_prefix_state(tmp_path: Path) -> None:
     from codebase_rag.parsers.java.imports import JavaImporter
     from codebase_rag.parsers.js_ts.imports import JsTsImporter
     from codebase_rag.parsers.js_ts.reexports import JsExport
+    from codebase_rag.parsers.julia.imports import JuliaImporter
     from codebase_rag.parsers.scala.imports import ScalaImporter
 
     class _Probe(ImportProcessor):  # __slots__ forbids stubbing on instances
@@ -838,7 +839,8 @@ def test_a_reparse_drops_the_dart_prefix_state(tmp_path: Path) -> None:
     processor.js_ts.js_export_bindings = {
         "m": {"Svc": JsExport("m.svc.Svc", local=False)}
     }
-    processor._julia_scope_map_keys = {"m": {"m.Inner"}}
+    processor.julia = object.__new__(JuliaImporter)
+    processor.julia._julia_scope_map_keys = {"m": {"m.Inner"}}
 
     processor._clear_module_import_state("m")
 
@@ -846,7 +848,7 @@ def test_a_reparse_drops_the_dart_prefix_state(tmp_path: Path) -> None:
     assert processor.dart.dart_prefix_shadows.get("m") is None
     assert processor.dart.dart_import_aliases.get("m") is None
     assert processor.dart.dart_exposed_libraries.get("m") is None
-    assert processor._julia_scope_map_keys.get("m") is None
+    assert processor.julia._julia_scope_map_keys.get("m") is None
     # The control: the mapping it sits beside is emptied, not dropped, so
     # this is the documented reset rather than a wholesale delete.
     assert processor.import_mapping["m"] == {}

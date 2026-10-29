@@ -331,8 +331,8 @@ def test_excluded_module_not_in_discovery(
 
     processor = updater.factory.import_processor
     indexed = [
-        *(processor._julia_file_stems or {}).values(),
-        *(processor._julia_module_index().declared.values()),
+        *(processor.julia._julia_file_stems or {}).values(),
+        *(processor.julia._julia_module_index().declared.values()),
     ]
     assert all("generated/dep.jl" not in files for files in indexed), indexed
     imports = {
