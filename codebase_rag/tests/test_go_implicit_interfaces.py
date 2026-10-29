@@ -2451,7 +2451,7 @@ def test_go_pairs_read_back_stay_out_of_the_generic_override_walk(
             "proj.Strategy.Strategy": {"proj.Upper.Upper"},
         }
     )
-    assert dp._override_walk_implementers() == {
+    assert dp.class_ingest._override_walk_implementers() == {
         "proj.Strategy.Strategy": {"proj.Upper.Upper"}
     }
 

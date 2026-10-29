@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from abc import abstractmethod
 from bisect import bisect_left, bisect_right
 from collections.abc import Collection, Mapping, Sequence
 from functools import partial
@@ -16,13 +15,11 @@ from ...config import settings
 from ...language_spec import LanguageSpec, module_directory_qn
 from ...node_text import safe_decode_text, sorted_captures
 from ...types_defs import (
-    ASTNode,
     CppDefinitionSpan,
     DeferredCppInherit,
     DeferredInherit,
     FunctionLocation,
     FunctionSpanKey,
-    PendingTypeFact,
     PropertyDict,
     RustTraitImpl,
 )
@@ -45,8 +42,8 @@ from ..go import interfaces as go_ifaces
 from ..java import utils as java_utils
 from ..js_ts import utils as js_ts_utils
 from ..js_ts.utils import mark_js_ts_module_private
-from ..method_ingest import ingest_method
-from ..parameter_nodes import PendingParameterType, csharp_call_shape
+from ..method_ingest import MethodIngestHost, ingest_method
+from ..parameter_nodes import csharp_call_shape
 from ..php import namespaces as php_namespaces
 from ..python import (
     external_stdlib_base_method_names,
@@ -345,46 +342,135 @@ class _MethodScope(NamedTuple):
     module_qn: str | None
 
 
-class ClassIngestMixin:
-    # No __slots__: this mixin lazily creates _deferred_* registries on the
-    # host instance, which requires the host to provide a __dict__.
-    ingestor: IngestorProtocol
-    repo_path: Path
-    project_name: str
-    function_registry: FunctionRegistryTrieProtocol
-    simple_name_lookup: SimpleNameLookup
-    module_qn_to_file_path: dict[str, Path]
-    flow_capture_enabled: bool
-    import_processor: ImportProcessor
-    facts: DefinitionFacts
-    class_owner_module: dict[str, str]
-    dart_annotated_overrides: dict[str, list[tuple[str, str]]]
-    java_anon_overrides: list[tuple[str, str, str, str]]
-    csharp_methods: set[str]
-    csharp_override_methods: set[str]
-    _csharp_partial_index: dict[str, list[str]]
-    csharp_type_locations: dict[tuple[str, int], str]
-    go_type_locations: dict[tuple[str, int, int], tuple[str, str]]
-    rust_impl_owner_module: dict[str, str]
-    go_interfaces: dict[str, go_ifaces.GoInterfaceDecl]
-    go_interface_ingest: GoInterfaceIngest
-    function_ingest: FunctionIngest
-    cpp_definition_spans: dict[str, list[CppDefinitionSpan]]
-    _deferred_forward_decls: list[_DeferredForwardDecl]
-    _deferred_parent_links: list[DeferredParentLink]
-    _deferred_cpp_inherits: list[DeferredCppInherit]
-    _deferred_inherits: list[DeferredInherit]
-    _rust_trait_impls: list[RustTraitImpl]
-    rust_impl_method_traits: dict[str, str]
-    rust_inherent_impl_methods: set[str]
-    cpp_module_interfaces: set[str]
-    cpp_interfaces_parsed_this_run: set[str]
-    _deferred_cpp_module_impls: list[tuple[str, str]]
-    pending_endpoints: list[tuple[cs.NodeLabel, str, list[str], str | None]]
-    pending_type_facts: list[PendingTypeFact]
-    pending_parameter_types: list[PendingParameterType]
-    pending_field_types: list[PendingFieldType]
-    folded_overloads: dict[str, frozenset[int]]
+class ClassIngest:
+    """Writes every class-like node a file's class captures yield (classes,
+    interfaces, enums, traits, impl blocks, inline modules) with their methods,
+    bases and members. What waits for every type to be registered is held
+    here and resolved by the `resolve_deferred_*` passes and the override
+    walk."""
+
+    __slots__ = (
+        "_method_host",
+        "_function_ingest",
+        "_go_interface_ingest",
+        "ingestor",
+        "repo_path",
+        "project_name",
+        "function_registry",
+        "simple_name_lookup",
+        "module_qn_to_file_path",
+        "flow_capture_enabled",
+        "import_processor",
+        "facts",
+        "class_owner_module",
+        "dart_annotated_overrides",
+        "java_anon_overrides",
+        "csharp_methods",
+        "csharp_override_methods",
+        "_csharp_partial_index",
+        "csharp_type_locations",
+        "go_type_locations",
+        "rust_impl_owner_module",
+        "go_interfaces",
+        "cpp_definition_spans",
+        "rust_impl_method_traits",
+        "rust_inherent_impl_methods",
+        "cpp_module_interfaces",
+        "cpp_interfaces_parsed_this_run",
+        "pending_field_types",
+        "folded_overloads",
+        "_deferred_parent_links",
+        "_deferred_forward_decls",
+        "_deferred_cpp_inherits",
+        "_deferred_inherits",
+        "_rust_trait_impls",
+        "_deferred_cpp_module_impls",
+    )
+
+    def __init__(
+        self,
+        *,
+        method_host: MethodIngestHost,
+        function_ingest: FunctionIngest,
+        go_interface_ingest: GoInterfaceIngest,
+        ingestor: IngestorProtocol,
+        repo_path: Path,
+        project_name: str,
+        function_registry: FunctionRegistryTrieProtocol,
+        simple_name_lookup: SimpleNameLookup,
+        module_qn_to_file_path: dict[str, Path],
+        flow_capture_enabled: bool,
+        import_processor: ImportProcessor,
+        facts: DefinitionFacts,
+        class_owner_module: dict[str, str],
+        dart_annotated_overrides: dict[str, list[tuple[str, str]]],
+        java_anon_overrides: list[tuple[str, str, str, str]],
+        csharp_methods: set[str],
+        csharp_override_methods: set[str],
+        csharp_partial_index: dict[str, list[str]],
+        csharp_type_locations: dict[tuple[str, int], str],
+        go_type_locations: dict[tuple[str, int, int], tuple[str, str]],
+        rust_impl_owner_module: dict[str, str],
+        go_interfaces: dict[str, go_ifaces.GoInterfaceDecl],
+        cpp_definition_spans: dict[str, list[CppDefinitionSpan]],
+        rust_impl_method_traits: dict[str, str],
+        rust_inherent_impl_methods: set[str],
+        cpp_module_interfaces: set[str],
+        cpp_interfaces_parsed_this_run: set[str],
+        pending_field_types: list[PendingFieldType],
+        folded_overloads: dict[str, frozenset[int]],
+        deferred_parent_links: list[DeferredParentLink],
+    ) -> None:
+        # What a class's methods are written through, and where a
+        # definition's docstring is read from.
+        self._method_host = method_host
+        # A class's lexical parent, its DEFINES edge and the C++ class lookup
+        # are the function pass's, shared with every function it ingests.
+        self._function_ingest = function_ingest
+        # A Go interface's method specs are written by the Go interface pass.
+        self._go_interface_ingest = go_interface_ingest
+        self.ingestor = ingestor
+        self.repo_path = repo_path
+        self.project_name = project_name
+        self.function_registry = function_registry
+        self.simple_name_lookup = simple_name_lookup
+        self.module_qn_to_file_path = module_qn_to_file_path
+        self.flow_capture_enabled = flow_capture_enabled
+        self.import_processor = import_processor
+        self.facts = facts
+        self.class_owner_module = class_owner_module
+        self.dart_annotated_overrides = dart_annotated_overrides
+        self.java_anon_overrides = java_anon_overrides
+        self.csharp_methods = csharp_methods
+        self.csharp_override_methods = csharp_override_methods
+        self._csharp_partial_index = csharp_partial_index
+        self.csharp_type_locations = csharp_type_locations
+        self.go_type_locations = go_type_locations
+        self.rust_impl_owner_module = rust_impl_owner_module
+        self.go_interfaces = go_interfaces
+        self.cpp_definition_spans = cpp_definition_spans
+        self.rust_impl_method_traits = rust_impl_method_traits
+        self.rust_inherent_impl_methods = rust_inherent_impl_methods
+        self.cpp_module_interfaces = cpp_module_interfaces
+        self.cpp_interfaces_parsed_this_run = cpp_interfaces_parsed_this_run
+        self.pending_field_types = pending_field_types
+        self.folded_overloads = folded_overloads
+        # Shared with the function pass, which emits them once every parent
+        # is registered.
+        self._deferred_parent_links = deferred_parent_links
+        self._deferred_forward_decls: list[_DeferredForwardDecl] = []
+        self._deferred_cpp_inherits: list[DeferredCppInherit] = []
+        # Non-C++ INHERITS/IMPLEMENTS held back until every class is
+        # registered; resolve_deferred_inherits re-resolves the guesses.
+        self._deferred_inherits: list[DeferredInherit] = []
+        # Rust `impl Trait for Type` blocks paired with the method qns they
+        # ingested. Whether the trait is external is only knowable once every
+        # trait is registered, so resolve_deferred_inherits judges it and
+        # flags the methods of the external ones (issue #1048).
+        self._rust_trait_impls: list[RustTraitImpl] = []
+        # C++20 implementation units whose IMPLEMENTS edge waits for its
+        # interface to be known.
+        self._deferred_cpp_module_impls: list[tuple[str, str]] = []
 
     def _namespace_qn(self, class_qn: str, module_qn: str) -> str:
         # Strip the module-file prefix so two nodes for the same C++ type in
@@ -407,11 +493,6 @@ class ClassIngestMixin:
             qn.endswith(suffix)
             for qn in self.function_registry.find_ending_with(simple)
         )
-
-    @abstractmethod
-    def _get_docstring(
-        self, node: ASTNode, language: cs.SupportedLanguage
-    ) -> str | None: ...
 
     def _resolve_to_qn(
         self,
@@ -488,7 +569,7 @@ class ClassIngestMixin:
             return expanded, None
         return anchored, None
 
-    def _ingest_cpp_module_declarations(
+    def ingest_cpp_module_declarations(
         self,
         root_node: Node,
         module_qn: str,
@@ -533,7 +614,7 @@ class ClassIngestMixin:
             emitted += 1
         return emitted
 
-    def _ingest_classes_and_methods(
+    def ingest_classes_and_methods(
         self,
         root_node: Node,
         module_qn: str,
@@ -576,7 +657,7 @@ class ClassIngestMixin:
                 func_node_starts=func_node_starts,
             )
 
-    def _ingest_inline_modules(
+    def ingest_inline_modules(
         self,
         root_node: Node,
         module_qn: str,
@@ -603,7 +684,7 @@ class ClassIngestMixin:
                 module_nodes, module_qn, lang_queries[cs.QUERY_CONFIG]
             )
 
-    def _reserve_python_class_qns(
+    def reserve_python_class_qns(
         self,
         combined_captures: dict[str, list] | None,
         module_qn: str,
@@ -724,7 +805,7 @@ class ClassIngestMixin:
                 0, f"{entry.namespace_path}{cs.SEPARATOR_DOT}{normalized}"
             )
         for candidate in candidates:
-            parent_qn, resolved = self.function_ingest.resolve_cpp_class_qn(
+            parent_qn, resolved = self._function_ingest.resolve_cpp_class_qn(
                 candidate, "", exclude_qn=entry.child_qn
             )
             if resolved:
@@ -1423,7 +1504,7 @@ class ClassIngestMixin:
             cs.KEY_START_LINE: class_start_line,
             cs.KEY_START_COL: class_start_col,
             cs.KEY_END_LINE: class_node.end_point[0] + 1,
-            cs.KEY_DOCSTRING: self._get_docstring(class_node, language),
+            cs.KEY_DOCSTRING: self._method_host._get_docstring(class_node, language),
             cs.KEY_IS_EXPORTED: is_exported,
         }
         if file_path is not None:
@@ -1464,11 +1545,11 @@ class ClassIngestMixin:
         parent_label, parent_qn, parent_span = (
             self._cpp_local_type_parent(class_node, local_qn, module_qn)
             if local_qn is not None
-            else self.function_ingest.determine_function_parent(
+            else self._function_ingest.determine_function_parent(
                 class_node, class_qn, module_qn, lang_config, language
             )
         )
-        self.function_ingest.emit_or_defer_defines(
+        self._function_ingest.emit_or_defer_defines(
             parent_label,
             parent_qn,
             label,
@@ -1532,7 +1613,7 @@ class ClassIngestMixin:
             member_node, class_qn, module_qn, label, language, class_props
         )
         if language == cs.SupportedLanguage.GO and label == cs.NodeLabel.INTERFACE:
-            self.go_interface_ingest.ingest_interface_methods(
+            self._go_interface_ingest.ingest_interface_methods(
                 class_node, class_qn, module_qn, file_path
             )
         self._record_class_field_types(
@@ -2014,7 +2095,7 @@ class ClassIngestMixin:
             if _skip_method(method_node, class_node, body_node, lang_config):
                 continue
             ingested_qn = ingest_method(
-                self,
+                self._method_host,
                 method_node,
                 class_qn,
                 cs.NodeLabel.CLASS,
@@ -2211,7 +2292,7 @@ class ClassIngestMixin:
             )
 
             ingested_qn = ingest_method(
-                self,
+                self._method_host,
                 method_node,
                 class_qn,
                 container_label,

@@ -1310,22 +1310,28 @@ class TestResolveToQn:
         return updater
 
     def test_resolves_imported_name(self, mixin_instance: GraphUpdater) -> None:
-        result = mixin_instance.factory.definition_processor._resolve_to_qn(
-            "MyClass", "test.module"
+        result = (
+            mixin_instance.factory.definition_processor.class_ingest._resolve_to_qn(
+                "MyClass", "test.module"
+            )
         )
         assert result == "other.module.MyClass"
 
     def test_returns_qualified_name_for_unknown(
         self, mixin_instance: GraphUpdater
     ) -> None:
-        result = mixin_instance.factory.definition_processor._resolve_to_qn(
-            "UnknownClass", "test.module"
+        result = (
+            mixin_instance.factory.definition_processor.class_ingest._resolve_to_qn(
+                "UnknownClass", "test.module"
+            )
         )
         assert result == "test.module.UnknownClass"
 
     def test_uses_module_qn_as_prefix(self, mixin_instance: GraphUpdater) -> None:
-        result = mixin_instance.factory.definition_processor._resolve_to_qn(
-            "LocalClass", "my.package.submodule"
+        result = (
+            mixin_instance.factory.definition_processor.class_ingest._resolve_to_qn(
+                "LocalClass", "my.package.submodule"
+            )
         )
         assert result == "my.package.submodule.LocalClass"
 
@@ -1390,28 +1396,22 @@ class TestGetNodeTypeForInheritance:
         return updater
 
     def test_returns_class_for_known_class(self, mixin_instance: GraphUpdater) -> None:
-        result = (
-            mixin_instance.factory.definition_processor._get_node_type_for_inheritance(
-                "my.module.BaseClass"
-            )
+        result = mixin_instance.factory.definition_processor.class_ingest._get_node_type_for_inheritance(
+            "my.module.BaseClass"
         )
         assert result == "Class"
 
     def test_returns_interface_for_known_interface(
         self, mixin_instance: GraphUpdater
     ) -> None:
-        result = (
-            mixin_instance.factory.definition_processor._get_node_type_for_inheritance(
-                "my.module.IInterface"
-            )
+        result = mixin_instance.factory.definition_processor.class_ingest._get_node_type_for_inheritance(
+            "my.module.IInterface"
         )
         assert result == "Interface"
 
     def test_returns_class_for_unknown(self, mixin_instance: GraphUpdater) -> None:
-        result = (
-            mixin_instance.factory.definition_processor._get_node_type_for_inheritance(
-                "unknown.module.SomeClass"
-            )
+        result = mixin_instance.factory.definition_processor.class_ingest._get_node_type_for_inheritance(
+            "unknown.module.SomeClass"
         )
         assert result == "Class"
 

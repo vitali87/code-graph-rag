@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -14,13 +14,10 @@ from ..node_text import safe_decode_with_fallback, sorted_captures
 from ..types_defs import (
     ASTNode,
     CppDefinitionSpan,
-    DeferredCppInherit,
-    DeferredInherit,
     DeferredParentLink,
     FunctionRegistryTrieProtocol,
     PendingTypeFact,
     PropertyDict,
-    RustTraitImpl,
     SimpleNameLookup,
 )
 from ..utils.path_utils import (
@@ -31,7 +28,7 @@ from ..utils.path_utils import (
     has_implementation_sibling,
 )
 from ..utils.source_encoding import grammar_bytes
-from .class_ingest import ClassIngestMixin
+from .class_ingest import ClassIngest
 from .cpp.preproc_recovery import parse_with_preproc_recovery
 from .cpp.type_inference import CppTypeInferenceEngine
 from .definition_docstring import extract_definition_docstring
@@ -81,7 +78,7 @@ def _signature_docstring(node: ASTNode, language: cs.SupportedLanguage) -> str |
     )
 
 
-class DefinitionProcessor(ClassIngestMixin):
+class DefinitionProcessor:
     def __init__(
         self,
         ingestor: IngestorProtocol,
@@ -97,7 +94,6 @@ class DefinitionProcessor(ClassIngestMixin):
         exclude_paths: frozenset[str] | None = None,
         unignore_paths: frozenset[str] | None = None,
     ):
-        super().__init__()
         self.ingestor = ingestor
         self.repo_path = repo_path
         self.project_name = project_name
@@ -201,20 +197,10 @@ class DefinitionProcessor(ClassIngestMixin):
         # Non-module DEFINES held back until every parent is registered,
         # written by the function and the class passes alike.
         self._deferred_parent_links: list[DeferredParentLink] = []
-        self._deferred_forward_decls: list = []
         # {rel path: [full line spans]} of every C/C++ function/method the
         # tree-sitter pass ingested; the hybrid C++ frontend's macro-use
         # CALLS resolve against these after Pass 2 (see CppDefinitionSpan).
         self.cpp_definition_spans: dict[str, list[CppDefinitionSpan]] = {}
-        self._deferred_cpp_inherits: list[DeferredCppInherit] = []
-        # Non-C++ INHERITS/IMPLEMENTS held back until every class is
-        # registered; resolve_deferred_inherits re-resolves the guesses.
-        self._deferred_inherits: list[DeferredInherit] = []
-        # Rust `impl Trait for Type` blocks paired with the method qns they
-        # ingested. Whether the trait is external is only knowable once every
-        # trait is registered, so resolve_deferred_inherits judges it and
-        # flags the methods of the external ones (issue #1048).
-        self._rust_trait_impls: list[RustTraitImpl] = []
         # method qn -> the first-party trait qn its own impl block names. The
         # override pass cannot re-derive this: two traits declaring one method
         # name leave the method qns indistinguishable (issue #1076).
@@ -223,9 +209,7 @@ class DefinitionProcessor(ClassIngestMixin):
         # inheritance, so these override nothing and must never reach the
         # ancestry walk (issue #1078).
         self.rust_inherent_impl_methods: set[str] = set()
-        # C++20 module interfaces declared this run (export module X), and
-        # implementation units whose IMPLEMENTS edge waits for its
-        # interface to be known.
+        # C++20 module interfaces declared this run (export module X).
         self.cpp_module_interfaces: set[str] = set()
         # The subset of the above that THIS run's parsing registered, as
         # opposed to entries read back from the graph. Rehydration rebuilds
@@ -236,7 +220,6 @@ class DefinitionProcessor(ClassIngestMixin):
         # {manifest path: why its content could not be parsed}, for the one
         # WARNING the updater logs per run in place of a line per file.
         self.unparsable_manifests: dict[Path, str] = {}
-        self._deferred_cpp_module_impls: list[tuple[str, str]] = []
         # Route-decorated handlers deferred from Pass 2: endpoint templates
         # need router mount prefixes, which may live in modules parsed later
         # (issue #877). (label, qn, route decorators, module_qn).
@@ -286,6 +269,38 @@ class DefinitionProcessor(ClassIngestMixin):
             go_variant_methods=self.go_variant_methods,
             go_pair_builds=self.go_pair_builds,
             go_builds=self.go_builds,
+        )
+        self.class_ingest = ClassIngest(
+            method_host=self,
+            function_ingest=self.function_ingest,
+            go_interface_ingest=self.go_interface_ingest,
+            ingestor=ingestor,
+            repo_path=repo_path,
+            project_name=project_name,
+            function_registry=function_registry,
+            simple_name_lookup=simple_name_lookup,
+            module_qn_to_file_path=module_qn_to_file_path,
+            flow_capture_enabled=flow_capture_enabled,
+            import_processor=import_processor,
+            facts=self.facts,
+            class_owner_module=self.class_owner_module,
+            dart_annotated_overrides=self.dart_annotated_overrides,
+            java_anon_overrides=self.java_anon_overrides,
+            csharp_methods=self.csharp_methods,
+            csharp_override_methods=self.csharp_override_methods,
+            csharp_partial_index=self._csharp_partial_index,
+            csharp_type_locations=self.csharp_type_locations,
+            go_type_locations=self.go_type_locations,
+            rust_impl_owner_module=self.rust_impl_owner_module,
+            go_interfaces=self.go_interfaces,
+            cpp_definition_spans=self.cpp_definition_spans,
+            rust_impl_method_traits=self.rust_impl_method_traits,
+            rust_inherent_impl_methods=self.rust_inherent_impl_methods,
+            cpp_module_interfaces=self.cpp_module_interfaces,
+            cpp_interfaces_parsed_this_run=self.cpp_interfaces_parsed_this_run,
+            pending_field_types=self.pending_field_types,
+            folded_overloads=self.folded_overloads,
+            deferred_parent_links=self._deferred_parent_links,
         )
         self.js_ts_module_system = JsTsModuleSystem(
             host=self,
@@ -388,6 +403,31 @@ class DefinitionProcessor(ClassIngestMixin):
         """Emit DEFINES for functions nested in out-of-class C++ method bodies
         (`FunctionIngest.resolve_deferred_cpp_containment`)."""
         return self.function_ingest.resolve_deferred_cpp_containment()
+
+    def resolve_deferred_cpp_module_impls(self) -> int:
+        """Emit the C++ ModuleImplementation IMPLEMENTS edges whose interface
+        exists (`ClassIngest.resolve_deferred_cpp_module_impls`)."""
+        return self.class_ingest.resolve_deferred_cpp_module_impls()
+
+    def resolve_deferred_forward_declarations(self) -> int:
+        """Drop or register the held-back C++ forward declarations
+        (`ClassIngest.resolve_deferred_forward_declarations`)."""
+        return self.class_ingest.resolve_deferred_forward_declarations()
+
+    def resolve_deferred_cpp_inherits(self) -> int:
+        """Emit the C++ INHERITS edges held until every class is registered
+        (`ClassIngest.resolve_deferred_cpp_inherits`)."""
+        return self.class_ingest.resolve_deferred_cpp_inherits()
+
+    def resolve_deferred_inherits(self) -> int:
+        """Emit the non-C++ INHERITS/IMPLEMENTS edges held until every class
+        is registered (`ClassIngest.resolve_deferred_inherits`)."""
+        return self.class_ingest.resolve_deferred_inherits()
+
+    def process_all_method_overrides(self, module_qns: Collection[str] = ()) -> None:
+        """Write the OVERRIDES edges of every method
+        (`ClassIngest.process_all_method_overrides`)."""
+        self.class_ingest.process_all_method_overrides(module_qns)
 
     def reset_interface_implementers(self) -> None:
         """Forget every implementer pair, parsed or read back from the graph.
@@ -582,7 +622,7 @@ class DefinitionProcessor(ClassIngestMixin):
             # Before the function pass below, which would otherwise take a
             # class's plain name first (issue #2621).
             if language == cs.SupportedLanguage.PYTHON:
-                self._reserve_python_class_qns(
+                self.class_ingest.reserve_python_class_qns(
                     combined_captures,
                     module_qn,
                     queries[language][cs.QUERY_CONFIG],
@@ -619,7 +659,9 @@ class DefinitionProcessor(ClassIngestMixin):
                     },
                 )
             if language == cs.SupportedLanguage.CPP:
-                self._ingest_cpp_module_declarations(root_node, module_qn, file_path)
+                self.class_ingest.ingest_cpp_module_declarations(
+                    root_node, module_qn, file_path
+                )
                 CppTypeInferenceEngine().collect_type_aliases(
                     root_node, self.facts.type_aliases, self._type_alias_conflicts
                 )
@@ -634,7 +676,7 @@ class DefinitionProcessor(ClassIngestMixin):
                 # is the file's declared module (an import index), not a
                 # nested module node, so a synthetic `fileqn.Module` node
                 # would clobber that model.
-                self._ingest_classes_and_methods(
+                self.class_ingest.ingest_classes_and_methods(
                     root_node,
                     module_qn,
                     language,
@@ -649,7 +691,7 @@ class DefinitionProcessor(ClassIngestMixin):
                     combined_captures=combined_captures,
                 )
             else:
-                self._ingest_inline_modules(
+                self.class_ingest.ingest_inline_modules(
                     root_node,
                     module_qn,
                     language,
@@ -663,7 +705,7 @@ class DefinitionProcessor(ClassIngestMixin):
                     queries,
                     combined_captures=combined_captures,
                 )
-                self._ingest_classes_and_methods(
+                self.class_ingest.ingest_classes_and_methods(
                     root_node,
                     module_qn,
                     language,
