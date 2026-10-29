@@ -969,7 +969,9 @@ CLASS_CPP_INHERITANCE = "Found C++ inheritance: {parent_name} -> {parent_qn}"
 
 # Java type inference logs
 JAVA_VAR_TYPE_MAP_BUILT = "Built Java variable type map with {count} entries"
-JAVA_VAR_TYPE_MAP_FAILED = "Failed to build Java variable type map: {error}"
+JAVA_MODULE_LOCAL_TYPES_FAILED = (
+    "Failed to infer local types in module {module} for a lookup: {error}"
+)
 JAVA_PARAM = "Parameter: {name} -> {type}"
 JAVA_VARARGS_PARAM = "Varargs parameter: {name} -> {type}"
 JAVA_LOCAL_VAR_INFERRED = "Local variable (inferred): {name} -> {type}"

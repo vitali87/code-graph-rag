@@ -632,7 +632,16 @@ class JavaVariableAnalyzerMixin:
         if not root_node:
             return None
 
-        variable_types = self.build_local_variable_type_map(root_node, module_qn)
+        try:
+            variable_types = self.build_local_variable_type_map(root_node, module_qn)
+        except Exception as e:
+            # Another module's variables, read while resolving one caller: the
+            # caller resolves without them, and the module is named for the
+            # failure its own call pass would also report.
+            logger.warning(
+                ls.JAVA_MODULE_LOCAL_TYPES_FAILED.format(module=module_qn, error=e)
+            )
+            return None
 
         this_var = f"{cs.JAVA_KEYWORD_THIS}{cs.SEPARATOR_DOT}{var_name}"
         return variable_types.get(var_name) or variable_types.get(this_var)

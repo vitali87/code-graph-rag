@@ -170,15 +170,12 @@ class JavaTypeInferenceEngine(
     def build_local_variable_type_map(
         self, scope_node: ASTNode, module_qn: str
     ) -> dict[str, str]:
+        # No catch, as in the sibling engines: a failure reaches the call
+        # pass's per-caller handler, which names the caller in the sync
+        # summary (#3173).
         local_var_types: dict[str, str] = {}
-
-        try:
-            self._collect_all_variable_types(scope_node, local_var_types, module_qn)
-            logger.debug(ls.JAVA_VAR_TYPE_MAP_BUILT, count=len(local_var_types))
-
-        except Exception as e:
-            logger.error(ls.JAVA_VAR_TYPE_MAP_FAILED, error=e)
-
+        self._collect_all_variable_types(scope_node, local_var_types, module_qn)
+        logger.debug(ls.JAVA_VAR_TYPE_MAP_BUILT, count=len(local_var_types))
         return local_var_types
 
     def resolve_java_method_call(
