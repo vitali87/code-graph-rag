@@ -757,6 +757,15 @@ def _own_scope(node: Node) -> Node | None:
     return current
 
 
+def _returns_for(return_node: Node, function_node: Node) -> bool:
+    """Whether a `return` under a Python def returns for that def rather than
+    for a def or class nested in it; a JS/TS method is not filtered."""
+    if function_node.type != cs.TS_PY_FUNCTION_DEFINITION:
+        return True
+    own = _own_scope(return_node)
+    return own is not None and own.id == function_node.id
+
+
 def _nonlocal_names(binding: Node, scope: Node) -> frozenset[str]:
     """The names `binding` rebinds in `scope` through a `nonlocal`.
 
@@ -1198,7 +1207,7 @@ class PythonAstAnalyzerMixin(_AstBase):
             try:
                 q = get_cached_query(py_lang_obj, _PY_TRAVERSE_QUERY)
                 cursor = QueryCursor(q)
-                captures = cursor.captures(node)
+                captures = sorted_captures(cursor, node)
                 if return_stmts := captures.get("return_stmt"):
                     self._return_stmt_cache[node] = return_stmts
                 return (
@@ -1787,6 +1796,10 @@ class PythonAstAnalyzerMixin(_AstBase):
         self._find_return_statements(method_node, return_nodes)
 
         for return_node in return_nodes:
+            # A nested helper's `return A()` comes first in document order
+            # and would type the outer call as `A`.
+            if not _returns_for(return_node, method_node):
+                continue
             return_value = next(
                 (
                     child
@@ -1880,7 +1893,7 @@ class PythonAstAnalyzerMixin(_AstBase):
             try:
                 q = get_cached_query(py_lang_obj, cs.PY_RETURN_QUERY)
                 cursor = QueryCursor(q)
-                captures = cursor.captures(node)
+                captures = sorted_captures(cursor, node)
                 return_nodes.extend(captures.get("return_stmt", []))
                 return
             except Exception:  # noqa: S110 - a failed query falls back to the walk below
