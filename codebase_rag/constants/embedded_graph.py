@@ -96,7 +96,69 @@ def broken(x:
 """.encode()
 
 
-# ----------------------------------------------------------------- storage
+# The Cypher AST enums the Rust parser in cgr_graph_rs mirrors. It imports
+# them by this module's path (ENUM_MODULE in rust/cgr_graph_rs/src/cypher/
+# python.rs), so they stay here; the engine reads them through its own
+# constants module.
+class EgDirection(StrEnum):
+    OUT = "out"
+    IN = "in"
+    BOTH = "both"
 
 
-# ----------------------------------------------------------------- errors
+class EgSetKind(StrEnum):
+    PROP = "prop"
+    MERGE = "merge"
+    REPLACE = "replace"
+    LABEL = "label"
+
+
+class EgRemoveKind(StrEnum):
+    PROP = EgSetKind.PROP.value
+    LABEL = EgSetKind.LABEL.value
+
+
+class EgQuantifier(StrEnum):
+    ANY = "any"
+    ALL = "all"
+    NONE = "none"
+    SINGLE = "single"
+
+
+class EgSchemaKind(StrEnum):
+    CREATE_INDEX = "create_index"
+    CREATE_CONSTRAINT = "create_constraint"
+    DROP_INDEX = "drop_index"
+    DROP_CONSTRAINT = "drop_constraint"
+    SHOW_CONSTRAINTS = "show_constraints"
+    SHOW_INDEXES = "show_indexes"
+    SHOW_STORAGE = "show_storage"
+
+
+class EgBinary(StrEnum):
+    OR = "or"
+    XOR = "xor"
+    AND = "and"
+    EQ = "="
+    NE = "<>"
+    LT = "<"
+    GT = ">"
+    LE = "<="
+    GE = ">="
+    REGEX = "=~"
+    IN = "in"
+    STARTS_WITH = "starts with"
+    ENDS_WITH = "ends with"
+    CONTAINS = "contains"
+    ADD = "+"
+    SUB = "-"
+    MUL = "*"
+    DIV = "/"
+    MOD = "%"
+    POW = "^"
+
+
+class EgUnary(StrEnum):
+    NOT = "not"
+    NEG = "-"
+    POS = "+"

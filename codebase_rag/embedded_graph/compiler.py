@@ -589,9 +589,9 @@ class _MatchBuilder:
         if rp.types:
             self.conds.append(sq.is_in(sq.column(alias, sq.TYPE), rp.types))
         lid, rid = left.sql, right.sql
-        if rp.direction == ecs.EgDirection.OUT:
+        if rp.direction == cs.EgDirection.OUT:
             self.conds.append(sq.outgoing(alias, lid, rid))
-        elif rp.direction == ecs.EgDirection.IN:
+        elif rp.direction == cs.EgDirection.IN:
             self.conds.append(sq.outgoing(alias, rid, lid))
         else:
             self.conds.append(sq.either_way(alias, lid, rid))
@@ -700,8 +700,8 @@ class _MatchBuilder:
         seeds, forward = self._walk_seeds(left_np, right_np)
         # Walked from its far end, an outgoing pattern follows edges in.
         direction_out: bool | None = None
-        if rp.direction != ecs.EgDirection.BOTH:
-            direction_out = (rp.direction == ecs.EgDirection.OUT) == forward
+        if rp.direction != cs.EgDirection.BOTH:
+            direction_out = (rp.direction == cs.EgDirection.OUT) == forward
         name = self.ctx.fresh(sq.WALK_PREFIX)
         seed_np = left_np if forward else right_np
         edge_conds = self._walk_edge_conditions(rp)
@@ -774,7 +774,7 @@ def _label_alternatives(e: a.Expr, var: str) -> set[str] | None:
         and len(e.labels) == 1
     ):
         return {e.labels[0]}
-    if isinstance(e, a.BinOp) and e.op == ecs.EgBinary.OR:
+    if isinstance(e, a.BinOp) and e.op == cs.EgBinary.OR:
         left = _label_alternatives(e.left, var)
         right = _label_alternatives(e.right, var)
         if left is not None and right is not None:
@@ -783,7 +783,7 @@ def _label_alternatives(e: a.Expr, var: str) -> set[str] | None:
 
 
 def _conjuncts(e: a.Expr) -> list[a.Expr]:
-    if isinstance(e, a.BinOp) and e.op == ecs.EgBinary.AND:
+    if isinstance(e, a.BinOp) and e.op == cs.EgBinary.AND:
         return _conjuncts(e.left) + _conjuncts(e.right)
     return [e]
 

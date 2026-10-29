@@ -14,6 +14,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from functools import cache, lru_cache
 
+from .. import constants as cs
 from . import constants as ecs
 from . import cypher_ast as a
 from .extension import rust_extension
@@ -21,30 +22,30 @@ from .lexer import CypherSyntaxError, Token, tokenize
 
 type Statement = a.Query | a.Explain | a.SchemaCommand
 
-_COMPARISON_OPS: dict[str, ecs.EgBinary] = {
-    ecs.EgPunct.EQ: ecs.EgBinary.EQ,
-    ecs.EgPunct.NE: ecs.EgBinary.NE,
-    ecs.EgPunct.BANG_EQ: ecs.EgBinary.NE,
-    ecs.EgPunct.LT: ecs.EgBinary.LT,
-    ecs.EgPunct.GT: ecs.EgBinary.GT,
-    ecs.EgPunct.LE: ecs.EgBinary.LE,
-    ecs.EgPunct.GE: ecs.EgBinary.GE,
-    ecs.EgPunct.REGEX: ecs.EgBinary.REGEX,
+_COMPARISON_OPS: dict[str, cs.EgBinary] = {
+    ecs.EgPunct.EQ: cs.EgBinary.EQ,
+    ecs.EgPunct.NE: cs.EgBinary.NE,
+    ecs.EgPunct.BANG_EQ: cs.EgBinary.NE,
+    ecs.EgPunct.LT: cs.EgBinary.LT,
+    ecs.EgPunct.GT: cs.EgBinary.GT,
+    ecs.EgPunct.LE: cs.EgBinary.LE,
+    ecs.EgPunct.GE: cs.EgBinary.GE,
+    ecs.EgPunct.REGEX: cs.EgBinary.REGEX,
 }
-_ADDITIVE_OPS: dict[str, ecs.EgBinary] = {
-    ecs.EgPunct.PLUS: ecs.EgBinary.ADD,
-    ecs.EgPunct.MINUS: ecs.EgBinary.SUB,
+_ADDITIVE_OPS: dict[str, cs.EgBinary] = {
+    ecs.EgPunct.PLUS: cs.EgBinary.ADD,
+    ecs.EgPunct.MINUS: cs.EgBinary.SUB,
 }
-_MULTIPLICATIVE_OPS: dict[str, ecs.EgBinary] = {
-    ecs.EgPunct.STAR: ecs.EgBinary.MUL,
-    ecs.EgPunct.SLASH: ecs.EgBinary.DIV,
-    ecs.EgPunct.PERCENT: ecs.EgBinary.MOD,
+_MULTIPLICATIVE_OPS: dict[str, cs.EgBinary] = {
+    ecs.EgPunct.STAR: cs.EgBinary.MUL,
+    ecs.EgPunct.SLASH: cs.EgBinary.DIV,
+    ecs.EgPunct.PERCENT: cs.EgBinary.MOD,
 }
-_QUANTIFIERS: dict[str, ecs.EgQuantifier] = {
-    ecs.EgKw.ANY: ecs.EgQuantifier.ANY,
-    ecs.EgKw.ALL: ecs.EgQuantifier.ALL,
-    ecs.EgKw.NONE: ecs.EgQuantifier.NONE,
-    ecs.EgKw.SINGLE: ecs.EgQuantifier.SINGLE,
+_QUANTIFIERS: dict[str, cs.EgQuantifier] = {
+    ecs.EgKw.ANY: cs.EgQuantifier.ANY,
+    ecs.EgKw.ALL: cs.EgQuantifier.ALL,
+    ecs.EgKw.NONE: cs.EgQuantifier.NONE,
+    ecs.EgKw.SINGLE: cs.EgQuantifier.SINGLE,
 }
 _WORD_LITERALS: dict[str, bool | None] = {
     ecs.EgKw.TRUE: True,
@@ -52,11 +53,11 @@ _WORD_LITERALS: dict[str, bool | None] = {
     ecs.EgKw.NULL: None,
 }
 # Keyed by (CREATE rather than DROP, INDEX rather than CONSTRAINT).
-_SCHEMA_KINDS: dict[tuple[bool, bool], ecs.EgSchemaKind] = {
-    (True, True): ecs.EgSchemaKind.CREATE_INDEX,
-    (True, False): ecs.EgSchemaKind.CREATE_CONSTRAINT,
-    (False, True): ecs.EgSchemaKind.DROP_INDEX,
-    (False, False): ecs.EgSchemaKind.DROP_CONSTRAINT,
+_SCHEMA_KINDS: dict[tuple[bool, bool], cs.EgSchemaKind] = {
+    (True, True): cs.EgSchemaKind.CREATE_INDEX,
+    (True, False): cs.EgSchemaKind.CREATE_CONSTRAINT,
+    (False, True): cs.EgSchemaKind.DROP_INDEX,
+    (False, False): cs.EgSchemaKind.DROP_CONSTRAINT,
 }
 
 
@@ -306,17 +307,17 @@ class _Parser:
             if self.accept_punct(ecs.EgPunct.DOT):
                 key = self.name()
                 self.expect_punct(ecs.EgPunct.EQ)
-                items.append(a.SetItem(ecs.EgSetKind.PROP, var, key, self.expression()))
+                items.append(a.SetItem(cs.EgSetKind.PROP, var, key, self.expression()))
             elif self.accept_punct(ecs.EgPunct.PLUS_EQ):
                 items.append(
-                    a.SetItem(ecs.EgSetKind.MERGE, var, None, self.expression())
+                    a.SetItem(cs.EgSetKind.MERGE, var, None, self.expression())
                 )
             elif self.accept_punct(ecs.EgPunct.EQ):
                 items.append(
-                    a.SetItem(ecs.EgSetKind.REPLACE, var, None, self.expression())
+                    a.SetItem(cs.EgSetKind.REPLACE, var, None, self.expression())
                 )
             elif self.accept_punct(ecs.EgPunct.COLON):
-                items.append(a.SetItem(ecs.EgSetKind.LABEL, var, self.name(), None))
+                items.append(a.SetItem(cs.EgSetKind.LABEL, var, self.name(), None))
             else:
                 raise self.error(ecs.EG_EXPECT_SET_ITEM)
             if not self.accept_punct(ecs.EgPunct.COMMA):
@@ -327,10 +328,10 @@ class _Parser:
         while True:
             var = self.variable()
             if self.accept_punct(ecs.EgPunct.DOT):
-                items.append(a.RemoveItem(ecs.EgRemoveKind.PROP, var, self.name()))
+                items.append(a.RemoveItem(cs.EgRemoveKind.PROP, var, self.name()))
             else:
                 self.expect_punct(ecs.EgPunct.COLON)
-                items.append(a.RemoveItem(ecs.EgRemoveKind.LABEL, var, self.name()))
+                items.append(a.RemoveItem(cs.EgRemoveKind.LABEL, var, self.name()))
             if not self.accept_punct(ecs.EgPunct.COMMA):
                 return a.Remove(tuple(items))
 
@@ -407,10 +408,10 @@ class _Parser:
         while self.tok.kind == ecs.EgTok.IDENT:
             words.append(self.advance().text.upper())
         if ecs.EgKw.CONSTRAINT in words or ecs.EgKw.CONSTRAINTS in words:
-            return a.SchemaCommand(ecs.EgSchemaKind.SHOW_CONSTRAINTS)
+            return a.SchemaCommand(cs.EgSchemaKind.SHOW_CONSTRAINTS)
         if ecs.EgKw.STORAGE in words:
-            return a.SchemaCommand(ecs.EgSchemaKind.SHOW_STORAGE)
-        return a.SchemaCommand(ecs.EgSchemaKind.SHOW_INDEXES)
+            return a.SchemaCommand(cs.EgSchemaKind.SHOW_STORAGE)
+        return a.SchemaCommand(cs.EgSchemaKind.SHOW_INDEXES)
 
     def _schema_target(self) -> tuple[str | None, list[str]]:
         # Memgraph (`ON :L(p)`, `ON (n:L) ASSERT n.p`) and Neo4j (`name IF NOT
@@ -542,11 +543,11 @@ class _Parser:
         self.expect_punct(ecs.EgPunct.MINUS)
         right_arrow = self.accept_punct(ecs.EgPunct.GT)
         if left_arrow and not right_arrow:
-            direction = ecs.EgDirection.IN
+            direction = cs.EgDirection.IN
         elif right_arrow and not left_arrow:
-            direction = ecs.EgDirection.OUT
+            direction = cs.EgDirection.OUT
         else:
-            direction = ecs.EgDirection.BOTH
+            direction = cs.EgDirection.BOTH
         return a.RelPattern(var, types, direction, props, var_length)
 
     def _int_token(self) -> int:
@@ -576,24 +577,24 @@ class _Parser:
     def _or(self) -> a.Expr:
         left = self._xor()
         while self.accept_word(ecs.EgKw.OR):
-            left = a.BinOp(ecs.EgBinary.OR, left, self._xor())
+            left = a.BinOp(cs.EgBinary.OR, left, self._xor())
         return left
 
     def _xor(self) -> a.Expr:
         left = self._and()
         while self.accept_word(ecs.EgKw.XOR):
-            left = a.BinOp(ecs.EgBinary.XOR, left, self._and())
+            left = a.BinOp(cs.EgBinary.XOR, left, self._and())
         return left
 
     def _and(self) -> a.Expr:
         left = self._not()
         while self.accept_word(ecs.EgKw.AND):
-            left = a.BinOp(ecs.EgBinary.AND, left, self._not())
+            left = a.BinOp(cs.EgBinary.AND, left, self._not())
         return left
 
     def _not(self) -> a.Expr:
         if self.accept_word(ecs.EgKw.NOT):
-            return a.UnaryOp(ecs.EgUnary.NOT, self._not())
+            return a.UnaryOp(cs.EgUnary.NOT, self._not())
         return self._comparison()
 
     def _comparison(self) -> a.Expr:
@@ -605,18 +606,18 @@ class _Parser:
                 left = a.BinOp(_COMPARISON_OPS[tok.text], left, self._additive())
             elif tok.is_word(ecs.EgKw.IN):
                 self.advance()
-                left = a.BinOp(ecs.EgBinary.IN, left, self._additive())
+                left = a.BinOp(cs.EgBinary.IN, left, self._additive())
             elif tok.is_word(ecs.EgKw.STARTS):
                 self.advance()
                 self.expect_word(ecs.EgKw.WITH)
-                left = a.BinOp(ecs.EgBinary.STARTS_WITH, left, self._additive())
+                left = a.BinOp(cs.EgBinary.STARTS_WITH, left, self._additive())
             elif tok.is_word(ecs.EgKw.ENDS):
                 self.advance()
                 self.expect_word(ecs.EgKw.WITH)
-                left = a.BinOp(ecs.EgBinary.ENDS_WITH, left, self._additive())
+                left = a.BinOp(cs.EgBinary.ENDS_WITH, left, self._additive())
             elif tok.is_word(ecs.EgKw.CONTAINS):
                 self.advance()
-                left = a.BinOp(ecs.EgBinary.CONTAINS, left, self._additive())
+                left = a.BinOp(cs.EgBinary.CONTAINS, left, self._additive())
             elif tok.is_word(ecs.EgKw.IS):
                 self.advance()
                 negated = self.accept_word(ecs.EgKw.NOT)
@@ -642,12 +643,12 @@ class _Parser:
     def _power(self) -> a.Expr:
         left = self._unary()
         while self.accept_punct(ecs.EgPunct.CARET):
-            left = a.BinOp(ecs.EgBinary.POW, left, self._unary())
+            left = a.BinOp(cs.EgBinary.POW, left, self._unary())
         return left
 
     def _unary(self) -> a.Expr:
         if self.accept_punct(ecs.EgPunct.MINUS):
-            return a.UnaryOp(ecs.EgUnary.NEG, self._unary())
+            return a.UnaryOp(cs.EgUnary.NEG, self._unary())
         if self.accept_punct(ecs.EgPunct.PLUS):
             return self._unary()
         return self._postfix()
@@ -758,7 +759,7 @@ class _Parser:
         self.expect_punct(ecs.EgPunct.RPAREN)
         return a.FuncCall(name, args, distinct=distinct)
 
-    def _quantifier(self, kind: ecs.EgQuantifier) -> a.Expr:
+    def _quantifier(self, kind: cs.EgQuantifier) -> a.Expr:
         self.advance()
         self.expect_punct(ecs.EgPunct.LPAREN)
         var = self.variable()

@@ -358,19 +358,19 @@ class Executor:
     # ----------------------------------------------------------------- schema
 
     def _schema(self, cmd: a.SchemaCommand) -> Result:
-        if cmd.kind == ecs.EgSchemaKind.SHOW_CONSTRAINTS:
+        if cmd.kind == cs.EgSchemaKind.SHOW_CONSTRAINTS:
             return Result(
                 [ecs.EG_COL_LABEL, ecs.EG_COL_PROPERTIES],
                 [(label, [prop]) for label, prop in cs.NODE_UNIQUE_CONSTRAINTS.items()],
             )
-        if cmd.kind == ecs.EgSchemaKind.SHOW_STORAGE:
+        if cmd.kind == cs.EgSchemaKind.SHOW_STORAGE:
             return self._storage_info()
-        if cmd.kind == ecs.EgSchemaKind.SHOW_INDEXES:
+        if cmd.kind == cs.EgSchemaKind.SHOW_INDEXES:
             rows = self.conn.execute(sq.LIST_NODE_INDEXES).fetchall()
             return Result(
                 [ecs.EG_COL_LABEL, ecs.EG_COL_COUNT], [(r[0], None) for r in rows]
             )
-        if cmd.kind == ecs.EgSchemaKind.CREATE_INDEX and cmd.label:
+        if cmd.kind == cs.EgSchemaKind.CREATE_INDEX and cmd.label:
             self._create_indexes(cmd.label, cmd.props)
         return Result([], [])
 
@@ -578,17 +578,17 @@ class _Run:
         self, item: a.SetItem, t: ValueType, target: int, value: SqlValue
     ) -> None:
         table = self._table_of(t)
-        if item.kind == ecs.EgSetKind.PROP:
+        if item.kind == cs.EgSetKind.PROP:
             key = str(item.key)
             if value is None:
                 self.conn.execute(sq.remove_prop(table, key), (target,))
             else:
                 self.conn.execute(sq.set_prop(table, key), (value, target))
-        elif item.kind == ecs.EgSetKind.MERGE:
+        elif item.kind == cs.EgSetKind.MERGE:
             if value is None:
                 return
             self.conn.execute(sq.merge_props(table), (value, target))
-        elif item.kind == ecs.EgSetKind.REPLACE:
+        elif item.kind == cs.EgSetKind.REPLACE:
             self.conn.execute(sq.replace_props(table), (value, target))
         else:
             label = self.conn.execute(sq.NODE_LABEL, (target,)).fetchone()
@@ -610,7 +610,7 @@ class _Run:
                 target = row[cols.index(item.var)]
                 if target is None:
                     continue
-                if item.kind == ecs.EgRemoveKind.LABEL:
+                if item.kind == cs.EgRemoveKind.LABEL:
                     raise CompileError(
                         ecs.EG_ERR_UNSUPPORTED.format(what=ecs.EG_WHAT_REMOVE_LABEL)
                     )
@@ -740,11 +740,9 @@ class _Run:
         doc: dict[str, JsonValue],
     ) -> tuple[int, bool]:
         rel_type = rp.types[0]
-        src, dst = (
-            (right, left) if rp.direction == ecs.EgDirection.IN else (left, right)
-        )
+        src, dst = (right, left) if rp.direction == cs.EgDirection.IN else (left, right)
         args = [int(v) if isinstance(v, bool) else v for v in doc.values()]
-        either_way = rp.direction == ecs.EgDirection.BOTH
+        either_way = rp.direction == cs.EgDirection.BOTH
         ends = (src, dst, dst, src) if either_way else (src, dst)
         found = self.conn.execute(
             sq.find_edge(list(doc), either_way), (*ends, rel_type, *args)
@@ -860,12 +858,12 @@ class _Run:
         self, rel: a.RelPattern, left: int, right: int, props: Iterator[SqlValue]
     ) -> int:
         doc = _json_map(next(props)) if rel.props is not None else {}
-        if len(rel.types) != 1 or rel.direction == ecs.EgDirection.BOTH:
+        if len(rel.types) != 1 or rel.direction == cs.EgDirection.BOTH:
             raise CompileError(
                 ecs.EG_ERR_UNSUPPORTED.format(what=ecs.EG_WHAT_CREATE_REL)
             )
         src, dst = (
-            (right, left) if rel.direction == ecs.EgDirection.IN else (left, right)
+            (right, left) if rel.direction == cs.EgDirection.IN else (left, right)
         )
         cur = self.conn.execute(
             sq.INSERT_EDGE,

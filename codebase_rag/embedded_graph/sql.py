@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+from .. import constants as cs
 from . import constants as ecs
 
 # ------------------------------------------------------------------ schema
@@ -326,9 +327,9 @@ def native_walk(
     scanned once per outer row (7 s for one project's ownership walk).
     """
     if direction_out is None:
-        direction = ecs.EgDirection.BOTH
+        direction = cs.EgDirection.BOTH
     else:
-        direction = ecs.EgDirection.OUT if direction_out else ecs.EgDirection.IN
+        direction = cs.EgDirection.OUT if direction_out else cs.EgDirection.IN
     seed_ids = paren(select([call(JSON_GROUP_ARRAY, ID)], paren(seeds)))
     args = [
         seed_ids,

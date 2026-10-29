@@ -13,6 +13,7 @@ from collections import defaultdict, deque
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 
+from .. import constants as cs
 from . import constants as ecs
 from . import native
 from . import sql as sq
@@ -119,9 +120,9 @@ def _degree(conn: sqlite3.Connection, args: Sequence[SqlValue]) -> Iterable[Reco
     mode = str(_arg(args, 0, ecs.EG_DEGREE_UNDIRECTED)).lower()
     counts: dict[int, int] = defaultdict(int)
     for s, d in conn.execute(sq.EDGE_ENDS):
-        if mode in (ecs.EgDirection.OUT, ecs.EG_DEGREE_UNDIRECTED):
+        if mode in (cs.EgDirection.OUT, ecs.EG_DEGREE_UNDIRECTED):
             counts[int(s)] += 1
-        if mode in (ecs.EgDirection.IN, ecs.EG_DEGREE_UNDIRECTED):
+        if mode in (cs.EgDirection.IN, ecs.EG_DEGREE_UNDIRECTED):
             counts[int(d)] += 1
     return [
         {

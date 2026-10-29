@@ -348,13 +348,13 @@ class ExprCompiler:
         some_true = sq.exists(each, cond)
         some_false = sq.exists(each, sq.negate(cond))
         some_null = sq.exists(each, sq.is_null(cond))
-        if e.kind == ecs.EgQuantifier.ANY:
+        if e.kind == cs.EgQuantifier.ANY:
             body = sq.case(None, [(some_true, sq.TRUE), (some_null, sq.NULL)], sq.FALSE)
-        elif e.kind == ecs.EgQuantifier.ALL:
+        elif e.kind == cs.EgQuantifier.ALL:
             body = sq.case(
                 None, [(some_false, sq.FALSE), (some_null, sq.NULL)], sq.TRUE
             )
-        elif e.kind == ecs.EgQuantifier.NONE:
+        elif e.kind == cs.EgQuantifier.NONE:
             body = sq.case(None, [(some_true, sq.FALSE), (some_null, sq.NULL)], sq.TRUE)
         else:
             # Memgraph: one true element is true whatever else is null; with
@@ -410,9 +410,9 @@ class ExprCompiler:
 
     def _unary(self, e: a.UnaryOp, scope: Scope) -> CE:
         operand = self.compile(e.operand, scope)
-        if e.op == ecs.EgUnary.NOT:
+        if e.op == cs.EgUnary.NOT:
             return CE(sq.negate(self.boolean(operand)), ty.BOOL)
-        if e.op == ecs.EgUnary.NEG:
+        if e.op == cs.EgUnary.NEG:
             return CE(
                 sq.minus(self.native(operand)),
                 operand.t if operand.t.is_native else ty.ANY,
@@ -432,38 +432,38 @@ class ExprCompiler:
     def _binop(self, e: a.BinOp, scope: Scope) -> CE:
         left = self.compile(e.left, scope)
         right = self.compile(e.right, scope)
-        op = ecs.EgBinary(e.op)
-        if op in (ecs.EgBinary.AND, ecs.EgBinary.OR):
+        op = cs.EgBinary(e.op)
+        if op in (cs.EgBinary.AND, cs.EgBinary.OR):
             return CE(
                 sq.binary(self.boolean(left), op.upper(), self.boolean(right)), ty.BOOL
             )
-        if op == ecs.EgBinary.XOR:
+        if op == cs.EgBinary.XOR:
             return CE(sq.xor(self.boolean(left), self.boolean(right)), ty.BOOL)
         if op in (
-            ecs.EgBinary.EQ,
-            ecs.EgBinary.NE,
-            ecs.EgBinary.LT,
-            ecs.EgBinary.GT,
-            ecs.EgBinary.LE,
-            ecs.EgBinary.GE,
+            cs.EgBinary.EQ,
+            cs.EgBinary.NE,
+            cs.EgBinary.LT,
+            cs.EgBinary.GT,
+            cs.EgBinary.LE,
+            cs.EgBinary.GE,
         ):
             return self._comparison(op, left, right)
-        if op == ecs.EgBinary.IN:
+        if op == cs.EgBinary.IN:
             return self._in(left, right)
-        if op == ecs.EgBinary.STARTS_WITH:
+        if op == cs.EgBinary.STARTS_WITH:
             return self._starts_with(left, right, e)
-        if op == ecs.EgBinary.ENDS_WITH:
+        if op == cs.EgBinary.ENDS_WITH:
             return CE(sq.ends_with(self.native(left), self.native(right)), ty.BOOL)
-        if op == ecs.EgBinary.CONTAINS:
+        if op == cs.EgBinary.CONTAINS:
             return CE(sq.contains(self.native(left), self.native(right)), ty.BOOL)
-        if op == ecs.EgBinary.REGEX:
+        if op == cs.EgBinary.REGEX:
             return CE(
                 sq.call(ecs.EgSqlFn.REGEX, self.native(left), self.native(right)),
                 ty.BOOL,
             )
         return self._arithmetic(op, left, right)
 
-    def _comparison(self, op: ecs.EgBinary, left: CE, right: CE) -> CE:
+    def _comparison(self, op: cs.EgBinary, left: CE, right: CE) -> CE:
         if left.t.is_json or right.t.is_json:
             lj, rj = left.t, right.t
             if (lj.kind in (Kind.LIST, Kind.MAP)) or (rj.kind in (Kind.LIST, Kind.MAP)):
@@ -494,10 +494,10 @@ class ExprCompiler:
             return CE(sq.prefix_range(lv, rv, upper, exact), ty.BOOL)
         return CE(exact, ty.BOOL)
 
-    def _arithmetic(self, op: ecs.EgBinary, left: CE, right: CE) -> CE:
-        if op == ecs.EgBinary.ADD:
+    def _arithmetic(self, op: cs.EgBinary, left: CE, right: CE) -> CE:
+        if op == cs.EgBinary.ADD:
             return self._add(left, right)
-        if op == ecs.EgBinary.POW:
+        if op == cs.EgBinary.POW:
             return CE(
                 sq.call(ecs.EgSqlFn.POW, self.native(left), self.native(right)),
                 ty.FLOAT,
@@ -526,15 +526,15 @@ class ExprCompiler:
             return CE(
                 sq.call(ecs.EgSqlFn.ADD, self.jsonv(left), self.jsonv(right)), ty.ANY
             )
-        return self._numeric(ecs.EgBinary.ADD, left, right)
+        return self._numeric(cs.EgBinary.ADD, left, right)
 
-    def _numeric(self, op: ecs.EgBinary, left: CE, right: CE) -> CE:
+    def _numeric(self, op: cs.EgBinary, left: CE, right: CE) -> CE:
         # SQLite's own operators already match Cypher's numeric semantics:
         # integer `/` truncates toward zero, either float operand makes a
         # float. The result is a native number either way.
         both_int = left.t.kind == Kind.INT and right.t.kind == Kind.INT
         number = ty.INT if both_int else ty.FLOAT
-        if op == ecs.EgBinary.MOD:
+        if op == cs.EgBinary.MOD:
             return CE(
                 sq.call(ecs.EgSqlFn.MOD, self.native(left), self.native(right)), number
             )
