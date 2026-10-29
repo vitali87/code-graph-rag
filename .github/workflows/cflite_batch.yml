@@ -20,20 +20,22 @@ concurrency:
 
 jobs:
   batch-fuzzing:
-    name: Batch fuzz (${{ matrix.sanitizer }})
+    name: Batch fuzz (${{ matrix.language }}, ${{ matrix.sanitizer }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
+        # One job per language: see .clusterfuzzlite/build.sh.
+        language: [python, rust]
         sanitizer: [address]
     steps:
-      - name: Build fuzzers (${{ matrix.sanitizer }})
+      - name: Build fuzzers (${{ matrix.language }}, ${{ matrix.sanitizer }})
         uses: google/clusterfuzzlite/actions/build_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
         with:
           sanitizer: ${{ matrix.sanitizer }}
-          language: python
+          language: ${{ matrix.language }}
 
-      - name: Run fuzzers (${{ matrix.sanitizer }})
+      - name: Run fuzzers (${{ matrix.language }}, ${{ matrix.sanitizer }})
         uses: google/clusterfuzzlite/actions/run_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -46,4 +48,4 @@ jobs:
           # 30s default). A PyInstaller-frozen Python target is slow to start,
           # so dropping this risks real crashes being written off as
           # unreproducible.
-          language: python
+          language: ${{ matrix.language }}
