@@ -60,17 +60,11 @@ def _unknown_project(
     return _Refusal(message, cs.GRAPH_EXIT_UNKNOWN_PROJECT)
 
 
-def _unknown_target(
-    fetch_all: graph_query.QueryFn, name: str, qualified_name: str
-) -> _Refusal | None:
-    if graph_query.node_exists(fetch_all, qualified_name):
-        return None
-    close = graph_query.similar_targets(fetch_all, name, qualified_name)
-    message = cs.CLI_ERR_GRAPH_UNKNOWN_TARGET.format(qualified_name=qualified_name)
-    message += (
-        graph_query.did_you_mean(close) if close else cs.CLI_ERR_GRAPH_RESOLVE_HINT
+def _unknown_target(unknown: graph_query.UnknownTargetError) -> _Refusal:
+    return _Refusal(
+        unknown.refusal(cs.CLI_ERR_GRAPH_UNKNOWN_TARGET, cs.CLI_ERR_GRAPH_RESOLVE_HINT),
+        cs.GRAPH_EXIT_UNKNOWN_TARGET,
     )
-    return _Refusal(message, cs.GRAPH_EXIT_UNKNOWN_TARGET)
 
 
 def _run_query_and_emit(
@@ -83,14 +77,22 @@ def _run_query_and_emit(
 
     `target` is the qualified name the query walks from; an empty answer
     for it is checked against the graph, because `[]` for a name the graph
-    never saw reads as "nothing calls it" (issue #2461).
+    never saw reads as "nothing calls it" (issue #2461). A target the query
+    itself refuses (a `path:line` naming no indexed file, or one two files
+    share) goes to stderr the same way, not to stdout as JSON a script
+    would read as an answer.
     """
     name, fetch_all, ingestor = _project_and_fetch(project, repo_path)
+    result: object = None
     with ingestor:
         refusal = _unknown_project(fetch_all, name, project, repo_path)
-        result = None if refusal is not None else query(fetch_all, name)
-        if refusal is None and target is not None and result == []:
-            refusal = _unknown_target(fetch_all, name, target)
+        if refusal is None:
+            try:
+                result = query(fetch_all, name)
+                if target is not None and result == []:
+                    graph_query.require_known(fetch_all, name, target)
+            except graph_query.UnknownTargetError as unknown:
+                refusal = _unknown_target(unknown)
     # Reported after the connection closes: an exit raised inside it is
     # logged as a failed write with a traceback.
     if refusal is not None:
@@ -99,15 +101,6 @@ def _run_query_and_emit(
         # under typer, where click turns its own Exit into a return value and
         # the status would be lost.
         sys.exit(refusal.exit_code)
-    # A refusal from the query itself is the `{"error": ...}` the MCP tools
-    # answer with (a `path:line` target naming no indexed file, or one two
-    # files share): stderr with a status too, not stdout as JSON a script
-    # would read as an answer.
-    if isinstance(result, dict) and isinstance(
-        error := result.get(cs.DICT_KEY_ERROR), str
-    ):
-        click.secho(error, fg=cs.Color.RED, err=True)
-        sys.exit(cs.GRAPH_EXIT_UNKNOWN_TARGET)
     _emit(result)
 
 

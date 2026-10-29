@@ -395,6 +395,8 @@ def test_implementors_and_overrides() -> None:
             "qualified_name": f"{P}.app.Child",
             "path": "app.py",
             "relationship": "INHERITS",
+            "depth": 1,
+            "through": f"{P}.app.Base",
         }
     ]
     assert [

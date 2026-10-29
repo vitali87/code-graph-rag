@@ -237,9 +237,8 @@ async def test_definition_of_an_unknown_name_is_refused_like_callers(
     assert isinstance(callers, dict)
     assert _reports_failure(definition)
     assert _reports_failure(callers)
-    assert definition[cs.DICT_KEY_ERROR] == callers[cs.DICT_KEY_ERROR]
-    # The row stays for a client that reads `found`.
-    assert definition["found"] is False
+    # One refusal, worded and shaped as `callers` words it.
+    assert definition == callers
 
 
 async def test_a_known_definition_is_answered(temp_repo: Path) -> None:

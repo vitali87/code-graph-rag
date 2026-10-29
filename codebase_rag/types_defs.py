@@ -791,6 +791,13 @@ class MCPToolSchema(NamedTuple):
     inputSchema: MCPInputSchema
 
 
+class GraphRefusal(TypedDict):
+    """A graph tool's refusal: the project, target or read it could not
+    answer for. Every graph handler answers its rows or this."""
+
+    error: str
+
+
 class QueryResultDict(TypedDict, total=False):
     query_used: str
     results: list[ResultRow]

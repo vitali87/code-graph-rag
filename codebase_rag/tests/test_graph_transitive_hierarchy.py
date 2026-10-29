@@ -273,18 +273,24 @@ def test_the_default_is_the_direct_rows_unchanged() -> None:
             "qualified_name": DIGRAPH,
             "path": _path(DIGRAPH),
             "relationship": "INHERITS",
+            "depth": 1,
+            "through": GRAPH,
         },
         {
             "label": "Class",
             "qualified_name": MULTIGRAPH,
             "path": _path(MULTIGRAPH),
             "relationship": "INHERITS",
+            "depth": 1,
+            "through": GRAPH,
         },
         {
             "label": "Class",
             "qualified_name": MYGRAPH,
             "path": _path(MYGRAPH),
             "relationship": "INHERITS",
+            "depth": 1,
+            "through": GRAPH,
         },
     ]
     assert graph_query.implementors(fetch, P, GRAPH, depth=1) == (
@@ -309,12 +315,7 @@ def test_the_first_hop_lists_what_the_direct_query_does() -> None:
     ):
         direct = query(fetch, P, target)
         rows: Sequence[Mapping[str, object]] = query(fetch, P, target, depth=3)
-        first = [
-            {k: v for k, v in r.items() if k not in ("depth", "through")}
-            for r in rows
-            if r["depth"] == 1
-        ]
-        assert first == direct
+        assert [r for r in rows if r["depth"] == 1] == direct
 
 
 def test_a_cycle_terminates_and_never_lists_the_start() -> None:
@@ -488,13 +489,13 @@ async def test_mcp_depth_answers_what_the_cli_does(
     )
 
 
-async def test_mcp_default_is_the_direct_rows(
+async def test_mcp_default_is_the_first_hop(
     registry: MCPToolsRegistry, tmp_path: Path
 ) -> None:
     rows = await registry.implementors(GRAPH, project=P)
     assert _json(rows) == _cli(tmp_path, "implementors", GRAPH)
     assert isinstance(rows, list)
-    assert all("depth" not in r and "through" not in r for r in rows)
+    assert all(r["depth"] == 1 and r["through"] == GRAPH for r in rows)
     rows = await registry.overrides(f"{GRAPH}.add_edge", project=P)
     assert _json(rows) == _cli(tmp_path, "overrides", f"{GRAPH}.add_edge")
 

@@ -65,6 +65,7 @@ from codebase_rag.types_defs import (
     DeleteProjectErrorResult,
     DeleteProjectResult,
     DeleteProjectSuccessResult,
+    GraphRefusal,
     ListProjectsErrorResult,
     ListProjectsResult,
     ListProjectsSuccessResult,
@@ -91,6 +92,7 @@ from codebase_rag.vector_store import clear_all_embeddings, delete_project_embed
 from codebase_rag.workspaces import WorkspaceConfig
 
 if TYPE_CHECKING:
+    from codebase_rag.context_slice import ContextSlice
     from codebase_rag.crash_correlation import (
         FrameResolutionRate,
         RootCauseReport,
@@ -2856,13 +2858,13 @@ class MCPToolsRegistry:
             returns_json=True,
         )
 
-    async def _graph_query(
+    async def _graph_query[T](
         self,
         tool: cs.MCPToolName,
         project: str | None,
-        run: Callable[[str], object],
+        run: Callable[[str], T | GraphRefusal],
         target: str | None = None,
-    ) -> object:
+    ) -> T | GraphRefusal:
         # Every path that reads the graph, the project check included, runs
         # under the ingestor lock so an index/update rebuild cannot tear the
         # read (issue #1471). A typo in `project` would otherwise read as a
@@ -2879,22 +2881,22 @@ class MCPToolsRegistry:
                 # unknown rather than as a second, weaker path (issue #1494).
                 project, scope_error = self._workspace_scope(project)
                 if scope_error is not None:
-                    return {cs.DICT_KEY_ERROR: scope_error}
+                    return GraphRefusal(error=scope_error)
                 known = await _run_in_thread(self.ingestor.list_projects)
                 if project is not None and project not in known:
-                    return {
-                        cs.DICT_KEY_ERROR: self._unknown_project_error(project, known)
-                    }
+                    return GraphRefusal(
+                        error=self._unknown_project_error(project, known)
+                    )
                 project_name = project or derive_project_name(Path(self.project_root))
                 # The derived default is held to the same check: a server
                 # rooted in a directory that was never indexed answered every
                 # read with nothing (issue #2461).
                 if project_name not in known:
-                    return {
-                        cs.DICT_KEY_ERROR: await _run_in_thread(
+                    return GraphRefusal(
+                        error=await _run_in_thread(
                             self._root_not_indexed_error, project_name, known
                         )
-                    }
+                    )
                 # A read is as wrong as a reingest when the graph is known
                 # partial: a failed run (or a rollback whose re-ingest
                 # failed) leaves definitions and edges missing, and every
@@ -2922,23 +2924,25 @@ class MCPToolsRegistry:
                         self._incomplete_refusal, project_name, tool
                     )
                 ):
-                    return {cs.DICT_KEY_ERROR: refusal}
+                    return GraphRefusal(error=refusal)
                 result = await _run_in_thread(run, project_name)
                 if target is not None and _found_nothing(result):
-                    if unknown := await _run_in_thread(
-                        self._unknown_target_error, project_name, target
-                    ):
-                        # A `found: false` row keeps its fields beside the
-                        # refusal, for a client that reads `found`.
-                        if isinstance(result, dict):
-                            return {**result, cs.DICT_KEY_ERROR: unknown}
-                        return {cs.DICT_KEY_ERROR: unknown}
+                    await _run_in_thread(
+                        graph_query.require_known,
+                        self.ingestor.fetch_all,
+                        project_name,
+                        target,
+                    )
                 return result
+        except graph_query.UnknownTargetError as unknown:
+            # Raised by the lookup itself (a location, an endpoint) or by
+            # `require_known` for an empty answer: one refusal either way.
+            return GraphRefusal(error=self._target_refusal(unknown))
         except Exception as e:
             logger.error(ls.MCP_GRAPH_QUERY_ERROR.format(tool=tool, error=e))
-            return {
-                cs.DICT_KEY_ERROR: cs.MCP_GRAPH_QUERY_ERROR.format(tool=tool, error=e)
-            }
+            return GraphRefusal(
+                error=cs.MCP_GRAPH_QUERY_ERROR.format(tool=tool, error=e)
+            )
 
     def _nameable(self, projects: Collection[str]) -> list[str]:
         """The `projects` a refusal may name: under a workspace, only the
@@ -3039,37 +3043,42 @@ class MCPToolsRegistry:
         )
         return owner if owner != project_name else None
 
+    @staticmethod
+    def _target_refusal(unknown: graph_query.UnknownTargetError) -> str:
+        return unknown.refusal(cs.MCP_UNKNOWN_TARGET, cs.MCP_UNKNOWN_TARGET_HINT)
+
     def _unknown_target_error(self, project_name: str, target: str) -> str | None:
-        fetch_all = self.ingestor.fetch_all
-        if graph_query.node_exists(fetch_all, target):
-            return None
-        close = graph_query.similar_targets(fetch_all, project_name, target)
-        return cs.MCP_UNKNOWN_TARGET.format(qualified_name=target) + (
-            graph_query.did_you_mean(close) if close else cs.MCP_UNKNOWN_TARGET_HINT
-        )
+        try:
+            graph_query.require_known(self.ingestor.fetch_all, project_name, target)
+        except graph_query.UnknownTargetError as unknown:
+            return self._target_refusal(unknown)
+        return None
 
     @staticmethod
     def _depth(depth: int | None) -> int:
         return max(1, min(int(depth or 1), cs.GRAPH_QUERY_MAX_DEPTH))
 
-    async def resolve(self, target: str, project: str | None = None) -> object:
+    async def resolve(
+        self, target: str, project: str | None = None
+    ) -> list[graph_query.SymbolRow] | GraphRefusal:
         return await self._graph_query(
             cs.MCPToolName.RESOLVE,
             project,
             lambda name: self._resolve_rows(name, target),
         )
 
-    def _resolve_rows(self, project_name: str, target: str) -> object:
+    def _resolve_rows(
+        self, project_name: str, target: str
+    ) -> list[graph_query.SymbolRow]:
         # A line no file can have is refused as such (issue #3244); the
         # graph would only be asked about it to overflow a Bolt integer.
         location = graph_query.parse_location(target)
         if location is not None and location[1] > cs.GRAPH_MAX_SOURCE_LINE:
             path, line = location
-            return {
-                cs.DICT_KEY_ERROR: cs.MCP_RESOLVE_LINE_OUT_OF_RANGE.format(
-                    path=path, line=line
-                )
-            }
+            raise graph_query.UnknownTargetError(
+                target,
+                reason=cs.MCP_RESOLVE_LINE_OUT_OF_RANGE.format(path=path, line=line),
+            )
         return graph_query.resolve_or_refuse(
             self.ingestor.fetch_all, project_name, target
         )
@@ -3190,7 +3199,7 @@ class MCPToolsRegistry:
 
     def _uncaptured_refusal[T](
         self, tool: cs.MCPToolName, project_name: str, rows: list[T]
-    ) -> list[T] | dict[str, str]:
+    ) -> list[T] | GraphRefusal:
         # Only an EMPTY answer is questioned, so a project with rows pays no
         # extra read, and a graph with no recorded capture keeps its `[]`.
         if rows:
@@ -3200,19 +3209,19 @@ class MCPToolsRegistry:
         )
         if gap is None:
             return rows
-        return {
-            cs.DICT_KEY_ERROR: cs.MCP_CAPTURE_GROUP_MISSING.format(
+        return GraphRefusal(
+            error=cs.MCP_CAPTURE_GROUP_MISSING.format(
                 tool=tool,
                 project=project_name,
                 groups=cs.CHAR_COMMA.join(gap["groups"]),
                 relationships=cs.SEPARATOR_COMMA_SPACE.join(gap["relationships"]),
                 root=gap["root_path"] or cs.MCP_DEFAULT_DIRECTORY,
             )
-        }
+        )
 
     async def definition(
         self, qualified_name: str, project: str | None = None
-    ) -> object:
+    ) -> graph_query.DefinitionRow | GraphRefusal:
         return await self._graph_query(
             cs.MCPToolName.DEFINITION,
             project,
@@ -3226,7 +3235,9 @@ class MCPToolsRegistry:
             target=qualified_name,
         )
 
-    async def endpoints(self, project: str | None = None) -> object:
+    async def endpoints(
+        self, project: str | None = None
+    ) -> list[graph_query.EndpointRow] | GraphRefusal:
         return await self._graph_query(
             cs.MCPToolName.ENDPOINTS,
             project,
@@ -3237,14 +3248,18 @@ class MCPToolsRegistry:
             ),
         )
 
-    async def endpoint_callers(self, target: str, project: str | None = None) -> object:
+    async def endpoint_callers(
+        self, target: str, project: str | None = None
+    ) -> list[graph_query.EndpointCallerRow] | GraphRefusal:
         return await self._graph_query(
             cs.MCPToolName.ENDPOINT_CALLERS,
             project,
             lambda name: self._endpoint_callers(name, target),
         )
 
-    def _endpoint_callers(self, project_name: str, target: str) -> object:
+    def _endpoint_callers(
+        self, project_name: str, target: str
+    ) -> list[graph_query.EndpointCallerRow] | GraphRefusal:
         # A target that names no endpoint is refused, as `callers` refuses an
         # unknown name: `[]` means the endpoint exists and nothing reaches it
         # (issue #3186). A project synced without what the tool reads holds no
@@ -3254,13 +3269,15 @@ class MCPToolsRegistry:
             rows = graph_query.endpoint_callers(
                 self.ingestor.fetch_all, project_name, target
             )
-        except graph_query.UnknownEndpointError as unknown:
-            return self._uncaptured_refusal(tool, project_name, []) or {
-                cs.DICT_KEY_ERROR: str(unknown)
-            }
+        except graph_query.UnknownEndpointError:
+            if gap := self._uncaptured_refusal(tool, project_name, []):
+                return gap
+            raise
         return self._uncaptured_refusal(tool, project_name, rows)
 
-    async def remote_dependencies(self, project: str | None = None) -> object:
+    async def remote_dependencies(
+        self, project: str | None = None
+    ) -> list[graph_query.RemoteDependencyRow] | GraphRefusal:
         return await self._graph_query(
             cs.MCPToolName.REMOTE_DEPENDENCIES,
             project,
@@ -3273,7 +3290,7 @@ class MCPToolsRegistry:
 
     async def callers(
         self, qualified_name: str, depth: int | None = None, project: str | None = None
-    ) -> object:
+    ) -> list[graph_query.CallSiteRow] | GraphRefusal:
         return await self._graph_query(
             cs.MCPToolName.CALLERS,
             project,
@@ -3285,7 +3302,7 @@ class MCPToolsRegistry:
 
     async def callees(
         self, qualified_name: str, depth: int | None = None, project: str | None = None
-    ) -> object:
+    ) -> list[graph_query.CallSiteRow] | GraphRefusal:
         return await self._graph_query(
             cs.MCPToolName.CALLEES,
             project,
@@ -3297,7 +3314,7 @@ class MCPToolsRegistry:
 
     async def implementors(
         self, qualified_name: str, project: str | None = None, depth: int | None = None
-    ) -> object:
+    ) -> list[graph_query.RelatedRow] | GraphRefusal:
         return await self._graph_query(
             cs.MCPToolName.IMPLEMENTORS,
             project,
@@ -3309,7 +3326,7 @@ class MCPToolsRegistry:
 
     async def overrides(
         self, qualified_name: str, project: str | None = None, depth: int | None = None
-    ) -> object:
+    ) -> list[graph_query.RelatedRow] | GraphRefusal:
         return await self._graph_query(
             cs.MCPToolName.OVERRIDES,
             project,
@@ -3324,7 +3341,11 @@ class MCPToolsRegistry:
         module_qualified_name: str,
         project: str | None = None,
         through_reexports: bool = False,
-    ) -> object:
+    ) -> (
+        list[graph_query.ImporterRow]
+        | list[graph_query.ReexportImporterRow]
+        | GraphRefusal
+    ):
         # A single `return await` keeps the handler a pure delegation to the
         # locked `_graph_query`, so the read is serialised against a rebuild
         # (issue #1471) whichever query the flag picks.
@@ -3341,7 +3362,7 @@ class MCPToolsRegistry:
 
     async def tests_reaching(
         self, qualified_name: str, project: str | None = None
-    ) -> object:
+    ) -> list[graph_query.TestReachRow] | GraphRefusal:
         return await self._graph_query(
             cs.MCPToolName.TESTS_REACHING,
             project,
@@ -3370,7 +3391,7 @@ class MCPToolsRegistry:
         mentions: str | None = None,
         author: str | None = None,
         project: str | None = None,
-    ) -> object:
+    ) -> gloss.GlossRow | gloss.GlossRefusal | GraphRefusal:
         # Runs under the ingestor lock like every graph read, so the write
         # cannot interleave with an index or reingest deleting its subject.
         return await self._graph_query(
@@ -3412,7 +3433,9 @@ class MCPToolsRegistry:
 
         return read
 
-    async def glosses(self, target: str, project: str | None = None) -> object:
+    async def glosses(
+        self, target: str, project: str | None = None
+    ) -> gloss.GlossesResult | gloss.GlossRefusal | GraphRefusal:
         return await self._graph_query(
             cs.MCPToolName.GLOSSES,
             project,
@@ -3450,7 +3473,7 @@ class MCPToolsRegistry:
         target: str,
         budget_tokens: int = cs.CONTEXT_DEFAULT_BUDGET,
         project: str | None = None,
-    ) -> object:
+    ) -> "ContextSlice | GraphRefusal":
         return await self._graph_query(
             cs.MCPToolName.CONTEXT,
             project,
@@ -3459,7 +3482,7 @@ class MCPToolsRegistry:
 
     def _run_context(
         self, project_name: str, target: str, budget_tokens: int
-    ) -> object:
+    ) -> "ContextSlice | GraphRefusal":
         from codebase_rag.context_slice import context as build_context
 
         # The CLI enforces this with typer's min=1; without the same check an
@@ -3467,11 +3490,9 @@ class MCPToolsRegistry:
         # reads as success. Checked here rather than in `context` so that
         # handler stays a pure delegation to the locked `_graph_query`.
         if budget_tokens < 1:
-            return {
-                cs.DICT_KEY_ERROR: cs.MCP_CONTEXT_BUDGET_INVALID.format(
-                    budget=budget_tokens
-                )
-            }
+            return GraphRefusal(
+                error=cs.MCP_CONTEXT_BUDGET_INVALID.format(budget=budget_tokens)
+            )
 
         # Scoped to the project `_graph_query` resolved, not the optional
         # argument: an omitted `project` would otherwise search every project

@@ -131,13 +131,13 @@ def resolve_one(
         return _resolve_descriptor(
             fetch_all, project_name, target, natural_row, descriptor
         )
-    found = graph_query.resolve_or_refuse(fetch_all, project_name, target)
-    if not isinstance(found, list):
+    try:
+        rows = graph_query.resolve_or_refuse(fetch_all, project_name, target)
+    except graph_query.UnknownTargetError as refused:
         # A location the project cannot answer for (a file it does not hold,
         # or two held files it could name): saying which says more than "no
         # definition matches" (issue #2611).
-        return GlossRefusal(error=found["error"])
-    rows = found
+        return GlossRefusal(error=str(refused))
     if not rows:
         return GlossRefusal(
             error=cs.MCP_GLOSS_TARGET_NOT_FOUND.format(

@@ -12,6 +12,13 @@ rewrite each call. Edges written without a site (libclang macro uses,
 Roslyn facts, trace write-back) return `null` positions. In both directions
 `path` is the file the site sits in (its caller's), so `path:line` is always
 the call; `callee_path` is where the invoked symbol is defined (issue #2460).
+
+A lookup answers what the graph holds: `[]`, or `found: false` from
+`definition`, is that answer. A target the project cannot answer for is an
+`UnknownTargetError`, never an empty answer, which would read as "nothing
+calls it": `resolve_or_refuse` and `endpoint_callers` raise it themselves,
+and a surface that got an empty answer for a qualified name asks
+`require_known`. The MCP tools and `cgr graph` each translate it once.
 """
 
 from __future__ import annotations
@@ -125,9 +132,6 @@ class RelatedRow(TypedDict):
     qualified_name: str
     path: str | None
     relationship: str
-
-
-class TransitiveRelatedRow(RelatedRow):
     # Hops from the queried name, and the node this row's edge hangs off,
     # as `callers` rows carry them (issue #2624).
     depth: int
@@ -240,10 +244,6 @@ def _symbol_row(row: ResultRow) -> SymbolRow:
 
 def _symbol_key(row: SymbolRow) -> tuple[str, str]:
     return (row["qualified_name"], row["path"] or "")
-
-
-class TargetRefusal(TypedDict):
-    error: str
 
 
 class Location(NamedTuple):
@@ -374,8 +374,10 @@ def resolve(fetch_all: QueryFn, project_name: str, target: str) -> list[SymbolRo
     prefix = project_qn_prefix(project_name)
     owns = owner_check(fetch_all, project_name)
     if parse_location(target) is not None:
-        found = _resolve_location(fetch_all, project_name, target, owns)
-        return found if isinstance(found, list) else []
+        try:
+            return _resolve_location(fetch_all, project_name, target, owns)
+        except UnknownTargetError:
+            return []
     rows = fetch_all(
         cq.CYPHER_GRAPH_RESOLVE_NAME,
         {
@@ -415,12 +417,12 @@ def resolve(fetch_all: QueryFn, project_name: str, target: str) -> list[SymbolRo
 
 def resolve_or_refuse(
     fetch_all: QueryFn, project_name: str, target: str
-) -> list[SymbolRow] | TargetRefusal:
-    """`resolve`, or a refusal when `target` is a location the project
-    cannot answer for: a file it does not hold, or two held files the target
-    could equally name (issue #2611). `cgr graph resolve` and the MCP
-    `resolve`, `annotate` and `glosses` tools all answer through this, so a
-    target is refused, or not, the same way everywhere."""
+) -> list[SymbolRow]:
+    """`resolve`, raising `UnknownTargetError` when `target` is a location
+    the project cannot answer for: a file it does not hold, or two held files
+    the target could equally name (issue #2611). `cgr graph resolve` and the
+    MCP `resolve`, `annotate` and `glosses` tools all answer through this, so
+    a target is refused, or not, the same way everywhere."""
     if parse_location(target) is None:
         return resolve(fetch_all, project_name, target)
     owns = owner_check(fetch_all, project_name)
@@ -480,7 +482,7 @@ def _resolve_location(
     project_name: str,
     target: str,
     owns: Callable[[str], bool],
-) -> list[SymbolRow] | TargetRefusal:
+) -> list[SymbolRow]:
     readings = _location_readings(target)
     absolute = any(_is_absolute(portable_posix(r.path)) for r in readings)
     roots = _location_roots(fetch_all, project_name) if absolute else []
@@ -499,15 +501,16 @@ def _resolve_location(
                 Location(next(p for p in spelled[r] if p in held), r.line)
                 for r in holding
             )
-            return TargetRefusal(
-                error=cs.GRAPH_LOCATION_AMBIGUOUS.format(
+            raise UnknownTargetError(
+                target,
+                reason=cs.GRAPH_LOCATION_AMBIGUOUS.format(
                     target=target,
                     project=project_name,
                     path=first.path,
                     line=first.line,
                     other_path=second.path,
                     other_line=second.line,
-                )
+                ),
             )
         spelled = {r: spelled[r] for r in holding}
     # The spellings of one reading are of one file: the first that names
@@ -524,10 +527,11 @@ def _resolve_location(
         held = _held_paths(fetch_all, project_name, every_path, owns)
     if held:
         return []
-    return TargetRefusal(
-        error=cs.GRAPH_LOCATION_UNKNOWN_FILE.format(
+    raise UnknownTargetError(
+        target,
+        reason=cs.GRAPH_LOCATION_UNKNOWN_FILE.format(
             path=every_path[0], project=project_name
-        )
+        ),
     )
 
 
@@ -745,6 +749,7 @@ def callees(
 def _related_rows(
     fetch_all: QueryFn, project_name: str, query: str, qn: str
 ) -> list[RelatedRow]:
+    # The direct rows in the walk's shape: one hop, off the queried node.
     rows = fetch_all(
         query, {cs.KEY_PROJECT_PREFIX: project_qn_prefix(project_name), cs.KEY_QN: qn}
     )
@@ -756,6 +761,8 @@ def _related_rows(
             qualified_name=str(r.get(cs.KEY_QUALIFIED_NAME, "")),
             path=_opt_str(r.get(cs.KEY_PATH)),
             relationship=str(r.get(cs.KEY_REL_TYPE, "")),
+            depth=1,
+            through=qn,
         )
         for r in rows
     ]
@@ -768,7 +775,7 @@ def _walk_related(
     start: str,
     depth: int,
     hop_queries: tuple[str, ...],
-) -> list[TransitiveRelatedRow]:
+) -> list[RelatedRow]:
     """Breadth-first over `hop_queries`, one batched query per hop and query.
 
     Each query keeps its own frontier, so a direction is only ever followed
@@ -782,7 +789,7 @@ def _walk_related(
     reached = {start}
     # One list per query: each frontier is that query's own.
     frontiers = {query: [start] for query in hop_queries}
-    out: list[TransitiveRelatedRow] = []
+    out: list[RelatedRow] = []
     for level in range(1, depth + 1):
         found: dict[str, set[str]] = {query: set() for query in hop_queries}
         for query, frontier in frontiers.items():
@@ -815,11 +822,11 @@ def _first_reached_rows(
     reached: set[str],
     owns: Callable[[str], bool],
     level: int,
-) -> list[TransitiveRelatedRow]:
+) -> list[RelatedRow]:
     # The rows of one hop that reach a project node not reached at an
     # earlier level, listed at `level`.
     return [
-        TransitiveRelatedRow(
+        RelatedRow(
             label=str(r.get(cs.KEY_LABEL, "")),
             qualified_name=qn,
             path=_opt_str(r.get(cs.KEY_PATH)),
@@ -834,13 +841,13 @@ def _first_reached_rows(
 
 def implementors(
     fetch_all: QueryFn, project_name: str, qualified_name: str, depth: int = 1
-) -> list[RelatedRow] | list[TransitiveRelatedRow]:
+) -> list[RelatedRow]:
     """Types that INHERIT from or IMPLEMENT `qualified_name`.
 
     Direct subtypes only by default. `depth` > 1 also follows their own
     subtypes, so every class implementing an interface through an abstract
-    base is listed; each row then carries its `depth` and the type it was
-    reached `through`.
+    base is listed. Each row carries its `depth` and the type it was reached
+    `through`: a direct row is depth 1, through `qualified_name`.
     """
     if depth > 1:
         return _walk_related(
@@ -857,7 +864,7 @@ def implementors(
 
 def overrides(
     fetch_all: QueryFn, project_name: str, qualified_name: str, depth: int = 1
-) -> list[RelatedRow] | list[TransitiveRelatedRow]:
+) -> list[RelatedRow]:
     """Methods that OVERRIDE `qualified_name`, and the method it overrides.
 
     Direct only by default. `depth` > 1 follows each direction on its own:
@@ -1269,9 +1276,36 @@ def endpoints(fetch_all: QueryFn, project_name: str) -> list[EndpointRow]:
     return [_endpoint_row(row) for row in fetch_all(cq.CYPHER_GRAPH_ENDPOINTS, params)]
 
 
-class UnknownEndpointError(ValueError):
+class UnknownTargetError(ValueError):
+    """A target this project's graph cannot answer for.
+
+    `reason` is the whole refusal when the lookup could word it (a location
+    naming no held file, an endpoint the project does not expose). Without
+    one, `target` is a qualified name no node carries and `close` holds the
+    names it most likely means; each surface words that with its own hint.
+    """
+
+    def __init__(
+        self, target: str, close: Sequence[str] = (), reason: str | None = None
+    ) -> None:
+        super().__init__(reason or target)
+        self.target = target
+        self.close = tuple(close)
+        self.reason = reason
+
+    def refusal(self, unknown: str, hint: str) -> str:
+        """The message to show: `reason`, or `unknown` (formatted with the
+        qualified name) and a "did you mean", or `hint` when nothing is close."""
+        if self.reason is not None:
+            return self.reason
+        return unknown.format(qualified_name=self.target) + (
+            did_you_mean(self.close) if self.close else hint
+        )
+
+
+class UnknownEndpointError(UnknownTargetError):
     """An `endpoint_callers` target that names no endpoint the project
-    exposes; the message carries the close identities and handlers."""
+    exposes; the reason carries the close identities and handlers."""
 
 
 def endpoint_callers(
@@ -1303,7 +1337,9 @@ def endpoint_callers(
     ]
     keys = _endpoint_keys(exposed, target, project_name)
     if not keys:
-        raise UnknownEndpointError(_unknown_endpoint(exposed, project_name, target))
+        raise UnknownEndpointError(
+            target, reason=_unknown_endpoint(exposed, project_name, target)
+        )
     rows = {
         _endpoint_caller_key(row): row
         for key in keys
@@ -1453,6 +1489,20 @@ def projects_rooted_at(roots: dict[str, str | None], repo_root: Path) -> list[st
 def node_exists(fetch_all: QueryFn, qualified_name: str) -> bool:
     """Whether any node, in any project, carries `qualified_name`."""
     return bool(fetch_all(cq.CYPHER_GRAPH_NODE_EXISTS, {cs.KEY_QN: qualified_name}))
+
+
+def require_known(fetch_all: QueryFn, project_name: str, qualified_name: str) -> None:
+    """Raise `UnknownTargetError` unless some node carries `qualified_name`.
+
+    For a surface that got an empty answer for it: `[]` is "nothing calls
+    it" only for a name the graph holds (issue #2461). Only the empty answer
+    pays for this read.
+    """
+    if node_exists(fetch_all, qualified_name):
+        return
+    raise UnknownTargetError(
+        qualified_name, similar_targets(fetch_all, project_name, qualified_name)
+    )
 
 
 def similar_targets(

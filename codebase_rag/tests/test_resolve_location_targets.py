@@ -175,6 +175,13 @@ def _registry(graph: Graph, root: Path) -> MCPToolsRegistry:
 # --- the path spellings the issue lists ------------------------------------------
 
 
+def _refusal(graph: Graph, target: str) -> str:
+    """Why `resolve_or_refuse` refuses `target`; it must refuse."""
+    with pytest.raises(graph_query.UnknownTargetError) as refused:
+        graph_query.resolve_or_refuse(graph.fetch_all, P, target)
+    return str(refused.value)
+
+
 def test_the_stored_repo_relative_path_still_resolves() -> None:
     assert _qns(graph_query.resolve(Graph().fetch_all, P, f"{SESSIONS}:15")) == (
         INNERMOST
@@ -417,14 +424,12 @@ def test_another_projects_file_is_not_matched(tmp_path: Path) -> None:
     # A file only `other` or `proj.extra` holds is not proj's file.
     for target in ("src/pkg/adapters.py:3", "src/only_extra.py:3"):
         assert graph_query.resolve(graph.fetch_all, P, target) == []
-        refused = graph_query.resolve_or_refuse(graph.fetch_all, P, target)
-        assert isinstance(refused, dict), target
-        assert target.split(":")[0] in refused[cs.DICT_KEY_ERROR]
+        assert target.split(":")[0] in _refusal(graph, target)
     # An absolute path under OTHER's root is not made relative to it when
     # the project asked is proj.
     target = f"/srv/other/{SESSIONS}:15"
     assert graph_query.resolve(graph.fetch_all, P, target) == []
-    assert isinstance(graph_query.resolve_or_refuse(graph.fetch_all, P, target), dict)
+    assert _refusal(graph, target)
     # ... and the other project still answers its own file.
     assert _qns(graph_query.resolve(graph.fetch_all, OTHER, target)) == [
         f"{OTHER}.src.pkg.sessions.request"
@@ -435,9 +440,7 @@ def test_an_absolute_path_outside_every_root_is_refused_not_guessed() -> None:
     target = f"/elsewhere/checkout/{SESSIONS}:15"
     graph = Graph()
     assert graph_query.resolve(graph.fetch_all, P, target) == []
-    refused = graph_query.resolve_or_refuse(graph.fetch_all, P, target)
-    assert isinstance(refused, dict)
-    assert f"/elsewhere/checkout/{SESSIONS}" in refused[cs.DICT_KEY_ERROR]
+    assert f"/elsewhere/checkout/{SESSIONS}" in _refusal(graph, target)
 
 
 def test_gloss_resolve_one_names_the_unknown_file() -> None:
@@ -529,10 +532,9 @@ def test_a_column_reading_never_switches_to_another_held_file(
     graph = _both_odd_files(base_definitions)
     target = f"{ODD}:3"
     assert graph_query.resolve(graph.fetch_all, P, target) == []
-    refused = graph_query.resolve_or_refuse(graph.fetch_all, P, target)
-    assert isinstance(refused, dict), refused
-    assert repr(ODD_BASE) in refused[cs.DICT_KEY_ERROR]
-    assert repr(ODD) in refused[cs.DICT_KEY_ERROR]
+    refused = _refusal(graph, target)
+    assert repr(ODD_BASE) in refused
+    assert repr(ODD) in refused
     result = _cli_resolve(graph, target, tmp_path)
     assert result.exit_code == cs.GRAPH_EXIT_UNKNOWN_TARGET, result.output
     assert result.stdout == ""
@@ -564,11 +566,7 @@ def test_a_column_on_the_only_held_reading_still_resolves() -> None:
 def test_a_file_without_a_module_of_this_project_is_refused() -> None:
     # `src/pkg/adapters.py` has a Module only in `other`; a shared Folder
     # in the real graph would reach its File node from proj's Project too.
-    refused = graph_query.resolve_or_refuse(
-        Graph().fetch_all, P, "src/pkg/adapters.py:3"
-    )
-    assert isinstance(refused, dict)
-    assert "src/pkg/adapters.py" in refused[cs.DICT_KEY_ERROR]
+    assert "src/pkg/adapters.py" in _refusal(Graph(), "src/pkg/adapters.py:3")
 
 
 def test_the_held_file_query_reads_only_the_projects_modules() -> None:
