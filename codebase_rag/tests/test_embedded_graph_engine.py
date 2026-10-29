@@ -283,7 +283,7 @@ class TestLimits:
             "codebase_rag.services.graph_service.settings.QUERY_TIMEOUT_S", 0.05
         )
         ingestor = GraphIngestor(
-            "", 0, dialect=get_dialect(DIALECT_SQLITE), sqlite_path=path
+            host="", port=0, dialect=get_dialect(DIALECT_SQLITE), sqlite_path=path
         )
         with ingestor, pytest.raises(TimeoutError):
             ingestor.fetch_read_only(self._CROSS_JOIN)

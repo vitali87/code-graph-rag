@@ -740,8 +740,8 @@ def _replay(
     monkeypatch.setattr(native.NativeGraph, "merge_nodes", nodes)
     monkeypatch.setattr(native.NativeGraph, "merge_relationships", rels)
     with GraphIngestor(
-        "unused",
-        0,
+        host="unused",
+        port=0,
         batch_size=7,
         dialect=get_dialect(DIALECT_SQLITE),
         sqlite_path=str(path),
