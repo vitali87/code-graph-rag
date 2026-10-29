@@ -10,9 +10,9 @@ We want Code Graph RAG to work for people who use a screen reader, a screen magn
 
 ## Goals
 
-For the documentation site the target is WCAG 2.2 Level AA. That is a goal and not a claim of conformance, because nobody has audited the site against it.
+For the documentation site we aim for WCAG 2.2 Level AA where feasible. That is a goal and not a claim of conformance, because nobody has audited the site against it.
 
-WCAG was written for web content and does not map cleanly onto a terminal. For `cgr` the goals are the conventions terminal users already rely on:
+WCAG was written for web content and does not map cleanly onto a terminal. For `cgr` we aim to follow the conventions terminal users already rely on:
 
 - Colour never carries meaning on its own.
 - Colour and animation can be turned off.
@@ -65,7 +65,7 @@ If the form itself is hard to use, any other issue form will do. Say in it that 
 
 ## What happens next
 
-Accessibility reports get the `accessibility` label and go through triage with the other bugs. A barrier that stops someone from using cgr or the documentation at all is a high-priority bug. The maintainer will reply on the issue, suggest a workaround where one exists, and keep the issue updated until the barrier is fixed. If it cannot be fixed, the reply will say why. When a fix lands we may ask you to check that it works for you.
+Accessibility reports get the `accessibility` label and go through triage with the other bugs. We cannot promise that a report will be fixed, or fixed by a particular date. Where a fix is feasible, we will make a best effort to provide one, and to point you to a workaround in the meantime if there is one. Where it is not feasible, the barrier may stay. Pull requests that remove a barrier are welcome.
 
 ## For contributors
 
@@ -79,6 +79,6 @@ When a change affects what people see or hear:
 
 ## Ownership
 
-The lead maintainer named in [GOVERNANCE.md](GOVERNANCE.md) triages accessibility reports and keeps this page up to date.
+The lead maintainer named in [GOVERNANCE.md](GOVERNANCE.md) maintains this page.
 
 Last reviewed: October 2026.
