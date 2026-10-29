@@ -3,11 +3,11 @@ from typing import Annotated
 
 import typer
 
-from . import constants as ec
-from . import logs as ls
-from .cgr_graph import extract_cgr_rust_graph
-from .l1_eval import run_l1_eval
-from .oracles import run_rust_oracle, rust_oracle_available
+from .. import constants as ec
+from .. import logs as ls
+from ..cgr_graph import extract_cgr_rust_graph
+from ..oracles import run_rust_oracle, rust_oracle_available
+from .runner import run_l1_eval
 
 _TITLE = "cgr L1 structure eval (Rust vs syn)"
 

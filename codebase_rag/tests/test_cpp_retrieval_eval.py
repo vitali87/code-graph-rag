@@ -3,12 +3,12 @@ from pathlib import Path
 import pytest
 
 from evals import constants as ec
-from evals.cpp_retrieval import (
+from evals.oracles import cpp_oracle_available
+from evals.retrieval.cpp import (
     cgr_cpp_call_edges,
     oracle_cpp_call_edges,
     score_cpp_retrieval,
 )
-from evals.oracles import cpp_oracle_available
 
 needs_clang = pytest.mark.skipif(
     not cpp_oracle_available(), reason="libclang (clang.cindex) not importable"

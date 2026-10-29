@@ -133,7 +133,7 @@ GO_DEFAULT_TARGET = "."
 GO_SCORES_FILENAME = "go_scores.csv"
 GO_DIFF_FILENAME = "go_diff.json"
 
-# Multi-language retrieval (evals/retrieval_eval.py): file-level call
+# Multi-language retrieval (evals/retrieval/runner.py): file-level call
 # localization per language, cgr's CALLS edges vs an independent parser's call
 # sites over the same first-party name universe. The languages differ only in
 # the spec each one registers; outputs and labels derive from its stem.

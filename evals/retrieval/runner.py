@@ -1,6 +1,6 @@
 """Shared driver for the per-language call-retrieval evals.
 
-Every evals/*_retrieval.py ran the same program: refuse to run without the
+Every evals/retrieval/<language>.py runs the same program: refuse to run without the
 language oracle, capture the oracle's first-party call sites, capture cgr's
 CALLS edges for the same name universe, reduce each to (caller_file,
 callee_simple_name), score the two sets, then write and render the result.
@@ -19,11 +19,11 @@ from loguru import logger
 
 from codebase_rag import constants as cs
 
-from . import constants as ec
-from . import logs as ls
-from .cgr_graph import capture
-from .oracle_guard import oracle_unavailable_exits, require_oracle
-from .oracles import (
+from .. import constants as ec
+from .. import logs as ls
+from ..cgr_graph import capture
+from ..oracle_guard import oracle_unavailable_exits, require_oracle
+from ..oracles import (
     cpp_oracle_available,
     csharp_oracle_available,
     csharp_oracle_skip_reason,
@@ -49,9 +49,9 @@ from .oracles import (
     typescript_oracle_available,
     typescript_oracle_skip_reason,
 )
-from .score import _prf
-from .structure_report import render, write_outputs
-from .types_defs import (
+from ..score import _prf
+from ..structure_report import render, write_outputs
+from ..types_defs import (
     CallEdge,
     CallOracle,
     DiffBucket,

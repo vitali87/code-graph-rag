@@ -82,7 +82,7 @@ def test_cpp_l1_refuses_a_database_that_grades_nothing(
     """Driving the real command, not a reimplementation of its logic."""
     import typer
 
-    from evals import cpp_l1
+    from evals.l1 import cpp as cpp_l1
 
     project = _ungradeable_project(tmp_path)
 

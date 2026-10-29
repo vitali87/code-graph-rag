@@ -1,5 +1,5 @@
 # Covers the Lua structure oracle harness (evals/oracles/lua_oracle +
-# evals/lua_l1.py): luaparse is authoritative ground truth, and cgr's Lua
+# evals/l1/lua.py): luaparse is authoritative ground truth, and cgr's Lua
 # nodes are graded against it on (kind, file, start_line). Lua has no
 # classes, so every function is a Function.
 from __future__ import annotations

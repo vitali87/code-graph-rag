@@ -5,7 +5,7 @@ import pytest
 
 from codebase_rag import constants as cs
 from evals import constants as ec
-from evals.retrieval import (
+from evals.retrieval.python import (
     cgr_call_edges,
     first_party_property_names,
     first_party_symbols,

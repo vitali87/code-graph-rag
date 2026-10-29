@@ -1,5 +1,5 @@
 # Covers the Java structure oracle harness (evals/oracles/java_oracle +
-# evals/java_l1.py): cgr's Java nodes are graded against the JDK Compiler Tree
+# evals/l1/java.py): cgr's Java nodes are graded against the JDK Compiler Tree
 # API oracle on (kind, file, start_line). Includes an anonymous class, whose
 # methods cgr models as standalone Functions (like JS object-literal methods).
 from __future__ import annotations

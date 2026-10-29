@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from evals import constants as ec
-from evals.retrieval_eval import RETRIEVAL_SPECS, run_retrieval_eval
+from evals.retrieval.runner import RETRIEVAL_SPECS, run_retrieval_eval
 from evals.types_defs import CallOracle
 
 

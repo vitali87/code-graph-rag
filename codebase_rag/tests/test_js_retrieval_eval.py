@@ -4,12 +4,12 @@ import pytest
 
 from codebase_rag import constants as cs
 from evals import constants as ec
-from evals.js_retrieval import (
+from evals.oracles import typescript_oracle_available
+from evals.retrieval.js import (
     cgr_js_call_edges,
     oracle_js_call_edges,
     score_js_retrieval,
 )
-from evals.oracles import typescript_oracle_available
 
 
 def _js_grammar_available() -> bool:

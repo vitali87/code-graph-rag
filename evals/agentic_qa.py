@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 
 from . import constants as ec
 from . import logs as ls
-from .retrieval import (
+from .retrieval.python import (
     _callee_name,
     first_party_property_names,
     first_party_symbols,

@@ -4,7 +4,7 @@ import pytest
 
 from evals import constants as ec
 from evals.oracles import typescript_oracle_available
-from evals.ts_retrieval import (
+from evals.retrieval.ts import (
     cgr_ts_call_edges,
     oracle_ts_call_edges,
     score_ts_retrieval,

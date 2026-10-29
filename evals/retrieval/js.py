@@ -1,4 +1,4 @@
-# Multi-language retrieval (JavaScript). Mirrors ts_retrieval.py for .js/.jsx:
+# Multi-language retrieval (JavaScript). Mirrors ts.py for .js/.jsx:
 # cgr's JS CALLS edges ((caller_file, callee_simple_name)) are graded against
 # call sites the TypeScript compiler API (tsc) extracts from the same files,
 # over the same first-party name universe. tsc parses JS syntactically and is
@@ -9,14 +9,9 @@ from typing import Annotated
 
 import typer
 
-from . import constants as ec
-from .retrieval_eval import (
-    RETRIEVAL_SPECS,
-    cgr_call_edges,
-    run_retrieval_eval,
-    score_retrieval,
-)
-from .types_defs import CallEdge, ScoreResult
+from .. import constants as ec
+from ..types_defs import CallEdge, ScoreResult
+from .runner import RETRIEVAL_SPECS, cgr_call_edges, run_retrieval_eval, score_retrieval
 
 _SPEC = RETRIEVAL_SPECS[ec.RetrievalLanguage.JS]
 

@@ -17,7 +17,7 @@ from . import logs as ls
 from .ast_oracle import _from_base_parts
 from .cgr_graph import capture
 from .module_calls import _callee_name, _is_dunder
-from .retrieval import parse_py_trees
+from .retrieval.python import parse_py_trees
 from .score import _prf
 from .structure_report import render, write_outputs
 from .types_defs import DiffBucket, LocationStats, ScoreResult, ScoreRow

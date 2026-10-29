@@ -31,7 +31,7 @@ class NodeOracleUnavailable(RuntimeError):
 
     A real exception rather than `pytest.skip`, which the oracle runner used
     to raise directly. That made every caller a pytest caller: the four
-    standalone eval scripts (`evals/ts_l1.py`, `php_l1.py`, `lua_l1.py`,
+    standalone eval scripts (`evals/l1/ts.py`, `php.py`, `lua.py`,
     `inheritance.py`) would have died on pytest's private control-flow
     exception instead of reporting an unavailable toolchain.
 

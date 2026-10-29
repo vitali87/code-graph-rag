@@ -4,7 +4,7 @@ import pytest
 
 from evals import constants as ec
 from evals.oracles import php_oracle_available
-from evals.php_retrieval import (
+from evals.retrieval.php import (
     cgr_php_call_edges,
     oracle_php_call_edges,
     score_php_retrieval,

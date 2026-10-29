@@ -1,6 +1,6 @@
 """Shared driver for the per-language L1 structure evals.
 
-Every evals/*_l1.py ran the same program: refuse to run without the language
+Every evals/l1/<language>.py runs the same program: refuse to run without the language
 oracle, extract cgr's graph for the target, extract the oracle's, score the
 two against that language's node kinds, then write and render the result.
 The languages differ only in their oracle wiring and their message
@@ -16,11 +16,11 @@ from loguru import logger
 
 from codebase_rag import constants as cs
 
-from . import constants as ec
-from .oracle_guard import oracle_unavailable_exits, require_oracle
-from .score import score_structure
-from .structure_report import render, write_outputs
-from .types_defs import GraphData
+from .. import constants as ec
+from ..oracle_guard import oracle_unavailable_exits, require_oracle
+from ..score import score_structure
+from ..structure_report import render, write_outputs
+from ..types_defs import GraphData
 
 
 def run_l1_eval(

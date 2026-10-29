@@ -3,12 +3,12 @@ from pathlib import Path
 import pytest
 
 from evals import constants as ec
-from evals.csharp_retrieval import (
+from evals.oracles import csharp_oracle_available
+from evals.retrieval.csharp import (
     cgr_csharp_call_edges,
     oracle_csharp_call_edges,
     score_csharp_retrieval,
 )
-from evals.oracles import csharp_oracle_available
 
 needs_dotnet = pytest.mark.skipif(
     not csharp_oracle_available(), reason="dotnet toolchain not installed"

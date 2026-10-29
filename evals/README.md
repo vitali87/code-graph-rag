@@ -101,7 +101,7 @@ pass rate of roughly 6 to 7 of 23 issues. This benchmark measures retrieval
 quality directly instead.)
 
 ```bash
-uv run python -m evals.retrieval --target codebase_rag
+uv run python -m evals.retrieval.python --target codebase_rag
 ```
 
 The task: for every first-party symbol `S`, find the files that call `S`. The
@@ -124,7 +124,7 @@ first-party symbol universe:
   models as a `CALLS` edge, so the oracle counts it too rather than scoring
   cgr's property-as-call edges as false positives.
 
-Requires `rg` (ripgrep) on `PATH`; `evals.retrieval` exits cleanly if it is
+Requires `rg` (ripgrep) on `PATH`; `evals.retrieval.python` exits cleanly if it is
 missing. Writes `evals/results/retrieval_scores.csv` and
 `evals/results/retrieval_diff.json`. The thesis and grep's two failure modes (a
 bare reference or import counts as a hit, and a definition site `def S(` is
@@ -514,7 +514,7 @@ independent of cgr's tree-sitter Go frontend, so this measures cgr's cross-file
 Go call resolution against ground truth.
 
 ```bash
-uv run python -m evals.go_retrieval --target <go-sources>
+uv run python -m evals.retrieval.go --target <go-sources>
 ```
 
 Requires the `go` toolchain on `PATH`; the eval exits cleanly if it is missing.
@@ -549,7 +549,7 @@ callees and `ExprMethodCall` method idents), over the same first-party name
 universe. `syn` is independent of cgr's tree-sitter Rust frontend.
 
 ```bash
-uv run python -m evals.rust_retrieval --target <rust-sources>
+uv run python -m evals.retrieval.rust --target <rust-sources>
 ```
 
 Requires the `cargo` toolchain on `PATH`; the eval exits cleanly if it is missing.
@@ -585,7 +585,7 @@ trailing identifier of each `MethodInvocationTree`), over the same first-party
 name universe. `javac` is independent of cgr's tree-sitter Java frontend.
 
 ```bash
-uv run python -m evals.java_retrieval --target <java-sources>
+uv run python -m evals.retrieval.java --target <java-sources>
 ```
 
 Requires the `javac`/`java` toolchain on `PATH`; the eval exits cleanly if it is
@@ -628,7 +628,7 @@ expressions by their binding (`const foo = () => …` → `foo`), matching how c
 names them, so they enter the declared-name universe.
 
 ```bash
-uv run python -m evals.ts_retrieval --target <ts-sources>
+uv run python -m evals.retrieval.ts --target <ts-sources>
 ```
 
 Requires `node`/`npm` (the `typescript` dependency installs on first run); the
@@ -672,7 +672,7 @@ partly distinct path (CommonJS `require`/`module.exports`, prototype methods, no
 type annotations).
 
 ```bash
-uv run python -m evals.js_retrieval --target <js-sources>
+uv run python -m evals.retrieval.js --target <js-sources>
 ```
 
 Requires `node`/`npm`; pinned by `codebase_rag/tests/test_js_retrieval_eval.py`
@@ -706,7 +706,7 @@ and to carry real declaration names), over the same first-party name universe.
 `php-parser` is a pure-JS PHP parser, independent of cgr's tree-sitter PHP frontend.
 
 ```bash
-uv run python -m evals.php_retrieval --target <php-sources>
+uv run python -m evals.retrieval.php --target <php-sources>
 ```
 
 Requires `node`/`npm` (the `php-parser` dependency installs on first run; no PHP
@@ -741,7 +741,7 @@ the same first-party name universe. `luaparse` is a pure-JS Lua parser,
 independent of cgr's tree-sitter Lua frontend.
 
 ```bash
-uv run python -m evals.lua_retrieval --target <lua-sources>
+uv run python -m evals.retrieval.lua --target <lua-sources>
 ```
 
 Requires `node`/`npm` (the `luaparse` dependency installs on first run; no Lua
@@ -774,7 +774,7 @@ off), so `libclang` — a full C front end — is an independent oracle. C has n
 overloading, so a simple name is unambiguous.
 
 ```bash
-uv run python -m evals.c_retrieval --target <c-sources>
+uv run python -m evals.retrieval.c --target <c-sources>
 ```
 
 Requires `libclang` (the `clang.cindex` Python bindings). No `compile_commands.json`
@@ -848,7 +848,7 @@ Overloads collapse under the `(file, simple-name)` metric, so they need no
 disambiguation.
 
 ```bash
-uv run python -m evals.cpp_retrieval --target <cpp-sources> --define LEVELDB_PLATFORM_POSIX=1
+uv run python -m evals.retrieval.cpp --target <cpp-sources> --define LEVELDB_PLATFORM_POSIX=1
 ```
 
 Requires `libclang`. C++ standard headers must be parsed by a `libclang` whose
@@ -954,7 +954,7 @@ the cgr side is held to the same files), so a file using Scala 3 syntax that the
 2.13 parser rejects penalizes neither side.
 
 ```bash
-uv run python -m evals.scala_retrieval --target <scala-sources>
+uv run python -m evals.retrieval.scala --target <scala-sources>
 ```
 
 Requires `scala-cli` on `PATH` (it fetches `scalameta` on first run); the eval
@@ -998,9 +998,9 @@ the declared universe so a creation of a fully ctorless type is graded too.
 Roslyn's parser is independent of cgr's tree-sitter C# frontend.
 
 ```bash
-uv run python -m evals.csharp_retrieval --target <csharp-sources>
+uv run python -m evals.retrieval.csharp --target <csharp-sources>
 # opt-in Roslyn semantic frontend (issue #738):
-CSHARP_FRONTEND=hybrid uv run python -m evals.csharp_retrieval --target <csharp-sources>
+CSHARP_FRONTEND=hybrid uv run python -m evals.retrieval.csharp --target <csharp-sources>
 ```
 
 Requires the `dotnet` toolchain on `PATH`; the eval exits cleanly if it is
@@ -1043,12 +1043,12 @@ human-judged dataset).
 The Python L1 above grades cgr against a Python `ast` oracle. To grade other languages with *independent* ground truth, each language is checked against its own standard-library parser rather than against cgr's own tree-sitter output. The first such oracle is Go.
 
 ```bash
-uv run python -m evals.go_l1 --target /path/to/go/repo --project-name myrepo
+uv run python -m evals.l1.go --target /path/to/go/repo --project-name myrepo
 ```
 
 How it works:
 
-- **Oracle** (`evals/oracles/go_ast.go`): a small Go program that walks the target with the standard library's `go/parser` + `go/ast` and emits one JSON record per declaration (function-local type declarations included, via `ast.Inspect`, since cgr captures those too). The `kind` field already uses cgr's `NodeLabel` vocabulary (`Function`, `Method`, `Class`, `Interface`, `Type`), so records join cgr's nodes directly on `(kind, file, start_line)`. Mapping: `func` → `Function`, `func` with a receiver → `Method`, `type … struct` → `Class`, `type … interface` → `Interface`, any other `type …` (defined types and aliases) → `Type`. Requires the `go` toolchain on `PATH`; `evals.go_l1` exits cleanly if it is missing.
+- **Oracle** (`evals/oracles/go_ast.go`): a small Go program that walks the target with the standard library's `go/parser` + `go/ast` and emits one JSON record per declaration (function-local type declarations included, via `ast.Inspect`, since cgr captures those too). The `kind` field already uses cgr's `NodeLabel` vocabulary (`Function`, `Method`, `Class`, `Interface`, `Type`), so records join cgr's nodes directly on `(kind, file, start_line)`. Mapping: `func` → `Function`, `func` with a receiver → `Method`, `type … struct` → `Class`, `type … interface` → `Interface`, any other `type …` (defined types and aliases) → `Type`. Requires the `go` toolchain on `PATH`; `evals.l1.go` exits cleanly if it is missing.
 - **cgr side** (`cgr_graph.extract_cgr_go_nodes`): builds cgr's graph over the target and keeps the Go (`.go`) definition nodes.
 - **Fair file set**: `run_go_oracle` drops oracle records under any directory in cgr's `IGNORE_PATTERNS` (e.g. `bin`, `vendor`, `build`), so the oracle grades exactly the files cgr indexes — single source of truth, no drift.
 - **Score**: per-kind precision/recall/F1 via `score.score_node_kinds`, written to `evals/results/go_scores.csv` and `evals/results/go_diff.json`.
@@ -1070,10 +1070,10 @@ Both gaps the oracle originally exposed are fixed: Go `type` declarations (struc
 The second native oracle is Rust, checked against `syn` (the de-facto standard Rust parser).
 
 ```bash
-uv run python -m evals.rust_l1 --target /path/to/rust/repo --project-name myrepo
+uv run python -m evals.l1.rust --target /path/to/rust/repo --project-name myrepo
 ```
 
-- **Oracle** (`evals/oracles/rust_oracle/`): a small Rust program that parses every `.rs` file with `syn` and emits one JSON record per declaration, in cgr's `NodeLabel` vocabulary. A `syn::visit::Visit` walk recurses into function bodies (function-local defs), `impl`/`trait` associated types, and closures (which cgr models as anonymous `Function` nodes), so the comparison is apples-to-apples. Mapping: `struct` → `Class`, `enum` → `Enum`, `union` → `Union`, `trait` → `Interface` (+ its methods → `Method`), `type` (incl. associated types) → `Type`, `fn`/closure → `Function`, `impl` method → `Method`. Requires the `cargo` toolchain (`proc-macro2`'s `span-locations` feature gives real line numbers); `evals.rust_l1` exits cleanly if it is missing.
+- **Oracle** (`evals/oracles/rust_oracle/`): a small Rust program that parses every `.rs` file with `syn` and emits one JSON record per declaration, in cgr's `NodeLabel` vocabulary. A `syn::visit::Visit` walk recurses into function bodies (function-local defs), `impl`/`trait` associated types, and closures (which cgr models as anonymous `Function` nodes), so the comparison is apples-to-apples. Mapping: `struct` → `Class`, `enum` → `Enum`, `union` → `Union`, `trait` → `Interface` (+ its methods → `Method`), `type` (incl. associated types) → `Type`, `fn`/closure → `Function`, `impl` method → `Method`. Requires the `cargo` toolchain (`proc-macro2`'s `span-locations` feature gives real line numbers); `evals.l1.rust` exits cleanly if it is missing.
 - **cgr side** (`cgr_graph.extract_cgr_rust_nodes`), **score** (`score.score_node_kinds`), output to `rs_scores.csv` / `rs_diff.json`.
 
 Validated on `apache/thrift`'s `lib/rs` (758 cgr Rust nodes vs 758 oracle nodes — exact, all kinds 1.0). The oracle surfaced one cgr gap, now fixed: methods in an `impl Trait for <primitive>` block (e.g. `impl From<Foo> for u8`) were dropped because the `primitive_type` impl target was unhandled (see `codebase_rag/tests/test_rust_impl_primitive_target.py`).
@@ -1083,10 +1083,10 @@ Validated on `apache/thrift`'s `lib/rs` (758 cgr Rust nodes vs 758 oracle nodes 
 The third native oracle is TypeScript, checked against the TypeScript compiler API.
 
 ```bash
-uv run python -m evals.ts_l1 --target /path/to/ts/repo --project-name myrepo
+uv run python -m evals.l1.ts --target /path/to/ts/repo --project-name myrepo
 ```
 
-- **Oracle** (`evals/oracles/typescript_oracle/`): a Node script that parses every `.ts`/`.tsx` file (`.d.ts` excluded) with the TypeScript compiler API and emits one JSON record per declaration, in cgr's `NodeLabel` vocabulary. Mapping, matching how cgr models TypeScript: `class` → `Class`, `interface` → `Interface`, `enum` → `Enum`, `type` → `Type`, `namespace`/`module` → `Class` (a class-like container), `function` → `Function` (or `Method` inside a namespace/class), arrow functions and function expressions → `Function` (cgr captures every one, like a Rust closure), `method`/`constructor` → `Method`. Requires `node`/`npm` (the `typescript` dependency is installed on first run; `package-lock.json` is committed and `node_modules/` is gitignored). `evals.ts_l1` exits cleanly if node is missing.
+- **Oracle** (`evals/oracles/typescript_oracle/`): a Node script that parses every `.ts`/`.tsx` file (`.d.ts` excluded) with the TypeScript compiler API and emits one JSON record per declaration, in cgr's `NodeLabel` vocabulary. Mapping, matching how cgr models TypeScript: `class` → `Class`, `interface` → `Interface`, `enum` → `Enum`, `type` → `Type`, `namespace`/`module` → `Class` (a class-like container), `function` → `Function` (or `Method` inside a namespace/class), arrow functions and function expressions → `Function` (cgr captures every one, like a Rust closure), `method`/`constructor` → `Method`. Requires `node`/`npm` (the `typescript` dependency is installed on first run; `package-lock.json` is committed and `node_modules/` is gitignored). `evals.l1.ts` exits cleanly if node is missing.
 - **cgr side** (`cgr_graph.extract_cgr_ts_nodes`), **score** (`score.score_node_kinds`), output to `ts_scores.csv` / `ts_diff.json`.
 
 Validated on `apache/thrift`'s TypeScript (`lib/nodets`, `lib/ts`): 136 cgr nodes vs 136 oracle nodes — exact, all kinds 1.0. No cgr gap found.
@@ -1096,7 +1096,7 @@ Validated on `apache/thrift`'s TypeScript (`lib/nodets`, `lib/ts`): 136 cgr node
 The same compiler-API oracle parses JavaScript too (the TypeScript compiler accepts JS), so JavaScript reuses `evals/oracles/typescript_oracle/` over `.js`/`.jsx`.
 
 ```bash
-uv run python -m evals.js_l1 --target /path/to/js/repo --project-name myrepo
+uv run python -m evals.l1.js --target /path/to/js/repo --project-name myrepo
 ```
 
 Same mapping as TypeScript, with two JS-specific points matching cgr: object-literal shorthand methods are modelled as standalone `Function`s (not `Method`s), and every arrow function / function expression is a `Function`. Output to `js_scores.csv` / `js_diff.json`.
@@ -1108,10 +1108,10 @@ Validated on `apache/thrift`'s JavaScript (`lib/js`, `lib/nodejs`): 1087 cgr nod
 The sixth native oracle is Java, checked against the JDK's own parser (`com.sun.source` / `javax.tools`).
 
 ```bash
-uv run python -m evals.java_l1 --target /path/to/java/repo --project-name myrepo
+uv run python -m evals.l1.java --target /path/to/java/repo --project-name myrepo
 ```
 
-- **Oracle** (`evals/oracles/java_oracle/Oracle.java`): parses every `.java` file with the JDK Compiler Tree API (`task.parse()` only parses, so missing dependencies are fine) and emits one JSON record per declaration. Mapping, matching how cgr models Java: `class` → `Class`, `interface` → `Interface` (+ its method signatures → `Method`), annotation type (`@interface`) → `Class`, `enum` → `Enum`, method/constructor → `Method`. A method declared inside an **anonymous class** (e.g. `new Runnable() { public void run() {...} }`) is modelled as a standalone `Function` — the same way cgr treats it (and JS object-literal methods); the oracle replicates cgr's rule (a member is a `Method` only when its nearest enclosing named class precedes any enclosing method/lambda body). Requires `javac`/`java`; the oracle is compiled on first run (the `.class` is gitignored, the source committed). `evals.java_l1` exits cleanly if the JDK is missing.
+- **Oracle** (`evals/oracles/java_oracle/Oracle.java`): parses every `.java` file with the JDK Compiler Tree API (`task.parse()` only parses, so missing dependencies are fine) and emits one JSON record per declaration. Mapping, matching how cgr models Java: `class` → `Class`, `interface` → `Interface` (+ its method signatures → `Method`), annotation type (`@interface`) → `Class`, `enum` → `Enum`, method/constructor → `Method`. A method declared inside an **anonymous class** (e.g. `new Runnable() { public void run() {...} }`) is modelled as a standalone `Function` — the same way cgr treats it (and JS object-literal methods); the oracle replicates cgr's rule (a member is a `Method` only when its nearest enclosing named class precedes any enclosing method/lambda body). Requires `javac`/`java`; the oracle is compiled on first run (the `.class` is gitignored, the source committed). `evals.l1.java` exits cleanly if the JDK is missing.
 - **cgr side** (`cgr_graph.extract_cgr_java_nodes`), **score** (`score.score_node_kinds`), output to `java_scores.csv` / `java_diff.json`.
 
 Validated on `apache/thrift`'s `lib/java`: 2861 cgr nodes vs 2861 oracle nodes — exact, all kinds 1.0 (including the 103 anonymous-class methods graded as `Function`). No cgr gap found.
@@ -1121,7 +1121,7 @@ Validated on `apache/thrift`'s `lib/java`: 2861 cgr nodes vs 2861 oracle nodes �
 The seventh native oracle is Lua, checked against `luaparse`.
 
 ```bash
-uv run python -m evals.lua_l1 --target /path/to/lua/repo --project-name myrepo
+uv run python -m evals.l1.lua --target /path/to/lua/repo --project-name myrepo
 ```
 
 - **Oracle** (`evals/oracles/lua_oracle/`): a Node script that parses every `.lua` file with `luaparse` (`luaVersion: "5.3"`, so bitwise operators / integer division parse) and emits a `Function` record per function declaration/expression. Lua has no classes, so cgr models every function — global, `local`, table (`t.f`), method (`t:m`), and anonymous function expressions — as a `Function`. Requires `node`/`npm` (the `luaparse` dependency installs on first run; `package-lock.json` committed, `node_modules/` gitignored).
@@ -1134,7 +1134,7 @@ Validated on `apache/thrift`'s Lua (`lib/lua`, `test/lua`): 376 cgr nodes vs 376
 The eighth native oracle is PHP, checked against `php-parser` (a pure-JS PHP parser, so no `php` binary is needed).
 
 ```bash
-uv run python -m evals.php_l1 --target /path/to/php/repo --project-name myrepo
+uv run python -m evals.l1.php --target /path/to/php/repo --project-name myrepo
 ```
 
 - **Oracle** (`evals/oracles/php_oracle/`): a Node script that parses every `.php` file with `php-parser` and emits one record per declaration. Mapping, matching cgr: `class` → `Class`, `interface` → `Interface` (+ methods → `Method`), `trait` → `Class` (+ methods → `Method`), `enum` → `Enum`, `function` → `Function`, closure / arrow `fn` → `Function`. Methods of an **anonymous class** (`new class {...}`) are `Function`s (like Java/JS object-literal members), and a declaration's line is its first attribute (`#[Attr]`) line when present — both matching cgr's node span. Requires `node`/`npm` (the `php-parser` dependency installs on first run; `package-lock.json` committed, `node_modules/` gitignored).
@@ -1147,7 +1147,7 @@ Validated on `apache/thrift`'s PHP (`lib/php`): 1295 cgr nodes vs 1295 oracle no
 The ninth native oracle is C#, checked against Roslyn's own syntax parser (independent of cgr's tree-sitter frontend and of the opt-in Roslyn semantic frontend).
 
 ```bash
-uv run python -m evals.csharp_l1 --target /path/to/csharp/repo --project-name myrepo
+uv run python -m evals.l1.csharp --target /path/to/csharp/repo --project-name myrepo
 ```
 
 - **Oracle** (`evals/oracles/csharp_oracle/`): a .NET program parsing every `.cs` file with `CSharpSyntaxTree` and emitting nodes (`Class`/`Interface`/`Enum`/`Method`/`Function`), containment (`DEFINES`, `DEFINES_METHOD`), and inheritance name-edges. Conventions match cgr's model: interface bases are `INHERITS`, class-declared interface bases are `IMPLEMENTS`, top-level script functions anchor to the file `Module`, and `#if`/`#elif`/`#else` directives are neutralized so every branch parses (cgr has no preprocessor and indexes all branches).
@@ -1226,7 +1226,7 @@ Span (end_line) accuracy on matched defs: 6800/6800 exact.
 
 The L3 fixture exercises rich Python plus all 11 supported languages; recall is a sound lower bound over the cgr code paths that fixture drives. These numbers are for the Python `codebase_rag` target — graded multi-language recall (JS/Rust/Go/Java/C/C++/Lua/PHP/Scala) is future work pending a SCIP-based oracle.
 
-### Retrieval — graph vs grep (`uv run python -m evals.retrieval`)
+### Retrieval — graph vs grep (`uv run python -m evals.retrieval.python`)
 
 | category | label | tp | fp | fn | precision | recall | f1 |
 |---|---|---|---|---|---|---|---|

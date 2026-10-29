@@ -38,10 +38,10 @@ _OLD_SDK = "8.0.130 [/usr/share/dotnet/sdk]"
 _FIXED_MESSAGE = "not found on PATH"
 
 _NODE_RETRIEVAL = [
-    ("evals.ts_retrieval", typescript_oracle),
-    ("evals.js_retrieval", typescript_oracle),
-    ("evals.lua_retrieval", lua_oracle),
-    ("evals.php_retrieval", php_oracle),
+    ("evals.retrieval.ts", typescript_oracle),
+    ("evals.retrieval.js", typescript_oracle),
+    ("evals.retrieval.lua", lua_oracle),
+    ("evals.retrieval.php", php_oracle),
 ]
 
 
@@ -146,7 +146,7 @@ def test_csharp_retrieval_names_the_old_sdk(
 ) -> None:
     _dotnet_too_old(monkeypatch)
 
-    code, errors = _exit_and_errors(_run_main("evals.csharp_retrieval", tmp_path))
+    code, errors = _exit_and_errors(_run_main("evals.retrieval.csharp", tmp_path))
 
     assert code == 1
     assert _OLD_SDK in errors
@@ -156,11 +156,11 @@ def test_csharp_retrieval_names_the_old_sdk(
 def test_js_l1_names_the_probe_reason(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # ts_l1 passed the reason probe; js_l1 shares the same tsc oracle and
+    # l1.ts passed the reason probe; l1.js shares the same tsc oracle and
     # guard but did not, so the same toolchain read as "not found" there.
     _node_unusable(monkeypatch, typescript_oracle)
 
-    code, errors = _exit_and_errors(_run_main("evals.js_l1", tmp_path))
+    code, errors = _exit_and_errors(_run_main("evals.l1.js", tmp_path))
 
     assert code == 1
     assert _REASON in errors
@@ -172,7 +172,7 @@ def test_csharp_l1_names_the_old_sdk(
 ) -> None:
     _dotnet_too_old(monkeypatch)
 
-    code, errors = _exit_and_errors(_run_main("evals.csharp_l1", tmp_path))
+    code, errors = _exit_and_errors(_run_main("evals.l1.csharp", tmp_path))
 
     assert code == 1
     assert _OLD_SDK in errors

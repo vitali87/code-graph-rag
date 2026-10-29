@@ -10,14 +10,9 @@ from typing import Annotated
 
 import typer
 
-from . import constants as ec
-from .retrieval_eval import (
-    RETRIEVAL_SPECS,
-    cgr_call_edges,
-    run_retrieval_eval,
-    score_retrieval,
-)
-from .types_defs import CallEdge, ScoreResult
+from .. import constants as ec
+from ..types_defs import CallEdge, ScoreResult
+from .runner import RETRIEVAL_SPECS, cgr_call_edges, run_retrieval_eval, score_retrieval
 
 _SPEC = RETRIEVAL_SPECS[ec.RetrievalLanguage.CSHARP]
 

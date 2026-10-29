@@ -4,7 +4,7 @@ import pytest
 
 from evals import constants as ec
 from evals.oracles import rust_oracle_available
-from evals.rust_retrieval import (
+from evals.retrieval.rust import (
     cgr_rust_call_edges,
     oracle_rust_call_edges,
     score_rust_retrieval,

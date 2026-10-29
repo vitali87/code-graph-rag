@@ -3,11 +3,11 @@ from typing import Annotated
 
 import typer
 
-from . import constants as ec
-from . import logs as ls
-from .cgr_graph import extract_cgr_go_graph
-from .l1_eval import run_l1_eval
-from .oracles import go_oracle_available, run_go_oracle
+from .. import constants as ec
+from .. import logs as ls
+from ..cgr_graph import extract_cgr_go_graph
+from ..oracles import go_oracle_available, run_go_oracle
+from .runner import run_l1_eval
 
 _TITLE = "cgr L1 structure eval (Go vs go/ast)"
 

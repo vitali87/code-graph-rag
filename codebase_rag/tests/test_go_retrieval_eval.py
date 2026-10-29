@@ -3,12 +3,12 @@ from pathlib import Path
 import pytest
 
 from evals import constants as ec
-from evals.go_retrieval import (
+from evals.oracles import go_oracle_available
+from evals.retrieval.go import (
     cgr_go_call_edges,
     oracle_go_call_edges,
     score_go_retrieval,
 )
-from evals.oracles import go_oracle_available
 
 needs_go = pytest.mark.skipif(
     not go_oracle_available(), reason="go toolchain not installed"

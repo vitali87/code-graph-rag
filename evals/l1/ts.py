@@ -3,15 +3,15 @@ from typing import Annotated
 
 import typer
 
-from . import constants as ec
-from . import logs as ls
-from .cgr_graph import extract_cgr_ts_graph
-from .l1_eval import run_l1_eval
-from .oracles import (
+from .. import constants as ec
+from .. import logs as ls
+from ..cgr_graph import extract_cgr_ts_graph
+from ..oracles import (
     run_typescript_oracle,
     typescript_oracle_available,
     typescript_oracle_skip_reason,
 )
+from .runner import run_l1_eval
 
 _TITLE = "cgr L1 structure eval (TypeScript vs tsc)"
 

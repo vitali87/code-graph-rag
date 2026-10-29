@@ -757,14 +757,14 @@ class TestPostInstallRecheck:
 class TestStandaloneL1Runner:
     """A standalone eval must REPORT an unavailable toolchain, not crash.
 
-    The four L1 scripts (`evals/lua_l1.py`, `ts_l1.py`, `php_l1.py`) call the
+    The four L1 scripts (`evals/l1/lua.py`, `ts.py`, `php.py`) call the
     oracle outside pytest, so an exception escaping the shared runner reaches
     the operator as a traceback rather than as the command's result.
     """
 
     @staticmethod
     def _run(**overrides: object) -> int:
-        from evals import l1_eval
+        from evals.l1 import runner as l1_eval
         from evals.types_defs import GraphData
 
         kwargs: dict[str, object] = {

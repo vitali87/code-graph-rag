@@ -4,7 +4,7 @@ import pytest
 
 from evals import constants as ec
 from evals.oracles import scala_oracle_available
-from evals.scala_retrieval import (
+from evals.retrieval.scala import (
     cgr_scala_call_edges,
     oracle_scala_call_edges,
     score_scala_retrieval,

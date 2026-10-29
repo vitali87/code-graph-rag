@@ -1,5 +1,5 @@
 # Covers the Go structure oracle harness (evals/oracles/go_ast.go +
-# evals/go_l1.py): the go/ast oracle is authoritative ground truth, and cgr's
+# evals/l1/go.py): the go/ast oracle is authoritative ground truth, and cgr's
 # captured Go nodes are graded against it on (kind, file, start_line).
 from __future__ import annotations
 

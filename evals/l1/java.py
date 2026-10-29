@@ -3,11 +3,11 @@ from typing import Annotated
 
 import typer
 
-from . import constants as ec
-from . import logs as ls
-from .cgr_graph import extract_cgr_java_graph
-from .l1_eval import run_l1_eval
-from .oracles import java_oracle_available, run_java_oracle
+from .. import constants as ec
+from .. import logs as ls
+from ..cgr_graph import extract_cgr_java_graph
+from ..oracles import java_oracle_available, run_java_oracle
+from .runner import run_l1_eval
 
 _TITLE = "cgr L1 structure eval (Java vs JDK Compiler Tree API)"
 

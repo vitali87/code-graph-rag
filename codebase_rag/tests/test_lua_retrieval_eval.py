@@ -3,12 +3,12 @@ from pathlib import Path
 import pytest
 
 from evals import constants as ec
-from evals.lua_retrieval import (
+from evals.oracles import lua_oracle_available
+from evals.retrieval.lua import (
     cgr_lua_call_edges,
     oracle_lua_call_edges,
     score_lua_retrieval,
 )
-from evals.oracles import lua_oracle_available
 
 needs_node = pytest.mark.skipif(
     not lua_oracle_available(), reason="node toolchain not installed"

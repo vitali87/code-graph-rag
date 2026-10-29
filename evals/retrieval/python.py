@@ -19,14 +19,14 @@ from loguru import logger
 
 from codebase_rag import constants as cs
 
-from . import constants as ec
-from . import logs as ls
-from .ast_oracle import _iter_py_files
-from .cgr_graph import capture
-from .module_calls import _callee_name, _first_party_names, _is_dunder
-from .score import _diff_bucket, _fmt_name_edge, _prf
-from .structure_report import render, write_outputs
-from .types_defs import (
+from .. import constants as ec
+from .. import logs as ls
+from ..ast_oracle import _iter_py_files
+from ..cgr_graph import capture
+from ..module_calls import _callee_name, _first_party_names, _is_dunder
+from ..score import _diff_bucket, _fmt_name_edge, _prf
+from ..structure_report import render, write_outputs
+from ..types_defs import (
     DiffBucket,
     LocationStats,
     NameEdge,

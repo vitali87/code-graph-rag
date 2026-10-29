@@ -1,5 +1,5 @@
 # Covers the C# structure oracle harness (evals/oracles/csharp_oracle +
-# evals/csharp_l1.py): the Roslyn syntax-tree oracle is authoritative ground
+# evals/l1/csharp.py): the Roslyn syntax-tree oracle is authoritative ground
 # truth, and cgr's captured C# graph is graded against it on
 # (kind, file, start_line) for nodes, on containment edges, on inheritance
 # name-edges, and on end_line spans. Covers class/struct/record -> Class,

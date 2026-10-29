@@ -6,12 +6,12 @@ from loguru import logger
 
 from codebase_rag import constants as cs
 
-from . import constants as ec
-from . import logs as ls
-from .cgr_graph import extract_cgr_cpp_graph, restrict_to_files
-from .oracles import cpp_oracle_available, run_cpp_oracle
-from .score import score_structure
-from .structure_report import render, write_outputs
+from .. import constants as ec
+from .. import logs as ls
+from ..cgr_graph import extract_cgr_cpp_graph, restrict_to_files
+from ..oracles import cpp_oracle_available, run_cpp_oracle
+from ..score import score_structure
+from ..structure_report import render, write_outputs
 
 _TITLE = "cgr L1 structure eval (C/C++ vs libclang)"
 

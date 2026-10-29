@@ -3,11 +3,11 @@ from typing import Annotated
 
 import typer
 
-from . import constants as ec
-from . import logs as ls
-from .cgr_graph import extract_cgr_lua_graph
-from .l1_eval import run_l1_eval
-from .oracles import lua_oracle_available, lua_oracle_skip_reason, run_lua_oracle
+from .. import constants as ec
+from .. import logs as ls
+from ..cgr_graph import extract_cgr_lua_graph
+from ..oracles import lua_oracle_available, lua_oracle_skip_reason, run_lua_oracle
+from .runner import run_l1_eval
 
 _TITLE = "cgr L1 structure eval (Lua vs luaparse)"
 

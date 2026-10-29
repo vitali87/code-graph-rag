@@ -21,7 +21,7 @@ from loguru import logger
 
 from evals import constants as ec
 from evals import logs as ls
-from evals.l1_eval import run_l1_eval
+from evals.l1.runner import run_l1_eval
 
 # Every arm whose message carries a `{binary}` field, with the binary its
 # own module passes. `java_l1.py` is included because it hands over the bare
