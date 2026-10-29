@@ -617,11 +617,17 @@ class TestPackagePruneScope:
 
         mine_pkg = (mine / "pkg").resolve().as_posix()
         other_pkg = (other / "pkg").resolve().as_posix()
-        updater(mine, "shared")._delete_package(store, "shared.pkg", mine_pkg)
-        updater(other, "elsewhere")._delete_package(store, "shared.pkg", other_pkg)
+        updater(mine, "shared").graph_pruner._delete_package(
+            store, "shared.pkg", mine_pkg
+        )
+        updater(other, "elsewhere").graph_pruner._delete_package(
+            store, "shared.pkg", other_pkg
+        )
         assert "shared.pkg" in _packages(store)
 
-        updater(other, "shared")._delete_package(store, "shared.pkg", other_pkg)
+        updater(other, "shared").graph_pruner._delete_package(
+            store, "shared.pkg", other_pkg
+        )
         assert "shared.pkg" not in _packages(store)
 
     def test_a_package_behind_an_outside_link_is_pruned(self, tmp_path: Path) -> None:

@@ -219,26 +219,26 @@ def test_a_real_file_named_like_an_inline_module_is_not_synthetic() -> None:
     owner map and its type facts requeued under the derived name instead of
     the one the graph records (Copilot, #1935).
     """
-    from codebase_rag.graph_updater import _is_inline_module_path
+    from codebase_rag.utils.path_utils import is_inline_module_path
 
     # Synthetic: the producer writes no extension.
-    assert _is_inline_module_path("inline_module_widget") is True
-    assert _is_inline_module_path("inline_module_my_mod") is True
+    assert is_inline_module_path("inline_module_widget") is True
+    assert is_inline_module_path("inline_module_my_mod") is True
     # Real files carrying the same prefix are not synthetic.
-    assert _is_inline_module_path("inline_module_widget.py") is False
-    assert _is_inline_module_path("pkg/inline_module_a.py") is False
+    assert is_inline_module_path("inline_module_widget.py") is False
+    assert is_inline_module_path("pkg/inline_module_a.py") is False
     # The control: an ordinary path is unaffected either way, so the
     # assertions above are not passing on a predicate that always answers
     # False.
-    assert _is_inline_module_path("src/lib.rs") is False
+    assert is_inline_module_path("src/lib.rs") is False
     # Matched on the basename, so the answer does not depend on DEPTH.
     # Anchoring on the whole path made an extensionless `inline_module_data`
     # synthetic at the root but not under `pkg/` -- the same name answering
     # two ways (local review, PR #1967). Both are synthetic now; the
     # extension, not the directory, is what separates a real file.
-    assert _is_inline_module_path("inline_module_data") is True
-    assert _is_inline_module_path("pkg/inline_module_data") is True
-    assert _is_inline_module_path("pkg/inline_module_data.py") is False
+    assert is_inline_module_path("inline_module_data") is True
+    assert is_inline_module_path("pkg/inline_module_data") is True
+    assert is_inline_module_path("pkg/inline_module_data.py") is False
 
 
 def test_a_real_inline_module_named_file_is_seeded_so_an_add_cannot_take_its_qn(

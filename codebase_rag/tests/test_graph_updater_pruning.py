@@ -1,4 +1,4 @@
-# Tests for orphan node pruning in GraphUpdater._prune_orphan_nodes
+# Tests for orphan node pruning in GraphPruner.prune_orphan_nodes
 # and Cypher deletion in _process_files for hash-cache-detected deletions.
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -8,6 +8,10 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+
+
+def _prune(updater: GraphUpdater) -> None:
+    updater.graph_pruner.prune_orphan_nodes(updater._run, updater.prepared_state_dir)
 
 
 def _rows_by_query(rows: dict[str, list[dict[str, str]]]):
@@ -67,7 +71,7 @@ class TestPruneOrphanNodes:
                 ],
             }
         )
-        updater._prune_orphan_nodes()
+        _prune(updater)
 
         delete_calls = [
             c
@@ -94,7 +98,7 @@ class TestPruneOrphanNodes:
         )
 
         mock_ingestor.fetch_all.side_effect = [[], [], [], []]
-        updater._prune_orphan_nodes()
+        _prune(updater)
 
         external_calls = [
             c
@@ -118,9 +122,9 @@ class TestPruneOrphanNodes:
 
         mock_ingestor.fetch_all.side_effect = [[], [], [], []]
         with patch(
-            "codebase_rag.graph_updater.prune_unanchored_resources"
+            "codebase_rag.graph_pruning.prune_unanchored_resources"
         ) as prune_resources:
-            updater._prune_orphan_nodes()
+            _prune(updater)
 
         prune_resources.assert_called_once_with(mock_ingestor)
 
@@ -141,7 +145,7 @@ class TestPruneOrphanNodes:
             [{"path": "data", "absolute_path": "/other/project/data"}],
             [],
         ]
-        updater._prune_orphan_nodes()
+        _prune(updater)
 
         path_deletes = [
             c
@@ -170,7 +174,7 @@ class TestPruneOrphanNodes:
             [{"path": "subpkg", "absolute_path": f"{repo_abs}/subpkg"}],
             [],
         ]
-        updater._prune_orphan_nodes()
+        _prune(updater)
 
         path_deletes = [
             c
@@ -192,7 +196,7 @@ class TestPruneOrphanNodes:
         )
 
         mock_ingestor.fetch_all.side_effect = [[], [], [], []]
-        updater._prune_orphan_nodes()
+        _prune(updater)
 
         path_deletes = [
             c
@@ -223,7 +227,7 @@ class TestPruneOrphanNodes:
             [],
             [],
         ]
-        updater._prune_orphan_nodes()
+        _prune(updater)
 
         path_deletes = [
             c
@@ -268,7 +272,7 @@ class TestPruneOrphanNodes:
                 ],
             }
         )
-        updater._prune_orphan_nodes()
+        _prune(updater)
 
         path_deletes = [
             c
@@ -311,7 +315,7 @@ class TestPruneOrphanNodes:
             [],
             [],
         ]
-        updater._prune_orphan_nodes()
+        _prune(updater)
 
         delete_module_calls = [
             c
@@ -351,7 +355,7 @@ class TestPruneOrphanNodes:
             [],
             [],
         ]
-        updater._prune_orphan_nodes()
+        _prune(updater)
 
         deleted = [
             c.args[1]["path"]
@@ -450,7 +454,7 @@ class TestDeletedFileInProcessFiles:
         ]
         assert len(delete_calls) == 0
 
-    @patch("codebase_rag.graph_updater.GraphUpdater._prune_orphan_nodes")
+    @patch("codebase_rag.graph_pruning.GraphPruner.prune_orphan_nodes")
     def test_run_calls_prune(
         self,
         mock_prune: MagicMock,
@@ -494,7 +498,7 @@ class TestPruneSiblingRootPrefix:
             [],
             [],
         ]
-        updater._prune_orphan_nodes()
+        _prune(updater)
 
         file_deletes = [
             c
@@ -515,7 +519,7 @@ class TestPruneSiblingRootPrefix:
             [],
             [],
         ]
-        updater._prune_orphan_nodes()
+        _prune(updater)
 
         file_deletes = [
             c
@@ -553,7 +557,7 @@ class TestLegacyFileIdentitySweep:
             return []
 
         mock_ingestor.fetch_all.side_effect = fetch_all
-        updater._prune_orphan_nodes()
+        _prune(updater)
         return owner_calls
 
     def test_legacy_external_file_identity_is_swept(
@@ -688,7 +692,7 @@ class TestLegacyFileIdentitySweep:
             return []
 
         mock_ingestor.fetch_all.side_effect = fetch_all
-        updater._prune_orphan_nodes()
+        _prune(updater)
         deletes = [
             c
             for c in mock_ingestor.execute_write.call_args_list

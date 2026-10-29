@@ -563,8 +563,8 @@ def test_a_single_file_run_still_sees_every_directory(
     Written expecting the opposite, and it failed -- recorded here because
     the refuted version is the load-bearing part.
 
-    `_prune_orphan_nodes` consults `packages_now` for Folder and Package,
-    deleting a `Package` whose path is `not in` that set. The obvious worry
+    `GraphPruner.prune_orphan_nodes` consults `packages_now` for Folder and
+    Package, deleting a `Package` whose path is `not in` that set. The obvious worry
     is that a single-file run populates it from its target's chain only, so
     every other directory would look like it had stopped being a package.
 

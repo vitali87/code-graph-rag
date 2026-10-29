@@ -1022,9 +1022,9 @@ class TestCrashBetweenCacheSaveAndFlush:
     ) -> None:
         """Issue #1645: the same defect on the orphan-prune writes.
 
-        `_prune_orphan_nodes` runs after the graph flush and issues its own
-        `execute_write` deletes. Without a flush of its own, those deletes are
-        still queued when the hash cache commits, so a run that stops in
+        `GraphPruner.prune_orphan_nodes` runs after the graph flush and issues
+        its own `execute_write` deletes. Without a flush of its own, those
+        deletes are still queued when the hash cache commits, so a run that stops in
         between hands its successor caches describing a tree whose prune was
         never applied. The successor takes the in-sync fast path and never
         re-issues them, and the orphan survives until a full rebuild.
@@ -1406,6 +1406,7 @@ class TestFastPathInSync:
             queries=queries,
         )
         single._single_file = py_project / "module_a.py"
+        single.graph_pruner._single_file = single._single_file
         single.run()
 
         successor = GraphUpdater(

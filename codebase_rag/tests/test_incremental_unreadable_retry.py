@@ -18,6 +18,7 @@ from codebase_rag import graph_updater as gu
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.sync.checkout_state import state_file
+from codebase_rag.utils.path_utils import vanished
 from evals.cgr_graph import StatefulIngestor
 
 
@@ -176,18 +177,18 @@ def test_only_a_gone_path_escapes_the_mark(
     its directory."""
     present = tmp_path / "present.py"
     present.write_text("x = 1\n")
-    assert gu._vanished(tmp_path / "missing.py") is True
+    assert vanished(tmp_path / "missing.py") is True
     link = tmp_path / "dangling.py"
     try:
         link.symlink_to(tmp_path / "nowhere.py")
     except OSError:  # Windows without symlink privileges: the rest still holds.
         pytest.skip("symlinks need privileges on this host")
-    assert gu._vanished(link) is True
-    assert gu._vanished(present) is False
+    assert vanished(link) is True
+    assert vanished(present) is False
     # `exists()` reading False for a reachable path must not count as gone.
     monkeypatch.setattr(Path, "exists", lambda self: False)
-    assert gu._vanished(present) is False
-    assert gu._vanished(link) is True
+    assert vanished(present) is False
+    assert vanished(link) is True
 
 
 def test_a_link_with_no_target_at_all_is_gone(tmp_path: Path) -> None:
@@ -204,8 +205,8 @@ def test_a_link_with_no_target_at_all_is_gone(tmp_path: Path) -> None:
     regular.write_text("x = 1\n")
     through_a_file = tmp_path / "through.py"
     through_a_file.symlink_to(regular / "child.py")
-    assert gu._vanished(cycle) is True
-    assert gu._vanished(through_a_file) is True
+    assert vanished(cycle) is True
+    assert vanished(through_a_file) is True
 
 
 def test_a_path_under_a_directory_now_a_file_is_gone(
@@ -217,7 +218,7 @@ def test_a_path_under_a_directory_now_a_file_is_gone(
     on PR #1993). A permission failure on the same lookup stays unreachable."""
     (tmp_path / "pkg").write_text("not a directory\n")
     under_a_file = tmp_path / "pkg" / "module.py"
-    assert gu._vanished(under_a_file) is True
+    assert vanished(under_a_file) is True
 
     present = tmp_path / "present.py"
     present.write_text("x = 1\n")
@@ -229,7 +230,7 @@ def test_a_path_under_a_directory_now_a_file_is_gone(
         return real_lstat(path, *args, **kwargs)
 
     monkeypatch.setattr(gu.os, "lstat", denied)
-    assert gu._vanished(present) is False
+    assert vanished(present) is False
 
 
 def test_a_windows_reparse_loop_is_gone(
@@ -258,10 +259,10 @@ def test_a_windows_reparse_loop_is_gone(
         return real_stat(path, *args, **kwargs)
 
     monkeypatch.setattr(gu.os, "stat", unresolvable)
-    assert gu._vanished(link) is True
+    assert vanished(link) is True
     # Any other EINVAL is still "unreadable", not gone.
     winerror = None
-    assert gu._vanished(link) is False
+    assert vanished(link) is False
 
 
 def test_a_link_whose_target_cannot_be_reached_is_not_gone(
@@ -285,7 +286,7 @@ def test_a_link_whose_target_cannot_be_reached_is_not_gone(
         return real_stat(path, *args, **kwargs)
 
     monkeypatch.setattr(gu.os, "stat", denied)
-    assert gu._vanished(link) is False
+    assert vanished(link) is False
 
 
 def test_the_orphan_prune_does_not_raise_on_an_unreachable_link(
@@ -328,8 +329,8 @@ def test_the_orphan_prune_does_not_raise_on_an_unreachable_link(
         else:
             pytest.skip("the mode bits do not block access on this host")
         # The predicate the prune uses must ANSWER for all three, never raise.
-        assert gu._vanished(link) is False
-        assert gu._vanished(absent) is True
-        assert gu._vanished(present) is False
+        assert vanished(link) is False
+        assert vanished(absent) is True
+        assert vanished(present) is False
     finally:
         os.chmod(secret, 0o755)

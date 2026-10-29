@@ -98,7 +98,7 @@ def test_the_prune_reads_hold_only_this_projects_nodes(tmp_path: Path) -> None:
     )
     store.reads.clear()
 
-    updater._prune_orphan_nodes()
+    updater.graph_pruner.prune_orphan_nodes(updater._run, updater.prepared_state_dir)
     updater._package_paths()
 
     mine = repo.resolve().as_posix()

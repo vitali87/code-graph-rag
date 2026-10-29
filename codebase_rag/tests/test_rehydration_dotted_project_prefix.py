@@ -172,6 +172,7 @@ def test_an_incremental_run_deletes_nothing_the_longer_named_project_owns(
         delete(file_key)
 
     updater._delete_module_entities = record  # type: ignore[method-assign]
+    updater.graph_pruner._delete_module_entities = record
     updater.run()
 
     assert {path.name for path, _language in updater._parsed_files} == {"api.py"}

@@ -628,7 +628,7 @@ class TestSingleFileRunScope:
         file's PARENT, so for `pkg/module_a.py` that was `pkg/`. #1775 fixed
         that and the run is now rooted at the project root; the guard below
         pins the new behaviour. The history is kept because it is what this
-        prune guard was built against. `_prune_orphan_nodes`
+        prune guard was built against. `GraphPruner.prune_orphan_nodes`
         then resolves every Module's relative path against `pkg/` and deletes
         the ones that do not exist there -- which is every module outside
         `pkg/`, and, because Module rows carry no `absolute_path`, the

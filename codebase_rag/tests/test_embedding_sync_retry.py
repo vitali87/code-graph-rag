@@ -31,6 +31,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag import exceptions as ex
 from codebase_rag.constants import VectorStoreBackend
+from codebase_rag.graph_pruning import GraphPruner
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.sync.checkout_state import state_file
@@ -542,7 +543,7 @@ class TestAnInterruptedPassIsRetried:
         _sync(repo, graph, {1: _KEEP, 2: _DELETE}, skip_embeddings=True)
         with (
             patch.object(
-                GraphUpdater, "_prune_orphan_nodes", side_effect=KeyboardInterrupt
+                GraphPruner, "prune_orphan_nodes", side_effect=KeyboardInterrupt
             ),
             pytest.raises(KeyboardInterrupt),
         ):

@@ -1,3 +1,4 @@
+import errno
 import hashlib
 import os
 import posixpath
@@ -273,6 +274,65 @@ def is_symlink_entry(path: str | os.PathLike[str]) -> bool:
     cycle is a link like any other.
     """
     return os.path.islink(path)
+
+
+_PATH_GONE_ERRNOS = frozenset({errno.ENOENT, errno.ENOTDIR, errno.ELOOP})
+# Windows reports a reparse-point loop as ERROR_CANT_RESOLVE_FILENAME, which
+# CPython maps to EINVAL rather than ELOOP.
+_ERROR_CANT_RESOLVE_FILENAME = 1921
+
+
+def _is_gone_error(exc: OSError) -> bool:
+    return (
+        exc.errno in _PATH_GONE_ERRNOS
+        or getattr(exc, "winerror", None) == _ERROR_CANT_RESOLVE_FILENAME
+    )
+
+
+def vanished(filepath: Path) -> bool:
+    """Whether an unreadable path is GONE rather than unreachable: the path
+    is absent, or a symlink whose target is. Judged without following the
+    link and without `exists()`, which reads a permission failure on the
+    file or its directory as absence (issue #1983)."""
+    # ENOTDIR here means an ancestor is now a regular file, so the path can
+    # never exist again; reading it as "not gone" kept its subtree through
+    # every orphan prune. Only a permission-style failure is
+    # left as unreachable.
+    try:
+        os.lstat(filepath)
+    except OSError as exc:
+        return _is_gone_error(exc)
+    if not filepath.is_symlink():
+        return False
+    # A link with no target at all is gone: dangling, a cycle, or a target
+    # path through a non-directory. Retrying one would mark the cache
+    # `unreadable` on every run for as long as the link stays broken (bot
+    # review). A link whose target exists but cannot be reached is not gone,
+    # and `Path.exists()` would raise on that.
+    try:
+        os.stat(filepath)
+    except OSError as exc:
+        return _is_gone_error(exc)
+    return False
+
+
+def is_inline_module_path(path: str) -> bool:
+    """Whether `path` is the SYNTHETIC path of a bodied inline module.
+
+    Those are written as `inline_module_<name>` with no extension
+    (class_ingest/mixin.py), so the prefix alone is not the test: a real
+    file may legitimately be called `inline_module_widget.py`, and
+    treating it as synthetic drops it from the owner map (Copilot,
+    PR #1935).
+
+    Matched on the BASENAME, not the whole path: the producer writes no
+    directory component, so a path-anchored test could only ever match at
+    the repository root, and an extensionless `inline_module_data` there
+    was still read as synthetic while `pkg/inline_module_data` was not
+    (PR #1967).
+    """
+    name = Path(path).name
+    return name.startswith(cs.INLINE_MODULE_PATH_PREFIX) and not Path(name).suffix
 
 
 def is_ignored_filename(name: str) -> bool:

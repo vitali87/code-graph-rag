@@ -20,6 +20,7 @@ from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag import exceptions as ex
 from codebase_rag.cli import _run_graph_sync
+from codebase_rag.graph_pruning import GraphPruner
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.sync.checkout_state import state_dir
@@ -122,9 +123,7 @@ def test_an_interrupt_before_the_embeddings_pass_records_no_sync_time(
 ) -> None:
     updater = _updater(py_project, mock_ingestor)
     with (
-        patch.object(
-            GraphUpdater, "_prune_orphan_nodes", side_effect=KeyboardInterrupt
-        ),
+        patch.object(GraphPruner, "prune_orphan_nodes", side_effect=KeyboardInterrupt),
         pytest.raises(KeyboardInterrupt),
     ):
         updater.run()
@@ -155,9 +154,7 @@ def test_an_interrupt_before_the_embeddings_pass_commits_nothing(
     # partial, and a committed cache would hide that from the next sync.
     updater = _updater(py_project, mock_ingestor)
     with (
-        patch.object(
-            GraphUpdater, "_prune_orphan_nodes", side_effect=KeyboardInterrupt
-        ),
+        patch.object(GraphPruner, "prune_orphan_nodes", side_effect=KeyboardInterrupt),
         pytest.raises(KeyboardInterrupt) as stopped,
     ):
         updater.run()

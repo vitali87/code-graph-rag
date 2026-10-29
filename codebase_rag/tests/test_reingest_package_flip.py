@@ -8,7 +8,7 @@ hangs off whichever node it is.
 `run()` handles this (issue #1570): it captures the package set before Pass 1,
 computes the symmetric difference in `_package_flip_dirs`, re-parses the
 flipped directory's siblings so their containment edges re-point, and prunes
-the node of the wrong kind in `_prune_orphan_nodes`.
+the node of the wrong kind in `GraphPruner.prune_orphan_nodes`.
 
 The scoped `reingest` path did none of that. It never captured the before-set,
 never computed the flip, never re-parsed the siblings, and never pruned -- so
@@ -179,8 +179,8 @@ def test_a_flip_elsewhere_is_not_this_calls_to_reconcile(tmp_path: Path) -> None
     last derivation, which on a reused updater includes directories changed by
     something else entirely. Reconciling those would make a scoped re-ingest
     unbounded: it would re-parse and prune directories the caller never named,
-    which is the whole-project claim `_prune_orphan_nodes` is careful not to
-    make from a partial walk.
+    which is the whole-project claim `GraphPruner.prune_orphan_nodes` is
+    careful not to make from a partial walk.
 
     Here `other/` loses its `__init__.py` on disk without being named in the
     call, and the re-ingest of `pkg/` must leave it alone. A full index will

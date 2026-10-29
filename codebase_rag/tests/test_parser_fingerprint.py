@@ -17,7 +17,7 @@ import pytest
 from loguru import logger
 
 from codebase_rag import constants as cs
-from codebase_rag import graph_updater
+from codebase_rag import graph_pruning, graph_updater
 from codebase_rag import logs as ls
 from codebase_rag.capture import CaptureSelection, resolve_capture
 from codebase_rag.cli import _delete_hash_cache
@@ -315,14 +315,14 @@ class TestFingerprintStamping:
         and the directory mtimes already commit after the flush; this pins the
         fingerprint to the same point.
 
-        `_prune_orphan_nodes` sits between the old stamp site and the final
-        flush, so raising from it is a death in that window.
+        `GraphPruner.prune_orphan_nodes` sits between the old stamp site and
+        the final flush, so raising from it is a death in that window.
         """
         updater = _make_updater(py_project, mock_ingestor)
         with (
             patch.object(
-                updater,
-                "_prune_orphan_nodes",
+                updater.graph_pruner,
+                "prune_orphan_nodes",
                 side_effect=RuntimeError("died before the final flush"),
             ),
             pytest.raises(RuntimeError, match="died before the final flush"),
@@ -415,7 +415,7 @@ class TestFingerprintStamping:
         _fingerprint_path(py_project).write_text(STALE_FINGERPRINT, encoding="utf-8")
 
         real_hash = graph_updater.hash_file_with_bytes
-        real_vanished = graph_updater._vanished
+        real_vanished = graph_updater.vanished
 
         def refuse_module_b(filepath: Path) -> tuple[str, bytes] | None:
             if filepath.name == "module_b.py":
@@ -427,7 +427,8 @@ class TestFingerprintStamping:
 
         updater = _make_updater(py_project, mock_ingestor)
         monkeypatch.setattr(graph_updater, "hash_file_with_bytes", refuse_module_b)
-        monkeypatch.setattr(graph_updater, "_vanished", module_b_gone)
+        monkeypatch.setattr(graph_updater, "vanished", module_b_gone)
+        monkeypatch.setattr(graph_pruning, "vanished", module_b_gone)
         updater.run()
 
         stored = _fingerprint_path(py_project).read_text(encoding="utf-8").strip()

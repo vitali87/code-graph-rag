@@ -16,6 +16,7 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
+from codebase_rag.graph_pruning import PruneRun
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.sync.checkout_state import state_file
@@ -31,6 +32,10 @@ def _updater(repo: Path, ingestor: MagicMock) -> GraphUpdater:
         queries=queries,
         project_name="svc",
     )
+
+
+def _prune(updater: GraphUpdater) -> None:
+    updater.graph_pruner.prune_orphan_nodes(updater._run, updater.prepared_state_dir)
 
 
 def _registry_unreadable(ingestor: MagicMock) -> None:
@@ -116,7 +121,7 @@ def test_the_prune_leaves_qualified_rows_when_the_registry_is_unreadable(
     _registry_unreadable(mock_ingestor)
     updater = _updater(temp_repo, mock_ingestor)
 
-    updater._prune_orphan_nodes()
+    _prune(updater)
 
     assert cs.CYPHER_DELETE_MODULE not in _written(mock_ingestor)
 
@@ -130,7 +135,7 @@ def test_a_prune_that_leaves_rows_owes_the_next_run_a_prune(
     _registry_unreadable(mock_ingestor)
     updater = _updater(temp_repo, mock_ingestor)
 
-    updater._prune_orphan_nodes()
+    _prune(updater)
 
     assert state_file(temp_repo, cs.PRUNE_PENDING_FILENAME).exists()
 
@@ -146,7 +151,7 @@ def test_a_failed_path_read_owes_the_next_run_a_prune(
     mock_ingestor.fetch_all.side_effect = fetch_all
     updater = _updater(temp_repo, mock_ingestor)
 
-    updater._prune_orphan_nodes()
+    _prune(updater)
 
     assert state_file(temp_repo, cs.PRUNE_PENDING_FILENAME).exists()
 
@@ -158,12 +163,12 @@ def test_a_complete_prune_settles_what_an_earlier_run_owed(
     mock_ingestor.fetch_all.side_effect = lambda query, params=None: []
     updater = _updater(temp_repo, mock_ingestor)
 
-    updater._prune_orphan_nodes()
+    _prune(updater)
     # Not yet: the prune's deletes are durable only after run()'s flush, and
     # clearing before it would lose the retry if that flush failed.
     assert state_file(temp_repo, cs.PRUNE_PENDING_FILENAME).exists()
 
-    updater._settle_prune_marker()
+    updater.graph_pruner.settle_prune_marker(updater._run, updater.prepared_state_dir)
 
     assert not state_file(temp_repo, cs.PRUNE_PENDING_FILENAME).exists()
 
@@ -187,13 +192,13 @@ def test_a_failed_flush_after_a_complete_prune_keeps_what_was_owed(
     updater().run()
     state_file(temp_repo, cs.PRUNE_PENDING_FILENAME).touch()
     owed = updater()
-    real_prune = owed._prune_orphan_nodes
+    real_prune = owed.graph_pruner.prune_orphan_nodes
 
-    def prune_then_fail_the_flush() -> None:
-        real_prune()
+    def prune_then_fail_the_flush(run: PruneRun, state_dir: Path) -> None:
+        real_prune(run, state_dir)
         owed.ingestor.flush_all = MagicMock(side_effect=ConnectionError("down"))
 
-    owed._prune_orphan_nodes = prune_then_fail_the_flush
+    owed.graph_pruner.prune_orphan_nodes = prune_then_fail_the_flush
     with pytest.raises(ConnectionError):
         owed.run()
 
