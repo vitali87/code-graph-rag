@@ -1,7 +1,7 @@
 """Process-wide CLI state and helpers that must not import the LLM stack.
 
 `codebase_rag.cli` is imported by every `cgr` invocation, so anything it needs
-at import time lives here rather than in `codebase_rag.main`, whose provider
+at import time lives here rather than in `codebase_rag.agent_loop`, whose provider
 and agent imports cost over a second (issue #2253). `main` re-exports these
 names, so `main.app_context` and `cli.app_context` are the same object.
 """

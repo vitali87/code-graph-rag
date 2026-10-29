@@ -10,10 +10,10 @@ from .. import constants as cs
 from .. import logs as ls
 from .. import tool_errors as te
 from ..decorators import validate_project_path
-from ..schemas import FileReadResult
 from ..taint import ReadContentRecord
 from ..utils.source_encoding import source_codec
 from . import tool_descriptions as td
+from .schemas import FileReadResult
 
 
 class FileReader:

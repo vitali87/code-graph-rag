@@ -11,7 +11,7 @@ import time
 
 import pytest
 
-from codebase_rag.main import _run_pre_chat_sync
+from codebase_rag.agent_loop import _run_pre_chat_sync
 
 _RUNS_FOR = 10.0
 

@@ -605,7 +605,7 @@ def test_the_call_site_prunes_the_callers_list_and_precedes_the_counter() -> Non
     Same discipline as `test_mcp_read_handler_lock.py`, which parses the
     shipped file (raised by peer review on #1506).
     """
-    source = (Path(__file__).resolve().parents[1] / "main.py").read_text(
+    source = (Path(__file__).resolve().parents[1] / "agent_loop.py").read_text(
         encoding="utf-8"
     )
     tree = ast.parse(source)

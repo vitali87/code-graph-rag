@@ -9,8 +9,8 @@ from pydantic_ai.usage import RunUsage
 
 from codebase_rag import constants as cs
 from codebase_rag import exceptions as ex
+from codebase_rag.agent_loop import _create_model_from_string, _handle_model_command
 from codebase_rag.config import ModelConfig
-from codebase_rag.main import _create_model_from_string, _handle_model_command
 from codebase_rag.models import SessionState
 
 if TYPE_CHECKING:
@@ -19,14 +19,14 @@ if TYPE_CHECKING:
 
 @pytest.fixture
 def mock_console() -> Generator[MagicMock]:
-    with patch("codebase_rag.main.app_context") as mock_ctx:
+    with patch("codebase_rag.agent_loop.app_context") as mock_ctx:
         mock_ctx.console = MagicMock()
         yield mock_ctx.console
 
 
 @pytest.fixture
 def mock_settings() -> Generator[MagicMock]:
-    with patch("codebase_rag.main.settings") as mock_s:
+    with patch("codebase_rag.agent_loop.settings") as mock_s:
         mock_s.active_orchestrator_config = ModelConfig(
             provider="google", model_id="gemini-2.0-flash"
         )
@@ -73,9 +73,9 @@ class TestHandleModelCommand:
         mock_new_model = MagicMock()
         mock_new_config = MagicMock()
         with (
-            patch("codebase_rag.main.logger") as mock_logger,
+            patch("codebase_rag.agent_loop.logger") as mock_logger,
             patch(
-                "codebase_rag.main._create_model_from_string",
+                "codebase_rag.agent_loop._create_model_from_string",
                 return_value=(mock_new_model, "openai:gpt-4o", mock_new_config),
             ),
         ):
@@ -97,9 +97,9 @@ class TestHandleModelCommand:
         mock_new_model = MagicMock()
         mock_new_config = MagicMock()
         with (
-            patch("codebase_rag.main.logger"),
+            patch("codebase_rag.agent_loop.logger"),
             patch(
-                "codebase_rag.main._create_model_from_string",
+                "codebase_rag.agent_loop._create_model_from_string",
                 return_value=(
                     mock_new_model,
                     "anthropic:claude-3-opus",
@@ -145,9 +145,9 @@ class TestHandleModelCommand:
         self, mock_console: MagicMock, mock_settings: MagicMock
     ) -> None:
         with (
-            patch("codebase_rag.main.logger") as mock_logger,
+            patch("codebase_rag.agent_loop.logger") as mock_logger,
             patch(
-                "codebase_rag.main._create_model_from_string",
+                "codebase_rag.agent_loop._create_model_from_string",
                 side_effect=ValueError("Invalid model"),
             ),
         ):
@@ -166,7 +166,7 @@ class TestHandleModelCommand:
 class TestModelOverrideInAgentLoop:
     @pytest.mark.asyncio
     async def test_model_override_passed_to_agent_run(self) -> None:
-        from codebase_rag.main import _run_agent_response_loop
+        from codebase_rag.agent_loop import _run_agent_response_loop
         from codebase_rag.types_defs import CHAT_LOOP_UI, ConfirmationToolNames
 
         mock_agent = MagicMock()
@@ -185,8 +185,8 @@ class TestModelOverrideInAgentLoop:
         )
 
         with (
-            patch("codebase_rag.main.app_context") as mock_ctx,
-            patch("codebase_rag.main.log_session_event"),
+            patch("codebase_rag.agent_loop.app_context") as mock_ctx,
+            patch("codebase_rag.agent_loop.log_session_event"),
         ):
             mock_ctx.console.status.return_value.__enter__ = MagicMock()
             mock_ctx.console.status.return_value.__exit__ = MagicMock()
@@ -208,7 +208,7 @@ class TestModelOverrideInAgentLoop:
 
     @pytest.mark.asyncio
     async def test_model_override_none_by_default(self) -> None:
-        from codebase_rag.main import _run_agent_response_loop
+        from codebase_rag.agent_loop import _run_agent_response_loop
         from codebase_rag.types_defs import CHAT_LOOP_UI, ConfirmationToolNames
 
         mock_agent = MagicMock()
@@ -226,8 +226,8 @@ class TestModelOverrideInAgentLoop:
         )
 
         with (
-            patch("codebase_rag.main.app_context") as mock_ctx,
-            patch("codebase_rag.main.log_session_event"),
+            patch("codebase_rag.agent_loop.app_context") as mock_ctx,
+            patch("codebase_rag.agent_loop.log_session_event"),
         ):
             mock_ctx.console.status.return_value.__enter__ = MagicMock()
             mock_ctx.console.status.return_value.__exit__ = MagicMock()
@@ -261,21 +261,21 @@ class TestAgentLoopUserPromptOnResume:
         from pydantic_ai import DeferredToolResults
 
         return (
-            patch("codebase_rag.main.app_context"),
-            patch("codebase_rag.main.log_session_event"),
+            patch("codebase_rag.agent_loop.app_context"),
+            patch("codebase_rag.agent_loop.log_session_event"),
             patch(
-                "codebase_rag.main._process_tool_approvals",
+                "codebase_rag.agent_loop._process_tool_approvals",
                 new=AsyncMock(return_value=DeferredToolResults()),
             ),
-            patch("codebase_rag.main._refresh_context_tokens", new=AsyncMock()),
-            patch("codebase_rag.main._thinking_with_status_bar"),
+            patch("codebase_rag.agent_loop._refresh_context_tokens", new=AsyncMock()),
+            patch("codebase_rag.agent_loop._thinking_with_status_bar"),
         )
 
     @pytest.mark.asyncio
     async def test_user_prompt_not_resent_after_deferred_tool_approval(self) -> None:
         from pydantic_ai import DeferredToolRequests
 
-        from codebase_rag.main import _run_agent_response_loop
+        from codebase_rag.agent_loop import _run_agent_response_loop
         from codebase_rag.types_defs import CHAT_LOOP_UI, ConfirmationToolNames
 
         mock_agent = MagicMock()
@@ -315,7 +315,7 @@ class TestAgentLoopUserPromptOnResume:
     ) -> None:
         from pydantic_ai import DeferredToolRequests
 
-        from codebase_rag.main import _run_agent_response_loop
+        from codebase_rag.agent_loop import _run_agent_response_loop
         from codebase_rag.types_defs import CHAT_LOOP_UI, ConfirmationToolNames
 
         mock_agent = MagicMock()
@@ -350,7 +350,7 @@ class TestAgentLoopUserPromptOnResume:
 
     @pytest.mark.asyncio
     async def test_user_prompt_passed_on_first_call_when_no_deferred(self) -> None:
-        from codebase_rag.main import _run_agent_response_loop
+        from codebase_rag.agent_loop import _run_agent_response_loop
         from codebase_rag.types_defs import CHAT_LOOP_UI, ConfirmationToolNames
 
         mock_agent = MagicMock()
@@ -379,7 +379,7 @@ class TestAgentLoopUserPromptOnResume:
     async def test_multimodal_user_prompt_not_resent_after_approval(self) -> None:
         from pydantic_ai import BinaryContent, DeferredToolRequests
 
-        from codebase_rag.main import _run_agent_response_loop
+        from codebase_rag.agent_loop import _run_agent_response_loop
         from codebase_rag.types_defs import CHAT_LOOP_UI, ConfirmationToolNames
 
         multimodal_prompt = [
@@ -417,7 +417,7 @@ class TestAgentLoopUserPromptOnResume:
     async def test_deferred_results_passed_only_after_approval(self) -> None:
         from pydantic_ai import DeferredToolRequests, DeferredToolResults
 
-        from codebase_rag.main import _run_agent_response_loop
+        from codebase_rag.agent_loop import _run_agent_response_loop
         from codebase_rag.types_defs import CHAT_LOOP_UI, ConfirmationToolNames
 
         approved = DeferredToolResults()
@@ -436,14 +436,14 @@ class TestAgentLoopUserPromptOnResume:
         )
 
         with (
-            patch("codebase_rag.main.app_context") as mock_ctx,
-            patch("codebase_rag.main.log_session_event"),
+            patch("codebase_rag.agent_loop.app_context") as mock_ctx,
+            patch("codebase_rag.agent_loop.log_session_event"),
             patch(
-                "codebase_rag.main._process_tool_approvals",
+                "codebase_rag.agent_loop._process_tool_approvals",
                 new=AsyncMock(return_value=approved),
             ),
-            patch("codebase_rag.main._refresh_context_tokens", new=AsyncMock()),
-            patch("codebase_rag.main._thinking_with_status_bar"),
+            patch("codebase_rag.agent_loop._refresh_context_tokens", new=AsyncMock()),
+            patch("codebase_rag.agent_loop._thinking_with_status_bar"),
         ):
             mock_ctx.console.print = MagicMock()
             mock_ctx.session = SessionState()
@@ -492,8 +492,8 @@ class TestMultipleModelSwitches:
         mock_config_c = MagicMock(name="config-c")
 
         with (
-            patch("codebase_rag.main.logger"),
-            patch("codebase_rag.main._create_model_from_string") as mock_create,
+            patch("codebase_rag.agent_loop.logger"),
+            patch("codebase_rag.agent_loop._create_model_from_string") as mock_create,
         ):
             mock_create.return_value = (mock_model_a, "ollama:model-a", mock_config_a)
             model, model_str, config = _handle_model_command(
@@ -528,9 +528,9 @@ class TestMultipleModelSwitches:
         mock_model = MagicMock()
         mock_config = MagicMock()
         with (
-            patch("codebase_rag.main.logger"),
+            patch("codebase_rag.agent_loop.logger"),
             patch(
-                "codebase_rag.main._create_model_from_string",
+                "codebase_rag.agent_loop._create_model_from_string",
                 return_value=(mock_model, "openai:gpt-4", mock_config),
             ),
         ):
@@ -607,7 +607,9 @@ class TestCreateModelFromString:
         self, mock_settings: MagicMock
     ) -> None:
         mock_model = MagicMock()
-        with patch("codebase_rag.main.get_provider_from_config") as mock_get_provider:
+        with patch(
+            "codebase_rag.agent_loop.get_provider_from_config"
+        ) as mock_get_provider:
             mock_provider = MagicMock()
             mock_provider.create_model.return_value = mock_model
             mock_get_provider.return_value = mock_provider
@@ -619,7 +621,7 @@ class TestCreateModelFromString:
 
     def test_invalid_provider_raises_error(self, mock_settings: MagicMock) -> None:
         with patch(
-            "codebase_rag.main.get_provider_from_config",
+            "codebase_rag.agent_loop.get_provider_from_config",
             side_effect=ValueError("Unknown provider"),
         ):
             with pytest.raises(ValueError, match="Unknown provider"):
@@ -627,7 +629,9 @@ class TestCreateModelFromString:
 
     def test_same_provider_uses_current_config(self, mock_settings: MagicMock) -> None:
         mock_model = MagicMock()
-        with patch("codebase_rag.main.get_provider_from_config") as mock_get_provider:
+        with patch(
+            "codebase_rag.agent_loop.get_provider_from_config"
+        ) as mock_get_provider:
             mock_provider = MagicMock()
             mock_provider.create_model.return_value = mock_model
             mock_get_provider.return_value = mock_provider
@@ -642,7 +646,9 @@ class TestCreateModelFromString:
         mock_model = MagicMock()
         mock_settings.ollama_endpoint = "http://localhost:11434/v1"
 
-        with patch("codebase_rag.main.get_provider_from_config") as mock_get_provider:
+        with patch(
+            "codebase_rag.agent_loop.get_provider_from_config"
+        ) as mock_get_provider:
             mock_provider = MagicMock()
             mock_provider.create_model.return_value = mock_model
             mock_get_provider.return_value = mock_provider
@@ -657,9 +663,9 @@ class TestModelCommandEdgeCases:
         self, mock_console: MagicMock, mock_settings: MagicMock
     ) -> None:
         with (
-            patch("codebase_rag.main.logger") as mock_logger,
+            patch("codebase_rag.agent_loop.logger") as mock_logger,
             patch(
-                "codebase_rag.main._create_model_from_string",
+                "codebase_rag.agent_loop._create_model_from_string",
                 side_effect=AssertionError("Missing API key"),
             ),
         ):
@@ -678,9 +684,9 @@ class TestModelCommandEdgeCases:
         self, mock_console: MagicMock, mock_settings: MagicMock
     ) -> None:
         with (
-            patch("codebase_rag.main.logger") as mock_logger,
+            patch("codebase_rag.agent_loop.logger") as mock_logger,
             patch(
-                "codebase_rag.main._create_model_from_string",
+                "codebase_rag.agent_loop._create_model_from_string",
                 side_effect=ValueError("Invalid configuration"),
             ),
         ):

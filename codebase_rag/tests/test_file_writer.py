@@ -5,11 +5,11 @@ from pathlib import Path
 import pytest
 from pydantic_ai import Tool
 
-from codebase_rag.schemas import FileCreationResult
 from codebase_rag.tools.file_writer import (
     FileWriter,
     create_file_writer_tool,
 )
+from codebase_rag.tools.schemas import FileCreationResult
 
 pytestmark = [pytest.mark.anyio]
 

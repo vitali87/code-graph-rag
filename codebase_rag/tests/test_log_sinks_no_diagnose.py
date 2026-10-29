@@ -15,8 +15,8 @@ from types import SimpleNamespace
 import pytest
 from loguru import logger
 
+from codebase_rag import agent_loop as cgr_main
 from codebase_rag import cli
-from codebase_rag import main as cgr_main
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _SECRET = "sk-test-not-a-real-key-2362"
@@ -61,7 +61,7 @@ def test_the_scan_finds_the_known_sinks() -> None:
     }
     # `cgr watch` logs through the CLI's sink; the contributor script that
     # once added its own (`realtime_updater.py`) now only runs that command.
-    assert {"cli.py", "main.py", "server.py"} <= found
+    assert {"cli.py", "agent_loop.py", "server.py"} <= found
 
 
 def test_every_production_sink_disables_diagnose() -> None:

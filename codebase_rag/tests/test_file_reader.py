@@ -6,11 +6,11 @@ import pytest
 from pydantic_ai import Tool
 
 from codebase_rag import constants as cs
-from codebase_rag.schemas import FileReadResult
 from codebase_rag.tools.file_reader import (
     FileReader,
     create_file_reader_tool,
 )
+from codebase_rag.tools.schemas import FileReadResult
 
 pytestmark = [pytest.mark.anyio]
 

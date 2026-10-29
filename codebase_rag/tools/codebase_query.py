@@ -27,7 +27,6 @@ from ..constants import (
     QUERY_SUMMARY_TRANSLATION_FAILED,
     QUERY_SUMMARY_TRUNCATED,
 )
-from ..schemas import QueryGraphData
 from ..services import ReadOnlyQueryProtocol
 from ..services.graph_service import is_query_rejection
 from ..services.llm import CypherQueryGenerator
@@ -35,6 +34,7 @@ from ..types_defs import ResultRow
 from ..utils.terminal_console import terminal_aware_console
 from ..utils.token_utils import truncate_results_by_tokens
 from . import tool_descriptions as td
+from .schemas import QueryGraphData
 
 # A PROJECTED PROPERTY: `n.qualified_name`, with nothing appended. The
 # trailing boundary is what rejects `AS qualified_name_of_thing`, and the

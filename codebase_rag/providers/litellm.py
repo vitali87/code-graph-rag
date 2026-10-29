@@ -8,7 +8,7 @@ from loguru import logger
 from codebase_rag import constants as cs
 from codebase_rag import exceptions as ex
 
-from ..utils.endpoints import strip_v1_suffix
+from ..utils.provider_urls import strip_v1_suffix
 from .base import ModelProvider, check_litellm_proxy_running
 
 if TYPE_CHECKING:

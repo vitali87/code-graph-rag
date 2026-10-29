@@ -6,7 +6,7 @@ from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 
 from codebase_rag import constants as cs
-from codebase_rag.main import get_multiline_input
+from codebase_rag.agent_loop import get_multiline_input
 
 CTRL_J = "\x0a"
 CTRL_E = "\x05"

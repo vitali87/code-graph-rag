@@ -26,8 +26,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag.cypher_queries import CYPHER_FIND_BY_QUALIFIED_NAME
-from codebase_rag.schemas import CodeSnippet
 from codebase_rag.tools.code_retrieval import CodeRetriever
+from codebase_rag.tools.schemas import CodeSnippet
 
 _PATH_ALIAS = re.compile(r"\bAS\s+path\b")
 _PATH_PROPERTY = re.compile(r"\b\w+\.path\b")

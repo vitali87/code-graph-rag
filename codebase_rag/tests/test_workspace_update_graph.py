@@ -695,7 +695,7 @@ def test_start_without_a_workspace_opens_the_chat_on_the_repository(
 def _assistant_scope_check(active_projects: list[str] | None) -> None:
     # Stop `_initialize_services_and_agent` at its first step after the scope
     # check, so no model or tool is built.
-    from codebase_rag import main as main_mod
+    from codebase_rag import agent_loop as main_mod
 
     with patch.object(
         main_mod, "_validate_provider_config", side_effect=RuntimeError("past")

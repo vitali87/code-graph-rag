@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
-from .types_defs import ResultRow
+from ..types_defs import ResultRow
 
 
 class QueryGraphData(BaseModel):

@@ -117,7 +117,7 @@ def test_the_app_console_is_terminal_aware() -> None:
 def test_the_app_console_writes_no_escapes_into_a_pipe() -> None:
     env = {k: v for k, v in os.environ.items() if k not in _COLOUR_VARS}
     script = (
-        "from codebase_rag.main import app_context\n"
+        "from codebase_rag.agent_loop import app_context\n"
         f"app_context.console.print({STYLED_LINE!r})\n"
         f"app_context.console.print({LONG_LINE!r})\n"
     )

@@ -5,8 +5,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from codebase_rag import agent_loop as main_mod
 from codebase_rag import constants as cs
-from codebase_rag import main as main_mod
 
 
 @pytest.fixture(autouse=True)
@@ -16,7 +16,7 @@ def reset_session(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(main_mod.app_context.session, "target_repo", None)
 
 
-@patch("codebase_rag.main.settings")
+@patch("codebase_rag.agent_loop.settings")
 def test_config_segments_always_shows_both_models(
     mock_settings: MagicMock,
     monkeypatch: pytest.MonkeyPatch,
@@ -36,7 +36,7 @@ def test_config_segments_always_shows_both_models(
     assert segments[cs.STATUS_BAR_CONFIG_LABEL_REPO] == "/tmp/myrepo"
 
 
-@patch("codebase_rag.main.settings")
+@patch("codebase_rag.agent_loop.settings")
 def test_config_segments_shows_distinct_models(
     mock_settings: MagicMock,
 ) -> None:
@@ -49,7 +49,7 @@ def test_config_segments_shows_distinct_models(
     assert segments[cs.STATUS_BAR_CONFIG_LABEL_C] == "claude-haiku-4-5"
 
 
-@patch("codebase_rag.main.settings")
+@patch("codebase_rag.agent_loop.settings")
 def test_config_segments_reflects_session_flags(
     mock_settings: MagicMock,
     monkeypatch: pytest.MonkeyPatch,
@@ -65,7 +65,7 @@ def test_config_segments_reflects_session_flags(
     assert segments[cs.STATUS_BAR_CONFIG_LABEL_INSTRUCTIONS] == cs.STATUS_BAR_EDIT_OFF
 
 
-@patch("codebase_rag.main.settings")
+@patch("codebase_rag.agent_loop.settings")
 def test_abbreviated_repo_uses_tilde_for_home_paths(
     mock_settings: MagicMock,
 ) -> None:
@@ -89,7 +89,7 @@ def test_abbreviated_repo_handles_none() -> None:
     assert main_mod._abbreviated_repo(None) == ""
 
 
-@patch("codebase_rag.main.settings")
+@patch("codebase_rag.agent_loop.settings")
 def test_config_status_html_includes_model_and_repo(
     mock_settings: MagicMock,
     monkeypatch: pytest.MonkeyPatch,
@@ -108,9 +108,9 @@ def test_config_status_html_includes_model_and_repo(
     assert cs.STATUS_BAR_CONFIG_LABEL_REPO in html
 
 
-@patch("codebase_rag.main._git_state", return_value=None)
-@patch("codebase_rag.main._terminal_columns", return_value=200)
-@patch("codebase_rag.main.settings")
+@patch("codebase_rag.agent_loop._git_state", return_value=None)
+@patch("codebase_rag.agent_loop._terminal_columns", return_value=200)
+@patch("codebase_rag.agent_loop.settings")
 def test_status_bar_html_inlines_config_when_wide(
     mock_settings: MagicMock,
     _columns: MagicMock,
@@ -130,9 +130,9 @@ def test_status_bar_html_inlines_config_when_wide(
     assert config_idx > body_idx, "config should appear after body when wide"
 
 
-@patch("codebase_rag.main._git_state", return_value=None)
-@patch("codebase_rag.main._terminal_columns", return_value=40)
-@patch("codebase_rag.main.settings")
+@patch("codebase_rag.agent_loop._git_state", return_value=None)
+@patch("codebase_rag.agent_loop._terminal_columns", return_value=40)
+@patch("codebase_rag.agent_loop.settings")
 def test_status_bar_html_wraps_config_when_narrow(
     mock_settings: MagicMock,
     _columns: MagicMock,
@@ -152,9 +152,9 @@ def test_status_bar_html_wraps_config_when_narrow(
     assert config_idx < body_idx, "config should appear above body when narrow"
 
 
-@patch("codebase_rag.main._git_state", return_value=None)
-@patch("codebase_rag.main._terminal_columns", return_value=200)
-@patch("codebase_rag.main.settings")
+@patch("codebase_rag.agent_loop._git_state", return_value=None)
+@patch("codebase_rag.agent_loop._terminal_columns", return_value=200)
+@patch("codebase_rag.agent_loop.settings")
 def test_rich_status_bar_inlines_config_when_wide(
     mock_settings: MagicMock,
     _columns: MagicMock,
@@ -170,9 +170,9 @@ def test_rich_status_bar_inlines_config_when_wide(
     assert cs.STATUS_BAR_CONFIG_LABEL_O + ":" in rendered
 
 
-@patch("codebase_rag.main._git_state", return_value=None)
-@patch("codebase_rag.main._terminal_columns", return_value=30)
-@patch("codebase_rag.main.settings")
+@patch("codebase_rag.agent_loop._git_state", return_value=None)
+@patch("codebase_rag.agent_loop._terminal_columns", return_value=30)
+@patch("codebase_rag.agent_loop.settings")
 def test_rich_status_bar_wraps_config_when_narrow(
     mock_settings: MagicMock,
     _columns: MagicMock,
@@ -232,9 +232,9 @@ def test_git_state_returns_none_when_target_missing(
     assert main_mod._git_state() is None
 
 
-@patch("codebase_rag.main._git_state", return_value=("feature/x", True))
-@patch("codebase_rag.main._terminal_columns", return_value=400)
-@patch("codebase_rag.main.settings")
+@patch("codebase_rag.agent_loop._git_state", return_value=("feature/x", True))
+@patch("codebase_rag.agent_loop._terminal_columns", return_value=400)
+@patch("codebase_rag.agent_loop.settings")
 def test_branch_appears_after_repo_when_inline(
     mock_settings: MagicMock,
     _columns: MagicMock,
@@ -257,9 +257,9 @@ def test_branch_appears_after_repo_when_inline(
     assert rendered.index(mode_label) < rendered.index("feature/x")
 
 
-@patch("codebase_rag.main._git_state", return_value=("feature/x", False))
-@patch("codebase_rag.main._terminal_columns", return_value=400)
-@patch("codebase_rag.main.settings")
+@patch("codebase_rag.agent_loop._git_state", return_value=("feature/x", False))
+@patch("codebase_rag.agent_loop._terminal_columns", return_value=400)
+@patch("codebase_rag.agent_loop.settings")
 def test_status_bar_html_places_branch_after_repo_when_inline(
     mock_settings: MagicMock,
     _columns: MagicMock,

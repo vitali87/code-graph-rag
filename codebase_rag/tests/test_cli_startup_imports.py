@@ -67,7 +67,7 @@ def test_the_probe_sees_an_llm_package_when_one_is_imported() -> None:
 
 
 def test_the_probe_sees_the_deferred_modules_when_they_are_imported() -> None:
-    assert "prompt_toolkit" in _modules_loaded_by("import codebase_rag.main")
+    assert "prompt_toolkit" in _modules_loaded_by("import codebase_rag.agent_loop")
     assert "codebase_rag.parsers" in _modules_loaded_by(
         "import codebase_rag.graph_updater"
     )
@@ -158,11 +158,13 @@ def test_the_version_flag_loads_no_heavy_package() -> None:
     assert _modules_loaded_by(statement) == []
 
 
-def test_the_cli_wrappers_delegate_to_the_main_module() -> None:
+def test_the_cli_forwarders_delegate_to_the_agent_loop_module() -> None:
     # The LLM entry points stay patchable attributes of `cli`, and calling one
-    # reaches the real implementation in `codebase_rag.main`.
+    # reaches the real implementation in `codebase_rag.agent_loop`.
     sentinel = object()
-    with patch("codebase_rag.main.main_single_query", return_value=sentinel) as real:
+    with patch(
+        "codebase_rag.agent_loop.main_single_query", return_value=sentinel
+    ) as real:
         assert cli.main_single_query("repo", 7, "q", active_projects=["p"]) is sentinel
     real.assert_called_once_with("repo", 7, "q", active_projects=["p"])
 

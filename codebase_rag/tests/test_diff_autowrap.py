@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from codebase_rag.main import _autowrap_diff_blocks
+from codebase_rag.agent_loop import _autowrap_diff_blocks
 
 
 class TestNoDiff:

@@ -27,8 +27,8 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from codebase_rag import constants as cs
+from codebase_rag.agent_loop import main_single_query
 from codebase_rag.cli_runtime import app_context
-from codebase_rag.main import main_single_query
 from codebase_rag.mcp.tools import MCPToolsRegistry
 
 QUESTION = "Add a NOTES.md file that says hello"
@@ -86,10 +86,10 @@ def _single_query(
     output_format: cs.QueryFormat = cs.QueryFormat.TABLE,
 ) -> None:
     with (
-        patch("codebase_rag.main._setup_common_initialization"),
-        patch("codebase_rag.main.connect_memgraph") as connect,
+        patch("codebase_rag.agent_loop._setup_common_initialization"),
+        patch("codebase_rag.agent_loop.connect_memgraph") as connect,
         patch(
-            "codebase_rag.main._initialize_services_and_agent",
+            "codebase_rag.agent_loop._initialize_services_and_agent",
             return_value=(agent, [], ""),
         ),
     ):

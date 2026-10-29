@@ -20,9 +20,9 @@ from .. import logs as ls
 from .. import tool_errors as te
 from ..config import settings
 from ..decorators import async_timing_decorator
-from ..schemas import ShellCommandResult
 from ..taint import ReadContentRecord
 from . import tool_descriptions as td
+from .schemas import ShellCommandResult
 
 PIPELINE_PATTERNS_COMPILED = tuple(
     (re.compile(pattern, re.IGNORECASE), reason)

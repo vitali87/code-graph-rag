@@ -28,9 +28,9 @@ from codebase_rag import cli as cli_module
 from codebase_rag import constants as cs
 from codebase_rag.config import PROVIDER_ENV_KEYS, settings
 from codebase_rag.console_marks import status_mark
-from codebase_rag.schemas import HealthCheckResult
 from codebase_rag.tools import health_checker
 from codebase_rag.tools.health_checker import HealthChecker
+from codebase_rag.tools.schemas import HealthCheckResult
 
 runner = CliRunner()
 

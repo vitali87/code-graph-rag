@@ -39,7 +39,7 @@ def _messages(text: str = "hello " * 400) -> list[ModelMessage]:
 def _use_config(
     monkeypatch: pytest.MonkeyPatch, provider: object, api_key: str | None
 ) -> None:
-    from codebase_rag import main as main_mod
+    from codebase_rag import agent_loop as main_mod
 
     class _Config:
         pass
@@ -66,7 +66,7 @@ class TestTheCounterRunsForEveryProvider:
         critical threshold is never crossed and `prune_old_tool_results` is
         never called. Compaction was Anthropic-only without saying so.
         """
-        from codebase_rag import main as main_mod
+        from codebase_rag import agent_loop as main_mod
 
         main_mod.app_context.session.context_tokens = 0
         _use_config(monkeypatch, cs.Provider.OPENAI, "sk-whatever")
@@ -88,7 +88,7 @@ class TestTheCounterRunsForEveryProvider:
         only the provider half would leave a keyless Anthropic session with
         the original bug and a green suite.
         """
-        from codebase_rag import main as main_mod
+        from codebase_rag import agent_loop as main_mod
 
         main_mod.app_context.session.context_tokens = 0
         _use_config(monkeypatch, cs.Provider.ANTHROPIC, None)
@@ -110,7 +110,7 @@ class TestTheCounterRunsForEveryProvider:
         of the input. A stub returning 1, or a counter reading a stale value
         from a previous call, passes both tests above and fails this one.
         """
-        from codebase_rag import main as main_mod
+        from codebase_rag import agent_loop as main_mod
 
         _use_config(monkeypatch, cs.Provider.OPENAI, "sk-whatever")
 
@@ -148,7 +148,7 @@ class TestTheCounterRunsForEveryProvider:
 
         Asserts a sentinel the estimate could never produce.
         """
-        from codebase_rag import main as main_mod
+        from codebase_rag import agent_loop as main_mod
 
         sentinel = 1234567
 
@@ -179,7 +179,7 @@ class TestTheCounterRunsForEveryProvider:
         failure produced the same silent no-compaction state as the missing
         provider support -- for the provider that DID have support.
         """
-        from codebase_rag import main as main_mod
+        from codebase_rag import agent_loop as main_mod
         from codebase_rag.services.anthropic_token_counter import TokenCountError
 
         async def boom(*_args: object, **_kw: object) -> int:
@@ -212,7 +212,7 @@ class TestTheCounterRunsForEveryProvider:
         before a model is settled on, which is exactly when a stale 0 would
         persist longest.
         """
-        from codebase_rag import main as main_mod
+        from codebase_rag import agent_loop as main_mod
 
         def explode(self: object) -> object:
             raise RuntimeError("no orchestrator configured")
@@ -361,7 +361,7 @@ class TestTheRefreshDoesNotBlockTheEventLoop:
         import asyncio
         import time
 
-        from codebase_rag import main as main_mod
+        from codebase_rag import agent_loop as main_mod
 
         slow_calls = 0
 
@@ -423,7 +423,7 @@ class TestTheRefreshDoesNotBlockTheEventLoop:
         import asyncio
         import time
 
-        from codebase_rag import main as main_mod
+        from codebase_rag import agent_loop as main_mod
 
         def slow(_messages: object) -> int:
             time.sleep(0.6)
@@ -486,7 +486,7 @@ class TestTheRefreshDoesNotBlockTheEventLoop:
         import threading
         import time
 
-        from codebase_rag import main as main_mod
+        from codebase_rag import agent_loop as main_mod
 
         started = threading.Event()
         seen: dict[str, bool] = {}
@@ -538,7 +538,7 @@ class TestTheRefreshDoesNotBlockTheEventLoop:
         """
         import asyncio
 
-        from codebase_rag import main as main_mod
+        from codebase_rag import agent_loop as main_mod
 
         loop = asyncio.new_event_loop()
         future: asyncio.Future[int] = loop.create_future()
@@ -571,7 +571,7 @@ class TestTheRefreshDoesNotBlockTheEventLoop:
         import threading
         import time
 
-        from codebase_rag import main as main_mod
+        from codebase_rag import agent_loop as main_mod
 
         live = 0
         peak = 0

@@ -27,7 +27,6 @@ from codebase_rag.constants import (
 )
 from codebase_rag.graph_dialects import DIALECT_MEMGRAPH, DIALECT_SQLITE, get_dialect
 from codebase_rag.mgclient_compat import _absent_driver
-from codebase_rag.schemas import HealthCheckResult
 from codebase_rag.services import graph_service
 from codebase_rag.services.graph_service import GraphUnavailableError, MemgraphIngestor
 from codebase_rag.stack import manager as manager_module
@@ -35,6 +34,7 @@ from codebase_rag.stack.constants import SERVICE_MEMGRAPH, SERVICE_QDRANT
 from codebase_rag.stack.manager import StackError, StackManager
 from codebase_rag.tools import health_checker
 from codebase_rag.tools.health_checker import HealthChecker
+from codebase_rag.tools.schemas import HealthCheckResult
 from codebase_rag.types_defs import JsonValue
 
 _PASS = HealthCheckResult(name="ok", passed=True, message="ok")

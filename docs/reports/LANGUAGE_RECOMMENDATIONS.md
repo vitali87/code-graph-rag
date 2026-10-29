@@ -299,7 +299,7 @@ CPU profiling and concurrency analysis identified multiple high-impact optimisat
 
 ### ALGORITHMIC 0e: Use Compact JSON for Graph Export
 
-**Issue:** `_write_graph_json()` in `main.py:744` uses `json.dump(graph_data, f, indent=2)` which is **8x slower** than compact JSON (86ms vs 11ms for 10K nodes) and produces 1.5x larger output.
+**Issue:** `_write_graph_json()` in `graph_export.py` uses `json.dump(graph_data, f, indent=2)` which is **8x slower** than compact JSON (86ms vs 11ms for 10K nodes) and produces 1.5x larger output.
 
 **Projected Speedup:** 8x on graph JSON export
 

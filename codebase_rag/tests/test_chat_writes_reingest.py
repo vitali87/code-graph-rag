@@ -130,7 +130,7 @@ async def test_the_chat_session_reingests_an_approved_replace_code(
 ) -> None:
     # Through `main_async` as `cgr start` runs it: only the model and the
     # loop are stubbed, and the loop applies the one approved replace_code.
-    from codebase_rag import main as main_mod
+    from codebase_rag import agent_loop as main_mod
 
     root = temp_repo / PROJECT
     project = derive_project_name(root)

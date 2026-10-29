@@ -13,7 +13,7 @@ from .. import constants as cs
 from .. import exceptions as ex
 from .. import logs as ls
 from ..config import ModelConfig, normalised_credential, settings
-from ..utils.endpoints import join_endpoint_path, strip_v1_suffix
+from ..utils.provider_urls import join_endpoint_path, strip_v1_suffix
 
 # Each provider imports its pydantic-ai model and provider classes inside
 # `create_model`, so building one model loads one SDK rather than all of them

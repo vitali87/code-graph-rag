@@ -1151,19 +1151,19 @@ class TestTheCliScopeIsChosenNotAssumed:
     """
 
     def test_one_active_project_is_the_scope(self) -> None:
-        from codebase_rag.main import _cli_query_scope
+        from codebase_rag.agent_loop import _cli_query_scope
 
         assert _cli_query_scope([ALPHA]) == ALPHA
 
     def test_several_active_projects_means_no_scope(self) -> None:
         """The control that stops this narrowing deliberate multi-project use."""
-        from codebase_rag.main import _cli_query_scope
+        from codebase_rag.agent_loop import _cli_query_scope
 
         assert _cli_query_scope([ALPHA, BETA]) is None
 
     def test_no_active_projects_means_no_scope(self) -> None:
         """The default path: nothing activated, so nothing is excluded."""
-        from codebase_rag.main import _cli_query_scope
+        from codebase_rag.agent_loop import _cli_query_scope
 
         assert _cli_query_scope(None) is None
         assert _cli_query_scope([]) is None
@@ -1371,7 +1371,7 @@ def _handler_returning(
     from unittest.mock import AsyncMock, MagicMock
 
     from codebase_rag.mcp.tools import MCPToolsRegistry
-    from codebase_rag.schemas import QueryGraphData
+    from codebase_rag.tools.schemas import QueryGraphData
 
     handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
     handler._ingestor_lock = _NullLock()
@@ -1512,7 +1512,7 @@ class TestScopedBudgetIsSpentOnInProjectRows:
         """
         from unittest.mock import AsyncMock, MagicMock, patch
 
-        from codebase_rag.schemas import QueryGraphData
+        from codebase_rag.tools.schemas import QueryGraphData
 
         handler = _handler_returning(_ROWS)
         scoped_tool = MagicMock()

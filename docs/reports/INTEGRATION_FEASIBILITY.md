@@ -18,7 +18,7 @@ Drop-in dependency swap. Replace `import json` with `import orjson` in graph_loa
 
 ### Integration Overhead
 - **Serialisation boundary:** Zero. orjson is a direct Python C extension. No FFI marshalling.
-- **API difference:** `orjson.dumps()` returns `bytes` not `str`. Every `json.dumps()` call site that feeds the result to something expecting `str` needs `.decode()`. In this codebase, the `_write_graph_json` function in `main.py` uses `json.dump(graph_data, f, indent=2, ensure_ascii=False)` which would need adjustment since orjson's `OPT_INDENT_2` flag replaces the `indent` parameter.
+- **API difference:** `orjson.dumps()` returns `bytes` not `str`. Every `json.dumps()` call site that feeds the result to something expecting `str` needs `.decode()`. In this codebase, the `_write_graph_json` function in `graph_export.py` uses `json.dump(graph_data, f, indent=2, ensure_ascii=False)` which would need adjustment since orjson's `OPT_INDENT_2` flag replaces the `indent` parameter.
 - **Protobuf service:** `services/protobuf_service.py` does not use JSON. No impact.
 - **Hash cache I/O:** `_save_hash_cache` and `_load_hash_cache` use `json.dump/load` with file objects. orjson does not support file-object streaming; need to call `orjson.dumps()` then `f.write()`.
 - **Embedding cache:** Same pattern. `EmbeddingCache.save()` uses `json.dump(self._cache, f)`. Requires manual write of bytes.

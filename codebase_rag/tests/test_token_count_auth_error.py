@@ -180,7 +180,7 @@ class TestCallerBehaviour:
         of the log. Asserts the SECOND call is silent, which is what
         distinguishes "warned once" from "warned always".
         """
-        from codebase_rag import main as main_mod
+        from codebase_rag import agent_loop as main_mod
 
         warnings: list[str] = []
         monkeypatch.setattr(
@@ -226,7 +226,7 @@ class TestCallerBehaviour:
         original defect inverted -- nagging about credentials during a rate
         limit.
         """
-        from codebase_rag import main as main_mod
+        from codebase_rag import agent_loop as main_mod
 
         warnings: list[str] = []
         monkeypatch.setattr(

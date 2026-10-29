@@ -141,9 +141,9 @@ def main(
         str, typer.Option(help="Indexed project to scope the graph to.")
     ] = "",
 ) -> None:
+    from codebase_rag.agent_loop import _initialize_services_and_agent
     from codebase_rag.cli_runtime import connect_memgraph
     from codebase_rag.config import settings
-    from codebase_rag.main import _initialize_services_and_agent
 
     root = str(repo_path.resolve())
     projects = [project_name] if project_name else None

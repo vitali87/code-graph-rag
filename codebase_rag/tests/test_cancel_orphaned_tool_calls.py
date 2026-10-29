@@ -12,7 +12,7 @@ from pydantic_ai.messages import (
 )
 
 from codebase_rag import constants as cs
-from codebase_rag.main import _cancel_orphaned_tool_calls
+from codebase_rag.agent_loop import _cancel_orphaned_tool_calls
 
 
 def test_noop_when_history_empty() -> None:

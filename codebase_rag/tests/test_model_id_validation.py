@@ -309,7 +309,7 @@ class TestStartupWiring:
         for both roles. This asserts the model id is checked THERE, which
         is the difference between a helpful message and the reported 404.
         """
-        from codebase_rag.main import _validate_provider_config
+        from codebase_rag.agent_loop import _validate_provider_config
 
         config = _config(cs.Provider.ANTHROPIC, "opus-5")
 
@@ -324,7 +324,7 @@ class TestStartupWiring:
         Without it, a `_validate_provider_config` that raised on EVERY
         config would pass the test above while breaking all startups.
         """
-        from codebase_rag.main import _validate_provider_config
+        from codebase_rag.agent_loop import _validate_provider_config
 
         _validate_provider_config(
             cs.ModelRole.ORCHESTRATOR,

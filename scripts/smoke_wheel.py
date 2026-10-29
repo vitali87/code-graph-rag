@@ -52,14 +52,14 @@ def check_cli_entry_point() -> None:
 
 
 def check_agent_run_result_usage_is_a_property() -> None:
-    """`main.py` reads ``response.usage`` as an attribute, not a call."""
+    """`agent_loop.py` reads ``response.usage`` as an attribute, not a call."""
     from pydantic_ai.agent import AgentRunResult
 
     usage_attr = inspect.getattr_static(AgentRunResult, "usage")
     if not isinstance(usage_attr, property):
         raise SmokeFailure(
             f"AgentRunResult.usage is {type(usage_attr).__name__}, not a property; "
-            f"codebase_rag/main.py reads it as an attribute "
+            f"codebase_rag/agent_loop.py reads it as an attribute "
             f"(pydantic-ai {version('pydantic-ai')})"
         )
 
@@ -83,7 +83,7 @@ def check_agent_loop_reports_usage() -> None:
         if not isinstance(getattr(run_usage, field, None), int):
             raise SmokeFailure(
                 f"RunUsage.{field} is missing or not an int; "
-                f"codebase_rag/main.py accumulates it per turn "
+                f"codebase_rag/agent_loop.py accumulates it per turn "
                 f"(pydantic-ai {version('pydantic-ai')})"
             )
 

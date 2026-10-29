@@ -13,7 +13,7 @@ import asyncio
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from codebase_rag import main as m
+from codebase_rag import agent_loop as m
 
 
 def _run(tmp_path: Path, answers: list[object]) -> tuple[MagicMock, MagicMock, int]:

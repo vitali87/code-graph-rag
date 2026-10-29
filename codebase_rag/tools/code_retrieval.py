@@ -9,7 +9,6 @@ from pydantic_ai import Tool
 from .. import logs as ls
 from .. import tool_errors as te
 from ..cypher_queries import CYPHER_FIND_BY_QUALIFIED_NAME, CYPHER_LIST_PROJECTS
-from ..schemas import CodeSnippet
 from ..services import QueryProtocol
 from ..taint import ReadContentRecord
 from ..utils.path_utils import (
@@ -20,6 +19,7 @@ from ..utils.path_utils import (
 )
 from ..utils.source_encoding import source_codec
 from . import tool_descriptions as td
+from .schemas import CodeSnippet
 
 
 class CodeRetriever:

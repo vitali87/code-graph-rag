@@ -6,7 +6,7 @@ collected mid-flight, silently killing the task (python:S7502).
 
 import asyncio
 
-from codebase_rag.main import _background_tasks, _spawn_background
+from codebase_rag.agent_loop import _background_tasks, _spawn_background
 
 
 def test_spawned_task_is_retained_until_done() -> None:

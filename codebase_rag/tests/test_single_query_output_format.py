@@ -9,8 +9,8 @@ import pytest
 from typer.testing import CliRunner
 
 from codebase_rag import constants as cs
+from codebase_rag.agent_loop import main_single_query
 from codebase_rag.cli import app
-from codebase_rag.main import main_single_query
 
 _QUESTION = "What does the parser do?"
 _ANSWER = "The parser builds a knowledge graph."
@@ -30,10 +30,10 @@ def mock_agent_stack() -> Generator[MagicMock, None, None]:
     agent = MagicMock()
     agent.run = AsyncMock(return_value=MagicMock(output=_ANSWER))
     with (
-        patch("codebase_rag.main._setup_common_initialization"),
-        patch("codebase_rag.main.connect_memgraph") as mock_connect,
+        patch("codebase_rag.agent_loop._setup_common_initialization"),
+        patch("codebase_rag.agent_loop.connect_memgraph") as mock_connect,
         patch(
-            "codebase_rag.main._initialize_services_and_agent",
+            "codebase_rag.agent_loop._initialize_services_and_agent",
             return_value=(agent, [], ""),
         ),
     ):
@@ -67,10 +67,10 @@ def test_json_format_preserves_non_ascii(
     agent = MagicMock()
     agent.run = AsyncMock(return_value=MagicMock(output=answer))
     with (
-        patch("codebase_rag.main._setup_common_initialization"),
-        patch("codebase_rag.main.connect_memgraph") as mock_connect,
+        patch("codebase_rag.agent_loop._setup_common_initialization"),
+        patch("codebase_rag.agent_loop.connect_memgraph") as mock_connect,
         patch(
-            "codebase_rag.main._initialize_services_and_agent",
+            "codebase_rag.agent_loop._initialize_services_and_agent",
             return_value=(agent, [], ""),
         ),
     ):

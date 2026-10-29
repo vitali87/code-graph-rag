@@ -28,7 +28,7 @@ def _fresh_session() -> object:
     Without this a history entry written by one test leaks into the next,
     and the suite passes or fails depending on execution order.
     """
-    from codebase_rag.main import _input_history
+    from codebase_rag.agent_loop import _input_history
 
     _input_history.cache_clear()
     yield
@@ -50,7 +50,7 @@ class TestHistoryPersists:
         which hangs a headless Windows runner until the job times out.
         Persistence is the property under test; the prompt is not.
         """
-        from codebase_rag.main import _input_history
+        from codebase_rag.agent_loop import _input_history
 
         assert _input_history() is _input_history()
 
@@ -65,7 +65,7 @@ class TestHistoryPersists:
         Writing on one lookup and reading on a second is what actually
         distinguishes a persistent history from a per-turn one.
         """
-        from codebase_rag.main import _input_history, _remember_input
+        from codebase_rag.agent_loop import _input_history, _remember_input
 
         _remember_input(_input_history(), "asked on an earlier turn")
 
@@ -87,7 +87,7 @@ class TestHistoryPersists:
         """
         import inspect
 
-        from codebase_rag import main as m
+        from codebase_rag import agent_loop as m
 
         source = inspect.getsource(m._input_session)
 
@@ -100,7 +100,7 @@ class TestHistoryPersists:
         nothing ever appends to it -- which is what the bare `prompt()`
         call produced.
         """
-        from codebase_rag.main import _remember_input
+        from codebase_rag.agent_loop import _remember_input
 
         history = InMemoryHistory()
         _remember_input(history, "first question")
@@ -114,7 +114,7 @@ class TestHistoryPersists:
         Without this, holding Ctrl+J on an empty buffer fills the history
         with blanks and pushes the real previous message out of easy reach.
         """
-        from codebase_rag.main import _remember_input
+        from codebase_rag.agent_loop import _remember_input
 
         history = InMemoryHistory()
         _remember_input(history, "real question")
@@ -125,7 +125,7 @@ class TestHistoryPersists:
 
     def test_a_repeated_question_is_not_duplicated(self) -> None:
         """Asking the same thing twice should not need two up-arrows."""
-        from codebase_rag.main import _remember_input
+        from codebase_rag.agent_loop import _remember_input
 
         history = InMemoryHistory()
         _remember_input(history, "same")
@@ -153,7 +153,7 @@ class TestThePromptFollowsTheCurrentConsole:
         from prompt_toolkit.input import create_pipe_input
         from prompt_toolkit.output import DummyOutput
 
-        from codebase_rag.main import _input_session
+        from codebase_rag.agent_loop import _input_session
 
         bound_to_current = []
         for _ in range(2):
@@ -173,7 +173,7 @@ class TestThePromptFollowsTheCurrentConsole:
         from prompt_toolkit.input import create_pipe_input
         from prompt_toolkit.output import DummyOutput
 
-        from codebase_rag.main import _input_session, _remember_input
+        from codebase_rag.agent_loop import _input_session, _remember_input
 
         with create_pipe_input() as pipe:
             with create_app_session(input=pipe, output=DummyOutput()):
@@ -223,7 +223,7 @@ class TestOneSubmissionMakesOneHistoryEntry:
     def test_padded_input_is_recorded_once(self) -> None:
         from unittest.mock import patch
 
-        from codebase_rag import main as m
+        from codebase_rag import agent_loop as m
 
         history = m._input_history()
 
@@ -249,7 +249,7 @@ class TestOneSubmissionMakesOneHistoryEntry:
         """
         from unittest.mock import patch
 
-        from codebase_rag import main as m
+        from codebase_rag import agent_loop as m
 
         history = m._input_history()
 
@@ -271,7 +271,7 @@ class TestUpArrowIsBound:
 
     def test_up_and_down_are_bound(self) -> None:
         """The binding must exist, or history is unreachable by arrow key."""
-        from codebase_rag.main import _input_keybindings
+        from codebase_rag.agent_loop import _input_keybindings
 
         # `.value`, not `str(k)`: prompt_toolkit renders a key as
         # "Keys.Up" while the comparable spelling is "up".
@@ -291,7 +291,7 @@ class TestUpArrowIsBound:
         silently loses a key, and losing Ctrl+J makes the prompt
         impossible to submit -- a total outage with no error attached.
         """
-        from codebase_rag.main import _input_keybindings
+        from codebase_rag.agent_loop import _input_keybindings
 
         # `.value`, not `str(k)`: prompt_toolkit renders a key as
         # "Keys.Up" while the comparable spelling is "up".
@@ -336,7 +336,7 @@ class TestMultilineEditingStillWorks:
 
         from prompt_toolkit.buffer import Buffer
 
-        from codebase_rag.main import _input_keybindings
+        from codebase_rag.agent_loop import _input_keybindings
 
         buffer = Buffer()
         buffer.text = text

@@ -43,10 +43,9 @@ class TestEffectivePermissionMode:
 
     def test_each_mode_has_its_own_label(self) -> None:
         from codebase_rag import constants as cs
-        from codebase_rag import main
-        from codebase_rag.main import _permission_mode_label
+        from codebase_rag.agent_loop import _permission_mode_label, app_context
 
-        session = main.app_context.session
+        session = app_context.session
         saved = (session.confirm_edits, session.permission_mode)
         try:
             session.confirm_edits, session.permission_mode = (

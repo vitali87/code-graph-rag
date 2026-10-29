@@ -244,7 +244,7 @@ class TestShellFeedsTheRecord:
 
     async def test_stdout_and_stderr_are_recorded(self) -> None:
         """stderr carries source too (diagnostics, tracebacks)."""
-        from codebase_rag.schemas import ShellCommandResult
+        from codebase_rag.tools.schemas import ShellCommandResult
         from codebase_rag.tools.shell_command import create_shell_command_tool
 
         commander = MagicMock()
@@ -447,7 +447,7 @@ class TestOrchestratorWiring:
 
     def test_web_search_never_reaches_the_orchestrator(self, tmp_path: Path) -> None:
         """web_search is absent from the orchestrator and present only in the sub-agent."""
-        from codebase_rag import main as main_mod
+        from codebase_rag import agent_loop as main_mod
 
         with (
             patch.object(main_mod, "_validate_provider_config"),
@@ -479,7 +479,7 @@ class TestOrchestratorWiring:
 
     def test_subagent_is_built_once_and_reused(self, tmp_path: Path) -> None:
         """The sub-agent is constructed once and cached across calls."""
-        from codebase_rag import main as main_mod
+        from codebase_rag import agent_loop as main_mod
 
         with (
             patch.object(main_mod, "_validate_provider_config"),

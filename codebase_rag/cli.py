@@ -144,14 +144,14 @@ def _vendored_click_exception() -> type[click.ClickException]:
 _CLICK_EXCEPTIONS = (click.ClickException, _vendored_click_exception())
 
 
-# `codebase_rag.main` imports pydantic-ai and every provider SDK, and
+# `codebase_rag.agent_loop` imports pydantic-ai and every provider SDK, and
 # `codebase_rag.vector_store` imports the Qdrant and Milvus clients; together
 # they cost over a second, and every `cgr` invocation imports this module
 # (issue #2253). The checker sees the real functions; at runtime these
 # forwarders defer the imports to the commands that need them and keep the
 # names patchable attributes of `cli`.
 if TYPE_CHECKING:
-    from .main import (
+    from .agent_loop import (
         create_configuration_table,
         main_async,
         main_optimize_async,
@@ -172,27 +172,27 @@ else:
         return impl(*args, **kwargs)
 
     def update_model_settings(*args, **kwargs):
-        from .main import update_model_settings as impl
+        from .agent_loop import update_model_settings as impl
 
         return impl(*args, **kwargs)
 
     def create_configuration_table(*args, **kwargs):
-        from .main import create_configuration_table as impl
+        from .agent_loop import create_configuration_table as impl
 
         return impl(*args, **kwargs)
 
     def main_single_query(*args, **kwargs):
-        from .main import main_single_query as impl
+        from .agent_loop import main_single_query as impl
 
         return impl(*args, **kwargs)
 
     def main_async(*args, **kwargs):
-        from .main import main_async as impl
+        from .agent_loop import main_async as impl
 
         return impl(*args, **kwargs)
 
     def main_optimize_async(*args, **kwargs):
-        from .main import main_optimize_async as impl
+        from .agent_loop import main_optimize_async as impl
 
         return impl(*args, **kwargs)
 

@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from codebase_rag.schemas import CodeSnippet
 from codebase_rag.tools.code_retrieval import CodeRetriever, create_code_retrieval_tool
+from codebase_rag.tools.schemas import CodeSnippet
 
 
 class TestCodeRetrieverInit:

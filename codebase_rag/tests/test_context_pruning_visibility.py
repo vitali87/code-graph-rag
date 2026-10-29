@@ -221,7 +221,7 @@ class TestCallSite:
 
     @staticmethod
     def _main_tree() -> ast.Module:
-        return ast.parse((Path(__file__).resolve().parents[1] / "main.py").read_text())
+        return ast.parse((Path(__file__).resolve().parents[1] / "agent_loop.py").read_text())
 
     @staticmethod
     def _prune_call(tree: ast.Module) -> ast.Call:
@@ -468,7 +468,7 @@ class TestDeclinedPruneCostsNothing:
     @staticmethod
     def _main_tree() -> ast.Module:
         return ast.parse(
-            (Path(__file__).resolve().parents[1] / "main.py").read_text(
+            (Path(__file__).resolve().parents[1] / "agent_loop.py").read_text(
                 encoding="utf-8"
             )
         )
@@ -694,7 +694,7 @@ class TestTheCompactionGuardActuallyRuns:
 
     @staticmethod
     def _run(pct: float, *, enabled: bool, monkeypatch) -> tuple[list, str]:
-        from codebase_rag import main as main_module
+        from codebase_rag import agent_loop as main_module
         from codebase_rag.models import AppContext
 
         monkeypatch.setattr(

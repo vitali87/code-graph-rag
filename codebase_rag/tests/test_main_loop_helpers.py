@@ -4,9 +4,9 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from codebase_rag import constants as cs
+from codebase_rag.agent_loop import _dispatch_local_command, _session_question_text
 from codebase_rag.config import ModelConfig
 from codebase_rag.exclude_prompt import _parse_keep_selection, _selected_roots
-from codebase_rag.main import _dispatch_local_command, _session_question_text
 from codebase_rag.models import SessionState
 
 
@@ -46,7 +46,7 @@ class TestDispatchLocalCommand:
     def test_help_prints_and_keeps_override(self) -> None:
         config = ModelConfig(provider="ollama", model_id="llama3")
         current = (None, "ollama:llama3", config)
-        with patch("codebase_rag.main.app_context") as mock_ctx:
+        with patch("codebase_rag.agent_loop.app_context") as mock_ctx:
             result = _dispatch_local_command(cs.HELP_COMMAND, cs.HELP_COMMAND, current)
         assert result == current
         mock_ctx.console.print.assert_called_once_with(cs.UI_HELP_COMMANDS)
@@ -55,7 +55,7 @@ class TestDispatchLocalCommand:
         current = (None, None, None)
         expected = (None, "ollama:llama3", None)
         with patch(
-            "codebase_rag.main._handle_model_command", return_value=expected
+            "codebase_rag.agent_loop._handle_model_command", return_value=expected
         ) as mock_handle:
             result = _dispatch_local_command(
                 f"{cs.MODEL_COMMAND_PREFIX} ollama:llama3",
@@ -71,7 +71,7 @@ class TestDispatchLocalCommand:
 class TestSessionQuestionText:
     def test_not_cancelled_returns_question(self) -> None:
         session = SessionState()
-        with patch("codebase_rag.main.app_context") as mock_ctx:
+        with patch("codebase_rag.agent_loop.app_context") as mock_ctx:
             mock_ctx.session = session
             assert _session_question_text("q") == "q"
 
@@ -81,7 +81,7 @@ class TestSessionQuestionText:
         session = SessionState(cancelled=True, log_file=log_file)
         mock_ctx = MagicMock()
         mock_ctx.session = session
-        with patch("codebase_rag.main.app_context", mock_ctx):
+        with patch("codebase_rag.agent_loop.app_context", mock_ctx):
             text = _session_question_text("q")
         assert text == f"q{cs.SESSION_CONTEXT_START}earlier{cs.SESSION_CONTEXT_END}"
         assert session.cancelled is False

@@ -16,8 +16,8 @@ from pathlib import Path
 import pytest
 from loguru import logger
 
+from codebase_rag import agent_loop as cgr_main
 from codebase_rag import logs
-from codebase_rag import main as cgr_main
 
 _TIMEOUT_SECONDS = 120
 

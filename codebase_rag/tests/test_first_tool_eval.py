@@ -133,8 +133,8 @@ _Built = tuple[str, list[str] | None]
 def _patch_orchestrator(
     monkeypatch: pytest.MonkeyPatch, agent: Agent[None, str], calls: list[_Built]
 ) -> None:
+    from codebase_rag import agent_loop as cgr_main
     from codebase_rag import cli_runtime
-    from codebase_rag import main as cgr_main
 
     def fake_initialize(
         repo_path: str,

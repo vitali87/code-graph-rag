@@ -12,9 +12,7 @@ from rich.console import Console
 from rich.table import Table
 
 from codebase_rag import constants as cs
-from codebase_rag.config import AppConfig, ModelConfig
-from codebase_rag.graph_export import export_graph_to_file
-from codebase_rag.main import (
+from codebase_rag.agent_loop import (
     _build_user_prompt,
     _display_tool_call_diff,
     _find_multimodal_paths,
@@ -30,6 +28,8 @@ from codebase_rag.main import (
     create_configuration_table,
     update_model_settings,
 )
+from codebase_rag.config import AppConfig, ModelConfig
+from codebase_rag.graph_export import export_graph_to_file
 from codebase_rag.types_defs import ConfirmationToolNames, RawToolArgs
 
 
@@ -294,7 +294,7 @@ class TestCreateConfigurationTable:
         fake_settings.active_orchestrator_config = _model_config("anthropic", "claude")
         fake_settings.active_cypher_config = _model_config("openai", "gpt")
 
-        with patch("codebase_rag.main.settings", fake_settings):
+        with patch("codebase_rag.agent_loop.settings", fake_settings):
             table = create_configuration_table("/repo", language="python")
 
         text = self._render(table)
@@ -312,7 +312,7 @@ class TestCreateConfigurationTable:
             cs.Provider.OLLAMA, "llama", endpoint="http://localhost:11434"
         )
 
-        with patch("codebase_rag.main.settings", fake_settings):
+        with patch("codebase_rag.agent_loop.settings", fake_settings):
             table = create_configuration_table("/repo")
 
         text = self._render(table)
@@ -327,7 +327,7 @@ class TestCreateConfigurationTable:
             cs.Provider.OLLAMA, "llama", endpoint="http://two:11434"
         )
 
-        with patch("codebase_rag.main.settings", fake_settings):
+        with patch("codebase_rag.agent_loop.settings", fake_settings):
             table = create_configuration_table("/repo")
 
         text = self._render(table)
@@ -341,7 +341,7 @@ class TestUpdateModelSettings:
         fake_settings.parse_model_string.return_value = ("anthropic", "claude")
         fake_settings.active_orchestrator_config = _model_config("openai", "gpt")
 
-        with patch("codebase_rag.main.settings", fake_settings):
+        with patch("codebase_rag.agent_loop.settings", fake_settings):
             _update_single_model_setting(cs.ModelRole.ORCHESTRATOR, "anthropic:claude")
 
         fake_settings.set_orchestrator.assert_called_once()
@@ -353,7 +353,7 @@ class TestUpdateModelSettings:
         fake_settings.parse_model_string.return_value = ("openai", "gpt")
         fake_settings.active_cypher_config = _model_config("anthropic", "claude")
 
-        with patch("codebase_rag.main.settings", fake_settings):
+        with patch("codebase_rag.agent_loop.settings", fake_settings):
             _update_single_model_setting(cs.ModelRole.CYPHER, "openai:gpt")
 
         fake_settings.set_cypher.assert_called_once()
@@ -366,7 +366,7 @@ class TestUpdateModelSettings:
         fake_settings.active_orchestrator_config = _model_config("openai", "gpt")
         fake_settings.ollama_endpoint = "http://localhost:11434"
 
-        with patch("codebase_rag.main.settings", fake_settings):
+        with patch("codebase_rag.agent_loop.settings", fake_settings):
             _update_single_model_setting(cs.ModelRole.ORCHESTRATOR, "ollama:llama")
 
         kwargs = fake_settings.set_orchestrator.call_args.kwargs
@@ -383,7 +383,7 @@ class TestUpdateModelSettings:
             api_key=cs.DEFAULT_API_KEY,
         )
 
-        with patch("codebase_rag.main.settings", fake_settings):
+        with patch("codebase_rag.agent_loop.settings", fake_settings):
             _update_single_model_setting(cs.ModelRole.ORCHESTRATOR, "openai:gpt-4o")
 
         kwargs = fake_settings.set_orchestrator.call_args.kwargs
@@ -402,7 +402,7 @@ class TestUpdateModelSettings:
             region="eastus",
         )
 
-        with patch("codebase_rag.main.settings", fake_settings):
+        with patch("codebase_rag.agent_loop.settings", fake_settings):
             _update_single_model_setting(cs.ModelRole.CYPHER, "anthropic:claude")
 
         provider, model = fake_settings.set_cypher.call_args.args
@@ -422,7 +422,7 @@ class TestUpdateModelSettings:
             api_key="sk-test",
         )
 
-        with patch("codebase_rag.main.settings", fake_settings):
+        with patch("codebase_rag.agent_loop.settings", fake_settings):
             _update_single_model_setting(
                 cs.ModelRole.ORCHESTRATOR, "openai:gpt-4o-mini"
             )
@@ -438,7 +438,7 @@ class TestUpdateModelSettings:
         # provider overrides any env config so the role defaults to Ollama,
         # whose endpoint must not follow an OpenAI model.
         fresh = AppConfig(ORCHESTRATOR_PROVIDER="", ORCHESTRATOR_MODEL="")
-        with patch("codebase_rag.main.settings", fresh):
+        with patch("codebase_rag.agent_loop.settings", fresh):
             update_model_settings("openai:gpt-4o", None)
 
         config = fresh.active_orchestrator_config
@@ -447,7 +447,7 @@ class TestUpdateModelSettings:
         assert config.api_key is None
 
     def test_update_model_settings_dispatches_both_roles(self) -> None:
-        with patch("codebase_rag.main._update_single_model_setting") as single:
+        with patch("codebase_rag.agent_loop._update_single_model_setting") as single:
             update_model_settings("anthropic:claude", "openai:gpt")
 
         assert single.call_count == 2
@@ -459,7 +459,7 @@ class TestUpdateModelSettings:
         )
 
     def test_update_model_settings_skips_missing(self) -> None:
-        with patch("codebase_rag.main._update_single_model_setting") as single:
+        with patch("codebase_rag.agent_loop._update_single_model_setting") as single:
             update_model_settings(None, None)
 
         single.assert_not_called()
@@ -493,7 +493,7 @@ class TestProviderSwitchStartsFromProviderDefaults:
         ):
             monkeypatch.delenv(variable, raising=False)
         app_settings = AppConfig(_env_file=None)
-        monkeypatch.setattr("codebase_rag.main.settings", app_settings)
+        monkeypatch.setattr("codebase_rag.agent_loop.settings", app_settings)
         return app_settings
 
     @pytest.mark.parametrize("role", list(cs.ModelRole))
@@ -635,7 +635,7 @@ class TestSetupCommonInitialization:
         stale.mkdir()
         (stale / "leftover.txt").write_text("old", encoding="utf-8")
 
-        with patch("codebase_rag.main.logger"):
+        with patch("codebase_rag.agent_loop.logger"):
             result = _setup_common_initialization(str(tmp_path))
 
         assert result == tmp_path.resolve()
@@ -649,7 +649,7 @@ class TestSetupCommonInitialization:
         monkeypatch.setattr(app_context.session, "target_repo", None)
         (tmp_path / cs.TMP_DIR).write_text("not a dir", encoding="utf-8")
 
-        with patch("codebase_rag.main.logger"):
+        with patch("codebase_rag.agent_loop.logger"):
             _setup_common_initialization(str(tmp_path))
 
         assert (tmp_path / cs.TMP_DIR).is_dir()

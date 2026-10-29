@@ -342,15 +342,17 @@ class TestMainSingleQuery:
     def test_main_single_query_prints_output(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        from codebase_rag.main import main_single_query
+        from codebase_rag.agent_loop import main_single_query
 
         mock_response = MagicMock()
         mock_response.output = "The answer is 42."
 
         with (
-            patch("codebase_rag.main.connect_memgraph") as mock_conn,
-            patch("codebase_rag.main._initialize_services_and_agent") as mock_init,
-            patch("codebase_rag.main._setup_common_initialization"),
+            patch("codebase_rag.agent_loop.connect_memgraph") as mock_conn,
+            patch(
+                "codebase_rag.agent_loop._initialize_services_and_agent"
+            ) as mock_init,
+            patch("codebase_rag.agent_loop._setup_common_initialization"),
         ):
             mock_agent = MagicMock()
             mock_agent.run = AsyncMock(return_value=mock_response)
@@ -364,16 +366,18 @@ class TestMainSingleQuery:
             assert "The answer is 42." in captured.out
 
     def test_main_single_query_routes_logs_to_stderr(self, tmp_path: Path) -> None:
-        from codebase_rag.main import main_single_query
+        from codebase_rag.agent_loop import main_single_query
 
         mock_response = MagicMock()
         mock_response.output = "result"
 
         with (
-            patch("codebase_rag.main.connect_memgraph") as mock_conn,
-            patch("codebase_rag.main._initialize_services_and_agent") as mock_init,
-            patch("codebase_rag.main._setup_common_initialization"),
-            patch("codebase_rag.main.logger") as mock_logger,
+            patch("codebase_rag.agent_loop.connect_memgraph") as mock_conn,
+            patch(
+                "codebase_rag.agent_loop._initialize_services_and_agent"
+            ) as mock_init,
+            patch("codebase_rag.agent_loop._setup_common_initialization"),
+            patch("codebase_rag.agent_loop.logger") as mock_logger,
         ):
             mock_agent = MagicMock()
             mock_agent.run = AsyncMock(return_value=mock_response)

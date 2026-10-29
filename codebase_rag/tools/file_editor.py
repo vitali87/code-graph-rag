@@ -11,10 +11,10 @@ from pydantic_ai import Tool
 from .. import constants as cs
 from .. import logs as ls
 from .. import tool_errors as te
-from ..schemas import EditResult
 from ..types_defs import AfterWrite
 from ..utils.path_utils import resolve_in_root
 from . import tool_descriptions as td
+from .schemas import EditResult
 
 _LINE_BREAK = re.compile(r"\r\n?")
 
