@@ -12,7 +12,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from codebase_rag import constants as cs
-from codebase_rag.parsers.python.type_inference import PythonTypeInferenceEngine
+from codebase_rag.parsers.python import variable_analyzer
 from codebase_rag.tests.conftest import create_and_run_updater
 from codebase_rag.types_defs import ASTNode
 
@@ -55,23 +55,16 @@ def test_a_failing_pass_is_recorded_against_its_caller(
     mock_ingestor: MagicMock,
     _fail_on_swallowed_pass_errors: list[str],
 ) -> None:
-    original = PythonTypeInferenceEngine._infer_property_return_types
+    original = variable_analyzer._infer_property_return_types
 
-    def explode(
-        self: PythonTypeInferenceEngine,
-        caller_node: ASTNode,
-        local_var_types: dict[str, str],
-        module_qn: str,
-    ) -> None:
+    def explode(caller_node: ASTNode, local_var_types: dict[str, str]) -> None:
         name = caller_node.child_by_field_name(cs.FIELD_NAME)
         if name is not None and name.text == b"dispatch":
             raise RuntimeError("property pass exploded")
-        original(self, caller_node, local_var_types, module_qn)
+        original(caller_node, local_var_types)
 
     (temp_repo / "app.py").write_text(_SOURCE, encoding="utf-8")
-    with patch.object(
-        PythonTypeInferenceEngine, "_infer_property_return_types", explode
-    ):
+    with patch.object(variable_analyzer, "_infer_property_return_types", explode):
         updater = create_and_run_updater(temp_repo, mock_ingestor)
 
     calls = _calls(temp_repo, mock_ingestor)

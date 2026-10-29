@@ -8,6 +8,14 @@ from codebase_rag import constants as cs
 from codebase_rag.parsers.definition_facts import DefinitionFacts
 from codebase_rag.parsers.import_processor import ImportProcessor
 from codebase_rag.parsers.python.type_inference import PythonTypeInferenceEngine
+from codebase_rag.parsers.python.variable_analyzer import (
+    PythonVariableAnalyzer,
+    _extract_variable_name,
+    _find_best_class_match,
+    _infer_list_element_type,
+    _process_parameter,
+    _process_typed_parameter,
+)
 from codebase_rag.tests.conftest import create_mock_node
 
 
@@ -57,19 +65,22 @@ def engine(
     )
 
 
+@pytest.fixture
+def analyzer(engine: PythonTypeInferenceEngine) -> PythonVariableAnalyzer:
+    return engine.variable_analyzer
+
+
 class TestFindBestClassMatch:
-    def test_finds_exact_match(self, engine: PythonTypeInferenceEngine) -> None:
-        result = engine._find_best_class_match("User", ["User", "Account", "Service"])
+    def test_finds_exact_match(self) -> None:
+        result = _find_best_class_match("User", ["User", "Account", "Service"])
         assert result == "User"
 
-    def test_match_is_case_insensitive(self, engine: PythonTypeInferenceEngine) -> None:
-        result = engine._find_best_class_match("payload", ["Payload", "Account"])
+    def test_match_is_case_insensitive(self) -> None:
+        result = _find_best_class_match("payload", ["Payload", "Account"])
         assert result == "Payload"
 
-    def test_snake_case_name_spells_camel_case_class(
-        self, engine: PythonTypeInferenceEngine
-    ) -> None:
-        result = engine._find_best_class_match("user_repo", ["UserRepo", "User"])
+    def test_snake_case_name_spells_camel_case_class(self) -> None:
+        result = _find_best_class_match("user_repo", ["UserRepo", "User"])
         assert result == "UserRepo"
 
     # Issue #2608: a suffix or substring of the name typed `data` as `A`,
@@ -86,30 +97,26 @@ class TestFindBestClassMatch:
         ],
     )
     def test_suffix_or_substring_is_not_a_match(
-        self, engine: PythonTypeInferenceEngine, param: str, classes: list[str]
+        self, param: str, classes: list[str]
     ) -> None:
-        assert engine._find_best_class_match(param, classes) is None
+        assert _find_best_class_match(param, classes) is None
 
     @pytest.mark.parametrize(("param", "class_name"), [("a", "A"), ("db", "DB")])
     def test_short_class_name_is_never_a_match(
-        self, engine: PythonTypeInferenceEngine, param: str, class_name: str
+        self, param: str, class_name: str
     ) -> None:
-        assert engine._find_best_class_match(param, [class_name]) is None
+        assert _find_best_class_match(param, [class_name]) is None
 
-    def test_classes_spelled_alike_are_no_answer(
-        self, engine: PythonTypeInferenceEngine
-    ) -> None:
-        result = engine._find_best_class_match("user_repo", ["UserRepo", "Userrepo"])
+    def test_classes_spelled_alike_are_no_answer(self) -> None:
+        result = _find_best_class_match("user_repo", ["UserRepo", "Userrepo"])
         assert result is None
 
-    def test_returns_none_for_no_match(self, engine: PythonTypeInferenceEngine) -> None:
-        result = engine._find_best_class_match("xyz", ["Foo", "Bar"])
+    def test_returns_none_for_no_match(self) -> None:
+        result = _find_best_class_match("xyz", ["Foo", "Bar"])
         assert result is None
 
-    def test_returns_none_for_empty_list(
-        self, engine: PythonTypeInferenceEngine
-    ) -> None:
-        result = engine._find_best_class_match("user", [])
+    def test_returns_none_for_empty_list(self) -> None:
+        result = _find_best_class_match("user", [])
         assert result is None
 
 
@@ -117,7 +124,7 @@ class TestInferTypeFromParameterName:
     @pytest.mark.parametrize("receiver", ["self", "cls"])
     def test_receiver_is_never_typed_by_name(
         self,
-        engine: PythonTypeInferenceEngine,
+        analyzer: PythonVariableAnalyzer,
         mock_function_registry: MagicMock,
         receiver: str,
     ) -> None:
@@ -126,41 +133,37 @@ class TestInferTypeFromParameterName:
         mock_function_registry.find_with_prefix.return_value = [
             (f"test.module.{receiver.title()}", cs.NodeLabel.CLASS)
         ]
-        assert engine._infer_type_from_parameter_name(receiver, "test.module") is None
+        assert analyzer._infer_type_from_parameter_name(receiver, "test.module") is None
 
     def test_whole_name_types_the_parameter(
-        self, engine: PythonTypeInferenceEngine, mock_function_registry: MagicMock
+        self, analyzer: PythonVariableAnalyzer, mock_function_registry: MagicMock
     ) -> None:
         mock_function_registry.find_with_prefix.return_value = [
             ("test.module.Payload", cs.NodeLabel.CLASS)
         ]
-        result = engine._infer_type_from_parameter_name("payload", "test.module")
+        result = analyzer._infer_type_from_parameter_name("payload", "test.module")
         assert result == "Payload"
 
 
 class TestExtractVariableName:
-    def test_extracts_identifier(self, engine: PythonTypeInferenceEngine) -> None:
+    def test_extracts_identifier(self) -> None:
         node = create_mock_node(cs.TS_PY_IDENTIFIER, "my_var")
-        result = engine._extract_variable_name(node)
+        result = _extract_variable_name(node)
         assert result == "my_var"
 
-    def test_returns_none_for_non_identifier(
-        self, engine: PythonTypeInferenceEngine
-    ) -> None:
+    def test_returns_none_for_non_identifier(self) -> None:
         node = create_mock_node("some_other_type", "text")
-        result = engine._extract_variable_name(node)
+        result = _extract_variable_name(node)
         assert result is None
 
-    def test_returns_none_for_empty_text(
-        self, engine: PythonTypeInferenceEngine
-    ) -> None:
+    def test_returns_none_for_empty_text(self) -> None:
         node = create_mock_node(cs.TS_PY_IDENTIFIER, "")
-        result = engine._extract_variable_name(node)
+        result = _extract_variable_name(node)
         assert result is None
 
 
 class TestProcessTypedParameter:
-    def test_extracts_typed_parameter(self, engine: PythonTypeInferenceEngine) -> None:
+    def test_extracts_typed_parameter(self) -> None:
         name_node = create_mock_node(cs.TS_PY_IDENTIFIER, "user_id")
         type_node = create_mock_node(cs.TS_PY_IDENTIFIER, "int")
         param = create_mock_node(
@@ -170,11 +173,11 @@ class TestProcessTypedParameter:
         )
         local_var_types: dict[str, str] = {}
 
-        engine._process_typed_parameter(param, local_var_types)
+        _process_typed_parameter(param, local_var_types)
 
         assert local_var_types["user_id"] == "int"
 
-    def test_skips_missing_name(self, engine: PythonTypeInferenceEngine) -> None:
+    def test_skips_missing_name(self) -> None:
         type_node = create_mock_node(cs.TS_PY_IDENTIFIER, "int")
         param = create_mock_node(
             cs.TS_PY_TYPED_PARAMETER,
@@ -183,11 +186,11 @@ class TestProcessTypedParameter:
         )
         local_var_types: dict[str, str] = {}
 
-        engine._process_typed_parameter(param, local_var_types)
+        _process_typed_parameter(param, local_var_types)
 
         assert local_var_types == {}
 
-    def test_skips_missing_type(self, engine: PythonTypeInferenceEngine) -> None:
+    def test_skips_missing_type(self) -> None:
         name_node = create_mock_node(cs.TS_PY_IDENTIFIER, "user_id")
         param = create_mock_node(
             cs.TS_PY_TYPED_PARAMETER,
@@ -195,23 +198,21 @@ class TestProcessTypedParameter:
         )
         local_var_types: dict[str, str] = {}
 
-        engine._process_typed_parameter(param, local_var_types)
+        _process_typed_parameter(param, local_var_types)
 
         assert local_var_types == {}
 
 
 class TestProcessParameter:
-    def test_leaves_untyped_identifier_to_name_guess(
-        self, engine: PythonTypeInferenceEngine
-    ) -> None:
+    def test_leaves_untyped_identifier_to_name_guess(self) -> None:
         param = create_mock_node(cs.TS_PY_IDENTIFIER, "user")
         local_var_types: dict[str, str] = {}
 
-        engine._process_parameter(param, local_var_types)
+        _process_parameter(param, local_var_types)
 
         assert local_var_types == {}
 
-    def test_routes_typed_parameter(self, engine: PythonTypeInferenceEngine) -> None:
+    def test_routes_typed_parameter(self) -> None:
         name_node = create_mock_node(cs.TS_PY_IDENTIFIER, "count")
         type_node = create_mock_node(cs.TS_PY_IDENTIFIER, "int")
         param = create_mock_node(
@@ -221,13 +222,11 @@ class TestProcessParameter:
         )
         local_var_types: dict[str, str] = {}
 
-        engine._process_parameter(param, local_var_types)
+        _process_parameter(param, local_var_types)
 
         assert local_var_types["count"] == "int"
 
-    def test_routes_typed_default_parameter(
-        self, engine: PythonTypeInferenceEngine
-    ) -> None:
+    def test_routes_typed_default_parameter(self) -> None:
         name_node = create_mock_node(cs.TS_PY_IDENTIFIER, "count")
         type_node = create_mock_node(cs.TS_PY_IDENTIFIER, "int")
         param = create_mock_node(
@@ -236,15 +235,13 @@ class TestProcessParameter:
         )
         local_var_types: dict[str, str] = {}
 
-        engine._process_parameter(param, local_var_types)
+        _process_parameter(param, local_var_types)
 
         assert local_var_types["count"] == "int"
 
 
 class TestInferListElementType:
-    def test_extracts_class_from_call_in_list(
-        self, engine: PythonTypeInferenceEngine
-    ) -> None:
+    def test_extracts_class_from_call_in_list(self) -> None:
         func_node = create_mock_node(cs.TS_PY_IDENTIFIER, "User")
         call_node = create_mock_node(
             cs.TS_PY_CALL,
@@ -252,11 +249,11 @@ class TestInferListElementType:
         )
         list_node = create_mock_node(cs.TS_PY_LIST, children=[call_node])
 
-        result = engine._infer_list_element_type(list_node)
+        result = _infer_list_element_type(list_node)
 
         assert result == "User"
 
-    def test_skips_lowercase_function(self, engine: PythonTypeInferenceEngine) -> None:
+    def test_skips_lowercase_function(self) -> None:
         func_node = create_mock_node(cs.TS_PY_IDENTIFIER, "create_user")
         call_node = create_mock_node(
             cs.TS_PY_CALL,
@@ -264,23 +261,21 @@ class TestInferListElementType:
         )
         list_node = create_mock_node(cs.TS_PY_LIST, children=[call_node])
 
-        result = engine._infer_list_element_type(list_node)
+        result = _infer_list_element_type(list_node)
 
         assert result is None
 
-    def test_returns_none_for_empty_list(
-        self, engine: PythonTypeInferenceEngine
-    ) -> None:
+    def test_returns_none_for_empty_list(self) -> None:
         list_node = create_mock_node(cs.TS_PY_LIST, children=[])
 
-        result = engine._infer_list_element_type(list_node)
+        result = _infer_list_element_type(list_node)
 
         assert result is None
 
 
 class TestAnalyzeForClause:
     def test_extracts_loop_variable_type(
-        self, engine: PythonTypeInferenceEngine
+        self, analyzer: PythonVariableAnalyzer
     ) -> None:
         left_node = create_mock_node(cs.TS_PY_IDENTIFIER, "item")
         func_node = create_mock_node(cs.TS_PY_IDENTIFIER, "Product")
@@ -295,11 +290,11 @@ class TestAnalyzeForClause:
         )
         local_var_types: dict[str, str] = {}
 
-        engine._analyze_for_clause(for_node, local_var_types, "test.module")
+        analyzer._analyze_for_clause(for_node, local_var_types, "test.module")
 
         assert local_var_types.get("item") == "Product"
 
-    def test_skips_missing_left_node(self, engine: PythonTypeInferenceEngine) -> None:
+    def test_skips_missing_left_node(self, analyzer: PythonVariableAnalyzer) -> None:
         right_node = create_mock_node(cs.TS_PY_LIST, children=[])
         for_node = create_mock_node(
             cs.TS_PY_FOR_STATEMENT,
@@ -307,14 +302,14 @@ class TestAnalyzeForClause:
         )
         local_var_types: dict[str, str] = {}
 
-        engine._analyze_for_clause(for_node, local_var_types, "test.module")
+        analyzer._analyze_for_clause(for_node, local_var_types, "test.module")
 
         assert local_var_types == {}
 
 
 class TestCollectAvailableClasses:
     def test_collects_classes_from_registry(
-        self, engine: PythonTypeInferenceEngine, mock_function_registry: MagicMock
+        self, analyzer: PythonVariableAnalyzer, mock_function_registry: MagicMock
     ) -> None:
         mock_function_registry.find_with_prefix.return_value = [
             ("test.module.User", cs.NodeLabel.CLASS),
@@ -322,7 +317,7 @@ class TestCollectAvailableClasses:
             ("test.module.helper", cs.NodeLabel.FUNCTION),
         ]
 
-        result = engine._collect_available_classes("test.module")
+        result = analyzer._collect_available_classes("test.module")
 
         assert "User" in result
         assert "Account" in result
@@ -330,7 +325,7 @@ class TestCollectAvailableClasses:
 
     def test_collects_imported_classes(
         self,
-        engine: PythonTypeInferenceEngine,
+        analyzer: PythonVariableAnalyzer,
         mock_import_processor: MagicMock,
         mock_function_registry: MagicMock,
     ) -> None:
@@ -339,56 +334,56 @@ class TestCollectAvailableClasses:
         }
         mock_function_registry.get.return_value = cs.NodeLabel.CLASS
 
-        result = engine._collect_available_classes("test.module")
+        result = analyzer._collect_available_classes("test.module")
 
         assert "User" in result
 
     def test_returns_empty_for_no_classes(
-        self, engine: PythonTypeInferenceEngine
+        self, analyzer: PythonVariableAnalyzer
     ) -> None:
-        result = engine._collect_available_classes("empty.module")
+        result = analyzer._collect_available_classes("empty.module")
 
         assert result == []
 
 
 class TestInferMethodReturnElementType:
     def test_returns_none_for_non_collection_name(
-        self, engine: PythonTypeInferenceEngine
+        self, analyzer: PythonVariableAnalyzer
     ) -> None:
-        result = engine._infer_method_return_element_type("user", "test.module")
+        result = analyzer._infer_method_return_element_type("user", "test.module")
         assert result is None
 
-    def test_matches_all_prefix(self, engine: PythonTypeInferenceEngine) -> None:
-        result = engine._infer_method_return_element_type("all_users", "test.module")
+    def test_matches_all_prefix(self, analyzer: PythonVariableAnalyzer) -> None:
+        result = analyzer._infer_method_return_element_type("all_users", "test.module")
         assert result is None
 
-    def test_matches_plural_suffix(self, engine: PythonTypeInferenceEngine) -> None:
-        result = engine._infer_method_return_element_type("users", "test.module")
+    def test_matches_plural_suffix(self, analyzer: PythonVariableAnalyzer) -> None:
+        result = analyzer._infer_method_return_element_type("users", "test.module")
         assert result is None
 
 
 class TestInferVariableElementType:
-    def test_returns_known_type(self, engine: PythonTypeInferenceEngine) -> None:
+    def test_returns_known_type(self, analyzer: PythonVariableAnalyzer) -> None:
         local_var_types = {"items": "Product"}
 
-        result = engine._infer_variable_element_type(
+        result = analyzer._infer_variable_element_type(
             "items", local_var_types, "test.module"
         )
 
         assert result == "Product"
 
-    def test_skips_list_type(self, engine: PythonTypeInferenceEngine) -> None:
+    def test_skips_list_type(self, analyzer: PythonVariableAnalyzer) -> None:
         local_var_types = {"items": cs.TYPE_INFERENCE_LIST}
 
-        result = engine._infer_variable_element_type(
+        result = analyzer._infer_variable_element_type(
             "items", local_var_types, "test.module"
         )
 
         assert result is None
 
     def test_falls_back_to_method_return(
-        self, engine: PythonTypeInferenceEngine
+        self, analyzer: PythonVariableAnalyzer
     ) -> None:
-        result = engine._infer_variable_element_type("users", {}, "test.module")
+        result = analyzer._infer_variable_element_type("users", {}, "test.module")
 
         assert result is None

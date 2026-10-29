@@ -12,6 +12,7 @@ from codebase_rag.parsers.definition_facts import DefinitionFacts
 from codebase_rag.parsers.import_processor import ImportProcessor
 from codebase_rag.parsers.python import ast_analyzer, variable_analyzer
 from codebase_rag.parsers.python.type_inference import PythonTypeInferenceEngine
+from codebase_rag.parsers.python.variable_analyzer import PythonVariableAnalyzer
 
 if TYPE_CHECKING:
     from tree_sitter import Language, Parser, Query
@@ -80,6 +81,11 @@ def engine(
         simple_name_lookup=defaultdict(set),
         js_type_inference_getter=MagicMock,
     )
+
+
+@pytest.fixture
+def analyzer(engine: PythonTypeInferenceEngine) -> PythonVariableAnalyzer:
+    return engine.variable_analyzer
 
 
 class TestParameterAnalysisWithRealParsing:
@@ -355,20 +361,20 @@ class TestSelfAssignmentAnalysisWithRealParsing:
     def test_self_attribute_type(
         self,
         python_parser: Parser,
-        engine: PythonTypeInferenceEngine,
+        analyzer: PythonVariableAnalyzer,
         assignment: str,
         expected: str | None,
         use_query: bool,
     ) -> None:
-        engine.import_processor.import_mapping["test.module"] = {
+        analyzer.import_processor.import_mapping["test.module"] = {
             "Store": "models.Store",
             "Cache": "models.Cache",
         }
-        engine.function_registry.get.side_effect = lambda name: (
+        analyzer.function_registry.get.side_effect = lambda name: (
             cs.NodeLabel.CLASS if name in {"models.Store", "models.Cache"} else None
         )
         if use_query:
-            engine.queries = {
+            analyzer.queries = {
                 cs.SupportedLanguage.PYTHON: {"language": python_parser.language}
             }
         tree = python_parser.parse(
@@ -376,7 +382,7 @@ class TestSelfAssignmentAnalysisWithRealParsing:
         )
         init_node = self._find_method_in_class(tree.root_node, "App", "__init__")
         result = {"store": "Store"}
-        engine._analyze_self_assignments(init_node, result, "test.module")
+        analyzer.analyze_self_assignments(init_node, result, "test.module")
         assert result.get("self._s") == expected
 
     def test_init_with_self_assignments(
@@ -729,7 +735,7 @@ def get_value(x: int) -> int:
         engine_with_queries.build_local_variable_type_map(func_node, "test.module")
 
         return_nodes: list = []
-        engine_with_queries._find_return_statements(func_node, return_nodes)
+        engine_with_queries.ast_analyzer.find_return_statements(func_node, return_nodes)
         assert len(return_nodes) >= 1
 
     def test_failing_queries_fall_back_to_the_same_answer(
@@ -758,7 +764,9 @@ class Service:
                 run_node, "test.module"
             )
             return_nodes: list = []
-            engine_with_queries._find_return_statements(run_node, return_nodes)
+            engine_with_queries.ast_analyzer.find_return_statements(
+                run_node, return_nodes
+            )
             return types, len(return_nodes)
 
         def refuse(language_obj: Language, query_text: str) -> Query:
@@ -790,11 +798,11 @@ class Service:
             calls.append(args)
             raise ValueError("processing failed")
 
-        monkeypatch.setattr(
-            PythonTypeInferenceEngine, "_process_self_assignment", explode
-        )
+        monkeypatch.setattr(PythonVariableAnalyzer, "_process_self_assignment", explode)
         with pytest.raises(ValueError, match="processing failed"):
-            engine_with_queries._analyze_self_assignments(init, {}, "test.module")
+            engine_with_queries.variable_analyzer.analyze_self_assignments(
+                init, {}, "test.module"
+            )
         assert len(calls) == 1
 
     def test_a_failing_query_is_reported_once(

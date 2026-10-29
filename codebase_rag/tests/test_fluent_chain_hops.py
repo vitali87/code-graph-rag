@@ -621,14 +621,14 @@ def test_py_generated_chain_past_the_cap_does_not_recurse_per_hop(
     # receiver cap (#2262) that overflowed the stack on every assignment's
     # inference, and the swallowed RecursionError cost a deep unwind each time.
     from codebase_rag.parsers.python.expression_analyzer import (
-        PythonExpressionAnalyzerMixin,
+        PythonExpressionAnalyzer,
     )
 
     overflows: list[str] = []
-    original = PythonExpressionAnalyzerMixin._infer_chained_call_return_type_fixed
+    original = PythonExpressionAnalyzer._infer_chained_call_return_type_fixed
 
     def watching(
-        self: PythonExpressionAnalyzerMixin,
+        self: PythonExpressionAnalyzer,
         call_name: str,
         module_qn: str,
         local_var_types: dict[str, str] | None = None,
@@ -642,7 +642,7 @@ def test_py_generated_chain_past_the_cap_does_not_recurse_per_hop(
     root = temp_repo / "longproj"
     _write(root, {"m.py": _long_chain_source(1, 3_000)})
     with patch.object(
-        PythonExpressionAnalyzerMixin,
+        PythonExpressionAnalyzer,
         "_infer_chained_call_return_type_fixed",
         watching,
     ):

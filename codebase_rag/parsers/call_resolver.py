@@ -758,10 +758,9 @@ class CallResolver:
             return False, None
         receiver = cs.SEPARATOR_DOT.join(parts[:-1])
         method = parts[-1].split(cs.CHAR_PAREN_OPEN, 1)[0]
-        receiver_type = (
-            self.type_inference.python_type_inference._get_inline_expression_type(
-                receiver, module_qn, local_var_types
-            )
+        python = self.type_inference.python_type_inference
+        receiver_type = python.expression_analyzer.get_inline_expression_type(
+            receiver, module_qn, local_var_types
         )
         if not receiver_type:
             return False, None
@@ -6999,19 +6998,17 @@ class CallResolver:
 
         object_expr = call_name[: match.start()]
 
-        object_type = (
-            self.type_inference.python_type_inference._infer_expression_return_type(
-                object_expr, module_qn, local_var_types
-            )
-            or self._infer_chained_object_type(
-                object_expr,
-                module_qn,
-                local_var_types,
-                class_context,
-                caller_qn,
-                language,
-                call_point,
-            )
+        python = self.type_inference.python_type_inference
+        object_type = python.expression_analyzer.infer_expression_return_type(
+            object_expr, module_qn, local_var_types
+        ) or self._infer_chained_object_type(
+            object_expr,
+            module_qn,
+            local_var_types,
+            class_context,
+            caller_qn,
+            language,
+            call_point,
         )
         if object_type and (class_value := _class_value_of(object_type)):
             # The class itself, not an instance: only a static member binds.
@@ -7238,10 +7235,9 @@ class CallResolver:
             return self.operator_dunder_targets(
                 callee, cs.PY_DUNDER_CALL, module_qn, local_var_types
             )
-        returned = (
-            self.type_inference.python_type_inference._infer_expression_return_type(
-                callee, module_qn, local_var_types
-            )
+        python = self.type_inference.python_type_inference
+        returned = python.expression_analyzer.infer_expression_return_type(
+            callee, module_qn, local_var_types
         )
         if not returned:
             return set()

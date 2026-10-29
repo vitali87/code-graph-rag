@@ -189,7 +189,7 @@ class TypeInferenceEngine:
                 import_processor=self.import_processor,
                 function_registry=self.function_registry,
                 project_name=self.project_name,
-                find_method_ast_node_func=self.python_type_inference._find_method_ast_node,
+                find_method_ast_node_func=self.python_type_inference.ast_analyzer.find_method_ast_node,
                 queries=self.queries,
             )
         return self._js_type_inference

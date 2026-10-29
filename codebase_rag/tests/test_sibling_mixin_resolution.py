@@ -1,9 +1,9 @@
-# L3 finding from the evals/ harness: PythonAstAnalyzerMixin._traverse_single_pass
-# calls self._infer_instance_variable_types_from_assignments(...), a method defined
-# on the sibling PythonVariableAnalyzerMixin. Neither is the other's base; both are
-# combined into the concrete PythonTypeInferenceEngine. A same-named stub in another
-# class makes the bare-name trie fallback ambiguous, so resolution must go through
-# the concrete subclass's MRO to land on the real sibling method.
+# L3 finding from the evals/ harness: a mixin method calls self.<name>(...), a
+# method defined on a sibling mixin (AMixin.traverse -> BMixin.infer_vars below).
+# Neither is the other's base; both are combined into the concrete Engine. A
+# same-named stub in another class makes the bare-name trie fallback ambiguous,
+# so resolution must go through the concrete subclass's MRO to land on the real
+# sibling method.
 from __future__ import annotations
 
 from pathlib import Path

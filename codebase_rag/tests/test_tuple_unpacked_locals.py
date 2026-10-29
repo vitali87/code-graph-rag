@@ -426,7 +426,9 @@ def test_the_annotation_pass_reads_only_the_analysed_scope(
     engine = _type_inference_engine(tmp_path)
     types: dict[str, str] = {}
 
-    engine._process_assignment_annotation(outer, annotated, types, "proj.app")
+    engine.ast_analyzer._process_assignment_annotation(
+        outer, annotated, types, "proj.app"
+    )
 
     assert types == {}
 

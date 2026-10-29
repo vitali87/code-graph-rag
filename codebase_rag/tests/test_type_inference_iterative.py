@@ -94,8 +94,11 @@ def test_analyze_self_assignments_handles_deep_tree_without_recursion_error() ->
     root = _build_deep_assignment_chain(depth=1500)
     local_types: dict[str, Any] = {}
 
-    with patch.object(type(py_engine), "_infer_type_from_expression", mock_infer):
-        py_engine._analyze_self_assignments(root, local_types, "proj.module")  # ty: ignore[invalid-argument-type]  # NodeStub not Node
+    analyzer = py_engine.variable_analyzer
+    with patch.object(
+        type(py_engine.expression_analyzer), "infer_type_from_expression", mock_infer
+    ):
+        analyzer.analyze_self_assignments(root, local_types, "proj.module")  # ty: ignore[invalid-argument-type]  # NodeStub not Node
 
     assert local_types, "Expected at least one inferred instance variable"
     assert mock_infer.call_count == 1500
@@ -108,7 +111,7 @@ def test_find_return_statements_handles_deep_tree_without_recursion_error() -> N
     root = _build_deep_return_tree(depth=1500)
     returns: list[NodeStub] = []
 
-    py_engine._find_return_statements(root, returns)  # ty: ignore[invalid-argument-type]  # NodeStub not Node
+    py_engine.ast_analyzer.find_return_statements(root, returns)  # ty: ignore[invalid-argument-type]  # NodeStub not Node
 
     assert len(returns) == 1501
 

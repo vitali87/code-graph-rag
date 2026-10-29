@@ -107,7 +107,8 @@ def test_a_class_member_type_follows_the_edit(temp_repo: Path) -> None:
     engine = updater.factory.type_inference._python_type_inference
     assert engine is not None
     holder = f"{PROJECT}.app.models.Holder"
-    assert engine._class_member_types_by_qn(holder) == {
+    analyzer = engine.variable_analyzer
+    assert analyzer._class_member_types_by_qn(holder) == {
         "box": f"{PROJECT}.app.models.Foo"
     }
 
@@ -115,7 +116,7 @@ def test_a_class_member_type_follows_the_edit(temp_repo: Path) -> None:
         [_edit(root, "        self.box = Foo()\n", "        self.box = Bar()\n")]
     )
 
-    assert engine._class_member_types_by_qn(holder) == {
+    assert analyzer._class_member_types_by_qn(holder) == {
         "box": f"{PROJECT}.app.models.Bar"
     }
 
@@ -136,6 +137,26 @@ def test_repeated_reingests_do_not_grow_the_node_keyed_caches(
             (len(engine._return_stmt_cache), len(engine._self_assignment_cache))
         )
     assert sizes == [sizes[0]] * len(sizes)
+
+
+def test_the_analyzers_memoise_into_the_caches_the_engine_clears(
+    temp_repo: Path,
+) -> None:
+    """Each analyzer holds the engine's own dicts, so `clear_pass_caches`
+    empties what they read. A dict of their own would keep stale entries
+    through `reingest()`, and the size check above would pass on the
+    engine's empty one."""
+    root = temp_repo / PROJECT
+    _store, updater = _project(root)
+    engine = updater.factory.type_inference._python_type_inference
+    assert engine is not None
+    assert engine.ast_analyzer._return_stmt_cache is engine._return_stmt_cache
+    expressions = engine.expression_analyzer
+    assert expressions._method_return_type_cache is engine._method_return_type_cache
+    assert expressions._self_assignment_cache is engine._self_assignment_cache
+    variables = engine.variable_analyzer
+    assert variables._available_classes_cache is engine._available_classes_cache
+    assert variables._class_member_type_cache is engine._class_member_type_cache
 
 
 # Negative: what must not change.

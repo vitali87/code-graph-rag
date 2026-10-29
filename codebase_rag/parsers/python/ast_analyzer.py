@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-from abc import abstractmethod
 from collections import OrderedDict
 from collections.abc import Callable, Iterable, Iterator
 from typing import TYPE_CHECKING
@@ -21,7 +20,18 @@ from ...types_defs import (
 from .. import native_trees
 from ..js_ts.utils import find_method_in_ast as find_js_method_in_ast
 from ..utils import note_query_fallback
+from .expression_analyzer import extract_full_method_call
 from .with_analyzer import WithTarget
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+    from pathlib import Path
+
+    from ...types_defs import ASTCacheProtocol
+    from ..import_processor import ImportProcessor
+    from .expression_analyzer import PythonExpressionAnalyzer
+    from .variable_analyzer import PythonVariableAnalyzer
+    from .with_analyzer import PythonWithBinding
 
 _WITH_STMT_CAPTURE = "with_stmt"
 _PY_TRAVERSE_QUERY = (
@@ -923,60 +933,6 @@ def _homogeneous_element(name: str, inner: str) -> str | None:
     return parts[0] if len(parts) == 1 else None
 
 
-if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
-    from pathlib import Path
-
-    from ...types_defs import ASTCacheProtocol
-    from ..import_processor import ImportProcessor
-    from ..js_ts.type_inference import JsTypeInferenceEngine
-
-    # A plain class, not a Protocol: a protocol's stub methods count as
-    # abstract, and this base sits ahead of the mixins that implement them in
-    # the engine's MRO. It exists for the checker only.
-    class _AstAnalyzerDeps:
-        import_processor: ImportProcessor
-
-        def build_local_variable_type_map(
-            self, caller_node: Node, module_qn: str, class_context: str | None = None
-        ) -> dict[str, str]: ...
-
-        def _extract_full_method_call(self, attr_node: Node) -> str | None: ...
-
-        def _resolve_method_qualified_name(
-            self,
-            method_call: str,
-            module_qn: str,
-            local_var_types: dict[str, str] | None = None,
-        ) -> str | None: ...
-
-        def _analyze_comprehension(
-            self, comp_node: Node, local_var_types: dict[str, str], module_qn: str
-        ) -> None: ...
-
-        def _analyze_for_loop(
-            self, for_node: Node, local_var_types: dict[str, str], module_qn: str
-        ) -> None: ...
-
-        def _infer_instance_variable_types_from_assignments(
-            self,
-            assignments: list[Node],
-            local_var_types: dict[str, str],
-            module_qn: str,
-        ) -> None: ...
-
-        def _type_with_targets(
-            self,
-            targets: list[WithTarget],
-            local_var_types: dict[str, str],
-            module_qn: str,
-        ) -> list[WithTarget]: ...
-
-    _AstBase: type = _AstAnalyzerDeps
-else:
-    _AstBase = object
-
-
 def _node_name(node: Node) -> str | None:
     # The decoded `name` field of a definition, or None when it has no text.
     name_node = node.child_by_field_name(cs.TS_FIELD_NAME)
@@ -985,8 +941,106 @@ def _node_name(node: Node) -> str | None:
     return safe_decode_text(name_node)
 
 
-class PythonAstAnalyzerMixin(_AstBase):
-    __slots__ = ()
+def _extract_assignment_variable_name(node: Node) -> str | None:
+    if node.type != cs.TS_PY_IDENTIFIER or node.text is None:
+        return None
+    return safe_decode_text(node) or None
+
+
+def _defining_call(right: Node, caller: Node) -> Node | None:
+    """The call an unpacking's right-hand side comes from, or None.
+
+    Either the call itself, or -- for `parsed = f(); a, b = parsed` -- the
+    call that the nearest earlier binding of the name IN THE SAME SCOPE
+    gave it. A nearer binding to anything but a call clears it: after
+    `p = fw(); p = supplied` (or `p += x`, `for p in xs`, `with cm as p`),
+    `p` is not fw's result. Captures are not guaranteed to come back in
+    document order, so the nearest binding is the max position, not the
+    last seen.
+    """
+    if right.type == cs.TS_PY_CALL:
+        return right
+    if right.type != cs.TS_PY_IDENTIFIER or not (name := safe_decode_text(right)):
+        return None
+    events = _binding_events(name, right.start_byte, caller)
+    if not events:
+        return None
+    return max(events, key=lambda event: event[0])[1]
+
+
+def _is_top_level_definition(node: Node) -> bool:
+    parent = node.parent
+    while parent is not None:
+        if parent.type in (
+            cs.TS_PY_CLASS_DEFINITION,
+            cs.TS_PY_FUNCTION_DEFINITION,
+        ):
+            return False
+        parent = parent.parent
+    return True
+
+
+def _extract_method_call_from_attr(attr_node: Node) -> str | None:
+    return safe_decode_text(attr_node) or None if attr_node.text else None
+
+
+def _analyze_attribute_return(expr_node: Node, method_qn: str) -> str | None:
+    object_node = expr_node.child_by_field_name(cs.TS_FIELD_OBJECT)
+    if (
+        object_node
+        and object_node.type == cs.TS_PY_IDENTIFIER
+        and object_node.text is not None
+        and (object_name := safe_decode_text(object_node))
+        and object_name in (cs.PY_KEYWORD_CLS, cs.PY_KEYWORD_SELF)
+    ):
+        qn_parts = method_qn.split(cs.SEPARATOR_DOT)
+        return qn_parts[-2] if len(qn_parts) >= 2 else None
+
+    return None
+
+
+class PythonAstAnalyzer:
+    __slots__ = (
+        "import_processor",
+        "function_registry",
+        "module_qn_to_file_path",
+        "ast_cache",
+        "queries",
+        "expression_analyzer",
+        "variable_analyzer",
+        "with_binding",
+        "_return_stmt_cache",
+    )
+
+    def __init__(
+        self,
+        import_processor: ImportProcessor,
+        function_registry: FunctionRegistryTrieProtocol,
+        module_qn_to_file_path: dict[str, Path],
+        ast_cache: ASTCacheProtocol,
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
+        return_stmt_cache: dict[Node, list[Node]],
+    ) -> None:
+        self.import_processor = import_processor
+        self.function_registry = function_registry
+        self.module_qn_to_file_path = module_qn_to_file_path
+        self.ast_cache = ast_cache
+        self.queries = queries
+        # Owned by the engine, which empties it between call passes.
+        self._return_stmt_cache = return_stmt_cache
+
+    def bind_analyzers(
+        self,
+        expression_analyzer: PythonExpressionAnalyzer,
+        variable_analyzer: PythonVariableAnalyzer,
+        with_binding: PythonWithBinding,
+    ) -> None:
+        # Not constructor arguments: each of them is built with this
+        # analyzer, so they exist only afterwards (PythonTypeInferenceEngine
+        # says why they need each other).
+        self.expression_analyzer = expression_analyzer
+        self.variable_analyzer = variable_analyzer
+        self.with_binding = with_binding
 
     def locally_bound_names(self, caller: Node, module_qn: str) -> frozenset[str]:
         """`local_names` under the caller's module's import map."""
@@ -1044,44 +1098,7 @@ class PythonAstAnalyzerMixin(_AstBase):
             return frozenset()
         return _locally_bound_names(caller, import_map) & frozenset(import_map)
 
-    queries: Mapping[cs.SupportedLanguage, LanguageQueries]
-    module_qn_to_file_path: dict[str, Path]
-    ast_cache: ASTCacheProtocol
-    function_registry: FunctionRegistryTrieProtocol
-
-    _js_type_inference_getter: Callable[[], JsTypeInferenceEngine]
-
-    @abstractmethod
-    def _infer_type_from_expression(
-        self, node: Node, module_qn: str, scope: Node | None = None
-    ) -> str | None: ...
-
-    @abstractmethod
-    def _infer_type_from_expression_simple(
-        self, node: Node, module_qn: str
-    ) -> str | None: ...
-
-    @abstractmethod
-    def _infer_type_from_expression_complex(
-        self, node: Node, module_qn: str, local_var_types: dict[str, str]
-    ) -> str | None: ...
-
-    @abstractmethod
-    def _infer_method_call_return_type(
-        self, method_qn: str, module_qn: str, local_var_types: dict[str, str] | None
-    ) -> str | None: ...
-
-    @abstractmethod
-    def _find_class_in_scope(self, class_name: str, module_qn: str) -> str | None: ...
-
-    @abstractmethod
-    def _infer_free_function_return_type(
-        self, callee: str, module_qn: str
-    ) -> str | None: ...
-
-    _return_stmt_cache: dict[Node, list[Node]]
-
-    def _traverse_single_pass(
+    def traverse_single_pass(
         self, node: Node, local_var_types: dict[str, str], module_qn: str
     ) -> tuple[list[Node], list[Node]]:
         """Types locals in one traversal; returns (comprehensions, for
@@ -1125,7 +1142,9 @@ class PythonAstAnalyzerMixin(_AstBase):
         # types `r = conn.send()` from the target. A manager only the complex
         # pass types is retried after it.
         with_targets = _with_targets(node, with_statements)
-        pending = self._type_with_targets(with_targets, local_var_types, module_qn)
+        pending = self.with_binding.type_with_targets(
+            with_targets, local_var_types, module_qn
+        )
 
         for assignment in assignments:
             self._process_assignment_complex(assignment, local_var_types, module_qn)
@@ -1134,7 +1153,9 @@ class PythonAstAnalyzerMixin(_AstBase):
         # a retry types a manager; it types only names still untyped. Each
         # round types at least one more manager, so the loop ends.
         while pending:
-            retried = self._type_with_targets(pending, local_var_types, module_qn)
+            retried = self.with_binding.type_with_targets(
+                pending, local_var_types, module_qn
+            )
             if len(retried) == len(pending):
                 break
             typed_now = [target for target in pending if target not in retried]
@@ -1155,9 +1176,11 @@ class PythonAstAnalyzerMixin(_AstBase):
         )
 
         for for_stmt in for_statements:
-            self._analyze_for_loop(for_stmt, local_var_types, module_qn)
+            self.variable_analyzer.analyze_for_loop(
+                for_stmt, local_var_types, module_qn
+            )
 
-        self._infer_instance_variable_types_from_assignments(
+        self.variable_analyzer.infer_instance_variable_types_from_assignments(
             assignments, local_var_types, module_qn
         )
         return comprehensions, for_statements
@@ -1254,7 +1277,7 @@ class PythonAstAnalyzerMixin(_AstBase):
             if not names:
                 continue
             scratch = dict(local_var_types)
-            self._analyze_comprehension(comp, scratch, module_qn)
+            self.variable_analyzer.analyze_comprehension(comp, scratch, module_qn)
             for name in names:
                 if name in scratch:
                     local_var_types[name] = scratch[name]
@@ -1268,11 +1291,11 @@ class PythonAstAnalyzerMixin(_AstBase):
         if not left_node or not right_node:
             return
 
-        var_name = self._extract_assignment_variable_name(left_node)
+        var_name = _extract_assignment_variable_name(left_node)
         if not var_name:
             return
 
-        if inferred_type := self._infer_type_from_expression_simple(
+        if inferred_type := self.expression_analyzer.infer_type_from_expression_simple(
             right_node, module_qn
         ):
             local_var_types[var_name] = inferred_type
@@ -1287,14 +1310,14 @@ class PythonAstAnalyzerMixin(_AstBase):
         if not left_node or not right_node:
             return
 
-        var_name = self._extract_assignment_variable_name(left_node)
+        var_name = _extract_assignment_variable_name(left_node)
         if not var_name:
             return
 
         if var_name in local_var_types:
             return
 
-        if inferred_type := self._infer_type_from_expression_complex(
+        if inferred_type := self.expression_analyzer.infer_type_from_expression_complex(
             right_node, module_qn, local_var_types
         ):
             local_var_types[var_name] = inferred_type
@@ -1356,21 +1379,21 @@ class PythonAstAnalyzerMixin(_AstBase):
                 continue
             if _scope_of(assignment) != caller.id:
                 continue
-            var_name = self._extract_assignment_variable_name(left)
+            var_name = _extract_assignment_variable_name(left)
             if not var_name:
                 continue
             if var_name in local_var_types and var_name not in written:
                 continue
             annotation = safe_decode_text(type_node) or ""
-            if annotated := self._type_of_annotated_name(annotation, module_qn):
+            if annotated := self.type_of_annotated_name(annotation, module_qn):
                 local_var_types[var_name] = annotated
                 written.add(var_name)
 
-    def _type_of_annotated_name(self, text: str, module_qn: str) -> str | None:
+    def type_of_annotated_name(self, text: str, module_qn: str) -> str | None:
         text = text.strip().strip("\"'")
         if self._tuple_elements_from_text(text, "", module_qn):
             return text
-        return self._annotation_type_from_text(text, "", module_qn)
+        return self.annotation_type_from_text(text, "", module_qn)
 
     def _process_assignment_unpacking(
         self,
@@ -1464,7 +1487,7 @@ class PythonAstAnalyzerMixin(_AstBase):
         inside it keeps its text rather than resolving the module qn as if it
         were a method's."""
         elements: list[tuple[str, bool]] = []
-        if (call := self._defining_call(right, caller)) is not None:
+        if (call := _defining_call(right, caller)) is not None:
             elements = self._tuple_return_elements(
                 call, module_qn, local_var_types, bound
             )
@@ -1484,26 +1507,6 @@ class PythonAstAnalyzerMixin(_AstBase):
             return []
         stored = local_var_types.get(name)
         return self._tuple_elements_from_text(stored, "", module_qn) if stored else []
-
-    def _defining_call(self, right: Node, caller: Node) -> Node | None:
-        """The call an unpacking's right-hand side comes from, or None.
-
-        Either the call itself, or -- for `parsed = f(); a, b = parsed` -- the
-        call that the nearest earlier binding of the name IN THE SAME SCOPE
-        gave it. A nearer binding to anything but a call clears it: after
-        `p = fw(); p = supplied` (or `p += x`, `for p in xs`, `with cm as p`),
-        `p` is not fw's result. Captures are not guaranteed to come back in
-        document order, so the nearest binding is the max position, not the
-        last seen.
-        """
-        if right.type == cs.TS_PY_CALL:
-            return right
-        if right.type != cs.TS_PY_IDENTIFIER or not (name := safe_decode_text(right)):
-            return None
-        events = _binding_events(name, right.start_byte, caller)
-        if not events:
-            return None
-        return max(events, key=lambda event: event[0])[1]
 
     def _tuple_return_elements(
         self,
@@ -1596,7 +1599,7 @@ class PythonAstAnalyzerMixin(_AstBase):
         if not name or name in bound:
             return None
         for qn in (import_map.get(name), f"{module_qn}{cs.SEPARATOR_DOT}{name}"):
-            if qn and (node := self._find_function_ast_node(qn)) is not None:
+            if qn and (node := self.find_function_ast_node(qn)) is not None:
                 return node, qn
         return None
 
@@ -1608,7 +1611,7 @@ class PythonAstAnalyzerMixin(_AstBase):
         local_var_types: dict[str, str],
         bound: frozenset[str],
     ) -> tuple[Node, str] | None:
-        text = self._extract_full_method_call(func)
+        text = extract_full_method_call(func)
         if not text:
             return None
         # `helpers.make_pair()`: the receiver is an imported MODULE, which the
@@ -1621,19 +1624,16 @@ class PythonAstAnalyzerMixin(_AstBase):
             and (module := import_map.get(receiver))
         ):
             qn = f"{module}{cs.SEPARATOR_DOT}{leaf}"
-            if (node := self._find_function_ast_node(qn)) is not None:
+            if (node := self.find_function_ast_node(qn)) is not None:
                 return node, qn
-        qn = self._resolve_method_qualified_name(text, module_qn, local_var_types)
-        if qn and (node := self._find_method_ast_node(qn)) is not None:
+        qn = self.expression_analyzer.resolve_method_qualified_name(
+            text, module_qn, local_var_types
+        )
+        if qn and (node := self.find_method_ast_node(qn)) is not None:
             return node, qn
         return None
 
-    def _extract_assignment_variable_name(self, node: Node) -> str | None:
-        if node.type != cs.TS_PY_IDENTIFIER or node.text is None:
-            return None
-        return safe_decode_text(node) or None
-
-    def _find_method_ast_node(self, method_qn: str) -> Node | None:
+    def find_method_ast_node(self, method_qn: str) -> Node | None:
         qn_parts = method_qn.split(cs.SEPARATOR_DOT)
         if len(qn_parts) < 3:
             return None
@@ -1670,7 +1670,7 @@ class PythonAstAnalyzerMixin(_AstBase):
             case _:
                 return None
 
-    def _find_class_node(self, class_qn: str) -> Node | None:
+    def find_class_node(self, class_qn: str) -> Node | None:
         # Locate a class definition node from its qualified name so cross-class
         # attribute/property types resolve when handling chained calls.
         module_qn, _, class_name = class_qn.rpartition(cs.SEPARATOR_DOT)
@@ -1701,10 +1701,10 @@ class PythonAstAnalyzerMixin(_AstBase):
         # everything before the LAST dot); anything else keeps the method-shaped
         # module.Class.method lookup.
         if self.function_registry.get(qn) == cs.NodeLabel.FUNCTION:
-            return self._find_function_ast_node(qn)
-        return self._find_method_ast_node(qn)
+            return self.find_function_ast_node(qn)
+        return self.find_method_ast_node(qn)
 
-    def _find_function_ast_node(self, fn_qn: str) -> Node | None:
+    def find_function_ast_node(self, fn_qn: str) -> Node | None:
         # Top-level function definition for `mod.func`. Nested and method defs
         # carry longer qns, so anything under a class or function ancestor is
         # skipped.
@@ -1727,21 +1727,10 @@ class PythonAstAnalyzerMixin(_AstBase):
             if (
                 name_node is not None
                 and safe_decode_text(name_node) == fn_name
-                and self._is_top_level_definition(fn_node)
+                and _is_top_level_definition(fn_node)
             ):
                 return fn_node
         return None
-
-    def _is_top_level_definition(self, node: Node) -> bool:
-        parent = node.parent
-        while parent is not None:
-            if parent.type in (
-                cs.TS_PY_CLASS_DEFINITION,
-                cs.TS_PY_FUNCTION_DEFINITION,
-            ):
-                return False
-            parent = parent.parent
-        return True
 
     def _find_python_method_in_ast(
         self, root_node: Node, class_name: str, method_name: str
@@ -1773,7 +1762,7 @@ class PythonAstAnalyzerMixin(_AstBase):
 
         return None
 
-    def _analyze_method_return_statements(
+    def analyze_method_return_statements(
         self, method_node: Node, method_qn: str, module_qn: str | None = None
     ) -> str | None:
         # module_qn defaults to the method-shaped derivation (mod.Class.meth -> mod);
@@ -1785,7 +1774,7 @@ class PythonAstAnalyzerMixin(_AstBase):
             return annotated
 
         return_nodes: list[Node] = []
-        self._find_return_statements(method_node, return_nodes)
+        self.find_return_statements(method_node, return_nodes)
 
         for return_node in return_nodes:
             return_value = next(
@@ -1817,11 +1806,11 @@ class PythonAstAnalyzerMixin(_AstBase):
         type_node = method_node.child_by_field_name(cs.FIELD_RETURN_TYPE)
         if type_node is None or type_node.text is None:
             return None
-        return self._annotation_type_from_text(
+        return self.annotation_type_from_text(
             safe_decode_text(type_node) or "", method_qn, module_qn
         )
 
-    def _annotation_type_from_text(
+    def annotation_type_from_text(
         self, text: str, owner_qn: str, module_qn: str
     ) -> str | None:
         """The type an annotation's text names, resolved in scope: a class,
@@ -1868,9 +1857,12 @@ class PythonAstAnalyzerMixin(_AstBase):
             return cs.SEPARATOR_DOT.join(qn_parts[:-1])
         if cs.SEPARATOR_DOT in candidate:
             return candidate
-        return self._find_class_in_scope(candidate, module_qn) or candidate
+        return (
+            self.expression_analyzer.find_class_in_scope(candidate, module_qn)
+            or candidate
+        )
 
-    def _find_return_statements(self, node: Node, return_nodes: list[Node]) -> None:
+    def find_return_statements(self, node: Node, return_nodes: list[Node]) -> None:
         cached = self._return_stmt_cache.get(node)
         if cached is not None:
             return_nodes.extend(cached)
@@ -1902,7 +1894,7 @@ class PythonAstAnalyzerMixin(_AstBase):
             case cs.TS_PY_IDENTIFIER:
                 return self._analyze_identifier_return(expr_node, method_qn, module_qn)
             case cs.TS_PY_ATTRIBUTE:
-                return self._analyze_attribute_return(expr_node, method_qn)
+                return _analyze_attribute_return(expr_node, method_qn)
             case _:
                 return None
 
@@ -1925,11 +1917,13 @@ class PythonAstAnalyzerMixin(_AstBase):
             # A lowercase callee is a factory-calls-factory hop (django's
             # get_resolver delegating to _get_cached_resolver): follow the
             # inner factory's own return type transitively.
-            return self._infer_free_function_return_type(class_name, module_qn)
+            return self.expression_analyzer.infer_free_function_return_type(
+                class_name, module_qn
+            )
 
         if func_node.type == cs.TS_PY_ATTRIBUTE:
-            if method_call_text := self._extract_method_call_from_attr(func_node):
-                return self._infer_method_call_return_type(
+            if method_call_text := _extract_method_call_from_attr(func_node):
+                return self.expression_analyzer.infer_method_call_return_type(
                     method_call_text, module_qn, None
                 )
 
@@ -1945,7 +1939,9 @@ class PythonAstAnalyzerMixin(_AstBase):
             return cs.SEPARATOR_DOT.join(qn_parts[:-1]) if len(qn_parts) >= 3 else None
 
         if class_name[0].isupper():
-            resolved_class = self._find_class_in_scope(class_name, module_qn)
+            resolved_class = self.expression_analyzer.find_class_in_scope(
+                class_name, module_qn
+            )
             return resolved_class or class_name
 
         return None
@@ -1975,7 +1971,7 @@ class PythonAstAnalyzerMixin(_AstBase):
                 else None
             )
             try:
-                local_vars = self.build_local_variable_type_map(
+                local_vars = self.variable_analyzer.build_local_variable_type_map(
                     method_node, module_qn, class_context
                 )
             except Exception as e:  # noqa: BLE001 -- isolation: one unit's failure must not end the run
@@ -1992,20 +1988,3 @@ class PythonAstAnalyzerMixin(_AstBase):
 
         logger.debug(ls.PY_VAR_CANNOT_INFER, var=identifier)
         return None
-
-    def _analyze_attribute_return(self, expr_node: Node, method_qn: str) -> str | None:
-        object_node = expr_node.child_by_field_name(cs.TS_FIELD_OBJECT)
-        if (
-            object_node
-            and object_node.type == cs.TS_PY_IDENTIFIER
-            and object_node.text is not None
-            and (object_name := safe_decode_text(object_node))
-            and object_name in (cs.PY_KEYWORD_CLS, cs.PY_KEYWORD_SELF)
-        ):
-            qn_parts = method_qn.split(cs.SEPARATOR_DOT)
-            return qn_parts[-2] if len(qn_parts) >= 2 else None
-
-        return None
-
-    def _extract_method_call_from_attr(self, attr_node: Node) -> str | None:
-        return safe_decode_text(attr_node) or None if attr_node.text else None

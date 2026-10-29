@@ -4626,8 +4626,8 @@ class CallProcessor:
     ) -> None:
         # Names this caller binds that also name an import: the resolver
         # refuses to read the import map for them (issue #1907).
-        python_inference = self._resolver.type_inference.python_type_inference
-        shadowed = python_inference.shadowed_import_names(caller_node, module_qn)
+        python = self._resolver.type_inference.python_type_inference
+        shadowed = python.ast_analyzer.shadowed_import_names(caller_node, module_qn)
         if shadowed:
             self._resolver.python_shadowed_imports[caller_qn] = shadowed
         else:
@@ -4637,7 +4637,7 @@ class CallProcessor:
         # function or lambda body: in a class body `alias = run` does read the
         # class's own `run`, and a module's bindings are its definitions.
         local = (
-            python_inference.locally_bound_names(caller_node, module_qn)
+            python.ast_analyzer.locally_bound_names(caller_node, module_qn)
             if caller_node.type in _PY_LOCAL_SCOPE_CALLERS
             else frozenset()
         )
@@ -4652,8 +4652,8 @@ class CallProcessor:
     ) -> None:
         # Parameters whose class only their name spells: a call through one
         # is labelled heuristic (issue #2608).
-        python_inference = self._resolver.type_inference.python_type_inference
-        guessed = python_inference.name_typed_parameters(caller_node, module_qn)
+        python = self._resolver.type_inference.python_type_inference
+        guessed = python.variable_analyzer.name_typed_parameters(caller_node, module_qn)
         if guessed:
             self._resolver.python_name_typed_params[caller_qn] = frozenset(guessed)
         else:

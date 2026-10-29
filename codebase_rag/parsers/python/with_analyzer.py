@@ -12,6 +12,12 @@ from ...types_defs import FunctionRegistryTrieProtocol
 from ..utils import follow_reexports
 from .utils import resolve_class_name, resolve_dotted_class
 
+if TYPE_CHECKING:
+    from ..import_processor import ImportProcessor
+    from .ast_analyzer import PythonAstAnalyzer
+    from .expression_analyzer import PythonExpressionAnalyzer
+    from .variable_analyzer import PythonVariableAnalyzer
+
 
 class WithTarget(NamedTuple):
     """One `with <manager> as <name>` item: the plain name its `as` binds,
@@ -23,42 +29,6 @@ class WithTarget(NamedTuple):
     manager: Node
     is_async: bool
     binds_at: int
-
-
-if TYPE_CHECKING:
-    from ..import_processor import ImportProcessor
-
-    # A plain class, not a Protocol: a protocol's stub methods count as
-    # abstract, and this base sits ahead of the mixins that implement them in
-    # the engine's MRO. It exists for the checker only.
-    class _WithBindingDeps:
-        def _infer_type_from_expression_simple(
-            self, node: Node, module_qn: str
-        ) -> str | None: ...
-
-        def _infer_type_from_expression_complex(
-            self, node: Node, module_qn: str, local_var_types: dict[str, str]
-        ) -> str | None: ...
-
-        def _get_mro(self, class_qn: str) -> list[str]: ...
-
-        def _find_method_ast_node(self, method_qn: str) -> Node | None: ...
-
-        def _find_return_statements(
-            self, node: Node, return_nodes: list[Node]
-        ) -> None: ...
-
-        def _annotation_type_from_text(
-            self, text: str, owner_qn: str, module_qn: str
-        ) -> str | None: ...
-
-        def own_class_rebinds_import(
-            self, module_qn: str, name: str, scope: Node | None = None
-        ) -> bool: ...
-
-    _WithBase: type = _WithBindingDeps
-else:
-    _WithBase = object
 
 
 def _receiver_parameter(method: Node) -> tuple[str | None, str | None]:
@@ -108,7 +78,7 @@ def _is_class_path(type_name: str) -> bool:
     return all(part.isidentifier() for part in type_name.split(cs.SEPARATOR_DOT))
 
 
-class PythonWithBindingMixin(_WithBase):
+class PythonWithBinding:
     """Types the `as` target of a with statement (issue #2558).
 
     `with M as v` binds `v` to `M.__enter__()`, and `async with` to the
@@ -128,11 +98,29 @@ class PythonWithBindingMixin(_WithBase):
     `return`) leaves the target untyped: unknown, never guessed as the class.
     """
 
-    __slots__ = ()
-    import_processor: ImportProcessor
-    function_registry: FunctionRegistryTrieProtocol
+    __slots__ = (
+        "import_processor",
+        "function_registry",
+        "ast_analyzer",
+        "expression_analyzer",
+        "variable_analyzer",
+    )
 
-    def _type_with_targets(
+    def __init__(
+        self,
+        import_processor: ImportProcessor,
+        function_registry: FunctionRegistryTrieProtocol,
+        ast_analyzer: PythonAstAnalyzer,
+        expression_analyzer: PythonExpressionAnalyzer,
+        variable_analyzer: PythonVariableAnalyzer,
+    ) -> None:
+        self.import_processor = import_processor
+        self.function_registry = function_registry
+        self.ast_analyzer = ast_analyzer
+        self.expression_analyzer = expression_analyzer
+        self.variable_analyzer = variable_analyzer
+
+    def type_with_targets(
         self,
         targets: list[WithTarget],
         local_var_types: dict[str, str],
@@ -164,9 +152,9 @@ class PythonWithBindingMixin(_WithBase):
         assignment's right-hand side is."""
         if manager.type == cs.TS_PY_IDENTIFIER:
             return local_var_types.get(safe_decode_text(manager) or "")
-        return self._infer_type_from_expression_simple(
+        return self.expression_analyzer.infer_type_from_expression_simple(
             manager, module_qn
-        ) or self._infer_type_from_expression_complex(
+        ) or self.expression_analyzer.infer_type_from_expression_complex(
             manager, module_qn, local_var_types
         )
 
@@ -183,9 +171,11 @@ class PythonWithBindingMixin(_WithBase):
                 return manager_type
             return None
         dunder = cs.PY_DUNDER_AENTER if target.is_async else cs.PY_DUNDER_ENTER
-        for owner in self._get_mro(class_qn):
+        for owner in self.variable_analyzer.get_mro(class_qn):
             method_qn = f"{owner}{cs.SEPARATOR_DOT}{dunder}"
-            if (method := self._find_method_ast_node(method_qn)) is not None:
+            if (
+                method := self.ast_analyzer.find_method_ast_node(method_qn)
+            ) is not None:
                 returned = self._enter_return_type(method, method_qn, class_qn)
                 # The entered class itself keeps the manager's spelling, the
                 # one `v = X()` stores.
@@ -205,10 +195,12 @@ class PythonWithBindingMixin(_WithBase):
                 or text == receiver_annotation
             ):
                 return receiver_qn
-            declared = self._annotation_type_from_text(text, method_qn, owner_module)
+            declared = self.ast_analyzer.annotation_type_from_text(
+                text, method_qn, owner_module
+            )
             return self._resolved_type(declared, owner_module) if declared else None
         return_nodes: list[Node] = []
-        self._find_return_statements(method, return_nodes)
+        self.ast_analyzer.find_return_statements(method, return_nodes)
         values = [
             node.named_children[0] if node.named_children else None
             for node in return_nodes
@@ -241,9 +233,11 @@ class PythonWithBindingMixin(_WithBase):
             # value of unknown type, not the receiver.
             return None
         receiver_types = {receiver: receiver_qn} if receiver else {}
-        inferred = self._infer_type_from_expression_simple(
+        inferred = self.expression_analyzer.infer_type_from_expression_simple(
             value, module_qn
-        ) or self._infer_type_from_expression_complex(value, module_qn, receiver_types)
+        ) or self.expression_analyzer.infer_type_from_expression_complex(
+            value, module_qn, receiver_types
+        )
         return self._resolved_type(inferred, module_qn) if inferred else None
 
     def _resolved_type(self, type_name: str, module_qn: str) -> str | None:
@@ -277,7 +271,7 @@ class PythonWithBindingMixin(_WithBase):
                 module_qn,
                 self.import_processor,
                 self.function_registry,
-                self.own_class_rebinds_import(
+                self.ast_analyzer.own_class_rebinds_import(
                     module_qn, type_name.partition(cs.SEPARATOR_DOT)[0], scope
                 ),
             )

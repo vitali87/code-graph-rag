@@ -14,6 +14,7 @@ from ...types_defs import FunctionRegistryTrieProtocol, SimpleNameLookup
 from ...utils import qn_markers
 from ..utils import follow_reexports
 from .utils import resolve_class_name, resolve_dotted_class
+from .variable_analyzer import get_assignment_alias
 
 # An inline receiver is handed to the expression rules only when its text can
 # be one: an operator, `or`/`and`, or a conditional. Everything else keeps the
@@ -46,59 +47,51 @@ if TYPE_CHECKING:
 
     from ...types_defs import ASTCacheProtocol
     from ..import_processor import ImportProcessor
-    from .variable_analyzer import _Alias
-
-    # A plain class, not a Protocol: a protocol's stub methods count as
-    # abstract, and this base sits ahead of the mixins that implement them in
-    # the engine's MRO. It exists for the checker only.
-    class _ExpressionAnalyzerDeps:
-        def _analyze_self_assignments(
-            self, node: Node, local_var_types: dict[str, str], module_qn: str
-        ) -> None: ...
-
-        def build_local_variable_type_map(
-            self, caller_node: Node, module_qn: str, class_context: str | None = None
-        ) -> dict[str, str]: ...
-
-        def _find_method_ast_node(self, method_qn: str) -> Node | None: ...
-
-        def _find_function_ast_node(self, fn_qn: str) -> Node | None: ...
-
-        def shadowed_import_names(
-            self, caller: Node, module_qn: str
-        ) -> frozenset[str]: ...
-
-        def own_class_rebinds_import(
-            self, module_qn: str, name: str, scope: Node | None = None
-        ) -> bool: ...
-
-        def _analyze_method_return_statements(
-            self, method_node: Node, method_qn: str, module_qn: str | None = None
-        ) -> str | None: ...
-
-        def _get_assignment_alias(self, right: Node) -> _Alias | None: ...
-
-        def _get_alias_type(
-            self, alias: _Alias, local_var_types: dict[str, str], module_qn: str
-        ) -> str | None: ...
-
-    _ExprBase: type = _ExpressionAnalyzerDeps
-else:
-    _ExprBase = object
+    from .ast_analyzer import PythonAstAnalyzer
+    from .variable_analyzer import PythonVariableAnalyzer
 
 
-class PythonExpressionAnalyzerMixin(_ExprBase):
-    __slots__ = ()
-    import_processor: ImportProcessor
-    function_registry: FunctionRegistryTrieProtocol
-    simple_name_lookup: SimpleNameLookup
-    module_qn_to_file_path: dict[str, Path]
-    ast_cache: ASTCacheProtocol
+class PythonExpressionAnalyzer:
+    __slots__ = (
+        "import_processor",
+        "function_registry",
+        "simple_name_lookup",
+        "module_qn_to_file_path",
+        "ast_cache",
+        "ast_analyzer",
+        "variable_analyzer",
+        "_method_return_type_cache",
+        "_self_assignment_cache",
+    )
 
-    _method_return_type_cache: dict[str, str | None]
-    _self_assignment_cache: dict[tuple[Node, str], dict[str, str] | None]
+    def __init__(
+        self,
+        import_processor: ImportProcessor,
+        function_registry: FunctionRegistryTrieProtocol,
+        simple_name_lookup: SimpleNameLookup,
+        module_qn_to_file_path: dict[str, Path],
+        ast_cache: ASTCacheProtocol,
+        method_return_type_cache: dict[str, str | None],
+        self_assignment_cache: dict[tuple[Node, str], dict[str, str] | None],
+        ast_analyzer: PythonAstAnalyzer,
+    ) -> None:
+        self.import_processor = import_processor
+        self.function_registry = function_registry
+        self.simple_name_lookup = simple_name_lookup
+        self.module_qn_to_file_path = module_qn_to_file_path
+        self.ast_cache = ast_cache
+        self.ast_analyzer = ast_analyzer
+        # Owned by the engine, which empties them between call passes.
+        self._method_return_type_cache = method_return_type_cache
+        self._self_assignment_cache = self_assignment_cache
 
-    def _infer_type_from_expression(
+    def bind_variable_analyzer(self, variable_analyzer: PythonVariableAnalyzer) -> None:
+        # Not a constructor argument: the variable analyzer is built with
+        # this one, so it exists only afterwards (PythonTypeInferenceEngine
+        # says why the two need each other).
+        self.variable_analyzer = variable_analyzer
+
+    def infer_type_from_expression(
         self, node: Node, module_qn: str, scope: Node | None = None
     ) -> str | None:
         # `scope`: where the expression is read, whose enclosing defs decide
@@ -108,7 +101,7 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
         if node.type == cs.TS_PY_LIST_COMPREHENSION and (
             body_node := node.child_by_field_name(cs.TS_FIELD_BODY)
         ):
-            return self._infer_type_from_expression(body_node, module_qn, scope)
+            return self.infer_type_from_expression(body_node, module_qn, scope)
         return None
 
     def _infer_call_expression_type(
@@ -126,14 +119,14 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
             # A lowercase callee is a free-function factory: type from its
             # return (annotation first), so `self.widgets = load_widgets()`
             # seeds the attribute for methods that only read it.
-            return self._infer_free_function_return_type(callee, module_qn)
+            return self.infer_free_function_return_type(callee, module_qn)
 
         if (
             func_node
             and func_node.type == cs.TS_PY_ATTRIBUTE
-            and (method_call_text := self._extract_full_method_call(func_node))
+            and (method_call_text := extract_full_method_call(func_node))
         ):
-            if inferred := self._infer_method_call_return_type(
+            if inferred := self.infer_method_call_return_type(
                 method_call_text, module_qn, None
             ):
                 return inferred
@@ -169,7 +162,7 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
                 module_qn,
                 self.import_processor,
                 self.function_registry,
-                self.own_class_rebinds_import(module_qn, head, scope),
+                self.ast_analyzer.own_class_rebinds_import(module_qn, head, scope),
             )
         ):
             return method_call_text
@@ -177,11 +170,13 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
         # self-assignment read without the map) is still not the import: the
         # defs enclosing `scope` say which heads are locals. Asked only once a
         # class resolved: walking their bindings for every call is costly.
-        if scope is not None and head in self.shadowed_import_names(scope, module_qn):
+        if scope is not None and head in self.ast_analyzer.shadowed_import_names(
+            scope, module_qn
+        ):
             return method_call_text
         return class_qn
 
-    def _infer_type_from_expression_simple(
+    def infer_type_from_expression_simple(
         self, node: Node, module_qn: str
     ) -> str | None:
         if node.type == cs.TS_PY_CALL:
@@ -197,11 +192,11 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
 
         elif node.type == cs.TS_PY_LIST_COMPREHENSION:
             if body_node := node.child_by_field_name(cs.TS_FIELD_BODY):
-                return self._infer_type_from_expression_simple(body_node, module_qn)
+                return self.infer_type_from_expression_simple(body_node, module_qn)
 
         return None
 
-    def _infer_type_from_expression_complex(
+    def infer_type_from_expression_complex(
         self, node: Node, module_qn: str, local_var_types: dict[str, str]
     ) -> str | None:
         if node.type == cs.TS_PY_CALL:
@@ -209,9 +204,9 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
             if (
                 func_node
                 and func_node.type == cs.TS_PY_ATTRIBUTE
-                and (method_call_text := self._extract_full_method_call(func_node))
+                and (method_call_text := extract_full_method_call(func_node))
             ):
-                if inferred := self._infer_method_call_return_type(
+                if inferred := self.infer_method_call_return_type(
                     method_call_text, module_qn, local_var_types
                 ):
                     return inferred
@@ -228,12 +223,9 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
                 # `r = make_widget()`: type the local from the free-function
                 # factory's return so the later `r.run()` does not fall back to
                 # the bare-name trie.
-                return self._infer_free_function_return_type(callee, module_qn)
+                return self.infer_free_function_return_type(callee, module_qn)
 
         return None
-
-    def _extract_full_method_call(self, attr_node: Node) -> str | None:
-        return safe_decode_text(attr_node) or None
 
     @recursion_guard(
         key_func=lambda self, method_call, module_qn, *_, **__: (
@@ -241,13 +233,13 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
         ),
         guard_name=cs.ATTR_TYPE_INFERENCE_IN_PROGRESS,
     )
-    def _infer_method_call_return_type(
+    def infer_method_call_return_type(
         self,
         method_call: str,
         module_qn: str,
         local_var_types: dict[str, str] | None = None,
     ) -> str | None:
-        if cs.SEPARATOR_DOT in method_call and self._is_method_chain(method_call):
+        if cs.SEPARATOR_DOT in method_call and _is_method_chain(method_call):
             return self._infer_chained_call_return_type_fixed(
                 method_call, module_qn, local_var_types
             )
@@ -267,12 +259,12 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
             # the callee's return.
             callee = method_call.split(cs.CHAR_PAREN_OPEN, 1)[0].strip()
             if callee.isidentifier():
-                return self._infer_free_function_return_type(callee, module_qn)
+                return self.infer_free_function_return_type(callee, module_qn)
             return None
 
         return self._infer_method_return_type(method_call, module_qn, local_var_types)
 
-    def _infer_free_function_return_type(
+    def infer_free_function_return_type(
         self, callee: str, module_qn: str
     ) -> str | None:
         # Resolve a bare callee in the caller's scope only (same module, then
@@ -406,9 +398,11 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
 
         fn_module_qn = fn_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
         if fn_node is None:
-            fn_node = self._find_function_ast_node(fn_qn)
+            fn_node = self.ast_analyzer.find_function_ast_node(fn_qn)
         result = (
-            self._analyze_method_return_statements(fn_node, fn_qn, fn_module_qn)
+            self.ast_analyzer.analyze_method_return_statements(
+                fn_node, fn_qn, fn_module_qn
+            )
             if fn_node and not _is_coroutine_function(fn_node)
             else None
         )
@@ -419,13 +413,6 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
         self._method_return_type_cache[fn_qn] = result
         return result
 
-    def _is_method_chain(self, call_name: str) -> bool:
-        return (
-            cs.CHAR_PAREN_OPEN in call_name
-            and cs.CHAR_PAREN_CLOSE in call_name
-            and bool(re.search(cs.REGEX_METHOD_CHAIN_SUFFIX, call_name))
-        )
-
     def _called_chain_hop(self, method_call: str, module_qn: str) -> str | None:
         """`a().b(x)` -> `a().b`, when the called method hangs off a call."""
         # Each hop is typed from the one before, one level of recursion per
@@ -434,7 +421,7 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
         if method_call.count(_HOP_SEPARATOR) >= cs.MAX_RECEIVER_CHAIN_HOPS:
             return None
         callee = _called_callee(method_call)
-        if callee is None or not self._is_method_chain(callee):
+        if callee is None or not _is_method_chain(callee):
             return None
         path = self.module_qn_to_file_path.get(module_qn)
         if path is None or path.suffix not in _PY_MODULE_SUFFIXES:
@@ -468,7 +455,7 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
         ) or object_type
 
         method_qn = f"{full_object_type}{cs.SEPARATOR_DOT}{final_method}"
-        returned = self._get_method_return_type_from_ast(method_qn)
+        returned = self.get_method_return_type_from_ast(method_qn)
         if returned and cs.SEPARATOR_DOT not in returned:
             # A bare name is the one the method's own module sees. The next hop
             # reads it in the caller's, where it may not be imported and a
@@ -491,13 +478,13 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
             return var_type
 
         if cs.CHAR_PAREN_OPEN in object_expr and cs.CHAR_PAREN_CLOSE in object_expr:
-            return self._infer_method_call_return_type(
+            return self.infer_method_call_return_type(
                 object_expr, module_qn, local_var_types
             )
 
         return None
 
-    def _infer_expression_return_type(
+    def infer_expression_return_type(
         self,
         expression: str,
         module_qn: str,
@@ -514,16 +501,16 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
             return self._resolve_class_name(var_type, module_qn)
 
         if (
-            inline := self._get_inline_expression_type(
+            inline := self.get_inline_expression_type(
                 expression, module_qn, local_var_types
             )
         ) is not None:
             return inline
-        return self._infer_method_call_return_type(
+        return self.infer_method_call_return_type(
             expression, module_qn, local_var_types
         )
 
-    def _get_inline_expression_type(
+    def get_inline_expression_type(
         self,
         expression: str,
         module_qn: str,
@@ -562,10 +549,12 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
             node = next(iter(node.named_children), None)
         if node is None or node.type not in _INLINE_EXPRESSION_NODE_TYPES:
             return None
-        alias = self._get_assignment_alias(node)
+        alias = get_assignment_alias(node)
         if alias is None:
             return None
-        inferred = self._get_alias_type(alias, local_var_types or {}, module_qn)
+        inferred = self.variable_analyzer.get_alias_type(
+            alias, local_var_types or {}, module_qn
+        )
         if not inferred:
             return None
         import_map = self.import_processor.import_mapping.get(module_qn, {})
@@ -577,13 +566,13 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
         key_func=lambda self, method_qn: method_qn,
         guard_name=cs.ATTR_TYPE_INFERENCE_IN_PROGRESS,
     )
-    def _get_method_return_type_from_ast(self, method_qn: str) -> str | None:
+    def get_method_return_type_from_ast(self, method_qn: str) -> str | None:
         if method_qn in self._method_return_type_cache:
             return self._method_return_type_cache[method_qn]
 
-        method_node = self._find_method_ast_node(method_qn)
+        method_node = self.ast_analyzer.find_method_ast_node(method_qn)
         result = (
-            self._analyze_method_return_statements(method_node, method_qn)
+            self.ast_analyzer.analyze_method_return_statements(method_node, method_qn)
             if method_node and not _is_coroutine_function(method_node)
             else None
         )
@@ -598,19 +587,21 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
     ) -> str | None:
         try:
             if (
-                method_qn := self._resolve_method_qualified_name(
+                method_qn := self.resolve_method_qualified_name(
                     method_call, module_qn, local_var_types
                 )
-            ) and (method_node := self._find_method_ast_node(method_qn)):
+            ) and (method_node := self.ast_analyzer.find_method_ast_node(method_qn)):
                 if _is_coroutine_function(method_node):
                     return None
-                return self._analyze_method_return_statements(method_node, method_qn)
+                return self.ast_analyzer.analyze_method_return_statements(
+                    method_node, method_qn
+                )
             return None
         except Exception as e:  # noqa: BLE001 -- isolation: one unit's failure must not end the run
             logger.debug(ls.PY_INFER_RETURN_FAILED, method=method_call, error=e)
             return None
 
-    def _resolve_method_qualified_name(
+    def resolve_method_qualified_name(
         self,
         method_call: str,
         module_qn: str,
@@ -701,7 +692,7 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
             if cs.CHAR_UNDERSCORE in attribute_name
             else attribute_name.capitalize()
         )
-        return self._find_class_in_scope(class_name, module_qn)
+        return self.find_class_in_scope(class_name, module_qn)
 
     def _try_infer_from_self_assignments(
         self, attribute_name: str, module_qn: str
@@ -720,7 +711,9 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
                 instance_vars = self._self_assignment_cache[cache_key]
             else:
                 instance_vars = {}
-                self._analyze_self_assignments(root_node, instance_vars, module_qn)
+                self.variable_analyzer.analyze_self_assignments(
+                    root_node, instance_vars, module_qn
+                )
                 self._self_assignment_cache[cache_key] = instance_vars or None
 
             if not instance_vars:
@@ -733,7 +726,7 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
             logger.debug(ls.PY_INFER_ATTR_FAILED, attr=attribute_name, error=e)
             return None
 
-    def _find_class_in_scope(self, class_name: str, module_qn: str) -> str | None:
+    def find_class_in_scope(self, class_name: str, module_qn: str) -> str | None:
         local_class_qn = f"{module_qn}{cs.SEPARATOR_DOT}{class_name}"
         if self.function_registry.get(local_class_qn) == cs.NodeLabel.CLASS:
             return class_name
@@ -756,6 +749,18 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
         return resolve_class_name(
             class_name, module_qn, self.import_processor, self.function_registry
         )
+
+
+def extract_full_method_call(attr_node: Node) -> str | None:
+    return safe_decode_text(attr_node) or None
+
+
+def _is_method_chain(call_name: str) -> bool:
+    return (
+        cs.CHAR_PAREN_OPEN in call_name
+        and cs.CHAR_PAREN_CLOSE in call_name
+        and bool(re.search(cs.REGEX_METHOD_CHAIN_SUFFIX, call_name))
+    )
 
 
 def _is_coroutine_function(definition: Node) -> bool:
