@@ -13,7 +13,7 @@ from codebase_rag.config import (
     EMPTY_CGRIGNORE,
     load_cgrignore_patterns,
 )
-from codebase_rag.main import prompt_for_unignored_directories
+from codebase_rag.exclude_prompt import prompt_for_unignored_directories
 from codebase_rag.types_defs import CgrignorePatterns
 
 
@@ -142,8 +142,8 @@ class TestNegationSyntax:
 
 
 class TestCgrignoreIntegration:
-    @patch("codebase_rag.main.Prompt.ask")
-    @patch("codebase_rag.main.app_context")
+    @patch("codebase_rag.exclude_prompt.Prompt.ask")
+    @patch("codebase_rag.exclude_prompt.app_context")
     def test_cgrignore_patterns_included_in_candidates(
         self, mock_context: MagicMock, mock_ask: MagicMock, tmp_path: Path
     ) -> None:
@@ -158,8 +158,8 @@ class TestCgrignoreIntegration:
         assert "vendor" in result
         assert "custom_cache" in result
 
-    @patch("codebase_rag.main.Prompt.ask")
-    @patch("codebase_rag.main.app_context")
+    @patch("codebase_rag.exclude_prompt.Prompt.ask")
+    @patch("codebase_rag.exclude_prompt.app_context")
     def test_cgrignore_merged_with_cli_excludes(
         self, mock_context: MagicMock, mock_ask: MagicMock, tmp_path: Path
     ) -> None:
@@ -172,8 +172,8 @@ class TestCgrignoreIntegration:
         assert "from_cgrignore" in result
         assert "from_cli" in result
 
-    @patch("codebase_rag.main.Prompt.ask")
-    @patch("codebase_rag.main.app_context")
+    @patch("codebase_rag.exclude_prompt.Prompt.ask")
+    @patch("codebase_rag.exclude_prompt.app_context")
     def test_cgrignore_only_returns_without_prompt_when_empty(
         self, mock_context: MagicMock, mock_ask: MagicMock, tmp_path: Path
     ) -> None:
@@ -182,8 +182,8 @@ class TestCgrignoreIntegration:
         assert result == frozenset()
         mock_ask.assert_not_called()
 
-    @patch("codebase_rag.main.Prompt.ask")
-    @patch("codebase_rag.main.app_context")
+    @patch("codebase_rag.exclude_prompt.Prompt.ask")
+    @patch("codebase_rag.exclude_prompt.app_context")
     def test_cgrignore_alone_triggers_prompt(
         self, mock_context: MagicMock, mock_ask: MagicMock, tmp_path: Path
     ) -> None:
@@ -195,8 +195,8 @@ class TestCgrignoreIntegration:
 
         mock_ask.assert_called_once()
 
-    @patch("codebase_rag.main.Prompt.ask")
-    @patch("codebase_rag.main.app_context")
+    @patch("codebase_rag.exclude_prompt.Prompt.ask")
+    @patch("codebase_rag.exclude_prompt.app_context")
     def test_cgrignore_deduplicates_with_detected(
         self, mock_context: MagicMock, mock_ask: MagicMock, tmp_path: Path
     ) -> None:
@@ -213,8 +213,8 @@ class TestCgrignoreIntegration:
 
 
 class TestNegationIntegration:
-    @patch("codebase_rag.main.Prompt.ask")
-    @patch("codebase_rag.main.app_context")
+    @patch("codebase_rag.exclude_prompt.Prompt.ask")
+    @patch("codebase_rag.exclude_prompt.app_context")
     def test_unignore_included_when_user_selects_none(
         self, mock_context: MagicMock, mock_ask: MagicMock, tmp_path: Path
     ) -> None:
@@ -229,8 +229,8 @@ class TestNegationIntegration:
         assert "custom_exclude" not in result
         assert ".git" not in result
 
-    @patch("codebase_rag.main.Prompt.ask")
-    @patch("codebase_rag.main.app_context")
+    @patch("codebase_rag.exclude_prompt.Prompt.ask")
+    @patch("codebase_rag.exclude_prompt.app_context")
     def test_unignore_merged_with_user_selection(
         self, mock_context: MagicMock, mock_ask: MagicMock, tmp_path: Path
     ) -> None:
@@ -253,8 +253,8 @@ class TestNegationIntegration:
 
         assert result == frozenset({"vendor", "node_modules"})
 
-    @patch("codebase_rag.main.Prompt.ask")
-    @patch("codebase_rag.main.app_context")
+    @patch("codebase_rag.exclude_prompt.Prompt.ask")
+    @patch("codebase_rag.exclude_prompt.app_context")
     def test_unignore_included_when_user_selects_all(
         self, mock_context: MagicMock, mock_ask: MagicMock, tmp_path: Path
     ) -> None:

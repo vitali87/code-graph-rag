@@ -8,13 +8,13 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Callable, Coroutine, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import ExitStack, contextmanager
 from fnmatch import fnmatch
 from functools import partial, wraps
 from importlib.metadata import version as get_version
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NoReturn
+from typing import TYPE_CHECKING, NoReturn
 
 import click
 import typer
@@ -61,8 +61,10 @@ from .editor_links import (
     resolve_editor,
     url_template_problem,
 )
+from .exclude_prompt import prompt_for_unignored_directories
 from .graph_cli import cli as graph_cli
 from .graph_dialects import DIALECT_MEMGRAPH
+from .graph_export import export_graph_to_file
 from .parser_loader import load_parsers
 from .port_cli import cli as port_cli
 from .project_selection import ProjectChoice, choose_project, scope_refusal
@@ -145,67 +147,61 @@ _CLICK_EXCEPTIONS = (click.ClickException, _vendored_click_exception())
 # `codebase_rag.main` imports pydantic-ai and every provider SDK, and
 # `codebase_rag.vector_store` imports the Qdrant and Milvus clients; together
 # they cost over a second, and every `cgr` invocation imports this module
-# (issue #2253). These wrappers defer those imports to the commands that need
-# them and keep the names patchable attributes of `cli`.
-def clear_all_embeddings(*args: Any, **kwargs: Any) -> None:
-    from .vector_store import clear_all_embeddings as impl
+# (issue #2253). The checker sees the real functions; at runtime these
+# forwarders defer the imports to the commands that need them and keep the
+# names patchable attributes of `cli`.
+if TYPE_CHECKING:
+    from .main import (
+        create_configuration_table,
+        main_async,
+        main_optimize_async,
+        main_single_query,
+        update_model_settings,
+    )
+    from .vector_store import clear_all_embeddings, delete_project_embeddings
+else:
 
-    return impl(*args, **kwargs)
+    def clear_all_embeddings(*args, **kwargs):
+        from .vector_store import clear_all_embeddings as impl
 
+        return impl(*args, **kwargs)
 
-def delete_project_embeddings(*args: Any, **kwargs: Any) -> bool:
-    from .vector_store import delete_project_embeddings as impl
+    def delete_project_embeddings(*args, **kwargs):
+        from .vector_store import delete_project_embeddings as impl
 
-    return impl(*args, **kwargs)
+        return impl(*args, **kwargs)
+
+    def update_model_settings(*args, **kwargs):
+        from .main import update_model_settings as impl
+
+        return impl(*args, **kwargs)
+
+    def create_configuration_table(*args, **kwargs):
+        from .main import create_configuration_table as impl
+
+        return impl(*args, **kwargs)
+
+    def main_single_query(*args, **kwargs):
+        from .main import main_single_query as impl
+
+        return impl(*args, **kwargs)
+
+    def main_async(*args, **kwargs):
+        from .main import main_async as impl
+
+        return impl(*args, **kwargs)
+
+    def main_optimize_async(*args, **kwargs):
+        from .main import main_optimize_async as impl
+
+        return impl(*args, **kwargs)
 
 
 def _import_vector_store() -> None:
-    # The embedding wrappers import lazily. A clean run resolves the module
+    # The embedding forwarders import lazily. A clean run resolves the module
     # before it wipes anything, so a broken install stops with the graph
     # intact rather than after `clean_database`.
     importlib.import_module(".vector_store", __package__)
-
-
-def update_model_settings(*args: Any, **kwargs: Any) -> None:
-    from .main import update_model_settings as impl
-
-    return impl(*args, **kwargs)
-
-
-def prompt_for_unignored_directories(*args: Any, **kwargs: Any) -> frozenset[str]:
-    from .main import prompt_for_unignored_directories as impl
-
-    return impl(*args, **kwargs)
-
-
-def export_graph_to_file(*args: Any, **kwargs: Any) -> bool:
-    from .main import export_graph_to_file as impl
-
-    return impl(*args, **kwargs)
-
-
-def _create_configuration_table(*args: Any, **kwargs: Any) -> Table:
-    from .main import _create_configuration_table as impl
-
-    return impl(*args, **kwargs)
-
-
-def main_single_query(*args: Any, **kwargs: Any) -> None:
-    from .main import main_single_query as impl
-
-    return impl(*args, **kwargs)
-
-
-def main_async(*args: Any, **kwargs: Any) -> Coroutine[Any, Any, None]:
-    from .main import main_async as impl
-
-    return impl(*args, **kwargs)
-
-
-def main_optimize_async(*args: Any, **kwargs: Any) -> Coroutine[Any, Any, None]:
-    from .main import main_optimize_async as impl
-
-    return impl(*args, **kwargs)
 
 
 class _CgrGroup(TyperGroup):
@@ -1515,7 +1511,7 @@ def start(
     _update_and_validate_models(orchestrator, cypher)
 
     if not ask_agent and not update_graph:
-        app_context.console.print(_create_configuration_table(target_repo_path))
+        app_context.console.print(create_configuration_table(target_repo_path))
 
     if update_graph and not _start_update_graph(
         resolved_repo,

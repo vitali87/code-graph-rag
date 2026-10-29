@@ -5,12 +5,8 @@ from unittest.mock import MagicMock, patch
 
 from codebase_rag import constants as cs
 from codebase_rag.config import ModelConfig
-from codebase_rag.main import (
-    _dispatch_local_command,
-    _parse_keep_selection,
-    _selected_roots,
-    _session_question_text,
-)
+from codebase_rag.exclude_prompt import _parse_keep_selection, _selected_roots
+from codebase_rag.main import _dispatch_local_command, _session_question_text
 from codebase_rag.models import SessionState
 
 
@@ -23,7 +19,7 @@ class TestParseKeepSelection:
         assert regular == [1, 2]
 
     def test_invalid_parts_are_skipped(self) -> None:
-        with patch("codebase_rag.main.logger") as mock_logger:
+        with patch("codebase_rag.exclude_prompt.logger") as mock_logger:
             expand, regular = _parse_keep_selection(
                 f"abc,{cs.INTERACTIVE_EXPAND_SUFFIX},4"
             )
@@ -37,7 +33,7 @@ class TestSelectedRoots:
         assert _selected_roots([1, 0], ["a", "b"]) == ["b", "a"]
 
     def test_out_of_range_indices_warn(self) -> None:
-        with patch("codebase_rag.main.logger") as mock_logger:
+        with patch("codebase_rag.exclude_prompt.logger") as mock_logger:
             assert _selected_roots([-1, 2, 0], ["a", "b"]) == ["a"]
         assert mock_logger.warning.call_count == 2
 

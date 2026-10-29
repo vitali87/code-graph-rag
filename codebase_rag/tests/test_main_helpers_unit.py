@@ -13,9 +13,9 @@ from rich.table import Table
 
 from codebase_rag import constants as cs
 from codebase_rag.config import AppConfig, ModelConfig
+from codebase_rag.graph_export import export_graph_to_file
 from codebase_rag.main import (
     _build_user_prompt,
-    _create_configuration_table,
     _display_tool_call_diff,
     _find_multimodal_paths,
     _guess_media_type,
@@ -27,7 +27,7 @@ from codebase_rag.main import (
     _to_tool_args,
     _update_single_model_setting,
     app_context,
-    export_graph_to_file,
+    create_configuration_table,
     update_model_settings,
 )
 from codebase_rag.types_defs import ConfirmationToolNames, RawToolArgs
@@ -295,7 +295,7 @@ class TestCreateConfigurationTable:
         fake_settings.active_cypher_config = _model_config("openai", "gpt")
 
         with patch("codebase_rag.main.settings", fake_settings):
-            table = _create_configuration_table("/repo", language="python")
+            table = create_configuration_table("/repo", language="python")
 
         text = self._render(table)
         assert "claude" in text
@@ -313,7 +313,7 @@ class TestCreateConfigurationTable:
         )
 
         with patch("codebase_rag.main.settings", fake_settings):
-            table = _create_configuration_table("/repo")
+            table = create_configuration_table("/repo")
 
         text = self._render(table)
         assert text.count("http://localhost:11434") == 1
@@ -328,7 +328,7 @@ class TestCreateConfigurationTable:
         )
 
         with patch("codebase_rag.main.settings", fake_settings):
-            table = _create_configuration_table("/repo")
+            table = create_configuration_table("/repo")
 
         text = self._render(table)
         assert "http://one:11434" in text
