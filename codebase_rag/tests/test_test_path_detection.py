@@ -15,6 +15,7 @@ from codebase_rag import graph_query
 from codebase_rag.check.delta import _tests_reaching as delta_tests_reaching
 from codebase_rag.dead_code import collect_dead_code, default_dead_code_config
 from codebase_rag.path_filters import matches_test_path
+from codebase_rag.tests.conftest import DeadCodeIngestor
 from codebase_rag.types_defs import PropertyDict, ResultRow
 
 P = "proj"
@@ -151,19 +152,6 @@ def test_leading_slash_is_the_repo_root() -> None:
 # --- dead-code (issue reproduction) -------------------------------------------
 
 
-class _FakeIngestor:
-    def __init__(self, nodes: list[ResultRow], rels: list[ResultRow]) -> None:
-        self._nodes = nodes
-        self._rels = rels
-
-    def fetch_all(
-        self, query: str, params: dict[str, str] | None = None
-    ) -> list[ResultRow]:
-        if query == cq.CYPHER_DEAD_CODE_NODES:
-            return self._nodes
-        return self._rels
-
-
 def _node(label: str, qn: str, path: str) -> ResultRow:
     return {
         "label": label,
@@ -198,7 +186,7 @@ _HELPERS = (
 @pytest.mark.parametrize("include_tests", (True, False))
 def test_identical_unused_helpers_are_all_reported(include_tests: bool) -> None:
     rows = collect_dead_code(
-        _FakeIngestor(list(_HELPERS), []).fetch_all,
+        DeadCodeIngestor(list(_HELPERS), []).fetch_all,
         P,
         default_dead_code_config(include_tests=include_tests, include_classes=False),
     )
@@ -215,7 +203,9 @@ def test_unittest_file_roots_what_it_exercises() -> None:
     # With tests included, the *_unittest.cc caller is a root: neither it
     # nor the production function it alone calls is dead.
     rows = collect_dead_code(
-        _FakeIngestor([_COMPRESS, _UNITTEST], [_calls(_UNITTEST, _COMPRESS)]).fetch_all,
+        DeadCodeIngestor(
+            [_COMPRESS, _UNITTEST], [_calls(_UNITTEST, _COMPRESS)]
+        ).fetch_all,
         P,
         default_dead_code_config(include_tests=True, include_classes=False),
     )
@@ -226,7 +216,9 @@ def test_unittest_file_is_excluded_without_tests() -> None:
     # --no-include-tests: the test is not reported, the production function
     # only a test calls is.
     rows = collect_dead_code(
-        _FakeIngestor([_COMPRESS, _UNITTEST], [_calls(_UNITTEST, _COMPRESS)]).fetch_all,
+        DeadCodeIngestor(
+            [_COMPRESS, _UNITTEST], [_calls(_UNITTEST, _COMPRESS)]
+        ).fetch_all,
         P,
         default_dead_code_config(include_tests=False, include_classes=False),
     )

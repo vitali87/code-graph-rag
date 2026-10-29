@@ -2,26 +2,13 @@
 from __future__ import annotations
 
 from codebase_rag import constants as cs
-from codebase_rag import cypher_queries as cq
 from codebase_rag.dead_code import collect_dead_code, default_dead_code_config
+from codebase_rag.tests.conftest import DeadCodeIngestor
 from codebase_rag.types_defs import ResultRow
 
 _METHOD = cs.NodeLabel.METHOD.value
 _MODULE = cs.NodeLabel.MODULE.value
 _CALLS = cs.RelationshipType.CALLS.value
-
-
-class FakeIngestor:
-    def __init__(self, nodes: list[ResultRow], rels: list[ResultRow]) -> None:
-        self._nodes = nodes
-        self._rels = rels
-
-    def fetch_all(
-        self, query: str, params: dict[str, str] | None = None
-    ) -> list[ResultRow]:
-        if query == cq.CYPHER_DEAD_CODE_NODES:
-            return self._nodes
-        return self._rels
 
 
 def _method(qn: str, name: str, decorators: list[str] | None = None) -> ResultRow:
@@ -38,7 +25,7 @@ def _method(qn: str, name: str, decorators: list[str] | None = None) -> ResultRo
     }
 
 
-def _dead(ingestor: FakeIngestor) -> set[str]:
+def _dead(ingestor: DeadCodeIngestor) -> set[str]:
     config = default_dead_code_config(include_tests=True, include_classes=True)
     return {
         row["qualified_name"]
@@ -58,7 +45,7 @@ def test_attribute_and_dispose_methods_are_roots() -> None:
         _method("proj.Svc.Dispose", "Dispose"),
         _method("proj.Svc.Helper", "Helper"),
     ]
-    dead = _dead(FakeIngestor(nodes, []))
+    dead = _dead(DeadCodeIngestor(nodes, []))
 
     assert "proj.Svc.Helper" in dead
     assert "proj.Svc.T1" not in dead
@@ -76,7 +63,7 @@ def test_operator_and_finalizer_are_roots() -> None:
         _method("proj.Svc.~Svc", "~Svc"),
         _method("proj.Svc.Helper", "Helper"),
     ]
-    dead = _dead(FakeIngestor(nodes, []))
+    dead = _dead(DeadCodeIngestor(nodes, []))
 
     assert "proj.Svc.Helper" in dead
     assert "proj.Svc.operator_+(int, int)" not in dead

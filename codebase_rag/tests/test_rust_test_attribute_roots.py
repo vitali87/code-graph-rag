@@ -7,25 +7,12 @@
 from __future__ import annotations
 
 from codebase_rag import constants as cs
-from codebase_rag import cypher_queries as cq
 from codebase_rag.dead_code import collect_dead_code, default_dead_code_config
+from codebase_rag.tests.conftest import DeadCodeIngestor
 from codebase_rag.types_defs import ResultRow
 
 _FUNCTION = cs.NodeLabel.FUNCTION.value
 _MODULE = cs.NodeLabel.MODULE.value
-
-
-class FakeIngestor:
-    def __init__(self, nodes: list[ResultRow], rels: list[ResultRow]) -> None:
-        self._nodes = nodes
-        self._rels = rels
-
-    def fetch_all(
-        self, query: str, params: dict[str, str] | None = None
-    ) -> list[ResultRow]:
-        if query == cq.CYPHER_DEAD_CODE_NODES:
-            return self._nodes
-        return self._rels
 
 
 def _function(
@@ -79,7 +66,7 @@ def _collect(
     include_tests: bool = True,
 ) -> set[str]:
     rows = collect_dead_code(
-        FakeIngestor(nodes, rels or []).fetch_all,
+        DeadCodeIngestor(nodes, rels or []).fetch_all,
         "proj",
         default_dead_code_config(include_tests=include_tests, include_classes=False),
     )
@@ -242,7 +229,7 @@ def test_project_named_tests_still_reports() -> None:
     # The project prefix is not a module segment: a project directory
     # named `tests` must not silence Rust dead-code reporting wholesale.
     rows = collect_dead_code(
-        FakeIngestor(
+        DeadCodeIngestor(
             [_function("tests.src.lib.orphan", "orphan", "src/lib.rs")], []
         ).fetch_all,
         "tests",
@@ -386,7 +373,7 @@ def test_dotted_project_prefix_does_not_mask_reporting() -> None:
     # module match keys on real Module qns, so the prefix segments never
     # silence reporting.
     rows = collect_dead_code(
-        FakeIngestor(
+        DeadCodeIngestor(
             [
                 _module("my.tests.src.lib", "src/lib.rs"),
                 _function("my.tests.src.lib.orphan", "orphan", "src/lib.rs"),

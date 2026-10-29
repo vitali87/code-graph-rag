@@ -26,6 +26,7 @@ from loguru import logger
 os.environ["PYTHON_DOTENV_DISABLED"] = "1"
 
 from codebase_rag import constants as rag_cs
+from codebase_rag import cypher_queries as rag_cq
 from codebase_rag.capture import CaptureSelection
 from codebase_rag.doctor import graph_audit
 from codebase_rag.graph_updater import GraphUpdater
@@ -34,7 +35,7 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers import native_trees
 from codebase_rag.parsers.python.ast_analyzer import clear_scope_facts
 from codebase_rag.sync.checkout_state import state_file
-from codebase_rag.types_defs import GraphNodeRecord, GraphRelRecord
+from codebase_rag.types_defs import GraphNodeRecord, GraphRelRecord, ResultRow
 
 if TYPE_CHECKING:
     from codebase_rag.mcp.tools import MCPToolsRegistry
@@ -60,6 +61,22 @@ os.environ.setdefault("GRPC_VERBOSITY", "ERROR")
 # execs at once, the case gRPC's fork-support doc says to turn the handlers
 # off for; set to false, gRPC registers none.
 os.environ["GRPC_ENABLE_FORK_SUPPORT"] = "false"
+
+
+class DeadCodeIngestor:
+    """The graph `cgr dead-code` reads: `nodes` for its node query, `rels` for
+    any other, and every query asked, in order."""
+
+    def __init__(self, nodes: list[ResultRow], rels: list[ResultRow]) -> None:
+        self._nodes = nodes
+        self._rels = rels
+        self.queries: list[str] = []
+
+    def fetch_all(
+        self, query: str, params: dict[str, Any] | None = None
+    ) -> list[ResultRow]:
+        self.queries.append(query)
+        return self._nodes if query == rag_cq.CYPHER_DEAD_CODE_NODES else self._rels
 
 
 class NodeProtocol(Protocol):

@@ -28,6 +28,7 @@ from codebase_rag.dead_code import (
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services.protobuf_service import ProtobufFileIngestor
+from codebase_rag.tests.conftest import DeadCodeIngestor
 from codebase_rag.types_defs import (
     DeadCodeConfig,
     PropertyDict,
@@ -778,17 +779,6 @@ class TestLibraryModeIsUnchanged:
         assert _dead(graph, _config(public_roots=True)) == _dead(graph, _config())
 
 
-class FakeIngestor:
-    def __init__(self, nodes: list[ResultRow], rels: list[ResultRow]) -> None:
-        self._nodes = nodes
-        self._rels = rels
-
-    def fetch_all(
-        self, query: str, params: dict[str, PropertyValue] | None = None
-    ) -> list[ResultRow]:
-        return self._nodes if query == cq.CYPHER_DEAD_CODE_NODES else self._rels
-
-
 def _row(qn: str, path: str, *, label: str = "Function") -> ResultRow:
     return {
         "label": label,
@@ -818,7 +808,7 @@ def test_structural_tier_symbols_stay_roots_without_public_roots() -> None:
     config = _config(public_roots=False)
 
     rows = collect_dead_code(
-        FakeIngestor(_ruby_and_python_rows(), []).fetch_all, "proj", config
+        DeadCodeIngestor(_ruby_and_python_rows(), []).fetch_all, "proj", config
     )
 
     assert [row["qualified_name"] for row in rows] == ["proj.app.truly_unused"]

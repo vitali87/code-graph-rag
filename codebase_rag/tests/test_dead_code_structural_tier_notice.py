@@ -22,6 +22,7 @@ from codebase_rag.dead_code import (
     count_structural_tier_symbols,
     default_dead_code_config,
 )
+from codebase_rag.tests.conftest import DeadCodeIngestor
 from codebase_rag.types_defs import PropertyValue, ResultRow
 
 _FUNCTION = cs.NodeLabel.FUNCTION.value
@@ -29,19 +30,6 @@ _METHOD = cs.NodeLabel.METHOD.value
 _CLASS = cs.NodeLabel.CLASS.value
 _MODULE = cs.NodeLabel.MODULE.value
 _CALLS = cs.RelationshipType.CALLS.value
-
-
-class FakeIngestor:
-    def __init__(self, nodes: list[ResultRow], rels: list[ResultRow]) -> None:
-        self._nodes = nodes
-        self._rels = rels
-
-    def fetch_all(
-        self, query: str, params: dict[str, PropertyValue] | None = None
-    ) -> list[ResultRow]:
-        if query == cq.CYPHER_DEAD_CODE_NODES:
-            return self._nodes
-        return self._rels
 
 
 def _node(
@@ -149,7 +137,7 @@ class TestCountStructuralTierSymbols:
         nodes = _ruby_and_python_nodes()
         config = default_dead_code_config(include_tests=True, include_classes=True)
 
-        rows = collect_dead_code(FakeIngestor(nodes, []).fetch_all, "proj", config)
+        rows = collect_dead_code(DeadCodeIngestor(nodes, []).fetch_all, "proj", config)
 
         assert [row["qualified_name"] for row in rows] == ["proj.app.orphan"]
         assert count_structural_tier_symbols(nodes) == 3

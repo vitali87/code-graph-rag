@@ -6,24 +6,11 @@
 from __future__ import annotations
 
 from codebase_rag import constants as cs
-from codebase_rag import cypher_queries as cq
 from codebase_rag.dead_code import collect_dead_code, default_dead_code_config
+from codebase_rag.tests.conftest import DeadCodeIngestor
 from codebase_rag.types_defs import ResultRow
 
 _METHOD = cs.NodeLabel.METHOD.value
-
-
-class FakeIngestor:
-    def __init__(self, nodes: list[ResultRow], rels: list[ResultRow]) -> None:
-        self._nodes = nodes
-        self._rels = rels
-
-    def fetch_all(
-        self, query: str, params: dict[str, str] | None = None
-    ) -> list[ResultRow]:
-        if query == cq.CYPHER_DEAD_CODE_NODES:
-            return self._nodes
-        return self._rels
 
 
 def _method(qn: str, name: str, path: str) -> ResultRow:
@@ -42,7 +29,7 @@ def _method(qn: str, name: str, path: str) -> ResultRow:
 
 def _collect(nodes: list[ResultRow]) -> set[str]:
     rows = collect_dead_code(
-        FakeIngestor(nodes, []).fetch_all,
+        DeadCodeIngestor(nodes, []).fetch_all,
         "proj",
         default_dead_code_config(include_tests=True, include_classes=False),
     )
