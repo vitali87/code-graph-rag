@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from functools import lru_cache, wraps
 from pathlib import Path
 from types import MappingProxyType
-from typing import Concatenate, NamedTuple
+from typing import Any, NamedTuple
 
 from loguru import logger
 from tree_sitter import Node, Query, QueryCursor
@@ -34,7 +34,7 @@ from ..types_defs import (
 from ..utils import qn_markers
 from ..utils.fqn_resolver import scoped_name_parts
 from ..utils.path_utils import cached_relative_path
-from .call_resolver import PY_EXTERNAL_TARGET, CallResolver
+from .call_resolver import PY_EXTERNAL_TARGET, CallResolver, Resolved
 from .class_ingest.identity import build_nested_qualified_name_for_class
 from .cpp import local_types as cpp_local_types
 from .cpp import utils as cpp_utils
@@ -1325,22 +1325,14 @@ _RESOLVED_RELS = frozenset(
 )
 
 
-def _preserves_verdict[**P, R](
-    fn: Callable[Concatenate[CallProcessor, P], R],
-) -> Callable[Concatenate[CallProcessor, P], R]:
-    # The resolver's verdict belongs to the call node being emitted; the
-    # passes that resolve a call's ARGUMENTS (callable flow, function
-    # references, callable parameters) go through the resolver too and would
-    # otherwise overwrite it before the edge reads it back (issue #1526).
-    @wraps(fn)
-    def wrapper(self: CallProcessor, *args: P.args, **kwargs: P.kwargs) -> R:
-        saved = self._resolver.last_resolution
-        try:
-            return fn(self, *args, **kwargs)
-        finally:
-            self._resolver.last_resolution = saved
-
-    return wrapper
+def _verdict_of(resolved: tuple[str, str] | None) -> str:
+    """How surely a callee binds: the resolver's own verdict, and exact for an
+    answer a frontend or a language engine gave, which never guesses."""
+    return (
+        resolved.resolution
+        if isinstance(resolved, Resolved)
+        else cs.EdgeResolution.EXACT
+    )
 
 
 def _site_scoped[**P, R](fn: Callable[P, R]) -> Callable[P, R]:
@@ -2142,6 +2134,7 @@ class CallProcessor:
         "_note_unresolved",
         "_site_node",
         "_resolution",
+        "_verdict",
         "_site_cache",
         "repo_path",
         "project_name",
@@ -2195,6 +2188,11 @@ class CallProcessor:
         # Confidence of the edges emitted next (issue #1526); the main call
         # loop sets it from the resolver, fan-outs mark overloads.
         self._resolution: str = cs.EdgeResolution.EXACT
+        # How surely the call node being scanned binds its callee (issue
+        # #1526): noted where the scan resolves it, adjusted by the judgments
+        # that follow, and read when its edges are emitted. The passes over
+        # its arguments resolve their own references and keep their own.
+        self._verdict: str = cs.EdgeResolution.EXACT
         # Keyed by the node OBJECT, not Node.id: tree-sitter recycles ids
         # across trees, and holding the node keeps its id from being reused.
         self._site_cache: tuple[Node, PropertyDict] | None = None
@@ -5579,7 +5577,7 @@ class CallProcessor:
             else frozenset()
         )
         resolver = self._resolver
-        resolve_func = resolver.resolve_function_call
+        resolve_func = self._resolve_noting
         resolve_builtin = resolver.resolve_builtin_call if is_js_ts else None
         resolve_cpp_op = resolver.resolve_cpp_operator_call if is_cpp else None
         is_python = language == cs.SupportedLanguage.PYTHON
@@ -5634,6 +5632,16 @@ class CallProcessor:
             arg_ref_rel=arg_ref_rel,
         )
 
+    def _noted[R: tuple[str, str] | None](self, resolved: R) -> R:
+        """`resolved`, with its verdict noted as the call node's."""
+        self._verdict = _verdict_of(resolved)
+        return resolved
+
+    def _resolve_noting(self, *args: Any, **kwargs: Any) -> Resolved | None:
+        """The resolver's answer for the call node being scanned, its verdict
+        noted for the edge the scan emits."""
+        return self._noted(self._resolver.resolve_function_call(*args, **kwargs))
+
     def _ingest_call_node(self, ctx: _CallScanContext, call_node: Node) -> None:
         if _exceeds_receiver_chain_cap(call_node):
             # Left unresolved: resolving it would re-read the whole chain.
@@ -5641,11 +5649,11 @@ class CallProcessor:
         self._site_node = call_node
         self._resolution = cs.EdgeResolution.EXACT
         # A callee bound by a language frontend (Jedi, the Java and C#
-        # engines, the Go frontend, a typed C++ operator) never enters
-        # resolve_function_call, which is where the resolver resets its
+        # engines, the Go frontend, a typed C++ operator) never passes
+        # through `_noted`, which is where a resolver answer sets the
         # verdict; without this reset such an edge would inherit the
         # label the previous call node left behind (issue #1526).
-        self._resolver.last_resolution = cs.EdgeResolution.EXACT
+        self._verdict = cs.EdgeResolution.EXACT
         if ctx.is_java and call_node.type == cs.TS_JAVA_METHOD_REFERENCE:
             self._ingest_java_method_reference(ctx, call_node)
             return
@@ -5704,7 +5712,7 @@ class CallProcessor:
                     ctx.module_qn,
                     ctx.local_var_types,
                     ctx.class_context,
-                    ctx.resolve_func,
+                    self._resolver.resolve_function_call,
                     ctx.ensure_rel,
                     ctx.caller_qn,
                     cs.RelationshipType.REFERENCES,
@@ -5995,7 +6003,7 @@ class CallProcessor:
                 ctx.module_qn,
                 ctx.local_var_types,
                 ctx.class_context,
-                ctx.resolve_func,
+                self._resolver.resolve_function_call,
                 ctx.ensure_rel,
                 ctx.caller_qn,
             )
@@ -6138,7 +6146,7 @@ class CallProcessor:
         # not define (`Map`, a library class, `any`) cannot be that class, so
         # there is no edge, as for a local `new Map()`. Anything else stays
         # the heuristic it is.
-        if self._resolver.last_resolution != cs.EdgeResolution.HEURISTIC:
+        if self._verdict != cs.EdgeResolution.HEURISTIC:
             return callee_info
         func = call_node.child_by_field_name(cs.FIELD_FUNCTION)
         if func is not None and func.type in cs.TS_JS_PREFIXED_CALLEES:
@@ -6157,7 +6165,7 @@ class CallProcessor:
         if owner_qn in self._resolver._mro(
             self._resolver._follow_reexports(declared.qn)
         ):
-            self._resolver.last_resolution = cs.EdgeResolution.EXACT
+            self._verdict = cs.EdgeResolution.EXACT
         return callee_info
 
     def _js_receiver_declaration(
@@ -6619,7 +6627,7 @@ class CallProcessor:
         path = php_class_names.new_expression_class_path(call_node)
         if not path:
             return None
-        return self._resolver.resolve_php_class_path(path, ctx.module_qn)
+        return self._noted(self._resolver.resolve_php_class_path(path, ctx.module_qn))
 
     def _resolve_php_typed_member(
         self, ctx: _CallScanContext, call_node: Node, call_name: str
@@ -6632,8 +6640,10 @@ class CallProcessor:
         path = php_class_names.receiver_class_path(call_node, ctx.php_scope_classes)
         if not path:
             return None
-        return self._resolver.resolve_php_method_on_class_path(
-            path, call_name, ctx.module_qn
+        return self._noted(
+            self._resolver.resolve_php_method_on_class_path(
+                path, call_name, ctx.module_qn
+            )
         )
 
     def _resolve_java_callee(
@@ -6672,7 +6682,7 @@ class CallProcessor:
         )
         if not ties:
             return
-        self._resolver.last_resolution = cs.EdgeResolution.OVERLOAD
+        self._verdict = cs.EdgeResolution.OVERLOAD
         prev_resolution = self._resolution
         self._resolution = cs.EdgeResolution.OVERLOAD
         registry = self._resolver.function_registry
@@ -6894,7 +6904,7 @@ class CallProcessor:
         ):
             return None
         owned = root_callee[0] == cs.NodeLabel.FUNCTION
-        if self._resolver.last_resolution != cs.EdgeResolution.EXACT:
+        if self._verdict != cs.EdgeResolution.EXACT:
             return owned, None
         return owned, self._go_result_class(root_callee)
 
@@ -7227,7 +7237,6 @@ class CallProcessor:
         functor = self._cpp_functor_operator(arg_node, module_qn, local_var_types)
         if functor is None:
             return False
-        self._resolver.last_resolution = cs.EdgeResolution.EXACT
         self._emit_callback_targets(
             source_spec,
             functor[0],
@@ -7236,6 +7245,7 @@ class CallProcessor:
             ensure_rel,
             module_qn,
             language,
+            cs.EdgeResolution.EXACT,
         )
         return True
 
@@ -7376,7 +7386,7 @@ class CallProcessor:
                 ctx.module_qn,
                 ctx.local_var_types,
                 ctx.class_context,
-                ctx.resolve_func,
+                self._resolver.resolve_function_call,
                 ctx.ensure_rel,
                 ctx.caller_qn,
                 ctx.arg_ref_rel,
@@ -7443,7 +7453,7 @@ class CallProcessor:
                     ctx.module_qn,
                     ctx.local_var_types,
                     ctx.class_context,
-                    ctx.resolve_func,
+                    self._resolver.resolve_function_call,
                     ctx.ensure_rel,
                     ctx.caller_qn,
                     ctx.arg_ref_rel,
@@ -7474,7 +7484,7 @@ class CallProcessor:
                 ctx.module_qn,
                 ctx.local_var_types,
                 ctx.class_context,
-                ctx.resolve_func,
+                self._resolver.resolve_function_call,
                 ctx.ensure_rel,
                 ctx.caller_qn,
                 cs.RelationshipType.REFERENCES,
@@ -7498,9 +7508,7 @@ class CallProcessor:
         # Twin classes take the same stamp the class branch gives a
         # two-candidate construction.
         self._resolution = (
-            cs.EdgeResolution.OVERLOAD
-            if len(owner_variants) > 1
-            else self._resolver.last_resolution
+            cs.EdgeResolution.OVERLOAD if len(owner_variants) > 1 else self._verdict
         )
         for class_variant in owner_variants:
             ctx.ensure_rel(
@@ -7540,7 +7548,7 @@ class CallProcessor:
             # `.get(...)`) says nothing about the receiver: fanning it out
             # turned one guess into exact edges to every conformer, test
             # doubles included (issue #2931). It stays one heuristic edge.
-            and self._resolver.last_resolution != cs.EdgeResolution.HEURISTIC
+            and self._verdict != cs.EdgeResolution.HEURISTIC
             and (
                 dispatch_targets := self._resolver.protocol_dispatch_targets(callee_qn)
             )
@@ -7599,7 +7607,7 @@ class CallProcessor:
                 ctx.module_qn,
                 ctx.local_var_types,
                 ctx.class_context,
-                ctx.resolve_func,
+                self._resolver.resolve_function_call,
                 ctx.caller_qn,
             )
 
@@ -7645,9 +7653,7 @@ class CallProcessor:
         # a fan-out like any other same-named candidate set (issue #1526):
         # renaming one conformer must not rewrite the shared call site.
         self._resolution = (
-            cs.EdgeResolution.OVERLOAD
-            if len(edges) > 1
-            else self._resolver.last_resolution
+            cs.EdgeResolution.OVERLOAD if len(edges) > 1 else self._verdict
         )
         for conformer_type, target_qn in edges:
             ctx.ensure_rel(
@@ -7708,9 +7714,7 @@ class CallProcessor:
                 and variant not in self.facts.macro_qns
             ]
         self._resolution = (
-            cs.EdgeResolution.OVERLOAD
-            if len(class_variants) > 1
-            else self._resolver.last_resolution
+            cs.EdgeResolution.OVERLOAD if len(class_variants) > 1 else self._verdict
         )
         for class_variant in class_variants:
             # A duplicate-suffixed variant may be a DIFFERENT kind
@@ -7783,9 +7787,7 @@ class CallProcessor:
         # FILTERED target set (#1882).
         if fn_variants:
             self._resolution = (
-                cs.EdgeResolution.OVERLOAD
-                if len(fn_variants) > 1
-                else self._resolver.last_resolution
+                cs.EdgeResolution.OVERLOAD if len(fn_variants) > 1 else self._verdict
             )
             for node_type, variant in sorted(fn_variants):
                 ctx.ensure_rel(
@@ -7802,9 +7804,7 @@ class CallProcessor:
             for variant in self._resolver.function_registry.variants(ctor_qn)
         ]
         self._resolution = (
-            cs.EdgeResolution.OVERLOAD
-            if len(ctor_edges) > 1
-            else self._resolver.last_resolution
+            cs.EdgeResolution.OVERLOAD if len(ctor_edges) > 1 else self._verdict
         )
         for ctor_type, variant in ctor_edges:
             ctx.ensure_rel(
@@ -7887,9 +7887,7 @@ class CallProcessor:
             self._note_unresolved(ctx.module_qn, parts.method_name)
             return
         self._resolution = (
-            cs.EdgeResolution.OVERLOAD
-            if len(edges) > 1
-            else self._resolver.last_resolution
+            cs.EdgeResolution.OVERLOAD if len(edges) > 1 else self._verdict
         )
         for label, target_qn in edges:
             ctx.ensure_rel(
@@ -7981,7 +7979,7 @@ class CallProcessor:
             targets = [callee_qn]
         # The resolver's verdict on this callee, then one edge per
         # same-named candidate when the callee fans out (issue #1526).
-        self._resolution = self._resolver.last_resolution
+        self._resolution = self._verdict
         exact_in_every_build: dict[str, bool] = {}
         if ctx.language == cs.SupportedLanguage.GO:
             targets, exact_in_every_build = self._go_build_targets(
@@ -10275,8 +10273,10 @@ class CallProcessor:
             return None
         if not (text := safe_decode_text(node)):
             return None
-        resolved = self._resolver.resolve_function_call(
-            text, module_qn, local_var_types, class_context, caller_qn
+        resolved = self._noted(
+            self._resolver.resolve_function_call(
+                text, module_qn, local_var_types, class_context, caller_qn
+            )
         )
         if resolved is None or resolved[0] not in _CALLABLE_NODE_LABELS:
             return None
@@ -10385,10 +10385,17 @@ class CallProcessor:
         ):
             return
         res_type, res_qn = resolved
+        resolution = _verdict_of(resolved)
         registry = self._resolver.function_registry
         if res_type == cs.NodeLabel.CLASS:
             constructor = self._class_callback_target(
-                source_spec, res_qn, rel_type, ensure_rel, module_qn, language
+                source_spec,
+                res_qn,
+                rel_type,
+                ensure_rel,
+                module_qn,
+                language,
+                resolution,
             )
             if constructor is None:
                 return
@@ -10414,7 +10421,14 @@ class CallProcessor:
         if language == cs.SupportedLanguage.DART and registry.is_property(res_qn):
             return
         self._emit_callback_targets(
-            source_spec, res_type, res_qn, rel_type, ensure_rel, module_qn, language
+            source_spec,
+            res_type,
+            res_qn,
+            rel_type,
+            ensure_rel,
+            module_qn,
+            language,
+            resolution,
         )
 
     def _class_callback_target(
@@ -10425,6 +10439,7 @@ class CallProcessor:
         ensure_rel: Callable[..., None],
         module_qn: str,
         language: cs.SupportedLanguage | None,
+        resolution: str,
     ) -> tuple[str, str] | None:
         # A class passed as a callback is called through its constructor.
         # None when the edges were already fanned out here, or when the
@@ -10444,6 +10459,7 @@ class CallProcessor:
                 ensure_rel,
                 module_qn,
                 language,
+                resolution,
             )
             return None
         init_qn = f"{class_qn}{cs.SEPARATOR_DOT}{cs.PY_METHOD_INIT}"
@@ -10526,12 +10542,12 @@ class CallProcessor:
         ensure_rel: Callable[..., None],
         module_qn: str,
         language: cs.SupportedLanguage | None,
+        resolution: str,
     ) -> None:
         registry = self._resolver.function_registry
-        # The callback's OWN verdict, not the enclosing call's. `resolve_func`
-        # just ran the resolver on `arg_text`, so `last_resolution` describes
-        # this reference; `self._resolution` still describes the call whose
-        # argument it is. Emitting through the stale value labelled a callback
+        # The callback's OWN verdict, not the enclosing call's: `resolution`
+        # is how surely this reference resolved; `self._resolution` still
+        # describes the call whose argument it is. Emitting through the stale value labelled a callback
         # found only by trie fallback as exact, so `dead-code --min-resolution
         # exact` kept a target it should have dropped (#1543). Scoped:
         # the enclosing call's label is restored on the way out, so the edge
@@ -10543,9 +10559,7 @@ class CallProcessor:
         prev_resolution = self._resolution
         targets = registry.variants(res_qn)
         self._resolution = (
-            cs.EdgeResolution.OVERLOAD
-            if len(targets) > 1
-            else self._resolver.last_resolution
+            cs.EdgeResolution.OVERLOAD if len(targets) > 1 else resolution
         )
         try:
             for variant in targets:
@@ -10587,7 +10601,6 @@ class CallProcessor:
                 module_qn, target_module
             )
 
-    @_preserves_verdict
     def _ingest_callable_param_calls(
         self,
         call_node: Node,
@@ -10655,7 +10668,6 @@ class CallProcessor:
                 for node in nodes
             )
 
-    @_preserves_verdict
     def _collect_callable_flow(
         self,
         call_node: Node,
@@ -10970,7 +10982,6 @@ class CallProcessor:
                     (registry[target_qn], cs.KEY_QUALIFIED_NAME, target_qn),
                 )
 
-    @_preserves_verdict
     def _ingest_higher_order_builtin_calls(
         self,
         call_node: Node,
@@ -10995,7 +11006,6 @@ class CallProcessor:
                 caller_qn,
             )
 
-    @_preserves_verdict
     def _ingest_argument_function_references(
         self,
         call_node: Node,

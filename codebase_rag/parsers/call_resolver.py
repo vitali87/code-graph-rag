@@ -100,6 +100,22 @@ _RS_OWNER_NODE_TYPES = frozenset(
 _PY_SELF_RECEIVERS = frozenset({cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS})
 
 
+class Resolved(tuple[str, str]):
+    """A callee as `(label, qn)`, with how sure the binding is.
+
+    Unpacks and compares as the pair, so a caller that needs only the callee
+    reads it as one; `resolution` is the edge label the binding earns
+    (issue #1526).
+    """
+
+    resolution: str
+
+    def __new__(cls, label: str, qn: str, resolution: str) -> Resolved:
+        resolved = super().__new__(cls, (label, qn))
+        resolved.resolution = resolution
+        return resolved
+
+
 class _PhpCasedIndex(NamedTuple):
     """PHP definitions declared with capitals, by ASCII-folded name."""
 
@@ -315,7 +331,7 @@ class CallResolver:
         "go_builds",
         "_interface_impl_cache",
         "_simple_resolution_cache",
-        "last_resolution",
+        "_verdict",
         "_resolution_labels",
         "_wildcard_cache",
         "_protocol_impl_cache",
@@ -381,9 +397,11 @@ class CallResolver:
         self._simple_resolution_cache: dict[
             tuple[str, str, bool], tuple[str, str] | None
         ] = {}
-        # The branch that produced the last answer (issue #1526), memoised
-        # beside the cache so a hit reports the same confidence as the miss.
-        self.last_resolution: str = cs.EdgeResolution.EXACT
+        # How sure the answer being built is (issue #1526): the branch that
+        # binds a callee marks it, and the entry point hands it back with the
+        # answer. Memoised beside the cache so a hit reports the same
+        # confidence as the miss.
+        self._verdict: str = cs.EdgeResolution.EXACT
         self._resolution_labels: dict[tuple[str, str, bool], str] = {}
         self._wildcard_cache: dict[int, list[tuple[str, str]]] = {}
         self._protocol_impl_cache: dict[str, str] | None = None
@@ -642,11 +660,11 @@ class CallResolver:
         language: cs.SupportedLanguage | None = None,
         call_point: int | None = None,
         constructing: bool = False,
-    ) -> tuple[str, str] | None:
+    ) -> Resolved | None:
         """`constructing`: the call is a Java/C# `new X(...)`, so `call_name`
         names a TYPE and the simple-name fallback must not offer a method or
         function that merely shares the name."""
-        self.last_resolution = cs.EdgeResolution.EXACT
+        self._verdict = cs.EdgeResolution.EXACT
         result = self._reject_class_via_value_receiver(
             self._redirect_protocol_method(
                 self._resolve_function_call(
@@ -681,8 +699,8 @@ class CallResolver:
         if result is not None and self._receiver_typed_by_name(call_name, caller_qn):
             # The receiver's class is only what its parameter's name spells
             # (`payload` -> `Payload`): a guess, never an exact binding (#2608).
-            self.last_resolution = cs.EdgeResolution.HEURISTIC
-        return result
+            self._verdict = cs.EdgeResolution.HEURISTIC
+        return None if result is None else Resolved(*result, self._verdict)
 
     def _receiver_typed_by_name(self, call_name: str, caller_qn: str | None) -> bool:
         if not caller_qn or cs.SEPARATOR_DOT not in call_name:
@@ -1990,7 +2008,7 @@ class CallResolver:
 
         cache_key = self._resolution_cache_key(call)
         if cache_key is not None and cache_key in self._simple_resolution_cache:
-            self.last_resolution = self._resolution_labels.get(
+            self._verdict = self._resolution_labels.get(
                 cache_key, cs.EdgeResolution.EXACT
             )
             return self._simple_resolution_cache[cache_key]
@@ -2689,7 +2707,7 @@ class CallResolver:
                 # #2609). Only the call site's AST can say that, so the call
                 # processor confirms or drops the pick from the receiver's
                 # declaration; this caller-independent verdict is what caches.
-                self.last_resolution = cs.EdgeResolution.HEURISTIC
+                self._verdict = cs.EdgeResolution.HEURISTIC
             self._remember_cacheable(cache_key, result)
             return True, result
 
@@ -2716,7 +2734,7 @@ class CallResolver:
         self, cache_key: tuple[str, str, bool], result: tuple[str, str] | None
     ) -> None:
         self._simple_resolution_cache[cache_key] = result
-        self._resolution_labels[cache_key] = self.last_resolution
+        self._resolution_labels[cache_key] = self._verdict
 
     def _rust_name_maps_unresolvable(
         self, call_name: str, module_qn: str, caller_qn: str | None
@@ -2850,7 +2868,7 @@ class CallResolver:
             return None
         best = self._best_trie_candidate(candidates, call.module_qn)
         owner = best.rpartition(cs.SEPARATOR_DOT)[0]
-        self.last_resolution = (
+        self._verdict = (
             cs.EdgeResolution.EXACT
             if owner in owners
             or (self_type is not None and owner not in self.function_registry)
@@ -3761,6 +3779,14 @@ class CallResolver:
 
     def resolve_php_class_path(
         self, path: PhpClassPath, module_qn: str
+    ) -> Resolved | None:
+        """The class a fully qualified PHP class path names, and how surely."""
+        self._verdict = cs.EdgeResolution.EXACT
+        found = self._php_class_path(path, module_qn)
+        return None if found is None else Resolved(*found, self._verdict)
+
+    def _php_class_path(
+        self, path: PhpClassPath, module_qn: str
     ) -> tuple[str, str] | None:
         """The class a fully qualified PHP class path names (issue #2466).
 
@@ -3798,7 +3824,7 @@ class CallResolver:
         if not candidates:
             return None
         best = self._best_trie_candidate(candidates, module_qn)
-        self.last_resolution = cs.EdgeResolution.HEURISTIC
+        self._verdict = cs.EdgeResolution.HEURISTIC
         return self.function_registry[best], best
 
     def _php_class_candidates(self, symbol: str) -> list[str]:
@@ -3852,11 +3878,13 @@ class CallResolver:
 
     def resolve_php_method_on_class_path(
         self, path: PhpClassPath, method_name: str, module_qn: str
-    ) -> tuple[str, str] | None:
-        """`method_name` on the class `path` names, declared or inherited."""
+    ) -> Resolved | None:
+        """`method_name` on the class `path` names, declared or inherited,
+        bound as surely as the class is."""
         if (owner := self.resolve_php_class_path(path, module_qn)) is None:
             return None
-        return self._php_method(owner[1], method_name)
+        method = self._php_method(owner[1], method_name)
+        return None if method is None else Resolved(*method, owner.resolution)
 
     def php_constructor(self, class_qn: str) -> tuple[str, str] | None:
         """The `__construct` a `new` of `class_qn` runs: the class's own, else
@@ -4186,7 +4214,7 @@ class CallResolver:
             return None
         for _, imported_qn in wildcards:
             if result := self._try_wildcard_qns(call_name, imported_qn):
-                self.last_resolution = cs.EdgeResolution.HEURISTIC
+                self._verdict = cs.EdgeResolution.HEURISTIC
                 return result
         return None
 
@@ -5031,7 +5059,7 @@ class CallResolver:
 
         best_candidate_qn = self._best_trie_candidate(possible_matches, module_qn)
         logger.debug(ls.CALL_TRIE_FALLBACK, call_name=call_name, qn=best_candidate_qn)
-        self.last_resolution = cs.EdgeResolution.HEURISTIC
+        self._verdict = cs.EdgeResolution.HEURISTIC
         return self.function_registry[best_candidate_qn], best_candidate_qn
 
     def _best_trie_candidate(self, possible_matches: list[str], module_qn: str) -> str:
@@ -5223,7 +5251,7 @@ class CallResolver:
             return None
         resolved = self._try_resolve_module_method(method_name, call_name, module_qn)
         if resolved is not None:
-            self.last_resolution = cs.EdgeResolution.HEURISTIC
+            self._verdict = cs.EdgeResolution.HEURISTIC
         return resolved
 
     def _try_resolve_static_type_method(
@@ -5454,7 +5482,7 @@ class CallResolver:
             return None
         member_qn = min(candidates)
         if len(candidates) > 1:
-            self.last_resolution = cs.EdgeResolution.HEURISTIC
+            self._verdict = cs.EdgeResolution.HEURISTIC
         logger.debug(ls.CALL_PACKAGE_MEMBER, member=member_name, qn=member_qn)
         return self.function_registry[member_qn], member_qn
 
@@ -6205,10 +6233,7 @@ class CallResolver:
         # Read right after the callee resolved. A JS/TS callee bound only by
         # name is a guess, and typing the rest of the chain from its return
         # would build every later hop on that guess.
-        if (
-            language in cs.JS_TS_LANGUAGES
-            and self.last_resolution != cs.EdgeResolution.EXACT
-        ):
+        if language in cs.JS_TS_LANGUAGES and self._verdict != cs.EdgeResolution.EXACT:
             return None
         return self._hop_return_type(callee_qn, language)
 
@@ -6351,9 +6376,7 @@ class CallResolver:
             call.call_point,
         )
         if resolved is not None:
-            return (
-                resolved[1] if self.last_resolution == cs.EdgeResolution.EXACT else None
-            )
+            return resolved[1] if self._verdict == cs.EdgeResolution.EXACT else None
         # `this.m()` in an arrow: name resolution climbs from the arrow to its
         # method, not the class, so the call processor anchors such a call on
         # the enclosing class instead (#971). The hop is typed the same way.
