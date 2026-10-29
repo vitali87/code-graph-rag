@@ -61,10 +61,10 @@ Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by c
 ## Latest News 🔥
 
 <!-- SECTION:latest_news -->
-- **Signature Feature**: The `change_signature` operation is now exposed through the CLI and MCP, with updated documentation.
-- **Security Improvements**: Enhanced security measures include repository approval checks and warnings before reading credential files.
-- **Fuzzing Targets**: New fuzzing targets have been added for both the graph-rs and Rust indexer, improving code robustness.
-- **Configuration Management**: The OSS Scanner image's Python base is being held at version 3.12 for stability.
+- **CLI and MCP Improvements**: The CLI and MCP now support the `change_signature` operation and include enhanced security features like repository approval and credential file handling.
+- **Fuzzing Targets Added**: New fuzzing targets have been added for both the graph-rs and the overall system, increasing robustness.
+- **Configuration Handling**: `.env` files are now ignored except for the example file, improving security and preventing accidental commits of sensitive information.
+- **Security Focus**: Several changes focus on improving the security of the system, including stricter controls around credential files and repository loading.
 <!-- /SECTION:latest_news -->
 
 See [NEWS.md](NEWS.md) for the full history.
