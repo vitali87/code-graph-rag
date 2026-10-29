@@ -37,6 +37,7 @@ WRITERS = frozenset(
         cs.MCPToolName.UPDATE_REPOSITORY,
         cs.MCPToolName.REINGEST,
         cs.MCPToolName.RENAME,
+        cs.MCPToolName.CHANGE_SIGNATURE,
         cs.MCPToolName.SURGICAL_REPLACE_CODE,
         cs.MCPToolName.WRITE_FILE,
         cs.MCPToolName.STRUCTURAL_REPLACE,
@@ -77,7 +78,7 @@ async def _tools() -> dict[str, Tool]:
     return {tool.name: tool for tool in listed.tools}
 
 
-async def _call(name: str, arguments: dict[str, str]) -> CallToolResult:
+async def _call(name: str, arguments: dict[str, object]) -> CallToolResult:
     server, _ingestor = mcp_server.create_server()
     async with create_connected_server_and_client_session(server) as client:
         return await client.call_tool(name, arguments)
@@ -118,6 +119,7 @@ async def test_the_destructive_tools_say_so(repo: Path, no_llm: None) -> None:
         cs.MCPToolName.DELETE_PROJECT,
         cs.MCPToolName.WRITE_FILE,
         cs.MCPToolName.STRUCTURAL_REPLACE,
+        cs.MCPToolName.CHANGE_SIGNATURE,
     ):
         annotations = tools[name].annotations
         assert annotations is not None
@@ -151,6 +153,21 @@ async def test_a_read_only_server_refuses_a_writer_called_by_name(
     assert result.isError is True
     assert "read-only" in _text(result)
     assert not (repo / "new.py").exists()
+
+
+async def test_a_read_only_server_refuses_change_signature(
+    repo: Path, no_llm: None, read_only: None
+) -> None:
+    before = (repo / "lib.py").read_text(encoding="utf-8")
+
+    result = await _call(
+        cs.MCPToolName.CHANGE_SIGNATURE,
+        {"qualified_name": "proj.lib.helper", "new_params": ["a", "b"]},
+    )
+
+    assert result.isError is True
+    assert "read-only" in _text(result)
+    assert (repo / "lib.py").read_text(encoding="utf-8") == before
 
 
 async def test_a_read_only_server_still_reads(
