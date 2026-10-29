@@ -61,10 +61,9 @@ Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by c
 ## Latest News 🔥
 
 <!-- SECTION:latest_news -->
-- **CLI and MCP Improvements**: The CLI and MCP now support the `change_signature` operation and include enhanced security features like repository approval and credential file handling.
-- **Fuzzing Targets Added**: New fuzzing targets have been added for both the graph-rs and the overall system, increasing robustness.
-- **Configuration Handling**: `.env` files are now ignored except for the example file, improving security and preventing accidental commits of sensitive information.
-- **Security Focus**: Several changes focus on improving the security of the system, including stricter controls around credential files and repository loading.
+- **Dependencies Updated**: Several dependencies have been updated to the latest versions, including neo4j, qdrant-client, and transformers, bringing in bug fixes and new features.
+- **CLI Improvements**: The `change_signature` operation is now accessible through the CLI and MCP, with updated documentation.
+- **Graph-RS Fuzzing**: Expanded fuzz testing for the graph-rs component with new targets for procedures, bulk writing, and input decoding.
 <!-- /SECTION:latest_news -->
 
 See [NEWS.md](NEWS.md) for the full history.
