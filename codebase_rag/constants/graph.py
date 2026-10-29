@@ -1532,11 +1532,12 @@ CYPHER_RUST_TRAITS_WITH_REQUIRED_METHODS = (
     "RETURN DISTINCT trait.qualified_name AS qualified_name"
 )
 
-# C# type declaration locations for incremental runs: _join_csharp_partials
-# resolves each Roslyn partial-declaration location against csharp_type_locations,
-# which Pass 2 fills only for RE-PARSED files. Rebuild the (path, start_line) ->
-# qn entries for types in UNCHANGED .cs files from the persisted graph so a
-# partial part in an unchanged file still joins its group (issue #1229).
+# C# type declaration locations for incremental runs: the partial join
+# (parsers/csharp/graph_joins.py) resolves each Roslyn partial-declaration
+# location against csharp_type_locations, which Pass 2 fills only for
+# RE-PARSED files. Rebuild the (path, start_line) -> qn entries for types in
+# UNCHANGED .cs files from the persisted graph so a partial part in an
+# unchanged file still joins its group (issue #1229).
 CYPHER_ALL_CSHARP_TYPE_LOCATIONS = (
     "MATCH (n) WHERE (n:Class OR n:Interface OR n:Enum) "
     "AND n.qualified_name STARTS WITH $project_prefix "

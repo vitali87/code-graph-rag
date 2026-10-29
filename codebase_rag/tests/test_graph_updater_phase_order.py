@@ -68,7 +68,7 @@ _SOURCE = Path(__file__).resolve().parents[1] / "graph_updater.py"
 #   flush" -- `flush_all` is called twice, so it is a poor anchor.
 # * "Before the partial join on an incremental run: rebuild the type
 #   locations for unchanged .cs files" (#1229) -- a genuine
-#   `_rehydrate_csharp_type_locations` -> `_join_csharp_partials`
+#   `_rehydrate_csharp_type_locations` -> `join_partials`
 #   dependency, but the comment sits above the enclosing `if`, not above
 #   the call. `_comment_above` reads the block directly above a call, and
 #   widening it to look through an enclosing statement would risk
@@ -100,7 +100,7 @@ _ORDER: tuple[tuple[str, str, str, str], ...] = (
     ),
     (
         "_rehydrate_go_type_locations",
-        "_join_go_implements",
+        "join_implements",
         # Stated above the earlier call, in the block that follows it.
         "earlier:col-keyed indexes",
         "the Go IMPLEMENTS join resolves against locations Pass 2 filled "
@@ -109,14 +109,14 @@ _ORDER: tuple[tuple[str, str, str, str], ...] = (
     ),
     (
         "_process_files",
-        "_join_csharp_partials",
+        "join_partials",
         "after pass 2",
         "the Roslyn declaration locations resolve against the Class qns "
         "Pass 2 just registered",
     ),
     (
         "_process_files",
-        "_join_go_implements",
+        "join_implements",
         "after pass 2",
         "both ends resolve against the go_type_locations index Pass 2 just registered",
     ),
@@ -228,7 +228,7 @@ _ORDER: tuple[tuple[str, str, str, str], ...] = (
     ),
     (
         "_process_function_calls",
-        "_emit_csharp_query_calls",
+        "emit_query_calls",
         "after pass 3",
         "LINQ query-operator edges join after Pass 3 with the complete "
         "function-location registry: both ends must be registered nodes",

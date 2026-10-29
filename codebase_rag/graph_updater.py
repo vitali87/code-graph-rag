@@ -52,6 +52,7 @@ from .parsers.cpp.frontend import (
     run_cpp_frontend_hybrid,
 )
 from .parsers.cpp.preproc_recovery import parse_with_preproc_recovery
+from .parsers.csharp import graph_joins as csharp_joins
 from .parsers.csharp import utils as csharp_utils
 from .parsers.csharp.frontend import find_csharp_project
 from .parsers.definition_prune import RemovedFile
@@ -61,6 +62,7 @@ from .parsers.factory import ProcessorFactory
 from .parsers.field_nodes import PendingFieldType
 from .parsers.frontends import SemanticFacts
 from .parsers.frontends.builtin import FRONTENDS
+from .parsers.go import graph_joins as go_joins
 from .parsers.go import interfaces as go_ifaces
 from .parsers.go import read_package_clause
 from .parsers.go import utils as go_utils
@@ -80,7 +82,7 @@ from .parsers.java.lombok import (
 from .parsers.js_ts.utils import mark_js_ts_module_private
 from .parsers.notebook import NotebookSkipped, is_notebook_path, read_notebook
 from .parsers.parameter_nodes import PendingParameterType
-from .parsers.rust import utils as rs_utils
+from .parsers.rust import rehydration as rs_rehydration
 from .parsers.stdlib_extractor import flush_stdlib_cache
 from .parsers.structure_processor import StructureProcessor
 from .services import (
@@ -147,6 +149,7 @@ from .utils.path_utils import (
     should_skip_rel_file,
     vanished,
     walk_eligible_files,
+    walk_position,
 )
 from .utils.source_encoding import grammar_bytes
 from .vectors.embedding_sync import EmbeddingSync
@@ -279,30 +282,6 @@ def _specifier_targets(caller: str, specifiers: Iterable[object]) -> set[str]:
         for specifier in specifiers
         if isinstance(specifier, str)
     }
-
-
-def _walk_position(rel_path: str) -> tuple[tuple[str, ...], str]:
-    """Where `walk_eligible_files` yields a file, which is the order a clean
-    build parses in: a directory's files by name, then its subdirectories'."""
-    path = PurePosixPath(rel_path)
-    return path.parent.parts, path.name
-
-
-def _registration_order(
-    row: ResultRow,
-) -> tuple[tuple[tuple[str, ...], str], tuple[int, int]]:
-    """Where a definition row's qn fell among its same-named twins.
-
-    A clean build registers files in walk order, and within a file the first
-    twin it meets takes the natural qn and each later one an `@line` (then
-    `@line_col`) marker in document order. The marker alone cannot order
-    twins from two files: an inline `mod b` and the file `b.rs` both declare
-    into `a.b` (#2805).
-    """
-    qn = row.get(cs.KEY_QUALIFIED_NAME)
-    path = row.get(cs.KEY_PATH)
-    position = qn_markers.marker_position(qn) if isinstance(qn, str) else None
-    return _walk_position(path if isinstance(path, str) else ""), position or (0, -1)
 
 
 _GLOSS_RELS = frozenset(
@@ -1161,130 +1140,6 @@ class GraphUpdater:
         # line) must reach them, or they are parsed without their facts.
         return rescued_files(self.repo_path, self.exclude_paths, self.unignore_paths)
 
-    def _join_go_implements(self) -> None:
-        # go/types proved each implementer->interface pair structurally; both
-        # ends carry a declaring-identifier position that resolves to the Pass-2
-        # type node through go_type_locations. On a two-sided hit, emit the
-        # IMPLEMENTS edge and record the implementer so a call through the
-        # interface with a SOLE implementer also edges to the concrete method
-        # (resolver.interface_sole_impl_targets, no extra wiring). A miss on
-        # either end drops the pair rather than risk a dangling edge. The
-        # pairs replace the previous pass's, so a reused updater forgets one
-        # the compiler no longer proves.
-        dp = self.factory.definition_processor
-        proven: list[tuple[str, str]] = []
-        for pair in dp.facts.frontend_facts[cs.SupportedLanguage.GO].implements_pairs:
-            impl = dp.go_type_locations.get(
-                (pair.impl_file, pair.impl_line, pair.impl_col)
-            )
-            iface = dp.go_type_locations.get(
-                (pair.iface_file, pair.iface_line, pair.iface_col)
-            )
-            if impl is None or iface is None:
-                continue
-            impl_qn, impl_label = impl
-            iface_qn, iface_label = iface
-            # Through _sink (the capture-filtering wrapper), not the raw
-            # ingestor, so a capture that disables IMPLEMENTS suppresses this
-            # edge too -- graph-element emission must honour the capture contract.
-            self._sink.ensure_relationship_batch(
-                (impl_label, cs.KEY_QUALIFIED_NAME, impl_qn),
-                cs.RelationshipType.IMPLEMENTS,
-                (iface_label, cs.KEY_QUALIFIED_NAME, iface_qn),
-            )
-            proven.append((iface_qn, impl_qn))
-        dp.replace_go_implementers(dp.go_proven_pairs, proven, keep=dp.go_guessed_pairs)
-        if proven:
-            logger.info(ls.GO_FRONTEND_IMPLEMENTS_JOINED.format(count=len(proven)))
-
-    def _link_go_interfaces(self) -> None:
-        # Where go/types analysed a module it already proved which of its
-        # types implement which of its interfaces (_join_go_implements), even
-        # when it proved none; names and arities decide only elsewhere. Keyed
-        # on the modules it analysed, not on whether it returned any facts.
-        dp = self.factory.definition_processor
-        facts = dp.facts.frontend_facts[cs.SupportedLanguage.GO]
-        dp.link_go_interfaces(
-            frozenset(facts.analysed_roots),
-            facts.checked_files,
-            frozenset(
-                located[0]
-                for position in facts.compared_types
-                if (located := dp.go_type_locations.get(position)) is not None
-            ),
-        )
-
-    def _join_csharp_partials(self) -> None:
-        # Replace the directory-keyed syntactic partial grouping with the
-        # Roslyn symbol-identity groups wherever Roslyn saw the type: parts
-        # in DIFFERENT directories of one project merge (the syntactic rule
-        # deliberately under-merges there), and unrelated same-name types a
-        # syntactic merge would conflate split apart (each arrives as its
-        # own group). Group lists stay SHARED objects because the resolver
-        # compares them by identity.
-        dp = self.factory.definition_processor
-        partial_decls = dp.facts.frontend_facts[
-            cs.SupportedLanguage.CSHARP
-        ].partial_groups
-        if not partial_decls:
-            return
-        groups: list[list[str]] = []
-        covered: set[str] = set()
-        for decls in partial_decls:
-            qns = sorted({qn for d in decls if (qn := dp.csharp_type_locations.get(d))})
-            covered.update(qns)
-            if len(qns) > 1:
-                groups.append(qns)
-        for qn in covered:
-            old = dp.facts.csharp_partial_groups.pop(qn, None)
-            if old is not None and qn in old:
-                # Also shrink the shared syntactic list so members NOT
-                # covered by Roslyn stop spanning to this part.
-                old.remove(qn)
-        for group in groups:
-            for qn in group:
-                dp.facts.csharp_partial_groups[qn] = group
-        if groups:
-            logger.info(ls.CSHARP_FRONTEND_PARTIALS_JOINED.format(count=len(groups)))
-
-    def _emit_csharp_query_calls(self) -> None:
-        # LINQ query syntax has no invocation nodes for tree-sitter to see;
-        # each Roslyn query-operator fact becomes a direct CALLS edge, both
-        # ends resolved through the Pass-2 function-location registry (a miss
-        # on either end drops the fact rather than risk a dangling edge).
-        dp = self.factory.definition_processor
-        query_calls = dp.facts.frontend_facts[cs.SupportedLanguage.CSHARP].query_calls
-        if not query_calls:
-            return
-        rel_to_module = {
-            cached_relative_path(path, self.repo_path).as_posix(): qn
-            for qn, path in dp.module_qn_to_file_path.items()
-        }
-
-        def located(rel_file: str, line: int, col: int) -> FunctionLocation | None:
-            module_qn = rel_to_module.get(rel_file)
-            if module_qn is None:
-                return None
-            return dp.facts.function_locations.get((module_qn, line, col))
-
-        emitted = 0
-        for fact in query_calls:
-            caller = located(fact.caller_file, fact.caller_line, fact.caller_col)
-            target = located(fact.target_file, fact.target_line, fact.target_col)
-            if caller is None or target is None:
-                continue
-            # Through _sink (the capture-filtering wrapper), not the raw
-            # ingestor, so a capture that disables CALLS suppresses these
-            # synthesized LINQ query-operator edges too (issue #1236).
-            self._sink.ensure_relationship_batch(
-                (caller.label, cs.KEY_QUALIFIED_NAME, caller.qualified_name),
-                cs.RelationshipType.CALLS,
-                (target.label, cs.KEY_QUALIFIED_NAME, target.qualified_name),
-            )
-            emitted += 1
-        if emitted:
-            logger.info(ls.CSHARP_FRONTEND_QUERY_EDGES.format(count=emitted))
-
     def _tightest_containing_span(
         self, rel_path: str, line: int
     ) -> CppDefinitionSpan | None:
@@ -1556,7 +1411,7 @@ class GraphUpdater:
 
         # Every Go type and method is registered by now, rehydrated ones
         # included, so method sets are complete (issue #2483).
-        self._link_go_interfaces()
+        go_joins.link_interfaces(self.factory.definition_processor)
 
         module_impls = (
             self.factory.definition_processor.resolve_deferred_cpp_module_impls()
@@ -1869,11 +1724,11 @@ class GraphUpdater:
 
             # Partial groups join AFTER Pass 2: the Roslyn declaration
             # locations resolve against the Class qns Pass 2 just registered.
-            self._join_csharp_partials()
+            csharp_joins.join_partials(self.factory.definition_processor)
 
             # Go IMPLEMENTS pairs join AFTER Pass 2 for the same reason: both ends
             # resolve against the go_type_locations index Pass 2 just registered.
-            self._join_go_implements()
+            go_joins.join_implements(self.factory.definition_processor, self._sink)
 
             # The Jedi Python frontend runs AFTER Pass 2 (its facts join Pass 3
             # calls against the function_locations Pass 2 just filled) and needs
@@ -1937,7 +1792,9 @@ class GraphUpdater:
 
         # LINQ query-operator edges join AFTER Pass 3 with the complete
         # function-location registry (both ends must be registered nodes).
-        self._emit_csharp_query_calls()
+        csharp_joins.emit_query_calls(
+            self.factory.definition_processor, self.repo_path, self._sink
+        )
         self._write_unresolved_references()
 
         self.factory.definition_processor.process_all_method_overrides(
@@ -2466,7 +2323,12 @@ class GraphUpdater:
             logger.info(ls.REGISTRY_REHYDRATED, count=len(restored))
         # After the loop: whether a method's owner is a trait needs the whole
         # registry, and its rows arrive in no particular order.
-        self._rehydrate_rust_return_types(restored)
+        rs_rehydration.rehydrate_return_types(
+            restored,
+            self.parsers,
+            self.function_registry,
+            self.factory.facts.method_return_types,
+        )
         self._rehydrate_go_method_sets(restored)
         # Module qns from unchanged files: deferred import verification and
         # C++20 module-impl resolution must count them as real targets, or
@@ -2546,7 +2408,9 @@ class GraphUpdater:
             if isinstance(child := row.get(cs.KEY_CHILD_QN), str)
             and isinstance(base := row.get(cs.KEY_BASE_QN), str)
         ]
-        pairs.extend(self._nodeless_rust_impls(rust_overrides))
+        pairs.extend(
+            rs_rehydration.nodeless_impls(rust_overrides, self.function_registry)
+        )
         closed = {
             qn
             for row in required
@@ -2556,45 +2420,12 @@ class GraphUpdater:
         # hand: the _rehydrate_module_qns posture.
         rehydrated = self.factory.facts.rehydrated_interface_implementers
         rehydrated.clear()
-        for implementer, interface in pairs:
-            if not self._may_hide_rust_impls(interface, closed):
-                rehydrated.setdefault(interface, set()).add(implementer)
-
-    def _may_hide_rust_impls(self, interface_qn: str, closed: set[str]) -> bool:
-        # An impl of a Rust trait whose every method has a default body may
-        # define nothing, and one for a type with no node (`impl Visit for ()
-        # {}`) then leaves no trace in the graph: the pairs read back would
-        # count one implementer short and invent a sole-implementer edge a
-        # clean index does not emit. Such a trait, read back rather than
-        # parsed, keeps to its parsed pairs as before. A trait parsed this run
-        # has every implementer that left a trace re-parsed beside it.
-        dp = self.factory.definition_processor
-        path = dp.facts.rehydrated_definition_paths.get(interface_qn)
-        return (
-            path is not None and path.endswith(cs.EXT_RS) and interface_qn not in closed
+        definition_paths = (
+            self.factory.definition_processor.facts.rehydrated_definition_paths
         )
-
-    def _nodeless_rust_impls(
-        self, override_rows: list[ResultRow]
-    ) -> Iterable[tuple[str, str]]:
-        """(implementer, trait) for each Rust impl whose type has no node."""
-        # `impl FloatErrors for u64` has no node to hang an IMPLEMENTS edge
-        # on, so its methods' OVERRIDES name the pair. Only such a type: one
-        # with a node has its IMPLEMENTS edge, and a trait's default method
-        # overriding a supertrait's names no implementer at all.
-        for row in override_rows:
-            method = row.get(cs.KEY_FROM_QN)
-            base = row.get(cs.KEY_TO_QN)
-            if not isinstance(method, str) or not isinstance(base, str):
-                continue
-            implementer = method.rpartition(cs.SEPARATOR_DOT)[0]
-            trait = base.rpartition(cs.SEPARATOR_DOT)[0]
-            if (
-                implementer
-                and implementer not in self.function_registry
-                and self.function_registry.get(trait) == cs.NodeLabel.INTERFACE
-            ):
-                yield implementer, trait
+        for implementer, interface in pairs:
+            if not rs_rehydration.may_hide_impls(interface, closed, definition_paths):
+                rehydrated.setdefault(interface, set()).add(implementer)
 
     def _rehydrate_module_qns(self, module_rows: list[ResultRow]) -> None:
         """Rebuild the module and interface qn sets from the graph's rows."""
@@ -2799,74 +2630,6 @@ class GraphUpdater:
             and not row.get(cs.KEY_DECLARED_IN_CLASS)
             and row.get(cs.KEY_PATH) in self._reparsed_file_keys
         )
-
-    def _rehydrate_rust_return_types(self, rows: list[ResultRow]) -> None:
-        # Pass 2 records a Rust fn's return type only while it parses the
-        # file, and a chained or call-bound receiver (`Get::new(k).m()`,
-        # `let b = Builder::new(); b.m()`) types from that record. Without it
-        # an unchanged file's fn types nothing, and the method falls to a
-        # name-only match a clean index never makes (issue #2559).
-        records = [
-            (_registration_order(row), record)
-            for row in rows
-            if (record := self._rust_return_type_record(row)) is not None
-        ]
-        records.sort(key=lambda ordered: ordered[0])
-        if not records:
-            return
-        # Read only now: the parser view loads a grammar on first access, and
-        # a project with no Rust must not pay for one.
-        parser = self.parsers.get(cs.SupportedLanguage.RUST)
-        if parser is None:
-            return
-        reduced: dict[tuple[str, str | None], str | None] = {}
-        restored: dict[str, str] = {}
-        # Methods of two trait impls on one type share a key (`S.run` and
-        # `S.run@13`), and parsing writes each one's type over the last in
-        # registration order. The rows come in no fixed order, so they are
-        # replayed in that order and the last typed one stands (#2805).
-        for _position, (key, annotation, impl_target) in records:
-            if (annotation, impl_target) not in reduced:
-                reduced[(annotation, impl_target)] = (
-                    rs_utils.return_type_name_from_annotation(
-                        parser, annotation, impl_target
-                    )
-                )
-            if name := reduced[(annotation, impl_target)]:
-                restored[key] = name
-        return_types = self.factory.facts.method_return_types
-        for key, name in restored.items():
-            # A re-parsed file's own record is current; keep it.
-            return_types.setdefault(key, name)
-
-    def _rust_return_type_record(
-        self, row: ResultRow
-    ) -> tuple[str, str, str | None] | None:
-        """(record key, return annotation, impl target) for a Rust fn row."""
-        qn = row.get(cs.KEY_QUALIFIED_NAME)
-        label = row.get(cs.KEY_LABEL)
-        path = row.get(cs.KEY_PATH)
-        annotation = row.get(cs.KEY_RETURN_TYPE)
-        if not (
-            isinstance(qn, str)
-            and isinstance(path, str)
-            and isinstance(annotation, str)
-            and annotation
-            and path.endswith(cs.EXT_RS)
-        ):
-            return None
-        if label == cs.NodeLabel.FUNCTION.value:
-            # A free fn has no impl, so its `Self` names nothing.
-            return qn, annotation, None
-        if label != cs.NodeLabel.METHOD.value:
-            return None
-        # Pass 2 keys an impl method by its impl target and name, which the
-        # natural qn spells, and records none for a trait's own methods.
-        natural = qn_markers.natural_qn(qn)
-        owner = natural.rpartition(cs.SEPARATOR_DOT)[0]
-        if self.function_registry.get(owner) == cs.NodeLabel.INTERFACE:
-            return None
-        return natural, annotation, owner.rpartition(cs.SEPARATOR_DOT)[2]
 
     def _rehydrate_definition_path(
         self, node_type: cs.NodeLabel, qn: str, path: str, row: ResultRow
@@ -3249,12 +3012,13 @@ class GraphUpdater:
 
     def _rehydrate_csharp_type_locations(self) -> None:
         # Incremental runs fill csharp_type_locations only from re-parsed files,
-        # but _join_csharp_partials resolves every partial-declaration location
-        # against it. Restore the (path, start_line) -> qn entries for types in
-        # UNCHANGED .cs files from the persisted graph so a partial part in an
-        # unchanged file still joins its group (issue #1229). A re-parsed file's
-        # fresh Pass-2 entry is kept (not overwritten); a stale rehydrated
-        # position for a type that moved is simply never queried by the join.
+        # but csharp_joins.join_partials resolves every partial-declaration
+        # location against it. Restore the (path, start_line) -> qn entries for
+        # types in UNCHANGED .cs files from the persisted graph so a partial
+        # part in an unchanged file still joins its group (issue #1229). A
+        # re-parsed file's fresh Pass-2 entry is kept (not overwritten); a stale
+        # rehydrated position for a type that moved is simply never queried by
+        # the join.
         graph = self._graph
         if graph is None:
             return
@@ -3332,10 +3096,10 @@ class GraphUpdater:
 
     def _rehydrate_go_type_locations(self) -> None:
         # Incremental runs fill go_type_locations only from re-parsed files,
-        # but _join_go_implements resolves BOTH ends of each pair against it.
-        # Restore (path, line, col) -> (qn, label) for types in unchanged .go
-        # files from the persisted graph (issue #1240). A pre-#1240 graph has
-        # no start_col: those rows are skipped and behavior degrades to
+        # but go_joins.join_implements resolves BOTH ends of each pair against
+        # it. Restore (path, line, col) -> (qn, label) for types in unchanged
+        # .go files from the persisted graph (issue #1240). A pre-#1240 graph
+        # has no start_col: those rows are skipped and behavior degrades to
         # today's until a re-index.
         graph = self._graph
         if graph is None:
@@ -4306,8 +4070,8 @@ class GraphUpdater:
         None for a malformed row, a target the re-index did not recreate (a
         renamed or removed definition is correctly left without its stale
         inbound edge, matching a clean re-index), a label without a key, or
-        a Go type's IMPLEMENTS or OVERRIDES edge, which `_link_go_interfaces`
-        writes again for every pair that still holds.
+        a Go type's IMPLEMENTS or OVERRIDES edge, which
+        `go_joins.link_interfaces` writes again for every pair that still holds.
         """
         if _relinked_go_edge(row):
             return None
@@ -6632,12 +6396,12 @@ class GraphUpdater:
             self._run_go_frontend()
             self._rehydrate_go_type_locations()
             self._rehydrate_function_locations()
-            self._join_go_implements()
+            go_joins.join_implements(self.factory.definition_processor, self._sink)
         if cs.SupportedLanguage.CSHARP in languages:
             self._run_csharp_frontend()
             self._rehydrate_csharp_type_locations()
             self._rehydrate_function_locations()
-            self._join_csharp_partials()
+            csharp_joins.join_partials(self.factory.definition_processor)
         if cs.SupportedLanguage.JAVA in languages:
             self._run_java_frontend()
             self._rehydrate_function_locations()
@@ -7412,7 +7176,9 @@ class GraphUpdater:
         import_processor = self.factory.import_processor
         import_processor.requeue_csharp_import_edges()
         import_processor.flush_deferred_import_edges(known_module_paths)
-        self._emit_csharp_query_calls()
+        csharp_joins.emit_query_calls(
+            self.factory.definition_processor, self.repo_path, self._sink
+        )
         self._write_unresolved_references()
         self.factory.definition_processor.process_all_method_overrides(
             self.known_module_paths()
@@ -7704,7 +7470,7 @@ class GraphUpdater:
         reparse = dict(
             sorted(
                 {**present, **survivors, **affected}.items(),
-                key=lambda item: _walk_position(item[0]),
+                key=lambda item: walk_position(item[0]),
             )
         )
         self._reingest_delete(reparse, gone, hashes)

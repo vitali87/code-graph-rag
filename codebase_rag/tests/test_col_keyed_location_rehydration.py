@@ -12,6 +12,7 @@ from codebase_rag import constants as cs
 from codebase_rag import graph_updater as gu
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.frontends.protocol import ImplementsPair
+from codebase_rag.parsers.go import graph_joins as go_joins
 from codebase_rag.types_defs import PropertyDict, ResultRow
 
 
@@ -95,7 +96,7 @@ def test_go_implements_joins_across_an_unchanged_file(tmp_path: Path) -> None:
     ]
 
     updater._rehydrate_go_type_locations()
-    updater._join_go_implements()
+    go_joins.join_implements(updater.factory.definition_processor, updater._sink)
 
     assert (
         "proj.pkg.impl.DiskStore",

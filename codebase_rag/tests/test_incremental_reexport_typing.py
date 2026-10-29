@@ -21,9 +21,10 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater, _file_module_holding
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers.rust import rehydration as rs_rehydration
 from codebase_rag.parsers.rust import utils as rs_utils
 from codebase_rag.tests.conftest import force_mtime_after_cache
-from codebase_rag.types_defs import PropertyValue
+from codebase_rag.types_defs import PropertyValue, ResultRow
 from evals.cgr_graph import StatefulIngestor
 
 _CALLS = cs.RelationshipType.CALLS.value
@@ -218,6 +219,15 @@ def _updater(store: StatefulIngestor, root: Path, language: str) -> GraphUpdater
         parsers=parsers,
         queries=queries,
         project_name="proj",
+    )
+
+
+def _rehydrate_return_types(updater: GraphUpdater, rows: list[ResultRow]) -> None:
+    rs_rehydration.rehydrate_return_types(
+        rows,
+        updater.parsers,
+        updater.function_registry,
+        updater.factory.facts.method_return_types,
     )
 
 
@@ -669,7 +679,7 @@ class TestRustDuplicateMethodReturnTypes:
             _rust_row(f"{RS_TWO_TRAIT_RUN_KEY}@9", "Gamma"),
             _rust_row(f"{RS_TWO_TRAIT_RUN_KEY}@30_4", "Delta"),
         ]
-        updater._rehydrate_rust_return_types(rows[::-1] if reverse else rows)
+        _rehydrate_return_types(updater, rows[::-1] if reverse else rows)
         return_types = updater.factory.definition_processor.facts.method_return_types
         assert return_types.get(RS_TWO_TRAIT_RUN_KEY) == "Delta"
 
@@ -679,11 +689,12 @@ class TestRustDuplicateMethodReturnTypes:
         # Parsing records nothing for a fn whose annotation names no type, so
         # the earlier record stands; the read-back must not erase it either.
         updater = _updater(StatefulIngestor(), tmp_path, "rust")
-        updater._rehydrate_rust_return_types(
+        _rehydrate_return_types(
+            updater,
             [
                 _rust_row(f"{RS_TWO_TRAIT_RUN_KEY}@30", "()"),
                 _rust_row(RS_TWO_TRAIT_RUN_KEY, "Alpha"),
-            ]
+            ],
         )
         return_types = updater.factory.definition_processor.facts.method_return_types
         assert return_types.get(RS_TWO_TRAIT_RUN_KEY) == "Alpha"
@@ -692,8 +703,8 @@ class TestRustDuplicateMethodReturnTypes:
         updater = _updater(StatefulIngestor(), tmp_path, "rust")
         return_types = updater.factory.definition_processor.facts.method_return_types
         return_types[RS_TWO_TRAIT_RUN_KEY] = "Parsed"
-        updater._rehydrate_rust_return_types(
-            [_rust_row(f"{RS_TWO_TRAIT_RUN_KEY}@30", "Beta")]
+        _rehydrate_return_types(
+            updater, [_rust_row(f"{RS_TWO_TRAIT_RUN_KEY}@30", "Beta")]
         )
         assert return_types.get(RS_TWO_TRAIT_RUN_KEY) == "Parsed"
 
@@ -806,7 +817,7 @@ class TestRustTwinsAcrossFiles:
             _rust_row(f"{RS_TWINS_KEY}@12", "Beta", "src/a/b.rs"),
             _rust_row(f"{RS_TWINS_KEY}@6", "Gamma", "src/a/mod.rs"),
         ]
-        updater._rehydrate_rust_return_types(rows[::-1] if reverse else rows)
+        _rehydrate_return_types(updater, rows[::-1] if reverse else rows)
         return_types = updater.factory.definition_processor.facts.method_return_types
         assert return_types.get(RS_TWINS_KEY) == "Gamma"
 
@@ -822,7 +833,7 @@ class TestRustTwinsAcrossFiles:
             _rust_row(RS_TWINS_KEY, "Alpha", "src/z.rs"),
             _rust_row(f"{RS_TWINS_KEY}@40", "Gamma", "src/z.rs"),
         ]
-        updater._rehydrate_rust_return_types(rows[::-1] if reverse else rows)
+        _rehydrate_return_types(updater, rows[::-1] if reverse else rows)
         return_types = updater.factory.definition_processor.facts.method_return_types
         assert return_types.get(RS_TWINS_KEY) == "Beta"
 

@@ -1,4 +1,4 @@
-# Issue #1229 (Phase 1): on an incremental run, _join_csharp_partials resolves
+# Issue #1229 (Phase 1): on an incremental run, the partial join resolves
 # each Roslyn partial-declaration location against csharp_type_locations, which
 # Pass 2 fills only for RE-PARSED files. Without rehydration, a partial part in
 # an UNCHANGED .cs file has no entry, so its group silently drops below the
@@ -14,6 +14,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag import graph_updater as gu
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers.csharp import graph_joins as csharp_joins
 from codebase_rag.types_defs import PropertyDict, ResultRow
 
 
@@ -85,7 +86,7 @@ def test_rehydration_lets_partial_group_span_an_unchanged_file(tmp_path: Path) -
     ]
 
     updater._rehydrate_csharp_type_locations()
-    updater._join_csharp_partials()
+    csharp_joins.join_partials(updater.factory.definition_processor)
 
     group = dp.facts.csharp_partial_groups.get("proj.dirA.W")
     assert group is not None, dp.facts.csharp_partial_groups
@@ -107,7 +108,7 @@ def test_without_rehydration_the_unchanged_part_is_dropped(tmp_path: Path) -> No
     ]
 
     updater._rehydrate_csharp_type_locations()
-    updater._join_csharp_partials()
+    csharp_joins.join_partials(updater.factory.definition_processor)
 
     assert dp.facts.csharp_partial_groups == {}
 

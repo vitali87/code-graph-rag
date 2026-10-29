@@ -11,7 +11,7 @@ import os
 import random
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from loguru import logger
@@ -21,11 +21,13 @@ from codebase_rag.capture import resolve_capture
 from codebase_rag.exceptions import ReingestAborted
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers.csharp import graph_joins as csharp_joins
 from codebase_rag.parsers.endpoint_prefixes import (
     CYPHER_PROJECT_PY_MODULES,
     CYPHER_PROJECT_ROUTE_HANDLERS,
 )
 from codebase_rag.parsers.endpoint_routes import CYPHER_PROJECT_MODULES
+from codebase_rag.parsers.go import graph_joins as go_joins
 from codebase_rag.sync.checkout_state import state_file
 from codebase_rag.tests.conftest import create_and_run_updater
 from evals.cgr_graph import StatefulIngestor
@@ -812,7 +814,7 @@ def test_reingest_keeps_the_hash_cache_current(fixture_root: Path) -> None:
                 "_run_go_frontend",
                 "_rehydrate_go_type_locations",
                 "_rehydrate_function_locations",
-                "_join_go_implements",
+                "join_implements",
             ],
             ["_run_csharp_frontend", "_run_java_frontend"],
         ),
@@ -821,7 +823,7 @@ def test_reingest_keeps_the_hash_cache_current(fixture_root: Path) -> None:
             [
                 "_run_csharp_frontend",
                 "_rehydrate_csharp_type_locations",
-                "_join_csharp_partials",
+                "join_partials",
             ],
             ["_run_go_frontend"],
         ),
@@ -855,10 +857,8 @@ def test_reingest_reruns_the_language_frontend(
         "_run_go_frontend",
         "_rehydrate_go_type_locations",
         "_rehydrate_function_locations",
-        "_join_go_implements",
         "_run_csharp_frontend",
         "_rehydrate_csharp_type_locations",
-        "_join_csharp_partials",
         "_run_java_frontend",
         "_run_python_frontend",
     ]
@@ -868,7 +868,13 @@ def test_reingest_reruns_the_language_frontend(
     path = temp_repo / filename
     path.write_text("// change\n", encoding="utf-8")
 
-    updater.reingest([path])
+    # The joins are functions of their language's package, patched there.
+    with (
+        patch.object(go_joins, "join_implements") as join_implements,
+        patch.object(csharp_joins, "join_partials") as join_partials,
+    ):
+        mocks.update(join_implements=join_implements, join_partials=join_partials)
+        updater.reingest([path])
 
     for name in expected:
         assert mocks[name].called, name

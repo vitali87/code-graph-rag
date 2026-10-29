@@ -206,6 +206,7 @@ class TestEveryRoutedReaderUsesTheHelper:
         "codebase_rag.parsers.class_ingest.method_override",
         "codebase_rag.parsers.class_ingest.mixin",
         "codebase_rag.parsers.function_ingest",
+        "codebase_rag.parsers.rust.rehydration",
         "evals.cgr_graph",
     )
 

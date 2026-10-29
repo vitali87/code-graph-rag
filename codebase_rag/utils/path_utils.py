@@ -7,7 +7,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from functools import lru_cache
-from pathlib import Path, PurePath
+from pathlib import Path, PurePath, PurePosixPath
 
 from pathspec import PathSpec
 
@@ -739,6 +739,13 @@ def walk_eligible_files(
                 unignore_paths=unignore_paths,
             ) and not _skipped_link(dirpath, fname, rel_path_str, on_symlink):
                 yield dirpath, fname, rel_path_str
+
+
+def walk_position(rel_path: str) -> tuple[tuple[str, ...], str]:
+    """Where `walk_eligible_files` yields a file, which is the order a clean
+    build parses in: a directory's files by name, then its subdirectories'."""
+    path = PurePosixPath(rel_path)
+    return path.parent.parts, path.name
 
 
 def rescued_files(
