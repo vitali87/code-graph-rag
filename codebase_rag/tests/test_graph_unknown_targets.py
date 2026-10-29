@@ -661,13 +661,13 @@ class TestMcpIsError:
         assert result.isError is False
         assert json.loads(_text(result)) == []
 
-    async def test_a_payload_that_carries_an_error_field_is_not_an_error(
+    async def test_a_payload_that_carries_a_warning_is_not_an_error(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         # Negative: an applied rename reports a marker it could not clear
         # beside its result; the work happened, so the call succeeded.
         async def applied() -> dict[str, str | bool]:
-            return {"applied": True, cs.DICT_KEY_ERROR: "marker stuck"}
+            return {"applied": True, cs.DICT_KEY_WARNING: "marker stuck"}
 
         result = await _server_with(applied, tmp_path, monkeypatch)("rename")
 
