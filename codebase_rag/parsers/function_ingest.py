@@ -31,8 +31,13 @@ from ..utils.path_utils import cached_relative_path, cached_resolve_posix
 from . import export_detection
 from .anchor_hash import anchor_hash_props
 from .ast_fingerprint import fingerprint_props
+from .callable_params import (
+    callable_parameter_indices,
+    python_positional_parameter_names,
+)
 from .cpp import utils as cpp_utils
 from .cpp.overloads import cpp_overload_signature
+from .cpp.utils import record_cpp_definition_span
 from .dart import utils as dart_utils
 from .definition_facts import DefinitionFacts
 from .endpoints import emit_endpoints, queue_endpoints
@@ -40,6 +45,7 @@ from .go import interfaces as go_interfaces
 from .go import utils as go_utils
 from .go.builds import GoBuilds
 from .js_ts import utils as js_ts_utils
+from .js_ts.utils import mark_js_ts_module_private
 from .lua import utils as lua_utils
 from .method_ingest import ingest_method
 from .parameter_nodes import (
@@ -52,15 +58,11 @@ from .positional_params import declared_positional_params
 from .rust import utils as rs_utils
 from .type_facts import extract_type_facts, queue_type_facts, type_facts_props
 from .utils import (
-    callable_parameter_indices,
     decorated_start_props,
     extract_modifiers_and_decorators,
     function_span_key,
     get_function_captures,
     is_method_node,
-    mark_js_ts_module_private,
-    python_positional_parameter_names,
-    record_cpp_definition_span,
     warn_if_name_truncated,
 )
 

@@ -808,3 +808,34 @@ def binds_value(site: Node, name: str) -> bool:
         child, current = current, current.parent
     # Top-level statements share their outermost locals across the file.
     return top_level and _member_binds(child, name, site)
+
+
+def csharp_positional_parameter_slots(
+    func_node: Node,
+) -> tuple[list[str | None], int | None]:
+    # C# `parameter_list` -> `parameter` (its `name` field survives this/ref/out
+    # modifiers). A `params T[] tail` is NOT wrapped in a `parameter`: the hidden
+    # _parameter_array rule inlines it as a bare `array_type` followed by a bare
+    # `identifier` sibling (grammar quirk, mirrored in csharp/utils). A bare
+    # array_type therefore opens the single trailing variadic slot and the next
+    # identifier carries its name; a normal `int[] arr` stays a `parameter`.
+    params = func_node.child_by_field_name(cs.FIELD_PARAMETERS)
+    if params is None:
+        return [], None
+    names: list[str | None] = []
+    variadic_index: int | None = None
+    pending_variadic = False
+    for param in params.named_children:
+        if param.type == cs.TS_CSHARP_PARAMETER:
+            name = param.child_by_field_name(cs.FIELD_NAME)
+            names.append(safe_decode_text(name) if name is not None else None)
+            pending_variadic = False
+        elif param.type == cs.TS_CSHARP_ARRAY_TYPE:
+            if variadic_index is None:
+                variadic_index = len(names)
+            names.append(None)
+            pending_variadic = True
+        elif param.type == cs.TS_IDENTIFIER and pending_variadic:
+            names[-1] = safe_decode_text(param)
+            pending_variadic = False
+    return names, variadic_index

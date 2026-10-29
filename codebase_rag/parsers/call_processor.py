@@ -35,6 +35,13 @@ from ..utils import qn_markers
 from ..utils.fqn_resolver import scoped_name_parts
 from ..utils.path_utils import cached_relative_path
 from .call_resolver import PY_EXTERNAL_TARGET, CallResolver, Resolved
+from .callable_params import (
+    callable_parameter_invocations,
+    cpp_parameter_names,
+    go_parameter_names,
+    js_ts_parameter_names,
+    python_parameter_names,
+)
 from .class_ingest.identity import build_nested_qualified_name_for_class
 from .cpp import local_types as cpp_local_types
 from .cpp import utils as cpp_utils
@@ -75,16 +82,11 @@ from .string_call import load_string_call_specs, string_call_target
 from .type_inference import TypeInferenceEngine
 from .utils import (
     call_site_start,
-    callable_parameter_invocations,
-    cpp_parameter_names,
     enclosing_class_node,
     function_span_key,
     get_function_captures,
-    go_parameter_names,
-    js_ts_parameter_names,
     module_qn_for_entity,
     node_site_properties,
-    python_parameter_names,
     shared_or_new,
     written_simple_name,
 )

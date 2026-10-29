@@ -362,7 +362,7 @@ def _first_descendant(node: Node, node_type: str) -> Node | None:
 
 
 def _c_family_name_node(declarator: Node | None) -> Node | None:
-    # The node counterpart of `utils.cpp_declarator_name`: unwrap pointer,
+    # The node counterpart of `cpp.utils.cpp_declarator_name`: unwrap pointer,
     # reference, parenthesized, array, function and variadic declarators to
     # the bound identifier, which is what carries the position.
     current = declarator

@@ -8,7 +8,7 @@ from ...node_text import get_cached_query, safe_decode_text
 from ..utils import note_query_fallback
 
 if TYPE_CHECKING:
-    from ...types_defs import LanguageQueries
+    from ...types_defs import FunctionRegistryTrieProtocol, LanguageQueries
 
 
 def get_js_ts_language_obj(
@@ -700,3 +700,79 @@ def is_export_inside_function(node: Node) -> bool:
             return False
         current = current.parent
     return False
+
+
+JS_TS_TYPED_PARAMETERS = frozenset({cs.TS_REQUIRED_PARAMETER, cs.TS_OPTIONAL_PARAMETER})
+
+
+def _js_ts_parameter_slot(child: Node) -> tuple[str | None, bool] | None:
+    # A single formal parameter -> (name_or_None, is_variadic), or None when the
+    # node occupies NO runtime positional slot (a TypeScript `this` parameter).
+    # A TS typed parameter (required_parameter / optional_parameter) wraps the
+    # real pattern -- an identifier, a `this`, a rest_pattern, or a destructuring
+    # pattern -- so it is unwrapped recursively; that is what makes a typed rest
+    # (`...args: string[]`) mark variadic and a typed `this` drop its slot.
+    node_type = child.type
+    if node_type == cs.TS_THIS_PARAMETER:
+        return None
+    if node_type == cs.TS_IDENTIFIER:
+        return safe_decode_text(child), False
+    if node_type in JS_TS_TYPED_PARAMETERS:
+        pattern = child.child_by_field_name(cs.TS_FIELD_PATTERN)
+        if pattern is None:
+            return None, False
+        return _js_ts_parameter_slot(pattern)
+    if node_type == cs.TS_ASSIGNMENT_PATTERN:
+        return _js_ts_assignment_slot_name(child), False
+    if node_type == cs.TS_REST_PATTERN:
+        return _js_ts_rest_slot_name(child), True
+    return None, False
+
+
+def _js_ts_assignment_slot_name(child: Node) -> str | None:
+    left = child.child_by_field_name(cs.TS_FIELD_LEFT)
+    if left is not None and left.type == cs.TS_IDENTIFIER:
+        return safe_decode_text(left)
+    return None
+
+
+def _js_ts_rest_slot_name(child: Node) -> str | None:
+    ident = next((c for c in child.named_children if c.type == cs.TS_IDENTIFIER), None)
+    return safe_decode_text(ident) if ident is not None else None
+
+
+def js_ts_positional_parameter_slots(
+    func_node: Node,
+) -> tuple[list[str | None], int | None]:
+    names: list[str | None] = []
+    variadic_index: int | None = None
+    params = func_node.child_by_field_name(cs.FIELD_PARAMETERS)
+    if params is not None:
+        for child in params.named_children:
+            slot = _js_ts_parameter_slot(child)
+            if slot is None:
+                # A TypeScript `this` parameter is not a runtime argument, so it
+                # takes no slot and must not shift the parameters after it.
+                continue
+            name, is_variadic = slot
+            if is_variadic and variadic_index is None:
+                variadic_index = len(names)
+            names.append(name)
+        return names, variadic_index
+    single = func_node.child_by_field_name(cs.TS_FIELD_PARAMETER)
+    if single is not None and single.type == cs.TS_IDENTIFIER:
+        names.append(safe_decode_text(single))
+    return names, variadic_index
+
+
+def mark_js_ts_module_private(
+    function_registry: "FunctionRegistryTrieProtocol",
+    qualified_name: str,
+    is_exported: bool,
+    language: cs.SupportedLanguage | None,
+) -> None:
+    # `export * from` passes on only what a module exports, so the star lookup
+    # in follow_reexports must tell a private declaration from an exported
+    # one; the flag the node already carries is recorded where it can ask.
+    if language in cs.JS_TS_LANGUAGES and not is_exported:
+        function_registry.mark_module_private(qualified_name)

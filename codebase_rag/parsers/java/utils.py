@@ -889,3 +889,40 @@ def _is_non_standard_java_src_layout(parts: list[str], src_idx: int) -> bool:
         next_part in (cs.JAVA_PATH_MAIN, cs.JAVA_PATH_TEST)
         and part_after_next not in cs.JAVA_JVM_LANGUAGES
     )
+
+
+def java_positional_parameter_slots(
+    func_node: Node,
+) -> tuple[list[str | None], int | None]:
+    # Java `formal_parameters` -> `formal_parameter` (name field) plus a trailing
+    # `spread_parameter` for varargs (`String... xs`), whose name lives in a nested
+    # variable_declarator rather than a `name` field. A `receiver_parameter`
+    # (`A this`) occupies no runtime slot and is dropped by handling only the two
+    # real shapes.
+    params = func_node.child_by_field_name(cs.FIELD_PARAMETERS)
+    if params is None:
+        return [], None
+    names: list[str | None] = []
+    variadic_index: int | None = None
+    for param in params.named_children:
+        if param.type == cs.TS_FORMAL_PARAMETER:
+            name = param.child_by_field_name(cs.FIELD_NAME)
+            names.append(safe_decode_text(name) if name is not None else None)
+        elif param.type == cs.TS_SPREAD_PARAMETER:
+            if variadic_index is None:
+                variadic_index = len(names)
+            names.append(_java_spread_parameter_name(param))
+    return names, variadic_index
+
+
+def _java_spread_parameter_name(param: Node) -> str | None:
+    declarator = next(
+        (c for c in param.named_children if c.type == cs.TS_VARIABLE_DECLARATOR),
+        None,
+    )
+    name = (
+        declarator.child_by_field_name(cs.FIELD_NAME)
+        if declarator is not None
+        else None
+    )
+    return safe_decode_text(name) if name is not None else None

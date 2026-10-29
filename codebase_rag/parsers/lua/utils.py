@@ -479,3 +479,27 @@ def _identifiers(nodes: list[Node]) -> set[str]:
         for node in nodes
         if node.type == cs.TS_LUA_IDENTIFIER and (text := safe_decode_text(node))
     }
+
+
+def lua_positional_parameter_slots(
+    func_node: Node,
+) -> tuple[list[str | None], int | None]:
+    # Lua `parameters` holds bare `identifier` children plus a trailing `...`
+    # spelled `vararg_expression`, which takes the variadic slot and binds no
+    # name. A `function obj:method(a)` receiver is implicit (never a parameter
+    # node), and a `:` call passes it implicitly too, so the explicit arguments
+    # still line up with these slots and nothing has to be dropped.
+    params = func_node.child_by_field_name(cs.FIELD_PARAMETERS)
+    if params is None:
+        return [], None
+    names: list[str | None] = []
+    variadic_index: int | None = None
+    for param in params.named_children:
+        if param.type == cs.TS_LUA_VARARG_EXPRESSION:
+            if variadic_index is None:
+                variadic_index = len(names)
+            names.append(None)
+            continue
+        if param.type == cs.TS_LUA_IDENTIFIER:
+            names.append(safe_decode_text(param))
+    return names, variadic_index

@@ -580,3 +580,53 @@ def _identifier_texts(nodes: list[Node]) -> set[str]:
         for node in nodes
         if node.type == cs.TS_GO_IDENTIFIER and (text := safe_decode_text(node))
     }
+
+
+# Position-aligned parameter slots for forward parameter-taint (issue #1169).
+# Unlike the *_parameter_names helpers above -- which compact the list, dropping
+# unnamed/destructured slots and so shifting every later index -- these return
+# ONE entry per formal positional slot, with None for a slot that binds no simple
+# name (unnamed C++/Go parameter, JS/TS destructuring pattern). The second tuple
+# element is the index of a variadic/rest slot, if any, so a caller can map every
+# argument at or after it to that parameter. Keeping indices aligned is what
+# prevents arg:<index> from binding to the wrong parameter (false source-to-sink
+# edges), the failure the compacting helpers would cause here.
+def go_positional_parameter_slots(
+    func_node: Node,
+) -> tuple[list[str | None], int | None]:
+    params = func_node.child_by_field_name(cs.FIELD_PARAMETERS)
+    if params is None:
+        return [], None
+    names: list[str | None] = []
+    variadic_index: int | None = None
+    for declaration in params.named_children:
+        if declaration.type == cs.TS_GO_PARAMETER_DECLARATION:
+            names.extend(_go_declaration_slots(declaration))
+        elif declaration.type == cs.TS_GO_VARIADIC_PARAMETER_DECLARATION:
+            if variadic_index is None:
+                variadic_index = len(names)
+            names.append(_go_variadic_slot_name(declaration))
+    return names, variadic_index
+
+
+def _go_declaration_slots(declaration: Node) -> list[str | None]:
+    # Go groups names sharing a type (`a, b int`) into one declaration
+    # with several identifiers; each identifier is its own slot. A
+    # type-only declaration (`func f(int)`) has no identifier child and
+    # is a single unnamed slot.
+    idents = [
+        safe_decode_text(child)
+        for child in declaration.children
+        if child.type == cs.TS_IDENTIFIER
+    ]
+    if idents:
+        return idents
+    return [None]
+
+
+def _go_variadic_slot_name(declaration: Node) -> str | None:
+    ident = next(
+        (c for c in declaration.children if c.type == cs.TS_IDENTIFIER),
+        None,
+    )
+    return safe_decode_text(ident) if ident is not None else None

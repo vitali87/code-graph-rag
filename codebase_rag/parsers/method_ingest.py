@@ -28,6 +28,10 @@ from ..utils.path_utils import cached_relative_path, cached_resolve_posix
 from . import export_detection
 from .anchor_hash import anchor_hash_props
 from .ast_fingerprint import fingerprint_props
+from .callable_params import (
+    callable_parameter_indices,
+    python_positional_parameter_names,
+)
 from .cpp import overloads as cpp_overloads
 from .cpp import utils as cpp_utils
 from .csharp import utils as csharp_utils
@@ -40,11 +44,9 @@ from .type_facts import extract_type_facts, queue_type_facts, type_facts_props
 from .utils import (
     _decorator_tail_names,
     _is_abstract_member,
-    callable_parameter_indices,
     decorated_start_props,
     extract_modifiers_and_decorators,
     is_static_decorator,
-    python_positional_parameter_names,
     warn_if_name_truncated,
 )
 

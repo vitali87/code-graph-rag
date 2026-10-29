@@ -24,7 +24,6 @@ from ...types_defs import (
 )
 from ..definition_facts import DefinitionFacts
 from ..method_ingest import module_function_props
-from ..utils import mark_js_ts_module_private
 from .module_system import JsTsModuleSystemMixin
 from .utils import (
     arrow_binding_name,
@@ -32,6 +31,7 @@ from .utils import (
     is_class_method,
     is_export_inside_function,
     is_inside_method_with_object_literals,
+    mark_js_ts_module_private,
 )
 
 if TYPE_CHECKING:

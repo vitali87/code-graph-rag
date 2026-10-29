@@ -573,3 +573,32 @@ def bind_import(
         mapping[f"{cs.SCALA_WILDCARD_PREFIX}{target.member_qn}"] = target.member_qn
     else:
         mapping[local_name] = target.member_qn
+
+
+def scala_positional_parameter_slots(
+    func_node: Node,
+) -> tuple[list[str | None], int | None]:
+    # Scala `parameters` -> `parameter` (name field). A repeated parameter
+    # (`xs: String*`) carries a `repeated_parameter_type` as its TYPE, which is
+    # the only marker distinguishing it from a normal one. Curried definitions
+    # (`def f(a: Int)(b: Int)`) have SEVERAL sibling `parameters` lists; the
+    # field yields the first, and only that one maps to arg:<index> at a call
+    # site, so the later lists are deliberately left alone.
+    params = func_node.child_by_field_name(cs.FIELD_PARAMETERS)
+    if params is None:
+        return [], None
+    names: list[str | None] = []
+    variadic_index: int | None = None
+    for param in params.named_children:
+        if param.type != cs.TS_SCALA_PARAMETER:
+            continue
+        type_node = param.child_by_field_name(cs.FIELD_TYPE)
+        if (
+            type_node is not None
+            and type_node.type == cs.TS_SCALA_REPEATED_PARAMETER_TYPE
+            and variadic_index is None
+        ):
+            variadic_index = len(names)
+        name = param.child_by_field_name(cs.FIELD_NAME)
+        names.append(safe_decode_text(name) if name is not None else None)
+    return names, variadic_index

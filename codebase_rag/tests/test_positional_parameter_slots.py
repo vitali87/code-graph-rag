@@ -4,15 +4,15 @@ import pytest
 from tree_sitter import Node
 
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.parsers.utils import (
+from codebase_rag.parsers.cpp.utils import (
     c_positional_parameter_slots,
     cpp_positional_parameter_slots,
-    csharp_positional_parameter_slots,
-    go_positional_parameter_slots,
-    java_positional_parameter_slots,
-    js_ts_positional_parameter_slots,
-    rust_positional_parameter_slots,
 )
+from codebase_rag.parsers.csharp.utils import csharp_positional_parameter_slots
+from codebase_rag.parsers.go.utils import go_positional_parameter_slots
+from codebase_rag.parsers.java.utils import java_positional_parameter_slots
+from codebase_rag.parsers.js_ts.utils import js_ts_positional_parameter_slots
+from codebase_rag.parsers.rust.utils import rust_positional_parameter_slots
 
 
 def _first_node(lang: str, code: str, node_type: str) -> Node:

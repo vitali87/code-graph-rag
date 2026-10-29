@@ -12,8 +12,9 @@ from ...capture import CaptureSelection
 from ...node_text import safe_decode_text
 from ...services import IngestorProtocol
 from ...types_defs import ASTCacheProtocol
+from ..cpp.utils import cpp_declarator_name
 from ..import_processor import ImportProcessor
-from ..utils import cpp_declarator_name, shared_or_new
+from ..utils import shared_or_new
 from .constants import (
     DYNAMIC_TARGET,
     HTTP_METHOD_OPTION_KEY,

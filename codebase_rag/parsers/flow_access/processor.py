@@ -16,7 +16,16 @@ from ...node_text import safe_decode_text
 from ...services import IngestorProtocol
 from ...types_defs import FunctionLocations
 from ..call_resolver import CallResolver
+from ..callable_params import python_free_variable_names, python_parameter_names
+from ..cpp.utils import (
+    c_positional_parameter_slots,
+    cpp_declarator_name,
+    cpp_positional_parameter_slots,
+)
+from ..csharp.utils import csharp_positional_parameter_slots
 from ..dart import utils as dart_utils
+from ..dart.utils import dart_positional_parameter_slots
+from ..go.utils import go_positional_parameter_slots
 from ..import_processor import ImportProcessor
 from ..io_access import (
     DYNAMIC_TARGET,
@@ -66,25 +75,14 @@ from ..io_access.registry import (
     LIBC_STD_STREAMS,
 )
 from ..io_access.resource_names import resource_qn
+from ..java.utils import java_positional_parameter_slots
+from ..js_ts.utils import js_ts_positional_parameter_slots
+from ..lua.utils import lua_positional_parameter_slots
+from ..php.utils import php_positional_parameter_slots
+from ..rust.utils import rust_positional_parameter_slots
+from ..scala.utils import scala_positional_parameter_slots
 from ..semantic_call_join import call_site_key
-from ..utils import (
-    c_positional_parameter_slots,
-    cpp_declarator_name,
-    cpp_positional_parameter_slots,
-    csharp_positional_parameter_slots,
-    dart_positional_parameter_slots,
-    function_span_key,
-    go_positional_parameter_slots,
-    java_positional_parameter_slots,
-    js_ts_positional_parameter_slots,
-    lua_positional_parameter_slots,
-    php_positional_parameter_slots,
-    python_free_variable_names,
-    python_parameter_names,
-    rust_positional_parameter_slots,
-    scala_positional_parameter_slots,
-    shared_or_new,
-)
+from ..utils import function_span_key, shared_or_new
 from .constants import (
     KEY_KIND,
     KEY_VIA,

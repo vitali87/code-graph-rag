@@ -7,7 +7,8 @@ from enum import Enum, auto
 from tree_sitter import Node
 
 from ... import constants as cs
-from ..utils import cpp_declarator_name, python_import_bound_names
+from ..callable_params import python_import_bound_names
+from ..cpp.utils import cpp_declarator_name
 from .constants import DYNAMIC_TARGET, PY_SCOPE_BOUNDARIES
 from .descriptor import LanguageDescriptor
 from .models import RenderedText

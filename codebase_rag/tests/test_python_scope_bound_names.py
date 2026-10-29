@@ -4,7 +4,7 @@ import tree_sitter_python as tsp
 from tree_sitter import Language, Node, Parser
 
 from codebase_rag import constants as cs
-from codebase_rag.parsers.utils import _python_scope_bound_names
+from codebase_rag.parsers.callable_params import _python_scope_bound_names
 
 SOURCE = b"""
 def outer(p):

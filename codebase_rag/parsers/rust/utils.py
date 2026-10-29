@@ -884,3 +884,53 @@ def attribute_texts(node: Node) -> list[str]:
             ):
                 texts.append(attr_text)
     return texts
+
+
+# Rust parameter patterns that wrap the bound identifier (`&c`, `&mut a`, `ref b`,
+# `mut b`); unwrap past them (and any mutable_specifier) to the name.
+_RUST_REF_PATTERNS = frozenset(
+    {
+        cs.TS_RS_REFERENCE_PATTERN,
+        cs.TS_RS_REF_PATTERN,
+        cs.TS_RS_MUT_PATTERN,
+    }
+)
+
+
+def _rust_parameter_name(pattern: Node | None) -> str | None:
+    # A Rust parameter's `pattern` is usually an identifier but may be wrapped in a
+    # reference/ref/mut pattern (`&c`, `&mut a`, `ref b`); unwrap past any
+    # mutable_specifier to the bound identifier. A destructuring pattern
+    # (tuple/struct/slice) or `_` binds no single positional name -> None slot.
+    if pattern is None:
+        return None
+    if pattern.type == cs.TS_IDENTIFIER:
+        return safe_decode_text(pattern)
+    if pattern.type in _RUST_REF_PATTERNS:
+        inner = next(
+            (c for c in pattern.named_children if c.type != cs.TS_RS_MUTABLE_SPECIFIER),
+            None,
+        )
+        return _rust_parameter_name(inner)
+    return None
+
+
+def rust_positional_parameter_slots(
+    func_node: Node,
+) -> tuple[list[str | None], int | None]:
+    # Rust `parameters` -> `parameter` (pattern field). A `self_parameter` is the
+    # receiver, occupies no positional slot, and is dropped (like a TS `this`).
+    # Normal Rust fns have no varargs, so variadic_index stays None (extern `...`
+    # is out of scope).
+    params = func_node.child_by_field_name(cs.FIELD_PARAMETERS)
+    if params is None:
+        return [], None
+    names: list[str | None] = []
+    for param in params.named_children:
+        if param.type == cs.TS_RS_SELF_PARAMETER:
+            continue
+        if param.type == cs.TS_RS_PARAMETER:
+            names.append(
+                _rust_parameter_name(param.child_by_field_name(cs.TS_FIELD_PATTERN))
+            )
+    return names, None

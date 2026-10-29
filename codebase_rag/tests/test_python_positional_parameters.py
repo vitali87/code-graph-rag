@@ -22,7 +22,7 @@ from tree_sitter import Node
 from codebase_rag import constants as cs
 from codebase_rag.language_spec import LANGUAGE_SPECS
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.parsers.utils import python_positional_parameter_names
+from codebase_rag.parsers.callable_params import python_positional_parameter_names
 
 PARSERS, _ = load_parsers()
 

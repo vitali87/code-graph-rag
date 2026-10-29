@@ -32,6 +32,7 @@ from ..anchor_hash import anchor_hash_props
 from ..cpp import CppTypeInferenceEngine
 from ..cpp import local_types as cpp_local_types
 from ..cpp import utils as cpp_utils
+from ..cpp.utils import record_cpp_definition_span
 from ..csharp import utils as csharp_utils
 from ..csharp.arity import CSharpArityIndex
 from ..dart import utils as dart_utils
@@ -43,6 +44,7 @@ from ..go import GoTypeInferenceEngine
 from ..go import interfaces as go_ifaces
 from ..java import utils as java_utils
 from ..js_ts import utils as js_ts_utils
+from ..js_ts.utils import mark_js_ts_module_private
 from ..method_ingest import ingest_method
 from ..parameter_nodes import PendingParameterType, csharp_call_shape
 from ..php import namespaces as php_namespaces
@@ -58,9 +60,7 @@ from ..utils import (
     decorated_start_props,
     extract_modifiers_and_decorators,
     function_span_key,
-    mark_js_ts_module_private,
     module_qn_for_entity,
-    record_cpp_definition_span,
     written_simple_name,
 )
 from . import base_targets as bt

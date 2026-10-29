@@ -1,9 +1,13 @@
 from collections.abc import Iterator
+from pathlib import Path
 
 from tree_sitter import Node
 
 from ... import constants as cs
 from ...node_text import safe_decode_text, safe_decode_with_fallback
+from ...types_defs import ASTNode, CppDefinitionSpan
+from ...utils.path_utils import cached_relative_path
+from ..utils import find_descendant
 
 
 def convert_operator_symbol_to_name(symbol: str) -> str:
@@ -962,3 +966,110 @@ def cpp_declaration_has_internal_linkage(decl_node: Node) -> bool:
                 return True
         current = current.parent
     return False
+
+
+CPP_PARAMETER_DECLARATIONS = frozenset(
+    {
+        cs.CppNodeType.PARAMETER_DECLARATION,
+        cs.CppNodeType.OPTIONAL_PARAMETER_DECLARATION,
+    }
+)
+
+
+def cpp_declarator_name(declarator: Node | None) -> str | None:
+    # Unwrap pointer/reference/parenthesized/function declarators down to the
+    # bound identifier (`int (*cb)()` -> cb, `T& x` -> x, `Fn cb` -> cb).
+    current = declarator
+    while current is not None:
+        if current.type in (
+            cs.CppNodeType.IDENTIFIER,
+            cs.CppNodeType.FIELD_IDENTIFIER,
+        ):
+            return safe_decode_text(current)
+        if (inner := current.child_by_field_name(cs.FIELD_DECLARATOR)) is not None:
+            current = inner
+            continue
+        current = next(
+            (
+                child
+                for child in current.children
+                if child.is_named and cs.CPP_DECLARATOR_SUFFIX in child.type
+            ),
+            None,
+        )
+    return None
+
+
+def cpp_positional_parameter_slots(
+    func_node: Node,
+) -> tuple[list[str | None], int | None]:
+    declarator = func_node.child_by_field_name(cs.FIELD_DECLARATOR)
+    func_declarator = find_descendant(declarator, cs.CppNodeType.FUNCTION_DECLARATOR)
+    if func_declarator is None:
+        return [], None
+    params = func_declarator.child_by_field_name(cs.KEY_PARAMETERS)
+    if params is None:
+        return [], None
+    names: list[str | None] = []
+    for declaration in params.named_children:
+        if declaration.type not in CPP_PARAMETER_DECLARATIONS:
+            continue
+        param_declarator = declaration.child_by_field_name(cs.FIELD_DECLARATOR)
+        names.append(cpp_declarator_name(param_declarator))
+    return names, None
+
+
+def c_positional_parameter_slots(
+    func_node: Node,
+) -> tuple[list[str | None], int | None]:
+    # C shares C++'s declarator grammar, so the C++ helpers apply unchanged: descend
+    # declarator -> function_declarator -> parameters, unwrapping each
+    # parameter_declaration's declarator to its identifier (None for an abstract
+    # prototype declarator). Unlike C++, a trailing `...` is a well-formed
+    # `variadic_parameter`, recorded as the variadic slot (printf-style sinks).
+    declarator = func_node.child_by_field_name(cs.FIELD_DECLARATOR)
+    func_declarator = find_descendant(declarator, cs.CppNodeType.FUNCTION_DECLARATOR)
+    if func_declarator is None:
+        return [], None
+    params = func_declarator.child_by_field_name(cs.KEY_PARAMETERS)
+    if params is None:
+        return [], None
+    names: list[str | None] = []
+    variadic_index: int | None = None
+    for declaration in params.named_children:
+        if declaration.type == cs.CppNodeType.VARIADIC_PARAMETER:
+            if variadic_index is None:
+                variadic_index = len(names)
+            names.append(None)
+            continue
+        if declaration.type not in CPP_PARAMETER_DECLARATIONS:
+            continue
+        param_declarator = declaration.child_by_field_name(cs.FIELD_DECLARATOR)
+        names.append(cpp_declarator_name(param_declarator))
+    return names, variadic_index
+
+
+_CPP_SPAN_LANGUAGES = frozenset({cs.SupportedLanguage.C, cs.SupportedLanguage.CPP})
+
+
+def record_cpp_definition_span(
+    spans: dict[str, list[CppDefinitionSpan]],
+    language: cs.SupportedLanguage | None,
+    file_path: Path | None,
+    repo_path: Path,
+    node: ASTNode,
+    label: str,
+    qualified_name: str,
+) -> None:
+    # Record the full line span of a tree-sitter-ingested C/C++ definition,
+    # keyed by relative path: the hybrid C++ frontend attributes each macro use
+    # to the tightest enclosing span after Pass 2, since macro cursors are
+    # TU-level and libclang qns use the wrong scheme where macros hide namespaces.
+    if language not in _CPP_SPAN_LANGUAGES or file_path is None:
+        return
+    rel = cached_relative_path(file_path, repo_path).as_posix()
+    spans.setdefault(rel, []).append(
+        CppDefinitionSpan(
+            node.start_point[0] + 1, node.end_point[0] + 1, label, qualified_name
+        )
+    )
