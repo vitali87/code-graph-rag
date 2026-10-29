@@ -15,7 +15,7 @@ from codebase_rag import constants as cs
 from codebase_rag.capture import CaptureSelection, resolve_capture
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.tests.conftest import _audit_recorded_graph
+from codebase_rag.tests.conftest import _audit_recorded_graph, get_relationships
 
 EXPOSES = cs.RelationshipType.EXPOSES.value
 WRITES_TO = cs.RelationshipType.WRITES_TO.value
@@ -272,11 +272,7 @@ def test_reprocessed_module_drops_stale_facts(tmp_path: Path) -> None:
         producer.root_node, "proj.producer", cs2.SupportedLanguage.PYTHON
     )
     processor.finalize()
-    resolves = [
-        c
-        for c in ingestor.ensure_relationship_batch.call_args_list
-        if str(c.args[1]) == RESOLVES_TO
-    ]
+    resolves = get_relationships(ingestor, RESOLVES_TO)
     assert not resolves, resolves
 
 
@@ -315,11 +311,7 @@ def test_finalize_seeds_registrations_from_database(tmp_path: Path) -> None:
         producer.root_node, "proj.producer", cs2.SupportedLanguage.PYTHON
     )
     processor.finalize()
-    resolves = [
-        c
-        for c in ingestor.ensure_relationship_batch.call_args_list
-        if str(c.args[1]) == RESOLVES_TO
-    ]
+    resolves = get_relationships(ingestor, RESOLVES_TO)
     assert resolves, ingestor.ensure_relationship_batch.call_args_list
 
 

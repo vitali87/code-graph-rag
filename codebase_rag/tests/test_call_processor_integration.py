@@ -9,6 +9,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_relationships
 
 if TYPE_CHECKING:
     from tree_sitter import Parser
@@ -56,11 +57,7 @@ def main():
         )
         updater.run()
 
-        calls = [
-            c
-            for c in mock_ingestor.ensure_relationship_batch.call_args_list
-            if c.args[1] == cs.RelationshipType.CALLS
-        ]
+        calls = get_relationships(mock_ingestor, cs.RelationshipType.CALLS)
         assert len(calls) > 0
 
         call_targets = [c.args[2][2] for c in calls]
@@ -98,11 +95,7 @@ class MyClass:
         )
         updater.run()
 
-        calls = [
-            c
-            for c in mock_ingestor.ensure_relationship_batch.call_args_list
-            if c.args[1] == cs.RelationshipType.CALLS
-        ]
+        calls = get_relationships(mock_ingestor, cs.RelationshipType.CALLS)
 
         caller_qns = [c.args[0][2] for c in calls]
         main_caller = [qn for qn in caller_qns if "main" in qn]
@@ -149,11 +142,7 @@ def process():
         )
         updater.run()
 
-        calls = [
-            c
-            for c in mock_ingestor.ensure_relationship_batch.call_args_list
-            if c.args[1] == cs.RelationshipType.CALLS
-        ]
+        calls = get_relationships(mock_ingestor, cs.RelationshipType.CALLS)
 
         call_targets = [c.args[2][2] for c in calls]
         format_calls = [t for t in call_targets if "format_string" in t]
@@ -188,11 +177,7 @@ setup()
         )
         updater.run()
 
-        calls = [
-            c
-            for c in mock_ingestor.ensure_relationship_batch.call_args_list
-            if c.args[1] == cs.RelationshipType.CALLS
-        ]
+        calls = get_relationships(mock_ingestor, cs.RelationshipType.CALLS)
 
         caller_types = [c.args[0][0] for c in calls]
         module_callers = [t for t in caller_types if t == cs.NodeLabel.MODULE]
@@ -233,11 +218,7 @@ function main() {
         )
         updater.run()
 
-        calls = [
-            c
-            for c in mock_ingestor.ensure_relationship_batch.call_args_list
-            if c.args[1] == cs.RelationshipType.CALLS
-        ]
+        calls = get_relationships(mock_ingestor, cs.RelationshipType.CALLS)
         assert len(calls) > 0
 
     def test_processes_method_calls_js(
@@ -274,11 +255,7 @@ class MyClass {
         )
         updater.run()
 
-        calls = [
-            c
-            for c in mock_ingestor.ensure_relationship_batch.call_args_list
-            if c.args[1] == cs.RelationshipType.CALLS
-        ]
+        calls = get_relationships(mock_ingestor, cs.RelationshipType.CALLS)
         assert len(calls) >= 1
 
     def test_processes_builtin_calls_js(
@@ -311,11 +288,7 @@ function process(data) {
         )
         updater.run()
 
-        calls = [
-            c
-            for c in mock_ingestor.ensure_relationship_batch.call_args_list
-            if c.args[1] == cs.RelationshipType.CALLS
-        ]
+        calls = get_relationships(mock_ingestor, cs.RelationshipType.CALLS)
 
         # A synthetic builtin.* qn never has a node, so its CALLS edge was
         # always dropped by the database (issue #652); builtin resolution
@@ -360,11 +333,7 @@ public class Test {
         )
         updater.run()
 
-        calls = [
-            c
-            for c in mock_ingestor.ensure_relationship_batch.call_args_list
-            if c.args[1] == cs.RelationshipType.CALLS
-        ]
+        calls = get_relationships(mock_ingestor, cs.RelationshipType.CALLS)
         assert len(calls) >= 1
 
     def test_processes_same_class_method_calls_java(
@@ -401,11 +370,7 @@ public class Calculator {
         )
         updater.run()
 
-        calls = [
-            c
-            for c in mock_ingestor.ensure_relationship_batch.call_args_list
-            if c.args[1] == cs.RelationshipType.CALLS
-        ]
+        calls = get_relationships(mock_ingestor, cs.RelationshipType.CALLS)
 
         call_targets = [c.args[2][2] for c in calls]
         add_calls = [t for t in call_targets if "add" in t]
@@ -444,11 +409,7 @@ void main_func() {
         )
         updater.run()
 
-        calls = [
-            c
-            for c in mock_ingestor.ensure_relationship_batch.call_args_list
-            if c.args[1] == cs.RelationshipType.CALLS
-        ]
+        calls = get_relationships(mock_ingestor, cs.RelationshipType.CALLS)
 
         call_targets = [c.args[2][2] for c in calls]
         helper_calls = [t for t in call_targets if "helper" in t]
@@ -488,11 +449,7 @@ public:
         )
         updater.run()
 
-        calls = [
-            c
-            for c in mock_ingestor.ensure_relationship_batch.call_args_list
-            if c.args[1] == cs.RelationshipType.CALLS
-        ]
+        calls = get_relationships(mock_ingestor, cs.RelationshipType.CALLS)
         assert len(calls) >= 1
 
 
@@ -529,11 +486,7 @@ fn main_func() {
         )
         updater.run()
 
-        calls = [
-            c
-            for c in mock_ingestor.ensure_relationship_batch.call_args_list
-            if c.args[1] == cs.RelationshipType.CALLS
-        ]
+        calls = get_relationships(mock_ingestor, cs.RelationshipType.CALLS)
 
         call_targets = [c.args[2][2] for c in calls]
         helper_calls = [t for t in call_targets if "helper" in t]
@@ -575,11 +528,7 @@ impl MyStruct {
         )
         updater.run()
 
-        calls = [
-            c
-            for c in mock_ingestor.ensure_relationship_batch.call_args_list
-            if c.args[1] == cs.RelationshipType.CALLS
-        ]
+        calls = get_relationships(mock_ingestor, cs.RelationshipType.CALLS)
         assert len(calls) >= 1
 
 
@@ -617,11 +566,7 @@ function main(): void {
         )
         updater.run()
 
-        calls = [
-            c
-            for c in mock_ingestor.ensure_relationship_batch.call_args_list
-            if c.args[1] == cs.RelationshipType.CALLS
-        ]
+        calls = get_relationships(mock_ingestor, cs.RelationshipType.CALLS)
         assert len(calls) >= 1
 
     def test_processes_class_method_calls_ts(
@@ -658,11 +603,7 @@ class MyClass {
         )
         updater.run()
 
-        calls = [
-            c
-            for c in mock_ingestor.ensure_relationship_batch.call_args_list
-            if c.args[1] == cs.RelationshipType.CALLS
-        ]
+        calls = get_relationships(mock_ingestor, cs.RelationshipType.CALLS)
         assert len(calls) >= 1
 
 
@@ -688,11 +629,7 @@ class TestProcessCallsEdgeCases:
         )
         updater.run()
 
-        calls = [
-            c
-            for c in mock_ingestor.ensure_relationship_batch.call_args_list
-            if c.args[1] == cs.RelationshipType.CALLS
-        ]
+        calls = get_relationships(mock_ingestor, cs.RelationshipType.CALLS)
         assert len(calls) == 0
 
     def test_handles_file_with_only_imports(
@@ -760,11 +697,7 @@ def main():
         )
         updater.run()
 
-        calls = [
-            c
-            for c in mock_ingestor.ensure_relationship_batch.call_args_list
-            if c.args[1] == cs.RelationshipType.CALLS
-        ]
+        calls = get_relationships(mock_ingestor, cs.RelationshipType.CALLS)
 
         call_targets = [c.args[2][2] for c in calls]
         all_funcs_called = all(
@@ -814,11 +747,7 @@ def main():
         )
         updater.run()
 
-        calls = [
-            c
-            for c in mock_ingestor.ensure_relationship_batch.call_args_list
-            if c.args[1] == cs.RelationshipType.CALLS
-        ]
+        calls = get_relationships(mock_ingestor, cs.RelationshipType.CALLS)
         assert len(calls) >= 1
 
         # Builder() is a class instantiation, not a function call
@@ -855,11 +784,7 @@ package_func()
         )
         updater.run()
 
-        calls = [
-            c
-            for c in mock_ingestor.ensure_relationship_batch.call_args_list
-            if c.args[1] == cs.RelationshipType.CALLS
-        ]
+        calls = get_relationships(mock_ingestor, cs.RelationshipType.CALLS)
 
         caller_qns = [c.args[0][2] for c in calls]
         package_callers = [qn for qn in caller_qns if "mypackage" in qn]
@@ -900,11 +825,7 @@ helper()
         )
         updater.run()
 
-        calls = [
-            c
-            for c in mock_ingestor.ensure_relationship_batch.call_args_list
-            if c.args[1] == cs.RelationshipType.CALLS
-        ]
+        calls = get_relationships(mock_ingestor, cs.RelationshipType.CALLS)
 
         class_targets = [c for c in calls if c.args[2][0] == cs.NodeLabel.CLASS]
         assert class_targets == []
@@ -943,11 +864,7 @@ def factory():
         )
         updater.run()
 
-        calls = [
-            c
-            for c in mock_ingestor.ensure_relationship_batch.call_args_list
-            if c.args[1] == cs.RelationshipType.CALLS
-        ]
+        calls = get_relationships(mock_ingestor, cs.RelationshipType.CALLS)
 
         class_targets = [c for c in calls if c.args[2][0] == cs.NodeLabel.CLASS]
         assert class_targets == []

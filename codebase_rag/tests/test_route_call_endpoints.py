@@ -17,6 +17,7 @@ from codebase_rag import constants as cs
 from codebase_rag.capture import resolve_capture
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_relationships
 
 _CAPTURE_IO = resolve_capture([cs.CaptureGroup.IO.value])
 EXPOSES = cs.RelationshipType.EXPOSES.value
@@ -963,9 +964,5 @@ class TestTestModulesEmitNoEndpoints:
             capture=_CAPTURE_IO,
         )
         updater.endpoint_linker.emit_pending_endpoints(updater._run)
-        exposes = [
-            c
-            for c in ingestor.ensure_relationship_batch.call_args_list
-            if str(c.args[1]) == EXPOSES
-        ]
+        exposes = get_relationships(ingestor, EXPOSES)
         assert not exposes, exposes
