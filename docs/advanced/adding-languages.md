@@ -125,7 +125,10 @@ Put new language-specific behaviour there, as a function or engine method
 the pass calls through its per-language dispatch, rather than as a new
 `if language == ...` branch with the logic inlined in a pass module. Older
 per-language method groups still sit in the pass modules and are moving into
-the language packages one language at a time.
+the language packages one language at a time. Rust's import handling is the
+first to move: `ImportProcessor` builds a `RustImporter`
+(`parsers/rust/imports.py`) and hands it every Rust file's imports, keeping
+the shared import map and the deferred IMPORTS edges for itself.
 
 ## Example: Adding C# Support
 
