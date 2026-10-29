@@ -204,17 +204,23 @@ class TestDuplicateQualifiedNameReturnedClosures:
         self, tmp_path: Path
     ) -> None:
         # `return handler` hands back whichever branch defined handler, so the
-        # producer edge must link BOTH twins; linking one leaves the other
-        # unreachable and falsely dead (django's SET.set_on_delete@60).
+        # return must link BOTH twins; linking one leaves the other
+        # unreachable and falsely dead (django's SET.set_on_delete@60). The
+        # return's REFERENCES edge links them; no CALLS edge does, since
+        # returning a closure is not calling it (issue #2945).
         cap = _build(tmp_path, FACTORY_SRC)
-        returned_edges = sorted(
-            str(target)
-            for (_fl, from_val, rel_type, _tl, target) in cap.rels
-            if rel_type == cs.RelationshipType.CALLS
-            and str(from_val).endswith(".factory")
-            and ".handler" in str(target)
-        )
-        assert returned_edges == [
+
+        def returned_edges(rel: cs.RelationshipType) -> list[str]:
+            return sorted(
+                str(target)
+                for (_fl, from_val, rel_type, _tl, target) in cap.rels
+                if rel_type == rel
+                and str(from_val).endswith(".factory")
+                and ".handler" in str(target)
+            )
+
+        assert returned_edges(cs.RelationshipType.REFERENCES) == [
             f"{PROJECT}.m.factory.handler",
             f"{PROJECT}.m.factory.handler{cs.DUP_QN_MARKER}9",
-        ], returned_edges
+        ]
+        assert returned_edges(cs.RelationshipType.CALLS) == []
