@@ -497,6 +497,28 @@ class TestTheUnignorePolicyReachesEveryProcessor:
 
         assert importer._scala_files_for({module_qn}) == {module_qn: source}
 
+    def test_the_dart_importer_finds_packages_with_the_updated_policy(
+        self, factory: ProcessorFactory
+    ) -> None:
+        """The Dart importer walks for the repo's pubspecs with the policy it
+        reads through the processor that built it, so the run after the update
+        (whose cache reset drops the old map) sees a rescued package's `lib/`
+        as the project's own (issues #1088, #3278)."""
+        importer = factory.import_processor.dart
+        package = factory.repo_path / "target" / "generated-sources" / "annotations"
+        (package / "lib").mkdir(parents=True)
+        (package / "pubspec.yaml").write_text("name: gen\n", encoding="utf-8")
+        assert importer._dart_package_libs() == {}
+
+        factory.propagate_unignore_paths(
+            frozenset({"target/generated-sources/annotations/**"})
+        )
+        importer.reset_dart_path_caches()
+
+        assert importer._dart_package_libs() == {
+            "gen": f"{factory.project_name}.target.generated-sources.annotations.lib"
+        }
+
     def test_a_processor_built_after_the_update_sees_the_new_policy(
         self, factory: ProcessorFactory
     ) -> None:

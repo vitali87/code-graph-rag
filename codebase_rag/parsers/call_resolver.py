@@ -6562,12 +6562,14 @@ class CallResolver:
         merely IMPORTS stays hidden (issue #2482)."""
         processor = self.import_processor
         imported = set(processor.import_mapping.get(module_qn, {}).values())
-        for libraries in processor.dart_import_aliases.get(module_qn, {}).values():
+        for libraries in processor.dart.dart_import_aliases.get(module_qn, {}).values():
             imported.update(libraries)
         visible = {module_qn, *imported}
         frontier = list(imported)
         while frontier:
-            for exposed in processor.dart_exposed_libraries.get(frontier.pop(), ()):
+            for exposed in processor.dart.dart_exposed_libraries.get(
+                frontier.pop(), ()
+            ):
                 if exposed not in visible:
                     visible.add(exposed)
                     frontier.append(exposed)
@@ -6640,7 +6642,7 @@ class CallResolver:
         """
         if call_point is None:
             return False
-        spans = self.import_processor.dart_prefix_shadows.get(module_qn, {})
+        spans = self.import_processor.dart.dart_prefix_shadows.get(module_qn, {})
         return any(lo <= call_point < hi for lo, hi in spans.get(prefix, ()))
 
     def _fold_import_prefix_hop(
@@ -6728,7 +6730,7 @@ class CallResolver:
         # `helper` in the source is other.dart, while import_mapping still
         # holds helper.dart under that key so both IMPORTS edges survive
         # (PR #2040).
-        aliases = self.import_processor.dart_import_aliases.get(module_qn, {})
+        aliases = self.import_processor.dart.dart_import_aliases.get(module_qn, {})
         import_map = self.import_processor.import_mapping.get(module_qn, {})
         return aliases.get(prefix) or (
             [import_map[prefix]] if import_map.get(prefix) else []

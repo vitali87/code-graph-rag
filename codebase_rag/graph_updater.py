@@ -3539,7 +3539,7 @@ class GraphUpdater:
         import_processor = self.factory.import_processor
         # A scoped re-ingest resets the map only when it deletes the old
         # subtrees, after this lookup; the map judged must be the new one.
-        import_processor.reset_dart_path_caches()
+        import_processor.dart.reset_dart_path_caches()
         rows = self._project_read(
             cs.CYPHER_PACKAGE_URI_IMPORTS,
             "Dart package importers",
@@ -3554,7 +3554,7 @@ class GraphUpdater:
             and path.endswith(cs.DART_EXT)
             and isinstance(uri := row.get(cs.KEY_IMPORTED_NAME), str)
             and isinstance(from_qn := row.get(cs.KEY_FROM_QN), str)
-            and import_processor.dart_import_target(uri, from_qn)
+            and import_processor.dart.dart_import_target(uri, from_qn)
             != row.get(cs.KEY_TO_QN)
         }
 
@@ -5056,7 +5056,7 @@ class GraphUpdater:
         self.factory.import_processor.rust.reset_rust_path_caches()
         self.factory.import_processor.java.reset_java_path_caches()
         self.factory.import_processor.reset_julia_path_caches()
-        self.factory.import_processor.reset_dart_path_caches()
+        self.factory.import_processor.dart.reset_dart_path_caches()
         cache_path = self.prepared_state_dir / cs.HASH_CACHE_FILENAME
         dir_mtimes_path = self.prepared_state_dir / cs.DIR_MTIMES_FILENAME
         baseline = self._hash_baseline(force, cache_path, dir_mtimes_path)
@@ -7087,7 +7087,7 @@ class GraphUpdater:
                 import_processor.reset_julia_path_caches()
             # A pubspec's `name:` is what Dart `package:` imports resolve by.
             if path.name == cs.DEP_FILE_PUBSPEC:
-                import_processor.reset_dart_path_caches()
+                import_processor.dart.reset_dart_path_caches()
         graph = self._graph
         for key, path in gone.items():
             self.remove_file_from_state(path)
@@ -7096,7 +7096,7 @@ class GraphUpdater:
             if path.suffix == cs.EXT_JL:
                 import_processor.reset_julia_path_caches()
             if path.name == cs.DEP_FILE_PUBSPEC:
-                import_processor.reset_dart_path_caches()
+                import_processor.dart.reset_dart_path_caches()
             if graph is not None:
                 # Keyed on the absolute path: a sibling project's File node
                 # can share the relative path (issue #897). The entry's own

@@ -803,6 +803,7 @@ def test_a_reparse_drops_the_dart_prefix_state(tmp_path: Path) -> None:
     (Copilot, PR #2040).
     """
     from codebase_rag.parsers.csharp.imports import CSharpImporter
+    from codebase_rag.parsers.dart.imports import DartImporter
     from codebase_rag.parsers.import_processor import ImportProcessor
     from codebase_rag.parsers.java.imports import JavaImporter
     from codebase_rag.parsers.js_ts.imports import JsTsImporter
@@ -815,11 +816,12 @@ def test_a_reparse_drops_the_dart_prefix_state(tmp_path: Path) -> None:
 
     processor = object.__new__(_Probe)
     processor.import_mapping = {"m": {"p": "m.lib"}}
-    processor.dart_prefix_shadows = {"m": {"p": [(0, 1)]}}
-    processor.dart_import_aliases = {"m": {"p": ["m.lib"]}}
+    processor.dart = object.__new__(DartImporter)
+    processor.dart.dart_prefix_shadows = {"m": {"p": [(0, 1)]}}
+    processor.dart.dart_import_aliases = {"m": {"p": ["m.lib"]}}
     # An `export` / `part` the file no longer has must stop exposing its
     # target to importers too (issue #2482).
-    processor.dart_exposed_libraries = {"m": ["m.lib"]}
+    processor.dart.dart_exposed_libraries = {"m": ["m.lib"]}
     processor._cpp_shadowed_include_targets = set()
     processor._cpp_declaration_mappings = set()
     processor.csharp = object.__new__(CSharpImporter)
@@ -841,9 +843,9 @@ def test_a_reparse_drops_the_dart_prefix_state(tmp_path: Path) -> None:
     processor._clear_module_import_state("m")
 
     assert "m" not in processor.js_ts.js_export_bindings
-    assert processor.dart_prefix_shadows.get("m") is None
-    assert processor.dart_import_aliases.get("m") is None
-    assert processor.dart_exposed_libraries.get("m") is None
+    assert processor.dart.dart_prefix_shadows.get("m") is None
+    assert processor.dart.dart_import_aliases.get("m") is None
+    assert processor.dart.dart_exposed_libraries.get("m") is None
     assert processor._julia_scope_map_keys.get("m") is None
     # The control: the mapping it sits beside is emptied, not dropped, so
     # this is the documented reset rather than a wholesale delete.
