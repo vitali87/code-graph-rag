@@ -1,14 +1,15 @@
+import importlib
 import os
 import posixpath
 import re
 import tomllib
 from collections.abc import Iterator, Mapping, Sequence
-from functools import lru_cache
+from functools import cache, lru_cache
 from pathlib import Path
 from typing import NamedTuple
 
 from loguru import logger
-from tree_sitter import Node, Parser, QueryCursor
+from tree_sitter import Language, Node, Parser, QueryCursor
 
 from .. import constants as cs
 from .. import logs as ls
@@ -154,6 +155,46 @@ _RS_MACRO_OPEN_RE = re.compile(r"(?:\w!|\bmacro_rules!\s*(?:r#)?[A-Za-z_]\w*)\s*
 
 _JULIA_SNAKE_RE_ACRONYM = re.compile(r"([A-Z]+)([A-Z][a-z])")
 _JULIA_SNAKE_RE_WORD = re.compile(r"([a-z0-9])([A-Z])")
+
+
+class _JuliaModuleIndex(NamedTuple):
+    # declared: module name -> the files that declare it. scoped: (file,
+    # dotted enclosing-module chain) -> {module name: qn suffix relative to
+    # the file module}.
+    declared: dict[str, set[str]]
+    scoped: dict[tuple[str, str], dict[str, str]]
+
+
+@cache
+def _julia_parser() -> Parser | None:
+    """A tree-sitter Parser for Julia, or None without the grammar.
+
+    The declared-module fallback re-parses files the main pipeline already
+    parsed, but the import processor owns no parser, so it loads one on
+    demand. tree-sitter-julia ships with the treesitter-full extra; without
+    it the fallback degrades to the path/stem lookups.
+    """
+    try:
+        grammar = importlib.import_module(f"{cs.TREE_SITTER_MODULE_PREFIX}julia")
+        return Parser(Language(grammar.language()))
+    except Exception:
+        return None
+
+
+def _julia_module_name(node: Node) -> str | None:
+    return next(
+        (
+            safe_decode_text(child)
+            for child in node.named_children
+            if child.type == cs.TS_JULIA_IDENTIFIER
+        ),
+        None,
+    )
+
+
+def _julia_unmacro(node: Node | None) -> str:
+    # `@foo` binds and is invoked as `foo`, as julia_call_name reads it.
+    return (safe_decode_text(node) or "").lstrip("@")
 
 
 def _julia_snake_case(name: str) -> str:
@@ -1100,8 +1141,7 @@ class ImportProcessor:
         "_cpp_module_qn_map",
         "_cpp_qn_to_rel",
         "_julia_file_stems",
-        "_julia_declared",
-        "_julia_scope_declared",
+        "_julia_modules",
         "_julia_scope_map_keys",
         "_deferred_import_edges",
         "unresolved_specifiers",
@@ -1226,6 +1266,10 @@ class ImportProcessor:
         # File module -> its nested-scope map keys; read unguarded on the
         # re-ingest path, which never runs the per-run cache resets.
         self._julia_scope_map_keys: dict[str, set[str]] = {}
+        # Filesystem-derived, built on the first Julia import that needs them
+        # and dropped by reset_julia_path_caches.
+        self._julia_file_stems: dict[str, set[str]] | None = None
+        self._julia_modules: _JuliaModuleIndex | None = None
         # IMPORTS edges held back until every file is parsed, so internal
         # targets verify against the full module registry (issue #652).
         self._deferred_import_edges: list[DeferredImportEdge] = []
@@ -5577,8 +5621,7 @@ class ImportProcessor:
         # module indices are filesystem-derived, so files added or removed
         # between runs must not keep resolving against the old layout.
         self._julia_file_stems = None
-        self._julia_declared = None
-        self._julia_scope_declared = None
+        self._julia_modules = None
         self._julia_scope_map_keys = {}
 
     def reset_dart_path_caches(self) -> None:
@@ -6867,18 +6910,16 @@ class ImportProcessor:
                             if name_node.named_children
                             else None
                         )
-                        local = safe_decode_text(alias)
-                        if alias is not None and alias.type == (
-                            cs.TS_JULIA_MACRO_IDENTIFIER
-                        ):
-                            # `using .M: @foo as @bar`: strip the `@` like
-                            # julia_call_name does for the invocation.
-                            local = (local or "").lstrip("@")
+                        local = (
+                            _julia_unmacro(alias)
+                            if alias is not None
+                            and alias.type == cs.TS_JULIA_MACRO_IDENTIFIER
+                            else safe_decode_text(alias)
+                        )
                     elif name_node.type == cs.TS_JULIA_IDENTIFIER:
                         local = safe_decode_text(name_node)
                     elif name_node.type == cs.TS_JULIA_MACRO_IDENTIFIER:
-                        # `using .M: @foo`: strip the `@` to match julia_call_name.
-                        local = (safe_decode_text(name_node) or "").lstrip("@")
+                        local = _julia_unmacro(name_node)
                     else:
                         continue
                     if local:
@@ -6889,17 +6930,15 @@ class ImportProcessor:
                 if len(named) < 2:
                     continue
                 if named[0].type == cs.TS_JULIA_MACRO_IDENTIFIER:
-                    dotted, relative = (
-                        (safe_decode_text(named[0]) or "").lstrip("@"),
-                        0,
-                    )
+                    dotted, relative = _julia_unmacro(named[0]), 0
                 else:
                     dotted, relative = self._julia_path_dotted(named[0])
-                local = safe_decode_text(named[-1])
-                if named[-1].type == cs.TS_JULIA_MACRO_IDENTIFIER:
-                    # `import Base: @view as @v`: the alias side may itself
-                    # be a macro name; strip the `@` to match julia_call_name.
-                    local = (local or "").lstrip("@")
+                # `import Base: @view as @v`: the alias may be a macro too.
+                local = (
+                    _julia_unmacro(named[-1])
+                    if named[-1].type == cs.TS_JULIA_MACRO_IDENTIFIER
+                    else safe_decode_text(named[-1])
+                )
                 if local:
                     yield local, dotted, relative
             elif t in (
@@ -6952,31 +6991,6 @@ class ImportProcessor:
             score += 1
         return score
 
-    @classmethod
-    def _julia_tree_sitter_parser(cls) -> Parser | None:
-        """A lazy tree-sitter Parser for Julia, or None without the grammar.
-
-        The declared-module fallback re-parses files the main pipeline
-        already parsed, but the import processor owns no parser, so it loads
-        one on demand. tree-sitter-julia ships with the treesitter-full
-        extra; without it the fallback degrades to the path/stem lookups.
-        """
-        if not hasattr(cls, "_julia_ts_parser"):
-            parser: Parser | None = None
-            try:
-                import importlib
-
-                from tree_sitter import Language
-
-                grammar = importlib.import_module(
-                    f"{cs.TREE_SITTER_MODULE_PREFIX}julia"
-                )
-                parser = Parser(Language(grammar.language()))
-            except Exception:
-                parser = None
-            cls._julia_ts_parser = parser
-        return cls._julia_ts_parser
-
     def _julia_nested_pkg_root(self, path: str) -> str | None:
         # The nearest enclosing directory with its own Project.toml (the
         # nested package root), or None if the path is in the main package.
@@ -6994,87 +7008,49 @@ class ImportProcessor:
                 return cs.SEPARATOR_SLASH.join(parts[:i])
         return None
 
-    def _julia_declared_modules(self) -> dict[str, set[str]]:
-        """Declared module name -> the files that declare it.
+    def _julia_module_index(self) -> _JuliaModuleIndex:
+        """Every module declaration in the repo's Julia files, by name and
+        by enclosing scope, from one parse of each file.
 
         A submodule need not be named after its file, so the declared name
         is often the only link to it. Nested packages are indexed too; the
         package-root boundary is enforced at lookup time.
         """
-        if (cached := getattr(self, "_julia_declared", None)) is not None:
-            return cached
-        index: dict[str, set[str]] = {}
-        parser = self._julia_tree_sitter_parser()
-        if parser is not None:
-            try:
-                for path in sorted(self.repo_path.rglob("*" + cs.EXT_JL)):
-                    if not path.is_file():
-                        continue
-                    try:
-                        tree = parser.parse(path.read_bytes())
-                    except OSError:
-                        continue
-                    rel = path.relative_to(self.repo_path).as_posix()
-                    if self._julia_candidate_excluded(rel):
-                        continue
-                    stack = [tree.root_node]
-                    while stack:
-                        node = stack.pop()
-                        if node.type == cs.TS_JULIA_MODULE_DEFINITION:
-                            for child in node.named_children:
-                                if child.type == cs.TS_JULIA_IDENTIFIER:
-                                    name = safe_decode_text(child)
-                                    if name:
-                                        index.setdefault(name, set()).add(rel)
-                        stack.extend(node.children)
-            except OSError:
-                pass
-        self._julia_declared = index
+        index = self._julia_modules
+        if index is None:
+            index = self._julia_modules = self._scan_julia_modules()
         return index
 
-    def _julia_scope_declared_index(
-        self,
-    ) -> dict[tuple[str, str], dict[str, str]]:
-        # (file, dotted enclosing-module chain) -> {module name: qn suffix
-        # relative to the file module}; the scope form of the declared index.
-        if (cached := getattr(self, "_julia_scope_declared", None)) is not None:
-            return cached
-        index: dict[tuple[str, str], dict[str, str]] = {}
-        parser = self._julia_tree_sitter_parser()
-        if parser is not None:
-            try:
-                for path in sorted(self.repo_path.rglob("*" + cs.EXT_JL)):
-                    if not path.is_file():
-                        continue
-                    rel = path.relative_to(self.repo_path).as_posix()
-                    if self._julia_candidate_excluded(rel):
-                        continue
-                    try:
-                        tree = parser.parse(path.read_bytes())
-                    except OSError:
-                        continue
-                    stack: list[tuple[Node, list[str]]] = [(tree.root_node, [])]
-                    while stack:
-                        node, chain = stack.pop()
-                        child_chain = chain
-                        if node.type == cs.TS_JULIA_MODULE_DEFINITION:
-                            name = next(
-                                (
-                                    safe_decode_text(child)
-                                    for child in node.named_children
-                                    if child.type == cs.TS_JULIA_IDENTIFIER
-                                ),
-                                None,
-                            )
-                            if name:
-                                index.setdefault(
-                                    (rel, cs.SEPARATOR_DOT.join(chain)), {}
-                                )[name] = cs.SEPARATOR_DOT.join(chain + [name])
-                                child_chain = chain + [name]
-                        stack.extend((child, child_chain) for child in node.children)
-            except OSError:
-                pass
-        self._julia_scope_declared = index
+    def _scan_julia_modules(self) -> _JuliaModuleIndex:
+        index = _JuliaModuleIndex({}, {})
+        parser = _julia_parser()
+        if parser is None:
+            return index
+        try:
+            for path in sorted(self.repo_path.rglob("*" + cs.EXT_JL)):
+                if not path.is_file():
+                    continue
+                rel = path.relative_to(self.repo_path).as_posix()
+                if self._julia_candidate_excluded(rel):
+                    continue
+                try:
+                    tree = parser.parse(path.read_bytes())
+                except OSError:
+                    continue
+                stack: list[tuple[Node, list[str]]] = [(tree.root_node, [])]
+                while stack:
+                    node, chain = stack.pop()
+                    if node.type == cs.TS_JULIA_MODULE_DEFINITION and (
+                        name := _julia_module_name(node)
+                    ):
+                        index.declared.setdefault(name, set()).add(rel)
+                        index.scoped.setdefault(
+                            (rel, cs.SEPARATOR_DOT.join(chain)), {}
+                        )[name] = cs.SEPARATOR_DOT.join([*chain, name])
+                        chain = [*chain, name]
+                    stack.extend((child, chain) for child in node.children)
+        except OSError:
+            pass
         return index
 
     def _julia_find_in_scope(
@@ -7086,8 +7062,8 @@ class ImportProcessor:
             return None
         chain = cs.SEPARATOR_DOT.join([scope, *segs[:-1]])
         suffix = (
-            self._julia_scope_declared_index()
-            .get((self._julia_module_rel_file(module_qn), chain), {})
+            self._julia_module_index()
+            .scoped.get((self._julia_module_rel_file(module_qn), chain), {})
             .get(segs[-1])
         )
         return cs.SEPARATOR_DOT.join([module_qn, suffix]) if suffix else None
@@ -7097,7 +7073,7 @@ class ImportProcessor:
         # (`api.jl` declaring `module api` registers `proj.api.api.alpha`).
         candidates = [f"{module_qn}{cs.SEPARATOR_DOT}{name}"]
         rel_file = self._julia_module_rel_file(module_qn)
-        for declared, files in self._julia_declared_modules().items():
+        for declared, files in self._julia_module_index().declared.items():
             if rel_file in files:
                 candidates.append(
                     f"{module_qn}{cs.SEPARATOR_DOT}{declared}{cs.SEPARATOR_DOT}{name}"
@@ -7114,7 +7090,7 @@ class ImportProcessor:
     ) -> str | None:
         if not name:
             return None
-        hits = self._julia_declared_modules().get(name)
+        hits = self._julia_module_index().declared.get(name)
         if hits and importer_root is not None:
             hits = {
                 hit for hit in hits if self._julia_nested_pkg_root(hit) == importer_root
@@ -7204,7 +7180,7 @@ class ImportProcessor:
         return None
 
     def _julia_file_stem_index(self) -> dict[str, set[str]]:
-        if (cached := getattr(self, "_julia_file_stems", None)) is not None:
+        if (cached := self._julia_file_stems) is not None:
             return cached
         index: dict[str, set[str]] = {}
         try:

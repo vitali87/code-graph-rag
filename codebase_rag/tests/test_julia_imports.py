@@ -329,8 +329,12 @@ def test_excluded_module_not_in_discovery(
         exclude_paths=frozenset({"generated"}),
     )
 
-    index = updater.factory.import_processor._julia_declared or {}
-    assert "generated/dep.jl" not in index, index
+    processor = updater.factory.import_processor
+    indexed = [
+        *(processor._julia_file_stems or {}).values(),
+        *(processor._julia_module_index().declared.values()),
+    ]
+    assert all("generated/dep.jl" not in files for files in indexed), indexed
     imports = {
         (c.args[0][2], c.args[2][2])
         for c in get_relationships(mock_ingestor, "IMPORTS")
