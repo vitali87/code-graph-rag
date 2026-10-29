@@ -16,7 +16,7 @@ from codebase_rag import constants as cs
 from codebase_rag.parser_loader import load_parsers
 from evals import constants as ec
 from evals.cgr_graph import extract_cgr_cpp_graph, restrict_to_files
-from evals.oracles import cpp_available, run_cpp_oracle
+from evals.oracles import cpp_oracle_available, run_cpp_oracle
 from evals.score import (
     score_edge_types,
     score_name_edge_types,
@@ -75,7 +75,7 @@ int helper(int n) {
 
 
 def _require_cpp() -> None:
-    if not cpp_available():
+    if not cpp_oracle_available():
         pytest.skip("libclang not available")
     if cs.SupportedLanguage.CPP not in load_parsers()[0]:
         pytest.skip("cpp parser not available")

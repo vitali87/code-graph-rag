@@ -12,7 +12,7 @@ import pytest
 
 from codebase_rag import constants as cs
 from evals.cgr_graph import extract_cgr_go_graph
-from evals.oracles import go_available, run_go_oracle
+from evals.oracles import go_oracle_available, run_go_oracle
 from evals.score import score_edge_types
 
 GO_SRC = """package thrift
@@ -44,7 +44,7 @@ func TestHeaderContext(t *testing.T) {
 """
 
 
-@pytest.mark.skipif(not go_available(), reason="go toolchain not available")
+@pytest.mark.skipif(not go_oracle_available(), reason="go toolchain not available")
 def test_function_local_types_parent_to_enclosing_function(tmp_path: Path) -> None:
     (tmp_path / "wrapper_test.go").write_text(GO_SRC)
 

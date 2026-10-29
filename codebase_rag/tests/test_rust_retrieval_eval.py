@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from evals import constants as ec
-from evals.oracles import rust_available
+from evals.oracles import rust_oracle_available
 from evals.rust_retrieval import (
     cgr_rust_call_edges,
     oracle_rust_call_edges,
@@ -11,7 +11,7 @@ from evals.rust_retrieval import (
 )
 
 needs_rust = pytest.mark.skipif(
-    not rust_available(), reason="rust toolchain not installed"
+    not rust_oracle_available(), reason="rust toolchain not installed"
 )
 
 

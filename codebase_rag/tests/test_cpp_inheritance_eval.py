@@ -25,10 +25,10 @@ from evals.inheritance import (
     cpp_oracle_inheritance,
     score_inheritance,
 )
-from evals.oracles.cpp_oracle import cpp_available, run_cpp_oracle
+from evals.oracles.cpp_oracle import cpp_oracle_available, run_cpp_oracle
 
 _NEEDS_LIBCLANG = pytest.mark.skipif(
-    not cpp_available(), reason="libclang not available"
+    not cpp_oracle_available(), reason="libclang not available"
 )
 
 

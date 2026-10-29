@@ -28,7 +28,7 @@ from evals.inheritance import (
     oracle_inheritance,
     score_inheritance,
 )
-from evals.oracles import cpp_available, java_available
+from evals.oracles import cpp_oracle_available, java_oracle_available
 
 _VISIBLE = "class Base2:\n    pass\n\n\nclass Vis(Base2):\n    pass\n"
 _HIDDEN = "class B3:\n    pass\n\n\nclass Hid2(B3):\n    pass\n"
@@ -155,7 +155,9 @@ def _located_repo(root: Path, visible: str, hidden: str, suffix: str) -> None:
     (root / ".cgrignore").write_text("ignored/\n", encoding="utf-8")
 
 
-@pytest.mark.skipif(not java_available(), reason="java oracle needs a working JDK")
+@pytest.mark.skipif(
+    not java_oracle_available(), reason="java oracle needs a working JDK"
+)
 def test_the_java_oracle_honours_cgrignore(tmp_path: Path) -> None:
     """Only the TypeScript arm filtered its oracle; javac walked every file.
 
@@ -175,7 +177,7 @@ def test_the_java_oracle_honours_cgrignore(tmp_path: Path) -> None:
     assert all(not bucket["missing"] for bucket in result.diff.values()), result.diff
 
 
-@pytest.mark.skipif(not cpp_available(), reason="libclang not available")
+@pytest.mark.skipif(not cpp_oracle_available(), reason="libclang not available")
 def test_the_cpp_oracle_honours_cgrignore(tmp_path: Path) -> None:
     src = tmp_path / "proj"
     _located_repo(src, _CPP_VISIBLE, _CPP_HIDDEN, ".cpp")

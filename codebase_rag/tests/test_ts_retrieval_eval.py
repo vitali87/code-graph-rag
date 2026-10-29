@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from evals import constants as ec
-from evals.oracles import typescript_available
+from evals.oracles import typescript_oracle_available
 from evals.ts_retrieval import (
     cgr_ts_call_edges,
     oracle_ts_call_edges,
@@ -11,7 +11,7 @@ from evals.ts_retrieval import (
 )
 
 needs_node = pytest.mark.skipif(
-    not typescript_available(), reason="node toolchain not installed"
+    not typescript_oracle_available(), reason="node toolchain not installed"
 )
 
 

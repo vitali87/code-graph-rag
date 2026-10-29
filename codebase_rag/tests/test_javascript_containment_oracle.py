@@ -13,7 +13,7 @@ from evals import constants as ec
 from evals.cgr_graph import extract_cgr_js_graph
 from evals.oracles import (
     run_javascript_oracle,
-    typescript_skip_reason,
+    typescript_oracle_skip_reason,
 )
 from evals.score import score_edge_types
 
@@ -78,7 +78,7 @@ function wrap(base) {
 
 
 def _require_js() -> None:
-    reason = typescript_skip_reason()
+    reason = typescript_oracle_skip_reason()
     if reason is not None:
         pytest.skip(reason)
     if cs.SupportedLanguage.JS not in load_parsers()[0]:

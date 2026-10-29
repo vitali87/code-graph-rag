@@ -71,7 +71,7 @@ def _ensure_libclang() -> None:
         return
     _libclang_pinned = True
     # clang is an optional dependency: if the bindings are absent this import
-    # raises ModuleNotFoundError, so swallow it here and let cpp_available's own
+    # raises ModuleNotFoundError, so swallow it here and let cpp_oracle_available's own
     # try/except report the oracle as unavailable, rather than letting the
     # exception escape and break test collection or the CLI path.
     try:
@@ -92,7 +92,7 @@ def _ensure_libclang() -> None:
                 continue
 
 
-def cpp_available() -> bool:
+def cpp_oracle_available() -> bool:
     _ensure_libclang()
     try:
         import clang.cindex as ci

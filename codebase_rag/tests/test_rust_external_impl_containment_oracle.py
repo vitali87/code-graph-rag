@@ -12,7 +12,7 @@ import pytest
 
 from codebase_rag import constants as cs
 from evals.cgr_graph import extract_cgr_rust_graph
-from evals.oracles import run_rust_oracle, rust_available
+from evals.oracles import run_rust_oracle, rust_oracle_available
 from evals.score import score_edge_types
 
 RS_SRC = """\
@@ -31,7 +31,7 @@ where
 """
 
 
-@pytest.mark.skipif(not rust_available(), reason="cargo toolchain not available")
+@pytest.mark.skipif(not rust_oracle_available(), reason="cargo toolchain not available")
 def test_impl_on_external_type_methods_anchor_to_module(tmp_path: Path) -> None:
     (tmp_path / "lib.rs").write_text(RS_SRC)
 

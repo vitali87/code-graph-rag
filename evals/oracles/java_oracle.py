@@ -30,7 +30,7 @@ def _toolchain_runs(bin_name: str) -> bool:
     return toolchain_runs(bin_name, _PROBE_TIMEOUT_SECONDS)
 
 
-def java_available() -> bool:
+def java_oracle_available() -> bool:
     return _toolchain_runs(ec.JAVAC_BIN) and _toolchain_runs(ec.JAVA_BIN)
 
 

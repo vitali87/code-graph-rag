@@ -16,7 +16,7 @@ _ORACLE_DIR = Path(__file__).parent / ec.SCALA_ORACLE_DIRNAME
 _SOURCE = _ORACLE_DIR / ec.SCALA_ORACLE_SOURCE
 
 
-def scala_available() -> bool:
+def scala_oracle_available() -> bool:
     return shutil.which(ec.SCALA_CLI_BIN) is not None
 
 

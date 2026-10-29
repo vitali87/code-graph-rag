@@ -30,11 +30,11 @@ from evals.inheritance import (
 )
 from evals.oracles.typescript_oracle import (
     run_typescript_oracle,
-    typescript_available,
+    typescript_oracle_available,
 )
 
 pytestmark = pytest.mark.skipif(
-    not typescript_available(),
+    not typescript_oracle_available(),
     reason="the TypeScript oracle needs node and its vendored typescript",
 )
 

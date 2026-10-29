@@ -9,8 +9,8 @@ from .cgr_graph import extract_cgr_js_graph
 from .l1_eval import run_l1_eval
 from .oracles import (
     run_javascript_oracle,
-    typescript_available,
-    typescript_skip_reason,
+    typescript_oracle_available,
+    typescript_oracle_skip_reason,
 )
 
 _TITLE = "cgr L1 structure eval (JavaScript vs tsc)"
@@ -31,8 +31,8 @@ def main(
         target,
         project_name,
         out_dir,
-        available=typescript_available,
-        skip_reason=typescript_skip_reason,
+        available=typescript_oracle_available,
+        skip_reason=typescript_oracle_skip_reason,
         oracle_missing=ls.TS_ORACLE_MISSING,
         extract_cgr=extract_cgr_js_graph,
         run_oracle=run_javascript_oracle,

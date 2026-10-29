@@ -8,9 +8,11 @@ from evals.go_retrieval import (
     oracle_go_call_edges,
     score_go_retrieval,
 )
-from evals.oracles import go_available
+from evals.oracles import go_oracle_available
 
-needs_go = pytest.mark.skipif(not go_available(), reason="go toolchain not installed")
+needs_go = pytest.mark.skipif(
+    not go_oracle_available(), reason="go toolchain not installed"
+)
 
 
 def _make_repo(root: Path) -> None:

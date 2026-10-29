@@ -12,7 +12,7 @@ from codebase_rag import constants as cs
 from codebase_rag.parser_loader import load_parsers
 from evals import constants as ec
 from evals.cgr_graph import extract_cgr_rust_graph
-from evals.oracles import run_rust_oracle, rust_available
+from evals.oracles import run_rust_oracle, rust_oracle_available
 from evals.score import score_span
 
 RS_SRC = """\
@@ -52,7 +52,7 @@ where
 
 
 def _require_rust() -> None:
-    if not rust_available():
+    if not rust_oracle_available():
         pytest.skip("cargo toolchain not available")
     if cs.SupportedLanguage.RUST not in load_parsers()[0]:
         pytest.skip("rust parser not available")

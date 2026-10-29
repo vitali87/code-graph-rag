@@ -17,7 +17,7 @@ from evals.inheritance import (
     java_oracle_inheritance,
     score_inheritance,
 )
-from evals.oracles.java_oracle import java_available
+from evals.oracles.java_oracle import java_oracle_available
 
 _BASE = 'package com.app;\n\npublic class Base {\n    public String describe() {\n        return "base";\n    }\n}\n'
 _SPEAKS = "package com.app;\n\npublic interface Speaks {\n    String speak();\n}\n"
@@ -38,7 +38,9 @@ def _write(repo: Path) -> None:
     (package / "Child.java").write_text(_CHILD, encoding="utf-8")
 
 
-@pytest.mark.skipif(not java_available(), reason="java oracle needs a working JDK")
+@pytest.mark.skipif(
+    not java_oracle_available(), reason="java oracle needs a working JDK"
+)
 def test_oracle_reads_extends_and_implements(tmp_path: Path) -> None:
     repo = tmp_path / "proj"
     _write(repo)
@@ -50,7 +52,9 @@ def test_oracle_reads_extends_and_implements(tmp_path: Path) -> None:
     assert oracle.overrides == set()
 
 
-@pytest.mark.skipif(not java_available(), reason="java oracle needs a working JDK")
+@pytest.mark.skipif(
+    not java_oracle_available(), reason="java oracle needs a working JDK"
+)
 def test_cgr_and_oracle_agree_on_the_fixture(tmp_path: Path) -> None:
     repo = tmp_path / "proj"
     _write(repo)
@@ -65,7 +69,9 @@ def test_cgr_and_oracle_agree_on_the_fixture(tmp_path: Path) -> None:
     assert (row["tp"], row["fp"], row["fn"]) == (2, 0, 0)
 
 
-@pytest.mark.skipif(not java_available(), reason="java oracle needs a working JDK")
+@pytest.mark.skipif(
+    not java_oracle_available(), reason="java oracle needs a working JDK"
+)
 def test_no_overrides_row_is_emitted_for_java(tmp_path: Path) -> None:
     # CGR *does* resolve Java OVERRIDES, but the oracle cannot adjudicate them,
     # so reporting a score would be measuring nothing. Absence is the honest
@@ -94,7 +100,7 @@ def test_missing_java_toolchain_exits_instead_of_scoring_nothing(
     # that silently means nothing is worse than no measurement.
     repo = tmp_path / "proj"
     _write(repo)
-    monkeypatch.setattr(inh, "java_available", lambda: False)
+    monkeypatch.setattr(inh, "java_oracle_available", lambda: False)
     with pytest.raises(typer.Exit) as exit_info:
         inh.main(
             target=repo,

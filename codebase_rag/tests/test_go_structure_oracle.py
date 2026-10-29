@@ -10,7 +10,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.parser_loader import load_parsers
 from evals.cgr_graph import extract_cgr_go_nodes
-from evals.oracles import go_available, run_go_oracle
+from evals.oracles import go_oracle_available, run_go_oracle
 from evals.score import score_node_kinds
 from evals.types_defs import GraphData
 
@@ -38,7 +38,7 @@ func (p Point) Area() float64 {
 
 
 def _require_go() -> None:
-    if not go_available():
+    if not go_oracle_available():
         pytest.skip("go toolchain not available")
     if cs.SupportedLanguage.GO not in load_parsers()[0]:
         pytest.skip("go parser not available")

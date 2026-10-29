@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from evals import constants as ec
-from evals.oracles import scala_available
+from evals.oracles import scala_oracle_available
 from evals.scala_retrieval import (
     cgr_scala_call_edges,
     oracle_scala_call_edges,
@@ -11,7 +11,7 @@ from evals.scala_retrieval import (
 )
 
 needs_scala = pytest.mark.skipif(
-    not scala_available(), reason="scala-cli toolchain not installed"
+    not scala_oracle_available(), reason="scala-cli toolchain not installed"
 )
 
 

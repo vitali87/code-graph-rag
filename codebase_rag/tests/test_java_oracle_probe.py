@@ -7,7 +7,7 @@ from __future__ import annotations
 import subprocess
 from types import SimpleNamespace
 
-from evals.oracles import java_available
+from evals.oracles import java_oracle_available
 from evals.oracles.java_oracle import _toolchain_runs
 
 
@@ -45,4 +45,4 @@ def test_available_requires_both_toolchain_binaries(monkeypatch):
             returncode=0 if cmd[0].endswith("javac") else 1, stdout="", stderr=""
         ),
     )
-    assert java_available() is False
+    assert java_oracle_available() is False

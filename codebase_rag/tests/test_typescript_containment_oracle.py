@@ -14,7 +14,7 @@ from evals import constants as ec
 from evals.cgr_graph import extract_cgr_ts_graph
 from evals.oracles import (
     run_typescript_oracle,
-    typescript_skip_reason,
+    typescript_oracle_skip_reason,
 )
 from evals.score import score_edge_types
 
@@ -38,7 +38,7 @@ export namespace geo {
 
 
 def _require_ts() -> None:
-    reason = typescript_skip_reason()
+    reason = typescript_oracle_skip_reason()
     if reason is not None:
         pytest.skip(reason)
     if cs.SupportedLanguage.TS not in load_parsers()[0]:

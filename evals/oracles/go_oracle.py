@@ -15,7 +15,7 @@ from ._common import payload_call_edges, payload_to_graph
 _ORACLE_GO = Path(__file__).parent / ec.GO_ORACLE_GO_FILE
 
 
-def go_available() -> bool:
+def go_oracle_available() -> bool:
     return shutil.which(ec.GO_BIN) is not None
 
 

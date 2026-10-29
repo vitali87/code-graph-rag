@@ -22,7 +22,7 @@ from . import logs as ls
 from .ast_oracle import _from_base_parts, _iter_py_files, _module_dotted
 from .cgr_graph import capture
 from .ignore_rules import ignore_rules
-from .oracles.cpp_oracle import cpp_available, run_cpp_oracle
+from .oracles.cpp_oracle import cpp_oracle_available, run_cpp_oracle
 
 if TYPE_CHECKING:
     from clang.cindex import Cursor
@@ -32,11 +32,11 @@ from .oracles.csharp_oracle import (
     csharp_oracle_skip_reason,
     run_csharp_oracle,
 )
-from .oracles.java_oracle import java_available, run_java_oracle
+from .oracles.java_oracle import java_oracle_available, run_java_oracle
 from .oracles.typescript_oracle import (
     run_typescript_oracle,
-    typescript_available,
-    typescript_skip_reason,
+    typescript_oracle_available,
+    typescript_oracle_skip_reason,
 )
 from .score import _prf
 from .structure_report import render, write_outputs
@@ -611,7 +611,7 @@ def _located_arms() -> dict[ec.InheritanceLanguage, _LocatedArm]:
     # consulted are whatever this module's globals hold at that moment.
     return {
         ec.InheritanceLanguage.JAVA: _LocatedArm(
-            available=java_available,
+            available=java_oracle_available,
             oracle_missing=ls.JAVA_ORACLE_MISSING,
             run_oracle=java_oracle_inheritance,
             run_cgr=java_cgr_inheritance,
@@ -619,7 +619,7 @@ def _located_arms() -> dict[ec.InheritanceLanguage, _LocatedArm]:
             binary=ec.JAVAC_BIN,
         ),
         ec.InheritanceLanguage.CPP: _LocatedArm(
-            available=cpp_available,
+            available=cpp_oracle_available,
             oracle_missing=ls.CPP_ORACLE_MISSING,
             run_oracle=cpp_oracle_inheritance,
             run_cgr=cpp_cgr_inheritance,
@@ -636,13 +636,13 @@ def _located_arms() -> dict[ec.InheritanceLanguage, _LocatedArm]:
             skip_reason=csharp_oracle_skip_reason,
         ),
         ec.InheritanceLanguage.TYPESCRIPT: _LocatedArm(
-            available=typescript_available,
+            available=typescript_oracle_available,
             oracle_missing=ls.TS_ORACLE_MISSING,
             run_oracle=ts_oracle_inheritance,
             run_cgr=ts_cgr_inheritance,
             inherits_label=ec.TS_SUPERTYPES_LABEL,
             binary=ec.NODE_BIN,
-            skip_reason=typescript_skip_reason,
+            skip_reason=typescript_oracle_skip_reason,
         ),
     }
 

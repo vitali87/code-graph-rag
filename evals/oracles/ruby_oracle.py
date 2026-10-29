@@ -5,6 +5,7 @@ from pathlib import Path
 from .. import constants as ec
 from ..types_defs import GraphData, OraclePayload
 from ._common import (
+    node_oracle_available,
     node_oracle_skip_reason,
     payload_to_graph,
     run_node_oracle_payload,
@@ -12,6 +13,10 @@ from ._common import (
 
 _ORACLE_DIR = Path(__file__).parent / ec.RUBY_ORACLE_DIRNAME
 _SCRIPT = _ORACLE_DIR / ec.RUBY_ORACLE_SCRIPT
+
+
+def ruby_oracle_available() -> bool:
+    return node_oracle_available(_ORACLE_DIR)
 
 
 def ruby_oracle_skip_reason() -> str | None:

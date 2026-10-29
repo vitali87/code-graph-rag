@@ -8,10 +8,10 @@ from evals.c_retrieval import (
     oracle_c_call_edges,
     score_c_retrieval,
 )
-from evals.oracles import cpp_available
+from evals.oracles import cpp_oracle_available
 
 needs_clang = pytest.mark.skipif(
-    not cpp_available(), reason="libclang (clang.cindex) not importable"
+    not cpp_oracle_available(), reason="libclang (clang.cindex) not importable"
 )
 
 

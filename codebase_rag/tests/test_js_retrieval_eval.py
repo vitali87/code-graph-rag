@@ -9,7 +9,7 @@ from evals.js_retrieval import (
     oracle_js_call_edges,
     score_js_retrieval,
 )
-from evals.oracles import typescript_available
+from evals.oracles import typescript_oracle_available
 
 
 def _js_grammar_available() -> bool:
@@ -27,7 +27,7 @@ def _js_grammar_available() -> bool:
 
 
 needs_node = pytest.mark.skipif(
-    not typescript_available(), reason="node toolchain not installed"
+    not typescript_oracle_available(), reason="node toolchain not installed"
 )
 needs_js_grammar = pytest.mark.skipif(
     not _js_grammar_available(),

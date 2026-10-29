@@ -9,7 +9,7 @@ from codebase_rag import constants as cs
 from . import constants as ec
 from . import logs as ls
 from .cgr_graph import extract_cgr_cpp_graph, restrict_to_files
-from .oracles import cpp_available, run_cpp_oracle
+from .oracles import cpp_oracle_available, run_cpp_oracle
 from .score import score_structure
 from .structure_report import render, write_outputs
 
@@ -35,7 +35,7 @@ def main(
 
     settings.CPP_FRONTEND = cs.CppFrontend.TREESITTER
     target = target.resolve()
-    if not cpp_available() or not (target / ec.CPP_COMPDB_FILENAME).is_file():
+    if not cpp_oracle_available() or not (target / ec.CPP_COMPDB_FILENAME).is_file():
         logger.error(
             ls.CPP_ORACLE_MISSING.format(compdb=ec.CPP_COMPDB_FILENAME, target=target)
         )

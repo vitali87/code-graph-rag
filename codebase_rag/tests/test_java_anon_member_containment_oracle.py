@@ -12,7 +12,7 @@ import pytest
 
 from codebase_rag import constants as cs
 from evals.cgr_graph import extract_cgr_java_graph
-from evals.oracles import java_available, run_java_oracle
+from evals.oracles import java_oracle_available, run_java_oracle
 from evals.score import score_edge_types
 
 JAVA_SRC = """\
@@ -31,7 +31,7 @@ public class Client {
 """
 
 
-@pytest.mark.skipif(not java_available(), reason="javac toolchain not available")
+@pytest.mark.skipif(not java_oracle_available(), reason="javac toolchain not available")
 def test_anonymous_class_members_anchor_to_module(tmp_path: Path) -> None:
     (tmp_path / "Client.java").write_text(JAVA_SRC)
 

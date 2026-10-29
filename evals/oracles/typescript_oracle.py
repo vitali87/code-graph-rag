@@ -16,11 +16,11 @@ _ORACLE_DIR = Path(__file__).parent / ec.TS_ORACLE_DIRNAME
 _SCRIPT = _ORACLE_DIR / ec.TS_ORACLE_SCRIPT
 
 
-def typescript_available() -> bool:
+def typescript_oracle_available() -> bool:
     return node_oracle_available(_ORACLE_DIR)
 
 
-def typescript_skip_reason() -> str | None:
+def typescript_oracle_skip_reason() -> str | None:
     """Why this oracle cannot run here, or None when it can (issue #1639).
 
     On a clean checkout this answers None because the deps are not installed

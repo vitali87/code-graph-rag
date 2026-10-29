@@ -7,7 +7,7 @@ from . import constants as ec
 from . import logs as ls
 from .cgr_graph import extract_cgr_rust_graph
 from .l1_eval import run_l1_eval
-from .oracles import run_rust_oracle, rust_available
+from .oracles import run_rust_oracle, rust_oracle_available
 
 _TITLE = "cgr L1 structure eval (Rust vs syn)"
 
@@ -27,7 +27,7 @@ def main(
         target,
         project_name,
         out_dir,
-        available=rust_available,
+        available=rust_oracle_available,
         oracle_missing=ls.RS_ORACLE_MISSING,
         extract_cgr=extract_cgr_rust_graph,
         run_oracle=run_rust_oracle,

@@ -8,10 +8,10 @@ from evals.java_retrieval import (
     oracle_java_call_edges,
     score_java_retrieval,
 )
-from evals.oracles import java_available
+from evals.oracles import java_oracle_available
 
 needs_java = pytest.mark.skipif(
-    not java_available(), reason="java toolchain not installed"
+    not java_oracle_available(), reason="java toolchain not installed"
 )
 
 

@@ -7,7 +7,7 @@ from . import constants as ec
 from . import logs as ls
 from .cgr_graph import extract_cgr_java_graph
 from .l1_eval import run_l1_eval
-from .oracles import java_available, run_java_oracle
+from .oracles import java_oracle_available, run_java_oracle
 
 _TITLE = "cgr L1 structure eval (Java vs JDK Compiler Tree API)"
 
@@ -27,7 +27,7 @@ def main(
         target,
         project_name,
         out_dir,
-        available=java_available,
+        available=java_oracle_available,
         oracle_missing=ls.JAVA_ORACLE_MISSING,
         extract_cgr=extract_cgr_java_graph,
         run_oracle=run_java_oracle,

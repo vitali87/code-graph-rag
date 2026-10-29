@@ -12,7 +12,7 @@ from codebase_rag import constants as cs
 from codebase_rag.parser_loader import load_parsers
 from evals import constants as ec
 from evals.cgr_graph import extract_cgr_java_graph
-from evals.oracles import java_available, run_java_oracle
+from evals.oracles import java_oracle_available, run_java_oracle
 from evals.score import score_span
 
 JAVA_SRC = """\
@@ -47,7 +47,7 @@ enum Color {
 
 
 def _require_java() -> None:
-    if not java_available():
+    if not java_oracle_available():
         pytest.skip("jdk (javac/java) not available")
     if cs.SupportedLanguage.JAVA not in load_parsers()[0]:
         pytest.skip("java parser not available")

@@ -7,7 +7,7 @@ from . import constants as ec
 from . import logs as ls
 from .cgr_graph import extract_cgr_go_graph
 from .l1_eval import run_l1_eval
-from .oracles import go_available, run_go_oracle
+from .oracles import go_oracle_available, run_go_oracle
 
 _TITLE = "cgr L1 structure eval (Go vs go/ast)"
 
@@ -27,7 +27,7 @@ def main(
         target,
         project_name,
         out_dir,
-        available=go_available,
+        available=go_oracle_available,
         oracle_missing=ls.GO_ORACLE_MISSING,
         extract_cgr=extract_cgr_go_graph,
         run_oracle=run_go_oracle,

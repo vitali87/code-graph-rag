@@ -1,6 +1,6 @@
 from ._common import NodeOracleUnavailable
 from .cpp_oracle import (
-    cpp_available,
+    cpp_oracle_available,
     run_c_call_oracle,
     run_cpp_call_oracle,
     run_cpp_oracle,
@@ -11,8 +11,8 @@ from .csharp_oracle import (
     run_csharp_call_oracle,
     run_csharp_oracle,
 )
-from .go_oracle import go_available, run_go_call_oracle, run_go_oracle
-from .java_oracle import java_available, run_java_call_oracle, run_java_oracle
+from .go_oracle import go_oracle_available, run_go_call_oracle, run_go_oracle
+from .java_oracle import java_oracle_available, run_java_call_oracle, run_java_oracle
 from .lua_oracle import (
     lua_oracle_available,
     lua_oracle_skip_reason,
@@ -29,20 +29,24 @@ from .ruby_oracle import (
     ruby_oracle_skip_reason,
     run_ruby_oracle,
 )
-from .rust_oracle import run_rust_call_oracle, run_rust_oracle, rust_available
-from .scala_oracle import run_scala_call_oracle, run_scala_oracle, scala_available
+from .rust_oracle import run_rust_call_oracle, run_rust_oracle, rust_oracle_available
+from .scala_oracle import (
+    run_scala_call_oracle,
+    run_scala_oracle,
+    scala_oracle_available,
+)
 from .typescript_oracle import (
     run_javascript_call_oracle,
     run_javascript_oracle,
     run_typescript_call_oracle,
     run_typescript_oracle,
-    typescript_available,
-    typescript_skip_reason,
+    typescript_oracle_available,
+    typescript_oracle_skip_reason,
 )
 
 __all__ = [
     "NodeOracleUnavailable",
-    "cpp_available",
+    "cpp_oracle_available",
     "run_c_call_oracle",
     "run_cpp_call_oracle",
     "run_cpp_oracle",
@@ -50,10 +54,10 @@ __all__ = [
     "csharp_oracle_skip_reason",
     "run_csharp_call_oracle",
     "run_csharp_oracle",
-    "go_available",
+    "go_oracle_available",
     "run_go_call_oracle",
     "run_go_oracle",
-    "java_available",
+    "java_oracle_available",
     "run_java_call_oracle",
     "run_java_oracle",
     "lua_oracle_available",
@@ -68,14 +72,14 @@ __all__ = [
     "run_php_oracle",
     "run_rust_call_oracle",
     "run_rust_oracle",
-    "rust_available",
+    "rust_oracle_available",
     "run_scala_call_oracle",
     "run_scala_oracle",
-    "scala_available",
+    "scala_oracle_available",
     "run_javascript_call_oracle",
     "run_javascript_oracle",
     "run_typescript_call_oracle",
     "run_typescript_oracle",
-    "typescript_available",
-    "typescript_skip_reason",
+    "typescript_oracle_available",
+    "typescript_oracle_skip_reason",
 ]

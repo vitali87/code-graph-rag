@@ -20,7 +20,7 @@ _MANIFEST = _ORACLE_DIR / "Cargo.toml"
 _BUILD_LOCK = _ORACLE_DIR / ec.RS_ORACLE_BUILD_LOCK
 
 
-def rust_available() -> bool:
+def rust_oracle_available() -> bool:
     return shutil.which(ec.CARGO_BIN) is not None
 
 
