@@ -95,6 +95,8 @@ With all Tree-sitter grammars (Python, JS, TS, Rust, Go, Java, Scala, C, C++, Lu
 pip install 'code-graph-rag[treesitter-full]'
 ```
 
+A PyPI install parses C and C++ with the upstream `tree-sitter-c` and `tree-sitter-cpp` grammars. Those drop the declarations that follow a `#define` whose value contains a block comment ([tree-sitter-c #319](https://github.com/tree-sitter/tree-sitter-c/issues/319)). The patched forks that fix it reach only installs that apply the project's `[tool.uv.sources]`: [`uv` from git](#install-from-git) and a [source checkout](#install-from-source).
+
 Ruby, Kotlin, Swift, Elixir, Haskell, Solidity, Bash and Nix are parsed by the [ast-grep tier](../architecture/language-support.md#structural-support-ast-grep-tier), which is its own `ast-grep` extra. Without it their files are indexed as bare `File` nodes, and a sync that meets them says so in a warning:
 
 ```bash

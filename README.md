@@ -115,6 +115,11 @@ uv tool install "code-graph-rag[treesitter-full,ast-grep,semantic]"
 pipx install "code-graph-rag[treesitter-full,ast-grep,semantic]"
 ```
 
+A PyPI install parses C and C++ with the upstream tree-sitter grammars; the
+patched forks that keep declarations after a `#define` holding a block comment
+apply only to installs from git with `uv` and to source checkouts (see the
+[installation guide](docs/getting-started/installation.md#install-from-pypi)).
+
 ### Which version am I getting?
 
 Three version lines exist and they intentionally differ:

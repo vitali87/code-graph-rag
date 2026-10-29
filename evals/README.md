@@ -809,8 +809,8 @@ directions:
   and bison's `api.prefix {jq_yy}` rename (`libclang` records `jq_yylex` after the
   `#define`; cgr resolves the same call under the textual name `yylex`).
 
-**The rest was a `tree-sitter-c` grammar bug, now fixed in cgr via patched
-forks:** in the bison-generated `parser.c`, tree-sitter produced 20 `ERROR`
+**The rest was a `tree-sitter-c` grammar bug, fixed in a source checkout of
+cgr via patched forks:** in the bison-generated `parser.c`, tree-sitter produced 20 `ERROR`
 nodes, and the normal `yyerror` definition (a plain `void yyerror(...)` at
 `parser.c:406`) fell inside one, so cgr never registered `yyerror` as a function
 and every call to it was unresolved. The trigger was reduced to a block comment
@@ -827,6 +827,13 @@ and [tree-sitter-cpp](https://github.com/vitali87/tree-sitter-cpp), pinned via
 captured (`parser.c` ERROR count drops from 20 to 12; the remainder are
 attribute-macro constructs that only preprocessing can resolve). Drop the
 overrides once the fix lands upstream.
+
+The forks reach only installs that apply `[tool.uv.sources]`: `uv sync` in a
+checkout and `uv tool install` from git. A wheel's metadata never carries that
+table, so a PyPI install (`pip`, `pipx`, or `uv tool install` of the published
+package) gets the upstream `tree-sitter-c` and `tree-sitter-cpp` releases and
+still loses `yyerror` in this file. The evals above run from a checkout, so
+they measure the patched grammar.
 
 ## Multi-language retrieval (C++) — C++ CALLS vs `libclang`
 
