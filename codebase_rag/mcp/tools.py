@@ -4,7 +4,7 @@ import itertools
 import json
 import sys
 import uuid
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -71,6 +71,7 @@ from codebase_rag.types_defs import (
     ListProjectsSuccessResult,
     MCPHandlerType,
     MCPInputSchema,
+    MCPInputSchemaProperties,
     MCPInputSchemaProperty,
     MCPToolSchema,
     PropertyValue,
@@ -103,6 +104,52 @@ if TYPE_CHECKING:
 def _query_refusal(error: str) -> QueryResultDict:
     # The error once: a failed query has no query and no rows to summarise.
     return QueryResultDict(error=error, query_used=cs.QUERY_NOT_AVAILABLE, results=[])
+
+
+def _param(
+    kind: cs.MCPSchemaType,
+    description: str,
+    *,
+    default: str | int | float | bool | None = None,
+    minimum: int | None = None,
+    items: dict[str, str] | None = None,
+    value_type: cs.MCPSchemaType | None = None,
+) -> MCPInputSchemaProperty:
+    """One input property of an MCP tool's JSON schema; `value_type` is the
+    type of an object's values when it is used as a map."""
+    prop = MCPInputSchemaProperty(type=kind, description=description)
+    if default is not None:
+        prop["default"] = default
+    if minimum is not None:
+        prop["minimum"] = minimum
+    if items is not None:
+        prop["items"] = items
+    if value_type is not None:
+        prop["additionalProperties"] = {cs.MCPSchemaField.TYPE: value_type}
+    return prop
+
+
+def _tool(
+    name: cs.MCPToolName,
+    handler: MCPHandlerType,
+    properties: MCPInputSchemaProperties | None = None,
+    required: Sequence[str] = (),
+    *,
+    returns_json: bool = True,
+) -> ToolMetadata:
+    """An MCP tool: its description from `td.MCP_TOOLS`, an object schema of
+    `properties`, and the handler serving it."""
+    return ToolMetadata(
+        name=name,
+        description=td.MCP_TOOLS[name],
+        input_schema=MCPInputSchema(
+            type=cs.MCPSchemaType.OBJECT,
+            properties=dict(properties or {}),
+            required=list(required),
+        ),
+        handler=handler,
+        returns_json=returns_json,
+    )
 
 
 def _found_nothing(result: object) -> bool:
@@ -559,93 +606,62 @@ class MCPToolsRegistry:
         else:
             logger.info(ls.MCP_SEMANTIC_NOT_AVAILABLE)
 
-        self._tools: dict[str, ToolMetadata] = {
-            cs.MCPToolName.LIST_PROJECTS: ToolMetadata(
-                name=cs.MCPToolName.LIST_PROJECTS,
-                description=td.MCP_TOOLS[cs.MCPToolName.LIST_PROJECTS],
-                input_schema=MCPInputSchema(
-                    type=cs.MCPSchemaType.OBJECT,
-                    properties={},
-                    required=[],
-                ),
-                handler=self.list_projects,
-                returns_json=True,
+        self._tools = self._build_tools()
+        self._hold_tools_to_workspace()
+
+    def _build_tools(self) -> dict[str, ToolMetadata]:
+        """Every tool this server offers, by name: its schema and handler."""
+        tools: dict[str, ToolMetadata] = {
+            cs.MCPToolName.LIST_PROJECTS: _tool(
+                cs.MCPToolName.LIST_PROJECTS, self.list_projects
             ),
-            cs.MCPToolName.DELETE_PROJECT: ToolMetadata(
-                name=cs.MCPToolName.DELETE_PROJECT,
-                description=td.MCP_TOOLS[cs.MCPToolName.DELETE_PROJECT],
-                input_schema=MCPInputSchema(
-                    type=cs.MCPSchemaType.OBJECT,
-                    properties={
-                        cs.MCPParamName.PROJECT_NAME: MCPInputSchemaProperty(
-                            type=cs.MCPSchemaType.STRING,
-                            description=td.MCP_PARAM_PROJECT_NAME,
-                        )
-                    },
-                    required=[cs.MCPParamName.PROJECT_NAME],
-                ),
-                handler=self.delete_project,
-                returns_json=True,
+            cs.MCPToolName.DELETE_PROJECT: _tool(
+                cs.MCPToolName.DELETE_PROJECT,
+                self.delete_project,
+                {
+                    cs.MCPParamName.PROJECT_NAME: _param(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT_NAME
+                    )
+                },
+                [cs.MCPParamName.PROJECT_NAME],
             ),
-            cs.MCPToolName.WIPE_DATABASE: ToolMetadata(
-                name=cs.MCPToolName.WIPE_DATABASE,
-                description=td.MCP_TOOLS[cs.MCPToolName.WIPE_DATABASE],
-                input_schema=MCPInputSchema(
-                    type=cs.MCPSchemaType.OBJECT,
-                    properties={
-                        cs.MCPParamName.CONFIRM: MCPInputSchemaProperty(
-                            type=cs.MCPSchemaType.BOOLEAN,
-                            description=td.MCP_PARAM_CONFIRM,
-                        )
-                    },
-                    required=[cs.MCPParamName.CONFIRM],
-                ),
-                handler=self.wipe_database,
+            cs.MCPToolName.WIPE_DATABASE: _tool(
+                cs.MCPToolName.WIPE_DATABASE,
+                self.wipe_database,
+                {
+                    cs.MCPParamName.CONFIRM: _param(
+                        cs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_CONFIRM
+                    )
+                },
+                [cs.MCPParamName.CONFIRM],
                 returns_json=False,
             ),
-            cs.MCPToolName.INDEX_REPOSITORY: ToolMetadata(
-                name=cs.MCPToolName.INDEX_REPOSITORY,
-                description=td.MCP_TOOLS[cs.MCPToolName.INDEX_REPOSITORY],
-                input_schema=MCPInputSchema(
-                    type=cs.MCPSchemaType.OBJECT,
-                    properties={},
-                    required=[],
-                ),
-                handler=self.index_repository,
+            cs.MCPToolName.INDEX_REPOSITORY: _tool(
+                cs.MCPToolName.INDEX_REPOSITORY,
+                self.index_repository,
                 returns_json=False,
             ),
-            cs.MCPToolName.UPDATE_REPOSITORY: ToolMetadata(
-                name=cs.MCPToolName.UPDATE_REPOSITORY,
-                description=td.MCP_TOOLS[cs.MCPToolName.UPDATE_REPOSITORY],
-                input_schema=MCPInputSchema(
-                    type=cs.MCPSchemaType.OBJECT,
-                    properties={},
-                    required=[],
-                ),
-                handler=self.update_repository,
+            cs.MCPToolName.UPDATE_REPOSITORY: _tool(
+                cs.MCPToolName.UPDATE_REPOSITORY,
+                self.update_repository,
                 returns_json=False,
             ),
-            cs.MCPToolName.REINGEST: ToolMetadata(
-                name=cs.MCPToolName.REINGEST,
-                description=td.MCP_TOOLS[cs.MCPToolName.REINGEST],
-                input_schema=MCPInputSchema(
-                    type=cs.MCPSchemaType.OBJECT,
-                    properties={
-                        cs.MCPParamName.PATHS: MCPInputSchemaProperty(
-                            type=cs.MCPSchemaType.ARRAY,
-                            description=td.MCP_PARAM_REINGEST_PATHS,
-                            items={cs.MCPSchemaField.TYPE: cs.MCPSchemaType.STRING},
-                        ),
-                        cs.MCPParamName.DELETED: MCPInputSchemaProperty(
-                            type=cs.MCPSchemaType.ARRAY,
-                            description=td.MCP_PARAM_REINGEST_DELETED,
-                            items={cs.MCPSchemaField.TYPE: cs.MCPSchemaType.STRING},
-                        ),
-                    },
-                    required=[cs.MCPParamName.PATHS],
-                ),
-                handler=self.reingest,
-                returns_json=True,
+            cs.MCPToolName.REINGEST: _tool(
+                cs.MCPToolName.REINGEST,
+                self.reingest,
+                {
+                    cs.MCPParamName.PATHS: _param(
+                        cs.MCPSchemaType.ARRAY,
+                        td.MCP_PARAM_REINGEST_PATHS,
+                        items={cs.MCPSchemaField.TYPE: cs.MCPSchemaType.STRING},
+                    ),
+                    cs.MCPParamName.DELETED: _param(
+                        cs.MCPSchemaType.ARRAY,
+                        td.MCP_PARAM_REINGEST_DELETED,
+                        items={cs.MCPSchemaField.TYPE: cs.MCPSchemaType.STRING},
+                    ),
+                },
+                [cs.MCPParamName.PATHS],
             ),
             cs.MCPToolName.RESOLVE: self._graph_tool(
                 cs.MCPToolName.RESOLVE,
@@ -745,217 +761,191 @@ class MCPToolsRegistry:
             cs.MCPToolName.REMOTE_DEPENDENCIES: self._graph_tool(
                 cs.MCPToolName.REMOTE_DEPENDENCIES, {}, [], self.remote_dependencies
             ),
-            cs.MCPToolName.RENAME: self._rename_tool(),
-            cs.MCPToolName.CONTEXT: self._context_tool(),
-            cs.MCPToolName.QUERY_CODE_GRAPH: ToolMetadata(
-                name=cs.MCPToolName.QUERY_CODE_GRAPH,
-                description=td.MCP_TOOLS[cs.MCPToolName.QUERY_CODE_GRAPH],
-                input_schema=MCPInputSchema(
-                    type=cs.MCPSchemaType.OBJECT,
-                    properties={
-                        cs.MCPParamName.NATURAL_LANGUAGE_QUERY: MCPInputSchemaProperty(
-                            type=cs.MCPSchemaType.STRING,
-                            description=td.MCP_PARAM_NATURAL_LANGUAGE_QUERY,
-                        ),
-                        # Declared as well as accepted: a client reads this
-                        # schema to learn what it may send, so omitting it
-                        # made per-request scoping undiscoverable (#1494).
-                        cs.MCPParamName.PROJECT: MCPInputSchemaProperty(
-                            type=cs.MCPSchemaType.STRING,
-                            description=td.MCP_PARAM_PROJECT,
-                        ),
-                    },
-                    required=[cs.MCPParamName.NATURAL_LANGUAGE_QUERY],
-                ),
-                handler=self.query_code_graph,
-                returns_json=True,
+            cs.MCPToolName.RENAME: _tool(
+                cs.MCPToolName.RENAME,
+                self.rename,
+                {
+                    cs.MCPParamName.QUALIFIED_NAME: _param(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_QUALIFIED_NAME
+                    ),
+                    cs.MCPParamName.NEW_NAME: _param(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_NEW_NAME
+                    ),
+                    cs.MCPParamName.ALLOW_HEURISTIC: _param(
+                        cs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_ALLOW_HEURISTIC
+                    ),
+                    cs.MCPParamName.DRY_RUN: _param(
+                        cs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_RENAME_DRY_RUN
+                    ),
+                    cs.MCPParamName.PROJECT: _param(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
+                    ),
+                },
+                [cs.MCPParamName.QUALIFIED_NAME, cs.MCPParamName.NEW_NAME],
             ),
-            cs.MCPToolName.GET_CODE_SNIPPET: ToolMetadata(
-                name=cs.MCPToolName.GET_CODE_SNIPPET,
-                description=td.MCP_TOOLS[cs.MCPToolName.GET_CODE_SNIPPET],
-                input_schema=MCPInputSchema(
-                    type=cs.MCPSchemaType.OBJECT,
-                    properties={
-                        cs.MCPParamName.QUALIFIED_NAME: MCPInputSchemaProperty(
-                            type=cs.MCPSchemaType.STRING,
-                            description=td.MCP_PARAM_QUALIFIED_NAME,
-                        )
-                    },
-                    required=[cs.MCPParamName.QUALIFIED_NAME],
-                ),
-                handler=self.get_code_snippet,
-                returns_json=True,
+            cs.MCPToolName.CONTEXT: _tool(
+                cs.MCPToolName.CONTEXT,
+                self.context,
+                {
+                    cs.MCPParamName.TARGET: _param(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_CONTEXT_TARGET
+                    ),
+                    cs.MCPParamName.BUDGET_TOKENS: _param(
+                        cs.MCPSchemaType.INTEGER, td.MCP_PARAM_BUDGET_TOKENS
+                    ),
+                    cs.MCPParamName.PROJECT: _param(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
+                    ),
+                },
+                [cs.MCPParamName.TARGET],
             ),
-            cs.MCPToolName.SURGICAL_REPLACE_CODE: ToolMetadata(
-                name=cs.MCPToolName.SURGICAL_REPLACE_CODE,
-                description=td.MCP_TOOLS[cs.MCPToolName.SURGICAL_REPLACE_CODE],
-                input_schema=MCPInputSchema(
-                    type=cs.MCPSchemaType.OBJECT,
-                    properties={
-                        cs.MCPParamName.FILE_PATH: MCPInputSchemaProperty(
-                            type=cs.MCPSchemaType.STRING,
-                            description=td.MCP_PARAM_FILE_PATH,
-                        ),
-                        cs.MCPParamName.TARGET_CODE: MCPInputSchemaProperty(
-                            type=cs.MCPSchemaType.STRING,
-                            description=td.MCP_PARAM_TARGET_CODE,
-                        ),
-                        cs.MCPParamName.REPLACEMENT_CODE: MCPInputSchemaProperty(
-                            type=cs.MCPSchemaType.STRING,
-                            description=td.MCP_PARAM_REPLACEMENT_CODE,
-                        ),
-                    },
-                    required=[
-                        cs.MCPParamName.FILE_PATH,
-                        cs.MCPParamName.TARGET_CODE,
-                        cs.MCPParamName.REPLACEMENT_CODE,
-                    ],
-                ),
-                handler=self.surgical_replace_code,
+            cs.MCPToolName.QUERY_CODE_GRAPH: _tool(
+                cs.MCPToolName.QUERY_CODE_GRAPH,
+                self.query_code_graph,
+                {
+                    cs.MCPParamName.NATURAL_LANGUAGE_QUERY: _param(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_NATURAL_LANGUAGE_QUERY
+                    ),
+                    cs.MCPParamName.PROJECT: _param(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
+                    ),
+                },
+                [cs.MCPParamName.NATURAL_LANGUAGE_QUERY],
+            ),
+            cs.MCPToolName.GET_CODE_SNIPPET: _tool(
+                cs.MCPToolName.GET_CODE_SNIPPET,
+                self.get_code_snippet,
+                {
+                    cs.MCPParamName.QUALIFIED_NAME: _param(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_QUALIFIED_NAME
+                    )
+                },
+                [cs.MCPParamName.QUALIFIED_NAME],
+            ),
+            cs.MCPToolName.SURGICAL_REPLACE_CODE: _tool(
+                cs.MCPToolName.SURGICAL_REPLACE_CODE,
+                self.surgical_replace_code,
+                {
+                    cs.MCPParamName.FILE_PATH: _param(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_FILE_PATH
+                    ),
+                    cs.MCPParamName.TARGET_CODE: _param(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_TARGET_CODE
+                    ),
+                    cs.MCPParamName.REPLACEMENT_CODE: _param(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_REPLACEMENT_CODE
+                    ),
+                },
+                [
+                    cs.MCPParamName.FILE_PATH,
+                    cs.MCPParamName.TARGET_CODE,
+                    cs.MCPParamName.REPLACEMENT_CODE,
+                ],
                 returns_json=False,
             ),
-            cs.MCPToolName.READ_FILE: ToolMetadata(
-                name=cs.MCPToolName.READ_FILE,
-                description=td.MCP_TOOLS[cs.MCPToolName.READ_FILE],
-                input_schema=MCPInputSchema(
-                    type=cs.MCPSchemaType.OBJECT,
-                    properties={
-                        cs.MCPParamName.FILE_PATH: MCPInputSchemaProperty(
-                            type=cs.MCPSchemaType.STRING,
-                            description=td.MCP_PARAM_FILE_PATH,
-                        ),
-                        cs.MCPParamName.OFFSET: MCPInputSchemaProperty(
-                            type=cs.MCPSchemaType.INTEGER,
-                            description=td.MCP_PARAM_OFFSET,
-                            minimum=cs.MCP_READ_OFFSET_MINIMUM,
-                        ),
-                        cs.MCPParamName.LIMIT: MCPInputSchemaProperty(
-                            type=cs.MCPSchemaType.INTEGER,
-                            description=td.MCP_PARAM_LIMIT,
-                            minimum=cs.MCP_READ_LIMIT_MINIMUM,
-                        ),
-                    },
-                    required=[cs.MCPParamName.FILE_PATH],
-                ),
-                handler=self.read_file,
+            cs.MCPToolName.READ_FILE: _tool(
+                cs.MCPToolName.READ_FILE,
+                self.read_file,
+                {
+                    cs.MCPParamName.FILE_PATH: _param(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_FILE_PATH
+                    ),
+                    cs.MCPParamName.OFFSET: _param(
+                        cs.MCPSchemaType.INTEGER,
+                        td.MCP_PARAM_OFFSET,
+                        minimum=cs.MCP_READ_OFFSET_MINIMUM,
+                    ),
+                    cs.MCPParamName.LIMIT: _param(
+                        cs.MCPSchemaType.INTEGER,
+                        td.MCP_PARAM_LIMIT,
+                        minimum=cs.MCP_READ_LIMIT_MINIMUM,
+                    ),
+                },
+                [cs.MCPParamName.FILE_PATH],
                 returns_json=False,
             ),
-            cs.MCPToolName.WRITE_FILE: ToolMetadata(
-                name=cs.MCPToolName.WRITE_FILE,
-                description=td.MCP_TOOLS[cs.MCPToolName.WRITE_FILE],
-                input_schema=MCPInputSchema(
-                    type=cs.MCPSchemaType.OBJECT,
-                    properties={
-                        cs.MCPParamName.FILE_PATH: MCPInputSchemaProperty(
-                            type=cs.MCPSchemaType.STRING,
-                            description=td.MCP_PARAM_FILE_PATH,
-                        ),
-                        cs.MCPParamName.CONTENT: MCPInputSchemaProperty(
-                            type=cs.MCPSchemaType.STRING,
-                            description=td.MCP_PARAM_CONTENT,
-                        ),
-                    },
-                    required=[
-                        cs.MCPParamName.FILE_PATH,
-                        cs.MCPParamName.CONTENT,
-                    ],
-                ),
-                handler=self.write_file,
+            cs.MCPToolName.WRITE_FILE: _tool(
+                cs.MCPToolName.WRITE_FILE,
+                self.write_file,
+                {
+                    cs.MCPParamName.FILE_PATH: _param(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_FILE_PATH
+                    ),
+                    cs.MCPParamName.CONTENT: _param(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_CONTENT
+                    ),
+                },
+                [
+                    cs.MCPParamName.FILE_PATH,
+                    cs.MCPParamName.CONTENT,
+                ],
                 returns_json=False,
             ),
-            cs.MCPToolName.LIST_DIRECTORY: ToolMetadata(
-                name=cs.MCPToolName.LIST_DIRECTORY,
-                description=td.MCP_TOOLS[cs.MCPToolName.LIST_DIRECTORY],
-                input_schema=MCPInputSchema(
-                    type=cs.MCPSchemaType.OBJECT,
-                    properties={
-                        cs.MCPParamName.DIRECTORY_PATH: MCPInputSchemaProperty(
-                            type=cs.MCPSchemaType.STRING,
-                            description=td.MCP_PARAM_DIRECTORY_PATH,
-                            default=cs.MCP_DEFAULT_DIRECTORY,
-                        )
-                    },
-                    required=[],
-                ),
-                handler=self.list_directory,
+            cs.MCPToolName.LIST_DIRECTORY: _tool(
+                cs.MCPToolName.LIST_DIRECTORY,
+                self.list_directory,
+                {
+                    cs.MCPParamName.DIRECTORY_PATH: _param(
+                        cs.MCPSchemaType.STRING,
+                        td.MCP_PARAM_DIRECTORY_PATH,
+                        default=cs.MCP_DEFAULT_DIRECTORY,
+                    )
+                },
                 returns_json=False,
             ),
         }
         if self._semantic_search_tool is not None:
-            self._tools[cs.MCPToolName.SEMANTIC_SEARCH] = ToolMetadata(
-                name=cs.MCPToolName.SEMANTIC_SEARCH,
-                description=td.MCP_TOOLS[cs.MCPToolName.SEMANTIC_SEARCH],
-                input_schema=MCPInputSchema(
-                    type=cs.MCPSchemaType.OBJECT,
-                    properties={
-                        cs.MCPParamName.NATURAL_LANGUAGE_QUERY: MCPInputSchemaProperty(
-                            type=cs.MCPSchemaType.STRING,
-                            description=td.MCP_PARAM_NATURAL_LANGUAGE_QUERY,
-                        ),
-                        cs.MCPParamName.TOP_K: MCPInputSchemaProperty(
-                            type=cs.MCPSchemaType.INTEGER,
-                            description=td.MCP_PARAM_TOP_K,
-                            default=5,
-                        ),
-                        cs.MCPParamName.PROJECT: MCPInputSchemaProperty(
-                            type=cs.MCPSchemaType.STRING,
-                            description=td.MCP_PARAM_PROJECT,
-                        ),
-                    },
-                    required=[cs.MCPParamName.NATURAL_LANGUAGE_QUERY],
-                ),
-                handler=self.semantic_search,
+            tools[cs.MCPToolName.SEMANTIC_SEARCH] = _tool(
+                cs.MCPToolName.SEMANTIC_SEARCH,
+                self.semantic_search,
+                {
+                    cs.MCPParamName.NATURAL_LANGUAGE_QUERY: _param(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_NATURAL_LANGUAGE_QUERY
+                    ),
+                    cs.MCPParamName.TOP_K: _param(
+                        cs.MCPSchemaType.INTEGER, td.MCP_PARAM_TOP_K, default=5
+                    ),
+                    cs.MCPParamName.PROJECT: _param(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
+                    ),
+                },
+                [cs.MCPParamName.NATURAL_LANGUAGE_QUERY],
                 returns_json=False,
             )
 
         if self._structural_available:
-            self._tools[cs.MCPToolName.STRUCTURAL_SEARCH] = ToolMetadata(
-                name=cs.MCPToolName.STRUCTURAL_SEARCH,
-                description=td.MCP_TOOLS[cs.MCPToolName.STRUCTURAL_SEARCH],
-                input_schema=MCPInputSchema(
-                    type=cs.MCPSchemaType.OBJECT,
-                    properties={
-                        cs.MCPParamName.PATTERN: MCPInputSchemaProperty(
-                            type=cs.MCPSchemaType.STRING,
-                            description=td.MCP_PARAM_PATTERN,
-                        ),
-                        cs.MCPParamName.LANGUAGE: MCPInputSchemaProperty(
-                            type=cs.MCPSchemaType.STRING,
-                            description=td.MCP_PARAM_LANGUAGE,
-                        ),
-                    },
-                    required=[cs.MCPParamName.PATTERN],
-                ),
-                handler=self.structural_search,
+            tools[cs.MCPToolName.STRUCTURAL_SEARCH] = _tool(
+                cs.MCPToolName.STRUCTURAL_SEARCH,
+                self.structural_search,
+                {
+                    cs.MCPParamName.PATTERN: _param(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_PATTERN
+                    ),
+                    cs.MCPParamName.LANGUAGE: _param(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_LANGUAGE
+                    ),
+                },
+                [cs.MCPParamName.PATTERN],
                 returns_json=False,
             )
-            self._tools[cs.MCPToolName.STRUCTURAL_REPLACE] = ToolMetadata(
-                name=cs.MCPToolName.STRUCTURAL_REPLACE,
-                description=td.MCP_TOOLS[cs.MCPToolName.STRUCTURAL_REPLACE],
-                input_schema=MCPInputSchema(
-                    type=cs.MCPSchemaType.OBJECT,
-                    properties={
-                        cs.MCPParamName.PATTERN: MCPInputSchemaProperty(
-                            type=cs.MCPSchemaType.STRING,
-                            description=td.MCP_PARAM_PATTERN,
-                        ),
-                        cs.MCPParamName.REWRITE: MCPInputSchemaProperty(
-                            type=cs.MCPSchemaType.STRING,
-                            description=td.MCP_PARAM_REWRITE,
-                        ),
-                        cs.MCPParamName.LANGUAGE: MCPInputSchemaProperty(
-                            type=cs.MCPSchemaType.STRING,
-                            description=td.MCP_PARAM_LANGUAGE,
-                        ),
-                        cs.MCPParamName.DRY_RUN: MCPInputSchemaProperty(
-                            type=cs.MCPSchemaType.BOOLEAN,
-                            description=td.MCP_PARAM_DRY_RUN,
-                            default=True,
-                        ),
-                    },
-                    required=[cs.MCPParamName.PATTERN, cs.MCPParamName.REWRITE],
-                ),
-                handler=self.structural_replace,
+            tools[cs.MCPToolName.STRUCTURAL_REPLACE] = _tool(
+                cs.MCPToolName.STRUCTURAL_REPLACE,
+                self.structural_replace,
+                {
+                    cs.MCPParamName.PATTERN: _param(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_PATTERN
+                    ),
+                    cs.MCPParamName.REWRITE: _param(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_REWRITE
+                    ),
+                    cs.MCPParamName.LANGUAGE: _param(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_LANGUAGE
+                    ),
+                    cs.MCPParamName.DRY_RUN: _param(
+                        cs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_DRY_RUN, default=True
+                    ),
+                },
+                [cs.MCPParamName.PATTERN, cs.MCPParamName.REWRITE],
                 returns_json=False,
             )
 
@@ -963,124 +953,86 @@ class MCPToolsRegistry:
         # semantic_search.py but touches none of the embedding machinery, so
         # gating it on the semantic extra would hide a graph-only tool behind
         # a dependency it never uses.
-        self._tools[cs.MCPToolName.FIND_DUPLICATE_CODE] = ToolMetadata(
-            name=cs.MCPToolName.FIND_DUPLICATE_CODE,
-            description=td.MCP_TOOLS[cs.MCPToolName.FIND_DUPLICATE_CODE],
-            input_schema=MCPInputSchema(
-                type=cs.MCPSchemaType.OBJECT,
-                properties={
-                    cs.MCPParamName.PROJECT: MCPInputSchemaProperty(
-                        type=cs.MCPSchemaType.STRING,
-                        description=td.MCP_PARAM_PROJECT,
-                    ),
-                    cs.MCPParamName.THRESHOLD: MCPInputSchemaProperty(
-                        type=cs.MCPSchemaType.NUMBER,
-                        description=td.MCP_PARAM_THRESHOLD,
-                        default=cs.DUPLICATES_DEFAULT_THRESHOLD,
-                    ),
-                    cs.MCPParamName.MIN_SIZE: MCPInputSchemaProperty(
-                        type=cs.MCPSchemaType.INTEGER,
-                        description=td.MCP_PARAM_MIN_SIZE,
-                        default=cs.DUPLICATES_DEFAULT_MIN_NODES,
-                    ),
-                    cs.MCPParamName.LIMIT: MCPInputSchemaProperty(
-                        type=cs.MCPSchemaType.INTEGER,
-                        description=td.MCP_PARAM_DUPLICATES_LIMIT,
-                        default=cs.DUPLICATES_DEFAULT_GROUP_LIMIT,
-                    ),
-                },
-                required=[],
-            ),
-            handler=self.find_duplicate_code,
-            returns_json=False,
-        )
-        self._tools[cs.MCPToolName.GET_FUNCTION_SOURCE] = ToolMetadata(
-            name=cs.MCPToolName.GET_FUNCTION_SOURCE,
-            description=td.MCP_TOOLS[cs.MCPToolName.GET_FUNCTION_SOURCE],
-            input_schema=MCPInputSchema(
-                type=cs.MCPSchemaType.OBJECT,
-                properties={
-                    cs.MCPParamName.NODE_ID: MCPInputSchemaProperty(
-                        type=cs.MCPSchemaType.INTEGER,
-                        description=td.MCP_PARAM_NODE_ID,
-                    )
-                },
-                required=[cs.MCPParamName.NODE_ID],
-            ),
-            handler=self.get_function_source,
-            returns_json=False,
-        )
-
-        self._tools[cs.MCPToolName.ASK_AGENT] = ToolMetadata(
-            name=cs.MCPToolName.ASK_AGENT,
-            description=td.MCP_TOOLS[cs.MCPToolName.ASK_AGENT],
-            input_schema=MCPInputSchema(
-                type=cs.MCPSchemaType.OBJECT,
-                properties={
-                    cs.MCPParamName.QUESTION: MCPInputSchemaProperty(
-                        type=cs.MCPSchemaType.STRING,
-                        description=td.MCP_PARAM_QUESTION,
-                    )
-                },
-                required=[cs.MCPParamName.QUESTION],
-            ),
-            handler=self.ask_agent,
-            returns_json=True,
-        )
-
-        self._tools[cs.MCPToolName.FLOW_VERDICT] = ToolMetadata(
-            name=cs.MCPToolName.FLOW_VERDICT,
-            description=td.MCP_TOOLS[cs.MCPToolName.FLOW_VERDICT],
-            input_schema=MCPInputSchema(
-                type=cs.MCPSchemaType.OBJECT,
-                properties={
-                    cs.MCPParamName.SOURCE_QN: MCPInputSchemaProperty(
-                        type=cs.MCPSchemaType.STRING,
-                        description=td.MCP_PARAM_SOURCE_QN,
-                    ),
-                    cs.MCPParamName.SINK_QN: MCPInputSchemaProperty(
-                        type=cs.MCPSchemaType.STRING,
-                        description=td.MCP_PARAM_SINK_QN,
-                    ),
-                },
-                required=[cs.MCPParamName.SOURCE_QN, cs.MCPParamName.SINK_QN],
-            ),
-            handler=self.flow_verdict,
-            returns_json=True,
-        )
-
-        traceback_schema = MCPInputSchema(
-            type=cs.MCPSchemaType.OBJECT,
-            properties={
-                cs.MCPParamName.TRACEBACK_TEXT: MCPInputSchemaProperty(
-                    type=cs.MCPSchemaType.STRING,
-                    description=td.MCP_PARAM_TRACEBACK_TEXT,
+        tools[cs.MCPToolName.FIND_DUPLICATE_CODE] = _tool(
+            cs.MCPToolName.FIND_DUPLICATE_CODE,
+            self.find_duplicate_code,
+            {
+                cs.MCPParamName.PROJECT: _param(
+                    cs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
                 ),
-                cs.MCPParamName.PATH_PREFIX_MAP: MCPInputSchemaProperty(
-                    type=cs.MCPSchemaType.OBJECT,
-                    description=td.MCP_PARAM_PATH_PREFIX_MAP,
-                    additionalProperties={
-                        cs.MCPSchemaField.TYPE: cs.MCPSchemaType.STRING
-                    },
+                cs.MCPParamName.THRESHOLD: _param(
+                    cs.MCPSchemaType.NUMBER,
+                    td.MCP_PARAM_THRESHOLD,
+                    default=cs.DUPLICATES_DEFAULT_THRESHOLD,
+                ),
+                cs.MCPParamName.MIN_SIZE: _param(
+                    cs.MCPSchemaType.INTEGER,
+                    td.MCP_PARAM_MIN_SIZE,
+                    default=cs.DUPLICATES_DEFAULT_MIN_NODES,
+                ),
+                cs.MCPParamName.LIMIT: _param(
+                    cs.MCPSchemaType.INTEGER,
+                    td.MCP_PARAM_DUPLICATES_LIMIT,
+                    default=cs.DUPLICATES_DEFAULT_GROUP_LIMIT,
                 ),
             },
-            required=[cs.MCPParamName.TRACEBACK_TEXT],
+            returns_json=False,
         )
-        self._tools[cs.MCPToolName.EXPLAIN_TRACEBACK] = ToolMetadata(
-            name=cs.MCPToolName.EXPLAIN_TRACEBACK,
-            description=td.MCP_TOOLS[cs.MCPToolName.EXPLAIN_TRACEBACK],
-            input_schema=traceback_schema,
-            handler=self.explain_traceback,
-            returns_json=True,
+        tools[cs.MCPToolName.GET_FUNCTION_SOURCE] = _tool(
+            cs.MCPToolName.GET_FUNCTION_SOURCE,
+            self.get_function_source,
+            {
+                cs.MCPParamName.NODE_ID: _param(
+                    cs.MCPSchemaType.INTEGER, td.MCP_PARAM_NODE_ID
+                )
+            },
+            [cs.MCPParamName.NODE_ID],
+            returns_json=False,
         )
-        self._tools[cs.MCPToolName.RANK_ROOT_CAUSES] = ToolMetadata(
-            name=cs.MCPToolName.RANK_ROOT_CAUSES,
-            description=td.MCP_TOOLS[cs.MCPToolName.RANK_ROOT_CAUSES],
-            input_schema=traceback_schema,
-            handler=self.rank_root_causes,
-            returns_json=True,
+
+        tools[cs.MCPToolName.ASK_AGENT] = _tool(
+            cs.MCPToolName.ASK_AGENT,
+            self.ask_agent,
+            {
+                cs.MCPParamName.QUESTION: _param(
+                    cs.MCPSchemaType.STRING, td.MCP_PARAM_QUESTION
+                )
+            },
+            [cs.MCPParamName.QUESTION],
         )
-        self._hold_tools_to_workspace()
+
+        tools[cs.MCPToolName.FLOW_VERDICT] = _tool(
+            cs.MCPToolName.FLOW_VERDICT,
+            self.flow_verdict,
+            {
+                cs.MCPParamName.SOURCE_QN: _param(
+                    cs.MCPSchemaType.STRING, td.MCP_PARAM_SOURCE_QN
+                ),
+                cs.MCPParamName.SINK_QN: _param(
+                    cs.MCPSchemaType.STRING, td.MCP_PARAM_SINK_QN
+                ),
+            },
+            [cs.MCPParamName.SOURCE_QN, cs.MCPParamName.SINK_QN],
+        )
+
+        traceback_params: MCPInputSchemaProperties = {
+            cs.MCPParamName.TRACEBACK_TEXT: _param(
+                cs.MCPSchemaType.STRING, td.MCP_PARAM_TRACEBACK_TEXT
+            ),
+            cs.MCPParamName.PATH_PREFIX_MAP: _param(
+                cs.MCPSchemaType.OBJECT,
+                td.MCP_PARAM_PATH_PREFIX_MAP,
+                value_type=cs.MCPSchemaType.STRING,
+            ),
+        }
+        for name, handler in (
+            (cs.MCPToolName.EXPLAIN_TRACEBACK, self.explain_traceback),
+            (cs.MCPToolName.RANK_ROOT_CAUSES, self.rank_root_causes),
+        ):
+            tools[name] = _tool(
+                name, handler, traceback_params, [cs.MCPParamName.TRACEBACK_TEXT]
+            )
+        return tools
 
     def _hold_tools_to_workspace(self) -> None:
         """Refuse, under a workspace, the tools that would act outside it.
@@ -2842,26 +2794,18 @@ class MCPToolsRegistry:
         integer_params: set[str] | None = None,
         boolean_params: set[str] | None = None,
     ) -> ToolMetadata:
+        # String parameters unless named otherwise, and the `project` every
+        # graph read is scoped by.
         kinds = dict.fromkeys(integer_params or (), cs.MCPSchemaType.INTEGER)
         kinds |= dict.fromkeys(boolean_params or (), cs.MCPSchemaType.BOOLEAN)
         properties = {
-            key: MCPInputSchemaProperty(
-                type=kinds.get(key, cs.MCPSchemaType.STRING), description=description
-            )
+            key: _param(kinds.get(key, cs.MCPSchemaType.STRING), description)
             for key, description in params.items()
         }
-        properties[cs.MCPParamName.PROJECT] = MCPInputSchemaProperty(
-            type=cs.MCPSchemaType.STRING, description=td.MCP_PARAM_PROJECT
+        properties[cs.MCPParamName.PROJECT] = _param(
+            cs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
         )
-        return ToolMetadata(
-            name=name,
-            description=td.MCP_TOOLS[name],
-            input_schema=MCPInputSchema(
-                type=cs.MCPSchemaType.OBJECT, properties=properties, required=required
-            ),
-            handler=handler,
-            returns_json=True,
-        )
+        return _tool(name, handler, properties, required)
 
     async def _graph_query[T](
         self,
@@ -3447,32 +3391,6 @@ class MCPToolsRegistry:
             lambda name: gloss.glosses_for(self.ingestor.fetch_all, name, target),
         )
 
-    def _context_tool(self) -> ToolMetadata:
-        def prop(kind: cs.MCPSchemaType, description: str) -> MCPInputSchemaProperty:
-            return MCPInputSchemaProperty(type=kind, description=description)
-
-        return ToolMetadata(
-            name=cs.MCPToolName.CONTEXT,
-            description=td.MCP_TOOLS[cs.MCPToolName.CONTEXT],
-            input_schema=MCPInputSchema(
-                type=cs.MCPSchemaType.OBJECT,
-                properties={
-                    cs.MCPParamName.TARGET: prop(
-                        cs.MCPSchemaType.STRING, td.MCP_PARAM_CONTEXT_TARGET
-                    ),
-                    cs.MCPParamName.BUDGET_TOKENS: prop(
-                        cs.MCPSchemaType.INTEGER, td.MCP_PARAM_BUDGET_TOKENS
-                    ),
-                    cs.MCPParamName.PROJECT: prop(
-                        cs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
-                    ),
-                },
-                required=[cs.MCPParamName.TARGET],
-            ),
-            handler=self.context,
-            returns_json=True,
-        )
-
     async def context(
         self,
         target: str,
@@ -3512,38 +3430,6 @@ class MCPToolsRegistry:
             budget_tokens,
             self._source_root_for(project_name),
             search=search if self._semantic_search_tool is not None else None,
-        )
-
-    def _rename_tool(self) -> ToolMetadata:
-        def prop(kind: cs.MCPSchemaType, description: str) -> MCPInputSchemaProperty:
-            return MCPInputSchemaProperty(type=kind, description=description)
-
-        return ToolMetadata(
-            name=cs.MCPToolName.RENAME,
-            description=td.MCP_TOOLS[cs.MCPToolName.RENAME],
-            input_schema=MCPInputSchema(
-                type=cs.MCPSchemaType.OBJECT,
-                properties={
-                    cs.MCPParamName.QUALIFIED_NAME: prop(
-                        cs.MCPSchemaType.STRING, td.MCP_PARAM_QUALIFIED_NAME
-                    ),
-                    cs.MCPParamName.NEW_NAME: prop(
-                        cs.MCPSchemaType.STRING, td.MCP_PARAM_NEW_NAME
-                    ),
-                    cs.MCPParamName.ALLOW_HEURISTIC: prop(
-                        cs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_ALLOW_HEURISTIC
-                    ),
-                    cs.MCPParamName.DRY_RUN: prop(
-                        cs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_RENAME_DRY_RUN
-                    ),
-                    cs.MCPParamName.PROJECT: prop(
-                        cs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
-                    ),
-                },
-                required=[cs.MCPParamName.QUALIFIED_NAME, cs.MCPParamName.NEW_NAME],
-            ),
-            handler=self.rename,
-            returns_json=True,
         )
 
     async def rename(
