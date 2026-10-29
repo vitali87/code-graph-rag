@@ -3158,7 +3158,7 @@ class CallResolver:
         # A default import names `<module>.default`; the class the module
         # default-exports is what it makes visible (issue #3179).
         imported |= {
-            self.import_processor.follow_js_default_import(
+            self.import_processor.js_ts.follow_js_default_import(
                 value,
                 self.type_inference.module_qn_to_file_path,
                 self.function_registry,
@@ -3212,7 +3212,7 @@ class CallResolver:
         target = import_map.get(object_name)
         if not target or cs.SEPARATOR_SLASH not in target:
             return False
-        bare_imports = self.import_processor.js_ts_bare_imports.get(module_qn)
+        bare_imports = self.import_processor.js_ts.js_ts_bare_imports.get(module_qn)
         return not (bare_imports and object_name in bare_imports)
 
     def _is_external_import(
@@ -3263,7 +3263,7 @@ class CallResolver:
         # simple-name trie (like a relative import that misses) instead of
         # suppressing. Ordinary package specifiers (bare, scoped, node:/npm:) are
         # NOT recorded here, so genuine external calls stay suppressed.
-        bare_imports = self.import_processor.js_ts_bare_imports.get(module_qn)
+        bare_imports = self.import_processor.js_ts.js_ts_bare_imports.get(module_qn)
         if bare_imports and call_name in bare_imports:
             return False
         # Only dotted absolute-path imports (Python/Java `pkg.mod.Name`) are
@@ -3299,7 +3299,9 @@ class CallResolver:
         head, sep, _member = member_name.partition(cs.SEPARATOR_DOT)
         if not sep:
             return False
-        package_imports = self.import_processor.js_ts_package_imports.get(module_qn)
+        package_imports = self.import_processor.js_ts.js_ts_package_imports.get(
+            module_qn
+        )
         return bool(package_imports) and head in package_imports
 
     def _two_part_receiver_type(
@@ -3592,7 +3594,7 @@ class CallResolver:
         if language not in cs.JS_TS_LANGUAGES or call_name not in import_map:
             return None
         imported_qn = import_map[call_name]
-        followed = self.import_processor.follow_js_reexports(
+        followed = self.import_processor.js_ts.follow_js_reexports(
             imported_qn,
             self.type_inference.module_qn_to_file_path,
             self.function_registry,

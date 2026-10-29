@@ -1,6 +1,6 @@
 """A named import must bind through EVERY JS/TS module extension (#1720).
 
-`_resolve_js_internal_module` decides where a named import's module ends and
+`JsTsImporter.resolve_js_internal_module` decides where a named import's module ends and
 its symbol begins: given the deferred target `proj.pkg.go` it must return
 `proj.pkg` so the alias map can redirect that to the real `proj.pkg.index`
 Module node. It made that decision by probing the filesystem against a
@@ -109,7 +109,7 @@ class TestEveryModuleExtensionBindsANamedImport:
 
         Added after a surviving mutant, not by foresight. Every case above
         routes through a directory entry point, so neutering the file branch of
-        `_js_module_rel_on_disk` -- the other half of the helper this fix
+        `JsTsImporter._js_module_rel_on_disk` -- the other half of the helper this fix
         delegates to -- left all 12 tests green. The suite was one-dimensional
         on "directory entry point vs flat file" and could not see half the
         component it depends on.

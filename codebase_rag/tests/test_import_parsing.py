@@ -103,10 +103,10 @@ class TestImportParsing:
     ) -> None:
         """Test that language-specific import parsing methods exist."""
         import_processor = graph_updater.factory.import_processor
-        # Rust's imports are parsed by the importer the processor builds.
+        # JS/TS and Rust imports are parsed by the importers the processor builds.
         expected_methods = [
             (import_processor, "_parse_python_imports"),
-            (import_processor, "_parse_js_ts_imports"),
+            (import_processor.js_ts, "parse_imports"),
             (import_processor, "_parse_java_imports"),
             (import_processor.rust, "parse_imports"),
             (import_processor, "_parse_go_imports"),
@@ -395,7 +395,9 @@ class TestJsInternalModuleResolution:
             function_registry=None,
         )
 
-        result = processor._resolve_js_internal_module("myproject.components.Button.x")
+        result = processor.js_ts.resolve_js_internal_module(
+            "myproject.components.Button.x"
+        )
         assert result == "myproject.components.Button"
 
     def test_resolves_directory_with_index_file(self, tmp_path: Path) -> None:
@@ -409,7 +411,9 @@ class TestJsInternalModuleResolution:
             function_registry=None,
         )
 
-        result = processor._resolve_js_internal_module("myproject.components.Button")
+        result = processor.js_ts.resolve_js_internal_module(
+            "myproject.components.Button"
+        )
         assert result == "myproject.components"
 
     def test_resolves_directory_with_index_js(self, tmp_path: Path) -> None:
@@ -423,7 +427,7 @@ class TestJsInternalModuleResolution:
             function_registry=None,
         )
 
-        result = processor._resolve_js_internal_module("myproject.utils.helper")
+        result = processor.js_ts.resolve_js_internal_module("myproject.utils.helper")
         assert result == "myproject.utils"
 
     def test_returns_full_name_when_no_match(self, tmp_path: Path) -> None:
@@ -434,7 +438,9 @@ class TestJsInternalModuleResolution:
             function_registry=None,
         )
 
-        result = processor._resolve_js_internal_module("myproject.nonexistent.thing")
+        result = processor.js_ts.resolve_js_internal_module(
+            "myproject.nonexistent.thing"
+        )
         assert result == "myproject.nonexistent.thing"
 
 

@@ -1094,7 +1094,7 @@ class ClassIngest:
         """
         if entry.language not in cs.JS_TS_LANGUAGES:
             return None
-        followed = self.import_processor.follow_js_reexports(
+        followed = self.import_processor.js_ts.follow_js_reexports(
             entry.parent_qn, self.module_qn_to_file_path, self.function_registry
         )
         # A subclass may take the base's declared name (hono's `Hono extends
@@ -1202,7 +1202,7 @@ class ClassIngest:
         # member is what the barrel EXPORTS under that name, followed on to
         # its declaring module. A name the barrel only imports for its own
         # use is no member: tsc rejects `implements r.Router` then.
-        member = self.import_processor.follow_js_reexports(
+        member = self.import_processor.js_ts.follow_js_reexports(
             candidate, self.module_qn_to_file_path, self.function_registry
         )
         if (

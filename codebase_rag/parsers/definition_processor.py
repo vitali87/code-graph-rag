@@ -652,7 +652,7 @@ class DefinitionProcessor:
                     {
                         cs.KEY_QUALIFIED_NAME: module_qn,
                         cs.KEY_UNRESOLVED_SPECIFIERS: sorted(
-                            self.import_processor.unresolved_specifiers.get(
+                            self.import_processor.js_ts.unresolved_specifiers.get(
                                 module_qn, ()
                             )
                         ),

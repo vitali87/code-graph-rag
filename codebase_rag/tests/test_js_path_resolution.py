@@ -32,8 +32,10 @@ class TestJavaScriptPathResolution:
         ]
 
         for import_path, expected in test_cases:
-            result = graph_updater.factory.import_processor.resolve_js_module_path(
-                import_path, "test.src.components.Button"
+            result = (
+                graph_updater.factory.import_processor.js_ts.resolve_js_module_path(
+                    import_path, "test.src.components.Button"
+                )
             )
             assert result == expected, (
                 f"Failed for {import_path}: got {result}, expected {expected}"
@@ -50,8 +52,10 @@ class TestJavaScriptPathResolution:
         ]
 
         for import_path, expected in test_cases:
-            result = graph_updater.factory.import_processor.resolve_js_module_path(
-                import_path, current_module
+            result = (
+                graph_updater.factory.import_processor.js_ts.resolve_js_module_path(
+                    import_path, current_module
+                )
             )
             assert result == expected, (
                 f"Failed for {import_path}: got {result}, expected {expected}"
@@ -69,8 +73,10 @@ class TestJavaScriptPathResolution:
         ]
 
         for import_path, expected in test_cases:
-            result = graph_updater.factory.import_processor.resolve_js_module_path(
-                import_path, current_module
+            result = (
+                graph_updater.factory.import_processor.js_ts.resolve_js_module_path(
+                    import_path, current_module
+                )
             )
             assert result == expected, (
                 f"Failed for {import_path}: got {result}, expected {expected}"
@@ -87,8 +93,10 @@ class TestJavaScriptPathResolution:
         ]
 
         for import_path, expected in test_cases:
-            result = graph_updater.factory.import_processor.resolve_js_module_path(
-                import_path, current_module
+            result = (
+                graph_updater.factory.import_processor.js_ts.resolve_js_module_path(
+                    import_path, current_module
+                )
             )
             assert result == expected, (
                 f"Failed for {import_path}: got {result}, expected {expected}"
@@ -106,8 +114,10 @@ class TestJavaScriptPathResolution:
         ]
 
         for import_path, expected in test_cases:
-            result = graph_updater.factory.import_processor.resolve_js_module_path(
-                import_path, current_module
+            result = (
+                graph_updater.factory.import_processor.js_ts.resolve_js_module_path(
+                    import_path, current_module
+                )
             )
             assert result == expected, (
                 f"Failed for {import_path}: got {result}, expected {expected}"
@@ -126,8 +136,10 @@ class TestJavaScriptPathResolution:
         ]
 
         for import_path, expected in test_cases:
-            result = graph_updater.factory.import_processor.resolve_js_module_path(
-                import_path, current_module
+            result = (
+                graph_updater.factory.import_processor.js_ts.resolve_js_module_path(
+                    import_path, current_module
+                )
             )
             assert result == expected, (
                 f"Failed for {import_path}: got {result}, expected {expected}"

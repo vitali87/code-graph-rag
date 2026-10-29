@@ -21,7 +21,7 @@ def mock_ingestor() -> MagicMock:
 @pytest.fixture
 def mock_import_processor() -> MagicMock:
     processor = MagicMock()
-    processor.resolve_js_module_path = MagicMock(return_value="resolved.module")
+    processor.js_ts.resolve_js_module_path = MagicMock(return_value="resolved.module")
     return processor
 
 
@@ -76,7 +76,7 @@ class TestProcessCommonjsImport:
         mock_ingestor: MagicMock,
         mock_import_processor: MagicMock,
     ) -> None:
-        mock_import_processor.resolve_js_module_path.return_value = "fs"
+        mock_import_processor.js_ts.resolve_js_module_path.return_value = "fs"
 
         module_system._process_commonjs_import(
             "readFile", "fs", "my_module", cs.SupportedLanguage.JS
@@ -94,7 +94,7 @@ class TestProcessCommonjsImport:
         mock_ingestor: MagicMock,
         mock_import_processor: MagicMock,
     ) -> None:
-        mock_import_processor.resolve_js_module_path.return_value = (
+        mock_import_processor.js_ts.resolve_js_module_path.return_value = (
             "test_project.src.utils"
         )
 
@@ -114,7 +114,7 @@ class TestProcessCommonjsImport:
         mock_ingestor: MagicMock,
         mock_import_processor: MagicMock,
     ) -> None:
-        mock_import_processor.resolve_js_module_path.return_value = "fs"
+        mock_import_processor.js_ts.resolve_js_module_path.return_value = "fs"
 
         module_system._process_commonjs_import(
             "readFile", "fs", "my_module", cs.SupportedLanguage.JS
@@ -133,7 +133,7 @@ class TestProcessCommonjsImport:
     ) -> None:
         # Caught once, in `ingest_missing_import_patterns`, and reported
         # there; this helper used to swallow it at debug level as well.
-        mock_import_processor.resolve_js_module_path.side_effect = Exception(
+        mock_import_processor.js_ts.resolve_js_module_path.side_effect = Exception(
             "Resolution failed"
         )
 
@@ -152,7 +152,7 @@ class TestProcessVariableDeclaratorForCommonjs:
         module_system: JsTsModuleSystem,
         mock_import_processor: MagicMock,
     ) -> None:
-        mock_import_processor.resolve_js_module_path.return_value = "fs"
+        mock_import_processor.js_ts.resolve_js_module_path.return_value = "fs"
 
         shorthand_id = create_mock_node(
             cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN, "readFile"
@@ -182,14 +182,14 @@ class TestProcessVariableDeclaratorForCommonjs:
             declarator, "test_module", cs.SupportedLanguage.JS
         )
 
-        mock_import_processor.resolve_js_module_path.assert_called_once()
+        mock_import_processor.js_ts.resolve_js_module_path.assert_called_once()
 
     def test_processes_aliased_destructuring(
         self,
         module_system: JsTsModuleSystem,
         mock_import_processor: MagicMock,
     ) -> None:
-        mock_import_processor.resolve_js_module_path.return_value = "fs"
+        mock_import_processor.js_ts.resolve_js_module_path.return_value = "fs"
 
         key_node = create_mock_node(cs.TS_PROPERTY_IDENTIFIER, "readFile")
         value_node = create_mock_node(cs.TS_IDENTIFIER, "rf")
@@ -225,7 +225,7 @@ class TestProcessVariableDeclaratorForCommonjs:
             declarator, "test_module", cs.SupportedLanguage.JS
         )
 
-        mock_import_processor.resolve_js_module_path.assert_called_once()
+        mock_import_processor.js_ts.resolve_js_module_path.assert_called_once()
 
     def test_skips_non_object_pattern_name(
         self,
@@ -246,7 +246,7 @@ class TestProcessVariableDeclaratorForCommonjs:
             declarator, "test_module", cs.SupportedLanguage.JS
         )
 
-        mock_import_processor.resolve_js_module_path.assert_not_called()
+        mock_import_processor.js_ts.resolve_js_module_path.assert_not_called()
 
     def test_skips_non_require_call(
         self,
@@ -271,7 +271,7 @@ class TestProcessVariableDeclaratorForCommonjs:
             declarator, "test_module", cs.SupportedLanguage.JS
         )
 
-        mock_import_processor.resolve_js_module_path.assert_not_called()
+        mock_import_processor.js_ts.resolve_js_module_path.assert_not_called()
 
     def test_skips_empty_object_pattern(
         self,
@@ -303,7 +303,7 @@ class TestProcessVariableDeclaratorForCommonjs:
             declarator, "test_module", cs.SupportedLanguage.JS
         )
 
-        mock_import_processor.resolve_js_module_path.assert_not_called()
+        mock_import_processor.js_ts.resolve_js_module_path.assert_not_called()
 
 
 class TestIngestMissingImportPatterns:
@@ -396,7 +396,7 @@ class TestEdgeCases:
             declarator, "test_module", cs.SupportedLanguage.JS
         )
 
-        mock_import_processor.resolve_js_module_path.assert_not_called()
+        mock_import_processor.js_ts.resolve_js_module_path.assert_not_called()
 
     def test_missing_value_field_in_declarator(
         self,
@@ -413,7 +413,7 @@ class TestEdgeCases:
             declarator, "test_module", cs.SupportedLanguage.JS
         )
 
-        mock_import_processor.resolve_js_module_path.assert_not_called()
+        mock_import_processor.js_ts.resolve_js_module_path.assert_not_called()
 
     def test_missing_function_field_in_call_expression(
         self,
@@ -434,7 +434,7 @@ class TestEdgeCases:
             declarator, "test_module", cs.SupportedLanguage.JS
         )
 
-        mock_import_processor.resolve_js_module_path.assert_not_called()
+        mock_import_processor.js_ts.resolve_js_module_path.assert_not_called()
 
     def test_missing_arguments_in_require_call(
         self,
@@ -459,7 +459,7 @@ class TestEdgeCases:
             declarator, "test_module", cs.SupportedLanguage.JS
         )
 
-        mock_import_processor.resolve_js_module_path.assert_not_called()
+        mock_import_processor.js_ts.resolve_js_module_path.assert_not_called()
 
     def test_non_string_module_argument(
         self,
@@ -494,14 +494,14 @@ class TestEdgeCases:
             declarator, "test_module", cs.SupportedLanguage.JS
         )
 
-        mock_import_processor.resolve_js_module_path.assert_not_called()
+        mock_import_processor.js_ts.resolve_js_module_path.assert_not_called()
 
     def test_pair_pattern_with_wrong_key_type(
         self,
         module_system: JsTsModuleSystem,
         mock_import_processor: MagicMock,
     ) -> None:
-        mock_import_processor.resolve_js_module_path.return_value = "fs"
+        mock_import_processor.js_ts.resolve_js_module_path.return_value = "fs"
 
         key_node = create_mock_node(cs.TS_STRING, "'readFile'")
         value_node = create_mock_node(cs.TS_IDENTIFIER, "rf")
@@ -537,4 +537,4 @@ class TestEdgeCases:
             declarator, "test_module", cs.SupportedLanguage.JS
         )
 
-        mock_import_processor.resolve_js_module_path.assert_not_called()
+        mock_import_processor.js_ts.resolve_js_module_path.assert_not_called()

@@ -171,7 +171,7 @@ class TestDottedImporter:
             {"src/url.ts": URL_TS, "src/url.test.ts": URL_CONSUMER},
         )
 
-        assert not updater.factory.import_processor.unresolved_specifiers
+        assert not updater.factory.import_processor.js_ts.unresolved_specifiers
 
 
 class TestDottedTarget:
@@ -216,7 +216,7 @@ class TestDottedTarget:
             },
         )
 
-        assert not updater.factory.import_processor.unresolved_specifiers
+        assert not updater.factory.import_processor.js_ts.unresolved_specifiers
 
     def test_esm_specifier_with_js_extension(self, temp_repo: Path) -> None:
         # nest writes `./hello/hello.module.js` in its ESM sources.
@@ -539,7 +539,7 @@ class TestUnchangedNeighbours:
 
         assert _imports(ingestor) == set()
         assert _external_imports(ingestor) == set()
-        specifiers = updater.factory.import_processor.unresolved_specifiers
+        specifiers = updater.factory.import_processor.js_ts.unresolved_specifiers
         assert {_tail(k): v for k, v in specifiers.items()} == {
             "src.main": {"./users.service"}
         }

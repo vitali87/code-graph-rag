@@ -295,7 +295,7 @@ def test_the_barrel_maps_record_what_each_export_names(tmp_path: Path) -> None:
     # Only what a module exports may be followed through it: a re-export
     # names another module's export, a local export (True) one of its own
     # bindings.
-    exports = updater.factory.import_processor.js_export_bindings
+    exports = updater.factory.import_processor.js_ts.js_export_bindings
     assert exports["maps.src.lib.math.index"] == {
         "times": ("maps.src.lib.math.mul.default", False)
     }
@@ -333,7 +333,7 @@ UNNAMED_EXPORT_FILES = {
 
 def test_an_export_naming_no_binding_records_nothing(tmp_path: Path) -> None:
     updater, _store = _run(tmp_path / "unnamed", UNNAMED_EXPORT_FILES)
-    exports = updater.factory.import_processor.js_export_bindings
+    exports = updater.factory.import_processor.js_ts.js_export_bindings
     assert "unnamed.src.anon" not in exports, exports
     assert "unnamed.src.expr" not in exports, exports
     assert "unnamed.src.blank" not in exports, exports
