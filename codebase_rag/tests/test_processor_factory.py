@@ -13,6 +13,7 @@ from codebase_rag.parsers.definition_processor import DefinitionProcessor
 from codebase_rag.parsers.import_processor import ImportProcessor
 from codebase_rag.parsers.structure_processor import StructureProcessor
 from codebase_rag.parsers.type_inference import TypeInferenceEngine
+from codebase_rag.utils.path_utils import base_module_qn
 
 if TYPE_CHECKING:
     from codebase_rag.parsers.factory import ProcessorFactory
@@ -473,6 +474,28 @@ class TestTheUnignorePolicyReachesEveryProcessor:
         )
 
         assert importer._rust_file_is_indexed(rel_parts)
+
+    def test_the_scala_importer_walks_with_the_updated_policy(
+        self, factory: ProcessorFactory
+    ) -> None:
+        """The Scala importer finds an unscanned module's file by the walk the
+        indexer takes, reading the policy through the processor that built it.
+        A copy taken at construction would keep missing a rescued tree, and
+        an unchanged provider there would turn its importers external
+        (issues #1088, #2450)."""
+        importer = factory.import_processor.scala
+        rel = Path("target", "generated-sources", "annotations", "Gen.scala")
+        source = factory.repo_path / rel
+        source.parent.mkdir(parents=True)
+        source.write_text("package gen\n", encoding="utf-8")
+        module_qn = base_module_qn(rel, factory.project_name)
+        assert importer._scala_files_for({module_qn}) == {}
+
+        factory.propagate_unignore_paths(
+            frozenset({"target/generated-sources/annotations/**"})
+        )
+
+        assert importer._scala_files_for({module_qn}) == {module_qn: source}
 
     def test_a_processor_built_after_the_update_sees_the_new_policy(
         self, factory: ProcessorFactory

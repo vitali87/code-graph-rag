@@ -5862,7 +5862,9 @@ class CallResolver:
         self, written: str, module_qn: str, position: int | None = None
     ) -> str | None:
         """The registered class a type name written in a Scala file names."""
-        class_qn = self.import_processor.scala_type_qn(module_qn, written, position)
+        class_qn = self.import_processor.scala.scala_type_qn(
+            module_qn, written, position
+        )
         if (
             class_qn is None
             or self.function_registry.get(class_qn) != cs.NodeLabel.CLASS
@@ -5886,7 +5888,9 @@ class CallResolver:
         ):
             return True, (cs.NodeLabel.CLASS, class_qn)
         head, _, rest = call_name.partition(cs.SEPARATOR_DOT)
-        imported = self.import_processor.scala_block_import(module_qn, head, position)
+        imported = self.import_processor.scala.scala_block_import(
+            module_qn, head, position
+        )
         if imported is None:
             return False, None
         target = f"{imported}{cs.SEPARATOR_DOT}{rest}" if rest else imported

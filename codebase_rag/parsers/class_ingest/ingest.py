@@ -1128,7 +1128,7 @@ class ClassIngest:
         target_kinds = bt.base_target_kinds(entry.language)
         if entry.language == cs.SupportedLanguage.SCALA and (
             (
-                imported := self.import_processor.scala_base_qn(
+                imported := self.import_processor.scala.scala_base_qn(
                     entry.module_qn,
                     entry.child_qn,
                     entry.parent_qn,

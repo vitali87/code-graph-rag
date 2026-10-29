@@ -1355,11 +1355,11 @@ object App { def run(): Cart = new Cart() }
     updater = create_and_run_updater(project, mock_ingestor, skip_if_missing=SKIP)
     processor = updater.factory.import_processor
 
-    assert processor.scala_type_qn(f"{SRC}.app.App", "Cart") == (
+    assert processor.scala.scala_type_qn(f"{SRC}.app.App", "Cart") == (
         f"{SRC}.shop.Cart.Cart"
     )
-    assert processor.scala_type_qn(f"{SRC}.app.App", "Missing") is None
-    assert processor.scala_type_qn(f"{SRC}.nowhere.Gone", "Cart", 0) is None
+    assert processor.scala.scala_type_qn(f"{SRC}.app.App", "Missing") is None
+    assert processor.scala.scala_type_qn(f"{SRC}.nowhere.Gone", "Cart", 0) is None
 
 
 def test_a_resolved_scala_edge_to_a_module_no_longer_known_is_dropped(
@@ -1376,7 +1376,7 @@ def test_a_resolved_scala_edge_to_a_module_no_longer_known_is_dropped(
         repo_path=tmp_path, project_name="proj", ingestor=mock_ingestor
     )
     processor.defer_import_edge(importer, gone, cs.SupportedLanguage.SCALA)
-    processor._scala_resolved_edges.add((importer, gone))
+    processor.scala._scala_resolved_edges.add((importer, gone))
 
     emitted = processor.flush_deferred_import_edges({importer: ""})
 
@@ -1392,4 +1392,4 @@ def test_a_wildcard_import_names_nothing_without_a_registry(tmp_path: Path) -> N
         f"{cs.SCALA_WILDCARD_PREFIX}proj.shop.Cart": "proj.shop.Cart"
     }
 
-    assert processor.scala_type_qn("proj.app.App", "Cart") is None
+    assert processor.scala.scala_type_qn("proj.app.App", "Cart") is None

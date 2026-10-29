@@ -806,6 +806,7 @@ def test_a_reparse_drops_the_dart_prefix_state(tmp_path: Path) -> None:
     from codebase_rag.parsers.java.imports import JavaImporter
     from codebase_rag.parsers.js_ts.imports import JsTsImporter
     from codebase_rag.parsers.js_ts.reexports import JsExport
+    from codebase_rag.parsers.scala.imports import ScalaImporter
 
     class _Probe(ImportProcessor):  # __slots__ forbids stubbing on instances
         def _retract_import_sites(self, module_qn: str) -> None:
@@ -822,8 +823,9 @@ def test_a_reparse_drops_the_dart_prefix_state(tmp_path: Path) -> None:
     processor._cpp_declaration_mappings = set()
     processor.csharp_static_imports = {}
     processor.csharp_global_static_imports = {}
-    processor._scala_imports = {}
-    processor._scala_block_imports = {}
+    processor.scala = object.__new__(ScalaImporter)
+    processor.scala._scala_imports = {}
+    processor.scala._scala_block_imports = {}
     processor.java = object.__new__(JavaImporter)
     processor.java.java_static_imports = {}
     # A module's export table, CommonJS publications included, is the whole
