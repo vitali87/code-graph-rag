@@ -76,7 +76,7 @@ RUN uv sync --frozen \
 # The go/types helper is built on first use from the module cache, pinned by
 # its go.sum, so fetch its modules now. The crate's own tests need its
 # dependencies fetched too.
-RUN cd codebase_rag/parsers/go_frontend/gotypes && go mod download \
+RUN cd codebase_rag/parsers/go/gotypes && go mod download \
     && cargo fetch --locked --manifest-path /src/rust/cgr_graph_rs/Cargo.toml
 
 # The network is gone after this point, so `uv run` must use the environment

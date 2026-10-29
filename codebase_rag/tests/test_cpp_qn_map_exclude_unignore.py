@@ -12,7 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parsers.cpp_frontend.qn import build_module_qn_map
+from codebase_rag.parsers.cpp.qn import build_module_qn_map
 
 PROJECT = "proj"
 

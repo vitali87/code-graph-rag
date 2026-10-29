@@ -31,9 +31,9 @@ def _run(code: str) -> subprocess.CompletedProcess[str]:
 @pytest.mark.parametrize(
     "module",
     [
-        "codebase_rag.parsers.go_frontend",
+        "codebase_rag.parsers.go.frontend",
         "codebase_rag.parsers.java_frontend",
-        "codebase_rag.parsers.python_frontend",
+        "codebase_rag.parsers.python.frontend",
         "codebase_rag.parsers.semantic_call_join",
         "codebase_rag.language.catalog",
     ],

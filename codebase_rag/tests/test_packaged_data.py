@@ -24,8 +24,8 @@ from codebase_rag import constants as cs
 from codebase_rag import parser_loader
 from codebase_rag.analyzers import ast_grep_analyzer
 from codebase_rag.parsers import ast_grep_tier
-from codebase_rag.parsers.csharp_frontend import frontend as csharp_frontend
-from codebase_rag.parsers.go_frontend import frontend as go_frontend
+from codebase_rag.parsers.csharp import frontend as csharp_frontend
+from codebase_rag.parsers.go import frontend as go_frontend
 from codebase_rag.parsers.java_frontend import frontend as java_frontend
 from codebase_rag.services import provenance
 from codebase_rag.stack import constants as stack_cs

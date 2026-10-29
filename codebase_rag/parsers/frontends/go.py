@@ -8,11 +8,7 @@ from pathlib import Path
 
 from ...constants.languages import SupportedLanguage
 from ...utils.path_utils import frontend_ignored_dirs
-from ..go_frontend import (
-    find_go_module,
-    go_frontend_available,
-    run_go_frontend,
-)
+from ..go.frontend import find_go_module, go_frontend_available, run_go_frontend
 from .protocol import SemanticFacts
 from .registry import register_frontend
 

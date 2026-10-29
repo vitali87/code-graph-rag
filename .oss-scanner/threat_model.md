@@ -62,8 +62,8 @@ These matter most.
   tree-sitter parsers in `codebase_rag/parsers/`, the repository walk and
   ignore handling, `parser_loader.py`, and every subprocess or import that
   indexing triggers with default settings: the Go frontend
-  (`parsers/go_frontend/`, on by default when `go` is installed), the libclang
-  layer of the C/C++ frontend (`parsers/cpp_frontend/`, on by default with the
+  (`parsers/go/frontend.py`, on by default when `go` is installed), the libclang
+  layer of the C/C++ frontend (`parsers/cpp/frontend.py`, on by default with the
   `cpp` extra and a compilation database), Lombok preprocessing
   (`parsers/java/lombok.py`, which runs delombok in the default Java mode
   whenever a Lombok JAR is configured or found in `~/.m2` and the repository's

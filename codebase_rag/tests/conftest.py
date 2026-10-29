@@ -441,7 +441,7 @@ def one_go_helper_per_session(
     fresh CGR_HOME (above) made each one rebuild it, a `go env`, a `go build`
     and a link apiece, slowest on Windows. Tests of the helper's own build
     and cache keep their isolation by not using this."""
-    from codebase_rag.parsers.go_frontend import frontend
+    from codebase_rag.parsers.go import frontend
 
     monkeypatch.setattr(frontend, "_cache_dir", lambda: _shared_go_helper_cache)
     return _shared_go_helper_cache

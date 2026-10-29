@@ -22,7 +22,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.config import settings
 from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parsers.cpp_frontend import cpp_frontend_available
+from codebase_rag.parsers.cpp.frontend import cpp_frontend_available
 from codebase_rag.tests.test_graph_updater_incremental_rename import (
     InMemoryGraph,
     _make_updater,

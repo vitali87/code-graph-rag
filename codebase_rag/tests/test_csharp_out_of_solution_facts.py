@@ -55,7 +55,7 @@ def _solution_repo(root: Path, solution_name: str, solution_body: str) -> None:
 
 
 def test_sln_member_projects_parsed(temp_repo: Path) -> None:
-    from codebase_rag.parsers.csharp_frontend.frontend import _solution_member_projects
+    from codebase_rag.parsers.csharp.frontend import _solution_member_projects
 
     _solution_repo(temp_repo, "Repo.sln", _SLN)
     members = _solution_member_projects(temp_repo / "Repo.sln")
@@ -64,7 +64,7 @@ def test_sln_member_projects_parsed(temp_repo: Path) -> None:
 
 
 def test_slnx_member_projects_parsed(temp_repo: Path) -> None:
-    from codebase_rag.parsers.csharp_frontend.frontend import _solution_member_projects
+    from codebase_rag.parsers.csharp.frontend import _solution_member_projects
 
     _solution_repo(temp_repo, "Repo.slnx", _SLNX)
     members = _solution_member_projects(temp_repo / "Repo.slnx")
@@ -73,7 +73,7 @@ def test_slnx_member_projects_parsed(temp_repo: Path) -> None:
 
 
 def test_slnx_declaring_entities_is_refused_not_raised(temp_repo: Path) -> None:
-    from codebase_rag.parsers.csharp_frontend.frontend import _solution_member_projects
+    from codebase_rag.parsers.csharp.frontend import _solution_member_projects
 
     # Negative test. defusedxml refuses entity declarations with
     # EntitiesForbidden, a ValueError rather than a ParseError, so it escaped
@@ -90,7 +90,7 @@ def test_slnx_declaring_entities_is_refused_not_raised(temp_repo: Path) -> None:
 
 
 def test_uncovered_projects_found_for_solution(temp_repo: Path) -> None:
-    from codebase_rag.parsers.csharp_frontend.frontend import uncovered_csharp_projects
+    from codebase_rag.parsers.csharp.frontend import uncovered_csharp_projects
 
     _solution_repo(temp_repo, "Repo.sln", _SLN)
     uncovered = uncovered_csharp_projects(temp_repo, temp_repo / "Repo.sln")
@@ -99,7 +99,7 @@ def test_uncovered_projects_found_for_solution(temp_repo: Path) -> None:
 
 
 def test_uncovered_projects_found_for_single_csproj(temp_repo: Path) -> None:
-    from codebase_rag.parsers.csharp_frontend.frontend import uncovered_csharp_projects
+    from codebase_rag.parsers.csharp.frontend import uncovered_csharp_projects
 
     _solution_repo(temp_repo, "Repo.sln", _SLN)
     (temp_repo / "Repo.sln").unlink()
@@ -109,7 +109,7 @@ def test_uncovered_projects_found_for_single_csproj(temp_repo: Path) -> None:
 
 
 def test_uncovered_projects_skips_ignored_dirs(temp_repo: Path) -> None:
-    from codebase_rag.parsers.csharp_frontend.frontend import uncovered_csharp_projects
+    from codebase_rag.parsers.csharp.frontend import uncovered_csharp_projects
 
     _solution_repo(temp_repo, "Repo.sln", _SLN)
     (temp_repo / "Samples" / "obj").mkdir()
@@ -157,7 +157,7 @@ def test_first_party_assembly_reference_is_not_marked_external(
     # neither a positive fact nor an external fact.
     import subprocess
 
-    from codebase_rag.parsers.csharp_frontend import (
+    from codebase_rag.parsers.csharp.frontend import (
         csharp_frontend_available,
         run_csharp_frontend,
     )
@@ -196,7 +196,7 @@ def test_roslyn_facts_cover_projects_outside_the_solution(temp_repo: Path) -> No
     # beside it un-referenced (bench/samples projects). Facts must still
     # cover Samples' files or every call in them degrades to tree-sitter
     # heuristics (the #794 recall tail).
-    from codebase_rag.parsers.csharp_frontend import (
+    from codebase_rag.parsers.csharp.frontend import (
         csharp_frontend_available,
         run_csharp_frontend,
     )

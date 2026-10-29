@@ -163,7 +163,7 @@ def test_a_tool_is_active_when_the_repo_does_use_it(tmp_path) -> None:
     )
 
     with patch(
-        "codebase_rag.parsers.go_frontend.resolve_go_frontend",
+        "codebase_rag.parsers.go.frontend.resolve_go_frontend",
         return_value=__import__(
             "codebase_rag.constants", fromlist=["GoFrontend"]
         ).GoFrontend.GOTYPES,
@@ -208,7 +208,7 @@ def test_the_fingerprint_uses_the_frontends_own_applicability_predicate(
 
     go_frontend = FRONTENDS[cs.SupportedLanguage.GO]
     with patch(
-        "codebase_rag.parsers.go_frontend.resolve_go_frontend",
+        "codebase_rag.parsers.go.frontend.resolve_go_frontend",
         return_value=cs.GoFrontend.GOTYPES,
     ):
         fingerprint_says = pf._active_tools(tmp_path)["GO_VERSION"]

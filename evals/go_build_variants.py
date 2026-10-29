@@ -525,7 +525,7 @@ def _build_env(build: Build) -> dict[str, str]:
 
 
 def ground_truth(root: Path, builds: tuple[Build, ...]) -> dict[str, BuildFacts]:
-    from codebase_rag.parsers.go_frontend import frontend
+    from codebase_rag.parsers.go import frontend
 
     go = shutil.which("go")
     if go is None:

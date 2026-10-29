@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from ...constants.languages import SupportedLanguage
-from ..python_frontend import python_frontend_available, run_python_frontend
+from ..python.frontend import python_frontend_available, run_python_frontend
 from .protocol import SemanticFacts
 from .registry import register_frontend
 

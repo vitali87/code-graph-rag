@@ -26,7 +26,7 @@ from ...config import settings
 from ..build_lock import artifact_fresh, build_cached_artifact, newest_source_mtime
 from ..frontend_mode import resolve_frontend_mode
 from ..frontends.protocol import ImplementsPair, ResolvedCallSite, SemanticFacts
-from ..go.module_paths import discover_go_module_paths
+from .module_paths import discover_go_module_paths
 
 
 def _empty_facts() -> SemanticFacts:

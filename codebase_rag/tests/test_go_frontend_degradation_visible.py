@@ -22,8 +22,8 @@ from pathlib import Path
 
 import pytest
 
-import codebase_rag.parsers.go_frontend.frontend as fe
-from codebase_rag.parsers.go_frontend import run_go_frontend
+import codebase_rag.parsers.go.frontend as fe
+from codebase_rag.parsers.go.frontend import run_go_frontend
 
 _PAYLOAD = json.dumps(
     {

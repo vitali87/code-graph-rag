@@ -208,7 +208,7 @@ class TestComputeParserFingerprint:
         # hosts without dotnet while still exercising the real
         # resolution logic (issue #1101).
         from codebase_rag.config import settings as cfg
-        from codebase_rag.parsers.csharp_frontend import frontend
+        from codebase_rag.parsers.csharp import frontend
 
         monkeypatch.setattr(frontend, "csharp_frontend_available", lambda: True)
         monkeypatch.setattr(cfg, "CSHARP_FRONTEND", cs.CSharpFrontend.TREESITTER)
@@ -220,7 +220,7 @@ class TestComputeParserFingerprint:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         from codebase_rag.config import settings as cfg
-        from codebase_rag.parsers.cpp_frontend import frontend
+        from codebase_rag.parsers.cpp import frontend
 
         monkeypatch.setattr(frontend, "cpp_frontend_available", lambda: True)
         monkeypatch.setattr(cfg, "CPP_FRONTEND", cs.CppFrontend.TREESITTER)
@@ -236,7 +236,7 @@ class TestComputeParserFingerprint:
         # the fingerprint must record the RESOLVED mode and read the old
         # graph as stale (issue #1177), mirroring the C# entry above.
         from codebase_rag.config import settings as cfg
-        from codebase_rag.parsers.cpp_frontend import frontend
+        from codebase_rag.parsers.cpp import frontend
 
         monkeypatch.setattr(cfg, "CPP_FRONTEND", cs.CppFrontend.HYBRID)
         monkeypatch.setattr(frontend, "cpp_frontend_available", lambda: False)
@@ -253,7 +253,7 @@ class TestComputeParserFingerprint:
         # (issue #1177 review).
         import codebase_rag.parser_fingerprint as pf
         from codebase_rag.config import settings as cfg
-        from codebase_rag.parsers.cpp_frontend import frontend
+        from codebase_rag.parsers.cpp import frontend
 
         payload = b"x" * (pf._FILE_HASH_CHUNK_SIZE * 2 + 17)
         (tmp_path / "compile_commands.json").write_bytes(payload)
@@ -735,7 +735,7 @@ def test_fingerprint_resolves_auto_to_effective_frontend(
     # is the same.
     import codebase_rag.parser_fingerprint as pf
     from codebase_rag.config import settings as cfg
-    from codebase_rag.parsers.csharp_frontend import frontend as fe
+    from codebase_rag.parsers.csharp import frontend as fe
 
     monkeypatch.setattr(cfg, "CSHARP_FRONTEND", cs.CSharpFrontend.AUTO)
     monkeypatch.setattr(fe, "csharp_frontend_available", lambda: True)
@@ -764,7 +764,7 @@ def test_changes_when_a_compile_database_appears(
     # libclang; the repo-aware fingerprint must read the old graph as stale
     # (issue #1177 review).
     from codebase_rag.config import settings as cfg
-    from codebase_rag.parsers.cpp_frontend import frontend
+    from codebase_rag.parsers.cpp import frontend
 
     monkeypatch.setattr(cfg, "CPP_FRONTEND", cs.CppFrontend.HYBRID)
     monkeypatch.setattr(frontend, "cpp_frontend_available", lambda: True)
@@ -779,7 +779,7 @@ def test_compile_database_is_ignored_when_mode_resolves_to_treesitter(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from codebase_rag.config import settings as cfg
-    from codebase_rag.parsers.cpp_frontend import frontend
+    from codebase_rag.parsers.cpp import frontend
 
     monkeypatch.setattr(cfg, "CPP_FRONTEND", cs.CppFrontend.HYBRID)
     monkeypatch.setattr(frontend, "cpp_frontend_available", lambda: False)
@@ -796,7 +796,7 @@ def test_changes_when_compile_database_content_changes(
     # Edited flags rebuild different facts for unchanged sources; presence
     # alone cannot see that, so the entry digests the selected database.
     from codebase_rag.config import settings as cfg
-    from codebase_rag.parsers.cpp_frontend import frontend
+    from codebase_rag.parsers.cpp import frontend
 
     monkeypatch.setattr(cfg, "CPP_FRONTEND", cs.CppFrontend.HYBRID)
     monkeypatch.setattr(frontend, "cpp_frontend_available", lambda: True)

@@ -27,7 +27,7 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater, _module_key
-from codebase_rag.parsers.cpp_frontend.qn import build_module_qn_map
+from codebase_rag.parsers.cpp.qn import build_module_qn_map
 from codebase_rag.parsers.definition_processor import DefinitionProcessor
 from codebase_rag.utils.path_utils import (
     _walk_dir_keys,

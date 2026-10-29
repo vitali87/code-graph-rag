@@ -357,7 +357,7 @@ def test_enabled_frontend_without_its_toolchain_is_not_active(
     # go/types even though the setting asks for it.
     monkeypatch.setattr(settings, "GO_FRONTEND", cs.GoFrontend.GOTYPES)
     monkeypatch.setattr(
-        "codebase_rag.parsers.go_frontend.frontend.go_frontend_available",
+        "codebase_rag.parsers.go.frontend.go_frontend_available",
         lambda: False,
     )
     rows = _by_name(_table(_invoke().output, _FRONTEND_HEADERS), "Frontend")

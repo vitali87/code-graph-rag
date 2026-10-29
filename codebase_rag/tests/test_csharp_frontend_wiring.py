@@ -10,13 +10,11 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag import graph_updater as gu
-from codebase_rag.parsers.csharp_frontend import (
-    csharp_frontend_available,
-    run_csharp_frontend,
-)
-from codebase_rag.parsers.csharp_frontend.frontend import (
+from codebase_rag.parsers.csharp.frontend import (
     _parse_payload,
+    csharp_frontend_available,
     find_csharp_project,
+    run_csharp_frontend,
 )
 from codebase_rag.tests.conftest import get_relationships, run_updater
 

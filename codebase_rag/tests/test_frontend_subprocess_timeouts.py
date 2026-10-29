@@ -20,31 +20,38 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _FRONTEND_ROOT = _REPO_ROOT / "codebase_rag" / "parsers"
 
 # Frontend packages that shell out to a compiler or language server.
-_FRONTEND_DIRS = (
-    "go_frontend",
-    "java_frontend",
-    "csharp_frontend",
-    "python_frontend",
-    "cpp_frontend",
-)
+_FRONTEND_DIRS = ("java_frontend",)
 
-# Parser helpers that also invoke external language tools but sit outside a
-# *_frontend package. Both are bounded today;
-# they are scanned so that STAYS true, which is the point of a gate rather than
-# a sweep. Greptile found them missing by adding an unbounded call to each and
-# observing the test still passed.
+# Frontend modules that live in their language's package, and parser helpers
+# that also invoke external language tools. All are bounded today; they are
+# scanned so that STAYS true, which is the point of a gate rather than a
+# sweep. Greptile found the helpers missing by adding an unbounded call to
+# each and observing the test still passed.
 _FRONTEND_FILES = (
+    "cpp/frontend.py",
+    "cpp/qn.py",
+    "csharp/frontend.py",
+    "go/frontend.py",
+    "python/frontend.py",
     "java/lombok.py",
     "stdlib_extractor.py",
 )
 
 
 def _scanned_paths() -> list[Path]:
-    """Every file the gate covers: the frontend packages plus the loose helpers."""
+    """Every file the gate covers: the frontend packages plus the loose files.
+
+    A listed directory or file that no longer exists fails here: a frontend
+    moved elsewhere would otherwise leave the gate scanning nothing for it.
+    """
+    for d in _FRONTEND_DIRS:
+        assert (_FRONTEND_ROOT / d).is_dir(), d
     paths = [
         p for d in _FRONTEND_DIRS for p in sorted((_FRONTEND_ROOT / d).rglob("*.py"))
     ]
     paths += [_FRONTEND_ROOT / name for name in _FRONTEND_FILES]
+    for path in paths:
+        assert path.is_file(), path
     return paths
 
 
@@ -142,7 +149,7 @@ def test_a_timed_out_go_build_degrades_rather_than_raising(tmp_path: Path) -> No
     never worse. None, not False: a timeout says nothing about whether the
     helper builds, so it is not remembered as a failed build (PR #2417).
     """
-    from codebase_rag.parsers.go_frontend import frontend as gof
+    from codebase_rag.parsers.go import frontend as gof
 
     with patch.object(
         gof.subprocess, "run", side_effect=subprocess.TimeoutExpired("go", 1)
@@ -156,7 +163,7 @@ def test_a_timed_out_dotnet_build_degrades_rather_than_raising(
     tmp_path: Path,
 ) -> None:
     """The same for `dotnet build`, which restores packages over the network."""
-    from codebase_rag.parsers.csharp_frontend import frontend as csf
+    from codebase_rag.parsers.csharp import frontend as csf
 
     with patch.object(
         csf.subprocess, "run", side_effect=subprocess.TimeoutExpired("dotnet", 1)
@@ -173,7 +180,7 @@ def test_a_successful_build_still_reports_success(tmp_path: Path) -> None:
     Both assertions above are satisfied by an implementation that never
     succeeds, so the boundary has to be pinned from the other side too.
     """
-    from codebase_rag.parsers.go_frontend import frontend as gof
+    from codebase_rag.parsers.go import frontend as gof
 
     ok = subprocess.CompletedProcess(["go"], 0, stdout="", stderr="")
     with patch.object(gof.subprocess, "run", return_value=ok):

@@ -8,7 +8,7 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag import graph_updater as gu
-from codebase_rag.parsers.cpp_frontend import cpp_frontend_available
+from codebase_rag.parsers.cpp.frontend import cpp_frontend_available
 from codebase_rag.tests.conftest import get_nodes, get_qualified_names, run_updater
 
 pytestmark = pytest.mark.skipif(

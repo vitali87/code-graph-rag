@@ -78,7 +78,7 @@ updates:
       interval: "monthly"
 
   - package-ecosystem: "gomod"
-    directory: "/codebase_rag/parsers/go_frontend/gotypes"
+    directory: "/codebase_rag/parsers/go/gotypes"
     schedule:
       interval: "monthly"
     # Every x/tools minor release raises its `go` directive to the newest Go,
@@ -91,7 +91,7 @@ updates:
         update-types: ["version-update:semver-minor", "version-update:semver-major"]
 
   - package-ecosystem: "nuget"
-    directory: "/codebase_rag/parsers/csharp_frontend/roslyn"
+    directory: "/codebase_rag/parsers/csharp/roslyn"
     schedule:
       interval: "monthly"
     groups:

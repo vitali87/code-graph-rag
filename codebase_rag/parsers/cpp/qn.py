@@ -11,8 +11,8 @@ from ...utils.path_utils import (
     has_implementation_sibling,
     walk_eligible_files,
 )
-from ..cpp.utils import convert_operator_symbol_to_name
 from . import constants as fc
+from .utils import convert_operator_symbol_to_name
 
 if TYPE_CHECKING:
     from clang.cindex import Cursor

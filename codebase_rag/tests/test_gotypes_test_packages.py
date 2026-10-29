@@ -27,8 +27,8 @@ from codebase_rag import constants as cs
 from codebase_rag import graph_updater as gu
 from codebase_rag import logs as ls
 from codebase_rag.parsers.frontends.protocol import ResolvedCallSite
-from codebase_rag.parsers.go_frontend import frontend as go_frontend
-from codebase_rag.parsers.go_frontend import run_go_frontend
+from codebase_rag.parsers.go import frontend as go_frontend
+from codebase_rag.parsers.go.frontend import run_go_frontend
 from codebase_rag.tests.conftest import get_relationships, run_updater
 
 # The tests that run the real go/types helper share its build, and the

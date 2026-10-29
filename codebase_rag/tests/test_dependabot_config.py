@@ -24,8 +24,8 @@ _WATCHED_MANIFESTS = [
     ("npm", "/evals/oracles/ruby_oracle"),
     ("npm", "/evals/oracles/typescript_oracle"),
     ("cargo", "/evals/oracles/rust_oracle"),
-    ("gomod", "/codebase_rag/parsers/go_frontend/gotypes"),
-    ("nuget", "/codebase_rag/parsers/csharp_frontend/roslyn"),
+    ("gomod", "/codebase_rag/parsers/go/gotypes"),
+    ("nuget", "/codebase_rag/parsers/csharp/roslyn"),
 ]
 
 
@@ -154,7 +154,7 @@ def test_other_actions_are_not_grouped_with_codeql(action: str) -> None:
     assert not any(fnmatch(action, p) for p in _codeql_group_patterns())
 
 
-_ROSLYN_DIR = "/codebase_rag/parsers/csharp_frontend/roslyn"
+_ROSLYN_DIR = "/codebase_rag/parsers/csharp/roslyn"
 
 
 def _nuget_update() -> dict[str, object]:

@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.parsers.cpp_frontend import cpp_frontend_available, run_cpp_frontend
+from codebase_rag.parsers.cpp.frontend import cpp_frontend_available, run_cpp_frontend
 from codebase_rag.tests.conftest import recorded_edges
 
 pytestmark = pytest.mark.skipif(

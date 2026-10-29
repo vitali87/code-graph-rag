@@ -16,11 +16,11 @@ from codebase_rag.capture import resolve_capture
 from codebase_rag.config import settings
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.parsers.csharp_frontend import run_csharp_frontend
-from codebase_rag.parsers.csharp_frontend.frontend import (
+from codebase_rag.parsers.csharp.frontend import (
     _arg_flows,
     _out_writes,
     csharp_frontend_available,
+    run_csharp_frontend,
 )
 from codebase_rag.tests.conftest import recorded_edges
 

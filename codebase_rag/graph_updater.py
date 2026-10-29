@@ -47,15 +47,15 @@ from .parser_fingerprint import compute_parser_fingerprint
 from .parsers import utils as parser_utils
 from .parsers.ast_grep_tier import AstGrepTier
 from .parsers.contract_linking import link_contracts
-from .parsers.cpp.preproc_recovery import parse_with_preproc_recovery
-from .parsers.cpp_frontend import (
+from .parsers.cpp.frontend import (
     cpp_frontend_available,
     find_compile_commands,
     run_cpp_frontend,
     run_cpp_frontend_hybrid,
 )
+from .parsers.cpp.preproc_recovery import parse_with_preproc_recovery
 from .parsers.csharp import utils as csharp_utils
-from .parsers.csharp_frontend import find_csharp_project
+from .parsers.csharp.frontend import find_csharp_project
 from .parsers.definition_prune import RemovedFile
 from .parsers.document_tier import DocumentTier, broken_link_keys
 from .parsers.endpoint_prefixes import (
@@ -87,8 +87,8 @@ from .parsers.frontends.builtin import FRONTENDS
 from .parsers.go import interfaces as go_ifaces
 from .parsers.go import read_package_clause
 from .parsers.go import utils as go_utils
+from .parsers.go.frontend import find_go_module
 from .parsers.go.interfaces import GoInterfaceDecl, GoMethodSpec, GoSignature
-from .parsers.go_frontend import find_go_module
 from .parsers.interface_fingerprint import INTERFACE_LANGUAGES, interface_fingerprint
 from .parsers.java.generated import (
     discover_generated_source_roots,

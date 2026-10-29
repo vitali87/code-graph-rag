@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from codebase_rag.parsers.go_frontend import go_frontend_available
+from codebase_rag.parsers.go.frontend import go_frontend_available
 from evals import go_build_variants as oracle
 
 pytestmark = pytest.mark.usefixtures(

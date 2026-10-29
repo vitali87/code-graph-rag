@@ -17,8 +17,8 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag import graph_updater as gu
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers.cpp.frontend import cpp_frontend_available
 from codebase_rag.parsers.cpp.preproc_recovery import parse_with_preproc_recovery
-from codebase_rag.parsers.cpp_frontend import cpp_frontend_available
 from codebase_rag.tests.conftest import recorded_edges, run_updater
 
 PROJECT = "proj"

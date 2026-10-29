@@ -420,13 +420,13 @@ PY_SOURCE_GLOB = "*.py"
 # The bundled Roslyn C# frontend tool is parser code too, though .cs/.csproj
 # rather than Python: an edit changes the semantic edges it produces, so its
 # sources are folded into the parser fingerprint.
-PARSER_FINGERPRINT_TOOL_DIR = "parsers/csharp_frontend/roslyn"
+PARSER_FINGERPRINT_TOOL_DIR = "parsers/csharp/roslyn"
 PARSER_FINGERPRINT_TOOL_GLOBS: tuple[str, ...] = ("*.cs", "*.csproj")
 # Bundled semantic-frontend tool sources (per (dir, globs)): parser code that
 # is not Python, so an edit must still trip the staleness fingerprint.
 PARSER_FINGERPRINT_TOOL_SOURCES: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("parsers/csharp_frontend/roslyn", ("*.cs", "*.csproj")),
-    ("parsers/go_frontend/gotypes", ("*.go", "*.mod", "*.sum")),
+    ("parsers/csharp/roslyn", ("*.cs", "*.csproj")),
+    ("parsers/go/gotypes", ("*.go", "*.mod", "*.sum")),
     ("parsers/java_frontend/javac", ("**/*.java",)),
     # The ast-grep YAML is data, not code, but it decides what unchanged
     # sources produce: the finding rules which Pattern/CodeSmell/SecurityIssue

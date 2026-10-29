@@ -254,10 +254,7 @@ def test_gotypes_end_to_end_binds_promoted_call_through_real_facts(
     # line/col keys match tree-sitter node positions AND the Pass-2 name-alias
     # registry. `o.Do()` is a promoted embedded-method call; the fact binds it to
     # Base.Do, and `fmt.Println` is an external site (no first-party edge).
-    from codebase_rag.parsers.go_frontend import (
-        go_frontend_available,
-        run_go_frontend,
-    )
+    from codebase_rag.parsers.go.frontend import go_frontend_available, run_go_frontend
 
     go = shutil.which("go")
     if go is None or not go_frontend_available():
@@ -378,10 +375,7 @@ def test_gotypes_end_to_end_emits_implements_from_real_facts(
     # End-to-end with REAL facts: the tool's emitted implements positions match
     # the ingested Go type nodes, so the Dog -> Speaker IMPLEMENTS edge lands
     # with no synthetic maps.
-    from codebase_rag.parsers.go_frontend import (
-        go_frontend_available,
-        run_go_frontend,
-    )
+    from codebase_rag.parsers.go.frontend import go_frontend_available, run_go_frontend
 
     go = shutil.which("go")
     if go is None or not go_frontend_available():

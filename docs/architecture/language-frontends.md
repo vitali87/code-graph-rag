@@ -214,7 +214,7 @@ raises. `test_cpp_frontend_phase.py` asserts the order per mode for that reason.
 
 !!! warning "One genuine piece of migration is still outstanding"
 
-    `cpp_frontend/qn.py` — the frontend-owned qualified-name generator — still
+    `cpp/qn.py` — the frontend-owned qualified-name generator — still
     exists, and `graph_updater.py` still keeps `_frontend_owned_qns`
     bookkeeping. That generator has to reproduce the graph builder's file-walk
     order byte for byte, which is the coupling that

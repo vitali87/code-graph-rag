@@ -24,10 +24,10 @@ from codebase_rag import constants as cs
 from codebase_rag.config import settings
 from codebase_rag.parsers import build_lock
 from codebase_rag.parsers.frontends.protocol import SemanticFacts
-from codebase_rag.parsers.go_frontend import frontend as fe
+from codebase_rag.parsers.go import frontend as fe
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-HELPER = REPO_ROOT / "codebase_rag" / "parsers" / "go_frontend" / "gotypes"
+HELPER = REPO_ROOT / "codebase_rag" / "parsers" / "go" / "gotypes"
 # The oldest Go the helper asks for: the first release with no open advisory
 # against the stdlib it links or the cmd/go that go/packages drives to load
 # the indexed repository. GO-2026-6179 and GO-2026-6180 (sumdb bypasses in

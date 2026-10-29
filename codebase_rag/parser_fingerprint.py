@@ -288,8 +288,8 @@ def _active_tools(repo_path: Path | None = None) -> dict[str, bool]:
     Imported lazily, as `_frontend_settings` does, to keep this module free of
     the parsers package at import time.
     """
-    from .parsers.csharp_frontend import find_csharp_project, resolve_csharp_frontend
-    from .parsers.go_frontend import find_go_module, resolve_go_frontend
+    from .parsers.csharp.frontend import find_csharp_project, resolve_csharp_frontend
+    from .parsers.go.frontend import find_go_module, resolve_go_frontend
     from .parsers.java_frontend import resolve_java_frontend
 
     def _in_repo(probe: Callable[[Path], object | None]) -> bool:
@@ -454,7 +454,7 @@ def _repo_frontend_inputs(repo_path: Path | None) -> list[str]:
     # omit the entry consistently.
     if repo_path is None:
         return []
-    from .parsers.cpp_frontend import find_compile_commands, resolve_cpp_frontend
+    from .parsers.cpp.frontend import find_compile_commands, resolve_cpp_frontend
 
     if resolve_cpp_frontend() is cs.CppFrontend.TREESITTER:
         return []
@@ -476,12 +476,12 @@ def _frontend_settings() -> list[str]:
     # fingerprint (dotnet for C#, libclang for C++, issue #1177). Imported lazily to
     # keep this module free of the parsers package at import time.
     from .parsers.ast_grep_tier import ast_grep_importable
-    from .parsers.cpp_frontend import resolve_cpp_frontend
-    from .parsers.csharp_frontend import resolve_csharp_frontend
-    from .parsers.go_frontend import resolve_go_frontend
+    from .parsers.cpp.frontend import resolve_cpp_frontend
+    from .parsers.csharp.frontend import resolve_csharp_frontend
+    from .parsers.go.frontend import resolve_go_frontend
     from .parsers.java.lombok import current_lombok_version
     from .parsers.java_frontend import resolve_java_frontend
-    from .parsers.python_frontend import resolve_python_frontend
+    from .parsers.python.frontend import resolve_python_frontend
 
     return [
         f"CPP_FRONTEND={resolve_cpp_frontend().value}",

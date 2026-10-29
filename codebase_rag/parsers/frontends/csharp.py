@@ -8,7 +8,7 @@ from pathlib import Path
 
 from ...constants.languages import SupportedLanguage
 from ...utils.path_utils import frontend_ignored_dirs
-from ..csharp_frontend import (
+from ..csharp.frontend import (
     csharp_frontend_available,
     find_csharp_project,
     run_csharp_frontend,

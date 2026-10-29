@@ -9,7 +9,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag import graph_updater as gu
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.parsers.cpp_frontend import (
+from codebase_rag.parsers.cpp.frontend import (
     cpp_frontend_available,
     run_cpp_frontend_hybrid,
 )
@@ -542,7 +542,7 @@ def test_find_compile_commands_checks_parent_build_dirs(tmp_path: Path) -> None:
     # the repo root's conventional build/compile_commands.json: bare
     # parents were checked but never their build/ subdirs, so the default
     # hybrid frontend silently fell back to pure tree-sitter.
-    from codebase_rag.parsers.cpp_frontend import find_compile_commands
+    from codebase_rag.parsers.cpp.frontend import find_compile_commands
 
     (tmp_path / "build").mkdir()
     (tmp_path / "build" / "compile_commands.json").write_text("[]", encoding="utf-8")

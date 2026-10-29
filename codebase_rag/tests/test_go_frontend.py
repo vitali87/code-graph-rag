@@ -19,8 +19,12 @@ from codebase_rag.parsers.frontends.protocol import (
     LanguageFrontend,
     ResolvedCallSite,
 )
-from codebase_rag.parsers.go_frontend import find_go_module, run_go_frontend
-from codebase_rag.parsers.go_frontend.frontend import _build_tool, _parse_payload
+from codebase_rag.parsers.go.frontend import (
+    _build_tool,
+    _parse_payload,
+    find_go_module,
+    run_go_frontend,
+)
 
 _FIXTURE = """package main
 
@@ -270,7 +274,7 @@ def test_nested_modules_each_get_a_tool_run_with_reanchored_paths(
     (repo / "sub" / "tool" / "go.mod").write_text(
         "module example.com/tool\n\ngo 1.22\n"
     )
-    import codebase_rag.parsers.go_frontend.frontend as fe
+    import codebase_rag.parsers.go.frontend as fe
 
     monkeypatch.setattr(fe.shutil, "which", lambda _name: "/usr/bin/go")
     monkeypatch.setattr(fe, "_build_tool", lambda _go: Path("/fake/gotypes"))
@@ -355,7 +359,7 @@ def test_ignored_directories_never_get_a_tool_run(
     (repo / "vendor" / "dep" / "go.mod").write_text(
         "module example.com/dep\n\ngo 1.22\n"
     )
-    import codebase_rag.parsers.go_frontend.frontend as fe
+    import codebase_rag.parsers.go.frontend as fe
 
     monkeypatch.setattr(fe.shutil, "which", lambda _name: "/usr/bin/go")
     monkeypatch.setattr(fe, "_build_tool", lambda _go: Path("/fake/gotypes"))
@@ -376,7 +380,7 @@ def test_one_failing_module_degrades_only_itself(
     (repo / "sub").mkdir(parents=True)
     (repo / "go.mod").write_text("module example.com/root\n\ngo 1.22\n")
     (repo / "sub" / "go.mod").write_text("module example.com/sub\n\ngo 1.22\n")
-    import codebase_rag.parsers.go_frontend.frontend as fe
+    import codebase_rag.parsers.go.frontend as fe
 
     monkeypatch.setattr(fe.shutil, "which", lambda _name: "/usr/bin/go")
     monkeypatch.setattr(fe, "_build_tool", lambda _go: Path("/fake/gotypes"))
@@ -427,7 +431,7 @@ def test_the_helper_is_built_for_the_host_whatever_goos_the_analysis_reads(
 ) -> None:
     # GOOS=windows on Linux picks the build go/types reads; built under it,
     # the helper was a Windows binary this host cannot run (#3360 review).
-    from codebase_rag.parsers.go_frontend import frontend
+    from codebase_rag.parsers.go import frontend
 
     monkeypatch.setenv("GOOS", "windows")
     monkeypatch.setenv("GOARCH", "arm64")

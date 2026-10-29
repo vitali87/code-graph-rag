@@ -14,7 +14,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag import graph_updater as gu
 from codebase_rag.capture import ALL_ENABLED, CaptureSelection
-from codebase_rag.parsers.csharp_frontend.frontend import _parse_payload
+from codebase_rag.parsers.csharp.frontend import _parse_payload
 from codebase_rag.parsers.frontends.protocol import (
     QueryCall,
     ResolvedCallSite,
@@ -611,7 +611,7 @@ def test_roslyn_tool_emits_semantic_facts(temp_repo: Path) -> None:
     # must emit exact-overload call facts, reduced extension-method call
     # facts, partial declaration groups, and first-party LINQ query-operator
     # facts, all with locations matching the source layout.
-    from codebase_rag.parsers.csharp_frontend import (
+    from codebase_rag.parsers.csharp.frontend import (
         csharp_frontend_available,
         run_csharp_frontend,
     )
@@ -698,7 +698,7 @@ def test_hybrid_end_to_end_produces_semantic_edges(
     # The full pipeline with REAL Roslyn facts (no synthetic maps): proves
     # the tool's emitted line/col keys actually match tree-sitter's node
     # positions and the Pass-2 registries, end to end.
-    from codebase_rag.parsers.csharp_frontend import (
+    from codebase_rag.parsers.csharp.frontend import (
         csharp_frontend_available,
         run_csharp_frontend,
     )
@@ -761,7 +761,7 @@ def test_call_fact_survives_non_ascii_prefix_on_line(
     # is UTF-16 code units. A non-ASCII character before the callee name
     # token on the same line makes the two diverge, so the tool must emit
     # byte columns or the join silently misses. Real facts end to end.
-    from codebase_rag.parsers.csharp_frontend import (
+    from codebase_rag.parsers.csharp.frontend import (
         csharp_frontend_available,
         run_csharp_frontend,
     )

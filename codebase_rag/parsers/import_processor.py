@@ -49,7 +49,7 @@ from ..utils.path_utils import (
     walk_eligible_files,
 )
 from ..utils.source_encoding import grammar_bytes
-from .cpp_frontend.qn import build_module_qn_map
+from .cpp.qn import build_module_qn_map
 from .dart import discover_dart_packages
 from .dart import utils as dart_utils
 from .go import discover_go_module_paths, resolve_go_import_path

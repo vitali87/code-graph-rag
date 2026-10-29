@@ -870,7 +870,7 @@ def test_the_real_go_types_facts_reach_every_implementation(
     # End to end through the bundled tool: its interface-method target joins
     # the node at the name token, and its own IMPLEMENTS pairs drive the
     # fan-out. Skipped where the tool cannot build.
-    from codebase_rag.parsers.go_frontend import go_frontend_available
+    from codebase_rag.parsers.go.frontend import go_frontend_available
 
     if shutil.which("go") is None or not go_frontend_available():
         pytest.skip("go toolchain not available")
@@ -1209,7 +1209,7 @@ def test_the_real_go_types_run_proving_no_pair_adds_none(
 ) -> None:
     # The same through the bundled tool, which reports the module analysed
     # with no pair. Skipped where it cannot build.
-    from codebase_rag.parsers.go_frontend import go_frontend_available, run_go_frontend
+    from codebase_rag.parsers.go.frontend import go_frontend_available, run_go_frontend
 
     if shutil.which("go") is None or not go_frontend_available():
         pytest.skip("go toolchain not available")
@@ -2136,13 +2136,13 @@ _REAL_RUNS: list[Path] = []
 def _real_go_frontend(
     root: Path, ignored_dirs: frozenset[str] = cs.IGNORE_PATTERNS
 ) -> SemanticFacts:
-    from codebase_rag.parsers.go_frontend import frontend
+    from codebase_rag.parsers.go import frontend
 
     return frontend.run_go_frontend(root, ignored_dirs=ignored_dirs)
 
 
 def _real_gotypes_files_or_skip(root: Path, checked: set[str]) -> None:
-    from codebase_rag.parsers.go_frontend import go_frontend_available
+    from codebase_rag.parsers.go.frontend import go_frontend_available
 
     if shutil.which("go") is None or not go_frontend_available():
         pytest.skip("go toolchain not available")
@@ -2156,7 +2156,7 @@ def _real_gotypes_files_or_skip(root: Path, checked: set[str]) -> None:
 def _one_real_go_run_per_tree(
     monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
 ) -> None:
-    from codebase_rag.parsers.go_frontend import frontend
+    from codebase_rag.parsers.go import frontend
 
     _REAL_RUNS[:] = [shared_session_dir(tmp_path_factory, "go-helper-runs")]
     run = frontend._run_tool_once
@@ -2933,7 +2933,7 @@ def _sig_repo(root: Path) -> None:
 
 def _sig_frontend(monkeypatch: pytest.MonkeyPatch, frontend: str, root: Path) -> None:
     if frontend == "gotypes":
-        from codebase_rag.parsers.go_frontend import (
+        from codebase_rag.parsers.go.frontend import (
             go_frontend_available,
             run_go_frontend,
         )

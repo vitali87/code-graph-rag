@@ -167,7 +167,7 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ">=1.27.2"
-          cache-dependency-path: codebase_rag/parsers/go_frontend/gotypes/go.sum
+          cache-dependency-path: codebase_rag/parsers/go/gotypes/go.sum
 
       - name: Key the uv cache on dependencies, not the project version
         shell: bash
@@ -271,7 +271,7 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ">=1.27.2"
-          cache-dependency-path: codebase_rag/parsers/go_frontend/gotypes/go.sum
+          cache-dependency-path: codebase_rag/parsers/go/gotypes/go.sum
 
       - name: Key the uv cache on dependencies, not the project version
         shell: bash
@@ -526,7 +526,7 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ">=1.27.2"
-          cache-dependency-path: codebase_rag/parsers/go_frontend/gotypes/go.sum
+          cache-dependency-path: codebase_rag/parsers/go/gotypes/go.sum
 
       - name: Key the uv cache on dependencies, not the project version
         shell: bash
@@ -554,7 +554,7 @@ jobs:
       # attributable failure here, not a mysterious skip inside pytest. Deps
       # resolve from the module cache, pinned by go.sum.
       - name: Build the bundled gotypes tool
-        working-directory: codebase_rag/parsers/go_frontend/gotypes
+        working-directory: codebase_rag/parsers/go/gotypes
         env:
           GOTOOLCHAIN: local
         run: go build ./...
