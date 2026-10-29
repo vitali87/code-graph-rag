@@ -17,14 +17,6 @@ from . import constants as cs
 from . import exceptions as ex
 from . import logs as ls
 from .config import settings
-from .constants import (
-    PAYLOAD_NODE_ID,
-    PAYLOAD_QUALIFIED_NAME,
-    QDRANT_INSECURE_URL_SCHEME,
-    SETTING_QDRANT_DB_PATH,
-    VECTOR_DIM_SETTINGS,
-    VectorStoreBackend,
-)
 from .sqlite_vectors import (
     SqliteVectorClient,
     SqliteVectorPoint,
@@ -81,7 +73,9 @@ def _node_by_point(
 
 def _names_its_node(point: Record, node_by_point: Mapping[str, int]) -> bool:
     node_id = node_by_point.get(str(point.id))
-    return node_id is not None and (point.payload or {}).get(PAYLOAD_NODE_ID) == node_id
+    return (
+        node_id is not None and (point.payload or {}).get(cs.PAYLOAD_NODE_ID) == node_id
+    )
 
 
 def _in_project(qualified_name: str, project_name: str) -> bool:
@@ -129,7 +123,7 @@ def _search_project_scoped(
 
 
 _CLIENT: Any | None = None
-_CLIENT_BACKEND: VectorStoreBackend | None = None
+_CLIENT_BACKEND: cs.VectorStoreBackend | None = None
 # The bundled stack's Qdrant URL once probed, so the client and the embedding
 # cache agree on where the vectors go and the stack is probed only once.
 _BUNDLED_QDRANT: str | None = None
@@ -155,7 +149,7 @@ else:
 
 
 class VectorStore(Protocol):
-    backend: VectorStoreBackend
+    backend: cs.VectorStoreBackend
 
     def store_embedding_batch(
         self, project_name: str, points: Sequence[EmbeddingPoint]
@@ -211,9 +205,9 @@ def close_qdrant_client() -> None:
 atexit.register(close_vector_store_client)
 
 
-def _selected_backend() -> VectorStoreBackend | None:
+def _selected_backend() -> cs.VectorStoreBackend | None:
     try:
-        return VectorStoreBackend(str(settings.VECTOR_STORE_BACKEND).lower())
+        return cs.VectorStoreBackend(str(settings.VECTOR_STORE_BACKEND).lower())
     except ValueError:
         logger.warning(
             ls.VECTOR_STORE_BACKEND_UNKNOWN.format(
@@ -225,17 +219,17 @@ def _selected_backend() -> VectorStoreBackend | None:
 
 def _get_vector_store() -> VectorStore | None:
     backend = _selected_backend()
-    if backend == VectorStoreBackend.MILVUS:
+    if backend == cs.VectorStoreBackend.MILVUS:
         if not has_pymilvus():
             logger.warning(ls.VECTOR_STORE_BACKEND_UNAVAILABLE.format(backend=backend))
             return None
         return MilvusVectorStore()
-    if backend == VectorStoreBackend.QDRANT:
+    if backend == cs.VectorStoreBackend.QDRANT:
         if not has_qdrant_client():
             logger.warning(ls.VECTOR_STORE_BACKEND_UNAVAILABLE.format(backend=backend))
             return None
         return QdrantVectorStore()
-    if backend == VectorStoreBackend.SQLITE:
+    if backend == cs.VectorStoreBackend.SQLITE:
         if not has_sqlite_vec():
             logger.warning(ls.VECTOR_STORE_BACKEND_UNAVAILABLE.format(backend=backend))
             return None
@@ -245,7 +239,7 @@ def _get_vector_store() -> VectorStore | None:
     return None
 
 
-def _ensure_client_backend(backend: VectorStoreBackend) -> None:
+def _ensure_client_backend(backend: cs.VectorStoreBackend) -> None:
     if _CLIENT is not None and _CLIENT_BACKEND != backend:
         close_vector_store_client()
 
@@ -255,7 +249,7 @@ def get_qdrant_client(validate: bool = True) -> Any:
     if QdrantClient is None:
         raise RuntimeError("qdrant-client is not installed")
 
-    _ensure_client_backend(VectorStoreBackend.QDRANT)
+    _ensure_client_backend(cs.VectorStoreBackend.QDRANT)
     if _CLIENT is None:
         if settings.QDRANT_URL:
             client = QdrantClient(
@@ -280,7 +274,7 @@ def get_qdrant_client(validate: bool = True) -> Any:
             client.close()
             raise
         _CLIENT = client
-        _CLIENT_BACKEND = VectorStoreBackend.QDRANT
+        _CLIENT_BACKEND = cs.VectorStoreBackend.QDRANT
     return _CLIENT
 
 
@@ -298,8 +292,8 @@ def _bundled_qdrant_url() -> str | None:
     global _BUNDLED_QDRANT, _BUNDLED_QDRANT_PROBED
     if (
         settings.QDRANT_URL
-        or settings.VECTOR_STORE_BACKEND != VectorStoreBackend.QDRANT
-        or SETTING_QDRANT_DB_PATH in settings.model_fields_set
+        or settings.VECTOR_STORE_BACKEND != cs.VectorStoreBackend.QDRANT
+        or cs.SETTING_QDRANT_DB_PATH in settings.model_fields_set
     ):
         return None
     if not _BUNDLED_QDRANT_PROBED:
@@ -322,7 +316,7 @@ def embedding_cache_dir() -> Path:
     """
     if _bundled_qdrant_url() is not None:
         return settings.CGR_HOME.expanduser()
-    if settings.VECTOR_STORE_BACKEND == VectorStoreBackend.SQLITE:
+    if settings.VECTOR_STORE_BACKEND == cs.VectorStoreBackend.SQLITE:
         return settings.vector_db_file.parent
     return Path(settings.QDRANT_DB_PATH)
 
@@ -331,7 +325,7 @@ def _refuse_credential_over_http(url: str, allowed: bool, refusal: str) -> None:
     # Both credentialed backends send their secret with every request, so a
     # plain http:// endpoint carries it unencrypted unless the user said the
     # transport is protected another way.
-    if urlsplit(url).scheme == QDRANT_INSECURE_URL_SCHEME and not allowed:
+    if urlsplit(url).scheme == cs.QDRANT_INSECURE_URL_SCHEME and not allowed:
         raise ValueError(refusal)
 
 
@@ -409,7 +403,7 @@ def _ensure_milvus_collection(client: Any, validate: bool = True) -> None:
 
     schema = client.create_schema(auto_id=False, enable_dynamic_field=False)
     schema.add_field(
-        field_name=PAYLOAD_NODE_ID,
+        field_name=cs.PAYLOAD_NODE_ID,
         datatype=DataType.INT64,
         is_primary=True,
     )
@@ -419,7 +413,7 @@ def _ensure_milvus_collection(client: Any, validate: bool = True) -> None:
         dim=settings.MILVUS_VECTOR_DIM,
     )
     schema.add_field(
-        field_name=PAYLOAD_QUALIFIED_NAME,
+        field_name=cs.PAYLOAD_QUALIFIED_NAME,
         datatype=DataType.VARCHAR,
         max_length=65535,
     )
@@ -448,9 +442,9 @@ def _validate_milvus_collection(client: Any) -> None:
         if isinstance(field, dict)
     }
     missing = {
-        PAYLOAD_NODE_ID,
+        cs.PAYLOAD_NODE_ID,
         _MILVUS_VECTOR_FIELD,
-        PAYLOAD_QUALIFIED_NAME,
+        cs.PAYLOAD_QUALIFIED_NAME,
     } - set(fields)
     if missing:
         missing_fields = ", ".join(sorted(missing))
@@ -473,7 +467,7 @@ def get_milvus_client(validate: bool = True) -> Any:
     if MilvusClient is None:
         raise RuntimeError("pymilvus is not installed")
 
-    _ensure_client_backend(VectorStoreBackend.MILVUS)
+    _ensure_client_backend(cs.VectorStoreBackend.MILVUS)
     if _CLIENT is None:
         client = MilvusClient(**_milvus_client_kwargs())
         try:
@@ -484,7 +478,7 @@ def get_milvus_client(validate: bool = True) -> Any:
             client.close()
             raise
         _CLIENT = client
-        _CLIENT_BACKEND = VectorStoreBackend.MILVUS
+        _CLIENT_BACKEND = cs.VectorStoreBackend.MILVUS
     return _CLIENT
 
 
@@ -517,7 +511,7 @@ def get_sqlite_vector_client(validate: bool = True) -> SqliteVectorClient:
     if not has_sqlite_vec():
         raise RuntimeError(ex.SQLITE_VEC_NOT_INSTALLED)
 
-    _ensure_client_backend(VectorStoreBackend.SQLITE)
+    _ensure_client_backend(cs.VectorStoreBackend.SQLITE)
     if _CLIENT is None:
         if settings.qdrant_set_without_backend:
             _note_qdrant_set_without_backend()
@@ -530,7 +524,7 @@ def get_sqlite_vector_client(validate: bool = True) -> SqliteVectorClient:
             client.close()
             raise
         _CLIENT = client
-        _CLIENT_BACKEND = VectorStoreBackend.SQLITE
+        _CLIENT_BACKEND = cs.VectorStoreBackend.SQLITE
     return _CLIENT
 
 
@@ -570,7 +564,7 @@ def _store_batch(records: Sequence[Any], upsert: Callable[[], None]) -> int:
 
 
 def _delete_scoped_embeddings(
-    backend: VectorStoreBackend,
+    backend: cs.VectorStoreBackend,
     project_name: str,
     point_ids: Sequence[PointId],
     delete: Callable[[list[PointId]], None],
@@ -633,7 +627,7 @@ def _qdrant_keyed_points(project_name: str) -> Iterator[Record]:
             )
         ]
     )
-    return _qdrant_scroll(project, [PAYLOAD_NODE_ID])
+    return _qdrant_scroll(project, [cs.PAYLOAD_NODE_ID])
 
 
 def _qdrant_legacy_points(project_name: str) -> list[Record]:
@@ -655,13 +649,15 @@ def _qdrant_legacy_points(project_name: str) -> list[Record]:
     )
     return [
         point
-        for point in _qdrant_scroll(unowned, [PAYLOAD_NODE_ID, PAYLOAD_QUALIFIED_NAME])
+        for point in _qdrant_scroll(
+            unowned, [cs.PAYLOAD_NODE_ID, cs.PAYLOAD_QUALIFIED_NAME]
+        )
         if _in_project(_payload_qualified_name(point), project_name)
     ]
 
 
 def _payload_qualified_name(point: Record) -> str:
-    qualified_name = (point.payload or {}).get(PAYLOAD_QUALIFIED_NAME)
+    qualified_name = (point.payload or {}).get(cs.PAYLOAD_QUALIFIED_NAME)
     return qualified_name if isinstance(qualified_name, str) else ""
 
 
@@ -672,7 +668,7 @@ def _legacy_point_superseded(
     # when it no longer names its symbol's current node. One whose new point
     # failed to store still answers for the right node, so it stays until a
     # sync stores the replacement.
-    node_id = (point.payload or {}).get(PAYLOAD_NODE_ID)
+    node_id = (point.payload or {}).get(cs.PAYLOAD_NODE_ID)
     symbol = current.get(node_id)
     return (
         node_id in stored
@@ -682,7 +678,7 @@ def _legacy_point_superseded(
 
 
 class QdrantVectorStore(VectorStore):
-    backend = VectorStoreBackend.QDRANT
+    backend = cs.VectorStoreBackend.QDRANT
 
     def store_embedding_batch(
         self, project_name: str, points: Sequence[EmbeddingPoint]
@@ -694,8 +690,8 @@ class QdrantVectorStore(VectorStore):
                 id=embedding_point_id(project_name, symbol),
                 vector=embedding,
                 payload={
-                    PAYLOAD_NODE_ID: node_id,
-                    PAYLOAD_QUALIFIED_NAME: symbol.qualified_name,
+                    cs.PAYLOAD_NODE_ID: node_id,
+                    cs.PAYLOAD_QUALIFIED_NAME: symbol.qualified_name,
                     cs.PAYLOAD_PROJECT: project_name,
                 },
             )
@@ -823,7 +819,7 @@ class QdrantVectorStore(VectorStore):
             points = client.retrieve(
                 collection_name=settings.QDRANT_COLLECTION_NAME,
                 ids=ids_list[i : i + _RETRIEVE_BATCH_SIZE],
-                with_payload=[PAYLOAD_NODE_ID],
+                with_payload=[cs.PAYLOAD_NODE_ID],
                 with_vectors=False,
             )
             found_ids.update(
@@ -850,9 +846,9 @@ class QdrantVectorStore(VectorStore):
             )
             return [
                 (
-                    hit.payload[PAYLOAD_NODE_ID],
+                    hit.payload[cs.PAYLOAD_NODE_ID],
                     hit.score,
-                    hit.payload.get(PAYLOAD_QUALIFIED_NAME),
+                    hit.payload.get(cs.PAYLOAD_QUALIFIED_NAME),
                 )
                 for hit in result.points
                 if hit.payload is not None
@@ -869,7 +865,7 @@ def _milvus_project_scope(project_name: str) -> str:
     # json.dumps writes a string literal Milvus reads back as the same string,
     # quotes and backslashes in the project name included.
     return cs.MILVUS_PREFIX_RANGE_EXPR.format(
-        field=PAYLOAD_QUALIFIED_NAME,
+        field=cs.PAYLOAD_QUALIFIED_NAME,
         low=json.dumps(project_name + cs.SEPARATOR_DOT, ensure_ascii=False),
         high=json.dumps(project_name + cs.QN_PREFIX_RANGE_END, ensure_ascii=False),
     )
@@ -897,7 +893,7 @@ def _milvus_deleted_count(result: dict[str, int] | list[int]) -> int:
 
 
 class MilvusVectorStore(VectorStore):
-    backend = VectorStoreBackend.MILVUS
+    backend = cs.VectorStoreBackend.MILVUS
 
     def store_embedding_batch(
         self, project_name: str, points: Sequence[EmbeddingPoint]
@@ -910,9 +906,9 @@ class MilvusVectorStore(VectorStore):
             return 0
         rows = [
             {
-                PAYLOAD_NODE_ID: node_id,
+                cs.PAYLOAD_NODE_ID: node_id,
                 _MILVUS_VECTOR_FIELD: embedding,
-                PAYLOAD_QUALIFIED_NAME: symbol.qualified_name,
+                cs.PAYLOAD_QUALIFIED_NAME: symbol.qualified_name,
             }
             for node_id, embedding, symbol in points
         ]
@@ -942,7 +938,7 @@ class MilvusVectorStore(VectorStore):
                 )
                 return
             owned = _milvus_excluding(
-                cs.MILVUS_IDS_EXPR.format(field=PAYLOAD_NODE_ID, ids=ids),
+                cs.MILVUS_IDS_EXPR.format(field=cs.PAYLOAD_NODE_ID, ids=ids),
                 nested_projects,
             )
             get_milvus_client().delete(
@@ -967,7 +963,7 @@ class MilvusVectorStore(VectorStore):
         """
         stale = cs.MILVUS_STALE_ROWS_EXPR.format(
             scope=_milvus_owned_scope(project_name, nested_projects),
-            field=PAYLOAD_NODE_ID,
+            field=cs.PAYLOAD_NODE_ID,
             ids=sorted(current),
         )
         result = get_milvus_client().delete(
@@ -1000,10 +996,10 @@ class MilvusVectorStore(VectorStore):
             rows = client.get(
                 collection_name=settings.MILVUS_COLLECTION_NAME,
                 ids=ids_list[i : i + _RETRIEVE_BATCH_SIZE],
-                output_fields=[PAYLOAD_NODE_ID],
+                output_fields=[cs.PAYLOAD_NODE_ID],
             )
             for row in rows:
-                node_id = row.get(PAYLOAD_NODE_ID)
+                node_id = row.get(cs.PAYLOAD_NODE_ID)
                 if isinstance(node_id, int):
                     found_ids.add(node_id)
         return found_ids
@@ -1016,7 +1012,9 @@ class MilvusVectorStore(VectorStore):
     ) -> list[tuple[int, float]]:
         effective_top_k = top_k if top_k is not None else settings.MILVUS_TOP_K
         output_fields = (
-            [PAYLOAD_NODE_ID, PAYLOAD_QUALIFIED_NAME] if project else [PAYLOAD_NODE_ID]
+            [cs.PAYLOAD_NODE_ID, cs.PAYLOAD_QUALIFIED_NAME]
+            if project
+            else [cs.PAYLOAD_NODE_ID]
         )
         client = get_milvus_client()
 
@@ -1051,15 +1049,17 @@ class MilvusVectorStore(VectorStore):
 
 def _milvus_hit_qualified_name(hit: dict[str, Any]) -> str | None:
     entity = hit.get("entity")
-    if isinstance(entity, dict) and isinstance(entity.get(PAYLOAD_QUALIFIED_NAME), str):
-        return entity[PAYLOAD_QUALIFIED_NAME]
+    if isinstance(entity, dict) and isinstance(
+        entity.get(cs.PAYLOAD_QUALIFIED_NAME), str
+    ):
+        return entity[cs.PAYLOAD_QUALIFIED_NAME]
     return None
 
 
 def _milvus_hit_node_id(hit: dict[str, Any]) -> int | None:
     entity = hit.get("entity")
-    if isinstance(entity, dict) and isinstance(entity.get(PAYLOAD_NODE_ID), int):
-        return entity[PAYLOAD_NODE_ID]
+    if isinstance(entity, dict) and isinstance(entity.get(cs.PAYLOAD_NODE_ID), int):
+        return entity[cs.PAYLOAD_NODE_ID]
     if isinstance(hit.get("id"), int):
         return hit["id"]
     return None
@@ -1105,7 +1105,7 @@ class SqliteVectorStore(VectorStore):
     project it was stored for.
     """
 
-    backend = VectorStoreBackend.SQLITE
+    backend = cs.VectorStoreBackend.SQLITE
 
     def store_embedding_batch(
         self, project_name: str, points: Sequence[EmbeddingPoint]
@@ -1220,16 +1220,16 @@ class SqliteVectorStore(VectorStore):
         return _search_project_scoped(run_query, effective_top_k, project)
 
 
-def _configured_vector_dim(backend: VectorStoreBackend) -> int:
-    if backend == VectorStoreBackend.MILVUS:
+def _configured_vector_dim(backend: cs.VectorStoreBackend) -> int:
+    if backend == cs.VectorStoreBackend.MILVUS:
         return settings.MILVUS_VECTOR_DIM
-    if backend == VectorStoreBackend.SQLITE:
+    if backend == cs.VectorStoreBackend.SQLITE:
         return settings.SQLITE_VECTOR_DIM
     return settings.QDRANT_VECTOR_DIM
 
 
 def _check_vector_dims(
-    backend: VectorStoreBackend, vectors: Iterable[list[float]]
+    backend: cs.VectorStoreBackend, vectors: Iterable[list[float]]
 ) -> None:
     # A model whose output size differs from the collection's fails every
     # write with an opaque backend error, which the batch wrapper swallows
@@ -1242,7 +1242,7 @@ def _check_vector_dims(
                     dim=len(vector),
                     backend=backend,
                     expected=expected,
-                    setting=VECTOR_DIM_SETTINGS[backend],
+                    setting=cs.VECTOR_DIM_SETTINGS[backend],
                 )
             )
 

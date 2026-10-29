@@ -20,37 +20,9 @@ from loguru import logger
 from codebase_rag.config import settings
 from codebase_rag.types_defs import ConnectionProtocol, CursorProtocol, ResultValue
 
+from .. import constants as cs
 from .. import exceptions as ex
 from .. import logs as ls
-from ..constants import (
-    CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES,
-    CYPHER_EXPLAIN_PREFIX,
-    EG_MEMORY_PATH,
-    ERR_SUBSTR_ALREADY_EXISTS,
-    FAILED_REL_ROWS_SHOWN,
-    KEY_CREATED,
-    KEY_FROM_MISSING,
-    KEY_FROM_VAL,
-    KEY_NAME,
-    KEY_PROJECT_NAME,
-    KEY_PROJECT_NAMES,
-    KEY_PROJECT_PREFIX,
-    KEY_PROPS,
-    KEY_PURGED,
-    KEY_TO_MISSING,
-    KEY_TO_VAL,
-    LEGACY_NODE_CONSTRAINTS,
-    MERGE_KEY_PROPS_BY_REL,
-    MG_TRANSIENT_RETRY_ATTEMPTS,
-    MG_TRANSIENT_RETRY_BASE_DELAY_S,
-    NEO4J_EXCEPTIONS_MODULE,
-    NODE_NAME_INDEXES,
-    NODE_UNIQUE_CONSTRAINTS,
-    REL_ENDPOINT_JOINER,
-    REL_ENDPOINT_SOURCE,
-    REL_ENDPOINT_TARGET,
-    SEPARATOR_DOT,
-)
 from ..cypher_queries import (
     CYPHER_ANY_KEYLESS_STRUCTURE,
     CYPHER_ANY_SHARED_STRUCTURE,
@@ -142,10 +114,10 @@ def _group_by_merge_keys(
     rel_type: str, params_list: list[RelBatchRow]
 ) -> dict[tuple[str, ...], list[RelBatchRow]]:
     # Bucket rows by which of the relationship's merge-key props they carry.
-    candidate = MERGE_KEY_PROPS_BY_REL.get(rel_type, ())
+    candidate = cs.MERGE_KEY_PROPS_BY_REL.get(rel_type, ())
     by_keys: defaultdict[tuple[str, ...], list[RelBatchRow]] = defaultdict(list)
     for row in params_list:
-        props = row[KEY_PROPS] or {}
+        props = row[cs.KEY_PROPS] or {}
         by_keys[tuple(p for p in candidate if p in props)].append(row)
     return by_keys
 
@@ -165,7 +137,7 @@ def _note_memgraph_set_without_backend() -> None:
 def _created_count(results: Sequence[ResultRow]) -> int:
     total = 0
     for r in results:
-        created = r.get(KEY_CREATED, 0)
+        created = r.get(cs.KEY_CREATED, 0)
         if isinstance(created, int):
             total += created
     return total
@@ -196,7 +168,7 @@ def is_query_rejection(error: BaseException) -> bool:
     if isinstance(error, _MgclientDatabaseError):
         return not isinstance(error, _MgclientOperationalError)
     try:
-        neo4j_exceptions = importlib.import_module(NEO4J_EXCEPTIONS_MODULE)
+        neo4j_exceptions = importlib.import_module(cs.NEO4J_EXCEPTIONS_MODULE)
     except ImportError:
         return False
     return isinstance(error, neo4j_exceptions.ClientError) and not isinstance(
@@ -205,11 +177,11 @@ def is_query_rejection(error: BaseException) -> bool:
 
 
 def _missing_endpoints(row: ResultRow) -> str:
-    return REL_ENDPOINT_JOINER.join(
+    return cs.REL_ENDPOINT_JOINER.join(
         side
         for side, key in (
-            (REL_ENDPOINT_SOURCE, KEY_FROM_MISSING),
-            (REL_ENDPOINT_TARGET, KEY_TO_MISSING),
+            (cs.REL_ENDPOINT_SOURCE, cs.KEY_FROM_MISSING),
+            (cs.REL_ENDPOINT_TARGET, cs.KEY_TO_MISSING),
         )
         if row.get(key) is True
     )
@@ -223,16 +195,16 @@ def _retry_transient[T](execute: Callable[[], T]) -> T:
     changed nothing, and the error text itself asks for a retry once the
     conflicting transaction is finished. Every other error is raised at once.
     """
-    for attempt in range(1, MG_TRANSIENT_RETRY_ATTEMPTS):
+    for attempt in range(1, cs.MG_TRANSIENT_RETRY_ATTEMPTS):
         try:
             return execute()
         except _MgclientTransientError as exc:
-            delay = MG_TRANSIENT_RETRY_BASE_DELAY_S * 2 ** (attempt - 1)
+            delay = cs.MG_TRANSIENT_RETRY_BASE_DELAY_S * 2 ** (attempt - 1)
             logger.warning(
                 ls.MG_TRANSIENT_RETRY.format(
                     delay=delay,
                     attempt=attempt,
-                    attempts=MG_TRANSIENT_RETRY_ATTEMPTS,
+                    attempts=cs.MG_TRANSIENT_RETRY_ATTEMPTS,
                     error=exc,
                 )
             )
@@ -274,15 +246,15 @@ def _log_failed_relationships(
     )
     named = [
         (row, missing) for row in failed_rows if (missing := _missing_endpoints(row))
-    ][:FAILED_REL_ROWS_SHOWN]
+    ][: cs.FAILED_REL_ROWS_SHOWN]
     for index, (row, missing) in enumerate(named, start=1):
         logger.warning(
             ls.MG_REL_FAILED_ROW.format(
                 index=index,
                 from_label=from_label,
-                from_val=row.get(KEY_FROM_VAL),
+                from_val=row.get(cs.KEY_FROM_VAL),
                 to_label=to_label,
-                to_val=row.get(KEY_TO_VAL),
+                to_val=row.get(cs.KEY_TO_VAL),
                 missing=missing,
             )
         )
@@ -525,7 +497,7 @@ class MemgraphIngestor:
             except Exception as e:
                 # Only "already exists" is expected (re-running schema DDL);
                 # a constraint violation is a write that did not happen.
-                if ERR_SUBSTR_ALREADY_EXISTS not in str(e).lower():
+                if cs.ERR_SUBSTR_ALREADY_EXISTS not in str(e).lower():
                     logger.error(ls.MG_CYPHER_ERROR.format(error=e))
                     logger.error(ls.MG_CYPHER_QUERY.format(query=query))
                     logger.error(ls.MG_CYPHER_PARAMS.format(params=params))
@@ -624,7 +596,7 @@ class MemgraphIngestor:
                 )
             )
         except Exception as e:
-            if ERR_SUBSTR_ALREADY_EXISTS not in str(e).lower():
+            if cs.ERR_SUBSTR_ALREADY_EXISTS not in str(e).lower():
                 logger.error(ls.MG_BATCH_ERROR.format(error=e))
                 logger.error(ls.MG_CYPHER_QUERY.format(query=query))
                 if len(params_list) > 10:
@@ -674,25 +646,25 @@ class MemgraphIngestor:
 
     def list_projects(self) -> list[str]:
         result = self.fetch_all(CYPHER_LIST_PROJECTS)
-        return [str(r[KEY_NAME]) for r in result]
+        return [str(r[cs.KEY_NAME]) for r in result]
 
     def list_project_roots(self) -> dict[str, str | None]:
         return project_roots_from_rows(self.fetch_all(CYPHER_LIST_PROJECTS))
 
     def delete_project(self, project_name: str) -> None:
         logger.info(ls.MG_DELETING_PROJECT.format(project_name=project_name))
-        self._execute_query(CYPHER_DELETE_PROJECT, {KEY_PROJECT_NAME: project_name})
+        self._execute_query(CYPHER_DELETE_PROJECT, {cs.KEY_PROJECT_NAME: project_name})
         self._execute_query(
             CYPHER_DELETE_PROJECT_CUT_OFF_UNITS,
             {
-                KEY_PROJECT_NAME: project_name,
-                KEY_PROJECT_PREFIX: f"{project_name}{SEPARATOR_DOT}",
+                cs.KEY_PROJECT_NAME: project_name,
+                cs.KEY_PROJECT_PREFIX: f"{project_name}{cs.SEPARATOR_DOT}",
             },
         )
         # Shared prefix-less nodes (Resources, ExternalModules) only lose
         # their edges above; drop the ones this project alone anchored.
         prune_unanchored_resources(self)
-        self._execute_query(CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES)
+        self._execute_query(cs.CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES)
         logger.info(ls.MG_PROJECT_DELETED.format(project_name=project_name))
 
     def ensure_constraints(self) -> None:
@@ -700,7 +672,7 @@ class MemgraphIngestor:
         self._migrate_legacy_path_keys()
         failed = self._apply_schema_ddl(
             self._dialect.create_constraint(label, prop)
-            for label, prop in NODE_UNIQUE_CONSTRAINTS.items()
+            for label, prop in cs.NODE_UNIQUE_CONSTRAINTS.items()
         )
         if failed:
             logger.warning(ls.MG_CONSTRAINTS_INCOMPLETE.format(count=failed))
@@ -720,7 +692,7 @@ class MemgraphIngestor:
             try:
                 self._execute_query(statement)
             except Exception as e:  # noqa: BLE001 -- any engine's DDL error; an existing index is no failure
-                if ERR_SUBSTR_ALREADY_EXISTS not in str(e).lower():
+                if cs.ERR_SUBSTR_ALREADY_EXISTS not in str(e).lower():
                     failed += 1
         return failed
 
@@ -743,7 +715,7 @@ class MemgraphIngestor:
         # one whose name we derived -- a legacy constraint predates this
         # code and may be named anything.
         legacy_present: list[tuple[str, str, str | None]] = []
-        for label, prop in LEGACY_NODE_CONSTRAINTS:
+        for label, prop in cs.LEGACY_NODE_CONSTRAINTS:
             for row in existing_rows:
                 if self._dialect.constraint_row_matches(row, label, prop):
                     legacy_present.append(
@@ -772,7 +744,7 @@ class MemgraphIngestor:
         for purge_query in (cross_project_purge, CYPHER_PURGE_KEYLESS_STRUCTURE):
             rows = self._execute_query(purge_query)
             if rows:
-                purged += int(str(rows[0][KEY_PURGED]))
+                purged += int(str(rows[0][cs.KEY_PURGED]))
         if purged:
             logger.warning(ls.MG_LEGACY_PURGE.format(count=purged))
 
@@ -785,11 +757,11 @@ class MemgraphIngestor:
             [
                 *(
                     self._dialect.create_index(label, prop)
-                    for label, prop in NODE_UNIQUE_CONSTRAINTS.items()
+                    for label, prop in cs.NODE_UNIQUE_CONSTRAINTS.items()
                 ),
                 *(
-                    self._dialect.create_index(label, KEY_NAME)
-                    for label in NODE_NAME_INDEXES
+                    self._dialect.create_index(label, cs.KEY_NAME)
+                    for label in cs.NODE_NAME_INDEXES
                 ),
             ]
         )
@@ -834,7 +806,7 @@ class MemgraphIngestor:
         if not props_list:
             return 0, 0
 
-        id_key = NODE_UNIQUE_CONSTRAINTS.get(label)
+        id_key = cs.NODE_UNIQUE_CONSTRAINTS.get(label)
         if not id_key:
             logger.warning(ls.MG_NO_CONSTRAINT.format(label=label))
             return 0, len(props_list)
@@ -1003,7 +975,7 @@ class MemgraphIngestor:
     ) -> int:
         """The number of rows written for one relationship pattern."""
         from_label, from_key, rel_type, to_label, to_key = pattern
-        has_props = any(p[KEY_PROPS] for p in params_list)
+        has_props = any(p[cs.KEY_PROPS] for p in params_list)
         if self._use_merge:
             by_keys = _group_by_merge_keys(rel_type, params_list)
             if len(by_keys) > 1:
@@ -1088,7 +1060,7 @@ class MemgraphIngestor:
         # the count of lost rows is still reported without it.
         from_label, from_key, rel_type, to_label, to_key = pattern
         query = build_missing_rel_endpoints_query(
-            from_label, from_key, to_label, to_key, FAILED_REL_ROWS_SHOWN
+            from_label, from_key, to_label, to_key, cs.FAILED_REL_ROWS_SHOWN
         )
         try:
             return self._execute_batch_with_return_on(conn, query, params_list)
@@ -1205,7 +1177,7 @@ class MemgraphIngestor:
                 cursor = conn.cursor()
                 cursor.execute(bounded_query)
                 return self._cursor_to_results(cursor)
-        plan = self._execute_query(CYPHER_EXPLAIN_PREFIX + bounded_query)
+        plan = self._execute_query(cs.CYPHER_EXPLAIN_PREFIX + bounded_query)
         check_plan(
             memgraph_plan_operators(
                 [str(next(iter(row.values()), "")) for row in plan]
@@ -1229,7 +1201,7 @@ class MemgraphIngestor:
         QUERY_TIMEOUT_S (the caller's own timeout only stops waiting), and
         SQLite's heap is capped at QUERY_MEMORY_LIMIT_MB.
         """
-        if self.sqlite_graph_path() == EG_MEMORY_PATH:
+        if self.sqlite_graph_path() == cs.EG_MEMORY_PATH:
             return self._execute_query(query)
         with self._read_lock:
             if self._read_conn is None:
@@ -1253,7 +1225,7 @@ class MemgraphIngestor:
         logger.info(ls.MG_EXPORTING)
 
         if project_names:
-            params: PropertyParams = {KEY_PROJECT_NAMES: list(project_names)}
+            params: PropertyParams = {cs.KEY_PROJECT_NAMES: list(project_names)}
             nodes_data = self.fetch_all(CYPHER_EXPORT_PROJECT_NODES, params)
             relationships_data = self.fetch_all(
                 CYPHER_EXPORT_PROJECT_RELATIONSHIPS, params

@@ -41,27 +41,8 @@ from typing import TYPE_CHECKING, NamedTuple, Protocol
 
 from loguru import logger
 
+from .. import constants as cs
 from .. import logs as ls
-from ..constants.embedded_graph import (
-    EG_BUSY_TIMEOUT_MS,
-    EG_CACHE_SIZE_KIB,
-    EG_ERR_TIMEOUT,
-    EG_MEMORY_PATH,
-    EG_PRAGMAS,
-    EG_RUST_DECODE_ROWS,
-    EG_RUST_READER,
-    EG_RUST_WRITER,
-    EgDecode,
-    EgSqlFn,
-)
-from ..constants.graph import (
-    KEY_FROM_VAL,
-    KEY_ID,
-    KEY_PROPS,
-    KEY_ROW_INDEX,
-    KEY_TO_VAL,
-    NODE_UNIQUE_CONSTRAINTS,
-)
 from ..types_defs import NodeBatchRow, RelBatchRow, ResultValue
 from . import sql as sq
 from .extension import rust_extension
@@ -85,7 +66,7 @@ INGEST: bool = True
 DECODE: bool = True
 
 # The extension's decode kinds; any other kind passes the value through.
-_DECODE_CODES = {EgDecode.BOOL: 1, EgDecode.JSON: 2, EgDecode.NULL: 3}
+_DECODE_CODES = {cs.EgDecode.BOOL: 1, cs.EgDecode.JSON: 2, cs.EgDecode.NULL: 3}
 
 type Pattern = tuple[str, str, str, str, str]
 
@@ -155,7 +136,7 @@ type RowDecoder = Callable[
 
 @cache
 def _decoder() -> RowDecoder | None:
-    return getattr(rust_extension(), EG_RUST_DECODE_ROWS, None)
+    return getattr(rust_extension(), cs.EG_RUST_DECODE_ROWS, None)
 
 
 # ------------------------------------------------------------------- files
@@ -172,7 +153,7 @@ class _File:
     writer: Writer | None = None
 
 
-_REL_FIELDS = RelFields(KEY_FROM_VAL, KEY_TO_VAL, KEY_PROPS, KEY_ROW_INDEX)
+_REL_FIELDS = RelFields(cs.KEY_FROM_VAL, cs.KEY_TO_VAL, cs.KEY_PROPS, cs.KEY_ROW_INDEX)
 _FILES: dict[tuple[int, int], _File] = {}
 # Each open engine connection's graph by id() of its sqlite3 connection, for
 # the procedures, which are handed only that connection.
@@ -223,7 +204,7 @@ class NativeGraph:
         if reader is None:
             return
         self._conn.create_function(
-            EgSqlFn.WALK, -1, _walk_function(self, reader), deterministic=True
+            cs.EgSqlFn.WALK, -1, _walk_function(self, reader), deterministic=True
         )
         self.walks = True
 
@@ -236,7 +217,7 @@ class NativeGraph:
         try:
             return reader.run_procedure(version, name, list(args), seconds_left())
         except TimeoutError as error:
-            raise QueryTimeout(EG_ERR_TIMEOUT) from error
+            raise QueryTimeout(cs.EG_ERR_TIMEOUT) from error
 
     def release(self) -> None:
         """Forget this connection; after the file's last, close the handles."""
@@ -276,12 +257,12 @@ class NativeGraph:
         the engine would store differently from plain `json.dumps` (see
         rust/cgr_graph_rs/src/ingest.rs).
         """
-        if not INGEST or NODE_UNIQUE_CONSTRAINTS.get(label) != id_key:
+        if not INGEST or cs.NODE_UNIQUE_CONSTRAINTS.get(label) != id_key:
             return False
         path = sq.json_path(id_key)
         done = self._write(
             lambda w: w.merge_node_rows(
-                label, id_key, path, KEY_ID, KEY_PROPS, list(rows)
+                label, id_key, path, cs.KEY_ID, cs.KEY_PROPS, list(rows)
             )
         )
         return bool(done)
@@ -296,8 +277,8 @@ class NativeGraph:
         from_label, from_key, rel_type, to_label, to_key = pattern
         if (
             not INGEST
-            or NODE_UNIQUE_CONSTRAINTS.get(from_label) != from_key
-            or NODE_UNIQUE_CONSTRAINTS.get(to_label) != to_key
+            or cs.NODE_UNIQUE_CONSTRAINTS.get(from_label) != from_key
+            or cs.NODE_UNIQUE_CONSTRAINTS.get(to_label) != to_key
         ):
             return None
         paths = [sq.json_path(k) for k in spec.merge_keys]
@@ -316,21 +297,21 @@ class NativeGraph:
 
 
 def _new_reader(path: str) -> Reader | None:
-    make = getattr(rust_extension(), EG_RUST_READER, None)
+    make = getattr(rust_extension(), cs.EG_RUST_READER, None)
     if make is None:
         return None
-    return make(path, EG_BUSY_TIMEOUT_MS, EG_CACHE_SIZE_KIB, sq.GRAPH_VERSION)
+    return make(path, cs.EG_BUSY_TIMEOUT_MS, cs.EG_CACHE_SIZE_KIB, sq.GRAPH_VERSION)
 
 
 def _new_writer(path: str) -> Writer | None:
-    make = getattr(rust_extension(), EG_RUST_WRITER, None)
+    make = getattr(rust_extension(), cs.EG_RUST_WRITER, None)
     if make is None:
         return None
     return make(
         path,
-        EG_BUSY_TIMEOUT_MS,
-        EG_CACHE_SIZE_KIB,
-        list(EG_PRAGMAS),
+        cs.EG_BUSY_TIMEOUT_MS,
+        cs.EG_CACHE_SIZE_KIB,
+        list(cs.EG_PRAGMAS),
         sq.BUMP_GRAPH_VERSION,
     )
 
@@ -380,7 +361,7 @@ def _snapshot_version(conn: sqlite3.Connection) -> str | None:
 
 def attach(conn: sqlite3.Connection, path: str) -> NativeGraph | None:
     """The extension's handles for a new engine connection to `path`."""
-    if rust_extension() is None or path == EG_MEMORY_PATH:
+    if rust_extension() is None or path == cs.EG_MEMORY_PATH:
         return None
     target = Path(path).expanduser().resolve()
     try:
@@ -438,7 +419,7 @@ def with_walks[R](graph: NativeGraph | None, run: Callable[[bool], R]) -> R:
         return run(True)
     except sqlite3.OperationalError as error:
         if graph.walk_timed_out:
-            raise QueryTimeout(EG_ERR_TIMEOUT) from error
+            raise QueryTimeout(cs.EG_ERR_TIMEOUT) from error
         if not graph.walk_saw_newer_graph:
             raise
     return run(False)
@@ -448,9 +429,9 @@ def with_walks[R](graph: NativeGraph | None, run: Callable[[bool], R]) -> R:
 
 
 def decode_rows(
-    kinds: Sequence[EgDecode],
+    kinds: Sequence[cs.EgDecode],
     rows: list[tuple[SqlValue, ...]],
-    decode: Callable[[EgDecode, SqlValue], ResultValue],
+    decode: Callable[[cs.EgDecode, SqlValue], ResultValue],
 ) -> list[tuple[ResultValue, ...]]:
     """Each row's values decoded by their column's kind, as `decode` does."""
     accelerated = _decoder() if DECODE else None

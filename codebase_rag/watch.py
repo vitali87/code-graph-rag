@@ -39,13 +39,6 @@ from .config import (
     git_index_path,
     load_ignore_patterns,
 )
-from .constants import (
-    CONTENT_EVENT_TYPES,
-    DEFAULT_DEBOUNCE_SECONDS,
-    DEFAULT_MAX_WAIT_SECONDS,
-    WATCHER_SLEEP_INTERVAL,
-    EventType,
-)
 from .exceptions import ReingestAborted
 from .graph_updater import GraphUpdater
 from .parser_loader import load_parsers
@@ -149,8 +142,8 @@ class CodeChangeEventHandler(FileSystemEventHandler):
     def __init__(
         self,
         updater: GraphUpdater,
-        debounce_seconds: float = DEFAULT_DEBOUNCE_SECONDS,
-        max_wait_seconds: float = DEFAULT_MAX_WAIT_SECONDS,
+        debounce_seconds: float = cs.DEFAULT_DEBOUNCE_SECONDS,
+        max_wait_seconds: float = cs.DEFAULT_MAX_WAIT_SECONDS,
         timer_factory: TimerFactory = threading.Timer,
         ignore_rules: IgnoreRules | None = None,
         write_marker: WriteMarker | None = None,
@@ -331,7 +324,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         linked worktree's git directory exists for its index alone.
         """
         paths = [Path(_event_path(event.src_path))]
-        if event.event_type == EventType.MOVED:
+        if event.event_type == cs.EventType.MOVED:
             paths.append(Path(_event_path(event.dest_path)))
         if any(path in rules.inputs for path in paths):
             self._apply_ignore_rules(rules)
@@ -380,7 +373,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         updater's record of what it indexed there supplies them.
         """
         src_path = _event_path(event.src_path)
-        if event.event_type == EventType.MOVED:
+        if event.event_type == cs.EventType.MOVED:
             # Watchdog follows a directory move with synthetic moves of
             # everything inside it; the directory's own event already
             # restated those files, so repeating them would re-ingest twice.
@@ -390,7 +383,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
             if not event.is_directory:
                 return [FileDeletedEvent(src_path), FileCreatedEvent(dest_path)]
             return [*self._deleted_under(src_path), *self._created_under(dest_path)]
-        if event.event_type == EventType.DELETED:
+        if event.event_type == cs.EventType.DELETED:
             # Windows reports a deleted directory as a file deletion, so the
             # indexed record, not the event, says whether it held files.
             children = self._deleted_under(src_path)
@@ -537,7 +530,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
 
         # Without a debounce every event arrives here, and the `closed` after
         # a write would re-ingest the file a second time.
-        if event.event_type not in CONTENT_EVENT_TYPES:
+        if event.event_type not in cs.CONTENT_EVENT_TYPES:
             return
 
         path = Path(src_path)
@@ -554,7 +547,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
             # stays set and the next change tries again.
             return
         try:
-            self._reingest(path, deleted=event.event_type == EventType.DELETED)
+            self._reingest(path, deleted=event.event_type == cs.EventType.DELETED)
         except (ValueError, ReingestAborted) as exc:
             # A refusal (a symlink resolving outside the repo, a directory where
             # a file was expected) is raised while the paths are split, and an
@@ -641,9 +634,9 @@ def _coalesce(
     delete. A `closed` stands in for a write only when the window holds
     nothing else, as after a write through mmap, which raises no `modified`.
     """
-    if event.event_type in CONTENT_EVENT_TYPES:
+    if event.event_type in cs.CONTENT_EVENT_TYPES:
         return event
-    if event.event_type == EventType.CLOSED and pending is None:
+    if event.event_type == cs.EventType.CLOSED and pending is None:
         return FileModifiedEvent(_event_path(event.src_path))
     return pending
 
@@ -664,8 +657,8 @@ def start_watcher(
     project_name: str,
     project_named: bool,
     batch_size: int,
-    debounce_seconds: float = DEFAULT_DEBOUNCE_SECONDS,
-    max_wait_seconds: float = DEFAULT_MAX_WAIT_SECONDS,
+    debounce_seconds: float = cs.DEFAULT_DEBOUNCE_SECONDS,
+    max_wait_seconds: float = cs.DEFAULT_MAX_WAIT_SECONDS,
     assume_yes: bool = False,
 ) -> None:
     """Scan the checkout, then keep its graph in sync until Ctrl+C.
@@ -822,7 +815,7 @@ def _run_watcher_loop(
 
     try:
         while True:
-            time.sleep(WATCHER_SLEEP_INTERVAL)
+            time.sleep(cs.WATCHER_SLEEP_INTERVAL)
     except KeyboardInterrupt:
         observer.stop()
     observer.join()

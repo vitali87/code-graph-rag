@@ -13,22 +13,7 @@ from collections import defaultdict, deque
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 
-from ..constants.embedded_graph import (
-    EG_DEGREE_UNDIRECTED,
-    EG_PROC_ANCESTORS,
-    EG_PROC_BETWEENNESS,
-    EG_PROC_CYCLES,
-    EG_PROC_DEGREE,
-    EG_PROC_DESCENDANTS,
-    EG_PROC_FIND_CYCLE,
-    EG_PROC_PAGERANK,
-    EG_PROC_SCC,
-    EG_PROC_SHORTEST_PATH,
-    EG_PROC_TOPOSORT,
-    EG_PROC_WCC,
-    EgDirection,
-    EgProcCol,
-)
+from .. import constants as cs
 from . import native
 from . import sql as sq
 from . import types as ty
@@ -127,19 +112,19 @@ def _pagerank(conn: sqlite3.Connection, args: Sequence[SqlValue]) -> Iterable[Re
         check_deadline()
         if _pagerank_step(nodes, out, rank, damping) < epsilon:
             break
-    return [{EgProcCol.NODE: v, EgProcCol.RANK: rank[v]} for v in nodes]
+    return [{cs.EgProcCol.NODE: v, cs.EgProcCol.RANK: rank[v]} for v in nodes]
 
 
 def _degree(conn: sqlite3.Connection, args: Sequence[SqlValue]) -> Iterable[Record]:
-    mode = str(_arg(args, 0, EG_DEGREE_UNDIRECTED)).lower()
+    mode = str(_arg(args, 0, cs.EG_DEGREE_UNDIRECTED)).lower()
     counts: dict[int, int] = defaultdict(int)
     for s, d in conn.execute(sq.EDGE_ENDS):
-        if mode in (EgDirection.OUT, EG_DEGREE_UNDIRECTED):
+        if mode in (cs.EgDirection.OUT, cs.EG_DEGREE_UNDIRECTED):
             counts[int(s)] += 1
-        if mode in (EgDirection.IN, EG_DEGREE_UNDIRECTED):
+        if mode in (cs.EgDirection.IN, cs.EG_DEGREE_UNDIRECTED):
             counts[int(d)] += 1
     return [
-        {EgProcCol.NODE: int(r[0]), EgProcCol.DEGREE: counts.get(int(r[0]), 0)}
+        {cs.EgProcCol.NODE: int(r[0]), cs.EgProcCol.DEGREE: counts.get(int(r[0]), 0)}
         for r in conn.execute(sq.NODE_IDS_IN_ORDER)
     ]
 
@@ -160,7 +145,10 @@ def _wcc(conn: sqlite3.Connection, _args: Sequence[SqlValue]) -> Iterable[Record
             parent[max(rs, rd)] = min(rs, rd)
     ids: dict[int, int] = {}
     return [
-        {EgProcCol.NODE: v, EgProcCol.COMPONENT_ID: ids.setdefault(find(v), len(ids))}
+        {
+            cs.EgProcCol.NODE: v,
+            cs.EgProcCol.COMPONENT_ID: ids.setdefault(find(v), len(ids)),
+        }
         for v in nodes
     ]
 
@@ -232,7 +220,7 @@ def _tarjan(nodes: list[int], out: dict[int, list[int]]) -> list[list[int]]:
 
 def _scc(conn: sqlite3.Connection, _args: Sequence[SqlValue]) -> Iterable[Record]:
     nodes, out, _ = _graph(conn)
-    return [{EgProcCol.COMPONENTS: _tarjan(nodes, out)}]
+    return [{cs.EgProcCol.COMPONENTS: _tarjan(nodes, out)}]
 
 
 def _cycles_through(
@@ -265,16 +253,16 @@ def _simple_cycles(
             _cycles_through(start, members, out, cycles)
             members.discard(start)
             if len(cycles) >= _MAX_CYCLES:
-                return [{EgProcCol.CYCLES: cycles}]
-    return [{EgProcCol.CYCLES: cycles}]
+                return [{cs.EgProcCol.CYCLES: cycles}]
+    return [{cs.EgProcCol.CYCLES: cycles}]
 
 
 def _find_cycle(conn: sqlite3.Connection, args: Sequence[SqlValue]) -> Iterable[Record]:
     for record in _simple_cycles(conn, args):
-        cycles = record[EgProcCol.CYCLES]
+        cycles = record[cs.EgProcCol.CYCLES]
         assert isinstance(cycles, list)
-        return [{EgProcCol.CYCLE: cycles[0] if cycles else []}]
-    return [{EgProcCol.CYCLE: []}]
+        return [{cs.EgProcCol.CYCLE: cycles[0] if cycles else []}]
+    return [{cs.EgProcCol.CYCLE: []}]
 
 
 def _toposort(conn: sqlite3.Connection, _args: Sequence[SqlValue]) -> Iterable[Record]:
@@ -293,7 +281,7 @@ def _toposort(conn: sqlite3.Connection, _args: Sequence[SqlValue]) -> Iterable[R
             indegree[w] -= 1
             if indegree[w] == 0:
                 queue.append(w)
-    return [{EgProcCol.NODES: order if len(order) == len(nodes) else []}]
+    return [{cs.EgProcCol.NODES: order if len(order) == len(nodes) else []}]
 
 
 def _shortest_path(
@@ -301,7 +289,7 @@ def _shortest_path(
 ) -> Iterable[Record]:
     source, target = _node_arg(args, 0), _node_arg(args, 1)
     if source is None or target is None:
-        return [{EgProcCol.PATH: []}]
+        return [{cs.EgProcCol.PATH: []}]
     _, out, _ = _graph(conn)
     prev: dict[int, int | None] = {source: None}
     queue = deque([source])
@@ -315,13 +303,13 @@ def _shortest_path(
                 prev[w] = v
                 queue.append(w)
     if target not in prev:
-        return [{EgProcCol.PATH: []}]
+        return [{cs.EgProcCol.PATH: []}]
     path: list[int] = []
     step: int | None = target
     while step is not None:
         path.append(step)
         step = prev[step]
-    return [{EgProcCol.PATH: path[::-1]}]
+    return [{cs.EgProcCol.PATH: path[::-1]}]
 
 
 def _shortest_path_counts(
@@ -373,7 +361,10 @@ def _betweenness(
         _add_dependencies(s, nodes, out, score)
     n = len(nodes)
     scale = 1.0 / ((n - 1) * (n - 2)) if n > 2 else 1.0
-    return [{EgProcCol.NODE: v, EgProcCol.BETWEENNESS: score[v] * scale} for v in nodes]
+    return [
+        {cs.EgProcCol.NODE: v, cs.EgProcCol.BETWEENNESS: score[v] * scale}
+        for v in nodes
+    ]
 
 
 def _reach(
@@ -397,7 +388,7 @@ def _ancestors(conn: sqlite3.Connection, args: Sequence[SqlValue]) -> Iterable[R
     return _reach(
         conn,
         _node_arg(args, 0),
-        EgProcCol.ANCESTORS,
+        cs.EgProcCol.ANCESTORS,
         sq.SOURCES_OF,
     )
 
@@ -408,7 +399,7 @@ def _descendants(
     return _reach(
         conn,
         _node_arg(args, 0),
-        EgProcCol.DESCENDANTS,
+        cs.EgProcCol.DESCENDANTS,
         sq.TARGETS_OF,
     )
 
@@ -416,25 +407,30 @@ def _descendants(
 _NODES = ty.list_of(ty.NODE)
 
 PROCEDURES: dict[str, ProcSpec] = {
-    EG_PROC_PAGERANK: ProcSpec(
-        ((EgProcCol.NODE, ty.NODE), (EgProcCol.RANK, ty.FLOAT)), _pagerank
+    cs.EG_PROC_PAGERANK: ProcSpec(
+        ((cs.EgProcCol.NODE, ty.NODE), (cs.EgProcCol.RANK, ty.FLOAT)), _pagerank
     ),
-    EG_PROC_DEGREE: ProcSpec(
-        ((EgProcCol.NODE, ty.NODE), (EgProcCol.DEGREE, ty.INT)), _degree
+    cs.EG_PROC_DEGREE: ProcSpec(
+        ((cs.EgProcCol.NODE, ty.NODE), (cs.EgProcCol.DEGREE, ty.INT)), _degree
     ),
-    EG_PROC_WCC: ProcSpec(
-        ((EgProcCol.NODE, ty.NODE), (EgProcCol.COMPONENT_ID, ty.INT)), _wcc
+    cs.EG_PROC_WCC: ProcSpec(
+        ((cs.EgProcCol.NODE, ty.NODE), (cs.EgProcCol.COMPONENT_ID, ty.INT)), _wcc
     ),
-    EG_PROC_SCC: ProcSpec(((EgProcCol.COMPONENTS, ty.list_of(_NODES)),), _scc),
-    EG_PROC_CYCLES: ProcSpec(((EgProcCol.CYCLES, ty.list_of(_NODES)),), _simple_cycles),
-    EG_PROC_FIND_CYCLE: ProcSpec(((EgProcCol.CYCLE, _NODES),), _find_cycle),
-    EG_PROC_TOPOSORT: ProcSpec(((EgProcCol.NODES, _NODES),), _toposort),
-    EG_PROC_SHORTEST_PATH: ProcSpec(((EgProcCol.PATH, _NODES),), _shortest_path),
-    EG_PROC_BETWEENNESS: ProcSpec(
-        ((EgProcCol.NODE, ty.NODE), (EgProcCol.BETWEENNESS, ty.FLOAT)), _betweenness
+    cs.EG_PROC_SCC: ProcSpec(((cs.EgProcCol.COMPONENTS, ty.list_of(_NODES)),), _scc),
+    cs.EG_PROC_CYCLES: ProcSpec(
+        ((cs.EgProcCol.CYCLES, ty.list_of(_NODES)),), _simple_cycles
     ),
-    EG_PROC_ANCESTORS: ProcSpec(((EgProcCol.ANCESTORS, _NODES),), _ancestors),
-    EG_PROC_DESCENDANTS: ProcSpec(((EgProcCol.DESCENDANTS, _NODES),), _descendants),
+    cs.EG_PROC_FIND_CYCLE: ProcSpec(((cs.EgProcCol.CYCLE, _NODES),), _find_cycle),
+    cs.EG_PROC_TOPOSORT: ProcSpec(((cs.EgProcCol.NODES, _NODES),), _toposort),
+    cs.EG_PROC_SHORTEST_PATH: ProcSpec(((cs.EgProcCol.PATH, _NODES),), _shortest_path),
+    cs.EG_PROC_BETWEENNESS: ProcSpec(
+        ((cs.EgProcCol.NODE, ty.NODE), (cs.EgProcCol.BETWEENNESS, ty.FLOAT)),
+        _betweenness,
+    ),
+    cs.EG_PROC_ANCESTORS: ProcSpec(((cs.EgProcCol.ANCESTORS, _NODES),), _ancestors),
+    cs.EG_PROC_DESCENDANTS: ProcSpec(
+        ((cs.EgProcCol.DESCENDANTS, _NODES),), _descendants
+    ),
 }
 
 

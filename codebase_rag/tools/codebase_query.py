@@ -16,17 +16,6 @@ from .. import exceptions as ex
 from .. import logs as ls
 from ..config import settings
 from ..console_marks import status_mark
-from ..constants import (
-    QUERY_CELL_CONTROL_CHARS,
-    QUERY_CELL_CONTROL_ESCAPE,
-    QUERY_NOT_AVAILABLE,
-    QUERY_RESULTS_PANEL_TITLE,
-    QUERY_SUMMARY_DB_ERROR,
-    QUERY_SUMMARY_SUCCESS,
-    QUERY_SUMMARY_TIMEOUT,
-    QUERY_SUMMARY_TRANSLATION_FAILED,
-    QUERY_SUMMARY_TRUNCATED,
-)
 from ..services import ReadOnlyQueryProtocol
 from ..services.graph_service import is_query_rejection
 from ..services.llm import CypherQueryGenerator
@@ -767,7 +756,7 @@ def _names_another_project(value: object, prefix: str) -> bool:
     return True
 
 
-_CONTROL_CHARS = re.compile(QUERY_CELL_CONTROL_CHARS)
+_CONTROL_CHARS = re.compile(cs.QUERY_CELL_CONTROL_CHARS)
 
 
 def _plain_cell(value: str) -> Text:
@@ -781,7 +770,7 @@ def _plain_cell(value: str) -> Text:
     """
     return Text(
         _CONTROL_CHARS.sub(
-            lambda m: QUERY_CELL_CONTROL_ESCAPE.format(code=ord(m.group())), value
+            lambda m: cs.QUERY_CELL_CONTROL_ESCAPE.format(code=ord(m.group())), value
         )
     )
 
@@ -810,7 +799,7 @@ def _print_results_table(results: list[ResultRow], console: Console) -> None:
     console.print(
         Panel(
             table,
-            title=QUERY_RESULTS_PANEL_TITLE,
+            title=cs.QUERY_RESULTS_PANEL_TITLE,
             expand=False,
         )
     )
@@ -824,13 +813,13 @@ def _query_summary(
     was_truncated: bool,
 ) -> str:
     if was_truncated or total_count > len(results):
-        return QUERY_SUMMARY_TRUNCATED.format(
+        return cs.QUERY_SUMMARY_TRUNCATED.format(
             kept=len(results),
             total=total_count,
             tokens=tokens_used,
             max_tokens=settings.QUERY_RESULT_MAX_TOKENS,
         )
-    return QUERY_SUMMARY_SUCCESS.format(count=len(results))
+    return cs.QUERY_SUMMARY_SUCCESS.format(count=len(results))
 
 
 def _scope_refusal(
@@ -870,7 +859,7 @@ async def _fetch(ingestor: ReadOnlyQueryProtocol, cypher_query: str) -> list[Res
 class _QueryAttempt:
     """The query currently being tried, for the caller's error reports."""
 
-    query: str = QUERY_NOT_AVAILABLE
+    query: str = cs.QUERY_NOT_AVAILABLE
 
 
 async def _run_query(
@@ -951,7 +940,7 @@ def create_query_tool(
             # empty answer, so it carries `error` like a scope refusal.
             message = str(e)
             return QueryGraphData(
-                query_used=QUERY_NOT_AVAILABLE,
+                query_used=cs.QUERY_NOT_AVAILABLE,
                 results=[],
                 summary=message,
                 error=message,
@@ -960,9 +949,9 @@ def create_query_tool(
             # A model that answered badly is not a refusal: the caller can
             # rephrase, so the failure stays in `summary` alone.
             return QueryGraphData(
-                query_used=QUERY_NOT_AVAILABLE,
+                query_used=cs.QUERY_NOT_AVAILABLE,
                 results=[],
-                summary=QUERY_SUMMARY_TRANSLATION_FAILED.format(error=e),
+                summary=cs.QUERY_SUMMARY_TRANSLATION_FAILED.format(error=e),
             )
         except TimeoutError:
             logger.warning(
@@ -970,13 +959,13 @@ def create_query_tool(
                     timeout=settings.QUERY_TIMEOUT_S, query=attempt.query
                 )
             )
-            message = QUERY_SUMMARY_TIMEOUT.format(timeout=settings.QUERY_TIMEOUT_S)
+            message = cs.QUERY_SUMMARY_TIMEOUT.format(timeout=settings.QUERY_TIMEOUT_S)
             return QueryGraphData(
                 query_used=attempt.query, results=[], summary=message, error=message
             )
         except Exception as e:  # noqa: BLE001 -- tool boundary: any failure becomes the tool's error result
             logger.exception(ls.TOOL_QUERY_ERROR.format(error=e))
-            message = QUERY_SUMMARY_DB_ERROR.format(error=e)
+            message = cs.QUERY_SUMMARY_DB_ERROR.format(error=e)
             return QueryGraphData(
                 query_used=attempt.query, results=[], summary=message, error=message
             )

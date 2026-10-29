@@ -13,11 +13,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from ..constants.embedded_graph import (
-    EG_BATCH_PARAM,
-    EG_ERR_CLOSED,
-    EG_ERR_PARAMS_MAPPING,
-)
+from .. import constants as cs
 from ..types_defs import (
     BatchParams,
     BatchWrapper,
@@ -38,7 +34,7 @@ if TYPE_CHECKING:
 def _is_batch(
     params: dict[str, PropertyValue] | BatchWrapper,
 ) -> TypeIs[BatchWrapper]:
-    return len(params) == 1 and EG_BATCH_PARAM in params
+    return len(params) == 1 and cs.EG_BATCH_PARAM in params
 
 
 def _as_params(params: dict[str, PropertyValue] | BatchWrapper) -> CypherParams:
@@ -48,7 +44,7 @@ def _as_params(params: dict[str, PropertyValue] | BatchWrapper) -> CypherParams:
     is a dict at runtime, so the batch is re-wrapped under its own key.
     """
     if _is_batch(params):
-        return {EG_BATCH_PARAM: params[EG_BATCH_PARAM]}
+        return {cs.EG_BATCH_PARAM: params[cs.EG_BATCH_PARAM]}
     return params
 
 
@@ -82,7 +78,7 @@ class EmbeddedCursor:
         elif isinstance(params, dict):
             plain = _as_params(params)
         else:
-            raise TypeError(EG_ERR_PARAMS_MAPPING.format(kind=type(params).__name__))
+            raise TypeError(cs.EG_ERR_PARAMS_MAPPING.format(kind=type(params).__name__))
         result = self._conn.run(query, plain)
         self._description = [_Column(c) for c in result.columns] or None
         self._rows = result.rows
@@ -117,7 +113,7 @@ class EmbeddedConnection:
     ) -> Result:
         """Run one statement; past `timeout_s` it stops with QueryTimeout."""
         if self._closed:
-            raise ConnectionError(EG_ERR_CLOSED)
+            raise ConnectionError(cs.EG_ERR_CLOSED)
         with self._lock, native.turn(self.native):
             return self._executor.execute(query, params, timeout_s)
 

@@ -15,7 +15,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 
-from ..constants.embedded_graph import EG_DEADLINE_VAR, EG_ERR_TIMEOUT
+from .. import constants as cs
 
 
 class QueryTimeout(TimeoutError):
@@ -35,7 +35,7 @@ class Deadline:
         return self.at is not None and time.monotonic() > self.at
 
 
-_current: ContextVar[Deadline] = ContextVar(EG_DEADLINE_VAR, default=Deadline())
+_current: ContextVar[Deadline] = ContextVar(cs.EG_DEADLINE_VAR, default=Deadline())
 
 
 @contextmanager
@@ -60,4 +60,4 @@ def seconds_left() -> float | None:
 def check_deadline() -> None:
     """Stop a long-running procedure once its statement's time is up."""
     if _current.get().passed():
-        raise QueryTimeout(EG_ERR_TIMEOUT)
+        raise QueryTimeout(cs.EG_ERR_TIMEOUT)
