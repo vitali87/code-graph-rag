@@ -185,7 +185,7 @@ def test_lua_language_tag_constant():
     # reload the module here to record the definition line under coverage.
     import importlib
 
-    from codebase_rag.constants import trace as trace_constants
+    from codebase_rag.trace import constants as trace_constants
 
     importlib.reload(trace_constants)
     assert trace_constants.TRACE_LANGUAGE_LUA == "lua"

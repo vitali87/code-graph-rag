@@ -20,7 +20,6 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import cli_help as ch
-from codebase_rag import constants as cs
 from codebase_rag.trace import cli as trace_cli
 from codebase_rag.trace import constants as tcs
 from codebase_rag.trace.pprof import _decompress
@@ -32,7 +31,7 @@ _PATH = Path("profile.pb.gz")
 
 @pytest.fixture
 def small_cap(monkeypatch: pytest.MonkeyPatch) -> int:
-    monkeypatch.setattr(cs, "TRACE_MAX_DECOMPRESSED_BYTES", _LIMIT)
+    monkeypatch.setattr(tcs, "TRACE_MAX_DECOMPRESSED_BYTES", _LIMIT)
     return _LIMIT
 
 
@@ -94,7 +93,7 @@ def test_members_up_to_the_member_cap_are_read() -> None:
 def test_a_member_spanning_many_input_slices_is_read(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(cs, "TRACE_GZIP_INPUT_CHUNK_BYTES", 7)
+    monkeypatch.setattr(tcs, "TRACE_GZIP_INPUT_CHUNK_BYTES", 7)
     payload = bytes(range(256)) * 64
     raw = gzip.compress(payload) + gzip.compress(b"tail")
 

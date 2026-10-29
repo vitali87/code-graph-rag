@@ -12,6 +12,7 @@ edited package's Go files, issue #2483), so only the restore could keep it.
 
 from __future__ import annotations
 
+import inspect
 import os
 from collections.abc import Callable
 from pathlib import Path
@@ -296,7 +297,8 @@ def test_a_failing_go_method_registration_still_restores_the_other_edges(
     original = function_ingest.ingest_method
 
     def fail_go(*args: object, **kwargs: object) -> str | None:
-        if kwargs.get("language") == cs.SupportedLanguage.GO:
+        bound = inspect.signature(original).bind(*args, **kwargs)
+        if bound.arguments["language"] == cs.SupportedLanguage.GO:
             raise RuntimeError("go method ingestion failed")
         return original(*args, **kwargs)
 
