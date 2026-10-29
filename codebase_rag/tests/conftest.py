@@ -143,6 +143,168 @@ def bare_registry() -> MCPToolsRegistry:
     return registry
 
 
+def marker_store() -> MagicMock:
+    """An ingestor whose `:IncompleteRun` markers persist across registries.
+
+    Backed by a dict rather than a canned return value: a fresh process must
+    read what an earlier one wrote, and a static return value would satisfy
+    that assertion without any write having happened. Every other query reads
+    as an empty graph, so a read that is not refused runs and finds nothing.
+
+    Failures are injected by name through `_failing`: "mark", "clear" and
+    "read" make the marker's write, its delete or its read raise, as an
+    unreachable or read-only store would.
+    """
+    store: dict[str, bool] = {}
+    # {project: {run_id, ...}} -- the outstanding runs behind `store`.
+    runs: dict[str, set[str]] = {}
+    # The marker's phase, kept beside the marker itself so the existing
+    # `store[name] is True` assertions keep their meaning. Absent reads as
+    # writing, exactly as the production query's `coalesce` does.
+    # PER MARKER, keyed (project, run_id), because production stores the
+    # phase on the marker node. A per-project phase cannot express two
+    # concurrent runs at different phases -- and it silently raised a
+    # legacy marker's phase when an unrelated run marked itself writing,
+    # which is behaviour production does not have (#1850 review).
+    writing: dict[tuple[str, str], bool] = {}
+    ingestor = MagicMock()
+
+    # A plain dict, never an attribute on the MagicMock: `getattr` on a
+    # MagicMock returns a truthy child mock for ANY name, so a
+    # `getattr(ingestor, "_fail_clear", False)` switch is permanently on.
+    failing: set[str] = set()
+
+    def _write(query: str, params: dict | None = None) -> None:
+        name = str((params or {}).get(rag_cs.KEY_PROJECT_NAME))
+        if "clear" in failing and "DELETE m" in query:
+            raise RuntimeError("clear write refused")
+        if "mark" in failing and "SET m.run_incomplete" in query:
+            raise RuntimeError("mark write refused")
+        # MERGE creates the node when absent; MATCH does not, and a
+        # MATCH-based mark therefore writes NOTHING on a first run. The
+        # fake has to honour that difference or it answers the question
+        # the code is supposed to answer: with a branch keyed only on
+        # "SET m.run_incomplete", reverting MERGE to MATCH left every
+        # test green (#1705 review).
+        # The marker node is keyed by (project, run_id) in production
+        # (issue #1709), so the fake keys its per-run set the same way. A
+        # fake keyed only by project cannot express "B's clear leaves A's
+        # marker", which is the whole behaviour under test -- it would
+        # answer the question the code is supposed to answer, exactly as
+        # the MERGE-vs-MATCH note above records.
+        run_id = str((params or {}).get(rag_cs.KEY_RUN_ID, ""))
+        if "SET m.run_incomplete" in query:
+            if query.lstrip().startswith("MERGE") or name in store:
+                runs.setdefault(name, set()).add(run_id)
+                store[name] = True
+                # Monotonic, as the production MERGE is: a later mark can
+                # raise the phase to writing but never lower it.
+                writing[(name, run_id)] = writing.get((name, run_id), False) or bool(
+                    (params or {}).get(rag_cs.KEY_WRITING, True)
+                )
+        elif "DELETE m" in query:
+            if "m.run_id IS NULL" in query:
+                # The LEGACY clear: markers written before run ids
+                # existed. The fake models those as the sentinel run id
+                # "" (see the mark branch, which records whatever the
+                # params carry). Phase-guarded exactly as production is --
+                # a legacy marker whose run is still WRITING belongs to an
+                # old-version process mid-write during a rolling upgrade
+                # and must not be cleared. A fake that ignored the phase
+                # would pass tests on behaviour production does not have.
+                if writing.get((name, ""), True):
+                    return
+                remaining = runs.get(name, set())
+                remaining.discard("")
+                writing.pop((name, ""), None)
+                if remaining:
+                    return
+            elif "run_id" in query:
+                # The ordinary clear: only THIS run's marker. The project
+                # reads clear once every outstanding run's marker is gone.
+                remaining = runs.get(name, set())
+                remaining.discard(run_id)
+                writing.pop((name, run_id), None)
+                if remaining:
+                    return
+            elif "coalesce(m.writing, true) = false" in query:
+                # RECOVERY, and it deletes only markers that are STILL
+                # read-only. A run still writing blocks the project's
+                # clear -- which is the property under test: a concurrent
+                # run that began writing must not have its marker
+                # recovered away.
+                still_writing = {
+                    r for r in runs.get(name, set()) if writing.get((name, r), True)
+                }
+                if still_writing:
+                    # Production's WHERE clause deletes the read-only ones
+                    # and leaves the rest; the project stays incomplete.
+                    for r in runs.get(name, set()) - still_writing:
+                        writing.pop((name, r), None)
+                    runs[name] = still_writing
+                    return
+            for r in runs.get(name, set()):
+                writing.pop((name, r), None)
+            runs.pop(name, None)
+            store.pop(name, None)
+
+    def _read(query: str, params: dict | None = None) -> list[dict]:
+        if "run_incomplete" not in query:
+            return []
+        if "read" in failing:
+            raise RuntimeError("marker read refused")
+        name = str((params or {}).get(rag_cs.KEY_PROJECT_NAME))
+        # A real MATCH returns NO ROWS when the marker node is absent, not
+        # a row saying false. Modelling the empty result matters: code that
+        # reads rows[0] would pass against a canned false and fail here.
+        if not store.get(name):
+            return []
+        any_writing = any(writing.get((name, r), True) for r in runs.get(name, {""}))
+        return [{"run_incomplete": True, "writing": any_writing}]
+
+    def _delete_project(name: str) -> None:
+        # Models CYPHER_DELETE_PROJECT: it detaches the Project and
+        # everything it CONTAINS. A marker kept ON the Project would go
+        # with it; one on its own unconnected node must survive.
+        store.pop(f"__project_anchored__{name}", None)
+
+    ingestor.execute_write.side_effect = _write
+    ingestor.fetch_all.side_effect = _read
+    ingestor.delete_project.side_effect = _delete_project
+    ingestor._marker_store = store
+
+    # Tests ask "is THIS PROJECT writing", which is a view over the
+    # per-marker phases: true when any outstanding run is.
+    class _WritingView:
+        @staticmethod
+        def get(name: str, default: object = None) -> object:
+            marks = runs.get(name) or ({""} if store.get(name) else set())
+            if not marks:
+                return default
+            return any(writing.get((name, r), True) for r in marks)
+
+        @staticmethod
+        def __setitem__(name: str, value: bool) -> None:
+            # Tests that plant a marker straight into `_marker_store`
+            # set the phase the same way. Record it against every known
+            # run for the project, and against the legacy sentinel when
+            # the marker was injected without one.
+            for r in runs.get(name) or {""}:
+                writing[(name, r)] = value
+
+        @staticmethod
+        def pop(name: str, default: object = None) -> object:
+            for r in list(runs.get(name) or {""}):
+                writing.pop((name, r), None)
+            return default
+
+    ingestor._writing_store = _WritingView()
+    ingestor._writing_by_marker = writing
+    ingestor._marker_runs = runs
+    ingestor._failing = failing
+    return ingestor
+
+
 def create_mock_node(
     node_type: str,
     text: str = "",
