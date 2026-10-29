@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from codebase_rag import constants as cs
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.parsers.node_text import safe_decode_with_fallback
+from codebase_rag.node_text import safe_decode_with_fallback
 from codebase_rag.services.protobuf_service import ProtobufFileIngestor
 from codebase_rag.sync.state import hash_file, load_hash_cache, publish_hash_cache
 from codebase_rag.utils.path_utils import should_skip_path
