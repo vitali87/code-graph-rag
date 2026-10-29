@@ -381,8 +381,13 @@ def _create_highlights_query(
     return None
 
 
-COMBINED_FUNC_CLASS_QUERIES: dict[cs.SupportedLanguage, Query | None] = {}
-COMBINED_FUNC_CLASS_IMPORT_QUERIES: dict[cs.SupportedLanguage, Query | None] = {}
+def _create_combined_query(language: Language, pattern: str) -> Query | None:
+    # A combined query only saves walks; the per-kind queries still answer
+    # when one does not compile.
+    try:
+        return Query(language, pattern) if pattern else None
+    except Exception:
+        return None
 
 
 def _create_language_queries(
@@ -403,20 +408,7 @@ def _create_language_queries(
     combined_import_patterns = _build_combined_import_pattern(lang_config)
 
     combined_fc_pattern = f"{function_patterns} {class_patterns}".strip()
-    try:
-        COMBINED_FUNC_CLASS_QUERIES[lang_name] = (
-            Query(language, combined_fc_pattern) if combined_fc_pattern else None
-        )
-    except Exception:
-        COMBINED_FUNC_CLASS_QUERIES[lang_name] = None
-
     combined_fci_pattern = f"{function_patterns} {class_patterns} {combined_import_patterns} {call_patterns}".strip()
-    try:
-        COMBINED_FUNC_CLASS_IMPORT_QUERIES[lang_name] = (
-            Query(language, combined_fci_pattern) if combined_fci_pattern else None
-        )
-    except Exception:
-        COMBINED_FUNC_CLASS_IMPORT_QUERIES[lang_name] = None
 
     return LanguageQueries(
         functions=_create_optional_query(language, function_patterns),
@@ -425,6 +417,8 @@ def _create_language_queries(
         imports=_create_optional_query(language, combined_import_patterns),
         locals=_create_locals_query(language, lang_name),
         highlights=_create_highlights_query(language, lang_name),
+        func_class=_create_combined_query(language, combined_fc_pattern),
+        func_class_import=_create_combined_query(language, combined_fci_pattern),
         config=lang_config,
         language=language,
         parser=parser,

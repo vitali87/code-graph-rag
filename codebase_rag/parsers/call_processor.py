@@ -21,7 +21,6 @@ from ..language_spec import (
     decode_node_text,
     sql_object_reference_name,
 )
-from ..parser_loader import COMBINED_FUNC_CLASS_QUERIES
 from ..services import IngestorProtocol
 from ..types_defs import (
     ASTCacheProtocol,
@@ -2941,7 +2940,7 @@ class CallProcessor:
             call_name_cache: dict[int, str | None] = {}
 
             combined_captures = self._file_combined_captures(
-                file_path, root_node, language, func_class_captures_cache
+                file_path, root_node, queries[language], func_class_captures_cache
             )
 
             all_call_nodes, call_starts, func_node_starts = self._file_call_nodes(
@@ -3038,7 +3037,7 @@ class CallProcessor:
     def _file_combined_captures(
         file_path: Path,
         root_node: Node,
-        language: cs.SupportedLanguage,
+        language_queries: LanguageQueries,
         func_class_captures_cache: dict[Path, dict] | None,
     ) -> dict[str, list[Node]]:
         if (
@@ -3046,7 +3045,7 @@ class CallProcessor:
             and file_path in func_class_captures_cache
         ):
             return func_class_captures_cache[file_path]
-        combined_query = COMBINED_FUNC_CLASS_QUERIES.get(language)
+        combined_query = language_queries[cs.QUERY_FUNC_CLASS]
         if combined_query:
             cursor = QueryCursor(combined_query)
             return sorted_captures(cursor, root_node)

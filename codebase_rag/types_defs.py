@@ -761,6 +761,10 @@ class LanguageQueries(TypedDict):
     imports: Query | None
     locals: Query | None
     highlights: Query | None
+    # Functions and classes in one walk, and with imports and calls added,
+    # for the passes that read them all from one file.
+    func_class: Query | None
+    func_class_import: Query | None
     config: LanguageSpec
     language: Language
     parser: Parser

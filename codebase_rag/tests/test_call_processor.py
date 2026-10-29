@@ -1290,21 +1290,15 @@ class TestProcessCallsInFileWithoutCache:
         tree = parser.parse(b"x = 1")
         root_node = tree.root_node
 
-        from codebase_rag.parser_loader import COMBINED_FUNC_CLASS_QUERIES
-
-        original = COMBINED_FUNC_CLASS_QUERIES.get(cs.SupportedLanguage.PYTHON)
-        try:
-            COMBINED_FUNC_CLASS_QUERIES[cs.SupportedLanguage.PYTHON] = None
-            cp.process_calls_in_file(
-                test_file,
-                root_node,
-                cs.SupportedLanguage.PYTHON,
-                queries,
-                func_class_captures_cache=None,
-            )
-        finally:
-            if original is not None:
-                COMBINED_FUNC_CLASS_QUERIES[cs.SupportedLanguage.PYTHON] = original
+        without_combined = queries[cs.SupportedLanguage.PYTHON].copy()
+        without_combined[cs.QUERY_FUNC_CLASS] = None
+        cp.process_calls_in_file(
+            test_file,
+            root_node,
+            cs.SupportedLanguage.PYTHON,
+            {cs.SupportedLanguage.PYTHON: without_combined},
+            func_class_captures_cache=None,
+        )
 
 
 class TestProcessCallsInFunctionsWithoutCombined:
@@ -1533,11 +1527,7 @@ class TestCombinedQueryCompilationExceptionPaths:
     ) -> None:
         from tree_sitter import Query as RealQuery
 
-        from codebase_rag.parser_loader import (
-            COMBINED_FUNC_CLASS_IMPORT_QUERIES,
-            COMBINED_FUNC_CLASS_QUERIES,
-            _create_language_queries,
-        )
+        from codebase_rag.parser_loader import _create_language_queries
 
         parsers, queries = parsers_and_queries
         if cs.SupportedLanguage.PYTHON not in parsers:
@@ -1548,35 +1538,23 @@ class TestCombinedQueryCompilationExceptionPaths:
         parser = parsers[cs.SupportedLanguage.PYTHON]
         lang_config = lang_queries[cs.QUERY_CONFIG]
 
-        call_count = 0
+        built_patterns: list[str] = []
 
         def patched_query(language, pattern):
-            nonlocal call_count
-            call_count += 1
-            if call_count <= 2:
+            # The functions query is built first; both combined queries
+            # extend its pattern.
+            if built_patterns and pattern.startswith(f"{built_patterns[0]} "):
                 raise RuntimeError("simulated combined query failure")
+            built_patterns.append(pattern)
             return RealQuery(language, pattern)
 
-        original_fc = COMBINED_FUNC_CLASS_QUERIES.get(cs.SupportedLanguage.PYTHON)
-        original_fci = COMBINED_FUNC_CLASS_IMPORT_QUERIES.get(
-            cs.SupportedLanguage.PYTHON
-        )
-        try:
-            with patch("codebase_rag.parser_loader.Query", side_effect=patched_query):
-                _create_language_queries(
-                    language_obj, parser, lang_config, cs.SupportedLanguage.PYTHON
-                )
-            assert COMBINED_FUNC_CLASS_QUERIES[cs.SupportedLanguage.PYTHON] is None
-            assert (
-                COMBINED_FUNC_CLASS_IMPORT_QUERIES[cs.SupportedLanguage.PYTHON] is None
+        with patch("codebase_rag.parser_loader.Query", side_effect=patched_query):
+            built = _create_language_queries(
+                language_obj, parser, lang_config, cs.SupportedLanguage.PYTHON
             )
-        finally:
-            if original_fc is not None:
-                COMBINED_FUNC_CLASS_QUERIES[cs.SupportedLanguage.PYTHON] = original_fc
-            if original_fci is not None:
-                COMBINED_FUNC_CLASS_IMPORT_QUERIES[cs.SupportedLanguage.PYTHON] = (
-                    original_fci
-                )
+        assert built[cs.QUERY_FUNC_CLASS] is None
+        assert built[cs.QUERY_FUNC_CLASS_IMPORT] is None
+        assert built[cs.QUERY_FUNCTIONS] is not None
 
 
 class TestGetRustImplClassName:

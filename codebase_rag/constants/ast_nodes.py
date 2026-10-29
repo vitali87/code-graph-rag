@@ -335,6 +335,8 @@ QUERY_LOCALS = "locals"
 QUERY_CONFIG = "config"
 QUERY_LANGUAGE = "language"
 QUERY_HIGHLIGHTS = "highlights"
+QUERY_FUNC_CLASS = "func_class"
+QUERY_FUNC_CLASS_IMPORT = "func_class_import"
 
 CAPTURE_FUNCTION = "function"
 CAPTURE_CLASS = "class"

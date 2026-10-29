@@ -10,7 +10,6 @@ from tree_sitter import QueryCursor
 from .. import constants as cs
 from .. import logs as ls
 from ..language_spec import has_other_language_sibling, own_extension_module_qn
-from ..parser_loader import COMBINED_FUNC_CLASS_IMPORT_QUERIES
 from ..types_defs import (
     ASTNode,
     CppDefinitionSpan,
@@ -665,7 +664,7 @@ class DefinitionProcessor(
             )
 
             combined_captures = self._file_combined_captures(
-                file_path, root_node, language, pre_combined_captures
+                file_path, root_node, language, queries, pre_combined_captures
             )
 
             # A reused updater's second run re-parses this module into a map
@@ -940,13 +939,14 @@ class DefinitionProcessor(
         file_path: Path,
         root_node: ASTNode,
         language: cs.SupportedLanguage,
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
         pre_combined_captures: dict[str, list] | None,
     ) -> dict[str, list] | None:
         if pre_combined_captures is not None:
             combined_captures = pre_combined_captures
         else:
             combined_captures = None
-            combined_query = COMBINED_FUNC_CLASS_IMPORT_QUERIES.get(language)
+            combined_query = queries[language][cs.QUERY_FUNC_CLASS_IMPORT]
             if combined_query:
                 cursor = QueryCursor(combined_query)
                 combined_captures = sorted_captures(cursor, root_node)

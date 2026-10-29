@@ -4,53 +4,65 @@
 # call). Grammars must load on first use per language, once per process.
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import pytest
+from tree_sitter import Language, Parser
 
 from codebase_rag import constants as cs
-from codebase_rag.parser_loader import (
-    COMBINED_FUNC_CLASS_QUERIES,
-    _reset_parser_cache,
-    load_parsers,
-)
+from codebase_rag import parser_loader
+from codebase_rag.language_spec import LanguageSpec
+from codebase_rag.parser_loader import _reset_parser_cache, load_parsers
+from codebase_rag.types_defs import LanguageQueries
 
 
-def test_load_parsers_defers_grammar_work() -> None:
+@pytest.fixture
+def compiled(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[cs.SupportedLanguage]]:
+    # The languages whose query sets get compiled, from a clean cache.
+    seen: list[cs.SupportedLanguage] = []
+    real = parser_loader._create_language_queries
+
+    def spy(
+        language: Language,
+        parser: Parser,
+        lang_config: LanguageSpec,
+        lang_name: cs.SupportedLanguage,
+    ) -> LanguageQueries:
+        seen.append(lang_name)
+        return real(language, parser, lang_config, lang_name)
+
+    monkeypatch.setattr(parser_loader, "_create_language_queries", spy)
     _reset_parser_cache()
-    saved = dict(COMBINED_FUNC_CLASS_QUERIES)
-    COMBINED_FUNC_CLASS_QUERIES.clear()
     try:
-        parsers, queries = load_parsers()
-        # nothing is compiled until a language is actually used
-        assert cs.SupportedLanguage.PYTHON not in COMBINED_FUNC_CLASS_QUERIES
-        assert cs.SupportedLanguage.RUST not in COMBINED_FUNC_CLASS_QUERIES
-
-        lang_queries = queries[cs.SupportedLanguage.PYTHON]
-        assert lang_queries[cs.KEY_PARSER] is parsers[cs.SupportedLanguage.PYTHON]
-        assert COMBINED_FUNC_CLASS_QUERIES.get(cs.SupportedLanguage.PYTHON) is not None
-        # touching python must not have loaded rust
-        assert cs.SupportedLanguage.RUST not in COMBINED_FUNC_CLASS_QUERIES
+        yield seen
     finally:
         _reset_parser_cache()
-        COMBINED_FUNC_CLASS_QUERIES.clear()
-        COMBINED_FUNC_CLASS_QUERIES.update(saved)
 
 
-def test_membership_check_loads_on_demand() -> None:
-    _reset_parser_cache()
-    saved = dict(COMBINED_FUNC_CLASS_QUERIES)
-    COMBINED_FUNC_CLASS_QUERIES.clear()
-    try:
-        parsers, _ = load_parsers()
-        # conftest-style availability probe (`lang in parsers`) must load
-        # that one language and answer truthfully
-        if cs.SupportedLanguage.RUST not in parsers:
-            pytest.skip("rust parser not available")
-        assert COMBINED_FUNC_CLASS_QUERIES.get(cs.SupportedLanguage.RUST) is not None
-        assert cs.SupportedLanguage.PYTHON not in COMBINED_FUNC_CLASS_QUERIES
-    finally:
-        _reset_parser_cache()
-        COMBINED_FUNC_CLASS_QUERIES.clear()
-        COMBINED_FUNC_CLASS_QUERIES.update(saved)
+def test_load_parsers_defers_grammar_work(
+    compiled: list[cs.SupportedLanguage],
+) -> None:
+    parsers, queries = load_parsers()
+    # nothing is compiled until a language is actually used
+    assert compiled == []
+
+    lang_queries = queries[cs.SupportedLanguage.PYTHON]
+    assert lang_queries[cs.KEY_PARSER] is parsers[cs.SupportedLanguage.PYTHON]
+    assert lang_queries[cs.QUERY_FUNC_CLASS] is not None
+    assert lang_queries[cs.QUERY_FUNC_CLASS_IMPORT] is not None
+    # touching python must not have loaded rust
+    assert compiled == [cs.SupportedLanguage.PYTHON]
+
+
+def test_membership_check_loads_on_demand(
+    compiled: list[cs.SupportedLanguage],
+) -> None:
+    parsers, _ = load_parsers()
+    # conftest-style availability probe (`lang in parsers`) must load
+    # that one language and answer truthfully
+    if cs.SupportedLanguage.RUST not in parsers:
+        pytest.skip("rust parser not available")
+    assert compiled == [cs.SupportedLanguage.RUST]
 
 
 def test_loaded_grammars_are_shared_across_calls() -> None:
@@ -77,15 +89,7 @@ def test_concurrent_first_load_is_thread_safe(monkeypatch) -> None:
     import threading
     import time
 
-    from tree_sitter import Parser
-
-    from codebase_rag import parser_loader
-    from codebase_rag.language_spec import LanguageSpec
-    from codebase_rag.types_defs import LanguageQueries
-
     _reset_parser_cache()
-    saved = dict(COMBINED_FUNC_CLASS_QUERIES)
-    COMBINED_FUNC_CLASS_QUERIES.clear()
     real = parser_loader._process_language
 
     def slow_process(
@@ -113,8 +117,6 @@ def test_concurrent_first_load_is_thread_safe(monkeypatch) -> None:
         assert results == [True] * 8, results
     finally:
         _reset_parser_cache()
-        COMBINED_FUNC_CLASS_QUERIES.clear()
-        COMBINED_FUNC_CLASS_QUERIES.update(saved)
 
 
 def test_mid_load_window_never_exposes_a_partial_language() -> None:
@@ -123,8 +125,6 @@ def test_mid_load_window_never_exposes_a_partial_language() -> None:
     # concurrent queries[lang] in that window raises KeyError
     # (PR #802 review round 3).
     from unittest.mock import MagicMock
-
-    from codebase_rag import parser_loader
 
     store = parser_loader._LazyGrammarStore()
     store._parser_data[cs.SupportedLanguage.PYTHON] = MagicMock()
@@ -135,8 +135,6 @@ def test_mid_load_window_never_exposes_a_partial_language() -> None:
 def test_failed_load_leaves_no_orphan_parser(monkeypatch) -> None:
     # a query-compilation failure after the parser insert must not leave a
     # parser entry without its queries twin
-    from codebase_rag import parser_loader
-
     store = parser_loader._LazyGrammarStore()
 
     def boom(*args: object, **kwargs: object) -> None:

@@ -47,7 +47,6 @@ from .language_spec import (
     sql_object_reference_name,
 )
 from .parser_fingerprint import compute_parser_fingerprint
-from .parser_loader import COMBINED_FUNC_CLASS_IMPORT_QUERIES
 from .parsers import utils as parser_utils
 from .parsers.ast_grep_tier import AstGrepTier
 from .parsers.contract_linking import link_contracts
@@ -5359,7 +5358,10 @@ class GraphUpdater:
         without a parser or a combined query offers nothing."""
         language = get_language_for_extension(PurePosixPath(key).suffix)
         parser = self.parsers.get(language) if language is not None else None
-        query = COMBINED_FUNC_CLASS_IMPORT_QUERIES.get(language) if language else None
+        language_queries = self.queries.get(language) if language else None
+        query = (
+            language_queries[cs.QUERY_FUNC_CLASS_IMPORT] if language_queries else None
+        )
         if parser is None or query is None or language is None:
             return set()
         try:
@@ -8127,7 +8129,7 @@ class GraphUpdater:
                 parser, grammar_bytes(file_bytes, language, filepath), language
             )
             root_node = tree.root_node
-            combined_query = COMBINED_FUNC_CLASS_IMPORT_QUERIES.get(language)
+            combined_query = language_queries[cs.QUERY_FUNC_CLASS_IMPORT]
             combined_captures: dict[str, list] | None = None
             if combined_query:
                 cursor = QueryCursor(combined_query)

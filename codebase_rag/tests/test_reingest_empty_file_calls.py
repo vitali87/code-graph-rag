@@ -210,7 +210,6 @@ def test_an_unavailable_query_is_not_cached_as_an_empty_result(
     answer -- rather than a hardcoded expectation.
     """
     from codebase_rag import constants as cs
-    from codebase_rag.parsers import definition_processor as dp
 
     _write_fixture_tree(tmp_path)
     (tmp_path / "pkg" / "caller.py").write_text(
@@ -224,8 +223,9 @@ def test_an_unavailable_query_is_not_cached_as_an_empty_result(
         "edge, or the comparison below is vacuous"
     )
 
+    _, queries = load_parsers()
     monkeypatch.setitem(
-        dp.COMBINED_FUNC_CLASS_IMPORT_QUERIES, cs.SupportedLanguage.PYTHON, None
+        queries[cs.SupportedLanguage.PYTHON], cs.QUERY_FUNC_CLASS_IMPORT, None
     )
     _, without_query = _indexed_project(tmp_path)
 
