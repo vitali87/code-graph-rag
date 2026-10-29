@@ -135,6 +135,14 @@ and the deferred IMPORTS edges and their flush for itself. A new language's
 import parsing goes in an importer in its own package, registered in that
 lookup.
 
+The call pass has moved Go, C++, Dart and C# the same way: `CallProcessor`
+builds a `GoCallResolution`, `CppCallResolution`, `DartCallResolution` and
+`CSharpCallResolution` (each in `parsers/<language>/calls.py`) and hands
+each its language's callee binding, fan-outs and the edges the language
+writes without a call node. It keeps for itself the scan of a caller's
+calls, the site and resolution every edge carries (`parsers/edge_site.py`
+holds the part a collaborator writes through) and the name-based resolver.
+
 ## Example: Adding C# Support
 
 ```bash
