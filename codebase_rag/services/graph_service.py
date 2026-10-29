@@ -13,7 +13,6 @@ from datetime import UTC, datetime
 from functools import cache, partial
 from typing import TYPE_CHECKING
 
-import click
 import typer
 from loguru import logger
 
@@ -83,16 +82,13 @@ if TYPE_CHECKING:
 
 # Raised on purpose to end a command with its own exit code once it has told
 # the user why; logging them as a failed write buried that message under a
-# traceback (#2414). typer's are listed beside click's because a typer that
-# vendors click raises its own copies (#1409). Ctrl+C is not here: it stops
-# work that did not choose to stop.
+# traceback (#2414). A usage error is one too: typer prints it and exits 2.
+# Ctrl+C is not here: it stops work that did not choose to stop.
 _DELIBERATE_EXITS: tuple[type[BaseException], ...] = (
     SystemExit,
-    click.exceptions.Exit,
-    click.exceptions.Abort,
-    click.ClickException,
     typer.Exit,
     typer.Abort,
+    typer.BadParameter,
 )
 
 

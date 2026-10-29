@@ -19,10 +19,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 from unittest.mock import MagicMock, patch
 
-import click
 import pytest
 import typer
 from loguru import logger
+from typer.core import TyperCommand
 from typer.testing import CliRunner
 
 from codebase_rag import constants as cs
@@ -97,6 +97,14 @@ def _ingestor() -> GraphIngestor:
     return GraphIngestor(host="localhost", port=7687)
 
 
+def _context_exit(code: int) -> BaseException:
+    # What click's own `ctx.exit()` raises, from whichever click typer builds
+    # on: typer's Exit, so listing that one covers it.
+    with pytest.raises(typer.Exit) as raised:
+        typer.Context(TyperCommand(name="cgr")).exit(code)
+    return raised.value
+
+
 _DELIBERATE_EXITS = [
     pytest.param(typer.Exit(), 0, id="typer-exit-0"),
     pytest.param(typer.Exit(1), 1, id="typer-exit-1"),
@@ -104,8 +112,8 @@ _DELIBERATE_EXITS = [
     pytest.param(SystemExit(0), 0, id="system-exit-0"),
     pytest.param(SystemExit(4), 4, id="system-exit-4"),
     pytest.param(typer.Abort(), None, id="typer-abort"),
-    pytest.param(click.UsageError("no such project"), 2, id="click-usage-error"),
-    pytest.param(click.ClickException("refused"), 1, id="click-exception"),
+    pytest.param(typer.BadParameter("no such project"), 2, id="usage-error"),
+    pytest.param(_context_exit(1), 1, id="context-exit"),
 ]
 
 
@@ -113,9 +121,7 @@ def _exit_code(error: BaseException) -> int | str | None:
     match error:
         case SystemExit():
             return error.code
-        # typer's own Exit is listed: a typer that vendors click raises a type
-        # that is not click's (review of PR 2496).
-        case typer.Exit() | click.exceptions.Exit() | click.ClickException():
+        case typer.Exit() | typer.BadParameter():
             return error.exit_code
         case _:
             return None
@@ -172,7 +178,7 @@ class TestWhatMustNotChange:
         [
             pytest.param(ConnectionError("bolt connection lost"), id="connection"),
             pytest.param(ValueError("bad row"), id="value"),
-            # typer.Exit and click.Abort are RuntimeErrors; the check must not
+            # typer.Exit and typer.Abort are RuntimeErrors; the check must not
             # widen to their base and swallow real runtime failures.
             pytest.param(RuntimeError("query failed"), id="runtime"),
             pytest.param(

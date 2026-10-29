@@ -16,7 +16,6 @@ from importlib.metadata import version as get_version
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn
 
-import click
 import typer
 from loguru import logger
 from rich.console import Console
@@ -130,19 +129,6 @@ from .workspaces.cli import cli as workspace_cli
 
 if TYPE_CHECKING:
     from .graph_updater import GraphUpdater
-
-
-def _vendored_click_exception() -> type[click.ClickException]:
-    # A typer that vendors click raises the vendored exceptions, which do not
-    # descend from the real click's; both flavors must be caught (#1409).
-    try:
-        vendored = importlib.import_module(cs.TYPER_VENDORED_CLICK_EXCEPTIONS_MODULE)
-    except ImportError:
-        return click.ClickException
-    return getattr(vendored, "ClickException", click.ClickException)
-
-
-_CLICK_EXCEPTIONS = (click.ClickException, _vendored_click_exception())
 
 
 # `codebase_rag.agent_loop` imports pydantic-ai and every provider SDK, and
@@ -2267,28 +2253,22 @@ def help_command(
         return
 
     root_command = root_context.command
-    command_name, *command_args = requested
-    # Duck-typed, not isinstance(click.Group): a typer that vendors click
-    # builds the app from a Group that is not the real click's (#1409).
-    get_command = getattr(root_command, "get_command", None)
-    if get_command is None:
+    if not isinstance(root_command, TyperGroup):
         raise typer.Exit(1)
 
-    target = get_command(root_context, command_name)
+    command_name, *command_args = requested
+    target = root_command.get_command(root_context, command_name)
     if target is None:
         typer.echo(f"cgr: '{command_name}' is not a cgr command.", err=True)
         typer.echo("See 'cgr help'.", err=True)
         raise typer.Exit(2)
 
-    try:
-        target.main(
-            args=[*command_args, "--help"],
-            prog_name=f"{root_context.command_path} {command_name}",
-            standalone_mode=False,
-        )
-    except _CLICK_EXCEPTIONS as error:
-        error.show()
-        raise typer.Exit(error.exit_code) from error
+    # Standalone, so a mistake in the rest of the path (`cgr help graph
+    # nosuch`) is reported, and exits, as it is without the `help`.
+    target.main(
+        args=[*command_args, "--help"],
+        prog_name=f"{root_context.command_path} {command_name}",
+    )
 
 
 @app.command(

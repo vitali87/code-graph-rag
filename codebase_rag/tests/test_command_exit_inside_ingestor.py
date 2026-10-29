@@ -13,10 +13,10 @@ from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import click
 import pytest
 import typer
 from loguru import logger
+from typer.core import TyperCommand
 from typer.testing import CliRunner
 
 from codebase_rag import constants as cs
@@ -57,6 +57,14 @@ def _exit(exc: BaseException) -> MagicMock:
     return flush
 
 
+def _context_exit(code: int) -> BaseException:
+    # What click's own `ctx.exit()` raises, from whichever click typer builds
+    # on: typer's Exit, so listing that one covers it.
+    with pytest.raises(typer.Exit) as raised:
+        typer.Context(TyperCommand(name="cgr")).exit(code)
+    return raised.value
+
+
 @pytest.fixture
 def offline_ingestor() -> Iterator[None]:
     # The real `__exit__` runs; only the connection and the writes are stubbed.
@@ -73,7 +81,7 @@ def offline_ingestor() -> Iterator[None]:
     [
         pytest.param(typer.Exit(code=1), id="typer-exit-1"),
         pytest.param(typer.Exit(code=0), id="typer-exit-0"),
-        pytest.param(click.exceptions.Exit(1), id="click-exit"),
+        pytest.param(_context_exit(1), id="context-exit"),
         pytest.param(SystemExit(1), id="system-exit"),
     ],
 )
