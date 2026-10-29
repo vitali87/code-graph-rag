@@ -10,6 +10,7 @@ import pytest
 from click.testing import CliRunner
 
 from codebase_rag import constants as cs
+from codebase_rag.trace import constants as tcs
 from codebase_rag.trace.cli import cli
 from codebase_rag.trace.records import (
     TraceHeader,
@@ -44,10 +45,10 @@ def _patch_graph(monkeypatch, graph):
 def _write_header_only_trace(tmp_path):
     trace_path = tmp_path / "trace.jsonl"
     header = TraceHeader(
-        version=cs.TRACE_FORMAT_VERSION,
-        language=cs.TRACE_LANGUAGE_PYTHON,
+        version=tcs.TRACE_FORMAT_VERSION,
+        language=tcs.TRACE_LANGUAGE_PYTHON,
         repo_root=str(tmp_path),
-        tracer=cs.TRACE_TOOL_NAME,
+        tracer=tcs.TRACE_TOOL_NAME,
     )
     write_trace_file(trace_path, header, [])
     return trace_path
@@ -133,7 +134,7 @@ def test_convert_command_writes_interchange_trace(tmp_path):
 
     assert result.exit_code == 0, result.output
     header, records = read_trace_file(output)
-    assert header.language == cs.TRACE_LANGUAGE_JS
+    assert header.language == tcs.TRACE_LANGUAGE_JS
     (record,) = list(records)
     assert (record.caller.qualname, record.callee.qualname) == ("runAll", "helper")
     assert record.workloads == ("suite",)
@@ -221,7 +222,7 @@ def test_convert_command_sniffs_speedscope_and_requires_include(tmp_path):
 
     assert result.exit_code == 0, result.output
     header, records = read_trace_file(output)
-    assert header.language == cs.TRACE_LANGUAGE_DOTNET
+    assert header.language == tcs.TRACE_LANGUAGE_DOTNET
     (record,) = list(records)
     assert (record.caller.qualname, record.callee.qualname) == (
         "MyApp.Program.Main",
@@ -290,7 +291,7 @@ def test_convert_command_converts_xdebug_traces(tmp_path, name, compress):
 
     assert result.exit_code == 0, result.output
     header, records = read_trace_file(output)
-    assert header.tracer == cs.TRACE_TOOL_NAME_XDEBUG
+    assert header.tracer == tcs.TRACE_TOOL_NAME_XDEBUG
     assert [(r.caller.qualname, r.callee.qualname) for r in records] == [
         ("{main}", "run")
     ]

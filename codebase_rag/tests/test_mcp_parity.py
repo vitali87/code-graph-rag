@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.mcp import constants as mcs
 from codebase_rag.mcp.tools import MCPToolsRegistry
 from codebase_rag.tools import tool_descriptions as td
 
@@ -163,7 +164,7 @@ class TestGetFunctionSourceIsExposed:
         schema = _schema(mcp_registry, cs.MCPToolName.GET_FUNCTION_SOURCE)
         assert schema is not None
         node_id = schema.inputSchema["properties"][cs.MCPParamName.NODE_ID]
-        assert node_id["type"] == cs.MCPSchemaType.INTEGER
+        assert node_id["type"] == mcs.MCPSchemaType.INTEGER
 
     def test_handler_is_dispatchable(self, mcp_registry: MCPToolsRegistry) -> None:
         entry = mcp_registry.get_tool_handler(cs.MCPToolName.GET_FUNCTION_SOURCE)

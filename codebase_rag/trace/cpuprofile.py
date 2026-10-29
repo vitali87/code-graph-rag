@@ -27,8 +27,8 @@ from urllib.parse import unquote, urlparse
 
 from loguru import logger
 
-from .. import constants as cs
 from .. import logs as ls
+from . import constants as tcs
 from .records import (
     CallRecord,
     FramePoint,
@@ -91,8 +91,8 @@ def _url_to_path(url: str) -> str:
     # decode so the path matches the real repo prefix.
     parsed = urlparse(url)
     path = unquote(parsed.path)
-    if parsed.netloc and parsed.netloc.lower() != cs.TRACE_JS_LOCAL_FILE_HOST:
-        path = cs.TRACE_JS_UNC_PATH.format(host=parsed.netloc, path=path)
+    if parsed.netloc and parsed.netloc.lower() != tcs.TRACE_JS_LOCAL_FILE_HOST:
+        path = tcs.TRACE_JS_UNC_PATH.format(host=parsed.netloc, path=path)
     elif _DRIVE_LETTER.match(path):
         path = path[1:]
     # Normalise to POSIX separators so a Windows drive path (`C:\repo\main.js`)
@@ -107,7 +107,7 @@ def _project_frame(
     stats: Counter[SourceMapOutcome],
 ) -> _ProfileFrame | None:
     url = call_frame.get("url")
-    if not isinstance(url, str) or not url.startswith(cs.TRACE_JS_FILE_URL_PREFIX):
+    if not isinstance(url, str) or not url.startswith(tcs.TRACE_JS_FILE_URL_PREFIX):
         return None
     generated_path = _url_to_path(url)
     line = call_frame.get("lineNumber")
@@ -118,7 +118,7 @@ def _project_frame(
         # V8 reports module toplevels as a nameless frame at line 0; other
         # nameless frames are anonymous functions, resolvable only by span.
         # The generated line drives this even when a source map relocates it.
-        name = cs.TRACE_QUALNAME_MODULE if line == 0 else cs.TRACE_QUALNAME_ANONYMOUS
+        name = tcs.TRACE_QUALNAME_MODULE if line == 0 else tcs.TRACE_QUALNAME_ANONYMOUS
     # A transpiled file (dist/*.js) with a source map relocates back to its
     # original TypeScript/JavaScript position, so the frame lands on the source
     # node the graph indexed; without a map the generated position stands.
@@ -133,7 +133,7 @@ def _project_frame(
         path, source_line = generated_path, line + 1
     if not normcase(path).startswith(normcase(root_prefix)):
         return None
-    if not cs.TRACE_EXCLUDED_DIR_NAMES.isdisjoint(Path(normcase(path)).parts):
+    if not tcs.TRACE_EXCLUDED_DIR_NAMES.isdisjoint(Path(normcase(path)).parts):
         return None
     # Only project frames count toward the resolution rate; the source-map
     # outcome categorises whether each landed on its source or fell back.
@@ -162,7 +162,7 @@ def _parse_nodes(
     for raw_node in nodes:
         if not isinstance(raw_node, dict):
             raise TraceFormatError(
-                cs.TRACE_ERR_BAD_CPUPROFILE.format(path=profile_path)
+                tcs.TRACE_ERR_BAD_CPUPROFILE.format(path=profile_path)
             )
         node = cast("dict[str, object]", raw_node)
         node_id = node.get("id")
@@ -176,7 +176,7 @@ def _parse_nodes(
             or not _int_ids(raw_children)
         ):
             raise TraceFormatError(
-                cs.TRACE_ERR_BAD_CPUPROFILE.format(path=profile_path)
+                tcs.TRACE_ERR_BAD_CPUPROFILE.format(path=profile_path)
             )
         frames[node_id] = _project_frame(
             cast("dict[str, object]", call_frame), root_prefix, source_maps, stats
@@ -217,11 +217,11 @@ def convert_cpuprofile(
         raw = json.loads(profile_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
         raise TraceFormatError(
-            cs.TRACE_ERR_BAD_CPUPROFILE.format(path=profile_path)
+            tcs.TRACE_ERR_BAD_CPUPROFILE.format(path=profile_path)
         ) from e
     nodes = raw.get("nodes") if isinstance(raw, dict) else None
     if not isinstance(nodes, list) or not nodes:
-        raise TraceFormatError(cs.TRACE_ERR_BAD_CPUPROFILE.format(path=profile_path))
+        raise TraceFormatError(tcs.TRACE_ERR_BAD_CPUPROFILE.format(path=profile_path))
 
     root_prefix = repo_root.resolve().as_posix() + "/"
     resolution: Counter[SourceMapOutcome] = Counter()
@@ -236,7 +236,7 @@ def convert_cpuprofile(
     all_children = [c for kids in children.values() for c in kids]
     child_ids = set(all_children)
     if len(all_children) != len(child_ids) or not child_ids.issubset(frames):
-        raise TraceFormatError(cs.TRACE_ERR_BAD_CPUPROFILE.format(path=profile_path))
+        raise TraceFormatError(tcs.TRACE_ERR_BAD_CPUPROFILE.format(path=profile_path))
     roots = [node_id for node_id in frames if node_id not in child_ids]
 
     # Total samples in each subtree: children first, then parents, without
@@ -249,7 +249,7 @@ def convert_cpuprofile(
         stack.extend(children[node_id])
     if len(order) != len(frames):
         # Nodes unreachable from any root can only mean a cycle.
-        raise TraceFormatError(cs.TRACE_ERR_BAD_CPUPROFILE.format(path=profile_path))
+        raise TraceFormatError(tcs.TRACE_ERR_BAD_CPUPROFILE.format(path=profile_path))
     subtree: dict[int, int] = {}
     for node_id in reversed(order):
         subtree[node_id] = hits[node_id] + sum(subtree[c] for c in children[node_id])
@@ -272,10 +272,10 @@ def convert_cpuprofile(
         for (caller, callee), count in edges.items()
     ]
     header = TraceHeader(
-        version=cs.TRACE_FORMAT_VERSION,
-        language=cs.TRACE_LANGUAGE_JS,
+        version=tcs.TRACE_FORMAT_VERSION,
+        language=tcs.TRACE_LANGUAGE_JS,
         repo_root=str(repo_root),
-        tracer=cs.TRACE_TOOL_NAME_CPUPROFILE,
+        tracer=tcs.TRACE_TOOL_NAME_CPUPROFILE,
         sampled=True,
     )
     write_trace_file(output, header, records)

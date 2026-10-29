@@ -20,6 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .. import constants as cs
+from . import constants as ecs
 from . import cypher_ast as a
 from . import sql as sq
 from . import types as ty
@@ -35,7 +36,7 @@ from .expressions import (
 )
 from .types import Kind, ValueType
 
-ALL_LIVE = cs.EG_ALL_LIVE
+ALL_LIVE = ecs.EG_ALL_LIVE
 
 
 @dataclass
@@ -89,7 +90,7 @@ def _is_live(var: str, live: set[str]) -> bool:
 @dataclass
 class OutputColumn:
     name: str
-    decode: cs.EgDecode
+    decode: ecs.EgDecode
 
 
 @dataclass
@@ -103,14 +104,14 @@ class Pipeline:
         return sq.with_ctes(sq.cte(name, sql) for name, sql in self.ctes)
 
 
-def decode_for(t: ValueType) -> cs.EgDecode:
+def decode_for(t: ValueType) -> ecs.EgDecode:
     if t.kind == Kind.BOOL:
-        return cs.EgDecode.BOOL
+        return ecs.EgDecode.BOOL
     if t.kind == Kind.NULL:
-        return cs.EgDecode.NULL
+        return ecs.EgDecode.NULL
     if t.is_entity or t.is_json:
-        return cs.EgDecode.JSON
-    return cs.EgDecode.RAW
+        return ecs.EgDecode.JSON
+    return ecs.EgDecode.RAW
 
 
 # ------------------------------------------------------------------- liveness
@@ -252,7 +253,7 @@ class QueryCompiler:
             return self._unwind(pipeline, stage, clause, live)
         if isinstance(clause, a.Projection) and not clause.is_return:
             return self._with(pipeline, stage, clause)
-        raise CompileError(cs.EG_ERR_UNSUPPORTED.format(what=type(clause).__name__))
+        raise CompileError(ecs.EG_ERR_UNSUPPORTED.format(what=type(clause).__name__))
 
     def _extend(
         self,
@@ -512,7 +513,7 @@ class _MatchBuilder:
     def add_pattern(self, pattern: a.PathPattern) -> None:
         if pattern.var is not None:
             raise CompileError(
-                cs.EG_ERR_UNSUPPORTED.format(what=cs.EG_WHAT_PATH_VARIABLES)
+                ecs.EG_ERR_UNSUPPORTED.format(what=ecs.EG_WHAT_PATH_VARIABLES)
             )
         nodes = [self._node(n) for n in pattern.nodes]
         for i, rel in enumerate(pattern.rels):
@@ -533,7 +534,7 @@ class _MatchBuilder:
         bound = self.scope.get(np.var) if np.var and self.scope.has(np.var) else None
         if bound is not None:
             if bound.t.kind not in (Kind.NODE, Kind.ANY, Kind.NULL):
-                raise CompileError(cs.EG_ERR_NOT_NODE.format(name=np.var))
+                raise CompileError(ecs.EG_ERR_NOT_NODE.format(name=np.var))
             self.conds.append(sq.eq(sq.column(alias, sq.ID), bound.sql))
         labels = np.labels or self._labels_from_where(np.var)
         names = labels or (bound.names if bound is not None else ())
@@ -573,7 +574,7 @@ class _MatchBuilder:
             return
         if not isinstance(props, a.MapLit):
             raise CompileError(
-                cs.EG_ERR_UNSUPPORTED.format(what=cs.EG_WHAT_PARAM_PATTERN_PROPS)
+                ecs.EG_ERR_UNSUPPORTED.format(what=ecs.EG_WHAT_PARAM_PATTERN_PROPS)
             )
         for key, value in props.items:
             rhs = self.exprs.native(self.exprs.compile(value, self.scope))
@@ -588,9 +589,9 @@ class _MatchBuilder:
         if rp.types:
             self.conds.append(sq.is_in(sq.column(alias, sq.TYPE), rp.types))
         lid, rid = left.sql, right.sql
-        if rp.direction == cs.EgDirection.OUT:
+        if rp.direction == ecs.EgDirection.OUT:
             self.conds.append(sq.outgoing(alias, lid, rid))
-        elif rp.direction == cs.EgDirection.IN:
+        elif rp.direction == ecs.EgDirection.IN:
             self.conds.append(sq.outgoing(alias, rid, lid))
         else:
             self.conds.append(sq.either_way(alias, lid, rid))
@@ -599,7 +600,7 @@ class _MatchBuilder:
             if self.scope.has(rp.var):
                 bound = self.scope.get(rp.var)
                 if bound.t.kind != Kind.REL:
-                    raise CompileError(cs.EG_ERR_NOT_REL.format(name=rp.var))
+                    raise CompileError(ecs.EG_ERR_NOT_REL.format(name=rp.var))
                 self.conds.append(sq.eq(sq.column(alias, sq.ID), bound.sql))
             else:
                 self._bind(rp.var, CE(sq.column(alias, sq.ID), ty.REL, alias, rp.types))
@@ -694,13 +695,13 @@ class _MatchBuilder:
         right: CE,
     ) -> None:
         if rp.var is not None:
-            raise CompileError(cs.EG_ERR_VARLEN_VAR)
+            raise CompileError(ecs.EG_ERR_VARLEN_VAR)
         low, high = rp.var_length or (1, None)
         seeds, forward = self._walk_seeds(left_np, right_np)
         # Walked from its far end, an outgoing pattern follows edges in.
         direction_out: bool | None = None
-        if rp.direction != cs.EgDirection.BOTH:
-            direction_out = (rp.direction == cs.EgDirection.OUT) == forward
+        if rp.direction != ecs.EgDirection.BOTH:
+            direction_out = (rp.direction == ecs.EgDirection.OUT) == forward
         name = self.ctx.fresh(sq.WALK_PREFIX)
         seed_np = left_np if forward else right_np
         edge_conds = self._walk_edge_conditions(rp)
@@ -729,13 +730,13 @@ class _MatchBuilder:
             return []
         if not isinstance(rp.props, a.MapLit):
             raise CompileError(
-                cs.EG_ERR_UNSUPPORTED.format(what=cs.EG_WHAT_PARAM_PATTERN_PROPS)
+                ecs.EG_ERR_UNSUPPORTED.format(what=ecs.EG_WHAT_PARAM_PATTERN_PROPS)
             )
         conds: list[str] = []
         for key, value in rp.props.items:
             if free_vars(value):
                 raise CompileError(
-                    cs.EG_ERR_UNSUPPORTED.format(what=cs.EG_WHAT_VARLEN_ROW_PROPS)
+                    ecs.EG_ERR_UNSUPPORTED.format(what=ecs.EG_WHAT_VARLEN_ROW_PROPS)
                 )
             rhs = self.exprs.native(self.exprs.compile(value, Scope()))
             conds.append(sq.eq(sq.prop_of(sq.EDGE, key), rhs))
@@ -773,7 +774,7 @@ def _label_alternatives(e: a.Expr, var: str) -> set[str] | None:
         and len(e.labels) == 1
     ):
         return {e.labels[0]}
-    if isinstance(e, a.BinOp) and e.op == cs.EgBinary.OR:
+    if isinstance(e, a.BinOp) and e.op == ecs.EgBinary.OR:
         left = _label_alternatives(e.left, var)
         right = _label_alternatives(e.right, var)
         if left is not None and right is not None:
@@ -782,7 +783,7 @@ def _label_alternatives(e: a.Expr, var: str) -> set[str] | None:
 
 
 def _conjuncts(e: a.Expr) -> list[a.Expr]:
-    if isinstance(e, a.BinOp) and e.op == cs.EgBinary.AND:
+    if isinstance(e, a.BinOp) and e.op == ecs.EgBinary.AND:
         return _conjuncts(e.left) + _conjuncts(e.right)
     return [e]
 

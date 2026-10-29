@@ -20,6 +20,7 @@ from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag import tool_errors as te
 from codebase_rag.config import settings
+from codebase_rag.mcp import constants as mcs
 from codebase_rag.mcp import server as mcp_server
 from codebase_rag.mcp.tools import MCPToolsRegistry
 from codebase_rag.workspaces import WorkspaceConfig, WorkspaceError, WorkspaceRepo
@@ -79,7 +80,7 @@ async def test_a_project_outside_the_workspace_is_refused_naming_the_workspace(
     registry = _registry(tmp_path, ws)
     result = await registry.resolve("x", project="other__9999")
     assert result == {
-        "error": cs.MCP_PROJECT_OUTSIDE_WORKSPACE.format(
+        "error": mcs.MCP_PROJECT_OUTSIDE_WORKSPACE.format(
             project="other__9999", workspace="ws", known=f"{ALPHA}, {BETA}"
         )
     }
@@ -117,7 +118,7 @@ async def test_several_workspace_projects_and_no_root_match_refuse_a_bare_reques
     registry = _registry(tmp_path, ws, root="elsewhere")
     result = await registry.resolve("x")
     assert result == {
-        "error": cs.MCP_WORKSPACE_DEFAULT_AMBIGUOUS.format(
+        "error": mcs.MCP_WORKSPACE_DEFAULT_AMBIGUOUS.format(
             workspace="ws", count=2, known=f"{ALPHA}, {BETA}"
         )
     }
@@ -141,11 +142,11 @@ def test_the_server_loads_the_workspace_from_the_flag_or_the_environment(
     with patch.object(mcp_server, "load_workspace", return_value=ws) as load:
         assert mcp_server.get_workspace("ws") is ws
         load.assert_called_once_with("ws")
-    monkeypatch.setenv(cs.MCPEnvVar.MCP_WORKSPACE, "from-env")
+    monkeypatch.setenv(mcs.MCPEnvVar.MCP_WORKSPACE, "from-env")
     with patch.object(mcp_server, "load_workspace", return_value=ws) as load:
         assert mcp_server.get_workspace(None) is ws
         load.assert_called_once_with("from-env")
-    monkeypatch.delenv(cs.MCPEnvVar.MCP_WORKSPACE)
+    monkeypatch.delenv(mcs.MCPEnvVar.MCP_WORKSPACE)
     assert mcp_server.get_workspace(None) is None
 
 
@@ -193,7 +194,7 @@ def test_the_cli_passes_the_workspace_through_to_both_transports() -> None:
 
 def test_the_environment_variable_is_named_for_the_launch_config() -> None:
     """An MCP client's launch config has an environment and no flags."""
-    assert cs.MCPEnvVar.MCP_WORKSPACE == "MCP_WORKSPACE"
+    assert mcs.MCPEnvVar.MCP_WORKSPACE == "MCP_WORKSPACE"
 
 
 @pytest.mark.anyio
@@ -207,10 +208,10 @@ async def test_every_project_taking_tool_applies_the_workspace_allow_list(
     registry = _registry(tmp_path, ws, root="elsewhere")
     registry._semantic_search_tool = MagicMock()
     registry._find_duplicates_tool = MagicMock()
-    outside = cs.MCP_PROJECT_OUTSIDE_WORKSPACE.format(
+    outside = mcs.MCP_PROJECT_OUTSIDE_WORKSPACE.format(
         project="other__9999", workspace="ws", known=f"{ALPHA}, {BETA}"
     )
-    ambiguous = cs.MCP_WORKSPACE_DEFAULT_AMBIGUOUS.format(
+    ambiguous = mcs.MCP_WORKSPACE_DEFAULT_AMBIGUOUS.format(
         workspace="ws", count=2, known=f"{ALPHA}, {BETA}"
     )
     graph = await registry.query_code_graph("q", project="other__9999")
@@ -235,7 +236,7 @@ async def test_delete_project_is_held_to_the_workspace(tmp_path: Path) -> None:
     registry = _registry(tmp_path, ws)
     result = await registry.delete_project("other__9999")
     assert result["success"] is False
-    assert result["error"] == cs.MCP_PROJECT_OUTSIDE_WORKSPACE.format(
+    assert result["error"] == mcs.MCP_PROJECT_OUTSIDE_WORKSPACE.format(
         project="other__9999", workspace="ws", known=ALPHA
     )
     registry.ingestor.delete_project.assert_not_called()
@@ -315,7 +316,7 @@ async def test_the_agents_tools_are_held_to_the_workspace(tmp_path: Path) -> Non
     tools = {t.name: t for t in build.call_args.kwargs["tools"] if hasattr(t, "name")}
     dup = tools["find_duplicate_code"]
     assert await dup.function(project="other__9999") == (
-        cs.MCP_PROJECT_OUTSIDE_WORKSPACE.format(
+        mcs.MCP_PROJECT_OUTSIDE_WORKSPACE.format(
             project="other__9999", workspace="ws", known=f"{ALPHA}, {BETA}"
         )
     )
@@ -324,7 +325,7 @@ async def test_the_agents_tools_are_held_to_the_workspace(tmp_path: Path) -> Non
     assert await dup.function(project=BETA) == f"dups:{BETA}"
     # The source readers take a name or a node id, not a project: the name's
     # project prefix is what the allow-list is applied to.
-    refused = cs.MCP_NAME_OUTSIDE_WORKSPACE.format(
+    refused = mcs.MCP_NAME_OUTSIDE_WORKSPACE.format(
         name="other__9999.pkg.g", workspace="ws", known=f"{ALPHA}, {BETA}"
     )
     code = tools["get_code_snippet"]
@@ -338,7 +339,7 @@ async def test_the_agents_tools_are_held_to_the_workspace(tmp_path: Path) -> Non
     assert await by_node.function(9) == "source:9"
     # A served project the graph shows indexed from another checkout: the
     # name passes the allow-list, but its source is not read (Copilot).
-    unproven = cs.MCP_WORKSPACE_SOURCE_UNPROVEN.format(
+    unproven = mcs.MCP_WORKSPACE_SOURCE_UNPROVEN.format(
         name=f"{ALPHA}.pkg.h", project=ALPHA, workspace="ws"
     )
     assert await code.function(f"{ALPHA}.pkg.h") == unproven
@@ -368,7 +369,7 @@ async def test_the_direct_handlers_refuse_with_the_real_tools_wrapped_once(
         if params and params.get("node_id") == 8
         else []
     )
-    refused = cs.MCP_NAME_OUTSIDE_WORKSPACE.format(
+    refused = mcs.MCP_NAME_OUTSIDE_WORKSPACE.format(
         name="other__9999.pkg.g", workspace="ws", known=f"{ALPHA}, {BETA}"
     )
     snippet = await registry.get_code_snippet("other__9999.pkg.g")
@@ -389,7 +390,7 @@ async def test_a_name_under_a_longer_indexed_project_is_refused(
     ws = _workspace(tmp_path, ("a", "foo"))
     registry = _registry(tmp_path, ws, root="a")
     registry.ingestor.list_projects.return_value = ["foo", "foo.bar"]
-    refused = cs.MCP_NAME_OUTSIDE_WORKSPACE.format(
+    refused = mcs.MCP_NAME_OUTSIDE_WORKSPACE.format(
         name="foo.bar.pkg.fn", workspace="ws", known="foo"
     )
     assert registry._workspace_name_refusal("foo.bar.pkg.fn") == refused
@@ -405,7 +406,7 @@ def test_without_a_default_the_agents_graph_query_refuses(tmp_path: Path) -> Non
     tool = registry._agent_query_tool()
 
     answer = tool.function("anything")
-    assert answer == cs.MCP_WORKSPACE_DEFAULT_AMBIGUOUS.format(
+    assert answer == mcs.MCP_WORKSPACE_DEFAULT_AMBIGUOUS.format(
         workspace="ws", count=2, known=f"{ALPHA}, {BETA}"
     )
     assert registry._agent_query_tool() is not registry._query_tool
@@ -543,7 +544,7 @@ async def test_root_bound_tools_refuse_a_root_the_workspace_does_not_serve(
 
     ws = _workspace(tmp_path, ("a", ALPHA))
     registry = _registry(tmp_path, ws, root="elsewhere")
-    refusal = cs.MCP_ROOT_OUTSIDE_WORKSPACE.format(
+    refusal = mcs.MCP_ROOT_OUTSIDE_WORKSPACE.format(
         root=(tmp_path / "elsewhere").resolve(),
         workspace="ws",
         known=(tmp_path / "a").resolve(),
@@ -587,7 +588,7 @@ async def test_wipe_database_is_refused_under_a_workspace(tmp_path: Path) -> Non
     assert info is not None
     result = await info[0](confirm=True)
     assert isinstance(result, te.ToolFailure)
-    assert result == cs.MCP_WIPE_REFUSED_IN_WORKSPACE.format(
+    assert result == mcs.MCP_WIPE_REFUSED_IN_WORKSPACE.format(
         workspace="ws", known=ALPHA
     )
     registry.ingestor.clean_database.assert_not_called()

@@ -43,6 +43,7 @@ from .. import cypher_queries as cq
 from .. import graph_query
 from ..graph_query import QueryFn, SymbolRow, project_qn_prefix
 from ..types_defs import PropertyDict, ResultRow
+from . import constants as gcs
 from .anchor import SourceReader, TextAnchor, text_anchor
 
 if TYPE_CHECKING:
@@ -115,11 +116,11 @@ def resolve_one(
     """
     base, descriptor = _split_descriptor(target)
     if descriptor is not None:
-        if descriptor not in cs.GLOSS_DESCRIPTORS:
+        if descriptor not in gcs.GLOSS_DESCRIPTORS:
             return GlossRefusal(
-                error=cs.MCP_GLOSS_DESCRIPTOR_UNKNOWN.format(
+                error=gcs.MCP_GLOSS_DESCRIPTOR_UNKNOWN.format(
                     descriptor=descriptor,
-                    known=cs.SEPARATOR_COMMA_SPACE.join(sorted(cs.GLOSS_DESCRIPTORS)),
+                    known=cs.SEPARATOR_COMMA_SPACE.join(sorted(gcs.GLOSS_DESCRIPTORS)),
                 )
             )
         # The base is resolved once, here; its refusal (not found, ambiguous)
@@ -140,7 +141,7 @@ def resolve_one(
         return GlossRefusal(error=str(refused))
     if not rows:
         return GlossRefusal(
-            error=cs.MCP_GLOSS_TARGET_NOT_FOUND.format(
+            error=gcs.MCP_GLOSS_TARGET_NOT_FOUND.format(
                 target=target, project=project_name
             )
         )
@@ -159,7 +160,7 @@ def resolve_one(
     if not exact and not suffix and len(rows) == 1:
         return rows[0]
     return GlossRefusal(
-        error=cs.MCP_GLOSS_TARGET_AMBIGUOUS.format(target=target, count=len(rows)),
+        error=gcs.MCP_GLOSS_TARGET_AMBIGUOUS.format(target=target, count=len(rows)),
         candidates=rows,
     )
 
@@ -170,9 +171,9 @@ def _split_descriptor(target: str) -> tuple[str, str | None]:
     a JS/TS private member keeps its `#` in the qualified name
     (`Bank.#validatePin`), so a `#` right after a dot, or at the start,
     leaves the target whole."""
-    if cs.GLOSS_DESCRIPTOR_SEPARATOR not in target:
+    if gcs.GLOSS_DESCRIPTOR_SEPARATOR not in target:
         return target, None
-    base, descriptor = target.rsplit(cs.GLOSS_DESCRIPTOR_SEPARATOR, 1)
+    base, descriptor = target.rsplit(gcs.GLOSS_DESCRIPTOR_SEPARATOR, 1)
     if not base or base.endswith(cs.SEPARATOR_DOT) or cs.SEPARATOR_DOT in descriptor:
         return target, None
     return base, descriptor.strip().lower()
@@ -196,7 +197,7 @@ def _resolve_descriptor(
     later members `x@<line>`, which shifts with the file; the descriptor is
     the stable address (issue #1808)."""
     qn = natural_row["qualified_name"].split(cs.DUP_QN_MARKER, 1)[0]
-    marker = cs.GLOSS_DESCRIPTORS[descriptor]
+    marker = gcs.GLOSS_DESCRIPTORS[descriptor]
     for row in fetch_all(
         cq.CYPHER_GLOSS_VARIANTS,
         {
@@ -214,7 +215,7 @@ def _resolve_descriptor(
         ):
             return graph_query._symbol_row(row)
     return GlossRefusal(
-        error=cs.MCP_GLOSS_DESCRIPTOR_NOT_FOUND.format(
+        error=gcs.MCP_GLOSS_DESCRIPTOR_NOT_FOUND.format(
             target=target, qn=qn, descriptor=marker
         )
     )
@@ -382,11 +383,11 @@ def write_gloss(
     """
     text = body.strip()
     if not text:
-        return GlossRefusal(error=cs.MCP_GLOSS_BODY_EMPTY)
+        return GlossRefusal(error=gcs.MCP_GLOSS_BODY_EMPTY)
     kinds = [k.value for k in cs.GlossKind]
     if kind not in kinds:
         return GlossRefusal(
-            error=cs.MCP_GLOSS_KIND_UNKNOWN.format(
+            error=gcs.MCP_GLOSS_KIND_UNKNOWN.format(
                 kind=kind, kinds=cs.SEPARATOR_COMMA_SPACE.join(kinds)
             )
         )
@@ -399,7 +400,7 @@ def write_gloss(
         found = resolve_one(fetch_all, project_name, name)
         if _is_refusal(found):
             refusal: GlossRefusal = found
-            refusal[cs.DICT_KEY_ERROR] = cs.MCP_GLOSS_MENTION_REFUSED.format(
+            refusal[cs.DICT_KEY_ERROR] = gcs.MCP_GLOSS_MENTION_REFUSED.format(
                 name=name, error=refusal[cs.DICT_KEY_ERROR]
             )
             return refusal
@@ -442,7 +443,7 @@ def write_gloss(
     execute_write(cq.CYPHER_GLOSS_WRITE, params)
     stored = fetch_all(cq.CYPHER_GLOSS_READ, {cs.KEY_QN: key})
     if not stored or stored[0].get(cs.KEY_WRITE_ID) != params[cs.KEY_WRITE_ID]:
-        return GlossRefusal(error=cs.MCP_GLOSS_NOT_WRITTEN.format(target=target))
+        return GlossRefusal(error=gcs.MCP_GLOSS_NOT_WRITTEN.format(target=target))
     return _gloss_row(stored[0])
 
 

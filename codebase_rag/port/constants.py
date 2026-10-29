@@ -3,7 +3,7 @@
 
 from enum import StrEnum
 
-from .graph import EdgeResolution, NodeLabel
+from ..constants.graph import EdgeResolution, NodeLabel
 
 
 class ParityVerdict(StrEnum):

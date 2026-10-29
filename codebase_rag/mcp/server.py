@@ -26,6 +26,8 @@ from codebase_rag.utils.path_utils import derive_project_name
 from codebase_rag.vectors.store import close_qdrant_client
 from codebase_rag.workspaces import WorkspaceConfig, WorkspaceError, load_workspace
 
+from . import constants as mcs
+
 if TYPE_CHECKING:
     # starlette is a lazy dependency of the HTTP path only; its ASGI
     # types, and the SDK's settings model that imports it, are needed
@@ -38,8 +40,8 @@ def setup_logging() -> None:
     logger.remove()
     logger.add(
         sys.stderr,
-        level=cs.MCP_LOG_LEVEL_INFO,
-        format=cs.MCP_LOG_FORMAT,
+        level=mcs.MCP_LOG_LEVEL_INFO,
+        format=mcs.MCP_LOG_FORMAT,
         backtrace=False,
         diagnose=False,
     )
@@ -68,7 +70,7 @@ def get_workspace(name: str | None = None) -> WorkspaceConfig | None:
     workspace-backed. A workspace that does not exist is a configuration
     error at start-up, the same class as a missing root.
     """
-    chosen = name or os.environ.get(cs.MCPEnvVar.MCP_WORKSPACE)
+    chosen = name or os.environ.get(mcs.MCPEnvVar.MCP_WORKSPACE)
     if not chosen:
         return None
     try:
@@ -130,7 +132,7 @@ def create_server(workspace: str | None = None) -> tuple[Server, GraphIngestor]:
 
     logger.info(ls.MCP_SERVER_INIT_SUCCESS)
 
-    server = Server(cs.MCP_SERVER_NAME)
+    server = Server(mcs.MCP_SERVER_NAME)
 
     def _create_error_content(message: str) -> CallToolResult:
         return _failed_call(te.failure(message))
@@ -156,7 +158,7 @@ def create_server(workspace: str | None = None) -> tuple[Server, GraphIngestor]:
         try:
             handler_info = tools.get_tool_handler(name)
             if not handler_info:
-                error_msg = cs.MCP_UNKNOWN_TOOL_ERROR.format(name=name)
+                error_msg = mcs.MCP_UNKNOWN_TOOL_ERROR.format(name=name)
                 logger.error(ls.MCP_SERVER_UNKNOWN_TOOL.format(name=name))
                 return _create_error_content(error_msg)
 
@@ -171,13 +173,13 @@ def create_server(workspace: str | None = None) -> tuple[Server, GraphIngestor]:
             else:
                 result_text = str(result)
 
-            content = [TextContent(type=cs.MCP_CONTENT_TYPE_TEXT, text=result_text)]
+            content = [TextContent(type=mcs.MCP_CONTENT_TYPE_TEXT, text=result_text)]
             if returns_json and _reports_failure(result):
                 return CallToolResult(content=content, isError=True)
             return content
 
         except Exception as e:  # noqa: BLE001 -- tool boundary: any failure becomes the tool's error result
-            error_msg = cs.MCP_TOOL_EXEC_ERROR.format(name=name, error=e)
+            error_msg = mcs.MCP_TOOL_EXEC_ERROR.format(name=name, error=e)
             logger.exception(ls.MCP_SERVER_TOOL_ERROR.format(name=name, error=e))
             return _create_error_content(error_msg)
 
@@ -198,7 +200,7 @@ def _failed_call(message: str) -> CallToolResult:
     # failure the server or a tool detected must say so in the protocol, not
     # only in its prose (issue #2650).
     return CallToolResult(
-        content=[TextContent(type=cs.MCP_CONTENT_TYPE_TEXT, text=message)],
+        content=[TextContent(type=mcs.MCP_CONTENT_TYPE_TEXT, text=message)],
         isError=True,
     )
 

@@ -14,6 +14,7 @@ import sys
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.trace import constants as tcs
 from codebase_rag.trace.records import read_trace_file
 from codebase_rag.trace.rust_pprof import _bare_name, convert_rust_pprof
 
@@ -126,7 +127,7 @@ def _convert(tmp_path, workload=None):
 def test_converts_stacks_to_edges_with_sample_weights(tmp_path):
     count, header, records = _convert(tmp_path)
 
-    assert header.language == cs.TRACE_LANGUAGE_RUST
+    assert header.language == tcs.TRACE_LANGUAGE_RUST
     assert header.sampled is True
     assert count == len(records)
     edges = {(r.caller.qualname, r.callee.qualname): r for r in records}
@@ -161,7 +162,7 @@ def test_closures_and_generics_normalise(tmp_path):
     _count, _header, records = _convert(tmp_path)
 
     edges = {(r.caller.qualname, r.callee.qualname): r for r in records}
-    assert ("run_all", cs.TRACE_QUALNAME_ANONYMOUS) in edges
+    assert ("run_all", tcs.TRACE_QUALNAME_ANONYMOUS) in edges
     generic = edges[("handle", "get")]
     assert generic.callee.line == 40
 
@@ -171,9 +172,9 @@ def test_bare_name_demangles_rust_symbols():
     assert _bare_name("<myapp::svc::Dog as myapp::svc::Animal>::speak::h444") == "speak"
     assert _bare_name("myapp::util::Cache<alloc::string::String>::get") == "get"
     assert _bare_name("myapp::util::process::<u32>") == "process"
-    assert _bare_name("myapp::run_all::{{closure}}") == cs.TRACE_QUALNAME_ANONYMOUS
+    assert _bare_name("myapp::run_all::{{closure}}") == tcs.TRACE_QUALNAME_ANONYMOUS
     assert (
-        _bare_name("myapp::run_all::{{closure}}::h5555") == cs.TRACE_QUALNAME_ANONYMOUS
+        _bare_name("myapp::run_all::{{closure}}::h5555") == tcs.TRACE_QUALNAME_ANONYMOUS
     )
     assert _bare_name("<myapp::Foo as core::default::Default>::default") == "default"
     assert _bare_name("main") == "main"

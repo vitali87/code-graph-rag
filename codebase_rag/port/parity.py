@@ -39,8 +39,9 @@ from ..graph_query import QueryFn, owner_check, project_qn_prefix, projects_nest
 from ..parsers.utils import is_static_decorator
 from ..types_defs import PropertyDict, PropertyValue, ResultValue
 from ..utils.path_utils import portable_posix
+from . import constants as pcs
 
-_CAMEL_BOUNDARY = re.compile(cs.PORT_CAMEL_BOUNDARY_PATTERN)
+_CAMEL_BOUNDARY = re.compile(pcs.PORT_CAMEL_BOUNDARY_PATTERN)
 
 
 class PortCheckError(ValueError):
@@ -76,7 +77,7 @@ class CallDifference(TypedDict):
 
 
 class CallsParity(TypedDict):
-    verdict: cs.ParityVerdict
+    verdict: pcs.ParityVerdict
     missing: list[CallDifference]
     extra: list[CallDifference]
     unpaired_old: list[str]
@@ -88,7 +89,7 @@ class ArityParity(TypedDict):
     # out. `open` is true when a side declares parameters past them (a rest
     # parameter, or a Python `*args`, keyword-only or `**kwargs` one), which
     # the counts alone cannot compare.
-    verdict: cs.ParityVerdict
+    verdict: pcs.ParityVerdict
     old: int | None
     new: int | None
     open: bool
@@ -97,8 +98,8 @@ class ArityParity(TypedDict):
 class PairReport(TypedDict):
     old: SymbolRef
     new: SymbolRef
-    paired_by: cs.PairedBy
-    verdict: cs.ParityVerdict
+    paired_by: pcs.PairedBy
+    verdict: pcs.ParityVerdict
     calls: CallsParity
     arity: ArityParity
 
@@ -181,7 +182,7 @@ class _Side(NamedTuple):
 
 
 class _Pairing(NamedTuple):
-    pairs: list[tuple[str, str, cs.PairedBy]]
+    pairs: list[tuple[str, str, pcs.PairedBy]]
     old_only: list[str]
     new_only: list[str]
     ambiguous: list[tuple[str, list[str], list[str]]]
@@ -190,18 +191,18 @@ class _Pairing(NamedTuple):
 def normalize_name(name: str) -> str:
     """Fold case convention and surrounding underscores, so `_read_number`,
     `readNumber` and `ReadNumber` compare equal."""
-    core = name.strip(cs.PORT_NAME_STRIP_CHARS) or name
-    return _CAMEL_BOUNDARY.sub(cs.PORT_NAME_JOIN, core).lower()
+    core = name.strip(pcs.PORT_NAME_STRIP_CHARS) or name
+    return _CAMEL_BOUNDARY.sub(pcs.PORT_NAME_JOIN, core).lower()
 
 
 def parse_pairs(values: Iterable[str]) -> list[tuple[str, str]]:
     """`OLD=NEW` options as (old, new) targets."""
     pairs: list[tuple[str, str]] = []
     for value in values:
-        old, sep, new = value.partition(cs.PORT_PAIR_SEPARATOR)
+        old, sep, new = value.partition(pcs.PORT_PAIR_SEPARATOR)
         if not sep or not old.strip() or not new.strip():
             raise PortCheckError(
-                cs.PORT_ERR_PAIR_FORMAT.format(value=value), cs.PORT_EXIT_USAGE
+                pcs.PORT_ERR_PAIR_FORMAT.format(value=value), pcs.PORT_EXIT_USAGE
             )
         pairs.append((old.strip(), new.strip()))
     return pairs
@@ -223,10 +224,10 @@ def port_check(
     new_scope = _normalise_scope(new.scope)
     if old.project == new.project and _overlaps(old_scope, new_scope):
         raise PortCheckError(
-            cs.PORT_ERR_OVERLAPPING_SCOPES.format(
+            pcs.PORT_ERR_OVERLAPPING_SCOPES.format(
                 old=old.scope, new=new.scope, project=old.project
             ),
-            cs.PORT_EXIT_USAGE,
+            pcs.PORT_EXIT_USAGE,
         )
     graphs: dict[str, _ProjectGraph] = {}
     for project in (old.project, new.project):
@@ -256,14 +257,14 @@ def port_check(
         summary=ParitySummary(
             pairs=len(reports),
             paired_by=PairedByCounts(
-                explicit=how.count(cs.PairedBy.EXPLICIT),
-                module=how.count(cs.PairedBy.MODULE),
-                container=how.count(cs.PairedBy.CONTAINER),
-                name=how.count(cs.PairedBy.NAME),
+                explicit=how.count(pcs.PairedBy.EXPLICIT),
+                module=how.count(pcs.PairedBy.MODULE),
+                container=how.count(pcs.PairedBy.CONTAINER),
+                name=how.count(pcs.PairedBy.NAME),
             ),
-            match=verdicts.count(cs.ParityVerdict.MATCH),
-            differs=verdicts.count(cs.ParityVerdict.DIFFERS),
-            unknown=verdicts.count(cs.ParityVerdict.UNKNOWN),
+            match=verdicts.count(pcs.ParityVerdict.MATCH),
+            differs=verdicts.count(pcs.ParityVerdict.DIFFERS),
+            unknown=verdicts.count(pcs.ParityVerdict.UNKNOWN),
             old_only=len(pairing.old_only),
             new_only=len(pairing.new_only),
             ambiguous=len(pairing.ambiguous),
@@ -289,7 +290,7 @@ def _text(value: ResultValue | PropertyValue) -> str:
 
 def _normalise_scope(scope: str) -> str:
     path = portable_posix(scope.strip())
-    return "" if path in cs.PORT_SCOPE_ROOTS else path
+    return "" if path in pcs.PORT_SCOPE_ROOTS else path
 
 
 def _in_scope(path: str, scope: str) -> bool:
@@ -313,7 +314,7 @@ def _container(label: str, qualified_name: str, name: str, path: str) -> str:
         )
         return normalize_name(owner.rsplit(cs.SEPARATOR_DOT, 1)[-1])
     file = PurePosixPath(path)
-    stem = file.parent.name if file.stem in cs.PORT_PACKAGE_ENTRY_STEMS else file.stem
+    stem = file.parent.name if file.stem in pcs.PORT_PACKAGE_ENTRY_STEMS else file.stem
     return normalize_name(stem)
 
 
@@ -330,7 +331,7 @@ def _module_path(path: str, scope: str) -> str:
     file = PurePosixPath(relative)
     parts = (
         file.parent.parts
-        if file.stem in cs.PORT_PACKAGE_ENTRY_STEMS
+        if file.stem in pcs.PORT_PACKAGE_ENTRY_STEMS
         else (*file.parent.parts, file.stem)
     )
     return cs.SEPARATOR_SLASH.join(normalize_name(part) for part in parts)
@@ -361,7 +362,7 @@ def _merge_resolution(
 ) -> None:
     # Several sites may call the same callee; one exact site makes the call
     # certain, whatever the others were bound by.
-    if callee not in callees or callees[callee] in cs.PORT_UNCERTAIN_RESOLUTIONS:
+    if callee not in callees or callees[callee] in pcs.PORT_UNCERTAIN_RESOLUTIONS:
         callees[callee] = resolution
 
 
@@ -385,7 +386,7 @@ def _load_project(fetch_all: QueryFn, project: str) -> _ProjectGraph:
     callables: dict[str, _Callable] = {}
     tests: set[str] = set()
     for (label, raw_qn), props in nodes.items():
-        if label not in cs.PORT_CALLABLE_LABELS:
+        if label not in pcs.PORT_CALLABLE_LABELS:
             continue
         qualified_name = str(raw_qn)
         found = _callable(label, qualified_name, props)
@@ -446,7 +447,7 @@ def _side(
     }
     if not chosen:
         raise PortCheckError(
-            cs.PORT_ERR_EMPTY_SCOPE.format(
+            pcs.PORT_ERR_EMPTY_SCOPE.format(
                 project=spec.project, scope=spec.scope or cs.SEPARATOR_DOT
             )
         )
@@ -470,7 +471,7 @@ def _resolve_target(side: _Side, target: str) -> str:
     matches = [qn for qn in side.callables if qn.endswith(cs.SEPARATOR_DOT + target)]
     if len(matches) != 1:
         raise PortCheckError(
-            cs.PORT_ERR_PAIR_TARGET.format(
+            pcs.PORT_ERR_PAIR_TARGET.format(
                 target=target,
                 count=len(matches),
                 scope=side.spec.scope or cs.SEPARATOR_DOT,
@@ -479,20 +480,20 @@ def _resolve_target(side: _Side, target: str) -> str:
     return matches[0]
 
 
-def _tier_key(found: _Callable, tier: cs.PairedBy) -> tuple[str, str, str]:
+def _tier_key(found: _Callable, tier: pcs.PairedBy) -> tuple[str, str, str]:
     # Keys are only compared within one tier, so a field the tier ignores is
     # left blank rather than dropped.
     match tier:
-        case cs.PairedBy.MODULE:
+        case pcs.PairedBy.MODULE:
             return (found.key, found.module, found.container)
-        case cs.PairedBy.CONTAINER:
+        case pcs.PairedBy.CONTAINER:
             return (found.key, "", found.container)
         case _:
             return (found.key, "", "")
 
 
 def _group(
-    callables: Iterable[_Callable], tier: cs.PairedBy
+    callables: Iterable[_Callable], tier: pcs.PairedBy
 ) -> dict[tuple[str, str, str], list[_Callable]]:
     groups: dict[tuple[str, str, str], list[_Callable]] = {}
     for found in callables:
@@ -503,7 +504,7 @@ def _group(
 def _pair_unique(
     olds: Iterable[_Callable],
     news: Iterable[_Callable],
-    tier: cs.PairedBy,
+    tier: pcs.PairedBy,
     pairing: _Pairing,
 ) -> tuple[list[_Callable], list[_Callable]]:
     """Pair every group holding one callable on each side; return the rest."""
@@ -535,14 +536,14 @@ def _pair_explicit(
         n = _resolve_target(new, new_target)
         if o in taken_old or n in taken_new:
             raise PortCheckError(
-                cs.PORT_ERR_PAIR_TWICE.format(
+                pcs.PORT_ERR_PAIR_TWICE.format(
                     qualified_name=o if o in taken_old else n
                 ),
-                cs.PORT_EXIT_USAGE,
+                pcs.PORT_EXIT_USAGE,
             )
         taken_old.add(o)
         taken_new.add(n)
-        pairing.pairs.append((o, n, cs.PairedBy.EXPLICIT))
+        pairing.pairs.append((o, n, pcs.PairedBy.EXPLICIT))
     return taken_old, taken_new
 
 
@@ -555,7 +556,7 @@ def _pair(old: _Side, new: _Side, explicit: Sequence[tuple[str, str]]) -> _Pairi
     # `paired_by: name` tells the reader the containers differ.
     left_old = [c for qn, c in old.callables.items() if qn not in taken_old]
     left_new = [c for qn, c in new.callables.items() if qn not in taken_new]
-    for tier in cs.PORT_PAIRING_TIERS:
+    for tier in pcs.PORT_PAIRING_TIERS:
         left_old, left_new = _pair_unique(left_old, left_new, tier, pairing)
     _settle_leftovers(left_old, left_new, pairing)
     return pairing
@@ -566,8 +567,8 @@ def _settle_leftovers(
 ) -> None:
     """What no tier paired: ambiguous where both sides still share a name,
     otherwise unpaired on its own side."""
-    old_by_name = _group(left_old, cs.PairedBy.NAME)
-    new_by_name = _group(left_new, cs.PairedBy.NAME)
+    old_by_name = _group(left_old, pcs.PairedBy.NAME)
+    new_by_name = _group(left_new, pcs.PairedBy.NAME)
     for key in sorted(old_by_name.keys() | new_by_name.keys()):
         olds = sorted(c.qualified_name for c in old_by_name.get(key, []))
         news = sorted(c.qualified_name for c in new_by_name.get(key, []))
@@ -606,11 +607,11 @@ def _calls_parity(
     ]
     differences = missing + extra
     if not differences:
-        verdict = cs.ParityVerdict.MATCH
-    elif all(d["resolution"] in cs.PORT_UNCERTAIN_RESOLUTIONS for d in differences):
-        verdict = cs.ParityVerdict.UNKNOWN
+        verdict = pcs.ParityVerdict.MATCH
+    elif all(d["resolution"] in pcs.PORT_UNCERTAIN_RESOLUTIONS for d in differences):
+        verdict = pcs.ParityVerdict.UNKNOWN
     else:
-        verdict = cs.ParityVerdict.DIFFERS
+        verdict = pcs.ParityVerdict.DIFFERS
     return CallsParity(
         verdict=verdict,
         missing=missing,
@@ -646,11 +647,11 @@ def _arity(found: _Callable, positional: tuple[str, ...] | None) -> _Arity | Non
 
 def _arity_parity(old: _Arity | None, new: _Arity | None) -> ArityParity:
     if old is None or new is None or old.open or new.open:
-        verdict = cs.ParityVerdict.UNKNOWN
+        verdict = pcs.ParityVerdict.UNKNOWN
     elif old.fixed == new.fixed:
-        verdict = cs.ParityVerdict.MATCH
+        verdict = pcs.ParityVerdict.MATCH
     else:
-        verdict = cs.ParityVerdict.DIFFERS
+        verdict = pcs.ParityVerdict.DIFFERS
     return ArityParity(
         verdict=verdict,
         old=None if old is None else old.fixed,
@@ -659,8 +660,8 @@ def _arity_parity(old: _Arity | None, new: _Arity | None) -> ArityParity:
     )
 
 
-def _worst(*verdicts: cs.ParityVerdict) -> cs.ParityVerdict:
-    return max(verdicts, key=cs.PARITY_VERDICT_RANK.__getitem__)
+def _worst(*verdicts: pcs.ParityVerdict) -> pcs.ParityVerdict:
+    return max(verdicts, key=pcs.PARITY_VERDICT_RANK.__getitem__)
 
 
 def _ref(side: _Side, qualified_name: str) -> SymbolRef:
@@ -679,7 +680,7 @@ def _pair_report(
     new: _Side,
     o: str,
     n: str,
-    paired_by: cs.PairedBy,
+    paired_by: pcs.PairedBy,
     twin_of_old: dict[str, str],
     twin_of_new: dict[str, str],
 ) -> PairReport:

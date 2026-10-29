@@ -59,6 +59,7 @@ from loguru import logger
 
 from .. import constants as cs
 from .. import logs as ls
+from . import constants as tcs
 from .instrumented import _bare_name as _cpp_bare_name
 from .pprof import (
     _backfill_start_lines,
@@ -87,9 +88,9 @@ if TYPE_CHECKING:
 
 # Bare-member demanglers reused from the per-runtime converters.
 _DEMANGLERS = {
-    cs.TRACE_LANGUAGE_GO: _go_bare_name,
-    cs.TRACE_LANGUAGE_RUST: _rust_bare_name,
-    cs.TRACE_LANGUAGE_CPP: _cpp_bare_name,
+    tcs.TRACE_LANGUAGE_GO: _go_bare_name,
+    tcs.TRACE_LANGUAGE_RUST: _rust_bare_name,
+    tcs.TRACE_LANGUAGE_CPP: _cpp_bare_name,
 }
 
 # Interpreted runtimes the eBPF profiler unwinds in-kernel. Their frames arrive
@@ -111,12 +112,12 @@ def _interpreted_name(name: str) -> str:
 
 
 _INTERPRETED_NAME_FNS = {
-    cs.TRACE_LANGUAGE_PYTHON: _interpreted_name,
+    tcs.TRACE_LANGUAGE_PYTHON: _interpreted_name,
 }
 
 # JVM frames are managed-runtime frames too, but they need a dedicated builder
 # (the package inside the symbol is the path), not just a name normaliser.
-_INTERPRETED_LANGUAGES = frozenset(_INTERPRETED_NAME_FNS) | {cs.TRACE_LANGUAGE_JVM}
+_INTERPRETED_LANGUAGES = frozenset(_INTERPRETED_NAME_FNS) | {tcs.TRACE_LANGUAGE_JVM}
 
 _SUPPORTED_LANGUAGES = frozenset(_DEMANGLERS) | _INTERPRETED_LANGUAGES
 
@@ -434,7 +435,7 @@ def _jvm_source_stem(package: str, simple: str) -> str:
     lambda classes all live in it. A Scala object's trailing ``$`` falls away
     with the split.
     """
-    outer = simple.split(cs.TRACE_JVM_NESTED_MARKER, 1)[0]
+    outer = simple.split(tcs.TRACE_JVM_NESTED_MARKER, 1)[0]
     return posixpath.join(package.replace(cs.SEPARATOR_DOT, cs.SEPARATOR_SLASH), outer)
 
 
@@ -570,7 +571,7 @@ def convert_ebpf_pprof(
     build_id: str | None = None,
     service: tuple[str, str] | None = None,
     workload_label: str | None = None,
-    language: str = cs.TRACE_LANGUAGE_GO,
+    language: str = tcs.TRACE_LANGUAGE_GO,
 ) -> int:
     """Convert an eBPF-profiler pprof profile to project call edges.
 
@@ -585,7 +586,7 @@ def convert_ebpf_pprof(
     interpreted = language in _INTERPRETED_LANGUAGES
     if language not in _SUPPORTED_LANGUAGES:
         raise TraceFormatError(
-            cs.TRACE_ERR_EBPF_LANGUAGE.format(
+            tcs.TRACE_ERR_EBPF_LANGUAGE.format(
                 language=language, supported=", ".join(sorted(_SUPPORTED_LANGUAGES))
             )
         )
@@ -593,12 +594,12 @@ def convert_ebpf_pprof(
     try:
         profile = _decode(raw)
     except TraceFormatError as e:
-        raise TraceFormatError(cs.TRACE_ERR_BAD_PPROF.format(path=profile_path)) from e
+        raise TraceFormatError(tcs.TRACE_ERR_BAD_PPROF.format(path=profile_path)) from e
     if not profile.strings or not profile.functions or not profile.samples:
-        raise TraceFormatError(cs.TRACE_ERR_BAD_PPROF.format(path=profile_path))
+        raise TraceFormatError(tcs.TRACE_ERR_BAD_PPROF.format(path=profile_path))
 
     builder: _FrameBuilder | _JvmFrameBuilder
-    if language == cs.TRACE_LANGUAGE_JVM:
+    if language == tcs.TRACE_LANGUAGE_JVM:
         builder = _JvmFrameBuilder(profile, repo_root)
     else:
         root_prefix = repo_root.resolve().as_posix() + "/"
@@ -627,10 +628,10 @@ def convert_ebpf_pprof(
         for (caller, callee), (count, workloads) in edges.items()
     ]
     header = TraceHeader(
-        version=cs.TRACE_FORMAT_VERSION,
+        version=tcs.TRACE_FORMAT_VERSION,
         language=language,
         repo_root=str(repo_root),
-        tracer=cs.TRACE_TOOL_NAME_EBPF,
+        tracer=tcs.TRACE_TOOL_NAME_EBPF,
         sampled=True,
     )
     write_trace_file(output, header, records)

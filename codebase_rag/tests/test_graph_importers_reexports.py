@@ -20,6 +20,7 @@ from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag import graph_query
 from codebase_rag.graph_cli import cli as graph_cli
+from codebase_rag.mcp import constants as mcs
 from codebase_rag.mcp.tools import MCPToolsRegistry
 from codebase_rag.types_defs import PropertyDict, ResultRow
 
@@ -633,7 +634,7 @@ def test_mcp_importers_declares_through_reexports_as_an_optional_boolean(
 ) -> None:
     schema = registry._tools[cs.MCPToolName.IMPORTERS].input_schema
     prop = schema["properties"][cs.MCPParamName.THROUGH_REEXPORTS]
-    assert prop["type"] == cs.MCPSchemaType.BOOLEAN
+    assert prop["type"] == mcs.MCPSchemaType.BOOLEAN
     assert cs.MCPParamName.THROUGH_REEXPORTS not in schema["required"]
 
 

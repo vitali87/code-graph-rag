@@ -16,6 +16,7 @@ from unittest.mock import patch
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.trace import constants as tcs
 from codebase_rag.trace.records import read_trace_file
 from codebase_rag.trace.resolution import _demangle_clr_name
 from codebase_rag.trace.speedscope import convert_speedscope
@@ -73,7 +74,7 @@ def test_converts_adjacent_project_frames_to_edges(tmp_path):
 
     count, header, records = _convert(tmp_path, profile)
 
-    assert header.language == cs.TRACE_LANGUAGE_DOTNET
+    assert header.language == tcs.TRACE_LANGUAGE_DOTNET
     # A sampled speedscope profile yields approximate edges.
     assert header.sampled is True
     assert count == len(records)
@@ -169,7 +170,7 @@ def test_converts_evented_profiles_from_dotnet_trace(tmp_path):
 
     count, header, records = _convert(tmp_path, profile)
 
-    assert header.language == cs.TRACE_LANGUAGE_DOTNET
+    assert header.language == tcs.TRACE_LANGUAGE_DOTNET
     # An evented profile records explicit open/close events, so its edges are
     # exact and must not be flagged approximate.
     assert header.sampled is False

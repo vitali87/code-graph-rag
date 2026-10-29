@@ -28,7 +28,9 @@ from codebase_rag.flow_verdict import (
     CYPHER_FLOW_EDGES,
     CYPHER_FLOW_REMOTE_EDGES,
 )
+from codebase_rag.mcp import constants as mcs
 from codebase_rag.mcp.tools import MCPToolsRegistry
+from codebase_rag.trace import constants as tcs
 from codebase_rag.trace import resolution
 from codebase_rag.trace.ingest import ingest_trace
 from codebase_rag.trace.records import (
@@ -522,8 +524,8 @@ async def test_mcp_tools_declare_an_optional_path_prefix_map(tmp_path):
     for name in (cs.MCPToolName.EXPLAIN_TRACEBACK, cs.MCPToolName.RANK_ROOT_CAUSES):
         schema = registry._tools[name].input_schema
         prop = schema["properties"][cs.MCPParamName.PATH_PREFIX_MAP]
-        assert prop["type"] == cs.MCPSchemaType.OBJECT
-        assert prop["additionalProperties"] == {"type": cs.MCPSchemaType.STRING}
+        assert prop["type"] == mcs.MCPSchemaType.OBJECT
+        assert prop["additionalProperties"] == {"type": mcs.MCPSchemaType.STRING}
         assert schema["required"] == [cs.MCPParamName.TRACEBACK_TEXT]
 
 
@@ -618,10 +620,10 @@ def _write_trace(
     write_trace_file(
         trace_path,
         TraceHeader(
-            version=cs.TRACE_FORMAT_VERSION,
-            language=cs.TRACE_LANGUAGE_PYTHON,
+            version=tcs.TRACE_FORMAT_VERSION,
+            language=tcs.TRACE_LANGUAGE_PYTHON,
             repo_root=recorded_root,
-            tracer=cs.TRACE_TOOL_NAME,
+            tracer=tcs.TRACE_TOOL_NAME,
         ),
         [
             CallRecord(

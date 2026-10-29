@@ -22,6 +22,7 @@ import pytest
 from codebase_rag import cli_help as ch
 from codebase_rag import constants as cs
 from codebase_rag.trace import cli as trace_cli
+from codebase_rag.trace import constants as tcs
 from codebase_rag.trace.pprof import _decompress
 from codebase_rag.trace.records import TraceFormatError
 
@@ -54,7 +55,7 @@ def test_a_gzip_that_expands_past_the_cap_is_refused(small_cap: int) -> None:
 def test_the_default_cap_refuses_a_real_bomb() -> None:
     # 320 MiB of zeros is about 320 KB compressed, well under the download
     # cap, and must fail without ever being held whole.
-    bomb = _bomb(cs.TRACE_MAX_DECOMPRESSED_BYTES + 64 * 1024 * 1024)
+    bomb = _bomb(tcs.TRACE_MAX_DECOMPRESSED_BYTES + 64 * 1024 * 1024)
 
     with pytest.raises(TraceFormatError, match="decompresses to more than"):
         _decompress(bomb, _PATH)
@@ -85,9 +86,9 @@ def test_many_empty_members_are_refused_quickly() -> None:
 
 
 def test_members_up_to_the_member_cap_are_read() -> None:
-    raw = gzip.compress(b"x") * cs.TRACE_MAX_GZIP_MEMBERS
+    raw = gzip.compress(b"x") * tcs.TRACE_MAX_GZIP_MEMBERS
 
-    assert _decompress(raw, _PATH) == b"x" * cs.TRACE_MAX_GZIP_MEMBERS
+    assert _decompress(raw, _PATH) == b"x" * tcs.TRACE_MAX_GZIP_MEMBERS
 
 
 def test_a_member_spanning_many_input_slices_is_read(

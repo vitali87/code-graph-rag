@@ -6,6 +6,7 @@ import sqlite3
 from pathlib import Path
 
 from .. import constants as cs
+from . import constants as ecs
 from . import functions
 from .sql import BEGIN_WRITE, COMMIT, ROLLBACK
 
@@ -24,18 +25,18 @@ def check_sqlite() -> None:
     have = sqlite3.sqlite_version_info
     if have < MIN_SQLITE_VERSION:
         raise EmbeddedGraphUnsupported(
-            cs.EG_ERR_SQLITE_VERSION.format(
-                need=cs.EG_VERSION_SEPARATOR.join(map(str, MIN_SQLITE_VERSION)),
+            ecs.EG_ERR_SQLITE_VERSION.format(
+                need=ecs.EG_VERSION_SEPARATOR.join(map(str, MIN_SQLITE_VERSION)),
                 have=sqlite3.sqlite_version,
             )
         )
     probe = sqlite3.connect(cs.EG_MEMORY_PATH)
     try:
-        probe.execute(cs.EG_SQL_JSON_PROBE)
+        probe.execute(ecs.EG_SQL_JSON_PROBE)
     except sqlite3.OperationalError as e:
         raise EmbeddedGraphUnsupported(
-            cs.EG_ERR_SQLITE_VERSION.format(
-                need=cs.EG_VERSION_SEPARATOR.join(map(str, MIN_SQLITE_VERSION)),
+            ecs.EG_ERR_SQLITE_VERSION.format(
+                need=ecs.EG_VERSION_SEPARATOR.join(map(str, MIN_SQLITE_VERSION)),
                 have=sqlite3.sqlite_version,
             )
         ) from e
@@ -54,15 +55,15 @@ def pin_planner_statistics(conn: sqlite3.Connection) -> None:
     older cgr, cannot leave the planner judging the graph by a moment when
     it was nearly empty.
     """
-    conn.execute(cs.EG_SQL_CREATE_STATS)
-    conn.execute(cs.EG_SQL_CLEAR_STATS)
-    conn.executemany(cs.EG_SQL_INSERT_STAT, cs.EG_PLANNER_STATISTICS)
-    conn.execute(cs.EG_SQL_RELOAD_STATS)
+    conn.execute(ecs.EG_SQL_CREATE_STATS)
+    conn.execute(ecs.EG_SQL_CLEAR_STATS)
+    conn.executemany(ecs.EG_SQL_INSERT_STAT, ecs.EG_PLANNER_STATISTICS)
+    conn.execute(ecs.EG_SQL_RELOAD_STATS)
 
 
 def _reuses_node_ids(conn: sqlite3.Connection) -> bool:
-    row = conn.execute(cs.EG_SQL_TABLE_DDL, (cs.EG_NODES_TABLE,)).fetchone()
-    return row is not None and cs.EG_AUTOINCREMENT not in str(row[0]).upper()
+    row = conn.execute(ecs.EG_SQL_TABLE_DDL, (ecs.EG_NODES_TABLE,)).fetchone()
+    return row is not None and ecs.EG_AUTOINCREMENT not in str(row[0]).upper()
 
 
 def stop_node_id_reuse(conn: sqlite3.Connection) -> None:
@@ -79,18 +80,20 @@ def stop_node_id_reuse(conn: sqlite3.Connection) -> None:
         if _reuses_node_ids(conn):
             indexes = [
                 row[0]
-                for row in conn.execute(cs.EG_SQL_TABLE_INDEXES, (cs.EG_NODES_TABLE,))
+                for row in conn.execute(ecs.EG_SQL_TABLE_INDEXES, (ecs.EG_NODES_TABLE,))
             ]
-            conn.execute(cs.EG_NODES_TABLE_SQL.format(table=cs.EG_NODES_REBUILD_TABLE))
             conn.execute(
-                cs.EG_SQL_COPY_NODES.format(
-                    dst=cs.EG_NODES_REBUILD_TABLE, src=cs.EG_NODES_TABLE
+                ecs.EG_NODES_TABLE_SQL.format(table=ecs.EG_NODES_REBUILD_TABLE)
+            )
+            conn.execute(
+                ecs.EG_SQL_COPY_NODES.format(
+                    dst=ecs.EG_NODES_REBUILD_TABLE, src=ecs.EG_NODES_TABLE
                 )
             )
-            conn.execute(cs.EG_SQL_DROP_TABLE.format(table=cs.EG_NODES_TABLE))
+            conn.execute(ecs.EG_SQL_DROP_TABLE.format(table=ecs.EG_NODES_TABLE))
             conn.execute(
-                cs.EG_SQL_RENAME_TABLE.format(
-                    src=cs.EG_NODES_REBUILD_TABLE, dst=cs.EG_NODES_TABLE
+                ecs.EG_SQL_RENAME_TABLE.format(
+                    src=ecs.EG_NODES_REBUILD_TABLE, dst=ecs.EG_NODES_TABLE
                 )
             )
             for index in indexes:
@@ -119,34 +122,34 @@ def open_connection(
     if read_only and target != cs.EG_MEMORY_PATH:
         # A URI built by pathlib, so `?`, `#` or `%` in a path stay literal.
         conn = sqlite3.connect(
-            Path(target).resolve().as_uri() + cs.EG_URI_READ_ONLY,
+            Path(target).resolve().as_uri() + ecs.EG_URI_READ_ONLY,
             uri=True,
             isolation_level=None,
             check_same_thread=False,
-            cached_statements=cs.EG_STATEMENT_CACHE_SIZE,
+            cached_statements=ecs.EG_STATEMENT_CACHE_SIZE,
         )
     else:
         conn = sqlite3.connect(
             target,
             isolation_level=None,
             check_same_thread=False,
-            cached_statements=cs.EG_STATEMENT_CACHE_SIZE,
+            cached_statements=ecs.EG_STATEMENT_CACHE_SIZE,
         )
-    conn.execute(cs.EG_PRAGMA_BUSY.format(ms=cs.EG_BUSY_TIMEOUT_MS))
-    conn.execute(cs.EG_PRAGMA_CACHE.format(kib=cs.EG_CACHE_SIZE_KIB))
+    conn.execute(ecs.EG_PRAGMA_BUSY.format(ms=cs.EG_BUSY_TIMEOUT_MS))
+    conn.execute(ecs.EG_PRAGMA_CACHE.format(kib=cs.EG_CACHE_SIZE_KIB))
     if heap_limit_mb is not None:
         conn.execute(
-            cs.EG_PRAGMA_HEAP_LIMIT.format(bytes=heap_limit_mb * cs.EG_BYTES_PER_MB)
+            ecs.EG_PRAGMA_HEAP_LIMIT.format(bytes=heap_limit_mb * ecs.EG_BYTES_PER_MB)
         )
     if not read_only:
-        for pragma in cs.EG_PRAGMAS:
+        for pragma in ecs.EG_PRAGMAS:
             conn.execute(pragma)
         stop_node_id_reuse(conn)
-        conn.executescript(cs.EG_SCHEMA_SQL)
+        conn.executescript(ecs.EG_SCHEMA_SQL)
         conn.execute(
-            cs.EG_META_UPSERT, (cs.EG_META_SCHEMA_VERSION, cs.EG_SCHEMA_VERSION)
+            ecs.EG_META_UPSERT, (ecs.EG_META_SCHEMA_VERSION, ecs.EG_SCHEMA_VERSION)
         )
-        conn.execute(cs.EG_SQL_SEED_GRAPH_VERSION)
+        conn.execute(ecs.EG_SQL_SEED_GRAPH_VERSION)
         pin_planner_statistics(conn)
     functions.register(conn, heap_limit_mb)
     return conn

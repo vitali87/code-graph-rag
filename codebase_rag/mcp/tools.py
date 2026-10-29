@@ -93,6 +93,8 @@ from codebase_rag.utils.terminal_console import terminal_aware_console
 from codebase_rag.vectors.store import clear_all_embeddings, delete_project_embeddings
 from codebase_rag.workspaces import WorkspaceConfig
 
+from . import constants as mcs
+
 if TYPE_CHECKING:
     from codebase_rag.context_slice import ContextSlice
     from codebase_rag.crash_correlation import (
@@ -108,13 +110,13 @@ def _query_refusal(error: str) -> QueryResultDict:
 
 
 def _param(
-    kind: cs.MCPSchemaType,
+    kind: mcs.MCPSchemaType,
     description: str,
     *,
     default: str | int | float | bool | None = None,
     minimum: int | None = None,
     items: dict[str, str] | None = None,
-    value_type: cs.MCPSchemaType | None = None,
+    value_type: mcs.MCPSchemaType | None = None,
 ) -> MCPInputSchemaProperty:
     """One input property of an MCP tool's JSON schema; `value_type` is the
     type of an object's values when it is used as a map."""
@@ -126,7 +128,7 @@ def _param(
     if items is not None:
         prop["items"] = items
     if value_type is not None:
-        prop["additionalProperties"] = {cs.MCPSchemaField.TYPE: value_type}
+        prop["additionalProperties"] = {mcs.MCPSchemaField.TYPE: value_type}
     return prop
 
 
@@ -144,7 +146,7 @@ def _tool(
         name=name,
         description=td.MCP_TOOLS[name],
         input_schema=MCPInputSchema(
-            type=cs.MCPSchemaType.OBJECT,
+            type=mcs.MCPSchemaType.OBJECT,
             properties=dict(properties or {}),
             required=list(required),
         ),
@@ -156,7 +158,7 @@ def _tool(
 def _found_nothing(result: object) -> bool:
     """An empty walk, or a lookup that answered `found: false`."""
     return result == [] or (
-        isinstance(result, dict) and result.get(cs.MCP_KEY_FOUND) is False
+        isinstance(result, dict) and result.get(mcs.MCP_KEY_FOUND) is False
     )
 
 
@@ -191,9 +193,11 @@ def _paginate(full_path: Path, start: int, limit: int | None, file_path: str) ->
     # land on a line.
     if start >= total_lines and start > 0:
         return te.failure(
-            cs.MCP_READ_PAST_END.format(offset=start, path=file_path, total=total_lines)
+            mcs.MCP_READ_PAST_END.format(
+                offset=start, path=file_path, total=total_lines
+            )
         )
-    header = cs.MCP_PAGINATION_HEADER.format(
+    header = mcs.MCP_PAGINATION_HEADER.format(
         start=start + 1,
         end=start + len(sliced_lines),
         total=total_lines,
@@ -529,7 +533,7 @@ class MCPToolsRegistry:
                 self.delete_project,
                 {
                     cs.MCPParamName.PROJECT_NAME: _param(
-                        cs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT_NAME
+                        mcs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT_NAME
                     )
                 },
                 [cs.MCPParamName.PROJECT_NAME],
@@ -539,7 +543,7 @@ class MCPToolsRegistry:
                 self.wipe_database,
                 {
                     cs.MCPParamName.CONFIRM: _param(
-                        cs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_CONFIRM
+                        mcs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_CONFIRM
                     )
                 },
                 [cs.MCPParamName.CONFIRM],
@@ -560,14 +564,14 @@ class MCPToolsRegistry:
                 self.reingest,
                 {
                     cs.MCPParamName.PATHS: _param(
-                        cs.MCPSchemaType.ARRAY,
+                        mcs.MCPSchemaType.ARRAY,
                         td.MCP_PARAM_REINGEST_PATHS,
-                        items={cs.MCPSchemaField.TYPE: cs.MCPSchemaType.STRING},
+                        items={mcs.MCPSchemaField.TYPE: mcs.MCPSchemaType.STRING},
                     ),
                     cs.MCPParamName.DELETED: _param(
-                        cs.MCPSchemaType.ARRAY,
+                        mcs.MCPSchemaType.ARRAY,
                         td.MCP_PARAM_REINGEST_DELETED,
-                        items={cs.MCPSchemaField.TYPE: cs.MCPSchemaType.STRING},
+                        items={mcs.MCPSchemaField.TYPE: mcs.MCPSchemaType.STRING},
                     ),
                 },
                 [cs.MCPParamName.PATHS],
@@ -675,19 +679,19 @@ class MCPToolsRegistry:
                 self.rename,
                 {
                     cs.MCPParamName.QUALIFIED_NAME: _param(
-                        cs.MCPSchemaType.STRING, td.MCP_PARAM_QUALIFIED_NAME
+                        mcs.MCPSchemaType.STRING, td.MCP_PARAM_QUALIFIED_NAME
                     ),
                     cs.MCPParamName.NEW_NAME: _param(
-                        cs.MCPSchemaType.STRING, td.MCP_PARAM_NEW_NAME
+                        mcs.MCPSchemaType.STRING, td.MCP_PARAM_NEW_NAME
                     ),
                     cs.MCPParamName.ALLOW_HEURISTIC: _param(
-                        cs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_ALLOW_HEURISTIC
+                        mcs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_ALLOW_HEURISTIC
                     ),
                     cs.MCPParamName.DRY_RUN: _param(
-                        cs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_RENAME_DRY_RUN
+                        mcs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_RENAME_DRY_RUN
                     ),
                     cs.MCPParamName.PROJECT: _param(
-                        cs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
+                        mcs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
                     ),
                 },
                 [cs.MCPParamName.QUALIFIED_NAME, cs.MCPParamName.NEW_NAME],
@@ -697,13 +701,13 @@ class MCPToolsRegistry:
                 self.context,
                 {
                     cs.MCPParamName.TARGET: _param(
-                        cs.MCPSchemaType.STRING, td.MCP_PARAM_CONTEXT_TARGET
+                        mcs.MCPSchemaType.STRING, td.MCP_PARAM_CONTEXT_TARGET
                     ),
                     cs.MCPParamName.BUDGET_TOKENS: _param(
-                        cs.MCPSchemaType.INTEGER, td.MCP_PARAM_BUDGET_TOKENS
+                        mcs.MCPSchemaType.INTEGER, td.MCP_PARAM_BUDGET_TOKENS
                     ),
                     cs.MCPParamName.PROJECT: _param(
-                        cs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
+                        mcs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
                     ),
                 },
                 [cs.MCPParamName.TARGET],
@@ -713,10 +717,10 @@ class MCPToolsRegistry:
                 self.query_code_graph,
                 {
                     cs.MCPParamName.NATURAL_LANGUAGE_QUERY: _param(
-                        cs.MCPSchemaType.STRING, td.MCP_PARAM_NATURAL_LANGUAGE_QUERY
+                        mcs.MCPSchemaType.STRING, td.MCP_PARAM_NATURAL_LANGUAGE_QUERY
                     ),
                     cs.MCPParamName.PROJECT: _param(
-                        cs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
+                        mcs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
                     ),
                 },
                 [cs.MCPParamName.NATURAL_LANGUAGE_QUERY],
@@ -726,7 +730,7 @@ class MCPToolsRegistry:
                 self.get_code_snippet,
                 {
                     cs.MCPParamName.QUALIFIED_NAME: _param(
-                        cs.MCPSchemaType.STRING, td.MCP_PARAM_QUALIFIED_NAME
+                        mcs.MCPSchemaType.STRING, td.MCP_PARAM_QUALIFIED_NAME
                     )
                 },
                 [cs.MCPParamName.QUALIFIED_NAME],
@@ -736,13 +740,13 @@ class MCPToolsRegistry:
                 self.surgical_replace_code,
                 {
                     cs.MCPParamName.FILE_PATH: _param(
-                        cs.MCPSchemaType.STRING, td.MCP_PARAM_FILE_PATH
+                        mcs.MCPSchemaType.STRING, td.MCP_PARAM_FILE_PATH
                     ),
                     cs.MCPParamName.TARGET_CODE: _param(
-                        cs.MCPSchemaType.STRING, td.MCP_PARAM_TARGET_CODE
+                        mcs.MCPSchemaType.STRING, td.MCP_PARAM_TARGET_CODE
                     ),
                     cs.MCPParamName.REPLACEMENT_CODE: _param(
-                        cs.MCPSchemaType.STRING, td.MCP_PARAM_REPLACEMENT_CODE
+                        mcs.MCPSchemaType.STRING, td.MCP_PARAM_REPLACEMENT_CODE
                     ),
                 },
                 [
@@ -757,17 +761,17 @@ class MCPToolsRegistry:
                 self.read_file,
                 {
                     cs.MCPParamName.FILE_PATH: _param(
-                        cs.MCPSchemaType.STRING, td.MCP_PARAM_FILE_PATH
+                        mcs.MCPSchemaType.STRING, td.MCP_PARAM_FILE_PATH
                     ),
                     cs.MCPParamName.OFFSET: _param(
-                        cs.MCPSchemaType.INTEGER,
+                        mcs.MCPSchemaType.INTEGER,
                         td.MCP_PARAM_OFFSET,
-                        minimum=cs.MCP_READ_OFFSET_MINIMUM,
+                        minimum=mcs.MCP_READ_OFFSET_MINIMUM,
                     ),
                     cs.MCPParamName.LIMIT: _param(
-                        cs.MCPSchemaType.INTEGER,
+                        mcs.MCPSchemaType.INTEGER,
                         td.MCP_PARAM_LIMIT,
-                        minimum=cs.MCP_READ_LIMIT_MINIMUM,
+                        minimum=mcs.MCP_READ_LIMIT_MINIMUM,
                     ),
                 },
                 [cs.MCPParamName.FILE_PATH],
@@ -778,10 +782,10 @@ class MCPToolsRegistry:
                 self.write_file,
                 {
                     cs.MCPParamName.FILE_PATH: _param(
-                        cs.MCPSchemaType.STRING, td.MCP_PARAM_FILE_PATH
+                        mcs.MCPSchemaType.STRING, td.MCP_PARAM_FILE_PATH
                     ),
                     cs.MCPParamName.CONTENT: _param(
-                        cs.MCPSchemaType.STRING, td.MCP_PARAM_CONTENT
+                        mcs.MCPSchemaType.STRING, td.MCP_PARAM_CONTENT
                     ),
                 },
                 [
@@ -795,7 +799,7 @@ class MCPToolsRegistry:
                 self.list_directory,
                 {
                     cs.MCPParamName.DIRECTORY_PATH: _param(
-                        cs.MCPSchemaType.STRING,
+                        mcs.MCPSchemaType.STRING,
                         td.MCP_PARAM_DIRECTORY_PATH,
                         default=cs.MCP_DEFAULT_DIRECTORY,
                     )
@@ -809,13 +813,13 @@ class MCPToolsRegistry:
                 self.semantic_search,
                 {
                     cs.MCPParamName.NATURAL_LANGUAGE_QUERY: _param(
-                        cs.MCPSchemaType.STRING, td.MCP_PARAM_NATURAL_LANGUAGE_QUERY
+                        mcs.MCPSchemaType.STRING, td.MCP_PARAM_NATURAL_LANGUAGE_QUERY
                     ),
                     cs.MCPParamName.TOP_K: _param(
-                        cs.MCPSchemaType.INTEGER, td.MCP_PARAM_TOP_K, default=5
+                        mcs.MCPSchemaType.INTEGER, td.MCP_PARAM_TOP_K, default=5
                     ),
                     cs.MCPParamName.PROJECT: _param(
-                        cs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
+                        mcs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
                     ),
                 },
                 [cs.MCPParamName.NATURAL_LANGUAGE_QUERY],
@@ -828,10 +832,10 @@ class MCPToolsRegistry:
                 self.structural_search,
                 {
                     cs.MCPParamName.PATTERN: _param(
-                        cs.MCPSchemaType.STRING, td.MCP_PARAM_PATTERN
+                        mcs.MCPSchemaType.STRING, td.MCP_PARAM_PATTERN
                     ),
                     cs.MCPParamName.LANGUAGE: _param(
-                        cs.MCPSchemaType.STRING, td.MCP_PARAM_LANGUAGE
+                        mcs.MCPSchemaType.STRING, td.MCP_PARAM_LANGUAGE
                     ),
                 },
                 [cs.MCPParamName.PATTERN],
@@ -842,16 +846,16 @@ class MCPToolsRegistry:
                 self.structural_replace,
                 {
                     cs.MCPParamName.PATTERN: _param(
-                        cs.MCPSchemaType.STRING, td.MCP_PARAM_PATTERN
+                        mcs.MCPSchemaType.STRING, td.MCP_PARAM_PATTERN
                     ),
                     cs.MCPParamName.REWRITE: _param(
-                        cs.MCPSchemaType.STRING, td.MCP_PARAM_REWRITE
+                        mcs.MCPSchemaType.STRING, td.MCP_PARAM_REWRITE
                     ),
                     cs.MCPParamName.LANGUAGE: _param(
-                        cs.MCPSchemaType.STRING, td.MCP_PARAM_LANGUAGE
+                        mcs.MCPSchemaType.STRING, td.MCP_PARAM_LANGUAGE
                     ),
                     cs.MCPParamName.DRY_RUN: _param(
-                        cs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_DRY_RUN, default=True
+                        mcs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_DRY_RUN, default=True
                     ),
                 },
                 [cs.MCPParamName.PATTERN, cs.MCPParamName.REWRITE],
@@ -867,20 +871,20 @@ class MCPToolsRegistry:
             self.find_duplicate_code,
             {
                 cs.MCPParamName.PROJECT: _param(
-                    cs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
+                    mcs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
                 ),
                 cs.MCPParamName.THRESHOLD: _param(
-                    cs.MCPSchemaType.NUMBER,
+                    mcs.MCPSchemaType.NUMBER,
                     td.MCP_PARAM_THRESHOLD,
                     default=cs.DUPLICATES_DEFAULT_THRESHOLD,
                 ),
                 cs.MCPParamName.MIN_SIZE: _param(
-                    cs.MCPSchemaType.INTEGER,
+                    mcs.MCPSchemaType.INTEGER,
                     td.MCP_PARAM_MIN_SIZE,
                     default=cs.DUPLICATES_DEFAULT_MIN_NODES,
                 ),
                 cs.MCPParamName.LIMIT: _param(
-                    cs.MCPSchemaType.INTEGER,
+                    mcs.MCPSchemaType.INTEGER,
                     td.MCP_PARAM_DUPLICATES_LIMIT,
                     default=cs.DUPLICATES_DEFAULT_GROUP_LIMIT,
                 ),
@@ -892,7 +896,7 @@ class MCPToolsRegistry:
             self.get_function_source,
             {
                 cs.MCPParamName.NODE_ID: _param(
-                    cs.MCPSchemaType.INTEGER, td.MCP_PARAM_NODE_ID
+                    mcs.MCPSchemaType.INTEGER, td.MCP_PARAM_NODE_ID
                 )
             },
             [cs.MCPParamName.NODE_ID],
@@ -904,7 +908,7 @@ class MCPToolsRegistry:
             self.ask_agent,
             {
                 cs.MCPParamName.QUESTION: _param(
-                    cs.MCPSchemaType.STRING, td.MCP_PARAM_QUESTION
+                    mcs.MCPSchemaType.STRING, td.MCP_PARAM_QUESTION
                 )
             },
             [cs.MCPParamName.QUESTION],
@@ -915,10 +919,10 @@ class MCPToolsRegistry:
             self.flow_verdict,
             {
                 cs.MCPParamName.SOURCE_QN: _param(
-                    cs.MCPSchemaType.STRING, td.MCP_PARAM_SOURCE_QN
+                    mcs.MCPSchemaType.STRING, td.MCP_PARAM_SOURCE_QN
                 ),
                 cs.MCPParamName.SINK_QN: _param(
-                    cs.MCPSchemaType.STRING, td.MCP_PARAM_SINK_QN
+                    mcs.MCPSchemaType.STRING, td.MCP_PARAM_SINK_QN
                 ),
             },
             [cs.MCPParamName.SOURCE_QN, cs.MCPParamName.SINK_QN],
@@ -926,12 +930,12 @@ class MCPToolsRegistry:
 
         traceback_params: MCPInputSchemaProperties = {
             cs.MCPParamName.TRACEBACK_TEXT: _param(
-                cs.MCPSchemaType.STRING, td.MCP_PARAM_TRACEBACK_TEXT
+                mcs.MCPSchemaType.STRING, td.MCP_PARAM_TRACEBACK_TEXT
             ),
             cs.MCPParamName.PATH_PREFIX_MAP: _param(
-                cs.MCPSchemaType.OBJECT,
+                mcs.MCPSchemaType.OBJECT,
                 td.MCP_PARAM_PATH_PREFIX_MAP,
-                value_type=cs.MCPSchemaType.STRING,
+                value_type=mcs.MCPSchemaType.STRING,
             ),
         }
         for name, handler in (
@@ -959,7 +963,7 @@ class MCPToolsRegistry:
         for name, metadata in self._tools.items():
             if name == cs.MCPToolName.WIPE_DATABASE:
                 refusal: te.ToolFailure | None = te.ToolFailure(
-                    cs.MCP_WIPE_REFUSED_IN_WORKSPACE.format(
+                    mcs.MCP_WIPE_REFUSED_IN_WORKSPACE.format(
                         workspace=self.workspace.name,
                         known=cs.SEPARATOR_COMMA_SPACE.join(
                             self.workspace.project_names()
@@ -980,7 +984,7 @@ class MCPToolsRegistry:
         if root in repos:
             return None
         return te.ToolFailure(
-            cs.MCP_ROOT_OUTSIDE_WORKSPACE.format(
+            mcs.MCP_ROOT_OUTSIDE_WORKSPACE.format(
                 root=root,
                 workspace=self.workspace.name,
                 known=cs.SEPARATOR_COMMA_SPACE.join(map(str, repos)),
@@ -1063,7 +1067,7 @@ class MCPToolsRegistry:
         if owner is not None and owner in names:
             return None
         return te.ToolFailure(
-            cs.MCP_NAME_OUTSIDE_WORKSPACE.format(
+            mcs.MCP_NAME_OUTSIDE_WORKSPACE.format(
                 name=qualified_name,
                 workspace=self.workspace.name,
                 known=cs.SEPARATOR_COMMA_SPACE.join(names),
@@ -1105,7 +1109,7 @@ class MCPToolsRegistry:
         if owner is not None and self._source_root_for(owner) is not None:
             return None
         return te.ToolFailure(
-            cs.MCP_WORKSPACE_SOURCE_UNPROVEN.format(
+            mcs.MCP_WORKSPACE_SOURCE_UNPROVEN.format(
                 name=qualified_name, project=owner, workspace=self.workspace.name
             )
         )
@@ -1373,7 +1377,7 @@ class MCPToolsRegistry:
         return DeleteProjectSuccessResult(
             success=True,
             project=project_name,
-            message=cs.MCP_PROJECT_DELETED.format(project_name=project_name),
+            message=mcs.MCP_PROJECT_DELETED.format(project_name=project_name),
         )
 
     async def delete_project(self, project_name: str) -> DeleteProjectResult:
@@ -1393,7 +1397,7 @@ class MCPToolsRegistry:
 
     async def wipe_database(self, confirm: bool) -> str:
         if not confirm:
-            return cs.MCP_WIPE_CANCELLED
+            return mcs.MCP_WIPE_CANCELLED
         logger.warning(ls.MCP_WIPING_DATABASE)
         try:
             async with self._ingestor_lock:
@@ -1413,7 +1417,7 @@ class MCPToolsRegistry:
                 # to all of them -- the one clear that is entitled to retire a
                 # widened flag.
                 self.marker.damage = GraphDamage()
-            return cs.MCP_WIPE_SUCCESS
+            return mcs.MCP_WIPE_SUCCESS
         except Exception as e:  # noqa: BLE001 -- tool boundary: any failure becomes the tool's error result
             # A wipe spans every project and writes no marker, so its damage
             # cannot be recorded under one project's name: an attribution
@@ -1425,7 +1429,7 @@ class MCPToolsRegistry:
             # record and NO single project's successful clear may retire it.
             self.marker.damage.unbounded = True
             logger.error(ls.MCP_ERROR_WIPE.format(error=e))
-            return te.ToolFailure(cs.MCP_WIPE_ERROR.format(error=e))
+            return te.ToolFailure(mcs.MCP_WIPE_ERROR.format(error=e))
 
     def _ignore_sets(self) -> tuple[frozenset[str] | None, frozenset[str] | None]:
         # MCP has no `--exclude` flag and no interactive setup, so the
@@ -1496,7 +1500,7 @@ class MCPToolsRegistry:
             raise RuntimeError(stuck)
         self._live_updater = updater
 
-        return cs.MCP_INDEX_SUCCESS_PROJECT.format(
+        return mcs.MCP_INDEX_SUCCESS_PROJECT.format(
             path=self.project_root, project_name=project_name
         )
 
@@ -1531,7 +1535,7 @@ class MCPToolsRegistry:
             self._index_repository_sync,
             ls.MCP_INDEXING_REPO,
             ls.MCP_ERROR_INDEXING,
-            cs.MCP_INDEX_ERROR,
+            mcs.MCP_INDEX_ERROR,
         )
 
     def _update_repository_sync(self) -> str:
@@ -1591,7 +1595,7 @@ class MCPToolsRegistry:
         if (stuck := self.marker.require_cleared(project_name)) is not None:
             raise RuntimeError(stuck)
         self._live_updater = updater
-        return cs.MCP_UPDATE_SUCCESS.format(path=self.project_root)
+        return mcs.MCP_UPDATE_SUCCESS.format(path=self.project_root)
 
     def _cleanup_embeddings_then_begin_writing(self, project_name: str) -> None:
         """The step between a `writing=False` mark and the first destructive write.
@@ -1669,10 +1673,10 @@ class MCPToolsRegistry:
         latched_here = self.marker.damage.blocks(project_name)
         if latched_here or persisted_incomplete:
             raise ValueError(
-                cs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=project_name)
+                mcs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=project_name)
             )
         if project_name not in self.ingestor.list_projects():
-            raise ValueError(cs.MCP_REINGEST_NEEDS_INDEX.format(project=project_name))
+            raise ValueError(mcs.MCP_REINGEST_NEEDS_INDEX.format(project=project_name))
         # Marked after the guards above -- they ask whether a PREVIOUS run
         # left the graph partial, so marking first would make every
         # reingest refuse on its own marker -- and before
@@ -1797,7 +1801,7 @@ class MCPToolsRegistry:
         except Exception as e:  # noqa: BLE001 -- tool boundary: any failure becomes the tool's error result
             logger.error(ls.MCP_ERROR_REINGEST.format(error=e))
             return ReingestToolResult(
-                error=cs.MCP_REINGEST_ERROR.format(error=e),
+                error=mcs.MCP_REINGEST_ERROR.format(error=e),
                 reparsed=[],
                 affected=[],
                 removed=[],
@@ -1810,7 +1814,7 @@ class MCPToolsRegistry:
             self._update_repository_sync,
             ls.MCP_UPDATING_REPO,
             ls.MCP_ERROR_UPDATING,
-            cs.MCP_UPDATE_ERROR,
+            mcs.MCP_UPDATE_ERROR,
         )
 
     async def semantic_search(
@@ -2027,7 +2031,7 @@ class MCPToolsRegistry:
             # whichever failure owns it.
             if marked_here is not None:
                 self.marker.abandon_before_writing(marked_here)
-            return "\n\n" + cs.MCP_DELTA_ERROR.format(error=e)
+            return "\n\n" + mcs.MCP_DELTA_ERROR.format(error=e)
         except Exception as e:  # noqa: BLE001 -- tool boundary: any failure becomes the tool's error result
             # The re-ingest may have deleted a subtree it never rebuilt: the
             # same invalidation `_reingest_sync` applies, so no later query
@@ -2049,7 +2053,7 @@ class MCPToolsRegistry:
             # Added on the rebase: this site landed on main (#1525) after the
             # attribution was written, so it had no way to know about it.
             self.marker.damage.from_failed_clear = None
-            return "\n\n" + cs.MCP_DELTA_ERROR.format(error=e)
+            return "\n\n" + mcs.MCP_DELTA_ERROR.format(error=e)
         if marked_here is not None:
             # Invariant (b): the hydration marked before its constraint
             # migration, so a completed delta must lift it. A failed clear is
@@ -2057,10 +2061,10 @@ class MCPToolsRegistry:
             # this method never raises, so the message is the only channel.
             if (stuck := self.marker.require_cleared(marked_here)) is not None:
                 logger.warning(ls.MCP_DELTA_FAILED.format(error=stuck))
-                return "\n\n" + cs.MCP_DELTA_ERROR.format(error=stuck)
+                return "\n\n" + mcs.MCP_DELTA_ERROR.format(error=stuck)
         return (
             "\n\n"
-            + cs.MCP_DELTA_HEADER
+            + mcs.MCP_DELTA_HEADER
             + "\n"
             + json.dumps(delta, indent=cs.MCP_JSON_INDENT)
         )
@@ -2101,12 +2105,12 @@ class MCPToolsRegistry:
                     self.rag_agent,
                     question,
                     approve=False,
-                    denial=cs.MCP_ASK_AGENT_APPROVAL_DENIED,
+                    denial=mcs.MCP_ASK_AGENT_APPROVAL_DENIED,
                 )
             return {"output": answer}
         except Exception as e:  # noqa: BLE001 -- tool boundary: any failure becomes the tool's error result
             logger.error(ls.MCP_ASK_AGENT_ERROR.format(error=e))
-            return {"error": cs.MCP_ASK_AGENT_ERROR.format(error=e)}
+            return {"error": mcs.MCP_ASK_AGENT_ERROR.format(error=e)}
 
     # --- deterministic graph queries (issue #1523) -------------------------------
 
@@ -2121,14 +2125,14 @@ class MCPToolsRegistry:
     ) -> ToolMetadata:
         # String parameters unless named otherwise, and the `project` every
         # graph read is scoped by.
-        kinds = dict.fromkeys(integer_params or (), cs.MCPSchemaType.INTEGER)
-        kinds |= dict.fromkeys(boolean_params or (), cs.MCPSchemaType.BOOLEAN)
+        kinds = dict.fromkeys(integer_params or (), mcs.MCPSchemaType.INTEGER)
+        kinds |= dict.fromkeys(boolean_params or (), mcs.MCPSchemaType.BOOLEAN)
         properties = {
-            key: _param(kinds.get(key, cs.MCPSchemaType.STRING), description)
+            key: _param(kinds.get(key, mcs.MCPSchemaType.STRING), description)
             for key, description in params.items()
         }
         properties[cs.MCPParamName.PROJECT] = _param(
-            cs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
+            mcs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
         )
         return _tool(name, handler, properties, required)
 
@@ -2215,7 +2219,7 @@ class MCPToolsRegistry:
         except Exception as e:  # noqa: BLE001 -- tool boundary: any failure becomes the tool's error result
             logger.error(ls.MCP_GRAPH_QUERY_ERROR.format(tool=tool, error=e))
             return GraphRefusal(
-                error=cs.MCP_GRAPH_QUERY_ERROR.format(tool=tool, error=e)
+                error=mcs.MCP_GRAPH_QUERY_ERROR.format(tool=tool, error=e)
             )
 
     def _nameable(self, projects: Collection[str]) -> list[str]:
@@ -2239,24 +2243,24 @@ class MCPToolsRegistry:
         close = graph_query.close_project_names(project, known)
         if close:
             return te.ToolFailure(
-                cs.MCP_UNKNOWN_PROJECT_NAMED.format(project=project)
+                mcs.MCP_UNKNOWN_PROJECT_NAMED.format(project=project)
                 + graph_query.did_you_mean(close)
             )
         listed = cs.SEPARATOR_COMMA_SPACE.join(known)
         if self.workspace is None:
             return te.ToolFailure(
-                cs.MCP_UNKNOWN_PROJECT.format(project=project, known=listed)
+                mcs.MCP_UNKNOWN_PROJECT.format(project=project, known=listed)
             )
         # Labelled as the workspace's, so a short list does not read as the
         # whole graph, and an empty one is said rather than left blank.
         if not known:
             return te.ToolFailure(
-                cs.MCP_UNKNOWN_WORKSPACE_PROJECT_NONE_INDEXED.format(
+                mcs.MCP_UNKNOWN_WORKSPACE_PROJECT_NONE_INDEXED.format(
                     project=project, workspace=self.workspace.name
                 )
             )
         return te.ToolFailure(
-            cs.MCP_UNKNOWN_WORKSPACE_PROJECT.format(
+            mcs.MCP_UNKNOWN_WORKSPACE_PROJECT.format(
                 project=project, workspace=self.workspace.name, known=listed
             )
         )
@@ -2265,7 +2269,7 @@ class MCPToolsRegistry:
         self,
         project_name: str,
         known: list[str],
-        message: str = cs.MCP_ROOT_NOT_INDEXED,
+        message: str = mcs.MCP_ROOT_NOT_INDEXED,
     ) -> te.ToolFailure:
         root = Path(self.project_root)
         # A repository indexed under a name of its own is the likeliest
@@ -2293,16 +2297,16 @@ class MCPToolsRegistry:
         service boundary, in another project.
         """
         problems = [
-            cs.MCP_FLOW_ENDPOINT.format(side=side, problem=problem)
+            mcs.MCP_FLOW_ENDPOINT.format(side=side, problem=problem)
             for side, qualified_name in (
-                (cs.MCP_FLOW_SOURCE, source),
-                (cs.MCP_FLOW_SINK, sink),
+                (mcs.MCP_FLOW_SOURCE, source),
+                (mcs.MCP_FLOW_SINK, sink),
             )
             if (problem := self._unknown_target_error(project_name, qualified_name))
         ]
         if not problems and (owner := self._other_owner(project_name, source)):
             problems.append(
-                cs.MCP_FLOW_SOURCE_ELSEWHERE.format(
+                mcs.MCP_FLOW_SOURCE_ELSEWHERE.format(
                     qualified_name=source, owner=owner, project=project_name
                 )
             )
@@ -2319,7 +2323,7 @@ class MCPToolsRegistry:
 
     @staticmethod
     def _target_refusal(unknown: graph_query.UnknownTargetError) -> str:
-        return unknown.refusal(cs.MCP_UNKNOWN_TARGET, cs.MCP_UNKNOWN_TARGET_HINT)
+        return unknown.refusal(mcs.MCP_UNKNOWN_TARGET, mcs.MCP_UNKNOWN_TARGET_HINT)
 
     def _unknown_target_error(self, project_name: str, target: str) -> str | None:
         try:
@@ -2351,7 +2355,7 @@ class MCPToolsRegistry:
             path, line = location
             raise graph_query.UnknownTargetError(
                 target,
-                reason=cs.MCP_RESOLVE_LINE_OUT_OF_RANGE.format(path=path, line=line),
+                reason=mcs.MCP_RESOLVE_LINE_OUT_OF_RANGE.format(path=path, line=line),
             )
         return graph_query.resolve_or_refuse(
             self.ingestor.fetch_all, project_name, target
@@ -2376,7 +2380,7 @@ class MCPToolsRegistry:
             if project in names:
                 return project, None
             return None, te.ToolFailure(
-                cs.MCP_PROJECT_OUTSIDE_WORKSPACE.format(
+                mcs.MCP_PROJECT_OUTSIDE_WORKSPACE.format(
                     project=project,
                     workspace=self.workspace.name,
                     known=cs.SEPARATOR_COMMA_SPACE.join(names),
@@ -2385,7 +2389,7 @@ class MCPToolsRegistry:
         default = self._workspace_default_project()
         if default is None:
             return None, te.ToolFailure(
-                cs.MCP_WORKSPACE_DEFAULT_AMBIGUOUS.format(
+                mcs.MCP_WORKSPACE_DEFAULT_AMBIGUOUS.format(
                     workspace=self.workspace.name,
                     count=len(names),
                     known=cs.SEPARATOR_COMMA_SPACE.join(names),
@@ -2411,7 +2415,7 @@ class MCPToolsRegistry:
             return default, None
         names = self.workspace.project_names()
         return None, te.ToolFailure(
-            cs.MCP_WORKSPACE_DEFAULT_AMBIGUOUS.format(
+            mcs.MCP_WORKSPACE_DEFAULT_AMBIGUOUS.format(
                 workspace=self.workspace.name,
                 count=len(names),
                 known=cs.SEPARATOR_COMMA_SPACE.join(names),
@@ -2435,7 +2439,7 @@ class MCPToolsRegistry:
         if self.workspace is not None:
             return self._unknown_project_error(project, known)
         return self._root_not_indexed_error(
-            project, known, cs.MCP_FIXED_ROOT_NOT_INDEXED
+            project, known, mcs.MCP_FIXED_ROOT_NOT_INDEXED
         )
 
     def _workspace_default_project(self) -> str | None:
@@ -2484,7 +2488,7 @@ class MCPToolsRegistry:
         if gap is None:
             return rows
         return GraphRefusal(
-            error=cs.MCP_CAPTURE_GROUP_MISSING.format(
+            error=mcs.MCP_CAPTURE_GROUP_MISSING.format(
                 tool=tool,
                 project=project_name,
                 groups=cs.CHAR_COMMA.join(gap["groups"]),
@@ -2739,7 +2743,7 @@ class MCPToolsRegistry:
         # handler stays a pure delegation to the locked `_graph_query`.
         if budget_tokens < 1:
             return GraphRefusal(
-                error=cs.MCP_CONTEXT_BUDGET_INVALID.format(budget=budget_tokens)
+                error=mcs.MCP_CONTEXT_BUDGET_INVALID.format(budget=budget_tokens)
             )
 
         # Scoped to the project `_graph_query` resolved, not the optional
@@ -2813,7 +2817,7 @@ class MCPToolsRegistry:
         latched_here = self.marker.damage.blocks(project_name)
         if latched_here or persisted_incomplete:
             raise ValueError(
-                cs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=project_name)
+                mcs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=project_name)
             )
         return retained
 
@@ -3021,7 +3025,7 @@ class MCPToolsRegistry:
             # The error key marks a scoping refusal; absent it means success,
             # so a None must not leak into the wire shape as a present key.
             if graph_data.error is None:
-                result_dict.pop(cs.MCP_KEY_ERROR, None)
+                result_dict.pop(mcs.MCP_KEY_ERROR, None)
             logger.info(
                 ls.MCP_QUERY_RESULTS.format(
                     count=len(result_dict.get(cs.DICT_KEY_RESULTS, []))
@@ -3031,7 +3035,7 @@ class MCPToolsRegistry:
         except Exception as e:  # noqa: BLE001 -- tool boundary: any failure becomes the tool's error result
             logger.exception(ls.MCP_ERROR_QUERY.format(error=e))
             return _query_refusal(
-                cs.MCP_TOOL_EXEC_ERROR.format(
+                mcs.MCP_TOOL_EXEC_ERROR.format(
                     name=cs.MCPToolName.QUERY_CODE_GRAPH, error=e
                 )
             )
@@ -3058,7 +3062,7 @@ class MCPToolsRegistry:
                     # The workspace guard answered instead of the retriever.
                     return CodeSnippetResultDict(error=snippet, found=False)
                 result: CodeSnippetResultDict = snippet.model_dump()
-                if result.get(cs.MCP_KEY_FOUND) is False:
+                if result.get(mcs.MCP_KEY_FOUND) is False:
                     # No snippet is a refusal, worded as `callers` words an
                     # unknown name when the graph has none (issue #3244).
                     unknown = await _run_in_thread(
@@ -3066,7 +3070,7 @@ class MCPToolsRegistry:
                     )
                     result[cs.DICT_KEY_ERROR] = (
                         unknown
-                        or result.get(cs.MCP_KEY_ERROR_MESSAGE)
+                        or result.get(mcs.MCP_KEY_ERROR_MESSAGE)
                         or te.CODE_ENTITY_NOT_FOUND
                     )
             return result
@@ -3097,10 +3101,10 @@ class MCPToolsRegistry:
         self, file_path: str, offset: int | None = None, limit: int | None = None
     ) -> str:
         logger.info(ls.MCP_READ_FILE.format(path=file_path, offset=offset, limit=limit))
-        if offset is not None and offset < cs.MCP_READ_OFFSET_MINIMUM:
-            return te.failure(cs.MCP_READ_OFFSET_NEGATIVE.format(offset=offset))
-        if limit is not None and limit < cs.MCP_READ_LIMIT_MINIMUM:
-            return te.failure(cs.MCP_READ_LIMIT_NOT_POSITIVE.format(limit=limit))
+        if offset is not None and offset < mcs.MCP_READ_OFFSET_MINIMUM:
+            return te.failure(mcs.MCP_READ_OFFSET_NEGATIVE.format(offset=offset))
+        if limit is not None and limit < mcs.MCP_READ_LIMIT_MINIMUM:
+            return te.failure(mcs.MCP_READ_LIMIT_NOT_POSITIVE.format(limit=limit))
         try:
             if offset is not None or limit is not None:
                 project_root = Path(self.project_root)
@@ -3135,7 +3139,7 @@ class MCPToolsRegistry:
                 if not result.success:
                     return te.failure(result.error_message)
                 delta = await _run_in_thread(self._delta_after_write, [file_path])
-                return cs.MCP_WRITE_SUCCESS.format(path=file_path) + delta
+                return mcs.MCP_WRITE_SUCCESS.format(path=file_path) + delta
         except Exception as e:  # noqa: BLE001 -- tool boundary: any failure becomes the tool's error result
             logger.error(ls.MCP_ERROR_WRITE.format(error=e))
             return te.failure(e)

@@ -44,6 +44,7 @@ from loguru import logger
 from .. import constants as cs
 from .. import logs as ls
 from ..types_defs import NodeBatchRow, RelBatchRow, ResultValue
+from . import constants as ecs
 from . import sql as sq
 from .extension import rust_extension
 from .limits import QueryTimeout, seconds_left
@@ -66,7 +67,7 @@ INGEST: bool = True
 DECODE: bool = True
 
 # The extension's decode kinds; any other kind passes the value through.
-_DECODE_CODES = {cs.EgDecode.BOOL: 1, cs.EgDecode.JSON: 2, cs.EgDecode.NULL: 3}
+_DECODE_CODES = {ecs.EgDecode.BOOL: 1, ecs.EgDecode.JSON: 2, ecs.EgDecode.NULL: 3}
 
 type Pattern = tuple[str, str, str, str, str]
 
@@ -136,7 +137,7 @@ type RowDecoder = Callable[
 
 @cache
 def _decoder() -> RowDecoder | None:
-    return getattr(rust_extension(), cs.EG_RUST_DECODE_ROWS, None)
+    return getattr(rust_extension(), ecs.EG_RUST_DECODE_ROWS, None)
 
 
 # ------------------------------------------------------------------- files
@@ -204,7 +205,7 @@ class NativeGraph:
         if reader is None:
             return
         self._conn.create_function(
-            cs.EgSqlFn.WALK, -1, _walk_function(self, reader), deterministic=True
+            ecs.EgSqlFn.WALK, -1, _walk_function(self, reader), deterministic=True
         )
         self.walks = True
 
@@ -217,7 +218,7 @@ class NativeGraph:
         try:
             return reader.run_procedure(version, name, list(args), seconds_left())
         except TimeoutError as error:
-            raise QueryTimeout(cs.EG_ERR_TIMEOUT) from error
+            raise QueryTimeout(ecs.EG_ERR_TIMEOUT) from error
 
     def release(self) -> None:
         """Forget this connection; after the file's last, close the handles."""
@@ -297,21 +298,21 @@ class NativeGraph:
 
 
 def _new_reader(path: str) -> Reader | None:
-    make = getattr(rust_extension(), cs.EG_RUST_READER, None)
+    make = getattr(rust_extension(), ecs.EG_RUST_READER, None)
     if make is None:
         return None
     return make(path, cs.EG_BUSY_TIMEOUT_MS, cs.EG_CACHE_SIZE_KIB, sq.GRAPH_VERSION)
 
 
 def _new_writer(path: str) -> Writer | None:
-    make = getattr(rust_extension(), cs.EG_RUST_WRITER, None)
+    make = getattr(rust_extension(), ecs.EG_RUST_WRITER, None)
     if make is None:
         return None
     return make(
         path,
         cs.EG_BUSY_TIMEOUT_MS,
         cs.EG_CACHE_SIZE_KIB,
-        list(cs.EG_PRAGMAS),
+        list(ecs.EG_PRAGMAS),
         sq.BUMP_GRAPH_VERSION,
     )
 
@@ -419,7 +420,7 @@ def with_walks[R](graph: NativeGraph | None, run: Callable[[bool], R]) -> R:
         return run(True)
     except sqlite3.OperationalError as error:
         if graph.walk_timed_out:
-            raise QueryTimeout(cs.EG_ERR_TIMEOUT) from error
+            raise QueryTimeout(ecs.EG_ERR_TIMEOUT) from error
         if not graph.walk_saw_newer_graph:
             raise
     return run(False)
@@ -429,9 +430,9 @@ def with_walks[R](graph: NativeGraph | None, run: Callable[[bool], R]) -> R:
 
 
 def decode_rows(
-    kinds: Sequence[cs.EgDecode],
+    kinds: Sequence[ecs.EgDecode],
     rows: list[tuple[SqlValue, ...]],
-    decode: Callable[[cs.EgDecode, SqlValue], ResultValue],
+    decode: Callable[[ecs.EgDecode, SqlValue], ResultValue],
 ) -> list[tuple[ResultValue, ...]]:
     """Each row's values decoded by their column's kind, as `decode` does."""
     accelerated = _decoder() if DECODE else None

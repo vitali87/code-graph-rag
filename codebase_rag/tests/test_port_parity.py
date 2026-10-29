@@ -21,6 +21,7 @@ from codebase_rag.config import settings
 from codebase_rag.graph_dialects import DIALECT_SQLITE
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.port import constants as pcs
 from codebase_rag.port.parity import (
     PairReport,
     ParityReport,
@@ -171,24 +172,24 @@ def test_identical_twins_match_on_calls_and_arity(indexed: Path) -> None:
     report = _check()
     area = _pair_of(report, _qn("py.geometry.area"))
     assert area["new"]["qualified_name"] == _qn("rs.geometry.area")
-    assert area["paired_by"] == cs.PairedBy.MODULE
-    assert area["verdict"] == cs.ParityVerdict.MATCH
-    assert area["calls"]["verdict"] == cs.ParityVerdict.MATCH
+    assert area["paired_by"] == pcs.PairedBy.MODULE
+    assert area["verdict"] == pcs.ParityVerdict.MATCH
+    assert area["calls"]["verdict"] == pcs.ParityVerdict.MATCH
     assert area["arity"] == {
-        "verdict": cs.ParityVerdict.MATCH,
+        "verdict": pcs.ParityVerdict.MATCH,
         "old": 2,
         "new": 2,
         "open": False,
     }
     assert _pair_of(report, _qn("py.geometry.scale"))["verdict"] == (
-        cs.ParityVerdict.MATCH
+        pcs.ParityVerdict.MATCH
     )
 
 
 def test_a_dropped_parameter_differs_on_arity(indexed: Path) -> None:
     perimeter = _pair_of(_check(), _qn("py.geometry.perimeter"))
-    assert perimeter["verdict"] == cs.ParityVerdict.DIFFERS
-    assert perimeter["arity"]["verdict"] == cs.ParityVerdict.DIFFERS
+    assert perimeter["verdict"] == pcs.ParityVerdict.DIFFERS
+    assert perimeter["arity"]["verdict"] == pcs.ParityVerdict.DIFFERS
     assert (perimeter["arity"]["old"], perimeter["arity"]["new"]) == (2, 1)
 
 
@@ -197,8 +198,8 @@ def test_a_call_the_port_dropped_is_missing(indexed: Path) -> None:
     assert describe["new"]["qualified_name"] == _qn("rs.geometry.Shape.describe")
     # The receiver is left out on both sides: `self, prefix` and
     # `&self, prefix` are one parameter each.
-    assert describe["arity"]["verdict"] == cs.ParityVerdict.MATCH
-    assert describe["calls"]["verdict"] == cs.ParityVerdict.DIFFERS
+    assert describe["arity"]["verdict"] == pcs.ParityVerdict.MATCH
+    assert describe["calls"]["verdict"] == pcs.ParityVerdict.DIFFERS
     assert describe["calls"]["missing"] == [
         {
             "old": _qn("py.geometry.label"),
@@ -257,8 +258,8 @@ def test_a_name_no_container_settles_is_ambiguous_until_paired(
     paired = _check(pairs=[("nightly.run", "rs.jobs.run")])
     assert paired["ambiguous"] == []
     nightly = _pair_of(paired, _qn("py.jobs.nightly.run"))
-    assert nightly["paired_by"] == cs.PairedBy.EXPLICIT
-    assert nightly["verdict"] == cs.ParityVerdict.MATCH
+    assert nightly["paired_by"] == pcs.PairedBy.EXPLICIT
+    assert nightly["verdict"] == pcs.ParityVerdict.MATCH
     assert _qn("py.jobs.weekly.run") in [
         r["qualified_name"] for r in paired["old_only"]
     ]
@@ -302,16 +303,16 @@ def test_repeated_basenames_pair_by_their_path_under_each_scope(
     assert pairs == {
         _qn("legacy.a.utils.run", LAYOUTS): (
             _qn("rewrite.a.utils.run", LAYOUTS),
-            cs.PairedBy.MODULE,
+            pcs.PairedBy.MODULE,
         ),
         _qn("legacy.b.utils.run", LAYOUTS): (
             _qn("rewrite.b.utils.run", LAYOUTS),
-            cs.PairedBy.MODULE,
+            pcs.PairedBy.MODULE,
         ),
         # Moved under `cypher/`, so only the file's stem still agrees.
         _qn("legacy.lexer.tokenize", LAYOUTS): (
             _qn("rewrite.cypher.lexer.tokenize", LAYOUTS),
-            cs.PairedBy.CONTAINER,
+            pcs.PairedBy.CONTAINER,
         ),
     }
     assert report["summary"]["match"] == 3
@@ -323,7 +324,7 @@ def test_repeated_basenames_pair_by_their_path_under_each_scope(
 def test_overlapping_scopes_are_refused(indexed: Path, old: str, new: str) -> None:
     with pytest.raises(PortCheckError) as raised:
         _check(old, new)
-    assert raised.value.exit_code == cs.PORT_EXIT_USAGE
+    assert raised.value.exit_code == pcs.PORT_EXIT_USAGE
 
 
 def test_an_empty_scope_is_refused(indexed: Path) -> None:
@@ -341,7 +342,7 @@ def test_a_pair_naming_no_single_definition_is_refused(indexed: Path) -> None:
 def test_a_definition_paired_twice_is_refused(indexed: Path) -> None:
     with pytest.raises(PortCheckError, match="more than once") as raised:
         _check(pairs=[("nightly.run", "rs.jobs.run"), ("weekly.run", "rs.jobs.run")])
-    assert raised.value.exit_code == cs.PORT_EXIT_USAGE
+    assert raised.value.exit_code == pcs.PORT_EXIT_USAGE
 
 
 # --- the CLI ---------------------------------------------------------------------
@@ -362,7 +363,7 @@ def test_the_cli_prints_the_report_as_json(indexed: Path) -> None:
 
 def test_fail_on_found_exits_one_when_a_pair_differs(indexed: Path) -> None:
     code, out, _err = _cli("py", "rs", "--fail-on-found")
-    assert code == cs.PORT_EXIT_DIFFERS
+    assert code == pcs.PORT_EXIT_DIFFERS
     assert json.loads(out)["summary"]["differs"] == 2
 
 
@@ -375,7 +376,7 @@ def test_the_cli_refuses_an_unknown_new_project(indexed: Path) -> None:
 
 def test_the_cli_reports_a_malformed_pair_as_a_usage_error(indexed: Path) -> None:
     code, out, err = _cli("py", "rs", "--pair", "nightly.run")
-    assert code == cs.PORT_EXIT_USAGE
+    assert code == pcs.PORT_EXIT_USAGE
     assert out == ""
     assert "OLD=NEW" in err
 
@@ -413,12 +414,12 @@ def test_a_difference_resting_only_on_guessed_edges_is_unknown() -> None:
     heuristic = cs.EdgeResolution.HEURISTIC.value
     exact = cs.EdgeResolution.EXACT.value
     guessed = _calls_parity({"old.f": heuristic}, {}, twins, reverse)
-    assert guessed["verdict"] == cs.ParityVerdict.UNKNOWN
+    assert guessed["verdict"] == pcs.ParityVerdict.UNKNOWN
     certain = _calls_parity({"old.f": heuristic}, {"new.g": exact}, twins, reverse)
-    assert certain["verdict"] == cs.ParityVerdict.DIFFERS
+    assert certain["verdict"] == pcs.ParityVerdict.DIFFERS
     assert _calls_parity({"old.f": exact}, {"new.f": heuristic}, twins, reverse)[
         "verdict"
-    ] == (cs.ParityVerdict.MATCH)
+    ] == (pcs.ParityVerdict.MATCH)
 
 
 def test_callees_without_a_twin_are_listed_not_judged() -> None:
@@ -428,7 +429,7 @@ def test_callees_without_a_twin_are_listed_not_judged() -> None:
         {},
         {},
     )
-    assert parity["verdict"] == cs.ParityVerdict.MATCH
+    assert parity["verdict"] == pcs.ParityVerdict.MATCH
     assert parity["unpaired_old"] == ["old.helper"]
     assert parity["unpaired_new"] == ["new.inlined"]
 
@@ -485,7 +486,7 @@ def test_parameters_past_the_positional_run_leave_arity_open() -> None:
     assert star == _Arity(0, True)
     assert _arity(_callable("m.ts"), ("a", "...rest")) == _Arity(1, True)
     parity = _arity_parity(star, _Arity(1, False))
-    assert parity["verdict"] == cs.ParityVerdict.UNKNOWN
+    assert parity["verdict"] == pcs.ParityVerdict.UNKNOWN
     assert parity["open"] is True
 
 
@@ -493,7 +494,7 @@ def test_arity_a_language_does_not_record_is_unknown() -> None:
     assert _arity(_callable("m.lua"), None) is None
     parity = _arity_parity(None, _Arity(2, False))
     assert parity == {
-        "verdict": cs.ParityVerdict.UNKNOWN,
+        "verdict": pcs.ParityVerdict.UNKNOWN,
         "old": None,
         "new": 2,
         "open": False,

@@ -10,6 +10,7 @@ from .. import constants as cs
 from .. import graph_query
 from ..graph_cli import _emit, _project_and_fetch, _unknown_project
 from ..project_selection import unknown_project
+from . import constants as pcs
 
 
 @click.group(
@@ -94,4 +95,4 @@ def check_cmd(
         sys.exit(exit_code)
     _emit(report)
     if fail_on_found and has_differences(report):
-        sys.exit(cs.PORT_EXIT_DIFFERS)
+        sys.exit(pcs.PORT_EXIT_DIFFERS)

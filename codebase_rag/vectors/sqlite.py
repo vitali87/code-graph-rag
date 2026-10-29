@@ -2,7 +2,7 @@
 
 The other backends talk to a client library; this module is that client for
 a vec0 table, so `vectors.store` can drive all three the same way. Its layout
-is in `constants/sqlite_vectors.py`.
+is in `vectors/constants.py`.
 """
 
 from __future__ import annotations
@@ -15,8 +15,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import NamedTuple
 
-from .. import constants as cs
 from .. import exceptions as ex
+from . import constants as vcs
 
 
 class SqliteVectorRow(NamedTuple):
@@ -42,7 +42,7 @@ class SqliteVectorHit(NamedTuple):
 def extensions_loadable() -> bool:
     # sqlite3 has no enable_load_extension unless CPython was configured with
     # --enable-loadable-sqlite-extensions, which some builds leave out.
-    return hasattr(sqlite3.Connection, cs.SQLITE_LOAD_EXTENSION_METHOD)
+    return hasattr(sqlite3.Connection, vcs.SQLITE_LOAD_EXTENSION_METHOD)
 
 
 def _float32(vector: Sequence[float]) -> bytes:
@@ -67,9 +67,11 @@ def open_sqlite_vector_client(path: Path) -> SqliteVectorClient:
         finally:
             # Left on, any SQL run later could load a library of its own.
             conn.enable_load_extension(False)
-        conn.execute(cs.SQLITE_VEC_PRAGMA_BUSY.format(ms=cs.SQLITE_VEC_BUSY_TIMEOUT_MS))
-        conn.execute(cs.SQLITE_VEC_PRAGMA_WAL)
-        conn.execute(cs.SQLITE_VEC_CREATE_META)
+        conn.execute(
+            vcs.SQLITE_VEC_PRAGMA_BUSY.format(ms=vcs.SQLITE_VEC_BUSY_TIMEOUT_MS)
+        )
+        conn.execute(vcs.SQLITE_VEC_PRAGMA_WAL)
+        conn.execute(vcs.SQLITE_VEC_CREATE_META)
     except Exception:
         conn.close()
         raise
@@ -77,16 +79,16 @@ def open_sqlite_vector_client(path: Path) -> SqliteVectorClient:
 
 
 def _create_collection(conn: sqlite3.Connection, dim: int) -> None:
-    conn.execute(cs.SQLITE_VEC_CREATE_POINTS)
-    conn.execute(cs.SQLITE_VEC_CREATE_POINTS_PROJECT_INDEX)
-    conn.execute(cs.SQLITE_VEC_CREATE_VECTORS.format(dim=dim))
-    conn.execute(cs.SQLITE_VEC_UPSERT_META, (cs.SQLITE_VEC_META_DIMENSION, str(dim)))
+    conn.execute(vcs.SQLITE_VEC_CREATE_POINTS)
+    conn.execute(vcs.SQLITE_VEC_CREATE_POINTS_PROJECT_INDEX)
+    conn.execute(vcs.SQLITE_VEC_CREATE_VECTORS.format(dim=dim))
+    conn.execute(vcs.SQLITE_VEC_UPSERT_META, (vcs.SQLITE_VEC_META_DIMENSION, str(dim)))
 
 
 def _drop_collection(conn: sqlite3.Connection) -> None:
-    conn.execute(cs.SQLITE_VEC_DROP_VECTORS)
-    conn.execute(cs.SQLITE_VEC_DROP_POINTS)
-    conn.execute(cs.SQLITE_VEC_DELETE_META, (cs.SQLITE_VEC_META_DIMENSION,))
+    conn.execute(vcs.SQLITE_VEC_DROP_VECTORS)
+    conn.execute(vcs.SQLITE_VEC_DROP_POINTS)
+    conn.execute(vcs.SQLITE_VEC_DELETE_META, (vcs.SQLITE_VEC_META_DIMENSION,))
 
 
 class SqliteVectorClient:
@@ -108,7 +110,7 @@ class SqliteVectorClient:
         # The connection's own context manager commits, or rolls back when
         # the block raises, so a failed batch leaves no half-written point.
         with self._lock, self._conn:
-            self._conn.execute(cs.SQLITE_VEC_BEGIN_WRITE)
+            self._conn.execute(vcs.SQLITE_VEC_BEGIN_WRITE)
             yield self._conn
 
     def close(self) -> None:
@@ -119,7 +121,7 @@ class SqliteVectorClient:
         """The vectors' size, or None when the collection was never made."""
         with self._lock:
             row = self._conn.execute(
-                cs.SQLITE_VEC_SELECT_META, (cs.SQLITE_VEC_META_DIMENSION,)
+                vcs.SQLITE_VEC_SELECT_META, (vcs.SQLITE_VEC_META_DIMENSION,)
             ).fetchone()
         return None if row is None else int(row[0])
 
@@ -138,26 +140,26 @@ class SqliteVectorClient:
         with self._write() as conn:
             for row in rows:
                 conn.execute(
-                    cs.SQLITE_VEC_UPSERT_POINT,
+                    vcs.SQLITE_VEC_UPSERT_POINT,
                     (row.point_id, row.node_id, row.qualified_name, project),
                 )
                 (rowid,) = conn.execute(
-                    cs.SQLITE_VEC_POINT_ROWID, (row.point_id,)
+                    vcs.SQLITE_VEC_POINT_ROWID, (row.point_id,)
                 ).fetchone()
-                conn.execute(cs.SQLITE_VEC_DELETE_VECTOR, (rowid,))
+                conn.execute(vcs.SQLITE_VEC_DELETE_VECTOR, (rowid,))
                 # A zero vector has no direction, so its cosine distance is
                 # NULL, which vec0 ranks ahead of every real neighbour; kept
                 # out of the KNN table, it is stored but matches no query.
                 if any(row.vector):
                     conn.execute(
-                        cs.SQLITE_VEC_INSERT_VECTOR, (rowid, _float32(row.vector))
+                        vcs.SQLITE_VEC_INSERT_VECTOR, (rowid, _float32(row.vector))
                     )
 
     def search(self, query: Sequence[float], limit: int) -> list[SqliteVectorHit]:
         """The `limit` nearest points, nearest first, by cosine distance."""
-        k = min(limit, cs.SQLITE_VEC_MAX_K)
+        k = min(limit, vcs.SQLITE_VEC_MAX_K)
         with self._lock:
-            rows = self._conn.execute(cs.SQLITE_VEC_SEARCH, (_float32(query), k))
+            rows = self._conn.execute(vcs.SQLITE_VEC_SEARCH, (_float32(query), k))
             # A zero query has no direction either: every distance is NULL.
             return [
                 SqliteVectorHit(node_id, distance, qualified_name)
@@ -167,13 +169,13 @@ class SqliteVectorClient:
 
     def project_points(self, project: str) -> list[SqliteVectorPoint]:
         with self._lock:
-            rows = self._conn.execute(cs.SQLITE_VEC_PROJECT_POINTS, (project,))
+            rows = self._conn.execute(vcs.SQLITE_VEC_PROJECT_POINTS, (project,))
             return [SqliteVectorPoint(*row) for row in rows]
 
     def points(self, point_ids: Sequence[str]) -> list[SqliteVectorPoint]:
         with self._lock:
             rows = self._conn.execute(
-                cs.SQLITE_VEC_POINTS_BY_ID, (json.dumps(list(point_ids)),)
+                vcs.SQLITE_VEC_POINTS_BY_ID, (json.dumps(list(point_ids)),)
             )
             return [SqliteVectorPoint(*row) for row in rows]
 
@@ -182,5 +184,5 @@ class SqliteVectorClient:
             return
         ids = json.dumps(list(point_ids))
         with self._write() as conn:
-            conn.execute(cs.SQLITE_VEC_DELETE_VECTORS_BY_POINT, (ids,))
-            conn.execute(cs.SQLITE_VEC_DELETE_POINTS, (ids,))
+            conn.execute(vcs.SQLITE_VEC_DELETE_VECTORS_BY_POINT, (ids,))
+            conn.execute(vcs.SQLITE_VEC_DELETE_POINTS, (ids,))

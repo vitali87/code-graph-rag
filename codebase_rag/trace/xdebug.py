@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from .. import constants as cs
+from . import constants as tcs
 from .pprof import _decompress
 from .records import (
     CallRecord,
@@ -79,8 +80,8 @@ def _read_trace_lines(trace_path: Path) -> list[str]:
     raw = _decompress(
         trace_path.read_bytes(),
         trace_path,
-        bad_template=cs.TRACE_ERR_BAD_XDEBUG_GZIP,
-        too_large_template=cs.TRACE_ERR_XDEBUG_TOO_LARGE,
+        bad_template=tcs.TRACE_ERR_BAD_XDEBUG_GZIP,
+        too_large_template=tcs.TRACE_ERR_XDEBUG_TOO_LARGE,
     )
     return raw.decode(cs.ENCODING_UTF8, errors="replace").splitlines()
 
@@ -100,7 +101,7 @@ def _parse_calls(lines: list[str]) -> list[_Call]:
         name = columns[_COL_NAME]
         call_file = columns[_COL_FILENAME]
         user_defined = columns[_COL_USER_DEFINED] == "1"
-        transparent = not user_defined or name in cs.TRACE_XDEBUG_GLUE_FUNCTIONS
+        transparent = not user_defined or name in tcs.TRACE_XDEBUG_GLUE_FUNCTIONS
 
         parent_index = stack.get(level - 1)
         call = _Call(
@@ -110,7 +111,7 @@ def _parse_calls(lines: list[str]) -> list[_Call]:
             transparent=transparent,
             parent=parent_index,
         )
-        if name == cs.TRACE_XDEBUG_MAIN:
+        if name == tcs.TRACE_XDEBUG_MAIN:
             call.defining_file = call_file
         index = len(calls)
         calls.append(call)
@@ -144,10 +145,10 @@ def _receiver_types(qualname: str) -> tuple[str, ...]:
     dynamic dispatch, so they carry no receiver type. The namespace is dropped
     to match the path-derived graph names.
     """
-    if cs.TRACE_PHP_INSTANCE_SEPARATOR not in qualname:
+    if tcs.TRACE_PHP_INSTANCE_SEPARATOR not in qualname:
         return ()
-    owner = qualname.split(cs.TRACE_PHP_INSTANCE_SEPARATOR, 1)[0]
-    owner = owner.rsplit(cs.TRACE_PHP_NAMESPACE_SEPARATOR, 1)[-1].strip()
+    owner = qualname.split(tcs.TRACE_PHP_INSTANCE_SEPARATOR, 1)[0]
+    owner = owner.rsplit(tcs.TRACE_PHP_NAMESPACE_SEPARATOR, 1)[-1].strip()
     return (owner,) if owner else ()
 
 
@@ -158,8 +159,8 @@ def convert_xdebug_trace(
 ) -> int:
     """Write ``trace_path``'s call edges to ``output``; returns record count."""
     lines = _read_trace_lines(trace_path)
-    if not any(line.startswith(cs.TRACE_XDEBUG_FORMAT_LINE) for line in lines[:5]):
-        raise TraceFormatError(cs.TRACE_ERR_BAD_XDEBUG.format(path=trace_path))
+    if not any(line.startswith(tcs.TRACE_XDEBUG_FORMAT_LINE) for line in lines[:5]):
+        raise TraceFormatError(tcs.TRACE_ERR_BAD_XDEBUG.format(path=trace_path))
 
     calls = _parse_calls(lines)
     # Runtime names embed the namespace, so they identify one declaration;
@@ -198,10 +199,10 @@ def convert_xdebug_trace(
         for (caller, callee), count in edges.items()
     ]
     header = TraceHeader(
-        version=cs.TRACE_FORMAT_VERSION,
-        language=cs.TRACE_LANGUAGE_PHP,
+        version=tcs.TRACE_FORMAT_VERSION,
+        language=tcs.TRACE_LANGUAGE_PHP,
         repo_root="",
-        tracer=cs.TRACE_TOOL_NAME_XDEBUG,
+        tracer=tcs.TRACE_TOOL_NAME_XDEBUG,
         sampled=False,
     )
     write_trace_file(output, header, records)

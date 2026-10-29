@@ -20,6 +20,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from .. import constants as cs
+from . import constants as ecs
 from . import cypher_ast as a
 from . import sql as sq
 from . import types as ty
@@ -60,7 +61,7 @@ class Scope:
     def get(self, name: str) -> CE:
         bind = self.binds.get(name)
         if bind is None:
-            raise CompileError(cs.EG_ERR_UNBOUND.format(name=name))
+            raise CompileError(ecs.EG_ERR_UNBOUND.format(name=name))
         return bind.ce
 
     def has(self, name: str) -> bool:
@@ -79,7 +80,7 @@ class Scope:
 class ParamSpec:
     placeholder: str
     name: str
-    mode: cs.EgParamMode
+    mode: ecs.EgParamMode
 
 
 @dataclass
@@ -92,14 +93,14 @@ class Ctx:
     # a recursive CTE.
     native_walks: bool = False
     params: list[ParamSpec] = field(default_factory=list)
-    _param_index: dict[tuple[str, cs.EgParamMode], str] = field(default_factory=dict)
+    _param_index: dict[tuple[str, ecs.EgParamMode], str] = field(default_factory=dict)
     _counter: int = 0
 
     def fresh(self, prefix: str) -> str:
         self._counter += 1
         return f"{prefix}{self._counter}"
 
-    def param(self, name: str, mode: cs.EgParamMode) -> str:
+    def param(self, name: str, mode: ecs.EgParamMode) -> str:
         key = (name, mode)
         placeholder = self._param_index.get(key)
         if placeholder is None:
@@ -111,7 +112,7 @@ class Ctx:
 
 
 def is_aggregate(e: a.Expr) -> bool:
-    if isinstance(e, a.FuncCall) and e.name in cs.EG_AGGREGATES:
+    if isinstance(e, a.FuncCall) and e.name in ecs.EG_AGGREGATES:
         return True
     return any(is_aggregate(c) for c in children(e))
 
@@ -238,7 +239,7 @@ class ExprCompiler:
     def compile(self, e: a.Expr, scope: Scope) -> CE:
         method = _DISPATCH.get(type(e))
         if method is None:
-            raise CompileError(cs.EG_ERR_UNSUPPORTED.format(what=type(e).__name__))
+            raise CompileError(ecs.EG_ERR_UNSUPPORTED.format(what=type(e).__name__))
         ce = method(self, e, scope)
         if not ce.const and _is_constant(e, scope):
             return CE(ce.sql, ce.t, ce.alias, ce.names, const=True)
@@ -259,8 +260,8 @@ class ExprCompiler:
     def _param(self, e: a.Param, _scope: Scope) -> CE:
         t = self.ctx.param_types.get(e.name, ty.ANY)
         if t.is_json:
-            return CE(self.ctx.param(e.name, cs.EgParamMode.JSON), t)
-        return CE(self.ctx.param(e.name, cs.EgParamMode.NATIVE), t)
+            return CE(self.ctx.param(e.name, ecs.EgParamMode.JSON), t)
+        return CE(self.ctx.param(e.name, ecs.EgParamMode.NATIVE), t)
 
     def _var(self, e: a.Var, scope: Scope) -> CE:
         return scope.get(e.name)
@@ -301,7 +302,7 @@ class ExprCompiler:
     def _index(self, e: a.Index, scope: Scope) -> CE:
         if (
             isinstance(e.subject, a.FuncCall)
-            and e.subject.name == cs.EgFn.LABELS
+            and e.subject.name == ecs.EgFn.LABELS
             and isinstance(e.index, a.Literal)
             and e.index.value == 0
         ):
@@ -333,8 +334,12 @@ class ExprCompiler:
         start = self.native(self.compile(e.start, scope)) if e.start else sq.NULL
         end = self.native(self.compile(e.end, scope)) if e.end else sq.NULL
         if subject.t.kind == Kind.STRING:
-            return CE(sq.call(cs.EgSqlFn.STR_SLICE, subject.sql, start, end), ty.STRING)
-        return CE(sq.call(cs.EgSqlFn.SLICE, self.jsonv(subject), start, end), subject.t)
+            return CE(
+                sq.call(ecs.EgSqlFn.STR_SLICE, subject.sql, start, end), ty.STRING
+            )
+        return CE(
+            sq.call(ecs.EgSqlFn.SLICE, self.jsonv(subject), start, end), subject.t
+        )
 
     def _quantifier(self, e: a.Quantifier, scope: Scope) -> CE:
         source = self.compile(e.source, scope)
@@ -343,13 +348,13 @@ class ExprCompiler:
         some_true = sq.exists(each, cond)
         some_false = sq.exists(each, sq.negate(cond))
         some_null = sq.exists(each, sq.is_null(cond))
-        if e.kind == cs.EgQuantifier.ANY:
+        if e.kind == ecs.EgQuantifier.ANY:
             body = sq.case(None, [(some_true, sq.TRUE), (some_null, sq.NULL)], sq.FALSE)
-        elif e.kind == cs.EgQuantifier.ALL:
+        elif e.kind == ecs.EgQuantifier.ALL:
             body = sq.case(
                 None, [(some_false, sq.FALSE), (some_null, sq.NULL)], sq.TRUE
             )
-        elif e.kind == cs.EgQuantifier.NONE:
+        elif e.kind == ecs.EgQuantifier.NONE:
             body = sq.case(None, [(some_true, sq.FALSE), (some_null, sq.NULL)], sq.TRUE)
         else:
             # Memgraph: one true element is true whatever else is null; with
@@ -405,9 +410,9 @@ class ExprCompiler:
 
     def _unary(self, e: a.UnaryOp, scope: Scope) -> CE:
         operand = self.compile(e.operand, scope)
-        if e.op == cs.EgUnary.NOT:
+        if e.op == ecs.EgUnary.NOT:
             return CE(sq.negate(self.boolean(operand)), ty.BOOL)
-        if e.op == cs.EgUnary.NEG:
+        if e.op == ecs.EgUnary.NEG:
             return CE(
                 sq.minus(self.native(operand)),
                 operand.t if operand.t.is_native else ty.ANY,
@@ -427,38 +432,38 @@ class ExprCompiler:
     def _binop(self, e: a.BinOp, scope: Scope) -> CE:
         left = self.compile(e.left, scope)
         right = self.compile(e.right, scope)
-        op = cs.EgBinary(e.op)
-        if op in (cs.EgBinary.AND, cs.EgBinary.OR):
+        op = ecs.EgBinary(e.op)
+        if op in (ecs.EgBinary.AND, ecs.EgBinary.OR):
             return CE(
                 sq.binary(self.boolean(left), op.upper(), self.boolean(right)), ty.BOOL
             )
-        if op == cs.EgBinary.XOR:
+        if op == ecs.EgBinary.XOR:
             return CE(sq.xor(self.boolean(left), self.boolean(right)), ty.BOOL)
         if op in (
-            cs.EgBinary.EQ,
-            cs.EgBinary.NE,
-            cs.EgBinary.LT,
-            cs.EgBinary.GT,
-            cs.EgBinary.LE,
-            cs.EgBinary.GE,
+            ecs.EgBinary.EQ,
+            ecs.EgBinary.NE,
+            ecs.EgBinary.LT,
+            ecs.EgBinary.GT,
+            ecs.EgBinary.LE,
+            ecs.EgBinary.GE,
         ):
             return self._comparison(op, left, right)
-        if op == cs.EgBinary.IN:
+        if op == ecs.EgBinary.IN:
             return self._in(left, right)
-        if op == cs.EgBinary.STARTS_WITH:
+        if op == ecs.EgBinary.STARTS_WITH:
             return self._starts_with(left, right, e)
-        if op == cs.EgBinary.ENDS_WITH:
+        if op == ecs.EgBinary.ENDS_WITH:
             return CE(sq.ends_with(self.native(left), self.native(right)), ty.BOOL)
-        if op == cs.EgBinary.CONTAINS:
+        if op == ecs.EgBinary.CONTAINS:
             return CE(sq.contains(self.native(left), self.native(right)), ty.BOOL)
-        if op == cs.EgBinary.REGEX:
+        if op == ecs.EgBinary.REGEX:
             return CE(
-                sq.call(cs.EgSqlFn.REGEX, self.native(left), self.native(right)),
+                sq.call(ecs.EgSqlFn.REGEX, self.native(left), self.native(right)),
                 ty.BOOL,
             )
         return self._arithmetic(op, left, right)
 
-    def _comparison(self, op: cs.EgBinary, left: CE, right: CE) -> CE:
+    def _comparison(self, op: ecs.EgBinary, left: CE, right: CE) -> CE:
         if left.t.is_json or right.t.is_json:
             lj, rj = left.t, right.t
             if (lj.kind in (Kind.LIST, Kind.MAP)) or (rj.kind in (Kind.LIST, Kind.MAP)):
@@ -485,16 +490,17 @@ class ExprCompiler:
         # A key column compared with a parameter prefix also gets a range
         # bound the (label, key) index can serve; the exact test stays.
         if sq.is_key_column(lv) and isinstance(e.right, a.Param):
-            upper = self.ctx.param(e.right.name, cs.EgParamMode.UPPER)
+            upper = self.ctx.param(e.right.name, ecs.EgParamMode.UPPER)
             return CE(sq.prefix_range(lv, rv, upper, exact), ty.BOOL)
         return CE(exact, ty.BOOL)
 
-    def _arithmetic(self, op: cs.EgBinary, left: CE, right: CE) -> CE:
-        if op == cs.EgBinary.ADD:
+    def _arithmetic(self, op: ecs.EgBinary, left: CE, right: CE) -> CE:
+        if op == ecs.EgBinary.ADD:
             return self._add(left, right)
-        if op == cs.EgBinary.POW:
+        if op == ecs.EgBinary.POW:
             return CE(
-                sq.call(cs.EgSqlFn.POW, self.native(left), self.native(right)), ty.FLOAT
+                sq.call(ecs.EgSqlFn.POW, self.native(left), self.native(right)),
+                ty.FLOAT,
             )
         return self._numeric(op, left, right)
 
@@ -506,61 +512,61 @@ class ExprCompiler:
                 for side in (left, right)
             ]
             return CE(
-                sq.call(cs.EgSqlFn.LIST_ADD, self.jsonv(left), self.jsonv(right)),
+                sq.call(ecs.EgSqlFn.LIST_ADD, self.jsonv(left), self.jsonv(right)),
                 ty.list_of(ty.unify(elems)),
             )
         if lk == Kind.STRING and rk == Kind.STRING:
             return CE(sq.concat(left.sql, right.sql), ty.STRING)
         if Kind.STRING in (lk, rk):
             return CE(
-                sq.call(cs.EgSqlFn.CONCAT, self.jsonv(left), self.jsonv(right)),
+                sq.call(ecs.EgSqlFn.CONCAT, self.jsonv(left), self.jsonv(right)),
                 ty.STRING,
             )
         if left.t.is_json or right.t.is_json:
             return CE(
-                sq.call(cs.EgSqlFn.ADD, self.jsonv(left), self.jsonv(right)), ty.ANY
+                sq.call(ecs.EgSqlFn.ADD, self.jsonv(left), self.jsonv(right)), ty.ANY
             )
-        return self._numeric(cs.EgBinary.ADD, left, right)
+        return self._numeric(ecs.EgBinary.ADD, left, right)
 
-    def _numeric(self, op: cs.EgBinary, left: CE, right: CE) -> CE:
+    def _numeric(self, op: ecs.EgBinary, left: CE, right: CE) -> CE:
         # SQLite's own operators already match Cypher's numeric semantics:
         # integer `/` truncates toward zero, either float operand makes a
         # float. The result is a native number either way.
         both_int = left.t.kind == Kind.INT and right.t.kind == Kind.INT
         number = ty.INT if both_int else ty.FLOAT
-        if op == cs.EgBinary.MOD:
+        if op == ecs.EgBinary.MOD:
             return CE(
-                sq.call(cs.EgSqlFn.MOD, self.native(left), self.native(right)), number
+                sq.call(ecs.EgSqlFn.MOD, self.native(left), self.native(right)), number
             )
         return CE(sq.binary(self.native(left), op.value, self.native(right)), number)
 
     # ---------------------------------------------------------------- functions
 
     def _function(self, e: a.FuncCall, scope: Scope) -> CE:
-        if e.name in cs.EG_AGGREGATES:
+        if e.name in ecs.EG_AGGREGATES:
             return self.aggregate(e, scope)
         handler = _FUNCTIONS.get(e.name)
         if handler is None:
-            raise CompileError(cs.EG_ERR_UNKNOWN_FUNCTION.format(name=e.name))
+            raise CompileError(ecs.EG_ERR_UNKNOWN_FUNCTION.format(name=e.name))
         args = [self.compile(x, scope) for x in e.args]
         return handler(self, args)
 
     def aggregate(self, e: a.FuncCall, scope: Scope) -> CE:
-        if e.name == cs.EgFn.COUNT:
+        if e.name == ecs.EgFn.COUNT:
             if e.star:
                 return CE(sq.COUNT_ALL, ty.INT)
             arg = self.compile(e.args[0], scope)
             value = self.native(arg) if not arg.t.is_json else arg.sql
             return CE(sq.aggregate(e.name, value, e.distinct), ty.INT)
         arg = self.compile(e.args[0], scope)
-        if e.name == cs.EgFn.COLLECT:
+        if e.name == ecs.EgFn.COLLECT:
             value = self.embed(arg) if not arg.t.is_entity else arg.sql
             present = arg.sql if not arg.t.is_json else sq.json_type(arg.sql)
             return CE(sq.collect(value, present, e.distinct), ty.list_of(arg.t))
         native = self.native(arg)
-        if e.name == cs.EgFn.AVG:
+        if e.name == ecs.EgFn.AVG:
             return CE(sq.aggregate(e.name, native, e.distinct), ty.FLOAT)
-        if e.name == cs.EgFn.SUM:
+        if e.name == ecs.EgFn.SUM:
             number = ty.INT if arg.t.kind == Kind.INT else ty.FLOAT
             return CE(sq.sum_or_zero(native, e.distinct), number)
         return CE(sq.aggregate(e.name, native, e.distinct), arg.t)
@@ -579,7 +585,7 @@ def _is_constant(e: a.Expr, scope: Scope) -> bool:
 
 
 def _calls_volatile(e: a.Expr) -> bool:
-    if isinstance(e, a.FuncCall) and e.name in cs.EG_VOLATILE_FUNCTIONS:
+    if isinstance(e, a.FuncCall) and e.name in ecs.EG_VOLATILE_FUNCTIONS:
         return True
     # `children` leaves out a comprehension's inner expressions, which see
     # its variable rather than the outer scope; a volatile call there still
@@ -644,15 +650,15 @@ def _f_coalesce(c: ExprCompiler, args: list[CE]) -> CE:
     t = ty.unify([x.t for x in args])
     if t.is_json or t.kind == Kind.NULL:
         return CE(
-            sq.call(cs.EgSqlFn.COALESCE, *(c.jsonv(x) for x in args)),
+            sq.call(ecs.EgSqlFn.COALESCE, *(c.jsonv(x) for x in args)),
             t if t.kind != Kind.NULL else ty.ANY,
         )
     if t.is_entity:
-        return CE(sq.call(cs.EgSqlFn.COALESCE, *(x.sql for x in args)), t)
-    return CE(sq.call(cs.EgSqlFn.COALESCE, *(c.native(x) for x in args)), t)
+        return CE(sq.call(ecs.EgSqlFn.COALESCE, *(x.sql for x in args)), t)
+    return CE(sq.call(ecs.EgSqlFn.COALESCE, *(c.native(x) for x in args)), t)
 
 
-def _string_fn(sql_name: cs.EgSqlFn) -> Callable[[ExprCompiler, list[CE]], CE]:
+def _string_fn(sql_name: ecs.EgSqlFn) -> Callable[[ExprCompiler, list[CE]], CE]:
     def handler(c: ExprCompiler, args: list[CE]) -> CE:
         return CE(sq.call(sql_name, *(c.native(x) for x in args)), ty.STRING)
 
@@ -675,10 +681,10 @@ def _f_right(c: ExprCompiler, args: list[CE]) -> CE:
 def _f_size(c: ExprCompiler, args: list[CE]) -> CE:
     arg = args[0]
     if arg.t.kind == Kind.STRING:
-        return CE(sq.call(cs.EgSqlFn.LENGTH, arg.sql), ty.INT)
+        return CE(sq.call(ecs.EgSqlFn.LENGTH, arg.sql), ty.INT)
     if arg.t.kind == Kind.LIST:
-        return CE(sq.call(cs.EgSqlFn.JSON_ARRAY_LENGTH, arg.sql), ty.INT)
-    return CE(sq.call(cs.EgSqlFn.SIZE, c.jsonv(arg)), ty.INT)
+        return CE(sq.call(ecs.EgSqlFn.JSON_ARRAY_LENGTH, arg.sql), ty.INT)
+    return CE(sq.call(ecs.EgSqlFn.SIZE, c.jsonv(arg)), ty.INT)
 
 
 def _f_head(c: ExprCompiler, args: list[CE]) -> CE:
@@ -692,20 +698,20 @@ def _f_last(c: ExprCompiler, args: list[CE]) -> CE:
 
 
 def _f_tail(c: ExprCompiler, args: list[CE]) -> CE:
-    return CE(sq.call(cs.EgSqlFn.SLICE, c.jsonv(args[0]), sq.ONE, sq.NULL), args[0].t)
+    return CE(sq.call(ecs.EgSqlFn.SLICE, c.jsonv(args[0]), sq.ONE, sq.NULL), args[0].t)
 
 
 def _f_range(c: ExprCompiler, args: list[CE]) -> CE:
     step = c.native(args[2]) if len(args) > 2 else sq.ONE
     return CE(
-        sq.call(cs.EgSqlFn.RANGE, c.native(args[0]), c.native(args[1]), step),
+        sq.call(ecs.EgSqlFn.RANGE, c.native(args[0]), c.native(args[1]), step),
         ty.list_of(ty.INT),
     )
 
 
 def _f_split(c: ExprCompiler, args: list[CE]) -> CE:
     return CE(
-        sq.call(cs.EgSqlFn.SPLIT, c.native(args[0]), c.native(args[1])),
+        sq.call(ecs.EgSqlFn.SPLIT, c.native(args[0]), c.native(args[1])),
         ty.list_of(ty.STRING),
     )
 
@@ -713,12 +719,12 @@ def _f_split(c: ExprCompiler, args: list[CE]) -> CE:
 def _f_reverse(c: ExprCompiler, args: list[CE]) -> CE:
     arg = args[0]
     if arg.t.kind == Kind.STRING:
-        return CE(sq.call(cs.EgSqlFn.REVERSE_STR, arg.sql), ty.STRING)
-    return CE(sq.call(cs.EgSqlFn.REVERSE_LIST, c.jsonv(arg)), arg.t)
+        return CE(sq.call(ecs.EgSqlFn.REVERSE_STR, arg.sql), ty.STRING)
+    return CE(sq.call(ecs.EgSqlFn.REVERSE_LIST, c.jsonv(arg)), arg.t)
 
 
 def _converter(
-    sql_name: cs.EgSqlFn, out: ValueType
+    sql_name: ecs.EgSqlFn, out: ValueType
 ) -> Callable[[ExprCompiler, list[CE]], CE]:
     def handler(c: ExprCompiler, args: list[CE]) -> CE:
         return CE(sq.call(sql_name, c.jsonv(args[0])), out)
@@ -727,7 +733,7 @@ def _converter(
 
 
 def _math(
-    sql_name: cs.EgSqlFn, out: ValueType | None = None
+    sql_name: ecs.EgSqlFn, out: ValueType | None = None
 ) -> Callable[[ExprCompiler, list[CE]], CE]:
     def handler(c: ExprCompiler, args: list[CE]) -> CE:
         arg = args[0]
@@ -742,7 +748,7 @@ def _f_exists(_c: ExprCompiler, args: list[CE]) -> CE:
 
 
 def _f_timestamp(_c: ExprCompiler, _args: list[CE]) -> CE:
-    return CE(sq.call(cs.EgSqlFn.TIMESTAMP), ty.INT)
+    return CE(sq.call(ecs.EgSqlFn.TIMESTAMP), ty.INT)
 
 
 def _f_rand(_c: ExprCompiler, _args: list[CE]) -> CE:
@@ -750,56 +756,56 @@ def _f_rand(_c: ExprCompiler, _args: list[CE]) -> CE:
 
 
 def _f_nodes_unsupported(_c: ExprCompiler, _args: list[CE]) -> CE:
-    raise CompileError(cs.EG_ERR_UNSUPPORTED.format(what=cs.EG_WHAT_PATH_FUNCTIONS))
+    raise CompileError(ecs.EG_ERR_UNSUPPORTED.format(what=ecs.EG_WHAT_PATH_FUNCTIONS))
 
 
 _FUNCTIONS: dict[str, Callable[[ExprCompiler, list[CE]], CE]] = {
-    cs.EgFn.ID: _f_id,
-    cs.EgFn.ELEMENT_ID: _f_id,
-    cs.EgFn.LABELS: _f_labels,
-    cs.EgFn.TYPE: _f_type,
-    cs.EgFn.PROPERTIES: _f_properties,
-    cs.EgFn.KEYS: _f_keys,
-    cs.EgFn.START_NODE: _f_start,
-    cs.EgFn.END_NODE: _f_end,
-    cs.EgFn.COALESCE: _f_coalesce,
-    cs.EgFn.TO_LOWER: _string_fn(cs.EgSqlFn.LOWER),
-    cs.EgFn.TO_UPPER: _string_fn(cs.EgSqlFn.UPPER),
-    cs.EgFn.LOWER: _string_fn(cs.EgSqlFn.LOWER),
-    cs.EgFn.UPPER: _string_fn(cs.EgSqlFn.UPPER),
-    cs.EgFn.TRIM: _string_fn(cs.EgSqlFn.TRIM),
-    cs.EgFn.LTRIM: _string_fn(cs.EgSqlFn.LTRIM),
-    cs.EgFn.RTRIM: _string_fn(cs.EgSqlFn.RTRIM),
-    cs.EgFn.REPLACE: _string_fn(cs.EgSqlFn.REPLACE),
-    cs.EgFn.SUBSTRING: _f_substring,
-    cs.EgFn.LEFT: _f_left,
-    cs.EgFn.RIGHT: _f_right,
-    cs.EgFn.SIZE: _f_size,
-    cs.EgFn.LENGTH: _f_size,
-    cs.EgFn.HEAD: _f_head,
-    cs.EgFn.LAST: _f_last,
-    cs.EgFn.TAIL: _f_tail,
-    cs.EgFn.RANGE: _f_range,
-    cs.EgFn.SPLIT: _f_split,
-    cs.EgFn.REVERSE: _f_reverse,
-    cs.EgFn.TO_STRING: _converter(cs.EgSqlFn.TO_STRING, ty.STRING),
-    cs.EgFn.TO_INTEGER: _converter(cs.EgSqlFn.TO_INTEGER, ty.INT),
-    cs.EgFn.TO_INT: _converter(cs.EgSqlFn.TO_INTEGER, ty.INT),
-    cs.EgFn.TO_FLOAT: _converter(cs.EgSqlFn.TO_FLOAT, ty.FLOAT),
-    cs.EgFn.TO_BOOLEAN: _converter(cs.EgSqlFn.TO_BOOLEAN, ty.BOOL),
-    cs.EgFn.ABS: _math(cs.EgSqlFn.ABS),
-    cs.EgFn.CEIL: _math(cs.EgSqlFn.CEIL, ty.FLOAT),
-    cs.EgFn.FLOOR: _math(cs.EgSqlFn.FLOOR, ty.FLOAT),
-    cs.EgFn.ROUND: _math(cs.EgSqlFn.ROUND, ty.FLOAT),
-    cs.EgFn.SQRT: _math(cs.EgSqlFn.SQRT, ty.FLOAT),
-    cs.EgFn.SIGN: _math(cs.EgSqlFn.SIGN, ty.INT),
-    cs.EgFn.LOG: _math(cs.EgSqlFn.LOG, ty.FLOAT),
-    cs.EgFn.EXP: _math(cs.EgSqlFn.EXP, ty.FLOAT),
-    cs.EgFn.EXISTS: _f_exists,
-    cs.EgFn.TIMESTAMP: _f_timestamp,
-    cs.EgFn.RAND: _f_rand,
-    cs.EgFn.NODES: _f_nodes_unsupported,
-    cs.EgFn.RELATIONSHIPS: _f_nodes_unsupported,
+    ecs.EgFn.ID: _f_id,
+    ecs.EgFn.ELEMENT_ID: _f_id,
+    ecs.EgFn.LABELS: _f_labels,
+    ecs.EgFn.TYPE: _f_type,
+    ecs.EgFn.PROPERTIES: _f_properties,
+    ecs.EgFn.KEYS: _f_keys,
+    ecs.EgFn.START_NODE: _f_start,
+    ecs.EgFn.END_NODE: _f_end,
+    ecs.EgFn.COALESCE: _f_coalesce,
+    ecs.EgFn.TO_LOWER: _string_fn(ecs.EgSqlFn.LOWER),
+    ecs.EgFn.TO_UPPER: _string_fn(ecs.EgSqlFn.UPPER),
+    ecs.EgFn.LOWER: _string_fn(ecs.EgSqlFn.LOWER),
+    ecs.EgFn.UPPER: _string_fn(ecs.EgSqlFn.UPPER),
+    ecs.EgFn.TRIM: _string_fn(ecs.EgSqlFn.TRIM),
+    ecs.EgFn.LTRIM: _string_fn(ecs.EgSqlFn.LTRIM),
+    ecs.EgFn.RTRIM: _string_fn(ecs.EgSqlFn.RTRIM),
+    ecs.EgFn.REPLACE: _string_fn(ecs.EgSqlFn.REPLACE),
+    ecs.EgFn.SUBSTRING: _f_substring,
+    ecs.EgFn.LEFT: _f_left,
+    ecs.EgFn.RIGHT: _f_right,
+    ecs.EgFn.SIZE: _f_size,
+    ecs.EgFn.LENGTH: _f_size,
+    ecs.EgFn.HEAD: _f_head,
+    ecs.EgFn.LAST: _f_last,
+    ecs.EgFn.TAIL: _f_tail,
+    ecs.EgFn.RANGE: _f_range,
+    ecs.EgFn.SPLIT: _f_split,
+    ecs.EgFn.REVERSE: _f_reverse,
+    ecs.EgFn.TO_STRING: _converter(ecs.EgSqlFn.TO_STRING, ty.STRING),
+    ecs.EgFn.TO_INTEGER: _converter(ecs.EgSqlFn.TO_INTEGER, ty.INT),
+    ecs.EgFn.TO_INT: _converter(ecs.EgSqlFn.TO_INTEGER, ty.INT),
+    ecs.EgFn.TO_FLOAT: _converter(ecs.EgSqlFn.TO_FLOAT, ty.FLOAT),
+    ecs.EgFn.TO_BOOLEAN: _converter(ecs.EgSqlFn.TO_BOOLEAN, ty.BOOL),
+    ecs.EgFn.ABS: _math(ecs.EgSqlFn.ABS),
+    ecs.EgFn.CEIL: _math(ecs.EgSqlFn.CEIL, ty.FLOAT),
+    ecs.EgFn.FLOOR: _math(ecs.EgSqlFn.FLOOR, ty.FLOAT),
+    ecs.EgFn.ROUND: _math(ecs.EgSqlFn.ROUND, ty.FLOAT),
+    ecs.EgFn.SQRT: _math(ecs.EgSqlFn.SQRT, ty.FLOAT),
+    ecs.EgFn.SIGN: _math(ecs.EgSqlFn.SIGN, ty.INT),
+    ecs.EgFn.LOG: _math(ecs.EgSqlFn.LOG, ty.FLOAT),
+    ecs.EgFn.EXP: _math(ecs.EgSqlFn.EXP, ty.FLOAT),
+    ecs.EgFn.EXISTS: _f_exists,
+    ecs.EgFn.TIMESTAMP: _f_timestamp,
+    ecs.EgFn.RAND: _f_rand,
+    ecs.EgFn.NODES: _f_nodes_unsupported,
+    ecs.EgFn.RELATIONSHIPS: _f_nodes_unsupported,
 }
 
 # Each handler takes its own Expr subclass, which a Callable over the base

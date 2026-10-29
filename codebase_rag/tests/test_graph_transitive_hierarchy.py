@@ -21,6 +21,7 @@ from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag import graph_query
 from codebase_rag.graph_cli import cli as graph_cli
+from codebase_rag.mcp import constants as mcs
 from codebase_rag.mcp.tools import MCPToolsRegistry
 from codebase_rag.tools import tool_descriptions as td
 from codebase_rag.types_defs import PropertyDict, ResultRow
@@ -459,7 +460,7 @@ def test_mcp_tool_declares_depth_as_an_optional_integer(
 ) -> None:
     schema = registry._tools[tool].input_schema
     prop = schema["properties"][cs.MCPParamName.DEPTH]
-    assert prop["type"] == cs.MCPSchemaType.INTEGER
+    assert prop["type"] == mcs.MCPSchemaType.INTEGER
     assert cs.MCPParamName.DEPTH not in schema["required"]
     # Same schema as callers / callees take.
     callers = registry._tools[cs.MCPToolName.CALLERS].input_schema

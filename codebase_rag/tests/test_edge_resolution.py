@@ -21,6 +21,7 @@ from codebase_rag.cypher_queries import (
 )
 from codebase_rag.dead_code import collect_dead_code, default_dead_code_config
 from codebase_rag.tests.conftest import create_and_run_updater
+from codebase_rag.trace import constants as tcs
 from codebase_rag.trace.ingest import ingest_trace
 from codebase_rag.trace.records import (
     CallRecord,
@@ -345,8 +346,8 @@ def _trace(
     calls: list[tuple[tuple[str, str, int], tuple[str, str, int]]],
 ) -> Path:
     header = TraceHeader(
-        version=cs.TRACE_FORMAT_VERSION,
-        language=cs.TRACE_LANGUAGE_PYTHON,
+        version=tcs.TRACE_FORMAT_VERSION,
+        language=tcs.TRACE_LANGUAGE_PYTHON,
         repo_root=str(repo),
         tracer="t",
         sampled=False,

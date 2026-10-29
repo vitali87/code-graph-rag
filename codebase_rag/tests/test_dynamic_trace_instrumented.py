@@ -16,6 +16,7 @@ import pytest
 from loguru import logger
 
 from codebase_rag import constants as cs
+from codebase_rag.trace import constants as tcs
 from codebase_rag.trace.instrumented import _bare_name, convert_instrumented
 from codebase_rag.trace.records import TraceFormatError, read_trace_file
 
@@ -54,7 +55,7 @@ def test_converts_symbolised_pairs_with_exact_counts(tmp_path):
 
     header, records_iter = read_trace_file(output)
     records = list(records_iter)
-    assert header.language == cs.TRACE_LANGUAGE_CPP
+    assert header.language == tcs.TRACE_LANGUAGE_CPP
     assert header.sampled is False
     assert count == len(records) == 2
     edges = {(r.caller.qualname, r.callee.qualname): r for r in records}
@@ -197,7 +198,7 @@ def test_bare_name_keeps_complete_operator_names():
         _bare_name("F::operator std::__cxx11::basic_string<char> () const")
         == "operator std::__cxx11::basic_string<char>"
     )
-    assert _bare_name("") == cs.TRACE_QUALNAME_ANONYMOUS
+    assert _bare_name("") == tcs.TRACE_QUALNAME_ANONYMOUS
 
 
 cc = shutil.which("cc")
@@ -353,7 +354,7 @@ def test_live_cpp_virtual_dispatch_produces_virtual_edge(tmp_path):
 
     assert count > 0
     header, records_iter = read_trace_file(output)
-    assert header.language == cs.TRACE_LANGUAGE_CPP
+    assert header.language == tcs.TRACE_LANGUAGE_CPP
     edges = {(r.caller.qualname, r.callee.qualname): r for r in records_iter}
     # The virtual call a->speak() resolves to Dog::speak - the runtime-only edge
     # static analysis cannot resolve through the abstract Animal interface.
@@ -467,7 +468,7 @@ def test_live_cmake_project_produces_dynamic_edges(tmp_path):
 
     assert count > 0
     header, records_iter = read_trace_file(output)
-    assert header.language == cs.TRACE_LANGUAGE_CPP
+    assert header.language == tcs.TRACE_LANGUAGE_CPP
     records = list(records_iter)
 
     def edge_count(caller: str, callee: str) -> int:

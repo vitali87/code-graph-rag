@@ -12,12 +12,10 @@ from dataclasses import dataclass
 from enum import Enum
 from functools import cache
 
-from .. import constants as cs
-from ..constants.embedded_graph import (
-    EgKind as Kind,
-)
 from ..schema_parse import parse_properties, parsed_node_schemas
 from ..types_defs import RELATIONSHIP_PROPERTY_SCHEMAS
+from . import constants as ecs
+from .constants import EgKind as Kind
 
 
 @dataclass(frozen=True)
@@ -69,18 +67,18 @@ def unify(types: list[ValueType]) -> ValueType:
 
 
 _DECLARED: dict[str, ValueType] = {
-    cs.EG_SCHEMA_STRING: STRING,
-    cs.EG_SCHEMA_INT: INT,
-    cs.EG_SCHEMA_BOOLEAN: BOOL,
-    cs.EG_SCHEMA_FLOAT: FLOAT,
+    ecs.EG_SCHEMA_STRING: STRING,
+    ecs.EG_SCHEMA_INT: INT,
+    ecs.EG_SCHEMA_BOOLEAN: BOOL,
+    ecs.EG_SCHEMA_FLOAT: FLOAT,
 }
 
 
 def _declared_type(type_name: str) -> ValueType:
-    if type_name.startswith(cs.EG_SCHEMA_LIST_OPEN) and type_name.endswith(
-        cs.EG_SCHEMA_LIST_CLOSE
+    if type_name.startswith(ecs.EG_SCHEMA_LIST_OPEN) and type_name.endswith(
+        ecs.EG_SCHEMA_LIST_CLOSE
     ):
-        inner = type_name[len(cs.EG_SCHEMA_LIST_OPEN) : -len(cs.EG_SCHEMA_LIST_CLOSE)]
+        inner = type_name[len(ecs.EG_SCHEMA_LIST_OPEN) : -len(ecs.EG_SCHEMA_LIST_CLOSE)]
         return list_of(_DECLARED.get(inner, ANY))
     return _DECLARED.get(type_name, ANY)
 

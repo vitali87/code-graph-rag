@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from .. import constants as cs
+from . import constants as ecs
 
 # ------------------------------------------------------------------ schema
 
@@ -326,9 +326,9 @@ def native_walk(
     scanned once per outer row (7 s for one project's ownership walk).
     """
     if direction_out is None:
-        direction = cs.EgDirection.BOTH
+        direction = ecs.EgDirection.BOTH
     else:
-        direction = cs.EgDirection.OUT if direction_out else cs.EgDirection.IN
+        direction = ecs.EgDirection.OUT if direction_out else ecs.EgDirection.IN
     seed_ids = paren(select([call(JSON_GROUP_ARRAY, ID)], paren(seeds)))
     args = [
         seed_ids,
@@ -337,7 +337,7 @@ def native_walk(
         NULL if high is None else str(high),
         *(sql_str(t) for t in types),
     ]
-    rows = json_each(call(cs.EgSqlFn.WALK, *args), EACH_PREFIX)
+    rows = json_each(call(ecs.EgSqlFn.WALK, *args), EACH_PREFIX)
     element = column(EACH_PREFIX, VALUE)
     picked = [json_extract(element, sql_str(f"$[{i}]")) for i in range(4)]
     columns = [WALK_SEED, WALK_NODE, WALK_DEPTH, WALK_PATH]
@@ -350,7 +350,7 @@ def path_avoids(path: str, edge_id: str) -> str:
 
 
 def paths_disjoint(left: str, right: str) -> str:
-    return call(cs.EgSqlFn.PATHS_DISJOINT, left, right)
+    return call(ecs.EgSqlFn.PATHS_DISJOINT, left, right)
 
 
 def all_node_ids() -> str:
@@ -404,9 +404,9 @@ ROLLBACK = "ROLLBACK"
 # A counter every transaction that changes the graph bumps once, here and
 # in the Rust extension's writes; the extension reads only where it equals
 # what the calling statement's own transaction reads (native.py).
-GRAPH_VERSION = f"SELECT CAST(value AS TEXT) FROM cgr_meta WHERE name = '{cs.EG_META_GRAPH_VERSION}'"
+GRAPH_VERSION = f"SELECT CAST(value AS TEXT) FROM cgr_meta WHERE name = '{ecs.EG_META_GRAPH_VERSION}'"
 BUMP_GRAPH_VERSION = (
-    f"INSERT INTO cgr_meta(name, value) VALUES ('{cs.EG_META_GRAPH_VERSION}', '1') "
+    f"INSERT INTO cgr_meta(name, value) VALUES ('{ecs.EG_META_GRAPH_VERSION}', '1') "
     "ON CONFLICT(name) DO UPDATE SET value = CAST(value AS INTEGER) + 1"
 )
 
@@ -674,7 +674,7 @@ def list_comprehension(
     """`[x IN source WHERE ... | element]`, elements in list order."""
     rows = select([STAR], each, where(filters) + order_by([column(alias, KEY)]))
     collected = call(
-        cs.EgSqlFn.COALESCE, call(JSON_GROUP_ARRAY, element), EMPTY_JSON_ARRAY
+        ecs.EgSqlFn.COALESCE, call(JSON_GROUP_ARRAY, element), EMPTY_JSON_ARRAY
     )
     return paren(
         select(
@@ -753,7 +753,7 @@ def aggregate(fn: str, value: str, distinct: bool) -> str:
 
 def sum_or_zero(value: str, distinct: bool) -> str:
     # Cypher's sum() over no rows is 0, SQLite's is NULL.
-    return call(cs.EgSqlFn.COALESCE, aggregate("sum", value, distinct), ZERO)
+    return call(ecs.EgSqlFn.COALESCE, aggregate("sum", value, distinct), ZERO)
 
 
 def collect(value: str, present: str, distinct: bool) -> str:
@@ -773,7 +773,9 @@ def keys_of(doc: str) -> str:
     """keys(): a map's keys in their stored order."""
     keys = select([KEY], f"json_each({doc})", order_by([ID]))
     collected = call(
-        cs.EgSqlFn.COALESCE, call(JSON_GROUP_ARRAY, column("k", KEY)), EMPTY_JSON_ARRAY
+        ecs.EgSqlFn.COALESCE,
+        call(JSON_GROUP_ARRAY, column("k", KEY)),
+        EMPTY_JSON_ARRAY,
     )
     return paren(
         select(
@@ -791,12 +793,12 @@ def substring(text: str, start: str, length: str | None) -> str:
     # Cypher counts from 0, substr from 1.
     first = f"({start}) + 1"
     if length is None:
-        return call(cs.EgSqlFn.SUBSTR, text, first)
-    return call(cs.EgSqlFn.SUBSTR, text, first, length)
+        return call(ecs.EgSqlFn.SUBSTR, text, first)
+    return call(ecs.EgSqlFn.SUBSTR, text, first, length)
 
 
 def left_part(text: str, length: str) -> str:
-    return call(cs.EgSqlFn.SUBSTR, text, ONE, length)
+    return call(ecs.EgSqlFn.SUBSTR, text, ONE, length)
 
 
 def right_part(text: str, length: str) -> str:
@@ -809,24 +811,24 @@ def entity_object(row_id: str, rel: bool) -> str:
     row = "x"
     if rel:
         fields = [
-            sql_str(cs.EG_NODE_ID),
+            sql_str(ecs.EG_NODE_ID),
             column(row, ID),
-            sql_str(cs.EG_REL_TYPE),
+            sql_str(ecs.EG_REL_TYPE),
             column(row, TYPE),
-            sql_str(cs.EG_REL_START),
+            sql_str(ecs.EG_REL_START),
             column(row, SRC),
-            sql_str(cs.EG_REL_END),
+            sql_str(ecs.EG_REL_END),
             column(row, DST),
-            sql_str(cs.EG_NODE_PROPERTIES),
+            sql_str(ecs.EG_NODE_PROPERTIES),
             json_text(column(row, PROPS)),
         ]
     else:
         fields = [
-            sql_str(cs.EG_NODE_ID),
+            sql_str(ecs.EG_NODE_ID),
             column(row, ID),
-            sql_str(cs.EG_NODE_LABELS),
+            sql_str(ecs.EG_NODE_LABELS),
             json_array([column(row, LABEL)]),
-            sql_str(cs.EG_NODE_PROPERTIES),
+            sql_str(ecs.EG_NODE_PROPERTIES),
             json_text(column(row, PROPS)),
         ]
     source = f"{EDGES if rel else NODES} {row}"

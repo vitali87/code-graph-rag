@@ -17,15 +17,15 @@ from types import SimpleNamespace
 import pytest
 
 from codebase_rag import cypher_queries as cq
-from codebase_rag.constants import (
-    EG_BYTES_PER_MB,
-    EG_PLANNER_STATISTICS,
-    EG_RANGE_ITEM_BYTES,
-)
 from codebase_rag.embedded_graph import cypher_ast as a
 from codebase_rag.embedded_graph import functions, limits, procedures
 from codebase_rag.embedded_graph.compiler import ALL_LIVE, live_after
 from codebase_rag.embedded_graph.connection import EmbeddedConnection
+from codebase_rag.embedded_graph.constants import (
+    EG_BYTES_PER_MB,
+    EG_PLANNER_STATISTICS,
+    EG_RANGE_ITEM_BYTES,
+)
 from codebase_rag.embedded_graph.executor import compile_read, value_type
 from codebase_rag.embedded_graph.expressions import (
     CompileError,

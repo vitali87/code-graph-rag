@@ -27,6 +27,7 @@ from codebase_rag import graph_query
 from codebase_rag.cli import app
 from codebase_rag.config import settings
 from codebase_rag.graph_cli import cli as graph_cli
+from codebase_rag.mcp import constants as mcs
 from codebase_rag.mcp import server as mcp_server
 from codebase_rag.mcp.tools import MCPToolsRegistry
 from codebase_rag.types_defs import MCPHandlerType, PropertyParams, ResultRow
@@ -581,7 +582,7 @@ def _server_with(
     monkeypatch: pytest.MonkeyPatch,
 ) -> Callable[[str], Awaitable[types.CallToolResult]]:
     monkeypatch.setattr(settings, "TARGET_REPO_PATH", str(tmp_path))
-    monkeypatch.delenv(cs.MCPEnvVar.MCP_WORKSPACE, raising=False)
+    monkeypatch.delenv(mcs.MCPEnvVar.MCP_WORKSPACE, raising=False)
     tools = MagicMock()
     tools.get_tool_schemas.return_value = []
     tools.get_tool_handler.return_value = None if handler is None else (handler, True)

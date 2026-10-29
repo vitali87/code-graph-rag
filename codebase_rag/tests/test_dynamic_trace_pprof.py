@@ -9,7 +9,7 @@ import gzip
 
 import pytest
 
-from codebase_rag import constants as cs
+from codebase_rag.trace import constants as tcs
 from codebase_rag.trace.pprof import convert_pprof
 from codebase_rag.trace.records import read_trace_file
 
@@ -123,7 +123,7 @@ def _convert(tmp_path, workload=None):
 def test_converts_stacks_to_edges_with_sample_weights(tmp_path):
     count, header, records = _convert(tmp_path)
 
-    assert header.language == cs.TRACE_LANGUAGE_GO
+    assert header.language == tcs.TRACE_LANGUAGE_GO
     assert header.sampled is True
     assert count == len(records)
     edges = {(r.caller.qualname, r.callee.qualname): r for r in records}
@@ -149,7 +149,7 @@ def test_closures_and_methods_normalise(tmp_path):
     _count, _header, records = _convert(tmp_path)
 
     edges = {(r.caller.qualname, r.callee.qualname): r for r in records}
-    assert ("runAll", cs.TRACE_QUALNAME_ANONYMOUS) in edges
+    assert ("runAll", tcs.TRACE_QUALNAME_ANONYMOUS) in edges
     method = edges[("runAll", "Sound")]
     assert method.callee.line == 38
 

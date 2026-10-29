@@ -26,6 +26,7 @@ from loguru import logger
 
 from .. import constants as cs
 from .. import logs as ls
+from . import constants as tcs
 from .records import (
     CallRecord,
     FramePoint,
@@ -130,13 +131,13 @@ def _bare_name(symbol: str) -> str:
     """
     text = _strip_trailing_qualifiers(symbol.strip())
     if not text:
-        return cs.TRACE_QUALNAME_ANONYMOUS
+        return tcs.TRACE_QUALNAME_ANONYMOUS
     head = _strip_trailing_params(text)
     match = _OPERATOR.search(head)
     if match:
         return re.sub(r"\s+", " ", head[match.start() :]).strip()
     name = _strip_angle_groups(_drop_return_type(head))
-    return name.rsplit("::", 1)[-1].strip() or cs.TRACE_QUALNAME_ANONYMOUS
+    return name.rsplit("::", 1)[-1].strip() or tcs.TRACE_QUALNAME_ANONYMOUS
 
 
 def _atos_symbolizer(
@@ -211,7 +212,7 @@ def _default_symbolizer() -> Symbolizer:
         return _atos_symbolizer
     if shutil.which("addr2line"):
         return _addr2line_symbolizer
-    raise TraceFormatError(cs.TRACE_ERR_NO_SYMBOLIZER)
+    raise TraceFormatError(tcs.TRACE_ERR_NO_SYMBOLIZER)
 
 
 def _parse_addrs(addrs_path: Path) -> tuple[str, int, list[tuple[int, int, int]]]:
@@ -243,14 +244,14 @@ def _parse_addrs(addrs_path: Path) -> tuple[str, int, list[tuple[int, int, int]]
             if len(parts) == 3:
                 pairs.append((int(parts[0], 16), int(parts[1], 16), int(parts[2])))
     if not exe or not pairs:
-        raise TraceFormatError(cs.TRACE_ERR_BAD_ADDRS.format(path=addrs_path))
+        raise TraceFormatError(tcs.TRACE_ERR_BAD_ADDRS.format(path=addrs_path))
     if dropped:
         # The shim lost caller/callee pairs, so the exact invocation-count
         # contract can no longer hold. Refuse the trace rather than pass off
         # an incomplete call graph as exact; an unwound one likewise.
-        raise TraceFormatError(cs.TRACE_ERR_ADDRS_DROPPED.format(path=addrs_path))
+        raise TraceFormatError(tcs.TRACE_ERR_ADDRS_DROPPED.format(path=addrs_path))
     if unwound:
-        raise TraceFormatError(cs.TRACE_ERR_ADDRS_UNWOUND.format(path=addrs_path))
+        raise TraceFormatError(tcs.TRACE_ERR_ADDRS_UNWOUND.format(path=addrs_path))
     return exe, slide, pairs
 
 
@@ -313,10 +314,10 @@ def convert_instrumented(
         for (caller, callee), count in edges.items()
     ]
     header = TraceHeader(
-        version=cs.TRACE_FORMAT_VERSION,
-        language=cs.TRACE_LANGUAGE_CPP,
+        version=tcs.TRACE_FORMAT_VERSION,
+        language=tcs.TRACE_LANGUAGE_CPP,
         repo_root=str(repo_root),
-        tracer=cs.TRACE_TOOL_NAME_INSTRUMENTED,
+        tracer=tcs.TRACE_TOOL_NAME_INSTRUMENTED,
         sampled=False,
     )
     write_trace_file(output, header, records)

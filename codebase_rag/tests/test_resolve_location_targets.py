@@ -24,6 +24,7 @@ from click.testing import CliRunner
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag import graph_query
+from codebase_rag.gloss import constants as gcs
 from codebase_rag.gloss import notes as gloss
 from codebase_rag.graph_cli import cli as graph_cli
 from codebase_rag.mcp.tools import MCPToolsRegistry
@@ -452,7 +453,7 @@ def test_gloss_resolve_one_names_the_unknown_file() -> None:
     # A held file with no definition at the line keeps the not-found refusal.
     missing = gloss.resolve_one(graph.fetch_all, P, f"{SESSIONS}:999")
     assert isinstance(missing, dict)
-    assert missing[cs.DICT_KEY_ERROR] == cs.MCP_GLOSS_TARGET_NOT_FOUND.format(
+    assert missing[cs.DICT_KEY_ERROR] == gcs.MCP_GLOSS_TARGET_NOT_FOUND.format(
         target=f"{SESSIONS}:999", project=P
     )
 

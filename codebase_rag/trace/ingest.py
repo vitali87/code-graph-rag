@@ -24,6 +24,7 @@ from ..cypher_queries import (
     build_trace_confirm_calls_query,
 )
 from ..services import IngestorProtocol, QueryProtocol
+from . import constants as tcs
 from .dispatch_site import locate_dispatch_literal
 from .records import read_trace_file
 from .resolution import (
@@ -55,23 +56,23 @@ class FrameResolverProtocol(Protocol):
 def _resolver_for(
     header: TraceHeader, repo_root: Path, nodes: list[CallableNode]
 ) -> FrameResolverProtocol:
-    if header.language == cs.TRACE_LANGUAGE_JVM:
+    if header.language == tcs.TRACE_LANGUAGE_JVM:
         return JvmFrameResolver(nodes)
     if header.language in (
-        cs.TRACE_LANGUAGE_JS,
-        cs.TRACE_LANGUAGE_LUA,
-        cs.TRACE_LANGUAGE_DART,
-        cs.TRACE_LANGUAGE_GO,
-        cs.TRACE_LANGUAGE_CPP,
-        cs.TRACE_LANGUAGE_RUST,
+        tcs.TRACE_LANGUAGE_JS,
+        tcs.TRACE_LANGUAGE_LUA,
+        tcs.TRACE_LANGUAGE_DART,
+        tcs.TRACE_LANGUAGE_GO,
+        tcs.TRACE_LANGUAGE_CPP,
+        tcs.TRACE_LANGUAGE_RUST,
     ):
         # Lua-agent and Dart-collector frames share V8's shape: repo paths,
         # bare runtime names, 1-based definition lines, <module>/<anonymous>
         # markers. Rust pprof frames reduce to the same shape after demangling.
         return JsFrameResolver(repo_root, nodes)
-    if header.language == cs.TRACE_LANGUAGE_DOTNET:
+    if header.language == tcs.TRACE_LANGUAGE_DOTNET:
         return DotnetFrameResolver(nodes)
-    if header.language == cs.TRACE_LANGUAGE_PHP:
+    if header.language == tcs.TRACE_LANGUAGE_PHP:
         return PhpFrameResolver(repo_root, nodes)
     return FrameResolver(repo_root, nodes)
 
@@ -150,19 +151,19 @@ def _load_existing_calls(
 
 
 def _edge_properties(stats: _EdgeStats, sampled: bool) -> dict[str, PropertyValue]:
-    workloads = sorted(stats.workloads)[: cs.TRACE_MAX_WORKLOADS_PER_EDGE]
-    receivers = sorted(stats.receiver_types)[: cs.TRACE_MAX_RECEIVER_TYPES_PER_EDGE]
+    workloads = sorted(stats.workloads)[: tcs.TRACE_MAX_WORKLOADS_PER_EDGE]
+    receivers = sorted(stats.receiver_types)[: tcs.TRACE_MAX_RECEIVER_TYPES_PER_EDGE]
     return {
         cs.TRACE_PROP_DYNAMIC: True,
         cs.TRACE_PROP_CALL_COUNT: stats.count,
-        cs.TRACE_PROP_WORKLOAD_COUNT: len(stats.workloads),
-        cs.TRACE_PROP_WORKLOADS: workloads,
-        cs.TRACE_PROP_RECEIVER_TYPES: receivers,
-        cs.TRACE_PROP_SAMPLED: sampled,
+        tcs.TRACE_PROP_WORKLOAD_COUNT: len(stats.workloads),
+        tcs.TRACE_PROP_WORKLOADS: workloads,
+        tcs.TRACE_PROP_RECEIVER_TYPES: receivers,
+        tcs.TRACE_PROP_SAMPLED: sampled,
         # Written, not omitted: the edge this merges onto may carry a True
         # from a sync that graded it after an edit (issue #2429), and a new
         # observation of the current code is what makes it current again.
-        cs.TRACE_PROP_STALE: False,
+        tcs.TRACE_PROP_STALE: False,
     }
 
 
@@ -248,7 +249,7 @@ def write_trace_edge(
     runtime-only edge whose dispatch literal is looked up in the caller's
     current body.
     """
-    properties[cs.TRACE_PROP_STATIC_MISSED] = static_missed
+    properties[tcs.TRACE_PROP_STATIC_MISSED] = static_missed
     if static_missed:
         _mark_dynamic(properties, repo_root, caller_node, callee)
     else:

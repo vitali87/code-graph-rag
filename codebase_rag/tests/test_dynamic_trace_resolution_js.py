@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from codebase_rag import constants as cs
+from codebase_rag.trace import constants as tcs
 from codebase_rag.trace.records import FramePoint
 from codebase_rag.trace.resolution import (
     CallableNode,
@@ -84,7 +85,7 @@ def test_resolves_top_level_function_and_method_by_name_and_span(tmp_path):
 
 def test_resolves_module_toplevel_frame_to_module_node(tmp_path):
     resolved = _resolver(tmp_path).resolve(
-        _frame(tmp_path, "src/utils.js", cs.TRACE_QUALNAME_MODULE, 1),
+        _frame(tmp_path, "src/utils.js", tcs.TRACE_QUALNAME_MODULE, 1),
         ResolutionStats(),
     )
 
@@ -104,7 +105,7 @@ def test_resolves_nested_function_to_innermost_span(tmp_path):
 
 def test_resolves_anonymous_frame_by_span(tmp_path):
     resolved = _resolver(tmp_path).resolve(
-        _frame(tmp_path, "src/utils.js", cs.TRACE_QUALNAME_ANONYMOUS, 22),
+        _frame(tmp_path, "src/utils.js", tcs.TRACE_QUALNAME_ANONYMOUS, 22),
         ResolutionStats(),
     )
 

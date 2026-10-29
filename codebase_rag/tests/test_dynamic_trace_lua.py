@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.trace import constants as tcs
 from codebase_rag.trace.records import read_trace_file
 
 _AGENT_DIR = Path(__file__).resolve().parents[1] / "trace" / "lua_agent"
@@ -124,7 +125,7 @@ def test_agent_records_registry_dispatch_with_exact_counts(tmp_path):
     edges = {(r.caller.qualname, r.callee.qualname): r for r in records}
     # A table-dispatched function has no runtime name; its definition site
     # is what span resolution needs.
-    dispatch = edges.get(("handle", cs.TRACE_QUALNAME_ANONYMOUS))
+    dispatch = edges.get(("handle", tcs.TRACE_QUALNAME_ANONYMOUS))
     assert dispatch is not None, sorted(edges)
     assert dispatch.count == 3
     assert dispatch.callee.path.endswith("main.lua")
@@ -250,5 +251,5 @@ def test_sibling_directories_sharing_the_root_prefix_stay_out_of_scope(tmp_path)
 def test_main_chunk_frames_use_module_marker(tmp_path):
     _header, records = _run_traced_lua(tmp_path)
 
-    toplevel = [r for r in records if r.caller.qualname == cs.TRACE_QUALNAME_MODULE]
+    toplevel = [r for r in records if r.caller.qualname == tcs.TRACE_QUALNAME_MODULE]
     assert toplevel

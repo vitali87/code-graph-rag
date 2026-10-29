@@ -23,18 +23,17 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
-from codebase_rag.constants import (
+from codebase_rag.constants import MERGE_KEY_PROPS_BY_REL, NODE_UNIQUE_CONSTRAINTS
+from codebase_rag.embedded_graph import executor, limits, native
+from codebase_rag.embedded_graph import sql as sq
+from codebase_rag.embedded_graph.connection import EmbeddedConnection
+from codebase_rag.embedded_graph.constants import (
     EG_META_GRAPH_VERSION,
     EG_RUST_MODULE,
     EG_RUST_READER,
     EG_SQL_SEED_GRAPH_VERSION,
-    MERGE_KEY_PROPS_BY_REL,
-    NODE_UNIQUE_CONSTRAINTS,
     EgDecode,
 )
-from codebase_rag.embedded_graph import executor, limits, native
-from codebase_rag.embedded_graph import sql as sq
-from codebase_rag.embedded_graph.connection import EmbeddedConnection
 from codebase_rag.embedded_graph.executor import compile_read, decode
 from codebase_rag.embedded_graph.extension import rust_extension
 from codebase_rag.embedded_graph.limits import (

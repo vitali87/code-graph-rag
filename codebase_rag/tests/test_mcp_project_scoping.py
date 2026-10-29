@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.mcp import constants as mcs
 from codebase_rag.tests.conftest import bare_registry
 
 # Two projects whose symbols COLLIDE by name. A fixture with distinct names
@@ -1559,7 +1560,7 @@ class TestScopedBudgetIsSpentOnInProjectRows:
 
         result = await handler.query_code_graph("everything", project=ALPHA)
 
-        assert cs.MCP_KEY_ERROR not in result, result
+        assert mcs.MCP_KEY_ERROR not in result, result
 
     @pytest.mark.asyncio
     async def test_an_unscoped_success_carries_no_error_key_either(self) -> None:
@@ -1568,7 +1569,7 @@ class TestScopedBudgetIsSpentOnInProjectRows:
 
         result = await handler.query_code_graph("everything")
 
-        assert cs.MCP_KEY_ERROR not in result, result
+        assert mcs.MCP_KEY_ERROR not in result, result
 
     @pytest.mark.asyncio
     async def test_a_scoped_refusal_still_reports_an_error(self) -> None:
@@ -2853,7 +2854,7 @@ async def test_query_code_graph_refuses_on_an_incomplete_graph() -> None:
     # the call did not happen instead.
     handler._query_tool.function.assert_not_awaited()
     assert result[cs.DICT_KEY_RESULTS] == []
-    assert ALPHA in result[cs.MCP_KEY_ERROR]
+    assert ALPHA in result[mcs.MCP_KEY_ERROR]
 
 
 @pytest.mark.asyncio
@@ -3683,7 +3684,7 @@ def test_one_projects_damage_does_not_block_anothers_reingest() -> None:
     try:
         handler._hydrate_reingest_updater(BETA)
     except ValueError as exc:
-        assert cs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=BETA) != str(exc), (
+        assert mcs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=BETA) != str(exc), (
             "healthy BETA was refused for ALPHA's damage"
         )
     except Exception:
@@ -3697,7 +3698,7 @@ def test_unattributed_damage_still_blocks_every_reingest() -> None:
     for project in (ALPHA, BETA):
         with pytest.raises(ValueError) as refused:
             handler._hydrate_reingest_updater(project)
-        assert cs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=project) == str(
+        assert mcs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=project) == str(
             refused.value
         )
 
@@ -3708,12 +3709,12 @@ def test_the_cached_path_also_scopes_the_latch() -> None:
 
     with pytest.raises(ValueError) as damaged:
         handler._hydrate_reingest_updater(ALPHA)
-    assert cs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=ALPHA) == str(damaged.value)
+    assert mcs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=ALPHA) == str(damaged.value)
 
     try:
         handler._hydrate_reingest_updater(BETA)
     except ValueError as exc:
-        assert cs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=BETA) != str(exc), (
+        assert mcs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=BETA) != str(exc), (
             "healthy BETA was refused for ALPHA's damage"
         )
     except Exception:
@@ -4025,7 +4026,7 @@ async def test_the_cached_path_honours_a_marker_from_an_earlier_process() -> Non
     with pytest.raises(ValueError) as refused:
         handler._hydrate_reingest_updater(ALPHA)
 
-    assert cs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=ALPHA) == str(refused.value)
+    assert mcs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=ALPHA) == str(refused.value)
 
 
 @pytest.mark.asyncio
@@ -4189,7 +4190,7 @@ def test_a_retained_updater_still_refuses_on_a_durable_marker() -> None:
     with pytest.raises(ValueError) as refused:
         handler._guarded_rename_reingest(ALPHA)
 
-    assert cs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=ALPHA) == str(
+    assert mcs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=ALPHA) == str(
         refused.value
     ), "a warm updater re-ingested over a graph a previous process left partial"
 

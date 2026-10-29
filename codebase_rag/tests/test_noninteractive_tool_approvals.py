@@ -29,6 +29,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from codebase_rag import constants as cs
 from codebase_rag.agent_loop import main_single_query
 from codebase_rag.cli_runtime import app_context
+from codebase_rag.mcp import constants as mcs
 from codebase_rag.mcp.tools import MCPToolsRegistry
 from codebase_rag.tests.conftest import bare_registry
 
@@ -162,7 +163,7 @@ def test_a_model_that_never_stops_asking_ends_in_an_error(
 async def test_mcp_ask_agent_denies_the_edit_and_answers(tmp_path: Path) -> None:
     result = await _registry(_agent(tmp_path)).ask_agent(QUESTION)
 
-    assert result == {"output": f"Done: {cs.MCP_ASK_AGENT_APPROVAL_DENIED}"}
+    assert result == {"output": f"Done: {mcs.MCP_ASK_AGENT_APPROVAL_DENIED}"}
     assert not (tmp_path / "NOTES.md").exists()
 
 

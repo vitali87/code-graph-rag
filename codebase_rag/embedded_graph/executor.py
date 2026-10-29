@@ -18,6 +18,7 @@ from functools import lru_cache
 
 from .. import constants as cs
 from ..types_defs import CypherParams, CypherParamValue, JsonValue, ResultValue
+from . import constants as ecs
 from . import cypher_ast as a
 from . import sql as sq
 from . import types as ty
@@ -49,14 +50,14 @@ _WRITE_CLAUSES = (a.Create, a.Merge, a.SetClause, a.Remove, a.Delete, a.Foreach,
 
 # The one operator each clause other than MATCH and CALL plans as.
 _PLAN_OPS: tuple[tuple[type[a.Clause], str], ...] = (
-    (a.Unwind, cs.EG_PLAN_UNWIND),
-    (a.Projection, cs.EG_PLAN_PRODUCE),
-    (a.Create, cs.EG_PLAN_CREATE),
-    (a.Merge, cs.EG_PLAN_MERGE),
-    (a.SetClause, cs.EG_PLAN_SET),
-    (a.Remove, cs.EG_PLAN_REMOVE),
-    (a.Delete, cs.EG_PLAN_DELETE),
-    (a.Foreach, cs.EG_PLAN_FOREACH),
+    (a.Unwind, ecs.EG_PLAN_UNWIND),
+    (a.Projection, ecs.EG_PLAN_PRODUCE),
+    (a.Create, ecs.EG_PLAN_CREATE),
+    (a.Merge, ecs.EG_PLAN_MERGE),
+    (a.SetClause, ecs.EG_PLAN_SET),
+    (a.Remove, ecs.EG_PLAN_REMOVE),
+    (a.Delete, ecs.EG_PLAN_DELETE),
+    (a.Foreach, ecs.EG_PLAN_FOREACH),
 )
 
 _SQL_REFRESH_KEY = sq.refresh_key(cs.NODE_UNIQUE_CONSTRAINTS)
@@ -96,13 +97,13 @@ def _json_default(
 def bind_value(spec: ParamSpec, params: CypherParams) -> SqlValue:
     """A parameter as SQLite binds it: JSON text for anything structured."""
     if spec.name not in params:
-        raise CompileError(cs.EG_ERR_MISSING_PARAM.format(name=spec.name))
+        raise CompileError(ecs.EG_ERR_MISSING_PARAM.format(name=spec.name))
     value = params[spec.name]
-    if spec.mode == cs.EgParamMode.UPPER:
-        return None if value is None else f"{value}{cs.EG_PREFIX_UPPER_BOUND}"
+    if spec.mode == ecs.EgParamMode.UPPER:
+        return None if value is None else f"{value}{ecs.EG_PREFIX_UPPER_BOUND}"
     if value is None:
         return None
-    if spec.mode == cs.EgParamMode.JSON:
+    if spec.mode == ecs.EgParamMode.JSON:
         return json.dumps(value, default=_json_default)
     if isinstance(value, bool):
         return int(value)
@@ -115,14 +116,14 @@ def _entity_id(value: JsonValue) -> int:
     """A node or relationship id, as SQLite stores it: an integer."""
     if isinstance(value, int):
         return value
-    raise CompileError(cs.EG_ERR_NOT_ENTITY.format(value=value))
+    raise CompileError(ecs.EG_ERR_NOT_ENTITY.format(value=value))
 
 
 def _json(value: JsonValue) -> JsonValue:
     """A value the compiler emitted as JSON text, decoded."""
     if isinstance(value, str):
         return json.loads(value)
-    raise CompileError(cs.EG_ERR_NOT_JSON.format(value=value))
+    raise CompileError(ecs.EG_ERR_NOT_JSON.format(value=value))
 
 
 def _json_map(value: JsonValue) -> dict[str, JsonValue]:
@@ -139,14 +140,14 @@ def _binds(ctx: Ctx, params: CypherParams) -> dict[str, SqlValue]:
     return {spec.placeholder: bind_value(spec, params) for spec in ctx.params}
 
 
-def decode(kind: cs.EgDecode, value: SqlValue) -> ResultValue:
-    if value is None or kind == cs.EgDecode.RAW:
+def decode(kind: ecs.EgDecode, value: SqlValue) -> ResultValue:
+    if value is None or kind == ecs.EgDecode.RAW:
         return value
-    if kind == cs.EgDecode.BOOL:
+    if kind == ecs.EgDecode.BOOL:
         return bool(value)
-    if kind == cs.EgDecode.JSON:
+    if kind == ecs.EgDecode.JSON:
         return json.loads(value) if isinstance(value, str) else value
-    if kind == cs.EgDecode.NULL:
+    if kind == ecs.EgDecode.NULL:
         return None
     return value
 
@@ -182,7 +183,7 @@ def _mutates(query: a.Query) -> bool:
     )
 
 
-@lru_cache(maxsize=cs.EG_COMPILE_CACHE_SIZE)
+@lru_cache(maxsize=ecs.EG_COMPILE_CACHE_SIZE)
 def compile_read(
     text: str,
     param_sig: tuple[tuple[str, ValueType], ...],
@@ -201,7 +202,7 @@ def compile_read(
         *body, last = part.clauses
         if not (isinstance(last, a.Projection) and last.is_return):
             raise CompileError(
-                cs.EG_ERR_UNSUPPORTED.format(what=cs.EG_WHAT_READ_WITHOUT_RETURN)
+                ecs.EG_ERR_UNSUPPORTED.format(what=ecs.EG_WHAT_READ_WITHOUT_RETURN)
             )
         live = live_after(part.clauses)
         for clause, after in zip(body, live):
@@ -222,19 +223,19 @@ def _union(
     return sq.union(selects, union_all), [OutputColumn(n, kinds[n]) for n in names]
 
 
-def _union_kinds(parts: list[_ReturnPart]) -> dict[str, cs.EgDecode]:
+def _union_kinds(parts: list[_ReturnPart]) -> dict[str, ecs.EgDecode]:
     """Each column's decode; JSON where the parts disagree on it."""
-    kinds: dict[str, cs.EgDecode] = {}
+    kinds: dict[str, ecs.EgDecode] = {}
     for _, outs, _ in parts:
         for out in outs:
             prior = kinds.setdefault(out.name, out.decode)
             if prior != out.decode:
-                kinds[out.name] = cs.EgDecode.JSON
+                kinds[out.name] = ecs.EgDecode.JSON
     return kinds
 
 
 def _union_select(
-    part: _ReturnPart, names: list[str], kinds: dict[str, cs.EgDecode]
+    part: _ReturnPart, names: list[str], kinds: dict[str, ecs.EgDecode]
 ) -> str:
     sql, outs, cols = part
     by_name = {out.name: (out, col) for out, col in zip(outs, cols)}
@@ -246,12 +247,12 @@ def _union_select(
     return sq.select(exprs, sq.paren(sql))
 
 
-def _union_value(col: str, decode: cs.EgDecode, kind: cs.EgDecode) -> str:
+def _union_value(col: str, decode: ecs.EgDecode, kind: ecs.EgDecode) -> str:
     # A scalar or boolean column decodes as JSON once another part's column
     # of the same name does, so it has to read as JSON text too.
-    if kind == cs.EgDecode.JSON and decode == cs.EgDecode.RAW:
+    if kind == ecs.EgDecode.JSON and decode == ecs.EgDecode.RAW:
         return sq.json_of_scalar(col)
-    if kind == cs.EgDecode.JSON and decode == cs.EgDecode.BOOL:
+    if kind == ecs.EgDecode.JSON and decode == ecs.EgDecode.BOOL:
         return sq.json_of_bool(col)
     return col
 
@@ -289,7 +290,7 @@ class Executor:
         writes = _has_updates(stmt)
         mutates = _mutates(stmt)
         if mutates and self.read_only:
-            raise CompileError(cs.EG_ERR_READ_ONLY)
+            raise CompileError(ecs.EG_ERR_READ_ONLY)
         return self._transaction(
             mutates,
             timeout_s,
@@ -304,7 +305,7 @@ class Executor:
         self.conn.execute(sq.BEGIN_WRITE if mutates else sq.BEGIN_READ)
         deadline = Deadline.after(timeout_s)
         if timeout_s is not None:
-            self.conn.set_progress_handler(deadline.passed, cs.EG_PROGRESS_STEPS)
+            self.conn.set_progress_handler(deadline.passed, ecs.EG_PROGRESS_STEPS)
         try:
             if mutates:
                 # Once per transaction that changes the graph (native.py).
@@ -320,7 +321,7 @@ class Executor:
                 self.conn.execute(sq.ROLLBACK)
             # The progress handler aborts a statement as "interrupted".
             if isinstance(error, sqlite3.OperationalError) and deadline.passed():
-                raise QueryTimeout(cs.EG_ERR_TIMEOUT) from error
+                raise QueryTimeout(ecs.EG_ERR_TIMEOUT) from error
             raise
         self.conn.set_progress_handler(None, 0)
         self.conn.execute(sq.COMMIT)
@@ -345,7 +346,7 @@ class Executor:
             )
         if len(stmt.parts) > 1:
             raise CompileError(
-                cs.EG_ERR_UNSUPPORTED.format(what=cs.EG_WHAT_UNION_UPDATES)
+                ecs.EG_ERR_UNSUPPORTED.format(what=ecs.EG_WHAT_UNION_UPDATES)
             )
         ctx = Ctx(dict(sig), self.json_arrow, walks)
         return _Run(self, ctx, params).single(stmt.parts[0])
@@ -357,19 +358,19 @@ class Executor:
     # ----------------------------------------------------------------- schema
 
     def _schema(self, cmd: a.SchemaCommand) -> Result:
-        if cmd.kind == cs.EgSchemaKind.SHOW_CONSTRAINTS:
+        if cmd.kind == ecs.EgSchemaKind.SHOW_CONSTRAINTS:
             return Result(
-                [cs.EG_COL_LABEL, cs.EG_COL_PROPERTIES],
+                [ecs.EG_COL_LABEL, ecs.EG_COL_PROPERTIES],
                 [(label, [prop]) for label, prop in cs.NODE_UNIQUE_CONSTRAINTS.items()],
             )
-        if cmd.kind == cs.EgSchemaKind.SHOW_STORAGE:
+        if cmd.kind == ecs.EgSchemaKind.SHOW_STORAGE:
             return self._storage_info()
-        if cmd.kind == cs.EgSchemaKind.SHOW_INDEXES:
+        if cmd.kind == ecs.EgSchemaKind.SHOW_INDEXES:
             rows = self.conn.execute(sq.LIST_NODE_INDEXES).fetchall()
             return Result(
-                [cs.EG_COL_LABEL, cs.EG_COL_COUNT], [(r[0], None) for r in rows]
+                [ecs.EG_COL_LABEL, ecs.EG_COL_COUNT], [(r[0], None) for r in rows]
             )
-        if cmd.kind == cs.EgSchemaKind.CREATE_INDEX and cmd.label:
+        if cmd.kind == ecs.EgSchemaKind.CREATE_INDEX and cmd.label:
             self._create_indexes(cmd.label, cmd.props)
         return Result([], [])
 
@@ -377,19 +378,22 @@ class Executor:
         nodes = self.conn.execute(sq.COUNT_NODES).fetchone()[0]
         edges = self.conn.execute(sq.COUNT_EDGES).fetchone()[0]
         return Result(
-            [cs.EG_COL_STORAGE_NAME, cs.EG_COL_STORAGE_VALUE],
-            [(cs.EG_STORAGE_VERTEX_COUNT, nodes), (cs.EG_STORAGE_EDGE_COUNT, edges)],
+            [ecs.EG_COL_STORAGE_NAME, ecs.EG_COL_STORAGE_VALUE],
+            [
+                (ecs.EG_STORAGE_VERTEX_COUNT, nodes),
+                (ecs.EG_STORAGE_EDGE_COUNT, edges),
+            ],
         )
 
     def _create_indexes(self, label: str, props: Sequence[str]) -> None:
         for prop in props:
             if cs.NODE_UNIQUE_CONSTRAINTS.get(label) == prop:
                 continue
-            if not prop.replace(cs.EG_IDENT_EXTRA, sq.NOTHING).isalnum():
+            if not prop.replace(ecs.EG_IDENT_EXTRA, sq.NOTHING).isalnum():
                 continue
             self.conn.execute(
-                cs.EG_PROP_INDEX_SQL.format(
-                    name=cs.EG_PROP_INDEX_NAME.format(prop=prop),
+                ecs.EG_PROP_INDEX_SQL.format(
+                    name=ecs.EG_PROP_INDEX_NAME.format(prop=prop),
                     path=sq.json_path(prop),
                 )
             )
@@ -491,7 +495,7 @@ class _Run:
         return Stage(sq.temp_table(name), dict(vars_), cols or [sq.ONE_COLUMN_NAME])
 
     def _eval(
-        self, stage: Stage, exprs: Sequence[tuple[a.Expr, cs.EgForm]]
+        self, stage: Stage, exprs: Sequence[tuple[a.Expr, ecs.EgForm]]
     ) -> list[list[SqlValue]]:
         """Per row (in rowid order), each expression in the requested form."""
         if not exprs:
@@ -504,10 +508,10 @@ class _Run:
         sql = sq.in_row_order(parts, stage.name, sq.INPUT)
         return [list(r) for r in self.conn.execute(sql, self._binds()).fetchall()]
 
-    def _form(self, ce: CE, form: cs.EgForm) -> str:
-        if form == cs.EgForm.JSON:
+    def _form(self, ce: CE, form: ecs.EgForm) -> str:
+        if form == ecs.EgForm.JSON:
             return self.qc.exprs.jsonv(ce)
-        if form == cs.EgForm.NATIVE:
+        if form == ecs.EgForm.NATIVE:
             return self.qc.exprs.native(ce)
         return ce.sql
 
@@ -535,7 +539,7 @@ class _Run:
             return stage
         if isinstance(clause, a.Call):
             return self._call(stage, clause)
-        raise CompileError(cs.EG_ERR_UNSUPPORTED.format(what=type(clause).__name__))
+        raise CompileError(ecs.EG_ERR_UNSUPPORTED.format(what=type(clause).__name__))
 
     def _table_of(self, t: ValueType) -> str:
         return sq.EDGES if t.kind == Kind.REL else sq.NODES
@@ -547,7 +551,7 @@ class _Run:
             return
         rows = self._rows(stage)
         exprs = [
-            (item.value, cs.EgForm.JSON) for item in items if item.value is not None
+            (item.value, ecs.EgForm.JSON) for item in items if item.value is not None
         ]
         values = self._eval(stage, exprs)
         cols = list(stage.vars)
@@ -574,24 +578,24 @@ class _Run:
         self, item: a.SetItem, t: ValueType, target: int, value: SqlValue
     ) -> None:
         table = self._table_of(t)
-        if item.kind == cs.EgSetKind.PROP:
+        if item.kind == ecs.EgSetKind.PROP:
             key = str(item.key)
             if value is None:
                 self.conn.execute(sq.remove_prop(table, key), (target,))
             else:
                 self.conn.execute(sq.set_prop(table, key), (value, target))
-        elif item.kind == cs.EgSetKind.MERGE:
+        elif item.kind == ecs.EgSetKind.MERGE:
             if value is None:
                 return
             self.conn.execute(sq.merge_props(table), (value, target))
-        elif item.kind == cs.EgSetKind.REPLACE:
+        elif item.kind == ecs.EgSetKind.REPLACE:
             self.conn.execute(sq.replace_props(table), (value, target))
         else:
             label = self.conn.execute(sq.NODE_LABEL, (target,)).fetchone()
             if label and label[0] != item.key:
                 raise CompileError(
-                    cs.EG_ERR_LABEL_COUNT.format(
-                        labels=cs.EgPunct.COLON.join((label[0], str(item.key)))
+                    ecs.EG_ERR_LABEL_COUNT.format(
+                        labels=ecs.EgPunct.COLON.join((label[0], str(item.key)))
                     )
                 )
             return
@@ -606,9 +610,9 @@ class _Run:
                 target = row[cols.index(item.var)]
                 if target is None:
                     continue
-                if item.kind == cs.EgRemoveKind.LABEL:
+                if item.kind == ecs.EgRemoveKind.LABEL:
                     raise CompileError(
-                        cs.EG_ERR_UNSUPPORTED.format(what=cs.EG_WHAT_REMOVE_LABEL)
+                        ecs.EG_ERR_UNSUPPORTED.format(what=ecs.EG_WHAT_REMOVE_LABEL)
                     )
                 table = self._table_of(stage.vars[item.var].t)
                 self.conn.execute(
@@ -618,7 +622,7 @@ class _Run:
                     self.conn.execute(_SQL_REFRESH_KEY, (_entity_id(target),))
 
     def _delete(self, stage: Stage, clause: a.Delete) -> None:
-        exprs = [(e, cs.EgForm.RAW) for e in clause.exprs]
+        exprs = [(e, ecs.EgForm.RAW) for e in clause.exprs]
         scope = stage.scope(sq.INPUT)
         types = [self.qc.exprs.compile(e, scope).t for e in clause.exprs]
         values = self._eval(stage, exprs)
@@ -634,14 +638,14 @@ class _Run:
             if clause.detach:
                 self.conn.execute(sq.DETACH_NODE, (node, node))
             elif self.conn.execute(sq.NODE_HAS_EDGES, (node, node)).fetchone():
-                raise CompileError(cs.EG_ERR_DELETE_ATTACHED.format(id=node))
+                raise CompileError(ecs.EG_ERR_DELETE_ATTACHED.format(id=node))
             self.conn.execute(sq.DELETE_NODE, (node,))
 
     def _merge(self, stage: Stage, clause: a.Merge) -> Stage:
         pattern = clause.pattern
         if pattern.var is not None:
             raise CompileError(
-                cs.EG_ERR_UNSUPPORTED.format(what=cs.EG_WHAT_PATH_VARIABLES)
+                ecs.EG_ERR_UNSUPPORTED.format(what=ecs.EG_WHAT_PATH_VARIABLES)
             )
         if not pattern.rels:
             return self._merge_node(stage, clause, pattern.nodes[0])
@@ -650,17 +654,17 @@ class _Run:
             for n in pattern.nodes
         ):
             return self._merge_rel(stage, clause)
-        raise CompileError(cs.EG_ERR_UNSUPPORTED.format(what=cs.EG_WHAT_MERGE_PATH))
+        raise CompileError(ecs.EG_ERR_UNSUPPORTED.format(what=ecs.EG_WHAT_MERGE_PATH))
 
     def _merge_node(self, stage: Stage, clause: a.Merge, np: a.NodePattern) -> Stage:
         if len(np.labels) != 1:
             raise CompileError(
-                cs.EG_ERR_LABEL_COUNT.format(labels=cs.EgPunct.COLON.join(np.labels))
+                ecs.EG_ERR_LABEL_COUNT.format(labels=ecs.EgPunct.COLON.join(np.labels))
             )
         label = np.labels[0]
         key_prop = cs.NODE_UNIQUE_CONSTRAINTS.get(label)
         props = np.props.items if isinstance(np.props, a.MapLit) else ()
-        exprs = [(value, cs.EgForm.JSON) for _, value in props]
+        exprs = [(value, ecs.EgForm.JSON) for _, value in props]
         values = self._eval(stage, exprs)
         rows = self._rows(stage)
         created: set[int] = set()
@@ -669,7 +673,7 @@ class _Run:
             doc: dict[str, JsonValue] = {}
             for (key, _), raw in zip(props, row_values):
                 if raw is None:
-                    raise CompileError(cs.EG_ERR_MERGE_NULL.format(key=key))
+                    raise CompileError(ecs.EG_ERR_MERGE_NULL.format(key=key))
                 doc[key] = _json(raw)
             node_id, was_created = self._find_or_create_node(label, key_prop, doc)
             bound.append(node_id)
@@ -700,14 +704,16 @@ class _Run:
         pattern = clause.pattern
         rp = pattern.rels[0]
         if len(rp.types) != 1 or rp.var_length is not None:
-            raise CompileError(cs.EG_ERR_UNSUPPORTED.format(what=cs.EG_WHAT_MERGE_REL))
+            raise CompileError(
+                ecs.EG_ERR_UNSUPPORTED.format(what=ecs.EG_WHAT_MERGE_REL)
+            )
         rel_type = rp.types[0]
         left_var, right_var = str(pattern.nodes[0].var), str(pattern.nodes[1].var)
         props = rp.props.items if isinstance(rp.props, a.MapLit) else ()
         exprs = [
-            (a.Var(left_var), cs.EgForm.RAW),
-            (a.Var(right_var), cs.EgForm.RAW),
-        ] + [(value, cs.EgForm.JSON) for _, value in props]
+            (a.Var(left_var), ecs.EgForm.RAW),
+            (a.Var(right_var), ecs.EgForm.RAW),
+        ] + [(value, ecs.EgForm.JSON) for _, value in props]
         values = self._eval(stage, exprs)
         rows = self._rows(stage)
         created: set[int] = set()
@@ -734,9 +740,11 @@ class _Run:
         doc: dict[str, JsonValue],
     ) -> tuple[int, bool]:
         rel_type = rp.types[0]
-        src, dst = (right, left) if rp.direction == cs.EgDirection.IN else (left, right)
+        src, dst = (
+            (right, left) if rp.direction == ecs.EgDirection.IN else (left, right)
+        )
         args = [int(v) if isinstance(v, bool) else v for v in doc.values()]
-        either_way = rp.direction == cs.EgDirection.BOTH
+        either_way = rp.direction == ecs.EgDirection.BOTH
         ends = (src, dst, dst, src) if either_way else (src, dst)
         found = self.conn.execute(
             sq.find_edge(list(doc), either_way), (*ends, rel_type, *args)
@@ -838,7 +846,9 @@ class _Run:
         doc = _json_map(next(props)) if node.props is not None else {}
         if len(node.labels) > 1:
             raise CompileError(
-                cs.EG_ERR_LABEL_COUNT.format(labels=cs.EgPunct.COLON.join(node.labels))
+                ecs.EG_ERR_LABEL_COUNT.format(
+                    labels=ecs.EgPunct.COLON.join(node.labels)
+                )
             )
         label = node.labels[0] if node.labels else sq.NOTHING
         node_id = self._create_node(label, doc)
@@ -850,10 +860,12 @@ class _Run:
         self, rel: a.RelPattern, left: int, right: int, props: Iterator[SqlValue]
     ) -> int:
         doc = _json_map(next(props)) if rel.props is not None else {}
-        if len(rel.types) != 1 or rel.direction == cs.EgDirection.BOTH:
-            raise CompileError(cs.EG_ERR_UNSUPPORTED.format(what=cs.EG_WHAT_CREATE_REL))
+        if len(rel.types) != 1 or rel.direction == ecs.EgDirection.BOTH:
+            raise CompileError(
+                ecs.EG_ERR_UNSUPPORTED.format(what=ecs.EG_WHAT_CREATE_REL)
+            )
         src, dst = (
-            (right, left) if rel.direction == cs.EgDirection.IN else (left, right)
+            (right, left) if rel.direction == ecs.EgDirection.IN else (left, right)
         )
         cur = self.conn.execute(
             sq.INSERT_EDGE,
@@ -887,7 +899,7 @@ class _Run:
         scope = stage.scope(sq.INPUT)
         source = self.qc.exprs.compile(clause.source, scope)
         elem = (source.t.elem if source.t.kind == Kind.LIST else None) or ty.ANY
-        values = self._eval(stage, [(clause.source, cs.EgForm.JSON)])
+        values = self._eval(stage, [(clause.source, ecs.EgForm.JSON)])
         rows = self._rows(stage)
         sub_rows: list[list[SqlValue]] = []
         for row, (raw,) in zip(rows, values):
@@ -905,17 +917,17 @@ class _Run:
         spec = PROCEDURES.get(clause.procedure)
         if spec is None:
             raise CompileError(
-                cs.EG_ERR_UNKNOWN_PROCEDURE.format(name=clause.procedure)
+                ecs.EG_ERR_UNKNOWN_PROCEDURE.format(name=clause.procedure)
             )
         columns = dict(spec.columns)
         yields = clause.yields or tuple(a.YieldItem(c, c) for c in columns)
         for y in yields:
             if y.name not in columns:
                 raise CompileError(
-                    cs.EG_ERR_YIELD.format(name=clause.procedure, column=y.name)
+                    ecs.EG_ERR_YIELD.format(name=clause.procedure, column=y.name)
                 )
         rows = self._rows(stage)
-        args_values = self._eval(stage, [(arg, cs.EgForm.RAW) for arg in clause.args])
+        args_values = self._eval(stage, [(arg, ecs.EgForm.RAW) for arg in clause.args])
         new_vars = dict(stage.vars)
         added: list[tuple[str, str]] = []
         for y in yields:
@@ -955,17 +967,17 @@ class _Run:
 
 def _create_props(
     clause: a.Create, bound: Mapping[str, VarInfo]
-) -> list[tuple[a.Expr, cs.EgForm]]:
+) -> list[tuple[a.Expr, ecs.EgForm]]:
     """Every property map a CREATE writes, to evaluate against the incoming
     rows; a node its input already binds is not created, so has none."""
-    exprs: list[tuple[a.Expr, cs.EgForm]] = []
+    exprs: list[tuple[a.Expr, ecs.EgForm]] = []
     for pattern in clause.patterns:
         for node in pattern.nodes:
             if node.props is not None and not (node.var and node.var in bound):
-                exprs.append((node.props, cs.EgForm.JSON))
+                exprs.append((node.props, ecs.EgForm.JSON))
         for rel in pattern.rels:
             if rel.props is not None:
-                exprs.append((rel.props, cs.EgForm.JSON))
+                exprs.append((rel.props, ecs.EgForm.JSON))
     return exprs
 
 
@@ -1029,8 +1041,8 @@ def _to_column(t: ValueType, value: JsonValue | ProcValue) -> SqlValue:
 
 def _explain(query: a.Query) -> Result:
     return Result(
-        [cs.EG_COL_QUERY_PLAN],
-        [(cs.EG_PLAN_ROW.format(op=op),) for op in plan_operator_names(query)],
+        [ecs.EG_COL_QUERY_PLAN],
+        [(ecs.EG_PLAN_ROW.format(op=op),) for op in plan_operator_names(query)],
     )
 
 
@@ -1039,7 +1051,7 @@ def plan_operator_names(query: a.Query) -> list[str]:
     ops: list[str] = []
     for i, part in enumerate(query.parts):
         if i:
-            ops.append(cs.EG_PLAN_UNION)
+            ops.append(ecs.EG_PLAN_UNION)
         for clause in part.clauses:
             ops.extend(_clause_ops(clause))
     return ops
@@ -1049,21 +1061,21 @@ def _clause_ops(clause: a.Clause) -> list[str]:
     if isinstance(clause, a.Match):
         return _match_ops(clause)
     if isinstance(clause, a.Call):
-        return [cs.EG_PLAN_CALL_OF.format(procedure=clause.procedure)]
+        return [ecs.EG_PLAN_CALL_OF.format(procedure=clause.procedure)]
     for kind, op in _PLAN_OPS:
         if isinstance(clause, kind):
             return [op]
-    return [cs.EG_PLAN_SCHEMA]
+    return [ecs.EG_PLAN_SCHEMA]
 
 
 def _match_ops(clause: a.Match) -> list[str]:
-    ops = [cs.EG_PLAN_SCAN]
+    ops = [ecs.EG_PLAN_SCAN]
     if any(r.var_length for p in clause.patterns for r in p.rels):
-        ops.append(cs.EG_PLAN_EXPAND_VARIABLE)
+        ops.append(ecs.EG_PLAN_EXPAND_VARIABLE)
     if any(p.rels for p in clause.patterns):
-        ops.append(cs.EG_PLAN_EXPAND)
+        ops.append(ecs.EG_PLAN_EXPAND)
     if clause.where is not None:
-        ops.append(cs.EG_PLAN_FILTER)
+        ops.append(ecs.EG_PLAN_FILTER)
     if clause.optional:
-        ops.append(cs.EG_PLAN_OPTIONAL)
+        ops.append(ecs.EG_PLAN_OPTIONAL)
     return ops

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .. import constants as cs
+from . import constants as ecs
 
 # ---------------------------------------------------------------- expressions
 
@@ -133,7 +133,7 @@ class NodePattern:
 class RelPattern:
     var: str | None
     types: tuple[str, ...] = ()
-    direction: cs.EgDirection = cs.EgDirection.OUT
+    direction: ecs.EgDirection = ecs.EgDirection.OUT
     props: Expr | None = None
     # (min, max) hops for a variable-length relationship; max None = unbounded
     var_length: tuple[int, int | None] | None = None
@@ -281,6 +281,6 @@ class Explain:
 class SchemaCommand:
     """Index / constraint DDL and introspection; the store owns the schema."""
 
-    kind: cs.EgSchemaKind
+    kind: ecs.EgSchemaKind
     label: str | None = None
     props: tuple[str, ...] = field(default=())

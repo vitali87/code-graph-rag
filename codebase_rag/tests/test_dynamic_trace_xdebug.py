@@ -14,6 +14,7 @@ import textwrap
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.trace import constants as tcs
 from codebase_rag.trace.records import TraceFormatError, read_trace_file
 from codebase_rag.trace.xdebug import convert_xdebug_trace
 
@@ -115,7 +116,7 @@ def test_converts_calls_with_exact_counts(tmp_path):
     repo = tmp_path.as_posix()
     count, header, records = _convert(tmp_path, _sample_rows(repo))
 
-    assert header.language == cs.TRACE_LANGUAGE_PHP
+    assert header.language == tcs.TRACE_LANGUAGE_PHP
     assert count == len(records)
     edges = {(r.caller.qualname, r.callee.qualname): r for r in records}
     assert edges[("describeAnimal", r"App\Services\Dog->sound")].count == 1
@@ -225,7 +226,7 @@ def test_gzip_compressed_trace_converts_like_the_plain_one(tmp_path):
     count = convert_xdebug_trace(_write_gzipped(tmp_path, rows), output=output)
 
     header, records = read_trace_file(output)
-    assert header.language == cs.TRACE_LANGUAGE_PHP
+    assert header.language == tcs.TRACE_LANGUAGE_PHP
     assert count == plain_count > 0
     assert list(records) == plain_records
 

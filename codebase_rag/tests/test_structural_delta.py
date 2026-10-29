@@ -25,6 +25,7 @@ from codebase_rag.check.delta import (
 )
 from codebase_rag.cli import app
 from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.mcp import constants as mcs
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.sync.checkout_state import state_file
 from evals.cgr_graph import StatefulIngestor
@@ -681,8 +682,8 @@ async def test_write_file_appends_the_structural_delta(
     result = await reg.write_file(  # type: ignore[attr-defined]
         "pkg/app.py", FIXTURE["pkg/app.py"].replace("helper(1)", "helper(1, 2)")
     )
-    head, _sep, payload = result.partition(cs.MCP_DELTA_HEADER + "\n")
-    assert head.startswith(cs.MCP_WRITE_SUCCESS.format(path="pkg/app.py"))
+    head, _sep, payload = result.partition(mcs.MCP_DELTA_HEADER + "\n")
+    assert head.startswith(mcs.MCP_WRITE_SUCCESS.format(path="pkg/app.py"))
     delta = json.loads(payload)
     assert delta["arity_findings"][0]["verdict"] == cs.DELTA_ARITY_TOO_MANY
     assert delta["reparsed"] == ["pkg/app.py"]
@@ -697,7 +698,7 @@ async def test_surgical_replace_appends_the_structural_delta(
     result = await reg.surgical_replace_code(  # type: ignore[attr-defined]
         "pkg/util.py", "def helper(a):", "def assist(a):"
     )
-    _head, _sep, payload = result.partition(cs.MCP_DELTA_HEADER + "\n")
+    _head, _sep, payload = result.partition(mcs.MCP_DELTA_HEADER + "\n")
     delta = json.loads(payload)
     assert delta["dangling_callers"][0]["caller"] == _qn("pkg.app.run")
 
@@ -713,7 +714,7 @@ async def test_write_on_an_unindexed_project_appends_nothing(temp_repo: Path) ->
         project_root=str(temp_repo), ingestor=ingestor, cypher_gen=MagicMock()
     )
     result = await reg.write_file("fresh.py", "x = 1\n")
-    assert result == cs.MCP_WRITE_SUCCESS.format(path="fresh.py")
+    assert result == mcs.MCP_WRITE_SUCCESS.format(path="fresh.py")
     ingestor.fetch_all.assert_not_called()
 
 

@@ -12,8 +12,8 @@ from __future__ import annotations
 import pytest
 
 from codebase_rag import cypher_queries as cq
-from codebase_rag.constants import EG_AGGREGATES
 from codebase_rag.embedded_graph import cypher_ast as a
+from codebase_rag.embedded_graph.constants import EG_AGGREGATES
 from codebase_rag.embedded_graph.expressions import children, free_vars, is_aggregate
 from codebase_rag.embedded_graph.parser import parse
 

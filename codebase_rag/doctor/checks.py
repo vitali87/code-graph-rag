@@ -19,6 +19,7 @@ from ..services.graph_service import GraphIngestor, GraphUnavailableError
 from ..tools.schemas import HealthCheckResult
 from ..types_defs import ConnectionProtocol, CursorProtocol, ResultRow
 from ..utils.provider_urls import join_endpoint_path, strip_v1_suffix
+from . import constants as dcs
 from . import graph_audit
 
 # pymgclient 1.6 re-exports its C extension through `import *`, which a type
@@ -91,7 +92,7 @@ def _connection_error_types() -> tuple[type[BaseException], ...]:
 
 def _backend_engine_name() -> str:
     """The engine's display name, for health output."""
-    return cs.HEALTH_ENGINE_NAMES.get(settings.GRAPH_BACKEND, settings.GRAPH_BACKEND)
+    return dcs.HEALTH_ENGINE_NAMES.get(settings.GRAPH_BACKEND, settings.GRAPH_BACKEND)
 
 
 def _backend_endpoint() -> str:
@@ -155,36 +156,36 @@ class HealthChecker:
             if result.returncode == 0:
                 version = result.stdout.strip()
                 return HealthCheckResult(
-                    name=cs.HEALTH_CHECK_DOCKER_RUNNING,
+                    name=dcs.HEALTH_CHECK_DOCKER_RUNNING,
                     passed=True,
-                    message=cs.HEALTH_CHECK_DOCKER_RUNNING_MSG.format(version=version),
+                    message=dcs.HEALTH_CHECK_DOCKER_RUNNING_MSG.format(version=version),
                 )
             else:
                 return HealthCheckResult(
-                    name=cs.HEALTH_CHECK_DOCKER_NOT_RUNNING,
+                    name=dcs.HEALTH_CHECK_DOCKER_NOT_RUNNING,
                     passed=False,
-                    message=cs.HEALTH_CHECK_DOCKER_NOT_RESPONDING_MSG,
-                    error=result.stderr.strip() or cs.HEALTH_CHECK_DOCKER_EXIT_CODE,
+                    message=dcs.HEALTH_CHECK_DOCKER_NOT_RESPONDING_MSG,
+                    error=result.stderr.strip() or dcs.HEALTH_CHECK_DOCKER_EXIT_CODE,
                 )
         except FileNotFoundError:
             return HealthCheckResult(
-                name=cs.HEALTH_CHECK_DOCKER_NOT_RUNNING,
+                name=dcs.HEALTH_CHECK_DOCKER_NOT_RUNNING,
                 passed=False,
-                message=cs.HEALTH_CHECK_DOCKER_NOT_INSTALLED_MSG,
-                error=cs.HEALTH_CHECK_DOCKER_NOT_IN_PATH,
+                message=dcs.HEALTH_CHECK_DOCKER_NOT_INSTALLED_MSG,
+                error=dcs.HEALTH_CHECK_DOCKER_NOT_IN_PATH,
             )
         except subprocess.TimeoutExpired:
             return HealthCheckResult(
-                name=cs.HEALTH_CHECK_DOCKER_NOT_RUNNING,
+                name=dcs.HEALTH_CHECK_DOCKER_NOT_RUNNING,
                 passed=False,
-                message=cs.HEALTH_CHECK_DOCKER_TIMEOUT_MSG,
-                error=cs.HEALTH_CHECK_DOCKER_TIMEOUT_ERROR,
+                message=dcs.HEALTH_CHECK_DOCKER_TIMEOUT_MSG,
+                error=dcs.HEALTH_CHECK_DOCKER_TIMEOUT_ERROR,
             )
         except Exception as e:  # noqa: BLE001 -- a health check reports any failure as a failed check
             return HealthCheckResult(
-                name=cs.HEALTH_CHECK_DOCKER_NOT_RUNNING,
+                name=dcs.HEALTH_CHECK_DOCKER_NOT_RUNNING,
                 passed=False,
-                message=cs.HEALTH_CHECK_DOCKER_FAILED_MSG,
+                message=dcs.HEALTH_CHECK_DOCKER_FAILED_MSG,
                 error=str(e),
             )
 
@@ -194,33 +195,37 @@ class HealthChecker:
         try:
             with _backend_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute(cs.HEALTH_CHECK_MEMGRAPH_QUERY)
+                cursor.execute(dcs.HEALTH_CHECK_MEMGRAPH_QUERY)
                 list(cursor.fetchall())
 
             return HealthCheckResult(
-                name=cs.HEALTH_CHECK_GRAPH_SUCCESSFUL.format(
+                name=dcs.HEALTH_CHECK_GRAPH_SUCCESSFUL.format(
                     engine=_backend_engine_name()
                 ),
                 passed=True,
-                message=cs.HEALTH_CHECK_MEMGRAPH_CONNECTED_MSG.format(
+                message=dcs.HEALTH_CHECK_MEMGRAPH_CONNECTED_MSG.format(
                     endpoint=_backend_endpoint(),
                 ),
             )
 
         except _connection_error_types() as e:
             return HealthCheckResult(
-                name=cs.HEALTH_CHECK_GRAPH_FAILED.format(engine=_backend_engine_name()),
+                name=dcs.HEALTH_CHECK_GRAPH_FAILED.format(
+                    engine=_backend_engine_name()
+                ),
                 passed=False,
-                message=cs.HEALTH_CHECK_MEMGRAPH_CONNECTION_FAILED_MSG,
-                error=cs.HEALTH_CHECK_GRAPH_ERROR.format(
+                message=dcs.HEALTH_CHECK_MEMGRAPH_CONNECTION_FAILED_MSG,
+                error=dcs.HEALTH_CHECK_GRAPH_ERROR.format(
                     engine=_backend_engine_name(), error=str(e)
                 ),
             )
         except Exception as e:  # noqa: BLE001 -- a health check reports any failure as a failed check
             return HealthCheckResult(
-                name=cs.HEALTH_CHECK_GRAPH_FAILED.format(engine=_backend_engine_name()),
+                name=dcs.HEALTH_CHECK_GRAPH_FAILED.format(
+                    engine=_backend_engine_name()
+                ),
                 passed=False,
-                message=cs.HEALTH_CHECK_MEMGRAPH_UNEXPECTED_FAILURE_MSG,
+                message=dcs.HEALTH_CHECK_MEMGRAPH_UNEXPECTED_FAILURE_MSG,
                 error=str(e),
             )
         finally:
@@ -245,7 +250,7 @@ class HealthChecker:
         missing key is named by the variable the runtime reads
         (issue #1910).
         """
-        role_name = cs.HEALTH_MODEL_ROLE_NAMES.get(role.value, role.value)
+        role_name = dcs.HEALTH_MODEL_ROLE_NAMES.get(role.value, role.value)
         try:
             config = (
                 settings.active_orchestrator_config
@@ -256,9 +261,9 @@ class HealthChecker:
             # A half-configured role is refused by `cgr start` too; doctor
             # reports it as a failed check instead of crashing on it.
             return HealthCheckResult(
-                name=cs.HEALTH_CHECK_MODEL_MISCONFIGURED.format(role=role_name),
+                name=dcs.HEALTH_CHECK_MODEL_MISCONFIGURED.format(role=role_name),
                 passed=False,
-                message=cs.HEALTH_CHECK_MODEL_MISCONFIGURED_MSG,
+                message=dcs.HEALTH_CHECK_MODEL_MISCONFIGURED_MSG,
                 error=str(e),
             )
         label = {
@@ -271,27 +276,29 @@ class HealthChecker:
         except ex.UnknownProviderError as e:
             # No key fixes a provider nothing serves (issue #2897).
             return HealthCheckResult(
-                name=cs.HEALTH_CHECK_MODEL_MISCONFIGURED.format(role=role_name),
+                name=dcs.HEALTH_CHECK_MODEL_MISCONFIGURED.format(role=role_name),
                 passed=False,
-                message=cs.HEALTH_CHECK_MODEL_MISCONFIGURED_MSG,
+                message=dcs.HEALTH_CHECK_MODEL_MISCONFIGURED_MSG,
                 error=str(e),
             )
         except ValueError:
-            role_var = cs.HEALTH_MODEL_ROLE_KEY_VARIABLE.format(role=role.value.upper())
+            role_var = dcs.HEALTH_MODEL_ROLE_KEY_VARIABLE.format(
+                role=role.value.upper()
+            )
             # The gate accepts a provider-owned variable for some providers;
             # read its map rather than restating the rule here.
             provider_var = PROVIDER_ENV_KEYS.get(config.provider.lower())
             error = (
-                cs.HEALTH_CHECK_MODEL_KEY_MISSING_EITHER.format(
+                dcs.HEALTH_CHECK_MODEL_KEY_MISSING_EITHER.format(
                     env_name=role_var, provider_env=provider_var
                 )
                 if provider_var
-                else cs.HEALTH_CHECK_MODEL_KEY_MISSING_ERROR.format(env_name=role_var)
+                else dcs.HEALTH_CHECK_MODEL_KEY_MISSING_ERROR.format(env_name=role_var)
             )
             return HealthCheckResult(
-                name=cs.HEALTH_CHECK_MODEL_NOT_READY.format(**label),
+                name=dcs.HEALTH_CHECK_MODEL_NOT_READY.format(**label),
                 passed=False,
-                message=cs.HEALTH_CHECK_MODEL_KEY_MISSING_MSG,
+                message=dcs.HEALTH_CHECK_MODEL_KEY_MISSING_MSG,
                 error=error,
             )
         if config.provider.lower() == cs.Provider.OLLAMA:
@@ -299,9 +306,9 @@ class HealthChecker:
         # Key-based providers are not called over the network here: what
         # passed is the credentials, and the name says so (#2423).
         return HealthCheckResult(
-            name=cs.HEALTH_CHECK_MODEL_CREDENTIALS.format(**label),
+            name=dcs.HEALTH_CHECK_MODEL_CREDENTIALS.format(**label),
             passed=True,
-            message=cs.HEALTH_CHECK_MODEL_OK_MSG.format(provider=config.provider),
+            message=dcs.HEALTH_CHECK_MODEL_OK_MSG.format(provider=config.provider),
         )
 
     def _check_ollama_model(
@@ -316,26 +323,26 @@ class HealthChecker:
         pulled = _ollama_models(base_url)
         if pulled is None:
             return HealthCheckResult(
-                name=cs.HEALTH_CHECK_MODEL_UNREACHABLE.format(**label),
+                name=dcs.HEALTH_CHECK_MODEL_UNREACHABLE.format(**label),
                 passed=False,
-                message=cs.HEALTH_CHECK_OLLAMA_UNREACHABLE_MSG,
-                error=cs.HEALTH_CHECK_OLLAMA_UNREACHABLE_ERROR.format(
+                message=dcs.HEALTH_CHECK_OLLAMA_UNREACHABLE_MSG,
+                error=dcs.HEALTH_CHECK_OLLAMA_UNREACHABLE_ERROR.format(
                     url=base_url, role=role.value.upper()
                 ),
             )
         if not _ollama_has_model(pulled, config.model_id):
             return HealthCheckResult(
-                name=cs.HEALTH_CHECK_MODEL_NOT_PULLED.format(**label),
+                name=dcs.HEALTH_CHECK_MODEL_NOT_PULLED.format(**label),
                 passed=False,
-                message=cs.HEALTH_CHECK_OLLAMA_NOT_PULLED_MSG,
-                error=cs.HEALTH_CHECK_OLLAMA_NOT_PULLED_ERROR.format(
+                message=dcs.HEALTH_CHECK_OLLAMA_NOT_PULLED_MSG,
+                error=dcs.HEALTH_CHECK_OLLAMA_NOT_PULLED_ERROR.format(
                     model=config.model_id
                 ),
             )
         return HealthCheckResult(
-            name=cs.HEALTH_CHECK_MODEL_READY.format(**label),
+            name=dcs.HEALTH_CHECK_MODEL_READY.format(**label),
             passed=True,
-            message=cs.HEALTH_CHECK_OLLAMA_READY_MSG.format(url=base_url),
+            message=dcs.HEALTH_CHECK_OLLAMA_READY_MSG.format(url=base_url),
         )
 
     def check_model_roles(self) -> list[HealthCheckResult]:
@@ -346,7 +353,7 @@ class HealthChecker:
     ) -> HealthCheckResult:
         cmd = command or tool_name
         check_cmd = [
-            cs.SHELL_CMD_WHERE if os.name == "nt" else cs.SHELL_CMD_WHICH,
+            dcs.SHELL_CMD_WHERE if os.name == "nt" else dcs.SHELL_CMD_WHICH,
             cmd,
         ]
 
@@ -362,29 +369,31 @@ class HealthChecker:
             if result.returncode == 0:
                 path = result.stdout.strip().splitlines()[0]
                 return HealthCheckResult(
-                    name=cs.HEALTH_CHECK_TOOL_INSTALLED.format(tool_name=tool_name),
+                    name=dcs.HEALTH_CHECK_TOOL_INSTALLED.format(tool_name=tool_name),
                     passed=True,
-                    message=cs.HEALTH_CHECK_TOOL_INSTALLED_MSG.format(path=path),
+                    message=dcs.HEALTH_CHECK_TOOL_INSTALLED_MSG.format(path=path),
                 )
             else:
                 return HealthCheckResult(
-                    name=cs.HEALTH_CHECK_TOOL_NOT_INSTALLED.format(tool_name=tool_name),
+                    name=dcs.HEALTH_CHECK_TOOL_NOT_INSTALLED.format(
+                        tool_name=tool_name
+                    ),
                     passed=False,
-                    message=cs.HEALTH_CHECK_TOOL_NOT_IN_PATH_MSG.format(cmd=cmd),
-                    error=cs.HEALTH_CHECK_TOOL_NOT_IN_PATH_MSG.format(cmd=cmd),
+                    message=dcs.HEALTH_CHECK_TOOL_NOT_IN_PATH_MSG.format(cmd=cmd),
+                    error=dcs.HEALTH_CHECK_TOOL_NOT_IN_PATH_MSG.format(cmd=cmd),
                 )
         except subprocess.TimeoutExpired:
             return HealthCheckResult(
-                name=cs.HEALTH_CHECK_TOOL_NOT_INSTALLED.format(tool_name=tool_name),
+                name=dcs.HEALTH_CHECK_TOOL_NOT_INSTALLED.format(tool_name=tool_name),
                 passed=False,
-                message=cs.HEALTH_CHECK_TOOL_TIMEOUT_MSG,
-                error=cs.HEALTH_CHECK_TOOL_TIMEOUT_ERROR.format(cmd=cmd),
+                message=dcs.HEALTH_CHECK_TOOL_TIMEOUT_MSG,
+                error=dcs.HEALTH_CHECK_TOOL_TIMEOUT_ERROR.format(cmd=cmd),
             )
         except Exception as e:  # noqa: BLE001 -- a health check reports any failure as a failed check
             return HealthCheckResult(
-                name=cs.HEALTH_CHECK_TOOL_NOT_INSTALLED.format(tool_name=tool_name),
+                name=dcs.HEALTH_CHECK_TOOL_NOT_INSTALLED.format(tool_name=tool_name),
                 passed=False,
-                message=cs.HEALTH_CHECK_TOOL_FAILED_MSG,
+                message=dcs.HEALTH_CHECK_TOOL_FAILED_MSG,
                 error=str(e),
             )
 
@@ -427,9 +436,9 @@ class HealthChecker:
         except Exception as e:  # noqa: BLE001 -- a health check reports any failure as a failed check
             return [
                 HealthCheckResult(
-                    name=cs.HEALTH_CHECK_GRAPH_INTEGRITY_FAILED,
+                    name=dcs.HEALTH_CHECK_GRAPH_INTEGRITY_FAILED,
                     passed=False,
-                    message=cs.HEALTH_CHECK_GRAPH_INTEGRITY_ERROR_MSG,
+                    message=dcs.HEALTH_CHECK_GRAPH_INTEGRITY_ERROR_MSG,
                     error=str(e),
                 )
             ]
@@ -449,32 +458,32 @@ class HealthChecker:
 
         results = [
             HealthCheckResult(
-                name=cs.HEALTH_CHECK_GRAPH_INTEGRITY_FAILED,
+                name=dcs.HEALTH_CHECK_GRAPH_INTEGRITY_FAILED,
                 passed=False,
-                message=cs.HEALTH_CHECK_GRAPH_INTEGRITY_VIOLATIONS_MSG.format(
+                message=dcs.HEALTH_CHECK_GRAPH_INTEGRITY_VIOLATIONS_MSG.format(
                     count=len(violations)
                 ),
-                error=cs.HEALTH_CHECK_GRAPH_INTEGRITY_SEPARATOR.join(
+                error=dcs.HEALTH_CHECK_GRAPH_INTEGRITY_SEPARATOR.join(
                     v.detail for v in violations
                 ),
             )
             if violations
             else HealthCheckResult(
-                name=cs.HEALTH_CHECK_GRAPH_INTEGRITY_OK,
+                name=dcs.HEALTH_CHECK_GRAPH_INTEGRITY_OK,
                 passed=True,
-                message=cs.HEALTH_CHECK_GRAPH_INTEGRITY_OK_MSG,
+                message=dcs.HEALTH_CHECK_GRAPH_INTEGRITY_OK_MSG,
             )
         ]
         if interrupted:
             results.append(
                 HealthCheckResult(
-                    name=cs.HEALTH_CHECK_INTERRUPTED_SYNC,
+                    name=dcs.HEALTH_CHECK_INTERRUPTED_SYNC,
                     passed=False,
-                    message=cs.HEALTH_CHECK_INTERRUPTED_SYNC_MSG.format(
+                    message=dcs.HEALTH_CHECK_INTERRUPTED_SYNC_MSG.format(
                         count=len(interrupted)
                     ),
-                    error=cs.HEALTH_CHECK_GRAPH_INTEGRITY_SEPARATOR.join(
-                        cs.HEALTH_CHECK_INTERRUPTED_SYNC_DETAIL.format(project=project)
+                    error=dcs.HEALTH_CHECK_GRAPH_INTEGRITY_SEPARATOR.join(
+                        dcs.HEALTH_CHECK_INTERRUPTED_SYNC_DETAIL.format(project=project)
                         for project in interrupted
                     ),
                 )
@@ -490,7 +499,7 @@ class HealthChecker:
         self.results.append(self.check_memgraph_connection())
         self.results.extend(self.check_graph_integrity())
         self.results.extend(self.check_model_roles())
-        for tool_name, cmd in cs.HEALTH_CHECK_EXTERNAL_TOOLS:
+        for tool_name, cmd in dcs.HEALTH_CHECK_EXTERNAL_TOOLS:
             self.results.append(self.check_external_tool(tool_name, cmd))
         return self.results
 

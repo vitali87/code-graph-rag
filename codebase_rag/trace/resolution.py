@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 from .. import constants as cs
 from ..utils import qn_markers
 from ..utils.path_utils import portable_posix
+from . import constants as tcs
 from .records import FramePoint
 
 if TYPE_CHECKING:
@@ -269,7 +270,7 @@ class FrameResolver:
             return None
 
         parts = _runtime_name_parts(frame.qualname)
-        if parts == [cs.TRACE_QUALNAME_MODULE]:
+        if parts == [tcs.TRACE_QUALNAME_MODULE]:
             module = self._modules_by_path.get(rel_path)
             if module is None:
                 stats.record(cs.TraceUnresolvedReason.UNKNOWN_PATH)
@@ -277,7 +278,7 @@ class FrameResolver:
             return ResolvedFrame(
                 label=module.label, qualified_name=module.qualified_name
             )
-        if any(p.startswith(cs.TRACE_SYNTHETIC_PREFIX) for p in parts):
+        if any(p.startswith(tcs.TRACE_SYNTHETIC_PREFIX) for p in parts):
             stats.record(cs.TraceUnresolvedReason.SYNTHETIC)
             return None
 
@@ -331,7 +332,7 @@ class FrameResolver:
         votes: Counter[str] = Counter()
         spelled: dict[str, str] = {}
         for frame in frames:
-            if frame.path.startswith(cs.TRACE_SYNTHETIC_PREFIX):
+            if frame.path.startswith(tcs.TRACE_SYNTHETIC_PREFIX):
                 continue
             if _repo_relative(self._root_posix, frame.path) is not None:
                 return None
@@ -351,7 +352,7 @@ class FrameResolver:
         """The roots whose removal leaves a graph path naming ``frame``."""
         path = portable_posix(frame.path)
         parts = path.split(cs.SEPARATOR_SLASH)
-        if not cs.TRACE_INSTALLED_DIR_NAMES.isdisjoint(parts):
+        if not tcs.TRACE_INSTALLED_DIR_NAMES.isdisjoint(parts):
             return set()
         windows = _recorded_on_windows(path)
         return {
@@ -367,9 +368,9 @@ class FrameResolver:
         if windows:
             rel_path = self.path_spellings.get(rel_path.casefold(), rel_path)
         parts = _runtime_name_parts(qualname)
-        if parts == [cs.TRACE_QUALNAME_MODULE]:
+        if parts == [tcs.TRACE_QUALNAME_MODULE]:
             return rel_path in self._modules_by_path
-        if any(p.startswith(cs.TRACE_SYNTHETIC_PREFIX) for p in parts):
+        if any(p.startswith(tcs.TRACE_SYNTHETIC_PREFIX) for p in parts):
             return False
         return bool(_named_by(self._callables_by_path.get(rel_path, []), parts))
 
@@ -377,7 +378,7 @@ class FrameResolver:
 def _runtime_name_parts(qualname: str) -> list[str]:
     """A runtime qualname's scope chain without its ``<locals>`` hops."""
     return [
-        p for p in qualname.split(cs.SEPARATOR_DOT) if p != cs.TRACE_QUALNAME_LOCALS
+        p for p in qualname.split(cs.SEPARATOR_DOT) if p != tcs.TRACE_QUALNAME_LOCALS
     ]
 
 
@@ -445,7 +446,7 @@ class JsFrameResolver:
             stats.record(cs.TraceUnresolvedReason.OUTSIDE_REPO)
             return None
 
-        if frame.qualname == cs.TRACE_QUALNAME_MODULE:
+        if frame.qualname == tcs.TRACE_QUALNAME_MODULE:
             module = self._modules_by_path.get(rel_path)
             if module is None:
                 stats.record(cs.TraceUnresolvedReason.UNKNOWN_PATH)
@@ -460,7 +461,7 @@ class JsFrameResolver:
             return None
 
         by_name: list[CallableNode] = []
-        if not frame.qualname.startswith(cs.TRACE_SYNTHETIC_PREFIX):
+        if not frame.qualname.startswith(tcs.TRACE_SYNTHETIC_PREFIX):
             by_name = [
                 n
                 for n in candidates
@@ -515,7 +516,7 @@ class PhpFrameResolver:
                 closure.group("path"), int(closure.group("start")), stats
             )
         if frame.path:
-            if frame.qualname == cs.TRACE_XDEBUG_MAIN:
+            if frame.qualname == tcs.TRACE_XDEBUG_MAIN:
                 return self._resolve_module(frame.path, stats)
             return self._resolve_position(frame.path, frame.line, stats)
         return self._resolve_by_name_tail(frame.qualname, stats)
@@ -557,16 +558,16 @@ class PhpFrameResolver:
         self, qualname: str, stats: ResolutionStats
     ) -> ResolvedFrame | None:
         for separator in (
-            cs.TRACE_PHP_INSTANCE_SEPARATOR,
-            cs.TRACE_PHP_STATIC_SEPARATOR,
+            tcs.TRACE_PHP_INSTANCE_SEPARATOR,
+            tcs.TRACE_PHP_STATIC_SEPARATOR,
         ):
             if separator in qualname:
                 owner, _, method = qualname.partition(separator)
-                owner = owner.rsplit(cs.TRACE_PHP_NAMESPACE_SEPARATOR, 1)[-1]
+                owner = owner.rsplit(tcs.TRACE_PHP_NAMESPACE_SEPARATOR, 1)[-1]
                 tail = f"{cs.SEPARATOR_DOT}{owner}{cs.SEPARATOR_DOT}{method}"
                 break
         else:
-            plain = qualname.rsplit(cs.TRACE_PHP_NAMESPACE_SEPARATOR, 1)[-1]
+            plain = qualname.rsplit(tcs.TRACE_PHP_NAMESPACE_SEPARATOR, 1)[-1]
             tail = f"{cs.SEPARATOR_DOT}{plain}"
         matches = [
             node
@@ -610,7 +611,7 @@ def _owner_chain(owner: str) -> tuple[list[str], str | None]:
     """
     chain: list[str] = []
     state_machine_method: str | None = None
-    for part in owner.split(cs.TRACE_DOTNET_NESTED_MARKER):
+    for part in owner.split(tcs.TRACE_DOTNET_NESTED_MARKER):
         machine = _DOTNET_STATE_MACHINE.match(part)
         if machine:
             state_machine_method = machine.group(1)
@@ -646,11 +647,11 @@ def _demangle_clr_name(name: str) -> str | None:
     # dotnet-trace keeps CLR generic arity markers (``Dictionary`2``,
     # ``Method`1``); the graph stores the source spelling, so strip them.
     name = _DOTNET_ARITY.sub("", name)
-    if name.endswith(cs.TRACE_DOTNET_CCTOR):
+    if name.endswith(tcs.TRACE_DOTNET_CCTOR):
         return None
-    constructor = name.endswith(cs.TRACE_DOTNET_CTOR)
+    constructor = name.endswith(tcs.TRACE_DOTNET_CTOR)
     if constructor:
-        owner = name[: -len(cs.TRACE_DOTNET_CTOR)]
+        owner = name[: -len(tcs.TRACE_DOTNET_CTOR)]
         method = ""
     else:
         owner, separator, method = name.rpartition(cs.SEPARATOR_DOT)
@@ -749,11 +750,11 @@ class JvmFrameResolver:
     ) -> ResolvedFrame | None:
         class_parts, method = self._split_qualname(frame.qualname)
         anonymous = any(part.isdigit() for part in class_parts)
-        if method == cs.TRACE_JVM_STATIC_INITIALIZER or (
+        if method == tcs.TRACE_JVM_STATIC_INITIALIZER or (
             # An anonymous class's constructor sits at the `new` expression
             # line; span resolution would fabricate a self-edge on the
             # enclosing method.
-            anonymous and method == cs.TRACE_JVM_CONSTRUCTOR
+            anonymous and method == tcs.TRACE_JVM_CONSTRUCTOR
         ):
             stats.record(cs.TraceUnresolvedReason.SYNTHETIC)
             return None
@@ -765,7 +766,7 @@ class JvmFrameResolver:
 
         by_name: list[CallableNode] = []
         if not anonymous and self._name_addressable(method):
-            if method == cs.TRACE_JVM_CONSTRUCTOR:
+            if method == tcs.TRACE_JVM_CONSTRUCTOR:
                 method = class_parts[-1]
             suffix = cs.SEPARATOR_DOT + cs.SEPARATOR_DOT.join([*class_parts, method])
             by_name = [
@@ -793,7 +794,7 @@ class JvmFrameResolver:
         is dropped; anonymous-class ordinals stay so callers can detect them.
         """
         simple, _, method = qualname.rpartition(cs.SEPARATOR_DOT)
-        parts = [part for part in simple.split(cs.TRACE_JVM_NESTED_MARKER) if part]
+        parts = [part for part in simple.split(tcs.TRACE_JVM_NESTED_MARKER) if part]
         return parts, method
 
     @staticmethod
@@ -806,8 +807,8 @@ class JvmFrameResolver:
         the caller since they are a class-chain property.
         """
         return not (
-            method.startswith(cs.TRACE_JVM_LAMBDA_PREFIX)
-            or method.startswith(cs.TRACE_JVM_ANONFUN_PREFIX)
+            method.startswith(tcs.TRACE_JVM_LAMBDA_PREFIX)
+            or method.startswith(tcs.TRACE_JVM_ANONFUN_PREFIX)
         )
 
     def _candidates(self, frame_path: str) -> list[CallableNode]:

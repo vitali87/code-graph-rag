@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from codebase_rag import constants as cs
+from codebase_rag.trace import constants as tcs
 from codebase_rag.trace.records import FramePoint
 from codebase_rag.trace.resolution import (
     CallableNode,
@@ -75,7 +76,7 @@ def test_resolves_caller_frames_by_call_site_span(tmp_path):
 
 def test_resolves_main_frame_to_module(tmp_path):
     resolved = _resolver(tmp_path).resolve(
-        _frame(tmp_path, "main.php", cs.TRACE_XDEBUG_MAIN, 20), ResolutionStats()
+        _frame(tmp_path, "main.php", tcs.TRACE_XDEBUG_MAIN, 20), ResolutionStats()
     )
 
     assert resolved is not None

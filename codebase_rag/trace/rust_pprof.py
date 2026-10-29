@@ -26,7 +26,7 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
-from .. import constants as cs
+from . import constants as tcs
 from .pprof import convert_pprof_profile
 
 if TYPE_CHECKING:
@@ -96,16 +96,16 @@ def _bare_name(symbol: str) -> str:
     cleaned = _RUST_LEGACY_HASH.sub("", symbol.strip())
     segments = _split_top_level(cleaned)
     if any(seg.startswith("{{closure") for seg in segments):
-        return cs.TRACE_QUALNAME_ANONYMOUS
+        return tcs.TRACE_QUALNAME_ANONYMOUS
     # A trailing ``::<...>`` turbofish (v0 monomorphisation) is generic args, not
     # the member; drop it so ``util::process::<u32>`` resolves to ``process``.
     while segments and segments[-1].startswith("<"):
         segments.pop()
     if not segments:
-        return cs.TRACE_QUALNAME_ANONYMOUS
+        return tcs.TRACE_QUALNAME_ANONYMOUS
     name = _strip_generics_and_args(segments[-1]).strip()
-    if not name or name.startswith(cs.TRACE_SYNTHETIC_PREFIX) or name.startswith("{"):
-        return cs.TRACE_QUALNAME_ANONYMOUS
+    if not name or name.startswith(tcs.TRACE_SYNTHETIC_PREFIX) or name.startswith("{"):
+        return tcs.TRACE_QUALNAME_ANONYMOUS
     return name
 
 
@@ -128,6 +128,6 @@ def convert_rust_pprof(
         workload,
         excluded_dir=_RUST_EXCLUDED_DIR,
         bare_name=_bare_name,
-        language=cs.TRACE_LANGUAGE_RUST,
-        tracer=cs.TRACE_TOOL_NAME_RUST_PPROF,
+        language=tcs.TRACE_LANGUAGE_RUST,
+        tracer=tcs.TRACE_TOOL_NAME_RUST_PPROF,
     )

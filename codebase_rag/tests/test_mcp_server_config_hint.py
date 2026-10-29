@@ -18,6 +18,7 @@ import typer
 from codebase_rag import cli
 from codebase_rag import constants as cs
 from codebase_rag.config import AppConfig, settings
+from codebase_rag.mcp import constants as mcs
 from codebase_rag.mcp import server as srv
 
 HINT = "TARGET_REPO_PATH environment variable"
@@ -28,7 +29,7 @@ def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     root = tmp_path / "repo"
     root.mkdir()
     monkeypatch.setattr(settings, "TARGET_REPO_PATH", str(root))
-    monkeypatch.delenv(cs.MCPEnvVar.MCP_WORKSPACE, raising=False)
+    monkeypatch.delenv(mcs.MCPEnvVar.MCP_WORKSPACE, raising=False)
     with (
         patch.object(srv, "setup_logging"),
         patch.object(cli.settings, "QUIET", False),

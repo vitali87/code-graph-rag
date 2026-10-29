@@ -10,7 +10,7 @@ from __future__ import annotations
 import mgclient
 import pytest
 
-from codebase_rag import constants as cs
+from codebase_rag.doctor import constants as dcs
 from codebase_rag.doctor.checks import (
     HealthChecker,
     _backend_connection,
@@ -371,11 +371,11 @@ class TestReachabilityNeedsAQuery:
         assert result.passed
         # The probe must actually round-trip a statement: opening the
         # connection is not evidence a Neo4j server is reachable.
-        assert sent == [cs.HEALTH_CHECK_MEMGRAPH_QUERY]
+        assert sent == [dcs.HEALTH_CHECK_MEMGRAPH_QUERY]
 
     def test_the_probe_query_is_trivial(self) -> None:
         # It must exercise the round trip without depending on any data.
-        assert cs.HEALTH_CHECK_MEMGRAPH_QUERY.upper().startswith("RETURN 1")
+        assert dcs.HEALTH_CHECK_MEMGRAPH_QUERY.upper().startswith("RETURN 1")
 
     def test_opening_a_session_does_not_touch_the_network(self) -> None:
         """The asymmetry itself, against a port with nothing listening."""

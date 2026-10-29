@@ -8,7 +8,7 @@ import json
 
 import pytest
 
-from codebase_rag import constants as cs
+from codebase_rag.trace import constants as tcs
 from codebase_rag.trace.records import (
     CallRecord,
     FramePoint,
@@ -21,27 +21,27 @@ from codebase_rag.trace.records import (
 
 def _frame(line: object = 3) -> dict[str, object]:
     return {
-        cs.TRACE_KEY_PATH: "/repo/pkg/mod.py",
-        cs.TRACE_KEY_QUALNAME: "fn",
-        cs.TRACE_KEY_LINE: line,
+        tcs.TRACE_KEY_PATH: "/repo/pkg/mod.py",
+        tcs.TRACE_KEY_QUALNAME: "fn",
+        tcs.TRACE_KEY_LINE: line,
     }
 
 
 def _write_trace(tmp_path, count: object = 1, line: object = 3):
     header = {
-        cs.TRACE_KEY_KIND: cs.TRACE_KIND_HEADER,
-        cs.TRACE_KEY_VERSION: cs.TRACE_FORMAT_VERSION,
-        cs.TRACE_KEY_LANGUAGE: cs.TRACE_LANGUAGE_PYTHON,
-        cs.TRACE_KEY_REPO_ROOT: "/repo",
-        cs.TRACE_KEY_TRACER: cs.TRACE_TOOL_NAME,
+        tcs.TRACE_KEY_KIND: tcs.TRACE_KIND_HEADER,
+        tcs.TRACE_KEY_VERSION: tcs.TRACE_FORMAT_VERSION,
+        tcs.TRACE_KEY_LANGUAGE: tcs.TRACE_LANGUAGE_PYTHON,
+        tcs.TRACE_KEY_REPO_ROOT: "/repo",
+        tcs.TRACE_KEY_TRACER: tcs.TRACE_TOOL_NAME,
     }
     record = {
-        cs.TRACE_KEY_KIND: cs.TRACE_KIND_CALL,
-        cs.TRACE_KEY_CALLER: _frame(),
-        cs.TRACE_KEY_CALLEE: _frame(line),
-        cs.TRACE_KEY_COUNT: count,
-        cs.TRACE_KEY_WORKLOADS: [],
-        cs.TRACE_KEY_RECEIVER_TYPES: [],
+        tcs.TRACE_KEY_KIND: tcs.TRACE_KIND_CALL,
+        tcs.TRACE_KEY_CALLER: _frame(),
+        tcs.TRACE_KEY_CALLEE: _frame(line),
+        tcs.TRACE_KEY_COUNT: count,
+        tcs.TRACE_KEY_WORKLOADS: [],
+        tcs.TRACE_KEY_RECEIVER_TYPES: [],
     }
     trace_path = tmp_path / "trace.jsonl"
     trace_path.write_text(json.dumps(header) + "\n" + json.dumps(record) + "\n")
@@ -75,11 +75,11 @@ def _write_raw(tmp_path, *lines: str):
 
 def _header_line(**overrides) -> str:
     header = {
-        cs.TRACE_KEY_KIND: cs.TRACE_KIND_HEADER,
-        cs.TRACE_KEY_VERSION: cs.TRACE_FORMAT_VERSION,
-        cs.TRACE_KEY_LANGUAGE: cs.TRACE_LANGUAGE_PYTHON,
-        cs.TRACE_KEY_REPO_ROOT: "/repo",
-        cs.TRACE_KEY_TRACER: cs.TRACE_TOOL_NAME,
+        tcs.TRACE_KEY_KIND: tcs.TRACE_KIND_HEADER,
+        tcs.TRACE_KEY_VERSION: tcs.TRACE_FORMAT_VERSION,
+        tcs.TRACE_KEY_LANGUAGE: tcs.TRACE_LANGUAGE_PYTHON,
+        tcs.TRACE_KEY_REPO_ROOT: "/repo",
+        tcs.TRACE_KEY_TRACER: tcs.TRACE_TOOL_NAME,
     }
     header.update(overrides)
     return json.dumps(header)
@@ -109,16 +109,16 @@ def test_malformed_header_is_rejected(tmp_path, first_line):
 
 def test_unsupported_version_is_rejected(tmp_path):
     trace_path = _write_raw(
-        tmp_path, _header_line(**{cs.TRACE_KEY_VERSION: cs.TRACE_FORMAT_VERSION + 1})
+        tmp_path, _header_line(**{tcs.TRACE_KEY_VERSION: tcs.TRACE_FORMAT_VERSION + 1})
     )
 
     with pytest.raises(TraceFormatError) as excinfo:
         read_trace_file(trace_path)
-    assert str(cs.TRACE_FORMAT_VERSION + 1) in str(excinfo.value)
+    assert str(tcs.TRACE_FORMAT_VERSION + 1) in str(excinfo.value)
 
 
 def test_non_string_header_field_is_rejected(tmp_path):
-    trace_path = _write_raw(tmp_path, _header_line(**{cs.TRACE_KEY_LANGUAGE: 7}))
+    trace_path = _write_raw(tmp_path, _header_line(**{tcs.TRACE_KEY_LANGUAGE: 7}))
     with pytest.raises(TraceFormatError):
         read_trace_file(trace_path)
 
@@ -146,10 +146,10 @@ def test_blank_lines_are_skipped(tmp_path):
 def test_sampled_flag_round_trips(tmp_path, sampled):
     trace_path = tmp_path / "trace.jsonl"
     header = TraceHeader(
-        version=cs.TRACE_FORMAT_VERSION,
-        language=cs.TRACE_LANGUAGE_GO,
+        version=tcs.TRACE_FORMAT_VERSION,
+        language=tcs.TRACE_LANGUAGE_GO,
         repo_root="/repo",
-        tracer=cs.TRACE_TOOL_NAME_PPROF,
+        tracer=tcs.TRACE_TOOL_NAME_PPROF,
         sampled=sampled,
     )
     record = CallRecord(
@@ -174,7 +174,7 @@ def test_header_without_sampled_key_reads_as_exact(tmp_path):
 
 @pytest.mark.parametrize("sampled", ["true", 1, 0, None])
 def test_non_bool_sampled_is_rejected(tmp_path, sampled):
-    trace_path = _write_raw(tmp_path, _header_line(**{cs.TRACE_KEY_SAMPLED: sampled}))
+    trace_path = _write_raw(tmp_path, _header_line(**{tcs.TRACE_KEY_SAMPLED: sampled}))
     with pytest.raises(TraceFormatError):
         read_trace_file(trace_path)
 

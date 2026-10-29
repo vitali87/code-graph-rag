@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.trace import constants as tcs
 from codebase_rag.trace.records import read_trace_file
 
 _COLLECTOR_DIR = Path(__file__).resolve().parents[1] / "trace" / "dart_collector"
@@ -138,7 +139,7 @@ def dynamic_dispatch_trace(tmp_path_factory):
 def test_collector_captures_registry_dispatch(dart_trace):
     header, records = dart_trace
 
-    assert header.language == cs.TRACE_LANGUAGE_DART
+    assert header.language == tcs.TRACE_LANGUAGE_DART
     edges = {(r.caller.qualname, r.callee.qualname) for r in records}
     assert ("handle", "greet") in edges, sorted(edges)
 

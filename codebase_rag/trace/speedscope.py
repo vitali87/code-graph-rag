@@ -21,6 +21,7 @@ import math
 from typing import TYPE_CHECKING, cast
 
 from .. import constants as cs
+from . import constants as tcs
 from .records import (
     CallRecord,
     FramePoint,
@@ -38,7 +39,7 @@ def _scoped_name(name: object, include: Sequence[str]) -> str | None:
     """The frame's assembly-stripped, argument-stripped dotted name, if in scope."""
     if not isinstance(name, str):
         return None
-    _assembly, separator, rest = name.partition(cs.TRACE_DOTNET_ASSEMBLY_SEPARATOR)
+    _assembly, separator, rest = name.partition(tcs.TRACE_DOTNET_ASSEMBLY_SEPARATOR)
     if not separator:
         return None
     args_start = rest.find("(")
@@ -188,11 +189,11 @@ def _accumulate_profiles(
             continue
         if not ok:
             raise TraceFormatError(
-                cs.TRACE_ERR_BAD_SPEEDSCOPE.format(path=profile_path)
+                tcs.TRACE_ERR_BAD_SPEEDSCOPE.format(path=profile_path)
             )
         converted = True
     if not converted:
-        raise TraceFormatError(cs.TRACE_ERR_BAD_SPEEDSCOPE.format(path=profile_path))
+        raise TraceFormatError(tcs.TRACE_ERR_BAD_SPEEDSCOPE.format(path=profile_path))
     return sampled
 
 
@@ -208,7 +209,7 @@ def convert_speedscope(
     frames = shared.get("frames") if isinstance(shared, dict) else None
     profiles = raw.get("profiles") if isinstance(raw, dict) else None
     if not isinstance(frames, list) or not isinstance(profiles, list):
-        raise TraceFormatError(cs.TRACE_ERR_BAD_SPEEDSCOPE.format(path=profile_path))
+        raise TraceFormatError(tcs.TRACE_ERR_BAD_SPEEDSCOPE.format(path=profile_path))
 
     names: list[str | None] = [
         _scoped_name(f.get("name") if isinstance(f, dict) else None, include)
@@ -232,10 +233,10 @@ def convert_speedscope(
         for (caller, callee), count in edges.items()
     ]
     header = TraceHeader(
-        version=cs.TRACE_FORMAT_VERSION,
-        language=cs.TRACE_LANGUAGE_DOTNET,
+        version=tcs.TRACE_FORMAT_VERSION,
+        language=tcs.TRACE_LANGUAGE_DOTNET,
         repo_root="",
-        tracer=cs.TRACE_TOOL_NAME_SPEEDSCOPE,
+        tracer=tcs.TRACE_TOOL_NAME_SPEEDSCOPE,
         sampled=sampled,
     )
     write_trace_file(output, header, records)

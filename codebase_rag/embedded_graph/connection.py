@@ -13,7 +13,6 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from .. import constants as cs
 from ..types_defs import (
     BatchParams,
     BatchWrapper,
@@ -22,6 +21,7 @@ from ..types_defs import (
     PropertyValue,
     ResultValue,
 )
+from . import constants as ecs
 from . import native
 from .executor import Executor, Result
 from .store import open_connection, supports_json_arrow
@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 def _is_batch(
     params: dict[str, PropertyValue] | BatchWrapper,
 ) -> TypeIs[BatchWrapper]:
-    return len(params) == 1 and cs.EG_BATCH_PARAM in params
+    return len(params) == 1 and ecs.EG_BATCH_PARAM in params
 
 
 def _as_params(params: dict[str, PropertyValue] | BatchWrapper) -> CypherParams:
@@ -44,7 +44,7 @@ def _as_params(params: dict[str, PropertyValue] | BatchWrapper) -> CypherParams:
     is a dict at runtime, so the batch is re-wrapped under its own key.
     """
     if _is_batch(params):
-        return {cs.EG_BATCH_PARAM: params[cs.EG_BATCH_PARAM]}
+        return {ecs.EG_BATCH_PARAM: params[ecs.EG_BATCH_PARAM]}
     return params
 
 
@@ -78,7 +78,9 @@ class EmbeddedCursor:
         elif isinstance(params, dict):
             plain = _as_params(params)
         else:
-            raise TypeError(cs.EG_ERR_PARAMS_MAPPING.format(kind=type(params).__name__))
+            raise TypeError(
+                ecs.EG_ERR_PARAMS_MAPPING.format(kind=type(params).__name__)
+            )
         result = self._conn.run(query, plain)
         self._description = [_Column(c) for c in result.columns] or None
         self._rows = result.rows
@@ -113,7 +115,7 @@ class EmbeddedConnection:
     ) -> Result:
         """Run one statement; past `timeout_s` it stops with QueryTimeout."""
         if self._closed:
-            raise ConnectionError(cs.EG_ERR_CLOSED)
+            raise ConnectionError(ecs.EG_ERR_CLOSED)
         with self._lock, native.turn(self.native):
             return self._executor.execute(query, params, timeout_s)
 

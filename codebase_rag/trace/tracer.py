@@ -12,7 +12,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .. import constants as cs
 from .records import CallRecord, FramePoint, TraceHeader, write_trace_file
 
 if TYPE_CHECKING:
@@ -20,6 +19,8 @@ if TYPE_CHECKING:
 
 import os
 import sys
+
+from . import constants as tcs
 
 _NO_WORKLOAD = -1
 
@@ -73,7 +74,7 @@ class CallGraphTracer:
 
     def start(self) -> None:
         monitoring = sys.monitoring
-        monitoring.use_tool_id(monitoring.PROFILER_ID, cs.TRACE_TOOL_NAME)
+        monitoring.use_tool_id(monitoring.PROFILER_ID, tcs.TRACE_TOOL_NAME)
         try:
             monitoring.register_callback(
                 monitoring.PROFILER_ID, monitoring.events.PY_START, self._on_py_start
@@ -102,7 +103,7 @@ class CallGraphTracer:
         if cached is None:
             cached = filename.startswith(
                 self._root_prefix
-            ) and cs.TRACE_EXCLUDED_DIR_NAMES.isdisjoint(Path(filename).parts)
+            ) and tcs.TRACE_EXCLUDED_DIR_NAMES.isdisjoint(Path(filename).parts)
             self._scope_cache[filename] = cached
         return cached
 
@@ -128,9 +129,9 @@ class CallGraphTracer:
         # Materialising f_locals is comparatively expensive, so receivers are
         # sampled only for a pair's first few observations.
         if (
-            stats.count <= cs.TRACE_RECEIVER_SAMPLE_LIMIT
+            stats.count <= tcs.TRACE_RECEIVER_SAMPLE_LIMIT
             and code.co_argcount >= 1
-            and code.co_varnames[0] in cs.TRACE_RECEIVER_PARAMS
+            and code.co_varnames[0] in tcs.TRACE_RECEIVER_PARAMS
         ):
             receiver = callee_frame.f_locals.get(code.co_varnames[0])
             if receiver is not None:
@@ -167,10 +168,10 @@ class CallGraphTracer:
         """Flush aggregated observations to ``output``; returns record count."""
         records = self.records()
         header = TraceHeader(
-            version=cs.TRACE_FORMAT_VERSION,
-            language=cs.TRACE_LANGUAGE_PYTHON,
+            version=tcs.TRACE_FORMAT_VERSION,
+            language=tcs.TRACE_LANGUAGE_PYTHON,
             repo_root=str(self._repo_root),
-            tracer=cs.TRACE_TOOL_NAME,
+            tracer=tcs.TRACE_TOOL_NAME,
             sampled=False,
         )
         write_trace_file(output, header, records)

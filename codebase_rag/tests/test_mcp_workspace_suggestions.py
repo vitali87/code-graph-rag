@@ -18,6 +18,7 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag import graph_query
+from codebase_rag.mcp import constants as mcs
 from codebase_rag.mcp.tools import MCPToolsRegistry
 from codebase_rag.utils.path_utils import derive_project_name
 from codebase_rag.workspaces import WorkspaceConfig, WorkspaceRepo
@@ -124,7 +125,7 @@ class TestUnderAWorkspace:
 
         refusal = await _refusal(registry, tool, GAMMA)
 
-        assert refusal == cs.MCP_UNKNOWN_WORKSPACE_PROJECT.format(
+        assert refusal == mcs.MCP_UNKNOWN_WORKSPACE_PROJECT.format(
             project=GAMMA, workspace=WS, known=ALPHA
         )
 
@@ -138,7 +139,7 @@ class TestUnderAWorkspace:
 
         refusal = await _refusal(registry, tool, SERVED)
 
-        assert refusal == cs.MCP_UNKNOWN_WORKSPACE_PROJECT_NONE_INDEXED.format(
+        assert refusal == mcs.MCP_UNKNOWN_WORKSPACE_PROJECT_NONE_INDEXED.format(
             project=SERVED, workspace=WS
         )
 
@@ -151,7 +152,7 @@ class TestUnderAWorkspace:
 
         refusal = str(registry._agent_query_tool().function("anything"))
 
-        assert refusal == cs.MCP_UNKNOWN_WORKSPACE_PROJECT_NONE_INDEXED.format(
+        assert refusal == mcs.MCP_UNKNOWN_WORKSPACE_PROJECT_NONE_INDEXED.format(
             project=SERVED, workspace=WS
         )
 
@@ -167,7 +168,7 @@ class TestUnderAWorkspace:
 
         refusal = registry._root_not_indexed_error(derived, sorted(roots))
 
-        assert refusal == cs.MCP_ROOT_NOT_INDEXED.format(path=tmp_path.resolve())
+        assert refusal == mcs.MCP_ROOT_NOT_INDEXED.format(path=tmp_path.resolve())
 
 
 class TestWhatStillHolds:
@@ -180,7 +181,7 @@ class TestWhatStillHolds:
 
         refusal = await _refusal(registry, "resolve", SERVED)
 
-        assert refusal == cs.MCP_UNKNOWN_PROJECT_NAMED.format(
+        assert refusal == mcs.MCP_UNKNOWN_PROJECT_NAMED.format(
             project=SERVED
         ) + graph_query.did_you_mean([TWIN])
 
@@ -210,7 +211,7 @@ class TestWhatStillHolds:
         registry = _registry(tmp_path, _workspace(tmp_path, SERVED, ALPHA))
 
         assert await registry.resolve("total", project=OUTSIDE) == {
-            cs.DICT_KEY_ERROR: cs.MCP_PROJECT_OUTSIDE_WORKSPACE.format(
+            cs.DICT_KEY_ERROR: mcs.MCP_PROJECT_OUTSIDE_WORKSPACE.format(
                 project=OUTSIDE, workspace=WS, known=f"{SERVED}, {ALPHA}"
             )
         }
@@ -227,7 +228,7 @@ class TestWithoutAWorkspace:
 
         refusal = await _refusal(registry, tool, SERVED)
 
-        assert refusal == cs.MCP_UNKNOWN_PROJECT_NAMED.format(
+        assert refusal == mcs.MCP_UNKNOWN_PROJECT_NAMED.format(
             project=SERVED
         ) + graph_query.did_you_mean([OUTSIDE, TWIN])
 
@@ -239,7 +240,7 @@ class TestWithoutAWorkspace:
 
         refusal = await _refusal(registry, tool, GAMMA)
 
-        assert refusal == cs.MCP_UNKNOWN_PROJECT.format(
+        assert refusal == mcs.MCP_UNKNOWN_PROJECT.format(
             project=GAMMA, known=cs.SEPARATOR_COMMA_SPACE.join(sorted(INDEXED))
         )
 
@@ -252,7 +253,7 @@ class TestWithoutAWorkspace:
 
         refusal = registry._root_not_indexed_error(derived, sorted(roots))
 
-        assert refusal == cs.MCP_ROOT_NOT_INDEXED.format(
+        assert refusal == mcs.MCP_ROOT_NOT_INDEXED.format(
             path=tmp_path.resolve()
         ) + graph_query.did_you_mean(["custom", near])
 
@@ -261,4 +262,4 @@ class TestWithoutAWorkspace:
 
         refusal = await _refusal(registry, "resolve", GAMMA)
 
-        assert refusal == cs.MCP_UNKNOWN_PROJECT.format(project=GAMMA, known="")
+        assert refusal == mcs.MCP_UNKNOWN_PROJECT.format(project=GAMMA, known="")

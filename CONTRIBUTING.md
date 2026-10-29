@@ -476,6 +476,16 @@ raise ex.LLMGenerationError(ex.CONFIG.format(error=e))
 
 Define constants, patterns, and types once. Import everywhere.
 
+#### Where a Constant Lives
+
+A constant read only inside one package lives in that package's `constants.py`,
+imported as `from . import constants as <x>cs` (`scs` in `stack/`, `tcs` in
+`trace/`, `ecs` in `embedded_graph/`). A constant read by more than one package
+is shared vocabulary and lives in `codebase_rag/constants/`, imported as `cs`.
+Tests do not count as readers: a test imports a constant from wherever its
+package keeps it. When a package-owned constant gains a reader in another
+package, move it to `codebase_rag/constants/` rather than importing across.
+
 #### StrEnum for Constrained Values
 
 Use `StrEnum` when string values are used in code (defaults, comparisons, assignments):

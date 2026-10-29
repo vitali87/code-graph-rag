@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .. import constants as cs
+from . import constants as tcs
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
@@ -53,16 +53,16 @@ class CallRecord:
 
 def _frame_to_json(point: FramePoint) -> dict[str, str | int]:
     return {
-        cs.TRACE_KEY_PATH: point.path,
-        cs.TRACE_KEY_QUALNAME: point.qualname,
-        cs.TRACE_KEY_LINE: point.line,
+        tcs.TRACE_KEY_PATH: point.path,
+        tcs.TRACE_KEY_QUALNAME: point.qualname,
+        tcs.TRACE_KEY_LINE: point.line,
     }
 
 
 def _frame_from_json(raw: dict[str, object]) -> FramePoint:
-    path = raw.get(cs.TRACE_KEY_PATH)
-    qualname = raw.get(cs.TRACE_KEY_QUALNAME)
-    line = raw.get(cs.TRACE_KEY_LINE)
+    path = raw.get(tcs.TRACE_KEY_PATH)
+    qualname = raw.get(tcs.TRACE_KEY_QUALNAME)
+    line = raw.get(tcs.TRACE_KEY_LINE)
     if (
         not isinstance(path, str)
         or not isinstance(qualname, str)
@@ -79,22 +79,22 @@ def write_trace_file(
 ) -> None:
     with output.open("w", encoding="utf-8") as fh:
         header_row: dict[str, str | int | bool] = {
-            cs.TRACE_KEY_KIND: cs.TRACE_KIND_HEADER,
-            cs.TRACE_KEY_VERSION: header.version,
-            cs.TRACE_KEY_LANGUAGE: header.language,
-            cs.TRACE_KEY_REPO_ROOT: header.repo_root,
-            cs.TRACE_KEY_TRACER: header.tracer,
-            cs.TRACE_KEY_SAMPLED: header.sampled,
+            tcs.TRACE_KEY_KIND: tcs.TRACE_KIND_HEADER,
+            tcs.TRACE_KEY_VERSION: header.version,
+            tcs.TRACE_KEY_LANGUAGE: header.language,
+            tcs.TRACE_KEY_REPO_ROOT: header.repo_root,
+            tcs.TRACE_KEY_TRACER: header.tracer,
+            tcs.TRACE_KEY_SAMPLED: header.sampled,
         }
         fh.write(json.dumps(header_row) + "\n")
         for record in records:
             row = {
-                cs.TRACE_KEY_KIND: cs.TRACE_KIND_CALL,
-                cs.TRACE_KEY_CALLER: _frame_to_json(record.caller),
-                cs.TRACE_KEY_CALLEE: _frame_to_json(record.callee),
-                cs.TRACE_KEY_COUNT: record.count,
-                cs.TRACE_KEY_WORKLOADS: list(record.workloads),
-                cs.TRACE_KEY_RECEIVER_TYPES: list(record.receiver_types),
+                tcs.TRACE_KEY_KIND: tcs.TRACE_KIND_CALL,
+                tcs.TRACE_KEY_CALLER: _frame_to_json(record.caller),
+                tcs.TRACE_KEY_CALLEE: _frame_to_json(record.callee),
+                tcs.TRACE_KEY_COUNT: record.count,
+                tcs.TRACE_KEY_WORKLOADS: list(record.workloads),
+                tcs.TRACE_KEY_RECEIVER_TYPES: list(record.receiver_types),
             }
             fh.write(json.dumps(row) + "\n")
 
@@ -103,31 +103,34 @@ def _parse_header(trace_path: Path, line: str) -> TraceHeader:
     try:
         raw = json.loads(line)
     except json.JSONDecodeError as e:
-        raise TraceFormatError(cs.TRACE_ERR_BAD_HEADER.format(path=trace_path)) from e
-    if not isinstance(raw, dict) or raw.get(cs.TRACE_KEY_KIND) != cs.TRACE_KIND_HEADER:
-        raise TraceFormatError(cs.TRACE_ERR_BAD_HEADER.format(path=trace_path))
-    version = raw.get(cs.TRACE_KEY_VERSION)
-    if version != cs.TRACE_FORMAT_VERSION:
+        raise TraceFormatError(tcs.TRACE_ERR_BAD_HEADER.format(path=trace_path)) from e
+    if (
+        not isinstance(raw, dict)
+        or raw.get(tcs.TRACE_KEY_KIND) != tcs.TRACE_KIND_HEADER
+    ):
+        raise TraceFormatError(tcs.TRACE_ERR_BAD_HEADER.format(path=trace_path))
+    version = raw.get(tcs.TRACE_KEY_VERSION)
+    if version != tcs.TRACE_FORMAT_VERSION:
         raise TraceFormatError(
-            cs.TRACE_ERR_VERSION.format(
+            tcs.TRACE_ERR_VERSION.format(
                 path=trace_path,
                 found=version,
-                expected=cs.TRACE_FORMAT_VERSION,
+                expected=tcs.TRACE_FORMAT_VERSION,
             )
         )
-    language = raw.get(cs.TRACE_KEY_LANGUAGE)
-    repo_root = raw.get(cs.TRACE_KEY_REPO_ROOT)
-    tracer = raw.get(cs.TRACE_KEY_TRACER)
+    language = raw.get(tcs.TRACE_KEY_LANGUAGE)
+    repo_root = raw.get(tcs.TRACE_KEY_REPO_ROOT)
+    tracer = raw.get(tcs.TRACE_KEY_TRACER)
     # Pre-flag trace files omit `sampled`; they read back as exact. A present
     # value must be a real boolean, not a truthy string or number.
-    sampled = raw.get(cs.TRACE_KEY_SAMPLED, False)
+    sampled = raw.get(tcs.TRACE_KEY_SAMPLED, False)
     if (
         not isinstance(language, str)
         or not isinstance(repo_root, str)
         or not isinstance(tracer, str)
         or not isinstance(sampled, bool)
     ):
-        raise TraceFormatError(cs.TRACE_ERR_BAD_HEADER.format(path=trace_path))
+        raise TraceFormatError(tcs.TRACE_ERR_BAD_HEADER.format(path=trace_path))
     return TraceHeader(
         version=version,
         language=language,
@@ -142,14 +145,14 @@ def _parse_record(trace_path: Path, line_no: int, line: str) -> CallRecord:
         raw = json.loads(line)
     except json.JSONDecodeError as e:
         raise TraceFormatError(
-            cs.TRACE_ERR_BAD_RECORD.format(path=trace_path, line=line_no)
+            tcs.TRACE_ERR_BAD_RECORD.format(path=trace_path, line=line_no)
         ) from e
-    caller = raw.get(cs.TRACE_KEY_CALLER) if isinstance(raw, dict) else None
-    callee = raw.get(cs.TRACE_KEY_CALLEE) if isinstance(raw, dict) else None
-    count = raw.get(cs.TRACE_KEY_COUNT) if isinstance(raw, dict) else None
-    workloads = raw.get(cs.TRACE_KEY_WORKLOADS, []) if isinstance(raw, dict) else None
+    caller = raw.get(tcs.TRACE_KEY_CALLER) if isinstance(raw, dict) else None
+    callee = raw.get(tcs.TRACE_KEY_CALLEE) if isinstance(raw, dict) else None
+    count = raw.get(tcs.TRACE_KEY_COUNT) if isinstance(raw, dict) else None
+    workloads = raw.get(tcs.TRACE_KEY_WORKLOADS, []) if isinstance(raw, dict) else None
     receivers = (
-        raw.get(cs.TRACE_KEY_RECEIVER_TYPES, []) if isinstance(raw, dict) else None
+        raw.get(tcs.TRACE_KEY_RECEIVER_TYPES, []) if isinstance(raw, dict) else None
     )
     if (
         not isinstance(caller, dict)
@@ -161,7 +164,7 @@ def _parse_record(trace_path: Path, line_no: int, line: str) -> CallRecord:
         or not isinstance(receivers, list)
     ):
         raise TraceFormatError(
-            cs.TRACE_ERR_BAD_RECORD.format(path=trace_path, line=line_no)
+            tcs.TRACE_ERR_BAD_RECORD.format(path=trace_path, line=line_no)
         )
     try:
         return CallRecord(
@@ -173,7 +176,7 @@ def _parse_record(trace_path: Path, line_no: int, line: str) -> CallRecord:
         )
     except TraceFormatError as e:
         raise TraceFormatError(
-            cs.TRACE_ERR_BAD_RECORD.format(path=trace_path, line=line_no)
+            tcs.TRACE_ERR_BAD_RECORD.format(path=trace_path, line=line_no)
         ) from e
 
 
@@ -182,7 +185,7 @@ def read_trace_file(trace_path: Path) -> tuple[TraceHeader, Iterator[CallRecord]
     with trace_path.open("r", encoding="utf-8") as fh:
         first = fh.readline()
     if not first.strip():
-        raise TraceFormatError(cs.TRACE_ERR_BAD_HEADER.format(path=trace_path))
+        raise TraceFormatError(tcs.TRACE_ERR_BAD_HEADER.format(path=trace_path))
     header = _parse_header(trace_path, first)
 
     def _records() -> Iterator[CallRecord]:

@@ -16,6 +16,7 @@ from loguru import logger
 
 from codebase_rag import constants as cs
 from codebase_rag import logs as ls
+from codebase_rag.trace import constants as tcs
 from codebase_rag.trace.ebpf_pprof import (
     _prefix_matches,
     _reanchor,
@@ -137,7 +138,7 @@ def test_reanchors_paths_and_captures_seen_through_edge(tmp_path):
         tmp_path, build_id="abc123", workload_label="endpoint"
     )
 
-    assert header.language == cs.TRACE_LANGUAGE_GO
+    assert header.language == tcs.TRACE_LANGUAGE_GO
     assert header.sampled is True
     assert count == len(records) == 1
     record = records[0]
@@ -641,7 +642,7 @@ def _py_convert(tmp_path, **kwargs):
     profile = tmp_path / "py.pb.gz"
     profile.write_bytes(gzip.compress(_py_profile_bytes(src.as_posix())))
     output = tmp_path / "trace.jsonl"
-    kwargs.setdefault("language", cs.TRACE_LANGUAGE_PYTHON)
+    kwargs.setdefault("language", tcs.TRACE_LANGUAGE_PYTHON)
     count = convert_ebpf_pprof(profile, repo_root=tmp_path, output=output, **kwargs)
     header, records = read_trace_file(output)
     return count, header, list(records), output
@@ -649,9 +650,9 @@ def _py_convert(tmp_path, **kwargs):
 
 def test_interpreted_python_frames_are_shaped_for_the_resolver(tmp_path):
     count, header, records, _ = _py_convert(tmp_path)
-    assert header.language == cs.TRACE_LANGUAGE_PYTHON
+    assert header.language == tcs.TRACE_LANGUAGE_PYTHON
     assert header.sampled is True
-    assert header.tracer == cs.TRACE_TOOL_NAME_EBPF
+    assert header.tracer == tcs.TRACE_TOOL_NAME_EBPF
     src = (tmp_path / "app" / "service.py").as_posix()
     edges = {
         (r.caller.qualname, r.callee.qualname): (r.caller, r.callee) for r in records
@@ -667,7 +668,7 @@ def test_interpreted_python_frames_are_shaped_for_the_resolver(tmp_path):
     assert callee.qualname == "Service.handle_request"
     assert callee.path == src
     assert callee.line == 12
-    assert caller.qualname == cs.TRACE_QUALNAME_MODULE
+    assert caller.qualname == tcs.TRACE_QUALNAME_MODULE
     # The bare py-spy-style leaf keeps its name and its definition line.
     _, leaf = edges[("Service.handle_request", "leaf_compute")]
     assert leaf.qualname == "leaf_compute"
@@ -763,7 +764,7 @@ def test_interpreted_python_trace_ingests_to_calls_edges(tmp_path):
         ),
     }
     # Runtime-only edges from a sampled profile carry the sampled provenance flag.
-    assert all(props[cs.TRACE_PROP_SAMPLED] for _f, _t, props in graph.edges)
+    assert all(props[tcs.TRACE_PROP_SAMPLED] for _f, _t, props in graph.edges)
 
 
 # --- JVM frames (issue #1287 follow-up) ------------------------------------
@@ -837,7 +838,7 @@ def _jvm_convert(tmp_path, **kwargs):
     profile = tmp_path / "jvm.pb.gz"
     profile.write_bytes(gzip.compress(_jvm_profile_bytes()))
     output = tmp_path / "trace.jsonl"
-    kwargs.setdefault("language", cs.TRACE_LANGUAGE_JVM)
+    kwargs.setdefault("language", tcs.TRACE_LANGUAGE_JVM)
     count = convert_ebpf_pprof(profile, repo_root=tmp_path, output=output, **kwargs)
     header, records = read_trace_file(output)
     return count, header, list(records), output
@@ -845,7 +846,7 @@ def _jvm_convert(tmp_path, **kwargs):
 
 def test_jvm_frames_derive_package_paths_for_the_resolver(tmp_path):
     count, header, records, _ = _jvm_convert(tmp_path)
-    assert header.language == cs.TRACE_LANGUAGE_JVM
+    assert header.language == tcs.TRACE_LANGUAGE_JVM
     assert header.sampled is True
     edges = {
         (r.caller.qualname, r.callee.qualname): (r.caller, r.callee) for r in records
@@ -918,7 +919,7 @@ def test_jvm_scala_frames_attribute_to_the_scala_file(tmp_path):
         profile,
         repo_root=tmp_path,
         output=output,
-        language=cs.TRACE_LANGUAGE_JVM,
+        language=tcs.TRACE_LANGUAGE_JVM,
     )
     _header, records = read_trace_file(output)
     materialized = list(records)
@@ -951,7 +952,7 @@ def test_jvm_stem_matching_both_java_and_scala_is_ambiguous(tmp_path):
             profile,
             repo_root=tmp_path,
             output=output,
-            language=cs.TRACE_LANGUAGE_JVM,
+            language=tcs.TRACE_LANGUAGE_JVM,
         )
     finally:
         logger.remove(sink)
@@ -1002,4 +1003,4 @@ def test_jvm_trace_ingests_to_calls_edges(tmp_path):
     }
     # The synthetic lambda frame has no line to span-match: unresolved, counted.
     assert summary.unresolved == 1
-    assert all(props[cs.TRACE_PROP_SAMPLED] for _f, _t, props in graph.edges)
+    assert all(props[tcs.TRACE_PROP_SAMPLED] for _f, _t, props in graph.edges)

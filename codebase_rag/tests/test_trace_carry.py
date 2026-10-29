@@ -22,6 +22,7 @@ from codebase_rag.cypher_queries import (
     build_trace_confirm_calls_query,
 )
 from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.trace import constants as tcs
 from codebase_rag.trace.carry import (
     CapturedTraceEdge,
     capture_trace_edges,
@@ -107,13 +108,13 @@ def _captured_row(
     edge_props: dict[str, PropertyValue] = {
         cs.TRACE_PROP_DYNAMIC: True,
         cs.TRACE_PROP_CALL_COUNT: 3,
-        cs.TRACE_PROP_WORKLOADS: ["t::one"],
-        cs.TRACE_PROP_WORKLOAD_COUNT: 1,
-        cs.TRACE_PROP_RECEIVER_TYPES: [],
-        cs.TRACE_PROP_SAMPLED: False,
-        cs.TRACE_PROP_STATIC_MISSED: True,
+        tcs.TRACE_PROP_WORKLOADS: ["t::one"],
+        tcs.TRACE_PROP_WORKLOAD_COUNT: 1,
+        tcs.TRACE_PROP_RECEIVER_TYPES: [],
+        tcs.TRACE_PROP_SAMPLED: False,
+        tcs.TRACE_PROP_STATIC_MISSED: True,
         cs.KEY_RESOLUTION: cs.EdgeResolution.DYNAMIC.value,
-        cs.TRACE_PROP_STALE: False,
+        tcs.TRACE_PROP_STALE: False,
         **props,
     }
     return {
@@ -189,7 +190,7 @@ def test_capture_folds_a_confirmed_pairs_sites_into_one_observation() -> None:
     assert edge.stale is True
     # Only the runtime observation travels; the site, resolution and
     # static_missed are re-derived against the re-parsed graph.
-    assert set(edge.observation) == set(cs.TRACE_CARRIED_PROPS)
+    assert set(edge.observation) == set(tcs.TRACE_CARRIED_PROPS)
     assert edge.observation[cs.TRACE_PROP_CALL_COUNT] == 3
 
 
@@ -222,9 +223,9 @@ def test_carry_confirms_a_pair_the_reparse_gave_a_static_edge(tmp_path: Path) ->
     ]
     props = _written(store)
     assert props[cs.KEY_RESOLUTION] == cs.EdgeResolution.TRACE_CONFIRMED
-    assert props[cs.TRACE_PROP_STATIC_MISSED] is False
+    assert props[tcs.TRACE_PROP_STATIC_MISSED] is False
     assert props[cs.TRACE_PROP_CALL_COUNT] == 3
-    assert props[cs.TRACE_PROP_STALE] is False
+    assert props[tcs.TRACE_PROP_STALE] is False
     assert store.flushed == 1
 
 
@@ -241,7 +242,7 @@ def test_carry_keeps_a_pair_without_a_static_edge_runtime_only(tmp_path: Path) -
     assert store.writes == []
     props = _written(store)
     assert props[cs.KEY_RESOLUTION] == cs.EdgeResolution.DYNAMIC
-    assert props[cs.TRACE_PROP_STATIC_MISSED] is True
+    assert props[tcs.TRACE_PROP_STATIC_MISSED] is True
     assert props[cs.KEY_UNLOCATABLE] is True
     assert cs.KEY_LINE not in props
     assert cs.KEY_DISPATCH_LITERAL not in props
@@ -263,7 +264,7 @@ def test_carry_grades_an_edge_stale_when_an_endpoint_changed(
     summary = carry_trace_edges(store, _capture(store), tmp_path)
 
     assert summary.newly_stale == 1
-    assert _written(store)[cs.TRACE_PROP_STALE] is True
+    assert _written(store)[tcs.TRACE_PROP_STALE] is True
 
 
 def test_carry_keeps_an_unchanged_edge_fresh(tmp_path: Path) -> None:
@@ -272,7 +273,7 @@ def test_carry_keeps_an_unchanged_edge_fresh(tmp_path: Path) -> None:
     summary = carry_trace_edges(store, _capture(store), tmp_path)
 
     assert summary.newly_stale == 0
-    assert _written(store)[cs.TRACE_PROP_STALE] is False
+    assert _written(store)[tcs.TRACE_PROP_STALE] is False
 
 
 def test_carry_keeps_a_stale_edge_stale_when_nothing_changed_since(
@@ -287,7 +288,7 @@ def test_carry_keeps_a_stale_edge_stale_when_nothing_changed_since(
     summary = carry_trace_edges(store, _capture(store), tmp_path)
 
     assert summary.newly_stale == 0
-    assert _written(store)[cs.TRACE_PROP_STALE] is True
+    assert _written(store)[tcs.TRACE_PROP_STALE] is True
 
 
 def test_carry_does_not_guess_stale_without_hashes(tmp_path: Path) -> None:
@@ -300,7 +301,7 @@ def test_carry_does_not_guess_stale_without_hashes(tmp_path: Path) -> None:
 
     carry_trace_edges(store, _capture(store), tmp_path)
 
-    assert _written(store)[cs.TRACE_PROP_STALE] is False
+    assert _written(store)[tcs.TRACE_PROP_STALE] is False
 
 
 def test_carry_drops_an_edge_whose_endpoint_no_longer_exists(tmp_path: Path) -> None:

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from codebase_rag import constants as cs
+from codebase_rag.trace import constants as tcs
 from codebase_rag.trace.cpuprofile import convert_cpuprofile
 from codebase_rag.trace.records import read_trace_file
 
@@ -78,7 +78,7 @@ def _convert(tmp_path, workload=None):
 def test_converts_project_edges_with_one_based_lines(tmp_path):
     count, header, records = _convert(tmp_path)
 
-    assert header.language == cs.TRACE_LANGUAGE_JS
+    assert header.language == tcs.TRACE_LANGUAGE_JS
     assert header.repo_root == str(tmp_path)
     assert count == len(records)
     edges = {(r.caller.qualname, r.callee.qualname): r for r in records}
@@ -102,7 +102,7 @@ def test_toplevel_frame_maps_to_module_qualname(tmp_path):
     _count, _header, records = _convert(tmp_path)
     edges = {(r.caller.qualname, r.callee.qualname): r for r in records}
 
-    assert (cs.TRACE_QUALNAME_MODULE, "runAll") in edges
+    assert (tcs.TRACE_QUALNAME_MODULE, "runAll") in edges
 
 
 def test_runtime_internal_frames_are_walked_through(tmp_path):
@@ -142,7 +142,7 @@ def test_dependency_directory_case_follows_platform(
     _header, records = read_trace_file(tmp_path / "out.jsonl")
     edges = {(record.caller.qualname, record.callee.qualname) for record in records}
     expected = {
-        (cs.TRACE_QUALNAME_MODULE, "runAll"),
+        (tcs.TRACE_QUALNAME_MODULE, "runAll"),
         ("runAll", "handle"),
         ("handle", "greet"),
         ("runAll", "callback"),
@@ -329,7 +329,7 @@ def test_unc_repository_keeps_profile_edges(
 
     assert count == 4
     assert set(edges) == {
-        (cs.TRACE_QUALNAME_MODULE, "runAll"),
+        (tcs.TRACE_QUALNAME_MODULE, "runAll"),
         ("runAll", "handle"),
         ("handle", "greet"),
         ("runAll", "callback"),

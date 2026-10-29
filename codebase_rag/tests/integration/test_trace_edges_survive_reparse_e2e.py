@@ -19,6 +19,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.trace import constants as tcs
 from codebase_rag.trace.ingest import ingest_trace
 from codebase_rag.trace.records import (
     CallRecord,
@@ -107,10 +108,10 @@ def _sync(ingestor: GraphIngestor, repo: Path) -> None:
 
 def _ingest(ingestor: GraphIngestor, repo: Path, trace_path: Path) -> None:
     header = TraceHeader(
-        version=cs.TRACE_FORMAT_VERSION,
-        language=cs.TRACE_LANGUAGE_PYTHON,
+        version=tcs.TRACE_FORMAT_VERSION,
+        language=tcs.TRACE_LANGUAGE_PYTHON,
         repo_root=str(repo),
-        tracer=cs.TRACE_TOOL_NAME,
+        tracer=tcs.TRACE_TOOL_NAME,
         sampled=False,
     )
     records = [
@@ -172,13 +173,13 @@ def test_trace_ingest_leaves_the_expected_edges(
     for callee in ("_on_create", "_on_delete"):
         props = _only(edges, "dispatch", callee)
         assert props[cs.KEY_RESOLUTION] == cs.EdgeResolution.DYNAMIC
-        assert props[cs.TRACE_PROP_STATIC_MISSED] is True
+        assert props[tcs.TRACE_PROP_STATIC_MISSED] is True
     confirmed = edges[("test_dispatch", "dispatch")]
     assert len(confirmed) == 2
     for props in confirmed:
         assert props[cs.KEY_RESOLUTION] == cs.EdgeResolution.TRACE_CONFIRMED
         assert props[cs.TRACE_PROP_DYNAMIC] is True
-    assert _only(edges, "run", "dispatch")[cs.TRACE_PROP_STATIC_MISSED] is True
+    assert _only(edges, "run", "dispatch")[tcs.TRACE_PROP_STATIC_MISSED] is True
     assert all(props[_STALE] is False for sites in edges.values() for props in sites)
 
 
@@ -249,7 +250,7 @@ def test_callee_edit_marks_an_unchanged_callers_trace_edge_stale(
     edges = _calls(memgraph_ingestor)
 
     runner = _only(edges, "run", "dispatch")
-    assert runner[cs.TRACE_PROP_STATIC_MISSED] is True
+    assert runner[tcs.TRACE_PROP_STATIC_MISSED] is True
     assert runner[_STALE] is True
     for callee in ("_on_create", "_on_delete"):
         assert _only(edges, "dispatch", callee)[_STALE] is True
@@ -279,12 +280,12 @@ def test_call_static_analysis_now_sees_confirms_instead_of_duplicating(
 
     confirmed = _only(edges, "dispatch", "_on_create")
     assert confirmed[cs.KEY_RESOLUTION] == cs.EdgeResolution.TRACE_CONFIRMED
-    assert confirmed[cs.TRACE_PROP_STATIC_MISSED] is False
+    assert confirmed[tcs.TRACE_PROP_STATIC_MISSED] is False
     assert confirmed[cs.TRACE_PROP_DYNAMIC] is True
     assert confirmed[_STALE] is True
     still_dynamic = _only(edges, "dispatch", "_on_delete")
     assert still_dynamic[cs.KEY_RESOLUTION] == cs.EdgeResolution.DYNAMIC
-    assert still_dynamic[cs.TRACE_PROP_STATIC_MISSED] is True
+    assert still_dynamic[tcs.TRACE_PROP_STATIC_MISSED] is True
 
 
 def test_removed_endpoint_drops_its_trace_edge(
@@ -333,7 +334,7 @@ def test_sync_without_trace_data_adds_no_trace_properties(
 
     edges = _calls(memgraph_ingestor)
     assert edges[("test_dispatch", "dispatch")]
-    trace_keys = {cs.TRACE_PROP_DYNAMIC, cs.TRACE_PROP_STATIC_MISSED, _STALE}
+    trace_keys = {cs.TRACE_PROP_DYNAMIC, tcs.TRACE_PROP_STATIC_MISSED, _STALE}
     for sites in edges.values():
         for props in sites:
             assert not trace_keys & props.keys()

@@ -15,8 +15,8 @@ from functools import partial
 
 import regex
 
-from .. import constants as cs
 from ..types_defs import JsonValue
+from . import constants as ecs
 from .limits import seconds_left
 from .types import SqlValue
 
@@ -34,7 +34,7 @@ def _load(text: str | None) -> JsonValue:
 def _dump(value: JsonValue) -> str | None:
     if value is None:
         return None
-    return json.dumps(value, separators=cs.EG_JSON_SEPARATORS)
+    return json.dumps(value, separators=ecs.EG_JSON_SEPARATORS)
 
 
 def eg_regex(value: SqlValue, pattern: SqlValue) -> int | None:
@@ -58,7 +58,7 @@ def eg_regex(value: SqlValue, pattern: SqlValue) -> int | None:
         # whole tick behind (15.6 ms on Windows before Python 3.13), so one
         # sleep for the time it shows left can end before it moves on.
         while (rest := seconds_left()) is not None and rest >= 0:
-            time.sleep(max(rest, cs.EG_CLOCK_POLL_S))
+            time.sleep(max(rest, ecs.EG_CLOCK_POLL_S))
         raise
     return 1 if matched else 0
 
@@ -74,7 +74,7 @@ def eg_list_add(left: str | None, right: str | None) -> str | None:
 
 def _text(value: JsonValue) -> str:
     if isinstance(value, bool):
-        return cs.EG_JSON_TRUE if value else cs.EG_JSON_FALSE
+        return ecs.EG_JSON_TRUE if value else ecs.EG_JSON_FALSE
     if isinstance(value, float) and value.is_integer():
         return str(int(value))
     if isinstance(value, (list, dict)):
@@ -177,7 +177,7 @@ def eg_range(
     items = range(int(start), int(stop), int(step))
     count = _length(items)
     if max_items is not None and count > max_items:
-        raise MemoryError(cs.EG_ERR_RANGE_TOO_LARGE.format(count=count))
+        raise MemoryError(ecs.EG_ERR_RANGE_TOO_LARGE.format(count=count))
     return _dump(list(items))
 
 
@@ -237,8 +237,8 @@ def eg_to_boolean(value: str | None) -> int | None:
     v = _load(value)
     if isinstance(v, bool):
         return int(v)
-    if isinstance(v, str) and v.lower() in (cs.EG_JSON_TRUE, cs.EG_JSON_FALSE):
-        return int(v.lower() == cs.EG_JSON_TRUE)
+    if isinstance(v, str) and v.lower() in (ecs.EG_JSON_TRUE, ecs.EG_JSON_FALSE):
+        return int(v.lower() == ecs.EG_JSON_TRUE)
     return None
 
 
@@ -268,8 +268,10 @@ def eg_paths_disjoint(left: str | None, right: str | None) -> int | None:
     """Whether two walks' edge lists (`,1,7,`) share no relationship."""
     if left is None or right is None:
         return None
-    ids = set(left.split(cs.EG_PATH_SEPARATOR)) & set(right.split(cs.EG_PATH_SEPARATOR))
-    return int(ids <= {cs.EG_EMPTY})
+    ids = set(left.split(ecs.EG_PATH_SEPARATOR)) & set(
+        right.split(ecs.EG_PATH_SEPARATOR)
+    )
+    return int(ids <= {ecs.EG_EMPTY})
 
 
 def eg_timestamp() -> int:
@@ -277,30 +279,30 @@ def eg_timestamp() -> int:
 
 
 _DETERMINISTIC: dict[str, tuple[int, Callable[..., SqlValue]]] = {
-    cs.EgSqlFn.REGEX: (2, eg_regex),
-    cs.EgSqlFn.LIST_ADD: (2, eg_list_add),
-    cs.EgSqlFn.CONCAT: (2, eg_concat),
-    cs.EgSqlFn.ADD: (2, eg_add),
-    cs.EgSqlFn.POW: (2, eg_pow),
-    cs.EgSqlFn.MOD: (2, eg_mod),
-    cs.EgSqlFn.SIZE: (1, eg_size),
-    cs.EgSqlFn.SLICE: (3, eg_slice),
-    cs.EgSqlFn.STR_SLICE: (3, eg_str_slice),
-    cs.EgSqlFn.SPLIT: (2, eg_split),
-    cs.EgSqlFn.REVERSE_STR: (1, eg_reverse_str),
-    cs.EgSqlFn.REVERSE_LIST: (1, eg_reverse_list),
-    cs.EgSqlFn.TO_STRING: (1, eg_to_string),
-    cs.EgSqlFn.TO_INTEGER: (1, eg_to_integer),
-    cs.EgSqlFn.TO_FLOAT: (1, eg_to_float),
-    cs.EgSqlFn.TO_BOOLEAN: (1, eg_to_boolean),
-    cs.EgSqlFn.CEIL: (1, _num(math.ceil)),
-    cs.EgSqlFn.FLOOR: (1, _num(math.floor)),
-    cs.EgSqlFn.ROUND: (1, _num(_round_half_away)),
-    cs.EgSqlFn.SQRT: (1, _num(math.sqrt)),
-    cs.EgSqlFn.LOG: (1, _num(math.log)),
-    cs.EgSqlFn.EXP: (1, _num(math.exp)),
-    cs.EgSqlFn.SIGN: (1, eg_sign),
-    cs.EgSqlFn.PATHS_DISJOINT: (2, eg_paths_disjoint),
+    ecs.EgSqlFn.REGEX: (2, eg_regex),
+    ecs.EgSqlFn.LIST_ADD: (2, eg_list_add),
+    ecs.EgSqlFn.CONCAT: (2, eg_concat),
+    ecs.EgSqlFn.ADD: (2, eg_add),
+    ecs.EgSqlFn.POW: (2, eg_pow),
+    ecs.EgSqlFn.MOD: (2, eg_mod),
+    ecs.EgSqlFn.SIZE: (1, eg_size),
+    ecs.EgSqlFn.SLICE: (3, eg_slice),
+    ecs.EgSqlFn.STR_SLICE: (3, eg_str_slice),
+    ecs.EgSqlFn.SPLIT: (2, eg_split),
+    ecs.EgSqlFn.REVERSE_STR: (1, eg_reverse_str),
+    ecs.EgSqlFn.REVERSE_LIST: (1, eg_reverse_list),
+    ecs.EgSqlFn.TO_STRING: (1, eg_to_string),
+    ecs.EgSqlFn.TO_INTEGER: (1, eg_to_integer),
+    ecs.EgSqlFn.TO_FLOAT: (1, eg_to_float),
+    ecs.EgSqlFn.TO_BOOLEAN: (1, eg_to_boolean),
+    ecs.EgSqlFn.CEIL: (1, _num(math.ceil)),
+    ecs.EgSqlFn.FLOOR: (1, _num(math.floor)),
+    ecs.EgSqlFn.ROUND: (1, _num(_round_half_away)),
+    ecs.EgSqlFn.SQRT: (1, _num(math.sqrt)),
+    ecs.EgSqlFn.LOG: (1, _num(math.log)),
+    ecs.EgSqlFn.EXP: (1, _num(math.exp)),
+    ecs.EgSqlFn.SIGN: (1, eg_sign),
+    ecs.EgSqlFn.PATHS_DISJOINT: (2, eg_paths_disjoint),
 }
 
 
@@ -310,9 +312,12 @@ def register(conn: sqlite3.Connection, heap_limit_mb: int | None = None) -> None
     max_items = (
         None
         if heap_limit_mb is None
-        else heap_limit_mb * cs.EG_BYTES_PER_MB // cs.EG_RANGE_ITEM_BYTES
+        else heap_limit_mb * ecs.EG_BYTES_PER_MB // ecs.EG_RANGE_ITEM_BYTES
     )
     conn.create_function(
-        cs.EgSqlFn.RANGE, 3, partial(eg_range, max_items=max_items), deterministic=True
+        ecs.EgSqlFn.RANGE,
+        3,
+        partial(eg_range, max_items=max_items),
+        deterministic=True,
     )
-    conn.create_function(cs.EgSqlFn.TIMESTAMP, 0, eg_timestamp)
+    conn.create_function(ecs.EgSqlFn.TIMESTAMP, 0, eg_timestamp)

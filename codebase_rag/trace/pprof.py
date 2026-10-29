@@ -29,7 +29,7 @@ import zlib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from .. import constants as cs
+from . import constants as tcs
 from .records import (
     CallRecord,
     FramePoint,
@@ -232,14 +232,14 @@ def _bare_name(symbol: str) -> str:
     tail = _strip_generics(symbol.rsplit("/", 1)[-1])
     segments = [s for s in tail.split(".") if s and not s.startswith("(")]
     if not segments:
-        return cs.TRACE_QUALNAME_ANONYMOUS
+        return tcs.TRACE_QUALNAME_ANONYMOUS
     # A nested closure surfaces as `main.runAll.func1.1`; its final segment is
     # a bare number, so test every trailing run of segments, not just the leaf.
     if any(
         _GO_CLOSURE_SEGMENT.fullmatch(".".join(segments[index:]))
         for index in range(len(segments))
     ):
-        return cs.TRACE_QUALNAME_ANONYMOUS
+        return tcs.TRACE_QUALNAME_ANONYMOUS
     return segments[-1]
 
 
@@ -247,8 +247,8 @@ def _decompress(
     raw: bytes,
     profile_path: Path,
     *,
-    bad_template: str = cs.TRACE_ERR_BAD_PPROF,
-    too_large_template: str = cs.TRACE_ERR_PPROF_TOO_LARGE,
+    bad_template: str = tcs.TRACE_ERR_BAD_PPROF,
+    too_large_template: str = tcs.TRACE_ERR_PPROF_TOO_LARGE,
 ) -> bytes:
     """Gunzip a gzipped profile under a size cap (#2263).
 
@@ -257,7 +257,7 @@ def _decompress(
     decompression bomb from ever being held whole; every gzip member is read,
     as ``gzip.decompress`` does.
     """
-    if raw[:2] != cs.TRACE_GZIP_MAGIC:
+    if raw[:2] != tcs.TRACE_GZIP_MAGIC:
         return raw
     bad = TraceFormatError(bad_template.format(path=profile_path))
     view = memoryview(raw)
@@ -273,7 +273,7 @@ def _decompress(
                     raise bad
                 break
             members += 1
-            if members > cs.TRACE_MAX_GZIP_MEMBERS:
+            if members > tcs.TRACE_MAX_GZIP_MEMBERS:
                 raise bad
             position = _inflate_member(
                 view, position, out, bad, too_large_template, profile_path
@@ -296,12 +296,12 @@ def _inflate_member(
     Input goes in bounded slices, so each member costs the slices it spans
     rather than a copy of everything after it.
     """
-    limit = cs.TRACE_MAX_DECOMPRESSED_BYTES
-    inflater = zlib.decompressobj(cs.TRACE_GZIP_WBITS)
+    limit = tcs.TRACE_MAX_DECOMPRESSED_BYTES
+    inflater = zlib.decompressobj(tcs.TRACE_GZIP_WBITS)
     while not inflater.eof:
         if position >= len(view):
             raise bad
-        chunk = view[position : position + cs.TRACE_GZIP_INPUT_CHUNK_BYTES]
+        chunk = view[position : position + tcs.TRACE_GZIP_INPUT_CHUNK_BYTES]
         out += inflater.decompress(chunk, limit + 1 - len(out))
         if len(out) > limit:
             raise TraceFormatError(
@@ -411,9 +411,9 @@ def convert_pprof_profile(
     try:
         strings, functions, locations, samples = _decode_profile(raw)
     except TraceFormatError as e:
-        raise TraceFormatError(cs.TRACE_ERR_BAD_PPROF.format(path=profile_path)) from e
+        raise TraceFormatError(tcs.TRACE_ERR_BAD_PPROF.format(path=profile_path)) from e
     if not strings or not functions or not samples:
-        raise TraceFormatError(cs.TRACE_ERR_BAD_PPROF.format(path=profile_path))
+        raise TraceFormatError(tcs.TRACE_ERR_BAD_PPROF.format(path=profile_path))
 
     root_prefix = repo_root.resolve().as_posix() + "/"
     frames: dict[int, FramePoint | None] = {}
@@ -443,7 +443,7 @@ def convert_pprof_profile(
         for (caller, callee), count in edges.items()
     ]
     header = TraceHeader(
-        version=cs.TRACE_FORMAT_VERSION,
+        version=tcs.TRACE_FORMAT_VERSION,
         language=language,
         repo_root=str(repo_root),
         tracer=tracer,
@@ -467,6 +467,6 @@ def convert_pprof(
         workload,
         excluded_dir=_GO_EXCLUDED_DIR,
         bare_name=_bare_name,
-        language=cs.TRACE_LANGUAGE_GO,
-        tracer=cs.TRACE_TOOL_NAME_PPROF,
+        language=tcs.TRACE_LANGUAGE_GO,
+        tracer=tcs.TRACE_TOOL_NAME_PPROF,
     )

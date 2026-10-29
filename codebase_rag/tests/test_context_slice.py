@@ -12,6 +12,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.context_slice import _doc_pieces, context
 from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.mcp import constants as mcs
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.utils.token_utils import count_tokens
 from evals.cgr_graph import StatefulIngestor
@@ -291,7 +292,7 @@ async def test_mcp_context_tool_rejects_a_budget_below_one(
             target=_qn("pkg.util.helper"), budget_tokens=budget, project=PROJECT
         )
         assert payload == {
-            cs.DICT_KEY_ERROR: cs.MCP_CONTEXT_BUDGET_INVALID.format(budget=budget)
+            cs.DICT_KEY_ERROR: mcs.MCP_CONTEXT_BUDGET_INVALID.format(budget=budget)
         }
 
 

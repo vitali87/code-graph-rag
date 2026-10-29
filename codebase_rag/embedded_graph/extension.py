@@ -11,12 +11,12 @@ from functools import cache
 from importlib import import_module
 from types import ModuleType
 
-from .. import constants as cs
+from . import constants as ecs
 
 
 @cache
 def rust_extension() -> ModuleType | None:
     try:
-        return import_module(cs.EG_RUST_MODULE)
+        return import_module(ecs.EG_RUST_MODULE)
     except ImportError:
         return None

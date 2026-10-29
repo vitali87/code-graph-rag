@@ -9,6 +9,7 @@ import click
 from loguru import logger
 
 from .. import cli_help as ch
+from . import constants as tcs
 
 
 @click.group(
@@ -89,9 +90,8 @@ def _convert_for_language(
     magic bytes, so an explicit override is the only way to select the Rust
     demangler.
     """
-    from .. import constants as cs
 
-    if language == cs.TRACE_LANGUAGE_RUST:
+    if language == tcs.TRACE_LANGUAGE_RUST:
         from .rust_pprof import convert_rust_pprof
 
         return convert_rust_pprof(
@@ -102,7 +102,7 @@ def _convert_for_language(
         )
     raise _ConvertUsageError(
         ch.ERR_TRACE_CONVERT_BAD_LANGUAGE.format(
-            language=language, supported=cs.TRACE_LANGUAGE_RUST
+            language=language, supported=tcs.TRACE_LANGUAGE_RUST
         )
     )
 
@@ -164,7 +164,6 @@ def _convert_ebpf(
     commit: str | None,
 ) -> int:
     """Convert an eBPF-profiler pprof profile with re-anchoring and filtering."""
-    from .. import constants as cs
     from .ebpf_pprof import convert_ebpf_pprof
 
     repo = _require_repo(repo_path)
@@ -184,7 +183,7 @@ def _convert_ebpf(
         build_id=build_id,
         service=service_pair,
         workload_label=label,
-        language=language or cs.TRACE_LANGUAGE_GO,
+        language=language or tcs.TRACE_LANGUAGE_GO,
     )
 
 
@@ -296,8 +295,6 @@ def _convert_profile(
     """
     import json
 
-    from .. import constants as cs
-
     if language is not None:
         return _convert_for_language(
             profile_file, repo_path, resolved_output, workload, language
@@ -314,7 +311,7 @@ def _convert_profile(
             workload=workload,
         )
 
-    if profile_file.name.endswith(cs.TRACE_XDEBUG_SUFFIXES):
+    if profile_file.name.endswith(tcs.TRACE_XDEBUG_SUFFIXES):
         # Checked before the gzip sniff below: a zlib-enabled Xdebug writes
         # gzip-compressed .xt.gz traces, which are not pprof profiles.
         from .xdebug import convert_xdebug_trace
@@ -410,9 +407,8 @@ def convert_cmd(
     label: str | None,
     commit: str | None,
 ) -> None:
-    from .. import constants as cs
 
-    resolved_output = output or Path(cs.TRACE_DEFAULT_OUTPUT)
+    resolved_output = output or Path(tcs.TRACE_DEFAULT_OUTPUT)
     try:
         if fmt == "ebpf":
             count = _convert_ebpf(
@@ -495,9 +491,7 @@ def pull_cmd(
     import os
     import tempfile
 
-    from .. import constants as cs
-
-    resolved_output = output or Path(cs.TRACE_DEFAULT_OUTPUT)
+    resolved_output = output or Path(tcs.TRACE_DEFAULT_OUTPUT)
     try:
         if save is not None and save.resolve() == resolved_output.resolve():
             raise _ConvertUsageError(ch.ERR_TRACE_PULL_SAVE_EQUALS_OUTPUT)

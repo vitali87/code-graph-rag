@@ -34,6 +34,8 @@ from codebase_rag.mcp.graph_damage import GraphDamage
 from codebase_rag.services import QueryProtocol
 from codebase_rag.types_defs import PropertyValue
 
+from . import constants as mcs
+
 
 class RunMarker:
     """One registry's `:IncompleteRun` marker, and the in-process damage
@@ -169,7 +171,7 @@ class RunMarker:
         """
         if self.persist(project_name, True, writing=writing):
             return None
-        return cs.MCP_INCOMPLETE_MARKER_REQUIRED.format(project=project_name)
+        return mcs.MCP_INCOMPLETE_MARKER_REQUIRED.format(project=project_name)
 
     def require_writing(self, project_name: str) -> str | None:
         """Invariant (a), second half: say WRITING before the first graph write.
@@ -334,7 +336,7 @@ class RunMarker:
                 self.damage.from_failed_clear = project_name
             else:
                 self.damage.project = owner_before
-            return cs.MCP_INCOMPLETE_MARKER_STUCK.format(project=project_name)
+            return mcs.MCP_INCOMPLETE_MARKER_STUCK.format(project=project_name)
         # A successful clear is evidence about THIS project only: a flag
         # attributed to a different one, or spanning several, is the sole
         # record that they are partial whenever the damaging failure could
@@ -357,7 +359,7 @@ class RunMarker:
         in_process = self.damage.blocks(project_name)
         if in_process or self.says_incomplete(project_name):
             return te.ToolFailure(
-                cs.MCP_QUERY_AFTER_FAILED_RUN.format(project=project_name, tool=tool)
+                mcs.MCP_QUERY_AFTER_FAILED_RUN.format(project=project_name, tool=tool)
             )
         return None
 

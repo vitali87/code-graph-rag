@@ -13,6 +13,7 @@ from codebase_rag.cypher_queries import (
     CYPHER_TRACE_EXISTING_CALLS,
     build_trace_confirm_calls_query,
 )
+from codebase_rag.trace import constants as tcs
 from codebase_rag.trace.ingest import ingest_trace
 from codebase_rag.trace.records import (
     CallRecord,
@@ -43,7 +44,7 @@ class _FakeGraph:
     def _existing_call_rows(self):
         rows = list(self._static_rows)
         for from_spec, _rel, to_spec, props in self.edges:
-            if props and props.get(cs.TRACE_PROP_STATIC_MISSED):
+            if props and props.get(tcs.TRACE_PROP_STATIC_MISSED):
                 continue
             rows.append({cs.KEY_FROM_QN: from_spec[2], cs.KEY_TO_QN: to_spec[2]})
         return rows
@@ -137,10 +138,10 @@ def _record(repo: Path, caller, callee, count, workloads=()):
 
 def _write_trace(repo: Path, trace_path: Path, records, sampled: bool = False) -> None:
     header = TraceHeader(
-        version=cs.TRACE_FORMAT_VERSION,
-        language=cs.TRACE_LANGUAGE_PYTHON,
+        version=tcs.TRACE_FORMAT_VERSION,
+        language=tcs.TRACE_LANGUAGE_PYTHON,
         repo_root=str(repo),
-        tracer=cs.TRACE_TOOL_NAME,
+        tracer=tcs.TRACE_TOOL_NAME,
         sampled=sampled,
     )
     write_trace_file(trace_path, header, records)
@@ -191,13 +192,13 @@ def test_ingest_confirms_static_and_flags_missed_edges(tmp_path):
         (f"{_PROJECT}.pkg.registry.handle", f"{_PROJECT}.pkg.registry.greet")
     ]
     assert confirmed[cs.TRACE_PROP_DYNAMIC] is True
-    assert confirmed[cs.TRACE_PROP_STATIC_MISSED] is False
+    assert confirmed[tcs.TRACE_PROP_STATIC_MISSED] is False
     assert confirmed[cs.TRACE_PROP_CALL_COUNT] == 4
     # An exact tracer's edges are not flagged approximate.
-    assert confirmed[cs.TRACE_PROP_SAMPLED] is False
-    assert missed[cs.TRACE_PROP_STATIC_MISSED] is True
-    assert missed[cs.TRACE_PROP_WORKLOADS] == ["t::one", "t::two"]
-    assert missed[cs.TRACE_PROP_WORKLOAD_COUNT] == 2
+    assert confirmed[tcs.TRACE_PROP_SAMPLED] is False
+    assert missed[tcs.TRACE_PROP_STATIC_MISSED] is True
+    assert missed[tcs.TRACE_PROP_WORKLOADS] == ["t::one", "t::two"]
+    assert missed[tcs.TRACE_PROP_WORKLOAD_COUNT] == 2
 
 
 def test_ingest_marks_every_edge_fresh(tmp_path):
@@ -257,7 +258,7 @@ def test_ingest_flags_sampled_trace_edges_as_approximate(tmp_path):
     ingest_trace(trace_path, graph, repo, _PROJECT)
 
     (props,) = [props for (_frm, _rel, _to, props) in graph.edges]
-    assert props[cs.TRACE_PROP_SAMPLED] is True
+    assert props[tcs.TRACE_PROP_SAMPLED] is True
     assert props[cs.TRACE_PROP_DYNAMIC] is True
 
 
@@ -324,7 +325,7 @@ def test_reingest_preserves_runtime_only_classification(tmp_path):
     assert first.static_missed == second.static_missed == 1
     assert second.confirmed_static == 0
     for _frm, _rel, _to, props in graph.edges:
-        assert props[cs.TRACE_PROP_STATIC_MISSED] is True
+        assert props[tcs.TRACE_PROP_STATIC_MISSED] is True
 
 
 def test_ingest_dispatches_jvm_traces_to_jvm_resolution(tmp_path):
@@ -351,10 +352,10 @@ def test_ingest_dispatches_jvm_traces_to_jvm_resolution(tmp_path):
         [],
     )
     header = TraceHeader(
-        version=cs.TRACE_FORMAT_VERSION,
-        language=cs.TRACE_LANGUAGE_JVM,
+        version=tcs.TRACE_FORMAT_VERSION,
+        language=tcs.TRACE_LANGUAGE_JVM,
         repo_root=str(repo),
-        tracer=cs.TRACE_TOOL_NAME_JVM,
+        tracer=tcs.TRACE_TOOL_NAME_JVM,
     )
     # JVM frames carry package-derived paths and binary names; only the JVM
     # resolver can join them onto the path-derived signature-bearing qns.
@@ -410,10 +411,10 @@ def test_ingest_dispatches_dotnet_traces_to_name_resolution(tmp_path):
         [],
     )
     header = TraceHeader(
-        version=cs.TRACE_FORMAT_VERSION,
-        language=cs.TRACE_LANGUAGE_DOTNET,
+        version=tcs.TRACE_FORMAT_VERSION,
+        language=tcs.TRACE_LANGUAGE_DOTNET,
         repo_root="",
-        tracer=cs.TRACE_TOOL_NAME_SPEEDSCOPE,
+        tracer=tcs.TRACE_TOOL_NAME_SPEEDSCOPE,
     )
     # .NET frames have no paths or lines; only CLR-name demangling can join.
     write_trace_file(
@@ -465,8 +466,8 @@ def test_ingest_dispatches_dart_traces_to_span_resolution(tmp_path):
         [],
     )
     header = TraceHeader(
-        version=cs.TRACE_FORMAT_VERSION,
-        language=cs.TRACE_LANGUAGE_DART,
+        version=tcs.TRACE_FORMAT_VERSION,
+        language=tcs.TRACE_LANGUAGE_DART,
         repo_root=str(repo),
         tracer="cgr-trace-dart",
     )
@@ -523,10 +524,10 @@ def test_ingest_dispatches_rust_traces_to_span_resolution(tmp_path):
         [],
     )
     header = TraceHeader(
-        version=cs.TRACE_FORMAT_VERSION,
-        language=cs.TRACE_LANGUAGE_RUST,
+        version=tcs.TRACE_FORMAT_VERSION,
+        language=tcs.TRACE_LANGUAGE_RUST,
         repo_root=str(repo),
-        tracer=cs.TRACE_TOOL_NAME_RUST_PPROF,
+        tracer=tcs.TRACE_TOOL_NAME_RUST_PPROF,
         sampled=True,
     )
     write_trace_file(
@@ -554,8 +555,8 @@ def test_ingest_dispatches_rust_traces_to_span_resolution(tmp_path):
     ((frm, _rel, to, props),) = graph.edges
     assert frm[2].endswith("Registry.handle")
     assert to[2].endswith("Dog.speak")
-    assert props[cs.TRACE_PROP_SAMPLED] is True
-    assert props[cs.TRACE_PROP_STATIC_MISSED] is True
+    assert props[tcs.TRACE_PROP_SAMPLED] is True
+    assert props[tcs.TRACE_PROP_STATIC_MISSED] is True
 
 
 def test_ingest_counts_unresolved_frames(tmp_path):

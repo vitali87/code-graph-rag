@@ -34,6 +34,7 @@ from ..cypher_queries import (
 )
 from ..services import QueryProtocol
 from ..types_defs import PropertyDict, ResultRow, ResultValue
+from . import constants as tcs
 from .ingest import TraceGraphProtocol, callable_node, write_trace_edge
 from .resolution import CallableNode, ResolvedFrame
 
@@ -126,7 +127,7 @@ def carry_trace_edges(
             graph,
             edge.caller,
             edge.callee,
-            {**edge.observation, cs.TRACE_PROP_STALE: stale},
+            {**edge.observation, tcs.TRACE_PROP_STALE: stale},
             (edge.caller.qualified_name, edge.callee.qualified_name)
             not in static_pairs,
             repo_root,
@@ -159,7 +160,7 @@ def _captured(row: ResultRow) -> CapturedTraceEdge | None:
         caller_hash=_text(row.get(cs.KEY_FROM_HASH)),
         callee_hash=_text(row.get(cs.KEY_TO_HASH)),
         observation=_observation(props),
-        stale=isinstance(props, dict) and props.get(cs.TRACE_PROP_STALE) is True,
+        stale=isinstance(props, dict) and props.get(tcs.TRACE_PROP_STALE) is True,
     )
 
 
@@ -167,7 +168,7 @@ def _observation(props: ResultValue) -> PropertyDict:
     if not isinstance(props, dict):
         return {}
     observation: PropertyDict = {}
-    for key in cs.TRACE_CARRIED_PROPS:
+    for key in tcs.TRACE_CARRIED_PROPS:
         value = props.get(key)
         if isinstance(value, list):
             observation[key] = [item for item in value if isinstance(item, str)]

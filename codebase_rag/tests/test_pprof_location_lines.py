@@ -23,6 +23,7 @@ from codebase_rag.tests.test_dynamic_trace_rust import (
     _string,
     _uint,
 )
+from codebase_rag.trace import constants as tcs
 from codebase_rag.trace.ebpf_pprof import convert_ebpf_pprof
 from codebase_rag.trace.pprof import convert_pprof
 from codebase_rag.trace.records import FramePoint, read_trace_file
@@ -126,7 +127,7 @@ def test_the_ebpf_converter_keeps_the_line_too(tmp_path: Path) -> None:
         tmp_path,
         _issue_profile(tmp_path),
         convert=lambda p, repo_root, output: convert_ebpf_pprof(
-            p, repo_root=repo_root, output=output, language=cs.TRACE_LANGUAGE_RUST
+            p, repo_root=repo_root, output=output, language=tcs.TRACE_LANGUAGE_RUST
         ),
     )
     assert {(r.caller.line, r.callee.line) for r in records} == {(60, 20), (60, 40)}

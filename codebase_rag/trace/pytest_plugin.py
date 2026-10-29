@@ -17,6 +17,8 @@ from typing import TYPE_CHECKING, Protocol
 
 import pytest
 
+from . import constants as tcs
+
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
@@ -34,13 +36,12 @@ _HELP_REPO = "Repository root to scope tracing to (default: pytest rootdir)."
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
-    from .. import constants as cs
 
-    group = parser.getgroup(cs.TRACE_TOOL_NAME)
+    group = parser.getgroup(tcs.TRACE_TOOL_NAME)
     group.addoption(_OPT_TRACE, action="store_true", default=False, help=_HELP_TRACE)
     group.addoption(
         _OPT_OUTPUT,
-        default=cs.TRACE_DEFAULT_OUTPUT,
+        default=tcs.TRACE_DEFAULT_OUTPUT,
         help=_HELP_OUTPUT,
     )
     group.addoption(_OPT_REPO, default=None, help=_HELP_REPO)
@@ -94,7 +95,6 @@ def pytest_sessionfinish(session: pytest.Session) -> None:
     tracer = session.config.stash.get(_STASH_KEY, None)
     if tracer is None or not tracer.active:
         return
-    from .. import constants as cs
 
     tracer.stop()
     output = _output_path(session.config)
@@ -103,7 +103,7 @@ def pytest_sessionfinish(session: pytest.Session) -> None:
     # progress line when this hook runs, so under `-q` the message was glued
     # to `[100%]` (issue #2888).
     session.config.stash[_SUMMARY_KEY] = (
-        f"{cs.TRACE_TOOL_NAME}: wrote {count} call records to {output}"
+        f"{tcs.TRACE_TOOL_NAME}: wrote {count} call records to {output}"
     )
 
 

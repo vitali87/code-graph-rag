@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from codebase_rag import constants as cs
+from codebase_rag.trace import constants as tcs
 from codebase_rag.trace.instrumented import convert_instrumented
 from codebase_rag.trace.records import TraceFormatError, read_trace_file
 
@@ -266,7 +266,7 @@ def test_ordinary_recursion_stays_exact(tmp_path: Path) -> None:
 
 
 def test_the_unwound_message_is_distinct_from_dropped() -> None:
-    assert cs.TRACE_ERR_ADDRS_UNWOUND != cs.TRACE_ERR_ADDRS_DROPPED
+    assert tcs.TRACE_ERR_ADDRS_UNWOUND != tcs.TRACE_ERR_ADDRS_DROPPED
 
 
 @pytest.mark.parametrize("optimise", ["-O1", "-O2", "-O3"])
