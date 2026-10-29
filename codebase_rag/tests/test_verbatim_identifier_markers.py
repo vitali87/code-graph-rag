@@ -204,6 +204,7 @@ class TestEveryRoutedReaderUsesTheHelper:
         "codebase_rag.parsers.call_processor",
         "codebase_rag.parsers.call_resolver",
         "codebase_rag.parsers.class_ingest.method_override",
+        "codebase_rag.parsers.cpp.resolution",
         "codebase_rag.parsers.csharp.class_ingest",
         "codebase_rag.parsers.function_ingest",
         "codebase_rag.parsers.go.calls",
