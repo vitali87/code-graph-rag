@@ -16,7 +16,7 @@ from codebase_rag.editing.transaction import (
     undo_transaction,
 )
 from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.mcp.tools import MCPToolsRegistry
+from codebase_rag.tests.conftest import bare_registry
 from codebase_rag.tests.test_edit_contract import PROJECT, _real_project
 from evals.cgr_graph import StatefulIngestor
 
@@ -174,7 +174,7 @@ def test_mcp_failed_contract_serializes_rollback_status(
 ) -> None:
     root, store, updater = collision
     calls: list[list[str]] = []
-    registry = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    registry = bare_registry()
     registry.ingestor = store
     registry.project_root = str(root)
     with patch.object(

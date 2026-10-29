@@ -30,8 +30,8 @@ from codebase_rag.editing.occurrences import (
 )
 from codebase_rag.editing.rename import QueryFn, RenameRefused, rename
 from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.mcp.tools import MCPToolsRegistry
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import bare_registry
 from codebase_rag.types_defs import PropertyParams, ResultRow
 from evals.cgr_graph import StatefulIngestor
 
@@ -703,7 +703,7 @@ def test_mcp_refusal_payload_lists_the_unplanned_sites(
     ingestor = MagicMock()
     ingestor.fetch_all = _missing(store, "pkg/late.py")
     ingestor.list_projects.return_value = []
-    registry = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    registry = bare_registry()
     registry.ingestor = ingestor
     registry.project_root = str(root)
     registry._live_updater = None

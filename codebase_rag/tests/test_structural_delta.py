@@ -735,14 +735,14 @@ def test_a_failed_write_reingest_invalidates_the_live_graph(
     updater.project_name = "proj"
     updater.reingest.side_effect = error
     registry._live_updater = updater
-    registry._graph_incomplete = False
+    registry._damage.incomplete = False
     note = registry._delta_after_write(["pkg/app.py"])
     assert "memgraph" in note or "bad path" in note
     # A failure after the re-ingest began may have left a partial graph, so
     # the updater is dropped and the graph marked incomplete; a validation
     # error raised before any change leaves both as they were.
     assert (registry._live_updater is None) is invalidated
-    assert registry._graph_incomplete is invalidated
+    assert registry._damage.incomplete is invalidated
 
 
 def test_check_reports_the_delta_since_a_git_ref(

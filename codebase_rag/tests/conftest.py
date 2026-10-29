@@ -30,7 +30,7 @@ from codebase_rag.parsers.py.ast_analyzer import clear_scope_facts
 from codebase_rag.types_defs import GraphNodeRecord, GraphRelRecord
 
 if TYPE_CHECKING:
-    pass  # ty: ignore[unresolved-import]
+    from codebase_rag.mcp.tools import MCPToolsRegistry
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
@@ -103,6 +103,19 @@ class MockNode:
 
     def child_by_field_name(self, name: str) -> MockNode | None:
         return self.node_fields.get(name)
+
+
+def bare_registry() -> MCPToolsRegistry:
+    """An MCP registry built without `__init__`, for a test that sets only
+    the fields the handler under test reads. Its damage record is fresh, as
+    `__init__` would leave it: the record is mutable, so no class default can
+    stand in for it."""
+    from codebase_rag.mcp.graph_damage import GraphDamage
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    registry = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    registry._damage = GraphDamage()
+    return registry
 
 
 def create_mock_node(

@@ -15,7 +15,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag.editing.rename import RenameRefused, rename
-from codebase_rag.tests.conftest import create_and_run_updater
+from codebase_rag.tests.conftest import bare_registry, create_and_run_updater
 from codebase_rag.types_defs import PropertyDict, ResultRow
 from evals.recorded_graph import RecordedGraph
 
@@ -1014,19 +1014,17 @@ def test_a_rollback_revokes_its_own_projects_healing_licence() -> None:
     """
     from unittest.mock import MagicMock
 
-    from codebase_rag.mcp.tools import MCPToolsRegistry
-
-    handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    handler = bare_registry()
     handler.ingestor = MagicMock()
     handler.ingestor.fetch_all = MagicMock(return_value=[])
-    handler._graph_incomplete = True
-    handler._incomplete_project = "alpha"
-    handler._flag_from_failed_clear = "alpha"
+    handler._damage.incomplete = True
+    handler._damage.project = "alpha"
+    handler._damage.from_failed_clear = "alpha"
 
     handler._invalidate_graph_for("alpha")
 
-    assert handler._graph_incomplete is True
-    assert handler._flag_from_failed_clear is None, (
+    assert handler._damage.incomplete is True
+    assert handler._damage.from_failed_clear is None, (
         "the rollback left a licence that authorises clearing its own damage"
     )
 
@@ -1035,36 +1033,32 @@ def test_widening_still_revokes_a_licence_for_another_project() -> None:
     """The control: the widening branch must keep revoking, as before."""
     from unittest.mock import MagicMock
 
-    from codebase_rag.mcp.tools import MCPToolsRegistry
-
-    handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    handler = bare_registry()
     handler.ingestor = MagicMock()
-    handler._graph_incomplete = True
-    handler._incomplete_project = "beta"
-    handler._flag_from_failed_clear = "beta"
+    handler._damage.incomplete = True
+    handler._damage.project = "beta"
+    handler._damage.from_failed_clear = "beta"
 
     handler._invalidate_graph_for("alpha")
 
-    assert handler._incomplete_project is None
-    assert handler._flag_from_failed_clear is None
+    assert handler._damage.project is None
+    assert handler._damage.from_failed_clear is None
 
 
 def test_a_first_rollback_still_attributes_to_its_project() -> None:
     """The second control: from clean, the rollback's damage IS this project's."""
     from unittest.mock import MagicMock
 
-    from codebase_rag.mcp.tools import MCPToolsRegistry
-
-    handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    handler = bare_registry()
     handler.ingestor = MagicMock()
-    handler._graph_incomplete = False
-    handler._incomplete_project = None
-    handler._flag_from_failed_clear = None
+    handler._damage.incomplete = False
+    handler._damage.project = None
+    handler._damage.from_failed_clear = None
 
     handler._invalidate_graph_for("alpha")
 
-    assert handler._graph_incomplete is True
-    assert handler._incomplete_project == "alpha"
+    assert handler._damage.incomplete is True
+    assert handler._damage.project == "alpha"
 
 
 def test_one_restored_site_is_not_a_full_undo(tmp_path: Path) -> None:

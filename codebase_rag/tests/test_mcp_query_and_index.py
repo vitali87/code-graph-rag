@@ -574,7 +574,7 @@ class TestWipeDatabase:
         incomplete_during_purge: list[bool] = []
 
         def purge() -> None:
-            incomplete_during_purge.append(mcp_registry._graph_incomplete)
+            incomplete_during_purge.append(mcp_registry._damage.incomplete)
 
         with patch(
             "codebase_rag.mcp.tools.clear_all_embeddings", side_effect=purge
@@ -584,7 +584,7 @@ class TestWipeDatabase:
         clear.assert_called_once()
         assert "wiped" in result.lower()
         assert incomplete_during_purge == [True]
-        assert mcp_registry._graph_incomplete is False
+        assert mcp_registry._damage.incomplete is False
 
     async def test_wipe_database_reports_vector_purge_failure(
         self, mcp_registry: MCPToolsRegistry
@@ -596,8 +596,8 @@ class TestWipeDatabase:
             result = await mcp_registry.wipe_database(confirm=True)
 
         assert "purge failed" in result
-        assert mcp_registry._graph_incomplete is True
-        assert mcp_registry._flag_from_failed_clear is None
+        assert mcp_registry._damage.incomplete is True
+        assert mcp_registry._damage.from_failed_clear is None
         assert mcp_registry._live_updater is None
 
     async def test_wipe_database_retry_clears_incomplete_state(
@@ -609,13 +609,13 @@ class TestWipeDatabase:
         ) as clear:
             failed = await mcp_registry.wipe_database(confirm=True)
             assert "purge failed" in failed
-            assert mcp_registry._graph_incomplete is True
+            assert mcp_registry._damage.incomplete is True
 
             succeeded = await mcp_registry.wipe_database(confirm=True)
 
         assert "wiped" in succeeded.lower()
         assert clear.call_count == 2
-        assert mcp_registry._graph_incomplete is False
+        assert mcp_registry._damage.incomplete is False
 
     async def test_wipe_database_not_confirmed(
         self, mcp_registry: MCPToolsRegistry
@@ -631,4 +631,4 @@ class TestWipeDatabase:
         result = await mcp_registry.wipe_database(confirm=True)
 
         assert "error" in result.lower()
-        assert mcp_registry._graph_incomplete is True
+        assert mcp_registry._damage.incomplete is True

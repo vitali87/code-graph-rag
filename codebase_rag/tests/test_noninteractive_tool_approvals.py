@@ -30,6 +30,7 @@ from codebase_rag import constants as cs
 from codebase_rag.agent_loop import main_single_query
 from codebase_rag.cli_runtime import app_context
 from codebase_rag.mcp.tools import MCPToolsRegistry
+from codebase_rag.tests.conftest import bare_registry
 
 QUESTION = "Add a NOTES.md file that says hello"
 REPR = "DeferredToolRequests("
@@ -99,14 +100,14 @@ def _single_query(
 
 
 def _registry(agent: Agent[None, str | DeferredToolRequests]) -> MCPToolsRegistry:
-    handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    handler = bare_registry()
     handler._ingestor_lock = asyncio.Lock()
     handler.ingestor = MagicMock()
     handler.ingestor.fetch_all = MagicMock(return_value=[])
     handler.project_root = "/repo"
-    handler._graph_incomplete = False
-    handler._incomplete_project = None
-    handler._flag_from_failed_clear = None
+    handler._damage.incomplete = False
+    handler._damage.project = None
+    handler._damage.from_failed_clear = None
     handler._persisted_incomplete = MagicMock(return_value=False)
     handler.rag_agent = agent
     return handler

@@ -790,8 +790,8 @@ async def test_mcp_refuses_both_tools_while_the_graph_is_partial(
     other graph reader, and the write never reaches the store."""
     graph = FakeGraph()
     registry = _registry(graph, tmp_path)
-    registry._graph_incomplete = True
-    registry._incomplete_project = P
+    registry._damage.incomplete = True
+    registry._damage.project = P
     written = await registry.annotate(
         target=RUN, body=BODY, kind=cs.GlossKind.INVARIANT.value, project=P
     )
@@ -800,8 +800,8 @@ async def test_mcp_refuses_both_tools_while_the_graph_is_partial(
     assert _is_refusal(read)
     assert graph.writes == []
     # The control: the same registry with the flag clear writes.
-    registry._graph_incomplete = False
-    registry._incomplete_project = None
+    registry._damage.incomplete = False
+    registry._damage.project = None
     ok = await registry.annotate(
         target=RUN, body=BODY, kind=cs.GlossKind.INVARIANT.value, project=P
     )

@@ -1104,7 +1104,7 @@ class TestIncompleteMarkerSurvivesTheProcess:
         # The crash: a brand new registry over the same store.
         second = self._registry(temp_project_root, ingestor)
         _mark_indexed(second)
-        assert second._graph_incomplete is False, (
+        assert second._damage.incomplete is False, (
             "fixture guard: the new registry must NOT carry the in-process "
             "flag, or this test cannot tell the persisted marker apart from it"
         )
@@ -1121,7 +1121,7 @@ class TestIncompleteMarkerSurvivesTheProcess:
         """A successful clear settles only what it owns (#1774).
 
         `_graph_incomplete` is registry-wide while every writer of it is
-        project-scoped, so `self._graph_incomplete = not cleared` let project
+        project-scoped, so `self._damage.incomplete = not cleared` let project
         B's clean clear discard a flag project A earned.
 
         The durable marker does not cover this. It is per project, so
@@ -1138,7 +1138,7 @@ class TestIncompleteMarkerSurvivesTheProcess:
         assert "Error" in await registry.wipe_database(confirm=True)
         ingestor.clean_database.side_effect = None
 
-        assert registry._graph_incomplete is True, "fixture guard: wipe must flag"
+        assert registry._damage.incomplete is True, "fixture guard: wipe must flag"
         assert not ingestor._marker_store, (
             "fixture guard: the wipe must write NO marker, or the durable "
             "check would refuse on its own and this proves nothing"
@@ -1148,7 +1148,7 @@ class TestIncompleteMarkerSurvivesTheProcess:
         assert registry._require_marker("project-B") is None
         assert registry._require_marker_cleared("project-B") is None
 
-        assert registry._graph_incomplete is True, (
+        assert registry._damage.incomplete is True, (
             "an unrelated project's successful clear discarded the flag the "
             "failed wipe earned; the next reingest would run over a partial graph"
         )
@@ -1187,11 +1187,11 @@ class TestIncompleteMarkerSurvivesTheProcess:
         ingestor.clean_database.side_effect = RuntimeError("wipe died")
         assert "Error" in await registry.wipe_database(confirm=True)
         ingestor.clean_database.side_effect = None
-        assert registry._graph_incomplete is True, "fixture guard: wipe must flag"
-        assert registry._incomplete_project is None, (
+        assert registry._damage.incomplete is True, "fixture guard: wipe must flag"
+        assert registry._damage.project is None, (
             "fixture guard: a wipe spans every project, so it owns none"
         )
-        assert registry._incomplete_unbounded is True, (
+        assert registry._damage.unbounded is True, (
             "fixture guard: a half-done wipe is unbounded damage, so no "
             "single project's clear may retire it (#1547)"
         )
@@ -1200,7 +1200,7 @@ class TestIncompleteMarkerSurvivesTheProcess:
         result = await registry.delete_project("B")
         assert result.get("success") is True, f"fixture guard: delete failed; {result}"
 
-        assert registry._graph_incomplete is True, (
+        assert registry._damage.incomplete is True, (
             "deleting an unrelated project settled the flag a failed wipe "
             "earned; the next reingest would run over a partially wiped graph"
         )
@@ -1237,8 +1237,8 @@ class TestIncompleteMarkerSurvivesTheProcess:
         ingestor.clean_database.side_effect = RuntimeError("wipe died")
         assert "Error" in await registry.wipe_database(confirm=True)
         ingestor.clean_database.side_effect = None
-        assert registry._graph_incomplete is True, "fixture guard: wipe must flag"
-        assert registry._flag_from_failed_clear is None, (
+        assert registry._damage.incomplete is True, "fixture guard: wipe must flag"
+        assert registry._damage.from_failed_clear is None, (
             "fixture guard: a wipe strands no marker, so nothing is attributed"
         )
 
@@ -1250,7 +1250,7 @@ class TestIncompleteMarkerSurvivesTheProcess:
         )
         ingestor._failing.discard("clear")
 
-        assert registry._flag_from_failed_clear is None, (
+        assert registry._damage.from_failed_clear is None, (
             "B's failed clear claimed recovery authority over the flag A owns"
         )
 
@@ -1260,7 +1260,7 @@ class TestIncompleteMarkerSurvivesTheProcess:
         ingestor.list_projects.return_value = [project, "B"]
         with pytest.raises(ValueError, match="failed part way"):
             registry._hydrate_reingest_updater("B")
-        assert registry._graph_incomplete is True, (
+        assert registry._damage.incomplete is True, (
             "B's marker recovery cleared the latch A owns"
         )
 
@@ -1289,7 +1289,7 @@ class TestIncompleteMarkerSurvivesTheProcess:
         ingestor._failing.add("clear")
         assert registry._require_marker_cleared(project) is not None
         ingestor._failing.discard("clear")
-        assert registry._flag_from_failed_clear == project, (
+        assert registry._damage.from_failed_clear == project, (
             "fixture guard: A's failed clear must attribute the flag to A"
         )
 
@@ -1297,7 +1297,7 @@ class TestIncompleteMarkerSurvivesTheProcess:
         assert registry._require_marker("B", writing=False) is None
         assert registry._require_marker_cleared("B") is None
 
-        assert registry._flag_from_failed_clear == project, (
+        assert registry._damage.from_failed_clear == project, (
             "B's clean clear discarded A's licence to heal itself; A's own "
             "reingest would be refused though its graph was never touched"
         )
@@ -1306,7 +1306,7 @@ class TestIncompleteMarkerSurvivesTheProcess:
         registry._live_updater = None
         with patch("codebase_rag.mcp.tools.GraphUpdater"):
             registry._hydrate_reingest_updater(project)
-        assert registry._graph_incomplete is False, (
+        assert registry._damage.incomplete is False, (
             "A could not heal its own recoverable marker"
         )
 
@@ -1334,11 +1334,11 @@ class TestIncompleteMarkerSurvivesTheProcess:
         ingestor.clean_database.side_effect = RuntimeError("wipe died")
         assert "Error" in await registry.wipe_database(confirm=True)
         ingestor.clean_database.side_effect = None
-        assert registry._graph_incomplete is True
-        assert registry._incomplete_project is None, (
+        assert registry._damage.incomplete is True
+        assert registry._damage.project is None, (
             "fixture guard: a wipe spans every project, so it owns none"
         )
-        assert registry._incomplete_unbounded is True, (
+        assert registry._damage.unbounded is True, (
             "fixture guard: a half-done wipe is unbounded damage, so no "
             "single project's clear may retire it (#1547)"
         )
@@ -1347,7 +1347,7 @@ class TestIncompleteMarkerSurvivesTheProcess:
         assert registry._require_marker("any-project", writing=False) is None
         assert registry._require_marker_cleared("any-project") is None
 
-        assert registry._graph_incomplete is True, (
+        assert registry._damage.incomplete is True, (
             "an unrelated project's clear settled the flag a failed wipe "
             "earned; reads would proceed against a half-wiped graph (#1820)"
         )
@@ -1376,11 +1376,11 @@ class TestIncompleteMarkerSurvivesTheProcess:
         with patch("codebase_rag.mcp.tools.GraphUpdater"):
             assert "Error" not in await registry.update_repository()
 
-        assert registry._graph_incomplete is False, (
+        assert registry._damage.incomplete is False, (
             "a completed update must clear the flag it raised for its own project"
         )
-        assert registry._incomplete_project is None
-        assert not registry._incomplete_projects, (
+        assert registry._damage.project is None
+        assert not registry._damage.projects, (
             "a completed update must leave nothing outstanding"
         )
 
@@ -1400,7 +1400,7 @@ class TestIncompleteMarkerSurvivesTheProcess:
 
         result = await registry.delete_project(project)
         assert result.get("success") is True, result
-        assert registry._graph_incomplete is False, (
+        assert registry._damage.incomplete is False, (
             "a completed delete must settle the flag it raised"
         )
 
@@ -1514,7 +1514,7 @@ class TestIncompleteMarkerSurvivesTheProcess:
         assert "Error" in result, (
             f"a run that left its marker stuck must report a failure: {result}"
         )
-        assert registry._graph_incomplete is True, (
+        assert registry._damage.incomplete is True, (
             "the local flag reported complete while the graph still says "
             "incomplete; a fresh registry would refuse reingest forever"
         )
@@ -1929,7 +1929,7 @@ class TestIncompleteMarkerSurvivesTheProcess:
             "a failure in optional legacy cleanup reported a COMPLETED run as "
             f"incomplete: {stuck}"
         )
-        assert registry._graph_incomplete is False, (
+        assert registry._damage.incomplete is False, (
             "the flag was raised for a graph that is whole"
         )
 
@@ -2080,7 +2080,7 @@ class TestIncompleteMarkerSurvivesTheProcess:
 
         second = self._registry(temp_project_root, ingestor)
         _mark_indexed(second)
-        assert second._graph_incomplete is False, (
+        assert second._damage.incomplete is False, (
             "fixture guard: the new registry must NOT carry the in-process "
             "flag, or this test cannot tell the persisted marker apart from it"
         )
@@ -2770,7 +2770,7 @@ class TestIncompleteMarkerInvariant:
             "fixture guard: the clear must actually have failed, or this test "
             "proves nothing"
         )
-        assert registry._graph_incomplete is True, (
+        assert registry._damage.incomplete is True, (
             "the local flag reported clean while the durable marker is still "
             "set, so this process would not know later reingests will refuse"
         )
@@ -3185,7 +3185,7 @@ class TestIncompleteMarkerInvariant:
         assert registry._require_marker_cleared(project) is not None, (
             "fixture guard: the clear was expected to fail"
         )
-        assert registry._graph_incomplete is True, (
+        assert registry._damage.incomplete is True, (
             "fixture guard: a failed clear must set the in-process flag"
         )
         assert ingestor._writing_store.get(project) is False, (
@@ -3201,7 +3201,7 @@ class TestIncompleteMarkerInvariant:
             "the same process still refused scoped reingest after the store "
             f"recovered and the marker was clearable: {result}"
         )
-        assert registry._graph_incomplete is False, (
+        assert registry._damage.incomplete is False, (
             "the in-process flag was not healed from the durable state"
         )
 
@@ -3231,7 +3231,7 @@ class TestIncompleteMarkerInvariant:
         assert registry._persisted_incomplete(project) is False, (
             "fixture guard: the recoverable marker should have been cleared"
         )
-        assert registry._flag_from_failed_clear == project, (
+        assert registry._damage.from_failed_clear == project, (
             "fixture guard: the failed clear should have attributed the flag"
         )
 
@@ -3241,7 +3241,7 @@ class TestIncompleteMarkerInvariant:
         with patch("codebase_rag.mcp.tools.GraphUpdater"):
             await registry.wipe_database(confirm=True)
         ingestor.clean_database.side_effect = None
-        assert registry._graph_incomplete is True, (
+        assert registry._damage.incomplete is True, (
             "fixture guard: the failed wipe must set the in-process flag"
         )
         assert not ingestor._marker_store, (
@@ -3341,17 +3341,17 @@ class TestIncompleteMarkerInvariant:
         assert ingestor._marker_store.get(project) is True, (
             "fixture guard: the marker must still be pending at guard time"
         )
-        assert registry._flag_from_failed_clear == project, (
+        assert registry._damage.from_failed_clear == project, (
             "fixture guard: the failed clear must attribute the flag to this "
             "project, or the recovery under test heals nothing"
         )
 
         # A failure that writes no marker for this project.
         await self._fail_without_writing_a_marker(registry, ingestor, failure)
-        assert registry._graph_incomplete is True, (
+        assert registry._damage.incomplete is True, (
             f"fixture guard: the failed {failure} must set the in-process flag"
         )
-        assert registry._flag_from_failed_clear is None, (
+        assert registry._damage.from_failed_clear is None, (
             f"the failed {failure} left the flag attributed to a stranded "
             "marker, so an unrelated recovery may consume it"
         )
@@ -3425,7 +3425,7 @@ class TestIncompleteMarkerInvariant:
             "fixture guard: the clear was expected to fail"
         )
         ingestor._failing.discard("clear")
-        assert registry._flag_from_failed_clear == project, (
+        assert registry._damage.from_failed_clear == project, (
             "fixture guard: the failed clear must attribute the flag, or "
             "there is no stale attribution for the heal to act on"
         )
@@ -3469,7 +3469,7 @@ class TestIncompleteMarkerInvariant:
         # attached to the wrong object), which would make it green forever.
         # Step 4 hydrates by construction -- `_live_updater` is cleared
         # below -- so the counter MUST reach 1 there. Asserted after step 4.
-        assert registry._graph_incomplete is True, (
+        assert registry._damage.incomplete is True, (
             "fixture guard: the mutating failure must set the in-process flag"
         )
         assert registry._live_updater is None, (
@@ -3563,10 +3563,10 @@ class TestIncompleteMarkerInvariant:
         with patch("codebase_rag.mcp.tools.GraphUpdater"):
             await registry.wipe_database(confirm=True)
         ingestor.clean_database.side_effect = None
-        assert registry._graph_incomplete is True, (
+        assert registry._damage.incomplete is True, (
             "fixture guard: the failed wipe must set the flag"
         )
-        assert registry._flag_from_failed_clear is None, (
+        assert registry._damage.from_failed_clear is None, (
             "fixture guard: a wipe writes no marker, so its flag must carry "
             "no attribution -- otherwise there is nothing for step 2 to "
             "overwrite and this test proves nothing"
@@ -3596,7 +3596,7 @@ class TestIncompleteMarkerInvariant:
             # claimed either way -- and asserting it here would redden the
             # control too, costing it the property that makes it a control.
             # What separates them is the VERDICT below, not this.
-            assert registry._flag_from_failed_clear is None, (
+            assert registry._damage.from_failed_clear is None, (
                 f"a run that abandoned {target} before writing anything "
                 "relabelled the flag a failed wipe earned, so a recoverable "
                 "marker can now heal damage no marker records"
@@ -3649,16 +3649,16 @@ class TestIncompleteMarkerInvariant:
         with patch("codebase_rag.mcp.tools.GraphUpdater"):
             await registry.wipe_database(confirm=True)
         ingestor.clean_database.side_effect = None
-        assert registry._incomplete_project in (None, alpha), (
+        assert registry._damage.project in (None, alpha), (
             "fixture guard: the failed wipe must leave the flag up"
         )
 
         # A SECOND project is damaged, which widens the attribution to None.
         registry._invalidate_graph_for(beta)
-        assert registry._graph_incomplete is True, (
+        assert registry._damage.incomplete is True, (
             "fixture guard: the flag must still be up after the second damage"
         )
-        assert registry._incomplete_project is None, (
+        assert registry._damage.project is None, (
             "fixture guard: two different damaged projects must widen the "
             "attribution to None -- if it is still attributed, the clear "
             "below takes the other branch and this test proves nothing"
@@ -3667,7 +3667,7 @@ class TestIncompleteMarkerInvariant:
         # ALPHA now clears its own marker, successfully.
         registry._require_marker_cleared(alpha)
 
-        assert registry._graph_incomplete is True, (
+        assert registry._damage.incomplete is True, (
             "a successful clear for one project settled a flag that had been "
             "WIDENED because a second project was damaged too, so the only "
             "record that the other project is partial is gone"
@@ -3710,7 +3710,7 @@ class TestIncompleteMarkerInvariant:
             "fixture guard: the clear was expected to fail"
         )
         ingestor._failing.discard("clear")
-        assert registry._flag_from_failed_clear == project, (
+        assert registry._damage.from_failed_clear == project, (
             "fixture guard: the failed clear must attribute the flag, or "
             "there is no attribution for the delta path to inherit"
         )
@@ -3721,10 +3721,10 @@ class TestIncompleteMarkerInvariant:
         registry._live_updater = failing
         registry._delta_after_write(["a.py"])
 
-        assert registry._graph_incomplete is True, (
+        assert registry._damage.incomplete is True, (
             "fixture guard: the failed delta must invalidate the graph"
         )
-        assert registry._flag_from_failed_clear is None, (
+        assert registry._damage.from_failed_clear is None, (
             "the structural-delta path set the incomplete flag while leaving "
             "an unrelated attribution in place, so a pending marker recovery "
             "can lift a refusal that records a half-rebuilt subtree"
