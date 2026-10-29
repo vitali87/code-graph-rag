@@ -119,9 +119,9 @@ def test_the_other_members_still_map_to_their_crates(tmp_path: Path) -> None:
 def test_a_member_pattern_is_read_relative_to_the_root(
     pattern: str, expected: str
 ) -> None:
-    from codebase_rag.parsers.import_processor import _rust_member_pattern
+    from codebase_rag.parsers.rust.cargo import member_pattern
 
-    assert _rust_member_pattern(pattern) == expected
+    assert member_pattern(pattern) == expected
 
 
 def test_a_member_the_expansion_cannot_handle_is_skipped(

@@ -13,11 +13,11 @@ from unittest.mock import MagicMock
 
 from codebase_rag import constants as cs
 from codebase_rag.constants import RelationshipType
-from codebase_rag.parsers.import_processor import (
+from codebase_rag.parsers.rust.source_scan import (
     RustEntryDecls,
-    _rs_entry_decls_of,
-    _rs_strip_comments_and_strings,
-    _rs_top_level_only,
+    entry_decls_of,
+    strip_comments_and_strings,
+    top_level_only,
 )
 from codebase_rag.tests.test_rust_cfg_test_mod_declarations import _declared_gates
 from codebase_rag.tests.test_rust_crate_path_trait_linking import (
@@ -742,11 +742,11 @@ def test_impl_of_a_trait_through_unrepresentable_redirect_binds_nothing(
 
 def _scan_cost_per_char(source: str) -> tuple[float, RustEntryDecls]:
     """Best-of-three seconds per scanned character, and what was found."""
-    top_level = _rs_top_level_only(_rs_strip_comments_and_strings(source))
+    top_level = top_level_only(strip_comments_and_strings(source))
     best = None
     for _ in range(3):
         start = time.perf_counter()
-        decls = _rs_entry_decls_of(top_level)
+        decls = entry_decls_of(top_level)
         elapsed = time.perf_counter() - start
         best = elapsed if best is None else min(best, elapsed)
     assert best is not None
@@ -782,9 +782,7 @@ def test_an_attribute_on_its_own_line_still_reaches_its_declaration() -> None:
     source = (
         '#[cfg(unix)]\n\n    \n#[path = "sys/unix.rs"]\n    pub(crate) mod platform;\n'
     )
-    decls = _rs_entry_decls_of(
-        _rs_top_level_only(_rs_strip_comments_and_strings(source))
-    )
+    decls = entry_decls_of(top_level_only(strip_comments_and_strings(source)))
     assert "platform" in decls.mods, decls
     assert decls.redirects == {"platform": "sys/unix.rs"}, decls.redirects
 
@@ -802,9 +800,7 @@ def test_two_cfg_variants_of_one_name_claim_no_single_target() -> None:
         '#[path = "sys/windows.rs"]\n'
         "mod platform;\n"
     )
-    decls = _rs_entry_decls_of(
-        _rs_top_level_only(_rs_strip_comments_and_strings(source))
-    )
+    decls = entry_decls_of(top_level_only(strip_comments_and_strings(source)))
     assert "platform" in decls.mods, decls
     assert decls.redirects == {}, decls.redirects
 

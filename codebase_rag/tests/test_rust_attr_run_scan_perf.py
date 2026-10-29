@@ -7,11 +7,11 @@ import time
 
 import pytest
 
-from codebase_rag.parsers.import_processor import (
-    _RS_ITEM_DECL_PATTERN,
-    _RS_MOD_DECL_PATTERN,
-    _RS_MOD_REDIRECT_PATTERN,
-    _rs_entry_decls_of,
+from codebase_rag.parsers.rust.source_scan import (
+    ITEM_DECL_PATTERN,
+    MOD_DECL_PATTERN,
+    MOD_REDIRECT_PATTERN,
+    entry_decls_of,
 )
 
 
@@ -36,9 +36,9 @@ def _scan_time(source: str) -> float:
     # that made this test flaky under `pytest -n auto`; CPU time barely
     # moves.
     start = time.process_time()
-    _RS_MOD_DECL_PATTERN.findall(source)
-    _RS_ITEM_DECL_PATTERN.findall(source)
-    list(_RS_MOD_REDIRECT_PATTERN.finditer(source))
+    MOD_DECL_PATTERN.findall(source)
+    ITEM_DECL_PATTERN.findall(source)
+    list(MOD_REDIRECT_PATTERN.finditer(source))
     return time.process_time() - start
 
 
@@ -107,19 +107,17 @@ def test_unbroken_attribute_run_scans_linearly() -> None:
 
 
 def test_attribute_block_above_declaration_still_redirects() -> None:
-    decls = _rs_entry_decls_of(
-        '#[allow(dead_code)]\n#[path = "alt.rs"]\n\npub mod sub;\n'
-    )
+    decls = entry_decls_of('#[allow(dead_code)]\n#[path = "alt.rs"]\n\npub mod sub;\n')
     assert decls.redirects == {"sub": "alt.rs"}
 
 
 def test_same_line_attribute_still_redirects() -> None:
-    decls = _rs_entry_decls_of('#[path = "alt.rs"] mod sub;\n')
+    decls = entry_decls_of('#[path = "alt.rs"] mod sub;\n')
     assert decls.redirects == {"sub": "alt.rs"}
 
 
 def test_cfg_twin_disagreement_stays_ambiguous() -> None:
-    decls = _rs_entry_decls_of(
+    decls = entry_decls_of(
         '#[cfg(unix)]\n#[path = "unix.rs"]\nmod platform;\n'
         '#[cfg(windows)]\n#[path = "windows.rs"]\nmod platform;\n'
     )
@@ -128,5 +126,5 @@ def test_cfg_twin_disagreement_stays_ambiguous() -> None:
 
 def test_long_generated_attribute_run_before_item_still_matches() -> None:
     source = _attr_run(300) + "pub mod tail;\n"
-    decls = _rs_entry_decls_of(source)
+    decls = entry_decls_of(source)
     assert "tail" in decls.mods

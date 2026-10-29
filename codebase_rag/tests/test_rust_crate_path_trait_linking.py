@@ -1306,11 +1306,11 @@ def test_raw_identifier_mod_declaration_counts_for_entry(
 def test_item_pattern_matches_static_mut_extern_fn_and_raw_idents() -> None:
     # log's `static mut LOGGER` and signal-hook-registry's `extern "C" fn`
     # are real entry-file items the tie-break must see.
-    from codebase_rag.parsers.import_processor import (
-        _RS_ITEM_DECL_PATTERN,
-        _RS_MOD_DECL_PATTERN,
-        _rs_strip_comments_and_strings,
-        _rs_top_level_only,
+    from codebase_rag.parsers.rust.source_scan import (
+        ITEM_DECL_PATTERN,
+        MOD_DECL_PATTERN,
+        strip_comments_and_strings,
+        top_level_only,
     )
 
     source = (
@@ -1319,10 +1319,10 @@ def test_item_pattern_matches_static_mut_extern_fn_and_raw_idents() -> None:
         "pub mod r#async;\n"
         "pub fn r#type() -> u32 {\n    0\n}\n"
     )
-    top = _rs_top_level_only(_rs_strip_comments_and_strings(source))
-    items = set(_RS_ITEM_DECL_PATTERN.findall(top))
+    top = top_level_only(strip_comments_and_strings(source))
+    items = set(ITEM_DECL_PATTERN.findall(top))
     assert {"LOGGER", "handler", "type"} <= items, items
-    mods = set(_RS_MOD_DECL_PATTERN.findall(top))
+    mods = set(MOD_DECL_PATTERN.findall(top))
     assert "async" in mods, mods
 
 
@@ -1398,11 +1398,11 @@ def test_diverging_fn_body_is_not_macro_transparent() -> None:
     # `fn abort() -> ! {` ends in `!` before the brace, but it opens an item
     # body, not a macro body: a macro invocation's `!` follows the macro
     # NAME. Declarations inside the diverging body must stay invisible.
-    from codebase_rag.parsers.import_processor import (
-        _RS_ITEM_DECL_PATTERN,
-        _RS_MOD_DECL_PATTERN,
-        _rs_strip_comments_and_strings,
-        _rs_top_level_only,
+    from codebase_rag.parsers.rust.source_scan import (
+        ITEM_DECL_PATTERN,
+        MOD_DECL_PATTERN,
+        strip_comments_and_strings,
+        top_level_only,
     )
 
     source = (
@@ -1413,10 +1413,10 @@ def test_diverging_fn_body_is_not_macro_transparent() -> None:
         "}\n"
         "mod real;\n"
     )
-    top = _rs_top_level_only(_rs_strip_comments_and_strings(source))
-    mods = set(_RS_MOD_DECL_PATTERN.findall(top))
+    top = top_level_only(strip_comments_and_strings(source))
+    mods = set(MOD_DECL_PATTERN.findall(top))
     assert mods == {"real"}, mods
-    items = set(_RS_ITEM_DECL_PATTERN.findall(top))
+    items = set(ITEM_DECL_PATTERN.findall(top))
     assert "sneaky" not in items, items
     assert "Hidden" not in items, items
 
@@ -1424,18 +1424,18 @@ def test_diverging_fn_body_is_not_macro_transparent() -> None:
 def test_spaced_pub_visibility_declarations_count() -> None:
     # `pub (crate) mod sub;` compiles: whitespace between `pub` and the
     # visibility parens is legal and must not hide the declaration.
-    from codebase_rag.parsers.import_processor import (
-        _RS_ITEM_DECL_PATTERN,
-        _RS_MOD_DECL_PATTERN,
-        _rs_strip_comments_and_strings,
-        _rs_top_level_only,
+    from codebase_rag.parsers.rust.source_scan import (
+        ITEM_DECL_PATTERN,
+        MOD_DECL_PATTERN,
+        strip_comments_and_strings,
+        top_level_only,
     )
 
     source = "pub (crate) mod sub;\npub (crate) struct S;\n"
-    top = _rs_top_level_only(_rs_strip_comments_and_strings(source))
-    mods = set(_RS_MOD_DECL_PATTERN.findall(top))
+    top = top_level_only(strip_comments_and_strings(source))
+    mods = set(MOD_DECL_PATTERN.findall(top))
     assert mods == {"sub"}, mods
-    items = set(_RS_ITEM_DECL_PATTERN.findall(top))
+    items = set(ITEM_DECL_PATTERN.findall(top))
     assert {"S", "sub"} <= items, items
 
 

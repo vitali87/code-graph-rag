@@ -68,7 +68,8 @@ from .js_ts.tsconfig import (
 from .lua import utils as lua_utils
 from .php.namespaces import declared_namespace
 from .python.source_roots import discover_python_source_roots, resolve_via_source_roots
-from .rust import cargo_semver
+from .rust import cargo, cargo_semver
+from .rust import source_scan as rs_scan
 from .rust import utils as rs_utils
 from .scala import utils as scala_utils
 from .stdlib_extractor import (
@@ -85,57 +86,6 @@ _JS_SCHEME_RE = re.compile(r"^([a-zA-Z][a-zA-Z0-9.+-]*):")
 _EMPTY_SCALA_SCAN = ScalaPackageScan(
     packages={}, enclosing=(), mentions=frozenset(), blocks=(), class_bases={}
 )
-# Bodyless `mod NAME;` declarations in a Rust crate entry file: the mod graph
-# is what assigns a file to the lib or the bin crate (issue #1007). Attribute
-# prefixes on the same line (`#[cfg(unix)] mod unix;`) are idiomatic; the
-# source is lexed through _rs_strip_comments_and_strings first so neither a
-# commented-out declaration nor one hidden behind a string literal containing
-# a comment marker can flip the crate attribution.
-_RS_MOD_DECL_PATTERN = re.compile(
-    r"^[^\S\n]*(?:#\[[^\]\n]*\][^\S\n]*)*(?:pub\s*(?:\([^)]*\))?\s+)?"
-    r"mod\s+(?:r#)?([A-Za-z_][A-Za-z0-9_]*)\s*;",
-    re.MULTILINE,
-)
-# Top-level item declarations in an entry file: `crate::Item` attaches under
-# the entry module's qn when the entry declares Item, and the declaring entry
-# disambiguates the path when BOTH src/lib.rs and src/main.rs declare the
-# importing module. `mod` here catches INLINE `mod x { ... }` blocks, which
-# declare a name in the entry module but pull no file into the crate (the
-# bodyless pattern above is what assigns files).
-# A `#[path = "..."]` attribute among a bodyless declaration's attributes
-# names the file backing it, which is where the qn scheme keys the module.
-# Only the plain string form is read: a cfg_attr wrapper is conditional and
-# no single target speaks for it (issue #1035).
-_RS_MOD_REDIRECT_PATTERN = re.compile(
-    r"^[^\S\n]*((?:#\[[^\]\n]*\][^\S\n]*)*)"
-    r"(?:pub\s*(?:\([^)]*\))?\s+)?"
-    r"mod\s+(?:r#)?([A-Za-z_][A-Za-z0-9_]*)\s*;",
-    re.MULTILINE,
-)
-# One attribute-only line, for the linear back-walk that gathers the block
-# ABOVE a declaration. Keeping every attribute group line-local is what makes
-# a long unbroken attribute run scan linearly: with `\s*` crossing newlines,
-# every line of the run restarted a match attempt that consumed the rest of
-# the run before failing, which is quadratic in the run length (issue #1089).
-_RS_ATTRIBUTE_LINE_PATTERN = re.compile(r"^[^\S\n]*((?:#\[[^\]\n]*\][^\S\n]*)+)$")
-_RS_PATH_ATTRIBUTE_PATTERN = re.compile(r'#\[\s*path\s*=\s*"([^"\n]+)"\s*\]')
-# The opening of a path attribute, matched against the code the lexer has
-# already emitted, so the literal that follows can be kept verbatim.
-_RS_PATH_ATTRIBUTE_OPEN = re.compile(r"#\[\s*path\s*=\s*$")
-_RS_ITEM_DECL_PATTERN = re.compile(
-    r"^[^\S\n]*(?:#\[[^\]\n]*\][^\S\n]*)*(?:pub\s*(?:\([^)]*\))?\s+)?"
-    r'(?:(?:unsafe|async|const|extern\s+"[^"]*")\s+)*'
-    r"(?:trait|struct|enum|fn|type|const|static|union|mod)"
-    r"\s+(?:mut\s+)?(?:r#)?([A-Za-z_][A-Za-z0-9_]*)",
-    re.MULTILINE,
-)
-# A depth-0 `{` opens a macro body rather than an item body when the text
-# before it ends in a macro NAME followed by `!` (an invocation: `cfg_if! {`)
-# or names a macro_rules definition. Macro bodies stay visible to the
-# declaration scans: libc, backtrace and getrandom declare their platform
-# `mod` files inside cfg_if!. A diverging `fn abort() -> ! {` also ends in
-# `!`, but with no name touching it: that brace opens an item body.
-_RS_MACRO_OPEN_RE = re.compile(r"(?:\w!|\bmacro_rules!\s*(?:r#)?[A-Za-z_]\w*)\s*$")
 
 _JULIA_SNAKE_RE_ACRONYM = re.compile(r"([A-Z]+)([A-Z][a-z])")
 _JULIA_SNAKE_RE_WORD = re.compile(r"([a-z0-9])([A-Z])")
@@ -186,243 +136,6 @@ def _julia_snake_case(name: str) -> str:
     # (`SharedStructs` -> `shared_structs.jl`); acronyms keep their grouping.
     s = _JULIA_SNAKE_RE_ACRONYM.sub(r"\1_\2", name)
     return _JULIA_SNAKE_RE_WORD.sub(r"\1_\2", s).lower()
-
-
-def _rs_strip_comments_and_strings(source: str) -> str:
-    """Blank Rust comments and string/char contents, keeping line structure.
-
-    A regex cannot do this: block comments NEST, and string literals may
-    contain comment markers (`const P: &str = "/*";`) or newline-separated
-    text that would fake a `mod x;` line.
-
-    The one literal kept is a `#[path = "..."]` value, which names the file
-    backing a mod declaration and so has to survive for the declaration
-    scan to read it (issue #1035). Keeping it is safe precisely because
-    this lexer decides it: the opening `#[path =` is matched in code the
-    lexer has already walked, so no comment or outer string can present
-    one.
-    """
-    out: list[str] = []
-    i, n = 0, len(source)
-    while i < n:
-        token_end = _rs_scan_token(source, i, out)
-        if token_end is None:
-            out.append(source[i])
-            i += 1
-        else:
-            i = token_end
-    return "".join(out)
-
-
-def _rs_scan_token(source: str, i: int, out: list[str]) -> int | None:
-    """Consume the comment or literal starting at `i`, appending what it
-    leaves behind to `out` and returning the index just past it; None when
-    `source[i]` opens neither and passes through as plain code."""
-    n = len(source)
-    c = source[i]
-    nxt = source[i + 1] if i + 1 < n else ""
-    if c == "/" and nxt == "/":
-        j = source.find("\n", i)
-        return n if j == -1 else j
-    if c == "/" and nxt == "*":
-        return _rs_skip_block_comment(source, i + 2, out)
-    if c == "r" and nxt in ('"', "#"):
-        raw_end = _rs_raw_string_end(source, i)
-        if raw_end is not None:
-            out.append('""')
-            return raw_end
-    if c == '"':
-        return _rs_scan_string(source, i, out)
-    if c == "'":
-        char_end = _rs_char_literal_end(source, i)
-        if char_end is not None:
-            out.append("''")
-            return char_end
-    return None
-
-
-def _rs_skip_block_comment(source: str, i: int, out: list[str]) -> int:
-    n = len(source)
-    depth = 1
-    while i < n and depth:
-        if source.startswith("/*", i):
-            depth += 1
-            i += 2
-        elif source.startswith("*/", i):
-            depth -= 1
-            i += 2
-        else:
-            if source[i] == "\n":
-                out.append("\n")
-            i += 1
-    return i
-
-
-def _rs_raw_string_end(source: str, i: int) -> int | None:
-    n = len(source)
-    j = i + 1
-    hashes = 0
-    while j < n and source[j] == "#":
-        hashes += 1
-        j += 1
-    if j < n and source[j] == '"':
-        end_marker = '"' + "#" * hashes
-        k = source.find(end_marker, j + 1)
-        return n if k == -1 else k + len(end_marker)
-    return None
-
-
-def _rs_scan_string(source: str, i: int, out: list[str]) -> int:
-    n = len(source)
-    start = i
-    i += 1
-    while i < n:
-        if source[i] == "\\":
-            i += 2
-            continue
-        if source[i] == '"':
-            i += 1
-            break
-        i += 1
-    literal = source[start:i]
-    keep = _RS_PATH_ATTRIBUTE_OPEN.search("".join(out[-80:])) is not None
-    out.append(literal if keep and "\n" not in literal else '""')
-    return i
-
-
-def _rs_char_literal_end(source: str, i: int) -> int | None:
-    # A char literal ('x', '\n', '\u{7f}'); a lifetime ('a) has no
-    # closing quote and passes through untouched. The escape must be
-    # honoured: pairing '\'' at its FIRST following quote leaves an
-    # orphan quote that swallows the rest of the file.
-    n = len(source)
-    j = i + 1
-    if j < n and source[j] == "\\":
-        k = _rs_char_escape_end(source, j + 1)
-        if k < n and source[k] == "'":
-            return k + 1
-    elif j + 1 < n and source[j] not in ("'", "\n") and source[j + 1] == "'":
-        return j + 2
-    return None
-
-
-def _rs_char_escape_end(source: str, k: int) -> int:
-    n = len(source)
-    if source.startswith("u{", k):
-        brace = source.find("}", k + 2)
-        return k + 2 if brace == -1 else brace + 1
-    if k < n and source[k] == "x":
-        return k + 3
-    return k + 1
-
-
-class RustEntryDecls(NamedTuple):
-    """What an entry file's top level declares, for crate attribution."""
-
-    mods: set[str]
-    items: set[str]
-    # Declared name -> the file path its `#[path]` attribute names, kept
-    # separate because the qn scheme keys the module by that FILE while
-    # every crate path names it by the declared name (issue #1035).
-    redirects: dict[str, str]
-
-
-def _rs_preceding_attribute_lines(top_level: str, decl_start: int) -> str:
-    collected: list[str] = []
-    end = decl_start
-    while end > 0:
-        line_start = top_level.rfind("\n", 0, end - 1) + 1
-        line = top_level[line_start : end - 1]
-        if not line.strip():
-            # Whitespace between an attribute and its item is legal; keep
-            # walking, exactly as the old newline-crossing `\s*` matched.
-            end = line_start
-            continue
-        line_match = _RS_ATTRIBUTE_LINE_PATTERN.fullmatch(line)
-        if line_match is None:
-            break
-        collected.append(line_match.group(1))
-        end = line_start
-    return "".join(reversed(collected))
-
-
-def _rs_entry_decls_of(top_level: str) -> RustEntryDecls:
-    # One name may be declared once per cfg (`#[cfg(unix)] mod platform;`
-    # beside its windows twin), each redirected somewhere else. Exactly one
-    # of them compiles and nothing here knows which, so disagreeing targets
-    # are ambiguous and the name keeps no redirect at all.
-    redirects: dict[str, str] = {}
-    ambiguous: set[str] = set()
-    for decl in _RS_MOD_REDIRECT_PATTERN.finditer(top_level):
-        attributes, name = decl.group(1), decl.group(2)
-        # The pattern only sees SAME-LINE attributes now (line-local group,
-        # issue #1089); the block above the declaration is gathered by a
-        # linear walk over the preceding attribute-only lines.
-        attributes = _rs_preceding_attribute_lines(top_level, decl.start()) + attributes
-        match = _RS_PATH_ATTRIBUTE_PATTERN.search(attributes)
-        target = match.group(1) if match else None
-        if name in redirects and redirects[name] != target:
-            ambiguous.add(name)
-        elif target is not None:
-            redirects[name] = target
-    for name in ambiguous:
-        redirects.pop(name, None)
-    return RustEntryDecls(
-        set(_RS_MOD_DECL_PATTERN.findall(top_level)),
-        set(_RS_ITEM_DECL_PATTERN.findall(top_level)),
-        redirects,
-    )
-
-
-def _rs_top_level_only(stripped: str) -> str:
-    """Keep only brace-depth-zero text of a comment-stripped source.
-
-    A `mod unix;` nested in an inline `mod sys { ... }` block declares a
-    file in a DIFFERENT directory, and a method inside an `impl` block is
-    not a crate-root item; both would otherwise match the line-anchored
-    declaration patterns. Depth-0 MACRO bodies (`cfg_if! { ... }`,
-    `macro_rules! m { ... }`) are kept instead: the declarations they emit
-    are top-level, so their braces and semicolons become newlines to keep
-    each one line-anchored. A depth-0 `}` becomes a newline so a
-    declaration following it on the same line stays anchored.
-    """
-    out: list[str] = []
-    depth = 0
-    in_macro = False
-    for c in stripped:
-        if c == "{":
-            in_macro = _rs_open_brace(out, depth, in_macro)
-            depth += 1
-        elif c == "}":
-            depth = max(depth - 1, 0)
-            if depth == 0 or in_macro:
-                out.append("\n")
-            in_macro = in_macro and depth > 0
-        else:
-            out.extend(_rs_top_level_char(c, depth, in_macro))
-    return "".join(out)
-
-
-def _rs_open_brace(out: list[str], depth: int, in_macro: bool) -> bool:
-    # A depth-0 `{` is kept and decides whether a macro body opens (its
-    # braces then become newlines); returns the new in-macro state.
-    if depth == 0:
-        in_macro = bool(_RS_MACRO_OPEN_RE.search("".join(out[-80:])))
-        out.append("{")
-    if in_macro:
-        out.append("\n")
-    return in_macro
-
-
-def _rs_top_level_char(c: str, depth: int, in_macro: bool) -> str:
-    # What a non-brace character contributes: depth-0 text and newlines pass
-    # through; inside a depth-0 macro body it passes too, with each `;`
-    # followed by a newline so emitted declarations stay line-anchored.
-    if depth == 0 or c == "\n":
-        return c
-    if not in_macro:
-        return ""
-    return c + "\n" if c == ";" else c
 
 
 def _js_destructured_names(pattern: Node) -> list[tuple[str, str]]:
@@ -526,22 +239,6 @@ def _is_conditional_import_node(import_node: Node) -> bool:
             return True
         current = current.parent
     return False
-
-
-def _rust_member_pattern(pattern: str) -> str:
-    # A workspace member glob relative to the root: leading `./` and a
-    # trailing `/` dropped, and the root itself (`.`) as the empty pattern.
-    # Whitespace is part of a TOML path, so it is kept.
-    while pattern.startswith(cs.RS_CURRENT_DIR_PREFIX):
-        pattern = pattern[len(cs.RS_CURRENT_DIR_PREFIX) :]
-    pattern = pattern.rstrip(cs.SEPARATOR_SLASH)
-    return "" if pattern == cs.RS_CURRENT_DIR else pattern
-
-
-def _rust_norm_manifest_path(path: str) -> str:
-    # Cargo normalises manifest paths (a ./ prefix, backslashes); the
-    # matcher compares against repo-relative posix form, so mirror it.
-    return posixpath.normpath(path.replace("\\", cs.SEPARATOR_SLASH))
 
 
 def _cpp_include_spec(include_node: Node) -> tuple[str, bool] | None:
@@ -684,139 +381,6 @@ def _lua_relative_module(import_path: str, current_module: str) -> str:
         elif p and p != cs.PATH_CURRENT_DIR:
             parts.append(p)
     return cs.SEPARATOR_DOT.join(parts)
-
-
-def _rust_auto_location(
-    dir_parts: list[str],
-) -> tuple[tuple[str, ...], str | None, bool] | None:
-    """Where `dir_parts` sits among cargo's auto target locations.
-
-    Returns (package dir parts, the manifest auto-discovery key governing it,
-    whether it is a multi-file target's own subdirectory), with key None for
-    a package's src/ (governed by autolib and autobins both); None when the
-    directory is not an auto location.
-    """
-    if not dir_parts:
-        return None
-    last = dir_parts[-1]
-    if last == cs.LANG_SRC_DIR:
-        return tuple(dir_parts[:-1]), None, False
-    if (
-        len(dir_parts) >= 2
-        and last == cs.RS_BIN_DIR
-        and dir_parts[-2] == cs.LANG_SRC_DIR
-    ):
-        return tuple(dir_parts[:-2]), cs.RS_MANIFEST_AUTOBINS_KEY, False
-    if last in cs.RS_AUTO_TARGET_DIRS:
-        return tuple(dir_parts[:-1]), cs.RS_AUTO_DIR_KEYS[last], False
-    if (
-        len(dir_parts) >= 3
-        and dir_parts[-2] == cs.RS_BIN_DIR
-        and dir_parts[-3] == cs.LANG_SRC_DIR
-    ):
-        return tuple(dir_parts[:-3]), cs.RS_MANIFEST_AUTOBINS_KEY, True
-    if len(dir_parts) >= 2 and dir_parts[-2] in cs.RS_AUTO_TARGET_DIRS:
-        return tuple(dir_parts[:-2]), cs.RS_AUTO_DIR_KEYS[dir_parts[-2]], True
-    return None
-
-
-def _rust_manifest_section_tables(manifest: dict, section: str) -> list[dict]:
-    # A manifest target section's tables: `[lib]` is one table, `[[bin]]` an
-    # array of them; anything malformed contributes nothing.
-    entries = manifest.get(section)
-    if isinstance(entries, dict):
-        entries = [entries]
-    if not isinstance(entries, list):
-        return []
-    return [entry for entry in entries if isinstance(entry, dict)]
-
-
-def _rust_manifest_dep_entries(
-    manifest: dict,
-) -> Iterator[tuple[str, str | dict[str, object]]]:
-    # Every dependency entry a manifest declares, of every kind, its
-    # `[target.<cfg>]` tables included: a version string or a table.
-    tables = [manifest]
-    target = manifest.get(cs.RS_MANIFEST_TARGET_TABLE_KEY)
-    if isinstance(target, dict):
-        tables.extend(t for t in target.values() if isinstance(t, dict))
-    for table in tables:
-        for section in cs.RS_MANIFEST_DEP_SECTIONS:
-            entries = table.get(section)
-            if isinstance(entries, dict):
-                yield from entries.items()
-
-
-def _rust_dep_source(value: object) -> str | None:
-    # Where a pathless dependency entry fetches its package from: its git
-    # URL, its alternate registry, or crates.io. None for a path entry,
-    # which binds a directory instead, and for a malformed one.
-    if isinstance(value, str):
-        return cs.RS_DEFAULT_REGISTRY
-    if not isinstance(value, dict) or cs.RS_MANIFEST_PATH_KEY in value:
-        return None
-    for key in cs.RS_MANIFEST_DEP_SOURCE_KEYS:
-        if isinstance(source := value.get(key), str):
-            return source
-    return cs.RS_DEFAULT_REGISTRY
-
-
-def _rust_dep_requirement(value: object) -> str | None:
-    # The version requirement a dependency entry states, if any.
-    if isinstance(value, str):
-        return value
-    version = value.get(cs.RS_MANIFEST_VERSION_KEY) if isinstance(value, dict) else None
-    return version if isinstance(version, str) else None
-
-
-def _rust_patch_winner(
-    local: list[tuple[str | None, tuple[str, ...]]], foreign: list[str | None]
-) -> tuple[str, ...] | None:
-    # The repo dir Cargo builds against, given the qualifying in-repo
-    # patches as (version, dir) and every other patch of the package by its
-    # own `version` requirement, each one able to meet the dependency's.
-    # Cargo takes the highest qualifying version wherever it comes from,
-    # and an out-of-repo patch's version cannot be read, so the local copy
-    # wins only when each of those is pinned below it; otherwise the
-    # dependency is external, as for any unreadable version.
-    if not local:
-        return None
-    version, target = max(local, key=lambda candidate: _rust_version_rank(candidate[0]))
-    if foreign and (
-        version is None
-        or not all(
-            req is not None and cargo_semver.all_below(req, version) for req in foreign
-        )
-    ):
-        return None
-    return target
-
-
-def _rust_patch_may_qualify(own: str | None, requirement: str | None) -> bool:
-    # Whether a patch whose version is unknown could meet the dependency's
-    # requirement. Its own `version` requirement says what it can be, and
-    # one that cannot overlap the dependency's is a patch Cargo leaves
-    # unused (`=2.0.0` against `=1.2.0`), so it never outranks the local
-    # copy (PR #2791).
-    return (
-        own is None
-        or requirement is None
-        or not cargo_semver.requirements_disjoint(own, requirement)
-    )
-
-
-def _rust_version_rank(version: str | None) -> tuple[bool, tuple]:
-    # Readable versions in Cargo's order, after every unreadable one.
-    key = cargo_semver.version_key(version) if version else None
-    return key is not None, key or ()
-
-
-def _rust_dep_package(key: str, value: object) -> str:
-    # The package a dependency entry names, underscore-spelled: its
-    # `package =` rename, else its key.
-    package = value.get(cs.RS_MANIFEST_PACKAGE_KEY) if isinstance(value, dict) else None
-    name = package if isinstance(package, str) and package else key
-    return name.replace(cs.CHAR_HYPHEN, cs.CHAR_UNDERSCORE)
 
 
 def _java_import_shape(import_node: Node) -> tuple[str | None, bool, bool]:
@@ -1110,14 +674,14 @@ class ImportProcessor:
         # reset_rust_path_caches so watch re-runs re-observe the filesystem.
         self._rust_dir_listing: dict[str, frozenset[str]] = {}
         self._rust_entry_mod_decls: dict[
-            tuple[str, ...], dict[str, RustEntryDecls]
+            tuple[str, ...], dict[str, rs_scan.RustEntryDecls]
         ] = {}
         # Same, for an ORDINARY module file: its own declarations, plus the
         # directory its `#[path]` targets count from. Kept apart from the
         # entry map, whose every stem is a crate root candidate (issue #1065).
         self._rust_module_mod_decls: dict[
             tuple[tuple[str, ...], bool, bool],
-            tuple[RustEntryDecls, list[str]] | None,
+            tuple[rs_scan.RustEntryDecls, list[str]] | None,
         ] = {}
         # `#[path]` target qn -> the module that DECLARES it, for the `super::`
         # climb inside such a file (issue #1083). Lazy: a file cannot say who
@@ -3184,7 +2748,7 @@ class ImportProcessor:
         # main.rs is the kind's target — src/bin/<name>/ (autobins) and
         # <kind>/<name>/ for examples/tests/benches. Elsewhere both stay
         # enabled.
-        location = _rust_auto_location(dir_parts)
+        location = cargo.auto_location(dir_parts)
         if location is None:
             return True, True
         pkg_parts, key, nested = location
@@ -3240,9 +2804,9 @@ class ImportProcessor:
         paths: set[str] = set()
         manifest = self._rust_read_manifest(self.repo_path.joinpath(*pkg_parts))
         for section in cs.RS_MANIFEST_TARGET_SECTIONS:
-            for entry in _rust_manifest_section_tables(manifest, section):
+            for entry in cargo.manifest_section_tables(manifest, section):
                 if isinstance(path := entry.get(cs.RS_MANIFEST_PATH_KEY), str):
-                    paths.add(_rust_norm_manifest_path(path))
+                    paths.add(cargo.norm_manifest_path(path))
                 elif default := self._rust_default_target_path(
                     pkg_parts, section, entry, manifest
                 ):
@@ -3258,7 +2822,7 @@ class ImportProcessor:
         # the named file is a crate root like any explicit target.
         build_value = package.get(cs.RS_MANIFEST_BUILD_KEY)
         if isinstance(build_value, str):
-            paths.add(_rust_norm_manifest_path(build_value))
+            paths.add(cargo.norm_manifest_path(build_value))
         # Unset AND `build = true` both mean auto-detection
         # (cargo-verified: `build = true` compiles build.rs exactly like
         # unset); a string names the script explicitly, false disables.
@@ -3343,7 +2907,7 @@ class ImportProcessor:
             # workspace, and the root is already listed; Python 3.12's
             # `Path.glob` raises IndexError / AttributeError on those two
             # rather than ValueError (issue #3167).
-            pattern = _rust_member_pattern(pattern)
+            pattern = cargo.member_pattern(pattern)
             if not pattern:
                 continue
             try:
@@ -3371,7 +2935,7 @@ class ImportProcessor:
         if isinstance(lib, dict) and isinstance(
             path := lib.get(cs.RS_MANIFEST_PATH_KEY), str
         ):
-            parts = _rust_norm_manifest_path(path).split(cs.SEPARATOR_SLASH)
+            parts = cargo.norm_manifest_path(path).split(cs.SEPARATOR_SLASH)
             if parts[-1].endswith(cs.EXT_RS):
                 return (*rel, *parts[:-1]), parts[-1][: -len(cs.EXT_RS)]
         # A pathless [lib] table is still an explicit target at the default
@@ -3407,7 +2971,7 @@ class ImportProcessor:
             return cached
         manifest = self._rust_read_manifest(self.repo_path.joinpath(*pkg_parts))
         deps: dict[str, tuple[str, ...] | None] = {}
-        for key, value in _rust_manifest_dep_entries(manifest):
+        for key, value in cargo.manifest_dep_entries(manifest):
             name = key.replace(cs.CHAR_HYPHEN, cs.CHAR_UNDERSCORE)
             resolved = self._rust_dep_target_dir(pkg_parts, key, value)
             # A path target from any section wins over a registry
@@ -3440,7 +3004,7 @@ class ImportProcessor:
             return None
         try:
             return (
-                (base / _rust_norm_manifest_path(path))
+                (base / cargo.norm_manifest_path(path))
                 .resolve()
                 .relative_to(self.repo_path.resolve())
                 .parts
@@ -3553,7 +3117,7 @@ class ImportProcessor:
             return cached
         manifest = self._rust_read_manifest(self.repo_path.joinpath(*pkg))
         found: dict[str, tuple[str, ...]] = {}
-        for key, value in _rust_manifest_dep_entries(manifest):
+        for key, value in cargo.manifest_dep_entries(manifest):
             if self._rust_dep_target_dir(pkg, key, value) is not None:
                 continue
             member = self._rust_fetched_member(key, value)
@@ -3578,12 +3142,12 @@ class ImportProcessor:
         """
         if isinstance(value, dict) and value.get(cs.RS_MANIFEST_WORKSPACE_KEY) is True:
             value = self._rust_workspace_dep_value(key)
-        source = _rust_dep_source(value)
+        source = cargo.dep_source(value)
         if source is None:
             return None
-        package = _rust_dep_package(key, value)
+        package = cargo.dep_package(key, value)
         if patches := self._rust_patch_entries(source, package):
-            return self._rust_patch_target(patches, _rust_dep_requirement(value))
+            return self._rust_patch_target(patches, cargo.dep_requirement(value))
         if source != cs.RS_DEFAULT_REGISTRY:
             return None
         return self._rust_member_package_dirs().get(package)
@@ -3602,7 +3166,7 @@ class ImportProcessor:
         return [
             (key, value)
             for key, value in entries.items()
-            if isinstance(value, dict) and _rust_dep_package(key, value) == package
+            if isinstance(value, dict) and cargo.dep_package(key, value) == package
         ]
 
     def _rust_patch_target(
@@ -3625,8 +3189,8 @@ class ImportProcessor:
         for key, value in patches:
             target = self._rust_dep_target_dir((), key, value)
             if target is None:
-                own = _rust_dep_requirement(value)
-                if _rust_patch_may_qualify(own, requirement):
+                own = cargo.dep_requirement(value)
+                if cargo.patch_may_qualify(own, requirement):
                     foreign.append(own)
                 continue
             version = self._rust_package_version(target)
@@ -3634,7 +3198,7 @@ class ImportProcessor:
                 version is not None and cargo_semver.satisfies(version, requirement)
             ):
                 local.append((version, target))
-        return _rust_patch_winner(local, foreign)
+        return cargo.patch_winner(local, foreign)
 
     def _rust_package_version(self, pkg: tuple[str, ...]) -> str | None:
         # A package's `[package] version`, or the root `[workspace.package]`
@@ -3881,7 +3445,7 @@ class ImportProcessor:
         return "lib", False
 
     def _rust_lone_explicit_stem(
-        self, dir_parts: list[str], decls: dict[str, RustEntryDecls]
+        self, dir_parts: list[str], decls: dict[str, rs_scan.RustEntryDecls]
     ) -> str | None:
         entries = self._rust_dir_entries(self.repo_path.joinpath(*dir_parts))
         if (
@@ -3936,7 +3500,9 @@ class ImportProcessor:
                 return stem
         return None
 
-    def _rust_entry_decls(self, dir_parts: list[str]) -> dict[str, RustEntryDecls]:
+    def _rust_entry_decls(
+        self, dir_parts: list[str]
+    ) -> dict[str, rs_scan.RustEntryDecls]:
         """Per entry stem: mod declarations, item names, `#[path]` targets."""
         key = tuple(dir_parts)
         decls = self._rust_entry_mod_decls.setdefault(key, {})
@@ -3986,8 +3552,10 @@ class ImportProcessor:
                 # flips definitive crate attributions to the item
                 # tie-break's real but wrong answer.
                 continue
-            top_level = _rs_top_level_only(_rs_strip_comments_and_strings(source))
-            decls[stem] = _rs_entry_decls_of(top_level)
+            top_level = rs_scan.top_level_only(
+                rs_scan.strip_comments_and_strings(source)
+            )
+            decls[stem] = rs_scan.entry_decls_of(top_level)
         return decls
 
     def _rust_module_decls(
@@ -3995,7 +3563,7 @@ class ImportProcessor:
         module_parts: list[str],
         dir_backed: bool = False,
         want_mods: bool = False,
-    ) -> tuple[RustEntryDecls, list[str]] | None:
+    ) -> tuple[rs_scan.RustEntryDecls, list[str]] | None:
         """Declarations of the file backing a module, and its `#[path]` base.
 
         `src/engine.rs` and `src/engine/mod.rs` both back `src.engine`, and a
@@ -4045,7 +3613,7 @@ class ImportProcessor:
             # Uncached, so the next access retries: a storm's transient
             # absence must not bake in "this module declares nothing".
             return None
-        if not want_mods and _RS_PATH_ATTRIBUTE_PATTERN.search(source) is None:
+        if not want_mods and rs_scan.PATH_ATTRIBUTE_PATTERN.search(source) is None:
             # Only redirects are read here, and both the lexer and the
             # declaration scan behind them cost far more than this prescan
             # (the scan is superlinear in file length, so a 30k-line
@@ -4053,11 +3621,11 @@ class ImportProcessor:
             # redirect). Searching the RAW source overshoots by the
             # commented-out and quoted spellings, which merely fall through
             # to the real scan; nothing it misses can be a redirect.
-            found = (RustEntryDecls(set(), set(), {}), list(base))
+            found = (rs_scan.RustEntryDecls(set(), set(), {}), list(base))
         else:
             found = (
-                _rs_entry_decls_of(
-                    _rs_top_level_only(_rs_strip_comments_and_strings(source))
+                rs_scan.entry_decls_of(
+                    rs_scan.top_level_only(rs_scan.strip_comments_and_strings(source))
                 ),
                 list(base),
             )
@@ -4154,7 +3722,7 @@ class ImportProcessor:
             source = path.read_text(encoding=cs.RS_ENCODING_UTF8, errors="ignore")
         except OSError:
             return []
-        if _RS_PATH_ATTRIBUTE_PATTERN.search(source) is None:
+        if rs_scan.PATH_ATTRIBUTE_PATTERN.search(source) is None:
             return []
         # A mod.rs IS its directory's module, so it contributes no segment of
         # its own; every other file contributes its stem.
@@ -4163,8 +3731,8 @@ class ImportProcessor:
             if path.stem == cs.INDEX_MOD
             else [self.project_name, *dir_parts, path.stem]
         )
-        decls = _rs_entry_decls_of(
-            _rs_top_level_only(_rs_strip_comments_and_strings(source))
+        decls = rs_scan.entry_decls_of(
+            rs_scan.top_level_only(rs_scan.strip_comments_and_strings(source))
         )
         moved = []
         for redirect in decls.redirects.values():
@@ -4295,7 +3863,7 @@ class ImportProcessor:
         dir_parts: list[str],
         stem: str,
         rest: list[str],
-        chosen: RustEntryDecls,
+        chosen: rs_scan.RustEntryDecls,
     ) -> str | None:
         """Attach through the chosen entry's own declarations, if any match."""
         if redirect := chosen.redirects.get(rest[0]):
@@ -5521,8 +5089,10 @@ class ImportProcessor:
             except OSError:
                 pass
             else:
-                top_level = _rs_top_level_only(_rs_strip_comments_and_strings(source))
-                stems[file_path.stem] = _rs_entry_decls_of(top_level)
+                top_level = rs_scan.top_level_only(
+                    rs_scan.strip_comments_and_strings(source)
+                )
+                stems[file_path.stem] = rs_scan.entry_decls_of(top_level)
 
     def _rebuild_rust_manifest_caches(self) -> None:
         # A manifest edit can add, remove, or repoint explicit targets
