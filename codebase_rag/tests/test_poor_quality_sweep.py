@@ -22,6 +22,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from codebase_rag import constants as cs
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "poor-quality-management.yml"
 JOB_ID = "close-stale-poor-quality"
@@ -132,7 +134,7 @@ class _Repo:
         result = subprocess.run(
             [node, str(driver), str(script), str(fixture)],
             capture_output=True,
-            text=True,
+            encoding=cs.ENCODING_UTF8,
             timeout=30,
             check=False,
         )
