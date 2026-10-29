@@ -48,8 +48,8 @@ def _no_links(_qn: str) -> list[str]:
 
 def hierarchy(
     fetch_all: QueryFn,
-    project: str,
-    qn: str,
+    project_name: str,
+    qualified_name: str,
     linked: Callable[[str], list[str]] = _no_links,
 ) -> Hierarchy:
     # Each edge keeps its own confidence. Asking per member whether all of
@@ -57,16 +57,16 @@ def hierarchy(
     # member had a proven edge of its own, and each was renamed unasked.
     # `linked` names the members another way certainly joins (each build's
     # declaration of one Go method).
-    owns = graph_query.owner_check(fetch_all, project)
+    owns = graph_query.owner_check(fetch_all, project_name)
     edges: dict[str, list[tuple[str, bool]]] = {}
     # `found` keeps the members in the order reached, `seen` answers
     # membership: a list alone was quadratic in a large hierarchy.
-    found: list[str] = [qn]
-    seen = {qn}
-    frontier = [qn]
+    found: list[str] = [qualified_name]
+    seen = {qualified_name}
+    frontier = [qualified_name]
     while frontier:
         current = frontier.pop()
-        edges[current] = _override_edges(fetch_all, project, current, owns) + [
+        edges[current] = _override_edges(fetch_all, project_name, current, owns) + [
             (other, False) for other in linked(current)
         ]
         for other, _guessed in edges[current]:
@@ -74,7 +74,7 @@ def hierarchy(
                 seen.add(other)
                 found.append(other)
                 frontier.append(other)
-    return Hierarchy(found, frozenset(found) - _proven_reach(qn, edges))
+    return Hierarchy(found, frozenset(found) - _proven_reach(qualified_name, edges))
 
 
 def _override_edges(

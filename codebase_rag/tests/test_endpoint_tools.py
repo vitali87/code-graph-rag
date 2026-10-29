@@ -299,9 +299,9 @@ class _Ingestor:
 def test_the_collector_fetches_the_links_only_when_asked() -> None:
     config = default_dead_code_config(include_tests=True, include_classes=False)
     store = _Ingestor([{"handler": HANDLER, "endpoint": ENDPOINT, "callers": 0}])
-    assert collect_dead_code(store, P, config) == []  # type: ignore[arg-type]
+    assert collect_dead_code(store.fetch_all, P, config) == []  # type: ignore[arg-type]
     assert cq.CYPHER_DEAD_CODE_ENDPOINT_LINKS not in store.queries
-    rows = collect_dead_code(store, P, config._replace(endpoint_roots=False))  # type: ignore[arg-type]
+    rows = collect_dead_code(store.fetch_all, P, config._replace(endpoint_roots=False))  # type: ignore[arg-type]
     assert [r["qualified_name"] for r in rows] == [HANDLER]
     assert cq.CYPHER_DEAD_CODE_ENDPOINT_LINKS in store.queries
     # Two endpoints on one handler add up: one caller anywhere keeps it live.
@@ -311,7 +311,10 @@ def test_the_collector_fetches_the_links_only_when_asked() -> None:
             {"handler": HANDLER, "endpoint": "HEAD /users/{id}", "callers": 1},
         ]
     )
-    assert collect_dead_code(store, P, config._replace(endpoint_roots=False)) == []  # type: ignore[arg-type]
+    assert (
+        collect_dead_code(store.fetch_all, P, config._replace(endpoint_roots=False))
+        == []
+    )  # type: ignore[arg-type]
 
 
 def test_the_cli_config_carries_the_switch() -> None:

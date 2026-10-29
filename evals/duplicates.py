@@ -105,7 +105,9 @@ def cgr_duplicates(
     target: Path, project: str, config: DuplicatesConfig
 ) -> DuplicatesReport:
     ingestor = capture(target, project)
-    return collect_duplicates_with_coverage(_GraphRows(ingestor.nodes), project, config)
+    return collect_duplicates_with_coverage(
+        _GraphRows(ingestor.nodes).fetch_all, project, config
+    )
 
 
 def duplicate_pairs(groups: list[DuplicateGroup]) -> set[tuple[str, str]]:

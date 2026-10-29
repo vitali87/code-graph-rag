@@ -149,7 +149,7 @@ class TestCountStructuralTierSymbols:
         nodes = _ruby_and_python_nodes()
         config = default_dead_code_config(include_tests=True, include_classes=True)
 
-        rows = collect_dead_code(FakeIngestor(nodes, []), "proj", config)
+        rows = collect_dead_code(FakeIngestor(nodes, []).fetch_all, "proj", config)
 
         assert [row["qualified_name"] for row in rows] == ["proj.app.orphan"]
         assert count_structural_tier_symbols(nodes) == 3

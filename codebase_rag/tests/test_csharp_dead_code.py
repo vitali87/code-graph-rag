@@ -41,7 +41,8 @@ def _method(qn: str, name: str, decorators: list[str] | None = None) -> ResultRo
 def _dead(ingestor: FakeIngestor) -> set[str]:
     config = default_dead_code_config(include_tests=True, include_classes=True)
     return {
-        row["qualified_name"] for row in collect_dead_code(ingestor, "proj", config)
+        row["qualified_name"]
+        for row in collect_dead_code(ingestor.fetch_all, "proj", config)
     }
 
 

@@ -68,7 +68,7 @@ def _module(
 
 def _collect(nodes: list[ResultRow], include_tests: bool) -> set[str]:
     rows = collect_dead_code(
-        FakeIngestor(nodes, []),
+        FakeIngestor(nodes, []).fetch_all,
         "proj",
         default_dead_code_config(include_tests=include_tests, include_classes=False),
     )

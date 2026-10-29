@@ -70,7 +70,9 @@ def _dead(
     )
     return {
         row["qualified_name"]
-        for row in collect_dead_code(FakeIngestor(nodes, rels), "proj", config)
+        for row in collect_dead_code(
+            FakeIngestor(nodes, rels).fetch_all, "proj", config
+        )
     }
 
 

@@ -97,14 +97,18 @@ def _member_counts(groups: list[DuplicateGroup]) -> Counter[str]:
 
 class TestDisjointGroups:
     def test_each_function_is_reported_in_one_group(self) -> None:
-        groups = collect_duplicates(FakeIngestor(_gson_shape()), "proj", _CONFIG)
+        groups = collect_duplicates(
+            FakeIngestor(_gson_shape()).fetch_all, "proj", _CONFIG
+        )
 
         counts = _member_counts(groups)
         assert len(counts) == 5
         assert {qn: n for qn, n in counts.items() if n > 1} == {}
 
     def test_exact_copies_nest_inside_the_cluster_that_contains_them(self) -> None:
-        groups = collect_duplicates(FakeIngestor(_gson_shape()), "proj", _CONFIG)
+        groups = collect_duplicates(
+            FakeIngestor(_gson_shape()).fetch_all, "proj", _CONFIG
+        )
 
         assert [group["kind"] for group in groups] == [cs.KIND_SIMILAR]
         assert groups[0]["exact_subgroups"] == [
@@ -121,7 +125,7 @@ class TestDisjointGroups:
             _row("proj.c.three", "cccc", ["b3", "b4", "b5", "b6", "b7", "b8"]),
         ]
 
-        groups = collect_duplicates(FakeIngestor(rows), "proj", config)
+        groups = collect_duplicates(FakeIngestor(rows).fetch_all, "proj", config)
 
         assert len(groups) == 1
         assert set(_member_counts(groups)) == {
@@ -140,7 +144,7 @@ class TestDisjointGroups:
             _row("proj.c.three", "cccc", ["b1", "b2", "b3", "b4", "b7", "b8", "b9"]),
         ]
 
-        groups = collect_duplicates(FakeIngestor(rows), "proj", config)
+        groups = collect_duplicates(FakeIngestor(rows).fetch_all, "proj", config)
 
         assert len(groups) == 1
         assert groups[0]["similarity"] == round(4 / 7, 3)
@@ -162,7 +166,7 @@ class TestDisjointGroups:
             _row("proj.e.E.ctor", "swap2", branches),
         ]
 
-        groups = collect_duplicates(FakeIngestor(rows), "proj", _CONFIG)
+        groups = collect_duplicates(FakeIngestor(rows).fetch_all, "proj", _CONFIG)
 
         assert len(groups) == 1
         group = groups[0]
@@ -182,7 +186,7 @@ class TestNeighbouringBehaviourUnchanged:
             _row("proj.d.four", "dddd", [f"t{i}" for i in range(9)] + ["y2"]),
         ]
 
-        groups = collect_duplicates(FakeIngestor(rows), "proj", _CONFIG)
+        groups = collect_duplicates(FakeIngestor(rows).fetch_all, "proj", _CONFIG)
 
         assert sorted(sorted(_member_counts([g])) for g in groups) == [
             ["proj.a.one", "proj.b.two"],
@@ -195,7 +199,7 @@ class TestNeighbouringBehaviourUnchanged:
             _row("proj.b.sum_w", "f3a9", ["b1", "b2"]),
         ]
 
-        groups = collect_duplicates(FakeIngestor(rows), "proj", _CONFIG)
+        groups = collect_duplicates(FakeIngestor(rows).fetch_all, "proj", _CONFIG)
 
         assert len(groups) == 1
         group = groups[0]
@@ -209,7 +213,7 @@ class TestNeighbouringBehaviourUnchanged:
             _row("proj.b.edit", "bbbb", [*_SHARED, "x2"]),
         ]
 
-        groups = collect_duplicates(FakeIngestor(rows), "proj", _CONFIG)
+        groups = collect_duplicates(FakeIngestor(rows).fetch_all, "proj", _CONFIG)
 
         assert len(groups) == 1
         assert groups[0]["similarity"] == groups[0]["max_similarity"] == 0.818
@@ -227,12 +231,12 @@ class TestNeighbouringBehaviourUnchanged:
         ]
 
         capped = collect_duplicates_with_coverage(
-            FakeIngestor(rows),
+            FakeIngestor(rows).fetch_all,
             "proj",
             DuplicatesConfig(max_similar_groups=1),
         )
         complete = collect_duplicates_with_coverage(
-            FakeIngestor(rows),
+            FakeIngestor(rows).fetch_all,
             "proj",
             DuplicatesConfig(max_similar_groups=2),
         )
@@ -281,7 +285,9 @@ class TestReport:
     def test_summary_counts_distinct_functions(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        groups = collect_duplicates(FakeIngestor(_gson_shape()), "proj", _CONFIG)
+        groups = collect_duplicates(
+            FakeIngestor(_gson_shape()).fetch_all, "proj", _CONFIG
+        )
 
         out = _render_table(monkeypatch, groups)
 
@@ -290,7 +296,9 @@ class TestReport:
     def test_table_shows_the_range_and_numbers_the_exact_copies(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        groups = collect_duplicates(FakeIngestor(_gson_shape()), "proj", _CONFIG)
+        groups = collect_duplicates(
+            FakeIngestor(_gson_shape()).fetch_all, "proj", _CONFIG
+        )
 
         out = _render_table(monkeypatch, groups)
 
@@ -311,7 +319,7 @@ class TestReport:
             _row("proj.a.orig", "aaaa", [*_SHARED, "x1"]),
             _row("proj.b.edit", "bbbb", [*_SHARED, "x2"]),
         ]
-        groups = collect_duplicates(FakeIngestor(rows), "proj", _CONFIG)
+        groups = collect_duplicates(FakeIngestor(rows).fetch_all, "proj", _CONFIG)
 
         out = _render_table(monkeypatch, groups)
 
@@ -359,7 +367,9 @@ class TestQualifyingPairs:
         monkeypatch.setattr(settings, "CGR_DIFF_COMMAND", "difftool {left} {right}")
 
     def test_group_records_its_qualifying_links(self) -> None:
-        groups = collect_duplicates(FakeIngestor(_chain_rows()), "proj", _CHAIN_CONFIG)
+        groups = collect_duplicates(
+            FakeIngestor(_chain_rows()).fetch_all, "proj", _CHAIN_CONFIG
+        )
 
         assert groups[0]["links"] == [
             {"first": _A, "second": _C, "similarity": round(4 / 6, 3)},
@@ -367,7 +377,9 @@ class TestQualifyingPairs:
         ]
 
     def test_table_link_previews_the_strongest_link(self) -> None:
-        groups = collect_duplicates(FakeIngestor(_chain_rows()), "proj", _CHAIN_CONFIG)
+        groups = collect_duplicates(
+            FakeIngestor(_chain_rows()).fetch_all, "proj", _CHAIN_CONFIG
+        )
 
         cell = cli._duplicates_group_cell(1, groups[0], Path("/repo"))
 
@@ -394,7 +406,9 @@ class TestQualifyingPairs:
         ]
 
     def test_evaluation_counts_only_qualifying_pairs(self) -> None:
-        groups = collect_duplicates(FakeIngestor(_chain_rows()), "proj", _CHAIN_CONFIG)
+        groups = collect_duplicates(
+            FakeIngestor(_chain_rows()).fetch_all, "proj", _CHAIN_CONFIG
+        )
         oracle = {(_A, _C), (_B, _C)}
 
         pairs = duplicate_pairs(groups)
@@ -409,7 +423,7 @@ class TestQualifyingPairs:
             _row("proj.a.copy", "same", _SHARED),
             _row("proj.b.copy", "same", _SHARED),
         ]
-        groups = collect_duplicates(FakeIngestor(rows), "proj", _CONFIG)
+        groups = collect_duplicates(FakeIngestor(rows).fetch_all, "proj", _CONFIG)
 
         cell = cli._duplicates_group_cell(1, groups[0], Path("/repo"))
 
@@ -430,13 +444,15 @@ class TestQualifyingPairs:
             _row("proj.b.two", "bbbb", [*_SHARED, "x2"]),
             _row("proj.c.three", "cccc", [*_SHARED, "x3"]),
         ]
-        groups = collect_duplicates(FakeIngestor(rows), "proj", _CONFIG)
+        groups = collect_duplicates(FakeIngestor(rows).fetch_all, "proj", _CONFIG)
 
         assert len(groups[0]["links"]) == 3
         assert duplicate_pairs(groups) == {(_A, _B), (_A, _C), (_B, _C)}
 
     def test_exact_copies_pair_up_but_unlinked_members_do_not(self) -> None:
-        groups = collect_duplicates(FakeIngestor(_gson_shape()), "proj", _CONFIG)
+        groups = collect_duplicates(
+            FakeIngestor(_gson_shape()).fetch_all, "proj", _CONFIG
+        )
 
         pairs = duplicate_pairs(groups)
 
@@ -455,7 +471,7 @@ class TestQualifyingPairs:
         inner["end_line"] = 58
         copy = _row("proj.o.copy", "bbbb", shared, line=5)
         groups = collect_duplicates(
-            FakeIngestor([factory, inner, copy]), "proj", _CONFIG
+            FakeIngestor([factory, inner, copy]).fetch_all, "proj", _CONFIG
         )
 
         pairs = duplicate_pairs(groups)
@@ -492,13 +508,15 @@ class TestLinkStorage:
     def test_collected_group_grows_linearly_with_copies(self) -> None:
         def stored(copies: int) -> int:
             rows = _clone_classes(copies)
-            groups = collect_duplicates(FakeIngestor(rows), "proj", _CONFIG)
+            groups = collect_duplicates(FakeIngestor(rows).fetch_all, "proj", _CONFIG)
             return len(json.dumps(groups))
 
         assert stored(40) < 2.5 * stored(20)
 
     def test_one_link_per_linked_fingerprint_pair(self) -> None:
-        groups = collect_duplicates(FakeIngestor(_clone_classes(30)), "proj", _CONFIG)
+        groups = collect_duplicates(
+            FakeIngestor(_clone_classes(30)).fetch_all, "proj", _CONFIG
+        )
 
         assert len(groups[0]["links"]) == 1
 
@@ -553,7 +571,9 @@ class TestLinkStorage:
         ]
 
     def test_table_rows_are_unchanged(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        groups = collect_duplicates(FakeIngestor(_gson_shape()), "proj", _CONFIG)
+        groups = collect_duplicates(
+            FakeIngestor(_gson_shape()).fetch_all, "proj", _CONFIG
+        )
 
         out = _render_table(monkeypatch, groups)
 

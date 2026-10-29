@@ -93,9 +93,9 @@ def test_failed_contract_reports_rollback_without_running_success_hook(
     after_apply = MagicMock()
 
     report = rename(
-        root,
         store.fetch_all,
         PROJECT,
+        root,
         f"{PROJECT}.pkg.util.helper",
         "assist",
         reingest=_reingest_with_interference(root, updater, interference, calls),
@@ -199,9 +199,9 @@ def test_rename_without_contract_failure_has_no_rollback_status(
     after_apply = MagicMock()
 
     report = rename(
-        root,
         store.fetch_all,
         PROJECT,
+        root,
         f"{PROJECT}.pkg.util.helper",
         "renamed",
         reingest=None if mode == "unchecked" else updater.reingest,

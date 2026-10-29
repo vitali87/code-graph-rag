@@ -74,7 +74,7 @@ class TestCollectDeadCode:
         ingestor = _seeded_ingestor()
         config = default_dead_code_config(include_tests=True, include_classes=False)
 
-        rows = collect_dead_code(ingestor, "proj", config)
+        rows = collect_dead_code(ingestor.fetch_all, "proj", config)
 
         assert [row["qualified_name"] for row in rows] == ["proj.mod.orphan"]
 
@@ -82,7 +82,7 @@ class TestCollectDeadCode:
         ingestor = _seeded_ingestor()
         config = default_dead_code_config(include_tests=True, include_classes=False)
 
-        rows = collect_dead_code(ingestor, "proj", config)
+        rows = collect_dead_code(ingestor.fetch_all, "proj", config)
 
         assert rows[0]["label"] == _FUNCTION
         assert rows[0]["name"] == "orphan"
@@ -94,7 +94,7 @@ class TestCollectDeadCode:
         ingestor = _seeded_ingestor()
         config = default_dead_code_config(include_tests=True, include_classes=False)
 
-        collect_dead_code(ingestor, "proj", config)
+        collect_dead_code(ingestor.fetch_all, "proj", config)
 
         assert ingestor.queries == [
             cq.CYPHER_DEAD_CODE_NODES,

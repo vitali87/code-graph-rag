@@ -5,11 +5,11 @@
 # the same discipline as dead_code.py: a *BFS expansion inside memgraph is
 # what hit the 600s timeout there.
 from collections import deque
-from typing import NamedTuple, Protocol
+from typing import NamedTuple
 
 from . import constants as cs
 from .cypher_queries import CYPHER_LIST_PROJECTS
-from .types_defs import PropertyParams, ResultRow
+from .types_defs import QueryFn, ResultRow
 
 FLOW_VERDICT_FOUND = "FOUND"
 FLOW_VERDICT_NO_FLOW = "NO_FLOW"
@@ -55,12 +55,6 @@ MATCH (e:{cs.NodeLabel.RESOURCE.value})<-[:{cs.RelationshipType.EXPOSES.value}]-
 WHERE e.kind IN ['RPC', 'DISPATCH']
 RETURN e.qualified_name AS source, h.qualified_name AS target
 """
-
-
-class QueryFn(Protocol):
-    def __call__(
-        self, query: str, params: PropertyParams | None = None
-    ) -> list[ResultRow]: ...
 
 
 class FlowVerdict(NamedTuple):

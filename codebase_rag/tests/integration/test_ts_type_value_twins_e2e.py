@@ -91,9 +91,9 @@ def test_renaming_the_function_leaves_the_type_and_its_annotation(
     project = _index(memgraph_ingestor, twin_repo)
 
     report = rename(
-        twin_repo,
         memgraph_ingestor.fetch_all,
         project,
+        twin_repo,
         f"{project}.src.shape.input",
         "makeInput",
         dry_run=True,

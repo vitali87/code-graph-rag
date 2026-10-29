@@ -82,14 +82,14 @@ class SignatureChanger:
 
     def __init__(
         self,
-        repo_root: Path,
         fetch_all: QueryFn,
         project_name: str,
+        repo_root: Path,
         reingest: Reingest | None = None,
     ) -> None:
         self.repo_root = repo_root.resolve()
         self.fetch_all = fetch_all
-        self.project = project_name
+        self.project_name = project_name
         # With a re-ingest the change is held to its postcondition contract
         # (issue #1531): the delta of what it wrote is measured and the
         # transaction undone when the contract fails.
@@ -124,7 +124,7 @@ class SignatureChanger:
         disk after planning may have moved under the recorded offsets.
         """
         patcher = Patcher(self.repo_root, parsers=self._parsers)
-        members = hierarchy(self.fetch_all, self.project, qn).members
+        members = hierarchy(self.fetch_all, self.project_name, qn).members
         headers = [self._header(member, patcher) for member in members]
         old = headers[0].params
         old_names = [p.name for p in old]
@@ -193,7 +193,7 @@ class SignatureChanger:
         return report, edits, patcher
 
     def _header(self, qn: str, patcher: Patcher) -> _Header:
-        definition = graph_query.definition(self.fetch_all, self.project, qn, None)
+        definition = graph_query.definition(self.fetch_all, self.project_name, qn, None)
         path = definition["path"]
         if not definition["found"] or not path:
             raise SignatureRefused(cs.RENAME_UNKNOWN.format(qn=qn))
@@ -289,7 +289,9 @@ class SignatureChanger:
         candidates: list[_Candidate] = []
         seen: set[tuple[object, ...]] = set()
         for header in headers:
-            for row in graph_query.callers(self.fetch_all, self.project, header.qn):
+            for row in graph_query.callers(
+                self.fetch_all, self.project_name, header.qn
+            ):
                 # Chained calls share a start and differ in their end, so
                 # the whole span identifies a site; sites without a
                 # location are each listed, since nothing tells them apart.
@@ -480,7 +482,7 @@ class SignatureChanger:
                 report,
                 allow_heuristic,
                 fetch_all=self.fetch_all,
-                project=self.project,
+                project_name=self.project_name,
                 repo_root=self.repo_root,
                 reingest=self.reingest,
             )
@@ -567,9 +569,9 @@ def _imported_as(node: Node, source: bytes, alias: str) -> str | None:
 
 
 def change_signature(
-    repo_root: Path,
     fetch_all: QueryFn,
     project_name: str,
+    repo_root: Path,
     qualified_name: str,
     new_params: Sequence[str],
     mapping: Mapping[str, str] | None = None,
@@ -582,7 +584,7 @@ def change_signature(
     With `reingest` the applied change is measured through the structural
     delta and undone when its postcondition contract fails (issue #1531).
     """
-    changer = SignatureChanger(repo_root, fetch_all, project_name, reingest=reingest)
+    changer = SignatureChanger(fetch_all, project_name, repo_root, reingest=reingest)
     if dry_run:
         return changer.preview(qualified_name, new_params, mapping, allow_heuristic)
     return changer.apply(qualified_name, new_params, mapping, allow_heuristic)

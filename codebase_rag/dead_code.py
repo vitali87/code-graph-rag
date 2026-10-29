@@ -18,9 +18,9 @@ from . import cypher_queries as cq
 from .path_filters import matches_test_path
 from .types_defs import (
     DeadCodeConfig,
-    GraphQueryClient,
     PropertyDict,
     PropertyValue,
+    QueryFn,
     ResultRow,
     ResultValue,
 )
@@ -1450,12 +1450,12 @@ def count_structural_tier_symbols(node_rows: list[ResultRow]) -> int:
 
 
 def _endpoint_links(
-    ingestor: GraphQueryClient, params: dict[str, PropertyValue]
+    fetch_all: QueryFn, params: dict[str, PropertyValue]
 ) -> dict[str, int]:
     """Indexed call sites per handler exposing an endpoint, read only when
     the endpoint-roots switch is off (issue #1603)."""
     links: dict[str, int] = {}
-    for row in ingestor.fetch_all(cq.CYPHER_DEAD_CODE_ENDPOINT_LINKS, params):
+    for row in fetch_all(cq.CYPHER_DEAD_CODE_ENDPOINT_LINKS, params):
         handler = row.get(cs.KEY_HANDLER)
         callers = row.get(cs.KEY_CALLERS)
         if isinstance(handler, str) and handler:
@@ -1466,13 +1466,13 @@ def _endpoint_links(
 
 
 def collect_dead_code(
-    ingestor: GraphQueryClient, project_name: str, config: DeadCodeConfig
+    fetch_all: QueryFn, project_name: str, config: DeadCodeConfig
 ) -> list[ResultRow]:
-    return collect_dead_code_with_coverage(ingestor, project_name, config)[0]
+    return collect_dead_code_with_coverage(fetch_all, project_name, config)[0]
 
 
 def collect_dead_code_with_coverage(
-    ingestor: GraphQueryClient, project_name: str, config: DeadCodeConfig
+    fetch_all: QueryFn, project_name: str, config: DeadCodeConfig
 ) -> tuple[list[ResultRow], int]:
     """Dead-code rows plus the count of symbols no analysis could cover.
 
@@ -1482,7 +1482,7 @@ def collect_dead_code_with_coverage(
     prefix = project_name + cs.SEPARATOR_DOT
     params: dict[str, PropertyValue] = {cs.KEY_PROJECT_PREFIX: prefix}
 
-    node_rows = ingestor.fetch_all(cq.CYPHER_DEAD_CODE_NODES, params)
+    node_rows = fetch_all(cq.CYPHER_DEAD_CODE_NODES, params)
     nodes: dict[NodeId, PropertyDict] = {
         (str(row.get(cs.KEY_LABEL) or ""), _row_qn(row)): node_props(row)
         for row in node_rows
@@ -1496,12 +1496,12 @@ def collect_dead_code_with_coverage(
             str(row.get(cs.KEY_TO_LABEL) or ""),
             str(row.get(cs.KEY_TO_QN) or ""),
         )
-        for row in ingestor.fetch_all(cq.CYPHER_DEAD_CODE_RELS, params)
+        for row in fetch_all(cq.CYPHER_DEAD_CODE_RELS, params)
         if _passes_floor(row, config.min_resolution)
     ]
 
     endpoint_links = (
-        None if config.endpoint_roots else _endpoint_links(ingestor, params)
+        None if config.endpoint_roots else _endpoint_links(fetch_all, params)
     )
     dead = dead_code_from_graph(nodes, rels, prefix, config, endpoint_links)
     rows = [row for row in node_rows if _row_qn(row) in dead]

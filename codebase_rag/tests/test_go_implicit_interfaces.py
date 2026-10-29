@@ -766,13 +766,13 @@ def test_renaming_one_implementation_renames_the_interface_method_set(
     with pytest.raises(RenameRefused):
         # `s.Area()` reaches each implementation as one candidate of several;
         # rewriting a shared call site is the opt-in it is for a Protocol.
-        rename(temp_repo, query, graph.project, target, "Size")
+        rename(query, graph.project, temp_repo, target, "Size")
     assert (temp_repo / "shapes.go").read_text(encoding="utf-8") == RENAMED
 
     report = rename(
-        temp_repo,
         _query(graph),
         graph.project,
+        temp_repo,
         f"{pkg}.Square.Area",
         "Size",
         allow_heuristic=True,
@@ -1257,13 +1257,13 @@ def test_a_guessed_override_is_renamed_only_on_opt_in(
     }
     query, target = _query(graph), f"{pkg}.Name.Get"
     with pytest.raises(RenameRefused):
-        rename(temp_repo, query, graph.project, target, "Fetch")
+        rename(query, graph.project, temp_repo, target, "Fetch")
     assert (temp_repo / "app.go").read_text(encoding="utf-8") == GUESSED_GETTER
 
     report = rename(
-        temp_repo,
         _query(graph),
         graph.project,
+        temp_repo,
         f"{pkg}.Name.Get",
         "Fetch",
         allow_heuristic=True,
@@ -1329,7 +1329,7 @@ def test_a_proven_override_and_sole_target_rename_without_opt_in(
     }
 
     report = rename(
-        temp_repo, _query(graph), graph.project, f"{pkg}.Count.Get", "Fetch"
+        _query(graph), graph.project, temp_repo, f"{pkg}.Count.Get", "Fetch"
     )
 
     assert report.applied, report.message
@@ -2624,9 +2624,9 @@ def test_renaming_the_interface_method_renames_every_build_variant(
         _write(temp_repo, rel, text)
     graph = _rename_index(temp_repo, mock_ingestor)
     report = rename(
-        temp_repo,
         _query(graph),
         graph.project,
+        temp_repo,
         f"{graph.project}.shape.Shape.Area",
         "Measure",
         allow_heuristic=True,
@@ -3060,9 +3060,9 @@ def test_renaming_through_another_spelling_keeps_the_build(
     _sig_frontend(monkeypatch, frontend, temp_repo)
     graph = _rename_index(temp_repo, mock_ingestor)
     report = rename(
-        temp_repo,
         _query(graph),
         graph.project,
+        temp_repo,
         f"{graph.project}.{target}",
         renamed,
         allow_heuristic=True,
@@ -3418,14 +3418,14 @@ def test_a_hierarchy_reached_through_a_guess_needs_the_opt_in(
     target = f"{graph.project}.a.I1.M"
     query = _query(graph)
     with pytest.raises(RenameRefused):
-        rename(temp_repo, query, graph.project, target, "N")
+        rename(query, graph.project, temp_repo, target, "N")
     assert (temp_repo / "a.go").read_text(encoding="utf-8") == MODULE_A
     assert (temp_repo / "modb" / "b.go").read_text(encoding="utf-8") == MODULE_B
 
     report = rename(
-        temp_repo,
         _query(graph),
         graph.project,
+        temp_repo,
         target,
         "N",
         allow_heuristic=True,
@@ -3474,7 +3474,7 @@ def test_a_proven_hierarchy_renames_without_the_opt_in(
     )
     graph = _rename_index(temp_repo, mock_ingestor)
     report = rename(
-        temp_repo, _query(graph), graph.project, f"{graph.project}.a.I1.M", "N"
+        _query(graph), graph.project, temp_repo, f"{graph.project}.a.I1.M", "N"
     )
     assert report.applied, report.message
     text = (temp_repo / "a.go").read_text(encoding="utf-8")
@@ -3738,7 +3738,7 @@ def test_a_test_packages_own_error_leaves_the_package_alone(
     )
 
     report = rename(
-        root, _query(graph), graph.project, f"{pkg}.T.N", "M", allow_heuristic=True
+        _query(graph), graph.project, root, f"{pkg}.T.N", "M", allow_heuristic=True
     )
     assert report.applied, report.message
     text = (root / "p" / "p.go").read_text(encoding="utf-8")
@@ -3775,7 +3775,7 @@ def test_a_package_declaring_error_in_a_test_file_shadows_it_there_alone(
     assert (f"{own}.W", f"{own}.K") not in implements
 
     report = rename(
-        root, _query(graph), graph.project, f"{pkg}.T.N", "M", allow_heuristic=True
+        _query(graph), graph.project, root, f"{pkg}.T.N", "M", allow_heuristic=True
     )
     assert report.applied, report.message
     text = (root / "p" / "p.go").read_text(encoding="utf-8")
@@ -3874,7 +3874,7 @@ def test_an_embedded_import_names_the_package_not_its_external_tests(
     assert ("proj.q.q.I", "proj.p.reader_test.Reader") not in inherits
 
     report = rename(
-        root, _query(graph), graph.project, "proj.q.q.T.N", "M", allow_heuristic=True
+        _query(graph), graph.project, root, "proj.q.q.T.N", "M", allow_heuristic=True
     )
     assert report.applied, report.message
     text = (root / "q" / "q.go").read_text(encoding="utf-8")
@@ -4177,7 +4177,7 @@ def test_an_embedded_name_each_build_declares_keeps_its_method_set(
     assert overrides[("proj.q.q.T.N", "proj.q.q.J.N")] == cs.EdgeResolution.HEURISTIC
 
     report = rename(
-        root, _query(graph), graph.project, "proj.q.q.T.N", "O", allow_heuristic=True
+        _query(graph), graph.project, root, "proj.q.q.T.N", "O", allow_heuristic=True
     )
     assert report.applied, report.message
     text = (root / "q" / "q.go").read_text(encoding="utf-8")
@@ -4345,9 +4345,9 @@ def test_an_interface_each_build_declares_apart_links_each_builds_implementers(
     assert ("proj.p.v.V.N", "proj.p.j.J.N") not in overrides
 
     report = rename(
-        root,
         _query(graph),
         graph.project,
+        root,
         "proj.p.t_linux.T.N",
         "O",
         allow_heuristic=True,
@@ -4525,9 +4525,9 @@ def test_a_type_each_build_declares_again_has_the_methods_both_compile(
     assert ("proj.p.i.Run", f"{linux}.M") in calls
 
     report = rename(
-        root,
         _query(graph),
         graph.project,
+        root,
         "proj.p.m_windows.I2.M",
         "Y",
         allow_heuristic=True,
@@ -4790,7 +4790,7 @@ def test_embeds_combine_only_the_builds_one_build_compiles(
     assert ("proj.p.t.T.N", "proj.p.j.J.N") in overrides
 
     report = rename(
-        root, _query(graph), graph.project, "proj.p.t.T.N", "O", allow_heuristic=True
+        _query(graph), graph.project, root, "proj.p.t.T.N", "O", allow_heuristic=True
     )
     assert report.applied, report.message
     assert "func (V) O()" in (root / "p" / "v.go").read_text(encoding="utf-8")
@@ -4884,9 +4884,9 @@ def test_renaming_one_builds_interface_method_renames_every_builds(
     before = _go_sources(root)
     graph = _rename_index(root, mock_ingestor)
     report = rename(
-        root,
         _query(graph),
         graph.project,
+        root,
         "proj.p.i_linux.I.M",
         "Z",
         allow_heuristic=True,
@@ -4928,7 +4928,7 @@ def test_a_method_each_build_declares_at_one_place_keeps_every_declaration(
     } == declared
 
     report = rename(
-        root, _query(graph), graph.project, "proj.p.i.I.M", "Z", allow_heuristic=True
+        _query(graph), graph.project, root, "proj.p.i.I.M", "Z", allow_heuristic=True
     )
     assert report.applied, report.message
     for rel in ("p/m_linux.go", "p/m_windows.go", "p/m_darwin.go"):
@@ -5001,7 +5001,7 @@ def test_a_rename_reaches_only_the_same_packages_other_builds(
     query, target = _query(graph), "proj.p.h_linux.Helper"
     if opt_in:
         report = rename(
-            root, query, graph.project, target, "Assist", allow_heuristic=True
+            query, graph.project, root, target, "Assist", allow_heuristic=True
         )
         assert report.applied, report.message
         for rel in ("p/h_linux.go", "p/h_windows.go"):
@@ -5011,7 +5011,7 @@ def test_a_rename_reaches_only_the_same_packages_other_builds(
     else:
         # c.go reaches each build's Helper, a guess the caller opts into.
         with pytest.raises(RenameRefused):
-            rename(root, query, graph.project, target, "Assist")
+            rename(query, graph.project, root, target, "Assist")
         _go_checks_after(root, before)
     for rel in ("p/helper.py", "p/helper.js", "p/ext_test.go", "r/r.go"):
         assert (root / rel).read_text(encoding="utf-8") == VARIANT_NEIGHBOURS[rel], rel
@@ -5030,9 +5030,9 @@ def test_two_declarations_one_build_compiles_are_no_rename_variants(
     root = _variant_repo(temp_repo / "proj", files)
     graph = _rename_index(root, mock_ingestor)
     report = rename(
-        root,
         _query(graph),
         graph.project,
+        root,
         "proj.s.a.Helper",
         "Assist",
         allow_heuristic=True,
@@ -5064,9 +5064,9 @@ def test_a_tests_own_build_variant_is_renamed_and_the_external_tests_is_not(
     before = _go_sources(root)
     graph = _rename_index(root, mock_ingestor)
     report = rename(
-        root,
         _query(graph),
         graph.project,
+        root,
         "proj.p.probe_linux_test.Probe",
         "Assist",
         allow_heuristic=True,
@@ -5448,7 +5448,7 @@ def test_an_interface_only_hierarchy_renames_every_declaration(
 
     for index, (shape, target) in enumerate(renames):
         report = rename(
-            root, _query(graph), graph.project, f"proj.r{index}.{target}", "N"
+            _query(graph), graph.project, root, f"proj.r{index}.{target}", "N"
         )
         assert report.applied, (shape, target, report.message)
     for rel in files:
@@ -5578,13 +5578,13 @@ def test_an_interface_past_the_alternatives_cap_links_nothing(
     query = _query(graph)
     if linked:
         report = rename(
-            root, query, graph.project, "proj.p.u.U.N", "M", allow_heuristic=True
+            query, graph.project, root, "proj.p.u.U.N", "M", allow_heuristic=True
         )
         assert report.applied, report.message
     else:
         with pytest.raises(RenameRefused, match=r"proj\.p\.j\.J"):
             rename(
-                root, query, graph.project, "proj.p.u.U.N", "M", allow_heuristic=True
+                query, graph.project, root, "proj.p.u.U.N", "M", allow_heuristic=True
             )
     assert (root / "p" / "j.go").read_text(encoding="utf-8") == files["p/j.go"]
     _go_checks_after(root, before)
@@ -5628,7 +5628,7 @@ def test_a_name_an_interface_of_unknown_implementers_declares_is_never_renamed(
     assert graph.nodes["proj.p.j.J"][cs.KEY_IMPLEMENTERS_UNKNOWN] == "builds"
     query = _query(graph)
     with pytest.raises(RenameRefused) as refused:
-        rename(root, query, graph.project, target, "M", allow_heuristic=opt_in)
+        rename(query, graph.project, root, target, "M", allow_heuristic=opt_in)
     assert "proj.p.j.J" in str(refused.value)
     assert "differs between builds" in str(refused.value)
     assert _changed(root, files) == []
@@ -5652,7 +5652,7 @@ def test_a_name_no_interface_of_unknown_implementers_declares_still_renames(
     root = _variant_repo(temp_repo / "proj", files)
     graph = _rename_index(root, mock_ingestor)
     report = rename(
-        root, _query(graph), graph.project, target, "Renamed", allow_heuristic=True
+        _query(graph), graph.project, root, target, "Renamed", allow_heuristic=True
     )
     assert report.applied, report.message
     assert "Renamed()" in (root / "p" / "t.go").read_text(encoding="utf-8")
@@ -5686,10 +5686,10 @@ def test_an_unexported_name_refuses_only_in_its_interfaces_package(
     assert graph.nodes["proj.q.k.K"][cs.KEY_IMPLEMENTERS_UNKNOWN] == "embeds"
     query = _query(graph)
     with pytest.raises(RenameRefused, match="embeds an interface cgr cannot resolve"):
-        rename(root, query, graph.project, "proj.q.v.V.n", "m", allow_heuristic=opt_in)
+        rename(query, graph.project, root, "proj.q.v.V.n", "m", allow_heuristic=opt_in)
     assert _changed(root, UNRESOLVED_EMBED_FILES) == []
     report = rename(
-        root, query, graph.project, "proj.r.w.W.n", "m", allow_heuristic=opt_in
+        query, graph.project, root, "proj.r.w.W.n", "m", allow_heuristic=opt_in
     )
     assert report.applied, report.message
     assert "func (W) m()" in (root / "r" / "w.go").read_text(encoding="utf-8")
@@ -5726,7 +5726,7 @@ def test_an_interface_a_type_may_implement_under_an_undecided_constraint_refuses
     assert graph.nodes["proj.p.i.I"][cs.KEY_IMPLEMENTERS_UNKNOWN] == "constraint"
     query = _query(graph)
     with pytest.raises(RenameRefused, match="build constraint cgr cannot read"):
-        rename(root, query, graph.project, target, "N", allow_heuristic=True)
+        rename(query, graph.project, root, target, "N", allow_heuristic=True)
     assert _changed(root, UNDECIDED_FILES) == []
 
 
@@ -5736,7 +5736,7 @@ def test_a_name_the_undecided_interface_does_not_declare_still_renames(
     monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
     root = _variant_repo(temp_repo / "proj", UNDECIDED_FILES)
     graph = _rename_index(root, mock_ingestor)
-    report = rename(root, _query(graph), graph.project, "proj.p.t.T.Other", "Else")
+    report = rename(_query(graph), graph.project, root, "proj.p.t.T.Other", "Else")
     assert report.applied, report.message
     _go_checks_on(root)
 

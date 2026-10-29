@@ -81,9 +81,9 @@ def _rename(
         return store.fetch_all(query, dict(params) if params is not None else None)
 
     report = rename(
-        root,
         fetch_all,
         PROJECT,
+        root,
         f"{PROJECT}.{target}",
         new_name,
         allow_heuristic=True,

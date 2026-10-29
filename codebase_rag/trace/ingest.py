@@ -39,8 +39,7 @@ from .resolution import (
 )
 
 if TYPE_CHECKING:
-    from ..flow_verdict import QueryFn
-    from ..types_defs import PropertyDict, PropertyValue, ResultRow
+    from ..types_defs import PropertyDict, PropertyValue, QueryFn, ResultRow
     from .records import FramePoint, TraceHeader
     from .resolution import ResolvedFrame
 

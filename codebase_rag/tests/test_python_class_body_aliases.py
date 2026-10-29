@@ -170,7 +170,7 @@ def _dead(mock_ingestor: MagicMock) -> set[str]:
     config = default_dead_code_config(include_tests=True, include_classes=False)
     return {
         str(row[cs.KEY_QUALIFIED_NAME])
-        for row in collect_dead_code(graph, PROJECT, config)
+        for row in collect_dead_code(graph.fetch_all, PROJECT, config)
     }
 
 

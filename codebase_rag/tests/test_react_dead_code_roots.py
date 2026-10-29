@@ -63,7 +63,7 @@ def _dead(nodes: list[ResultRow], rels: list[ResultRow]) -> set[str]:
     config = default_dead_code_config(include_tests=True, include_classes=False)
     return {
         row["qualified_name"]
-        for row in collect_dead_code(FakeIngestor(nodes, rels), "app", config)
+        for row in collect_dead_code(FakeIngestor(nodes, rels).fetch_all, "app", config)
     }
 
 

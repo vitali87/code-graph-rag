@@ -1291,7 +1291,7 @@ def rename_check(
     refused = False
     try:
         report = rename(
-            root, query, PROJECT, target, f"Renamed_{case}", allow_heuristic=True
+            query, PROJECT, root, target, f"Renamed_{case}", allow_heuristic=True
         )
         applied = report.applied
     except RenameRefused:

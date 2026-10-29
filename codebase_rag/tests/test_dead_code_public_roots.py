@@ -817,7 +817,9 @@ def test_structural_tier_symbols_stay_roots_without_public_roots() -> None:
     # symbols: dropping their root would report every one of them.
     config = _config(public_roots=False)
 
-    rows = collect_dead_code(FakeIngestor(_ruby_and_python_rows(), []), "proj", config)
+    rows = collect_dead_code(
+        FakeIngestor(_ruby_and_python_rows(), []).fetch_all, "proj", config
+    )
 
     assert [row["qualified_name"] for row in rows] == ["proj.app.truly_unused"]
 

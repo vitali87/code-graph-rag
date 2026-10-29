@@ -185,7 +185,7 @@ def test_the_issue_schema_has_no_dead_code(issue: StatefulIngestor) -> None:
     config = default_dead_code_config(include_tests=True, include_classes=False)
     assert [
         row["qualified_name"]
-        for row in collect_dead_code(_Client(issue), PROJECT, config)
+        for row in collect_dead_code(_Client(issue).fetch_all, PROJECT, config)
     ] == []
 
 

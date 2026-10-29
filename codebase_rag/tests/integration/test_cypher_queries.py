@@ -520,7 +520,7 @@ class TestCollectDeadCodeIntegration:
         self._seed(memgraph_ingestor)
 
         rows = collect_dead_code(
-            memgraph_ingestor,
+            memgraph_ingestor.fetch_all,
             "proj",
             _dead_code_config(include_tests=True, **self._SEED_CONFIG_ARGS),
         )
@@ -534,7 +534,7 @@ class TestCollectDeadCodeIntegration:
         self._seed(memgraph_ingestor)
 
         rows = collect_dead_code(
-            memgraph_ingestor,
+            memgraph_ingestor.fetch_all,
             "proj",
             _dead_code_config(include_tests=False, **self._SEED_CONFIG_ARGS),
         )
@@ -552,7 +552,7 @@ class TestCollectDeadCodeIntegration:
         self._seed(memgraph_ingestor)
 
         rows = collect_dead_code(
-            memgraph_ingestor,
+            memgraph_ingestor.fetch_all,
             "proj",
             _dead_code_config(include_tests=True, **self._SEED_CONFIG_ARGS),
         )
@@ -581,12 +581,12 @@ class TestCollectDeadCodeIntegration:
         )
 
         excluded = collect_dead_code(
-            memgraph_ingestor, "proj", _dead_code_config(include_tests=False)
+            memgraph_ingestor.fetch_all, "proj", _dead_code_config(include_tests=False)
         )
         assert {r["qualified_name"] for r in excluded} == {"proj.mod.tool_only"}
 
         included = collect_dead_code(
-            memgraph_ingestor, "proj", _dead_code_config(include_tests=True)
+            memgraph_ingestor.fetch_all, "proj", _dead_code_config(include_tests=True)
         )
         assert {r["qualified_name"] for r in included} == set()
 
@@ -628,14 +628,14 @@ class TestCollectDeadCodeIntegration:
         )
 
         without_classes = collect_dead_code(
-            memgraph_ingestor,
+            memgraph_ingestor.fetch_all,
             "proj",
             _dead_code_config(include_tests=False, include_classes=False),
         )
         assert {r["qualified_name"] for r in without_classes} == {"proj.mod.orphan_fn"}
 
         with_classes = collect_dead_code(
-            memgraph_ingestor,
+            memgraph_ingestor.fetch_all,
             "proj",
             _dead_code_config(include_tests=False, include_classes=True),
         )
@@ -666,7 +666,7 @@ class TestCollectDeadCodeIntegration:
         )
 
         with_classes = collect_dead_code(
-            memgraph_ingestor,
+            memgraph_ingestor.fetch_all,
             "proj",
             _dead_code_config(include_tests=False, include_classes=True),
         )
@@ -690,7 +690,7 @@ class TestCollectDeadCodeIntegration:
         )
 
         rows = collect_dead_code(
-            memgraph_ingestor, "proj", _dead_code_config(include_tests=False)
+            memgraph_ingestor.fetch_all, "proj", _dead_code_config(include_tests=False)
         )
         assert {r["qualified_name"] for r in rows} == {
             "proj.mod.a",
@@ -751,7 +751,7 @@ class TestCollectDeadCodeIntegration:
         )
 
         rows = collect_dead_code(
-            memgraph_ingestor, "proj", _dead_code_config(include_tests=False)
+            memgraph_ingestor.fetch_all, "proj", _dead_code_config(include_tests=False)
         )
         assert {r["qualified_name"] for r in rows} == {
             "proj.mod.outer._unused",
@@ -781,7 +781,7 @@ class TestCollectDeadCodeIntegration:
         )
 
         rows = collect_dead_code(
-            memgraph_ingestor, "proj", _dead_code_config(include_tests=False)
+            memgraph_ingestor.fetch_all, "proj", _dead_code_config(include_tests=False)
         )
         names = {r["qualified_name"] for r in rows}
 

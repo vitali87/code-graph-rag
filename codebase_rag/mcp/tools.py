@@ -3384,9 +3384,9 @@ class MCPToolsRegistry:
             # the same name the re-ingest writes.
             reingest = self._guarded_rename_reingest(project_name)
             report = rename(
-                root,
                 self.ingestor.fetch_all,
                 project_name,
+                root,
                 qualified_name,
                 new_name,
                 allow_heuristic=allow_heuristic,

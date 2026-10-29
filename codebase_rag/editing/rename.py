@@ -48,7 +48,7 @@ from ..parsers.go.builds import GoBuilds
 from ..parsers.go.module_paths import read_package_clause
 from ..parsers.js_ts.overloads import overload_signatures
 from ..parsers.py.overloads import overload_stub_names
-from ..types_defs import PropertyParams, ResultRow
+from ..types_defs import QueryFn, ResultRow
 from ..utils import qn_markers
 from ..utils.path_utils import (
     base_module_qn,
@@ -74,8 +74,6 @@ from .transaction import (
     load_history,
     undo_transaction,
 )
-
-QueryFn = Callable[[str, PropertyParams | None], list[ResultRow]]
 
 _IDENTIFIER_RE = r"(?<![\w])%s(?![\w])"
 
@@ -690,9 +688,9 @@ class Renamer:
 
     def __init__(
         self,
-        repo_root: Path,
         fetch_all: QueryFn,
         project_name: str,
+        repo_root: Path,
         verify: Callable[[StagedTree], VerificationResult | bool | None] | None = None,
         after_apply: Callable[[list[str]], None] | None = None,
         reingest: Reingest | None = None,
@@ -700,7 +698,7 @@ class Renamer:
     ) -> None:
         self.repo_root = repo_root.resolve()
         self.fetch_all = fetch_all
-        self.project = project_name
+        self.project_name = project_name
         self.verify = verify
         self.after_apply = after_apply
         # With a re-ingest the rename is held to its postcondition contract
@@ -721,15 +719,15 @@ class Renamer:
         # The defining module's qn and path, from the definition's own path:
         # a method's qn nests under its class, so stripping segments would
         # name the class, not the module.
-        definition = graph_query.definition(self.fetch_all, self.project, qn, None)
+        definition = graph_query.definition(self.fetch_all, self.project_name, qn, None)
         path = definition["path"]
         if not path:
             return qn.rsplit(cs.SEPARATOR_DOT, 1)[0], None
-        return base_module_qn(Path(path), self.project), path
+        return base_module_qn(Path(path), self.project_name), path
 
     def _collect(self, qn: str) -> tuple[list[RenameSite], list[str], str, str | None]:
         definition = graph_query.definition(
-            self.fetch_all, self.project, qn, self.repo_root
+            self.fetch_all, self.project_name, qn, self.repo_root
         )
         path = definition["path"]
         if not definition["found"] or not path:
@@ -742,19 +740,19 @@ class Renamer:
         ]
         sites.extend(_overload_stub_sites(sites[0], patcher))
         # Calls, references and constructions.
-        for row in graph_query.callers(self.fetch_all, self.project, qn):
+        for row in graph_query.callers(self.fetch_all, self.project_name, qn):
             self._add_site(
                 sites, unlocatable, cs.RenameSiteKind.CALL, row, old_name, patcher
             )
         params = {
-            cs.KEY_PROJECT_PREFIX: f"{self.project}{cs.SEPARATOR_DOT}",
+            cs.KEY_PROJECT_PREFIX: f"{self.project_name}{cs.SEPARATOR_DOT}",
             cs.KEY_QN: qn,
             cs.KEY_LABEL: definition["label"],
         }
         # Both reads below are prefix-scoped, and `foo.` selects `foo.bar`'s
         # rows too: a site in a project whose name extends this one must not
         # join this project's plan (issue #1989; the rule of #1982).
-        owns = graph_query.owner_check(self.fetch_all, self.project)
+        owns = graph_query.owner_check(self.fetch_all, self.project_name)
         for row in self.fetch_all(cq.CYPHER_GRAPH_REFERENCES, params):
             if not owns(str(row.get(cs.KEY_QUALIFIED_NAME) or "")):
                 continue
@@ -858,7 +856,7 @@ class Renamer:
         seen = {module_qn}
         while pending:
             source, chosen = pending.pop()
-            for row in graph_query.importers(self.fetch_all, self.project, source):
+            for row in graph_query.importers(self.fetch_all, self.project_name, source):
                 # The definition's own name is rewritten with its import; a
                 # barrel's chosen name only passes on under that same name.
                 if (
@@ -887,7 +885,7 @@ class Renamer:
         seen = {(module_qn, False)}
         while pending:
             source, barrel = pending.pop()
-            for row in graph_query.importers(self.fetch_all, self.project, source):
+            for row in graph_query.importers(self.fetch_all, self.project_name, source):
                 following = self._js_star_following(row, name, barrel, bound)
                 if following is None:
                     continue
@@ -1038,7 +1036,7 @@ class Renamer:
             return None
         if through not in self._callback_sites:
             params = {
-                cs.KEY_PROJECT_PREFIX: f"{self.project}{cs.SEPARATOR_DOT}",
+                cs.KEY_PROJECT_PREFIX: f"{self.project_name}{cs.SEPARATOR_DOT}",
                 cs.KEY_QN: through,
             }
             self._callback_sites[through] = {
@@ -1245,7 +1243,9 @@ class Renamer:
         seen = {module_qn}
         while pending:
             source_qn = pending.pop()
-            for row in graph_query.importers(self.fetch_all, self.project, source_qn):
+            for row in graph_query.importers(
+                self.fetch_all, self.project_name, source_qn
+            ):
                 if (
                     row["imported_name"] != old_name
                     or row["path"] is None
@@ -1312,14 +1312,16 @@ class Renamer:
         ]
         if not typed:
             return []
-        label = graph_query.definition(self.fetch_all, self.project, qn, None)["label"]
+        label = graph_query.definition(self.fetch_all, self.project_name, qn, None)[
+            "label"
+        ]
         if label is None or label in _TYPE_SPACE_LABELS:
             return []
-        owns = graph_query.owner_check(self.fetch_all, self.project)
+        owns = graph_query.owner_check(self.fetch_all, self.project_name)
         paths: set[str] = set()
         for twin_label in _TYPE_SPACE_LABELS:
             params = {
-                cs.KEY_PROJECT_PREFIX: f"{self.project}{cs.SEPARATOR_DOT}",
+                cs.KEY_PROJECT_PREFIX: f"{self.project_name}{cs.SEPARATOR_DOT}",
                 cs.KEY_QN: qn,
                 cs.KEY_LABEL: twin_label,
             }
@@ -1334,7 +1336,7 @@ class Renamer:
         # the label-scoped reads above.
         paths.update(
             row["path"]
-            for row in graph_query.implementors(self.fetch_all, self.project, qn)
+            for row in graph_query.implementors(self.fetch_all, self.project_name, qn)
             if row["relationship"] == cs.RelationshipType.IMPLEMENTS
             and row["path"] is not None
         )
@@ -1370,10 +1372,10 @@ class Renamer:
         """Collect everything a rename touches; refuse on ambiguity."""
         if not re.fullmatch(r"[A-Za-z_]\w*", new_name):
             raise RenameRefused(cs.RENAME_BAD_NAME.format(name=new_name), [], [])
-        found = _hierarchy(self.fetch_all, self.project, qn, self.repo_root)
+        found = _hierarchy(self.fetch_all, self.project_name, qn, self.repo_root)
         members = found.members
         self._guessed_members = found.guessed
-        unknown = _go_implementers_unknown(self.fetch_all, self.project, members)
+        unknown = _go_implementers_unknown(self.fetch_all, self.project_name, members)
         if unknown is not None:
             interface, why, name = unknown
             raise RenameRefused(
@@ -1560,7 +1562,7 @@ class Renamer:
                 occurrence.path,
                 occurrence.line,
                 occurrence.col,
-                base_module_qn(Path(occurrence.path), self.project),
+                base_module_qn(Path(occurrence.path), self.project_name),
                 _UNPLANNED if occurrence.certain else _RECEIVER_UNKNOWN,
             )
             for occurrence in leftover
@@ -1588,7 +1590,7 @@ class Renamer:
         classes = {_owner_class(member) for member in hierarchy}
         rivals: set[tuple[str, str]] = set()
         for name in _owners(hierarchy):
-            for symbol in graph_query.resolve(self.fetch_all, self.project, name):
+            for symbol in graph_query.resolve(self.fetch_all, self.project_name, name):
                 path = symbol["path"]
                 if (
                     path is not None
@@ -1618,11 +1620,11 @@ class Renamer:
         this one: the plan leaves them alone (#1989), so its cross-check
         does too. The reads are scoped to the target's label as the plan's
         are, since a TS type and a value share one name (issue #2520)."""
-        owns = graph_query.owner_check(self.fetch_all, self.project)
+        owns = graph_query.owner_check(self.fetch_all, self.project_name)
         paths: set[str] = set()
         for member in hierarchy:
             params = {
-                cs.KEY_PROJECT_PREFIX: f"{self.project}{cs.SEPARATOR_DOT}",
+                cs.KEY_PROJECT_PREFIX: f"{self.project_name}{cs.SEPARATOR_DOT}",
                 cs.KEY_QN: member,
                 cs.KEY_LABEL: label,
             }
@@ -1648,7 +1650,7 @@ class Renamer:
         would collect them. A symbol that is the target's declaration in a
         `.d.ts` beside its module is the target's, not another one."""
         namesakes = _Namesakes(set(), [], [], {})
-        for symbol in graph_query.resolve(self.fetch_all, self.project, old_name):
+        for symbol in graph_query.resolve(self.fetch_all, self.project_name, old_name):
             other = symbol["qualified_name"]
             if other in hierarchy:
                 continue
@@ -2032,12 +2034,12 @@ class Renamer:
         ]
         pairs = list(parents)
         longer_project_prefixes = graph_query.projects_nested_under(
-            self.fetch_all, self.project
+            self.fetch_all, self.project_name
         )
         for row in self.fetch_all(
             cq.CYPHER_DELTA_DEFINITIONS,
             {
-                cs.KEY_PROJECT_PREFIX: f"{self.project}{cs.SEPARATOR_DOT}",
+                cs.KEY_PROJECT_PREFIX: f"{self.project_name}{cs.SEPARATOR_DOT}",
                 cs.KEY_LONGER_PROJECT_PREFIXES: list(longer_project_prefixes),
                 cs.CYPHER_PARAM_PATHS: list(report.files),
             },
@@ -2058,7 +2060,7 @@ class Renamer:
             pairs = self._declared_renames(report, new_name)
             delta = measure(
                 self.fetch_all,
-                self.project,
+                self.project_name,
                 self.repo_root,
                 report.files,
                 self.reingest,
@@ -2275,9 +2277,9 @@ def _locations(sites: list[RenameSite]) -> str:
 
 
 def rename(
-    repo_root: Path,
     fetch_all: QueryFn,
     project_name: str,
+    repo_root: Path,
     qualified_name: str,
     new_name: str,
     allow_heuristic: bool = False,
@@ -2293,9 +2295,9 @@ def rename(
     delta and undone when its postcondition contract fails (issue #1531).
     """
     renamer = Renamer(
-        repo_root,
         fetch_all,
         project_name,
+        repo_root,
         verify=verify,
         after_apply=after_apply,
         reingest=reingest,

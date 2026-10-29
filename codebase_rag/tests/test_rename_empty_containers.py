@@ -47,7 +47,7 @@ def test_rename_carries_empty_nested_containers(
     new = f"{PROJECT}.pkg.util.Assist"
 
     report = rename(
-        root, store.fetch_all, PROJECT, old, "Assist", reingest=updater.reingest
+        store.fetch_all, PROJECT, root, old, "Assist", reingest=updater.reingest
     )
 
     assert report.applied, report.message
@@ -110,9 +110,9 @@ def test_rename_rejects_an_undeclared_empty_container_replacement(
 
     monkeypatch.setattr(EditTransaction, "stage", stage_with_collateral)
     report = rename(
-        root,
         store.fetch_all,
         PROJECT,
+        root,
         f"{PROJECT}.pkg.util.Helper",
         "Assist",
         reingest=updater.reingest,
@@ -209,9 +209,9 @@ def test_declaration_read_failure_reports_the_committed_rename(
         return updater.reingest(paths)
 
     report = rename(
-        root,
         fetch_all,
         PROJECT,
+        root,
         f"{PROJECT}.pkg.util.Helper",
         "Assist",
         reingest=reingest,

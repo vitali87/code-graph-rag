@@ -2310,9 +2310,9 @@ def rename_command(
         )
         try:
             report = rename(
-                repo_path.resolve(),
                 fetch_all,
                 name,
+                repo_path.resolve(),
                 qualified_name,
                 new_name,
                 allow_heuristic=allow_heuristic,
@@ -3089,7 +3089,7 @@ def dead_code(
             if (resolved := choice.name) is not None:
                 logger.info(ls.DEADCODE_SCANNING.format(project_name=resolved))
                 rows, structural_tier_symbols = collect_dead_code_with_coverage(
-                    ingestor,
+                    ingestor.fetch_all,
                     resolved,
                     _dead_code_config(
                         include_tests,
@@ -3503,7 +3503,7 @@ def duplicates(
             if (resolved := choice.name) is not None:
                 logger.info(ls.DUPLICATES_SCANNING.format(project_name=resolved))
                 report = collect_duplicates_with_coverage(
-                    ingestor,
+                    ingestor.fetch_all,
                     resolved,
                     DuplicatesConfig(
                         threshold=threshold,

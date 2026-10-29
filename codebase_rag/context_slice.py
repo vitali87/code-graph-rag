@@ -128,13 +128,13 @@ def _header(
 
 def resolve_target(
     fetch_all: QueryFn,
-    project: str,
+    project_name: str,
     target: str,
     search: Searcher | None,
 ) -> tuple[str | None, dict[str, float]]:
     """(qualified name, similarity by qualified name for free text)."""
     if _LOCATION.match(target) or cs.SEPARATOR_DOT in target or " " not in target:
-        rows = graph_query.resolve(fetch_all, project, target)
+        rows = graph_query.resolve(fetch_all, project_name, target)
         rows = [r for r in rows if r["label"] in _DEFINITION_LABELS] or rows
         if rows:
             return rows[0]["qualified_name"], {}
@@ -433,7 +433,7 @@ def _trim(source: str, budget: int) -> tuple[str, int]:
 
 def context(
     fetch_all: QueryFn,
-    project: str,
+    project_name: str,
     target: str,
     budget_tokens: int,
     repo_root: Path | None = None,
@@ -441,7 +441,7 @@ def context(
 ) -> ContextSlice:
     """The budgeted, graph-ranked slice around `target`."""
     budget = max(int(budget_tokens), 0)
-    qn, scores = resolve_target(fetch_all, project, target, search)
+    qn, scores = resolve_target(fetch_all, project_name, target, search)
     if qn is None:
         return ContextSlice(
             target=target,
@@ -452,7 +452,7 @@ def context(
             omitted=[],
             truncated=False,
         )
-    definition = graph_query.definition(fetch_all, project, qn, repo_root)
+    definition = graph_query.definition(fetch_all, project_name, qn, repo_root)
     if not definition["found"]:
         return ContextSlice(
             target=target,
@@ -463,15 +463,15 @@ def context(
             omitted=[],
             truncated=False,
         )
-    hotness = _hotness(fetch_all, project, qn)
+    hotness = _hotness(fetch_all, project_name, qn)
     name = definition["name"] or qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
     candidates = [
         _target_piece(definition, repo_root),
-        *_caller_pieces(fetch_all, project, qn, repo_root, hotness),
-        *_callee_pieces(fetch_all, project, qn, repo_root),
-        *_type_pieces(fetch_all, project, qn, repo_root),
-        *_test_pieces(fetch_all, project, qn, repo_root),
-        *_doc_pieces(fetch_all, project, definition["path"], name, repo_root),
+        *_caller_pieces(fetch_all, project_name, qn, repo_root, hotness),
+        *_callee_pieces(fetch_all, project_name, qn, repo_root),
+        *_type_pieces(fetch_all, project_name, qn, repo_root),
+        *_test_pieces(fetch_all, project_name, qn, repo_root),
+        *_doc_pieces(fetch_all, project_name, definition["path"], name, repo_root),
     ]
     if scores:
         candidates = [

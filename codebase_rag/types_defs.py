@@ -60,6 +60,10 @@ type ResultValue = (
 )
 type ResultRow = dict[str, ResultValue]
 
+# How a reader reaches the graph: the ingestor's fetch_all, or a double with
+# its signature. Readers take it first, as `fetch_all`, then the project name.
+QueryFn = Callable[[str, PropertyParams | None], list[ResultRow]]
+
 
 class MgclientProbeRequest(TypedDict):
     """One Memgraph probe, as the parent hands it to the probe's own process."""
@@ -926,12 +930,6 @@ class DuplicatesReport(NamedTuple):
     # (indexed before the feature): "no duplicates" would be vacuous and the
     # CLI recommends a re-index instead.
     analyzed_symbols: int = 0
-
-
-class GraphQueryClient(Protocol):
-    def fetch_all(
-        self, query: str, params: PropertyParams | None = None
-    ) -> list[ResultRow]: ...
 
 
 class ReingestToolResult(TypedDict, total=False):

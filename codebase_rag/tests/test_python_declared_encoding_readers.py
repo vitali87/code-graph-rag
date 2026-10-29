@@ -52,7 +52,7 @@ def latin_repo(temp_repo: Path, mock_ingestor: MagicMock) -> tuple[Path, Recorde
 def _rename(
     root: Path, graph: RecordedGraph, qn: str, new: str, dry_run: bool
 ) -> RenameReport:
-    return rename(root, graph.fetch_all, graph.project, qn, new, dry_run=dry_run)
+    return rename(graph.fetch_all, graph.project, root, qn, new, dry_run=dry_run)
 
 
 def _on_disk(root: Path) -> str:

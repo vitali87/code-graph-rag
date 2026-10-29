@@ -67,9 +67,9 @@ def _renamed(temp_repo: Path, mock: MagicMock, qn_tail: str, new_name: str) -> P
     _write(temp_repo, "src/App.tsx", _APP)
     graph = _index(temp_repo, mock)
     report = rename(
-        temp_repo,
         graph.fetch_all,
         graph.project,
+        temp_repo,
         f"{graph.project}.{qn_tail}",
         new_name,
         allow_heuristic=True,
@@ -115,9 +115,9 @@ def test_a_member_expression_tag_renames_its_member(
     )
     graph = _index(temp_repo, mock_ingestor)
     report = rename(
-        temp_repo,
         graph.fetch_all,
         graph.project,
+        temp_repo,
         f"{graph.project}.src.ui.Card",
         "Panel",
         allow_heuristic=True,

@@ -38,11 +38,9 @@ from .dead_code import (
     rust_test_fn_spans,
     rust_test_modules_from_nodes,
 )
-from .types_defs import PropertyDict, PropertyParams, ResultRow
+from .types_defs import PropertyDict, QueryFn, ResultRow
 from .utils.path_utils import portable_posix, project_roots_from_rows
 from .utils.source_extraction import extract_source_lines
-
-QueryFn = Callable[[str, PropertyParams | None], list[ResultRow]]
 
 _DEFINITION_LABELS = frozenset(label.value for label in cs.DEFINITION_NODE_LABELS)
 _REACH_RELS = frozenset(

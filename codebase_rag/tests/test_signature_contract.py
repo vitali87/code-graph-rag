@@ -116,7 +116,7 @@ class _Harness:
             report,
             allow_heuristic,
             fetch_all=lambda *_a, **_k: [],
-            project="p",
+            project_name="p",
             repo_root=ROOT,
             reingest=self.reingest,
         )

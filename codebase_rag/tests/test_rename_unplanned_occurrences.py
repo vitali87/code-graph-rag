@@ -28,7 +28,8 @@ from codebase_rag.editing.occurrences import (
     _access,
     find_occurrences,
 )
-from codebase_rag.editing.rename import QueryFn, RenameRefused, rename
+from codebase_rag.editing.rename import RenameRefused, rename
+from codebase_rag.graph_query import QueryFn
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.tests.conftest import bare_registry
@@ -152,9 +153,9 @@ def test_a_call_site_the_graph_missed_refuses_the_rename(
     graph = _missing(store, "pkg/late.py")
     with pytest.raises(RenameRefused) as refused:
         rename(
-            root,
             graph,
             PROJECT,
+            root,
             HELPER,
             "assist",
             dry_run=dry_run,
@@ -180,9 +181,9 @@ def test_the_rust_reexport_case_never_leaves_a_call_under_the_old_name(
 
     try:
         report = rename(
-            root,
             _query(store),
             "mr",
+            root,
             NEXT_STRING,
             "next_str",
             reingest=updater.reingest,
@@ -208,9 +209,9 @@ def test_a_missed_rust_method_call_refuses_and_the_comment_is_not_listed(
     graph = _missing(store, "src/cmd/get.rs")
     with pytest.raises(RenameRefused) as refused:
         rename(
-            root,
             graph,
             "mr",
+            root,
             NEXT_STRING,
             "next_str",
             dry_run=True,
@@ -269,9 +270,9 @@ def test_a_missed_java_method_reference_and_static_import_call_refuse(
     graph = _missing(store, "src/main/java/a/Use.java", "src/main/java/b/Stat.java")
     with pytest.raises(RenameRefused) as refused:
         rename(
-            root,
             graph,
             PROJECT,
+            root,
             f"{PROJECT}.src.main.java.a.Greeter.Greeter.greet(String)",
             "welcome",
             dry_run=True,
@@ -311,9 +312,9 @@ def test_a_type_is_held_to_every_occurrence_not_only_calls(tmp_path: Path) -> No
     graph = _missing(store, "pkg/use.py")
     with pytest.raises(RenameRefused) as refused:
         rename(
-            root,
             graph,
             PROJECT,
+            root,
             f"{PROJECT}.pkg.errors.MyError",
             "Oops",
             dry_run=True,
@@ -346,9 +347,9 @@ def test_a_function_named_without_a_call_is_held_to_the_plan(
     graph = _missing(store, "pkg/refs.py")
     with pytest.raises(RenameRefused) as refused:
         rename(
-            root,
             graph,
             PROJECT,
+            root,
             HELPER,
             "assist",
             dry_run=True,
@@ -372,9 +373,9 @@ def test_a_call_on_an_import_line_is_not_covered_by_the_import(
     graph = _missing(store, "pkg/one.py")
     with pytest.raises(RenameRefused) as refused:
         rename(
-            root,
             graph,
             PROJECT,
+            root,
             HELPER,
             "assist",
             dry_run=True,
@@ -412,9 +413,9 @@ def test_a_method_read_through_self_is_held_to_the_plan(tmp_path: Path) -> None:
     graph = _missing(store, "pkg/worker.py")
     with pytest.raises(RenameRefused) as refused:
         rename(
-            root,
             graph,
             PROJECT,
+            root,
             f"{PROJECT}.pkg.worker.Worker.helper",
             "assist",
             dry_run=True,
@@ -454,9 +455,9 @@ def test_a_call_through_an_unknown_object_refuses_even_with_allow_heuristic(
     graph = _missing(store, "pkg/use.py")
     with pytest.raises(RenameRefused) as refused:
         rename(
-            root,
             graph,
             PROJECT,
+            root,
             CACHE_GET,
             "fetch",
             allow_heuristic=True,
@@ -483,9 +484,9 @@ def test_without_allow_heuristic_the_refusal_says_which_calls_it_cannot_take(
     graph = _missing(store, "pkg/use.py")
     with pytest.raises(RenameRefused) as refused:
         rename(
-            root,
             graph,
             PROJECT,
+            root,
             CACHE_GET,
             "fetch",
             dry_run=True,
@@ -506,9 +507,9 @@ def test_allow_heuristic_rewrites_a_call_on_a_receiver_declared_as_the_class(
     store, updater = _indexed(root, RUST, project="mr")
 
     report = rename(
-        root,
         _missing(store, "src/cmd/get.rs"),
         "mr",
+        root,
         NEXT_STRING,
         "next_str",
         allow_heuristic=True,
@@ -553,9 +554,9 @@ def test_a_class_used_as_a_python_dict_key_is_held_to_the_plan(
     graph = _missing(store, "pkg/handlers.py")
     with pytest.raises(RenameRefused) as refused:
         rename(
-            root,
             graph,
             PROJECT,
+            root,
             f"{PROJECT}.pkg.errors.MyError",
             "Oops",
             dry_run=True,
@@ -577,9 +578,9 @@ def test_the_refusal_names_ten_locations_and_counts_the_rest(tmp_path: Path) -> 
     graph = _missing(store, "pkg/many.py")
     with pytest.raises(RenameRefused) as refused:
         rename(
-            root,
             graph,
             PROJECT,
+            root,
             HELPER,
             "assist",
             dry_run=True,
@@ -608,7 +609,7 @@ def test_a_guessed_and_an_unplanned_site_are_both_reported(
         ]
 
     with pytest.raises(RenameRefused) as refused:
-        rename(root, guessed, PROJECT, HELPER, "assist", dry_run=True)
+        rename(guessed, PROJECT, root, HELPER, "assist", dry_run=True)
 
     assert [(s.path, s.line) for s in refused.value.ambiguous] == [("pkg/app.py", 5)]
     assert [(s.path, s.line) for s in refused.value.unplanned] == [("pkg/late.py", 5)]
@@ -621,9 +622,9 @@ def test_allow_heuristic_rewrites_the_unplanned_site_and_reports_it(
     root, store, updater = py_repo
 
     report = rename(
-        root,
         _missing(store, "pkg/late.py"),
         PROJECT,
+        root,
         HELPER,
         "assist",
         allow_heuristic=True,
@@ -729,7 +730,7 @@ def test_a_complete_graph_renames_as_before_with_nothing_unplanned(
     root, store, updater = py_repo
 
     report = rename(
-        root, _query(store), PROJECT, HELPER, "assist", reingest=updater.reingest
+        _query(store), PROJECT, root, HELPER, "assist", reingest=updater.reingest
     )
 
     assert report.applied, report.message
@@ -764,7 +765,7 @@ def test_prose_strings_locals_and_attributes_are_not_unplanned(
     store, updater = _indexed(root, {**PY, "pkg/notes.py": PROSE_AND_LOCALS})
 
     report = rename(
-        root, _query(store), PROJECT, HELPER, "assist", reingest=updater.reingest
+        _query(store), PROJECT, root, HELPER, "assist", reingest=updater.reingest
     )
 
     assert report.applied, report.message
@@ -791,7 +792,7 @@ def test_a_same_named_symbol_the_graph_knows_is_not_unplanned(
     store, updater = _indexed(root, {**PY, "pkg/other.py": OTHER})
 
     report = rename(
-        root, _query(store), PROJECT, HELPER, "assist", reingest=updater.reingest
+        _query(store), PROJECT, root, HELPER, "assist", reingest=updater.reingest
     )
 
     assert report.applied, report.message
@@ -831,7 +832,7 @@ def test_parameters_attributes_keywords_and_locals_are_not_unplanned(
     root.mkdir()
     store, _updater = _indexed(root, {**PY, "pkg/locals.py": LOCALS})
 
-    report = rename(root, _missing(store, "pkg/locals.py"), PROJECT, HELPER, "assist")
+    report = rename(_missing(store, "pkg/locals.py"), PROJECT, root, HELPER, "assist")
 
     assert report.applied, report.message
     assert report.unplanned == ()
@@ -856,7 +857,7 @@ def test_a_multi_name_import_line_stays_clean(tmp_path: Path) -> None:
     store, updater = _indexed(root, files)
 
     report = rename(
-        root, _query(store), PROJECT, HELPER, "assist", reingest=updater.reingest
+        _query(store), PROJECT, root, HELPER, "assist", reingest=updater.reingest
     )
 
     assert report.applied, report.message
@@ -883,7 +884,7 @@ def test_another_language_ignored_dirs_and_cgrignore_are_not_scanned(
     store, updater = _indexed(root, {**PY, **outside})
 
     report = rename(
-        root, _query(store), PROJECT, HELPER, "assist", reingest=updater.reingest
+        _query(store), PROJECT, root, HELPER, "assist", reingest=updater.reingest
     )
 
     assert report.applied, report.message
@@ -909,7 +910,7 @@ def test_a_guessed_site_alone_still_refuses_with_the_heuristic_message(
         ]
 
     with pytest.raises(RenameRefused) as refused:
-        rename(root, guessed, PROJECT, HELPER, "assist", dry_run=True)
+        rename(guessed, PROJECT, root, HELPER, "assist", dry_run=True)
 
     assert refused.value.unplanned == []
     assert [(s.path, s.line) for s in refused.value.ambiguous] == [("pkg/late.py", 5)]
@@ -948,9 +949,9 @@ def test_other_objects_methods_are_not_a_functions_occurrences(
     store, _updater = _indexed(root, FUNCTIONS)
 
     report = rename(
-        root,
         _missing(store, "pkg/client.py"),
         PROJECT,
+        root,
         f"{PROJECT}.pkg.util.{name}",
         new_name,
         allow_heuristic=allow_heuristic,
@@ -973,9 +974,9 @@ def test_a_function_reached_through_a_module_alias_is_held_to_the_plan(
     graph = _missing(store, "pkg/aliased.py")
     with pytest.raises(RenameRefused) as refused:
         rename(
-            root,
             graph,
             PROJECT,
+            root,
             HELPER,
             "assist",
             dry_run=True,
@@ -1008,9 +1009,9 @@ def test_a_file_that_never_names_the_class_is_not_held_to_its_method(
     store, _updater = _indexed(root, files)
 
     report = rename(
-        root,
         _missing(store, "pkg/store.py"),
         PROJECT,
+        root,
         CACHE_GET,
         "fetch",
         allow_heuristic=True,
@@ -1042,9 +1043,9 @@ def test_a_js_key_is_a_label_and_shorthand_is_a_use(tmp_path: Path) -> None:
     graph = _missing(store, "src/app.js")
     with pytest.raises(RenameRefused) as refused:
         rename(
-            root,
             graph,
             PROJECT,
+            root,
             f"{PROJECT}.src.util.helper",
             "assist",
             dry_run=True,
@@ -1107,9 +1108,9 @@ def test_a_call_on_an_object_from_the_classs_module_is_held_to_the_plan(
     graph = _missing(store, "pkg/use.py")
     with pytest.raises(RenameRefused) as refused:
         rename(
-            root,
             graph,
             PROJECT,
+            root,
             CACHE_GET,
             "fetch",
             allow_heuristic=allow_heuristic,
@@ -1143,9 +1144,9 @@ def test_a_module_that_only_shares_a_prefix_with_the_classs_is_not_held(
     store, _updater = _indexed(root, files)
 
     report = rename(
-        root,
         _missing(store, "pkg/store.py"),
         PROJECT,
+        root,
         CACHE_GET,
         "fetch",
         allow_heuristic=True,
@@ -1187,9 +1188,9 @@ def test_a_function_scoped_import_of_a_namesake_binds_only_that_function(
     graph = _missing(store, "pkg/mixed.py")
     with pytest.raises(RenameRefused) as refused:
         rename(
-            root,
             graph,
             PROJECT,
+            root,
             HELPER,
             "assist",
         )
@@ -1226,9 +1227,9 @@ def test_a_module_level_import_of_a_namesake_still_binds_the_whole_file(
     store, updater = _indexed(root, files)
 
     report = rename(
-        root,
         _missing(store, "pkg/elsewhere.py"),
         PROJECT,
+        root,
         HELPER,
         "assist",
         reingest=updater.reingest,
@@ -1302,9 +1303,9 @@ def test_another_modules_same_named_class_is_not_the_target(
     graph = _missing(store, "pkg/use.py")
     with pytest.raises(RenameRefused) as refused:
         rename(
-            root,
             graph,
             PROJECT,
+            root,
             CACHE_GET,
             "fetch",
             allow_heuristic=True,
@@ -1344,9 +1345,9 @@ def test_the_targets_class_is_still_certain_beside_a_namesake(
     store, updater = _indexed(root, {**RIVAL, "pkg/use.py": OWN_USERS[user]})
 
     report = rename(
-        root,
         _missing(store, "pkg/use.py"),
         PROJECT,
+        root,
         CACHE_GET,
         "fetch",
         allow_heuristic=True,
@@ -1396,9 +1397,9 @@ def test_a_module_spelled_in_a_string_is_still_the_classs_module(
     graph = _missing(store, "src/use.js")
     with pytest.raises(RenameRefused) as refused:
         rename(
-            root,
             graph,
             PROJECT,
+            root,
             f"{PROJECT}.src.cache.Cache.get",
             "fetch",
             dry_run=True,
@@ -1455,9 +1456,9 @@ def test_a_java_class_is_told_from_its_namesake_by_its_package(
 
     try:
         report = rename(
-            root,
             _missing(store, "src/main/java/c/Use.java"),
             PROJECT,
+            root,
             f"{PROJECT}.src.main.java.a.Greeter.Greeter.greet(String)",
             "welcome",
             allow_heuristic=True,
@@ -1508,9 +1509,9 @@ def test_a_namesake_module_does_not_hold_the_file_to_the_method(
     store, _updater = _indexed(root, files)
 
     report = rename(
-        root,
         _missing(store, "pkg/use.py"),
         PROJECT,
+        root,
         CACHE_GET,
         "fetch",
         allow_heuristic=True,
@@ -1546,9 +1547,9 @@ def test_an_import_of_the_classs_own_module_still_holds_the_file(
     graph = _missing(store, "pkg/use.py")
     with pytest.raises(RenameRefused) as refused:
         rename(
-            root,
             graph,
             PROJECT,
+            root,
             CACHE_GET,
             "fetch",
             allow_heuristic=True,
@@ -1597,9 +1598,9 @@ def test_a_same_named_class_in_a_same_named_module_is_not_the_target(
     graph = _missing(store, "app/use.py")
     with pytest.raises(RenameRefused) as refused:
         rename(
-            root,
             graph,
             PROJECT,
+            root,
             TWIN_GET,
             "fetch",
             allow_heuristic=True,
@@ -1621,9 +1622,9 @@ def test_the_twin_module_of_the_target_is_still_the_target(tmp_path: Path) -> No
     store, updater = _indexed(root, {**TWIN, "app/use.py": user})
 
     report = rename(
-        root,
         _missing(store, "app/use.py"),
         PROJECT,
+        root,
         TWIN_GET,
         "fetch",
         allow_heuristic=True,
@@ -1662,9 +1663,9 @@ def test_a_parameter_named_like_the_class_shadows_it_only_in_its_function(
     store, updater = _indexed(root, {**CACHE, "pkg/use.py": SHADOWED_ELSEWHERE})
 
     report = rename(
-        root,
         _missing(store, "pkg/use.py"),
         PROJECT,
+        root,
         CACHE_GET,
         "fetch",
         allow_heuristic=True,
@@ -1693,9 +1694,9 @@ def test_a_parameter_named_like_the_class_shadows_it_in_its_own_function(
     graph = _missing(store, "pkg/use.py")
     with pytest.raises(RenameRefused) as refused:
         rename(
-            root,
             graph,
             PROJECT,
+            root,
             CACHE_GET,
             "fetch",
             allow_heuristic=True,
@@ -1756,9 +1757,9 @@ def test_a_builtin_named_like_the_function_is_not_its_use(
     store, _updater = _indexed(root, files)
 
     report = rename(
-        root,
         _missing(store, builtin_user),
         PROJECT,
+        root,
         qn,
         new_name,
         allow_heuristic=allow_heuristic,
@@ -1798,7 +1799,7 @@ def test_a_bare_call_reached_through_an_import_still_counts(
 
     graph = _missing(store, "pkg/other.py")
     with pytest.raises(RenameRefused) as refused:
-        rename(root, graph, PROJECT, qn, new_name, dry_run=True)
+        rename(graph, PROJECT, root, qn, new_name, dry_run=True)
 
     assert [
         (s.kind, s.path, s.line, s.col, s.resolution) for s in refused.value.unplanned
@@ -1814,7 +1815,7 @@ def test_a_bare_call_in_the_functions_own_file_still_counts(tmp_path: Path) -> N
 
     graph = _missing(store, "pkg/util.py")
     with pytest.raises(RenameRefused) as refused:
-        rename(root, graph, PROJECT, qn, new_name, dry_run=True)
+        rename(graph, PROJECT, root, qn, new_name, dry_run=True)
 
     assert [
         (s.kind, s.path, s.line, s.col, s.resolution) for s in refused.value.unplanned
@@ -1926,9 +1927,9 @@ def test_an_import_two_source_roots_satisfy_is_never_rewritten(
 
     try:
         report = rename(
-            root,
             _missing(store, user),
             PROJECT,
+            root,
             target,
             "fetch",
             allow_heuristic=True,
@@ -1969,9 +1970,9 @@ def test_an_import_one_module_satisfies_is_still_rewritten(
     store, updater = _indexed(root, {**files, user: text})
 
     report = rename(
-        root,
         _missing(store, user),
         PROJECT,
+        root,
         f"{PROJECT}.pkg.cache.Cache.get",
         "fetch",
         allow_heuristic=True,
@@ -2007,9 +2008,9 @@ def test_a_classic_scripts_global_function_is_held_in_every_script(
     graph = _missing(store, "web/page.js")
     with pytest.raises(RenameRefused) as refused:
         rename(
-            root,
             graph,
             PROJECT,
+            root,
             f"{PROJECT}.web.lib.helper",
             "assist",
             allow_heuristic=allow_heuristic,
@@ -2046,9 +2047,9 @@ def test_a_module_marker_in_prose_leaves_the_script_classic(
     graph = _missing(store, "web/page.js")
     with pytest.raises(RenameRefused) as refused:
         rename(
-            root,
             graph,
             PROJECT,
+            root,
             f"{PROJECT}.web.lib.helper",
             "assist",
             allow_heuristic=True,
@@ -2077,9 +2078,9 @@ def test_commonjs_code_makes_the_file_a_module(tmp_path: Path, code: str) -> Non
     store, _updater = _indexed(root, files)
 
     report = rename(
-        root,
         _missing(store, "web/page.js"),
         PROJECT,
+        root,
         f"{PROJECT}.web.lib.helper",
         "assist",
     )
@@ -2153,7 +2154,7 @@ def test_an_import_the_graph_did_not_record_is_held_to_the_plan(
 
     graph = _without_imports(store, importer)
     with pytest.raises(RenameRefused) as refused:
-        rename(root, graph, project, qn, "assist", dry_run=True)
+        rename(graph, project, root, qn, "assist", dry_run=True)
 
     assert [
         (s.kind, s.path, s.line, s.col, s.resolution) for s in refused.value.unplanned
@@ -2166,9 +2167,9 @@ def test_allow_heuristic_rewrites_an_import_the_graph_did_not_record(
     root, store, _updater = py_repo
 
     report = rename(
-        root,
         _without_imports(store, "pkg/app.py"),
         PROJECT,
+        root,
         HELPER,
         "assist",
         allow_heuristic=True,
@@ -2211,9 +2212,9 @@ def test_a_local_named_like_commonjs_leaves_the_script_classic(
     graph = _missing(store, "web/page.js")
     with pytest.raises(RenameRefused) as refused:
         rename(
-            root,
             graph,
             PROJECT,
+            root,
             f"{PROJECT}.web.lib.helper",
             "assist",
             allow_heuristic=True,
@@ -2241,9 +2242,9 @@ def test_free_commonjs_names_still_make_the_file_a_module(
     store, _updater = _indexed(root, {**CLASSIC, "web/lib.js": lib})
 
     report = rename(
-        root,
         _missing(store, "web/page.js"),
         PROJECT,
+        root,
         f"{PROJECT}.web.lib.helper",
         "assist",
     )
@@ -2283,9 +2284,9 @@ def test_a_require_declared_elsewhere_leaves_the_free_call_commonjs(
     store, _updater = _indexed(root, {**CLASSIC, "web/lib.js": lib})
 
     report = rename(
-        root,
         _missing(store, "web/page.js"),
         PROJECT,
+        root,
         f"{PROJECT}.web.lib.helper",
         "assist",
         allow_heuristic=True,
@@ -2319,9 +2320,9 @@ def test_a_require_shadowed_around_the_call_leaves_the_script_classic(
     graph = _missing(store, "web/page.js")
     with pytest.raises(RenameRefused) as refused:
         rename(
-            root,
             graph,
             PROJECT,
+            root,
             f"{PROJECT}.web.lib.helper",
             "assist",
             allow_heuristic=True,
@@ -2384,7 +2385,7 @@ def test_a_companion_stub_refuses_the_rename_by_default(
 
     graph = _query(store)
     with pytest.raises(RenameRefused) as refused:
-        rename(root, graph, PROJECT, qn, new_name)
+        rename(graph, PROJECT, root, qn, new_name)
 
     assert [(s.path, s.line, s.col, s.resolution) for s in refused.value.unplanned] == [
         ("pkg/widget.pyi", line, col, "unplanned") for line, col in positions
@@ -2403,9 +2404,9 @@ def test_allow_heuristic_renames_the_companion_stub_with_its_module(
     store, updater = _indexed(root, STUBBED)
 
     report = rename(
-        root,
         _query(store),
         PROJECT,
+        root,
         qn,
         new_name,
         allow_heuristic=True,
@@ -2445,7 +2446,7 @@ def test_a_stub_is_held_to_the_module_it_declares(tmp_path: Path, where: str) ->
 
     graph = _query(store)
     with pytest.raises(RenameRefused) as refused:
-        rename(root, graph, PROJECT, qn, "assist", dry_run=True)
+        rename(graph, PROJECT, root, qn, "assist", dry_run=True)
 
     assert [(s.path, s.line, s.col) for s in refused.value.unplanned] == [(stub, 1, 4)]
 
@@ -2477,9 +2478,9 @@ def test_another_modules_stub_is_neither_refused_nor_rewritten(
     store, updater = _indexed(root, {**own, **UNRELATED_STUBS[case]})
 
     report = rename(
-        root,
         _query(store),
         PROJECT,
+        root,
         f"{PROJECT}.pkg.widget.Widget",
         "Gadget",
         allow_heuristic=allow_heuristic,
@@ -2500,7 +2501,7 @@ def test_a_module_with_no_stub_renames_as_before(tmp_path: Path, kind: str) -> N
     store, updater = _indexed(root, own)
 
     report = rename(
-        root, _query(store), PROJECT, qn, new_name, reingest=updater.reingest
+        _query(store), PROJECT, root, qn, new_name, reingest=updater.reingest
     )
 
     assert report.applied, report.message
@@ -2520,9 +2521,9 @@ def test_a_stub_only_module_is_its_own_definition(tmp_path: Path) -> None:
     store, updater = _indexed(root, files)
 
     report = rename(
-        root,
         _query(store),
         PROJECT,
+        root,
         f"{PROJECT}.pkg.widget.make",
         "build",
         reingest=updater.reingest,
@@ -2668,9 +2669,9 @@ def test_a_missed_call_through_the_crate_name_refuses_the_rename(
     graph = _missing(store, path)
     try:
         report = rename(
-            root,
             graph,
             "mr",
+            root,
             "mr.src.util.helper",
             "assist",
             allow_heuristic=allow_heuristic,
@@ -2795,9 +2796,9 @@ def test_a_missed_call_through_a_tsconfig_alias_refuses_the_rename(
     graph = _missing(store, "src/app.ts")
     try:
         report = rename(
-            root,
             graph,
             PROJECT,
+            root,
             f"{PROJECT}.src.utils.helper.helper",
             "assist",
             allow_heuristic=allow_heuristic,
@@ -2830,9 +2831,9 @@ def test_an_external_import_does_not_refuse_the_rename(
     store, _updater = _indexed(root, files)
 
     report = rename(
-        root,
         _query(store),
         PROJECT,
+        root,
         f"{PROJECT}.src.utils.helper.helper",
         "assist",
         dry_run=True,
@@ -2909,7 +2910,7 @@ def test_an_import_of_the_target_under_its_own_name_is_held_to_the_plan(
 
     graph = _unseen(store, path)
     with pytest.raises(RenameRefused) as refused:
-        rename(root, graph, PROJECT, qn, "Renamed", dry_run=True)
+        rename(graph, PROJECT, root, qn, "Renamed", dry_run=True)
 
     assert [(s.path, s.line, s.col, s.resolution) for s in refused.value.unplanned] == [
         (path, line, col, "unplanned") for line, col in positions
@@ -2927,9 +2928,9 @@ def test_allow_heuristic_renames_an_import_under_the_targets_own_name(
     store, updater = _indexed(root, {**ALIASED, path: text})
 
     report = rename(
-        root,
         _unseen(store, path),
         PROJECT,
+        root,
         qn,
         "Renamed",
         allow_heuristic=True,
@@ -2959,9 +2960,9 @@ def test_an_import_under_the_targets_name_from_another_module_is_not_held(
     store, updater = _indexed(root, files)
 
     report = rename(
-        root,
         _query(store),
         PROJECT,
+        root,
         f"{PROJECT}.pkg.widget.Widget",
         "Gadget",
         allow_heuristic=True,
@@ -2984,9 +2985,9 @@ def test_a_module_imported_under_the_targets_name_is_not_the_target(
     store, _updater = _indexed(root, {**ALIASED, "app.py": user})
 
     report = rename(
-        root,
         _unseen(store, "app.py"),
         PROJECT,
+        root,
         f"{PROJECT}.pkg.widget.Widget",
         "Gadget",
         dry_run=True,
@@ -3039,7 +3040,7 @@ def test_a_declaration_file_beside_the_module_refuses_by_default(
 
     graph = _query(store)
     with pytest.raises(RenameRefused) as refused:
-        rename(root, graph, PROJECT, qn, new_name, dry_run=True)
+        rename(graph, PROJECT, root, qn, new_name, dry_run=True)
 
     assert [(s.path, s.line, s.col, s.resolution) for s in refused.value.unplanned] == [
         ("src/util.d.ts", line, col, "unplanned") for line, col in positions
@@ -3059,9 +3060,9 @@ def test_allow_heuristic_renames_the_declaration_file_with_its_module(
     store, updater = _indexed(root, files)
 
     report = rename(
-        root,
         _query(store),
         PROJECT,
+        root,
         qn,
         new_name,
         allow_heuristic=True,
@@ -3104,9 +3105,9 @@ def test_another_modules_declaration_file_is_neither_refused_nor_rewritten(
     store, updater = _indexed(root, OTHER_DECLARATIONS[case])
 
     report = rename(
-        root,
         _query(store),
         PROJECT,
+        root,
         f"{PROJECT}.src.util.helper",
         "assist",
         allow_heuristic=allow_heuristic,
@@ -3128,9 +3129,9 @@ def test_a_declaration_file_alone_is_its_own_module(tmp_path: Path) -> None:
     graph = _query(store)
     with pytest.raises(RenameRefused) as refused:
         rename(
-            root,
             graph,
             PROJECT,
+            root,
             f"{PROJECT}.src.util.helper",
             "assist",
             dry_run=True,
@@ -3152,9 +3153,9 @@ def test_a_same_named_declaration_nested_elsewhere_is_not_the_targets(
     store, updater = _indexed(root, files)
 
     report = rename(
-        root,
         _query(store),
         PROJECT,
+        root,
         f"{PROJECT}.src.util.helper",
         "assist",
         allow_heuristic=True,
@@ -3216,9 +3217,9 @@ def test_another_modules_class_bound_by_an_import_is_not_the_target(
     store, updater = _indexed(root, {**TWO_WIDGETS, "app.py": user})
 
     report = rename(
-        root,
         _unseen(store, "app.py"),
         PROJECT,
+        root,
         f"{PROJECT}.pkg.widget.Widget",
         "Gadget",
         allow_heuristic=allow_heuristic,
@@ -3246,9 +3247,9 @@ def test_the_targets_class_bound_by_an_import_still_counts(
     graph = _unseen(store, "app.py")
     with pytest.raises(RenameRefused) as refused:
         rename(
-            root,
             graph,
             PROJECT,
+            root,
             f"{PROJECT}.pkg.widget.Widget",
             "Gadget",
             dry_run=True,
@@ -3271,9 +3272,9 @@ def test_a_class_through_a_star_import_from_elsewhere_is_held_uncertain(
     graph = _unseen(store, "app.py")
     with pytest.raises(RenameRefused) as refused:
         rename(
-            root,
             graph,
             PROJECT,
+            root,
             f"{PROJECT}.pkg.widget.Widget",
             "Gadget",
             allow_heuristic=True,
@@ -3435,7 +3436,7 @@ def test_an_importers_own_name_for_the_target_is_not_unplanned(
     store, _updater = _indexed(root, {"src/mul.ts": TS_MUL, "src/app.ts": importer})
     fetch_all = _query(store) if graph == "complete" else _unseen(store, "src/app.ts")
 
-    report = rename(root, fetch_all, PROJECT, TS_MUL_QN, "product")
+    report = rename(fetch_all, PROJECT, root, TS_MUL_QN, "product")
 
     assert report.applied, report.message
     assert report.unplanned == ()
@@ -3469,7 +3470,7 @@ def test_a_barrels_own_name_for_a_default_is_not_unplanned(
     store, _updater = _indexed(root, PARENT_BARREL)
     fetch_all = _query(store) if graph == "complete" else _missing(store, "src/app.ts")
 
-    report = rename(root, fetch_all, PROJECT, f"{PROJECT}.src.widget.Widget", "Gadget")
+    report = rename(fetch_all, PROJECT, root, f"{PROJECT}.src.widget.Widget", "Gadget")
 
     assert report.applied, report.message
     assert report.unplanned == ()
@@ -3500,9 +3501,9 @@ def test_a_use_through_a_namespace_named_like_the_function_still_counts(
     graph = _missing(store, "src/app.ts")
     with pytest.raises(RenameRefused) as refused:
         rename(
-            root,
             graph,
             PROJECT,
+            root,
             TS_MUL_QN,
             "product",
             dry_run=True,
@@ -3558,9 +3559,9 @@ def test_a_missed_call_on_a_csharp_generic_twin_refuses_the_rename(
     graph = _missing(store, "src/Acme/Use.cs")
     with pytest.raises(RenameRefused) as refused:
         rename(
-            root,
             graph,
             PROJECT,
+            root,
             CS_GENERIC_RUN,
             "Exec",
             dry_run=dry_run,
@@ -3605,9 +3606,9 @@ def test_a_missed_call_on_a_duplicate_csharp_class_refuses_the_rename(
     graph = _missing(store, "src/Acme/Use.cs")
     with pytest.raises(RenameRefused) as refused:
         rename(
-            root,
             graph,
             PROJECT,
+            root,
             f"{PROJECT}.src.Acme.Boxes.Box@8.Get",
             "Fetch",
             dry_run=True,
@@ -3632,9 +3633,9 @@ def test_the_generic_twins_rename_never_rewrites_the_plain_twins_call(
 
     try:
         report = rename(
-            root,
             _missing(store, "src/Acme/Use.cs"),
             PROJECT,
+            root,
             CS_GENERIC_RUN,
             "Exec",
             allow_heuristic=True,
@@ -3661,9 +3662,9 @@ def test_the_plain_twins_rename_never_claims_the_generic_twins_call(
     graph = _missing(store, "src/Acme/Use.cs")
     with pytest.raises(RenameRefused) as refused:
         rename(
-            root,
             graph,
             PROJECT,
+            root,
             CS_PLAIN_RUN,
             "Exec",
             allow_heuristic=True,
@@ -3687,9 +3688,9 @@ def test_a_complete_graph_renames_the_generic_twins_method_alone(
     store, updater = _indexed(root, CS_TWIN_FILES)
 
     report = rename(
-        root,
         _query(store),
         PROJECT,
+        root,
         CS_GENERIC_RUN,
         "Exec",
         reingest=updater.reingest,

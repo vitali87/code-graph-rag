@@ -77,7 +77,9 @@ def _services(ingestor: MemgraphIngestor, root: Path) -> None:
 def _dead_names(ingestor: MemgraphIngestor, endpoint_roots: bool) -> set[str]:
     config = default_dead_code_config(include_tests=True, include_classes=False)
     rows = collect_dead_code(
-        ingestor, "user-service", config._replace(endpoint_roots=endpoint_roots)
+        ingestor.fetch_all,
+        "user-service",
+        config._replace(endpoint_roots=endpoint_roots),
     )
     return {str(row[cs.KEY_NAME]) for row in rows}
 

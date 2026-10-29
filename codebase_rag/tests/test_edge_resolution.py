@@ -883,7 +883,7 @@ def _dead_code_with(min_resolution: str | None) -> set[str]:
     config = default_dead_code_config(
         include_tests=False, include_classes=False
     )._replace(entry_points=(f"{PROJECT}.m.main",), min_resolution=min_resolution)
-    rows = collect_dead_code(ingestor, PROJECT, config)
+    rows = collect_dead_code(ingestor.fetch_all, PROJECT, config)
     return {str(r[cs.KEY_QUALIFIED_NAME]) for r in rows}
 
 
@@ -923,7 +923,7 @@ def test_min_resolution_keeps_structural_relationships() -> None:
     with patch.object(
         dead_code_module, "dead_code_from_graph", return_value=set()
     ) as walk:
-        collect_dead_code(ingestor, PROJECT, config)
+        collect_dead_code(ingestor.fetch_all, PROJECT, config)
     kept = {rel[2] for rel in walk.call_args.args[1]}
     assert kept == {"INHERITS"}, kept
 

@@ -537,9 +537,9 @@ def test_a_rename_through_a_named_reexport_needs_no_allow_heuristic(
     # most common barrel layout unless the caller accepted guesses.
     graph = _rename_graph(temp_repo, COMMENT_FILES, mock_ingestor)
     report = rename(
-        temp_repo,
         graph.fetch_all,
         graph.project,
+        temp_repo,
         f"{graph.project}.src.lib.util.formatPrice",
         "formatMoney",
     )
@@ -571,9 +571,9 @@ def test_a_default_import_call_keeps_the_importers_own_name(
     graph = _rename_graph(temp_repo, ISSUE_FILES, mock_ingestor)
     before = _read(temp_repo, "src/app/main.ts")
     report = rename(
-        temp_repo,
         graph.fetch_all,
         graph.project,
+        temp_repo,
         f"{graph.project}.src.lib.math.mul.mul",
         "product",
     )
@@ -596,9 +596,9 @@ def test_a_call_through_a_star_barrel_refuses_even_with_allow_heuristic(
     before = {rel: _read(temp_repo, rel) for rel in ISSUE_FILES}
     with pytest.raises(RenameRefused) as refused:
         rename(
-            temp_repo,
             graph.fetch_all,
             graph.project,
+            temp_repo,
             f"{graph.project}.src.lib.math.add.add",
             "sum",
             allow_heuristic=allow_heuristic,
@@ -619,9 +619,9 @@ def test_a_default_reexported_under_its_own_name_keeps_its_importers(
     graph = _rename_graph(temp_repo, WIDGET_FILES, mock_ingestor)
     before = {rel: _read(temp_repo, rel) for rel in WIDGET_FILES}
     report = rename(
-        temp_repo,
         graph.fetch_all,
         graph.project,
+        temp_repo,
         f"{graph.project}.src.widget.Widget",
         "Gadget",
     )
@@ -646,9 +646,9 @@ def test_a_require_binding_keeps_the_importers_own_name(
     }
     graph = _rename_graph(temp_repo, files, mock_ingestor)
     report = rename(
-        temp_repo,
         graph.fetch_all,
         graph.project,
+        temp_repo,
         f"{graph.project}.src.mul.mul",
         "product",
     )
@@ -681,9 +681,9 @@ def test_a_star_after_a_named_reexport_refuses_even_with_allow_heuristic(
     graph = _rename_graph(temp_repo, files, mock_ingestor)
     with pytest.raises(RenameRefused) as refused:
         rename(
-            temp_repo,
             graph.fetch_all,
             graph.project,
+            temp_repo,
             f"{graph.project}.src.a.foo",
             "bar",
             allow_heuristic=True,
@@ -702,7 +702,7 @@ def test_a_chain_of_named_reexports_renames_without_leave(
     files = _chain_files('export { foo } from "../b";\n')
     graph = _rename_graph(temp_repo, files, mock_ingestor)
     report = rename(
-        temp_repo, graph.fetch_all, graph.project, f"{graph.project}.src.a.foo", "bar"
+        graph.fetch_all, graph.project, temp_repo, f"{graph.project}.src.a.foo", "bar"
     )
     assert report.applied, report.message
     assert _read(temp_repo, "src/b/index.ts") == 'export { bar } from "../a";\n'
@@ -771,7 +771,7 @@ def test_the_star_walk_binds_each_consumer_to_its_first_star_barrel(
         return STAR_WALK_IMPORTERS.get(source, [])
 
     monkeypatch.setattr(graph_query, "importers", importers)
-    bound = Renamer(tmp_path, MagicMock(), "p")._js_star_bound("p.a", "foo")
+    bound = Renamer(MagicMock(), "p", tmp_path)._js_star_bound("p.a", "foo")
     assert bound == {
         "src/near.ts": "src/c.ts",
         "src/app.ts": "src/c.ts",

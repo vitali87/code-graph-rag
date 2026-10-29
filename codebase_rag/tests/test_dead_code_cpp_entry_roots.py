@@ -59,7 +59,9 @@ def test_windows_entry_points_root_their_call_tree() -> None:
     config = default_dead_code_config(include_tests=True, include_classes=False)
     reported = {
         row["qualified_name"]
-        for row in collect_dead_code(FakeIngestor(nodes, rels), "proj", config)
+        for row in collect_dead_code(
+            FakeIngestor(nodes, rels).fetch_all, "proj", config
+        )
     }
     assert "proj.runner.main.wWinMain" not in reported, reported
     assert "proj.runner.window.Create" not in reported, reported
@@ -69,7 +71,7 @@ def test_windows_entry_points_root_their_call_tree() -> None:
 def test_c_main_is_rooted() -> None:
     nodes = [_node("proj.tool.entry.main", "main", "tool/entry.c")]
     config = default_dead_code_config(include_tests=True, include_classes=False)
-    reported = collect_dead_code(FakeIngestor(nodes, []), "proj", config)
+    reported = collect_dead_code(FakeIngestor(nodes, []).fetch_all, "proj", config)
     assert reported == [], reported
 
 
@@ -78,7 +80,7 @@ def test_header_defined_entry_name_is_not_rooted() -> None:
     # defined in a .h/.hpp is ordinary code and must stay a candidate.
     nodes = [_node("proj.lib.api.WinMain", "WinMain", "lib/api.h")]
     config = default_dead_code_config(include_tests=True, include_classes=False)
-    reported = collect_dead_code(FakeIngestor(nodes, []), "proj", config)
+    reported = collect_dead_code(FakeIngestor(nodes, []).fetch_all, "proj", config)
     assert len(reported) == 1, reported
 
 
@@ -89,7 +91,7 @@ def test_namespace_named_like_file_stem_is_not_rooted() -> None:
     # earns the root.
     nodes = [_node("proj.app.main.main.main", "main", "app/main.cpp")]
     config = default_dead_code_config(include_tests=True, include_classes=False)
-    reported = collect_dead_code(FakeIngestor(nodes, []), "proj", config)
+    reported = collect_dead_code(FakeIngestor(nodes, []).fetch_all, "proj", config)
     assert len(reported) == 1, reported
 
 
@@ -99,7 +101,7 @@ def test_namespace_scoped_main_is_not_rooted() -> None:
     # whose segment matches the file stem) earns the root.
     nodes = [_node("proj.app.util.detail.main", "main", "app/util.cpp")]
     config = default_dead_code_config(include_tests=True, include_classes=False)
-    reported = collect_dead_code(FakeIngestor(nodes, []), "proj", config)
+    reported = collect_dead_code(FakeIngestor(nodes, []).fetch_all, "proj", config)
     assert len(reported) == 1, reported
 
 
@@ -108,5 +110,5 @@ def test_entry_name_on_other_language_is_not_rooted() -> None:
     # same-named Python function earns no root.
     nodes = [_node("proj.tool.wWinMain", "wWinMain", "tool/entry.py")]
     config = default_dead_code_config(include_tests=True, include_classes=False)
-    reported = collect_dead_code(FakeIngestor(nodes, []), "proj", config)
+    reported = collect_dead_code(FakeIngestor(nodes, []).fetch_all, "proj", config)
     assert len(reported) == 1, reported

@@ -404,9 +404,9 @@ def test_renaming_the_function_leaves_its_type_twin(temp_repo: Path) -> None:
     updater.run()
 
     report = rename(
-        temp_repo,
         store.fetch_all,
         updater.project_name,
+        temp_repo,
         f"{updater.project_name}.src.shape.input",
         "makeInput",
         dry_run=True,
@@ -436,9 +436,9 @@ def test_renaming_a_function_whose_import_also_binds_its_type_twin_refuses(
 
     with pytest.raises(RenameRefused) as refused:
         rename(
-            temp_repo,
             store.fetch_all,
             updater.project_name,
+            temp_repo,
             f"{updater.project_name}.src.shape.input",
             "makeInput",
             dry_run=True,
@@ -464,9 +464,9 @@ def test_renaming_a_function_whose_import_is_also_implemented_refuses(
 
     with pytest.raises(RenameRefused) as refused:
         rename(
-            temp_repo,
             store.fetch_all,
             updater.project_name,
+            temp_repo,
             f"{updater.project_name}.src.shape.Opts",
             "makeOpts",
             dry_run=True,

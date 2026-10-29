@@ -97,7 +97,7 @@ def test_a_decorated_definition_renames_its_def_token_not_the_decorator(
             lambda _suffix: None,
         )
     report = rename(
-        temp_repo, graph.fetch_all, graph.project, f"{graph.project}.mod.fetch", "load"
+        graph.fetch_all, graph.project, temp_repo, f"{graph.project}.mod.fetch", "load"
     )
     assert report.applied, report.message
     assert (temp_repo / "mod.py").read_text(encoding="utf-8") == DECORATED.replace(
@@ -125,9 +125,9 @@ def test_markdown_mentions_of_the_old_name_are_reported(
         "helper appears here too\n", encoding="utf-8"
     )
     report = rename(
-        root,
         graph.fetch_all,
         graph.project,
+        root,
         f"{graph.project}.pkg.util.helper",
         "assist",
     )
@@ -143,9 +143,9 @@ def test_python_function_rename_rewrites_every_site_and_import(
     root, graph = py_repo
     (root / "tests" / "__init__.py").write_bytes(b"")
     report = rename(
-        root,
         graph.fetch_all,
         graph.project,
+        root,
         f"{graph.project}.pkg.util.helper",
         "assist",
     )
@@ -174,9 +174,9 @@ def test_python_method_rename_covers_the_hierarchy(
     root, graph = py_repo
     (root / "tests" / "__init__.py").write_bytes(b"")
     report = rename(
-        root,
         graph.fetch_all,
         graph.project,
+        root,
         f"{graph.project}.pkg.shapes.Base.area",
         "surface",
     )
@@ -197,9 +197,9 @@ def test_python_constant_rename(py_repo: tuple[Path, RecordedGraph]) -> None:
     (root / "tests" / "__init__.py").write_bytes(b"")
     try:
         report = rename(
-            root,
             graph.fetch_all,
             graph.project,
+            root,
             f"{graph.project}.pkg.util.LIMIT",
             "CAP",
         )
@@ -217,9 +217,9 @@ def test_dry_run_changes_nothing(py_repo: tuple[Path, RecordedGraph]) -> None:
     root, graph = py_repo
     before = {p: p.read_bytes() for p in root.rglob("*.py")}
     report = rename(
-        root,
         graph.fetch_all,
         graph.project,
+        root,
         f"{graph.project}.pkg.util.helper",
         "assist",
         dry_run=True,
@@ -241,9 +241,9 @@ def test_heuristic_site_refuses_and_changes_nothing(
     before = (temp_repo / "pkg" / "app.py").read_bytes()
     with pytest.raises(RenameRefused) as excinfo:
         rename(
-            temp_repo,
             graph.fetch_all,
             graph.project,
+            temp_repo,
             f"{graph.project}.pkg.util.lonely",
             "alone",
         )
@@ -253,9 +253,9 @@ def test_heuristic_site_refuses_and_changes_nothing(
     assert "lonely" in (temp_repo / "pkg" / "util.py").read_text()
     # Accepting the risk rewrites through the guess.
     report = rename(
-        temp_repo,
         graph.fetch_all,
         graph.project,
+        temp_repo,
         f"{graph.project}.pkg.util.lonely",
         "alone",
         allow_heuristic=True,
@@ -285,9 +285,9 @@ def test_unlocatable_dynamic_site_is_listed(
     )
     with pytest.raises(RenameRefused) as excinfo:
         rename(
-            temp_repo,
             graph.fetch_all,
             graph.project,
+            temp_repo,
             f"{graph.project}.pkg.util.helper",
             "assist",
         )
@@ -299,9 +299,9 @@ def test_unlocatable_dynamic_site_is_listed(
     # over a half-renamed symbol.
     with pytest.raises(RenameRefused) as forced:
         rename(
-            temp_repo,
             graph.fetch_all,
             graph.project,
+            temp_repo,
             f"{graph.project}.pkg.util.helper",
             "assist",
             allow_heuristic=True,
@@ -325,9 +325,9 @@ def test_a_deleted_definition_file_refuses_rather_than_raising(
 
     with pytest.raises(RenameRefused) as refused:
         rename(
-            root,
             graph.fetch_all,
             graph.project,
+            root,
             f"{graph.project}.pkg.util.helper",
             "assist",
         )
@@ -338,13 +338,13 @@ def test_unknown_symbol_and_bad_name(py_repo: tuple[Path, RecordedGraph]) -> Non
     root, graph = py_repo
     with pytest.raises(RenameRefused, match="No definition"):
         rename(
-            root, graph.fetch_all, graph.project, f"{graph.project}.pkg.util.nope", "x"
+            graph.fetch_all, graph.project, root, f"{graph.project}.pkg.util.nope", "x"
         )
     with pytest.raises(RenameRefused, match="valid identifier"):
         rename(
-            root,
             graph.fetch_all,
             graph.project,
+            root,
             f"{graph.project}.pkg.util.helper",
             "not valid",
         )
@@ -354,9 +354,9 @@ def test_verifier_failure_rolls_back(py_repo: tuple[Path, RecordedGraph]) -> Non
     root, graph = py_repo
     before = {p: p.read_bytes() for p in root.rglob("*.py")}
     report = rename(
-        root,
         graph.fetch_all,
         graph.project,
+        root,
         f"{graph.project}.pkg.util.helper",
         "assist",
         verify=lambda tree: False,
@@ -381,9 +381,9 @@ def test_typescript_rename(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     )
     graph = _index(temp_repo, mock_ingestor)
     report = rename(
-        temp_repo,
         graph.fetch_all,
         graph.project,
+        temp_repo,
         f"{graph.project}.src.util.helper",
         "assist",
         allow_heuristic=True,
@@ -410,9 +410,9 @@ def test_go_rename(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     )
     graph = _index(temp_repo, mock_ingestor)
     report = rename(
-        temp_repo,
         graph.fetch_all,
         graph.project,
+        temp_repo,
         f"{graph.project}.main.helper",
         "assist",
         allow_heuristic=True,
@@ -443,7 +443,7 @@ def test_java_rename(temp_repo: Path, mock_ingestor: MagicMock) -> None:
         or ".Util.helper(" in q
     )
     report = rename(
-        temp_repo, graph.fetch_all, graph.project, qn, "assist", allow_heuristic=True
+        graph.fetch_all, graph.project, temp_repo, qn, "assist", allow_heuristic=True
     )
     assert report.applied, report.message
     assert (
@@ -465,9 +465,9 @@ def test_rust_rename(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     )
     graph = _index(temp_repo, mock_ingestor)
     report = rename(
-        temp_repo,
         graph.fetch_all,
         graph.project,
+        temp_repo,
         f"{graph.project}.src.util.helper",
         "assist",
         allow_heuristic=True,
@@ -505,9 +505,9 @@ def test_method_rename_leaves_a_same_named_module_symbol_alone(
     )
     graph = _index(temp_repo, mock_ingestor)
     report = rename(
-        temp_repo,
         graph.fetch_all,
         graph.project,
+        temp_repo,
         f"{graph.project}.pkg.util.Store.get",
         "fetch",
         allow_heuristic=True,
@@ -550,9 +550,9 @@ def test_callee_is_renamed_when_an_argument_shares_its_name(
     )
     graph = _index(temp_repo, mock_ingestor)
     report = rename(
-        temp_repo,
         graph.fetch_all,
         graph.project,
+        temp_repo,
         f"{graph.project}.pkg.util.helper",
         "assist",
     )
@@ -570,9 +570,9 @@ def test_a_graph_known_site_in_a_missing_file_refuses_the_rename(
     before = (root / "pkg" / "util.py").read_text()
     with pytest.raises(RenameRefused) as refused:
         rename(
-            root,
             graph.fetch_all,
             graph.project,
+            root,
             f"{graph.project}.pkg.util.helper",
             "assist",
         )
@@ -598,9 +598,9 @@ def test_a_graph_known_call_without_a_site_refuses_the_rename(
     before = (root / "pkg" / "util.py").read_text()
     with pytest.raises(RenameRefused) as refused:
         rename(
-            root,
             graph.fetch_all,
             graph.project,
+            root,
             f"{graph.project}.pkg.util.helper",
             "assist",
         )
@@ -644,9 +644,9 @@ def test_class_rename_refuses_when_a_base_or_annotation_edge_has_no_site(
     root, graph = py_repo
     with pytest.raises(RenameRefused) as refused:
         rename(
-            root,
             graph.fetch_all,
             graph.project,
+            root,
             f"{graph.project}.pkg.shapes.Base",
             "Shape",
         )
@@ -662,9 +662,9 @@ def test_dry_run_returns_the_diff_and_lists_import_sites(
     root, graph = py_repo
     before = {p: (root / p).read_bytes() for p in PY_FILES}
     report = rename(
-        root,
         graph.fetch_all,
         graph.project,
+        root,
         f"{graph.project}.pkg.util.helper",
         "assist",
         dry_run=True,
@@ -796,9 +796,9 @@ def test_both_links_of_a_fluent_chain_are_renamed(
     _write(temp_repo, "pkg/fluent.py", FLUENT.format(annotation=": Fluent"))
     graph = _index(temp_repo, mock_ingestor)
     report = rename(
-        temp_repo,
         graph.fetch_all,
         graph.project,
+        temp_repo,
         f"{graph.project}.pkg.fluent.Fluent.helper",
         "assist",
     )
@@ -829,10 +829,10 @@ def test_an_unrecorded_chain_link_is_renamed_only_as_a_guess(
     before = (temp_repo / "pkg" / "fluent.py").read_text()
     qn = f"{graph.project}.pkg.fluent.Fluent.helper"
     with pytest.raises(RenameRefused):
-        rename(temp_repo, graph.fetch_all, graph.project, qn, "assist")
+        rename(graph.fetch_all, graph.project, temp_repo, qn, "assist")
     assert (temp_repo / "pkg" / "fluent.py").read_text() == before
     report = rename(
-        temp_repo, graph.fetch_all, graph.project, qn, "assist", allow_heuristic=True
+        graph.fetch_all, graph.project, temp_repo, qn, "assist", allow_heuristic=True
     )
     assert report.applied, report.message
     assert (
@@ -858,9 +858,9 @@ def test_a_multi_line_chain_is_renamed_link_by_link(
     )
     graph = _index(temp_repo, mock_ingestor)
     report = rename(
-        temp_repo,
         graph.fetch_all,
         graph.project,
+        temp_repo,
         f"{graph.project}.pkg.fluent.Fluent.helper",
         "assist",
     )
@@ -889,9 +889,9 @@ def test_a_member_call_whose_argument_spells_the_name_renames_the_call(
     )
     graph = _index(temp_repo, mock_ingestor)
     report = rename(
-        temp_repo,
         graph.fetch_all,
         graph.project,
+        temp_repo,
         f"{graph.project}.pkg.fluent.Fluent.helper",
         "assist",
     )
@@ -916,9 +916,9 @@ def test_a_siteless_heuristic_call_refuses_even_with_allow_heuristic(
     before = (root / "pkg" / "util.py").read_text()
     with pytest.raises(RenameRefused) as refused:
         rename(
-            root,
             graph.fetch_all,
             graph.project,
+            root,
             f"{graph.project}.pkg.util.helper",
             "assist",
             allow_heuristic=True,
@@ -943,9 +943,9 @@ def test_consumers_of_a_barrel_re_export_follow_the_rename(
         _write(temp_repo, rel, text)
     graph = _index(temp_repo, mock_ingestor)
     report = rename(
-        temp_repo,
         graph.fetch_all,
         graph.project,
+        temp_repo,
         f"{graph.project}.pkg.util.helper",
         "assist",
         allow_heuristic=True,
@@ -1707,9 +1707,9 @@ def test_a_rename_plan_leaves_a_longer_named_projects_references_out(
         {cq.CYPHER_GRAPH_REFERENCES: [_foreign_row(graph.project, "far/use.py", 2)]},
     )
     report = rename(
-        root,
         nested.fetch_all,
         graph.project,
+        root,
         f"{graph.project}.pkg.util.helper",
         "assist",
         dry_run=True,
@@ -1731,9 +1731,9 @@ def test_a_longer_named_projects_unlocatable_type_edge_does_not_refuse(
         {cq.CYPHER_GRAPH_TYPE_EDGES: [_foreign_row(graph.project, None, None)]},
     )
     report = rename(
-        root,
         nested.fetch_all,
         graph.project,
+        root,
         f"{graph.project}.pkg.util.helper",
         "assist",
         dry_run=True,

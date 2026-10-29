@@ -42,7 +42,7 @@ def _method(qn: str, name: str, path: str) -> ResultRow:
 
 def _collect(nodes: list[ResultRow]) -> set[str]:
     rows = collect_dead_code(
-        FakeIngestor(nodes, []),
+        FakeIngestor(nodes, []).fetch_all,
         "proj",
         default_dead_code_config(include_tests=True, include_classes=False),
     )

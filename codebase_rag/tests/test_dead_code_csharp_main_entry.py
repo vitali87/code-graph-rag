@@ -86,7 +86,9 @@ def _collect(nodes: list[ResultRow], rels: list[ResultRow]) -> set[str]:
     config = default_dead_code_config(include_tests=True, include_classes=False)
     return {
         str(row["qualified_name"])
-        for row in collect_dead_code(FakeIngestor(nodes, rels), "proj", config)
+        for row in collect_dead_code(
+            FakeIngestor(nodes, rels).fetch_all, "proj", config
+        )
     }
 
 

@@ -30,8 +30,8 @@ from .types_defs import (
     DuplicateMember,
     DuplicatesConfig,
     DuplicatesReport,
-    GraphQueryClient,
     PropertyValue,
+    QueryFn,
     ResultRow,
 )
 from .utils import qn_markers
@@ -56,13 +56,13 @@ class _Cluster(NamedTuple):
 
 
 def collect_duplicates(
-    ingestor: GraphQueryClient, project_name: str, config: DuplicatesConfig
+    fetch_all: QueryFn, project_name: str, config: DuplicatesConfig
 ) -> list[DuplicateGroup]:
-    return collect_duplicates_with_coverage(ingestor, project_name, config).groups
+    return collect_duplicates_with_coverage(fetch_all, project_name, config).groups
 
 
 def collect_duplicates_with_coverage(
-    ingestor: GraphQueryClient, project_name: str, config: DuplicatesConfig
+    fetch_all: QueryFn, project_name: str, config: DuplicatesConfig
 ) -> DuplicatesReport:
     """Duplicate groups plus scan-completeness metadata.
 
@@ -75,8 +75,8 @@ def collect_duplicates_with_coverage(
     prefix = project_name + cs.SEPARATOR_DOT
     params: dict[str, PropertyValue] = {cs.KEY_PROJECT_PREFIX: prefix}
 
-    rows = ingestor.fetch_all(cq.CYPHER_DUPLICATE_FINGERPRINTS, params)
-    skipped_rows = ingestor.fetch_all(cq.CYPHER_DUPLICATE_SKIPPED_COUNT, params)
+    rows = fetch_all(cq.CYPHER_DUPLICATE_FINGERPRINTS, params)
+    skipped_rows = fetch_all(cq.CYPHER_DUPLICATE_SKIPPED_COUNT, params)
     skipped = int(str(skipped_rows[0].get(cs.KEY_SKIPPED) or 0)) if skipped_rows else 0
 
     order = list(_entries_from_rows(rows, config).values())

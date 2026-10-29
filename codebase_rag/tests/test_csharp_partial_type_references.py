@@ -433,7 +433,7 @@ def test_renaming_either_part_renames_every_part(temp_repo: Path, part: str) -> 
     )
 
     report = rename(
-        root, store.fetch_all, PROJECT, part, "Purchase", reingest=updater.reingest
+        store.fetch_all, PROJECT, root, part, "Purchase", reingest=updater.reingest
     )
 
     assert report.applied, report.message
@@ -463,7 +463,7 @@ def test_a_partial_class_named_by_a_parameter_refuses_and_writes_nothing(
 
     with pytest.raises(RenameRefused) as refused:
         rename(
-            root, store.fetch_all, PROJECT, part, "Purchase", reingest=updater.reingest
+            store.fetch_all, PROJECT, root, part, "Purchase", reingest=updater.reingest
         )
 
     owners = {site.owner for site in refused.value.ambiguous}
@@ -487,9 +487,9 @@ def test_a_same_named_partial_class_of_another_directory_is_left_alone(
     )
 
     report = rename(
-        root,
         store.fetch_all,
         PROJECT,
+        root,
         f"{PROJECT}.A.Order.Tax.Shop.Order",
         "Purchase",
         reingest=updater.reingest,
@@ -518,9 +518,9 @@ def test_a_non_partial_same_named_type_is_left_alone(temp_repo: Path) -> None:
     )
 
     report = rename(
-        root,
         store.fetch_all,
         PROJECT,
+        root,
         f"{PROJECT}.Box.Shop.Box",
         "Crate",
         reingest=updater.reingest,
@@ -550,9 +550,9 @@ def test_renaming_a_python_class_never_asks_for_partial_parts(
         return store.fetch_all(query, params)
 
     report = rename(
-        root,
         fetch_all,
         PROJECT,
+        root,
         f"{PROJECT}.pkg.util.Helper",
         "Assist",
         reingest=updater.reingest,
@@ -601,7 +601,7 @@ def test_a_partial_twin_of_another_arity_is_left_alone(
     store, updater = _indexed(root, {**PLAIN_BOX_FILES, **GENERIC_BOX_FILES})
 
     report = rename(
-        root, store.fetch_all, PROJECT, target, "Crate", reingest=updater.reingest
+        store.fetch_all, PROJECT, root, target, "Crate", reingest=updater.reingest
     )
 
     assert report.applied, report.message

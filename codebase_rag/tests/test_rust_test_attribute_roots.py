@@ -79,7 +79,7 @@ def _collect(
     include_tests: bool = True,
 ) -> set[str]:
     rows = collect_dead_code(
-        FakeIngestor(nodes, rels or []),
+        FakeIngestor(nodes, rels or []).fetch_all,
         "proj",
         default_dead_code_config(include_tests=include_tests, include_classes=False),
     )
@@ -242,7 +242,9 @@ def test_project_named_tests_still_reports() -> None:
     # The project prefix is not a module segment: a project directory
     # named `tests` must not silence Rust dead-code reporting wholesale.
     rows = collect_dead_code(
-        FakeIngestor([_function("tests.src.lib.orphan", "orphan", "src/lib.rs")], []),
+        FakeIngestor(
+            [_function("tests.src.lib.orphan", "orphan", "src/lib.rs")], []
+        ).fetch_all,
         "tests",
         default_dead_code_config(include_tests=True, include_classes=False),
     )
@@ -390,7 +392,7 @@ def test_dotted_project_prefix_does_not_mask_reporting() -> None:
                 _function("my.tests.src.lib.orphan", "orphan", "src/lib.rs"),
             ],
             [],
-        ),
+        ).fetch_all,
         "my.tests",
         default_dead_code_config(include_tests=True, include_classes=False),
     )

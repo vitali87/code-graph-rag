@@ -50,7 +50,7 @@ def test_non_public_main_roots_its_helper(
     memgraph_ingestor.flush_all()
 
     config = default_dead_code_config(include_tests=True, include_classes=False)
-    rows = collect_dead_code(memgraph_ingestor, "csmain", config)
+    rows = collect_dead_code(memgraph_ingestor.fetch_all, "csmain", config)
     dead = {
         ".".join(str(row[cs.KEY_QUALIFIED_NAME]).split("(", 1)[0].rsplit(".", 2)[-2:])
         for row in rows

@@ -143,7 +143,7 @@ async def _find_duplicates(
     logger.info(ls.DUPLICATES_SCANNING.format(project_name=resolved))
     config = DuplicatesConfig(threshold=threshold, min_nodes=min_size)
     report = await asyncio.to_thread(
-        collect_duplicates_with_coverage, ingestor, resolved, config
+        collect_duplicates_with_coverage, ingestor.fetch_all, resolved, config
     )
     return _render_report(report, resolved, threshold, min_size, limit)
 

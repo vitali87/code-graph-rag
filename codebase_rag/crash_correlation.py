@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
 from . import constants as cs
-from .flow_verdict import CYPHER_FLOW_COVERAGE_GAPS, CYPHER_FLOW_EDGES, QueryFn
+from .flow_verdict import CYPHER_FLOW_COVERAGE_GAPS, CYPHER_FLOW_EDGES
 from .language_spec import get_language_for_extension
 from .trace.records import FramePoint
 from .trace.resolution import (
@@ -23,6 +23,7 @@ from .trace.resolution import (
     ResolutionStats,
     is_absolute_on_any_os,
 )
+from .types_defs import QueryFn
 
 if TYPE_CHECKING:
     from collections.abc import Mapping

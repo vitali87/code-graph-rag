@@ -75,7 +75,7 @@ class TestExactGroups:
                 _row("proj.c.other", "8b11", ["b9"]),
             ]
         )
-        groups = collect_duplicates(ingestor, "proj", _CONFIG)
+        groups = collect_duplicates(ingestor.fetch_all, "proj", _CONFIG)
         assert len(groups) == 1
         assert groups[0]["kind"] == cs.KIND_EXACT
         assert groups[0]["similarity"] == 1.0
@@ -91,7 +91,7 @@ class TestExactGroups:
                 _row("proj.b.get_y", "aaaa", [], nodes=6),
             ]
         )
-        assert collect_duplicates(ingestor, "proj", _CONFIG) == []
+        assert collect_duplicates(ingestor.fetch_all, "proj", _CONFIG) == []
 
     def test_same_span_is_deduplicated(self) -> None:
         # C++ decl/def pairs and DUP_QN registry variants repeat a span.
@@ -102,7 +102,7 @@ class TestExactGroups:
                 _row("proj.b.copy", "f3a9", ["b1"], path="proj/b.cpp", start_line=9),
             ]
         )
-        groups = collect_duplicates(ingestor, "proj", _CONFIG)
+        groups = collect_duplicates(ingestor.fetch_all, "proj", _CONFIG)
         assert len(groups) == 1
         assert len(groups[0]["members"]) == 2
 
@@ -124,7 +124,7 @@ class TestExactGroups:
                 _row("proj.o.beta_copy", "eeee", ["b2"], path="proj/o.py"),
             ]
         )
-        groups = collect_duplicates(ingestor, "proj", _CONFIG)
+        groups = collect_duplicates(ingestor.fetch_all, "proj", _CONFIG)
         assert len(groups) == 1
         assert {m["qualified_name"] for m in groups[0]["members"]} == {
             "proj.r.beta@1",
@@ -139,7 +139,7 @@ class TestExactGroups:
                 _row("proj.g.total", "f3a9", ["b1"], path="proj/x_generated/g.py"),
             ]
         )
-        assert collect_duplicates(ingestor, "proj", config) == []
+        assert collect_duplicates(ingestor.fetch_all, "proj", config) == []
 
 
 class TestSimilarGroups:
@@ -152,7 +152,7 @@ class TestSimilarGroups:
                 _row("proj.b.edit", "bbbb", [*shared, "x2"]),
             ]
         )
-        groups = collect_duplicates(ingestor, "proj", _CONFIG)
+        groups = collect_duplicates(ingestor.fetch_all, "proj", _CONFIG)
         assert len(groups) == 1
         assert groups[0]["kind"] == cs.KIND_SIMILAR
         assert groups[0]["similarity"] == round(9 / 11, 3)
@@ -165,7 +165,7 @@ class TestSimilarGroups:
                 _row("proj.b.edit", "bbbb", ["b1", "b2", "b3", "b4", "b6"]),
             ]
         )
-        assert collect_duplicates(ingestor, "proj", _CONFIG) == []
+        assert collect_duplicates(ingestor.fetch_all, "proj", _CONFIG) == []
 
     def test_size_ratio_prefilter_rejects_mismatched_sets(self) -> None:
         # Subset overlap, but 2 branches vs 10 can never reach 0.8.
@@ -176,7 +176,7 @@ class TestSimilarGroups:
                 _row("proj.b.large", "bbbb", big),
             ]
         )
-        assert collect_duplicates(ingestor, "proj", _CONFIG) == []
+        assert collect_duplicates(ingestor.fetch_all, "proj", _CONFIG) == []
 
     def test_ubiquitous_shared_branch_still_yields_pairs(self) -> None:
         # A branch shared by many functions is boilerplate, but two edited
@@ -185,7 +185,7 @@ class TestSimilarGroups:
         # cap did exactly that).
         rows = [_row(f"proj.m{i}.fn", f"fp{i}", ["hot"], nodes=20) for i in range(60)]
         ingestor = FakeIngestor(rows)
-        groups = collect_duplicates(ingestor, "proj", _CONFIG)
+        groups = collect_duplicates(ingestor.fetch_all, "proj", _CONFIG)
         # All 60 share their entire (single-element) branch set: one clique.
         assert len(groups) == 1
         assert groups[0]["kind"] == cs.KIND_SIMILAR
@@ -208,7 +208,7 @@ class TestSimilarGroups:
             for i in range(58)
         )
         ingestor = FakeIngestor(rows)
-        groups = collect_duplicates(ingestor, "proj", _CONFIG)
+        groups = collect_duplicates(ingestor.fetch_all, "proj", _CONFIG)
         pair_groups = [
             group
             for group in groups
@@ -227,7 +227,9 @@ class TestSimilarGroups:
             for i in range(10)
         ]
         config = DuplicatesConfig(max_candidate_pairs=3)
-        report = collect_duplicates_with_coverage(FakeIngestor(rows), "proj", config)
+        report = collect_duplicates_with_coverage(
+            FakeIngestor(rows).fetch_all, "proj", config
+        )
         assert report.truncated is True
 
     def test_candidate_pairs_at_exact_budget_not_truncated(self) -> None:
@@ -237,7 +239,9 @@ class TestSimilarGroups:
             for i in range(3)
         ]
         config = DuplicatesConfig(max_candidate_pairs=3)
-        report = collect_duplicates_with_coverage(FakeIngestor(rows), "proj", config)
+        report = collect_duplicates_with_coverage(
+            FakeIngestor(rows).fetch_all, "proj", config
+        )
         assert report.truncated is False
         assert len(report.groups) == 1
         assert len(report.groups[0]["members"]) == 3
@@ -251,7 +255,7 @@ class TestSimilarGroups:
                 _row("proj.c.three", "cccc", [*shared, "x3"]),
             ]
         )
-        groups = collect_duplicates(ingestor, "proj", _CONFIG)
+        groups = collect_duplicates(ingestor.fetch_all, "proj", _CONFIG)
         assert len(groups) == 1
         assert len(groups[0]["members"]) == 3
 
@@ -268,7 +272,7 @@ class TestSimilarGroups:
                 _row("proj.c.three", "cccc", ["b3", "b4", "b5", "b6", "b7", "b8"]),
             ]
         )
-        groups = collect_duplicates(ingestor, "proj", config)
+        groups = collect_duplicates(ingestor.fetch_all, "proj", config)
         assert len(groups) == 1
         assert {m["qualified_name"] for m in groups[0]["members"]} == {
             "proj.a.one",
@@ -295,7 +299,7 @@ class TestSimilarGroups:
                 ),
             ]
         )
-        groups = collect_duplicates(ingestor, "proj", config)
+        groups = collect_duplicates(ingestor.fetch_all, "proj", config)
         assert len(groups) == 1
         assert {m["qualified_name"] for m in groups[0]["members"]} == {
             "proj.a.one",
@@ -332,7 +336,7 @@ class TestSimilarGroups:
                 ),
             ]
         )
-        assert collect_duplicates(ingestor, "proj", _CONFIG) == []
+        assert collect_duplicates(ingestor.fetch_all, "proj", _CONFIG) == []
 
     def test_nested_pair_with_external_copy_still_groups(self) -> None:
         # The nested-pair exemption is scoped to containment: when the
@@ -366,7 +370,7 @@ class TestSimilarGroups:
                 ),
             ]
         )
-        groups = collect_duplicates(ingestor, "proj", _CONFIG)
+        groups = collect_duplicates(ingestor.fetch_all, "proj", _CONFIG)
         # One disjoint cluster (issue #2473): the closure and its external
         # copy nest in it as exact copies instead of a second group that
         # repeated proj.other.copy. The factory meets its own closure only
@@ -409,7 +413,7 @@ class TestSimilarGroups:
                 ),
             ]
         )
-        assert collect_duplicates(ingestor, "proj", _CONFIG) == []
+        assert collect_duplicates(ingestor.fetch_all, "proj", _CONFIG) == []
 
     def test_same_line_adjacent_definitions_still_pair(self) -> None:
         # Two DISTINCT minified definitions can share one line span without
@@ -437,7 +441,7 @@ class TestSimilarGroups:
                 ),
             ]
         )
-        groups = collect_duplicates(ingestor, "proj", _CONFIG)
+        groups = collect_duplicates(ingestor.fetch_all, "proj", _CONFIG)
         assert len(groups) == 1
         assert {m["qualified_name"] for m in groups[0]["members"]} == {
             "proj.min.first",
@@ -490,7 +494,7 @@ class TestSimilarGroups:
                 ),
             ]
         )
-        groups = collect_duplicates(ingestor, "proj", _CONFIG)
+        groups = collect_duplicates(ingestor.fetch_all, "proj", _CONFIG)
         member_sets = [
             {m["qualified_name"] for m in group["members"]} for group in groups
         ]
@@ -532,7 +536,7 @@ class TestSimilarGroups:
                 ),
             ]
         )
-        groups = collect_duplicates(ingestor, "proj", _CONFIG)
+        groups = collect_duplicates(ingestor.fetch_all, "proj", _CONFIG)
         assert len(groups) == 1
         assert {m["qualified_name"] for m in groups[0]["members"]} == {
             "proj.m.factory",
@@ -585,7 +589,7 @@ class TestSimilarGroups:
             ]
         )
         config = DuplicatesConfig(threshold=0.5)
-        groups = collect_duplicates(ingestor, "proj", config)
+        groups = collect_duplicates(ingestor.fetch_all, "proj", config)
         assert len(groups) == 1
         assert len(groups[0]["members"]) == 4
         assert groups[0]["exact_subgroups"] == [
@@ -647,7 +651,7 @@ class TestSimilarGroups:
             ]
         )
         config = DuplicatesConfig(threshold=0.5)
-        groups = collect_duplicates(ingestor, "proj", config)
+        groups = collect_duplicates(ingestor.fetch_all, "proj", config)
         assert len(groups) == 1
         assert {m["qualified_name"] for m in groups[0]["members"]} == {
             "proj.a.factory_one",
@@ -684,7 +688,7 @@ class TestSimilarGroups:
                 ),
             ]
         )
-        assert collect_duplicates(ingestor, "proj", _CONFIG) == []
+        assert collect_duplicates(ingestor.fetch_all, "proj", _CONFIG) == []
 
     def test_exact_copies_are_not_rereported_as_similar(self) -> None:
         ingestor = FakeIngestor(
@@ -693,7 +697,7 @@ class TestSimilarGroups:
                 _row("proj.b.sum_w", "f3a9", ["b1", "b2", "b3", "b4", "b5"]),
             ]
         )
-        groups = collect_duplicates(ingestor, "proj", _CONFIG)
+        groups = collect_duplicates(ingestor.fetch_all, "proj", _CONFIG)
         assert [group["kind"] for group in groups] == [cs.KIND_EXACT]
 
     def test_exact_only_skips_similarity(self) -> None:
@@ -704,7 +708,7 @@ class TestSimilarGroups:
                 _row("proj.b.edit", "bbbb", ["b1", "b2", "b3", "b4", "b6"]),
             ]
         )
-        assert collect_duplicates(ingestor, "proj", config) == []
+        assert collect_duplicates(ingestor.fetch_all, "proj", config) == []
 
 
 class TestOrderingAndCoverage:
@@ -721,7 +725,7 @@ class TestOrderingAndCoverage:
                 _row("proj.g.trio", "ffff", ["c2"], nodes=25),
             ]
         )
-        groups = collect_duplicates(ingestor, "proj", _CONFIG)
+        groups = collect_duplicates(ingestor.fetch_all, "proj", _CONFIG)
         assert [group["kind"] for group in groups] == [
             cs.KIND_EXACT,
             cs.KIND_EXACT,
@@ -731,7 +735,7 @@ class TestOrderingAndCoverage:
 
     def test_coverage_reports_skipped_symbols(self) -> None:
         ingestor = FakeIngestor([], skipped=12)
-        report = collect_duplicates_with_coverage(ingestor, "proj", _CONFIG)
+        report = collect_duplicates_with_coverage(ingestor.fetch_all, "proj", _CONFIG)
         assert report.groups == []
         assert report.skipped_symbols == 12
         assert report.truncated is False
@@ -742,7 +746,7 @@ class TestOrderingAndCoverage:
         # as complete.
         config = DuplicatesConfig(max_similar_groups=1)
         report = collect_duplicates_with_coverage(
-            FakeIngestor(_TWO_CLUSTERS), "proj", config
+            FakeIngestor(_TWO_CLUSTERS).fetch_all, "proj", config
         )
         assert len(report.groups) == 1
         assert report.truncated is True
@@ -752,7 +756,7 @@ class TestOrderingAndCoverage:
         # and must not be reported as truncated.
         config = DuplicatesConfig(max_similar_groups=2)
         report = collect_duplicates_with_coverage(
-            FakeIngestor(_TWO_CLUSTERS), "proj", config
+            FakeIngestor(_TWO_CLUSTERS).fetch_all, "proj", config
         )
         assert len(report.groups) == 2
         assert report.truncated is False
@@ -764,6 +768,6 @@ class TestOrderingAndCoverage:
                 _row("proj.B.total", "f3a9", ["b1"], label=_METHOD),
             ]
         )
-        groups = collect_duplicates(ingestor, "proj", _CONFIG)
+        groups = collect_duplicates(ingestor.fetch_all, "proj", _CONFIG)
         assert len(groups) == 1
         assert {m["label"] for m in groups[0]["members"]} == {_FUNCTION, _METHOD}

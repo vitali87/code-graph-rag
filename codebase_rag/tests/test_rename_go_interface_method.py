@@ -73,7 +73,7 @@ def _go_build(root: Path) -> None:
 
 def _rename(root: Path, files: dict[str, str], qn: str, new: str) -> None:
     store, updater = _real_project(root, files)
-    report = rename(root, store.fetch_all, PROJECT, qn, new, reingest=updater.reingest)
+    report = rename(store.fetch_all, PROJECT, root, qn, new, reingest=updater.reingest)
     assert report.applied, report.message
 
 

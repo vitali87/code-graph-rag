@@ -27,7 +27,7 @@ def enforce_contract(
     allow_heuristic: bool,
     *,
     fetch_all: QueryFn,
-    project: str,
+    project_name: str,
     repo_root: Path,
     reingest: Reingest,
 ) -> SignatureReport:
@@ -35,7 +35,7 @@ def enforce_contract(
     try:
         delta = measure(
             fetch_all,
-            project,
+            project_name,
             repo_root,
             report.files,
             reingest,

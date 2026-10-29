@@ -158,7 +158,7 @@ def _dead(graph: _Graph) -> set[str]:
     config = default_dead_code_config(include_tests=True, include_classes=True)
     return {
         str(row[cs.KEY_QUALIFIED_NAME]).removeprefix(_PREFIX)
-        for row in collect_dead_code(graph, PROJECT, config)
+        for row in collect_dead_code(graph.fetch_all, PROJECT, config)
     }
 
 

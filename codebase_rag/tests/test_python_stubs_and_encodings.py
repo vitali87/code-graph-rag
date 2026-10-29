@@ -477,7 +477,7 @@ class TestStubDefinitionsInDeadCode:
                 return [row] if query == cq.CYPHER_DEAD_CODE_NODES else []
 
         found = collect_dead_code(
-            _Store(),
+            _Store().fetch_all,
             "proj",
             default_dead_code_config(include_tests=True, include_classes=False),
         )

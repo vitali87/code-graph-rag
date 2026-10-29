@@ -24,7 +24,8 @@ from watchdog.events import FileModifiedEvent
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag import graph_query, watch
-from codebase_rag.editing.rename import QueryFn, RenameRefused, rename
+from codebase_rag.editing.rename import RenameRefused, rename
+from codebase_rag.graph_query import QueryFn
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers import call_processor as cp
@@ -444,7 +445,7 @@ def test_renaming_a_callback_passed_into_a_shorter_file_plans_cleanly(
 ) -> None:
     store = _store(temp_repo, PY_ISSUE)
 
-    report = rename(temp_repo, _query(store), PROJECT, DOUBLE, "twice", dry_run=True)
+    report = rename(_query(store), PROJECT, temp_repo, DOUBLE, "twice", dry_run=True)
 
     assert report.unlocatable == ()
     assert sorted((s.kind, s.path, s.line, s.col) for s in report.sites) == [
@@ -470,9 +471,9 @@ def test_renaming_a_callback_named_like_the_parameter_leaves_the_receiver_alone(
     )
 
     report = rename(
-        temp_repo,
         _query(store),
         PROJECT,
+        temp_repo,
         f"{PROJECT}.pkg.main.callback",
         "handler",
     )
@@ -501,7 +502,7 @@ def test_a_site_past_the_end_of_its_file_refuses_instead_of_crashing(
         return rows
 
     with pytest.raises(RenameRefused) as refused:
-        rename(temp_repo, stale, PROJECT, DOUBLE, "twice", dry_run=True)
+        rename(stale, PROJECT, temp_repo, DOUBLE, "twice", dry_run=True)
 
     assert refused.value.unlocatable == [
         cs.RENAME_UNLOCATABLE_SITE.format(
@@ -532,7 +533,7 @@ def test_renaming_a_class_a_factory_builds_through_its_parameter_still_refuses(
     query = _query(_store(temp_repo, files))
 
     with pytest.raises(RenameRefused) as refused:
-        rename(temp_repo, query, PROJECT, f"{PROJECT}.pkg.main.Model", "Entity")
+        rename(query, PROJECT, temp_repo, f"{PROJECT}.pkg.main.Model", "Entity")
 
     assert refused.value.unlocatable == [
         cs.RENAME_UNLOCATABLE_SITE.format(

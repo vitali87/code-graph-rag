@@ -93,9 +93,9 @@ def test_apply_rewrites_definition_and_sites_under_the_contract(
 ) -> None:
     root, store, updater = repo
     report = change_signature(
-        root,
         store.fetch_all,
         PROJECT,
+        root,
         HELPER,
         ["a", "n: int", "b"],
         {"n": "=1"},
@@ -118,7 +118,7 @@ def test_apply_without_reingest_skips_the_contract(
 ) -> None:
     root, store, _updater = repo
     report = change_signature(
-        root, store.fetch_all, PROJECT, HELPER, ["a", "b", "c=None"]
+        store.fetch_all, PROJECT, root, HELPER, ["a", "b", "c=None"]
     )
     assert report.applied, report.message
     assert report.verdict is None
@@ -133,7 +133,7 @@ def test_dry_run_returns_the_diff_and_writes_nothing(
     root, store, _updater = repo
     before = {rel: _read(root, rel) for rel in (UTIL, APP)}
     report = change_signature(
-        root, store.fetch_all, PROJECT, HELPER, ["b: str", "a: int"], dry_run=True
+        store.fetch_all, PROJECT, root, HELPER, ["b: str", "a: int"], dry_run=True
     )
     assert not report.applied
     assert report.files == (APP, UTIL)
@@ -151,7 +151,7 @@ def test_plan_lists_the_edits_without_staging(
     repo: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, _updater = repo
-    changer = SignatureChanger(root, store.fetch_all, PROJECT)
+    changer = SignatureChanger(store.fetch_all, PROJECT, root)
     report, edits = changer.plan(HELPER, ["a", "text: str = 'x'"], {"text": "b"}, False)
     assert report.old_params == ("a", "b")
     assert report.new_params == ("a", "text")
@@ -170,7 +170,7 @@ def test_a_rewrite_that_no_longer_parses_is_rolled_back(
     repo: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, _updater = repo
-    args = (root, store.fetch_all, PROJECT, HELPER, ["a", "n", "b"], {"n": "=)"})
+    args = (store.fetch_all, PROJECT, root, HELPER, ["a", "n", "b"], {"n": "=)"})
     preview = change_signature(*args, dry_run=True)
     assert preview.message == cs.SIGNATURE_PARSE_FAILED.format(files=APP)
     report = change_signature(*args)
@@ -189,7 +189,7 @@ def test_unknown_definition_is_refused(
     root, store, _updater = repo
     qn = f"{PROJECT}.pkg.util.nothing"
     with pytest.raises(SignatureRefused, match="No definition named"):
-        change_signature(root, store.fetch_all, PROJECT, qn, ["a"])
+        change_signature(store.fetch_all, PROJECT, root, qn, ["a"])
 
 
 def test_non_python_definition_is_refused(temp_repo: Path) -> None:
@@ -198,7 +198,7 @@ def test_non_python_definition_is_refused(temp_repo: Path) -> None:
     )
     with pytest.raises(SignatureRefused, match="is not Python"):
         change_signature(
-            root, store.fetch_all, PROJECT, f"{PROJECT}.web.lib.helper", ["b", "a"]
+            store.fetch_all, PROJECT, root, f"{PROJECT}.web.lib.helper", ["b", "a"]
         )
 
 
@@ -208,7 +208,7 @@ def test_definition_file_gone_since_indexing_is_refused(
     root, store, _updater = repo
     (root / UTIL).unlink()
     with pytest.raises(SignatureRefused, match="cannot be read"):
-        change_signature(root, store.fetch_all, PROJECT, HELPER, ["a"])
+        change_signature(store.fetch_all, PROJECT, root, HELPER, ["a"])
 
 
 def test_definition_moved_since_indexing_is_refused(
@@ -217,7 +217,7 @@ def test_definition_moved_since_indexing_is_refused(
     root, store, _updater = repo
     (root / UTIL).write_text("\n\n\n\n" + FILES[UTIL], encoding="utf-8")
     with pytest.raises(SignatureRefused, match="Could not locate the definition"):
-        change_signature(root, store.fetch_all, PROJECT, HELPER, ["a"])
+        change_signature(store.fetch_all, PROJECT, root, HELPER, ["a"])
 
 
 def test_dropping_a_parameter_the_body_reads_is_refused(
@@ -225,7 +225,7 @@ def test_dropping_a_parameter_the_body_reads_is_refused(
 ) -> None:
     root, store, _updater = repo
     with pytest.raises(SignatureRefused, match="Cannot drop parameter b"):
-        change_signature(root, store.fetch_all, PROJECT, HELPER, ["a"])
+        change_signature(store.fetch_all, PROJECT, root, HELPER, ["a"])
 
 
 @pytest.mark.parametrize(
@@ -246,7 +246,7 @@ def test_a_new_parameter_the_body_already_reads_is_refused(
     files = {"pkg/__init__.py": "", UTIL: source}
     root, store, _updater = _indexed(temp_repo, files)
     with pytest.raises(SignatureRefused, match="Cannot add parameter len"):
-        change_signature(root, store.fetch_all, PROJECT, HELPER, ["a", "len=None"])
+        change_signature(store.fetch_all, PROJECT, root, HELPER, ["a", "len=None"])
     assert _read(root, UTIL) == source
 
 
@@ -257,7 +257,7 @@ def test_a_new_parameter_named_like_a_keyword_label_is_added(
     source = "def helper(a):\n    return dict(len=a)\n"
     files = {"pkg/__init__.py": "", UTIL: source}
     root, store, _updater = _indexed(temp_repo, files)
-    report = change_signature(root, store.fetch_all, PROJECT, HELPER, ["a", "len=None"])
+    report = change_signature(store.fetch_all, PROJECT, root, HELPER, ["a", "len=None"])
     assert report.applied, report.message
     assert "def helper(a, len=None):" in _read(root, UTIL)
 
@@ -281,7 +281,7 @@ def test_a_dropped_argument_that_runs_code_leaves_the_site_unmapped(
         },
     )
     report = change_signature(
-        root, store.fetch_all, PROJECT, HELPER, ["a"], dry_run=True
+        store.fetch_all, PROJECT, root, HELPER, ["a"], dry_run=True
     )
     assert [(site.owner, site.reason) for site in report.unmapped] == [
         (
@@ -300,7 +300,7 @@ def test_literal_of_the_wrong_type_is_refused(
     root, store, _updater = repo
     with pytest.raises(SignatureRefused, match="does not fit the declared type"):
         change_signature(
-            root, store.fetch_all, PROJECT, HELPER, ["a", "n: int", "b"], {"n": "='x'"}
+            store.fetch_all, PROJECT, root, HELPER, ["a", "n: int", "b"], {"n": "='x'"}
         )
 
 
@@ -332,7 +332,7 @@ def test_a_header_python_would_reject_is_refused(
     files = {"pkg/__init__.py": "", SHAPES: HIERARCHY_SOURCE}
     root, store, _updater = _indexed(temp_repo, files)
     with pytest.raises(SignatureRefused, match="is not valid Python") as refused:
-        change_signature(root, store.fetch_all, PROJECT, BASE_F, new_params)
+        change_signature(store.fetch_all, PROJECT, root, BASE_F, new_params)
     assert error in str(refused.value)
     assert _read(root, SHAPES) == HIERARCHY_SOURCE
 
@@ -341,7 +341,7 @@ def test_edit_the_patcher_cannot_apply_is_a_refusal(
     repo: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, _updater = repo
-    changer = SignatureChanger(root, store.fetch_all, PROJECT)
+    changer = SignatureChanger(store.fetch_all, PROJECT, root)
     planned = Patcher(root)
     edits = [_Edit(UTIL, (0, 10_000), "x")]
     with pytest.raises(SignatureRefused, match="Cannot stage the signature change"):
@@ -368,7 +368,7 @@ def test_file_changed_after_planning_is_refused_not_spliced(
     monkeypatch.setattr(SignatureChanger, "_stage", stage_after_an_edit)
     with pytest.raises(SignatureRefused, match="changed on disk after"):
         change_signature(
-            root, store.fetch_all, PROJECT, HELPER, ["a", "n", "b"], {"n": "=1"}
+            store.fetch_all, PROJECT, root, HELPER, ["a", "n", "b"], {"n": "=1"}
         )
     assert _read(root, APP) == changed
     assert _read(root, UTIL) == FILES[UTIL]
@@ -386,7 +386,7 @@ def test_a_call_passing_the_receiver_explicitly_is_unmapped(
         temp_repo, {"pkg/__init__.py": "", SHAPES: SHAPES_SOURCE}
     )
     report = change_signature(
-        root, store.fetch_all, PROJECT, BASE_F, ["a", "n", "b"], {"n": "=9"}
+        store.fetch_all, PROJECT, root, BASE_F, ["a", "n", "b"], {"n": "=9"}
     )
     assert report.applied, report.message
     shapes = _read(root, SHAPES)
@@ -420,7 +420,7 @@ def test_a_call_through_a_class_imported_under_an_alias_is_unmapped(
         },
     )
     report = change_signature(
-        root, store.fetch_all, PROJECT, BASE_F, ["a", "n", "b"], {"n": "=9"}
+        store.fetch_all, PROJECT, root, BASE_F, ["a", "n", "b"], {"n": "=9"}
     )
     assert report.applied, report.message
     assert "def f(self, a, n, b=0):" in _read(root, SHAPES)
@@ -435,7 +435,7 @@ def test_a_classmethod_through_its_class_is_rewritten(temp_repo: Path) -> None:
         temp_repo, {"pkg/__init__.py": "", SHAPES: SHAPES_SOURCE}
     )
     report = change_signature(
-        root, store.fetch_all, PROJECT, BASE_MAKE, ["a", "n", "b"], {"n": "=9"}
+        store.fetch_all, PROJECT, root, BASE_MAKE, ["a", "n", "b"], {"n": "=9"}
     )
     assert report.applied, report.message
     assert report.unmapped == ()
@@ -487,7 +487,7 @@ def test_site_the_operation_cannot_read_is_unmapped(
     reason: str,
 ) -> None:
     root, store, _updater = repo
-    changer = SignatureChanger(root, store.fetch_all, PROJECT)
+    changer = SignatureChanger(store.fetch_all, PROJECT, root)
     patcher = Patcher(root)
     header = _function_header(changer, patcher)
     candidates: list = []
@@ -514,7 +514,7 @@ def test_generator_argument_is_unmapped(temp_repo: Path) -> None:
         },
     )
     report = change_signature(
-        root, store.fetch_all, PROJECT, HELPER, ["xs", "n=0"], dry_run=True
+        store.fetch_all, PROJECT, root, HELPER, ["xs", "n=0"], dry_run=True
     )
     assert [site.reason.split("`")[0] for site in report.unmapped] == [
         "arguments cannot be read positionally: "

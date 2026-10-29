@@ -131,9 +131,9 @@ def test_the_issue_repo_still_imports_after_the_rename(
     graph = _index(temp_repo, mock_ingestor)
 
     rename(
-        temp_repo,
         graph.fetch_all,
         graph.project,
+        temp_repo,
         f"{graph.project}.pkg.tax.compute_vat",
         "vat_amount",
         dry_run=False,

@@ -326,7 +326,7 @@ def test_an_unused_overloaded_function_is_one_dead_candidate(tmp_path: Path) -> 
     config = default_dead_code_config(include_tests=False, include_classes=False)
     dead = {
         str(row[cs.KEY_QUALIFIED_NAME]): row.get(cs.KEY_START_LINE)
-        for row in collect_dead_code(store, PROJECT, config)
+        for row in collect_dead_code(store.fetch_all, PROJECT, config)
     }
     assert dead == {f"{PROJECT}.internal.parse": 3}, dead
 
@@ -340,7 +340,7 @@ def _renamed(
     root = tmp_path / PROJECT
     store, updater = _index(root, files)
     report = rename(
-        root, store.fetch_all, PROJECT, qn, new_name, reingest=updater.reingest
+        store.fetch_all, PROJECT, root, qn, new_name, reingest=updater.reingest
     )
     assert report.applied, report.message
     assert report.ambiguous == ()
@@ -531,7 +531,7 @@ def test_renaming_an_abstract_member_leaves_the_static_overloads_alone(
     # the plain name once the abstract member gives it up.
     root = tmp_path / PROJECT
     store, _updater = _index(root, {"shape.ts": ABSTRACT_THEN_STATIC_TS})
-    report = rename(root, store.fetch_all, PROJECT, f"{PROJECT}.shape.A.f", "g")
+    report = rename(store.fetch_all, PROJECT, root, f"{PROJECT}.shape.A.f", "g")
     assert report.applied, report.message
     text = (root / "shape.ts").read_text(encoding="utf-8")
     assert text == ABSTRACT_THEN_STATIC_TS.replace("abstract f(", "abstract g(")
@@ -858,5 +858,5 @@ def test_the_heuristic_refusal_still_guards_a_real_fan_out(tmp_path: Path) -> No
     root = tmp_path / PROJECT
     store, _updater = _index(root, {"dup.js": text})
     with pytest.raises(RenameRefused):
-        rename(root, store.fetch_all, PROJECT, f"{PROJECT}.dup.dup", "once")
+        rename(store.fetch_all, PROJECT, root, f"{PROJECT}.dup.dup", "once")
     assert (root / "dup.js").read_text(encoding="utf-8") == text

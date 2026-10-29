@@ -262,7 +262,7 @@ def test_an_uncalled_overloaded_function_is_one_dead_candidate(
     config = default_dead_code_config(include_tests=False, include_classes=False)
     dead = {
         str(row[cs.KEY_QUALIFIED_NAME]): row.get(cs.KEY_START_LINE)
-        for row in collect_dead_code(store, PROJECT, config)
+        for row in collect_dead_code(store.fetch_all, PROJECT, config)
     }
     assert _named(dead, f"{PROJECT}.pkg.util._command") == {
         f"{PROJECT}.pkg.util._command": _line_of(util, "def _command(name=None):")
@@ -328,9 +328,9 @@ def test_rename_rewrites_every_stub_with_the_implementation(
         {"pkg/__init__.py": "", "pkg/util.py": before, "pkg/app.py": RENAME_APP},
     )
     report = rename(
-        root,
         store.fetch_all,
         PROJECT,
+        root,
         f"{PROJECT}.pkg.util.command",
         "cmd",
         reingest=updater.reingest,
@@ -367,9 +367,9 @@ def test_renaming_a_same_named_method_leaves_the_stubs_alone(
         {"pkg/__init__.py": "", "pkg/util.py": RENAME_UTIL, "pkg/app.py": RENAME_APP},
     )
     report = rename(
-        root,
         store.fetch_all,
         PROJECT,
+        root,
         f"{PROJECT}.pkg.util.Other.command",
         "cmd",
         reingest=updater.reingest,
@@ -1215,7 +1215,7 @@ def test_rename_of_a_nested_duplicate_rebound_later_still_refuses(
     store, _updater = _real_project(root, {"pkg/__init__.py": "", "pkg/util.py": util})
     with pytest.raises(RenameRefused):
         rename(
-            root, store.fetch_all, PROJECT, f"{PROJECT}.pkg.util.make.command", "cmd"
+            store.fetch_all, PROJECT, root, f"{PROJECT}.pkg.util.make.command", "cmd"
         )
     assert (root / "pkg" / "util.py").read_text(encoding="utf-8") == util
 
@@ -1229,9 +1229,9 @@ def test_rename_of_a_nested_overloaded_function_rewrites_its_stubs(
         root, {"pkg/__init__.py": "", "pkg/util.py": RENAME_NESTED_UTIL}
     )
     report = rename(
-        root,
         store.fetch_all,
         PROJECT,
+        root,
         f"{PROJECT}.pkg.util.make.command",
         "cmd",
         reingest=updater.reingest,
@@ -1423,5 +1423,5 @@ def test_rename_of_a_plain_duplicate_still_refuses_as_overload(
         root, {"pkg/__init__.py": "", "pkg/util.py": util, "pkg/app.py": RENAME_APP}
     )
     with pytest.raises(RenameRefused):
-        rename(root, store.fetch_all, PROJECT, f"{PROJECT}.pkg.util.command", "cmd")
+        rename(store.fetch_all, PROJECT, root, f"{PROJECT}.pkg.util.command", "cmd")
     assert (root / "pkg" / "util.py").read_text(encoding="utf-8") == util
