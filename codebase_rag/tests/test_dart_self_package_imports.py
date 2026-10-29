@@ -242,7 +242,7 @@ def test_an_unignored_package_under_an_ignored_dir_is_resolved(
 
 
 def test_a_renamed_package_is_seen_by_the_next_run(
-    temp_repo: Path, mock_ingestor: MagicMock
+    temp_repo: Path, mock_ingestor: MagicMock, partial_graph: None
 ) -> None:
     # The package map is per run: renaming a pubspec's `name:` and
     # re-indexing with the same updater must resolve against the new name.

@@ -49,7 +49,7 @@ def test_io_enabled_emits_io(tmp_path: Path) -> None:
     assert NL.RESOURCE.value in labels
 
 
-def test_none_calls_only_drops_defines(tmp_path: Path) -> None:
+def test_none_calls_only_drops_defines(tmp_path: Path, partial_graph: None) -> None:
     rels, _ = _run(tmp_path, ["none", "calls"])
     assert RT.DEFINES.value not in rels
     assert RT.WRITES_TO.value not in rels

@@ -647,7 +647,9 @@ def test_default_capture_emits_no_flow(tmp_path: Path) -> None:
     assert edges == []
 
 
-def test_flow_only_capture_still_ensures_resource_nodes(tmp_path: Path) -> None:
+def test_flow_only_capture_still_ensures_resource_nodes(
+    tmp_path: Path, partial_graph: None
+) -> None:
     # FLOWS_TO enabled, READS_FROM/WRITES_TO dropped: the resource endpoints of a
     # FLOWS_TO edge must still be ensured so no edge dangles to a missing node.
     capture = resolve_capture(

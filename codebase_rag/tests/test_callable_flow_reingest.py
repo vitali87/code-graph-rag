@@ -80,7 +80,7 @@ def test_watch_edit_drops_the_replaced_callback_edge(
 
 
 def test_forced_rerun_drops_the_replaced_callback_edge(
-    temp_repo: Path, mock_ingestor: MagicMock
+    temp_repo: Path, mock_ingestor: MagicMock, partial_graph: None
 ) -> None:
     project = temp_repo / "flow_force"
     _write(project, {"main.py": MAIN_TEMPLATE.format(arg="on_a")})

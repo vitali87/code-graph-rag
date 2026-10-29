@@ -66,7 +66,7 @@ def _reused_updater(project: Path, mock_ingestor: MagicMock) -> GraphUpdater:
 
 
 def test_renamed_method_does_not_resolve_through_the_dead_qn(
-    temp_repo: Path, mock_ingestor: MagicMock
+    temp_repo: Path, mock_ingestor: MagicMock, partial_graph: None
 ) -> None:
     name = "rs_reuse_rename"
     project = temp_repo / name
@@ -109,7 +109,7 @@ def test_function_locations_hold_no_entry_for_the_dead_qn(
 
 
 def test_unchanged_module_keeps_resolving_across_runs(
-    temp_repo: Path, mock_ingestor: MagicMock
+    temp_repo: Path, mock_ingestor: MagicMock, partial_graph: None
 ) -> None:
     # Control: purging on re-parse must not lose a module whose functions
     # kept their names. The trailing item makes the file re-parse; without a

@@ -343,7 +343,7 @@ _PASS_FAILURE_PREFIXES = (
 
 @pytest.fixture(autouse=True)
 def _fail_on_swallowed_pass_errors(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
 ) -> Generator[list[str], None, None]:
     """Fail any test whose indexing run swallowed a pass failure (issue #1070).
 
@@ -355,8 +355,14 @@ def _fail_on_swallowed_pass_errors(
 
     A test that means to index a broken file requests this fixture, asserts on
     the list and clears it.
+
+    The same wrapper audits the graph a recording ingestor holds after each
+    run (`_audit_recorded_graph`), for the same reason: a test that indexes a
+    fixture cannot skip the audit by not calling a helper. A test whose
+    recorder holds only part of a graph on purpose requests `partial_graph`.
     """
     failures: list[str] = []
+    audit = "partial_graph" not in request.fixturenames
     original_run = GraphUpdater.run
 
     def run_watching_for_pass_failures(self: GraphUpdater, force: bool = False) -> None:
@@ -369,10 +375,21 @@ def _fail_on_swallowed_pass_errors(
             original_run(self, force)
         finally:
             logger.remove(sink_id)
+        if audit and isinstance(
+            getattr(self.ingestor, "ensure_node_batch", None), MagicMock
+        ):
+            _audit_recorded_graph(self.ingestor)
 
     monkeypatch.setattr(GraphUpdater, "run", run_watching_for_pass_failures)
     yield failures
     assert_no_pass_failures(failures)
+
+
+@pytest.fixture
+def partial_graph() -> None:
+    """Opt out of the post-run graph audit: this test's recorder holds only
+    part of a graph on purpose, because it was reset between two runs or the
+    run's capture selection drops relationships the audit expects."""
 
 
 def assert_no_pass_failures(failures: list[str]) -> None:
@@ -1101,7 +1118,6 @@ def create_and_run_updater(
         names = ", ".join(sorted(str(lang.value) for lang in missing))
         pytest.skip(f"{names} parser not available")
     updater.run()
-    _audit_recorded_graph(mock_ingestor)
     return updater
 
 

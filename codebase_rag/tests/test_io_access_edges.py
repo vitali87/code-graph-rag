@@ -178,7 +178,9 @@ def test_db_handle_insert_is_write(tmp_path: Path) -> None:
     assert _has(rels, "m.ins", WRITES_TO, "resource::DATABASE::db.sqlite")
 
 
-def test_write_only_capture_drops_dangling_read_resource(tmp_path: Path) -> None:
+def test_write_only_capture_drops_dangling_read_resource(
+    tmp_path: Path, partial_graph: None
+) -> None:
     # With only WRITES_TO enabled, a read-only sink must not persist a
     # Resource node whose READS_FROM edge the filter drops (no orphan node).
     capture = resolve_capture(

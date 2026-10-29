@@ -226,6 +226,7 @@ def test_members_of_a_specialization_hang_off_its_canonical_name(
 
 def test_the_call_pass_spells_an_unrecorded_caller_s_class_alike(
     temp_repo: Path,
+    partial_graph: None,
 ) -> None:
     # Recovery reads the `FMT_CATCH(...) {...}` macro block as a nested
     # definition the definition pass never records, so the call pass names
