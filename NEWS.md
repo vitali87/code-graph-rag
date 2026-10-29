@@ -11,12 +11,16 @@ the README. The release workflow prepends feature entries via
 (dropping non-feature themes), and moves the marker below the block it
 inserted; hand edits remain welcome between releases and render too.
 
+- **Signature Feature**: The `change_signature` operation is now exposed through the CLI and MCP, with updated documentation.
+- **Security Improvements**: Enhanced security measures include repository approval checks and warnings before reading credential files.
+- **Fuzzing Targets**: New fuzzing targets have been added for both the graph-rs and Rust indexer, improving code robustness.
+- **Configuration Management**: The OSS Scanner image's Python base is being held at version 3.12 for stability.
+<!-- latest-release-end -->
 - **Security Enhancements**: Incorporates an OSS Scanner build image and threat model.
 - **Data Export**: Ensures all node properties within the graph are exported.
 - **SQL Fixes**: Addresses several SQL-related issues including grammar errors and dead-code roots.
 - **Rust Fixes**: Improves indexing of methods and handling of types in Rust code.
 - **Build Fixes**: Repairs build issues related to eMudhra root certificates and distrusted components.
-<!-- latest-release-end -->
 - **SBOM**: CycloneDX SBOM and Docker image attestation published with each release.
 - **Vector Store**: Default to the SQLite vector store.
 - **Docker**: No longer starts Docker without embeddings.
