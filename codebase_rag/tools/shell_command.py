@@ -1804,7 +1804,7 @@ class ShellCommander:
             return ShellCommandResult(
                 return_code=cs.SHELL_RETURN_CODE_ERROR, stdout="", stderr=msg
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool boundary: any failure becomes the tool's error result
             logger.error(ls.TOOL_SHELL_ERROR.format(error=e))
             return ShellCommandResult(
                 return_code=cs.SHELL_RETURN_CODE_ERROR, stdout="", stderr=str(e)

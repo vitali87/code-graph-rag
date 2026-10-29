@@ -103,7 +103,7 @@ class JsTsModuleSystemMixin:
                 self._process_variable_declarator_for_commonjs(
                     declarator, module_qn, language
                 )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- isolation: one unit's failure must not end the run
             logger.warning(
                 ls.JS_COMMONJS_DESTRUCTURE_FAILED, module_qn=module_qn, error=e
             )
@@ -321,7 +321,7 @@ class JsTsModuleSystemMixin:
                 get_cached_query(language_obj, cs.JS_COMMONJS_DIRECT_EXPORT_QUERY)
             )
             captures = sorted_captures(cursor, root_node)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- isolation: one unit's failure must not end the run
             logger.debug(ls.JS_COMMONJS_EXPORTS_QUERY_FAILED, error=e)
             return pending
         for module_obj, exports_prop, export_function in zip(
@@ -460,7 +460,7 @@ class JsTsModuleSystemMixin:
                     language,
                 )
 
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- isolation: one unit's failure must not end the run
                 logger.debug(ls.JS_COMMONJS_EXPORTS_QUERY_FAILED, error=e)
 
     def _ingest_es6_export_query(
@@ -501,7 +501,7 @@ class JsTsModuleSystemMixin:
                         cs.JS_EXPORT_TYPE_ES6_FUNCTION_DECL,
                         language,
                     )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- isolation: one unit's failure must not end the run
             logger.debug(ls.JS_ES6_EXPORTS_QUERY_FAILED, error=e)
 
     def _ingest_es6_exports(
@@ -522,5 +522,5 @@ class JsTsModuleSystemMixin:
                     root_node, lang_query, query_text, module_qn, language
                 )
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- isolation: one unit's failure must not end the run
             logger.debug(ls.JS_ES6_EXPORTS_DETECT_FAILED, error=e)

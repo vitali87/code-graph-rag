@@ -2720,7 +2720,7 @@ class CallProcessor:
                 )
             for call_node in call_nodes:
                 self._record_call_field_bindings(call_node, module_qn)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- isolation: one unit's failure must not end the run
             self.failed_call_files.add(file_path)
             logger.error(ls.CALL_PROCESSING_FAILED, path=file_path, error=e)
 
@@ -3024,7 +3024,7 @@ class CallProcessor:
                 call_name_cache=call_name_cache,
             )
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- isolation: one unit's failure must not end the run
             self.failed_call_files.add(file_path)
             logger.error(ls.CALL_PROCESSING_FAILED, path=file_path, error=e)
         finally:
@@ -3555,7 +3555,7 @@ class CallProcessor:
                     owned_func_nodes,
                     call_name_cache,
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- isolation: one unit's failure must not end the run
                 # One pathological function costs its own edges, not every
                 # other function's in the file (issue #3173).
                 loc = self._recorded_caller(func_node, module_qn)
@@ -4031,7 +4031,7 @@ class CallProcessor:
                     call_nodes=filtered,
                     call_name_cache=call_name_cache,
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- isolation: one unit's failure must not end the run
                 # Contained to this method, as for a free function (#3173).
                 self._record_caller_failure(ls.CALLER_CALLS_FAILED, caller_qn, e)
 
@@ -5181,7 +5181,7 @@ class CallProcessor:
             span_bindings = self._span_bindings(
                 caller_node, module_qn, class_context, language, local_var_types
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- isolation: one unit's failure must not end the run
             # A walk that still fails on some shape costs this caller its local
             # types, not the file its calls: they resolve untyped (#3173).
             self._record_caller_failure(ls.CALLER_LOCAL_TYPES_FAILED, caller_qn, e)
@@ -12194,7 +12194,7 @@ class CallProcessor:
                 elif node.type == cs.TS_JS_ASSIGNMENT_EXPRESSION:
                     self._collect_symbol_subscript_assignment(node, module_qn)
                 stack.extend(node.children)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- isolation: one unit's failure must not end the run
             self.failed_call_files.add(file_path)
             logger.error(ls.CALL_PROCESSING_FAILED, path=file_path, error=e)
 

@@ -93,7 +93,7 @@ class _Harness:
         monkeypatch.setattr(signature_contract, "measure", self._measure)
         monkeypatch.setattr(signature_contract, "undo_transaction", self._undo)
 
-    def _measure(self, fetch_all, project, repo_root, files, reingest):  # noqa: ANN001, ANN202
+    def _measure(self, fetch_all, project, repo_root, files, reingest):
         assert (project, repo_root) == ("p", ROOT)
         self.measured.append(tuple(files))
         if isinstance(self.delta, Exception):
@@ -111,7 +111,7 @@ class _Harness:
         self.reingested.append(paths)
         return ReingestReport(tuple(paths), (), (), (), 1.0)
 
-    def run(self, report: SignatureReport, allow_heuristic: bool = False):  # noqa: ANN201
+    def run(self, report: SignatureReport, allow_heuristic: bool = False):
         return enforce_contract(
             report,
             allow_heuristic,

@@ -108,7 +108,7 @@ def test_ownership_degrades_to_the_prefix_when_the_project_list_fails(
     updater = _updater(root, store, "svc")
     original = store.fetch_all
 
-    def failing(query: str, params=None):  # noqa: ANN001, ANN202
+    def failing(query: str, params=None):
         if (
             query
             == "MATCH (p:Project) RETURN p.name AS name, p.root_path AS root_path ORDER BY p.name"

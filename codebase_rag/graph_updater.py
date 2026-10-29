@@ -301,7 +301,7 @@ def _flush_embedding_batch(
     snippets = [item[2] for item in pending]
     try:
         embeddings = embed_code_batch(snippets)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- any embedding model error skips this batch, retried next sync
         logger.warning(
             ls.EMBEDDING_BATCH_COMPUTE_FAILED,
             count=len(pending),
@@ -2299,7 +2299,7 @@ class GraphUpdater:
                     cs.KEY_LAST_SYNCED_AT: datetime.now(UTC).isoformat(),
                 },
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- any engine's driver error; the write is retried later
             logger.warning(
                 ls.SYNC_TIME_NOT_RECORDED.format(project=self.project_name, error=exc)
             )
@@ -2577,7 +2577,7 @@ class GraphUpdater:
             return
         try:
             graph.execute_write(query, params)
-        except Exception:
+        except Exception:  # noqa: BLE001 -- any engine's driver error; the write is retried later
             # A delete that failed is owed exactly like one that was skipped.
             self._run.exposes_cleanup_skipped = True
             logger.debug(ls.EXPOSES_CLEANUP_UNAVAILABLE)
@@ -2702,7 +2702,7 @@ class GraphUpdater:
             rows = graph.fetch_all(
                 CYPHER_MODULE_FUNCTION_STARTS, {"module_qns": sorted(module_qns)}
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 -- any engine's driver error; the read degrades
             # The next rung of the ladder still anchors the endpoint.
             logger.debug(ls.ROUTE_HANDLER_STARTS_UNREADABLE)
             return {}
@@ -2817,7 +2817,7 @@ class GraphUpdater:
         }
         try:
             rows = list(graph.fetch_all(CYPHER_PROJECT_MODULES, params))
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- any engine's driver error; the read degrades
             logger.debug(ls.GRAPH_READ_UNAVAILABLE, label="route modules", error=exc)
             return []
         out: list[tuple[str, Path]] = []
@@ -2867,7 +2867,7 @@ class GraphUpdater:
         params = {cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT}
         try:
             rows = list(graph.fetch_all(CYPHER_PROJECT_ROUTE_HANDLERS, params))
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- any engine's driver error; the read degrades
             logger.debug(ls.GRAPH_READ_UNAVAILABLE, label="route handlers", error=exc)
             return []
         out: list[tuple[cs.NodeLabel, str, list[str], str | None]] = []
@@ -2909,7 +2909,7 @@ class GraphUpdater:
         params = {cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT}
         try:
             rows = list(graph.fetch_all(CYPHER_PROJECT_PY_MODULES, params))
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- any engine's driver error; the read degrades
             logger.debug(ls.GRAPH_READ_UNAVAILABLE, label="Python modules", error=exc)
             return []
         out: list[tuple[str, Path]] = []
@@ -3109,7 +3109,7 @@ class GraphUpdater:
         names: set[str] = {self.project_name}
         try:
             rows = self._graph_rows(cq.CYPHER_LIST_PROJECTS, None)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- any engine's driver error; the read degrades
             logger.warning(
                 ls.PRUNE_QUERY_FAILED, label="registered projects", error=exc
             )
@@ -3905,7 +3905,7 @@ class GraphUpdater:
         # previous state intact.
         try:
             rows = self._project_module_rows()
-        except Exception:
+        except Exception:  # noqa: BLE001 -- any engine's driver error; the read degrades
             logger.warning(ls.SEED_PRUNE_NO_VERDICT)
             return
         in_graph = {
@@ -4228,7 +4228,7 @@ class GraphUpdater:
                 query,
                 {**params, cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT},
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- any engine's driver error; the read degrades
             logger.warning(ls.PRUNE_QUERY_FAILED, label=label, error=exc)
             return None
 
@@ -4303,7 +4303,7 @@ class GraphUpdater:
                     cs.CYPHER_PARAM_CALLERS: sorted(candidates),
                 },
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 -- any engine's driver error; the read degrades
             logger.warning(ls.INTERFACE_BOUNDARY_UNREAD)
             return candidates
         return callers_to_reparse(rows, candidates, stable)
@@ -4339,7 +4339,7 @@ class GraphUpdater:
                     cs.KEY_PROJECT_NAME: self.project_name,
                 },
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 -- any engine's driver error; the read degrades
             logger.warning(ls.INTERFACE_FINGERPRINTS_UNREAD)
             return {}
         longer_projects = [
@@ -4360,7 +4360,7 @@ class GraphUpdater:
                 cs.CYPHER_INTERFACE_FLOW_SOURCE_PATHS,
                 {cs.CYPHER_PARAM_PATHS: sorted(stable)},
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 -- any engine's driver error; the read degrades
             logger.warning(ls.INTERFACE_FLOW_SOURCES_UNREAD)
             return {}
         return without_flow_sources(stable, rows)
@@ -4607,7 +4607,7 @@ class GraphUpdater:
                     cs.CYPHER_PARAM_PATHS: keys,
                 },
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- any engine's driver error; the read degrades
             logger.warning(ls.PRUNE_QUERY_FAILED, label="known definitions", error=exc)
             return {key: {"*"} for key in keys}
         for row in rows:
@@ -4645,7 +4645,7 @@ class GraphUpdater:
                 language,
             )
             captures = sorted_captures(QueryCursor(query), tree.root_node)
-        except Exception:
+        except Exception:  # noqa: BLE001 -- a module that fails to parse names no definitions
             return set()
         names: set[str] = set()
         for capture in (cs.CAPTURE_FUNCTION, cs.CAPTURE_CLASS):
@@ -4710,7 +4710,7 @@ class GraphUpdater:
                     cs.CYPHER_SET_UNRESOLVED_REFERENCES,
                     {cs.KEY_QN: module_qn, cs.CYPHER_PARAM_NAMES: names},
                 )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- any engine's driver error; the write is retried later
             logger.warning(ls.UNRESOLVED_REFERENCES_WRITE_FAILED, error=exc)
 
     def _update_unresolved_reference_nodes(
@@ -4939,7 +4939,7 @@ class GraphUpdater:
                     cs.KEY_PROJECT_PREFIX: f"{self.project_name}{cs.SEPARATOR_DOT}",
                 },
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- any engine's driver error; the read degrades
             logger.warning(ls.PRUNE_QUERY_FAILED, label="Package", error=exc)
             return None
         paths: set[str] = set()
@@ -5765,7 +5765,7 @@ class GraphUpdater:
                     cs.KEY_PROJECT_PREFIX: self.project_name + ".",
                 },
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- any engine's driver error; the read degrades
             logger.debug(ls.GRAPH_READ_UNAVAILABLE, label="module paths", error=exc)
             return None
         try:
@@ -5921,7 +5921,7 @@ class GraphUpdater:
             # retired project alone anchored.
             ingestor.execute_write(cs.CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES)
             prune_unanchored_resources(ingestor)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- any engine's driver error; the write is retried later
             # The sync itself succeeded; the next one tries again.
             logger.warning(
                 ls.LEGACY_DOTTED_PROJECT_RETIRE_FAILED.format(legacy=legacy, error=e)
@@ -5951,7 +5951,7 @@ class GraphUpdater:
             roots = project_roots_from_rows(
                 self._graph_rows(cq.CYPHER_LIST_PROJECTS, None)
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- any engine's driver error; the read degrades
             logger.debug(ls.GRAPH_READ_UNAVAILABLE, label="project roots", error=exc)
             return None
         root = roots.get(legacy)
@@ -6043,7 +6043,7 @@ class GraphUpdater:
                     cs.KEY_PROJECT_PREFIX: self.project_name + ".",
                 },
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 -- any engine's driver error; the read degrades
             # A graph that cannot answer (connection refused, a sink that
             # rejects reads) cannot invalidate the cache: fail open.
             return
@@ -6594,7 +6594,7 @@ class GraphUpdater:
                         file_bytes=file_bytes,
                         pre_parsed=pre_parsed.get(filepath),
                     )
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 -- isolation: one unit's failure must not end the run
                     logger.error(ls.INCREMENTAL_FILE_FAILED, path=filepath, error=exc)
                     if first_failure is None:
                         first_failure = exc
@@ -7156,7 +7156,7 @@ class GraphUpdater:
             # can vouch for.
             try:
                 self._run_cpp_frontend()
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 -- a frontend failing in any way costs only its facts
                 logger.error(ls.INCREMENTAL_FRONTEND_RERUN_FAILED, error=exc)
                 self._cpp_frontend_covered = frozenset()
                 first_failure = exc
@@ -9060,7 +9060,7 @@ class GraphUpdater:
         for query_all, scope, delete_query, label in prune_specs:
             try:
                 rows = graph.fetch_all(query_all, scope)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 -- any engine's driver error; the read degrades
                 # A graph that cannot be read cannot be pruned safely; the
                 # next healthy run sweeps whatever this one left behind.
                 logger.warning(ls.PRUNE_QUERY_FAILED, label=label, error=exc)
@@ -9300,7 +9300,7 @@ class GraphUpdater:
                     cs.KEY_PROJECT_NAME: self.project_name,
                 },
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- any engine's driver error; the read degrades
             logger.warning(
                 ls.PRUNE_QUERY_FAILED, label="legacy File identities", error=exc
             )
@@ -9343,7 +9343,7 @@ class GraphUpdater:
             rows = self._graph_rows(
                 cs.CYPHER_FILE_CONTAINERS, {cs.CYPHER_PARAM_PATHS: keys}
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- any engine's driver error; the read degrades
             # Unreadable ownership is unknown ownership: never delete a
             # globally merged key on a failed read, and never let the
             # failure escape mid-update.
@@ -9582,7 +9582,7 @@ class GraphUpdater:
 
         except KeyboardInterrupt:
             self._stop_interrupted_embeddings()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- any vector backend's error; the pass is retried
             logger.warning(ls.EMBEDDING_GENERATION_FAILED, error=e)
             self._record_embeddings_pending(True)
 
@@ -9621,7 +9621,7 @@ class GraphUpdater:
             return False
         try:
             removed = delete_fn(self.project_name, current, stored_ids, nested)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- any vector backend's error; the pass is retried
             logger.warning(
                 ls.EMBEDDING_STALE_FAILED.format(project=self.project_name, error=e)
             )
@@ -9667,7 +9667,7 @@ class GraphUpdater:
             return True
         try:
             stored_ids = verify_fn(self.project_name, expected)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- any vector backend's error; the pass is retried
             logger.warning(ls.EMBEDDING_RECONCILE_FAILED.format(error=e))
             return False
         missing = set(expected) - stored_ids

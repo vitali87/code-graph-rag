@@ -68,7 +68,7 @@ class DuckDuckGoBackend:
                 timeout=_TIMEOUT,
                 follow_redirects=True,
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool boundary: any failure becomes the tool's error result
             logger.error(
                 ls.WEB_SEARCH_ERROR.format(digest=_query_digest(query), error=e)
             )
@@ -107,7 +107,7 @@ class SerpdiveBackend:
                 },
                 timeout=_TIMEOUT,
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool boundary: any failure becomes the tool's error result
             logger.error(
                 ls.WEB_SEARCH_ERROR.format(digest=_query_digest(query), error=e)
             )
@@ -122,7 +122,7 @@ class SerpdiveBackend:
 
         try:
             payload = response.json()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool boundary: any failure becomes the tool's error result
             logger.error(
                 ls.WEB_SEARCH_ERROR.format(digest=_query_digest(query), error=e)
             )

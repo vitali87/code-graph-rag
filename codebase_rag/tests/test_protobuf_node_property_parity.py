@@ -237,7 +237,7 @@ def test_a_label_without_a_proto_message_is_reported() -> None:
     # real label lacks a message -- so that assertion cannot reach the branch
     # it is about. Calls the real function; an inline copy would be a mirror.
     class _StandInSchema:
-        class label:  # noqa: N801 - mimics the NodeSchema attribute shape
+        class label:
             value = "NoSuchNodeLabel"
 
         properties = "{qualified_name: string}"
@@ -265,7 +265,7 @@ def test_a_property_name_with_a_hyphen_is_read_whole() -> None:
     }
 
     class _StandInSchema:
-        class label:  # noqa: N801 - mimics the NodeSchema attribute shape
+        class label:
             value = "Module"
 
         properties = "{my-prop: string}"

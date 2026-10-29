@@ -405,7 +405,7 @@ def _run_verifier(verify: Verifier | None, tree: StagedTree) -> VerificationResu
         return VerificationResult(True)
     try:
         result = verify(tree)
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 -- a caller's verifier may raise anything; it reads as a failed check
         return VerificationResult(False, cs.EDIT_VERIFIER_RAISED.format(error=error))
     if result is None or result is True:
         return VerificationResult(True)

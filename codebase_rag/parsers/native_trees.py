@@ -141,7 +141,7 @@ def _bridge() -> TreeBridge | None:
     try:
         bridge: TreeBridge = bridge_type(rules())
         disagreement = _disagreement(bridge)
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 -- optional component: any failure reads as unavailable
         logger.debug(ls.NATIVE_TREES_UNAVAILABLE, error=error)
         return None
     if disagreement is not None:

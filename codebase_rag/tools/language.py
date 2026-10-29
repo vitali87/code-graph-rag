@@ -364,7 +364,7 @@ def _parse_node_types_file(node_types_path: Path) -> NodeCategories | None:
 
         return categories
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- command boundary: reported to the user, not a traceback
         click.echo(cs.LANG_ERR_PARSE_NODE_TYPES.format(error=e))
         return None
 
@@ -420,7 +420,7 @@ def _update_config_file(
 
     try:
         return _write_language_config(config_file, config_entry, language_name)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- command boundary: reported to the user, not a traceback
         _error(
             cs.LANG_ERR_UPDATE_CONFIG.format(
                 name=language_name, path=config_file, error=e
@@ -900,7 +900,7 @@ def _remove_language_from_config(config_file: Path, language_name: str) -> bool:
         click.echo(f"OK {cs.LANG_MSG_REMOVED_FROM_CONFIG.format(name=language_name)}")
         return True
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- command boundary: reported to the user, not a traceback
         _error(cs.LANG_ERR_REMOVE_CONFIG.format(error=e))
         return False
 

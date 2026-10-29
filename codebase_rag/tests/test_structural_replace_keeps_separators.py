@@ -17,9 +17,9 @@ import pytest
 
 pytest.importorskip("ast_grep_py")
 
-from ast_grep_py import SgRoot  # noqa: E402
+from ast_grep_py import SgRoot
 
-from codebase_rag.tools.ast_grep_service import AstGrepService  # noqa: E402
+from codebase_rag.tools.ast_grep_service import AstGrepService
 
 UTIL_JS = """function total(items) {
   const prices = items.map((i) => i.price)

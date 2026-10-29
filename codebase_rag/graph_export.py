@@ -46,7 +46,7 @@ def export_graph_to_file(
         )
         return True
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- command boundary: reported to the user, not a traceback
         app_context.console.print(cs.UI_ERR_EXPORT_FAILED.format(error=e))
         # The one line above is the report; a traceback at ERROR was ~200
         # lines of frames and locals for a mistyped path (issue #2410).

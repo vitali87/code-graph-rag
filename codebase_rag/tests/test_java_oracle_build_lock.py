@@ -58,7 +58,7 @@ def test_concurrent_callers_compile_the_oracle_once(
     def worker() -> None:
         try:
             java_oracle._ensure_compiled()
-        except BaseException as exc:  # noqa: BLE001
+        except BaseException as exc:
             errors.append(exc)
 
     threads = [threading.Thread(target=worker) for _ in range(6)]

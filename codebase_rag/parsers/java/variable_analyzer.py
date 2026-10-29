@@ -634,7 +634,7 @@ class JavaVariableAnalyzerMixin:
 
         try:
             variable_types = self.build_local_variable_type_map(root_node, module_qn)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- isolation: one unit's failure must not end the run
             # Another module's variables, read while resolving one caller: the
             # caller resolves without them, and the module is named for the
             # failure its own call pass would also report.

@@ -246,7 +246,7 @@ def _language_of_path(path: str) -> cs.SupportedLanguage | None:
         return None
     try:
         return get_language_for_extension(suffix)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- an unknown extension reads as no language
         return None
 
 

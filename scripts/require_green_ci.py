@@ -244,7 +244,7 @@ def github_fetch(token: str | None) -> Fetch:
 def _report(message: str, *, error: bool) -> None:
     if error and os.environ.get("GITHUB_ACTIONS") == "true":
         message = f"::error::{message}"
-    print(message, file=sys.stderr if error else sys.stdout)  # noqa: T201
+    print(message, file=sys.stderr if error else sys.stdout)
 
 
 def main(argv: list[str], fetch: Fetch | None = None) -> int:

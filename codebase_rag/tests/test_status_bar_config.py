@@ -206,7 +206,7 @@ def test_git_state_uses_target_repo_cwd(
     class _FakeCompleted:
         stdout = "## feature/x\n M something.py\n"
 
-    def fake_run(cmd, **kwargs):  # noqa: ANN001, ANN003
+    def fake_run(cmd, **kwargs):
         captured["cmd"] = cmd
         captured["cwd"] = kwargs.get("cwd")
         return _FakeCompleted()

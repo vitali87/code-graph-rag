@@ -169,7 +169,7 @@ class FileEditor:
             logger.success(ls.TOOL_FILE_EDIT_SURGICAL_SUCCESS.format(path=file_path))
             return EditResult(file_path=file_path)
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool boundary: any failure becomes the tool's error result
             logger.error(ls.EDITOR_SURGICAL_ERROR.format(error=e))
             return failed
 

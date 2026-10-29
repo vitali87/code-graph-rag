@@ -861,7 +861,7 @@ def _projects_in_graph(ingestor: MemgraphIngestor) -> list[str] | None:
     """
     try:
         return sorted(ingestor.list_projects())
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 -- any engine's driver error; the read degrades
         logger.warning(ls.MG_LIST_PROJECTS_FAILED.format(error=exc))
         return None
 
@@ -942,7 +942,7 @@ def _release_project_claim(batch_size: int, project_name: str, repo: Path) -> No
     try:
         with connect_memgraph(batch_size) as ingestor:
             release_project_claim(ingestor, project_name, repo)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 -- any engine's driver error; the write is retried later
         logger.warning(
             ls.PROJECT_CLAIM_RELEASE_FAILED.format(project_name=project_name, error=exc)
         )
@@ -1080,7 +1080,7 @@ def _clear_deleted_project_markers(
             cq.CYPHER_RECOVER_PROJECT_INCOMPLETE,
             {cs.KEY_PROJECT_NAME: project_name},
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 -- any engine's driver error; the write is retried later
         logger.warning(
             ls.CLI_DELETE_MARKER_NOT_CLEARED.format(project=project_name, error=exc)
         )
@@ -1102,7 +1102,7 @@ def _sweep_glosses_after_failed_delete(
     """
     try:
         still_listed = project_name in ingestor.list_projects()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 -- any engine's driver error; the read degrades
         logger.warning(
             ls.CLI_DELETE_GLOSS_SWEEP_SKIPPED.format(project=project_name, error=exc)
         )
@@ -2436,7 +2436,7 @@ def _project_syncs() -> list[ProjectSync] | None:
         with connect_memgraph(1) as ingestor:
             projects = ingestor.fetch_all(cq.CYPHER_PROJECT_SYNC_TIMES)
             markers = ingestor.fetch_all(cq.CYPHER_PROJECTS_WITH_INCOMPLETE_RUNS)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 -- any engine's driver error; the read degrades
         logger.warning(ls.CLI_SYNC_STATE_UNREADABLE.format(error=exc))
         return None
     synced_at = {
@@ -3402,9 +3402,7 @@ def _open_duplicate_group(
         )
         raise typer.Exit(1)
     try:
-        subprocess.Popen(  # noqa: S603 - user-configured local editor command
-            argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-        )
+        subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except OSError as e:
         app_context.console.print(
             style(

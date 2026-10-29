@@ -157,7 +157,7 @@ def main() -> int:
     for check in CHECKS:
         try:
             check()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- each check's failure is collected and reported
             failures.append(f"{check.__name__}: {exc}")
             print(f"FAIL  {check.__name__}: {exc}", file=sys.stderr)
         else:

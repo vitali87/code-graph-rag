@@ -316,7 +316,7 @@ class JsTypeInferenceEngine:
                     cursor = QueryCursor(q)
                     captures = cursor.captures(caller_node)
                     return captures.get("declarator", [])
-                except Exception:  # noqa: S112 - a failed query falls through to the next language
+                except Exception:  # noqa: BLE001, S112 - a failed query falls through to the next language
                     continue
         return None
 

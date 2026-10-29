@@ -68,7 +68,7 @@ def analyze_graph(graph_file: str) -> None:
 
     try:
         _perform_graph_analysis(graph_file)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- command boundary: reported to the user, not a traceback
         logger.error(logs.GRAPH_ANALYSIS_ERROR.format(error=e))
         sys.exit(1)
 

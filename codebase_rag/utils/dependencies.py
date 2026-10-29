@@ -118,6 +118,6 @@ def has_local_embedding_weights() -> bool:
         AutoConfig.from_pretrained(UNIXCODER_MODEL, local_files_only=True)
         AutoTokenizer.from_pretrained(UNIXCODER_MODEL, local_files_only=True)
         AutoModel.from_pretrained(UNIXCODER_MODEL, local_files_only=True)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- optional component: any failure reads as unavailable
         return False
     return True

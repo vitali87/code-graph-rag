@@ -63,7 +63,7 @@ def _read_file_sync(file_path: Path) -> FileReadResult:
             logger.warning(ls.TOOL_FILE_BINARY.format(message=error_msg))
             return FileReadResult(file_path=str(file_path), error_message=error_msg)
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- tool boundary: any failure becomes the tool's error result
         logger.error(ls.FILE_READER_ERR.format(path=file_path, error=e))
         return FileReadResult(
             file_path=str(file_path),

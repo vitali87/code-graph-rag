@@ -727,7 +727,7 @@ class DefinitionProcessor(
 
             return (root_node, language)
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- isolation: one unit's failure must not end the run
             logger.error(ls.DEF_PARSE_FAILED.format(path=file_path, error=e))
             return None
 

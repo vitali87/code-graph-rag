@@ -188,7 +188,7 @@ def create_semantic_search_tool(ingestor: QueryProtocol) -> Tool:
             results = await asyncio.to_thread(
                 semantic_code_search, ingestor, query, top_k, project
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool boundary: any failure becomes the tool's error result
             logger.error(ls.SEMANTIC_FAILED.format(query=query, error=e))
             return te.failure(e)
 
@@ -231,7 +231,7 @@ def create_get_function_source_tool(
             source_code = await asyncio.to_thread(
                 get_function_source_code, ingestor, node_id, roots_cache
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool boundary: any failure becomes the tool's error result
             logger.error(ls.SEMANTIC_SOURCE_FAILED.format(id=node_id, error=e))
             return te.failure(e)
 

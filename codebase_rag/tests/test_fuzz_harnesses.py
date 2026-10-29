@@ -58,7 +58,7 @@ class _StubProvider:
     def remaining_bytes(self) -> int:
         return self._remaining
 
-    def ConsumeIntInRange(self, low: int, high: int) -> int:  # noqa: N802
+    def ConsumeIntInRange(self, low: int, high: int) -> int:
         if low == high:
             return low
         span = high - low
@@ -71,16 +71,16 @@ class _StubProvider:
             offset += 8
         return low + (result % (span + 1))
 
-    def ConsumeBool(self) -> bool:  # noqa: N802
+    def ConsumeBool(self) -> bool:
         return bool(self.ConsumeIntInRange(0, 1))
 
-    def ConsumeBytes(self, count: int) -> bytes:  # noqa: N802
+    def ConsumeBytes(self, count: int) -> bytes:
         count = min(count, self._remaining)
         out = self._data[self._front : self._front + count]
         self._advance(count)
         return out
 
-    def ConsumeUnicodeNoSurrogates(self, count: int) -> str:  # noqa: N802
+    def ConsumeUnicodeNoSurrogates(self, count: int) -> str:
         if count == 0 or self._remaining == 0:
             return ""
         if self._remaining == 1:

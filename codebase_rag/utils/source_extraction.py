@@ -58,7 +58,7 @@ def extract_source_lines(
         extracted_lines = lines[start_line - 1 : end_line]
         return "".join(extracted_lines).strip()
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- a source that cannot be read reads as missing
         logger.warning(ls.SOURCE_EXTRACT_FAILED.format(path=file_path, error=e))
         return None
 
@@ -75,7 +75,7 @@ def extract_source_with_fallback(
         try:
             if ast_result := ast_extractor(qualified_name, file_path):
                 return str(ast_result)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- the AST extraction falls back to the line range
             logger.debug(ls.SOURCE_AST_FAILED, name=qualified_name, error=e)
 
     return extract_source_lines(file_path, start_line, end_line, encoding)
@@ -96,7 +96,7 @@ def validate_source_location(
     try:
         path_obj = Path(str(file_path))
         return True, path_obj
-    except Exception:
+    except Exception:  # noqa: BLE001 -- anything that is not a path reads as no path
         return False, None
 
 

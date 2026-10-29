@@ -185,7 +185,7 @@ def owner_check(fetch_all: QueryFn, project_name: str) -> Callable[[str], bool]:
     names: set[str] = {project_name}
     try:
         rows = fetch_all(cq.CYPHER_LIST_PROJECTS, None)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- any engine's driver error; the read degrades
         rows = []
     for row in rows:
         name = row.get(cs.KEY_NAME)

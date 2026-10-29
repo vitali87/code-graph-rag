@@ -132,7 +132,7 @@ def _trickle_server(*, in_headers: bool) -> Iterator[tuple[str, threading.Event]
     stop = threading.Event()
 
     class Handler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+        def do_GET(self) -> None:
             if in_headers:
                 self.wfile.write(b"HTTP/1.1 200 OK\r\n")
                 filler = b"X-Pad: " + b"a" * 4096

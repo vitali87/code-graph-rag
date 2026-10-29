@@ -116,7 +116,7 @@ def main(
     try:
         existing_labels = get_existing_labels(resolved_repo, resolved_token)
         print(f"Found {len(existing_labels)} existing labels\n")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- command boundary: reported to the user, not a traceback
         print(f"Error fetching existing labels: {e}")
         sys.exit(1)
 
@@ -131,7 +131,7 @@ def main(
                 success_count += 1
             else:
                 fail_count += 1
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- one label's failure is counted, the rest still run
             print(f"Error with label {label['name']}: {e}")
             fail_count += 1
 

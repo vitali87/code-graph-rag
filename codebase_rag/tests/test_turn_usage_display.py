@@ -101,7 +101,7 @@ def test_session_total_marked_partial_after_an_unpriced_turn() -> None:
 def test_price_current_run_none_when_no_config(monkeypatch) -> None:
     class _Boom:
         @property
-        def active_orchestrator_config(self):  # noqa: ANN202
+        def active_orchestrator_config(self):
             raise RuntimeError("no config")
 
     monkeypatch.setattr(agent_loop, "settings", _Boom())
@@ -117,7 +117,7 @@ def test_price_current_run_uses_override_config(monkeypatch) -> None:
 
     class _Boom:
         @property
-        def active_orchestrator_config(self):  # noqa: ANN202
+        def active_orchestrator_config(self):
             raise RuntimeError("settings must not be read when an override exists")
 
     monkeypatch.setattr(agent_loop, "settings", _Boom())

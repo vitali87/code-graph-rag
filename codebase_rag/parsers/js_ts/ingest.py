@@ -123,7 +123,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
             self._process_prototype_inheritance_captures(
                 language_obj, root_node, module_qn
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- isolation: one unit's failure must not end the run
             logger.debug(ls.JS_PROTOTYPE_INHERITANCE_FAILED, error=e)
 
     def _process_prototype_inheritance_captures(
@@ -186,7 +186,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
                 queries[language].get(cs.QUERY_CONFIG),
                 language,
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- isolation: one unit's failure must not end the run
             logger.debug(ls.JS_PROTOTYPE_METHODS_FAILED, error=e)
 
     def _lexical_defines_fallback(
@@ -342,7 +342,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
                 self._process_single_object_method(
                     method_name_node, method_func_node, module_qn, lang_config, language
                 )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- isolation: one unit's failure must not end the run
             # The one catch per query: a failure is a bug, so it is reported,
             # and the other query and the rest of the module still ingest.
             logger.warning(
@@ -513,7 +513,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
                 ls.JS_ASSIGNMENT_FUNC_EXPR_FOUND,
                 language,
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- isolation: one unit's failure must not end the run
             # The one catch per query, as for object literal methods.
             logger.warning(
                 ls.JS_ASSIGNMENT_ARROW_QUERY_FAILED, module_qn=module_qn, error=e

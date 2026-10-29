@@ -16,8 +16,8 @@ import pytest
 
 pytest.importorskip("ast_grep_py")
 
-from codebase_rag import constants as cs  # noqa: E402
-from codebase_rag.tests.test_ast_grep_analyzer import _fire  # noqa: E402
+from codebase_rag import constants as cs
+from codebase_rag.tests.test_ast_grep_analyzer import _fire
 
 NESTED = """def load(path):
     try:

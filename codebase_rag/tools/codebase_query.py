@@ -974,7 +974,7 @@ def create_query_tool(
             return QueryGraphData(
                 query_used=attempt.query, results=[], summary=message, error=message
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool boundary: any failure becomes the tool's error result
             logger.exception(ls.TOOL_QUERY_ERROR.format(error=e))
             message = QUERY_SUMMARY_DB_ERROR.format(error=e)
             return QueryGraphData(

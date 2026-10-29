@@ -141,7 +141,7 @@ def format_missing_api_key_errors(
      (No API key required)
 
 ───────────────────────────────────────────────────────────────────
-""".strip()  # noqa: W293
+""".strip()
     return error_msg
 
 

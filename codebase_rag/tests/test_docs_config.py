@@ -38,7 +38,7 @@ _MkdocsLoader.add_multi_constructor(
 
 
 def _mkdocs_config() -> dict[str, Any]:
-    return yaml.load(  # noqa: S506 - SafeLoader subclass; python tags load as None
+    return yaml.load(
         (REPO_ROOT / "mkdocs.yml").read_text(encoding=cs.ENCODING_UTF8),
         Loader=_MkdocsLoader,
     )

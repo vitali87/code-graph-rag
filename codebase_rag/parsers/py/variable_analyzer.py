@@ -423,7 +423,7 @@ class PythonVariableAnalyzerMixin(_VarBase):
             try:
                 q = get_cached_query(py_lang_obj, cs.PY_ASSIGNMENT_QUERY)
                 captures = QueryCursor(q).captures(node)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 -- a failed query falls back to the tree walk
                 note_query_fallback(cs.PY_ASSIGNMENT_QUERY, exc)
             else:
                 for assign_node in captures.get("assignment", []):

@@ -46,7 +46,7 @@ class CodeRetriever:
         logger.info(ls.CODE_RETRIEVER_SEARCH.format(name=qualified_name))
         try:
             return await self._find_code_snippet(qualified_name)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool boundary: any failure becomes the tool's error result
             logger.exception(ls.CODE_RETRIEVER_ERROR.format(error=e))
             return _miss(qualified_name, str(e))
 

@@ -432,7 +432,7 @@ async def _run_condition(
             answer = str(result.output)
             in_tokens = result.usage.input_tokens or 0
             out_tokens = result.usage.output_tokens or 0
-        except Exception as exc:  # one bad question must not sink the run
+        except Exception as exc:  # noqa: BLE001 -- one bad question must not sink the run
             error = f"{type(exc).__name__}: {exc}"
         seconds = round(time.perf_counter() - start, 2)
         in_tokens += cypher_meter.input_tokens - cypher_before[0]

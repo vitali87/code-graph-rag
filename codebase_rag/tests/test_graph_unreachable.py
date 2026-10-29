@@ -197,9 +197,7 @@ class _Connection:
 
 @pytest.fixture
 def graph_answers() -> Iterator[None]:
-    with patch.object(
-        MemgraphIngestor, "open_connection", return_value=_Connection()
-    ):
+    with patch.object(MemgraphIngestor, "open_connection", return_value=_Connection()):
         yield
 
 

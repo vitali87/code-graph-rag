@@ -76,7 +76,7 @@ def project_owner_refusal(
             cq.CYPHER_CLAIM_PROJECT_ROOT,
             {cs.KEY_PROJECT_NAME: project_name, cs.KEY_ROOT_PATH: root},
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 -- any engine's driver error; the read degrades
         logger.warning(ls.MG_PROJECT_ROOT_READ_FAILED.format(error=exc))
         if assume_yes:
             return OwnerCheck(None)
@@ -116,7 +116,7 @@ def release_project_claim(
     }
     try:
         ingestor.execute_write(cq.CYPHER_RELEASE_PROJECT_CLAIM, params)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 -- any engine's driver error; the write is retried later
         logger.warning(
             ls.PROJECT_CLAIM_RELEASE_FAILED.format(project_name=project_name, error=exc)
         )
@@ -212,7 +212,7 @@ def claim_lost_refusal(ingestor: QueryProtocol, project_name: str) -> str:
         rows = ingestor.fetch_all(
             cq.CYPHER_PROJECT_ROOT_PATH, {cs.KEY_PROJECT_NAME: project_name}
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 -- any engine's driver error; the read degrades
         return cs.CLI_ERR_PROJECT_OWNER_UNREADABLE.format(
             project_name=project_name, error=exc
         )
@@ -232,7 +232,7 @@ def clear_sync_incomplete(ingestor: QueryProtocol, project_name: str) -> None:
         ingestor.execute_write(
             cq.CYPHER_CLEAR_PROJECT_INCOMPLETE, sync_marker_params(project_name)
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 -- any engine's driver error; the write is retried later
         logger.warning(
             ls.CLI_SYNC_MARKER_NOT_CLEARED.format(project=project_name, error=exc)
         )
@@ -252,7 +252,7 @@ def clear_own_sync_incomplete(
     params[cs.KEY_OWNER_TOKEN] = owner[cs.KEY_OWNER_TOKEN]
     try:
         ingestor.execute_write(cq.CYPHER_CLEAR_STOPPED_CLI_SYNC_MARKER, params)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 -- any engine's driver error; the write is retried later
         logger.warning(
             ls.CLI_SYNC_MARKER_NOT_CLEARED.format(project=project_name, error=exc)
         )

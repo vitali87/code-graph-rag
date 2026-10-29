@@ -378,7 +378,7 @@ def _cpp_compile_db_units(target: Path) -> int | None:
         import clang.cindex as ci
 
         db = ci.CompilationDatabase.fromDirectory(str(target.resolve()))
-    except Exception:
+    except Exception:  # noqa: BLE001 -- optional component: any failure reads as unavailable
         # fromDirectory raises CompilationDatabaseError when the file is absent
         # or unreadable; libclang may be missing entirely on some platforms.
         return None

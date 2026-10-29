@@ -244,7 +244,7 @@ def test_reprocessed_module_drops_stale_facts(tmp_path: Path) -> None:
     parsers, _ = load_parsers()
 
     class _Registry:
-        def get(self, qn: str):  # noqa: ANN201
+        def get(self, qn: str):
 
             return cs.NodeLabel.FUNCTION if qn.endswith(".run_things") else None
 
@@ -291,14 +291,14 @@ def test_finalize_seeds_registrations_from_database(tmp_path: Path) -> None:
     parsers, _ = load_parsers()
 
     class _QueryIngestor(MagicMock):
-        def fetch_all(self, query, params=None):  # noqa: ANN001, ANN201
+        def fetch_all(self, query, params=None):
             return [{"name": "run-things"}]
 
-        def execute_write(self, query, params=None):  # noqa: ANN001, ANN201
+        def execute_write(self, query, params=None):
             return None
 
     class _Registry:
-        def get(self, qn: str):  # noqa: ANN201
+        def get(self, qn: str):
 
             return cs.NodeLabel.FUNCTION if qn.endswith(".schedule") else None
 
@@ -334,14 +334,14 @@ def test_registration_seed_tolerates_unreadable_graph(tmp_path: Path) -> None:
     parsers, _ = load_parsers()
 
     class _DownIngestor(MagicMock):
-        def fetch_all(self, query, params=None):  # noqa: ANN001, ANN201
+        def fetch_all(self, query, params=None):
             raise RuntimeError("graph down")
 
-        def execute_write(self, query, params=None):  # noqa: ANN001, ANN201
+        def execute_write(self, query, params=None):
             return None
 
     class _Registry:
-        def get(self, qn: str):  # noqa: ANN201
+        def get(self, qn: str):
             return cs.NodeLabel.FUNCTION if qn.endswith(".schedule") else None
 
     processor = DispatchRegistryProcessor(

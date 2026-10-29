@@ -268,7 +268,7 @@ def _random_hierarchy(
     dict[str, tuple[go_ifaces.GoEmbedAlternatives, ...] | None],
     dict[str, Expr],
 ]:
-    rng = random.Random(seed)  # noqa: S311 - a reproducible case, not a secret
+    rng = random.Random(seed)
     constraints = [
         ALWAYS,
         name_constraint("x_linux.go"),
@@ -327,7 +327,7 @@ def _random_chain(
     # I0 embeds I1, ..., each link's embed under a random constraint (one
     # meaning, so the walk without a memo stays linear), each file under
     # one, a method of its own now and then.
-    rng = random.Random(seed)  # noqa: S311 - a reproducible case, not a secret
+    rng = random.Random(seed)
     constraints = [
         ALWAYS,
         name_constraint("x_linux.go"),

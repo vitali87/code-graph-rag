@@ -64,7 +64,7 @@ def test_returns_empty_on_read_error(
 
     original_open = Path.open
 
-    def mock_open(self: Path, *args, **kwargs):  # noqa: ANN002, ANN003
+    def mock_open(self: Path, *args, **kwargs):
         if self.name == CGRIGNORE_FILENAME:
             raise PermissionError("Cannot read")
         return original_open(self, *args, **kwargs)

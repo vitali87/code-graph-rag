@@ -380,7 +380,7 @@ def find_return_statements(
         try:
             q = get_cached_query(language_obj, _JS_RETURN_QUERY)
             captures = QueryCursor(q).captures(node)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- a failed query falls back to the tree walk
             note_query_fallback(_JS_RETURN_QUERY, exc)
         else:
             return_nodes.extend(captures.get("return_stmt", []))

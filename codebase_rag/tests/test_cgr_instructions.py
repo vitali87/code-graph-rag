@@ -69,7 +69,7 @@ def test_returns_none_on_read_error(
     (temp_repo / CGR_INSTRUCTIONS_FILENAME).write_text("hello", encoding="utf-8")
     original_open = Path.open
 
-    def mock_open(self: Path, *args, **kwargs):  # noqa: ANN002, ANN003
+    def mock_open(self: Path, *args, **kwargs):
         if self.name == CGR_INSTRUCTIONS_FILENAME:
             raise PermissionError("nope")
         return original_open(self, *args, **kwargs)

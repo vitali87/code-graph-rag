@@ -248,7 +248,10 @@ target-version = "py312"
 exclude = ["codec/", "benchmarks/", "optimize/"]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP", "PL", "T201", "S"]
+# BLE: every broad `except Exception` either narrows or says why it is broad
+# in its `# noqa: BLE001 -- <why>`; RUF100 flags a marker that suppresses
+# nothing, so the reasons cannot go stale.
+select = ["E", "F", "W", "I", "UP", "PL", "T201", "S", "BLE", "RUF100"]
 ignore = [
     "E501",     # line too long
     "PLR2004",  # magic value comparison (too noisy)
@@ -270,7 +273,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 # Tests are outside Bandit's and SonarCloud's security scope too.
-"**/tests/**" = ["T201", "S"]
+"**/tests/**" = ["T201", "S", "BLE"]
 "benchmarks/**" = ["T201"]
 "evals/flows_corpus/**" = ["T201"]
 # The corpus builder is a CLI script; its output is the point.

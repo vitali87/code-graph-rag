@@ -176,7 +176,7 @@ def fuzz_shell_command(data: bytes) -> None:
             f"classifier hit the recursion limit on {command!r}; the nesting "
             "cap in _validate_segment is meant to refuse before this"
         ) from None
-    except Exception as exc:  # noqa: BLE001 - the point of the harness
+    except Exception as exc:  # the point of the harness
         raise AssertionError(
             f"classifier raised {type(exc).__name__}: {exc} on {command!r}"
         ) from exc

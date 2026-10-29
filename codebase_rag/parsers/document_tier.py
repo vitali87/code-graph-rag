@@ -1096,7 +1096,7 @@ class DocumentTier:
             return
         try:
             root = parser.parse(source).root_node
-        except (RuntimeError, ValueError) as exc:  # noqa: BLE001
+        except (RuntimeError, ValueError) as exc:
             logger.warning("markdown parse failed for {}: {}", file_path, exc)
             return
 

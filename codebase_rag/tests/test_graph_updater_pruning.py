@@ -10,7 +10,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 
 
-def _rows_by_query(rows: dict[str, list[dict[str, str]]]):  # noqa: ANN202
+def _rows_by_query(rows: dict[str, list[dict[str, str]]]):
     """Rows keyed by query, not by call order: the prune also reads the
     registered projects (issue #1985), and a positional side_effect list
     shifts every later read by one."""

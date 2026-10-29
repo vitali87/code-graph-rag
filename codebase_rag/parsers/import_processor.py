@@ -178,7 +178,7 @@ def _julia_parser() -> Parser | None:
     try:
         grammar = importlib.import_module(f"{cs.TREE_SITTER_MODULE_PREFIX}julia")
         return Parser(Language(grammar.language()))
-    except Exception:
+    except Exception:  # noqa: BLE001 -- optional component: any failure reads as unavailable
         return None
 
 
@@ -1910,7 +1910,7 @@ class ImportProcessor:
 
             if self.ingestor and defer_edges:
                 self._defer_module_import_edges(module_qn, language)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- isolation: one unit's failure must not end the run
             logger.warning(ls.IMP_PARSE_FAILED, module=module_qn, error=e)
 
     def _retract_import_sites(self, module_qn: str) -> None:
@@ -3573,7 +3573,7 @@ class ImportProcessor:
                 continue
             try:
                 matches = sorted(self.repo_path.glob(pattern))
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001 -- an odd member pattern leaves one crate unmapped
                 # One member the manifest spells oddly is one crate left
                 # unmapped, never a failed sync.
                 logger.debug(

@@ -45,7 +45,7 @@ def test_reading_a_far_row_keeps_the_int_alive() -> None:
     row = point[0]
     before = sys.getrefcount(row)
 
-    point.row  # noqa: B018
+    point.row
 
     assert sys.getrefcount(row) == before
 
@@ -55,7 +55,7 @@ def test_reading_a_far_column_keeps_the_int_alive() -> None:
     column = point[1]
     before = sys.getrefcount(column)
 
-    point.column  # noqa: B018
+    point.column
 
     assert sys.getrefcount(column) == before
 

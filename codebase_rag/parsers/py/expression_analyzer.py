@@ -605,7 +605,7 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
                     return None
                 return self._analyze_method_return_statements(method_node, method_qn)
             return None
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- isolation: one unit's failure must not end the run
             logger.debug(ls.PY_INFER_RETURN_FAILED, method=method_call, error=e)
             return None
 
@@ -728,7 +728,7 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
             full_attr_name = f"{cs.PY_SELF_PREFIX}{attribute_name}"
             return instance_vars.get(full_attr_name)
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- isolation: one unit's failure must not end the run
             logger.debug(ls.PY_INFER_ATTR_FAILED, attr=attribute_name, error=e)
             return None
 

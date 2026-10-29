@@ -31,7 +31,7 @@ def _try_load_from_submodule(lang_name: cs.SupportedLanguage) -> LanguageLoader:
     try:
         if not _build_submodule(lang_name):
             return None
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- a grammar or query that fails to load is left out
         logger.debug(ls.SUBMODULE_LOAD_FAILED, lang=lang_name, error=e)
         return None
     return _import_submodule(lang_name)
@@ -94,7 +94,7 @@ def _import_submodule(lang_name: str) -> LanguageLoader:
             if python_bindings_str in sys.path:
                 sys.path.remove(python_bindings_str)
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- a grammar or query that fails to load is left out
         logger.debug(ls.SUBMODULE_LOAD_FAILED, lang=lang_name, error=e)
 
     return None
@@ -334,7 +334,7 @@ def _create_locals_query(
         return None
     try:
         return Query(language, locals_pattern)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- a grammar or query that fails to load is left out
         logger.debug(ls.LOCALS_QUERY_FAILED, lang=lang_name, error=e)
         return None
 
@@ -356,7 +356,7 @@ def _create_highlights_query(
         module = importlib.import_module(module_name)
         if hasattr(module, "HIGHLIGHTS_QUERY"):
             query_str = module.HIGHLIGHTS_QUERY
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- a grammar or query that fails to load is left out
         logger.debug(
             f"Failed to load standard highlights query for {query_lang_name}: {e}"
         )
@@ -373,7 +373,7 @@ def _create_highlights_query(
 
         if query_str:
             return Query(language, query_str)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- a grammar or query that fails to load is left out
         logger.debug(
             f"Failed to load fallback highlights query for {query_lang_name}: {e}"
         )
@@ -386,7 +386,7 @@ def _create_combined_query(language: Language, pattern: str) -> Query | None:
     # when one does not compile.
     try:
         return Query(language, pattern) if pattern else None
-    except Exception:
+    except Exception:  # noqa: BLE001 -- a grammar or query that fails to load is left out
         return None
 
 
@@ -445,7 +445,7 @@ def _process_language(
         )
         logger.success(ls.GRAMMAR_LOADED.format(lang=lang_name))
         return True
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- a grammar or query that fails to load is left out
         # query compilation can fail AFTER the parser insert; drop the orphan
         # so the store never exposes a parser without its queries
         parsers.pop(lang_name, None)

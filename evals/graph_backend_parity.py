@@ -247,7 +247,7 @@ def run(
                 start = time.perf_counter()
                 try:
                     rows = ingestor.fetch_all(query, args)
-                except Exception as e:  # recorded, not fatal: one query's error
+                except Exception as e:  # noqa: BLE001 -- recorded, not fatal: one query's error
                     results[name] = ParityQueryRecording(error=str(e).splitlines()[0])
                     continue
                 results[name] = ParityQueryRecording(

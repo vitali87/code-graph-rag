@@ -460,7 +460,7 @@ class MemgraphIngestor:
                 # failure never masks the original.
                 try:
                     self.flush_all()
-                except Exception as flush_err:
+                except Exception as flush_err:  # noqa: BLE001 -- cleanup must not mask the original error
                     logger.error(ls.MG_FLUSH_ERROR.format(error=flush_err))
             else:
                 self.flush_all()
@@ -719,7 +719,7 @@ class MemgraphIngestor:
         for statement in statements:
             try:
                 self._execute_query(statement)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- any engine's DDL error; an existing index is no failure
                 if ERR_SUBSTR_ALREADY_EXISTS not in str(e).lower():
                     failed += 1
         return failed
@@ -965,7 +965,7 @@ class MemgraphIngestor:
             label = futures[future]
             try:
                 flushed, skipped = future.result()
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- collected per group and re-raised once the rest flushed
                 failed_labels.add(label)
                 logger.error(ls.MG_LABEL_FLUSH_ERROR.format(label=label, error=e))
                 if first_error is None:
@@ -985,7 +985,7 @@ class MemgraphIngestor:
         for label, props_list in nodes_by_label.items():
             try:
                 flushed, skipped = self._flush_node_label_group(label, props_list)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- collected per group and re-raised once the rest flushed
                 failed_labels.add(label)
                 logger.error(ls.MG_LABEL_FLUSH_ERROR.format(label=label, error=e))
                 if first_error is None:
@@ -1092,7 +1092,7 @@ class MemgraphIngestor:
         )
         try:
             return self._execute_batch_with_return_on(conn, query, params_list)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- any engine's driver error; the read degrades
             logger.warning(ls.MG_RELS_FAILED_LOOKUP.format(rel_type=rel_type, error=e))
             return []
 
@@ -1145,7 +1145,7 @@ class MemgraphIngestor:
             pattern = futures[future]
             try:
                 successful = future.result()
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- collected per group and re-raised once the rest flushed
                 logger.error(ls.MG_REL_FLUSH_ERROR.format(pattern=pattern, error=e))
                 if first_error is None:
                     first_error = e
@@ -1159,7 +1159,7 @@ class MemgraphIngestor:
         for pattern, params_list in self._rel_groups.items():
             try:
                 successful = self._flush_rel_pattern_group(pattern, params_list)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- collected per group and re-raised once the rest flushed
                 logger.error(ls.MG_REL_FLUSH_ERROR.format(pattern=pattern, error=e))
                 if first_error is None:
                     first_error = e

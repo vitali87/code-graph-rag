@@ -265,7 +265,7 @@ def _fetch_pprof(url: str, headers: tuple[str, ...], timeout: float) -> bytes:
     ):
         opener.add_handler(handler())
     try:
-        with opener.open(request, timeout=timeout) as response:  # noqa: S310
+        with opener.open(request, timeout=timeout) as response:
             data = response.read(_MAX_PROFILE_BYTES + 1)
     except OSError as e:
         raise _ConvertUsageError(

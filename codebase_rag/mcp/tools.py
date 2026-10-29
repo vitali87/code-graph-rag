@@ -1318,7 +1318,7 @@ class MCPToolsRegistry:
                 allowed = set(self.workspace.project_names())
                 projects = [p for p in projects if p in allowed]
             return ListProjectsSuccessResult(projects=projects, count=len(projects))
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool boundary: any failure becomes the tool's error result
             logger.error(ls.MCP_ERROR_LIST_PROJECTS.format(error=e))
             return ListProjectsErrorResult(error=str(e), projects=[], count=0)
 
@@ -1399,7 +1399,7 @@ class MCPToolsRegistry:
         try:
             async with self._ingestor_lock:
                 return await _run_in_thread(self._delete_project_sync, project_name)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool boundary: any failure becomes the tool's error result
             logger.error(ls.MCP_ERROR_DELETE_PROJECT.format(error=e))
             return DeleteProjectErrorResult(success=False, error=str(e))
 
@@ -1426,7 +1426,7 @@ class MCPToolsRegistry:
                 # widened flag.
                 self._damage = GraphDamage()
             return cs.MCP_WIPE_SUCCESS
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool boundary: any failure becomes the tool's error result
             # A wipe spans every project and writes no marker, so its damage
             # cannot be recorded under one project's name: an attribution
             # left over from an earlier failure would tell the guards every
@@ -1525,7 +1525,7 @@ class MCPToolsRegistry:
         try:
             async with self._ingestor_lock:
                 return await _run_in_thread(self._under_sync_lock, sync_fn)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool boundary: any failure becomes the tool's error result
             logger.error(error_log.format(error=e))
             return te.ToolFailure(error_message.format(error=e))
 
@@ -2300,7 +2300,7 @@ class MCPToolsRegistry:
                 return await _run_in_thread(
                     self._reingest_sync, list(paths), list(deleted or ())
                 )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool boundary: any failure becomes the tool's error result
             logger.error(ls.MCP_ERROR_REINGEST.format(error=e))
             return ReingestToolResult(
                 error=cs.MCP_REINGEST_ERROR.format(error=e),
@@ -2530,7 +2530,7 @@ class MCPToolsRegistry:
             if marked_here is not None:
                 self._abandon_before_writing(marked_here)
             return "\n\n" + cs.MCP_DELTA_ERROR.format(error=e)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool boundary: any failure becomes the tool's error result
             # The re-ingest may have deleted a subtree it never rebuilt: the
             # same invalidation `_reingest_sync` applies, so no later query
             # or write reuses a partial graph (issue #1525).
@@ -2606,7 +2606,7 @@ class MCPToolsRegistry:
                     denial=cs.MCP_ASK_AGENT_APPROVAL_DENIED,
                 )
             return {"output": answer}
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool boundary: any failure becomes the tool's error result
             logger.error(ls.MCP_ASK_AGENT_ERROR.format(error=e))
             return {"error": cs.MCP_ASK_AGENT_ERROR.format(error=e)}
 
@@ -2714,7 +2714,7 @@ class MCPToolsRegistry:
             # Raised by the lookup itself (a location, an endpoint) or by
             # `require_known` for an empty answer: one refusal either way.
             return GraphRefusal(error=self._target_refusal(unknown))
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool boundary: any failure becomes the tool's error result
             logger.error(ls.MCP_GRAPH_QUERY_ERROR.format(tool=tool, error=e))
             return GraphRefusal(
                 error=cs.MCP_GRAPH_QUERY_ERROR.format(tool=tool, error=e)
@@ -3526,7 +3526,7 @@ class MCPToolsRegistry:
                 )
             )
             return result_dict
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool boundary: any failure becomes the tool's error result
             logger.exception(ls.MCP_ERROR_QUERY.format(error=e))
             return _query_refusal(
                 cs.MCP_TOOL_EXEC_ERROR.format(
@@ -3568,7 +3568,7 @@ class MCPToolsRegistry:
                         or te.CODE_ENTITY_NOT_FOUND
                     )
             return result
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool boundary: any failure becomes the tool's error result
             logger.error(ls.MCP_ERROR_CODE_SNIPPET.format(error=e))
             return CodeSnippetResultDict(error=str(e), found=False)
 
@@ -3587,7 +3587,7 @@ class MCPToolsRegistry:
                     return result
                 delta = await _run_in_thread(self._delta_after_write, [file_path])
                 return str(result) + delta
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool boundary: any failure becomes the tool's error result
             logger.error(ls.MCP_ERROR_REPLACE.format(error=e))
             return te.failure(e)
 
@@ -3619,7 +3619,7 @@ class MCPToolsRegistry:
                     file_path=file_path
                 )
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool boundary: any failure becomes the tool's error result
             logger.error(ls.MCP_ERROR_READ.format(error=e))
             return te.failure(e)
 
@@ -3634,7 +3634,7 @@ class MCPToolsRegistry:
                     return te.failure(result.error_message)
                 delta = await _run_in_thread(self._delta_after_write, [file_path])
                 return cs.MCP_WRITE_SUCCESS.format(path=file_path) + delta
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool boundary: any failure becomes the tool's error result
             logger.error(ls.MCP_ERROR_WRITE.format(error=e))
             return te.failure(e)
 
@@ -3647,7 +3647,7 @@ class MCPToolsRegistry:
                 _plain_function(self._directory_lister_tool),
                 directory_path=directory_path,
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool boundary: any failure becomes the tool's error result
             logger.error(ls.MCP_ERROR_LIST_DIR.format(error=e))
             return te.failure(e)
 

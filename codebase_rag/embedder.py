@@ -80,7 +80,7 @@ class EmbeddingCache:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             with self._path.open("w", encoding="utf-8") as f:
                 json.dump(self._cache, f)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- a cache that cannot be saved costs a recompute
             logger.warning(ls.EMBEDDING_CACHE_SAVE_FAILED, path=self._path, error=e)
 
     def load(self) -> None:
@@ -92,7 +92,7 @@ class EmbeddingCache:
             logger.debug(
                 ls.EMBEDDING_CACHE_LOADED, count=len(self._cache), path=self._path
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- a cache that cannot be loaded is rebuilt
             logger.warning(ls.EMBEDDING_CACHE_LOAD_FAILED, path=self._path, error=e)
             self._cache = {}
 

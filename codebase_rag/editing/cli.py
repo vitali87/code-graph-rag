@@ -146,7 +146,7 @@ def _resync_graph(root: Path, project: str | None, paths: list[str]) -> None:
     try:
         with connect_memgraph(batch_size=settings.resolve_batch_size(None)) as ingestor:
             result = _reingest_restored(ingestor, root, name, paths)
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 -- returned to the caller, which prints the resync command
         result = error
     if isinstance(result, Exception):
         command = cs.EDIT_UNDO_RESYNC_COMMAND.format(repo=root)
@@ -194,6 +194,6 @@ def _reingest_restored(
         )
         with sync_owner() as owner:
             marked_reingest(updater, WriteMarker(ingestor, name, owner, None))(paths)
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 -- returned to the caller, which prints the resync command
         return error
     return True

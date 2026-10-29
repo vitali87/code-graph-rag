@@ -45,7 +45,7 @@ def _create_file_sync(file_path: Path, content: str) -> FileCreationResult:
         file_path.write_text(content, encoding=cs.ENCODING_UTF8)
         logger.info(ls.FILE_WRITER_SUCCESS.format(chars=len(content), path=file_path))
         return FileCreationResult(file_path=str(file_path))
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- tool boundary: any failure becomes the tool's error result
         err_msg = te.FILE_WRITER_CREATE.format(path=file_path, error=e)
         logger.error(err_msg)
         return FileCreationResult(file_path=str(file_path), error_message=err_msg)

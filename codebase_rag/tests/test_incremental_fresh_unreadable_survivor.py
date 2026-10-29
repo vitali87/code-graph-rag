@@ -77,7 +77,7 @@ def test_a_fresh_updater_keeps_an_unreadable_survivors_module(
         if Path(str(path)) == header:
             raise PermissionError(13, "Permission denied", str(path))
 
-    def open_denied(file, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+    def open_denied(file, *args, **kwargs):
         denied(file)
         return real_open(file, *args, **kwargs)
 
@@ -174,7 +174,7 @@ def test_an_unchanged_unopenable_survivor_is_marked_for_retry(
         if Path(str(path)) == header:
             raise PermissionError(13, "Permission denied", str(path))
 
-    def open_denied(file, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+    def open_denied(file, *args, **kwargs):
         denied(file)
         return real_open(file, *args, **kwargs)
 

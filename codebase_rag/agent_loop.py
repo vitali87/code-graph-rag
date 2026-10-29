@@ -869,7 +869,7 @@ def _build_user_prompt(question: str) -> str | list[UserContent]:
                 )
             )
             logger.info(ls.MULTIMODAL_ATTACHED.format(path=path))
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- an attachment that cannot be read stays as text
             logger.error(ls.MULTIMODAL_READ_FAILED.format(path=path, error=e))
             content.append(match_token)
         remaining = after
@@ -944,7 +944,7 @@ def _token_usage() -> tuple[int, int, float]:
         used = 0
     try:
         model_id = settings.active_orchestrator_config.model_id or ""
-    except Exception:
+    except Exception:  # noqa: BLE001 -- an unreadable model config reads as no model
         model_id = ""
     bare = model_id.split(":", 1)[-1]
     max_ctx = cs.MODEL_CONTEXT_WINDOWS.get(bare, cs.DEFAULT_CONTEXT_WINDOW)
@@ -1153,7 +1153,7 @@ async def _refresh_context_tokens(
         if not app_context.session.token_auth_warned:
             app_context.session.token_auth_warned = True
             logger.warning(ls.CONTEXT_TOKEN_COUNT_AUTH_FAILED.format(error=e))
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- the exact count is an upgrade; the estimate stands
         # Transient failures stay at debug. The next refresh probably works,
         # and a background retry is not something the user must act on.
         logger.debug(ls.CONTEXT_TOKEN_COUNT_FAILED.format(error=e))
@@ -1175,11 +1175,11 @@ def _prime_context_token_counter(
 def _short_model_id() -> tuple[str, str]:
     try:
         orch = settings.active_orchestrator_config.model_id or ""
-    except Exception:
+    except Exception:  # noqa: BLE001 -- an unreadable model config reads as no model
         orch = ""
     try:
         cyph = settings.active_cypher_config.model_id or ""
-    except Exception:
+    except Exception:  # noqa: BLE001 -- an unreadable model config reads as no model
         cyph = ""
     return orch.split(":", 1)[-1], cyph.split(":", 1)[-1]
 
@@ -1406,7 +1406,7 @@ def _shift_tab_listener():
         finally:
             try:
                 loop.remove_reader(fd)
-            except Exception:  # noqa: S110 - best-effort; the terminal restore below must still run
+            except Exception:  # noqa: BLE001, S110 - best-effort; the terminal restore below must still run
                 pass
     finally:
         try:
@@ -1742,7 +1742,7 @@ async def _run_interactive_loop(
         # (issue #2917).
         except (KeyboardInterrupt, EOFError):
             break
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- a failed turn is reported and the chat continues
             logger.exception(ls.UNEXPECTED.format(error=e))
             app_context.console.print(cs.UI_ERR_UNEXPECTED.format(error=e))
 

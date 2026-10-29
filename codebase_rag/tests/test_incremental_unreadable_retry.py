@@ -49,7 +49,7 @@ def test_an_unreadable_file_is_retried_by_the_next_run(
     real = gu.hash_file_with_bytes
 
     # Portable unreadability: the read of `b.py` fails on this run only.
-    def failing(path: Path):  # noqa: ANN202
+    def failing(path: Path):
         return None if path.name == "b.py" else real(path)
 
     monkeypatch.setattr(gu, "hash_file_with_bytes", failing)
@@ -223,7 +223,7 @@ def test_a_path_under_a_directory_now_a_file_is_gone(
     present.write_text("x = 1\n")
     real_lstat = os.lstat
 
-    def denied(path, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+    def denied(path, *args, **kwargs):
         if Path(str(path)) == present:
             raise PermissionError(errno.EACCES, "Permission denied", str(path))
         return real_lstat(path, *args, **kwargs)
@@ -249,7 +249,7 @@ def test_a_windows_reparse_loop_is_gone(
 
     winerror: int | None = 1921
 
-    def unresolvable(path, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+    def unresolvable(path, *args, **kwargs):
         if Path(str(path)) == link and kwargs.get("follow_symlinks", True) is not False:
             exc = OSError(errno.EINVAL, "cannot resolve", str(path))
             if winerror is not None:
@@ -279,7 +279,7 @@ def test_a_link_whose_target_cannot_be_reached_is_not_gone(
         pytest.skip("symlinks need privileges on this host")
     real_stat = os.stat
 
-    def denied(path, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+    def denied(path, *args, **kwargs):
         if Path(str(path)) == link and kwargs.get("follow_symlinks", True) is not False:
             raise PermissionError(13, "Permission denied", str(path))
         return real_stat(path, *args, **kwargs)

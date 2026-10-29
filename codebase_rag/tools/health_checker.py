@@ -180,7 +180,7 @@ class HealthChecker:
                 message=cs.HEALTH_CHECK_DOCKER_TIMEOUT_MSG,
                 error=cs.HEALTH_CHECK_DOCKER_TIMEOUT_ERROR,
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- a health check reports any failure as a failed check
             return HealthCheckResult(
                 name=cs.HEALTH_CHECK_DOCKER_NOT_RUNNING,
                 passed=False,
@@ -216,7 +216,7 @@ class HealthChecker:
                     engine=_backend_engine_name(), error=str(e)
                 ),
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- a health check reports any failure as a failed check
             return HealthCheckResult(
                 name=cs.HEALTH_CHECK_GRAPH_FAILED.format(engine=_backend_engine_name()),
                 passed=False,
@@ -227,12 +227,12 @@ class HealthChecker:
             if cursor is not None:
                 try:
                     cursor.close()
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 -- cleanup must not mask the original error
                     logger.warning(f"Failed to close Memgraph cursor: {e}")
             if conn is not None:
                 try:
                     conn.close()
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 -- cleanup must not mask the original error
                     logger.warning(f"Failed to close Memgraph connection: {e}")
 
     def check_model_role(self, role: cs.ModelRole) -> HealthCheckResult:
@@ -380,7 +380,7 @@ class HealthChecker:
                 message=cs.HEALTH_CHECK_TOOL_TIMEOUT_MSG,
                 error=cs.HEALTH_CHECK_TOOL_TIMEOUT_ERROR.format(cmd=cmd),
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- a health check reports any failure as a failed check
             return HealthCheckResult(
                 name=cs.HEALTH_CHECK_TOOL_NOT_INSTALLED.format(tool_name=tool_name),
                 passed=False,
@@ -401,7 +401,7 @@ class HealthChecker:
         connection = _backend_connection()
         try:
             conn = connection.__enter__()
-        except Exception:
+        except Exception:  # noqa: BLE001 -- a backend that cannot be reached has no audit rows
             return []
 
         # Bound before the try: `conn.cursor()` can raise, and the
@@ -424,7 +424,7 @@ class HealthChecker:
                 for row in fetch_all(cq.CYPHER_PROJECTS_WITH_INCOMPLETE_RUNS)
                 if row.get("project")
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- a health check reports any failure as a failed check
             return [
                 HealthCheckResult(
                     name=cs.HEALTH_CHECK_GRAPH_INTEGRITY_FAILED,
@@ -444,7 +444,7 @@ class HealthChecker:
             for close in closers:
                 try:
                     close()
-                except Exception as cleanup_error:
+                except Exception as cleanup_error:  # noqa: BLE001 -- cleanup must not mask the original error
                     logger.warning(f"Graph audit cleanup failed: {cleanup_error}")
 
         results = [

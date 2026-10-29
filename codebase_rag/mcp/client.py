@@ -46,7 +46,7 @@ async def _query_with_errlog(question: str, errlog: io.TextIOWrapper) -> dict[st
 
 
 def query_mcp_server(question: str) -> dict[str, str]:
-    with open(os.devnull, "w") as devnull:  # noqa: SIM115
+    with open(os.devnull, "w") as devnull:
         return asyncio.run(_query_with_errlog(question, devnull))
 
 
@@ -62,7 +62,7 @@ def main(
             print(result["output"])  # noqa: T201
         else:
             print(json.dumps(result))  # noqa: T201
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- command boundary: reported to the user, not a traceback
         print(f"Error: {e}", file=sys.stderr)  # noqa: T201
         sys.exit(1)
 

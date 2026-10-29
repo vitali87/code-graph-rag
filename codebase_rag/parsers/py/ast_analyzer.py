@@ -1203,7 +1203,7 @@ class PythonAstAnalyzerMixin(_AstBase):
             try:
                 q = get_cached_query(py_lang_obj, _PY_TRAVERSE_QUERY)
                 captures = QueryCursor(q).captures(node)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 -- a failed query falls back to the tree walk
                 note_query_fallback(_PY_TRAVERSE_QUERY, exc)
             else:
                 if return_stmts := captures.get("return_stmt"):
@@ -1885,7 +1885,7 @@ class PythonAstAnalyzerMixin(_AstBase):
             try:
                 q = get_cached_query(py_lang_obj, cs.PY_RETURN_QUERY)
                 captures = QueryCursor(q).captures(node)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 -- a failed query falls back to the tree walk
                 note_query_fallback(cs.PY_RETURN_QUERY, exc)
             else:
                 return_nodes.extend(captures.get("return_stmt", []))
@@ -1982,7 +1982,7 @@ class PythonAstAnalyzerMixin(_AstBase):
                 local_vars = self.build_local_variable_type_map(
                     method_node, module_qn, class_context
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- isolation: one unit's failure must not end the run
                 # The call pass records a failing walk against its caller
                 # (#3173); return-type inference resolves no caller, so the
                 # return just stays untyped.

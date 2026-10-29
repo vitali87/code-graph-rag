@@ -531,7 +531,7 @@ def _grammar_entry(dist: metadata.Distribution) -> str | None:
         if not name or not name.lower().startswith(cs.GRAMMAR_DIST_PREFIX):
             return None
         return cs.GRAMMAR_VERSION_FMT.format(name=name.lower(), version=dist.version)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- a distribution's metadata may be malformed in any way
         logger.debug(ls.FINGERPRINT_DIST_UNREADABLE)
         return None
 

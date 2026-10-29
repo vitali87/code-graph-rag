@@ -45,7 +45,7 @@ def create_structural_search_tool(
             )
         # catch broadly: ast-grep-py's Rust bindings raise beyond ValueError
         # (RuntimeError and others); report it rather than crash the turn.
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool boundary: any failure becomes the tool's error result
             return te.ToolFailure(str(e))
         if not matches:
             return cs.AST_GREP_NO_MATCHES.format(pattern=pattern)

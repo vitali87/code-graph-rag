@@ -176,7 +176,7 @@ def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngesto
                 return CallToolResult(content=content, isError=True)
             return content
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool boundary: any failure becomes the tool's error result
             error_msg = cs.MCP_TOOL_EXEC_ERROR.format(name=name, error=e)
             logger.exception(ls.MCP_SERVER_TOOL_ERROR.format(name=name, error=e))
             return _create_error_content(error_msg)

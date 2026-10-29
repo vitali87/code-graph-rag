@@ -174,7 +174,7 @@ def test_an_unreadable_same_stem_survivor_keeps_its_module(
         if Path(str(path)) == header:
             raise PermissionError(13, "Permission denied", str(path))
 
-    def open_denied(file, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+    def open_denied(file, *args, **kwargs):
         denied(file)
         return real_open(file, *args, **kwargs)
 
@@ -236,7 +236,7 @@ def test_a_survivor_that_opens_but_cannot_be_read_keeps_its_module(
         if Path(str(path)) == header:
             raise PermissionError(13, "Permission denied", str(path))
 
-    def open_denied(file, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+    def open_denied(file, *args, **kwargs):
         denied(file)
         return real_open(file, *args, **kwargs)
 

@@ -36,7 +36,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 # After the path insert: `evals` is a top-level directory, not an installed
 # package, so a bare `pytest` finds it only through the repository root.
-from evals.recorded_graph import RecordingIngestor  # noqa: E402
+from evals.recorded_graph import RecordingIngestor
 
 # pytester drives the cgr-trace pytest plugin end-to-end in its own sessions.
 pytest_plugins = ["pytester"]

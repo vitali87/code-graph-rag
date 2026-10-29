@@ -91,7 +91,7 @@ class DependencyParser:
                 return ManifestParse(dependencies)
             logger.debug(ls.DEP_MANIFEST_UNPARSABLE.format(path=file_path, error=e))
             return ManifestParse(dependencies, str(e))
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- isolation: one unit's failure must not end the run
             logger.error(self.failure_message.format(path=file_path, error=e))
         return ManifestParse(dependencies)
 

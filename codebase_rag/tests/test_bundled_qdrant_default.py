@@ -50,7 +50,7 @@ class _Handler(BaseHTTPRequestHandler):
     is_qdrant = True
     paths: list[str]
 
-    def do_GET(self) -> None:  # noqa: N802 - the http.server hook name
+    def do_GET(self) -> None:
         self.paths.append(self.path)
         body: dict[str, str | float | dict[str, list[str]]] = {}
         if self.path.startswith(stack_cs.QDRANT_READY_PATH):
@@ -443,7 +443,7 @@ class _Root(BaseHTTPRequestHandler):
     status = 200
     body = b""
 
-    def do_GET(self) -> None:  # noqa: N802 - the http.server hook name
+    def do_GET(self) -> None:
         self.send_response(self.status)
         self.end_headers()
         self.wfile.write(self.body)

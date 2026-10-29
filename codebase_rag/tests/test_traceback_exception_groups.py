@@ -296,7 +296,7 @@ def test_an_error_raised_while_handling_a_group_has_no_members() -> None:
         try:
             raise ExceptionGroup("first", [_raised(ValueError, "v")])
         except ExceptionGroup:
-            raise RuntimeError("cleanup failed")  # noqa: B904
+            raise RuntimeError("cleanup failed")
 
     try:
         handler()

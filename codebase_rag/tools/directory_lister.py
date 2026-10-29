@@ -35,7 +35,7 @@ class DirectoryLister:
                 return "\n".join(contents)
             return te.DIRECTORY_EMPTY.format(path=directory_path)
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool boundary: any failure becomes the tool's error result
             logger.error(ls.DIR_LIST_ERROR.format(path=directory_path, error=e))
             return te.ToolFailure(te.DIRECTORY_LIST_FAILED.format(path=directory_path))
 

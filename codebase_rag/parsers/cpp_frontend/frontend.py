@@ -34,7 +34,7 @@ def cpp_frontend_available() -> bool:
         import clang.cindex as ci
 
         ci.Index.create()
-    except Exception:
+    except Exception:  # noqa: BLE001 -- optional component: any failure reads as unavailable
         return False
     return True
 
@@ -80,7 +80,7 @@ def _has_internal_linkage(cursor: Cursor) -> bool:
     # older libclangs, so fail open (treated as external).
     try:
         return cursor.linkage.name == "INTERNAL"
-    except Exception:
+    except Exception:  # noqa: BLE001 -- older libclangs raise anything here; fail open
         return False
 
 

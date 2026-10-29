@@ -701,7 +701,7 @@ def test_varargs_element_types_of_every_shape_are_read() -> None:
             f"class C {{ {method_source} }}".encode()
         )
 
-        def walk(node):  # noqa: ANN001, ANN202
+        def walk(node):
             yield node
             for child in node.children:
                 yield from walk(child)

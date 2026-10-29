@@ -528,7 +528,7 @@ def test_java_varargs_type_survives_a_modifier_or_annotation() -> None:
             f"class C {{ {method_source} }}".encode()
         )
 
-        def walk(node):  # noqa: ANN001, ANN202
+        def walk(node):
             yield node
             for child in node.children:
                 yield from walk(child)

@@ -170,7 +170,7 @@ def _registered_projects(fetch_all: QueryFn, project_name: str) -> tuple[str, ..
     names: set[str] = {project_name}
     try:
         rows = fetch_all(CYPHER_LIST_PROJECTS, None)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- any engine's driver error; the read degrades
         rows = []
     names.update(
         name for row in rows if isinstance(name := row.get(cs.KEY_NAME), str) and name

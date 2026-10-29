@@ -380,7 +380,7 @@ def test_reanchored_path_cannot_escape_the_repository(tmp_path):
 @contextlib.contextmanager
 def _pprof_server(payload: bytes, require_auth: str | None = None):
     class Handler(BaseHTTPRequestHandler):
-        def do_GET(self):  # noqa: N802 - BaseHTTPRequestHandler API
+        def do_GET(self):
             if require_auth and self.headers.get("Authorization") != require_auth:
                 self.send_response(401)
                 self.end_headers()
@@ -538,7 +538,7 @@ def test_pull_strips_auth_on_redirect(tmp_path):
     received: dict[str, str | None] = {}
 
     class Target(BaseHTTPRequestHandler):
-        def do_GET(self):  # noqa: N802
+        def do_GET(self):
             received["auth"] = self.headers.get("Authorization")
             received["apikey"] = self.headers.get("X-Api-Key")
             self.send_response(200)
@@ -553,7 +553,7 @@ def test_pull_strips_auth_on_redirect(tmp_path):
     target_url = f"http://127.0.0.1:{target.server_address[1]}/target.pb.gz"
 
     class Redirector(BaseHTTPRequestHandler):
-        def do_GET(self):  # noqa: N802
+        def do_GET(self):
             self.send_response(302)
             self.send_header("Location", target_url)
             self.end_headers()

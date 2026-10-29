@@ -76,7 +76,7 @@ def _ensure_libclang() -> None:
     # exception escape and break test collection or the CLI path.
     try:
         from clang.cindex import Config
-    except Exception:
+    except Exception:  # noqa: BLE001 -- optional component: any failure reads as unavailable
         return
 
     for candidate in ec.LIBCLANG_CANDIDATES:
@@ -84,7 +84,7 @@ def _ensure_libclang() -> None:
             try:
                 Config.set_library_file(candidate)
                 return
-            except Exception:  # noqa: S112
+            except Exception:  # noqa: BLE001, S112
                 # libclang loading raises a wide, unpredictable range of errors
                 # (arch mismatch, format errors, an already-loaded library); on
                 # any, fall through to the next candidate, else the bundled
@@ -98,7 +98,7 @@ def cpp_available() -> bool:
         import clang.cindex as ci
 
         ci.Index.create()
-    except Exception:
+    except Exception:  # noqa: BLE001 -- optional component: any failure reads as unavailable
         return False
     return True
 

@@ -564,7 +564,7 @@ def _store_batch(records: Sequence[Any], upsert: Callable[[], None]) -> int:
         upsert()
         logger.debug(ls.EMBEDDING_BATCH_STORED.format(count=len(records)))
         return len(records)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- any vector backend's error; the pass is retried
         logger.warning(ls.EMBEDDING_BATCH_FAILED.format(error=e))
         return 0
 
@@ -595,7 +595,7 @@ def _delete_scoped_embeddings(
                 backend=backend, project=project_name
             )
         )
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- any vector backend's error; the pass is retried
         logger.warning(
             ls.VECTOR_STORE_DELETE_PROJECT_FAILED.format(
                 backend=backend, project=project_name, error=e
@@ -723,7 +723,7 @@ class QdrantVectorStore(VectorStore):
         try:
             found = [p.id for p in _qdrant_keyed_points(project_name)]
             legacy = _qdrant_legacy_points(project_name)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- any vector backend's error; the pass is retried
             logger.warning(
                 ls.VECTOR_STORE_DELETE_PROJECT_FAILED.format(
                     backend=self.backend, project=project_name, error=e
@@ -1142,7 +1142,7 @@ class SqliteVectorStore(VectorStore):
                 point.point_id
                 for point in get_sqlite_vector_client().project_points(project_name)
             ]
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- any vector backend's error; the pass is retried
             logger.warning(
                 ls.VECTOR_STORE_DELETE_PROJECT_FAILED.format(
                     backend=self.backend, project=project_name, error=e

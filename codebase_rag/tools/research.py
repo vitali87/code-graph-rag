@@ -80,7 +80,7 @@ def create_research_tool(
             # fail here (misconfigured or unreachable provider), and that must
             # surface as a tool error, not a crashed turn.
             result = await _agent().run(query)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool boundary: any failure becomes the tool's error result
             # The detail stays in the log (repo convention, and the operator
             # needs it to diagnose a bad key or model id). What crosses back
             # is a fixed string: the exception text is provider-controlled

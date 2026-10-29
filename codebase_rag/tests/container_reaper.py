@@ -167,7 +167,7 @@ def reap_orphaned_containers(
             continue
         try:
             container.remove(force=True)
-        except Exception as e:  # noqa: BLE001 -- housekeeping must not fail the run
+        except Exception as e:  # housekeeping must not fail the run
             logger.warning(REAPER_REMOVE_FAILED.format(name=name, error=e))
             continue
         removed.append(name)
