@@ -9,6 +9,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers.js_ts.calls import iife_target_name
 
 if TYPE_CHECKING:
     from tree_sitter import Node, Parser
@@ -274,7 +275,6 @@ class TestGetCallTargetName:
 class TestGetIifeTargetName:
     def test_function_expression_iife(
         self,
-        call_processor: CallProcessor,
         parsers_and_queries: tuple,
     ) -> None:
         parsers, _ = parsers_and_queries
@@ -286,13 +286,12 @@ class TestGetIifeTargetName:
         paren_expr = find_first_node_of_type(root, "parenthesized_expression")
         assert paren_expr is not None
 
-        result = call_processor._get_iife_target_name(paren_expr)
+        result = iife_target_name(paren_expr)
         assert result is not None
         assert result.startswith(cs.IIFE_FUNC_PREFIX)
 
     def test_arrow_function_iife(
         self,
-        call_processor: CallProcessor,
         parsers_and_queries: tuple,
     ) -> None:
         parsers, _ = parsers_and_queries
@@ -304,13 +303,12 @@ class TestGetIifeTargetName:
         paren_expr = find_first_node_of_type(root, "parenthesized_expression")
         assert paren_expr is not None
 
-        result = call_processor._get_iife_target_name(paren_expr)
+        result = iife_target_name(paren_expr)
         assert result is not None
         assert result.startswith(cs.IIFE_ARROW_PREFIX)
 
     def test_non_iife_returns_none(
         self,
-        call_processor: CallProcessor,
         parsers_and_queries: tuple,
     ) -> None:
         parsers, _ = parsers_and_queries
@@ -322,7 +320,7 @@ class TestGetIifeTargetName:
         paren_expr = find_first_node_of_type(root, "parenthesized_expression")
         assert paren_expr is not None
 
-        result = call_processor._get_iife_target_name(paren_expr)
+        result = iife_target_name(paren_expr)
         assert result is None
 
 

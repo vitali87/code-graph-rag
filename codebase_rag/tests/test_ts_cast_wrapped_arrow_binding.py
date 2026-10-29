@@ -1,6 +1,6 @@
 # A TS arrow bound through a CAST wrapper (`export const createStore = ((s) =>
 # s ? createStoreImpl(s) : createStoreImpl) as CreateStore`, zustand's public-API
-# shape) lost ALL its body's call/reference edges: `_js_ts_arrow_binding_name`
+# shape) lost ALL its body's call/reference edges: `arrow_binding_name`
 # required the arrow to be the declarator's DIRECT value, so the cast/paren
 # wrapper made it "anonymous", its calls bubbled to module scope, and dropped.
 # The def pass already unwraps the cast (registers `createStore`); the call pass

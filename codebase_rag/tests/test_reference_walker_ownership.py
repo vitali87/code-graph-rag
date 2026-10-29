@@ -2,7 +2,7 @@
 
 `x: function () {}` in an object literal has no AST name and no arrow
 binding name, but the definition pass registers it under the key's name, so
-`repo.app.A.m.x` is a real node with its own walk. `_is_unowned_js_scope`
+`repo.app.A.m.x` is a real node with its own walk. `is_unowned_scope`
 did not know about that third source of ownership -- it asked only for an
 AST name or an arrow binding -- so the four reference walkers ALSO descended
 into it from the enclosing method, and the same identifier was attributed to
@@ -49,7 +49,7 @@ def _reference_edges(tmp_path: Path, source: str) -> Counter[tuple[str, str]]:
     return found
 
 
-# One shape per walker that consults _is_unowned_js_scope and is reachable
+# One shape per walker that consults is_unowned_scope and is reachable
 # from a plain .js fixture: assignment, return and collection. In each, the
 # recorded `x` holds the reference, so `A.m` must not also claim it.
 #

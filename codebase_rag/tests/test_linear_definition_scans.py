@@ -34,6 +34,7 @@ from codebase_rag import function_registry
 from codebase_rag.parsers import call_processor, definition_docstring, export_detection
 from codebase_rag.parsers.csharp import type_inference as cs_type_inference
 from codebase_rag.parsers.java import variable_analyzer
+from codebase_rag.parsers.js_ts import calls as js_calls
 from codebase_rag.parsers.js_ts import type_inference as js_type_inference
 from codebase_rag.tests.conftest import get_relationships, run_updater
 
@@ -355,7 +356,7 @@ def test_js_call_result_receiver_lookup_is_linear(
 ) -> None:
     """Comment 2, items 2 and 4: `const r = make(); r.open()` found `make` by
     walking its module tree and re-read its returns, once per call site."""
-    scan = _Scan(_js_factory_source, "javascript", (call_processor,))
+    scan = _Scan(_js_factory_source, "javascript", (call_processor, js_calls))
     small, large = _growth(tmp_path, scan, mock_ingestor)
     _assert_linear(small, large, "call-result receiver typing")
     # Exact, not heuristic: the receiver was typed through make()'s return.
@@ -368,17 +369,15 @@ def test_js_factory_returns_are_read_once_per_factory(
     """Comment 2, item 4: the factory's body was re-walked for its returns at
     every call-result receiver; the answer is per factory, not per site."""
     reads: list[str] = []
-    original = call_processor.CallProcessor._js_function_return_class
+    original = js_calls.JsTsCallResolution._function_return_class
 
     def counting(
-        self: call_processor.CallProcessor, fn_node: Node, fn_qn: str, module: str
+        self: js_calls.JsTsCallResolution, fn_node: Node, fn_qn: str, module: str
     ) -> str | None:
         reads.append(fn_qn)
         return original(self, fn_node, fn_qn, module)
 
-    monkeypatch.setattr(
-        call_processor.CallProcessor, "_js_function_return_class", counting
-    )
+    monkeypatch.setattr(js_calls.JsTsCallResolution, "_function_return_class", counting)
     scan = _Scan(_js_factory_source, "javascript", ())
     _index(tmp_path / "small", _js_factory_source(SMALL), scan, mock_ingestor)
     small = len(reads)
@@ -397,7 +396,7 @@ def test_js_module_receiver_scope_scan_is_linear(
 ) -> None:
     """Comment 2, item 3: a module-level receiver's introduction was found by
     rescanning the module's statements, once per call site."""
-    scan = _Scan(_js_module_receiver_source, "javascript", (call_processor,))
+    scan = _Scan(_js_module_receiver_source, "javascript", (call_processor, js_calls))
     small, large = _growth(tmp_path, scan, mock_ingestor)
     _assert_linear(small, large, "receiver scope lookup")
     # Exact, not heuristic: the receiver was typed by its module declaration.
