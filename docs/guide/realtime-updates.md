@@ -163,7 +163,7 @@ with a short, growing wait before it is reported.
 | `--project-name`, `--project`, `-p` | Project name to store in the graph. Defaults to the name `cgr start --repo-path` gives the same repository, so both update one project; if you passed `cgr start --project-name`, pass the same name here. |
 | `--debounce`, `-d` | Seconds to wait after a file's last change before updating the graph, so a burst of saves becomes one update. 0 applies every change at once. [default: 5; x>=0] |
 | `--max-wait`, `-m` | Longest a file that keeps changing waits before the graph is updated anyway. Raised to --debounce when lower. [default: 30; x>=0] |
-| `--batch-size` | Flush to Memgraph after this many buffered nodes or relationships. [x>=1] |
+| `--batch-size` | Flush to the graph after this many buffered nodes or relationships. [x>=1] |
 | `--no-start-stack` | Do not start the shared stack automatically. |
 | `--yes`, `-y` | Watch even a home directory or the filesystem root, and take over a --project-name another repository already indexes, as cgr start --yes does. |
 <!-- /SECTION:cli_options_watch -->
