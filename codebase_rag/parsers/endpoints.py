@@ -315,7 +315,7 @@ def emit_endpoints(
         )
         for method, path in pairs:
             for prefix in prefixes:
-                _emit_endpoint(
+                emit_endpoint(
                     ingestor, label, qualified_name, f"{method} {prefix}{path}"
                 )
 
@@ -348,7 +348,7 @@ def _decorator_prefixes(
     return resolved if resolved else [""]
 
 
-def _emit_endpoint(
+def emit_endpoint(
     ingestor: IngestorProtocol,
     label: cs.NodeLabel,
     qualified_name: str,

@@ -1197,11 +1197,6 @@ class MCPToolsRegistry:
             )
         return self._rag_agent
 
-    # Setter lets tests inject a mock agent without triggering LLM init
-    @rag_agent.setter
-    def rag_agent(self, value: Agent[None, str | DeferredToolRequests]) -> None:
-        self._rag_agent = value
-
     async def flow_verdict(
         self, source_qualified_name: str, sink_qualified_name: str
     ) -> dict:
@@ -2076,30 +2071,6 @@ class MCPToolsRegistry:
         if (refusal := self._require_writing(project_name)) is not None:
             raise RuntimeError(refusal)
 
-    @staticmethod
-    def _reingest_mutated(updater: object, exc: BaseException) -> bool:
-        """Whether a failed reingest got as far as writing.
-
-        Classifies by WHAT HAPPENED rather than by exception type: the updater
-        sets `reingest_mutated` at the exact point its read-only prologue
-        ends, so a future abort raised mid-run is still classified as partial
-        (#1705). Split out of `_reingest_sync` to keep that function
-        under the cognitive-complexity limit.
-        """
-        flag = getattr(updater, "reingest_mutated", None)
-        if isinstance(flag, bool):
-            return flag
-        # No usable flag (an updater predating it, or a test double). Fall
-        # back to the exception type, which carries the same information less
-        # precisely: `GraphUpdater.reingest` converts EVERY prologue failure to
-        # `ReingestAborted` and rejects bad paths with `ValueError` before
-        # touching anything, so any other exception means writing had begun.
-        #
-        # `isinstance` on the flag rather than `getattr(..., True)`: any
-        # attribute of a MagicMock is a truthy child mock, which would classify
-        # every failure as mutated (measured).
-        return not isinstance(exc, ValueError | ReingestAborted)
-
     def _recover_then_persisted_incomplete(self, project_name: str) -> bool:
         """Recover a stranded marker, then report the durable state.
 
@@ -2237,7 +2208,7 @@ class MCPToolsRegistry:
                 deleted=deleted,
                 before_write=lambda: self._begin_writing_or_refuse(project_name),
             )
-        except Exception as exc:
+        except Exception:
             # One classification for every failure, by WHAT HAPPENED rather
             # than by exception type (#1705):
             #
@@ -2255,7 +2226,7 @@ class MCPToolsRegistry:
             # ReingestAborted instead would misread a future abort raised
             # mid-run as "nothing changed" and clear a marker that is
             # protecting a partial graph.
-            mutated = self._reingest_mutated(updater, exc)
+            mutated = updater.reingest_mutated
             if mutated:
                 self._live_updater = None
                 self._invalidate_graph_for(project_name)
@@ -3352,7 +3323,7 @@ class MCPToolsRegistry:
                     paths,
                     before_write=lambda: self._begin_writing_or_refuse(project_name),
                 )
-            except Exception as exc:
+            except Exception:
                 # Classified exactly as `_reingest_sync` does, which is what
                 # "same shape" above is supposed to mean. Clearing in a
                 # blanket `finally` was the bug: the rename recovers this
@@ -3363,7 +3334,7 @@ class MCPToolsRegistry:
                 # mutating failure there dropped the durable marker, raised
                 # nothing, and returned `applied` over a possibly-partial
                 # graph (PR #1547).
-                if self._reingest_mutated(updater, exc):
+                if updater.reingest_mutated:
                     # The marker STAYS: the graph may be partial and it is the
                     # only record that survives this process. The retained
                     # updater goes because it describes a graph that is gone,

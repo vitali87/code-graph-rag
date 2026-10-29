@@ -75,7 +75,7 @@ from .parsers.endpoint_routes import (
     collect_route_registrations,
 )
 from .parsers.endpoints import (
-    _emit_endpoint,
+    emit_endpoint,
     emit_endpoints,
     link_endpoints,
     parse_route_decorator,
@@ -2614,7 +2614,7 @@ class GraphUpdater:
             for registration in module_registrations:
                 label, source_qn = self._route_source(module_qn, registration, inline)
                 identity = f"{registration.method} {registration.path}"
-                _emit_endpoint(self._sink, label, source_qn, identity)
+                emit_endpoint(self._sink, label, source_qn, identity)
 
     def _inline_route_handlers(
         self, registrations: Mapping[str, list[RouteRegistration]]

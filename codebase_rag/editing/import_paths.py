@@ -37,12 +37,12 @@ from typing import NamedTuple
 
 from .. import constants as cs
 from ..language_spec import get_language_for_extension
-from ..parsers.import_processor import (
-    _load_jsonc,
-    _load_ts_path_aliases,
-    _parse_tsconfig_aliases,
-    _ts_alias_candidates,
-    _ts_alias_target,
+from ..parsers.js_ts.tsconfig import (
+    load_jsonc,
+    load_ts_path_aliases,
+    parse_tsconfig_aliases,
+    ts_alias_candidates,
+    ts_alias_target,
 )
 from ..utils.path_utils import module_stem
 
@@ -303,7 +303,7 @@ class ScriptConfigs:
         """Every `paths` alias the project's configs declare, as the
         indexer reads them: an alias any of them matches may be the
         project's code wherever the file sits."""
-        return tuple(_load_ts_path_aliases(self.repo_root))
+        return tuple(load_ts_path_aliases(self.repo_root))
 
     def _read(
         self, directory: tuple[str, ...], files: list[Path]
@@ -311,9 +311,9 @@ class ScriptConfigs:
         prefix = "".join(f"{part}/" for part in directory)
         paths: list[tuple[str, str, bool]] = []
         base: tuple[str, ...] | None = None
-        parsed = [data for path in files if (data := _load_jsonc(path))]
+        parsed = [data for path in files if (data := load_jsonc(path))]
         for data in parsed:
-            paths.extend(_parse_tsconfig_aliases(data, prefix))
+            paths.extend(parse_tsconfig_aliases(data, prefix))
             options = data.get(cs.TS_COMPILER_OPTIONS_KEY)
             url = options.get(cs.TS_BASE_URL_KEY) if isinstance(options, dict) else None
             if base is None and isinstance(url, str):
@@ -494,9 +494,9 @@ class ImportReader:
         if self.scripts is None or self.language not in cs.JS_TS_LANGUAGES:
             return [package]
         config = self.scripts.nearest(self.directory)
-        if config is not None and (found := _ts_alias_candidates(spec, config.paths)):
+        if config is not None and (found := ts_alias_candidates(spec, config.paths)):
             # The longest pattern wins, as TypeScript picks it.
-            target = _ts_alias_target(max(found, key=lambda pair: pair[0])[1])
+            target = ts_alias_target(max(found, key=lambda pair: pair[0])[1])
             if target is not None:
                 return [self._module_at(target)]
             return [ModulePath(segments, PathKind.UNKNOWN)]
@@ -504,7 +504,7 @@ class ImportReader:
             based = posixpath.normpath(posixpath.join(*config.base, spec))
             if not based.startswith(cs.PATH_PARENT_DIR):
                 return [self._module_at(based), package]
-        if _ts_alias_candidates(spec, self.scripts.paths):
+        if ts_alias_candidates(spec, self.scripts.paths):
             return [ModulePath(segments, PathKind.UNKNOWN)]
         return [package]
 

@@ -109,7 +109,7 @@ def _registry(agent: Agent[None, str | DeferredToolRequests]) -> MCPToolsRegistr
     handler._damage.project = None
     handler._damage.from_failed_clear = None
     handler._persisted_incomplete = MagicMock(return_value=False)
-    handler.rag_agent = agent
+    handler._rag_agent = agent
     return handler
 
 

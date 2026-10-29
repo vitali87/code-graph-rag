@@ -2179,7 +2179,7 @@ class CallResolver:
         while depth < len(parts) and parts[depth] == cs.KEYWORD_SUPER:
             depth += 1
         if depth:
-            current: str | None = self.import_processor._rust_super_base(
+            current: str | None = self.import_processor.rust_super_base(
                 effective, depth
             )
             rest = parts[depth:]
@@ -4196,7 +4196,7 @@ class CallResolver:
         import_map = self.import_processor.import_mapping.get(module_qn, {})
         namespaces = {
             namespace
-            for module_namespaces in self.import_processor._csharp_module_namespaces.values()
+            for module_namespaces in self.import_processor.csharp_module_namespaces.values()
             for namespace in module_namespaces
         }
         for cut in range(len(parts), 0, -1):
@@ -4436,7 +4436,7 @@ class CallResolver:
             return self._decide_rust_module_item(
                 mapped, object_path[1:], item, module_qn
             )
-        base = self.import_processor._rust_resolve_relative(
+        base = self.import_processor.rust_resolve_relative(
             module_qn, list(object_path), module_qn
         )
         return self._decide_rust_base(base, item)
@@ -4477,7 +4477,7 @@ class CallResolver:
                 effective_module = recorded
             elif self._rust_enclosing_mod_scopes(module_qn, caller_qn):
                 return None, False
-        base = self.import_processor._rewrite_rust_local_use_path(
+        base = self.import_processor.rewrite_rust_local_use_path(
             cs.SEPARATOR_DOUBLE_COLON.join(object_path), effective_module
         )
         if base == cs.RUST_UNRESOLVABLE_QN:
@@ -4688,14 +4688,14 @@ class CallResolver:
         if cs.SEPARATOR_DOUBLE_COLON not in value and cs.SEPARATOR_DOT in value:
             return value
         segments = value.split(cs.SEPARATOR_DOUBLE_COLON)
-        head_qn = self.import_processor._rust_resolve_relative(
+        head_qn = self.import_processor.rust_resolve_relative(
             owner, segments[:1], owner
         )
         if (
             head_qn in self.type_inference.module_qn_to_file_path
             or head_qn in self.import_processor.import_mapping
         ):
-            return self.import_processor._rust_resolve_relative(owner, segments, owner)
+            return self.import_processor.rust_resolve_relative(owner, segments, owner)
         return None
 
     def _follow_rust_scope_target(self, target: str) -> tuple[str, str] | None:
@@ -5183,7 +5183,7 @@ class CallResolver:
         .
         """
         declared_here = sorted(
-            self.import_processor._csharp_module_namespaces.get(module_qn, {}),
+            self.import_processor.csharp_module_namespaces.get(module_qn, {}),
             key=len,
         )
         if not declared_here or not all(
@@ -5566,7 +5566,7 @@ class CallResolver:
         came first (PR #2791). None when the path leads to no type.
         """
         imports = self.import_processor
-        target: str | None = imports._rewrite_rust_local_use_path(path, module_qn)
+        target: str | None = imports.rewrite_rust_local_use_path(path, module_qn)
         if target is not None and cs.SEPARATOR_DOUBLE_COLON in target:
             target = self._rust_local_qn(path, module_qn)
         if target is None:

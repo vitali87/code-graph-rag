@@ -173,7 +173,7 @@ class TestAskAgent:
         mock_response = MagicMock()
         mock_response.output = "The auth module uses JWT tokens."
         mock_agent.run = AsyncMock(return_value=mock_response)
-        mcp_registry.rag_agent = mock_agent
+        mcp_registry._rag_agent = mock_agent
 
         result = await mcp_registry.ask_agent("How is auth implemented?")
 
@@ -185,7 +185,7 @@ class TestAskAgent:
     async def test_ask_agent_error(self, mcp_registry: MCPToolsRegistry) -> None:
         mock_agent = MagicMock()
         mock_agent.run = AsyncMock(side_effect=RuntimeError("LLM unavailable"))
-        mcp_registry.rag_agent = mock_agent
+        mcp_registry._rag_agent = mock_agent
 
         result = await mcp_registry.ask_agent("What does main do?")
 
@@ -218,7 +218,7 @@ class TestToolDescriptions:
 class TestRagAgentProperty:
     def test_rag_agent_setter_allows_mock(self, mcp_registry: MCPToolsRegistry) -> None:
         mock_agent = MagicMock()
-        mcp_registry.rag_agent = mock_agent
+        mcp_registry._rag_agent = mock_agent
         assert mcp_registry.rag_agent is mock_agent
 
     def test_rag_agent_lazy_init(self, temp_project_root: Path) -> None:
@@ -809,6 +809,7 @@ class TestReingest:
         with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_cls:
             updater = mock_updater_cls.return_value
             updater.reingest.side_effect = ReingestAborted("graph read failed")
+            updater.reingest_mutated = False
             result = await mcp_registry.reingest(["a.py"])
             assert "graph read failed" in result["error"]
             assert mcp_registry._live_updater is updater
@@ -828,6 +829,7 @@ class TestReingest:
         with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_cls:
             updater = mock_updater_cls.return_value
             updater.reingest.side_effect = ValueError("Path is outside: ../x")
+            updater.reingest_mutated = False
             result = await mcp_registry.reingest(["../x"])
             assert "outside" in result["error"]
             assert mcp_registry._live_updater is updater

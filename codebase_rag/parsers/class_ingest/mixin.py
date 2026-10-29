@@ -517,7 +517,7 @@ class ClassIngestMixin:
         if not tail:
             return anchored, None
         if head in (cs.RUST_CRATE_KEYWORD, cs.KEYWORD_SELF, cs.KEYWORD_SUPER):
-            rewritten = self.import_processor._rewrite_rust_local_use_path(
+            rewritten = self.import_processor.rewrite_rust_local_use_path(
                 path, module_qn
             )
             if rewritten == cs.RUST_UNRESOLVABLE_QN:
@@ -1049,7 +1049,7 @@ class ClassIngestMixin:
             qn = (
                 bound
                 if bound.startswith(f"{self.project_name}{cs.SEPARATOR_DOT}")
-                else self.import_processor._rust_resolve_relative(
+                else self.import_processor.rust_resolve_relative(
                     owner, bound.split(cs.SEPARATOR_DOUBLE_COLON), owner
                 )
             )
@@ -2707,7 +2707,7 @@ class ClassIngestMixin:
             # where the qn scheme keys the module, so the name-derived
             # spellings below back nothing at all here (issue #1035).
             return {redirect}
-        resolved_candidate = self.import_processor._rust_resolve_relative(
+        resolved_candidate = self.import_processor.rust_resolve_relative(
             module_qn, [*chain, module_name], module_qn
         )
         # An unrepresentable #[path] target yields no candidate qn (issue

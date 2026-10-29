@@ -21,7 +21,7 @@ from .go import utils as go_utils
 from .go.type_inference import GoTypeInferenceEngine
 from .import_processor import ImportProcessor
 from .io_access.constants import KEY_KIND, RESOURCE_QN_FORMAT, ResourceKind
-from .io_access.processor import _RPC_PACKAGE_SUFFIX, _rpc_qualifier_resolves
+from .io_access.processor import RPC_PACKAGE_SUFFIX, rpc_qualifier_resolves
 from .utils import safe_decode_text
 
 # The connect-go handler constructor: `New<Stem>Handler`, qualified by a
@@ -166,7 +166,7 @@ class GoRpcExposureProcessor:
             return None
         match = _RPC_HANDLER_RE.match(safe_decode_text(field) or "")
         qualifier = safe_decode_text(operand) or ""
-        if not match or not _rpc_qualifier_resolves(qualifier, import_map):
+        if not match or not rpc_qualifier_resolves(qualifier, import_map):
             return None
         arguments = node.child_by_field_name(cs.FIELD_ARGUMENTS)
         if arguments is None or not arguments.named_children:
@@ -516,7 +516,7 @@ class GoRpcExposureProcessor:
             return None
         declaring_module = embedded.rsplit(cs.SEPARATOR_DOT, 1)[0]
         clause = self._go_package_names.get(declaring_module)
-        if clause is not None and clause.endswith(_RPC_PACKAGE_SUFFIX):
+        if clause is not None and clause.endswith(RPC_PACKAGE_SUFFIX):
             return None
         return embedded
 

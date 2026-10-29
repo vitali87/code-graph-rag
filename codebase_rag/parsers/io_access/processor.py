@@ -173,13 +173,13 @@ _HTTP_VERB_DIRECTIONS: dict[str, IODirection] = {
 }
 _CLIENT_RECEIVER_NAME = "client"
 _RPC_CLIENT_TYPE_RE = re.compile(r"^([A-Z]\w*)Client$")
-_RPC_PACKAGE_SUFFIX = "connect"
+RPC_PACKAGE_SUFFIX = "connect"
 
 
-def _rpc_qualifier_resolves(qualifier: str, import_map: dict[str, str]) -> bool:
+def rpc_qualifier_resolves(qualifier: str, import_map: dict[str, str]) -> bool:
     resolved = import_map.get(qualifier)
     return resolved is not None and resolved.rsplit("/", 1)[-1].endswith(
-        _RPC_PACKAGE_SUFFIX
+        RPC_PACKAGE_SUFFIX
     )
 
 
@@ -260,7 +260,7 @@ def _go_client_type_stem(
     qualifier, sep, name = type_node.text.decode(cs.ENCODING_UTF8).rpartition(
         cs.SEPARATOR_DOT
     )
-    if not sep or not _rpc_qualifier_resolves(qualifier, import_map):
+    if not sep or not rpc_qualifier_resolves(qualifier, import_map):
         return None
     match = _RPC_CLIENT_TYPE_RE.match(name)
     return match.group(1) if match else None
@@ -276,7 +276,7 @@ def _rpc_client_binding(
     qualifier, sep, func = raw.rpartition(cs.SEPARATOR_DOT)
     if not sep or qualifier in in_scope:
         return None
-    if not _rpc_qualifier_resolves(qualifier, import_map):
+    if not rpc_qualifier_resolves(qualifier, import_map):
         return None
     match = _RPC_CLIENT_RE.match(func)
     if match is None:

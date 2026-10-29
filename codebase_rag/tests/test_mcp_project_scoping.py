@@ -3918,7 +3918,7 @@ def _registry_for_ask_agent(incomplete: bool):
     handler._persisted_incomplete = MagicMock(return_value=False)
     response = MagicMock()
     response.output = "an authoritative-looking answer"
-    handler.rag_agent = MagicMock()
+    handler._rag_agent = MagicMock()
     handler.rag_agent.run = AsyncMock(return_value=response)
     return handler
 
@@ -4093,11 +4093,11 @@ def test_a_renames_reingest_marks_before_it_writes() -> None:
     )
 
 
-def _guarded_failure(exc: BaseException) -> tuple[object, list[str]]:
+def _guarded_failure(exc: BaseException, *, mutated: bool) -> tuple[object, list[str]]:
     """Drive `_guarded_rename_reingest` to a failure, returning (handler, cleared).
 
-    Shared so the two directions below differ ONLY in the exception, which is
-    what decides the classification.
+    Shared so the two directions below differ ONLY in whether the updater
+    reports having written, which is what decides the classification.
     """
     from unittest.mock import MagicMock, patch
 
@@ -4113,6 +4113,7 @@ def _guarded_failure(exc: BaseException) -> tuple[object, list[str]]:
 
     updater = MagicMock()
     updater.reingest = MagicMock(side_effect=exc)
+    updater.reingest_mutated = mutated
 
     with patch.object(handler, "_hydrate_reingest_updater", return_value=updater):
         callback = handler._guarded_rename_reingest(ALPHA)
@@ -4267,7 +4268,7 @@ def test_a_mutating_rename_reingest_failure_KEEPS_the_marker() -> None:
     `_reingest_mutated` falls back to the exception TYPE: a generic
     `RuntimeError` means writing had begun. That is the direction under test.
     """
-    handler, cleared = _guarded_failure(RuntimeError("re-ingest died"))
+    handler, cleared = _guarded_failure(RuntimeError("re-ingest died"), mutated=True)
 
     assert cleared == [], (
         "a mutating failure cleared the durable marker, which is the only "
@@ -4290,15 +4291,8 @@ def test_a_nothing_written_rename_reingest_failure_STILL_clears() -> None:
     later run for the process lifetime, which was worse than the leak it
     replaced. A `ValueError` is rejected before anything is touched, so the
     marker this call created describes a run that changed nothing.
-
-    The exception type is load-bearing, not decoration. `_reingest_mutated`
-    reads `reingest_mutated` off the updater and a MagicMock returns a truthy
-    child mock for ANY attribute, which the `isinstance(flag, bool)` guard
-    rejects -- so a double always lands on the type fallback. Pass a generic
-    exception here and this control silently tests the MUTATED branch above,
-    passing for the wrong reason.
     """
-    handler, cleared = _guarded_failure(ValueError("bad path"))
+    handler, cleared = _guarded_failure(ValueError("bad path"), mutated=False)
 
     assert cleared == [ALPHA], (
         "a failure that wrote nothing left its marker up, so every later "

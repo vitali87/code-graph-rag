@@ -351,7 +351,7 @@ class TestRustCrateResolution:
             function_registry=None,
         )
 
-        result = processor._rewrite_rust_local_use_path(
+        result = processor.rewrite_rust_local_use_path(
             "crate::utils::helper",
             module_qn="test_project.src.subdir.nested",
         )
@@ -375,7 +375,7 @@ class TestRustCrateResolution:
             function_registry=None,
         )
 
-        result = processor._rewrite_rust_local_use_path(
+        result = processor.rewrite_rust_local_use_path(
             "crate::flags::Flag",
             module_qn="test_project.crates.core.flags.defs",
         )

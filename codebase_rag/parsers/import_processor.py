@@ -38,7 +38,6 @@ from ..types_defs import (
     ScalaPackageScan,
     StemSiblingModules,
 )
-from ..utils.json_io import loads_json
 from ..utils.path_utils import (
     base_module_qn,
     cached_relative_path,
@@ -59,6 +58,12 @@ from .js_ts.module_paths import (
     resolve_js_workspace_import,
 )
 from .js_ts.reexports import JsExport, follow_js_reexports, js_ts_module_qn
+from .js_ts.tsconfig import (
+    load_ts_base_urls,
+    load_ts_path_aliases,
+    ts_alias_candidates,
+    ts_alias_target,
+)
 from .lua import utils as lua_utils
 from .php.namespaces import declared_namespace
 from .python_source_roots import discover_python_source_roots, resolve_via_source_roots
@@ -426,11 +431,6 @@ def _rs_top_level_char(c: str, depth: int, in_macro: bool) -> str:
     return c + "\n" if c == ";" else c
 
 
-_JSONC_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
-_JSONC_LINE_COMMENT_RE = re.compile(r"//[^\n]*")
-_JSONC_TRAILING_COMMA_RE = re.compile(r",(\s*[}\]])")
-
-
 def _js_destructured_names(pattern: Node) -> list[tuple[str, str]]:
     # (local, imported) name pairs bound by an object destructuring pattern:
     # `{ writeFileSync }` -> (writeFileSync, writeFileSync); `{ x: y }` -> (y, x).
@@ -496,182 +496,6 @@ def _names_js_module(site: PropertyDict | None) -> bool:
     return imported is None or imported == cs.IMPORTED_NAME_WILDCARD
 
 
-def _load_jsonc(path: Path) -> dict | None:
-    # tsconfig.json is JSONC (comments, trailing commas). Try strict JSON first,
-    # then fall back to stripping comments/trailing commas. The naive strip can
-    # mangle `//` inside string values, so it is only a fallback; on any failure
-    # return None (aliases simply stay unresolved).
-    try:
-        text = path.read_text(encoding=cs.ENCODING_UTF8)
-    except OSError:
-        return None
-    for candidate in (text, None):
-        source = candidate
-        if source is None:
-            source = _JSONC_BLOCK_COMMENT_RE.sub("", text)
-            source = _JSONC_LINE_COMMENT_RE.sub("", source)
-            source = _JSONC_TRAILING_COMMA_RE.sub(r"\1", source)
-        try:
-            parsed = loads_json(source)
-        except ValueError:
-            continue
-        return parsed if isinstance(parsed, dict) else None
-    return None
-
-
-def _child_dirs(path: Path) -> list[Path]:
-    # Immediate subdirectories worth searching, pruning dependency/build/VCS trees
-    # at traversal time so we never stat into node_modules (thousands of package
-    # tsconfigs) or hidden dirs.
-    try:
-        return sorted(
-            child
-            for child in path.iterdir()
-            if child.is_dir()
-            and child.name not in cs.TS_ALIAS_SKIP_DIRS
-            and not child.name.startswith(cs.PATH_CURRENT_DIR)
-        )
-    except OSError:
-        return []
-
-
-def _find_tsconfig_files(repo_path: Path) -> list[Path]:
-    # tsconfig can live at the repo root OR in a subdirectory (a monorepo's
-    # `frontend/`, `packages/*`), so search the root and up to two levels down; root
-    # first so its aliases win prefix-length ties.
-    level_one = _child_dirs(repo_path)
-    search_dirs = [repo_path, *level_one]
-    for child in level_one:
-        search_dirs.extend(_child_dirs(child))
-    found: list[Path] = []
-    for directory in search_dirs:
-        for name in cs.TSCONFIG_FILENAMES:
-            candidate = directory / name
-            if candidate.is_file():
-                found.append(candidate)
-    return found
-
-
-def _parse_tsconfig_aliases(data: dict, dir_prefix: str) -> list[tuple[str, str, bool]]:
-    # Parse one tsconfig's `compilerOptions.paths` into (match_prefix,
-    # target_prefix, is_wildcard) tuples, folding baseUrl and the tsconfig's own
-    # directory into the target so targets are repo-root-relative. A `@/*`->`src/*`
-    # entry in `frontend/tsconfig.json` yields ("@/", "frontend/src/", True); an
-    # exact `~lib`->`src/lib/index.ts` yields ("~lib", ".../src/lib/index.ts",
-    # False). `extends` chains are not followed.
-    options = data.get(cs.TS_COMPILER_OPTIONS_KEY)
-    if not isinstance(options, dict):
-        return []
-    paths = options.get(cs.TS_PATHS_KEY)
-    if not isinstance(paths, dict):
-        return []
-    base_prefix = _tsconfig_base_prefix(options)
-    aliases: list[tuple[str, str, bool]] = []
-    for pattern, targets in paths.items():
-        if not isinstance(targets, list) or not targets:
-            continue
-        target = targets[0]
-        if not isinstance(pattern, str) or not isinstance(target, str):
-            continue
-        if pattern.endswith(cs.GLOB_ALL) and cs.GLOB_ALL in target:
-            aliases.append(
-                (
-                    pattern[: -len(cs.GLOB_ALL)],
-                    dir_prefix + base_prefix + target[: target.index(cs.GLOB_ALL)],
-                    True,
-                )
-            )
-        elif cs.GLOB_ALL not in pattern:
-            aliases.append((pattern, dir_prefix + base_prefix + target, False))
-    return aliases
-
-
-def _tsconfig_base_prefix(options: dict) -> str:
-    # `baseUrl` as a path prefix relative to the tsconfig's own directory.
-    base = options.get(cs.TS_BASE_URL_KEY) or cs.PATH_CURRENT_DIR
-    base = str(base).strip(cs.SEPARATOR_SLASH)
-    return "" if base in ("", cs.PATH_CURRENT_DIR) else base + cs.SEPARATOR_SLASH
-
-
-def _tsconfig_dir_prefix(cfg: Path, repo_path: Path) -> str:
-    parent = cfg.parent
-    if parent == repo_path:
-        return ""
-    return parent.relative_to(repo_path).as_posix() + cs.SEPARATOR_SLASH
-
-
-def _tsconfig_extends(data: dict, cfg: Path, repo_path: Path) -> list[Path]:
-    # The in-repo configs `cfg` extends, last (most overriding) first. A
-    # package-shipped base (`@tsconfig/node20`) lives in node_modules, which
-    # is never indexed, so only relative entries are followed.
-    raw = data.get(cs.TS_EXTENDS_KEY)
-    entries = raw if isinstance(raw, list) else [raw]
-    found: list[Path] = []
-    for entry in reversed(entries):
-        if not isinstance(entry, str) or not entry.startswith(cs.PATH_CURRENT_DIR):
-            continue
-        target = Path(os.path.normpath(cfg.parent / entry))
-        if not target.is_file():
-            target = target.with_name(f"{target.name}{cs.TSCONFIG_EXTENSION}")
-        if target.is_file() and target.is_relative_to(repo_path):
-            found.append(target)
-    return found
-
-
-def _tsconfig_base_url(
-    cfg: Path, repo_path: Path, seen: frozenset[Path] = frozenset()
-) -> str | None:
-    # The repo-relative prefix `cfg`'s effective `baseUrl` names: its own, or
-    # one inherited through `extends`, which TypeScript resolves against the
-    # config that declares it (an app extending the root `tsconfig.base.json`).
-    data = _load_jsonc(cfg) if cfg not in seen else None
-    if not data:
-        return None
-    options = data.get(cs.TS_COMPILER_OPTIONS_KEY)
-    if isinstance(options, dict) and options.get(cs.TS_BASE_URL_KEY):
-        return _tsconfig_dir_prefix(cfg, repo_path) + _tsconfig_base_prefix(options)
-    for parent in _tsconfig_extends(data, cfg, repo_path):
-        if (base := _tsconfig_base_url(parent, repo_path, seen | {cfg})) is not None:
-            return base
-    return None
-
-
-def _load_ts_base_urls(repo_path: Path) -> tuple[tuple[str, str | None], ...]:
-    # (config directory as a dotted module prefix, its effective `baseUrl` as a
-    # repo-relative path prefix or None), deepest directory first. With a
-    # `baseUrl`, TypeScript resolves a bare specifier against it before
-    # node_modules, so `widgets` names `<baseUrl>/widgets.tsx` with no `paths`
-    # entry at all; but only for files that config governs: those under its
-    # directory, the nearest config winning, so a sibling app's `baseUrl`
-    # never reaches this app's imports. The first config file found in a
-    # directory governs it (tsconfig.json before jsconfig.json).
-    governing: dict[str, str | None] = {}
-    for cfg in _find_tsconfig_files(repo_path):
-        dotted = _tsconfig_dir_prefix(cfg, repo_path).replace(
-            cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT
-        )
-        if dotted not in governing:
-            governing[dotted] = _tsconfig_base_url(cfg, repo_path)
-    return tuple(sorted(governing.items(), key=lambda item: -len(item[0])))
-
-
-def _load_ts_path_aliases(repo_path: Path) -> list[tuple[str, str, bool]]:
-    # Aggregate `paths` aliases from every tsconfig at or below the repo root, each
-    # target prefixed by the tsconfig's own directory so `@/util` resolves against
-    # the config that defines it (a subdir `frontend/tsconfig.json` maps `@/` to
-    # `frontend/src/`). _ts_alias_module_qn keeps only aliases whose target exists
-    # on disk, so same-prefix aliases from sibling packages do not collide.
-    aliases: list[tuple[str, str, bool]] = []
-    for cfg in _find_tsconfig_files(repo_path):
-        data = _load_jsonc(cfg)
-        if not data:
-            continue
-        aliases.extend(
-            _parse_tsconfig_aliases(data, _tsconfig_dir_prefix(cfg, repo_path))
-        )
-    return aliases
-
-
 def _has_aliased_scheme(specifier: str) -> bool:
     # True for a JS/TS specifier with a non-standard scheme (`ext:deno_node/x`),
     # which names first-party code under a non-file-path alias. Standard external
@@ -679,8 +503,8 @@ def _has_aliased_scheme(specifier: str) -> bool:
     # `@scope/pkg`) are NOT aliased, so they stay externally suppressed. A tsconfig
     # `paths` alias (`@/util`) has no scheme and is not exempted here (it would be
     # indistinguishable from a scoped package `@scope/pkg`); it is instead resolved
-    # PRECISELY to its real module upstream by _resolve_js_module_path via
-    # _load_ts_path_aliases, so no trie fallback is needed for it.
+    # PRECISELY to its real module upstream by resolve_js_module_path via
+    # load_ts_path_aliases, so no trie fallback is needed for it.
     match = _JS_SCHEME_RE.match(specifier)
     return bool(match) and match.group(1).lower() not in cs.JS_EXTERNAL_IMPORT_SCHEMES
 
@@ -837,37 +661,6 @@ def _php_use_clause_binding(clause: Node) -> tuple[str, str] | None:
         return imported_path, safe_decode_with_fallback(alias_node)
     parts = imported_path.split(cs.SEPARATOR_DOT)
     return imported_path, parts[-1] if parts else imported_path
-
-
-def _ts_alias_candidates(
-    import_path: str, aliases: Sequence[tuple[str, str, bool]]
-) -> list[tuple[int, str]]:
-    # (prefix length, raw target) for every tsconfig alias matching the path.
-    candidates: list[tuple[int, str]] = []
-    for prefix, target_prefix, is_wildcard in aliases:
-        if is_wildcard and import_path.startswith(prefix):
-            candidates.append((len(prefix), target_prefix + import_path[len(prefix) :]))
-        elif not is_wildcard and import_path == prefix:
-            candidates.append((len(prefix), target_prefix))
-    return candidates
-
-
-def _ts_alias_target(raw_path: str) -> str | None:
-    # The alias target without its module extension, normalised; None when it
-    # is empty or escapes the project root.
-    path = raw_path
-    for ext in cs.JS_TS_MODULE_EXTENSIONS:
-        if path.endswith(ext):
-            path = path[: -len(ext)]
-            break
-    # normpath collapses `.`/`..` so the qn is clean and an escaping alias
-    # (`../x`) is rejected here.
-    normalized = posixpath.normpath(path)
-    if normalized in (cs.PATH_CURRENT_DIR, "") or normalized.startswith(
-        cs.PATH_PARENT_DIR
-    ):
-        return None
-    return normalized
 
 
 def _js_binds_whole_module(site: PropertyDict | None) -> bool:
@@ -1136,7 +929,7 @@ class ImportProcessor:
         "_import_site_owners",
         "_import_site_writers",
         "_inferred_module_imports",
-        "_csharp_module_namespaces",
+        "csharp_module_namespaces",
         "_csharp_module_identifiers",
         "_cpp_declaration_mappings",
         "_cpp_shadowed_include_targets",
@@ -1292,7 +1085,7 @@ class ImportProcessor:
         # in src/a.rs and src/a/b/mod.rs can share a scope key and a name.
         self._import_site_writers: dict[tuple[str, str], str] = {}
         self._inferred_module_imports: dict[str, set[str]] = {}
-        self._csharp_module_namespaces: dict[str, dict[str, set[str]]] = {}
+        self.csharp_module_namespaces: dict[str, dict[str, set[str]]] = {}
         self._csharp_module_identifiers: dict[str, frozenset[str]] = {}
         # Scala packages need not mirror directories (issue #2450): each
         # file's package clauses, scanned when it is parsed, say which
@@ -1533,10 +1326,10 @@ class ImportProcessor:
         # tsconfig `paths` aliases (match_prefix, target_prefix, is_wildcard), parsed
         # once from the repo-root tsconfig so `@/util` imports resolve to the real
         # first-party module instead of being dropped as external.
-        self.js_path_aliases: list[tuple[str, str, bool]] = _load_ts_path_aliases(
+        self.js_path_aliases: list[tuple[str, str, bool]] = load_ts_path_aliases(
             repo_path
         )
-        self.js_base_urls: tuple[tuple[str, str | None], ...] = _load_ts_base_urls(
+        self.js_base_urls: tuple[tuple[str, str | None], ...] = load_ts_base_urls(
             repo_path
         )
         self.stdlib_extractor = StdlibExtractor(
@@ -1814,7 +1607,7 @@ class ImportProcessor:
         # longer makes (issue #1347).
         self._inferred_module_imports.pop(module_qn, None)
         if language == cs.SupportedLanguage.CSHARP:
-            self._csharp_module_namespaces[module_qn] = self._collect_csharp_namespaces(
+            self.csharp_module_namespaces[module_qn] = self._collect_csharp_namespaces(
                 root_node
             )
             self._csharp_module_identifiers[module_qn] = (
@@ -2082,7 +1875,7 @@ class ImportProcessor:
         # A deleted C# file must stop declaring its namespaces, contributing
         # identifier evidence, and queueing its using entries, or the requeue
         # would rebuild edges a clean rebuild of the same tree never emits.
-        self._csharp_module_namespaces.pop(module_qn, None)
+        self.csharp_module_namespaces.pop(module_qn, None)
         self._csharp_module_identifiers.pop(module_qn, None)
         self._inferred_module_imports.pop(module_qn, None)
         self.import_mapping.pop(module_qn, None)
@@ -2098,7 +1891,7 @@ class ImportProcessor:
         holds their using directives, and re-emission is idempotent MERGEs
         (issue #1347).
         """
-        for module_qn in self._csharp_module_namespaces:
+        for module_qn in self.csharp_module_namespaces:
             for imported_path in self.import_mapping.get(module_qn, {}).values():
                 self.defer_import_edge(
                     module_qn, imported_path, cs.SupportedLanguage.CSHARP
@@ -2111,7 +1904,7 @@ class ImportProcessor:
         # C# namespaces need not mirror directory names, so path-based
         # guessing cannot answer "is this internal"; the per-file scans can.
         namespace_modules: dict[str, dict[str, set[str]]] = {}
-        for module_qn, namespaces in self._csharp_module_namespaces.items():
+        for module_qn, namespaces in self.csharp_module_namespaces.items():
             if module_qn not in known_module_qns:
                 continue
             for namespace, declared_types in namespaces.items():
@@ -2159,7 +1952,7 @@ class ImportProcessor:
         pending = [
             (module_qn, path)
             for module_qn, path in known_module_paths.items()
-            if module_qn not in self._csharp_module_namespaces
+            if module_qn not in self.csharp_module_namespaces
             and str(path).endswith(cs.EXT_CS)
         ]
         if not pending:
@@ -2174,7 +1967,7 @@ class ImportProcessor:
             try:
                 source = Path(path).read_bytes()
             except OSError:
-                self._csharp_module_namespaces[module_qn] = {}
+                self.csharp_module_namespaces[module_qn] = {}
                 self._csharp_module_identifiers[module_qn] = frozenset()
                 continue
             # Parsed as the indexer parses it: a UTF-16 file's raw bytes read
@@ -2182,7 +1975,7 @@ class ImportProcessor:
             tree = parser.parse(
                 grammar_bytes(source, cs.SupportedLanguage.CSHARP, Path(path))
             )
-            self._csharp_module_namespaces[module_qn] = self._collect_csharp_namespaces(
+            self.csharp_module_namespaces[module_qn] = self._collect_csharp_namespaces(
                 tree.root_node
             )
             self._csharp_module_identifiers[module_qn] = (
@@ -2211,7 +2004,7 @@ class ImportProcessor:
         # Names the importer DECLARES itself are not evidence: an unqualified
         # mention binds to the local type, not the imported namespace's.
         own_types: set[str] = set()
-        for own_declared in self._csharp_module_namespaces.get(
+        for own_declared in self.csharp_module_namespaces.get(
             entry.module_qn, {}
         ).values():
             own_types.update(own_declared)
@@ -4401,7 +4194,7 @@ class ImportProcessor:
         """
         return self._rust_redirect_parent_map().get(module_qn)
 
-    def _rust_super_base(self, module_qn: str, depth: int) -> str:
+    def rust_super_base(self, module_qn: str, depth: int) -> str:
         """Climb `depth` module parents from a module.
 
         Each step asks who DECLARES the module rather than which directory
@@ -4532,7 +4325,7 @@ class ImportProcessor:
             return cs.SEPARATOR_DOT.join([self.project_name, *dir_parts, stem, *rest])
         return None
 
-    def _rust_resolve_relative(
+    def rust_resolve_relative(
         self, base_qn: str, rest: list[str], importer_qn: str
     ) -> str:
         """Attach path segments to a super::/self:: base module.
@@ -4592,7 +4385,7 @@ class ImportProcessor:
             return cs.SEPARATOR_DOT.join([base_qn, *rest])
         return cs.SEPARATOR_DOT.join([self.project_name, *walked])
 
-    def _rewrite_rust_local_use_path(
+    def rewrite_rust_local_use_path(
         self,
         full_path: str,
         module_qn: str,
@@ -4619,15 +4412,15 @@ class ImportProcessor:
         if head == cs.RUST_CRATE_KEYWORD:
             return self._rust_rewrite_crate_path(parts[1:], module_qn)
         if head == cs.KEYWORD_SELF:
-            return self._rust_resolve_relative(module_qn, parts[1:], module_qn)
+            return self.rust_resolve_relative(module_qn, parts[1:], module_qn)
         if head == cs.KEYWORD_SUPER:
             depth = 0
             while depth < len(parts) and parts[depth] == cs.KEYWORD_SUPER:
                 depth += 1
-            base = self._rust_super_base(module_qn, depth)
-            return self._rust_resolve_relative(base, parts[depth:], module_qn)
+            base = self.rust_super_base(module_qn, depth)
+            return self.rust_resolve_relative(base, parts[depth:], module_qn)
         if head in local_mods:
-            return self._rust_resolve_relative(module_qn, parts, module_qn)
+            return self.rust_resolve_relative(module_qn, parts, module_qn)
         if (
             root := self._rust_workspace_crate_roots().get(head)
         ) is not None and self._rust_member_rewrite_allowed(root[0], module_qn):
@@ -4933,12 +4726,12 @@ class ImportProcessor:
         # (`"*": ["src/*"]`) from capturing bare package imports (`lodash` ->
         # `proj.src.lodash`) and rebinding them to same-named locals (#580).
         candidates = sorted(
-            _ts_alias_candidates(import_path, self.js_path_aliases),
+            ts_alias_candidates(import_path, self.js_path_aliases),
             key=lambda c: c[0],
             reverse=True,
         )
         for _prefix_len, raw_path in candidates:
-            normalized = _ts_alias_target(raw_path)
+            normalized = ts_alias_target(raw_path)
             if normalized is None:
                 continue
             module_rel = self._js_module_rel_on_disk(normalized)
@@ -5075,7 +4868,7 @@ class ImportProcessor:
                 current_parts.append(part)
         return current_parts
 
-    def _resolve_js_module_path(
+    def resolve_js_module_path(
         self, import_path: str, current_module: str, require: bool = False
     ) -> str:
         return self._resolve_js_import_target(
@@ -5836,7 +5629,7 @@ class ImportProcessor:
         local_mods = rs_utils.enclosing_mod_names(use_node)
         resolved_imports: dict[str, str] = {}
         for imported_name, full_path in imports.items():
-            resolved = self._rewrite_rust_local_use_path(
+            resolved = self.rewrite_rust_local_use_path(
                 full_path, resolve_qn, local_mods
             )
             if imported_name.startswith(cs.RS_SELF_MODULE_PREFIX):
@@ -5941,7 +5734,7 @@ class ImportProcessor:
             return None
         if path == cs.KEYWORD_SELF:
             return effective_qn
-        root = self._rewrite_rust_local_use_path(path, effective_qn)
+        root = self.rewrite_rust_local_use_path(path, effective_qn)
         project_prefix = f"{self.project_name}{cs.SEPARATOR_DOT}"
         if root == self.project_name or root.startswith(project_prefix):
             return root
