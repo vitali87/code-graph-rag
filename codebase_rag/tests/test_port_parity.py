@@ -126,6 +126,9 @@ def _index(parent: Path, project: str, files: dict[str, str]) -> Path:
             parsers=parsers,
             queries=queries,
             project_name=project,
+            # Parity reads the structure only; embedding every fixture with
+            # the real model made this module the slowest in the suite.
+            skip_embeddings=True,
         ).run(force=True)
     return root
 
