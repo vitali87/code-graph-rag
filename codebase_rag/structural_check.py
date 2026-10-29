@@ -25,7 +25,6 @@ import subprocess
 import uuid
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import cast
 
 from tree_sitter import Parser
 
@@ -332,7 +331,7 @@ def _refuse_unrestorable_capture(capture: CaptureSelection) -> None:
         )
 
 
-def _refuse_project_holding_io_links(ingestor: object, project_name: str) -> None:
+def _refuse_project_holding_io_links(ingestor: GraphStore, project_name: str) -> None:
     """Refuse an isolated run over IO links the checked project anchors.
 
     The capture check above covers what THIS run would write. A graph built
@@ -343,7 +342,7 @@ def _refuse_project_holding_io_links(ingestor: object, project_name: str) -> Non
     project's own nodes touch can be unanchored by the run, so another
     project's links do not refuse it (issue #3188).
     """
-    rows = cast(GraphStore, ingestor).fetch_all(
+    rows = ingestor.fetch_all(
         cq.CYPHER_CHECK_PROJECT_IO_LINKS,
         {
             cs.KEY_PROJECT_PREFIX: project_name + cs.SEPARATOR_DOT,
@@ -360,7 +359,7 @@ def _refuse_project_holding_io_links(ingestor: object, project_name: str) -> Non
 
 def _measure_then_restore(
     updater: GraphUpdater,
-    ingestor: object,
+    ingestor: GraphStore,
     project_name: str,
     repo_root: Path,
     apply: Callable[[Callable[[], None]], ReingestReport],
@@ -373,8 +372,7 @@ def _measure_then_restore(
     fails after its first write is rolled back from the capture before the
     error propagates.
     """
-    store = cast(GraphStore, ingestor)
-    guard = IsolationGuard(store, project_name, repo_root)
+    guard = IsolationGuard(ingestor, project_name, repo_root)
     # The cache the re-ingest rewrites, in the checkout's state directory
     # rather than the tree since #2427.
     cache_path = state_file(repo_root, cs.HASH_CACHE_FILENAME)
@@ -391,7 +389,7 @@ def _measure_then_restore(
         cs.KEY_PROJECT_NAME: project_name,
         cs.KEY_RUN_ID: uuid.uuid4().hex,
     }
-    store.execute_write(
+    ingestor.execute_write(
         cq.CYPHER_MARK_PROJECT_INCOMPLETE, {**marker, cs.KEY_WRITING: True}
     )
     try:
@@ -404,7 +402,7 @@ def _measure_then_restore(
         # Only once BOTH are back: a cache left holding the re-parse's hashes
         # would make the next update skip the edited files, so a failed cache
         # restore must keep the marker too (CodeRabbit, #1718).
-        store.execute_write(cq.CYPHER_CLEAR_PROJECT_INCOMPLETE, marker)
+        ingestor.execute_write(cq.CYPHER_CLEAR_PROJECT_INCOMPLETE, marker)
 
 
 def run_check(

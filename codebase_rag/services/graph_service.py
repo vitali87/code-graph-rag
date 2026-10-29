@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime
 from functools import cache, partial
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 import click
 import typer
@@ -337,7 +337,7 @@ class MemgraphIngestor:
             and settings.memgraph_set_without_backend
         ):
             _note_memgraph_set_without_backend()
-        self._driver: object | None = None
+        self._driver: Neo4jDriver | None = None
         self._driver_lock = threading.Lock()
         # The embedded engine's file; None reads SQLITE_GRAPH_PATH at connect.
         self._sqlite_path = sqlite_path
@@ -556,9 +556,8 @@ class MemgraphIngestor:
         otherwise outlive it. A Memgraph run never builds one, so this is
         a no-op there.
         """
-        driver = self._driver
-        if driver is not None:
-            cast("Neo4jDriver", driver).close()
+        if self._driver is not None:
+            self._driver.close()
             self._driver = None
 
     def _neo4j_driver(self) -> Neo4jDriver:
@@ -581,7 +580,7 @@ class MemgraphIngestor:
                     password=settings.NEO4J_PASSWORD,
                     database=settings.NEO4J_DATABASE,
                 )
-            return cast("Neo4jDriver", self._driver)
+            return self._driver
 
     def _execute_batch_on(
         self,

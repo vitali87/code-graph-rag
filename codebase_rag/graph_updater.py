@@ -3689,7 +3689,7 @@ class GraphUpdater:
         # The raw ingestor bypasses the capture filter, so gate explicitly.
         if not self.capture.rel_enabled(cs.RelationshipType.RESOLVES_TO):
             return
-        if not isinstance(self.ingestor, QueryProtocol):
+        if not isinstance(self.ingestor, QueryingIngestorProtocol):
             return
         created = link_endpoints(self.ingestor)
         if created:

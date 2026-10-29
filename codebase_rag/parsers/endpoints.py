@@ -9,7 +9,7 @@ those templates so cross-project request edges can resolve to handlers.
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 from .. import constants as cs
@@ -19,7 +19,7 @@ from .endpoint_routes import METHOD_ANY
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
 
-    from ..services import IngestorProtocol, QueryProtocol
+    from ..services import IngestorProtocol, QueryingIngestorProtocol, QueryProtocol
     from ..types_defs import ResultRow, ResultValue
 
     # (label, handler qn, route decorators, module qn)
@@ -436,7 +436,7 @@ def _project_stem(project: str) -> str:
     return project.rsplit(_PROJECT_HASH_SEPARATOR, 1)[0].lower().replace("_", "-")
 
 
-def link_endpoints(ingestor: QueryProtocol) -> int:
+def link_endpoints(ingestor: QueryingIngestorProtocol) -> int:
     """Resolve literal client request URLs to matching ENDPOINT resources.
 
     Endpoint identities are ``METHOD /path/template``; a NETWORK resource
@@ -455,9 +455,6 @@ def link_endpoints(ingestor: QueryProtocol) -> int:
     ingestor.execute_write(CYPHER_DELETE_RESOLVES_TO)
     networks, endpoints = _collect_live_resources(ingestor)
 
-    # The live ingestor both queries and writes; QueryProtocol alone types
-    # the read side, so the single write goes through an ingestor view.
-    writer = cast("IngestorProtocol", ingestor)
     created = 0
     for network_qn, (url, directions, caller_projects) in networks.items():
         rootful = not urlparse(url).netloc and url.startswith("/")
@@ -466,7 +463,7 @@ def link_endpoints(ingestor: QueryProtocol) -> int:
             url, directions, candidates, endpoints
         )
         for endpoint_qn in exact:
-            writer.ensure_relationship_batch(
+            ingestor.ensure_relationship_batch(
                 (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, network_qn),
                 cs.RelationshipType.RESOLVES_TO,
                 (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, endpoint_qn),
@@ -484,7 +481,7 @@ def link_endpoints(ingestor: QueryProtocol) -> int:
         for endpoint_qn, key, lead in _resolve_inferred_matches(
             suffix, mounts, endpoints
         ):
-            writer.ensure_relationship_batch(
+            ingestor.ensure_relationship_batch(
                 (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, network_qn),
                 cs.RelationshipType.RESOLVES_TO,
                 (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, endpoint_qn),
