@@ -135,16 +135,17 @@ def test_a_reingest_relinks_endpoint_resources(tmp_path: Path) -> None:
     updater, _ = _build(tmp_path, {"risky.py": _RISKY})
 
     calls: list[int] = []
-    real_link = type(updater)._link_endpoint_resources
+    linker = updater.endpoint_linker
+    real_link = type(linker).link_endpoint_resources
 
-    def _spy(self: object) -> None:
-        if self is updater:
+    def _spy(self: object, *a: object, **k: object) -> None:
+        if self is linker:
             calls.append(1)
-        return real_link(self)
+        return real_link(self, *a, **k)
 
     target = tmp_path / "risky.py"
     target.write_text(_RISKY.replace("eval(data)", "eval(data)  # edited"), "utf-8")
-    with patch.object(type(updater), "_link_endpoint_resources", _spy):
+    with patch.object(type(linker), "link_endpoint_resources", _spy):
         updater.reingest((target,))
 
     assert calls, (
@@ -170,7 +171,7 @@ def test_the_rebuild_runs_before_the_hash_commit(tmp_path: Path) -> None:
     order: list[str] = []
 
     real_findings = type(updater)._reingest_rebuild_findings
-    real_link = type(updater)._link_endpoint_resources
+    real_link = type(updater.endpoint_linker).link_endpoint_resources
     real_hashes = type(updater)._reingest_update_hashes
     real_flush = updater.ingestor.flush_all
 
@@ -196,7 +197,7 @@ def test_the_rebuild_runs_before_the_hash_commit(tmp_path: Path) -> None:
     target.write_text(_RISKY.replace("eval(data)", "eval(data)  # edited"), "utf-8")
     with (
         patch.object(type(updater), "_reingest_rebuild_findings", _findings),
-        patch.object(type(updater), "_link_endpoint_resources", _link),
+        patch.object(type(updater.endpoint_linker), "link_endpoint_resources", _link),
         patch.object(type(updater), "_reingest_update_hashes", _hashes),
     ):
         updater.reingest((target,))
@@ -211,7 +212,7 @@ def test_the_rebuild_runs_before_the_hash_commit(tmp_path: Path) -> None:
     )
     # And the queued writes must actually reach the store before the cache
     # records these files as current. `_reingest_rebuild_findings` only
-    # QUEUES, and `_link_endpoint_resources` returns early when RESOLVES_TO
+    # QUEUES, and `link_endpoint_resources` returns early when RESOLVES_TO
     # is disabled, so neither post-pass guarantees a flush of its own.
     # A flush must fall BETWEEN the rebuild and the hash commit. `.index`
     # alone is not enough: an earlier flush already runs inside the re-ingest

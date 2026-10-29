@@ -19,13 +19,13 @@ from loguru import logger
 from codebase_rag import constants as cs
 from codebase_rag.capture import resolve_capture
 from codebase_rag.exceptions import ReingestAborted
-from codebase_rag.graph_updater import (
-    CYPHER_PROJECT_MODULES,
+from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers.endpoint_prefixes import (
     CYPHER_PROJECT_PY_MODULES,
     CYPHER_PROJECT_ROUTE_HANDLERS,
-    GraphUpdater,
 )
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers.endpoint_routes import CYPHER_PROJECT_MODULES
 from codebase_rag.sync.checkout_state import state_file
 from codebase_rag.tests.conftest import create_and_run_updater
 from evals.cgr_graph import StatefulIngestor

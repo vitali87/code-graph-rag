@@ -361,7 +361,7 @@ class TestIncrementalMountChanges:
         updater._run.is_full_build = False
         assert not updater.factory.definition_processor.pending_endpoints
 
-        updater._emit_pending_endpoints()
+        updater.endpoint_linker.emit_pending_endpoints(updater._run)
 
         exposes = {
             (c.args[0][2], c.args[2][2].split("::")[-1])

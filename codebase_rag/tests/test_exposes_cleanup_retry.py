@@ -16,6 +16,8 @@ from codebase_rag import cypher_queries as cq
 from codebase_rag import graph_updater as gu
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers.endpoint_prefixes import CYPHER_DELETE_HANDLER_EXPOSES
+from codebase_rag.parsers.endpoint_routes import CYPHER_DELETE_MODULE_EXPOSES
 from codebase_rag.sync.checkout_state import state_file
 from evals.cgr_graph import StatefulIngestor
 
@@ -50,7 +52,7 @@ def test_a_skipped_cleanup_refuses_the_in_sync_path_until_done(tmp_path: Path) -
     down.__dict__.update(store.__dict__)
     blind = _updater(root, down)
     blind._run.registry_unread = True
-    blind._drop_stale_handler_exposes(["proj.api.items"])
+    blind.endpoint_linker._drop_stale_handler_exposes(blind._run, ["proj.api.items"])
     blind._record_exposes_cleanup(cleared_by_this_run=True)
     assert marker.exists()
     # Record the root's mtime AFTER the marker was written, as the run that
@@ -91,7 +93,7 @@ def test_a_scoped_pass_never_settles_an_owed_cleanup(tmp_path: Path) -> None:
 
 class _DeletesFail(StatefulIngestor):
     def execute_write(self, query, params=None):  # type: ignore[override]
-        if query in (cq.CYPHER_DELETE_HANDLER_EXPOSES, cq.CYPHER_DELETE_MODULE_EXPOSES):
+        if query in (CYPHER_DELETE_HANDLER_EXPOSES, CYPHER_DELETE_MODULE_EXPOSES):
             raise RuntimeError("write refused")
         return super().execute_write(query, params)
 
@@ -105,6 +107,6 @@ def test_a_failed_cleanup_delete_is_owed_like_a_skipped_one(tmp_path: Path) -> N
         marker = state_file(root, cs.EXPOSES_CLEANUP_PENDING_FILENAME)
         marker.touch()
         updater = _updater(root, _DeletesFail())
-        getattr(updater, cleanup)(["proj.api.items"])
+        getattr(updater.endpoint_linker, cleanup)(updater._run, ["proj.api.items"])
         updater._record_exposes_cleanup(cleared_by_this_run=True)
         assert marker.exists(), cleanup

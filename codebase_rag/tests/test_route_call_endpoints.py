@@ -962,7 +962,7 @@ class TestTestModulesEmitNoEndpoints:
             queries=queries,
             capture=_CAPTURE_IO,
         )
-        updater._emit_pending_endpoints()
+        updater.endpoint_linker.emit_pending_endpoints(updater._run)
         exposes = [
             c
             for c in ingestor.ensure_relationship_batch.call_args_list

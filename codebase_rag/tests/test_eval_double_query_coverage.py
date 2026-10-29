@@ -32,9 +32,10 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag import graph_updater as gu
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers import endpoint_prefixes as ep
+from codebase_rag.parsers import endpoint_routes as er
 from evals import cgr_graph
 from evals.cgr_graph import StatefulIngestor
 
@@ -295,7 +296,7 @@ class TestQueriesWhoseCallersSwallowExceptions:
         self, python_store: StatefulIngestor
     ) -> None:
         rows = python_store.fetch_all(
-            gu.CYPHER_PROJECT_MODULES,
+            er.CYPHER_PROJECT_MODULES,
             {cs.KEY_PROJECT_PREFIX: "proj.", "extensions": [".py"]},
         )
 
@@ -310,7 +311,7 @@ class TestQueriesWhoseCallersSwallowExceptions:
         """The control. Ignoring `$extensions` would still look right above,
         because every module in that fixture is Python."""
         rows = python_store.fetch_all(
-            gu.CYPHER_PROJECT_MODULES,
+            er.CYPHER_PROJECT_MODULES,
             {cs.KEY_PROJECT_PREFIX: "proj.", "extensions": [".ts"]},
         )
 
@@ -320,7 +321,7 @@ class TestQueriesWhoseCallersSwallowExceptions:
         self, python_store: StatefulIngestor
     ) -> None:
         rows = python_store.fetch_all(
-            gu.CYPHER_PROJECT_PY_MODULES, {cs.KEY_PROJECT_PREFIX: "proj."}
+            ep.CYPHER_PROJECT_PY_MODULES, {cs.KEY_PROJECT_PREFIX: "proj."}
         )
 
         assert {row[cs.KEY_QUALIFIED_NAME] for row in rows} == {
@@ -353,7 +354,7 @@ class TestQueriesWhoseCallersSwallowExceptions:
         )
 
         rows = store.fetch_all(
-            gu.CYPHER_PROJECT_ROUTE_HANDLERS, {cs.KEY_PROJECT_PREFIX: "proj."}
+            ep.CYPHER_PROJECT_ROUTE_HANDLERS, {cs.KEY_PROJECT_PREFIX: "proj."}
         )
 
         qns = {row[cs.KEY_QUALIFIED_NAME] for row in rows}

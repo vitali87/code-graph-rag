@@ -235,7 +235,7 @@ _ORDER: tuple[tuple[str, str, str, str], ...] = (
     ),
     (
         "_process_files",
-        "_emit_pending_endpoints",
+        "emit_pending_endpoints",
         "every module is parsed now",
         "router mount prefixes may be cross-module, so every module must be "
         "parsed before they can resolve (issue #877)",

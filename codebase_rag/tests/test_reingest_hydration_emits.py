@@ -351,10 +351,12 @@ def test_a_sink_without_a_query_surface_still_reingests(tmp_path: Path) -> None:
     (root / "newdir").mkdir()
     (root / "newdir" / "n.py").write_text(UTIL, encoding="utf-8")
 
-    updater = _updater(root, store)
     # `isinstance(..., QueryProtocol)` is what the guard consults, so failing
-    # that check is how a surface-less sink presents.
+    # that check is how a surface-less sink presents. The updater is built
+    # under the patch too: its collaborators take the graph view at
+    # construction.
     with patch("codebase_rag.graph_updater.QueryProtocol", type(None)):
+        updater = _updater(root, store)
         report = updater.reingest(["newdir/n.py"])
 
     assert report.reparsed, "a sink without a query surface could not re-ingest at all"

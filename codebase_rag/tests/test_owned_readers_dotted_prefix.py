@@ -67,7 +67,10 @@ def test_package_paths_skip_a_package_only_the_longer_project_holds(
 
 def test_python_modules_are_this_projects_own(tmp_path: Path) -> None:
     qns = {
-        qn for qn, _path in _svc_after_both_indexed(tmp_path)._graph_python_modules()
+        qn
+        for qn, _path in _svc_after_both_indexed(
+            tmp_path
+        ).endpoint_linker._graph_python_modules()
     }
     assert "svc.api" in qns
     assert _foreign(qns) == set()
@@ -76,7 +79,10 @@ def test_python_modules_are_this_projects_own(tmp_path: Path) -> None:
 def test_route_modules_are_this_projects_own(tmp_path: Path) -> None:
     """The EXPOSES cleanup is keyed on these module qns (#1991)."""
     updater = _svc_after_both_indexed(tmp_path)
-    qns = {qn for qn, _path in updater._graph_route_module_paths()}
+    qns = {
+        qn
+        for qn, _path in updater.endpoint_linker._graph_route_module_paths(updater._run)
+    }
     assert "svc.routes" in qns
     assert _foreign(qns) == set()
 
@@ -85,8 +91,8 @@ def test_route_handlers_are_this_projects_own(tmp_path: Path) -> None:
     updater = _svc_after_both_indexed(tmp_path)
     qns = {
         qn
-        for _label, qn, _routes, _module in updater._rehydrated_route_handlers(
-            set(), set()
+        for _label, qn, _routes, _module in (
+            updater.endpoint_linker._rehydrated_route_handlers(set(), set())
         )
     }
     assert "svc.api.items" in qns
@@ -110,13 +116,16 @@ def test_route_modules_read_nothing_when_the_registry_is_unread(
     pass `svc.v2`'s modules as `svc`'s, so the reader returns nothing, as it
     does when its own read fails (CodeRabbit, PR #2129)."""
     updater = _svc_after_both_indexed(tmp_path)
-    healthy = {qn for qn, _path in updater._graph_route_module_paths()}
+    healthy = {
+        qn
+        for qn, _path in updater.endpoint_linker._graph_route_module_paths(updater._run)
+    }
     assert "svc.routes" in healthy
 
     down = _RegistryDown()
     down.__dict__.update(updater.ingestor.__dict__)
     blind = _updater(tmp_path / "svc", down, "svc")
-    assert blind._graph_route_module_paths() == []
+    assert blind.endpoint_linker._graph_route_module_paths(blind._run) == []
 
 
 class _RecordingStore(StatefulIngestor):
@@ -136,21 +145,22 @@ def test_neither_exposes_cleanup_deletes_when_the_registry_is_unread(
     mislead: the seeded module map and the rehydrated handler names. With the
     registry unread neither delete runs, the whole cleanup deferred to the
     next healthy run (CodeRabbit, PR #2129)."""
-    from codebase_rag.graph_updater import CYPHER_DELETE_HANDLER_EXPOSES
+    from codebase_rag.parsers.endpoint_prefixes import CYPHER_DELETE_HANDLER_EXPOSES
     from codebase_rag.parsers.endpoint_routes import CYPHER_DELETE_MODULE_EXPOSES
 
     store = _RecordingStore()
     updater = _updater(tmp_path, store, "svc")
+    linker = updater.endpoint_linker
     updater._run.registry_unread = True
-    updater._drop_stale_handler_exposes(["svc.v2.api.items"])
-    updater._drop_stale_module_exposes(["svc.v2.routes"])
+    linker._drop_stale_handler_exposes(updater._run, ["svc.v2.api.items"])
+    linker._drop_stale_module_exposes(updater._run, ["svc.v2.routes"])
     assert not {CYPHER_DELETE_HANDLER_EXPOSES, CYPHER_DELETE_MODULE_EXPOSES} & set(
         store.written
     ), store.written
 
     updater._run.registry_unread = False
-    updater._drop_stale_handler_exposes(["svc.api.items"])
-    updater._drop_stale_module_exposes(["svc.routes"])
+    linker._drop_stale_handler_exposes(updater._run, ["svc.api.items"])
+    linker._drop_stale_module_exposes(updater._run, ["svc.routes"])
     assert {CYPHER_DELETE_HANDLER_EXPOSES, CYPHER_DELETE_MODULE_EXPOSES} <= set(
         store.written
     ), store.written

@@ -4,9 +4,10 @@ from pathlib import Path
 
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
-from codebase_rag import graph_updater as gu
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers import endpoint_prefixes as ep
+from codebase_rag.parsers import endpoint_routes as er
 from codebase_rag.types_defs import (
     PropertyDict,
     PropertyValue,
@@ -1763,7 +1764,7 @@ class StatefulIngestor:
                     }
                     rows.append(row)
                 return rows
-            case gu.CYPHER_PROJECT_MODULES | gu.CYPHER_PROJECT_PY_MODULES:
+            case er.CYPHER_PROJECT_MODULES | ep.CYPHER_PROJECT_PY_MODULES:
                 # Route rehydration. These MUST be emulated rather than left to
                 # the refusal below: their readers wrap the call in
                 # `except Exception: return []`, so a raise is caught and
@@ -1787,7 +1788,7 @@ class StatefulIngestor:
                     and qn.startswith(prefix)
                     and (path := _text(props.get(cs.KEY_PATH)) or "").endswith(suffixes)
                 ]
-            case gu.CYPHER_PROJECT_ROUTE_HANDLERS:
+            case ep.CYPHER_PROJECT_ROUTE_HANDLERS:
                 prefix = _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
                 return [
                     {
