@@ -37,6 +37,7 @@ WRITERS = frozenset(
         cs.MCPToolName.UPDATE_REPOSITORY,
         cs.MCPToolName.REINGEST,
         cs.MCPToolName.RENAME,
+        cs.MCPToolName.CHANGE_SIGNATURE,
         cs.MCPToolName.SURGICAL_REPLACE_CODE,
         cs.MCPToolName.WRITE_FILE,
         cs.MCPToolName.STRUCTURAL_REPLACE,
@@ -116,6 +117,7 @@ async def test_the_destructive_tools_say_so(repo: Path, no_llm: None) -> None:
     for name in (
         cs.MCPToolName.WIPE_DATABASE,
         cs.MCPToolName.DELETE_PROJECT,
+        cs.MCPToolName.CHANGE_SIGNATURE,
         cs.MCPToolName.WRITE_FILE,
         cs.MCPToolName.STRUCTURAL_REPLACE,
     ):
