@@ -410,13 +410,13 @@ def _fit(
             if candidate.distance == 0 and not pieces:
                 # The target itself must fit: keep as many of its lines as
                 # the budget allows and say so. A budget too small for even
-                # its first line leaves it out rather than padding with
-                # nothing.
+                # its first line returns nothing, since its neighbours alone
+                # would read as context for it (issue #3005).
                 source, tokens = _trim(source, budget)
                 truncated = True
                 if not source:
                     omitted.append(f"{candidate.qualified_name} ({candidate.why})")
-                    continue
+                    return [], omitted, 0, truncated
             else:
                 omitted.append(f"{candidate.qualified_name} ({candidate.why})")
                 continue

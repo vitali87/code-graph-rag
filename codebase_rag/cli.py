@@ -2788,6 +2788,16 @@ def context_command(
     if payload["resolved"] is None:
         typer.echo(cs.CONTEXT_UNRESOLVED.format(target=target), err=True)
         raise typer.Exit(code=1)
+    # Only the target's own trim marks a slice truncated, so truncated and
+    # empty means not even its first line fitted.
+    if payload["truncated"] and not payload["pieces"]:
+        typer.echo(
+            cs.CONTEXT_TARGET_OVER_BUDGET.format(
+                target=payload["resolved"], budget=budget
+            ),
+            err=True,
+        )
+        raise typer.Exit(code=1)
 
 
 @app.command(
