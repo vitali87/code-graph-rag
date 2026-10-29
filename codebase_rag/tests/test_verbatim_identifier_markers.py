@@ -206,6 +206,7 @@ class TestEveryRoutedReaderUsesTheHelper:
         "codebase_rag.parsers.class_ingest.method_override",
         "codebase_rag.parsers.class_ingest.ingest",
         "codebase_rag.parsers.function_ingest",
+        "codebase_rag.parsers.go.calls",
         "codebase_rag.parsers.rust.rehydration",
         "evals.cgr_graph",
     )
@@ -258,7 +259,7 @@ class TestEveryRoutedReaderUsesTheHelper:
 
 
 class TestVariantSpanSuffixReader:
-    """`call_processor._go_variant_spans`, which reads the marker's SUFFIX.
+    """`go.calls.variant_spans`, which reads the marker's SUFFIX.
 
     The mirror of every other reader here: it takes `[1]` rather than `[0]`,
     so a `split(MARKER, 1)[0]` grep could not see it -- the AST check above
@@ -269,22 +270,22 @@ class TestVariantSpanSuffixReader:
     """
 
     def test_a_marked_variant_still_resolves_its_line(self) -> None:
-        from codebase_rag.parsers.call_processor import _go_variant_spans
+        from codebase_rag.parsers.go.calls import variant_spans
 
-        spans = _go_variant_spans(["pkg.Box", "pkg.Box@12"], [(0, None), (12, (12, 4))])
+        spans = variant_spans(["pkg.Box", "pkg.Box@12"], [(0, None), (12, (12, 4))])
         assert spans == [None, (12, 4)]
 
     def test_a_marked_verbatim_variant_resolves_its_line(self) -> None:
         """Was `None` before the fix: `'event@12'` is not a digit string."""
-        from codebase_rag.parsers.call_processor import _go_variant_spans
+        from codebase_rag.parsers.go.calls import variant_spans
 
-        spans = _go_variant_spans(
+        spans = variant_spans(
             ["pkg.@event", "pkg.@event@12"], [(0, None), (12, (12, 4))]
         )
         assert spans == [None, (12, 4)]
 
     def test_a_bare_verbatim_name_takes_the_no_marker_branch(self) -> None:
         """`@event` carries no marker, so it is the natural declaration."""
-        from codebase_rag.parsers.call_processor import _go_variant_spans
+        from codebase_rag.parsers.go.calls import variant_spans
 
-        assert _go_variant_spans(["pkg.@event"], [(0, (3, 0))]) == [(3, 0)]
+        assert variant_spans(["pkg.@event"], [(0, (3, 0))]) == [(3, 0)]

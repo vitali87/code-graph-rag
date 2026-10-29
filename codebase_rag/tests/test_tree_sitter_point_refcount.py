@@ -220,7 +220,7 @@ def test_a_files_type_declarations_are_walked_once(
     # which is also what made the call pass allocate enough to expose the
     # binding bug. Rows stay below 257 here so the old code cannot crash.
     from codebase_rag.graph_updater import GraphUpdater
-    from codebase_rag.parsers import call_processor as cp
+    from codebase_rag.parsers.go import calls as go_calls
     from evals.cgr_graph import CapturingIngestor
 
     parsers, queries = load_parsers()
@@ -233,13 +233,13 @@ def test_a_files_type_declarations_are_walked_once(
     repo.mkdir()
     (repo / "demo.go").write_text("\n".join(lines) + "\n")
     walks: list[object] = []
-    walk = cp._go_type_declarations_by_name
+    walk = go_calls.type_declarations_by_name
 
-    def _counting(root: Node) -> dict[str, list[tuple[int, cp._Span | None]]]:
+    def _counting(root: Node) -> dict[str, list[tuple[int, go_calls.Span | None]]]:
         walks.append(root)
         return walk(root)
 
-    monkeypatch.setattr(cp, "_go_type_declarations_by_name", _counting)
+    monkeypatch.setattr(go_calls, "type_declarations_by_name", _counting)
     monkeypatch.setattr(settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
 
     GraphUpdater(

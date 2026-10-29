@@ -1579,7 +1579,8 @@ class CallResolver:
         # candidates are build variants (`h_linux.go`, `h_windows.go`) only
         # when no build compiles them together: the caller then binds the
         # first its builds may hold, labelled by the builds it reaches
-        # (`_go_build_targets`), and its sibling fan-out reaches the rest.
+        # (`GoCallResolution.build_targets`), and its sibling fan-out reaches
+        # the rest.
         # The name-only fallback took another package's same-named function
         # there, `p_test`'s even, and no variant (#3360).
         candidates = self._go_build_variant_candidates(
