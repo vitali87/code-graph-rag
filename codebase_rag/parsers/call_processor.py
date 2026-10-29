@@ -15,7 +15,6 @@ from .. import constants as cs
 from .. import logs as ls
 from ..capture import ALL_ENABLED, CaptureSelection
 from ..language_spec import (
-    LANGUAGE_FQN_SPECS,
     LanguageSpec,
     sql_object_reference_name,
 )
@@ -30,7 +29,6 @@ from ..types_defs import (
     ScalaBinding,
 )
 from ..utils import qn_markers
-from ..utils.fqn_resolver import scoped_name_parts
 from ..utils.path_utils import cached_relative_path
 from .call_resolver import CallResolver, Resolved
 from .callable_params import (
@@ -68,6 +66,7 @@ from .js_ts import calls as js_calls
 from .js_ts import utils as js_ts_utils
 from .julia import utils as julia_utils
 from .lua import utils as lua_utils
+from .php import calls as php_calls
 from .php import class_names as php_class_names
 from .php import utils as php_utils
 from .python import calls as python_calls
@@ -149,14 +148,6 @@ class _RefEmitScope(NamedTuple):
     caller_qn: str | None
     resolve_func: Callable[..., tuple[str, str] | None]
     ensure_rel: Callable[..., None]
-
-
-class _PhpClassCallee(NamedTuple):
-    # What a PHP call whose class the site shows binds to. `decided` False
-    # leaves the call to the name-based resolver; True means `callee` is the
-    # answer, and None there is a known non-edge.
-    decided: bool
-    callee: tuple[str, str] | None
 
 
 @dataclass(slots=True)
@@ -255,20 +246,6 @@ def _exceeds_receiver_chain_cap(call_node: Node) -> bool:
     return False
 
 
-def _php_anonymous_class_qn(node: Node, module_qn: str) -> str | None:
-    """The qn the definition pass registers an anonymous class under.
-
-    The call pass's own class-qn builder walks class ancestors only and
-    would drop the enclosing callables, so it asks for this instead.
-    """
-    if node.type != cs.TS_PHP_ANONYMOUS_CLASS:
-        return None
-    parts = scoped_name_parts(
-        node, LANGUAGE_FQN_SPECS[cs.SupportedLanguage.PHP], module_qn, None
-    )
-    return cs.SEPARATOR_DOT.join([module_qn, *parts])
-
-
 def _class_qn_for_calls(
     class_node: Node,
     module_qn: str,
@@ -284,7 +261,7 @@ def _class_qn_for_calls(
     if language == cs.SupportedLanguage.CPP:
         return cpp_utils.build_qualified_name(class_node, module_qn, class_name)
     if language == cs.SupportedLanguage.PHP and (
-        anonymous_qn := _php_anonymous_class_qn(class_node, module_qn)
+        anonymous_qn := php_calls.anonymous_class_qn(class_node, module_qn)
     ):
         return anonymous_qn
     return (
@@ -862,6 +839,7 @@ class CallProcessor:
         "_python",
         "_java",
         "_scala",
+        "_php",
         "_callable_flow",
         "_flow_bucket",
         "failed_call_files",
@@ -942,6 +920,7 @@ class CallProcessor:
         self._python = python_calls.PythonCallResolution(self, self._resolver)
         self._java = java_calls.JavaCallResolution(self, self._resolver)
         self._scala = scala_calls.ScalaCallResolution(self._resolver)
+        self._php = php_calls.PhpCallResolution(self, self._resolver)
         # Inter-procedural callable-parameter flow: ordered params per function and
         # the per-call-site argument bindings, resolved to a fixpoint in finalize.
         self._flow_param_names: dict[str, list[str]] = {}
@@ -3592,7 +3571,7 @@ class CallProcessor:
         if (
             ctx.language == cs.SupportedLanguage.PHP
             and (
-                php := self._resolve_php_class_callee(ctx, call_node, call_name)
+                php := self._php.resolve_class_callee(ctx, call_node, call_name)
             ).decided
         ):
             return php.callee
@@ -3623,47 +3602,6 @@ class CallProcessor:
         if ctx.is_js_ts and callee_info is not None:
             return self._js.judge_member_pick(ctx, call_node, callee_info)
         return callee_info
-
-    def _resolve_php_class_callee(
-        self, ctx: _CallScanContext, call_node: Node, call_name: str
-    ) -> _PhpClassCallee:
-        # `new C(...)` is always decided here; a member call only when its
-        # receiver's class is known, so a miss keeps the name-only fallback.
-        if call_node.type == cs.TS_PHP_OBJECT_CREATION_EXPRESSION:
-            return _PhpClassCallee(True, self._resolve_php_new_callee(ctx, call_node))
-        if call_node.type in cs.PHP_MEMBER_CALL_TYPES and (
-            typed := self._resolve_php_typed_member(ctx, call_node, call_name)
-        ):
-            return _PhpClassCallee(True, typed)
-        return _PhpClassCallee(False, None)
-
-    def _resolve_php_new_callee(
-        self, ctx: _CallScanContext, call_node: Node
-    ) -> tuple[str, str] | None:
-        # `new C(...)` names a class through PHP's namespace and `use` rules
-        # alone; the generic resolver would judge a `use`d namespace path
-        # external, or rebind the bare name to a function (issue #2466).
-        path = php_class_names.new_expression_class_path(call_node)
-        if not path:
-            return None
-        return self._noted(self._resolver.resolve_php_class_path(path, ctx.module_qn))
-
-    def _resolve_php_typed_member(
-        self, ctx: _CallScanContext, call_node: Node, call_name: str
-    ) -> tuple[str, str] | None:
-        # A receiver the site shows was built by `new C` has class C, so the
-        # method binds on C (or what C inherits) rather than by bare name. A
-        # miss here leaves the name-only fallback exactly as it was.
-        if ctx.php_scope_classes is None:
-            ctx.php_scope_classes = {}
-        path = php_class_names.receiver_class_path(call_node, ctx.php_scope_classes)
-        if not path:
-            return None
-        return self._noted(
-            self._resolver.resolve_php_method_on_class_path(
-                path, call_name, ctx.module_qn
-            )
-        )
 
     def _fallback_callee(
         self,
