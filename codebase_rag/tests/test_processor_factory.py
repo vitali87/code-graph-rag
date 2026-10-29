@@ -456,6 +456,24 @@ class TestTheUnignorePolicyReachesEveryProcessor:
 
         assert proc.unignore_paths == resolved
 
+    def test_the_rust_importer_prunes_with_the_updated_policy(
+        self, factory: ProcessorFactory
+    ) -> None:
+        """The import processor's Rust importer is no factory slot, so the
+        update never reaches it by assignment: it reads the policy through
+        the processor that built it. A copy taken at construction would keep
+        skipping a rescued tree in its declaration reads and redirect sweep
+        (issues #1088, #1100)."""
+        importer = factory.import_processor.rust
+        rel_parts = ["target", "generated-sources", "annotations", "lib.rs"]
+        assert not importer._rust_file_is_indexed(rel_parts)
+
+        factory.propagate_unignore_paths(
+            frozenset({"target/generated-sources/annotations/**"})
+        )
+
+        assert importer._rust_file_is_indexed(rel_parts)
+
     def test_a_processor_built_after_the_update_sees_the_new_policy(
         self, factory: ProcessorFactory
     ) -> None:
