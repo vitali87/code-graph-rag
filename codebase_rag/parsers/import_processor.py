@@ -4522,7 +4522,9 @@ class ImportProcessor:
                 return self._resolve_rust_import_path(full_name)
 
         module_path = self.stdlib_extractor.extract_module_path(full_name, language)
-        if not module_path.startswith(project_prefix):
+        # The bare project name is first-party too: a Go import of the module
+        # path itself binds the module's root package, whose qn is exactly it.
+        if self._module_label(module_path) == cs.NodeLabel.EXTERNAL_MODULE:
             self._ensure_external_module_node(module_path, full_name)
         return module_path
 

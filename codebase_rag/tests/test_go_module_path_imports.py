@@ -5,8 +5,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import recorded_nodes
 
 GO_MOD = "module github.com/acme/mytool\n\ngo 1.22\n"
 GREET_ALPHA = 'package util\n\nfunc Greet() string {\n    return "alpha"\n}\n'
@@ -189,6 +191,37 @@ def test_module_root_package_member_resolves(tmp_path: Path) -> None:
     calls = _calls(_run_rels(tmp_path, files), "cmd.main.main")
     assert "mytool.version.Version" in calls
     assert "mytool.internal.meta.meta.Version" not in calls
+
+
+def test_importing_the_module_root_mints_no_external_module(tmp_path: Path) -> None:
+    # The root package's qn is the project name itself, which the import
+    # resolver read as outside the project: it minted an ExternalModule of
+    # that name that nothing pointed at.
+    parsers, queries = load_parsers()
+    if "go" not in parsers:
+        pytest.skip("go parser not available")
+    root = tmp_path / "mytool"
+    for rel, content in {
+        "go.mod": GO_MOD,
+        "version.go": 'package mytool\n\nfunc Version() string {\n    return "1"\n}\n',
+        "cmd/main.go": (
+            "package main\n\n"
+            'import tool "github.com/acme/mytool"\n\n'
+            "func main() {\n    tool.Version()\n}\n"
+        ),
+    }.items():
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+    mock = MagicMock()
+    GraphUpdater(ingestor=mock, repo_path=root, parsers=parsers, queries=queries).run()
+
+    assert not [
+        node
+        for node in recorded_nodes(mock)
+        if node.label == cs.NodeLabel.EXTERNAL_MODULE
+        and node.properties[cs.KEY_QUALIFIED_NAME] == "mytool"
+    ]
 
 
 def test_invalid_utf8_gomod_does_not_crash(tmp_path: Path) -> None:
