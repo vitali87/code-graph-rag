@@ -13,7 +13,12 @@ from codebase_rag.parsers.cpp_frontend import (
     cpp_frontend_available,
     run_cpp_frontend_hybrid,
 )
-from codebase_rag.tests.conftest import get_nodes, get_qualified_names, run_updater
+from codebase_rag.tests.conftest import (
+    get_nodes,
+    get_qualified_names,
+    recorded_edges,
+    run_updater,
+)
 from evals.cgr_graph import StatefulIngestor
 
 pytestmark = pytest.mark.skipif(
@@ -150,19 +155,11 @@ def _write_param(root: Path) -> None:
 
 
 def _calls(ingestor: MagicMock) -> set[tuple[str, str]]:
-    return {
-        (c.args[0][2], c.args[2][2])
-        for c in ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    }
+    return recorded_edges(ingestor, "CALLS")
 
 
 def _imports(ingestor: MagicMock) -> set[tuple[str, str]]:
-    return {
-        (c.args[0][2], c.args[2][2])
-        for c in ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "IMPORTS"
-    }
+    return recorded_edges(ingestor, "IMPORTS")
 
 
 def _run_hybrid(root: Path, monkeypatch: pytest.MonkeyPatch) -> MagicMock:
@@ -452,11 +449,7 @@ def _write_b3(root: Path) -> None:
 
 
 def _defines(ingestor: MagicMock) -> set[tuple[str, str]]:
-    return {
-        (c.args[0][2], c.args[2][2])
-        for c in ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "DEFINES"
-    }
+    return recorded_edges(ingestor, "DEFINES")
 
 
 def test_hybrid_emits_namespace_and_file_scope_type_aliases(

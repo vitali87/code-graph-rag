@@ -18,7 +18,7 @@ from tree_sitter import Language, Node, Parser
 
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.tests.conftest import create_and_run_updater
+from codebase_rag.tests.conftest import create_and_run_updater, recorded_edges
 from codebase_rag.tests.test_incremental_added_dependents import _add_after_cache
 from codebase_rag.tests.test_incremental_deleted_dependents import (
     _index as _index_into,
@@ -68,11 +68,7 @@ def _index(tmp_path: Path, mock_ingestor: MagicMock, files: dict[str, str]) -> N
 
 
 def _calls(mock_ingestor: MagicMock) -> set[tuple[str, str]]:
-    return {
-        (str(c.args[0][2]), str(c.args[2][2]))
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == cs.RelationshipType.CALLS
-    }
+    return recorded_edges(mock_ingestor, cs.RelationshipType.CALLS)
 
 
 def _resolutions(mock_ingestor: MagicMock) -> dict[tuple[str, str], str]:

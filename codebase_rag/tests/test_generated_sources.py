@@ -17,6 +17,7 @@ from codebase_rag.parsers.java.generated import (
     generated_prefixes_for,
     generator_hint,
 )
+from codebase_rag.tests.conftest import recorded_edges
 
 _CALLER = (
     "package com.app;\n\nimport com.example.gen.Widget;\n\n"
@@ -52,11 +53,7 @@ def _modules(mock: MagicMock) -> dict[str, dict]:
 
 
 def _edges(mock: MagicMock, rel: str) -> set[tuple[str, str]]:
-    return {
-        (c.args[0][2], c.args[2][2])
-        for c in mock.ensure_relationship_batch.call_args_list
-        if str(c.args[1]) == rel
-    }
+    return recorded_edges(mock, rel)
 
 
 def _write_maven_repo(repo: Path) -> None:

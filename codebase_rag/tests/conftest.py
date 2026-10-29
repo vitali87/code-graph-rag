@@ -952,15 +952,9 @@ def _audit_recorded_graph(mock_ingestor: MagicMock) -> None:
     database). CGR_AUDIT_SWEEP=<file> switches to collect mode, appending
     violations as JSON lines instead of failing.
     """
-    nodes = [
-        GraphNodeRecord(str(c.args[0]), c.args[1])
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-    ]
-    rels = [
-        GraphRelRecord(c.args[0], str(c.args[1]), c.args[2])
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-    ]
-    violations = graph_audit.collect_violations(nodes, rels)
+    violations = graph_audit.collect_violations(
+        recorded_nodes(mock_ingestor), recorded_relationships(mock_ingestor)
+    )
     if sweep_path := os.environ.get("CGR_AUDIT_SWEEP"):
         import json
 
@@ -970,6 +964,32 @@ def _audit_recorded_graph(mock_ingestor: MagicMock) -> None:
                 f.write(json.dumps([str(v.check), v.detail, test_id]) + "\n")
         return
     assert not violations, "\n".join(v.detail for v in violations)
+
+
+def recorded_nodes(ingestor: MagicMock) -> list[GraphNodeRecord]:
+    """Every node a recording ingestor was handed, in order."""
+    return [
+        GraphNodeRecord(str(c.args[0]), c.args[1])
+        for c in ingestor.ensure_node_batch.call_args_list
+    ]
+
+
+def recorded_relationships(ingestor: MagicMock) -> list[GraphRelRecord]:
+    """Every relationship a recording ingestor was handed, in order."""
+    return [
+        GraphRelRecord(c.args[0], str(c.args[1]), c.args[2])
+        for c in ingestor.ensure_relationship_batch.call_args_list
+    ]
+
+
+def recorded_edges(ingestor: MagicMock, rel_type: str) -> set[tuple[str, str]]:
+    """The `rel_type` relationships recorded, as (source key, target key):
+    the qualified name, or whatever value keys the endpoint's label."""
+    return {
+        (str(rel.from_spec[2]), str(rel.to_spec[2]))
+        for rel in recorded_relationships(ingestor)
+        if rel.rel_type == rel_type
+    }
 
 
 def get_relationships(mock_ingestor: MagicMock, rel_type: str) -> list:

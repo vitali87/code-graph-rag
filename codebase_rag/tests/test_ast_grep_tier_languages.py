@@ -14,6 +14,7 @@ from unittest.mock import MagicMock
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import recorded_edges
 
 FUNCTION = cs.NodeLabel.FUNCTION.value
 METHOD = cs.NodeLabel.METHOD.value
@@ -569,11 +570,7 @@ def test_stems_colliding_across_elixir_extensions_stay_separate(
 
 def _defines_edges(mock: MagicMock) -> set[tuple[str, str]]:
     """(parent qn, child qn) for every DEFINES edge."""
-    return {
-        (c.args[0][2], c.args[2][2])
-        for c in mock.ensure_relationship_batch.call_args_list
-        if str(c.args[1]) == DEFINES
-    }
+    return recorded_edges(mock, DEFINES)
 
 
 def test_colliding_files_keep_their_own_functions(tmp_path: Path) -> None:

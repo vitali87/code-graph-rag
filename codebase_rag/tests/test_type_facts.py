@@ -16,7 +16,7 @@ from codebase_rag.parsers.type_facts import (
     type_reference_names,
 )
 from codebase_rag.sync.checkout_state import state_file
-from codebase_rag.tests.conftest import create_and_run_updater
+from codebase_rag.tests.conftest import create_and_run_updater, recorded_edges
 
 
 def _props(mock: MagicMock, label: str) -> dict[str, dict]:
@@ -30,11 +30,7 @@ def _props(mock: MagicMock, label: str) -> dict[str, dict]:
 
 
 def _edges(mock: MagicMock, rel: str) -> set[tuple[str, str]]:
-    return {
-        (str(c.args[0][2]), str(c.args[2][2]))
-        for c in mock.ensure_relationship_batch.call_args_list
-        if str(c.args[1]) == rel
-    }
+    return recorded_edges(mock, rel)
 
 
 def _suffix(edges: set[tuple[str, str]]) -> set[tuple[str, str]]:

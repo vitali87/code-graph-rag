@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 
 from codebase_rag import constants as cs
 from codebase_rag.parsers.java.type_inference import JavaTypeInferenceEngine
-from codebase_rag.tests.conftest import create_and_run_updater
+from codebase_rag.tests.conftest import create_and_run_updater, recorded_edges
 from codebase_rag.types_defs import ASTNode
 
 _SOURCE = """\
@@ -37,11 +37,7 @@ class Main {
 
 
 def _calls(repo: Path, mock: MagicMock) -> set[tuple[str, str]]:
-    return {
-        (str(c.args[0][2]), str(c.args[2][2]))
-        for c in mock.ensure_relationship_batch.call_args_list
-        if c.args[1] == cs.RelationshipType.CALLS.value
-    }
+    return recorded_edges(mock, cs.RelationshipType.CALLS.value)
 
 
 def test_a_failing_pass_is_recorded_against_its_caller(

@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from codebase_rag import constants as cs
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import recorded_edges, run_updater
 
 USING_ALIAS_CC = """
 struct basic_appender {
@@ -56,11 +56,7 @@ void tally() {
 
 
 def _edges(mock_ingestor: MagicMock, rel: cs.RelationshipType) -> set[tuple[str, str]]:
-    return {
-        (str(c.args[0][2]), str(c.args[2][2]))
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if str(c.args[1]) == rel.value
-    }
+    return recorded_edges(mock_ingestor, rel.value)
 
 
 def test_using_alias_construction_emits_instantiates_and_ctor_call(

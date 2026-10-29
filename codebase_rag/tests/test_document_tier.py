@@ -12,6 +12,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import recorded_edges
 
 pytest.importorskip(
     "tree_sitter_markdown",
@@ -90,11 +91,7 @@ def _qns(mock: MagicMock, label: str) -> set[str]:
 
 
 def _rels(mock: MagicMock, rel_type: str) -> set[tuple[str, str]]:
-    return {
-        (c.args[0][2], c.args[2][2])
-        for c in mock.ensure_relationship_batch.call_args_list
-        if str(c.args[1]) == rel_type
-    }
+    return recorded_edges(mock, rel_type)
 
 
 def _module_qn(tmp_path: Path, rel: str) -> str:

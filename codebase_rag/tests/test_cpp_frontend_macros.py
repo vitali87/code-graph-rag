@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag.parsers.cpp_frontend import cpp_frontend_available, run_cpp_frontend
+from codebase_rag.tests.conftest import recorded_edges
 
 pytestmark = pytest.mark.skipif(
     not cpp_frontend_available(),
@@ -70,11 +71,7 @@ def _functions(ingestor: MagicMock) -> set[str]:
 
 
 def _calls(ingestor: MagicMock) -> set[tuple[str, str]]:
-    return {
-        (c.args[0][2], c.args[2][2])
-        for c in ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "CALLS"
-    }
+    return recorded_edges(ingestor, "CALLS")
 
 
 def test_macro_definitions_register_as_functions(temp_repo: Path) -> None:
