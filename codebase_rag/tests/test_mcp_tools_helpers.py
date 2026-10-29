@@ -17,7 +17,7 @@ def _make_registry(mock_ingestor: MagicMock) -> MagicMock:
     registry._cleanup_embeddings_then_begin_writing = (
         MCPToolsRegistry._cleanup_embeddings_then_begin_writing.__get__(registry)
     )
-    registry._require_writing.return_value = None
+    registry.marker.require_writing.return_value = None
     return registry
 
 

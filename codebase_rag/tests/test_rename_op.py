@@ -1017,14 +1017,14 @@ def test_a_rollback_revokes_its_own_projects_healing_licence() -> None:
     handler = bare_registry()
     handler.ingestor = MagicMock()
     handler.ingestor.fetch_all = MagicMock(return_value=[])
-    handler._damage.incomplete = True
-    handler._damage.project = "alpha"
-    handler._damage.from_failed_clear = "alpha"
+    handler.marker.damage.incomplete = True
+    handler.marker.damage.project = "alpha"
+    handler.marker.damage.from_failed_clear = "alpha"
 
-    handler._invalidate_graph_for("alpha")
+    handler.marker.invalidate("alpha")
 
-    assert handler._damage.incomplete is True
-    assert handler._damage.from_failed_clear is None, (
+    assert handler.marker.damage.incomplete is True
+    assert handler.marker.damage.from_failed_clear is None, (
         "the rollback left a licence that authorises clearing its own damage"
     )
 
@@ -1035,14 +1035,14 @@ def test_widening_still_revokes_a_licence_for_another_project() -> None:
 
     handler = bare_registry()
     handler.ingestor = MagicMock()
-    handler._damage.incomplete = True
-    handler._damage.project = "beta"
-    handler._damage.from_failed_clear = "beta"
+    handler.marker.damage.incomplete = True
+    handler.marker.damage.project = "beta"
+    handler.marker.damage.from_failed_clear = "beta"
 
-    handler._invalidate_graph_for("alpha")
+    handler.marker.invalidate("alpha")
 
-    assert handler._damage.project is None
-    assert handler._damage.from_failed_clear is None
+    assert handler.marker.damage.project is None
+    assert handler.marker.damage.from_failed_clear is None
 
 
 def test_a_first_rollback_still_attributes_to_its_project() -> None:
@@ -1051,14 +1051,14 @@ def test_a_first_rollback_still_attributes_to_its_project() -> None:
 
     handler = bare_registry()
     handler.ingestor = MagicMock()
-    handler._damage.incomplete = False
-    handler._damage.project = None
-    handler._damage.from_failed_clear = None
+    handler.marker.damage.incomplete = False
+    handler.marker.damage.project = None
+    handler.marker.damage.from_failed_clear = None
 
-    handler._invalidate_graph_for("alpha")
+    handler.marker.invalidate("alpha")
 
-    assert handler._damage.incomplete is True
-    assert handler._damage.project == "alpha"
+    assert handler.marker.damage.incomplete is True
+    assert handler.marker.damage.project == "alpha"
 
 
 def test_one_restored_site_is_not_a_full_undo(tmp_path: Path) -> None:

@@ -21,6 +21,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.config import settings
 from codebase_rag.mcp import server as mcp_server
+from codebase_rag.mcp.run_marker import RunMarker
 from codebase_rag.mcp.tools import MCPToolsRegistry
 from codebase_rag.services.graph_service import MemgraphIngestor
 from codebase_rag.tests.test_mcp_tool_errors_flagged import _call, _text
@@ -216,9 +217,7 @@ async def test_an_incomplete_graph_refusal_from_a_text_tool_is_flagged(
 ) -> None:
     # The JSON tools already flagged this refusal under `error`; the text
     # tools returned the same sentence as a success.
-    with patch.object(
-        MCPToolsRegistry, "_marker_says_incomplete", MagicMock(return_value=True)
-    ):
+    with patch.object(RunMarker, "says_incomplete", MagicMock(return_value=True)):
         result = await _call(tool, arguments)
     assert result.isError is True, _text(result)
     assert tool in _text(result)

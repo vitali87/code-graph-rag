@@ -105,10 +105,10 @@ def _registry(agent: Agent[None, str | DeferredToolRequests]) -> MCPToolsRegistr
     handler.ingestor = MagicMock()
     handler.ingestor.fetch_all = MagicMock(return_value=[])
     handler.project_root = "/repo"
-    handler._damage.incomplete = False
-    handler._damage.project = None
-    handler._damage.from_failed_clear = None
-    handler._persisted_incomplete = MagicMock(return_value=False)
+    handler.marker.damage.incomplete = False
+    handler.marker.damage.project = None
+    handler.marker.damage.from_failed_clear = None
+    handler.marker.persisted_incomplete = MagicMock(return_value=False)
     handler._rag_agent = agent
     return handler
 

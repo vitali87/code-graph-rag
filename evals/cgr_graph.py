@@ -1453,7 +1453,7 @@ class StatefulIngestor:
                 # Outstanding incomplete-run markers for a project. This
                 # double never writes one, so the honest answer is "none".
                 # Modelled rather than left to the not-emulated assertion
-                # because `_persisted_incomplete` treats an unreadable store
+                # because `marker.persisted_incomplete` treats an unreadable store
                 # as "cannot tell -> refuse", so an unmodelled query makes
                 # every marker-consulting path refuse and looks exactly like
                 # a production guard firing (PR #1547).
@@ -1996,7 +1996,7 @@ class StatefulIngestor:
                 # When you hit this, read it as "the double is missing a
                 # case", not as a defect in the code under test. Some callers
                 # catch a failed read and treat it as "cannot tell -> refuse"
-                # (`_persisted_incomplete` does), so this assertion surfaces
+                # (`marker.persisted_incomplete` does), so this assertion surfaces
                 # as a REFUSAL from production rather than as an error naming
                 # the double -- a real guard firing and a missing case here
                 # look exactly alike from the test's side. Twice in one

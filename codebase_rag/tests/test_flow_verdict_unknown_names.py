@@ -84,7 +84,7 @@ def _registry(tmp_path: Path, projects: list[str]) -> MCPToolsRegistry:
             project_root=str(tmp_path), ingestor=ingestor, cypher_gen=MagicMock()
         )
     registry._fixed_root_project = MagicMock(return_value=(P, None))
-    registry._incomplete_refusal = MagicMock(return_value=None)
+    registry.marker.partial_graph_refusal = MagicMock(return_value=None)
     return registry
 
 

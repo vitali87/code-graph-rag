@@ -103,7 +103,7 @@ class RecordedGraph:
         if query == cq.CYPHER_PROJECT_IS_INCOMPLETE:
             # No marker: this fixture's graph was indexed by a run that
             # finished. An unanswered query would raise, and
-            # `_persisted_incomplete` reads a raise as "cannot tell, refuse",
+            # `marker.persisted_incomplete` reads a raise as "cannot tell, refuse",
             # so leaving it out makes every reingest here refuse.
             return []
         if query == cq.CYPHER_GRAPH_DEFINITION:
