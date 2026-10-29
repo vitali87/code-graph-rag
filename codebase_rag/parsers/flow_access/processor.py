@@ -2668,7 +2668,7 @@ class FlowProcessor:
     def _dart_member_source(
         self, nodes: list[Node], lean: _LeanCtx
     ) -> HandleBinding | None:
-        # `Platform.environment['K']`: a bound member read. `dart_member_read_name`
+        # `Platform.environment['K']`: a bound member read. `dart_utils.member_read_name`
         # on the `.environment` selector yields the prefix; the key comes from a
         # trailing `index_selector`'s string literal.
         for index, node in enumerate(nodes):

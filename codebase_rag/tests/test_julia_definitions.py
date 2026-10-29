@@ -598,7 +598,7 @@ end
 
 
 def test_argument_list_signature_names_nothing(julia_parser: "Parser") -> None:
-    """Unit: `julia_function_head_name` returns None for an anonymous
+    """Unit: `function_head_name` returns None for an anonymous
     long-form function (argument-list signature), not the first parameter."""
 
     def head(code: bytes) -> "Node":

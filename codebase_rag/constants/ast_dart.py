@@ -123,7 +123,7 @@ TS_DART_FORMAL_PARAMETER = "formal_parameter"
 
 # FLOWS_TO lean-walk node types (issue #1173). Dart has no call-expression node:
 # calls/members/bindings are flat sibling `selector` chains reconstructed by the
-# dart/utils.py helpers (dart_call_name, dart_member_read_name, dart_body_node).
+# dart/utils.py helpers (call_name, member_read_name, body_node).
 TS_DART_STRING_LITERAL = "string_literal"
 TS_DART_INDEX_SELECTOR = "index_selector"
 TS_DART_ASSIGNMENT_EXPRESSION = "assignment_expression"

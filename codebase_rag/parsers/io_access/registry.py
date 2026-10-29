@@ -480,7 +480,7 @@ _PHP_SINKS: tuple[IOSink, ...] = (
     IOSink("fsockopen", ResourceKind.NETWORK, IODirection.READ_WRITE, target_arg=0),
 )
 
-# Dart direct-call I/O sinks (issue #1173). Keyed by the callee text `dart_call_name`
+# Dart direct-call I/O sinks (issue #1173). Keyed by the callee text `dart_utils.call_name`
 # reconstructs from the selector chain (`print`, `stdout.write`, `stderr.writeln`).
 # Dart file writes go through the `File` handle (below), not a direct sink.
 _DART_SINKS: tuple[IOSink, ...] = (

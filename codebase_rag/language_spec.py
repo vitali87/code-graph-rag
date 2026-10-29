@@ -939,9 +939,9 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
         # The grammar has no call-expression node: a call site is a
         # `selector` (or `cascade_section`) holding an `argument_part`,
         # invoking whatever the preceding sibling chain names; the call
-        # name is reassembled by dart_call_name. Names come from
+        # name is reassembled by dart_utils.call_name. Names come from
         # _dart_get_name (bare captures); the signature/body split is
-        # repaired by dart_definition_end_point at ingestion.
+        # repaired by dart_utils.definition_end_point at ingestion.
         call_node_types=cs.SPEC_DART_CALL_TYPES,
         call_query=cs.DART_CALL_QUERY,
         import_node_types=cs.SPEC_DART_IMPORT_TYPES,

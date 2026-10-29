@@ -145,7 +145,7 @@ def test_function_span_covers_body(
     dart_project: Path, mock_ingestor: MagicMock
 ) -> None:
     # The signature/body split means a naive capture ends the node at the
-    # signature line; dart_definition_end_point extends it over the body so
+    # signature line; dart_utils.definition_end_point extends it over the body so
     # the snippet spans the whole function.
     (dart_project / "span.dart").write_text(
         "int compute(int x) {\n  var y = x + 1;\n  return y;\n}\n",

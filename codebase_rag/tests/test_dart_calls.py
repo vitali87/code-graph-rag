@@ -130,7 +130,7 @@ def test_static_method_call_via_class_name(
 
 
 def test_call_name_shapes() -> None:
-    # unit coverage of every chain shape dart_call_name handles, straight
+    # unit coverage of every chain shape dart_utils.call_name handles, straight
     # off real parse trees
 
     from codebase_rag.parser_loader import load_parsers

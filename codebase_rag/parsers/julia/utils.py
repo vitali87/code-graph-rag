@@ -117,7 +117,7 @@ def _callee_name(head: Node) -> str | None:
 
     `add` -> `add`; `Base.show` -> the full dotted
     text; `Arr{T, N}(ex)` -> `Arr` (the constructor's type, parameter list
-    stripped) — see julia_callee_name for the full reduction.
+    stripped) — see callee_name for the full reduction.
     """
     return callee_name(_first_named(head))
 
@@ -261,7 +261,7 @@ def call_name(call_node: Node) -> str | None:
         cs.TS_JULIA_CALL_EXPRESSION,
         cs.TS_JULIA_BROADCAST_CALL_EXPRESSION,
     ):
-        # The same reduction a definition head gets (julia_callee_name): a
+        # The same reduction a definition head gets (callee_name): a
         # call `Arr{T, N}(x)` names the constructor `Arr`, exactly as its
         # definition `function Arr{T, N}(x)` registers.
         return callee_name(_first_named(call_node))

@@ -493,7 +493,7 @@ def test_selected_macro_import_mapping(
     """`using .M: @foo` names the member as a `macro_identifier`, not an
     `identifier`: the local mapping must use the name WITHOUT the `@` so
     the invocation `@foo` reduces to the same local name as
-    julia_call_name (issue #1882 review: selected macro imports were
+    julia_utils.call_name (issue #1882 review: selected macro imports were
     silently skipped)."""
     project = temp_repo / "julia_selmacro"
     project.mkdir()
@@ -552,7 +552,7 @@ def test_selected_macro_import_at_alias(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
     """`using .M: @view as @v` — the alias side itself is a macro name:
-    strip the `@` from the local name, matching julia_call_name's
+    strip the `@` from the local name, matching julia_utils.call_name's
     reduction of the `@v` invocation (issue #1882 review: the alias
     kept its `@` and could never resolve)."""
     project = temp_repo / "julia_at_alias"
