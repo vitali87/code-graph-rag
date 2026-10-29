@@ -125,17 +125,13 @@ FIELD_MODEL_ID = "model_id"
 FIELD_API_KEY = "api_key"
 FIELD_ENDPOINT = "endpoint"
 
-ANTHROPIC_COUNT_TOKENS_URL = "https://api.anthropic.com/v1/messages/count_tokens"
-ANTHROPIC_API_VERSION = "2023-06-01"
-ANTHROPIC_HEADER_API_KEY = "x-api-key"
-
 # HTTP statuses meaning the credential was REJECTED. Retrying cannot help,
 # so these are reported differently from transient failures (issue #1493).
 HTTP_AUTH_FAILURE_STATUSES: frozenset[int] = frozenset({401, 403})
-ANTHROPIC_HEADER_VERSION = "anthropic-version"
-HEADER_CONTENT_TYPE = "content-type"
-CONTENT_TYPE_JSON = "application/json"
 ANTHROPIC_COUNT_TIMEOUT_S = 10.0
+# The user turn a count of a bare system prompt carries: the endpoint counts a
+# conversation and rejects one without messages.
+ANTHROPIC_COUNT_PLACEHOLDER_PROMPT = "."
 
 DEFAULT_CONTEXT_WINDOW = 200_000
 MODEL_CONTEXT_WINDOWS: dict[str, int] = {

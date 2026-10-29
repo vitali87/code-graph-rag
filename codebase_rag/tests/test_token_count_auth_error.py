@@ -14,11 +14,13 @@
 # out which one they have.
 from __future__ import annotations
 
-import httpx
+import httpx2
 import pytest
+from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.providers.anthropic import AnthropicProvider
 
-from codebase_rag import constants as cs
 from codebase_rag.services.anthropic_token_counter import (
     TokenCountAuthError,
     TokenCountError,
@@ -26,29 +28,19 @@ from codebase_rag.services.anthropic_token_counter import (
 )
 
 
-def _transport(status: int, body: str) -> httpx.MockTransport:
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(status, text=body)
+def _model(status: int, body: str) -> AnthropicModel:
+    """An `AnthropicModel` whose every request is answered with `status`."""
 
-    return httpx.MockTransport(handler)
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(status, text=body)
 
-
-def _patch_client(
-    monkeypatch: pytest.MonkeyPatch, transport: httpx.MockTransport
-) -> None:
-    """Route `httpx.AsyncClient` through a mock transport.
-
-    Captures the REAL class first. A lambda that calls `httpx.AsyncClient`
-    after patching that same name recurses infinitely -- and the resulting
-    `RecursionError` reads as a code failure rather than a fixture one.
-    """
-    real = httpx.AsyncClient
-
-    def build(**kwargs: object) -> httpx.AsyncClient:
-        kwargs.pop("transport", None)
-        return real(transport=transport, **kwargs)  # type: ignore[arg-type]
-
-    monkeypatch.setattr(httpx, "AsyncClient", build)
+    provider = AnthropicProvider(
+        api_key="key",
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    )
+    # No retries: a 429 or 5xx would otherwise be retried with backoff.
+    provider.client.max_retries = 0
+    return AnthropicModel("claude-x", provider=provider)
 
 
 def _messages() -> list[ModelMessage]:
@@ -67,18 +59,15 @@ class TestErrorClassification:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("status", [401, 403])
-    async def test_an_auth_status_raises_the_auth_error(
-        self, monkeypatch: pytest.MonkeyPatch, status: int
-    ) -> None:
+    async def test_an_auth_status_raises_the_auth_error(self, status: int) -> None:
         """401 and 403 are configuration errors, not failures to count.
 
         Both mean the credential is rejected. Neither is retryable, so the
         caller needs to tell the user rather than log at debug and move on.
         """
-        transport = _transport(
+        model = _model(
             status, '{"type":"error","error":{"message":"invalid x-api-key"}}'
         )
-        _patch_client(monkeypatch, transport)
 
         # Built OUTSIDE the raises block: a failure inside `_messages()`
         # would otherwise satisfy `pytest.raises` and the test would pass
@@ -86,26 +75,23 @@ class TestErrorClassification:
         messages = _messages()
 
         with pytest.raises(TokenCountAuthError):
-            await count_anthropic_context("bad-key", "claude-x", messages)
+            await count_anthropic_context(model, messages)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("status", [429, 500, 503])
-    async def test_a_transient_status_raises_the_plain_error(
-        self, monkeypatch: pytest.MonkeyPatch, status: int
-    ) -> None:
+    async def test_a_transient_status_raises_the_plain_error(self, status: int) -> None:
         """Rate limits and server errors stay the ordinary failure.
 
         The control that keeps the fix from over-reaching: if every status
         became an auth error, the caller would nag about credentials during a
         rate limit, which is worse than the original defect.
         """
-        transport = _transport(status, '{"type":"error","error":{"message":"oops"}}')
-        _patch_client(monkeypatch, transport)
+        model = _model(status, '{"type":"error","error":{"message":"oops"}}')
 
         messages = _messages()
 
         with pytest.raises(TokenCountError) as caught:
-            await count_anthropic_context("good-key", "claude-x", messages)
+            await count_anthropic_context(model, messages)
 
         assert not isinstance(caught.value, TokenCountAuthError), (
             f"status {status} was classified as an authentication failure; "
@@ -114,7 +100,7 @@ class TestErrorClassification:
 
     @pytest.mark.asyncio
     async def test_the_auth_error_is_a_token_count_error(
-        self, monkeypatch: pytest.MonkeyPatch
+        self,
     ) -> None:
         """Subclassing keeps existing `except TokenCountError` callers working.
 
@@ -122,13 +108,12 @@ class TestErrorClassification:
         already handles the base type -- turning a logged failure into a
         crash in a background task.
         """
-        transport = _transport(401, "denied")
-        _patch_client(monkeypatch, transport)
+        model = _model(401, "denied")
 
         messages = _messages()
 
         with pytest.raises(TokenCountError):
-            await count_anthropic_context("bad-key", "claude-x", messages)
+            await count_anthropic_context(model, messages)
 
 
 class TestMessage:
@@ -136,7 +121,7 @@ class TestMessage:
 
     @pytest.mark.asyncio
     async def test_the_auth_message_names_the_api_key(
-        self, monkeypatch: pytest.MonkeyPatch
+        self,
     ) -> None:
         """The message must say the key is invalid, not echo provider JSON.
 
@@ -147,15 +132,12 @@ class TestMessage:
         A reader has to parse that to learn their key is wrong. The status
         code is retained for diagnosis, but the actionable part leads.
         """
-        transport = _transport(
-            401, '{"type":"error","error":{"message":"invalid x-api-key"}}'
-        )
-        _patch_client(monkeypatch, transport)
+        model = _model(401, '{"type":"error","error":{"message":"invalid x-api-key"}}')
 
         messages = _messages()
 
         with pytest.raises(TokenCountAuthError) as caught:
-            await count_anthropic_context("bad-key", "claude-x", messages)
+            await count_anthropic_context(model, messages)
 
         message = str(caught.value)
         assert "API key" in message, message
@@ -197,19 +179,10 @@ class TestCallerBehaviour:
         )
         main_mod.app_context.session.token_auth_warned = False
 
-        class _Config:
-            provider = cs.Provider.ANTHROPIC
-            api_key = "bad-key"
-            model_id = "claude-x"
+        agent = Agent(_model(200, "{}"))
 
-        monkeypatch.setattr(
-            type(main_mod.settings),
-            "active_orchestrator_config",
-            property(lambda self: _Config()),
-        )
-
-        await main_mod._refresh_context_tokens(_messages())
-        await main_mod._refresh_context_tokens(_messages())
+        await main_mod._refresh_context_tokens(_messages(), agent)
+        await main_mod._refresh_context_tokens(_messages(), agent)
 
         assert len(warnings) == 1, (
             f"expected exactly one warning per session, got {len(warnings)}: {warnings}"
@@ -243,17 +216,8 @@ class TestCallerBehaviour:
         )
         main_mod.app_context.session.token_auth_warned = False
 
-        class _Config:
-            provider = cs.Provider.ANTHROPIC
-            api_key = "good-key"
-            model_id = "claude-x"
+        agent = Agent(_model(200, "{}"))
 
-        monkeypatch.setattr(
-            type(main_mod.settings),
-            "active_orchestrator_config",
-            property(lambda self: _Config()),
-        )
-
-        await main_mod._refresh_context_tokens(_messages())
+        await main_mod._refresh_context_tokens(_messages(), agent)
 
         assert warnings == [], f"a transient failure warned the user: {warnings}"

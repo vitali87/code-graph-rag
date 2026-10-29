@@ -113,6 +113,7 @@ if TYPE_CHECKING:
     from pydantic_ai import Agent
     from pydantic_ai.messages import ModelMessage
     from pydantic_ai.models import Model
+    from pydantic_ai.tools import ToolDefinition
     from pydantic_ai.usage import RunUsage
 
 # The chat UI's prompt style. It lives here rather than in types_defs because
@@ -789,7 +790,7 @@ async def _run_agent_response_loop(
         _, _, context_pct = _token_usage()
         _compact_context_if_needed(message_history, context_pct, app_context)
 
-        _spawn_context_refresh(list(message_history))
+        _spawn_context_refresh(list(message_history), rag_agent, model_override)
 
         output_text = response.output
         if not isinstance(output_text, str):
@@ -968,7 +969,11 @@ _background_tasks: set[asyncio.Task[None]] = set()
 _context_refresh_task: asyncio.Task[None] | None = None
 
 
-def _spawn_context_refresh(messages: list[ModelMessage]) -> None:
+def _spawn_context_refresh(
+    messages: list[ModelMessage],
+    rag_agent: Agent[None, str | DeferredToolRequests],
+    model_override: Model | None = None,
+) -> None:
     """Start a context refresh, superseding any still in flight.
 
     Only the NEWEST count is wanted -- it is a percentage on a status line and
@@ -983,7 +988,9 @@ def _spawn_context_refresh(messages: list[ModelMessage]) -> None:
     global _context_refresh_task
     if _context_refresh_task is not None and not _context_refresh_task.done():
         _context_refresh_task.cancel()
-    task = asyncio.create_task(_refresh_context_tokens(messages))
+    task = asyncio.create_task(
+        _refresh_context_tokens(messages, rag_agent, model_override)
+    )
     _context_refresh_task = task
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
@@ -1073,7 +1080,24 @@ async def _estimate_off_loop(messages: list[ModelMessage]) -> int:
     return await future
 
 
-async def _refresh_context_tokens(messages: list[ModelMessage]) -> None:
+def _tool_definitions(
+    rag_agent: Agent[None, str | DeferredToolRequests],
+) -> list[ToolDefinition]:
+    from pydantic_ai.toolsets import FunctionToolset
+
+    return [
+        tool.tool_def
+        for toolset in rag_agent.toolsets
+        if isinstance(toolset, FunctionToolset)
+        for tool in toolset.tools.values()
+    ]
+
+
+async def _refresh_context_tokens(
+    messages: list[ModelMessage],
+    rag_agent: Agent[None, str | DeferredToolRequests],
+    model_override: Model | None = None,
+) -> None:
     """Update the session's context-token count, for ANY provider.
 
     The local estimate is written FIRST and unconditionally, then upgraded to
@@ -1094,29 +1118,30 @@ async def _refresh_context_tokens(messages: list[ModelMessage]) -> None:
     a background refresh feeding a status line and a compaction trigger, so
     it must never be the reason a keystroke waits.
     """
-    try:
-        config = settings.active_orchestrator_config
-    except Exception:
-        # No config at all still deserves a number: the estimate needs only
-        # the messages, and the count drives compaction rather than billing.
-        app_context.session.context_tokens = await _estimate_off_loop(messages)
-        return
-
     app_context.session.context_tokens = await _estimate_off_loop(messages)
 
     # An exact count beats the estimate where it exists -- it accounts for
-    # tool definitions and system-prompt overhead that tiktoken over a message
-    # list cannot see. Anthropic is the only provider exposing one today, so
-    # this is an upgrade to the line above, never a precondition for it.
-    if config.provider != cs.Provider.ANTHROPIC or not config.api_key:
+    # the tool definitions and system prompt the next turn sends, which
+    # tiktoken over a message list cannot see. Anthropic is the only provider
+    # exposing one today, so this is an upgrade to the line above, never a
+    # precondition for it. Counted on the model the agent runs: a `/model`
+    # switch is counted as itself, not as the configured orchestrator.
+    model = model_override or rag_agent.model
+    if getattr(model, "system", None) != cs.Provider.ANTHROPIC:
         return
     try:
+        from pydantic_ai.models.anthropic import AnthropicModel
+
         from .services.anthropic_token_counter import (
             TokenCountAuthError,
             count_anthropic_context,
         )
 
-        count = await count_anthropic_context(config.api_key, config.model_id, messages)
+        if not isinstance(model, AnthropicModel):
+            return
+        count = await count_anthropic_context(
+            model, messages, _tool_definitions(rag_agent)
+        )
         app_context.session.context_tokens = count
     except TokenCountAuthError as e:
         # A rejected key recurs on EVERY refresh and silently disables the
@@ -1134,7 +1159,9 @@ async def _refresh_context_tokens(messages: list[ModelMessage]) -> None:
         logger.debug(ls.CONTEXT_TOKEN_COUNT_FAILED.format(error=e))
 
 
-def _prime_context_token_counter(system_prompt: str) -> None:
+def _prime_context_token_counter(
+    rag_agent: Agent[None, str | DeferredToolRequests], system_prompt: str
+) -> None:
     if not system_prompt:
         return
     from pydantic_ai.messages import ModelRequest, SystemPromptPart
@@ -1142,7 +1169,7 @@ def _prime_context_token_counter(system_prompt: str) -> None:
     baseline_messages: list[ModelMessage] = [
         ModelRequest(parts=[SystemPromptPart(content=system_prompt)])
     ]
-    _spawn_context_refresh(baseline_messages)
+    _spawn_context_refresh(baseline_messages, rag_agent)
 
 
 def _short_model_id() -> tuple[str, str]:
@@ -1984,7 +2011,7 @@ async def main_async(
             active_projects=active_projects,
             after_write=refresher.after_write,
         )
-        _prime_context_token_counter(system_prompt)
+        _prime_context_token_counter(rag_agent, system_prompt)
 
         if pre_chat_sync is not None:
             await _run_pre_chat_sync(pre_chat_sync, pre_chat_sync_message)
@@ -2030,7 +2057,7 @@ async def main_optimize_async(
         rag_agent, tool_names, system_prompt = _initialize_services_and_agent(
             target_repo_path, ingestor
         )
-        _prime_context_token_counter(system_prompt)
+        _prime_context_token_counter(rag_agent, system_prompt)
         await run_optimization_loop(
             rag_agent, [], project_root, language, tool_names, reference_document
         )

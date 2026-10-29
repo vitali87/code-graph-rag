@@ -1,142 +1,27 @@
+"""The exact context size of an Anthropic conversation, as the model counts it.
+
+Counted through the same `AnthropicModel` the agent runs on, so the request
+is the one the next turn would send: its messages mapped by pydantic-ai, its
+system prompt, and its tool definitions, which cost tokens on every turn.
+"""
+
 from __future__ import annotations
 
-import base64
-from typing import Any
+from collections.abc import Sequence
 
-import httpx
-from pydantic_ai import BinaryContent
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
-    ModelRequestPart,
-    ModelResponse,
-    ModelResponsePart,
-    RetryPromptPart,
     SystemPromptPart,
-    TextPart,
-    ToolCallPart,
-    ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.settings import ModelSettings
+from pydantic_ai.tools import ToolDefinition
 
 from .. import constants as cs
-
-
-def _binary_block(item: BinaryContent) -> dict[str, Any]:
-    media = item.media_type or cs.MIME_TYPE_FALLBACK
-    block_type = "image" if media.startswith("image/") else "document"
-    return {
-        "type": block_type,
-        "source": {
-            "type": "base64",
-            "media_type": media,
-            "data": base64.b64encode(item.data).decode(),
-        },
-    }
-
-
-def _user_part_to_blocks(part: UserPromptPart) -> list[dict[str, Any]]:
-    content = part.content
-    if isinstance(content, str):
-        return [{"type": "text", "text": content}]
-    blocks: list[dict[str, Any]] = []
-    for item in content:
-        if isinstance(item, str):
-            blocks.append({"type": "text", "text": item})
-        elif isinstance(item, BinaryContent):
-            blocks.append(_binary_block(item))
-    return blocks
-
-
-def _tool_return_content(value: object) -> str | list[dict[str, Any]]:
-    if isinstance(value, str):
-        return value
-    if isinstance(value, list):
-        out: list[dict[str, Any]] = []
-        for item in value:
-            if isinstance(item, str):
-                out.append({"type": "text", "text": item})
-            elif isinstance(item, BinaryContent):
-                out.append(_binary_block(item))
-        if out:
-            return out
-    return str(value)
-
-
-def _request_part_blocks(
-    part: ModelRequestPart, system_parts: list[str]
-) -> list[dict[str, Any]]:
-    # The user-turn content blocks one request part contributes; a system
-    # prompt part contributes none and is collected into `system_parts`.
-    if isinstance(part, SystemPromptPart):
-        system_parts.append(part.content)
-        return []
-    if isinstance(part, UserPromptPart):
-        return _user_part_to_blocks(part)
-    if isinstance(part, ToolReturnPart):
-        return [
-            {
-                "type": "tool_result",
-                "tool_use_id": part.tool_call_id,
-                "content": _tool_return_content(part.content),
-            }
-        ]
-    if isinstance(part, RetryPromptPart):
-        if part.tool_name is None:
-            return [{"type": "text", "text": part.model_response()}]
-        return [
-            {
-                "type": "tool_result",
-                "tool_use_id": part.tool_call_id,
-                "content": part.model_response(),
-                "is_error": True,
-            }
-        ]
-    return []
-
-
-def _response_part_block(part: ModelResponsePart) -> dict[str, Any] | None:
-    if isinstance(part, TextPart):
-        return {"type": "text", "text": part.content} if part.content else None
-    if isinstance(part, ToolCallPart):
-        return {
-            "type": "tool_use",
-            "id": part.tool_call_id,
-            "name": part.tool_name,
-            "input": part.args_as_dict() or {},
-        }
-    return None
-
-
-def _to_anthropic_payload(
-    messages: list[ModelMessage],
-) -> tuple[str, list[dict[str, Any]]]:
-    system_parts: list[str] = []
-    out: list[dict[str, Any]] = []
-    for m in messages:
-        turn = (
-            _user_turn(m, system_parts)
-            if isinstance(m, ModelRequest)
-            else _assistant_turn(m)
-        )
-        if turn is not None:
-            out.append(turn)
-    return "\n".join(system_parts), out
-
-
-def _user_turn(request: ModelRequest, system_parts: list[str]) -> dict[str, Any] | None:
-    content: list[dict[str, Any]] = []
-    for part in request.parts:
-        content.extend(_request_part_blocks(part, system_parts))
-    return {"role": "user", "content": content} if content else None
-
-
-def _assistant_turn(response: ModelResponse) -> dict[str, Any] | None:
-    content: list[dict[str, Any]] = []
-    for part in response.parts:
-        if (block := _response_part_block(part)) is not None:
-            content.append(block)
-    return {"role": "assistant", "content": content} if content else None
 
 
 class TokenCountError(Exception):
@@ -161,41 +46,45 @@ class TokenCountAuthError(TokenCountError):
     """
 
 
+def _countable(messages: list[ModelMessage]) -> list[ModelMessage]:
+    # A history of system parts alone (the primed counter before the first
+    # turn) maps to no messages, which the endpoint rejects.
+    if any(
+        not isinstance(part, SystemPromptPart)
+        for message in messages
+        for part in message.parts
+    ):
+        return messages
+    return [
+        *messages,
+        ModelRequest(parts=[UserPromptPart(cs.ANTHROPIC_COUNT_PLACEHOLDER_PROMPT)]),
+    ]
+
+
 async def count_anthropic_context(
-    api_key: str,
-    model_id: str,
+    model: AnthropicModel,
     messages: list[ModelMessage],
+    tools: Sequence[ToolDefinition] = (),
 ) -> int:
-    system_prompt, anthropic_messages = _to_anthropic_payload(messages)
-    if not anthropic_messages:
-        if not system_prompt:
-            return 0
-        anthropic_messages = [
-            {"role": "user", "content": [{"type": "text", "text": "."}]}
-        ]
-    payload: dict[str, Any] = {
-        "model": model_id,
-        "messages": anthropic_messages,
-    }
-    if system_prompt:
-        payload["system"] = system_prompt
-    headers = {
-        cs.ANTHROPIC_HEADER_API_KEY: api_key,
-        cs.ANTHROPIC_HEADER_VERSION: cs.ANTHROPIC_API_VERSION,
-        cs.HEADER_CONTENT_TYPE: cs.CONTENT_TYPE_JSON,
-    }
-    async with httpx.AsyncClient(timeout=cs.ANTHROPIC_COUNT_TIMEOUT_S) as client:
-        resp = await client.post(
-            cs.ANTHROPIC_COUNT_TOKENS_URL, json=payload, headers=headers
+    """The input tokens `messages` and `tools` cost `model` on the next turn."""
+    if not messages:
+        return 0
+    try:
+        usage = await model.count_tokens(
+            _countable(messages),
+            ModelSettings(timeout=cs.ANTHROPIC_COUNT_TIMEOUT_S),
+            ModelRequestParameters(function_tools=list(tools)),
         )
-        if resp.status_code in cs.HTTP_AUTH_FAILURE_STATUSES:
+    except ModelHTTPError as e:
+        if e.status_code in cs.HTTP_AUTH_FAILURE_STATUSES:
             # The actionable part leads. The status is kept for diagnosis,
             # but a reader should not have to parse a provider JSON blob to
             # learn their key is wrong.
             raise TokenCountAuthError(
-                f"the Anthropic API key was rejected ({resp.status_code}); "
+                f"the Anthropic API key was rejected ({e.status_code}); "
                 "check the key configured for this provider"
-            )
-        if resp.status_code >= 400:
-            raise TokenCountError(f"{resp.status_code}: {resp.text}")
-        return int(resp.json().get("input_tokens", 0))
+            ) from e
+        raise TokenCountError(f"{e.status_code}: {e.body}") from e
+    except ModelAPIError as e:
+        raise TokenCountError(str(e)) from e
+    return usage.input_tokens

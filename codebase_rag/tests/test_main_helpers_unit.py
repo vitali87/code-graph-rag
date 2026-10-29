@@ -6,8 +6,9 @@ from pathlib import Path
 from unittest.mock import MagicMock, call, patch
 
 import pytest
-from pydantic_ai import BinaryContent
+from pydantic_ai import Agent, BinaryContent
 from pydantic_ai.messages import ModelRequest, UserPromptPart
+from pydantic_ai.models.anthropic import AnthropicModel
 from rich.console import Console
 from rich.table import Table
 
@@ -30,6 +31,7 @@ from codebase_rag.agent_loop import (
 )
 from codebase_rag.config import AppConfig, ModelConfig
 from codebase_rag.graph_export import export_graph_to_file
+from codebase_rag.providers.base import get_provider_from_config
 from codebase_rag.types_defs import ConfirmationToolNames, RawToolArgs
 
 
@@ -573,12 +575,15 @@ class TestProviderSwitchStartsFromProviderDefaults:
     async def test_the_token_counter_receives_the_key_the_provider_uses(
         self, app_settings: AppConfig, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """It read the Ollama placeholder, and Anthropic answered 401."""
-        monkeypatch.setenv(cs.ENV_ANTHROPIC_API_KEY, "sk-ant-from-env")
-        sent_keys: list[str] = []
+        """It read the Ollama placeholder, and Anthropic answered 401.
 
-        async def count(api_key: str, *_args: object, **_kwargs: object) -> int:
-            sent_keys.append(api_key)
+        The count now runs on the model the agent is built with, so the key
+        is the one that model's client holds."""
+        monkeypatch.setenv(cs.ENV_ANTHROPIC_API_KEY, "sk-ant-from-env")
+        sent_keys: list[str | None] = []
+
+        async def count(model: AnthropicModel, *_args: object, **_kw: object) -> int:
+            sent_keys.append(model.client.api_key)
             return 1
 
         monkeypatch.setattr(
@@ -588,9 +593,11 @@ class TestProviderSwitchStartsFromProviderDefaults:
         _update_single_model_setting(
             cs.ModelRole.ORCHESTRATOR, "anthropic:claude-sonnet-5"
         )
+        config = app_settings.active_orchestrator_config
+        model = get_provider_from_config(config).create_model(config.model_id)
 
         await _refresh_context_tokens(
-            [ModelRequest(parts=[UserPromptPart(content="hello")])]
+            [ModelRequest(parts=[UserPromptPart(content="hello")])], Agent(model)
         )
 
         assert sent_keys == ["sk-ant-from-env"]

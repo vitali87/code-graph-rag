@@ -21,9 +21,12 @@ else. The estimate is already trusted elsewhere in this codebase: it is what
 from __future__ import annotations
 
 import pytest
+from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
-
-from codebase_rag import constants as cs
+from pydantic_ai.models import Model
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.providers.anthropic import AnthropicProvider
 
 
 def _messages(text: str = "hello " * 400) -> list[ModelMessage]:
@@ -36,22 +39,25 @@ def _messages(text: str = "hello " * 400) -> list[ModelMessage]:
     return [ModelRequest(parts=[UserPromptPart(content=text)])]
 
 
-def _use_config(
-    monkeypatch: pytest.MonkeyPatch, provider: object, api_key: str | None
-) -> None:
-    from codebase_rag import agent_loop as main_mod
+def _agent(model: Model | None = None) -> Agent[None, str]:
+    """An agent running `model`, a non-Anthropic one unless given."""
+    return Agent(model if model is not None else TestModel())
 
-    class _Config:
-        pass
 
-    _Config.provider = provider  # type: ignore[attr-defined]
-    _Config.api_key = api_key  # type: ignore[attr-defined]
-    _Config.model_id = "some-model"  # type: ignore[attr-defined]
+def _anthropic() -> AnthropicModel:
+    # Never reaches the network: the tests below replace the exact counter.
+    return AnthropicModel(
+        "claude-opus-5-5", provider=AnthropicProvider(api_key="sk-real-key")
+    )
+
+
+def _sentinel_counter(monkeypatch: pytest.MonkeyPatch, sentinel: int) -> None:
+    async def exact(*_args: object, **_kw: object) -> int:
+        return sentinel
 
     monkeypatch.setattr(
-        type(main_mod.settings),
-        "active_orchestrator_config",
-        property(lambda self: _Config()),
+        "codebase_rag.services.anthropic_token_counter.count_anthropic_context",
+        exact,
     )
 
 
@@ -69,9 +75,9 @@ class TestTheCounterRunsForEveryProvider:
         from codebase_rag import agent_loop as main_mod
 
         main_mod.app_context.session.context_tokens = 0
-        _use_config(monkeypatch, cs.Provider.OPENAI, "sk-whatever")
+        agent = _agent()
 
-        await main_mod._refresh_context_tokens(_messages())
+        await main_mod._refresh_context_tokens(_messages(), agent)
 
         assert main_mod.app_context.session.context_tokens > 0, (
             "the context counter stayed at 0 for a non-Anthropic provider, so "
@@ -79,25 +85,22 @@ class TestTheCounterRunsForEveryProvider:
         )
 
     @pytest.mark.asyncio
-    async def test_anthropic_without_a_key_gets_a_context_count(
-        self, monkeypatch: pytest.MonkeyPatch
+    async def test_an_agent_without_a_built_model_gets_a_context_count(
+        self,
     ) -> None:
-        """The second half of the same early return.
+        """The second way the exact count is out of reach.
 
-        `provider != ANTHROPIC or not api_key` has two ways to fire. Testing
-        only the provider half would leave a keyless Anthropic session with
-        the original bug and a green suite.
+        An agent named its model but has not built one has nothing to count
+        on; it must still get the estimate rather than keep 0.
         """
         from codebase_rag import agent_loop as main_mod
 
         main_mod.app_context.session.context_tokens = 0
-        _use_config(monkeypatch, cs.Provider.ANTHROPIC, None)
 
-        await main_mod._refresh_context_tokens(_messages())
+        await main_mod._refresh_context_tokens(_messages(), Agent())
 
         assert main_mod.app_context.session.context_tokens > 0, (
-            "a keyless Anthropic session cannot reach the remote counter and "
-            "was left with no count at all"
+            "an agent with no model to count on was left with no count at all"
         )
 
     @pytest.mark.asyncio
@@ -112,14 +115,14 @@ class TestTheCounterRunsForEveryProvider:
         """
         from codebase_rag import agent_loop as main_mod
 
-        _use_config(monkeypatch, cs.Provider.OPENAI, "sk-whatever")
+        agent = _agent()
 
         main_mod.app_context.session.context_tokens = 0
-        await main_mod._refresh_context_tokens(_messages("hi " * 50))
+        await main_mod._refresh_context_tokens(_messages("hi " * 50), agent)
         small = main_mod.app_context.session.context_tokens
 
         main_mod.app_context.session.context_tokens = 0
-        await main_mod._refresh_context_tokens(_messages("hi " * 5000))
+        await main_mod._refresh_context_tokens(_messages("hi " * 5000), agent)
         large = main_mod.app_context.session.context_tokens
 
         # Split because the two halves fail for different reasons: the first
@@ -151,18 +154,10 @@ class TestTheCounterRunsForEveryProvider:
         from codebase_rag import agent_loop as main_mod
 
         sentinel = 1234567
-
-        async def exact(*_args: object, **_kw: object) -> int:
-            return sentinel
-
-        monkeypatch.setattr(
-            "codebase_rag.services.anthropic_token_counter.count_anthropic_context",
-            exact,
-        )
+        _sentinel_counter(monkeypatch, sentinel)
         main_mod.app_context.session.context_tokens = 0
-        _use_config(monkeypatch, cs.Provider.ANTHROPIC, "sk-real-key")
 
-        await main_mod._refresh_context_tokens(_messages())
+        await main_mod._refresh_context_tokens(_messages(), _agent(_anthropic()))
 
         assert main_mod.app_context.session.context_tokens == sentinel, (
             "the exact provider count was replaced by the local estimate"
@@ -191,9 +186,8 @@ class TestTheCounterRunsForEveryProvider:
         )
         monkeypatch.setattr(main_mod.logger, "debug", lambda msg, *a, **k: None)
         main_mod.app_context.session.context_tokens = 0
-        _use_config(monkeypatch, cs.Provider.ANTHROPIC, "sk-real-key")
 
-        await main_mod._refresh_context_tokens(_messages())
+        await main_mod._refresh_context_tokens(_messages(), _agent(_anthropic()))
 
         assert main_mod.app_context.session.context_tokens > 0, (
             "a transient remote failure left the counter at 0, which reads as "
@@ -201,34 +195,28 @@ class TestTheCounterRunsForEveryProvider:
         )
 
     @pytest.mark.asyncio
-    async def test_an_unreadable_config_still_produces_a_count(
+    async def test_a_model_override_is_counted_as_itself(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The third early return, found by mutation rather than by reading.
-
-        Deleting the write on this path left every other test green. The
-        estimate needs only the messages, so a config that cannot be read is
-        no reason to report an empty context -- and this path runs at startup,
-        before a model is settled on, which is exactly when a stale 0 would
-        persist longest.
-        """
+        """A `/model` switch runs the turn on another model, so the count
+        follows it: to Anthropic it is exact, away from it the estimate."""
         from codebase_rag import agent_loop as main_mod
 
-        def explode(self: object) -> object:
-            raise RuntimeError("no orchestrator configured")
+        sentinel = 7654321
+        _sentinel_counter(monkeypatch, sentinel)
 
-        monkeypatch.setattr(
-            type(main_mod.settings),
-            "active_orchestrator_config",
-            property(explode),
-        )
         main_mod.app_context.session.context_tokens = 0
+        await main_mod._refresh_context_tokens(_messages(), _agent(), _anthropic())
+        assert main_mod.app_context.session.context_tokens == sentinel, (
+            "a switch to Anthropic was estimated rather than counted"
+        )
 
-        await main_mod._refresh_context_tokens(_messages())
-
-        assert main_mod.app_context.session.context_tokens > 0, (
-            "an unreadable config left the counter at 0 rather than falling "
-            "back to the estimate, which needs no config at all"
+        main_mod.app_context.session.context_tokens = 0
+        await main_mod._refresh_context_tokens(
+            _messages(), _agent(_anthropic()), TestModel()
+        )
+        assert 0 < main_mod.app_context.session.context_tokens != sentinel, (
+            "a switch away from Anthropic was counted as the configured model"
         )
 
 
@@ -372,7 +360,7 @@ class TestTheRefreshDoesNotBlockTheEventLoop:
             return 4321
 
         monkeypatch.setattr(main_mod, "estimate_message_tokens", slow_estimate)
-        _use_config(monkeypatch, cs.Provider.OPENAI, "sk-whatever")
+        agent = _agent()
         main_mod.app_context.session.context_tokens = 0
 
         stop = asyncio.Event()
@@ -389,7 +377,7 @@ class TestTheRefreshDoesNotBlockTheEventLoop:
 
         task = asyncio.create_task(ticker())
         await asyncio.sleep(0.05)
-        await main_mod._refresh_context_tokens(_messages())
+        await main_mod._refresh_context_tokens(_messages(), agent)
         stop.set()
         await task
 
@@ -403,67 +391,6 @@ class TestTheRefreshDoesNotBlockTheEventLoop:
         assert worst < 0.3, (
             f"the event loop was starved for {worst:.3f}s while the context "
             "estimate ran, so the whole UI freezes on a long history"
-        )
-
-    @pytest.mark.asyncio
-    async def test_the_no_config_path_also_stays_off_the_loop(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """The second call site, which the test above does not reach.
-
-        `_refresh_context_tokens` estimates on TWO paths: the configured one,
-        and the fallback when the config cannot be read at all. Mutating the
-        fallback to run inline left every other test green -- it is only
-        reached when reading the config raises, which nothing else here does.
-
-        That path runs at startup, before a model is settled on, so blocking
-        the loop there freezes the UI at exactly the moment a user is waiting
-        for the first prompt.
-        """
-        import asyncio
-        import time
-
-        from codebase_rag import agent_loop as main_mod
-
-        def slow(_messages: object) -> int:
-            time.sleep(0.6)
-            return 4321
-
-        monkeypatch.setattr(main_mod, "estimate_message_tokens", slow)
-
-        def explode(self: object) -> object:
-            raise RuntimeError("no orchestrator configured")
-
-        monkeypatch.setattr(
-            type(main_mod.settings), "active_orchestrator_config", property(explode)
-        )
-        main_mod.app_context.session.context_tokens = 0
-
-        stop = asyncio.Event()
-        worst = 0.0
-
-        async def ticker() -> None:
-            nonlocal worst
-            last = time.perf_counter()
-            while not stop.is_set():
-                await asyncio.sleep(0.01)
-                now = time.perf_counter()
-                worst = max(worst, now - last)
-                last = now
-
-        task = asyncio.create_task(ticker())
-        await asyncio.sleep(0.05)
-        await main_mod._refresh_context_tokens(_messages())
-        stop.set()
-        await task
-
-        assert main_mod.app_context.session.context_tokens == 4321, (
-            "fixture guard: the fallback estimate must have run and been "
-            "written back, or a small gap proves nothing"
-        )
-        assert worst < 0.3, (
-            f"the event loop was starved for {worst:.3f}s on the no-config "
-            "path, which runs at startup while the user waits"
         )
 
     @pytest.mark.asyncio
@@ -498,9 +425,9 @@ class TestTheRefreshDoesNotBlockTheEventLoop:
             return 99
 
         monkeypatch.setattr(main_mod, "estimate_message_tokens", slow)
-        _use_config(monkeypatch, cs.Provider.OPENAI, "sk-whatever")
+        agent = _agent()
 
-        task = asyncio.create_task(main_mod._refresh_context_tokens(_messages()))
+        task = asyncio.create_task(main_mod._refresh_context_tokens(_messages(), agent))
         await asyncio.to_thread(started.wait, 5.0)
         assert started.is_set(), (
             "fixture guard: the estimate never started, so cancelling it proves nothing"
@@ -595,7 +522,7 @@ class TestTheRefreshDoesNotBlockTheEventLoop:
             return 11
 
         monkeypatch.setattr(main_mod, "estimate_message_tokens", slow)
-        _use_config(monkeypatch, cs.Provider.OPENAI, "sk-whatever")
+        agent = _agent()
         # Reset the generation counter. It is module-global, so estimates from
         # EARLIER TESTS leave it ahead and every refresh here then reads as
         # superseded -- which passes this test for the wrong reason and made
@@ -613,7 +540,7 @@ class TestTheRefreshDoesNotBlockTheEventLoop:
         # which is what puts the generation check and the lock in play
         # (5 spawns, generation 5, two estimates).
         for _ in range(5):
-            main_mod._spawn_context_refresh(_messages())
+            main_mod._spawn_context_refresh(_messages(), agent)
             await asyncio.sleep(0.05)
         await asyncio.sleep(2.5)
 

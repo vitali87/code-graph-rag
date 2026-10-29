@@ -1,113 +1,131 @@
 from __future__ import annotations
 
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+import json
 
+import httpx2
 import pytest
 from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     SystemPromptPart,
     ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.providers.anthropic import AnthropicProvider
+from pydantic_ai.tools import ToolDefinition
+
+from codebase_rag import constants as cs
+from codebase_rag.services.anthropic_token_counter import count_anthropic_context
+
+_READ_FILE = ToolDefinition(
+    name="read_file",
+    description="Read a file from the repository.",
+    parameters_json_schema={
+        "type": "object",
+        "properties": {"path": {"type": "string"}},
+        "required": ["path"],
+    },
 )
 
-from codebase_rag.services.anthropic_token_counter import (
-    _to_anthropic_payload,
-    count_anthropic_context,
-)
 
+def _counting_model(
+    bodies: list[dict[str, object]], input_tokens: int = 42_000
+) -> AnthropicModel:
+    """An `AnthropicModel` whose count requests are recorded, not sent."""
 
-def _fake_post_returning(input_tokens: int) -> tuple[AsyncMock, MagicMock]:
-    fake_response = MagicMock()
-    fake_response.status_code = 200
-    fake_response.json.return_value = {"input_tokens": input_tokens}
-    fake_post = AsyncMock(return_value=fake_response)
-    return fake_post, fake_response
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        bodies.append(json.loads(request.content))
+        return httpx2.Response(200, json={"input_tokens": input_tokens})
+
+    provider = AnthropicProvider(
+        api_key="k",
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    )
+    return AnthropicModel("claude-opus-5-5", provider=provider)
 
 
 @pytest.mark.asyncio
-async def test_returns_zero_when_no_messages_and_no_system_prompt() -> None:
-    with patch("httpx.AsyncClient") as mock_client:
-        result = await count_anthropic_context(
-            api_key="k", model_id="claude-opus-4-7", messages=[]
-        )
+async def test_returns_zero_without_a_request_when_there_are_no_messages() -> None:
+    bodies: list[dict[str, object]] = []
 
-    assert result == 0
-    mock_client.assert_not_called()
+    assert await count_anthropic_context(_counting_model(bodies), []) == 0
+    assert bodies == []
 
 
 @pytest.mark.asyncio
-async def test_injects_placeholder_when_only_system_prompt_present() -> None:
-    fake_post, _ = _fake_post_returning(input_tokens=42_000)
-    mock_client_instance = MagicMock()
-    mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
-    mock_client_instance.__aexit__ = AsyncMock(return_value=None)
-    mock_client_instance.post = fake_post
-
+async def test_a_bare_system_prompt_is_counted_with_a_placeholder_turn() -> None:
+    # The endpoint rejects a request without messages, and the primed
+    # counter holds only the system prompt before the first turn.
+    bodies: list[dict[str, object]] = []
     messages = [
         ModelRequest(parts=[SystemPromptPart(content="GIANT SYSTEM PROMPT BODY")])
     ]
 
-    with patch("httpx.AsyncClient", return_value=mock_client_instance):
-        result = await count_anthropic_context(
-            api_key="k", model_id="claude-opus-4-7", messages=messages
-        )
+    count = await count_anthropic_context(_counting_model(bodies), messages)
 
-    assert result == 42_000
-    payload: dict[str, Any] = fake_post.call_args.kwargs["json"]
-    assert payload["system"] == "GIANT SYSTEM PROMPT BODY"
-    assert payload["messages"]
-    assert payload["messages"][0]["role"] == "user"
-    placeholder_text = payload["messages"][0]["content"][0]["text"]
-    assert placeholder_text.strip(), "placeholder must be non-whitespace"
+    assert count == 42_000
+    (body,) = bodies
+    assert body["system"] == "GIANT SYSTEM PROMPT BODY"
+    assert body["messages"] == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": cs.ANTHROPIC_COUNT_PLACEHOLDER_PROMPT}
+            ],
+        }
+    ]
 
 
-def test_retry_prompt_with_tool_name_becomes_tool_result_error_block() -> None:
-    tool_call_id = "toolu_test123"
+@pytest.mark.asyncio
+async def test_the_tool_definitions_are_counted() -> None:
+    # Every turn sends the agent's tool schemas, so a count without them
+    # came up short by all of them.
+    bodies: list[dict[str, object]] = []
+    messages = [ModelRequest(parts=[UserPromptPart(content="hello")])]
+
+    await count_anthropic_context(_counting_model(bodies), messages, [_READ_FILE])
+
+    (body,) = bodies
+    assert body["tools"] == [
+        {
+            "name": "read_file",
+            "description": "Read a file from the repository.",
+            "input_schema": _READ_FILE.parameters_json_schema,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_tool_round_trip_reaches_the_count_as_the_model_sends_it() -> None:
+    bodies: list[dict[str, object]] = []
     messages = [
+        ModelRequest(parts=[UserPromptPart(content="read it")]),
         ModelResponse(
             parts=[
                 ToolCallPart(
-                    tool_name="semantic_search",
-                    args={"query": "x"},
-                    tool_call_id=tool_call_id,
+                    tool_name="read_file",
+                    args={"path": "a.py"},
+                    tool_call_id="toolu_1",
                 )
             ]
         ),
         ModelRequest(
             parts=[
-                RetryPromptPart(
-                    content="bad args",
-                    tool_name="semantic_search",
-                    tool_call_id=tool_call_id,
+                ToolReturnPart(
+                    tool_name="read_file", content="x = 1", tool_call_id="toolu_1"
                 )
             ]
         ),
     ]
 
-    _, anthropic_messages = _to_anthropic_payload(messages)
+    await count_anthropic_context(_counting_model(bodies), messages, [_READ_FILE])
 
-    assert len(anthropic_messages) == 2
-    assistant = anthropic_messages[0]
-    user = anthropic_messages[1]
-    assert assistant["role"] == "assistant"
-    assert assistant["content"][0]["type"] == "tool_use"
-    assert assistant["content"][0]["id"] == tool_call_id
-    assert user["role"] == "user"
-    assert user["content"][0]["type"] == "tool_result"
-    assert user["content"][0]["tool_use_id"] == tool_call_id
-    assert user["content"][0]["is_error"] is True
-
-
-def test_retry_prompt_without_tool_name_becomes_text_block() -> None:
-    messages = [
-        ModelRequest(parts=[RetryPromptPart(content="please retry")]),
-    ]
-
-    _, anthropic_messages = _to_anthropic_payload(messages)
-
-    assert len(anthropic_messages) == 1
-    assert anthropic_messages[0]["role"] == "user"
-    assert anthropic_messages[0]["content"][0]["type"] == "text"
-    assert "please retry" in anthropic_messages[0]["content"][0]["text"]
+    (body,) = bodies
+    turns = body["messages"]
+    assert isinstance(turns, list)
+    assert [turn["role"] for turn in turns] == ["user", "assistant", "user"]
+    assert turns[1]["content"][0]["type"] == "tool_use"
+    assert turns[2]["content"][0]["type"] == "tool_result"
+    assert turns[2]["content"][0]["tool_use_id"] == "toolu_1"
