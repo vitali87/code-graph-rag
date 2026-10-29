@@ -3473,7 +3473,7 @@ class CallProcessor:
         # A Java Method node is registered with its parameter signature
         # (definition pass: class_qn.name(params)), so the caller endpoint of a
         # CALLS edge must carry the same signature to join that node. Mirrors
-        # class_ingest.mixin's method-qn build exactly.
+        # class_ingest.ingest's method-qn build exactly.
         if language != cs.SupportedLanguage.JAVA:
             return func_name
         info = java_utils.extract_method_info(func_node)

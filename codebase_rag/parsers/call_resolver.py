@@ -7417,7 +7417,7 @@ class CallResolver:
         while bfs_queue:
             # Base classes are recorded by the name the subclass imported, which
             # may be a package re-export (class_ingest.ClassIngest) rather than
-            # the real definition (class_ingest.mixin.ClassIngest); follow the
+            # the real definition (class_ingest.ingest.ClassIngest); follow the
             # re-export so the inherited method qn matches the registry.
             parent_class_qn = self._follow_reexports(bfs_queue.popleft())
             parent_method_qn = f"{parent_class_qn}.{method_name}"

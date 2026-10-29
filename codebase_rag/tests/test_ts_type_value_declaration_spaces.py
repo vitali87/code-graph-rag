@@ -24,7 +24,7 @@ from codebase_rag.function_registry import FunctionRegistryTrie
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers import method_ingest
-from codebase_rag.parsers.class_ingest import mixin as class_mixin
+from codebase_rag.parsers.class_ingest import ingest as class_ingest_module
 from codebase_rag.services.protobuf_service import ProtobufFileIngestor
 from codebase_rag.tests.conftest import get_relationships, run_updater
 from evals.cgr_graph import StatefulIngestor
@@ -778,7 +778,7 @@ def test_the_class_pass_hands_members_their_owners_declared_label(
     # A Java interface's default method stands in for the owner: TS interface
     # members do not reach this pass as methods yet (issue #2524).
     seen: dict[str, cs.NodeLabel] = {}
-    real_ingest_method = class_mixin.ingest_method
+    real_ingest_method = class_ingest_module.ingest_method
 
     def recording_ingest_method(
         host: object,
@@ -793,7 +793,7 @@ def test_the_class_pass_hands_members_their_owners_declared_label(
             host, method_node, container_qn, container_type, *args, **kwargs
         )
 
-    monkeypatch.setattr(class_mixin, "ingest_method", recording_ingest_method)
+    monkeypatch.setattr(class_ingest_module, "ingest_method", recording_ingest_method)
     (temp_repo / "Greeter.java").write_text(JAVA_INTERFACE_WITH_DEFAULT_METHOD)
     run_updater(temp_repo, mock_ingestor)
 

@@ -1,3 +1,3 @@
-from .mixin import ClassIngest
+from .ingest import ClassIngest
 
 __all__ = ["ClassIngest"]

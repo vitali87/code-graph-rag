@@ -320,7 +320,7 @@ def is_inline_module_path(path: str) -> bool:
     """Whether `path` is the SYNTHETIC path of a bodied inline module.
 
     Those are written as `inline_module_<name>` with no extension
-    (class_ingest/mixin.py), so the prefix alone is not the test: a real
+    (class_ingest/ingest.py), so the prefix alone is not the test: a real
     file may legitimately be called `inline_module_widget.py`, and
     treating it as synthetic drops it from the owner map (Copilot,
     PR #1935).
