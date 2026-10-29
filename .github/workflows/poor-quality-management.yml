@@ -66,7 +66,9 @@ jobs:
 
             console.log(`Checking for poor-quality PRs warned before ${cutoffDate.toISOString()}`);
 
-            const { data: prs } = await github.rest.pulls.list({
+            // Every page: the sweep is the only thing that warns, so a pull
+            // request it does not see is never warned or closed.
+            const prs = await github.paginate(github.rest.pulls.list, {
               owner: context.repo.owner,
               repo: context.repo.repo,
               state: 'open',
@@ -81,7 +83,7 @@ jobs:
               if (!hasLabel) continue;
 
               // Get all events for this PR
-              const { data: events } = await github.rest.issues.listEvents({
+              const events = await github.paginate(github.rest.issues.listEvents, {
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: pr.number,

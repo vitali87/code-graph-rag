@@ -38,19 +38,33 @@ const fs = require('fs');
 const [scriptPath, fixturePath] = process.argv.slice(2);
 const fixture = JSON.parse(fs.readFileSync(fixturePath, 'utf8'));
 const calls = [];
+// A list call answers with one page, as GitHub's API does; only paginate
+// walks every page.
+const page = (items, p) => {
+  const size = p.per_page || 30;
+  const start = ((p.page || 1) - 1) * size;
+  return { data: items.slice(start, start + size), total: items.length };
+};
 const github = {
   rest: {
     pulls: {
-      list: async () => ({ data: fixture.prs }),
+      list: async (p) => page(fixture.prs, p),
       update: async (p) => { calls.push(['update', p.pull_number, p.state]); return {}; },
     },
     issues: {
-      listEvents: async (p) => ({ data: fixture.events[p.issue_number] || [] }),
-      listComments: async (p) => ({ data: fixture.comments[p.issue_number] || [] }),
+      listEvents: async (p) => page(fixture.events[p.issue_number] || [], p),
+      listComments: async (p) => page(fixture.comments[p.issue_number] || [], p),
       createComment: async (p) => { calls.push(['comment', p.issue_number, p.body]); return {}; },
     },
   },
-  paginate: async (method, params) => (await method(params)).data,
+  paginate: async (method, params) => {
+    const items = [];
+    for (let n = 1; ; n++) {
+      const { data, total } = await method({ ...params, page: n });
+      items.push(...data);
+      if (items.length >= total || data.length === 0) return items;
+    }
+  },
 };
 const context = { repo: { owner: 'owner', repo: 'repo' } };
 const core = { info() {}, warning() {}, setFailed(message) { throw new Error(message); } };
@@ -217,6 +231,29 @@ def test_someone_else_quoting_the_warning_does_not_count(tmp_path: Path) -> None
 
     assert _warnings(calls) == [1]
     assert _closed(calls) == [], "a pull request is never closed unwarned"
+
+
+def test_a_labelled_pr_beyond_the_first_page_is_warned(tmp_path: Path) -> None:
+    repo = _Repo()
+    for number in range(1, 101):
+        repo.pr(number)
+    repo.pr(101, labelled=0.5)
+
+    calls = repo.sweep(tmp_path)
+
+    assert _warnings(calls) == [101]
+
+
+def test_a_label_event_beyond_the_first_page_counts(tmp_path: Path) -> None:
+    repo = _Repo()
+    repo.pr(1, labelled=0.5)
+    repo.events[1] = [
+        {"event": "commented", "created_at": _ago(2)} for _ in range(100)
+    ] + repo.events[1]
+
+    calls = repo.sweep(tmp_path)
+
+    assert _warnings(calls) == [1]
 
 
 def test_an_unlabelled_pr_is_ignored(tmp_path: Path) -> None:
