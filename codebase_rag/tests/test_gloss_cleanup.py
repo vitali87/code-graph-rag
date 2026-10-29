@@ -22,11 +22,16 @@ also asks whether the note was written about the project just deleted.
 
 from __future__ import annotations
 
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
 from codebase_rag import constants as cs
 from codebase_rag.gloss.cleanup import (
     CYPHER_DELETE_ORPHANED_GLOSSES,
     prune_orphaned_glosses,
 )
+from codebase_rag.mcp.tools import MCPToolsRegistry
+from codebase_rag.services.graph_service import GraphIngestor
 
 
 class _FakeStore:
@@ -35,8 +40,8 @@ class _FakeStore:
     The evals emulator does not model `CYPHER_DELETE_PROJECT` at all, so a
     probe built on it reports "nothing was deleted" for every query alike --
     it cannot distinguish this leak from a working delete. The parts that can
-    be checked without a live database are the query's shape and that the
-    sweep is wired into the delete path, so those are what these assert.
+    be checked against it are the query's shape; the wiring is checked on
+    an embedded graph below.
     """
 
     def __init__(self) -> None:
@@ -165,61 +170,91 @@ def test_the_sweep_keys_on_the_recorded_project_not_a_name_prefix() -> None:
     assert "(g.project IS NULL AND g.target_qn STARTS WITH $project_prefix)" in q
 
 
-def test_the_deliberate_delete_runs_the_sweep() -> None:
-    """Wiring, not just existence.
+def _graph_with_a_gloss(tmp_path: Path) -> GraphIngestor:
+    """An embedded graph holding project `proj`, one function and a gloss
+    written about it."""
+    from codebase_rag.graph_dialects import DIALECT_SQLITE, get_dialect
 
-    A correct sweep that nothing calls fixes nothing -- the same shape as a
-    deduplicating appender with no callers.
-    """
-    import inspect
+    ingestor = GraphIngestor(
+        dialect=get_dialect(DIALECT_SQLITE),
+        sqlite_path=str(tmp_path / "graph.sqlite"),
+    )
+    ingestor.__enter__()
+    ingestor.execute_write(
+        "CREATE (:Project {name: 'proj'})"
+        "-[:CONTAINS_MODULE]->(:Module {qualified_name: 'proj.mod'})"
+        "-[:DEFINES]->(f:Function {qualified_name: 'proj.mod.f'}) "
+        "CREATE (:Gloss {qualified_name: 'note', project: 'proj', "
+        "target_qn: 'proj.mod.f'})-[:ANNOTATES]->(f)"
+    )
+    return ingestor
 
-    from codebase_rag.mcp import tools
 
-    source = inspect.getsource(tools.MCPToolsRegistry._delete_project_sync)
-    assert "prune_orphaned_glosses" in source, (
-        "the deliberate project delete does not run the gloss sweep, so the "
-        "orphan survives the deletion it should die with"
+def _glosses(ingestor: GraphIngestor) -> list[object]:
+    return [
+        row["qn"]
+        for row in ingestor.fetch_all(
+            f"MATCH (g:{cs.NodeLabel.GLOSS.value}) RETURN g.qualified_name AS qn"
+        )
+    ]
+
+
+def _registry(tmp_path: Path, ingestor: GraphIngestor) -> MCPToolsRegistry:
+    repo = tmp_path / "proj"
+    repo.mkdir()
+    return MCPToolsRegistry(
+        project_root=str(repo), ingestor=ingestor, cypher_gen=MagicMock()
     )
 
 
-def test_the_shared_ingestor_delete_does_NOT_run_the_sweep() -> None:
-    """The half that matters more, and the one my first attempt got wrong.
+def test_the_deliberate_delete_removes_the_gloss(tmp_path: Path) -> None:
+    """Wiring, not just existence: a correct sweep nothing calls fixes
+    nothing."""
+    ingestor = _graph_with_a_gloss(tmp_path)
+    try:
+        registry = _registry(tmp_path, ingestor)
+        with patch.object(registry, "_cleanup_embeddings_then_begin_writing"):
+            result = registry._delete_project_sync("proj")
+        assert result["success"], result
+        assert _glosses(ingestor) == [], (
+            "the deliberate project delete left the gloss behind, so the "
+            "orphan survives the deletion it should die with"
+        )
+    finally:
+        ingestor.__exit__(None, None, None)
+
+
+def test_the_shared_ingestor_delete_keeps_the_gloss(tmp_path: Path) -> None:
+    """The half that matters more.
 
     `GraphIngestor.delete_project` is called by BOTH the deliberate delete
     and `_index_repository_sync`, which deletes and rebuilds. A sweep there
     runs on every reindex, and since the rebuild recreates the symbols AFTER
     the delete, every gloss is an orphan at that moment -- so the sweep would
-    destroy all of them, permanently, on a routine reindex.
-
-    That is the exact requirement #1828 names: a gloss must survive
-    index/update/reingest because its truth lives only in the graph. Caught
-    in review of #1856, where I had wired it into the shared method.
+    destroy all of them, permanently, on a routine reindex (#1828).
     """
-    import inspect
+    ingestor = _graph_with_a_gloss(tmp_path)
+    try:
+        ingestor.delete_project("proj")
+        assert _glosses(ingestor) == ["note"], (
+            "the shared ingestor delete swept the gloss; index_repository "
+            "also calls it, so every reindex would destroy every saved gloss"
+        )
+    finally:
+        ingestor.__exit__(None, None, None)
 
-    from codebase_rag.services import graph_service
 
-    source = inspect.getsource(graph_service.GraphIngestor.delete_project)
-    assert "prune_orphaned_glosses" not in source, (
-        "the gloss sweep is wired into the SHARED ingestor delete, which "
-        "index_repository also calls -- every reindex would permanently "
-        "destroy every saved gloss"
-    )
-
-
-def test_the_index_path_does_not_sweep_glosses() -> None:
-    """Stated against the index path directly, not inferred from the above.
-
-    The previous test pins where the sweep is NOT; this pins that the
-    rebuild path never reaches it by some other route.
-    """
-    import inspect
-
-    from codebase_rag.mcp import tools
-
-    source = inspect.getsource(tools.MCPToolsRegistry._index_repository_sync)
-    assert "prune_orphaned_glosses" not in source, (
-        "the reindex path sweeps glosses; the rebuild recreates symbols "
-        "after the delete, so every gloss is momentarily an orphan and "
-        "would be destroyed"
-    )
+def test_the_index_path_keeps_the_gloss(tmp_path: Path) -> None:
+    """The rebuild path never reaches the sweep by some other route."""
+    ingestor = _graph_with_a_gloss(tmp_path)
+    try:
+        registry = _registry(tmp_path, ingestor)
+        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+            registry._index_repository_sync()
+        assert _glosses(ingestor) == ["note"], (
+            "the reindex path swept the gloss; the rebuild recreates symbols "
+            "after the delete, so every gloss is momentarily an orphan and "
+            "would be destroyed"
+        )
+    finally:
+        ingestor.__exit__(None, None, None)

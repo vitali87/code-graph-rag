@@ -73,11 +73,13 @@ def test_the_new_project_route_is_actionable() -> None:
     assert "cgr start --repo-path" in _WARNING
 
     # The flag has to exist on the command the warning tells them to run.
-    import inspect
+    import typer
 
-    from codebase_rag import cli
+    from codebase_rag.cli import app
 
-    assert "--project-name" in inspect.getsource(cli.start), (
+    start = typer.main.get_group(app).commands["start"]
+    flags = {flag for param in start.params for flag in param.opts}
+    assert "--project-name" in flags, (
         "the warning names --project-name but `cgr start` does not accept it"
     )
 

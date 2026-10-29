@@ -78,20 +78,18 @@ class TestHistoryPersists:
         pass while the SESSION reads some other history, so the wiring
         needs its own assertion.
 
-        Read from the SOURCE rather than by constructing a session:
-        building one attaches to the platform console, which hung a
-        headless Windows runner until its 30-minute timeout. Inspecting
-        the call proves the same property -- that `_input_session` passes
-        `_input_history()` and not a fresh history -- with nothing to
-        attach to.
+        `PromptSession` is replaced rather than built: a real one attaches
+        to the platform console, which hung a headless Windows runner until
+        its 30-minute timeout.
         """
-        import inspect
+        from unittest.mock import patch
 
         from codebase_rag import agent_loop as m
 
-        source = inspect.getsource(m._input_session)
+        with patch.object(m, "PromptSession") as session:
+            m._input_session()
 
-        assert "history=_input_history()" in source, source
+        assert session.call_args.kwargs["history"] is m._input_history()
 
     def test_submitted_text_is_appended_to_history(self) -> None:
         """The history must actually be fed, not merely exist.

@@ -399,15 +399,6 @@ class TestMCPClient:
     def test_query_mcp_server_is_callable(self) -> None:
         assert callable(query_mcp_server)
 
-    def test_client_uses_constants(self) -> None:
-        import inspect
-
-        from codebase_rag.mcp import client
-
-        source = inspect.getsource(client)
-        assert "MCPToolName.ASK_AGENT" in source
-        assert "MCPParamName.QUESTION" in source
-
     def test_query_with_errlog_is_async(self) -> None:
         import asyncio
 
