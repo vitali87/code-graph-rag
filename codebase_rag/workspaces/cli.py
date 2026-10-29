@@ -83,7 +83,11 @@ def show_cmd(name: str) -> None:
 @click.argument("name")
 @click.argument("repo_path")
 @click.option(
-    "--project-name", "-p", default=None, help=ch.HELP_WORKSPACE_REPO_PROJECT_NAME
+    "--project-name",
+    "--project",
+    "-p",
+    default=None,
+    help=ch.HELP_WORKSPACE_REPO_PROJECT_NAME,
 )
 def add_repo_cmd(name: str, repo_path: str, project_name: str | None) -> None:
     try:

@@ -461,8 +461,9 @@ HELP_NO_EMBEDDINGS = (
     "are still updated. Equivalent env: CGR_SKIP_EMBEDDINGS=1."
 )
 HELP_PROJECTS = (
-    "Limit queries to comma-separated project names. Overrides --project-name; "
-    "defaults to the selected repository or workspace."
+    "Limit queries to these project names: comma-separated, or the option "
+    "repeated. Overrides --project-name; defaults to the selected repository "
+    "or workspace."
 )
 HELP_WORKSPACE = "Query every project defined in workspace NAME."
 

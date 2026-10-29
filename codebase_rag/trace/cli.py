@@ -37,7 +37,9 @@ def cli() -> None:
     required=True,
     help=ch.HELP_TRACE_REPO_PATH,
 )
-@click.option("--project-name", default=None, help=ch.HELP_TRACE_PROJECT_NAME)
+@click.option(
+    "--project-name", "--project", "-p", default=None, help=ch.HELP_TRACE_PROJECT_NAME
+)
 def ingest_cmd(trace_file: Path, repo_path: Path, project_name: str | None) -> None:
     from ..cli_runtime import connect_memgraph
     from ..config import settings

@@ -105,16 +105,16 @@ cgr start --repo-path /path/to/repo [OPTIONS]
 | `--no-confirm` | Auto-approve file edits and shell commands that need approval (the shell allowlist stays on). |
 | `--no-instructions` | Do not load ~/.cgr.md or &lt;repo>/.cgr.md into the session prompt. |
 | `--batch-size` | Flush to Memgraph after this many buffered nodes or relationships. [x>=1] |
-| `--project-name` | Project name to store in the graph. Defaults to the directory name plus an 8-hex hash of its absolute path (e.g. myrepo__1a2b3c4d), so two checkouts on one machine get different names barring a rare hash collision; machines that sync into one graph should each pass their own name, since the same path hashes alike on every machine. cgr status lists the names already stored. A chosen name has no hash: syncing a repository under a name another repository already indexes needs --yes and replaces that project. |
+| `--project-name`, `--project`, `-p` | Project name to store in the graph. Defaults to the directory name plus an 8-hex hash of its absolute path (e.g. myrepo__1a2b3c4d), so two checkouts on one machine get different names barring a rare hash collision; machines that sync into one graph should each pass their own name, since the same path hashes alike on every machine. cgr status lists the names already stored. A chosen name has no hash: syncing a repository under a name another repository already indexes needs --yes and replaces that project. |
 | `--exclude` | Exclude paths matching PATTERN from indexing. Repeat the option to add patterns. |
 | `--capture` | Capture GROUP on top of the defaults (structure, calls, types, imports). Opt-in groups: io, findings, glosses, parameters, fields, enum_variants, constants. +NAME adds and -NAME drops a GROUP or a relationship type such as OVERRIDES; all or none replaces the selection, so none first captures only what follows (none,structure). Repeatable or comma-separated; later values override CGR_CAPTURE. An unknown group or type is an error. |
 | `--interactive-setup` | Choose which detected directories remain included. |
 | `--ask-agent`, `-a` | Ask one question, write the answer to stdout, and exit. |
-| `--output-format` | Format --ask-agent output as table or json. [default: table] |
+| `--output-format`, `--format` | Format --ask-agent output as table or json. [default: table] |
 | `--no-start-stack` | Do not start the shared stack automatically. |
 | `--no-sync` | Do not synchronise the graph before starting the assistant. |
 | `--no-embeddings` | Do not generate semantic embeddings during sync. Graph nodes and relationships are still updated. Equivalent env: CGR_SKIP_EMBEDDINGS=1. |
-| `--projects` | Limit queries to comma-separated project names. Overrides --project-name; defaults to the selected repository or workspace. |
+| `--projects` | Limit queries to these project names: comma-separated, or the option repeated. Overrides --project-name; defaults to the selected repository or workspace. |
 | `--workspace` | Query every project defined in workspace NAME. |
 <!-- /SECTION:cli_options_start -->
 
@@ -142,7 +142,7 @@ cgr watch --repo-path /path/to/repo [OPTIONS]
 | Option | Description |
 |------|-----------|
 | `--repo-path` | Repository to watch. Defaults to the current directory. |
-| `--project-name` | Project name to store in the graph. Defaults to the name `cgr start --repo-path` gives the same repository, so both update one project; if you passed `cgr start --project-name`, pass the same name here. |
+| `--project-name`, `--project`, `-p` | Project name to store in the graph. Defaults to the name `cgr start --repo-path` gives the same repository, so both update one project; if you passed `cgr start --project-name`, pass the same name here. |
 | `--debounce`, `-d` | Seconds to wait after a file's last change before updating the graph, so a burst of saves becomes one update. 0 applies every change at once. [default: 5; x>=0] |
 | `--max-wait`, `-m` | Longest a file that keeps changing waits before the graph is updated anyway. Raised to --debounce when lower. [default: 30; x>=0] |
 | `--batch-size` | Flush to Memgraph after this many buffered nodes or relationships. [x>=1] |

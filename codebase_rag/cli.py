@@ -1408,6 +1408,8 @@ def start(
     project_name: str | None = typer.Option(
         None,
         "--project-name",
+        "--project",
+        "-p",
         help=ch.HELP_PROJECT_NAME,
         callback=_storable_project_name,
     ),
@@ -1436,6 +1438,7 @@ def start(
     output_format: cs.QueryFormat = typer.Option(
         cs.QueryFormat.TABLE,
         "--output-format",
+        "--format",
         help=ch.HELP_QUERY_OUTPUT_FORMAT,
     ),
     no_start_stack: bool = typer.Option(
@@ -1453,7 +1456,7 @@ def start(
         "--no-embeddings",
         help=ch.HELP_NO_EMBEDDINGS,
     ),
-    projects: str | None = typer.Option(
+    project_list: list[str] | None = typer.Option(
         None,
         "--projects",
         help=ch.HELP_PROJECTS,
@@ -1464,6 +1467,8 @@ def start(
         help=ch.HELP_WORKSPACE,
     ),
 ) -> None:
+    # One comma-separated list, as the option was before it could repeat.
+    projects = cs.CHAR_COMMA.join(project_list) if project_list else None
     app_context.session.confirm_edits = not no_confirm
     app_context.session.load_cgr_instructions = not no_instructions
 
@@ -1687,6 +1692,8 @@ def watch_command(
     project_name: str | None = typer.Option(
         None,
         "--project-name",
+        "--project",
+        "-p",
         help=ch.HELP_PROJECT_NAME_WATCH,
         callback=_storable_project_name,
     ),
@@ -1777,7 +1784,9 @@ def verify_index_command(
 def diff_index_command(
     old_dir: str = typer.Option(..., "--old", help=ch.HELP_DIFF_OLD),
     new_dir: str = typer.Option(..., "--new", help=ch.HELP_DIFF_NEW),
-    json_out: str | None = typer.Option(None, "--json-out", help=ch.HELP_DIFF_JSON_OUT),
+    json_out: str | None = typer.Option(
+        None, "--json-out", "--output", "-o", help=ch.HELP_DIFF_JSON_OUT
+    ),
 ) -> None:
     try:
         diff = diff_indexes(Path(old_dir), Path(new_dir))

@@ -114,6 +114,37 @@ def test_start_passes_projects_to_single_query(
     assert mock_single.call_args.kwargs["active_projects"] == ["alpha", "beta"]
 
 
+def test_start_projects_can_be_repeated(
+    mock_memgraph_connect: MagicMock,
+    mock_sync_path: None,
+    mock_validate_models: None,
+    tmp_path: Path,
+) -> None:
+    # The repeated form other list options take, beside the comma form.
+    with patch("codebase_rag.cli.main_single_query") as mock_single:
+        result = runner.invoke(
+            app,
+            [
+                "start",
+                "--repo-path",
+                str(tmp_path),
+                "--projects",
+                "alpha",
+                "--projects",
+                "beta,gamma",
+                "--ask-agent",
+                "hi",
+                "--no-sync",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+    assert mock_single.call_args.kwargs["active_projects"] == [
+        "alpha",
+        "beta",
+        "gamma",
+    ]
+
+
 def test_start_default_projects_uses_derived_name(
     mock_memgraph_connect: MagicMock,
     mock_sync_path: None,
