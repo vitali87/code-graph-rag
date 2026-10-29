@@ -27,7 +27,7 @@ from tree_sitter import Node
 
 from .. import constants as cs
 from ..types_defs import PropertyDict
-from .dart.utils import dart_body_node
+from .dart import utils as dart_utils
 from .native_trees import NotBorrowed, tree_bridge
 
 _SEPARATOR = b"\x00"
@@ -66,7 +66,7 @@ def python_anchor_hash(definition: Node, decorators: Sequence[str] = ()) -> str:
     # function_body; the captured node is the signature, so the body is
     # walked too or a `return 1` to `return 2` edit would not be seen.
     roots = [definition]
-    dart_body = dart_body_node(definition)
+    dart_body = dart_utils.body_node(definition)
     if dart_body is not None:
         roots.append(dart_body)
     # Iterative: deep trees overflow Python recursion, as `ast_fingerprint`

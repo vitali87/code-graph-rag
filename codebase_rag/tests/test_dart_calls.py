@@ -134,11 +134,7 @@ def test_call_name_shapes() -> None:
     # off real parse trees
 
     from codebase_rag.parser_loader import load_parsers
-    from codebase_rag.parsers.dart import (
-        dart_body_node,
-        dart_call_name,
-        dart_definition_end_byte,
-    )
+    from codebase_rag.parsers.dart import utils as dart_utils
 
     parsers, _ = load_parsers()
     if SKIP not in parsers:
@@ -170,7 +166,7 @@ class A extends B {
         if node.type in ("selector", "cascade_section") and any(
             c.type == "argument_part" for c in node.named_children
         ):
-            calls.append(dart_call_name(node))
+            calls.append(dart_utils.call_name(node))
         stack.extend(reversed(node.named_children))
     assert "plain" in calls
     assert "obj.member" in calls
@@ -194,8 +190,8 @@ class A extends B {
 
     # span helpers pass non-signature nodes through unchanged
     root = tree.root_node
-    assert dart_body_node(root) is None
-    assert dart_definition_end_byte(root) == root.end_byte
+    assert dart_utils.body_node(root) is None
+    assert dart_utils.definition_end_byte(root) == root.end_byte
 
 
 def test_body_calls_not_attributed_to_module(

@@ -121,7 +121,7 @@ def _enclosing_packages(root: Node) -> tuple[str, ...]:
     return tuple(reversed(opened))
 
 
-def scala_enclosing_packages_at(node: Node) -> tuple[str, ...]:
+def enclosing_packages_at(node: Node) -> tuple[str, ...]:
     """The packages whose members an import at `node` names relatively,
     innermost first.
 
@@ -179,7 +179,7 @@ def _package_block(clause: Node) -> ScalaPackageBlock | None:
     return ScalaPackageBlock(
         start=body.start_byte,
         end=body.end_byte,
-        enclosing=scala_enclosing_packages_at(body),
+        enclosing=enclosing_packages_at(body),
     )
 
 
@@ -200,7 +200,7 @@ def _package_blocks(root: Node) -> tuple[ScalaPackageBlock, ...]:
     return tuple(blocks)
 
 
-def scala_import_block(import_node: Node) -> ScalaPackageBlock | None:
+def import_block(import_node: Node) -> ScalaPackageBlock | None:
     """The package block an import is visible in; None for the whole file."""
     current = import_node.parent
     while current is not None:
@@ -254,7 +254,7 @@ def _class_bases(root: Node) -> dict[str, ScalaClassBases]:
     return found
 
 
-def scan_scala_packages(root: Node) -> ScalaPackageScan:
+def scan_packages(root: Node) -> ScalaPackageScan:
     """The packages a Scala file declares, opens and the names it mentions."""
     found: dict[str, set[str]] = {}
     _collect_packages(root, "", found)
@@ -267,7 +267,7 @@ def scan_scala_packages(root: Node) -> ScalaPackageScan:
     )
 
 
-def scala_blocks_at(
+def blocks_at(
     blocks: tuple[ScalaPackageBlock, ...], position: int
 ) -> list[ScalaPackageBlock]:
     """The package blocks holding byte `position`, innermost first."""
@@ -277,7 +277,7 @@ def scala_blocks_at(
     )
 
 
-def scala_import_candidates(path: str, enclosing: tuple[str, ...]) -> list[str]:
+def import_candidates(path: str, enclosing: tuple[str, ...]) -> list[str]:
     """The absolute paths a written import path may mean, in lookup order.
 
     Scala resolves an import's first segment against the enclosing packages
@@ -307,7 +307,7 @@ def _type_name(type_node: Node | None) -> str | None:
     return None
 
 
-def scala_instance_type_name(instance_node: Node) -> str | None:
+def instance_type_name(instance_node: Node) -> str | None:
     """The class `new C(...)` constructs, or None for `new { ... }`."""
     for child in instance_node.named_children:
         if (name := _type_name(child)) is not None:
@@ -321,7 +321,7 @@ def _value_type_name(value: Node | None) -> str | None:
     if value is None:
         return None
     if value.type == cs.TS_SCALA_INSTANCE_EXPRESSION:
-        return scala_instance_type_name(value)
+        return instance_type_name(value)
     if value.type == cs.TS_SCALA_CALL_EXPRESSION:
         callee = value.child_by_field_name(cs.TS_FIELD_FUNCTION)
         if callee is not None and callee.type == cs.TS_SCALA_IDENTIFIER:
@@ -413,7 +413,7 @@ def _binding(node: Node) -> ScalaBinding | None:
     return None
 
 
-def scala_bindings(caller_node: Node) -> dict[str, list[ScalaBinding]]:
+def bindings(caller_node: Node) -> dict[str, list[ScalaBinding]]:
     """Every name a caller binds, by name, with its type and scope.
 
     Types come from parameters (`c: Cart`), annotated vals (`val c: Cart =
@@ -431,7 +431,7 @@ def scala_bindings(caller_node: Node) -> dict[str, list[ScalaBinding]]:
     return bindings
 
 
-def scala_binding_at(
+def binding_at(
     bindings: dict[str, list[ScalaBinding]], name: str, position: int
 ) -> ScalaBinding | None:
     """The binding of `name` in effect at byte `position`, if any.
@@ -471,7 +471,7 @@ def _is_callee_or_assigned(node: Node) -> bool:
     return slot is not None and slot.id == node.id
 
 
-def scala_selection(node: Node) -> tuple[str, str] | None:
+def selection(node: Node) -> tuple[str, str] | None:
     """`(receiver, member)` of a parameterless selection like `c.size`.
 
     None when the selection is the callee of a call (the call node names it),
@@ -487,7 +487,7 @@ def scala_selection(node: Node) -> tuple[str, str] | None:
     return (receiver_name, member) if receiver_name else None
 
 
-def scala_package_index(
+def package_index(
     scans: dict[str, ScalaPackageScan], known_module_qns: Container[str]
 ) -> ScalaPackageIndex:
     """The packages the known modules declare, and who declares each name."""
@@ -510,9 +510,7 @@ def scala_package_index(
     )
 
 
-def scala_package_owner(
-    package: str, name: str, index: ScalaPackageIndex
-) -> str | None:
+def package_owner(package: str, name: str, index: ScalaPackageIndex) -> str | None:
     """The module declaring `name` in `package`, when exactly one does.
 
     None when no module declares it (a library may share the package: split
@@ -534,7 +532,7 @@ def _resolve_absolute(path: str, index: ScalaPackageIndex) -> ScalaImportTarget 
         if end == len(segments):
             return ScalaImportTarget(member_qn=None, declaring=declaring)
         member = segments[end]
-        owner = scala_package_owner(package, member, index)
+        owner = package_owner(package, member, index)
         if owner is None:
             return None
         return ScalaImportTarget(
@@ -544,17 +542,17 @@ def _resolve_absolute(path: str, index: ScalaPackageIndex) -> ScalaImportTarget 
     return None
 
 
-def resolve_scala_import(
+def resolve_import(
     path: str, enclosing: tuple[str, ...], index: ScalaPackageIndex
 ) -> ScalaImportTarget | None:
     """The project member or package an import path names, if any."""
-    for candidate in scala_import_candidates(path, enclosing):
+    for candidate in import_candidates(path, enclosing):
         if (target := _resolve_absolute(candidate, index)) is not None:
             return target
     return None
 
 
-def bind_scala_import(
+def bind_import(
     mapping: dict[str, str],
     local_name: str,
     path: str,

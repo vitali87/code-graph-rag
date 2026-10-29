@@ -15,7 +15,7 @@ from ...capture import CaptureSelection
 from ...services import IngestorProtocol
 from ...types_defs import FunctionLocations
 from ..call_resolver import CallResolver
-from ..dart.utils import dart_body_node, dart_call_name, dart_member_read_name
+from ..dart import utils as dart_utils
 from ..import_processor import ImportProcessor
 from ..io_access import (
     DYNAMIC_TARGET,
@@ -2332,7 +2332,7 @@ class FlowProcessor:
     def _dart_body_statements(self, caller_node: Node) -> list[Node]:
         # The captured Dart signature's sibling `function_body` -> its `block`'s
         # statements. A `program` (module-level) caller has no function body.
-        body = dart_body_node(caller_node)
+        body = dart_utils.body_node(caller_node)
         if body is None:
             return []
         block = next(
@@ -2442,7 +2442,7 @@ class FlowProcessor:
             return Taint(frozenset({source}), frozenset()), frozenset()
         call_sel = next((n for n in rhs if self._dart_selector_is_call(n)), None)
         if call_sel is not None:
-            raw = dart_call_name(call_sel)
+            raw = dart_utils.call_name(call_sel)
             if raw is not None:
                 return self._dart_call_rhs(call_sel, raw, handles, lean)
             return None, frozenset()
@@ -2674,7 +2674,7 @@ class FlowProcessor:
         for index, node in enumerate(nodes):
             if node.type != cs.TS_DART_SELECTOR:
                 continue
-            name = dart_member_read_name(node)
+            name = dart_utils.member_read_name(node)
             if name is None:
                 continue
             for prefix, kind in lean.member_reads:
@@ -2708,7 +2708,7 @@ class FlowProcessor:
     def _dart_call(
         self, selector: Node, tainted: _TaintMap, handles: _HandleMap, lean: _LeanCtx
     ) -> None:
-        raw = dart_call_name(selector)
+        raw = dart_utils.call_name(selector)
         if raw is None:
             return
         args = self._dart_arg_taints(selector, tainted, lean)
@@ -2853,7 +2853,7 @@ class FlowProcessor:
         call_sel = next((n for n in rhs if self._dart_selector_is_call(n)), None)
         if call_sel is None:
             return
-        raw = dart_call_name(call_sel)
+        raw = dart_utils.call_name(call_sel)
         if raw is None:
             return
         callee = self._resolve(

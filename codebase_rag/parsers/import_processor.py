@@ -50,15 +50,8 @@ from ..utils.path_utils import (
 )
 from ..utils.source_encoding import grammar_bytes
 from .cpp_frontend.qn import build_module_qn_map
-from .dart import (
-    dart_binding_spans,
-    dart_exposes_library,
-    dart_extract_uri,
-    dart_import_prefix,
-    dart_local_name,
-    dart_resolve_import,
-    discover_dart_packages,
-)
+from .dart import discover_dart_packages
+from .dart import utils as dart_utils
 from .go import discover_go_module_paths, resolve_go_import_path
 from .js_ts.commonjs_exports import commonjs_export_bindings, is_commonjs_module
 from .js_ts.module_paths import (
@@ -71,16 +64,7 @@ from .php.namespaces import declared_namespace
 from .python_source_roots import discover_python_source_roots, resolve_via_source_roots
 from .rs import cargo_semver
 from .rs import utils as rs_utils
-from .scala import (
-    bind_scala_import,
-    resolve_scala_import,
-    scala_blocks_at,
-    scala_enclosing_packages_at,
-    scala_import_block,
-    scala_package_index,
-    scala_package_owner,
-    scan_scala_packages,
-)
+from .scala import utils as scala_utils
 from .stdlib_extractor import (
     StdlibCacheStats,
     StdlibExtractor,
@@ -194,7 +178,7 @@ def _julia_module_name(node: Node) -> str | None:
 
 
 def _julia_unmacro(node: Node | None) -> str:
-    # `@foo` binds and is invoked as `foo`, as julia_call_name reads it.
+    # `@foo` binds and is invoked as `foo`, as `julia_utils.call_name` reads it.
     return (safe_decode_text(node) or "").lstrip("@")
 
 
@@ -1837,7 +1821,7 @@ class ImportProcessor:
                 self._collect_csharp_identifiers(root_node)
             )
         elif language == cs.SupportedLanguage.SCALA:
-            self._scala_scans[module_qn] = scan_scala_packages(root_node)
+            self._scala_scans[module_qn] = scala_utils.scan_packages(root_node)
         # A re-parsed module that no longer directly exports one function
         # must not leave the stale whole-module alias mapping behind.
         self.commonjs_direct_exports.pop(module_qn, None)
@@ -2724,7 +2708,7 @@ class ImportProcessor:
         if not importers:
             return
         self._recover_unscanned_scala_modules(known_module_paths)
-        index = scala_package_index(self._scala_scans, known_module_paths)
+        index = scala_utils.package_index(self._scala_scans, known_module_paths)
         self._scala_package_index = index
         self._deferred_import_edges = [
             entry
@@ -2746,14 +2730,14 @@ class ImportProcessor:
         block_mappings: dict[ScalaPackageBlock, dict[str, str]] = {}
         members: dict[str, str] = {}
         for binding in self._scala_imports[importer]:
-            target = resolve_scala_import(binding.path, binding.enclosing, index)
+            target = scala_utils.resolve_import(binding.path, binding.enclosing, index)
             if binding.block is None:
                 mapping = file_mapping
                 if target is not None and target.member_qn is not None:
                     members[binding.path] = target.member_qn
             else:
                 mapping = block_mappings.setdefault(binding.block, {})
-            bind_scala_import(mapping, binding.local_name, binding.path, target)
+            scala_utils.bind_import(mapping, binding.local_name, binding.path, target)
             if requeue:
                 self._requeue_scala_import_edges(importer, binding, target, scan)
         current = self.import_mapping.setdefault(importer, {})
@@ -2808,7 +2792,7 @@ class ImportProcessor:
         if scan is None or not blocks:
             return None
         declared: str | None = None
-        for block in scala_blocks_at(scan.blocks, position):
+        for block in scala_utils.blocks_at(scan.blocks, position):
             declared = declared or self._scala_block_declared(
                 module_qn, scan, block, name
             )
@@ -2869,7 +2853,9 @@ class ImportProcessor:
             return f"{imported}{cs.SEPARATOR_DOT}{rest}" if rest else imported
         enclosing = self._scala_enclosing_packages(module_qn, position)
         if rest:
-            target = resolve_scala_import(written, enclosing, self._scala_package_index)
+            target = scala_utils.resolve_import(
+                written, enclosing, self._scala_package_index
+            )
             return target.member_qn if target is not None else None
         return self._scala_simple_type_qn(module_qn, written, enclosing)
 
@@ -2881,7 +2867,9 @@ class ImportProcessor:
         scan = self._scala_scans.get(module_qn)
         if scan is None:
             return ()
-        if position is not None and (blocks := scala_blocks_at(scan.blocks, position)):
+        if position is not None and (
+            blocks := scala_utils.blocks_at(scan.blocks, position)
+        ):
             return blocks[0].enclosing
         return scan.enclosing
 
@@ -2898,7 +2886,7 @@ class ImportProcessor:
         if registry is not None and own in registry:
             return own
         for package in enclosing:
-            if owner := scala_package_owner(
+            if owner := scala_utils.package_owner(
                 package, written, self._scala_package_index
             ):
                 return f"{owner}{cs.SEPARATOR_DOT}{written}"
@@ -2990,7 +2978,7 @@ class ImportProcessor:
                 self._scala_scans[qn] = _EMPTY_SCALA_SCAN
                 continue
             self._scala_scans[qn] = (
-                scan_scala_packages(parser.parse(source).root_node)
+                scala_utils.scan_packages(parser.parse(source).root_node)
                 if parser is not None
                 else _EMPTY_SCALA_SCAN
             )
@@ -6197,11 +6185,11 @@ class ImportProcessor:
                 self._parse_scala_import_declaration(import_node, module_qn)
             finally:
                 self.import_mapping[module_qn] = mapping
-            block = scala_import_block(import_node)
+            block = scala_utils.import_block(import_node)
             if block is None:
                 # A package block's imports are visible in that block only.
                 mapping.update(bound)
-            enclosing = scala_enclosing_packages_at(import_node)
+            enclosing = scala_utils.enclosing_packages_at(import_node)
             sites = self._import_sites.get(module_qn, {})
             bindings.extend(
                 ScalaImportBinding(name, path, enclosing, block, sites.get(name))
@@ -6723,14 +6711,14 @@ class ImportProcessor:
         # skipped.
         prefixes: set[str] = set()
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
-            uri = dart_extract_uri(import_node)
+            uri = dart_utils.extract_uri(import_node)
             if not uri:
                 continue
             if full_name := self.dart_import_target(uri, module_qn):
-                local_name = dart_local_name(uri)
+                local_name = dart_utils.local_name(uri)
                 self.import_mapping[module_qn][local_name] = full_name
                 self._record_import_site(module_qn, local_name, import_node, uri)
-                if dart_exposes_library(import_node):
+                if dart_utils.exposes_library(import_node):
                     self.dart_exposed_libraries.setdefault(module_qn, []).append(
                         full_name
                     )
@@ -6740,7 +6728,7 @@ class ImportProcessor:
                 # PREFIX is a key too (issue #2033). Both keys are kept: the
                 # file-derived one still serves an unprefixed import of the
                 # same file elsewhere in the module.
-                prefix = dart_import_prefix(import_node)
+                prefix = dart_utils.import_prefix(import_node)
                 if prefix:
                     self._bind_dart_import_prefix(
                         module_qn, prefix, full_name, import_node, uri
@@ -6752,7 +6740,7 @@ class ImportProcessor:
         # syntactic, so record its span here and let the fold check the call
         # site against it (issue #2033).
         if root_node is not None and prefixes:
-            self.dart_prefix_shadows[module_qn] = dart_binding_spans(
+            self.dart_prefix_shadows[module_qn] = dart_utils.binding_spans(
                 root_node, frozenset(prefixes)
             )
 
@@ -6764,7 +6752,7 @@ class ImportProcessor:
             if uri.startswith(cs.DART_SCHEME_PACKAGE)
             else None
         )
-        return dart_resolve_import(uri, module_qn, packages)
+        return dart_utils.resolve_import(uri, module_qn, packages)
 
     def _dart_package_libs(self) -> dict[str, str]:
         # `package:<name>/<path>` with `<name>` a pubspec in this repository

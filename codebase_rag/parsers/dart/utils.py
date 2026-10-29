@@ -27,7 +27,7 @@ def _identifier_texts(node: Node) -> list[bytes]:
     ]
 
 
-def dart_get_name(node: Node) -> str | None:
+def get_name(node: Node) -> str | None:
     # The single source of truth for Dart declaration names; language_spec's
     # DART_FQN_SPEC delegates here. Most Dart declarations expose a `name`
     # field (functions, getters, setters, classes, enums, extensions).
@@ -51,7 +51,7 @@ def dart_get_name(node: Node) -> str | None:
     return None
 
 
-def dart_is_top_level_main(node: Node) -> bool:
+def is_top_level_main(node: Node) -> bool:
     """Whether `node` declares the program's entry: `main` at library level.
 
     A local function registers under its module too, so a `main` declared
@@ -61,11 +61,11 @@ def dart_is_top_level_main(node: Node) -> bool:
         node.type == cs.TS_DART_FUNCTION_SIGNATURE
         and node.parent is not None
         and node.parent.type == cs.TS_DART_PROGRAM
-        and dart_get_name(node) == cs.PROGRAM_MAIN_NAME
+        and get_name(node) == cs.PROGRAM_MAIN_NAME
     )
 
 
-def dart_definition_end_point(node: Node) -> tuple[int, int]:
+def definition_end_point(node: Node) -> tuple[int, int]:
     """End point of a captured Dart function/method, including its body.
 
     The grammar splits a definition into a `*_signature` node and a sibling
@@ -85,7 +85,7 @@ def dart_definition_end_point(node: Node) -> tuple[int, int]:
     return base.end_point
 
 
-def dart_body_node(node: Node) -> Node | None:
+def body_node(node: Node) -> Node | None:
     """The sibling `function_body` completing a captured signature, or None."""
     if node.type not in cs.DART_SIGNATURE_TYPES:
         return None
@@ -98,22 +98,22 @@ def dart_body_node(node: Node) -> Node | None:
     return None
 
 
-def dart_definition_end_byte(node: Node) -> int:
+def definition_end_byte(node: Node) -> int:
     """End byte of a captured Dart definition, including its sibling body.
 
     A body-less constructor still runs its `: this(...)` / `: super(...)` /
     field-initializer clauses, so it ends with the last of them; the calls in
     their arguments belong to it, not to the enclosing module (issue #2482).
     """
-    body = dart_body_node(node)
+    body = body_node(node)
     if body is not None:
         return body.end_byte
-    if clauses := dart_constructor_clauses(node):
+    if clauses := constructor_clauses(node):
         return clauses[-1].end_byte
     return node.end_byte
 
 
-def dart_constructor_clauses(node: Node) -> list[Node]:
+def constructor_clauses(node: Node) -> list[Node]:
     """The `redirection` / `initializers` clauses of a constructor signature.
 
     They are siblings of the signature inside its `method_signature` (bodied)
@@ -131,7 +131,7 @@ def dart_constructor_clauses(node: Node) -> list[Node]:
     ]
 
 
-def dart_constructor_delegations(node: Node) -> list[DartConstructorDelegation]:
+def constructor_delegations(node: Node) -> list[DartConstructorDelegation]:
     """The other constructors a constructor signature delegates to.
 
     `: this(...)` / `: this.named(...)` redirect to a constructor of the same
@@ -139,7 +139,7 @@ def dart_constructor_delegations(node: Node) -> list[DartConstructorDelegation]:
     of the superclass. Field initializers and asserts delegate nothing.
     """
     delegations: list[DartConstructorDelegation] = []
-    for clause in dart_constructor_clauses(node):
+    for clause in constructor_clauses(node):
         if clause.type == cs.TS_DART_REDIRECTION:
             entries = [(clause, cs.TS_DART_THIS)]
         else:
@@ -182,7 +182,7 @@ def _written_type_after(node: Node, keyword: str) -> str | None:
     return cs.SEPARATOR_DOT.join(names) or None
 
 
-def dart_extension_on_type(node: Node) -> str | None:
+def extension_on_type(node: Node) -> str | None:
     """The type an `extension ... on T` declaration extends, as written
     (`on p.Point` -> `p.Point`, `on List<T>` -> `List`)."""
     if node.type != cs.TS_DART_EXTENSION_DECLARATION:
@@ -190,7 +190,7 @@ def dart_extension_on_type(node: Node) -> str | None:
     return _written_type_after(node, cs.DART_EXTENSION_ON_KEYWORD)
 
 
-def dart_superclass_type(node: Node) -> str | None:
+def superclass_type(node: Node) -> str | None:
     """The `extends` type, as written, of the class enclosing `node`.
 
     Only that class declares the constructors a `: super(...)` initializer
@@ -211,7 +211,7 @@ def dart_superclass_type(node: Node) -> str | None:
     return _written_type_after(superclass, cs.DART_EXTENDS_KEYWORD)
 
 
-def dart_exposes_library(directive: Node) -> bool:
+def exposes_library(directive: Node) -> bool:
     """Does this directive hand its target's names to the library's importers?
 
     `export 'x.dart';` re-exports x, and `part 'x.dart';` makes x part of the
@@ -529,7 +529,7 @@ def _chain_part(node: Node) -> str | None:
             return None
 
 
-def dart_call_name(call_node: Node) -> str | None:
+def call_name(call_node: Node) -> str | None:
     """The dotted name a Dart invocation targets, reassembled from siblings.
 
     The grammar has no call-expression node: `f(x)` is `identifier` +
@@ -616,7 +616,7 @@ def generic_call_argument(node: Node) -> Node | None:
     return arg
 
 
-def dart_ambiguous_construction_base(selector_node: Node) -> str | None:
+def ambiguous_construction_base(selector_node: Node) -> str | None:
     """The identifier a read's receiver would construct, when ambiguous.
 
     `X<int>(1).m` and the chained comparison `a < b > (1).m` parse
@@ -638,7 +638,7 @@ def dart_ambiguous_construction_base(selector_node: Node) -> str | None:
     return _construction_class_name(parent)
 
 
-def dart_member_read_name(selector_node: Node) -> str | None:
+def member_read_name(selector_node: Node) -> str | None:
     """The dotted name a member-selector READ targets, or None.
 
     `marker.startYr` is `identifier` + `selector(.startYr)`: reassemble the
@@ -661,7 +661,7 @@ def dart_member_read_name(selector_node: Node) -> str | None:
     return _assemble_chain([*receiver, member])
 
 
-def dart_cascade_read_name(section: Node) -> str | None:
+def cascade_read_name(section: Node) -> str | None:
     """The dotted name a cascade member READ targets (`m..startYr`), or None.
 
     A pure read section holds ONLY cascade_selector children: an
@@ -692,7 +692,7 @@ def dart_cascade_read_name(section: Node) -> str | None:
     return _assemble_chain([*receiver, *parts])
 
 
-def dart_return_type_name(node: Node) -> str | None:
+def return_type_name(node: Node) -> str | None:
     """The declared return type of a Dart signature, or None.
 
     A constructor "returns" its class (its FIRST identifier); a method or
@@ -712,7 +712,7 @@ def dart_return_type_name(node: Node) -> str | None:
     return None
 
 
-def dart_extract_uri(node: Node) -> str | None:
+def extract_uri(node: Node) -> str | None:
     """The unquoted URI of an import/export/part directive, or None."""
     stack = [node]
     while stack:
@@ -723,7 +723,7 @@ def dart_extract_uri(node: Node) -> str | None:
     return None
 
 
-def dart_local_name(uri: str) -> str:
+def local_name(uri: str) -> str:
     """A short local key for an import URI (its last path segment, no `.dart`)."""
     segment = uri.rstrip(cs.SEPARATOR_SLASH).split(cs.SEPARATOR_SLASH)[-1]
     if segment.endswith(cs.DART_EXT):
@@ -738,7 +738,7 @@ def _walk_named(node: Node) -> Iterator[Node]:
         yield from _walk_named(child)
 
 
-def dart_import_prefix(import_node: Node) -> str | None:
+def import_prefix(import_node: Node) -> str | None:
     """The `as` prefix of a Dart import, or None when it has none.
 
     `import 'lib.dart' as p;` binds every name from that library under `p`,
@@ -771,7 +771,7 @@ def dart_import_prefix(import_node: Node) -> str | None:
     return None
 
 
-def dart_resolve_import(
+def resolve_import(
     uri: str, module_qn: str, packages: Mapping[str, str] | None = None
 ) -> str:
     """Full import target: external URIs kept verbatim, relative paths resolved.
@@ -925,7 +925,7 @@ def _bound_names(node: Node) -> list[str]:
     return []
 
 
-def dart_binding_spans(
+def binding_spans(
     root: Node, names: frozenset[str]
 ) -> dict[str, list[tuple[int, int]]]:
     """`{name: [byte span it is bound in]}` for the given names only.

@@ -55,9 +55,9 @@ def _member_name_start_point(node: Node) -> tuple[int, int]:
 
 def _method_end_line(node: ASTNode, language: cs.SupportedLanguage | None) -> int:
     if language == cs.SupportedLanguage.DART:
-        from .dart import dart_definition_end_point
+        from .dart import utils as dart_utils
 
-        return dart_definition_end_point(node)[0] + 1
+        return dart_utils.definition_end_point(node)[0] + 1
     return node.end_point[0] + 1
 
 
@@ -87,9 +87,9 @@ def _resolve_method_name(
     if language == cs.SupportedLanguage.DART:
         # Constructors/factories expose no `name` field; take the last bare
         # identifier (`factory C.empty` -> `empty`) so they are not dropped.
-        from .dart import dart_get_name
+        from .dart import utils as dart_utils
 
-        return dart_get_name(method_node) or None
+        return dart_utils.get_name(method_node) or None
     if (method_name_node := method_node.child_by_field_name(cs.FIELD_NAME)) is None:
         # A JS/TS class-field arrow / fn-expr (`helper = () => ...`) has no name
         # field on the function node; take the binding name from the enclosing

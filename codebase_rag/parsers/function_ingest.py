@@ -34,11 +34,7 @@ from .anchor_hash import anchor_hash_props
 from .ast_fingerprint import fingerprint_props
 from .cpp import utils as cpp_utils
 from .cpp.overloads import cpp_overload_signature
-from .dart import (
-    dart_definition_end_point,
-    dart_is_top_level_main,
-    dart_return_type_name,
-)
+from .dart import utils as dart_utils
 from .endpoints import emit_endpoints, queue_endpoints
 from .go import interfaces as go_interfaces
 from .go import utils as go_utils
@@ -547,7 +543,7 @@ class FunctionIngestMixin:
         # (`var g = makeIt()` via the enrichment pass) types from
         # this map.
         if language == cs.SupportedLanguage.DART and (
-            return_type := dart_return_type_name(func_node)
+            return_type := dart_utils.return_type_name(func_node)
         ):
             self.method_return_types[qualified_name] = return_type
 
@@ -1667,7 +1663,7 @@ class FunctionIngestMixin:
             # Dart splits a definition into a signature node and a sibling
             # function_body; extend the end over that body so the snippet covers the
             # whole function (no-op for every other language).
-            cs.KEY_END_LINE: dart_definition_end_point(func_node)[0] + 1,
+            cs.KEY_END_LINE: dart_utils.definition_end_point(func_node)[0] + 1,
             cs.KEY_DOCSTRING: self._get_docstring(func_node, language),
             cs.KEY_IS_EXPORTED: resolution.is_exported,
         }
@@ -1687,7 +1683,9 @@ class FunctionIngestMixin:
         elif (declared := declared_positional_params(func_node, language)) is not None:
             props[cs.KEY_POSITIONAL_PARAMS] = declared
         props.update(type_facts_props(extract_type_facts(func_node, language)))
-        if language == cs.SupportedLanguage.DART and dart_is_top_level_main(func_node):
+        if language == cs.SupportedLanguage.DART and dart_utils.is_top_level_main(
+            func_node
+        ):
             props[cs.KEY_IS_PROGRAM_MAIN] = True
         props.update(fingerprint_props(func_node))
         props.update(anchor_hash_props(func_node, decorators))

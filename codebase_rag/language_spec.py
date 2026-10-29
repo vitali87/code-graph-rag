@@ -410,7 +410,7 @@ def _dart_get_name(node: Node) -> str | None:
     # deferred here because language_spec is imported from inside parsers.
     from .parsers.dart import utils as dart_utils
 
-    return dart_utils.dart_get_name(node)
+    return dart_utils.get_name(node)
 
 
 def _julia_get_name(node: Node) -> str | None:
@@ -424,9 +424,9 @@ def _julia_get_name(node: Node) -> str | None:
         cs.TS_JULIA_MACRO_DEFINITION,
         cs.TS_JULIA_ASSIGNMENT,
     ):
-        return julia_utils.julia_function_head_name(node)
+        return julia_utils.function_head_name(node)
     if node.type == cs.TS_JULIA_ARROW_FUNCTION_EXPRESSION:
-        return julia_utils.julia_arrow_assigned_name(node)
+        return julia_utils.arrow_assigned_name(node)
     if node.type in cs.JULIA_TYPE_DEFINITION_TYPES:
         # The name sits in a positional `type_head` child; with a `<:` base
         # the head's first named child is a binary_expression whose own

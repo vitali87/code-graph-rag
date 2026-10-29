@@ -3,7 +3,8 @@ from __future__ import annotations
 from tree_sitter import Node
 
 from ... import constants as cs
-from .utils import _selector_member_name, dart_body_node
+from . import utils as dart_utils
+from .utils import _selector_member_name
 
 
 class DartTypeInferenceEngine:
@@ -21,7 +22,7 @@ class DartTypeInferenceEngine:
         types: dict[str, str] = {}
         conflicts: set[str] = set()
         self._collect_parameters(caller_node, types, conflicts)
-        body = dart_body_node(caller_node)
+        body = dart_utils.body_node(caller_node)
         if body is not None:
             self._collect_locals(body, types, conflicts)
         return types
@@ -43,7 +44,7 @@ class DartTypeInferenceEngine:
         # fixes the type and the initializer's return must not override
         # or untype it.
         bindings: dict[str, tuple[str, str]] = {}
-        body = dart_body_node(caller_node)
+        body = dart_utils.body_node(caller_node)
         if body is None:
             return bindings
         stack = list(body.named_children)

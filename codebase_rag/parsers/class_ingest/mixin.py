@@ -1747,7 +1747,7 @@ class ClassIngestMixin:
             partial(self._resolve_to_qn, language=cs.SupportedLanguage.DART),
         ):
             self.dart_extends_type_args[class_qn] = type_args
-        if on_type := dart_utils.dart_extension_on_type(member_node):
+        if on_type := dart_utils.extension_on_type(member_node):
             self.dart_extension_on_types[class_qn] = on_type
 
     def _record_php_namespace(
@@ -2359,7 +2359,7 @@ class ClassIngestMixin:
         # (`var s = Greeter.create()`) types from the RECORDED return
         # instead of guessing the class from the call's base name.
         if language == cs.SupportedLanguage.DART and (
-            dart_return := dart_utils.dart_return_type_name(method_node)
+            dart_return := dart_utils.return_type_name(method_node)
         ):
             self.method_return_types[ingested_qn] = dart_return
             if method_node.type in cs.DART_CONSTRUCTOR_SIGNATURE_TYPES:

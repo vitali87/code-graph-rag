@@ -56,7 +56,7 @@ def _dotted_text(node: Node) -> str | None:
     parts: list[str] = []
     for child in node.named_children:
         if child.type == cs.TS_JULIA_INTERPOLATION_EXPRESSION:
-            inner = julia_callee_name(_first_named(child))
+            inner = callee_name(_first_named(child))
             if not inner:
                 return _single_line_or_none(text)
         else:
@@ -70,7 +70,7 @@ def _dotted_text(node: Node) -> str | None:
     return cs.SEPARATOR_DOT.join(parts) if parts else _single_line_or_none(text)
 
 
-def julia_callee_name(node: Node | None) -> str | None:
+def callee_name(node: Node | None) -> str | None:
     """Reduce any call-position expression to the name it stands for.
 
     Reducing BOTH definition heads and call sites through this one helper
@@ -94,7 +94,7 @@ def julia_callee_name(node: Node | None) -> str | None:
         cs.TS_JULIA_CALL_EXPRESSION,
     ):
         # The real callee is the first named child; peel to a fixpoint.
-        return julia_callee_name(_first_named(node))
+        return callee_name(_first_named(node))
     if node_type == cs.TS_JULIA_TYPED_EXPRESSION:
         # `(D::Differential)(x)`: a closure method on a type — the type is
         # the callee's name (the value side is the receiver, not a name).
@@ -102,11 +102,11 @@ def julia_callee_name(node: Node | None) -> str | None:
         if type_node is None:
             named = node.named_children
             type_node = named[-1] if named else None
-        return julia_callee_name(type_node)
+        return callee_name(type_node)
     if node_type == cs.TS_JULIA_UNARY_TYPED_EXPRESSION:
         # `(::T)` — an anonymous-type closure head; the type side carries
         # the best available stand-in name.
-        return julia_callee_name(_first_named(node))
+        return callee_name(_first_named(node))
     # Anything else (a bare quoted operator, a string callee): the whole
     # text is the best available name.
     return _single_line_or_none(safe_decode_text(node))
@@ -119,10 +119,10 @@ def _callee_name(head: Node) -> str | None:
     text; `Arr{T, N}(ex)` -> `Arr` (the constructor's type, parameter list
     stripped) — see julia_callee_name for the full reduction.
     """
-    return julia_callee_name(_first_named(head))
+    return callee_name(_first_named(head))
 
 
-def julia_function_head_name(node: Node) -> str | None:
+def function_head_name(node: Node) -> str | None:
     """The name a Julia function-defining node declares, else None.
 
     Handles `function_definition`, `macro_definition` (a parameterless macro
@@ -194,7 +194,7 @@ def _climb_head_wrappers(call_node: Node) -> Node:
     return current
 
 
-def julia_is_signature_head(call_node: Node) -> bool:
+def is_signature_head(call_node: Node) -> bool:
     """Whether a call_expression is a function definition's own head.
 
     Julia's grammar parses definition heads as call_expressions, and both
@@ -213,7 +213,7 @@ def julia_is_signature_head(call_node: Node) -> bool:
     return first is not None and _same_span(first, head)
 
 
-def julia_arrow_assigned_name(node: Node) -> str | None:
+def arrow_assigned_name(node: Node) -> str | None:
     """The binding name of an arrow function, from its enclosing assignment.
 
     Only a DIRECT binding counts (the arrow must BE the assigned value):
@@ -245,7 +245,7 @@ def julia_arrow_assigned_name(node: Node) -> str | None:
     return None
 
 
-def julia_call_name(call_node: Node) -> str | None:
+def call_name(call_node: Node) -> str | None:
     """The callee name of a Julia call-site node (callee = first named
     child; a macrocall names its `macro_identifier` minus the `@`)."""
     if call_node.type == cs.TS_JULIA_MACROCALL_EXPRESSION:
@@ -264,5 +264,5 @@ def julia_call_name(call_node: Node) -> str | None:
         # The same reduction a definition head gets (julia_callee_name): a
         # call `Arr{T, N}(x)` names the constructor `Arr`, exactly as its
         # definition `function Arr{T, N}(x)` registers.
-        return julia_callee_name(_first_named(call_node))
+        return callee_name(_first_named(call_node))
     return None

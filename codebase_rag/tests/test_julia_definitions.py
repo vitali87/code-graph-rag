@@ -413,14 +413,14 @@ def test_recovered_span_is_not_a_name(julia_parser: "Parser") -> None:
     )
     ternary_text = ternary.text if ternary is not None else None
     assert ternary_text is not None and b"\n" in ternary_text
-    assert julia_utils.julia_callee_name(ternary) is None
+    assert julia_utils.callee_name(ternary) is None
 
     identifier = _first_of_type(
         julia_parser.parse(b"fn(x) = 1\n").root_node, "identifier"
     )
     identifier_text = identifier.text if identifier is not None else None
     assert identifier is not None and identifier_text is not None
-    assert julia_utils.julia_callee_name(identifier) == identifier_text.decode()
+    assert julia_utils.callee_name(identifier) == identifier_text.decode()
 
 
 def test_error_recovered_definition_stays_bounded(
@@ -543,30 +543,18 @@ def test_arrow_assigned_name_direct_binding_only(julia_parser: "Parser") -> None
         assert arrow is not None
         return arrow
 
+    assert julia_utils.arrow_assigned_name(first_arrow(b"f = x -> x + 1\n")) == "f"
     assert (
-        julia_utils.julia_arrow_assigned_name(first_arrow(b"f = x -> x + 1\n")) == "f"
-    )
-    assert (
-        julia_utils.julia_arrow_assigned_name(
-            first_arrow(b"f::Function = x -> x + 1\n")
-        )
+        julia_utils.arrow_assigned_name(first_arrow(b"f::Function = x -> x + 1\n"))
         == "f"
     )
+    assert julia_utils.arrow_assigned_name(first_arrow(b"f = (x -> x + 1)\n")) == "f"
+    assert julia_utils.arrow_assigned_name(first_arrow(b"M.f = x -> x\n")) == "M.f"
     assert (
-        julia_utils.julia_arrow_assigned_name(first_arrow(b"f = (x -> x + 1)\n")) == "f"
-    )
-    assert (
-        julia_utils.julia_arrow_assigned_name(first_arrow(b"M.f = x -> x\n")) == "M.f"
-    )
-    assert (
-        julia_utils.julia_arrow_assigned_name(
-            first_arrow(b"ys = map(x -> x + 1, xs)\n")
-        )
+        julia_utils.arrow_assigned_name(first_arrow(b"ys = map(x -> x + 1, xs)\n"))
         is None
     )
-    assert (
-        julia_utils.julia_arrow_assigned_name(first_arrow(b"g = f(x -> x)\n")) is None
-    )
+    assert julia_utils.arrow_assigned_name(first_arrow(b"g = f(x -> x)\n")) is None
 
 
 def test_module_docstring_not_from_block_comment(
@@ -616,10 +604,7 @@ def test_argument_list_signature_names_nothing(julia_parser: "Parser") -> None:
     def head(code: bytes) -> "Node":
         return julia_parser.parse(code).root_node.named_children[0]
 
-    assert julia_utils.julia_function_head_name(head(b"function (x) x end\n")) is None
-    assert (
-        julia_utils.julia_function_head_name(head(b"function (x, y) x + y end\n"))
-        is None
-    )
+    assert julia_utils.function_head_name(head(b"function (x) x end\n")) is None
+    assert julia_utils.function_head_name(head(b"function (x, y) x + y end\n")) is None
     # A named definition still names itself.
-    assert julia_utils.julia_function_head_name(head(b"function f(x) x end\n")) == "f"
+    assert julia_utils.function_head_name(head(b"function f(x) x end\n")) == "f"

@@ -23,11 +23,7 @@ from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.import_processor import ImportProcessor
-from codebase_rag.parsers.scala import (
-    scala_bindings,
-    scala_selection,
-    scan_scala_packages,
-)
+from codebase_rag.parsers.scala import utils as scala_utils
 from codebase_rag.tests.conftest import (
     create_and_run_updater,
     get_nodes,
@@ -1166,7 +1162,7 @@ def test_case_and_for_binders_are_untyped_and_scoped_to_their_clause() -> None:
     (case_clause,) = _nodes_of(root, cs.TS_SCALA_CASE_CLAUSE)
     (for_expression,) = _nodes_of(root, cs.TS_SCALA_FOR_EXPRESSION)
 
-    bindings = scala_bindings(root)
+    bindings = scala_utils.bindings(root)
 
     assert set(bindings) == {"c"}
     assert sorted(bindings["c"]) == sorted(
@@ -1191,7 +1187,7 @@ def test_destructuring_binders_bind_no_name_of_their_own() -> None:
     (lambda_expression,) = _nodes_of(root, cs.TS_SCALA_LAMBDA_EXPRESSION)
     scope = (lambda_expression.start_byte, lambda_expression.end_byte)
 
-    bindings = scala_bindings(root)
+    bindings = scala_utils.bindings(root)
 
     assert bindings == {
         "a": [ScalaBinding("a", None, *scope)],
@@ -1211,18 +1207,18 @@ def test_a_package_object_declares_its_members_in_its_own_package() -> None:
     )
     bodiless = _parse_scala("package shop\npackage object util")
 
-    assert scan_scala_packages(with_body).packages == {
+    assert scala_utils.scan_packages(with_body).packages == {
         "shop": frozenset(),
         "shop.util": frozenset({"helper", "rate"}),
     }
-    assert scan_scala_packages(bodiless).packages == {"shop": frozenset()}
+    assert scala_utils.scan_packages(bodiless).packages == {"shop": frozenset()}
 
 
 def test_a_package_clause_missing_its_name_opens_no_package() -> None:
     """`package ;` parses with an empty name, so A stays in the root package."""
     root = _parse_scala("package ;\nclass A")
 
-    assert scan_scala_packages(root).packages == {"": frozenset({"A"})}
+    assert scala_utils.scan_packages(root).packages == {"": frozenset({"A"})}
 
 
 @pytest.mark.parametrize(
@@ -1246,7 +1242,8 @@ def test_a_selection_is_a_read_only_on_a_plain_name_and_off_the_assigned_side(
     root = _parse_scala(f"object O {{ def f(): Unit = {{ {statement} }} }}")
 
     found = [
-        scala_selection(node) for node in _nodes_of(root, cs.TS_SCALA_FIELD_EXPRESSION)
+        scala_utils.selection(node)
+        for node in _nodes_of(root, cs.TS_SCALA_FIELD_EXPRESSION)
     ]
 
     assert found == selections
@@ -1293,7 +1290,7 @@ def test_a_selection_that_is_no_callee_reads_its_receiver(
 
     reparented = cast(Node, _Reparented(selection, parent))
 
-    assert scala_selection(reparented) == ("c", "size")
+    assert scala_utils.selection(reparented) == ("c", "size")
 
 
 @pytest.mark.parametrize(

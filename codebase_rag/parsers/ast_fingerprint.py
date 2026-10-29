@@ -23,7 +23,7 @@ from tree_sitter import Node
 
 from .. import constants as cs
 from ..types_defs import AstFingerprintResult, PropertyDict
-from .dart.utils import dart_body_node
+from .dart import utils as dart_utils
 from .native_trees import NotBorrowed, tree_bridge
 
 
@@ -72,7 +72,7 @@ def _resolve_body(func_node: Node) -> Node | None:
     body = func_node.child_by_field_name(cs.FIELD_BODY)
     if body is not None:
         return body
-    dart_body = dart_body_node(func_node)
+    dart_body = dart_utils.body_node(func_node)
     if dart_body is not None:
         return dart_body
     # A wrapper definition (C++ template_declaration) has no body field of

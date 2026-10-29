@@ -2418,7 +2418,7 @@ class CallProcessor:
         # A Dart definition is a signature node whose body is a SIBLING;
         # widen to the body's end or every body call escapes its caller.
         if container.type in cs.DART_SIGNATURE_TYPES:
-            end = dart_utils.dart_definition_end_byte(container)
+            end = dart_utils.definition_end_byte(container)
         lo = bisect_left(call_starts, start)
         hi = bisect_right(call_starts, end)
         return [n for n in all_call_nodes[lo:hi] if n.end_byte <= end]
@@ -2442,7 +2442,7 @@ class CallProcessor:
         for func_node in func_nodes:
             # A Dart constructor's `: this(...)` / `: super(...)` / field
             # initializer clauses run with it, outside its body (issue #2482).
-            for clause in dart_utils.dart_constructor_clauses(func_node):
+            for clause in dart_utils.constructor_clauses(func_node):
                 for call in self._filter_calls_in_node(
                     all_call_nodes, call_starts, clause
                 ):
@@ -2461,7 +2461,7 @@ class CallProcessor:
                 )
             if body is None:
                 # a Dart body is a SIBLING of its signature, not a field
-                body = dart_utils.dart_body_node(func_node)
+                body = dart_utils.body_node(func_node)
             if body is None and func_node.type in (
                 cs.TS_JULIA_FUNCTION_DEFINITION,
                 cs.TS_JULIA_MACRO_DEFINITION,
@@ -2469,7 +2469,7 @@ class CallProcessor:
                 # No body field: the body is everything after the signature.
                 # A head the naming pass refuses owns no body: its calls
                 # bubble to the module (issue #1882 review).
-                if func_node.named_children and julia_utils.julia_function_head_name(
+                if func_node.named_children and julia_utils.function_head_name(
                     func_node
                 ):
                     start = func_node.named_children[0].end_byte
@@ -2520,9 +2520,9 @@ class CallProcessor:
         # The name the definition pass registers for this node, or None
         # while it stays anonymous; every caller pass derives attribution
         # through this helper so both passes name a node identically.
-        name = julia_utils.julia_function_head_name(
+        name = julia_utils.function_head_name(
             func_node
-        ) or julia_utils.julia_arrow_assigned_name(func_node)
+        ) or julia_utils.arrow_assigned_name(func_node)
         if name:
             return name
         if (
@@ -3599,9 +3599,9 @@ class CallProcessor:
         if not func_name and language == cs.SupportedLanguage.JULIA:
             # Julia definition nodes carry no `name` field; recover it
             # here or the body is skipped.
-            func_name = julia_utils.julia_function_head_name(
+            func_name = julia_utils.function_head_name(
                 func_node
-            ) or julia_utils.julia_arrow_assigned_name(func_node)
+            ) or julia_utils.arrow_assigned_name(func_node)
         if not func_name:
             # A nameless JS/TS function expression that a NAMED pass
             # registered (`exports.f = function`, `x: function`) has a
@@ -3935,7 +3935,7 @@ class CallProcessor:
             # A factory_constructor_signature has no `name` field at all, so
             # the field lookup skipped every factory and its body was never
             # scanned (issue #2482); the definition pass names it this way.
-            method_name = dart_utils.dart_get_name(method_node)
+            method_name = dart_utils.get_name(method_node)
         else:
             method_name = self._get_node_name(method_node)
         if method_name or language not in _JS_TS_LANGUAGES:
@@ -4185,7 +4185,7 @@ class CallProcessor:
         if (
             func_node.type == cs.TS_JULIA_ASSIGNMENT
             and func_node.named_children
-            and julia_utils.julia_function_head_name(func_node) is not None
+            and julia_utils.function_head_name(func_node) is not None
         ):
             # A concise method `f(x) = ...` (also `f(x)::Int`,
             # `f(x) where T`): the right side is the body.
@@ -4470,13 +4470,13 @@ class CallProcessor:
         # argument_part; the target name lives in the PRECEDING sibling
         # chain, not inside the node.
         if language == cs.SupportedLanguage.DART:
-            return dart_utils.dart_call_name(call_node)
+            return dart_utils.call_name(call_node)
         if language == cs.SupportedLanguage.JULIA:
             # A definition's own head IS a call_expression; drop heads
             # here (no query negation to exclude them at capture time).
-            if julia_utils.julia_is_signature_head(call_node):
+            if julia_utils.is_signature_head(call_node):
                 return None
-            return julia_utils.julia_call_name(call_node)
+            return julia_utils.call_name(call_node)
         if func_child := call_node.child_by_field_name(cs.TS_FIELD_FUNCTION):
             match func_child.type:
                 case cs.TS_PARENTHESIZED_EXPRESSION:
@@ -4755,7 +4755,7 @@ class CallProcessor:
             ):
                 # Scala `new C(...)` holds its type as an unnamed child, so
                 # it fell through nameless and emitted nothing (issue #2450).
-                return scala_utils.scala_instance_type_name(call_node)
+                return scala_utils.instance_type_name(call_node)
             case cs.TS_NEW_EXPRESSION if language in _JS_TS_LANGUAGES:
                 # JS/TS `new Foo(...)` names the class via the `constructor` field
                 # (no `function` field). Returning the constructor name routes
@@ -5537,14 +5537,14 @@ class CallProcessor:
         resolver = self._resolver
         registry = resolver.function_registry
         constructors = resolver.type_inference.dart_constructor_qns
-        for delegation in dart_utils.dart_constructor_delegations(caller_node):
+        for delegation in dart_utils.constructor_delegations(caller_node):
             owner_qn = class_qn
             if delegation.to_super:
                 # `super` is the `extends` class ONLY, as written in this
                 # file: a `with` mixin's same-named METHOD, an `implements`
                 # interface's constructor, or anything at all for a class
                 # with no `extends` is never what runs (Greptile, PR #2804).
-                written = dart_utils.dart_superclass_type(caller_node)
+                written = dart_utils.superclass_type(caller_node)
                 if written is None:
                     continue
                 owner_qn = resolver._follow_reexports(
@@ -5843,15 +5843,13 @@ class CallProcessor:
         # field read spelled the same way. It binds only through a receiver
         # whose class is known (issue #2450); the selection that is a call's
         # callee is left to the call node, which names it with its args.
-        selection = scala_utils.scala_selection(node)
+        selection = scala_utils.selection(node)
         if selection is None:
             return
         if ctx.scala_bindings is None:
-            ctx.scala_bindings = scala_utils.scala_bindings(ctx.caller_node)
+            ctx.scala_bindings = scala_utils.bindings(ctx.caller_node)
         receiver, member = selection
-        binding = scala_utils.scala_binding_at(
-            ctx.scala_bindings, receiver, node.start_byte
-        )
+        binding = scala_utils.binding_at(ctx.scala_bindings, receiver, node.start_byte)
         # A local's binding types it; an unbound name is an object named
         # outright. A local of unknown type is neither, so it binds nothing.
         receiver_type = binding.type_name if binding is not None else receiver
@@ -11296,7 +11294,7 @@ class CallProcessor:
 
         # The grammar splits a definition into a signature node and a SIBLING
         # function_body: the signature holds no reads, so walk the body.
-        body = dart_utils.dart_body_node(caller_node)
+        body = dart_utils.body_node(caller_node)
         walk_root = body if body is not None else caller_node
         # The bodiless caller is the MODULE pass: FIELD INITIALIZERS read
         # getters outside any method body (`late final body =
@@ -11426,9 +11424,9 @@ class CallProcessor:
         if node_type == cs.TS_DART_SELECTOR:
             if self._dart_is_shadowed_construction(node, shadow_spans):
                 return None
-            read_name = dart_utils.dart_member_read_name(node)
+            read_name = dart_utils.member_read_name(node)
         elif node_type == cs.TS_DART_CASCADE_SECTION:
-            read_name = dart_utils.dart_cascade_read_name(node)
+            read_name = dart_utils.cascade_read_name(node)
         elif node_type == cs.TS_DART_IDENTIFIER and _dart_is_bare_read(node):
             read_name = self._dart_unshadowed_name(node, prop_names, shadow_spans)
         else:
@@ -11448,7 +11446,7 @@ class CallProcessor:
         # of that name is in scope the operand is that variable, not a type,
         # so the site is a comparison and must not bind its member: without
         # this, a local named after a class emits a wrong REFERENCES edge.
-        base = dart_utils.dart_ambiguous_construction_base(node)
+        base = dart_utils.ambiguous_construction_base(node)
         if base is None:
             return False
         # An import-prefixed base is dotted (`p.Box`, issue #2033) while the
