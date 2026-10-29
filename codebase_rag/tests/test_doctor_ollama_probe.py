@@ -22,7 +22,7 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag.config import settings
-from codebase_rag.tools.health_checker import HealthChecker
+from codebase_rag.doctor.checks import HealthChecker
 from codebase_rag.tools.schemas import HealthCheckResult
 
 

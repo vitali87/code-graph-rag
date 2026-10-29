@@ -19,9 +19,9 @@ import pytest
 from loguru import logger
 
 from codebase_rag import constants as rag_cs
-from codebase_rag import graph_audit
 from codebase_rag.capture import CaptureSelection
 from codebase_rag.checkout_state import state_file
+from codebase_rag.doctor import graph_audit
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.language_spec import LANGUAGE_SPECS, get_language_for_extension
 from codebase_rag.parser_loader import load_parsers

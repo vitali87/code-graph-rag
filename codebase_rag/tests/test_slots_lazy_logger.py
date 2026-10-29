@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from codebase_rag.doctor.checks import HealthChecker
 from codebase_rag.graph_loader import GraphLoader
 from codebase_rag.providers.base import (
     GoogleProvider,
@@ -18,7 +19,6 @@ from codebase_rag.tools.directory_lister import DirectoryLister
 from codebase_rag.tools.file_editor import FileEditor
 from codebase_rag.tools.file_reader import FileReader
 from codebase_rag.tools.file_writer import FileWriter
-from codebase_rag.tools.health_checker import HealthChecker
 from codebase_rag.tools.shell_command import CommandGroup, ShellCommander
 
 REPO_ROOT = Path(__file__).resolve().parent.parent

@@ -9,7 +9,7 @@ import collections
 
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
-from codebase_rag import graph_audit as ga
+from codebase_rag.doctor import graph_audit as ga
 from codebase_rag.types_defs import GraphNodeRecord, GraphRelRecord, PropertyDict
 
 QN = cs.UniqueKeyType.QUALIFIED_NAME.value

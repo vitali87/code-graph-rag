@@ -18,8 +18,8 @@ import typer
 from codebase_rag import cli as cli_module
 from codebase_rag import constants as cs
 from codebase_rag.config import AppConfig, settings
-from codebase_rag.tools import health_checker
-from codebase_rag.tools.health_checker import HealthChecker
+from codebase_rag.doctor import checks as health_checker
+from codebase_rag.doctor.checks import HealthChecker
 
 _ROLE_VARIABLES = (
     "ORCHESTRATOR_PROVIDER",

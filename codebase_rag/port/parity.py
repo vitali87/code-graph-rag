@@ -25,20 +25,20 @@ from collections.abc import Iterable, Sequence
 from pathlib import PurePosixPath
 from typing import NamedTuple, TypedDict
 
-from . import constants as cs
-from . import cypher_queries as cq
-from .dead_code import (
+from .. import constants as cs
+from .. import cypher_queries as cq
+from ..dead_code import (
     NodeId,
     is_test_symbol,
     node_props,
     rust_test_fn_spans,
     rust_test_modules_from_nodes,
 )
-from .graph_query import QueryFn, owner_check, project_qn_prefix, projects_nested_under
-from .parsers.utils import is_static_decorator
-from .structural_delta import is_receiver, language_of_path
-from .types_defs import PropertyDict, PropertyValue, ResultValue
-from .utils.path_utils import portable_posix
+from ..graph_query import QueryFn, owner_check, project_qn_prefix, projects_nested_under
+from ..parsers.utils import is_static_decorator
+from ..structural_delta import is_receiver, language_of_path
+from ..types_defs import PropertyDict, PropertyValue, ResultValue
+from ..utils.path_utils import portable_posix
 
 _CAMEL_BOUNDARY = re.compile(cs.PORT_CAMEL_BOUNDARY_PATTERN)
 

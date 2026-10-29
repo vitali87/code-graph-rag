@@ -4,7 +4,7 @@ import mgclient  # ty: ignore[unresolved-import]
 import pytest
 
 from codebase_rag.cypher_queries import CYPHER_AUDIT_ORPHANS
-from codebase_rag.tools.health_checker import HealthChecker
+from codebase_rag.doctor.checks import HealthChecker
 
 
 def test_check_memgraph_connection_returns_failure_when_down(

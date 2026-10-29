@@ -10,9 +10,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
-from codebase_rag.language_spec import LanguageSpec
-from codebase_rag.tools import language
-from codebase_rag.tools.language import (
+from codebase_rag.language import cli as language
+from codebase_rag.language.cli import (
     LanguageInfo,
     NodeCategories,
     SubmoduleResult,
@@ -31,6 +30,7 @@ from codebase_rag.tools.language import (
     list_languages,
     remove_language,
 )
+from codebase_rag.language_spec import LanguageSpec
 
 
 @pytest.fixture(autouse=True)
@@ -356,7 +356,7 @@ def _node_types_payload() -> str:
 
 class TestAddGitSubmodule:
     def test_success(self, tmp_path: Path) -> None:
-        with patch("codebase_rag.tools.language.subprocess.run") as run:
+        with patch("codebase_rag.language.cli.subprocess.run") as run:
             result = _add_git_submodule(
                 "https://example.com/repo.git", "grammars/repo", tmp_path
             )
@@ -369,7 +369,7 @@ class TestAddGitSubmodule:
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         with patch(
-            "codebase_rag.tools.language.subprocess.run",
+            "codebase_rag.language.cli.subprocess.run",
             side_effect=_proc_error("fatal: repository does not exist"),
         ):
             result = _add_git_submodule(
@@ -385,7 +385,7 @@ class TestAddGitSubmodule:
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         with patch(
-            "codebase_rag.tools.language.subprocess.run",
+            "codebase_rag.language.cli.subprocess.run",
             side_effect=_proc_error("fatal: unexpected breakage"),
         ):
             result = _add_git_submodule(
@@ -401,7 +401,7 @@ class TestAddGitSubmodule:
     ) -> None:
         monkeypatch.chdir(tmp_path)
         with patch(
-            "codebase_rag.tools.language.subprocess.run",
+            "codebase_rag.language.cli.subprocess.run",
             side_effect=[
                 _proc_error("already exists in the index"),
                 MagicMock(),
@@ -420,7 +420,7 @@ class TestAddGitSubmodule:
 
     def test_reinstall_failure_returns_none(self, tmp_path: Path) -> None:
         with patch(
-            "codebase_rag.tools.language.subprocess.run",
+            "codebase_rag.language.cli.subprocess.run",
             side_effect=[
                 _proc_error("already exists in the index"),
                 _proc_error("deinit failed"),
@@ -480,7 +480,7 @@ class TestParseNodeTypesFile:
 class TestPromptHelpers:
     def test_prompt_for_language_info_asks_name_when_missing(self) -> None:
         with patch(
-            "codebase_rag.tools.language.click.prompt",
+            "codebase_rag.language.cli.click.prompt",
             side_effect=["mylang", ".ml, .mli"],
         ):
             info = _prompt_for_language_info(None)
@@ -488,14 +488,14 @@ class TestPromptHelpers:
         assert info == LanguageInfo(name="mylang", extensions=[".ml", ".mli"])
 
     def test_prompt_for_language_info_keeps_given_name(self) -> None:
-        with patch("codebase_rag.tools.language.click.prompt", side_effect=[".zig"]):
+        with patch("codebase_rag.language.cli.click.prompt", side_effect=[".zig"]):
             info = _prompt_for_language_info("zig")
 
         assert info == LanguageInfo(name="zig", extensions=[".zig"])
 
     def test_prompt_for_node_categories(self) -> None:
         with patch(
-            "codebase_rag.tools.language.click.prompt",
+            "codebase_rag.language.cli.click.prompt",
             side_effect=[
                 "function_definition, method",
                 "class_definition",
@@ -741,7 +741,7 @@ class TestAddGrammarCommand:
             config.parent.mkdir(parents=True)
             config.write_text("LANGUAGE_SPECS = {\n}\n", encoding="utf-8")
 
-            with patch("codebase_rag.tools.language.subprocess.run"):
+            with patch("codebase_rag.language.cli.subprocess.run"):
                 result = runner.invoke(add_grammar, ["mylang"])
 
             assert result.exit_code == 0
@@ -753,7 +753,7 @@ class TestAddGrammarCommand:
         runner = CliRunner()
         with runner.isolated_filesystem():
             with patch(
-                "codebase_rag.tools.language.subprocess.run",
+                "codebase_rag.language.cli.subprocess.run",
                 side_effect=_proc_error("fatal: repository does not exist"),
             ):
                 result = runner.invoke(add_grammar, [], input="mylang\n")
@@ -767,7 +767,7 @@ class TestAddGrammarCommand:
         runner = CliRunner()
         with (
             runner.isolated_filesystem(),
-            patch("codebase_rag.tools.language.subprocess.run") as run,
+            patch("codebase_rag.language.cli.subprocess.run") as run,
         ):
             result = runner.invoke(
                 add_grammar,
@@ -785,7 +785,7 @@ class TestAddGrammarCommand:
             config.parent.mkdir(parents=True)
             config.write_text("LANGUAGE_SPECS = {\n}\n", encoding="utf-8")
 
-            with patch("codebase_rag.tools.language.subprocess.run"):
+            with patch("codebase_rag.language.cli.subprocess.run"):
                 result = runner.invoke(
                     add_grammar,
                     ["mylang"],
@@ -824,7 +824,7 @@ class TestRemoveLanguageCommand:
             )
 
             with patch(
-                "codebase_rag.tools.language.LANGUAGE_SPECS", {"foo": _spec("foo")}
+                "codebase_rag.language.cli.LANGUAGE_SPECS", {"foo": _spec("foo")}
             ):
                 result = runner.invoke(remove_language, ["foo", "--keep-submodule"])
 
@@ -845,7 +845,7 @@ class TestRemoveLanguageCommand:
             )
 
             with patch(
-                "codebase_rag.tools.language.LANGUAGE_SPECS", {"foo": _spec("foo")}
+                "codebase_rag.language.cli.LANGUAGE_SPECS", {"foo": _spec("foo")}
             ):
                 result = runner.invoke(remove_language, ["foo", "--keep-submodule"])
 
@@ -871,7 +871,7 @@ class TestRemoveLanguageCommand:
             )
 
             with patch(
-                "codebase_rag.tools.language.LANGUAGE_SPECS", {"foo": _spec("foo")}
+                "codebase_rag.language.cli.LANGUAGE_SPECS", {"foo": _spec("foo")}
             ):
                 result = runner.invoke(remove_language, ["foo", "--keep-submodule"])
 
@@ -897,7 +897,7 @@ class TestRemoveLanguageCommand:
             )
 
             with patch(
-                "codebase_rag.tools.language.LANGUAGE_SPECS", {"foo": _spec("foo")}
+                "codebase_rag.language.cli.LANGUAGE_SPECS", {"foo": _spec("foo")}
             ):
                 result = runner.invoke(remove_language, ["foo", "--keep-submodule"])
 
@@ -924,13 +924,13 @@ class TestRemoveLanguageCommand:
             truncating_span = (0, len("LANGUAGE_SPECS = {\n"))
             with (
                 patch(
-                    "codebase_rag.tools.language.LANGUAGE_SPECS", {"foo": _spec("foo")}
+                    "codebase_rag.language.cli.LANGUAGE_SPECS", {"foo": _spec("foo")}
                 ),
                 patch(
-                    "codebase_rag.tools.language._specs_entry_spans",
+                    "codebase_rag.language.cli._specs_entry_spans",
                     return_value=[truncating_span],
                 ),
-                patch("codebase_rag.tools.language.subprocess.run") as run,
+                patch("codebase_rag.language.cli.subprocess.run") as run,
             ):
                 result = runner.invoke(remove_language, ["foo"])
 
@@ -962,10 +962,10 @@ class TestRemoveLanguageCommand:
 
             with (
                 patch(
-                    "codebase_rag.tools.language.LANGUAGE_SPECS", {"foo": _spec("foo")}
+                    "codebase_rag.language.cli.LANGUAGE_SPECS", {"foo": _spec("foo")}
                 ),
                 patch.object(Path, "open", failing_write_open),
-                patch("codebase_rag.tools.language.subprocess.run") as run,
+                patch("codebase_rag.language.cli.subprocess.run") as run,
             ):
                 result = runner.invoke(remove_language, ["foo"])
 
@@ -991,7 +991,7 @@ class TestRemoveLanguageCommand:
             )
 
             with patch(
-                "codebase_rag.tools.language.LANGUAGE_SPECS", {"foo": _spec("foo")}
+                "codebase_rag.language.cli.LANGUAGE_SPECS", {"foo": _spec("foo")}
             ):
                 result = runner.invoke(remove_language, ["foo", "--keep-submodule"])
 
@@ -1019,9 +1019,9 @@ class TestRemoveLanguageCommand:
 
             with (
                 patch(
-                    "codebase_rag.tools.language.LANGUAGE_SPECS", {"foo": _spec("foo")}
+                    "codebase_rag.language.cli.LANGUAGE_SPECS", {"foo": _spec("foo")}
                 ),
-                patch("codebase_rag.tools.language.subprocess.run") as run,
+                patch("codebase_rag.language.cli.subprocess.run") as run,
             ):
                 result = runner.invoke(remove_language, ["foo"])
 
@@ -1067,7 +1067,7 @@ class TestRemoveLanguageCommand:
             )
 
             with patch(
-                "codebase_rag.tools.language.LANGUAGE_SPECS", {"foo": _spec("foo")}
+                "codebase_rag.language.cli.LANGUAGE_SPECS", {"foo": _spec("foo")}
             ):
                 result = runner.invoke(remove_language, ["foo", "--keep-submodule"])
 
@@ -1095,7 +1095,7 @@ class TestRemoveLanguageCommand:
             )
 
             with patch(
-                "codebase_rag.tools.language.LANGUAGE_SPECS", {"foo": _spec("foo")}
+                "codebase_rag.language.cli.LANGUAGE_SPECS", {"foo": _spec("foo")}
             ):
                 result = runner.invoke(remove_language, ["foo", "--keep-submodule"])
 
@@ -1123,7 +1123,7 @@ class TestRemoveLanguageCommand:
             )
 
             with patch(
-                "codebase_rag.tools.language.LANGUAGE_SPECS", {"foo": _spec("foo")}
+                "codebase_rag.language.cli.LANGUAGE_SPECS", {"foo": _spec("foo")}
             ):
                 result = runner.invoke(remove_language, ["foo", "--keep-submodule"])
 
@@ -1148,7 +1148,7 @@ class TestRemoveLanguageCommand:
             )
 
             with patch(
-                "codebase_rag.tools.language.LANGUAGE_SPECS", {"foo": _spec("foo")}
+                "codebase_rag.language.cli.LANGUAGE_SPECS", {"foo": _spec("foo")}
             ):
                 result = runner.invoke(remove_language, ["foo", "--keep-submodule"])
 
@@ -1175,7 +1175,7 @@ class TestRemoveLanguageCommand:
             )
 
             with patch(
-                "codebase_rag.tools.language.LANGUAGE_SPECS", {"foo": _spec("foo")}
+                "codebase_rag.language.cli.LANGUAGE_SPECS", {"foo": _spec("foo")}
             ):
                 result = runner.invoke(remove_language, ["foo", "--keep-submodule"])
 
@@ -1203,7 +1203,7 @@ class TestRemoveLanguageCommand:
             )
 
             with patch(
-                "codebase_rag.tools.language.LANGUAGE_SPECS", {"foo": _spec("foo")}
+                "codebase_rag.language.cli.LANGUAGE_SPECS", {"foo": _spec("foo")}
             ):
                 result = runner.invoke(remove_language, ["foo", "--keep-submodule"])
 
@@ -1229,7 +1229,7 @@ class TestRemoveLanguageCommand:
             )
 
             with patch(
-                "codebase_rag.tools.language.LANGUAGE_SPECS", {"foo": _spec("foo")}
+                "codebase_rag.language.cli.LANGUAGE_SPECS", {"foo": _spec("foo")}
             ):
                 result = runner.invoke(remove_language, ["foo", "--keep-submodule"])
 
@@ -1257,7 +1257,7 @@ class TestRemoveLanguageCommand:
             )
 
             with patch(
-                "codebase_rag.tools.language.LANGUAGE_SPECS", {"foo": _spec("foo")}
+                "codebase_rag.language.cli.LANGUAGE_SPECS", {"foo": _spec("foo")}
             ):
                 result = runner.invoke(remove_language, ["foo", "--keep-submodule"])
 
@@ -1280,7 +1280,7 @@ class TestRemoveLanguageCommand:
             )
 
             with patch(
-                "codebase_rag.tools.language.LANGUAGE_SPECS", {"foo": _spec("foo")}
+                "codebase_rag.language.cli.LANGUAGE_SPECS", {"foo": _spec("foo")}
             ):
                 result = runner.invoke(remove_language, ["foo", "--keep-submodule"])
 
@@ -1309,7 +1309,7 @@ class TestRemoveLanguageCommand:
             )
 
             with patch(
-                "codebase_rag.tools.language.LANGUAGE_SPECS", {"foo": _spec("foo")}
+                "codebase_rag.language.cli.LANGUAGE_SPECS", {"foo": _spec("foo")}
             ):
                 result = runner.invoke(remove_language, ["foo", "--keep-submodule"])
 
@@ -1353,9 +1353,9 @@ class TestRemoveLanguageCommand:
 
             with (
                 patch(
-                    "codebase_rag.tools.language.LANGUAGE_SPECS", {"foo": _spec("foo")}
+                    "codebase_rag.language.cli.LANGUAGE_SPECS", {"foo": _spec("foo")}
                 ),
-                patch("codebase_rag.tools.language.subprocess.run") as run,
+                patch("codebase_rag.language.cli.subprocess.run") as run,
             ):
                 result = runner.invoke(remove_language, ["foo"])
 
@@ -1379,9 +1379,9 @@ class TestRemoveLanguageCommand:
 
             with (
                 patch(
-                    "codebase_rag.tools.language.LANGUAGE_SPECS", {"foo": _spec("foo")}
+                    "codebase_rag.language.cli.LANGUAGE_SPECS", {"foo": _spec("foo")}
                 ),
-                patch("codebase_rag.tools.language.subprocess.run"),
+                patch("codebase_rag.language.cli.subprocess.run"),
             ):
                 result = runner.invoke(remove_language, ["foo"])
 
@@ -1401,10 +1401,10 @@ class TestRemoveLanguageCommand:
 
             with (
                 patch(
-                    "codebase_rag.tools.language.LANGUAGE_SPECS", {"foo": _spec("foo")}
+                    "codebase_rag.language.cli.LANGUAGE_SPECS", {"foo": _spec("foo")}
                 ),
                 patch(
-                    "codebase_rag.tools.language.subprocess.run",
+                    "codebase_rag.language.cli.subprocess.run",
                     side_effect=_proc_error("deinit failed"),
                 ),
             ):
@@ -1424,7 +1424,7 @@ class TestRemoveLanguageCommand:
             )
 
             with patch(
-                "codebase_rag.tools.language.LANGUAGE_SPECS", {"foo": _spec("foo")}
+                "codebase_rag.language.cli.LANGUAGE_SPECS", {"foo": _spec("foo")}
             ):
                 result = runner.invoke(remove_language, ["foo"])
 
@@ -1434,7 +1434,7 @@ class TestRemoveLanguageCommand:
         runner = CliRunner()
         with runner.isolated_filesystem():
             with patch(
-                "codebase_rag.tools.language.LANGUAGE_SPECS", {"foo": _spec("foo")}
+                "codebase_rag.language.cli.LANGUAGE_SPECS", {"foo": _spec("foo")}
             ):
                 result = runner.invoke(remove_language, ["foo"])
 

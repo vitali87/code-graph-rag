@@ -5,9 +5,9 @@
 # relationship endpoint triples.
 from collections.abc import Callable, Sequence
 
-from . import constants as cs
-from . import cypher_queries as cq
-from .types_defs import (
+from .. import constants as cs
+from .. import cypher_queries as cq
+from ..types_defs import (
     NODE_SCHEMAS,
     RELATIONSHIP_SCHEMAS,
     AuditViolation,

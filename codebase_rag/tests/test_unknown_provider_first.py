@@ -18,8 +18,8 @@ from typer.testing import CliRunner
 from codebase_rag import cli as cli_module
 from codebase_rag import constants as cs
 from codebase_rag.config import ModelConfig, settings
+from codebase_rag.doctor.checks import HealthChecker
 from codebase_rag.providers.base import get_provider
-from codebase_rag.tools.health_checker import HealthChecker
 
 
 @pytest.fixture

@@ -12,14 +12,14 @@ from loguru import logger
 from .. import constants as cs
 from .. import cypher_queries as cq
 from .. import exceptions as ex
-from .. import graph_audit
 from ..config import PROVIDER_ENV_KEYS, ModelConfig, settings
 from ..graph_dialects import DIALECT_MEMGRAPH, DIALECT_NEO4J, DIALECT_SQLITE
 from ..mgclient_compat import mgclient
 from ..services.graph_service import GraphUnavailableError, MemgraphIngestor
+from ..tools.schemas import HealthCheckResult
 from ..types_defs import ConnectionProtocol, CursorProtocol, ResultRow
 from ..utils.provider_urls import join_endpoint_path, strip_v1_suffix
-from .schemas import HealthCheckResult
+from . import graph_audit
 
 # pymgclient 1.6 re-exports its C extension through `import *`, which a type
 # checker cannot see into, so the exception type is bound once here.

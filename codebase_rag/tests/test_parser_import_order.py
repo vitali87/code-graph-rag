@@ -35,7 +35,7 @@ def _run(code: str) -> subprocess.CompletedProcess[str]:
         "codebase_rag.parsers.java_frontend",
         "codebase_rag.parsers.py_frontend",
         "codebase_rag.parsers.semantic_call_join",
-        "codebase_rag.tools.language_catalog",
+        "codebase_rag.language.catalog",
     ],
 )
 def test_module_imports_first_in_a_fresh_interpreter(module: str) -> None:

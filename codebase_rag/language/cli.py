@@ -848,7 +848,7 @@ def _resolve_node_categories(grammar_path: Path, language_name: str) -> NodeCate
 def list_languages(verbose: bool = False) -> None:
     # Deferred: the catalog loads the parsers package, which every other
     # `cgr` invocation must not pay for at start-up.
-    from .language_catalog import print_language_catalog
+    from .catalog import print_language_catalog
 
     print_language_catalog(Console(), verbose=verbose)
 

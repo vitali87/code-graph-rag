@@ -21,7 +21,7 @@ from codebase_rag.config import settings
 from codebase_rag.graph_dialects import DIALECT_SQLITE
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.port_parity import (
+from codebase_rag.port.parity import (
     PairReport,
     ParityReport,
     PortCheckError,

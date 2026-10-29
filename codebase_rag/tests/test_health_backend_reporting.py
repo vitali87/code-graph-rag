@@ -11,18 +11,18 @@ import mgclient
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.doctor.checks import (
+    HealthChecker,
+    _backend_connection,
+    _backend_endpoint,
+    _connection_error_types,
+)
 from codebase_rag.graph_dialects import (
     DIALECT_MEMGRAPH,
     DIALECT_NEO4J,
     get_dialect,
 )
 from codebase_rag.services.graph_service import GraphUnavailableError, MemgraphIngestor
-from codebase_rag.tools.health_checker import (
-    HealthChecker,
-    _backend_connection,
-    _backend_endpoint,
-    _connection_error_types,
-)
 
 
 class FakeCursor:
@@ -54,42 +54,40 @@ class FakeConn:
 class TestReportedEndpoint:
     def test_memgraph_reports_its_host_and_port(self, monkeypatch) -> None:
         monkeypatch.setattr(
-            "codebase_rag.tools.health_checker.settings.GRAPH_BACKEND",
+            "codebase_rag.doctor.checks.settings.GRAPH_BACKEND",
             DIALECT_MEMGRAPH,
         )
         monkeypatch.setattr(
-            "codebase_rag.tools.health_checker.settings.MEMGRAPH_HOST", "mg-host"
+            "codebase_rag.doctor.checks.settings.MEMGRAPH_HOST", "mg-host"
         )
-        monkeypatch.setattr(
-            "codebase_rag.tools.health_checker.settings.MEMGRAPH_PORT", 7687
-        )
+        monkeypatch.setattr("codebase_rag.doctor.checks.settings.MEMGRAPH_PORT", 7687)
         assert _backend_endpoint() == "mg-host:7687"
 
     def test_neo4j_reports_its_uri(self, monkeypatch) -> None:
         # The regression: reporting MEMGRAPH_HOST here names a server the
         # Neo4j install never talks to, while claiming it is responsive.
         monkeypatch.setattr(
-            "codebase_rag.tools.health_checker.settings.GRAPH_BACKEND", DIALECT_NEO4J
+            "codebase_rag.doctor.checks.settings.GRAPH_BACKEND", DIALECT_NEO4J
         )
         monkeypatch.setattr(
-            "codebase_rag.tools.health_checker.settings.NEO4J_URI",
+            "codebase_rag.doctor.checks.settings.NEO4J_URI",
             "bolt://neo-server.example:7999",
         )
         assert _backend_endpoint() == "bolt://neo-server.example:7999"
 
     def test_the_success_message_carries_the_neo4j_endpoint(self, monkeypatch) -> None:
         monkeypatch.setattr(
-            "codebase_rag.tools.health_checker.settings.GRAPH_BACKEND", DIALECT_NEO4J
+            "codebase_rag.doctor.checks.settings.GRAPH_BACKEND", DIALECT_NEO4J
         )
         monkeypatch.setattr(
-            "codebase_rag.tools.health_checker.settings.NEO4J_URI",
+            "codebase_rag.doctor.checks.settings.NEO4J_URI",
             "bolt://neo-server.example:7999",
         )
         monkeypatch.setattr(
-            "codebase_rag.tools.health_checker.settings.MEMGRAPH_HOST", "mg-host"
+            "codebase_rag.doctor.checks.settings.MEMGRAPH_HOST", "mg-host"
         )
         monkeypatch.setattr(
-            "codebase_rag.tools.health_checker.MemgraphIngestor.open_connection",
+            "codebase_rag.doctor.checks.MemgraphIngestor.open_connection",
             lambda self: FakeConn(),
         )
         result = HealthChecker().check_memgraph_connection()
@@ -103,15 +101,15 @@ class TestReportedEngineName:
 
     def _probe(self, monkeypatch, backend: str, uri: str = ""):
         monkeypatch.setattr(
-            "codebase_rag.tools.health_checker.settings.GRAPH_BACKEND", backend
+            "codebase_rag.doctor.checks.settings.GRAPH_BACKEND", backend
         )
-        monkeypatch.setattr("codebase_rag.tools.health_checker.settings.NEO4J_URI", uri)
+        monkeypatch.setattr("codebase_rag.doctor.checks.settings.NEO4J_URI", uri)
         monkeypatch.setattr(
-            "codebase_rag.tools.health_checker.MemgraphIngestor.open_connection",
+            "codebase_rag.doctor.checks.MemgraphIngestor.open_connection",
             lambda self: FakeConn(),
         )
         monkeypatch.setattr(
-            "codebase_rag.tools.health_checker.MemgraphIngestor.close_driver",
+            "codebase_rag.doctor.checks.MemgraphIngestor.close_driver",
             lambda self: None,
         )
         return HealthChecker().check_memgraph_connection()
@@ -157,11 +155,11 @@ class TestDriverIsReleased:
         conn = FakeConn()
 
         monkeypatch.setattr(
-            "codebase_rag.tools.health_checker.MemgraphIngestor.open_connection",
+            "codebase_rag.doctor.checks.MemgraphIngestor.open_connection",
             lambda self: conn,
         )
         monkeypatch.setattr(
-            "codebase_rag.tools.health_checker.MemgraphIngestor.close_driver",
+            "codebase_rag.doctor.checks.MemgraphIngestor.close_driver",
             lambda self: closed.append("driver"),
         )
 
@@ -174,11 +172,11 @@ class TestDriverIsReleased:
     def test_the_driver_is_closed_even_when_the_body_raises(self, monkeypatch) -> None:
         closed: list[str] = []
         monkeypatch.setattr(
-            "codebase_rag.tools.health_checker.MemgraphIngestor.open_connection",
+            "codebase_rag.doctor.checks.MemgraphIngestor.open_connection",
             lambda self: FakeConn(),
         )
         monkeypatch.setattr(
-            "codebase_rag.tools.health_checker.MemgraphIngestor.close_driver",
+            "codebase_rag.doctor.checks.MemgraphIngestor.close_driver",
             lambda self: closed.append("driver"),
         )
 
@@ -191,11 +189,11 @@ class TestDriverIsReleased:
     def test_the_integrity_audit_releases_its_driver(self, monkeypatch) -> None:
         closed: list[str] = []
         monkeypatch.setattr(
-            "codebase_rag.tools.health_checker.MemgraphIngestor.open_connection",
+            "codebase_rag.doctor.checks.MemgraphIngestor.open_connection",
             lambda self: FakeConn(),
         )
         monkeypatch.setattr(
-            "codebase_rag.tools.health_checker.MemgraphIngestor.close_driver",
+            "codebase_rag.doctor.checks.MemgraphIngestor.close_driver",
             lambda self: closed.append("driver"),
         )
         HealthChecker().check_graph_integrity()
@@ -214,7 +212,7 @@ class TestDriverIsReleased:
         """
         import inspect
 
-        from codebase_rag.tools import health_checker
+        from codebase_rag.doctor import checks as health_checker
 
         source = inspect.getsource(health_checker.HealthChecker.check_graph_integrity)
         assert "connection.__exit__(None, None, None)" in source
@@ -234,7 +232,7 @@ class TestConnectionFailureClassification:
         # than fail: this test is about the driver's exception hierarchy.
         exceptions = pytest.importorskip("neo4j.exceptions")
         monkeypatch.setattr(
-            "codebase_rag.tools.health_checker.settings.GRAPH_BACKEND", DIALECT_NEO4J
+            "codebase_rag.doctor.checks.settings.GRAPH_BACKEND", DIALECT_NEO4J
         )
         assert issubclass(exceptions.ServiceUnavailable, _connection_error_types())
 
@@ -247,7 +245,7 @@ class TestConnectionFailureClassification:
         """
         exceptions = pytest.importorskip("neo4j.exceptions")
         monkeypatch.setattr(
-            "codebase_rag.tools.health_checker.settings.GRAPH_BACKEND", DIALECT_NEO4J
+            "codebase_rag.doctor.checks.settings.GRAPH_BACKEND", DIALECT_NEO4J
         )
         types = _connection_error_types()
         assert issubclass(exceptions.ServiceUnavailable, types)
@@ -259,7 +257,7 @@ class TestConnectionFailureClassification:
 
     def test_memgraph_does_not_pull_in_neo4j_types(self, monkeypatch) -> None:
         monkeypatch.setattr(
-            "codebase_rag.tools.health_checker.settings.GRAPH_BACKEND",
+            "codebase_rag.doctor.checks.settings.GRAPH_BACKEND",
             DIALECT_MEMGRAPH,
         )
         assert _connection_error_types() == (mgclient.Error, GraphUnavailableError)
@@ -278,14 +276,14 @@ class TestConnectionFailureClassification:
                 pass
 
         monkeypatch.setattr(
-            "codebase_rag.tools.health_checker.settings.GRAPH_BACKEND", DIALECT_NEO4J
+            "codebase_rag.doctor.checks.settings.GRAPH_BACKEND", DIALECT_NEO4J
         )
         monkeypatch.setattr(
-            "codebase_rag.tools.health_checker.MemgraphIngestor.open_connection",
+            "codebase_rag.doctor.checks.MemgraphIngestor.open_connection",
             lambda self: ExplodingConn(),
         )
         monkeypatch.setattr(
-            "codebase_rag.tools.health_checker.MemgraphIngestor.close_driver",
+            "codebase_rag.doctor.checks.MemgraphIngestor.close_driver",
             lambda self: None,
         )
         result = HealthChecker().check_memgraph_connection()
@@ -302,11 +300,11 @@ class TestCleanupDoesNotMaskTheAuditResult:
                 raise RuntimeError("close blew up")
 
         monkeypatch.setattr(
-            "codebase_rag.tools.health_checker.MemgraphIngestor.open_connection",
+            "codebase_rag.doctor.checks.MemgraphIngestor.open_connection",
             lambda self: BadCloseConn(),
         )
         monkeypatch.setattr(
-            "codebase_rag.tools.health_checker.MemgraphIngestor.close_driver",
+            "codebase_rag.doctor.checks.MemgraphIngestor.close_driver",
             lambda self: None,
         )
         results = HealthChecker().check_graph_integrity()
@@ -318,7 +316,7 @@ class TestCleanupDoesNotMaskTheAuditResult:
             raise ConnectionError("down")
 
         monkeypatch.setattr(
-            "codebase_rag.tools.health_checker.MemgraphIngestor.open_connection",
+            "codebase_rag.doctor.checks.MemgraphIngestor.open_connection",
             explode,
         )
         assert HealthChecker().check_graph_integrity() == []
@@ -361,11 +359,11 @@ class TestReachabilityNeedsAQuery:
                 return RecordingCursor()
 
         monkeypatch.setattr(
-            "codebase_rag.tools.health_checker.MemgraphIngestor.open_connection",
+            "codebase_rag.doctor.checks.MemgraphIngestor.open_connection",
             lambda self: RecordingConn(),
         )
         monkeypatch.setattr(
-            "codebase_rag.tools.health_checker.MemgraphIngestor.close_driver",
+            "codebase_rag.doctor.checks.MemgraphIngestor.close_driver",
             lambda self: None,
         )
         result = HealthChecker().check_memgraph_connection()

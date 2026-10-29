@@ -23,9 +23,9 @@ from typer.testing import CliRunner as TyperCliRunner
 
 from codebase_rag import constants as cs
 from codebase_rag.cli import app
+from codebase_rag.language import cli as language
+from codebase_rag.language.cli import cli
 from codebase_rag.language_spec import LanguageSpec
-from codebase_rag.tools import language
-from codebase_rag.tools.language import cli
 
 LANG = "mylang"
 GRAMMAR_PATH = f"grammars/tree-sitter-{LANG}"

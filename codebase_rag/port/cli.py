@@ -5,11 +5,11 @@ from pathlib import Path
 
 import click
 
-from . import cli_help as ch
-from . import constants as cs
-from . import graph_query
-from .graph_cli import _emit, _project_and_fetch, _unknown_project
-from .project_selection import unknown_project
+from .. import cli_help as ch
+from .. import constants as cs
+from .. import graph_query
+from ..graph_cli import _emit, _project_and_fetch, _unknown_project
+from ..project_selection import unknown_project
 
 
 @click.group(
@@ -52,7 +52,7 @@ def check_cmd(
     include_tests: bool,
     fail_on_found: bool,
 ) -> None:
-    from .port_parity import (
+    from .parity import (
         ParityReport,
         PortCheckError,
         PortScope,

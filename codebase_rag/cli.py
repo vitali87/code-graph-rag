@@ -52,6 +52,7 @@ from .config import (
     settings_errors,
 )
 from .console_marks import status_mark
+from .doctor.checks import HealthChecker
 from .editing.cli import cli as edits_cli
 from .editor_links import (
     EditorTemplateError,
@@ -65,8 +66,9 @@ from .exclude_prompt import prompt_for_unignored_directories
 from .graph_cli import cli as graph_cli
 from .graph_dialects import DIALECT_MEMGRAPH
 from .graph_export import export_graph_to_file
+from .language.cli import cli as language_cli
 from .parser_loader import load_parsers
-from .port_cli import cli as port_cli
+from .port.cli import cli as port_cli
 from .project_selection import ProjectChoice, choose_project, scope_refusal
 from .services.gloss_cleanup import prune_orphaned_glosses
 from .services.graph_diff import DiffError, diff_indexes, diff_is_empty
@@ -96,8 +98,6 @@ from .sync_guard import project_owner_refusal as _project_owner_refusal
 from .sync_guard import sync_marker_params as _sync_marker_params
 from .sync_guard import sync_owner as _sync_owner
 from .sync_lock import SyncLockError, repo_sync_lock
-from .tools.health_checker import HealthChecker
-from .tools.language import cli as language_cli
 from .trace.cli import cli as trace_cli
 from .types_defs import (
     DeadCodeConfig,

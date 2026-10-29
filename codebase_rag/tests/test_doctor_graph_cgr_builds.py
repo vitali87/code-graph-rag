@@ -23,8 +23,8 @@ from unittest.mock import MagicMock
 import codec.schema_pb2 as pb
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
-from codebase_rag import graph_audit as ga
 from codebase_rag.capture import resolve_capture
+from codebase_rag.doctor import graph_audit as ga
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services.protobuf_service import ProtobufFileIngestor

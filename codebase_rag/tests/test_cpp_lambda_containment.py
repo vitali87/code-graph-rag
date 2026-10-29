@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from codebase_rag import constants as cs
-from codebase_rag import graph_audit as ga
+from codebase_rag.doctor import graph_audit as ga
 from codebase_rag.tests.conftest import get_relationships, run_updater
 from codebase_rag.types_defs import GraphNodeRecord, GraphRelRecord
 

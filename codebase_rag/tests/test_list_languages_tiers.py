@@ -18,11 +18,11 @@ from click.testing import CliRunner, Result
 
 from codebase_rag import constants as cs
 from codebase_rag.config import settings
+from codebase_rag.language.cli import list_languages
 from codebase_rag.language_spec import LANGUAGE_SPECS, LanguageSpec
 from codebase_rag.parser_loader import _get_language_library, grammar_installed
 from codebase_rag.parsers.ast_grep_tier import load_pattern_configs
 from codebase_rag.parsers.document_tier import DOCUMENT_EXTENSIONS
-from codebase_rag.tools.language import list_languages
 
 # Rich draws the header heavy (┏ ┃ ┡) on a VT console and swaps in the light
 # box (┌ │ ├) on a legacy Windows console, so both glyph sets must parse.
@@ -246,7 +246,7 @@ def test_verbose_leaves_the_language_table_as_it_was() -> None:
 
 def test_missing_grammar_is_not_claimed_installed() -> None:
     with patch(
-        "codebase_rag.tools.language_catalog.grammar_installed",
+        "codebase_rag.language.catalog.grammar_installed",
         side_effect=lambda lang: lang != cs.SupportedLanguage.RUST,
     ):
         result = _invoke()
@@ -261,10 +261,8 @@ def test_ast_grep_tier_without_its_extra_is_not_claimed_installed() -> None:
     # Every grammar present, as with the treesitter-full extra, so the
     # tree-sitter rows show what the missing ast-grep extra leaves alone.
     with (
-        patch("codebase_rag.tools.language_catalog.has_ast_grep", return_value=False),
-        patch(
-            "codebase_rag.tools.language_catalog.grammar_installed", return_value=True
-        ),
+        patch("codebase_rag.language.catalog.has_ast_grep", return_value=False),
+        patch("codebase_rag.language.catalog.grammar_installed", return_value=True),
     ):
         result = _invoke()
     rows = _table(result.output, _LANGUAGE_HEADERS)
@@ -278,7 +276,7 @@ def test_ast_grep_tier_without_its_extra_is_not_claimed_installed() -> None:
 
 def test_markdown_without_its_grammar_is_not_claimed_installed() -> None:
     with patch(
-        "codebase_rag.tools.language_catalog.document_tier_available",
+        "codebase_rag.language.catalog.document_tier_available",
         return_value=False,
     ):
         rows = _by_name(_table(_invoke().output, _LANGUAGE_HEADERS), "Language")
@@ -288,12 +286,10 @@ def test_markdown_without_its_grammar_is_not_claimed_installed() -> None:
 
 def test_no_install_hint_when_everything_is_installed() -> None:
     with (
+        patch("codebase_rag.language.catalog.grammar_installed", return_value=True),
+        patch("codebase_rag.language.catalog.has_ast_grep", return_value=True),
         patch(
-            "codebase_rag.tools.language_catalog.grammar_installed", return_value=True
-        ),
-        patch("codebase_rag.tools.language_catalog.has_ast_grep", return_value=True),
-        patch(
-            "codebase_rag.tools.language_catalog.document_tier_available",
+            "codebase_rag.language.catalog.document_tier_available",
             return_value=True,
         ),
     ):
@@ -319,7 +315,7 @@ def test_ast_grep_languages_without_yaml_are_listed_as_not_installed() -> None:
 
 def test_unreadable_ast_grep_configs_leave_the_other_tiers_listed() -> None:
     with patch(
-        "codebase_rag.tools.language_catalog.structural_tier_languages",
+        "codebase_rag.language.catalog.structural_tier_languages",
         side_effect=ValueError(
             "ruby.yaml: 'extensions' and 'ast_grep_id' are required"
         ),

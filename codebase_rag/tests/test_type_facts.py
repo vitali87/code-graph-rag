@@ -406,7 +406,7 @@ def test_resolver_prefers_the_nearest_package_among_candidates() -> None:
 def test_schema_documents_the_new_triples_and_properties(
     label: cs.NodeLabel, rel: cs.RelationshipType
 ) -> None:
-    from codebase_rag.graph_audit import (
+    from codebase_rag.doctor.graph_audit import (
         documented_node_properties,
         documented_relationship_triples,
     )
