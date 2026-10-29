@@ -9,6 +9,7 @@ import pytest
 
 from codebase_rag.parsers.definition_facts import DefinitionFacts
 from codebase_rag.parsers.import_processor import ImportProcessor
+from codebase_rag.parsers.java.method_resolver import JavaMethodResolver
 from codebase_rag.parsers.java.type_inference import JavaTypeInferenceEngine
 
 if TYPE_CHECKING:
@@ -1050,17 +1051,15 @@ def test_a_call_refused_for_depth_does_not_take_the_name_based_fallback(
     code = f"class A {{ void m(B b) {{ var v = {chain}; }} }}".encode()
     method = _only_method(java_parser.parse(code).root_node)
     at_limit: list[bool] = []
-    original = JavaTypeInferenceEngine._resolve_java_method_return_type
+    original = JavaMethodResolver.resolve_java_method_return_type
 
-    def spy(
-        self: JavaTypeInferenceEngine, call_string: str, module_qn: str
-    ) -> str | None:
+    def spy(self: JavaMethodResolver, call_string: str, module_qn: str) -> str | None:
         at_limit.append(
             depth_exhausted(cs.GUARD_JAVA_INFERENCE_DEPTH, cs.JAVA_MAX_INFERENCE_DEPTH)
         )
         return original(self, call_string, module_qn)
 
-    with patch.object(JavaTypeInferenceEngine, "_resolve_java_method_return_type", spy):
+    with patch.object(JavaMethodResolver, "resolve_java_method_return_type", spy):
         engine.build_local_variable_type_map(method, "test_project.A")
 
     assert at_limit, "the fallback never ran, so the test proves nothing"
@@ -1070,18 +1069,18 @@ def test_a_call_refused_for_depth_does_not_take_the_name_based_fallback(
 def test_the_name_based_return_type_fallback_is_not_shadowed(
     engine: JavaTypeInferenceEngine,
 ) -> None:
-    # JavaVariableAnalyzerMixin precedes JavaMethodResolverMixin in the MRO,
-    # so an abstract stub for this method there replaced the real one with a
-    # body that returns None, and the getter heuristics never ran.
+    # When the variable analyzer and the method resolver were mixins of one
+    # class, an abstract stub for this method on the analyzer's side shadowed
+    # the real one with a body that returned None, and the getter heuristics
+    # never ran. The analyzer reaches it through the engine's own resolver.
     from codebase_rag import constants as cs
-    from codebase_rag.parsers.java.method_resolver import JavaMethodResolverMixin
 
+    analyzer = engine.variable_analyzer
+    assert analyzer.method_resolver is engine.method_resolver
     assert (
-        JavaTypeInferenceEngine._resolve_java_method_return_type
-        is JavaMethodResolverMixin._resolve_java_method_return_type
-    )
-    assert (
-        engine._resolve_java_method_return_type("helper.getName", "test_project.A")
+        analyzer.method_resolver.resolve_java_method_return_type(
+            "helper.getName", "test_project.A"
+        )
         == cs.JAVA_TYPE_STRING_FQN
     )
 
@@ -1091,6 +1090,8 @@ def test_an_unrecognised_method_name_has_no_fallback_return_type(
 ) -> None:
     # Negative: the fallback types only the names its heuristics know.
     assert (
-        engine._resolve_java_method_return_type("helper.frobnicate", "test_project.A")
+        engine.method_resolver.resolve_java_method_return_type(
+            "helper.frobnicate", "test_project.A"
+        )
         is None
     )

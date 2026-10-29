@@ -10,7 +10,10 @@ import pytest
 from codebase_rag.parsers.definition_facts import DefinitionFacts
 from codebase_rag.parsers.import_processor import ImportProcessor
 from codebase_rag.parsers.java.type_inference import JavaTypeInferenceEngine
-from codebase_rag.parsers.java.type_resolver import collect_java_class_headers
+from codebase_rag.parsers.java.type_resolver import (
+    JavaTypeResolver,
+    collect_java_class_headers,
+)
 
 if TYPE_CHECKING:
     from tree_sitter import Parser
@@ -83,11 +86,16 @@ def type_inference_engine(
     )
 
 
+@pytest.fixture
+def type_resolver(type_inference_engine: JavaTypeInferenceEngine) -> JavaTypeResolver:
+    return type_inference_engine.type_resolver
+
+
 class TestJavaTypeResolverWithRealParsing:
     def test_get_superclass_name_with_real_ast(
         self,
         java_parser: Parser,
-        type_inference_engine: JavaTypeInferenceEngine,
+        type_resolver: JavaTypeResolver,
         mock_ast_cache: MagicMock,
     ) -> None:
         java_code = b"""
@@ -106,17 +114,17 @@ public class Child extends Parent {
         root_node = tree.root_node
 
         file_path = Path("/test/Child.java")
-        type_inference_engine.module_qn_to_file_path = {"com.example": file_path}
+        type_resolver.module_qn_to_file_path["com.example"] = file_path
         mock_ast_cache.__contains__ = MagicMock(side_effect=lambda x: x == file_path)
         mock_ast_cache.__getitem__ = MagicMock(return_value=(root_node, java_code))
 
-        result = type_inference_engine._get_superclass_name("com.example.Child")
+        result = type_resolver.get_superclass_name("com.example.Child")
         assert result == "Parent"
 
     def test_get_superclass_name_no_extends(
         self,
         java_parser: Parser,
-        type_inference_engine: JavaTypeInferenceEngine,
+        type_resolver: JavaTypeResolver,
         mock_ast_cache: MagicMock,
     ) -> None:
         java_code = b"""
@@ -130,17 +138,17 @@ public class Simple {
         root_node = tree.root_node
 
         file_path = Path("/test/Simple.java")
-        type_inference_engine.module_qn_to_file_path = {"com.example": file_path}
+        type_resolver.module_qn_to_file_path["com.example"] = file_path
         mock_ast_cache.__contains__ = MagicMock(side_effect=lambda x: x == file_path)
         mock_ast_cache.__getitem__ = MagicMock(return_value=(root_node, java_code))
 
-        result = type_inference_engine._get_superclass_name("com.example.Simple")
+        result = type_resolver.get_superclass_name("com.example.Simple")
         assert result is None
 
     def test_get_superclass_name_generic_extends(
         self,
         java_parser: Parser,
-        type_inference_engine: JavaTypeInferenceEngine,
+        type_resolver: JavaTypeResolver,
         mock_ast_cache: MagicMock,
     ) -> None:
         java_code = b"""
@@ -156,17 +164,17 @@ public class MyList extends ArrayList<String> {
         root_node = tree.root_node
 
         file_path = Path("/test/MyList.java")
-        type_inference_engine.module_qn_to_file_path = {"com.example": file_path}
+        type_resolver.module_qn_to_file_path["com.example"] = file_path
         mock_ast_cache.__contains__ = MagicMock(side_effect=lambda x: x == file_path)
         mock_ast_cache.__getitem__ = MagicMock(return_value=(root_node, java_code))
 
-        result = type_inference_engine._get_superclass_name("com.example.MyList")
+        result = type_resolver.get_superclass_name("com.example.MyList")
         assert result == "ArrayList"
 
     def test_get_implemented_interfaces_single(
         self,
         java_parser: Parser,
-        type_inference_engine: JavaTypeInferenceEngine,
+        type_resolver: JavaTypeResolver,
         mock_ast_cache: MagicMock,
     ) -> None:
         java_code = b"""
@@ -183,17 +191,17 @@ public class Worker implements Runnable {
         root_node = tree.root_node
 
         file_path = Path("/test/Worker.java")
-        type_inference_engine.module_qn_to_file_path = {"com.example": file_path}
+        type_resolver.module_qn_to_file_path["com.example"] = file_path
         mock_ast_cache.__contains__ = MagicMock(side_effect=lambda x: x == file_path)
         mock_ast_cache.__getitem__ = MagicMock(return_value=(root_node, java_code))
 
-        result = type_inference_engine._get_implemented_interfaces("com.example.Worker")
+        result = type_resolver.get_implemented_interfaces("com.example.Worker")
         assert "Runnable" in result
 
     def test_get_implemented_interfaces_multiple(
         self,
         java_parser: Parser,
-        type_inference_engine: JavaTypeInferenceEngine,
+        type_resolver: JavaTypeResolver,
         mock_ast_cache: MagicMock,
     ) -> None:
         java_code = b"""
@@ -214,18 +222,18 @@ public class Data implements Serializable, Comparable<Data>, Cloneable {
         root_node = tree.root_node
 
         file_path = Path("/test/Data.java")
-        type_inference_engine.module_qn_to_file_path = {"com.example": file_path}
+        type_resolver.module_qn_to_file_path["com.example"] = file_path
         mock_ast_cache.__contains__ = MagicMock(side_effect=lambda x: x == file_path)
         mock_ast_cache.__getitem__ = MagicMock(return_value=(root_node, java_code))
 
-        result = type_inference_engine._get_implemented_interfaces("com.example.Data")
+        result = type_resolver.get_implemented_interfaces("com.example.Data")
         assert "Serializable" in result
         assert "Cloneable" in result
 
     def test_get_implemented_interfaces_none(
         self,
         java_parser: Parser,
-        type_inference_engine: JavaTypeInferenceEngine,
+        type_resolver: JavaTypeResolver,
         mock_ast_cache: MagicMock,
     ) -> None:
         java_code = b"""
@@ -239,17 +247,17 @@ public class Plain {
         root_node = tree.root_node
 
         file_path = Path("/test/Plain.java")
-        type_inference_engine.module_qn_to_file_path = {"com.example": file_path}
+        type_resolver.module_qn_to_file_path["com.example"] = file_path
         mock_ast_cache.__contains__ = MagicMock(side_effect=lambda x: x == file_path)
         mock_ast_cache.__getitem__ = MagicMock(return_value=(root_node, java_code))
 
-        result = type_inference_engine._get_implemented_interfaces("com.example.Plain")
+        result = type_resolver.get_implemented_interfaces("com.example.Plain")
         assert result == []
 
     def test_get_current_class_name_class(
         self,
         java_parser: Parser,
-        type_inference_engine: JavaTypeInferenceEngine,
+        type_resolver: JavaTypeResolver,
         mock_ast_cache: MagicMock,
     ) -> None:
         java_code = b"""
@@ -263,17 +271,17 @@ public class MyService {
         root_node = tree.root_node
 
         file_path = Path("/test/MyService.java")
-        type_inference_engine.module_qn_to_file_path = {"com.example": file_path}
+        type_resolver.module_qn_to_file_path["com.example"] = file_path
         mock_ast_cache.__contains__ = MagicMock(side_effect=lambda x: x == file_path)
         mock_ast_cache.__getitem__ = MagicMock(return_value=(root_node, java_code))
 
-        result = type_inference_engine._get_current_class_name("com.example")
+        result = type_resolver.get_current_class_name("com.example")
         assert result == "com.example.MyService"
 
     def test_get_current_class_name_interface(
         self,
         java_parser: Parser,
-        type_inference_engine: JavaTypeInferenceEngine,
+        type_resolver: JavaTypeResolver,
         mock_ast_cache: MagicMock,
     ) -> None:
         java_code = b"""
@@ -288,17 +296,17 @@ public interface Repository {
         root_node = tree.root_node
 
         file_path = Path("/test/Repository.java")
-        type_inference_engine.module_qn_to_file_path = {"com.example": file_path}
+        type_resolver.module_qn_to_file_path["com.example"] = file_path
         mock_ast_cache.__contains__ = MagicMock(side_effect=lambda x: x == file_path)
         mock_ast_cache.__getitem__ = MagicMock(return_value=(root_node, java_code))
 
-        result = type_inference_engine._get_current_class_name("com.example")
+        result = type_resolver.get_current_class_name("com.example")
         assert result == "com.example.Repository"
 
     def test_get_current_class_name_enum(
         self,
         java_parser: Parser,
-        type_inference_engine: JavaTypeInferenceEngine,
+        type_resolver: JavaTypeResolver,
         mock_ast_cache: MagicMock,
     ) -> None:
         java_code = b"""
@@ -314,11 +322,11 @@ public enum Status {
         root_node = tree.root_node
 
         file_path = Path("/test/Status.java")
-        type_inference_engine.module_qn_to_file_path = {"com.example": file_path}
+        type_resolver.module_qn_to_file_path["com.example"] = file_path
         mock_ast_cache.__contains__ = MagicMock(side_effect=lambda x: x == file_path)
         mock_ast_cache.__getitem__ = MagicMock(return_value=(root_node, java_code))
 
-        result = type_inference_engine._get_current_class_name("com.example")
+        result = type_resolver.get_current_class_name("com.example")
         assert result == "com.example.Status"
 
     def test_collect_class_headers_multiple_in_file(
@@ -354,7 +362,7 @@ enum Type {
     def test_class_with_extends_and_implements(
         self,
         java_parser: Parser,
-        type_inference_engine: JavaTypeInferenceEngine,
+        type_resolver: JavaTypeResolver,
         mock_ast_cache: MagicMock,
     ) -> None:
         java_code = b"""
@@ -373,22 +381,20 @@ public class Employee extends Person implements Comparable<Employee>, Serializab
         root_node = tree.root_node
 
         file_path = Path("/test/Employee.java")
-        type_inference_engine.module_qn_to_file_path = {"com.example": file_path}
+        type_resolver.module_qn_to_file_path["com.example"] = file_path
         mock_ast_cache.__contains__ = MagicMock(side_effect=lambda x: x == file_path)
         mock_ast_cache.__getitem__ = MagicMock(return_value=(root_node, java_code))
 
-        superclass = type_inference_engine._get_superclass_name("com.example.Employee")
+        superclass = type_resolver.get_superclass_name("com.example.Employee")
         assert superclass == "Person"
 
-        interfaces = type_inference_engine._get_implemented_interfaces(
-            "com.example.Employee"
-        )
+        interfaces = type_resolver.get_implemented_interfaces("com.example.Employee")
         assert "Serializable" in interfaces
 
     def test_nested_class(
         self,
         java_parser: Parser,
-        type_inference_engine: JavaTypeInferenceEngine,
+        type_resolver: JavaTypeResolver,
         mock_ast_cache: MagicMock,
     ) -> None:
         java_code = b"""
@@ -404,14 +410,12 @@ public class Outer {
         root_node = tree.root_node
 
         file_path = Path("/test/Outer.java")
-        type_inference_engine.module_qn_to_file_path = {"com.example": file_path}
+        type_resolver.module_qn_to_file_path["com.example"] = file_path
         mock_ast_cache.__contains__ = MagicMock(side_effect=lambda x: x == file_path)
         mock_ast_cache.__getitem__ = MagicMock(return_value=(root_node, java_code))
 
-        result = type_inference_engine._get_superclass_name("com.example.Inner")
+        result = type_resolver.get_superclass_name("com.example.Inner")
         assert result == "BaseInner"
 
-        interfaces = type_inference_engine._get_implemented_interfaces(
-            "com.example.Inner"
-        )
+        interfaces = type_resolver.get_implemented_interfaces("com.example.Inner")
         assert "InnerInterface" in interfaces

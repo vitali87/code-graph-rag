@@ -1,11 +1,11 @@
-from .method_resolver import JavaMethodResolverMixin
+from .method_resolver import JavaMethodResolver
 from .type_inference import JavaTypeInferenceEngine
-from .type_resolver import JavaTypeResolverMixin
-from .variable_analyzer import JavaVariableAnalyzerMixin
+from .type_resolver import JavaTypeResolver
+from .variable_analyzer import JavaVariableAnalyzer
 
 __all__ = [
-    "JavaMethodResolverMixin",
+    "JavaMethodResolver",
     "JavaTypeInferenceEngine",
-    "JavaTypeResolverMixin",
-    "JavaVariableAnalyzerMixin",
+    "JavaTypeResolver",
+    "JavaVariableAnalyzer",
 ]

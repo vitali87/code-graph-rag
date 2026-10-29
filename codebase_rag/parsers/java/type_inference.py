@@ -2,10 +2,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from loguru import logger
-
 from ... import constants as cs
-from ... import logs as ls
 from ...node_text import safe_decode_text
 from ...types_defs import (
     ASTNode,
@@ -17,10 +14,10 @@ from ..definition_facts import DefinitionFacts
 from ..frontends.protocol import CallSiteKey
 from ..import_processor import ImportProcessor
 from ..semantic_call_join import call_site_key, resolve_call_site
-from .method_resolver import JavaMethodResolverMixin
-from .type_resolver import JavaClassHeaders, JavaTypeResolverMixin
+from .method_resolver import JavaMethodResolver
+from .type_resolver import JavaClassHeaders, JavaTypeResolver
 from .utils import find_package_start_index
-from .variable_analyzer import JavaVariableAnalyzerMixin
+from .variable_analyzer import JavaVariableAnalyzer
 
 if TYPE_CHECKING:
     from ...types_defs import ASTCacheProtocol
@@ -31,27 +28,18 @@ if TYPE_CHECKING:
 JAVA_EXTERNAL_TARGET: tuple[str, str] = ("", "")
 
 
-class JavaTypeInferenceEngine(
-    JavaTypeResolverMixin,
-    JavaVariableAnalyzerMixin,
-    JavaMethodResolverMixin,
-):
+class JavaTypeInferenceEngine:
     __slots__ = (
-        "import_processor",
-        "function_registry",
         "repo_path",
-        "project_name",
-        "ast_cache",
         "queries",
         "module_qn_to_file_path",
         "facts",
-        "simple_name_lookup",
-        "_lookup_cache",
-        "_lookup_in_progress",
-        "_fqn_to_module_qn",
         "_rel_to_module",
         "_family_picks",
         "_class_headers",
+        "type_resolver",
+        "variable_analyzer",
+        "method_resolver",
     )
 
     def __init__(
@@ -66,24 +54,46 @@ class JavaTypeInferenceEngine(
         facts: DefinitionFacts,
         simple_name_lookup: SimpleNameLookup,
     ):
-        self.import_processor = import_processor
-        self.function_registry = function_registry
         self.repo_path = repo_path
-        self.project_name = project_name
-        self.ast_cache = ast_cache
         self.queries = queries
         self.module_qn_to_file_path = module_qn_to_file_path
         self.facts = facts
-        self.simple_name_lookup = simple_name_lookup
 
         self._rel_to_module: dict[str, str] = {}
         self._family_picks: dict[str, list[tuple[str, str]]] = {}
-
-        self._lookup_cache: dict[str, str | None] = {}
-        self._lookup_in_progress: set[str] = set()
         self._class_headers: dict[Path, JavaClassHeaders] = {}
 
-        self._fqn_to_module_qn: dict[str, list[str]] = self._build_fqn_lookup_map()
+        self.type_resolver = JavaTypeResolver(
+            import_processor=import_processor,
+            function_registry=function_registry,
+            module_qn_to_file_path=module_qn_to_file_path,
+            ast_cache=ast_cache,
+            class_headers=self._class_headers,
+        )
+        self.variable_analyzer = JavaVariableAnalyzer(
+            module_qn_to_file_path=module_qn_to_file_path,
+            ast_cache=ast_cache,
+            facts=facts,
+            type_resolver=self.type_resolver,
+        )
+        self.method_resolver = JavaMethodResolver(
+            import_processor=import_processor,
+            function_registry=function_registry,
+            project_name=project_name,
+            module_qn_to_file_path=module_qn_to_file_path,
+            ast_cache=ast_cache,
+            facts=facts,
+            simple_name_lookup=simple_name_lookup,
+            fqn_to_module_qn=self._build_fqn_lookup_map(),
+            family_picks=self._family_picks,
+            type_resolver=self.type_resolver,
+            variable_analyzer=self.variable_analyzer,
+        )
+        # Variable typing and method resolution recurse into each other: a
+        # variable a call initialises is typed by resolving that call, and a
+        # call is resolved by typing its receiver and arguments. The resolver
+        # was built with the analyzer, so the analyzer is handed it last.
+        self.variable_analyzer.bind_method_resolver(self.method_resolver)
 
     def reset_resolution_memos(self) -> None:
         # A file re-parsed since the last call pass has a new tree to read
@@ -156,13 +166,9 @@ class JavaTypeInferenceEngine(
     def build_local_variable_type_map(
         self, scope_node: ASTNode, module_qn: str
     ) -> dict[str, str]:
-        # No catch, as in the sibling engines: a failure reaches the call
-        # pass's per-caller handler, which names the caller in the sync
-        # summary (#3173).
-        local_var_types: dict[str, str] = {}
-        self._collect_all_variable_types(scope_node, local_var_types, module_qn)
-        logger.debug(ls.JAVA_VAR_TYPE_MAP_BUILT, count=len(local_var_types))
-        return local_var_types
+        return self.variable_analyzer.build_local_variable_type_map(
+            scope_node, module_qn
+        )
 
     def resolve_java_method_call(
         self,
@@ -174,20 +180,6 @@ class JavaTypeInferenceEngine(
         # A pick recorded for an earlier call must not lend this one its
         # overload family.
         self._family_picks.clear()
-        return self._do_resolve_java_method_call(
+        return self.method_resolver.do_resolve_java_method_call(
             call_node, local_var_types or {}, module_qn, caller_qn
         )
-
-    def _find_containing_java_class(self, node: ASTNode) -> ASTNode | None:
-        current = node.parent
-        while current:
-            match current.type:
-                case (
-                    cs.TS_CLASS_DECLARATION
-                    | cs.TS_INTERFACE_DECLARATION
-                    | cs.TS_ENUM_DECLARATION
-                    | cs.TS_RECORD_DECLARATION
-                ):
-                    return current
-            current = current.parent
-        return None

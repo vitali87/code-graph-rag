@@ -1,4 +1,4 @@
-# L3 finding from the evals/ harness: JavaTypeResolverMixin._find_registry_entries_under
+# L3 finding from the evals/ harness: JavaTypeResolver.find_registry_entries_under
 # does `finder = getattr(self.function_registry, cs.METHOD_FIND_WITH_PREFIX, None)` then
 # calls finder(...). The call dispatches to FunctionRegistryTrie.find_with_prefix at
 # runtime. Resolving it needs getattr(recv, name) modelled as recv.<name>, where the

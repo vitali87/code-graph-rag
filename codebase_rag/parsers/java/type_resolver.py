@@ -119,73 +119,88 @@ def collect_java_class_headers(root: ASTNode) -> JavaClassHeaders:
     return JavaClassHeaders(tuple(type_names), superclasses, interfaces)
 
 
-class JavaTypeResolverMixin:
-    __slots__ = ()
-    import_processor: ImportProcessor
-    function_registry: FunctionRegistryTrieProtocol
-    module_qn_to_file_path: dict[str, Path]
-    ast_cache: ASTCacheProtocol
-    _fqn_to_module_qn: dict[str, list[str]]
-    _class_headers: dict[Path, JavaClassHeaders]
+def module_qn_to_java_fqn(module_qn: str) -> str | None:
+    parts = module_qn.split(cs.SEPARATOR_DOT)
+    package_start_idx = find_package_start_index(parts)
+    if package_start_idx is None:
+        return None
+    class_parts = parts[package_start_idx:]
+    return cs.SEPARATOR_DOT.join(class_parts) if class_parts else None
 
-    def _module_qn_to_java_fqn(self, module_qn: str) -> str | None:
-        parts = module_qn.split(cs.SEPARATOR_DOT)
-        package_start_idx = find_package_start_index(parts)
-        if package_start_idx is None:
-            return None
-        class_parts = parts[package_start_idx:]
-        return cs.SEPARATOR_DOT.join(class_parts) if class_parts else None
 
-    def _calculate_module_distance(
-        self, candidate_qn: str, caller_module_qn: str
-    ) -> int:
-        caller_parts = caller_module_qn.split(cs.SEPARATOR_DOT)
-        candidate_parts = candidate_qn.split(cs.SEPARATOR_DOT)
+def _calculate_module_distance(candidate_qn: str, caller_module_qn: str) -> int:
+    caller_parts = caller_module_qn.split(cs.SEPARATOR_DOT)
+    candidate_parts = candidate_qn.split(cs.SEPARATOR_DOT)
 
-        common_prefix = 0
-        for caller_part, candidate_part in zip(caller_parts, candidate_parts):
-            if caller_part == candidate_part:
-                common_prefix += 1
-            else:
-                break
+    common_prefix = 0
+    for caller_part, candidate_part in zip(caller_parts, candidate_parts):
+        if caller_part == candidate_part:
+            common_prefix += 1
+        else:
+            break
 
-        base_distance = max(len(caller_parts), len(candidate_parts)) - common_prefix
+    base_distance = max(len(caller_parts), len(candidate_parts)) - common_prefix
 
-        if (
-            len(caller_parts) > 1
-            and candidate_parts[: len(caller_parts) - 1] == caller_parts[:-1]
-        ):
-            base_distance -= 1
+    if (
+        len(caller_parts) > 1
+        and candidate_parts[: len(caller_parts) - 1] == caller_parts[:-1]
+    ):
+        base_distance -= 1
 
-        return max(base_distance, 0)
+    return max(base_distance, 0)
 
-    def _rank_module_candidates(
+
+def rank_module_candidates(
+    candidates: list[str],
+    class_qn: str,
+    current_module_qn: str | None,
+) -> list[str]:
+    if not candidates or not current_module_qn:
+        return candidates
+
+    ranked: list[tuple[tuple[int, int, int], str]] = []
+    for idx, candidate in enumerate(candidates):
+        candidate_fqn = module_qn_to_java_fqn(candidate)
+
+        if candidate_fqn == class_qn:
+            match_penalty = 0
+        elif candidate_fqn and class_qn.endswith(candidate_fqn):
+            match_penalty = 1
+        else:
+            match_penalty = 2
+
+        distance = _calculate_module_distance(candidate, current_module_qn)
+        ranked.append(((match_penalty, distance, idx), candidate))
+
+    ranked.sort(key=lambda item: item[0])
+    return [candidate for _, candidate in ranked]
+
+
+class JavaTypeResolver:
+    __slots__ = (
+        "import_processor",
+        "function_registry",
+        "module_qn_to_file_path",
+        "ast_cache",
+        "_class_headers",
+    )
+
+    def __init__(
         self,
-        candidates: list[str],
-        class_qn: str,
-        current_module_qn: str | None,
-    ) -> list[str]:
-        if not candidates or not current_module_qn:
-            return candidates
+        import_processor: ImportProcessor,
+        function_registry: FunctionRegistryTrieProtocol,
+        module_qn_to_file_path: dict[str, Path],
+        ast_cache: ASTCacheProtocol,
+        class_headers: dict[Path, JavaClassHeaders],
+    ) -> None:
+        self.import_processor = import_processor
+        self.function_registry = function_registry
+        self.module_qn_to_file_path = module_qn_to_file_path
+        self.ast_cache = ast_cache
+        # Owned by the engine, which empties it between call passes.
+        self._class_headers = class_headers
 
-        ranked: list[tuple[tuple[int, int, int], str]] = []
-        for idx, candidate in enumerate(candidates):
-            candidate_fqn = self._module_qn_to_java_fqn(candidate)
-
-            if candidate_fqn == class_qn:
-                match_penalty = 0
-            elif candidate_fqn and class_qn.endswith(candidate_fqn):
-                match_penalty = 1
-            else:
-                match_penalty = 2
-
-            distance = self._calculate_module_distance(candidate, current_module_qn)
-            ranked.append(((match_penalty, distance, idx), candidate))
-
-        ranked.sort(key=lambda item: item[0])
-        return [candidate for _, candidate in ranked]
-
-    def _find_registry_entries_under(self, prefix: str) -> Iterable[tuple[str, str]]:
+    def find_registry_entries_under(self, prefix: str) -> Iterable[tuple[str, str]]:
         finder = getattr(self.function_registry, cs.METHOD_FIND_WITH_PREFIX, None)
         if callable(finder):
             if matches := list(finder(prefix)):
@@ -202,7 +217,7 @@ class JavaTypeResolverMixin:
 
         return []
 
-    def _imported_class_qn(self, target: str, type_name: str) -> str:
+    def imported_class_qn(self, target: str, type_name: str) -> str:
         # A LOCAL Java import is recorded as the imported file's MODULE qn
         # (repo.com.foo.util.Helper), but the registered class qn duplicates the
         # class segment (repo.com.foo.util.Helper.Helper); the raw target then
@@ -223,7 +238,7 @@ class JavaTypeResolverMixin:
             return class_qn
         return target
 
-    def _resolve_java_type_name(self, type_name: str, module_qn: str) -> str:
+    def resolve_java_type_name(self, type_name: str, module_qn: str) -> str:
         if not type_name:
             return cs.JAVA_TYPE_OBJECT
 
@@ -238,17 +253,17 @@ class JavaTypeResolverMixin:
 
         if type_name.endswith(cs.JAVA_ARRAY_SUFFIX):
             base_type = type_name[:-2]
-            resolved_base = self._resolve_java_type_name(base_type, module_qn)
+            resolved_base = self.resolve_java_type_name(base_type, module_qn)
             return f"{resolved_base}{cs.JAVA_ARRAY_SUFFIX}"
 
         if cs.CHAR_ANGLE_OPEN in type_name and cs.CHAR_ANGLE_CLOSE in type_name:
             base_type = type_name.split(cs.CHAR_ANGLE_OPEN, maxsplit=1)[0]
-            return self._resolve_java_type_name(base_type, module_qn)
+            return self.resolve_java_type_name(base_type, module_qn)
 
         if module_qn in self.import_processor.import_mapping:
             import_map = self.import_processor.import_mapping[module_qn]
             if type_name in import_map:
-                return self._imported_class_qn(import_map[type_name], type_name)
+                return self.imported_class_qn(import_map[type_name], type_name)
 
         same_package_qn = f"{module_qn}{cs.SEPARATOR_DOT}{type_name}"
         if same_package_qn in self.function_registry and self.function_registry[
@@ -293,24 +308,24 @@ class JavaTypeResolverMixin:
         self._class_headers[file_path] = headers
         return headers
 
-    def _get_superclass_name(self, class_qn: str) -> str | None:
+    def get_superclass_name(self, class_qn: str) -> str | None:
         module_qn, _, class_name = class_qn.rpartition(cs.SEPARATOR_DOT)
         if not module_qn or not (headers := self._java_class_headers(module_qn)):
             return None
         if superclass := headers.superclasses.get(class_name):
-            return self._resolve_java_type_name(superclass, module_qn)
+            return self.resolve_java_type_name(superclass, module_qn)
         return None
 
-    def _get_implemented_interfaces(self, class_qn: str) -> list[str]:
+    def get_implemented_interfaces(self, class_qn: str) -> list[str]:
         module_qn, _, class_name = class_qn.rpartition(cs.SEPARATOR_DOT)
         if not module_qn or not (headers := self._java_class_headers(module_qn)):
             return []
         return [
-            self._resolve_java_type_name(interface, module_qn)
+            self.resolve_java_type_name(interface, module_qn)
             for interface in headers.interfaces.get(class_name, ())
         ]
 
-    def _get_current_class_name(self, module_qn: str) -> str | None:
+    def get_current_class_name(self, module_qn: str) -> str | None:
         if cs.SEPARATOR_DOT not in module_qn or not (
             headers := self._java_class_headers(module_qn)
         ):

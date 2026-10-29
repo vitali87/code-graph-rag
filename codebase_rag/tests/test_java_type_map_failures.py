@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from codebase_rag import constants as cs
-from codebase_rag.parsers.java.type_inference import JavaTypeInferenceEngine
+from codebase_rag.parsers.java.variable_analyzer import JavaVariableAnalyzer
 from codebase_rag.tests.conftest import create_and_run_updater, recorded_edges
 from codebase_rag.types_defs import ASTNode
 
@@ -45,10 +45,10 @@ def test_a_failing_pass_is_recorded_against_its_caller(
     mock_ingestor: MagicMock,
     _fail_on_swallowed_pass_errors: list[str],
 ) -> None:
-    original = JavaTypeInferenceEngine._collect_all_variable_types
+    original = JavaVariableAnalyzer._collect_all_variable_types
 
     def explode(
-        self: JavaTypeInferenceEngine,
+        self: JavaVariableAnalyzer,
         scope_node: ASTNode,
         local_var_types: dict[str, str],
         module_qn: str,
@@ -61,7 +61,7 @@ def test_a_failing_pass_is_recorded_against_its_caller(
     source = temp_repo / "app" / "Main.java"
     source.parent.mkdir()
     source.write_text(_SOURCE, encoding="utf-8")
-    with patch.object(JavaTypeInferenceEngine, "_collect_all_variable_types", explode):
+    with patch.object(JavaVariableAnalyzer, "_collect_all_variable_types", explode):
         updater = create_and_run_updater(temp_repo, mock_ingestor)
 
     calls = _calls(temp_repo, mock_ingestor)

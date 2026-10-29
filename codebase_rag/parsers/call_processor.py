@@ -6678,8 +6678,8 @@ class CallProcessor:
         # primary edge, which the caller emits after the argument passes;
         # the edge label proper is scoped to the siblings, so the argument
         # references emitted in between keep their own.
-        engine = self._resolver.type_inference.java_type_inference
-        ties = engine.java_overload_ties(
+        java = self._resolver.type_inference.java_type_inference
+        ties = java.method_resolver.java_overload_ties(
             call_node, callee_qn, ctx.local_var_types, ctx.module_qn
         )
         if not ties:
@@ -7871,8 +7871,8 @@ class CallProcessor:
         if parts.method_name is None:
             self._ingest_java_constructor_reference(ctx, ref_node, parts.receiver)
             return
-        engine = self._resolver.type_inference.java_type_inference
-        targets = engine.java_method_reference_targets(
+        java = self._resolver.type_inference.java_type_inference
+        targets = java.method_resolver.java_method_reference_targets(
             parts.receiver, parts.method_name, ctx.local_var_types, ctx.module_qn
         )
         registry = self._resolver.function_registry

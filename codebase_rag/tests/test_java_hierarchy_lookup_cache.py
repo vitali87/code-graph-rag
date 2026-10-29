@@ -31,6 +31,7 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.definition_facts import DefinitionFacts
 from codebase_rag.parsers.import_processor import ImportProcessor
 from codebase_rag.parsers.java.type_inference import JavaTypeInferenceEngine
+from codebase_rag.parsers.java.type_resolver import JavaTypeResolver
 from codebase_rag.parsers.java.utils import (
     get_class_context_from_qn,
     get_root_node_from_module_qn,
@@ -48,9 +49,9 @@ tree_sitter_java = pytest.importorskip("tree_sitter_java")
 _CALLS = cs.RelationshipType.CALLS.value
 _LookupAnswer = str | list[str] | None
 _HIERARCHY_LOOKUPS = (
-    "_get_superclass_name",
-    "_get_implemented_interfaces",
-    "_get_current_class_name",
+    "get_superclass_name",
+    "get_implemented_interfaces",
+    "get_current_class_name",
 )
 
 
@@ -118,18 +119,16 @@ def _count_hierarchy_walks(monkeypatch: pytest.MonkeyPatch) -> _WalkCounter:
     monkeypatch.setattr(BoundedASTCache, "load", counting_load)
     for name in _HIERARCHY_LOOKUPS:
         monkeypatch.setattr(
-            JavaTypeInferenceEngine,
-            name,
-            _counted(getattr(JavaTypeInferenceEngine, name), counter),
+            JavaTypeResolver, name, _counted(getattr(JavaTypeResolver, name), counter)
         )
     return counter
 
 
 def _counted(
-    lookup: Callable[[JavaTypeInferenceEngine, str], _LookupAnswer],
+    lookup: Callable[[JavaTypeResolver, str], _LookupAnswer],
     counter: _WalkCounter,
-) -> Callable[[JavaTypeInferenceEngine, str], _LookupAnswer]:
-    def counted(self: JavaTypeInferenceEngine, qn: str) -> _LookupAnswer:
+) -> Callable[[JavaTypeResolver, str], _LookupAnswer]:
+    def counted(self: JavaTypeResolver, qn: str) -> _LookupAnswer:
         counter.lookups += 1
         counter.depth += 1
         try:
@@ -285,7 +284,7 @@ def _legacy_type_name(parent_node: Node) -> str | None:
 
 
 def _legacy_find_superclass(
-    engine: JavaTypeInferenceEngine, node: Node, target: str, module_qn: str
+    resolver: JavaTypeResolver, node: Node, target: str, module_qn: str
 ) -> str | None:
     if node.type == cs.TS_CLASS_DECLARATION:
         if (name_node := node.child_by_field_name(cs.FIELD_NAME)) and safe_decode_text(
@@ -293,26 +292,26 @@ def _legacy_find_superclass(
         ) == target:
             if superclass_node := node.child_by_field_name(cs.FIELD_SUPERCLASS):
                 if superclass_name := _legacy_type_name(superclass_node):
-                    return engine._resolve_java_type_name(superclass_name, module_qn)
+                    return resolver.resolve_java_type_name(superclass_name, module_qn)
     for child in node.children:
-        if result := _legacy_find_superclass(engine, child, target, module_qn):
+        if result := _legacy_find_superclass(resolver, child, target, module_qn):
             return result
     return None
 
 
 def _legacy_interface_names(
-    engine: JavaTypeInferenceEngine, node: Node, names: list[str], module_qn: str
+    resolver: JavaTypeResolver, node: Node, names: list[str], module_qn: str
 ) -> None:
     for child in node.children:
         if child.type == cs.TS_TYPE_IDENTIFIER:
             if interface_name := safe_decode_text(child):
-                names.append(engine._resolve_java_type_name(interface_name, module_qn))
+                names.append(resolver.resolve_java_type_name(interface_name, module_qn))
         elif child.children:
-            _legacy_interface_names(engine, child, names, module_qn)
+            _legacy_interface_names(resolver, child, names, module_qn)
 
 
 def _legacy_find_interfaces(
-    engine: JavaTypeInferenceEngine, node: Node, target: str, module_qn: str
+    resolver: JavaTypeResolver, node: Node, target: str, module_qn: str
 ) -> list[str]:
     if node.type == cs.TS_CLASS_DECLARATION:
         if (name_node := node.child_by_field_name(cs.FIELD_NAME)) and safe_decode_text(
@@ -320,10 +319,10 @@ def _legacy_find_interfaces(
         ) == target:
             if interfaces_node := node.child_by_field_name(cs.FIELD_INTERFACES):
                 names: list[str] = []
-                _legacy_interface_names(engine, interfaces_node, names, module_qn)
+                _legacy_interface_names(resolver, interfaces_node, names, module_qn)
                 return names
     for child in node.children:
-        if result := _legacy_find_interfaces(engine, child, target, module_qn):
+        if result := _legacy_find_interfaces(resolver, child, target, module_qn):
             return result
     return []
 
@@ -342,7 +341,7 @@ def _legacy_type_names(node: Node, names: list[str]) -> None:
         _legacy_type_names(child, names)
 
 
-def _legacy_superclass_name(self: JavaTypeInferenceEngine, class_qn: str) -> str | None:
+def _legacy_superclass_name(self: JavaTypeResolver, class_qn: str) -> str | None:
     ctx = get_class_context_from_qn(
         class_qn, self.module_qn_to_file_path, self.ast_cache
     )
@@ -353,9 +352,7 @@ def _legacy_superclass_name(self: JavaTypeInferenceEngine, class_qn: str) -> str
     )
 
 
-def _legacy_implemented_interfaces(
-    self: JavaTypeInferenceEngine, class_qn: str
-) -> list[str]:
+def _legacy_implemented_interfaces(self: JavaTypeResolver, class_qn: str) -> list[str]:
     parts = class_qn.split(cs.SEPARATOR_DOT)
     if len(parts) < 2:
         return []
@@ -366,9 +363,7 @@ def _legacy_implemented_interfaces(
     return _legacy_find_interfaces(self, entry[0], parts[-1], module_qn)
 
 
-def _legacy_current_class_name(
-    self: JavaTypeInferenceEngine, module_qn: str
-) -> str | None:
+def _legacy_current_class_name(self: JavaTypeResolver, module_qn: str) -> str | None:
     root_node = get_root_node_from_module_qn(
         module_qn, self.module_qn_to_file_path, self.ast_cache
     )
@@ -381,15 +376,13 @@ def _legacy_current_class_name(
 
 def _use_legacy_walkers(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        JavaTypeInferenceEngine, "_get_superclass_name", _legacy_superclass_name
+        JavaTypeResolver, "get_superclass_name", _legacy_superclass_name
     )
     monkeypatch.setattr(
-        JavaTypeInferenceEngine,
-        "_get_implemented_interfaces",
-        _legacy_implemented_interfaces,
+        JavaTypeResolver, "get_implemented_interfaces", _legacy_implemented_interfaces
     )
     monkeypatch.setattr(
-        JavaTypeInferenceEngine, "_get_current_class_name", _legacy_current_class_name
+        JavaTypeResolver, "get_current_class_name", _legacy_current_class_name
     )
 
 
@@ -694,44 +687,44 @@ class TestIndexAnswersLikeTheWalkers:
     @pytest.mark.parametrize("name", _TRICKY_NAMES)
     def test_superclass_and_interfaces(self, name: str) -> None:
         cache = _TreeCache(_java_parser().parse(_TRICKY).root_node)
-        engine = _engine(cache)
+        resolver = _engine(cache).type_resolver
         class_qn = f"{_MODULE}.{name}"
 
-        assert engine._get_superclass_name(class_qn) == _legacy_superclass_name(
-            engine, class_qn
+        assert resolver.get_superclass_name(class_qn) == _legacy_superclass_name(
+            resolver, class_qn
         )
-        assert engine._get_implemented_interfaces(
+        assert resolver.get_implemented_interfaces(
             class_qn
-        ) == _legacy_implemented_interfaces(engine, class_qn)
+        ) == _legacy_implemented_interfaces(resolver, class_qn)
 
     def test_current_class_name(self) -> None:
         cache = _TreeCache(_java_parser().parse(_TRICKY).root_node)
-        engine = _engine(cache)
+        resolver = _engine(cache).type_resolver
 
-        assert engine._get_current_class_name(_MODULE) == _legacy_current_class_name(
-            engine, _MODULE
+        assert resolver.get_current_class_name(_MODULE) == _legacy_current_class_name(
+            resolver, _MODULE
         )
 
     def test_unmapped_and_short_names_answer_nothing(self) -> None:
         cache = _TreeCache(_java_parser().parse(_TRICKY).root_node)
-        engine = _engine(cache)
+        resolver = _engine(cache).type_resolver
 
-        assert engine._get_superclass_name("Plain") is None
-        assert engine._get_implemented_interfaces("Plain") == []
-        assert engine._get_current_class_name("example") is None
-        assert engine._get_superclass_name("proj.com.example.Other.Plain") is None
-        assert engine._get_implemented_interfaces("proj.Nowhere.Plain") == []
+        assert resolver.get_superclass_name("Plain") is None
+        assert resolver.get_implemented_interfaces("Plain") == []
+        assert resolver.get_current_class_name("example") is None
+        assert resolver.get_superclass_name("proj.com.example.Other.Plain") is None
+        assert resolver.get_implemented_interfaces("proj.Nowhere.Plain") == []
         assert cache.loads == 0
 
     def test_one_load_serves_every_lookup_in_the_file(self) -> None:
         cache = _TreeCache(_java_parser().parse(_TRICKY).root_node)
-        engine = _engine(cache)
+        resolver = _engine(cache).type_resolver
 
         for _ in range(3):
             for name in _TRICKY_NAMES:
-                engine._get_superclass_name(f"{_MODULE}.{name}")
-                engine._get_implemented_interfaces(f"{_MODULE}.{name}")
-            engine._get_current_class_name(_MODULE)
+                resolver.get_superclass_name(f"{_MODULE}.{name}")
+                resolver.get_implemented_interfaces(f"{_MODULE}.{name}")
+            resolver.get_current_class_name(_MODULE)
 
         assert cache.loads == 1
 
@@ -760,18 +753,18 @@ class TestIndexAnswersLikeTheWalkers:
                 declared("Gap", ["Cloneable"]),
             ],
         )
-        engine = _engine(_TreeCache(root))
+        resolver = _engine(_TreeCache(root)).type_resolver
         class_qn = f"{_MODULE}.Gap"
 
-        assert engine._get_implemented_interfaces(class_qn) == ["Cloneable"]
-        assert _legacy_implemented_interfaces(engine, class_qn) == ["Cloneable"]
+        assert resolver.get_implemented_interfaces(class_qn) == ["Cloneable"]
+        assert _legacy_implemented_interfaces(resolver, class_qn) == ["Cloneable"]
 
     def test_memo_holds_no_tree_nodes(self) -> None:
         # A memo holding nodes would pin every tree the bounded AST cache
         # evicts for the rest of the pass.
         cache = _TreeCache(_java_parser().parse(_TRICKY).root_node)
         engine = _engine(cache)
-        engine._get_current_class_name(_MODULE)
+        engine.type_resolver.get_current_class_name(_MODULE)
 
         (headers,) = engine._class_headers.values()
         values = [
@@ -789,21 +782,22 @@ class TestMemoLastsOnePass:
     def test_reset_reads_the_reparsed_tree(self) -> None:
         cache = _TreeCache(_java_parser().parse(b"class A extends B {}").root_node)
         engine = _engine(cache)
+        resolver = engine.type_resolver
         class_qn = f"{_MODULE}.A"
-        assert engine._get_superclass_name(class_qn) == "B"
+        assert resolver.get_superclass_name(class_qn) == "B"
 
         cache.root = (
             _java_parser().parse(b"class A extends C implements D {}").root_node
         )
         # Within a pass the tree cannot change, so the first answer stands...
-        assert engine._get_superclass_name(class_qn) == "B"
-        assert engine._get_implemented_interfaces(class_qn) == []
+        assert resolver.get_superclass_name(class_qn) == "B"
+        assert resolver.get_implemented_interfaces(class_qn) == []
 
         engine.reset_resolution_memos()
 
         # ...and the next pass reads the tree it was handed.
-        assert engine._get_superclass_name(class_qn) == "C"
-        assert engine._get_implemented_interfaces(class_qn) == ["D"]
+        assert resolver.get_superclass_name(class_qn) == "C"
+        assert resolver.get_implemented_interfaces(class_qn) == ["D"]
         assert cache.loads == 2
 
 

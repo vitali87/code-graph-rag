@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from abc import abstractmethod
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 from functools import cached_property
 from typing import TYPE_CHECKING
 
@@ -19,12 +18,17 @@ from ...types_defs import (
 )
 from ..definition_facts import DefinitionFacts
 from ..utils import method_signature_arity, module_qn_for_entity
-from .type_resolver import JAVA_TYPE_DECL_NODE_TYPES
+from .type_resolver import (
+    JAVA_TYPE_DECL_NODE_TYPES,
+    module_qn_to_java_fqn,
+    rank_module_candidates,
+)
 from .utils import (
     extract_class_info,
     extract_method_call_info,
     extract_method_info,
     extract_package_name,
+    find_containing_java_class,
     get_class_context_from_qn,
     java_written_supertype_count,
     method_reference_receiver_text,
@@ -39,6 +43,8 @@ if TYPE_CHECKING:
         SimpleNameLookup,
     )
     from ..import_processor import ImportProcessor
+    from .type_resolver import JavaTypeResolver
+    from .variable_analyzer import JavaVariableAnalyzer
 
 # The registry kinds a Java type declaration takes; records and annotation
 # types register as CLASS.
@@ -601,66 +607,106 @@ def _java_member_signature(method_name: str, parameters: list[str]) -> str:
     return f"{method_name}({cs.CHAR_COMMA.join(parameters)})"
 
 
-class JavaMethodResolverMixin:
-    __slots__ = ()
-    import_processor: ImportProcessor
-    function_registry: FunctionRegistryTrieProtocol
-    project_name: str
-    module_qn_to_file_path: dict[str, Path]
-    ast_cache: ASTCacheProtocol
-    facts: DefinitionFacts
-    simple_name_lookup: SimpleNameLookup
-    _fqn_to_module_qn: dict[str, list[str]]
-    # The overload family each pick of the call being resolved was weighed
-    # in, by the picked method: the call's ties come from the same family.
-    _family_picks: dict[str, list[tuple[str, str]]]
+def _is_matching_method(member: str, method_name: str) -> bool:
+    return (
+        member == method_name
+        or member.startswith(f"{method_name}{cs.CHAR_PAREN_OPEN}")
+        or member == f"{method_name}{cs.EMPTY_PARENS}"
+    )
 
-    @abstractmethod
-    def _resolve_java_type_name(self, type_name: str, module_qn: str) -> str: ...
 
-    @abstractmethod
-    def _infer_java_type_from_expression(
+def _heuristic_method_return_type(method_call: str) -> str | None:
+    method_lower = method_call.lower()
+    if cs.JAVA_GETTER_PATTERN in method_lower and (
+        getter_type := _java_getter_return_type(method_lower)
+    ):
+        return getter_type
+
+    if (
+        cs.JAVA_CREATE_PATTERN in method_lower or cs.JAVA_NEW_PATTERN in method_lower
+    ) and (factory_type := _java_factory_return_type(method_call)):
+        return factory_type
+
+    if cs.JAVA_IS_PATTERN in method_lower or cs.JAVA_HAS_PATTERN in method_lower:
+        return cs.JAVA_TYPE_BOOLEAN
+
+    return None
+
+
+def _has_call_receiver(call_node: ASTNode) -> bool:
+    receiver = call_node.child_by_field_name(cs.TS_FIELD_OBJECT)
+    return receiver is not None and receiver.type == cs.TS_METHOD_INVOCATION
+
+
+def _declared_method(declaration: ASTNode, method_qn: str) -> ASTNode | None:
+    # The method or constructor of a type declaration that `method_qn`
+    # names, matched by name and parameter types.
+    if (body := declaration.child_by_field_name(cs.FIELD_BODY)) is None:
+        return None
+    name = method_qn.split(cs.CHAR_PAREN_OPEN, 1)[0].rpartition(cs.SEPARATOR_DOT)[2]
+    params = _java_param_type_names(method_qn)
+    members = list(body.children)
+    members.extend(
+        member
+        for child in body.children
+        if child.type == cs.TS_JAVA_ENUM_BODY_DECLARATIONS
+        for member in child.children
+    )
+    for member in members:
+        if member.type not in cs.JAVA_METHOD_NODE_TYPES:
+            continue
+        info = extract_method_info(member)
+        if (
+            info[cs.KEY_NAME] == name
+            and [_simple_type_name(text) for text in info[cs.KEY_PARAMETERS]] == params
+        ):
+            return member
+    return None
+
+
+class JavaMethodResolver:
+    __slots__ = (
+        "import_processor",
+        "function_registry",
+        "project_name",
+        "module_qn_to_file_path",
+        "ast_cache",
+        "facts",
+        "simple_name_lookup",
+        "type_resolver",
+        "variable_analyzer",
+        "_fqn_to_module_qn",
+        "_family_picks",
+    )
+
+    def __init__(
         self,
-        expr_node: ASTNode,
-        module_qn: str,
-        local_var_types: dict[str, str] | None = None,
-    ) -> str | None: ...
-
-    @abstractmethod
-    def _imported_class_qn(self, target: str, type_name: str) -> str: ...
-
-    @abstractmethod
-    def _rank_module_candidates(
-        self, candidates: list[str], class_qn: str, current_module_qn: str | None
-    ) -> list[str]: ...
-
-    @abstractmethod
-    def _module_qn_to_java_fqn(self, module_qn: str) -> str | None: ...
-
-    @abstractmethod
-    def _find_registry_entries_under(
-        self, prefix: str
-    ) -> Iterable[tuple[str, str]]: ...
-
-    @abstractmethod
-    def _get_superclass_name(self, class_qn: str) -> str | None: ...
-
-    @abstractmethod
-    def _get_implemented_interfaces(self, class_qn: str) -> list[str]: ...
-
-    @abstractmethod
-    def _get_current_class_name(self, module_qn: str) -> str | None: ...
-
-    @abstractmethod
-    def _lookup_variable_type(self, var_name: str, module_qn: str) -> str | None: ...
-
-    @abstractmethod
-    def _lookup_java_field_type(
-        self, class_type: str, field_name: str, module_qn: str
-    ) -> str | None: ...
-
-    @abstractmethod
-    def _find_containing_java_class(self, node: ASTNode) -> ASTNode | None: ...
+        import_processor: ImportProcessor,
+        function_registry: FunctionRegistryTrieProtocol,
+        project_name: str,
+        module_qn_to_file_path: dict[str, Path],
+        ast_cache: ASTCacheProtocol,
+        facts: DefinitionFacts,
+        simple_name_lookup: SimpleNameLookup,
+        fqn_to_module_qn: dict[str, list[str]],
+        family_picks: dict[str, list[tuple[str, str]]],
+        type_resolver: JavaTypeResolver,
+        variable_analyzer: JavaVariableAnalyzer,
+    ) -> None:
+        self.import_processor = import_processor
+        self.function_registry = function_registry
+        self.project_name = project_name
+        self.module_qn_to_file_path = module_qn_to_file_path
+        self.ast_cache = ast_cache
+        self.facts = facts
+        self.simple_name_lookup = simple_name_lookup
+        self.type_resolver = type_resolver
+        self.variable_analyzer = variable_analyzer
+        self._fqn_to_module_qn = fqn_to_module_qn
+        # The overload family each pick of the call being resolved was weighed
+        # in, by the picked method: the call's ties come from the same family.
+        # Owned by the engine, which empties it before each call.
+        self._family_picks = family_picks
 
     def _java_this_type(
         self, context_node: ASTNode | None, module_qn: str
@@ -731,7 +777,9 @@ class JavaMethodResolverMixin:
 
         import_map = self.import_processor.import_mapping.get(module_qn)
         if import_map is not None and object_ref in import_map:
-            return self._imported_class_qn(import_map[object_ref], object_ref)
+            return self.type_resolver.imported_class_qn(
+                import_map[object_ref], object_ref
+            )
 
         simple_class_qn = f"{module_qn}{cs.SEPARATOR_DOT}{object_ref}"
         if (
@@ -744,7 +792,7 @@ class JavaMethodResolverMixin:
         # (`Checker.INSTANCE...`, gson's `AccessChecker.INSTANCE`) has qn
         # `module.Outer.Nested`, which the direct check above misses; use the
         # nested-aware type resolver so the static-field access chain resolves.
-        nested_qn = self._resolve_java_type_name(object_ref, module_qn)
+        nested_qn = self.type_resolver.resolve_java_type_name(object_ref, module_qn)
         if nested_qn != object_ref and self.function_registry.get(nested_qn) in (
             cs.NodeLabel.CLASS,
             cs.NodeLabel.INTERFACE,
@@ -801,11 +849,11 @@ class JavaMethodResolverMixin:
     ) -> str | None:
         if context_node is None:
             return None
-        if not (class_node := self._find_containing_java_class(context_node)):
+        if not (class_node := find_containing_java_class(context_node)):
             return None
         if not (class_name := extract_class_info(class_node).get(cs.FIELD_NAME)):
             return None
-        return self._resolve_java_type_name(class_name, module_qn)
+        return self.type_resolver.resolve_java_type_name(class_name, module_qn)
 
     def _enclosing_anon_base_qn(
         self, context_node: ASTNode | None, module_qn: str
@@ -838,7 +886,7 @@ class JavaMethodResolverMixin:
                     base = type_node.text.decode(cs.ENCODING_UTF8).split(
                         cs.CHAR_ANGLE_OPEN, 1
                     )[0]
-                    return self._resolve_java_type_name(base, module_qn)
+                    return self.type_resolver.resolve_java_type_name(base, module_qn)
                 return None
             current = current.parent
         return None
@@ -861,7 +909,7 @@ class JavaMethodResolverMixin:
             return None
 
         for field_name in parts[1:]:
-            next_type = self._lookup_java_field_type(
+            next_type = self.variable_analyzer.lookup_java_field_type(
                 current_type, field_name, module_qn
             )
             if not next_type:
@@ -1075,18 +1123,18 @@ class JavaMethodResolverMixin:
             visited.add(owner)
             static = self._static_method_signatures(owner, method_name)
             prefix = f"{owner}{cs.SEPARATOR_DOT}"
-            for qn, method_type in self._find_registry_entries_under(owner):
+            for qn, method_type in self.type_resolver.find_registry_entries_under(
+                owner
+            ):
                 signature = qn.removeprefix(prefix)
-                if signature == qn or not self._is_matching_method(
-                    signature, method_name
-                ):
+                if signature == qn or not _is_matching_method(signature, method_name):
                     continue
                 if signature not in declared and (
                     static is None or signature in static
                 ):
                     found.append((method_type, qn))
                 declared.add(signature)
-            next_qn = self._get_superclass_name(owner)
+            next_qn = self.type_resolver.get_superclass_name(owner)
         return found
 
     def _registered_owner_qn(
@@ -1165,7 +1213,7 @@ class JavaMethodResolverMixin:
         # layout, where an indexed suffix (foo.Foo of com/foo/Foo.java) is
         # no evidence of the package at all.
         if (root := self._module_root(module_qn)) is None:
-            return self._module_qn_to_java_fqn(module_qn)
+            return module_qn_to_java_fqn(module_qn)
         file_name = module_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
         package = next(
             (
@@ -1206,7 +1254,7 @@ class JavaMethodResolverMixin:
                 # import is the imported file.
                 owners = [
                     owner
-                    for owner in self._rank_module_candidates(
+                    for owner in rank_module_candidates(
                         self._fqn_to_module_qn.get(file_qn, []), file_qn, module_qn
                     )
                     if self._declared_java_fqn(owner) == file_qn
@@ -1226,7 +1274,9 @@ class JavaMethodResolverMixin:
         arg_count: int | None = None,
         arg_types: tuple[str | None, ...] = (),
     ) -> tuple[str, str] | None:
-        resolved_type = self._resolve_java_type_name(object_type, module_qn)
+        resolved_type = self.type_resolver.resolve_java_type_name(
+            object_type, module_qn
+        )
 
         # The family needs the receiver's registered class, which a
         # package-private type in a sibling file only has through the package.
@@ -1291,14 +1341,14 @@ class JavaMethodResolverMixin:
         # Every overload of `method_name` declared directly on `class_qn`; a
         # nested class's member carries an extra segment and never matches.
         matches: list[tuple[str, str]] = []
-        for qn, method_type in self._find_registry_entries_under(class_qn):
+        for qn, method_type in self.type_resolver.find_registry_entries_under(class_qn):
             if qn == class_qn:
                 continue
             suffix = qn[len(class_qn) :]
             if not suffix.startswith(cs.SEPARATOR_DOT):
                 continue
             member = suffix[1:]
-            if self._is_matching_method(member, method_name):
+            if _is_matching_method(member, method_name):
                 matches.append((method_type, qn))
         return matches
 
@@ -1313,7 +1363,7 @@ class JavaMethodResolverMixin:
         # path cannot type (a lambda parameter, the JDK's `System.out`) binds
         # nothing instead of a same-named first-party method found by name.
         if receiver.type in (cs.TS_METHOD_INVOCATION, cs.TS_OBJECT_CREATION_EXPRESSION):
-            receiver_type = self._infer_java_type_from_expression(
+            receiver_type = self.variable_analyzer.infer_java_type_from_expression(
                 receiver, module_qn, local_var_types
             )
         elif receiver_text := method_reference_receiver_text(receiver):
@@ -1666,7 +1716,7 @@ class JavaMethodResolverMixin:
         ):
             return frozenset()
         names: set[str] = set()
-        if (method := self._declared_method(scope, method_qn)) is not None:
+        if (method := _declared_method(scope, method_qn)) is not None:
             names.update(extract_method_info(method)[cs.KEY_TYPE_PARAMETERS])
         while scope is not None:
             if scope.type in cs.JAVA_CLASS_NODE_TYPES:
@@ -1674,38 +1724,11 @@ class JavaMethodResolverMixin:
             scope = scope.parent
         return frozenset(names)
 
-    @staticmethod
-    def _declared_method(declaration: ASTNode, method_qn: str) -> ASTNode | None:
-        # The method or constructor of a type declaration that `method_qn`
-        # names, matched by name and parameter types.
-        if (body := declaration.child_by_field_name(cs.FIELD_BODY)) is None:
-            return None
-        name = method_qn.split(cs.CHAR_PAREN_OPEN, 1)[0].rpartition(cs.SEPARATOR_DOT)[2]
-        params = _java_param_type_names(method_qn)
-        members = list(body.children)
-        members.extend(
-            member
-            for child in body.children
-            if child.type == cs.TS_JAVA_ENUM_BODY_DECLARATIONS
-            for member in child.children
-        )
-        for member in members:
-            if member.type not in cs.JAVA_METHOD_NODE_TYPES:
-                continue
-            info = extract_method_info(member)
-            if (
-                info[cs.KEY_NAME] == name
-                and [_simple_type_name(text) for text in info[cs.KEY_PARAMETERS]]
-                == params
-            ):
-                return member
-        return None
-
     def _java_type_ref(self, type_name: str, module_qn: str) -> str:
         # The registered project type `type_name` names from `module_qn`, or
         # the name itself for a JDK or other external type.
         base = type_name.split(cs.CHAR_ANGLE_OPEN, 1)[0].strip()
-        resolved = self._resolve_java_type_name(base, module_qn)
+        resolved = self.type_resolver.resolve_java_type_name(base, module_qn)
         if self.function_registry.get(resolved) in _JAVA_TYPE_NODE_TYPES:
             return resolved
         if resolved == base and (
@@ -1770,7 +1793,7 @@ class JavaMethodResolverMixin:
         ] or [class_qn]
 
         candidate_modules = self._collect_candidate_modules(lookup_keys)
-        ranked_candidates = self._rank_module_candidates(
+        ranked_candidates = rank_module_candidates(
             candidate_modules, class_qn, current_module_qn
         )
 
@@ -1798,13 +1821,6 @@ class JavaMethodResolverMixin:
 
         return candidate_modules
 
-    def _is_matching_method(self, member: str, method_name: str) -> bool:
-        return (
-            member == method_name
-            or member.startswith(f"{method_name}{cs.CHAR_PAREN_OPEN}")
-            or member == f"{method_name}{cs.EMPTY_PARENS}"
-        )
-
     @recursion_guard(
         key_func=lambda self, class_qn, *_, **__: class_qn,
         guard_name=cs.GUARD_INHERITED_METHOD,
@@ -1817,7 +1833,7 @@ class JavaMethodResolverMixin:
         arg_count: int | None = None,
         arg_types: tuple[str | None, ...] = (),
     ) -> tuple[str, str] | None:
-        if not (superclass_qn := self._get_superclass_name(class_qn)):
+        if not (superclass_qn := self.type_resolver.get_superclass_name(class_qn)):
             return None
 
         if method_result := self._find_method_with_any_signature(
@@ -1837,7 +1853,7 @@ class JavaMethodResolverMixin:
         arg_count: int | None = None,
         arg_types: tuple[str | None, ...] = (),
     ) -> tuple[str, str] | None:
-        for interface_qn in self._get_implemented_interfaces(class_qn):
+        for interface_qn in self.type_resolver.get_implemented_interfaces(class_qn):
             if method_result := self._find_method_with_any_signature(
                 interface_qn, method_name, module_qn, arg_count, arg_types
             ):
@@ -1845,7 +1861,7 @@ class JavaMethodResolverMixin:
 
         return None
 
-    def _resolve_java_method_return_type(
+    def resolve_java_method_return_type(
         self, method_call: str, module_qn: str
     ) -> str | None:
         if not method_call:
@@ -1854,7 +1870,9 @@ class JavaMethodResolverMixin:
         parts = method_call.split(cs.SEPARATOR_DOT)
         if len(parts) < 2:
             method_name = method_call
-            if (current_class_qn := self._get_current_class_name(module_qn)) and (
+            if (
+                current_class_qn := self.type_resolver.get_current_class_name(module_qn)
+            ) and (
                 result := self._find_method_return_type(current_class_qn, method_name)
             ):
                 return result
@@ -1865,14 +1883,16 @@ class JavaMethodResolverMixin:
             if object_part in self.function_registry:
                 return self._find_method_return_type(object_part, method_name)
 
-            if object_type := self._lookup_variable_type(object_part, module_qn):
+            if object_type := self.variable_analyzer.lookup_variable_type(
+                object_part, module_qn
+            ):
                 return self._find_method_return_type(object_type, method_name)
 
             potential_class_qn = f"{module_qn}{cs.SEPARATOR_DOT}{object_part}"
             if potential_class_qn in self.function_registry:
                 return self._find_method_return_type(potential_class_qn, method_name)
 
-        return self._heuristic_method_return_type(method_call)
+        return _heuristic_method_return_type(method_call)
 
     def _find_method_return_type(
         self,
@@ -1945,25 +1965,7 @@ class JavaMethodResolverMixin:
         if (type_node := chosen.child_by_field_name(cs.KEY_TYPE)) and (
             return_type := safe_decode_text(type_node)
         ):
-            return self._resolve_java_type_name(return_type, module_qn)
-        return None
-
-    def _heuristic_method_return_type(self, method_call: str) -> str | None:
-        method_lower = method_call.lower()
-        if cs.JAVA_GETTER_PATTERN in method_lower and (
-            getter_type := _java_getter_return_type(method_lower)
-        ):
-            return getter_type
-
-        if (
-            cs.JAVA_CREATE_PATTERN in method_lower
-            or cs.JAVA_NEW_PATTERN in method_lower
-        ) and (factory_type := _java_factory_return_type(method_call)):
-            return factory_type
-
-        if cs.JAVA_IS_PATTERN in method_lower or cs.JAVA_HAS_PATTERN in method_lower:
-            return cs.JAVA_TYPE_BOOLEAN
-
+            return self.type_resolver.resolve_java_type_name(return_type, module_qn)
         return None
 
     def _infer_arg_types(
@@ -1985,7 +1987,7 @@ class JavaMethodResolverMixin:
                 # or a call carries it in the expression: the shared inference
                 # types all of them (issue #1344).
                 arg_types.append(
-                    self._infer_java_type_from_expression(
+                    self.variable_analyzer.infer_java_type_from_expression(
                         child, module_qn, local_var_types
                     )
                 )
@@ -1993,14 +1995,9 @@ class JavaMethodResolverMixin:
             name = safe_decode_text(child)
             var_type = local_var_types.get(name) if name else None
             if not var_type and name:
-                var_type = self._lookup_variable_type(name, module_qn)
+                var_type = self.variable_analyzer.lookup_variable_type(name, module_qn)
             arg_types.append(var_type or None)
         return tuple(arg_types)
-
-    @staticmethod
-    def _has_call_receiver(call_node: ASTNode) -> bool:
-        receiver = call_node.child_by_field_name(cs.TS_FIELD_OBJECT)
-        return receiver is not None and receiver.type == cs.TS_METHOD_INVOCATION
 
     def _chained_receiver_type(
         self,
@@ -2013,14 +2010,14 @@ class JavaMethodResolverMixin:
             return None
         # Recursion walks the chain leftwards; the leftmost receiver is an
         # identifier or field access, which the existing paths already type.
-        resolved = self._do_resolve_java_method_call(
+        resolved = self.do_resolve_java_method_call(
             receiver, local_var_types, module_qn
         )
         if not resolved:
             return None
-        return self._declared_return_type_of(resolved[1])
+        return self.declared_return_type_of(resolved[1])
 
-    def _declared_return_type_of(self, method_qn: str) -> str | None:
+    def declared_return_type_of(self, method_qn: str) -> str | None:
         open_idx = method_qn.find(cs.CHAR_PAREN_OPEN)
         unsignatured = method_qn[:open_idx] if open_idx >= 0 else method_qn
         class_qn, _, method_name = unsignatured.rpartition(cs.SEPARATOR_DOT)
@@ -2037,7 +2034,7 @@ class JavaMethodResolverMixin:
         max_depth=cs.JAVA_MAX_INFERENCE_DEPTH,
         guard_name=cs.GUARD_JAVA_INFERENCE_DEPTH,
     )
-    def _do_resolve_java_method_call(
+    def do_resolve_java_method_call(
         self,
         call_node: ASTNode,
         local_var_types: dict[str, str],
@@ -2066,7 +2063,7 @@ class JavaMethodResolverMixin:
         # which carries no name to look up. Typing it means resolving the inner
         # call first and reading its DECLARED return type -- the same thing the
         # compiler does, and what makes `return this;` builders resolve.
-        if self._has_call_receiver(call_node):
+        if _has_call_receiver(call_node):
             if chained_type := self._chained_receiver_type(
                 call_node, local_var_types, module_qn
             ):

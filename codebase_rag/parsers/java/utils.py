@@ -67,6 +67,21 @@ def get_class_context_from_qn(
     return ClassContext(module_qn, target_class_name, root_node)
 
 
+def find_containing_java_class(node: ASTNode) -> ASTNode | None:
+    current = node.parent
+    while current:
+        match current.type:
+            case (
+                cs.TS_CLASS_DECLARATION
+                | cs.TS_INTERFACE_DECLARATION
+                | cs.TS_ENUM_DECLARATION
+                | cs.TS_RECORD_DECLARATION
+            ):
+                return current
+        current = current.parent
+    return None
+
+
 def extract_package_name(package_node: ASTNode) -> str | None:
     if package_node.type != cs.TS_PACKAGE_DECLARATION:
         return None
