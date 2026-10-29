@@ -19,7 +19,7 @@ a trailing comment on one file (the bytes and hash change, the AST does not)
 and re-ingests it, reporting p50 and p95 over the iterations. For comparison
 it then bumps the file's mtime and runs the whole-tree incremental path
 (`GraphUpdater.run()` behind the hash cache, what `update_repository` does)
-for the same edit. Both run against the in-memory `_StatefulIngestor`, so the
+for the same edit. Both run against the in-memory `StatefulIngestor`, so the
 numbers cover parsing, scoped call resolution and graph construction and
 exclude Memgraph round-trips by construction. Logging is at INFO, as in the
 MCP server.
