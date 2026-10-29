@@ -10,7 +10,7 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag import graph_updater as gu
-from codebase_rag.parsers.frontends import csharp as csharp_fe
+from codebase_rag.parsers.csharp import semantic_frontend as csharp_fe
 from codebase_rag.parsers.frontends.protocol import SemanticFacts
 from codebase_rag.tests.conftest import get_relationships, run_updater
 

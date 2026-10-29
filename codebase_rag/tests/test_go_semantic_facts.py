@@ -53,7 +53,7 @@ def _has(pairs: set[tuple[str, str]], caller_suffix: str, callee_suffix: str) ->
 def _gotypes(monkeypatch: pytest.MonkeyPatch, facts: SemanticFacts) -> None:
     # The Go frontend runs behind the LanguageFrontend registry, so patch the
     # toolchain gate and the runner where the ADAPTER binds them.
-    from codebase_rag.parsers.frontends import go as go_fe
+    from codebase_rag.parsers.go import semantic_frontend as go_fe
 
     monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.GOTYPES)
     monkeypatch.setattr(go_fe, "go_frontend_available", lambda: True)
@@ -207,7 +207,7 @@ def test_auto_without_toolchain_matches_frontend_off(
         (r / "go.mod").write_text("module example.com/inv\n\ngo 1.23\n")
         (r / "sample.go").write_text(_AMBIGUOUS_SRC, encoding="utf-8")
 
-    from codebase_rag.parsers.frontends import go as go_fe
+    from codebase_rag.parsers.go import semantic_frontend as go_fe
 
     monkeypatch.setattr(go_fe, "go_frontend_available", lambda: False)
     monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.AUTO)

@@ -8,9 +8,9 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from ...constants.languages import SupportedLanguage
-from ..python.frontend import python_frontend_available, run_python_frontend
-from .protocol import SemanticFacts
-from .registry import register_frontend
+from ..frontends.protocol import SemanticFacts
+from ..frontends.registry import register_frontend
+from .frontend import python_frontend_available, run_python_frontend
 
 
 class PythonJediFrontend:

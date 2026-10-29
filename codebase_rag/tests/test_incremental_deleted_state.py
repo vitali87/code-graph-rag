@@ -18,9 +18,9 @@ from codebase_rag import constants as cs
 from codebase_rag import graph_updater as gu
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.parsers.frontends import go as go_fe
-from codebase_rag.parsers.frontends import java as java_fe
 from codebase_rag.parsers.frontends.protocol import ResolvedCallSite, SemanticFacts
+from codebase_rag.parsers.go import semantic_frontend as go_fe
+from codebase_rag.parsers.java import semantic_frontend as java_fe
 from codebase_rag.sync.checkout_state import state_file
 from evals.cgr_graph import StatefulIngestor
 

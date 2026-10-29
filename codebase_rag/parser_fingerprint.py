@@ -304,8 +304,9 @@ def _active_tools(repo_path: Path | None = None) -> dict[str, bool]:
             return True
 
     # The probes below are DELIBERATELY the same predicates the frontends use
-    # in their own `applies()` (`frontends/go.py`, `frontends/csharp.py`), so
-    # "tool active" means exactly "this frontend will run against this repo".
+    # in their own `applies()` (`go/semantic_frontend.py`,
+    # `csharp/semantic_frontend.py`), so "tool active" means exactly "this
+    # frontend will run against this repo".
     # That identity is the point, not a coincidence: a fingerprint describes
     # what produced the graph, so any divergence from the thing that produced
     # it is a bug by construction.
@@ -319,7 +320,8 @@ def _active_tools(repo_path: Path | None = None) -> dict[str, bool]:
     #
     # The source-file question is already answered a layer up: the updater
     # gates on the files it actually parsed, which is why `applies()` only
-    # asks about project markers (see the comment in `frontends/python.py`).
+    # asks about project markers (see the comment in
+    # `python/semantic_frontend.py`).
     return {
         "GO_VERSION": (
             resolve_go_frontend() is not cs.GoFrontend.TREESITTER

@@ -39,11 +39,11 @@ from codebase_rag.config import (
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.csharp import frontend as csharp_frontend
-from codebase_rag.parsers.frontends.csharp import CSharpFrontend
-from codebase_rag.parsers.frontends.go import GoFrontend
-from codebase_rag.parsers.frontends.java import JavaJavacFrontend
+from codebase_rag.parsers.csharp.semantic_frontend import CSharpFrontend
 from codebase_rag.parsers.go import frontend as go_frontend
+from codebase_rag.parsers.go.semantic_frontend import GoFrontend
 from codebase_rag.parsers.java import frontend as java_frontend
+from codebase_rag.parsers.java.semantic_frontend import JavaJavacFrontend
 from codebase_rag.tests.conftest import git_env
 from codebase_rag.utils.path_utils import (
     frontend_ignored_dirs,

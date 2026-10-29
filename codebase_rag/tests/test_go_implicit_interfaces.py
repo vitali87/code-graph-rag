@@ -550,7 +550,7 @@ def _gotypes(
     call_sites: dict[tuple[str, int, int, str], ResolvedCallSite],
     implementers: tuple[str, ...],
 ) -> None:
-    from codebase_rag.parsers.frontends import go as go_fe
+    from codebase_rag.parsers.go import semantic_frontend as go_fe
 
     shape_line, shape_col = _position(SHAPES, "Shape interface")
     implements = [
@@ -1084,7 +1084,7 @@ func (b Box) Put(v Celsius) {}
 
 
 def _gotypes_facts(monkeypatch: pytest.MonkeyPatch, facts: SemanticFacts) -> None:
-    from codebase_rag.parsers.frontends import go as go_fe
+    from codebase_rag.parsers.go import semantic_frontend as go_fe
 
     monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.GOTYPES)
     monkeypatch.setattr(go_fe, "go_frontend_available", lambda: True)
@@ -1577,7 +1577,7 @@ def test_a_pair_that_changes_source_stays_an_implementer(
     # Run 1 matches Count to Getter by name (go/types failed) or proves it;
     # run 2, on the same updater, the other way round. Either way the pair
     # must survive the swap: the guessed and proven sets share one map.
-    from codebase_rag.parsers.frontends import go as go_fe
+    from codebase_rag.parsers.go import semantic_frontend as go_fe
 
     getter_line, getter_col = _position(PROVEN_GETTER, "Getter interface")
     count_line, count_col = _position(PROVEN_GETTER, "Count struct")

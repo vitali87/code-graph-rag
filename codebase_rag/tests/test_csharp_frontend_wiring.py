@@ -284,7 +284,7 @@ def test_auto_mode_runs_frontend_when_dotnet_available(
 ) -> None:
     root = temp_repo / "autoproj"
     _write_project(root)
-    from codebase_rag.parsers.frontends import csharp as csharp_fe
+    from codebase_rag.parsers.csharp import semantic_frontend as csharp_fe
 
     monkeypatch.setattr(gu.settings, "CSHARP_FRONTEND", cs.CSharpFrontend.AUTO)
     monkeypatch.setattr(csharp_fe, "csharp_frontend_available", lambda: True)
@@ -306,7 +306,7 @@ def test_auto_mode_falls_back_silently_without_dotnet(
 ) -> None:
     root = temp_repo / "autofallproj"
     _write_project(root)
-    from codebase_rag.parsers.frontends import csharp as csharp_fe
+    from codebase_rag.parsers.csharp import semantic_frontend as csharp_fe
 
     frontend_runner = MagicMock()
     monkeypatch.setattr(gu.settings, "CSHARP_FRONTEND", cs.CSharpFrontend.AUTO)

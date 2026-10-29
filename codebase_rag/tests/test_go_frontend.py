@@ -13,7 +13,6 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag.parsers.frontends.builtin import FRONTENDS
-from codebase_rag.parsers.frontends.go import GoFrontend
 from codebase_rag.parsers.frontends.protocol import (
     ImplementsPair,
     LanguageFrontend,
@@ -25,6 +24,7 @@ from codebase_rag.parsers.go.frontend import (
     find_go_module,
     run_go_frontend,
 )
+from codebase_rag.parsers.go.semantic_frontend import GoFrontend
 
 _FIXTURE = """package main
 
