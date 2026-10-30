@@ -7,10 +7,12 @@ from pathlib import Path
 import tomli_w
 from pydantic import ValidationError
 
+from .. import constants as cs
 from ..config import settings
+from ..utils.atomic_write import write_bytes_atomic
 from ..utils.path_utils import derive_project_name, project_name_error
 from . import constants as wcs
-from .models import WorkspaceConfig, WorkspaceRepo
+from .models import WorkspaceConfig, WorkspaceContents, WorkspaceRepo
 
 
 class WorkspaceError(RuntimeError):
@@ -67,16 +69,14 @@ def save_workspace(config: WorkspaceConfig, home: Path | None = None) -> Path:
     path = workspace_path(config.name, home)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"workspace": config.model_dump()}
-    with path.open("wb") as f:
-        tomli_w.dump(payload, f)
+    write_bytes_atomic(path, tomli_w.dumps(payload).encode(cs.ENCODING_UTF8))
     return path
 
 
 def create_workspace(
     name: str,
     *,
-    description: str = "",
-    repos: list[WorkspaceRepo] | None = None,
+    contents: WorkspaceContents = WorkspaceContents(),
     home: Path | None = None,
     overwrite: bool = False,
 ) -> tuple[WorkspaceConfig, Path]:
@@ -85,7 +85,9 @@ def create_workspace(
         raise WorkspaceError(
             wcs.ERR_WORKSPACE_ALREADY_EXISTS.format(name=name, path=path)
         )
-    config = WorkspaceConfig(name=name, description=description, repos=repos or [])
+    config = WorkspaceConfig(
+        name=name, description=contents.description, repos=list(contents.repos)
+    )
     saved = save_workspace(config, home=home)
     return config, saved
 

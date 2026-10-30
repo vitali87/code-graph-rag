@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -16,6 +18,14 @@ class WorkspaceRepo(BaseModel):
 
     def repo_path(self) -> Path:
         return Path(self.path).expanduser().resolve()
+
+
+@dataclass(frozen=True, slots=True)
+class WorkspaceContents:
+    """What a new workspace starts with: its description and member repos."""
+
+    description: str = ""
+    repos: Sequence[WorkspaceRepo] = ()
 
 
 class WorkspaceConfig(BaseModel):

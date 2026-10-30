@@ -26,6 +26,7 @@ from codebase_rag.cli import _launch_session, _run_graph_sync, app
 from codebase_rag.cli_runtime import app_context
 from codebase_rag.tests.cli_output import unstyle
 from codebase_rag.workspaces import (
+    WorkspaceContents,
     WorkspaceRepo,
     add_repo,
     create_workspace,
@@ -108,7 +109,10 @@ def test_a_workspace_holding_a_dotted_project_name_syncs_nothing(
     repo = tmp_path / "web"
     repo.mkdir()
     create_workspace(
-        "legacy", repos=[WorkspaceRepo(path=str(repo), project_name="acme.web")]
+        "legacy",
+        contents=WorkspaceContents(
+            repos=[WorkspaceRepo(path=str(repo), project_name="acme.web")]
+        ),
     )
 
     result = runner.invoke(

@@ -1,4 +1,4 @@
-from .models import WorkspaceConfig, WorkspaceRepo
+from .models import WorkspaceConfig, WorkspaceContents, WorkspaceRepo
 from .storage import (
     WorkspaceError,
     add_repo,
@@ -15,6 +15,7 @@ from .storage import (
 
 __all__ = [
     "WorkspaceConfig",
+    "WorkspaceContents",
     "WorkspaceError",
     "WorkspaceRepo",
     "add_repo",

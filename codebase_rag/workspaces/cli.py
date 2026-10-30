@@ -8,6 +8,7 @@ from loguru import logger
 from .. import cli_help as ch
 from . import constants as wcs
 from . import storage as st
+from .models import WorkspaceContents
 from .storage import WorkspaceError
 
 cli = typer.Typer(
@@ -42,7 +43,9 @@ def create_cmd(
     force: bool = typer.Option(False, "--force", help=ch.HELP_WORKSPACE_FORCE),
 ) -> None:
     try:
-        _, path = st.create_workspace(name, description=description, overwrite=force)
+        _, path = st.create_workspace(
+            name, contents=WorkspaceContents(description=description), overwrite=force
+        )
     except WorkspaceError as e:
         logger.debug(str(e))
         typer.secho(str(e), fg="red", err=True)

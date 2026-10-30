@@ -9,6 +9,7 @@ from typer.testing import CliRunner
 
 from codebase_rag.cli import app
 from codebase_rag.workspaces import (
+    WorkspaceContents,
     WorkspaceError,
     add_repo,
     create_workspace,
@@ -33,7 +34,9 @@ def _temp_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 class TestStorage:
     def test_create_then_load(self, _temp_home: Path) -> None:
-        config, _ = create_workspace("alpha", description="testing")
+        config, _ = create_workspace(
+            "alpha", contents=WorkspaceContents(description="testing")
+        )
         assert config.name == "alpha"
         loaded = load_workspace("alpha")
         assert loaded.name == "alpha"
@@ -60,9 +63,26 @@ class TestStorage:
             create_workspace("dup")
 
     def test_create_with_force_overwrites(self, _temp_home: Path) -> None:
-        create_workspace("over", description="first")
-        config, _ = create_workspace("over", description="second", overwrite=True)
+        create_workspace("over", contents=WorkspaceContents(description="first"))
+        config, _ = create_workspace(
+            "over", contents=WorkspaceContents(description="second"), overwrite=True
+        )
         assert config.description == "second"
+
+    def test_a_failed_save_leaves_the_saved_workspace_whole(
+        self, _temp_home: Path
+    ) -> None:
+        # Written in place, a save stopped after the truncate left an empty
+        # file that no longer loaded.
+        create_workspace("kept", contents=WorkspaceContents(description="first"))
+        with (
+            patch("os.replace", side_effect=OSError("disk full")),
+            pytest.raises(OSError, match="disk full"),
+        ):
+            save_workspace(WorkspaceConfig(name="kept", description="second"))
+
+        assert load_workspace("kept").description == "first"
+        assert [p.name for p in (_temp_home / "workspaces").iterdir()] == ["kept.toml"]
 
     def test_load_missing_raises(self, _temp_home: Path) -> None:
         with pytest.raises(WorkspaceError):

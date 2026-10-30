@@ -30,6 +30,7 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.types_defs import PropertyDict, ResultRow
 from codebase_rag.utils.path_utils import derive_project_name, project_name_error
 from codebase_rag.workspaces import (
+    WorkspaceContents,
     WorkspaceError,
     add_repo,
     create_workspace,
@@ -152,10 +153,12 @@ def test_a_workspace_saved_with_a_dotted_name_is_not_synced(
     dotted.mkdir()
     create_workspace(
         "mono",
-        repos=[
-            WorkspaceRepo(path=str(plain), project_name="acme"),
-            WorkspaceRepo(path=str(dotted), project_name="acme.web"),
-        ],
+        contents=WorkspaceContents(
+            repos=[
+                WorkspaceRepo(path=str(plain), project_name="acme"),
+                WorkspaceRepo(path=str(dotted), project_name="acme.web"),
+            ]
+        ),
     )
 
     result = runner.invoke(

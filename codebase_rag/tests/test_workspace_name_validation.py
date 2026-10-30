@@ -8,6 +8,7 @@ from typer.testing import CliRunner
 from codebase_rag.cli import app
 from codebase_rag.mcp.server import get_workspace
 from codebase_rag.workspaces import (
+    WorkspaceContents,
     WorkspaceError,
     add_repo,
     create_workspace,
@@ -145,7 +146,7 @@ class TestHandEditedName:
 class TestOrdinaryNamesStillWork:
     @pytest.mark.parametrize("name", GOOD_NAMES)
     def test_round_trip(self, name: str) -> None:
-        _, path = create_workspace(name, description="d")
+        _, path = create_workspace(name, contents=WorkspaceContents(description="d"))
         assert path == workspaces_dir() / f"{name}.toml"
         assert load_workspace(name).name == name
         assert list_workspaces() == [name]
