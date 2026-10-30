@@ -98,7 +98,32 @@ def _definition_edits(
             cs.SIGNATURE_JS_INVALID_HEADER.format(qn=header.qn, text=params)
         )
     _refuse_forward_defaults(header.qn, *probed)
+    _refuse_reordered_defaults(header, *probed)
     return [_Edit(header.path, header.span, params)]
+
+
+def _refuse_reordered_defaults(header: _Header, params: Node, source: bytes) -> None:
+    """Refuse a new order that runs two kept defaults' code in another order.
+
+    A call that leaves both slots out runs the defaults left to right, so
+    swapping `(a = f(), b = g())` would call `g` first. Call sites keep the
+    same rule for their arguments.
+    """
+    old = [spec.name for spec in header.params]
+    ran: list[str] = []
+    for child in params.named_children:
+        left = child.child_by_field_name(cs.FIELD_LEFT)
+        value = child.child_by_field_name(cs.FIELD_RIGHT)
+        if left is None or value is None or value.type in _INERT:
+            continue
+        if (name := _text(left, source)) in old:
+            ran.append(name)
+    if ran != sorted(ran, key=old.index):
+        raise SignatureRefused(
+            cs.SIGNATURE_JS_REORDERS_DEFAULTS.format(
+                qn=header.qn, names=cs.SEPARATOR_COMMA_SPACE.join(ran)
+            )
+        )
 
 
 def _site_arguments(header: _Header, call: Node, source: bytes) -> Node:
