@@ -2,15 +2,38 @@ import json
 import tempfile
 import time
 from pathlib import Path
+from typing import TypedDict
 
 from benchmarks import harness
+from codebase_rag.types_defs import GraphMetadata, PropertyValue
 
 WARMUP_RUNS = 3
 BENCH_RUNS = 20
 
 
-def generate_graph_data(num_nodes: int, num_rels: int) -> dict:
-    nodes = []
+# The export's shape, except that a node is keyed `id` rather than
+# `node_id`: the recorded results were measured on this payload.
+class SyntheticNode(TypedDict):
+    id: int
+    labels: list[str]
+    properties: dict[str, PropertyValue]
+
+
+class SyntheticRelationship(TypedDict):
+    from_id: int
+    to_id: int
+    type: str
+    properties: dict[str, PropertyValue]
+
+
+class SyntheticGraph(TypedDict):
+    nodes: list[SyntheticNode]
+    relationships: list[SyntheticRelationship]
+    metadata: GraphMetadata
+
+
+def generate_graph_data(num_nodes: int, num_rels: int) -> SyntheticGraph:
+    nodes: list[SyntheticNode] = []
     for i in range(num_nodes):
         nodes.append({
             "id": i,
@@ -26,7 +49,7 @@ def generate_graph_data(num_nodes: int, num_rels: int) -> dict:
             },
         })
 
-    rels = []
+    rels: list[SyntheticRelationship] = []
     for i in range(num_rels):
         rels.append({
             "from_id": i % num_nodes,
@@ -46,13 +69,13 @@ def generate_graph_data(num_nodes: int, num_rels: int) -> dict:
     }
 
 
-def bench_json_dumps(data: dict) -> float:
+def bench_json_dumps(data: SyntheticGraph) -> float:
     start = time.perf_counter()
     _ = json.dumps(data)
     return time.perf_counter() - start
 
 
-def bench_json_dumps_indent(data: dict) -> float:
+def bench_json_dumps_indent(data: SyntheticGraph) -> float:
     start = time.perf_counter()
     _ = json.dumps(data, indent=2, ensure_ascii=False)
     return time.perf_counter() - start
@@ -64,7 +87,7 @@ def bench_json_loads(json_str: str) -> float:
     return time.perf_counter() - start
 
 
-def bench_json_dump_file(data: dict, path: str) -> float:
+def bench_json_dump_file(data: SyntheticGraph, path: str) -> float:
     start = time.perf_counter()
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
