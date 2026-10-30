@@ -132,13 +132,6 @@ def _cache_lists_under(cache: Path, root: Path, checkout: Path) -> bool:
     return isinstance(entries, dict) and any(key.startswith(prefix) for key in entries)
 
 
-def _read_source(path: Path) -> bytes | None:
-    try:
-        return path.read_bytes()
-    except OSError:
-        return None
-
-
 @dataclass(slots=True)
 class _SyncRun:
     """What one `run()` or `reingest()` call learns and still owes.
