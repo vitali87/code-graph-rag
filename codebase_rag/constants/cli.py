@@ -1158,9 +1158,9 @@ SIGNATURE_JS_DUPLICATE_PARAM = (
     "than once, and the body sees only the last of them"
 )
 SIGNATURE_JS_REORDERS_DEFAULTS = (
-    "Cannot change the signature of {qn}: the defaults of {names} run code, "
-    "and the new order would run them in another order when a call leaves "
-    "them out"
+    "Cannot change the signature of {qn}: the defaults of {first} and {second} "
+    "would run in the other order when a call leaves both out, and one of them "
+    "runs code the other can observe"
 )
 SIGNATURE_JS_DEFAULT_READS_LATER = (
     "Cannot change the signature of {qn}: the default of {name} reads `{later}`, "

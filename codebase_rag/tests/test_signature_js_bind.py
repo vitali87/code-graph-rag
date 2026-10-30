@@ -176,8 +176,10 @@ def test_a_reorder_that_moves_a_default_before_what_it_reads_refuses() -> None:
     [
         ("(a = f(), b = g())", ["b", "a"]),
         ("(a = f(), n, b = cfg.size)", ["b", "n", "a"]),
+        # `b` reads `state` after `a` sets it; swapped, it reads the old one.
+        ("(a = (state = 1), b = state)", ["b", "a"]),
     ],
-    ids=["calls", "getter"],
+    ids=["calls", "getter", "read-after-write"],
 )
 def test_a_reorder_that_runs_defaults_in_another_order_refuses(
     params: str, new: list[str]
@@ -186,7 +188,7 @@ def test_a_reorder_that_runs_defaults_in_another_order_refuses(
     own = {p.name: p for p in header.params}
     reordered = [own[name] for name in new]
 
-    with pytest.raises(SignatureRefused, match="run code"):
+    with pytest.raises(SignatureRefused, match="would run in the other order"):
         _definition_edits(header, reordered, set(new), [])
 
 
@@ -194,10 +196,11 @@ def test_a_reorder_that_runs_defaults_in_another_order_refuses(
     ("params", "new"),
     [
         ("(a = 1, b = g())", ["b", "a"]),
+        ("(a = x, b = y)", ["b", "a"]),
         ("(a = f(), b = g())", ["b"]),
         ("(a = f(), b = g())", ["a", "c", "b"]),
     ],
-    ids=["one-runs-code", "one-dropped", "kept-in-order"],
+    ids=["literal-and-call", "two-reads", "one-dropped", "kept-in-order"],
 )
 def test_defaults_that_still_run_in_written_order_pass(
     params: str, new: list[str]

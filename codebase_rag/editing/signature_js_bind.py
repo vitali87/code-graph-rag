@@ -13,6 +13,7 @@ there is no keyword to keep them where they were written.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from itertools import combinations
 
 from tree_sitter import Node
 
@@ -103,27 +104,36 @@ def _definition_edits(
 
 
 def _refuse_reordered_defaults(header: _Header, params: Node, source: bytes) -> None:
-    """Refuse a new order that runs two kept defaults' code in another order.
+    """Refuse a new order that swaps two kept defaults one of which can tell.
 
-    A call that leaves both slots out runs the defaults left to right, so
-    swapping `(a = f(), b = g())` would call `g` first. Call sites keep the
-    same rule for their arguments.
+    A call that leaves both slots out runs the defaults left to right. So a
+    default that runs code keeps its place against any other that runs code
+    or reads a name the code may change: swapping `(a = f(), b = g())` would
+    call `g` first, and swapping `(a = (n = 1), b = n)` would read the old
+    `n`. Two reads, or a literal, may trade places. Call sites keep the same
+    rule for their arguments.
     """
     old = [spec.name for spec in header.params]
-    ran: list[str] = []
+    defaults: list[tuple[str, Node]] = []
     for child in params.named_children:
         left = child.child_by_field_name(cs.FIELD_LEFT)
         value = child.child_by_field_name(cs.FIELD_RIGHT)
-        if left is None or value is None or value.type in _INERT:
-            continue
-        if (name := _text(left, source)) in old:
-            ran.append(name)
-    if ran != sorted(ran, key=old.index):
-        raise SignatureRefused(
-            cs.SIGNATURE_JS_REORDERS_DEFAULTS.format(
-                qn=header.qn, names=cs.SEPARATOR_COMMA_SPACE.join(ran)
+        if left is not None and value is not None and _text(left, source) in old:
+            defaults.append((_text(left, source), value))
+    for (first, early), (second, late) in combinations(defaults, 2):
+        if old.index(first) > old.index(second) and _order_shows(early, late):
+            raise SignatureRefused(
+                cs.SIGNATURE_JS_REORDERS_DEFAULTS.format(
+                    qn=header.qn, first=first, second=second
+                )
             )
-        )
+
+
+def _order_shows(early: Node, late: Node) -> bool:
+    """Whether running these two defaults in the other order could differ."""
+    runs = (early.type not in _INERT, late.type not in _INERT)
+    reads = (early.type == cs.TS_IDENTIFIER, late.type == cs.TS_IDENTIFIER)
+    return (runs[0] and (runs[1] or reads[1])) or (runs[1] and reads[0])
 
 
 def _site_arguments(header: _Header, call: Node, source: bytes) -> Node:
