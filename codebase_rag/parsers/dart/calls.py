@@ -612,7 +612,7 @@ class DartCallResolution:
                 if written is None:
                     continue
                 owner_qn = resolver._follow_reexports(
-                    resolver.resolve_dart_written_type(written, module_qn)
+                    resolver.dart.resolve_dart_written_type(written, module_qn)
                 )
             simple = qn_markers.strip_dup_marker(
                 owner_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]

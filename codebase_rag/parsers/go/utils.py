@@ -44,7 +44,7 @@ def one_declaration(
     """The declaration a Go name is, of the package-level `declared`: the
     only one, or, for an interface each build declares again, the first of
     its build variants. A call through it reaches the variant each build
-    holds (`CallResolver.go_variant_callees`). None for any other two."""
+    holds (`GoResolver.go_variant_callees`). None for any other two."""
     if len(declared) == 1:
         return declared[0]
     group = variants.get(declared[0], ()) if declared else ()

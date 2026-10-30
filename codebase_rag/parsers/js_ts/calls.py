@@ -1211,7 +1211,7 @@ class JsTsCallResolution:
         # leaving `View.lookup` dead) edges the same-module same-name
         # member twin too (duplicate-QN keep-both design; revive-only).
         for twin_type, twin_qn in sorted(
-            self._resolver.js_member_twin_targets(callee_qn)
+            self._resolver.js_ts.js_member_twin_targets(callee_qn)
         ):
             for variant in self._resolver.function_registry.variants(twin_qn):
                 ensure_rel(

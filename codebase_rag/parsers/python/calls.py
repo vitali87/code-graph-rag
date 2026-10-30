@@ -657,7 +657,9 @@ class PythonCallResolution:
         # suppresses trie fabrication. Any miss (incl. the frontend
         # off, so both maps are empty) falls back to the Python
         # heuristics with call_point preserved.
-        callee_info = self._resolver.resolve_python_call_site(call_node, ctx.module_qn)
+        callee_info = self._resolver.python.resolve_python_call_site(
+            call_node, ctx.module_qn
+        )
         if callee_info == PY_EXTERNAL_TARGET:
             callee_info = None
         elif callee_info is None:
@@ -846,7 +848,7 @@ class PythonCallResolution:
         self._host._site_node = operand
         if any(ch in operand_text for ch in cs.PY_OPERAND_REJECT_CHARS):
             return False
-        targets = self._resolver.operator_dunder_targets(
+        targets = self._resolver.python.operator_dunder_targets(
             operand_text, dunder, module_qn, local_var_types
         )
         if not targets:
@@ -878,7 +880,7 @@ class PythonCallResolution:
             return
         if not (callee_text := safe_decode_text(callee)):
             return
-        targets = self._resolver.instance_call_targets(
+        targets = self._resolver.python.instance_call_targets(
             callee_text, is_call_result, module_qn, local_var_types
         )
         self._host._site_node = call_node

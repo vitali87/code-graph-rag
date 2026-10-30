@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict, deque
-from collections.abc import Iterable
 from functools import lru_cache
 from pathlib import PurePath
 
@@ -118,13 +117,13 @@ class CallResolver:
         "_ctor_param_attrs",
         "_pending_field_bindings",
         "_module_language_cache",
-        "_rust",
-        "_js_ts",
-        "_go",
-        "_cpp",
-        "_python",
-        "_php",
-        "_dart",
+        "rust",
+        "js_ts",
+        "go",
+        "cpp",
+        "python",
+        "php",
+        "dart",
     )
 
     def __init__(
@@ -178,14 +177,15 @@ class CallResolver:
         self._pending_field_bindings: list[tuple[str, int | str, str]] = []
         self._module_language_cache: dict[str, cs.SupportedLanguage | None] = {}
         # A language's share of the resolution reads the same registry, maps
-        # and facts, and calls back here for what every language shares.
-        self._rust = RustResolver(
+        # and facts, and calls back here for what every language shares. The
+        # call pass reaches each one directly (`resolver.go`, `resolver.cpp`).
+        self.rust = RustResolver(
             self, function_registry, import_processor, type_inference, facts
         )
-        self._js_ts = JsTsResolver(
+        self.js_ts = JsTsResolver(
             self, function_registry, import_processor, type_inference
         )
-        self._go = GoResolver(
+        self.go = GoResolver(
             self,
             function_registry,
             import_processor,
@@ -194,10 +194,10 @@ class CallResolver:
             go_links if go_links is not None else GoLinkState(),
             self.go_local_scopes,
         )
-        self._cpp = CppResolver(
+        self.cpp = CppResolver(
             self, function_registry, import_processor, type_inference, facts
         )
-        self._python = python_resolution.PythonResolver(
+        self.python = python_resolution.PythonResolver(
             self,
             function_registry,
             import_processor,
@@ -207,10 +207,10 @@ class CallResolver:
             self.python_shadowed_imports,
             self.python_local_names,
         )
-        self._php = php_resolution.PhpResolver(
+        self.php = php_resolution.PhpResolver(
             self, function_registry, import_processor, type_inference, facts
         )
-        self._dart = DartResolver(
+        self.dart = DartResolver(
             self, function_registry, import_processor, type_inference, facts
         )
 
@@ -312,7 +312,7 @@ class CallResolver:
     ) -> str:
         var_type = self._strip_optional(var_type)
         if cs.SEPARATOR_DOUBLE_COLON in var_type:
-            return self._rust.resolve_rust_class_qn(var_type, module_qn)
+            return self.rust.resolve_rust_class_qn(var_type, module_qn)
         if cs.SEPARATOR_DOT in var_type:
             return self._follow_reexports(var_type)
         if var_type in import_map:
@@ -322,10 +322,10 @@ class CallResolver:
             # first-party (else its trie fallback is wrongly suppressed).
             target = import_map[var_type]
             if cs.SEPARATOR_DOUBLE_COLON in target:
-                return self._rust.resolve_rust_class_qn(target, module_qn)
+                return self.rust.resolve_rust_class_qn(target, module_qn)
             return self._follow_reexports(target)
         if (
-            scoped := self._rust.rust_glob_imported_type(var_type, module_qn)
+            scoped := self.rust.rust_glob_imported_type(var_type, module_qn)
         ) is not None:
             return scoped
         return self._resolve_class_name(var_type, module_qn) or ""
@@ -355,7 +355,7 @@ class CallResolver:
         )
         if followed in self.function_registry:
             return followed
-        return self._rust.rust_glob_reexported_type(followed) or followed
+        return self.rust.rust_glob_reexported_type(followed) or followed
 
     def _try_resolve_method(
         self, class_qn: str, method_name: str, separator: str = cs.SEPARATOR_DOT
@@ -381,16 +381,16 @@ class CallResolver:
         self._wildcard_cache.clear()
         self._interface_impl_cache = None
         self._subclass_map_cache = None
-        self._cpp.reset_resolution_memos()
-        self._python.reset_resolution_memos()
+        self.cpp.reset_resolution_memos()
+        self.python.reset_resolution_memos()
         # The qn -> language memo goes too: after a same-stem replacement
         # across languages (`util.rs` deleted, `util.py` added) the bare qn
         # `proj.util` now names a Python module, and a stale RUST answer
         # makes `_languages_can_call` drop the candidate a clean index
         # resolves (issue #1575).
         self._module_language_cache.clear()
-        self._php.reset_resolution_memos()
-        self._js_ts.reset_resolution_memos()
+        self.php.reset_resolution_memos()
+        self.js_ts.reset_resolution_memos()
         # The C# chained-receiver memo (issue #1800) is a resolution cache
         # like the rest and expires with them: it is keyed by byte span, and a
         # re-parsed file's spans name different code. Reached through the
@@ -419,7 +419,7 @@ class CallResolver:
         function that merely shares the name."""
         self._verdict = cs.EdgeResolution.EXACT
         result = self._reject_class_via_value_receiver(
-            self._python.redirect_protocol_method(
+            self.python.redirect_protocol_method(
                 self._resolve_function_call(
                     call_name,
                     module_qn,
@@ -437,11 +437,11 @@ class CallResolver:
             local_var_types,
             language,
         )
-        if result is not None and self._rust.rust_lands_outside_crate(
+        if result is not None and self.rust.rust_lands_outside_crate(
             call_name, module_qn, result[1], language
         ):
             return None
-        if result is not None and self._python.receiver_typed_by_name(
+        if result is not None and self.python.receiver_typed_by_name(
             call_name, caller_qn
         ):
             # The receiver's class is only what its parameter's name spells
@@ -651,7 +651,7 @@ class CallResolver:
     def _class_bound_by_module_alias(self, name: str, module_qn: str) -> str | None:
         if not name or not module_qn:
             return None
-        target = self._python.module_level_alias_target(name, module_qn)
+        target = self.python.module_level_alias_target(name, module_qn)
         if target is None:
             return None
         alias_qn = self._resolve_class_name(target, module_qn)
@@ -888,9 +888,6 @@ class CallResolver:
         natural = qn_markers.natural_qn(caller_qn)
         return natural.rsplit(cs.SEPARATOR_DOT, 1)[-1] == call_name
 
-    def protocol_dispatch_targets(self, callee_qn: str) -> set[tuple[str, str]]:
-        return self._python.protocol_dispatch_targets(callee_qn)
-
     def self_dispatch_targets(
         self, class_context: str, method_name: str
     ) -> set[tuple[str, str]]:
@@ -926,34 +923,9 @@ class CallResolver:
         # (issue #1650).
         return {target for target in targets if target[0] != cs.NodeLabel.CLASS.value}
 
-    def js_member_twin_targets(self, callee_qn: str) -> set[tuple[str, str]]:
-        return self._js_ts.js_member_twin_targets(callee_qn)
-
-    def go_package_sibling_targets(self, callee_qn: str) -> set[tuple[str, str]]:
-        return self._go.go_package_sibling_targets(callee_qn)
-
-    def go_declaration_is_visible(self, declaration_qn: str, module_qn: str) -> bool:
-        return self._go.go_declaration_is_visible(declaration_qn, module_qn)
-
     def java_constructor_targets(self, class_qn: str) -> set[tuple[str, str]]:
         return java_resolution.java_constructor_targets(
             self.function_registry, class_qn
-        )
-
-    def cpp_destructor_targets(self, class_qn: str) -> set[tuple[str, str]]:
-        return self._cpp.cpp_destructor_targets(class_qn)
-
-    def cpp_braced_return_class(self, caller_qn: str, module_qn: str) -> str | None:
-        return self._cpp.cpp_braced_return_class(caller_qn, module_qn)
-
-    def cpp_dispatch_targets(
-        self,
-        call_name: str,
-        local_var_types: dict[str, str] | None,
-        template_params: frozenset[str],
-    ) -> set[tuple[str, str]]:
-        return self._cpp.cpp_dispatch_targets(
-            call_name, local_var_types, template_params
         )
 
     def _interface_impl_map(self) -> dict[str, str]:
@@ -996,45 +968,6 @@ class CallResolver:
             return {result}
         return set()
 
-    def interface_dispatch_targets(
-        self, callee_qn: str
-    ) -> dict[tuple[str, str], dict[str, bool]]:
-        return self._go.interface_dispatch_targets(callee_qn)
-
-    def go_declaration_satisfies(
-        self, method_qn: str, interface_method_qn: str
-    ) -> bool:
-        return self._go.go_declaration_satisfies(method_qn, interface_method_qn)
-
-    def go_declaration_read(self, method_qn: str) -> bool:
-        return self._go.go_declaration_read(method_qn)
-
-    def go_variant_callees(
-        self, callee_qn: str, module_qn: str
-    ) -> list[tuple[str, bool]] | None:
-        return self._go.go_variant_callees(callee_qn, module_qn)
-
-    def go_reaches_everywhere(
-        self, module_qn: str, declarations: Iterable[str]
-    ) -> bool:
-        return self._go.go_reaches_everywhere(module_qn, declarations)
-
-    def go_dispatch_builds(
-        self, module_qn: str, interface_qn: str, implementer: str, declaration: str
-    ) -> tuple[bool, bool]:
-        return self._go.go_dispatch_builds(
-            module_qn, interface_qn, implementer, declaration
-        )
-
-    def go_apart_from_caller(self, module_qn: str, declaration: str) -> bool:
-        return self._go.go_apart_from_caller(module_qn, declaration)
-
-    def go_caller_rel(self, module_qn: str) -> str:
-        return self._go.go_caller_rel(module_qn)
-
-    def go_declaring_rel(self, qn: str) -> str:
-        return self._go.go_declaring_rel(qn)
-
     def _resolve_function_call(
         self,
         call_name: str,
@@ -1049,7 +982,7 @@ class CallResolver:
         call = CallSite(
             call_name,
             module_qn,
-            self._rust.rust_scoped_local_types(
+            self.rust.rust_scoped_local_types(
                 local_var_types, module_qn, caller_qn, language
             ),
             class_context,
@@ -1066,7 +999,7 @@ class CallResolver:
         # same-module, class, import and trie stages below would bind it to
         # the definition it shadows (issue #2666). Before the cache, whose
         # answers are caller-independent.
-        if self._python.is_python_local_name(call):
+        if self.python.is_python_local_name(call):
             return None
 
         cache_key = self._resolution_cache_key(call)
@@ -1079,10 +1012,10 @@ class CallResolver:
         handled, result = self._resolve_structural_call(call)
         if handled:
             return result
-        handled, result = self._rust.resolve_rust_prefixed_or_local(call, cache_key)
+        handled, result = self.rust.resolve_rust_prefixed_or_local(call, cache_key)
         if handled:
             return result
-        handled, result = self._rust.resolve_rust_external_path(call, cache_key)
+        handled, result = self.rust.resolve_rust_external_path(call, cache_key)
         if handled:
             return result
         handled, result = self._resolve_typed_receiver_or_csharp(call)
@@ -1090,7 +1023,7 @@ class CallResolver:
             return result
         # Ahead of the import probe: for a receiver it cannot place, that probe
         # binds `subprocess.run` to a same-module function named `run`.
-        if self._python.receiver_is_external_python_module(call):
+        if self.python.receiver_is_external_python_module(call):
             self._remember_cacheable(cache_key, None)
             return None
         handled, result = self._resolve_imported_or_module_member(call, cache_key)
@@ -1102,10 +1035,10 @@ class CallResolver:
         handled, result = self._resolve_untyped_member_or_unresolvable(call, cache_key)
         if handled:
             return result
-        handled, result = self._rust.resolve_rust_named_owner(call, cache_key)
+        handled, result = self.rust.resolve_rust_named_owner(call, cache_key)
         if handled:
             return result
-        if self._python.untyped_receiver_guess_is_ambiguous(call):
+        if self.python.untyped_receiver_guess_is_ambiguous(call):
             logger.debug(ls.CALL_AMBIGUOUS_UNTYPED_RECEIVER, call_name=call_name)
             self._remember_cacheable(cache_key, None)
             return None
@@ -1123,7 +1056,7 @@ class CallResolver:
         # the caller-independent resolution cache.
         for stage in (
             self._resolve_receiver_shadow,
-            self._rust.resolve_rust_block_scope,
+            self.rust.resolve_rust_block_scope,
             self._resolve_caller_scope,
         ):
             handled, result = stage(call)
@@ -1134,10 +1067,10 @@ class CallResolver:
     def _resolve_receiver_shadow(
         self, call: CallSite
     ) -> tuple[bool, tuple[str, str] | None]:
-        handled, result = self._python.resolve_python_receiver_shadow(call)
+        handled, result = self.python.resolve_python_receiver_shadow(call)
         if handled:
             return True, result
-        return self._dart.resolve_dart_receiver_shadow(call)
+        return self.dart.resolve_dart_receiver_shadow(call)
 
     def _resolve_caller_scope(
         self, call: CallSite
@@ -1171,15 +1104,15 @@ class CallResolver:
         # this.getTwoDigitMonth()); the caller's parent scope names that target.
         # Caller-specific, so it too must run before the module-keyed cache; the
         # CommonJS module-receiver fallback still applies when no sibling exists.
-        if result := self._js_ts.resolve_js_prototype_sibling(
+        if result := self.js_ts.resolve_js_prototype_sibling(
             call.call_name, call.caller_qn, call.language
         ):
             return True, result
-        return self._go.resolve_go_local_value(call)
+        return self.go.resolve_go_local_value(call)
 
     def _resolution_cache_key(self, call: CallSite) -> tuple[str, str, bool] | None:
         module_qn, caller_qn = call.module_qn, call.caller_qn
-        use_cache = not call.local_var_types and not self._dart.dart_caller_dependent(
+        use_cache = not call.local_var_types and not self.dart.dart_caller_dependent(
             call
         )
         # A Rust caller whose inner scopes or initializer blocks bind its
@@ -1192,7 +1125,7 @@ class CallResolver:
             and caller_qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}")
             and cs.SEPARATOR_DOT in caller_qn[len(module_qn) + 1 :]
         )
-        if self._rust.rust_caller_dependent(call) or (
+        if self.rust.rust_caller_dependent(call) or (
             call.language == cs.SupportedLanguage.JULIA and nested_caller
         ):
             use_cache = False
@@ -1238,7 +1171,7 @@ class CallResolver:
                 call.call_point,
             )
 
-        return self._rust.resolve_rust_inline_scope(call)
+        return self.rust.resolve_rust_inline_scope(call)
 
     def _resolve_typed_receiver_or_csharp(
         self, call: CallSite
@@ -1253,7 +1186,7 @@ class CallResolver:
         # to an unrelated `go` (issue #1897). Ahead of the import probe for that
         # reason; never cached, because it can only fire with a non-empty local
         # type map and `use_cache` is already False then.
-        if self._python.typed_receiver_lacks_method(
+        if self.python.typed_receiver_lacks_method(
             call_name, module_qn, call.local_var_types, call.language
         ):
             return True, None
@@ -1299,7 +1232,7 @@ class CallResolver:
             self._remember_cacheable(cache_key, result)
             return True, result
 
-        handled, result = self._go.resolve_go_same_package(call, cache_key)
+        handled, result = self.go.resolve_go_same_package(call, cache_key)
         if handled:
             return True, result
 
@@ -1312,7 +1245,7 @@ class CallResolver:
             self._remember_cacheable(cache_key, result)
             return True, result
 
-        handled, result = self._rust.resolve_rust_module_qualified(call, cache_key)
+        handled, result = self.rust.resolve_rust_module_qualified(call, cache_key)
         if handled:
             return True, result
 
@@ -1375,12 +1308,12 @@ class CallResolver:
             language in cs.JS_TS_LANGUAGES or language == cs.SupportedLanguage.DART
         ) and cs.SEPARATOR_DOT in call_name:
             if language == cs.SupportedLanguage.DART and (
-                result := self._dart.resolve_dart_external_base_arg_member(
+                result := self.dart.resolve_dart_external_base_arg_member(
                     call_name, call.class_context, call.local_var_types
                 )
             ):
                 return True, result
-            result = self._js_ts.resolve_js_member_call_unique(call_name, module_qn)
+            result = self.js_ts.resolve_js_member_call_unique(call_name, module_qn)
             if result is not None and language in cs.JS_TS_LANGUAGES:
                 # Chosen because no other visible class defines the name, not
                 # because anything says the receiver is that class (issue
@@ -1390,7 +1323,7 @@ class CallResolver:
                 self._verdict = cs.EdgeResolution.HEURISTIC
             self._remember_cacheable(cache_key, result)
             return True, result
-        return self._rust.resolve_rust_unresolvable_import(call, cache_key)
+        return self.rust.resolve_rust_unresolvable_import(call, cache_key)
 
     def _remember_cacheable(
         self, cache_key: tuple[str, str, bool] | None, result: tuple[str, str] | None
@@ -1489,9 +1422,6 @@ class CallResolver:
         if target.split(cs.SEPARATOR_DOT, 1)[0] == project_root:
             return False
         return f"{project_root}{cs.SEPARATOR_DOT}{target}" not in self.function_registry
-
-    def js_member_head_is_external(self, member_name: str, module_qn: str) -> bool:
-        return self._js_ts.js_member_head_is_external(member_name, module_qn)
 
     def _two_part_receiver_type(
         self, call_name: str, local_var_types: dict[str, str] | None
@@ -1608,7 +1538,7 @@ class CallResolver:
         ):
             return result
 
-        if result := self._js_ts.try_resolve_js_reexport(
+        if result := self.js_ts.try_resolve_js_reexport(
             call_name, import_map, language, module_qn
         ):
             return result
@@ -1625,7 +1555,7 @@ class CallResolver:
     ) -> Resolved | None:
         """The class a fully qualified PHP class path names, and how surely."""
         self._verdict = cs.EdgeResolution.EXACT
-        found = self._php.php_class_path(path, module_qn)
+        found = self.php.php_class_path(path, module_qn)
         return None if found is None else Resolved(*found, self._verdict)
 
     def resolve_php_method_on_class_path(
@@ -1635,11 +1565,8 @@ class CallResolver:
         bound as surely as the class is."""
         if (owner := self.resolve_php_class_path(path, module_qn)) is None:
             return None
-        method = self._php.php_method(owner[1], method_name)
+        method = self.php.php_method(owner[1], method_name)
         return None if method is None else Resolved(*method, owner.resolution)
-
-    def php_constructor(self, class_qn: str) -> tuple[str, str] | None:
-        return self._php.php_constructor(class_qn)
 
     @staticmethod
     def _julia_caller_scopes(caller_qn: str, module_qn: str) -> list[str]:
@@ -1928,9 +1855,7 @@ class CallResolver:
         self, call_name: str, module_qn: str, call_point: int | None = None
     ) -> tuple[str, str] | None:
         same_module_func_qn = f"{module_qn}.{call_name}"
-        if self._rust.rust_block_item_hidden(
-            same_module_func_qn, module_qn, call_point
-        ):
+        if self.rust.rust_block_item_hidden(same_module_func_qn, module_qn, call_point):
             # A Rust block-local item that took the module's own flat qn.
             # It is in scope for its block alone (issue #1061).
             return None
@@ -1966,8 +1891,8 @@ class CallResolver:
             # A Rust block-local item is nameable inside its own block
             # alone, and the site-gated probe answered there already
             # (issue #1061); by simple name it is never a candidate.
-            and not self._rust.rust_block_item_hidden(qn, module_qn, call_point)
-            and self._rust.rust_crate_reaches(module_qn, qn)
+            and not self.rust.rust_block_item_hidden(qn, module_qn, call_point)
+            and self.rust.rust_crate_reaches(module_qn, qn)
         ]
         # A definition scoped inside another function's body is named from
         # elsewhere only when it escapes (a factory returns it, CommonJS
@@ -2288,7 +2213,7 @@ class CallResolver:
         # type probe after it by simple name (issue #2622).
         if separator == cs.SEPARATOR_DOUBLE_COLON and (
             (target := import_map.get(object_name)) is not None
-            and self._rust.rust_path_is_external(target, module_qn)
+            and self.rust.rust_path_is_external(target, module_qn)
         ):
             return None
 
@@ -2355,7 +2280,7 @@ class CallResolver:
         self, object_name: str, method_name: str, call_name: str, module_qn: str
     ) -> tuple[str, str] | None:
         if not (
-            class_qn := self._rust.rust_glob_imported_type(object_name, module_qn)
+            class_qn := self.rust.rust_glob_imported_type(object_name, module_qn)
             or self._resolve_class_name(object_name, module_qn)
         ):
             return None
@@ -2401,7 +2326,7 @@ class CallResolver:
             ):
                 return result
             if language == cs.SupportedLanguage.DART and (
-                extension := self._dart.dart_extension_member(
+                extension := self.dart.dart_extension_member(
                     class_qn, method_name, module_qn
                 )
             ):
@@ -2591,7 +2516,7 @@ class CallResolver:
         separator: str,
     ) -> str:
         if cs.SEPARATOR_DOUBLE_COLON in class_qn:
-            class_qn = self._rust.resolve_rust_class_qn(class_qn)
+            class_qn = self.rust.resolve_rust_class_qn(class_qn)
 
         potential_class_qn = f"{class_qn}.{object_name}"
         test_method_qn = f"{potential_class_qn}{separator}{method_name}"
@@ -2773,17 +2698,6 @@ class CallResolver:
             return self.function_registry[method_qn], method_qn
         return self._resolve_inherited_method(class_qn, method_name)
 
-    def operator_dunder_targets(
-        self,
-        operand_text: str,
-        dunder: str,
-        module_qn: str,
-        local_var_types: dict[str, str] | None,
-    ) -> set[tuple[str, str]]:
-        return self._python.operator_dunder_targets(
-            operand_text, dunder, module_qn, local_var_types
-        )
-
     def resolve_scala_selection(
         self,
         receiver_type: str,
@@ -2856,31 +2770,6 @@ class CallResolver:
     def resolve_builtin_call(self, call_name: str) -> tuple[str, str] | None:
         return resolve_js_builtin_call(call_name)
 
-    def cpp_member_operator(
-        self, call_name: str, operand_type_qn: str
-    ) -> tuple[str, str] | None:
-        return self._cpp.cpp_member_operator(call_name, operand_type_qn)
-
-    def cpp_free_operator_for_type(
-        self, call_name: str, operand_type_qn: str, position: int, arity: int
-    ) -> tuple[str, str] | None:
-        return self._cpp.cpp_free_operator_for_type(
-            call_name, operand_type_qn, position, arity
-        )
-
-    def cpp_operand_class_qn(
-        self,
-        operand_name: str | None,
-        local_var_types: dict[str, str] | None,
-        module_qn: str,
-    ) -> str | None:
-        return self._cpp.cpp_operand_class_qn(operand_name, local_var_types, module_qn)
-
-    def resolve_cpp_operator_call(
-        self, call_name: str, module_qn: str
-    ) -> tuple[str, str] | None:
-        return self._cpp.resolve_cpp_operator_call(call_name, module_qn)
-
     def _infer_chained_object_type(
         self,
         object_expr: str,
@@ -2911,7 +2800,7 @@ class CallResolver:
             # recorded return type. A bare-identifier factory call
             # (`parser(ia, cb).parse()`, C++): type it from the factory's recorded
             # return type. Other paren bases stay unresolved.
-            current_type = self._rust.infer_rust_assoc_base_type(
+            current_type = self.rust.infer_rust_assoc_base_type(
                 base, module_qn, call_point, rust_caller(language, caller_qn)
             ) or self._infer_call_base_type(
                 base,
@@ -2933,7 +2822,7 @@ class CallResolver:
             # the prefix into the next hop and type that hop instead.
             current_type, parts = folded
         elif (
-            folded := self._js_ts.fold_js_call_hop(
+            folded := self.js_ts.fold_js_call_hop(
                 parts,
                 module_qn,
                 local_var_types,
@@ -2953,8 +2842,8 @@ class CallResolver:
                 return None
             method = part.split(cs.CHAR_PAREN_OPEN, 1)[0]
             if language == cs.SupportedLanguage.DART:
-                current_type = self._dart.dart_member_return_type(
-                    self._dart.resolve_dart_written_type(current_type, module_qn),
+                current_type = self.dart.dart_member_return_type(
+                    self.dart.resolve_dart_written_type(current_type, module_qn),
                     method,
                     module_qn,
                 )
@@ -2976,7 +2865,7 @@ class CallResolver:
         # JS/TS class itself (`C.self()` from a static `return this`) reaches
         # only its static members, its ancestors' included.
         if (class_value := class_value_of(receiver_type)) is not None:
-            found = self._js_ts.js_static_member(class_value, method)
+            found = self.js_ts.js_static_member(class_value, method)
             if found is None:
                 return None
             return self._hop_return_type(found[0], language, True, class_value)
@@ -3002,7 +2891,7 @@ class CallResolver:
         recorded = self.type_inference.facts.method_return_types.get(callable_qn)
         if recorded is None and language in cs.JS_TS_LANGUAGES:
             return bind_receiver(
-                self._js_ts.js_return_class(callable_qn, static), receiver
+                self.js_ts.js_return_class(callable_qn, static), receiver
             )
         return recorded
 
@@ -3015,9 +2904,6 @@ class CallResolver:
         if language in cs.JS_TS_LANGUAGES and self._verdict != cs.EdgeResolution.EXACT:
             return None
         return self._hop_return_type(callee_qn, language)
-
-    def resolve_dart_written_type(self, written: str, module_qn: str) -> str:
-        return self._dart.resolve_dart_written_type(written, module_qn)
 
     def _drop_named_constructor(self, name: str, target: str) -> str:
         """`Box.named` -> `Box` when the dotted name is not a definition but
@@ -3082,7 +2968,7 @@ class CallResolver:
             return None
         # A binding of that name at this site shadows the import, whether or
         # not a type could be inferred for it (issue #2033).
-        if self._dart.dart_prefix_is_shadowed(prefix, module_qn, call_point):
+        if self.dart.dart_prefix_is_shadowed(prefix, module_qn, call_point):
             return None
         # `new X.named(1).m` splits to base `X` + hop `named()`: the base is
         # the CLASS itself and the hop is its named constructor, so the
@@ -3106,7 +2992,7 @@ class CallResolver:
             return None
         name = hop.split(cs.CHAR_PAREN_OPEN, 1)[0]
         hit = self._unique_prefixed_definition(
-            self._dart.dart_prefix_targets(prefix, module_qn), name
+            self.dart.dart_prefix_targets(prefix, module_qn), name
         )
         if hit is None:
             return None
@@ -3167,7 +3053,7 @@ class CallResolver:
         # method-return-type lookup keyed by the class qn hits. A Rust caller's own
         # body or inline-mod `use` binds the name ahead of the file's (#2622).
         if rust_caller and (
-            scoped := self._rust.rust_scoped_type(type_name, module_qn, rust_caller)
+            scoped := self.rust.rust_scoped_type(type_name, module_qn, rust_caller)
         ):
             return scoped
         import_map = self.import_processor.import_mapping.get(module_qn, {})
@@ -3195,7 +3081,7 @@ class CallResolver:
         # their own parens. A JS/TS construction (`new Box()`) has no callee to
         # resolve: it is the instance it builds.
         if (
-            constructed := self._js_ts.infer_js_construction_base_type(
+            constructed := self.js_ts.infer_js_construction_base_type(
                 base, module_qn, language, call_point
             )
         ) is not None:
@@ -3249,7 +3135,7 @@ class CallResolver:
             qn
             for qn in self.function_registry.find_ending_with(type_path)
             if self.function_registry.get(qn) == cs.NodeLabel.CLASS
-            and self._rust.rust_crate_reaches(module_qn, qn)
+            and self.rust.rust_crate_reaches(module_qn, qn)
         ]
         if not matches and cs.SEPARATOR_DOT in type_path:
             simple = type_path.rsplit(cs.SEPARATOR_DOT, 1)[-1]
@@ -3257,7 +3143,7 @@ class CallResolver:
                 qn
                 for qn in self.function_registry.find_ending_with(simple)
                 if self.function_registry.get(qn) == cs.NodeLabel.CLASS
-                and self._rust.rust_crate_reaches(module_qn, qn)
+                and self.rust.rust_crate_reaches(module_qn, qn)
             ]
         if not matches:
             return None
@@ -3325,7 +3211,7 @@ class CallResolver:
         )
         if object_type and (class_value := class_value_of(object_type)):
             # The class itself, not an instance: only a static member binds.
-            return self._js_ts.js_static_member_target(class_value, final_method)
+            return self.js_ts.js_static_member_target(class_value, final_method)
         if object_type:
             full_object_type = self._qualify_chained_object_type(
                 object_type, module_qn, rust_caller(language, caller_qn)
@@ -3356,7 +3242,7 @@ class CallResolver:
                 return inherited_method
 
             if language == cs.SupportedLanguage.DART and (
-                extension := self._dart.dart_extension_member(
+                extension := self.dart.dart_extension_member(
                     full_object_type, final_method, module_qn
                 )
             ):
@@ -3530,17 +3416,6 @@ class CallResolver:
             return targets
         return [callee_qn]
 
-    def instance_call_targets(
-        self,
-        callee: str,
-        is_call_result: bool,
-        module_qn: str,
-        local_var_types: dict[str, str] | None,
-    ) -> set[tuple[str, str]]:
-        return self._python.instance_call_targets(
-            callee, is_call_result, module_qn, local_var_types
-        )
-
     def _mro_method_qns(self, class_qn: str, method_name: str) -> set[str]:
         results: set[str] = set()
         visited: set[str] = set()
@@ -3653,7 +3528,7 @@ class CallResolver:
                 return alias
             if self.function_registry.binds_non_method(class_qn, method_name):
                 return None
-        if found := self._go.go_variant_method(class_qn, method_name):
+        if found := self.go.go_variant_method(class_qn, method_name):
             return found
         if class_qn not in self.facts.class_inheritance:
             return None
@@ -3682,7 +3557,7 @@ class CallResolver:
         self, class_qn: str, method_name: str
     ) -> tuple[str, str] | None:
         bfs_queue = deque(
-            self._go.with_go_variants(self.facts.class_inheritance.get(class_qn, []))
+            self.go.with_go_variants(self.facts.class_inheritance.get(class_qn, []))
         )
         visited = set(bfs_queue)
 
@@ -3703,7 +3578,7 @@ class CallResolver:
                 )
 
             if parent_class_qn in self.facts.class_inheritance:
-                for grandparent_qn in self._go.with_go_variants(
+                for grandparent_qn in self.go.with_go_variants(
                     self.facts.class_inheritance[parent_class_qn]
                 ):
                     if grandparent_qn not in visited:
@@ -3771,15 +3646,13 @@ class CallResolver:
         # and searches first-party types by simple name, which bound
         # `use regex_syntax::Parser;` to whichever `Parser` the repo holds
         # (issue #2622).
-        if self._rust.rust_file_use_is_external(class_name, module_qn):
+        if self.rust.rust_file_use_is_external(class_name, module_qn):
             return None
         # Call resolution runs in Pass 3, after every definition pass, so a
         # class qn missing from the registry can never be a real node;
         # require registration so an import-map module entry (a C++ header
         # stem shadowing its class name) cannot mask the real class.
-        if (
-            package_type := self._go.go_package_type(class_name, module_qn)
-        ) is not None:
+        if (package_type := self.go.go_package_type(class_name, module_qn)) is not None:
             return package_type
         resolved = resolve_class_name(
             self._dealias_type(class_name),
@@ -3788,11 +3661,11 @@ class CallResolver:
             self.function_registry,
             require_registered=True,
         )
-        if resolved is None or self._rust.rust_crate_reaches(module_qn, resolved):
+        if resolved is None or self.rust.rust_crate_reaches(module_qn, resolved):
             return resolved
         # Only the last step, the search by simple name, can land in a crate
         # the caller cannot depend on; search again among those it can.
-        return self._rust.rust_reachable_type(class_name, module_qn)
+        return self.rust.rust_reachable_type(class_name, module_qn)
 
     def resolve_java_method_call(
         self,
@@ -3803,7 +3676,7 @@ class CallResolver:
     ) -> tuple[str, str] | None:
         java_engine = self.type_inference.java_type_inference
 
-        result = self._python.redirect_protocol_method(
+        result = self.python.redirect_protocol_method(
             java_engine.resolve_java_method_call(
                 call_node, local_var_types, module_qn, caller_qn
             )
@@ -3849,8 +3722,3 @@ class CallResolver:
         return self.type_inference.java_type_inference.resolve_java_call_site(
             call_node, module_qn
         )
-
-    def resolve_python_call_site(
-        self, call_node: Node, module_qn: str
-    ) -> tuple[str, str] | None:
-        return self._python.resolve_python_call_site(call_node, module_qn)

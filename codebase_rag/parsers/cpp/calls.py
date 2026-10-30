@@ -340,7 +340,7 @@ class CppCallResolution:
         # the resolver. sorted(): the target label is a hash-randomized
         # StrEnum, so sort for deterministic output.
         for target_type, target_qn in sorted(
-            self._resolver.cpp_dispatch_targets(
+            self._resolver.cpp.cpp_dispatch_targets(
                 call_name, call_var_types, template_params
             )
         ):
@@ -385,10 +385,10 @@ class CppCallResolution:
             if (class_qn := self._operand_class(ctx, operand, var_types)) is None:
                 continue
             if position == 0 and (
-                member := resolver.cpp_member_operator(call_name, class_qn)
+                member := resolver.cpp.cpp_member_operator(call_name, class_qn)
             ):
                 return member
-            if free := resolver.cpp_free_operator_for_type(
+            if free := resolver.cpp.cpp_free_operator_for_type(
                 call_name, class_qn, position, arity
             ):
                 return free
@@ -438,7 +438,7 @@ class CppCallResolution:
             )
         if name is None or ctx.cpp_indirection.get(name, 0) != depth:
             return None
-        return self._resolver.cpp_operand_class_qn(name, var_types, ctx.module_qn)
+        return self._resolver.cpp.cpp_operand_class_qn(name, var_types, ctx.module_qn)
 
     def local_alias_callee(
         self, ctx: CppCallScan, call_node: Node, call_name: str
@@ -545,7 +545,7 @@ class CppCallResolution:
     ) -> str | None:
         match node.type:
             case cs.TS_CPP_IDENTIFIER:
-                return self._resolver.cpp_operand_class_qn(
+                return self._resolver.cpp.cpp_operand_class_qn(
                     safe_decode_text(node), var_types, module_qn
                 )
             case cs.TS_CPP_COMPOUND_LITERAL_EXPRESSION:
@@ -605,7 +605,7 @@ class CppCallResolution:
             stack.extend(node.children)
         if not has_braced_return:
             return
-        class_qn = self._resolver.cpp_braced_return_class(caller_qn, module_qn)
+        class_qn = self._resolver.cpp.cpp_braced_return_class(caller_qn, module_qn)
         if class_qn is None:
             return
         registry = self._resolver.function_registry
@@ -705,7 +705,7 @@ class CppCallResolution:
         if is_dtor:
             for base_qn in ancestors:
                 self._emit_lifecycle_targets(
-                    caller_spec, self._resolver.cpp_destructor_targets(base_qn)
+                    caller_spec, self._resolver.cpp.cpp_destructor_targets(base_qn)
                 )
             return
         named = self._member_init_class_qns(caller_node, module_qn)
@@ -836,7 +836,7 @@ class CppCallResolution:
                 continue
             targets = self._resolver.java_constructor_targets(
                 class_variant
-            ) | self._resolver.cpp_destructor_targets(class_variant)
+            ) | self._resolver.cpp.cpp_destructor_targets(class_variant)
             for target_type, target_qn in sorted(targets):
                 target_key = (target_type, target_qn)
                 if target_key in emitted_target_qns:

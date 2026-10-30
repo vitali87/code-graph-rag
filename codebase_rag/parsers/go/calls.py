@@ -766,11 +766,11 @@ class GoCallResolution:
         # `t_linux.go` declares again) is one candidate of several.
         resolver = self._resolver
         if callee_type == cs.NodeLabel.METHOD and (
-            variants := resolver.go_variant_callees(callee_qn, module_qn)
+            variants := resolver.go.go_variant_callees(callee_qn, module_qn)
         ):
             return [qn for qn, _ in variants], dict(variants)
         return targets, {
-            target: resolver.go_reaches_everywhere(module_qn, (target,))
+            target: resolver.go.go_reaches_everywhere(module_qn, (target,))
             for target in targets
         }
 
@@ -787,7 +787,7 @@ class GoCallResolution:
                 caller_spec, module_qn, callee_qn, ensure_rel
             )
         if callee_type == cs.NodeLabel.METHOD:
-            for method_qn, exact in self._resolver.go_variant_callees(
+            for method_qn, exact in self._resolver.go.go_variant_callees(
                 callee_qn, module_qn
             ) or [(callee_qn, True)]:
                 self._emit_interface_dispatch(
@@ -809,16 +809,16 @@ class GoCallResolution:
         host = self._host
         call_resolution = host._resolution
         for sibling_type, sibling_qn in sorted(
-            self._resolver.go_package_sibling_targets(callee_qn)
+            self._resolver.go.go_package_sibling_targets(callee_qn)
         ):
             for variant in self._resolver.function_registry.variants(sibling_qn):
                 # None in a file no build compiles with the caller; exact only
                 # where every build compiling the caller holds it.
-                if self._resolver.go_apart_from_caller(module_qn, variant):
+                if self._resolver.go.go_apart_from_caller(module_qn, variant):
                     continue
                 host._resolution = (
                     call_resolution
-                    if self._resolver.go_reaches_everywhere(module_qn, (variant,))
+                    if self._resolver.go.go_reaches_everywhere(module_qn, (variant,))
                     else cs.EdgeResolution.HEURISTIC
                 )
                 ensure_rel(
@@ -874,7 +874,7 @@ class GoCallResolution:
         resolver = self._resolver
         edges: list[tuple[str, str, bool]] = []
         for (target_type, target_qn), implementers in sorted(
-            resolver.interface_dispatch_targets(callee_qn).items()
+            resolver.go.interface_dispatch_targets(callee_qn).items()
         ):
             for variant in resolver.function_registry.variants(target_qn):
                 if (
@@ -901,17 +901,17 @@ class GoCallResolution:
         builds = {
             implementer: (
                 guessed,
-                *resolver.go_dispatch_builds(
+                *resolver.go.go_dispatch_builds(
                     module_qn, interface_qn, implementer, variant
                 ),
             )
             for implementer, guessed in implementers.items()
         }
-        read = resolver.go_declaration_read(variant)
+        read = resolver.go.go_declaration_read(variant)
         reachable = {impl: found for impl, found in builds.items() if found[1]}
         proven = [impl for impl, found in reachable.items() if not found[0] and read]
         if not reachable or not (
-            proven or resolver.go_declaration_satisfies(variant, callee_qn)
+            proven or resolver.go.go_declaration_satisfies(variant, callee_qn)
         ):
             return None
         return not any(reachable[implementer][2] for implementer in proven)
@@ -1018,7 +1018,7 @@ class GoCallResolution:
             for qn in registry.find_with_prefix_and_suffix(package_qn, name)
             if registry.get(qn) == cs.NodeLabel.CLASS
             and qn.count(cs.SEPARATOR_DOT) == depth
-            and self._resolver.go_declaration_is_visible(qn, module_qn)
+            and self._resolver.go.go_declaration_is_visible(qn, module_qn)
         ]
         if len(candidates) > 1:
             own = [

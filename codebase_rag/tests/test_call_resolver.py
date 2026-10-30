@@ -597,11 +597,11 @@ class TestResolveRustClassQn:
     def test_resolves_rust_class_qn(self, call_resolver: CallResolver) -> None:
         call_resolver.function_registry["crate.module.MyStruct"] = cs.NodeLabel.CLASS
 
-        result = call_resolver._rust.resolve_rust_class_qn("crate::module::MyStruct")
+        result = call_resolver.rust.resolve_rust_class_qn("crate::module::MyStruct")
         assert result == "crate.module.MyStruct"
 
     def test_returns_original_for_no_match(self, call_resolver: CallResolver) -> None:
-        result = call_resolver._rust.resolve_rust_class_qn("crate::module::Unknown")
+        result = call_resolver.rust.resolve_rust_class_qn("crate::module::Unknown")
         assert result == "crate::module::Unknown"
 
 

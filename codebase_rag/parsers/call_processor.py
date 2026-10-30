@@ -3062,7 +3062,7 @@ class CallProcessor:
         resolver = self._resolver
         resolve_func = self._resolve_noting
         resolve_builtin = resolver.resolve_builtin_call if is_js_ts else None
-        resolve_cpp_op = resolver.resolve_cpp_operator_call if is_cpp else None
+        resolve_cpp_op = resolver.cpp.resolve_cpp_operator_call if is_cpp else None
         is_python = language == cs.SupportedLanguage.PYTHON
         # Languages with interprocedural callable-parameter flow enabled: a
         # callback passed to a first-party function whose parameter is invoked
@@ -3711,7 +3711,9 @@ class CallProcessor:
             # doubles included (issue #2931). It stays one heuristic edge.
             and self._verdict != cs.EdgeResolution.HEURISTIC
             and (
-                dispatch_targets := self._resolver.protocol_dispatch_targets(callee_qn)
+                dispatch_targets := self._resolver.python.protocol_dispatch_targets(
+                    callee_qn
+                )
             )
         ):
             # The call resolved to a Protocol stub; the stub never runs, so emit
@@ -3882,7 +3884,7 @@ class CallProcessor:
         if ctx.language == cs.SupportedLanguage.PHP:
             # A PHP `new X(...)` runs `__construct`, X's own or, when X
             # declares none, the one it inherits (issue #2466).
-            return self._resolver.php_constructor(callee_qn)
+            return self._resolver.php.php_constructor(callee_qn)
         # A JS/TS `new X(...)` runs X's `constructor` method (leaf name
         # `constructor`, not Python's `__init__`); redirect the CALLS
         # edge there so an explicitly-declared constructor is reachable.
@@ -4488,7 +4490,7 @@ class CallProcessor:
         # package's own member. The resolver is called without a language
         # here, so the JS/TS member-call gate never sees the dotted tag and
         # the bare-name fallback would bind `Item` anywhere in the project.
-        if self._resolver.js_member_head_is_external(name_text, scope.module_qn):
+        if self._resolver.js_ts.js_member_head_is_external(name_text, scope.module_qn):
             return
         resolved = scope.resolve_func(
             name_text,
