@@ -199,7 +199,6 @@ class TestEveryRoutedReaderUsesTheHelper:
     """
 
     MODULES = (
-        "codebase_rag.graph_updater",
         "codebase_rag.dead_code",
         "codebase_rag.parsers.call_callbacks",
         "codebase_rag.parsers.call_processor",
@@ -213,6 +212,7 @@ class TestEveryRoutedReaderUsesTheHelper:
         "codebase_rag.parsers.js_ts.resolution",
         "codebase_rag.parsers.python.resolution",
         "codebase_rag.parsers.rust.rehydration",
+        "codebase_rag.updater.dependents",
         "evals.cgr_graph",
     )
 
