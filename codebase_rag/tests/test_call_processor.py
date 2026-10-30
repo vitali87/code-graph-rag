@@ -725,7 +725,7 @@ class TestBuildNestedQualifiedName:
         assert func_node is not None
 
         lang_config = queries[cs.SupportedLanguage.PYTHON]["config"]
-        result = call_processor._callers.build_nested_qualified_name(
+        result = call_processor.callers.build_nested_qualified_name(
             func_node, "proj.module", "my_func", lang_config
         )
         assert result == "proj.module.my_func"
@@ -760,7 +760,7 @@ def outer():
         assert inner_func is not None
 
         lang_config = queries[cs.SupportedLanguage.PYTHON]["config"]
-        result = call_processor._callers.build_nested_qualified_name(
+        result = call_processor.callers.build_nested_qualified_name(
             inner_func, "proj.module", "inner", lang_config
         )
         assert result == "proj.module.outer.inner"
@@ -784,7 +784,7 @@ class MyClass:
         assert func_node is not None
 
         lang_config = queries[cs.SupportedLanguage.PYTHON]["config"]
-        result = call_processor._callers.build_nested_qualified_name(
+        result = call_processor.callers.build_nested_qualified_name(
             func_node, "proj.module", "my_method", lang_config
         )
         assert result is None
@@ -1335,7 +1335,7 @@ class TestProcessCallsInFunctionsWithoutCombined:
         tree = parser.parse(code.encode(cs.ENCODING_UTF8))
         root_node = tree.root_node
 
-        cp._callers.ingest_function_callers(
+        cp.callers.ingest_function_callers(
             root_node,
             "proj.module",
             cs.SupportedLanguage.PYTHON,
@@ -1365,7 +1365,7 @@ class TestProcessCallsInFunctionsWithoutCombined:
         tree = parser.parse(code.encode(cs.ENCODING_UTF8))
         root_node = tree.root_node
 
-        cp._callers.ingest_function_callers(
+        cp.callers.ingest_function_callers(
             root_node,
             "proj.module",
             cs.SupportedLanguage.PYTHON,
@@ -1401,7 +1401,7 @@ class MyClass:
         tree = parser.parse(code.encode(cs.ENCODING_UTF8))
         root_node = tree.root_node
 
-        cp._callers.ingest_class_callers(
+        cp.callers.ingest_class_callers(
             root_node,
             "proj.module",
             cs.SupportedLanguage.PYTHON,
@@ -1442,7 +1442,7 @@ class MyClass:
         body_node = class_node.child_by_field_name("body")
         assert body_node is not None
 
-        cp._callers.ingest_class_body_callers(
+        cp.callers.ingest_class_body_callers(
             body_node,
             "proj.module.MyClass",
             "proj.module",

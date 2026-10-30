@@ -19,14 +19,15 @@ from typing import TYPE_CHECKING, Protocol
 from tree_sitter import Node
 
 from ... import constants as cs
-from ...language_spec import LanguageSpec
 from ...node_text import decode_node_text, safe_decode_text
 from ...types_defs import FunctionLocation, LanguageQueries, PropertyDict
 from ...utils import qn_markers
+from ..call_host import CallbackEdgeHost, ResolvedCallHost
 from ..callable_params import cpp_parameter_names
 from ..definition_facts import DefinitionFacts
 from ..edge_site import EdgeSiteHost, host_site_scoped
 from ..language_calls import CallScan, LanguageCalls
+from ..scope_boundaries import flow_scope_boundaries
 from . import local_types as cpp_local_types
 from . import utils as cpp_utils
 from .function_values import (
@@ -41,12 +42,12 @@ if TYPE_CHECKING:
     from ..call_resolver import CallResolver
 
 
-class CppCallHost(EdgeSiteHost, Protocol):
+class CppCallHost(EdgeSiteHost, CallbackEdgeHost, ResolvedCallHost, Protocol):
     """What C++ call resolution calls on the call pass that builds it: the
     edge emitter, the location the definition pass recorded for a function
-    node, the ingest of a call bound to its callee, which writes the edges
-    every resolved call writes, and the callback emitter a passed functor's
-    reference goes through like any other callback's."""
+    node, the binding, whose ingest of a call bound to its callee writes the
+    edges every resolved call writes, and the callback edges a passed
+    functor's reference goes through like any other callback's."""
 
     def _emit_rel(
         self,
@@ -59,26 +60,6 @@ class CppCallHost(EdgeSiteHost, Protocol):
     def _recorded_caller(
         self, func_node: Node, module_qn: str
     ) -> FunctionLocation | None: ...
-
-    def _ingest_resolved_call(
-        self,
-        ctx: CallScan,
-        call_node: Node,
-        call_name: str,
-        callee_info: tuple[str, str],
-    ) -> None: ...
-
-    def _emit_callback_targets(
-        self,
-        source_spec: tuple[str, str, str],
-        res_type: str,
-        res_qn: str,
-        rel_type: cs.RelationshipType,
-        ensure_rel: Callable[..., None],
-        module_qn: str,
-        language: cs.SupportedLanguage | None,
-        resolution: str,
-    ) -> None: ...
 
 
 class CppCallScan(Protocol):
@@ -467,7 +448,7 @@ class CppCallResolution(LanguageCalls):
                 )
             )
         ):
-            self._host._ingest_resolved_call(
+            self._host.binding.ingest_resolved_call(
                 ctx, call_node, cs.CPP_OPERATOR_CALL_NAME, functor
             )
             return True
@@ -503,7 +484,9 @@ class CppCallResolution(LanguageCalls):
         if callee_info := self.operator_callee(
             ctx, call_node, call_name, call_var_types
         ):
-            self._host._ingest_resolved_call(ctx, call_node, call_name, callee_info)
+            self._host.binding.ingest_resolved_call(
+                ctx, call_node, call_name, callee_info
+            )
         return True
 
     def emit_template_dispatch(
@@ -710,7 +693,7 @@ class CppCallResolution(LanguageCalls):
         functor = self.functor_operator(arg_node, module_qn, local_var_types)
         if functor is None:
             return False
-        self._host._emit_callback_targets(
+        self._host.callbacks.emit_callback_targets(
             source_spec,
             functor[0],
             functor[1],
@@ -1051,7 +1034,7 @@ class CppCallResolution(LanguageCalls):
 
 class CCallHost(EdgeSiteHost, Protocol):
     """What C's function-value references call on the call pass that builds
-    them: the edge emitter, and the scope boundaries a scan stops at."""
+    them: the edge emitter."""
 
     def _emit_rel(
         self,
@@ -1060,9 +1043,6 @@ class CCallHost(EdgeSiteHost, Protocol):
         to_spec: tuple[str, str, str],
         properties: PropertyDict | None = None,
     ) -> None: ...
-
-    @staticmethod
-    def _flow_scope_boundaries(lang_config: LanguageSpec) -> frozenset[str]: ...
 
 
 class CCallResolution(LanguageCalls):
@@ -1135,7 +1115,7 @@ class CCallResolution(LanguageCalls):
                 caller_node,
                 caller_spec,
                 module_qn,
-                self._host._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
+                flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
             )
 
     def ingest_module_references(
@@ -1154,7 +1134,7 @@ class CCallResolution(LanguageCalls):
             root_node,
             (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
             module_qn,
-            self._host._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
+            flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
         )
 
     @host_site_scoped

@@ -23,6 +23,7 @@ from ..callable_params import go_parameter_names
 from ..definition_facts import DefinitionFacts
 from ..edge_site import EdgeSiteHost, host_site_scoped
 from ..language_calls import UNDECIDED_CALLEE, Callee, LanguageCalls
+from ..scope_boundaries import flow_scope_boundaries
 from . import utils as go_utils
 from .type_inference import GO_EXTERNAL_TARGET
 
@@ -36,8 +37,8 @@ class GoCallHost(EdgeSiteHost, ValueReferenceHost, VerdictNotingHost, Protocol):
     Beside the edge site, which the fan-outs set per edge and put back as
     the pass's own emitters do: `_verdict`, how surely the last resolve
     bound its callee, which `_noted` notes and a chain root's binding is
-    judged by; and the reference walkers Go shares with other languages,
-    with the scope boundaries they stop at."""
+    judged by; the callee name the pass reads off a call node; and the
+    reference walkers Go shares with other languages."""
 
     _verdict: str
 
@@ -52,18 +53,6 @@ class GoCallHost(EdgeSiteHost, ValueReferenceHost, VerdictNotingHost, Protocol):
     def _get_call_target_name(
         self, call_node: Node, language: cs.SupportedLanguage | None = None
     ) -> str | None: ...
-
-    def _emit_value_function_ref(
-        self,
-        node: Node,
-        caller_spec: tuple[str, str, str],
-        module_qn: str,
-        local_var_types: dict[str, str] | None,
-        class_context: str | None,
-        resolve_func: Callable[..., tuple[str, str] | None],
-        ensure_rel: Callable[..., None],
-        caller_qn: str | None = None,
-    ) -> None: ...
 
 
 class GoCallScan(Protocol):
@@ -359,9 +348,7 @@ class GoCallResolution(LanguageCalls):
         sorted_func_nodes: list[Node] | None,
     ) -> None:
         module_spec = (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn)
-        boundaries = self._host._flow_scope_boundaries(
-            queries[language][cs.QUERY_CONFIG]
-        )
+        boundaries = flow_scope_boundaries(queries[language][cs.QUERY_CONFIG])
         # A module-scope Go func map/slice (var funcMap = map[...]{...})
         # keeps its function entries reachable; scan before the no-calls
         # early return so a file defining only funcs and a table counts.
@@ -375,7 +362,7 @@ class GoCallResolution(LanguageCalls):
         # A module-scope Go var bound to a bare function value
         # (var preExecHookFn = preExecHook) references it even in a file
         # with no calls, so scan before the no-calls early return.
-        self._host._ingest_assignment_function_references(
+        self._host.references.ingest_assignment_function_references(
             root_node, module_spec, module_qn, None, None, boundaries, language=language
         )
 
@@ -424,9 +411,9 @@ class GoCallResolution(LanguageCalls):
         class_context: str | None,
         local_var_types: dict[str, str] | None,
     ) -> None:
-        host = self._host
-        boundaries = host._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG])
-        host._ingest_assignment_function_references(
+        references = self._host.references
+        boundaries = flow_scope_boundaries(queries[language][cs.QUERY_CONFIG])
+        references.ingest_assignment_function_references(
             caller_node,
             caller_spec,
             module_qn,
@@ -438,7 +425,7 @@ class GoCallResolution(LanguageCalls):
         )
         # A function handed back bare (`return defaultUsageFunc`) is what
         # Go's factories and getters lean on (cobra's getUsageFunc).
-        host._ingest_returned_function_references(
+        references.ingest_returned_function_references(
             caller_node,
             caller_spec,
             module_qn,
@@ -1266,7 +1253,7 @@ class GoCallResolution(LanguageCalls):
                     host._site_node = element
                     if (inner := _literal_element_inner(element)) is None:
                         continue
-                    host._emit_value_function_ref(
+                    host.tables.emit_value_function_ref(
                         inner,
                         caller_spec,
                         module_qn,

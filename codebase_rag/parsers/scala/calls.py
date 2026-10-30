@@ -18,25 +18,12 @@ from tree_sitter import Node
 from ... import constants as cs
 from ...node_text import decode_node_text
 from ...types_defs import ScalaBinding
+from ..call_host import ResolvedCallHost
 from ..language_calls import Callee, CallScan, LanguageCalls
 from . import utils as scala_utils
 
 if TYPE_CHECKING:
     from ..call_resolver import CallResolver
-
-
-class ScalaCallHost(Protocol):
-    """What Scala call resolution calls on the call pass that builds it: the
-    ingest of a call bound to its callee, which writes the edges every
-    resolved call writes."""
-
-    def _ingest_resolved_call(
-        self,
-        ctx: CallScan,
-        call_node: Node,
-        call_name: str,
-        callee_info: tuple[str, str],
-    ) -> None: ...
 
 
 class ScalaCallScan(Protocol):
@@ -62,7 +49,7 @@ class ScalaCallResolution(LanguageCalls):
     new_constructs_type = True
     runs_declared_constructors = True
 
-    def __init__(self, host: ScalaCallHost, resolver: CallResolver) -> None:
+    def __init__(self, host: ResolvedCallHost, resolver: CallResolver) -> None:
         self._host = host
         self._resolver = resolver
 
@@ -91,7 +78,7 @@ class ScalaCallResolution(LanguageCalls):
             return False
         if (selected := self.selection_callee(ctx, call_node)) is not None:
             selection_name, callee_info = selected
-            self._host._ingest_resolved_call(
+            self._host.binding.ingest_resolved_call(
                 ctx, call_node, selection_name, callee_info
             )
         return True

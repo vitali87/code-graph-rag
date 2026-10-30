@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING, Protocol
 from tree_sitter import Node
 
 from ... import constants as cs
-from ...language_spec import LanguageSpec
 from ...types_defs import FunctionLocation, LanguageQueries, PropertyDict
 from ..class_ingest.identity import build_nested_qualified_name_for_class
 from ..edge_site import EdgeSiteHost, host_site_scoped
@@ -27,6 +26,8 @@ from . import utils as java_utils
 from .type_inference import JAVA_EXTERNAL_TARGET
 
 if TYPE_CHECKING:
+    from ..call_callers import CallerScan
+    from ..call_construction import CallConstruction
     from ..call_resolver import CallResolver
 
 
@@ -38,8 +39,8 @@ class JavaCallHost(EdgeSiteHost, Protocol):
     file added later may define; the construction a `Type::new` references,
     as the pass constructs a `new`; and, for the constructors an enum
     constant runs, the edge emitter, a definition's recorded location and
-    own name, and the qualified name the class pass gives a class's
-    member."""
+    own name, and the caller scan, which gives a class's member the
+    qualified name the class pass does."""
 
     _verdict: str
 
@@ -59,21 +60,11 @@ class JavaCallHost(EdgeSiteHost, Protocol):
 
     def _get_node_name(self, node: Node, field: str = cs.FIELD_NAME) -> str | None: ...
 
-    def _class_member_qn_and_label(
-        self,
-        func_node: Node,
-        class_qn: str,
-        func_name: str,
-        lang_config: LanguageSpec,
-        language: str,
-    ) -> tuple[str, str]: ...
+    @property
+    def construction(self) -> CallConstruction: ...
 
-    def _redirect_construction(
-        self,
-        ctx: CallScan,
-        callee_qn: str,
-        ctor_rel: cs.RelationshipType = cs.RelationshipType.CALLS,
-    ) -> tuple[str, str] | None: ...
+    @property
+    def callers(self) -> CallerScan: ...
 
 
 class JavaCallScan(Protocol):
@@ -220,7 +211,7 @@ class JavaCallResolution(LanguageCalls):
             )
             or f"{module_qn}{cs.SEPARATOR_DOT}{enum_name}"
         )
-        target_qn, target_label = host._class_member_qn_and_label(
+        target_qn, target_label = host.callers.class_member_qn_and_label(
             ctor_node, enum_qn, ctor_name, java_config, language
         )
         if target_qn not in self._resolver.function_registry:
@@ -277,7 +268,7 @@ class JavaCallResolution(LanguageCalls):
             self._host._note_unresolved(ctx.module_qn, written_simple_name(type_name))
             return
         if self._resolver.function_registry.get(callee[1]) == cs.NodeLabel.CLASS:
-            self._host._redirect_construction(
+            self._host.construction.redirect_construction(
                 ctx, callee[1], ctor_rel=cs.RelationshipType.REFERENCES
             )
 

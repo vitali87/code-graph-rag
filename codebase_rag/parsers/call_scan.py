@@ -21,7 +21,6 @@ from .. import logs as ls
 from ..node_text import sorted_captures
 from ..types_defs import LanguageQueries, PropertyDict
 from .call_binding import CallBinding
-from .call_references import flow_scope_boundaries
 from .call_resolver import CallResolver, Resolved
 from .callable_flow import CallableFlow
 from .cpp import calls as cpp_calls
@@ -30,6 +29,7 @@ from .flow_access import FlowProcessor
 from .io_access import IOAccessProcessor
 from .language_calls import CallScan, LanguageCalls
 from .rpc_exposure import GoRpcExposureProcessor
+from .scope_boundaries import flow_scope_boundaries
 
 
 class CallScanHost(EdgeSiteHost, Protocol):

@@ -17,7 +17,6 @@ from collections.abc import Callable, Mapping
 from tree_sitter import Node
 
 from .. import constants as cs
-from ..language_spec import LanguageSpec
 from ..node_text import safe_decode_text
 from ..types_defs import LanguageQueries
 from .call_callbacks import CallbackEdges, RefEmitScope, conditional_result_operands
@@ -27,7 +26,7 @@ from .callable_params import js_ts_parameter_names
 from .edge_site import host_site_scoped
 from .js_ts import bindings as js_bindings
 from .js_ts import calls as js_calls
-from .python import calls as python_calls
+from .scope_boundaries import flow_scope_boundaries
 
 # Assignment node type -> RHS field, per language family: Python `assignment`
 # and JS/TS `assignment_expression` (client.post = fn) carry the RHS in
@@ -74,20 +73,6 @@ _JSX_NAMED_ELEMENT_TYPES = frozenset(
 _JSX_COMPONENT_TARGET_TYPES = frozenset(
     {cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD, cs.NodeLabel.CLASS}
 )
-
-
-def flow_scope_boundaries(lang_config: LanguageSpec) -> frozenset[str]:
-    """The node types of a nested function or class scope a scan of a scope's
-    own syntax stops at."""
-    # A nested function/class scope; a scan of a function body must not descend
-    # into one, since its returns and local bindings belong to it, not the
-    # enclosing scope. The Python set is unioned in so Python keeps its exact
-    # prior behaviour (its decorated_definition wrapper is not a config type).
-    return (
-        python_calls.SCOPE_BOUNDARY_TYPES
-        | frozenset(lang_config.function_node_types)
-        | frozenset(lang_config.class_node_types)
-    )
 
 
 class ReferenceWalkers:

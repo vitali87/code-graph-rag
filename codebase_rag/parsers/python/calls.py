@@ -22,12 +22,14 @@ from ... import constants as cs
 from ...language_spec import LanguageSpec
 from ...node_text import safe_decode_text
 from ...types_defs import FunctionLocation, LanguageQueries, PropertyDict
-from ..call_host import PyJsValueReferenceHost, VerdictNotingHost
+from ..call_host import CallbackEdgeHost, ValueReferenceHost, VerdictNotingHost
+from ..call_nodes import call_target_name, parse_call_arguments
 from ..call_resolver import PY_EXTERNAL_TARGET
 from ..callable_params import python_parameter_names
 from ..edge_site import EdgeSiteHost, host_site_scoped
 from ..js_ts import calls as js_calls
 from ..language_calls import UNDECIDED_CALLEE, Callee, LanguageCalls
+from ..scope_boundaries import PY_SCOPE_BOUNDARY_TYPES, flow_scope_boundaries
 from .class_aliases import scan_class_body_aliases
 from .receiver_rebinding import ReceiverRebinding, receiver_rebinding
 
@@ -35,14 +37,15 @@ if TYPE_CHECKING:
     from ..call_resolver import CallResolver
 
 
-class PythonCallHost(EdgeSiteHost, PyJsValueReferenceHost, VerdictNotingHost, Protocol):
+class PythonCallHost(
+    EdgeSiteHost, ValueReferenceHost, CallbackEdgeHost, VerdictNotingHost, Protocol
+):
     """What Python call resolution calls on the call pass that builds it: the
     edge emitter, the note of how surely a name-based resolve binds the call
-    node being scanned, a function node's recorded location, a call's callee
-    name and arguments, the callback emitter a passed function's edge goes
-    through like any other callback's, and the reference walkers Python
-    shares with other languages, with the scope boundaries they stop at.
-    Beside the edge site, `_verdict`, how surely
+    node being scanned, a function node's recorded location, and the
+    reference walkers and callback edges Python shares with other languages,
+    through which a function passed to a higher-order builtin gets its edge
+    like any other callback. Beside the edge site, `_verdict`, how surely
     the call node being scanned binds its callee, which a single Protocol
     conformer's edge carries."""
 
@@ -59,28 +62,6 @@ class PythonCallHost(EdgeSiteHost, PyJsValueReferenceHost, VerdictNotingHost, Pr
     def _recorded_caller(
         self, func_node: Node, module_qn: str
     ) -> FunctionLocation | None: ...
-
-    def _get_call_target_name(
-        self, call_node: Node, language: cs.SupportedLanguage | None = None
-    ) -> str | None: ...
-
-    def _parse_call_arguments(
-        self, call_node: Node
-    ) -> tuple[list[Node], dict[str, Node]]: ...
-
-    def _emit_callback_edge(
-        self,
-        source_spec: tuple[str, str, str],
-        arg_node: Node,
-        module_qn: str,
-        local_var_types: dict[str, str] | None,
-        class_context: str | None,
-        resolve_func: Callable[..., tuple[str, str] | None],
-        ensure_rel: Callable[..., None],
-        caller_qn: str | None = None,
-        rel_type: cs.RelationshipType = cs.RelationshipType.CALLS,
-        language: cs.SupportedLanguage | None = None,
-    ) -> None: ...
 
 
 class PythonCallScan(Protocol):
@@ -108,16 +89,6 @@ _LOCAL_SCOPE_CALLERS = frozenset({cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_LAMBDA}
 # as a call (`Dispatcher()(1)`) is typed by what that call returns.
 _INSTANCE_CALLEE_TYPES = frozenset(
     {cs.TS_PY_IDENTIFIER, cs.TS_PY_ATTRIBUTE, cs.TS_PY_CALL}
-)
-
-# Python nested-scope boundaries used when scanning a scope for dispatch
-# tables of function references.
-SCOPE_BOUNDARY_TYPES = frozenset(
-    {
-        cs.TS_PY_FUNCTION_DEFINITION,
-        cs.TS_PY_CLASS_DEFINITION,
-        cs.TS_PY_DECORATED_DEFINITION,
-    }
 )
 
 
@@ -328,7 +299,7 @@ class PythonCallResolution(LanguageCalls):
         combined_captures: dict[str, list[Node]],
         sorted_func_nodes: list[Node] | None,
     ) -> None:
-        self._host._ingest_py_js_module_references(
+        self._host.references.ingest_module_references(
             root_node, module_qn, language, queries
         )
         self.ingest_module_decorator_calls(
@@ -358,14 +329,14 @@ class PythonCallResolution(LanguageCalls):
         class_context: str | None,
         local_var_types: dict[str, str] | None,
     ) -> None:
-        host = self._host
-        boundaries = host._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG])
+        references = self._host.references
+        boundaries = flow_scope_boundaries(queries[language][cs.QUERY_CONFIG])
         # Operator syntax (k in r, r[k], r[k]=v, len(r)) dispatches to dunder
         # methods; emit those edges when the operand is a first-party type.
         self.ingest_operator_dispatch_calls(
             caller_node, caller_spec, module_qn, local_var_types
         )
-        host._ingest_assignment_function_references(
+        references.ingest_assignment_function_references(
             caller_node,
             caller_spec,
             module_qn,
@@ -375,7 +346,7 @@ class PythonCallResolution(LanguageCalls):
             caller_qn,
             language=language,
         )
-        host._ingest_default_param_references(
+        references.ingest_default_param_references(
             caller_node,
             caller_spec,
             module_qn,
@@ -385,7 +356,7 @@ class PythonCallResolution(LanguageCalls):
         )
         # A returned bound method (django GEOSCoordSeq `return
         # self._get_point_2d`) is invoked by whoever receives it.
-        host._ingest_returned_function_references(
+        references.ingest_returned_function_references(
             caller_node,
             caller_spec,
             module_qn,
@@ -399,7 +370,7 @@ class PythonCallResolution(LanguageCalls):
         # scanned before the no-calls early return, so only nested scopes
         # here.
         if caller_type != cs.NodeLabel.MODULE:
-            host._ingest_collection_function_references(
+            self._host.tables.ingest_collection_function_references(
                 caller_node,
                 caller_spec,
                 module_qn,
@@ -614,10 +585,10 @@ class PythonCallResolution(LanguageCalls):
         # A class construction whose arguments name functions binds each
         # to the matching (keyword or positional) ctor field.
         resolver = self._resolver
-        positional, keyword = self._host._parse_call_arguments(call_node)
+        positional, keyword = parse_call_arguments(call_node)
         if not positional and not keyword:
             return
-        name = self._host._get_call_target_name(call_node)
+        name = call_target_name(call_node, self)
         if not name:
             return
         callee = resolver.resolve_function_call(name, module_qn)
@@ -712,7 +683,7 @@ class PythonCallResolution(LanguageCalls):
             # self.cb = handler) is that helper's store, not a constructor
             # rename; descending would let it override the real __init__
             # store, so stop at nested scopes.
-            if node.type in SCOPE_BOUNDARY_TYPES:
+            if node.type in PY_SCOPE_BOUNDARY_TYPES:
                 continue
             if node.type == cs.TS_PY_ASSIGNMENT:
                 left = node.child_by_field_name(cs.TS_FIELD_LEFT)
@@ -1173,9 +1144,9 @@ class PythonCallResolution(LanguageCalls):
         ensure_rel: Callable[..., None],
         caller_qn: str | None = None,
     ) -> None:
-        positional, keyword = self._host._parse_call_arguments(call_node)
+        positional, keyword = parse_call_arguments(call_node)
         for arg_node in (*positional, *keyword.values()):
-            self._host._emit_callback_edge(
+            self._host.callbacks.emit_callback_edge(
                 caller_spec,
                 arg_node,
                 module_qn,

@@ -1,22 +1,27 @@
 """What several languages' call collaborators reach on the call pass that
 builds them, declared once for their host Protocols to take.
 
-`CallProcessor` owns the reference walkers every language shares: a function
-used as a value rather than called (stored by an assignment, handed back by
-a return, held in a collection literal or a parameter default) still gets an
-edge, and each walk stops at the nested scopes its language's spec names. It
+`CallProcessor` holds the collaborators every language shares as its own
+attributes, and a language's collaborator calls their methods directly: the
+reference walkers (`references`) and the dispatch-table walk (`tables`),
+which still give a function used as a value rather than called (stored by
+an assignment, handed back by a return, held in a collection literal or a
+parameter default) its edge; the callback edges (`callbacks`) a function
+handed over as a value writes; and the binding (`binding`) whose ingest of
+a bound call writes the edges every resolved call writes. The processor
 also notes how surely a resolver answer binds the call node being scanned,
 the verdict that node's edge carries. A collaborator's host Protocol takes
 the members it uses from here rather than spelling them out again."""
 
-from collections.abc import Mapping
-from typing import Protocol
+from __future__ import annotations
 
-from tree_sitter import Node
+from typing import TYPE_CHECKING, Protocol
 
-from .. import constants as cs
-from ..language_spec import LanguageSpec
-from ..types_defs import LanguageQueries
+if TYPE_CHECKING:
+    from .call_binding import CallBinding
+    from .call_callbacks import CallbackEdges
+    from .call_references import ReferenceWalkers
+    from .call_tables import TableReferences
 
 
 class VerdictNotingHost(Protocol):
@@ -27,68 +32,27 @@ class VerdictNotingHost(Protocol):
 
 
 class ValueReferenceHost(Protocol):
-    """The walkers for a function a caller stores by assignment or hands back
-    by a return, and the scope boundaries they stop at."""
+    """The walkers for a function a caller's scope holds as a value: the
+    reference walkers, and the walk over the scope's literals."""
 
-    @staticmethod
-    def _flow_scope_boundaries(lang_config: LanguageSpec) -> frozenset[str]: ...
+    @property
+    def references(self) -> ReferenceWalkers: ...
 
-    def _ingest_assignment_function_references(
-        self,
-        caller_node: Node,
-        caller_spec: tuple[str, str, str],
-        module_qn: str,
-        local_var_types: dict[str, str] | None,
-        class_context: str | None,
-        boundary_types: frozenset[str],
-        caller_qn: str | None = None,
-        language: cs.SupportedLanguage | None = None,
-    ) -> None: ...
-
-    def _ingest_returned_function_references(
-        self,
-        caller_node: Node,
-        caller_spec: tuple[str, str, str],
-        module_qn: str,
-        local_var_types: dict[str, str] | None,
-        class_context: str | None,
-        boundary_types: frozenset[str],
-        caller_qn: str | None = None,
-        language: cs.SupportedLanguage | None = None,
-    ) -> None: ...
+    @property
+    def tables(self) -> TableReferences: ...
 
 
-class PyJsValueReferenceHost(ValueReferenceHost, Protocol):
-    """The walkers Python and JS/TS add: a function held in a collection
-    literal or a parameter default, and a module-level (or class-level)
-    dispatch table."""
+class CallbackEdgeHost(Protocol):
+    """The callback edges, which resolve a function handed over as a value
+    and write the edge that keeps it reachable."""
 
-    def _ingest_py_js_module_references(
-        self,
-        root_node: Node,
-        module_qn: str,
-        language: cs.SupportedLanguage,
-        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
-        class_field_assignments: bool = False,
-    ) -> None: ...
+    @property
+    def callbacks(self) -> CallbackEdges: ...
 
-    def _ingest_default_param_references(
-        self,
-        caller_node: Node,
-        caller_spec: tuple[str, str, str],
-        module_qn: str,
-        local_var_types: dict[str, str] | None,
-        class_context: str | None,
-        caller_qn: str | None,
-    ) -> None: ...
 
-    def _ingest_collection_function_references(
-        self,
-        caller_node: Node,
-        caller_spec: tuple[str, str, str],
-        module_qn: str,
-        local_var_types: dict[str, str] | None,
-        class_context: str | None,
-        boundary_types: frozenset[str],
-        language: cs.SupportedLanguage | None = None,
-    ) -> None: ...
+class ResolvedCallHost(Protocol):
+    """The binding of the call nodes a caller's scan visits, whose ingest of a
+    call bound to its callee writes the edges every resolved call writes."""
+
+    @property
+    def binding(self) -> CallBinding: ...

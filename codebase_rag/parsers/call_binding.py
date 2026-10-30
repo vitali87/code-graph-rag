@@ -21,12 +21,12 @@ from .. import constants as cs
 from .call_callbacks import CallbackEdges
 from .call_construction import CallConstruction
 from .call_nodes import call_target_name
-from .call_references import flow_scope_boundaries
 from .call_resolver import CallResolver
 from .callable_flow import CallableFlow
 from .definition_facts import DefinitionFacts
 from .edge_site import EdgeSiteHost
 from .language_calls import CallScan
+from .scope_boundaries import flow_scope_boundaries
 from .string_call import StringCallSpec, string_call_target
 from .utils import written_simple_name
 

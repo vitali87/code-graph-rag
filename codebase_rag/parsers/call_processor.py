@@ -27,7 +27,6 @@ from tree_sitter import Node
 from .. import constants as cs
 from .. import logs as ls
 from ..capture import ALL_ENABLED, CaptureSelection
-from ..language_spec import LanguageSpec
 from ..node_text import decode_node_text
 from ..services import IngestorProtocol
 from ..types_defs import (
@@ -47,14 +46,13 @@ from .call_nodes import (
     call_site_properties,
     call_target_name,
     function_field_call_name,
-    parse_call_arguments,
 )
 from .call_ownership import (
     collect_all_call_nodes,
     file_call_nodes,
     file_combined_captures,
 )
-from .call_references import ReferenceWalkers, flow_scope_boundaries
+from .call_references import ReferenceWalkers
 from .call_resolver import CallResolver, Resolved
 from .call_scan import CallerCalls
 from .call_tables import TableReferences
@@ -74,7 +72,7 @@ from .io_access.processor import PackageFileLookups
 from .java import calls as java_calls
 from .js_ts import calls as js_calls
 from .julia import calls as julia_calls
-from .language_calls import CallScan, LanguageCalls
+from .language_calls import LanguageCalls
 from .lua import calls as lua_calls
 from .php import calls as php_calls
 from .python import calls as python_calls
@@ -148,13 +146,13 @@ class CallProcessor:
         "_julia",
         "_language_calls",
         "_default_calls",
-        "_callbacks",
-        "_tables",
-        "_references",
+        "callbacks",
+        "tables",
+        "references",
         "_flow",
-        "_construction",
-        "_binding",
-        "_callers",
+        "construction",
+        "binding",
+        "callers",
         "_scan",
         "failed_call_files",
         "_call_file",
@@ -235,25 +233,28 @@ class CallProcessor:
         # value keeps alive, the walks that find such values, callable-
         # parameter flow, a class callee's construction, the steps a call
         # node goes through, and the callers a file's calls are shared out to.
-        self._callbacks = CallbackEdges(self, self._resolver.function_registry)
-        self._tables = TableReferences(self, self._callbacks, self._resolver, self._js)
-        self._references = ReferenceWalkers(
-            self, self._callbacks, self._tables, self._resolver, self._js
+        # The language collaborators above call the public ones directly
+        # (`call_host`): built after them, they are reached through this
+        # processor when a pass runs rather than handed over at construction.
+        self.callbacks = CallbackEdges(self, self._resolver.function_registry)
+        self.tables = TableReferences(self, self.callbacks, self._resolver, self._js)
+        self.references = ReferenceWalkers(
+            self, self.callbacks, self.tables, self._resolver, self._js
         )
-        self._flow = CallableFlow(self, self._callbacks, self._resolver)
-        self._construction = CallConstruction(self, self._resolver, self.facts)
-        self._binding = CallBinding(
+        self._flow = CallableFlow(self, self.callbacks, self._resolver)
+        self.construction = CallConstruction(self, self._resolver, self.facts)
+        self.binding = CallBinding(
             self,
             self._resolver,
             self.facts,
-            self._callbacks,
+            self.callbacks,
             self._flow,
-            self._construction,
+            self.construction,
             # Dispatchers that name their callee in a string argument,
             # declared in the repository's .cgr.toml.
             load_string_call_specs(repo_path),
         )
-        self._callers = CallerScan(self, self._julia)
+        self.callers = CallerScan(self, self._julia)
         # Files whose call pass failed this run, whole or in one caller, for
         # the sync summary (issue #3173); `_call_file` is the file being walked.
         self.failed_call_files: set[Path] = set()
@@ -298,7 +299,7 @@ class CallProcessor:
             self,
             self._resolver,
             self._flow,
-            self._binding,
+            self.binding,
             io_access=io_access,
             rpc_exposure=rpc_exposure,
             flow_access=self._flow_processor,
@@ -490,7 +491,7 @@ class CallProcessor:
                 call_name_cache,
             )
 
-            self._callers.ingest_function_callers(
+            self.callers.ingest_function_callers(
                 root_node, module_qn, language, queries, file_calls
             )
             # Bare decorators (`@task`) are not call nodes; emit their
@@ -516,10 +517,10 @@ class CallProcessor:
                 # one; those passes run per caller inside class processing,
                 # so they proceed.
                 return
-            self._callers.ingest_class_callers(
+            self.callers.ingest_class_callers(
                 root_node, module_qn, language, queries, file_calls
             )
-            module_calls = self._callers.module_level_calls(
+            module_calls = self.callers.module_level_calls(
                 all_call_nodes, call_starts, sorted_func_nodes, language, module_qn
             )
             self._ingest_function_calls(
@@ -711,9 +712,9 @@ class CallProcessor:
     def js_symbol_member_types(self) -> dict[str, set[str]]:
         return self._js.symbol_member_types
 
-    # The language collaborators' host protocols name the methods below, the
-    # share of the pass they call back into; each hands the call to the
-    # collaborator that owns it.
+    # `call_nodes` reads Go's and JS/TS's call syntax, so neither language's
+    # module can import it; the pass, which imports both, names a call for
+    # their collaborators.
 
     def _get_call_target_name(
         self, call_node: Node, language: cs.SupportedLanguage | None = None
@@ -723,237 +724,3 @@ class CallProcessor:
     @staticmethod
     def _function_field_call_name(func_child: Node, calls: LanguageCalls) -> str | None:
         return function_field_call_name(func_child, calls)
-
-    @staticmethod
-    def _parse_call_arguments(call_node: Node) -> tuple[list[Node], dict[str, Node]]:
-        return parse_call_arguments(call_node)
-
-    @staticmethod
-    def _flow_scope_boundaries(lang_config: LanguageSpec) -> frozenset[str]:
-        return flow_scope_boundaries(lang_config)
-
-    def _class_member_qn_and_label(
-        self,
-        func_node: Node,
-        class_qn: str,
-        func_name: str,
-        lang_config: LanguageSpec,
-        language: str,
-    ) -> tuple[str, str]:
-        return self._callers.class_member_qn_and_label(
-            func_node, class_qn, func_name, lang_config, language
-        )
-
-    def _ingest_resolved_call(
-        self,
-        ctx: CallScan,
-        call_node: Node,
-        call_name: str,
-        callee_info: tuple[str, str],
-    ) -> None:
-        self._binding.ingest_resolved_call(ctx, call_node, call_name, callee_info)
-
-    def _redirect_construction(
-        self,
-        ctx: CallScan,
-        callee_qn: str,
-        ctor_rel: cs.RelationshipType = cs.RelationshipType.CALLS,
-    ) -> tuple[str, str] | None:
-        return self._construction.redirect_construction(ctx, callee_qn, ctor_rel)
-
-    def _emit_callback_edge(
-        self,
-        source_spec: tuple[str, str, str],
-        arg_node: Node,
-        module_qn: str,
-        local_var_types: dict[str, str] | None,
-        class_context: str | None,
-        resolve_func: Callable[..., tuple[str, str] | None],
-        ensure_rel: Callable[..., None],
-        caller_qn: str | None = None,
-        rel_type: cs.RelationshipType = cs.RelationshipType.CALLS,
-        language: cs.SupportedLanguage | None = None,
-    ) -> None:
-        self._callbacks.emit_callback_edge(
-            source_spec,
-            arg_node,
-            module_qn,
-            local_var_types,
-            class_context,
-            resolve_func,
-            ensure_rel,
-            caller_qn,
-            rel_type,
-            language,
-        )
-
-    def _emit_callback_targets(
-        self,
-        source_spec: tuple[str, str, str],
-        res_type: str,
-        res_qn: str,
-        rel_type: cs.RelationshipType,
-        ensure_rel: Callable[..., None],
-        module_qn: str,
-        language: cs.SupportedLanguage | None,
-        resolution: str,
-    ) -> None:
-        self._callbacks.emit_callback_targets(
-            source_spec,
-            res_type,
-            res_qn,
-            rel_type,
-            ensure_rel,
-            module_qn,
-            language,
-            resolution,
-        )
-
-    def _emit_inline_arg_function_ref(
-        self,
-        arg_node: Node,
-        source_spec: tuple[str, str, str],
-        ensure_rel: Callable[..., None],
-        caller_qn: str | None = None,
-        rel_type: cs.RelationshipType = cs.RelationshipType.REFERENCES,
-        module_qn: str | None = None,
-    ) -> None:
-        self._callbacks.emit_inline_arg_function_ref(
-            arg_node, source_spec, ensure_rel, caller_qn, rel_type, module_qn
-        )
-
-    def _emit_value_function_ref(
-        self,
-        node: Node,
-        caller_spec: tuple[str, str, str],
-        module_qn: str,
-        local_var_types: dict[str, str] | None,
-        class_context: str | None,
-        resolve_func: Callable[..., tuple[str, str] | None],
-        ensure_rel: Callable[..., None],
-        caller_qn: str | None = None,
-    ) -> None:
-        self._tables.emit_value_function_ref(
-            node,
-            caller_spec,
-            module_qn,
-            local_var_types,
-            class_context,
-            resolve_func,
-            ensure_rel,
-            caller_qn,
-        )
-
-    def _ingest_py_js_module_references(
-        self,
-        root_node: Node,
-        module_qn: str,
-        language: cs.SupportedLanguage,
-        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
-        class_field_assignments: bool = False,
-    ) -> None:
-        self._references.ingest_module_references(
-            root_node, module_qn, language, queries, class_field_assignments
-        )
-
-    def _ingest_assignment_function_references(
-        self,
-        caller_node: Node,
-        caller_spec: tuple[str, str, str],
-        module_qn: str,
-        local_var_types: dict[str, str] | None,
-        class_context: str | None,
-        boundary_types: frozenset[str],
-        caller_qn: str | None = None,
-        language: cs.SupportedLanguage | None = None,
-    ) -> None:
-        self._references.ingest_assignment_function_references(
-            caller_node,
-            caller_spec,
-            module_qn,
-            local_var_types,
-            class_context,
-            boundary_types,
-            caller_qn,
-            language,
-        )
-
-    def _ingest_jsx_component_references(
-        self,
-        caller_node: Node,
-        caller_spec: tuple[str, str, str],
-        module_qn: str,
-        local_var_types: dict[str, str] | None,
-        class_context: str | None,
-        boundary_types: frozenset[str],
-        caller_qn: str | None = None,
-    ) -> None:
-        self._references.ingest_jsx_component_references(
-            caller_node,
-            caller_spec,
-            module_qn,
-            local_var_types,
-            class_context,
-            boundary_types,
-            caller_qn,
-        )
-
-    def _ingest_returned_function_references(
-        self,
-        caller_node: Node,
-        caller_spec: tuple[str, str, str],
-        module_qn: str,
-        local_var_types: dict[str, str] | None,
-        class_context: str | None,
-        boundary_types: frozenset[str],
-        caller_qn: str | None = None,
-        language: cs.SupportedLanguage | None = None,
-    ) -> None:
-        self._references.ingest_returned_function_references(
-            caller_node,
-            caller_spec,
-            module_qn,
-            local_var_types,
-            class_context,
-            boundary_types,
-            caller_qn,
-            language,
-        )
-
-    def _ingest_collection_function_references(
-        self,
-        caller_node: Node,
-        caller_spec: tuple[str, str, str],
-        module_qn: str,
-        local_var_types: dict[str, str] | None,
-        class_context: str | None,
-        boundary_types: frozenset[str],
-        language: cs.SupportedLanguage | None = None,
-    ) -> None:
-        self._tables.ingest_collection_function_references(
-            caller_node,
-            caller_spec,
-            module_qn,
-            local_var_types,
-            class_context,
-            boundary_types,
-            language,
-        )
-
-    def _ingest_default_param_references(
-        self,
-        caller_node: Node,
-        caller_spec: tuple[str, str, str],
-        module_qn: str,
-        local_var_types: dict[str, str] | None,
-        class_context: str | None,
-        caller_qn: str | None,
-    ) -> None:
-        self._references.ingest_default_param_references(
-            caller_node,
-            caller_spec,
-            module_qn,
-            local_var_types,
-            class_context,
-            caller_qn,
-        )

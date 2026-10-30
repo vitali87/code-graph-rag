@@ -24,12 +24,13 @@ from ... import constants as cs
 from ...language_spec import LanguageSpec
 from ...node_text import decode_node_text, safe_decode_text
 from ...types_defs import FunctionLocation, LanguageQueries, PropertyDict
-from ..call_host import PyJsValueReferenceHost
+from ..call_host import CallbackEdgeHost, ValueReferenceHost
 from ..callable_params import js_ts_parameter_names
 from ..definition_docstring import extract_definition_docstring
 from ..edge_site import EdgeSiteHost, host_site_scoped
 from ..field_nodes import declared_fields
 from ..language_calls import UNDECIDED_NAME, CallName, CallScan, LanguageCalls
+from ..scope_boundaries import flow_scope_boundaries
 from . import bindings as js_bindings
 from . import utils as js_ts_utils
 from .resolution import function_prototype_builtin
@@ -38,15 +39,14 @@ if TYPE_CHECKING:
     from ..call_resolver import CallResolver
 
 
-class JsTsCallHost(EdgeSiteHost, PyJsValueReferenceHost, Protocol):
-    """What JS/TS call resolution reads and sets on the call pass that builds
+class JsTsCallHost(EdgeSiteHost, ValueReferenceHost, CallbackEdgeHost, Protocol):
+    """What JS/TS call resolution reads and calls on the call pass that builds
     it: the edge emitter, a function node's own name and the location the
     definition pass recorded for it, the callee name a `function` field
-    spells, the reference an inline callback argument gets, the reference
-    walkers JS/TS shares with other languages and the scope boundaries they
-    stop at, and `_verdict`, how surely the call node being scanned binds its
-    callee, which a member pick its receiver's declared type confirms raises
-    to exact."""
+    spells, the reference walkers and callback edges JS/TS shares with other
+    languages, and `_verdict`, how surely the call node being scanned binds
+    its callee, which a member pick its receiver's declared type confirms
+    raises to exact."""
 
     _verdict: str
 
@@ -63,27 +63,6 @@ class JsTsCallHost(EdgeSiteHost, PyJsValueReferenceHost, Protocol):
     def _recorded_caller(
         self, func_node: Node, module_qn: str
     ) -> FunctionLocation | None: ...
-
-    def _emit_inline_arg_function_ref(
-        self,
-        arg_node: Node,
-        source_spec: tuple[str, str, str],
-        ensure_rel: Callable[..., None],
-        caller_qn: str | None = None,
-        rel_type: cs.RelationshipType = cs.RelationshipType.REFERENCES,
-        module_qn: str | None = None,
-    ) -> None: ...
-
-    def _ingest_jsx_component_references(
-        self,
-        caller_node: Node,
-        caller_spec: tuple[str, str, str],
-        module_qn: str,
-        local_var_types: dict[str, str] | None,
-        class_context: str | None,
-        boundary_types: frozenset[str],
-        caller_qn: str | None = None,
-    ) -> None: ...
 
     def _function_field_call_name(
         self, func_child: Node, calls: LanguageCalls
@@ -940,19 +919,19 @@ class JsTsCallResolution(LanguageCalls):
     ) -> None:
         # A class field's initializer runs at construction, so the
         # assignment scan descends into class bodies too.
-        self._host._ingest_py_js_module_references(
+        self._host.references.ingest_module_references(
             root_node, module_qn, language, queries, class_field_assignments=True
         )
         # A module-scope JSX element (export default <App />) can sit
         # in a file with no call expressions; scan before the early
         # return like the assignment pass.
-        self._host._ingest_jsx_component_references(
+        self._host.references.ingest_jsx_component_references(
             root_node,
             (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
             module_qn,
             None,
             None,
-            self._host._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
+            flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
         )
 
     def parameter_names(self, caller_node: Node) -> list[str] | None:
@@ -970,9 +949,9 @@ class JsTsCallResolution(LanguageCalls):
         class_context: str | None,
         local_var_types: dict[str, str] | None,
     ) -> None:
-        host = self._host
-        boundaries = host._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG])
-        host._ingest_assignment_function_references(
+        references = self._host.references
+        boundaries = flow_scope_boundaries(queries[language][cs.QUERY_CONFIG])
+        references.ingest_assignment_function_references(
             caller_node,
             caller_spec,
             module_qn,
@@ -982,7 +961,7 @@ class JsTsCallResolution(LanguageCalls):
             caller_qn,
             language=language,
         )
-        host._ingest_jsx_component_references(
+        references.ingest_jsx_component_references(
             caller_node,
             caller_spec,
             module_qn,
@@ -991,7 +970,7 @@ class JsTsCallResolution(LanguageCalls):
             boundaries,
             caller_qn,
         )
-        host._ingest_default_param_references(
+        references.ingest_default_param_references(
             caller_node,
             caller_spec,
             module_qn,
@@ -999,7 +978,7 @@ class JsTsCallResolution(LanguageCalls):
             class_context,
             caller_qn,
         )
-        host._ingest_returned_function_references(
+        references.ingest_returned_function_references(
             caller_node,
             caller_spec,
             module_qn,
@@ -1013,7 +992,7 @@ class JsTsCallResolution(LanguageCalls):
         # scanned before the no-calls early return, so only nested scopes
         # here.
         if caller_type != cs.NodeLabel.MODULE:
-            host._ingest_collection_function_references(
+            self._host.tables.ingest_collection_function_references(
                 caller_node,
                 caller_spec,
                 module_qn,
@@ -1113,7 +1092,7 @@ class JsTsCallResolution(LanguageCalls):
         for arg in args.named_children:
             value = unwrap_ts_value(arg)
             if value.type in js_bindings.INLINE_FUNC_VALUE_TYPES:
-                self._host._emit_inline_arg_function_ref(
+                self._host.callbacks.emit_inline_arg_function_ref(
                     value,
                     caller_spec,
                     ensure_rel,
