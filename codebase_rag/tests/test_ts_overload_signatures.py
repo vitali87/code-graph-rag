@@ -20,7 +20,7 @@ from codebase_rag import constants as cs
 from codebase_rag.check.command import run_check
 from codebase_rag.check.delta import has_findings
 from codebase_rag.dead_code import collect_dead_code, default_dead_code_config
-from codebase_rag.editing.rename import RenameRefused, rename
+from codebase_rag.editing.rename import RenameHooks, RenameRefused, rename
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.js_ts.overloads import (
@@ -340,7 +340,12 @@ def _renamed(
     root = tmp_path / PROJECT
     store, updater = _index(root, files)
     report = rename(
-        store.fetch_all, PROJECT, root, qn, new_name, reingest=updater.reingest
+        store.fetch_all,
+        PROJECT,
+        root,
+        qn,
+        new_name,
+        hooks=RenameHooks(reingest=updater.reingest),
     )
     assert report.applied, report.message
     assert report.ambiguous == ()

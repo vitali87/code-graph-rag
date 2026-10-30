@@ -23,7 +23,7 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag.capture import resolve_capture
-from codebase_rag.editing.rename import RenameRefused, rename
+from codebase_rag.editing.rename import RenameHooks, RenameRefused, rename
 from codebase_rag.function_registry import FunctionRegistryTrie
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
@@ -433,7 +433,12 @@ def test_renaming_either_part_renames_every_part(temp_repo: Path, part: str) -> 
     )
 
     report = rename(
-        store.fetch_all, PROJECT, root, part, "Purchase", reingest=updater.reingest
+        store.fetch_all,
+        PROJECT,
+        root,
+        part,
+        "Purchase",
+        hooks=RenameHooks(reingest=updater.reingest),
     )
 
     assert report.applied, report.message
@@ -463,7 +468,12 @@ def test_a_partial_class_named_by_a_parameter_refuses_and_writes_nothing(
 
     with pytest.raises(RenameRefused) as refused:
         rename(
-            store.fetch_all, PROJECT, root, part, "Purchase", reingest=updater.reingest
+            store.fetch_all,
+            PROJECT,
+            root,
+            part,
+            "Purchase",
+            hooks=RenameHooks(reingest=updater.reingest),
         )
 
     owners = {site.owner for site in refused.value.ambiguous}
@@ -492,7 +502,7 @@ def test_a_same_named_partial_class_of_another_directory_is_left_alone(
         root,
         f"{PROJECT}.A.Order.Tax.Shop.Order",
         "Purchase",
-        reingest=updater.reingest,
+        hooks=RenameHooks(reingest=updater.reingest),
     )
 
     assert report.applied, report.message
@@ -523,7 +533,7 @@ def test_a_non_partial_same_named_type_is_left_alone(temp_repo: Path) -> None:
         root,
         f"{PROJECT}.Box.Shop.Box",
         "Crate",
-        reingest=updater.reingest,
+        hooks=RenameHooks(reingest=updater.reingest),
     )
 
     assert report.applied, report.message
@@ -555,7 +565,7 @@ def test_renaming_a_python_class_never_asks_for_partial_parts(
         root,
         f"{PROJECT}.pkg.util.Helper",
         "Assist",
-        reingest=updater.reingest,
+        hooks=RenameHooks(reingest=updater.reingest),
     )
 
     assert report.applied, report.message
@@ -601,7 +611,12 @@ def test_a_partial_twin_of_another_arity_is_left_alone(
     store, updater = _indexed(root, {**PLAIN_BOX_FILES, **GENERIC_BOX_FILES})
 
     report = rename(
-        store.fetch_all, PROJECT, root, target, "Crate", reingest=updater.reingest
+        store.fetch_all,
+        PROJECT,
+        root,
+        target,
+        "Crate",
+        hooks=RenameHooks(reingest=updater.reingest),
     )
 
     assert report.applied, report.message

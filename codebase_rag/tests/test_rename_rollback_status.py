@@ -8,7 +8,7 @@ from typer.testing import CliRunner
 
 from codebase_rag import constants as cs
 from codebase_rag.cli import app
-from codebase_rag.editing.rename import rename
+from codebase_rag.editing.rename import RenameHooks, rename
 from codebase_rag.editing.transaction import (
     EditTransaction,
     history_path,
@@ -98,8 +98,10 @@ def test_failed_contract_reports_rollback_without_running_success_hook(
         root,
         f"{PROJECT}.pkg.util.helper",
         "assist",
-        reingest=_reingest_with_interference(root, updater, interference, calls),
-        after_apply=after_apply,
+        hooks=RenameHooks(
+            reingest=_reingest_with_interference(root, updater, interference, calls),
+            after_apply=after_apply,
+        ),
     )
 
     assert report.verdict is not None
@@ -204,9 +206,11 @@ def test_rename_without_contract_failure_has_no_rollback_status(
         root,
         f"{PROJECT}.pkg.util.helper",
         "renamed",
-        reingest=None if mode == "unchecked" else updater.reingest,
+        hooks=RenameHooks(
+            reingest=None if mode == "unchecked" else updater.reingest,
+            after_apply=after_apply,
+        ),
         dry_run=mode == "dry_run",
-        after_apply=after_apply,
     )
 
     assert report.undone is None

@@ -15,7 +15,7 @@ import pytest
 
 from codebase_rag.check.delta import RenameFinding, StructuralDelta
 from codebase_rag.editing import rename_expectation, verify
-from codebase_rag.editing.rename import rename
+from codebase_rag.editing.rename import RenameHooks, rename
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.types_defs import PropertyParams, ResultRow
@@ -87,7 +87,7 @@ def _rename(
         f"{PROJECT}.{target}",
         new_name,
         allow_heuristic=True,
-        reingest=updater.reingest,
+        hooks=RenameHooks(reingest=updater.reingest),
     )
     return report.applied, report.message
 

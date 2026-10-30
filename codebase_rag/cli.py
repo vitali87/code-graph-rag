@@ -2199,7 +2199,7 @@ def rename_command(
     ),
     dry_run: bool = typer.Option(False, "--dry-run", help=ch.HELP_RENAME_DRY_RUN),
 ) -> None:
-    from .editing.rename import RenameRefused, rename, sites_for
+    from .editing.rename import RenameHooks, RenameRefused, rename, sites_for
     from .graph_cli import _project_and_fetch
 
     name, fetch_all, ingestor = _project_and_fetch(project, repo_path)
@@ -2226,8 +2226,10 @@ def rename_command(
                 new_name,
                 allow_heuristic=allow_heuristic,
                 dry_run=dry_run,
-                reingest=marked_reingest(
-                    updater, WriteMarker(ingestor, name, owner, None)
+                hooks=RenameHooks(
+                    reingest=marked_reingest(
+                        updater, WriteMarker(ingestor, name, owner, None)
+                    )
                 ),
                 heuristic_opt_in=cs.RENAME_CLI_ALLOW_HEURISTIC,
             )

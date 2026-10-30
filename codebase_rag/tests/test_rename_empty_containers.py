@@ -5,7 +5,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag.check.delta import Definition, Snapshot, _symbols
-from codebase_rag.editing.rename import rename
+from codebase_rag.editing.rename import RenameHooks, rename
 from codebase_rag.editing.transaction import EditTransaction, StagedFile, load_history
 from codebase_rag.tests.test_edit_contract import PROJECT, _real_project
 from codebase_rag.types_defs import PropertyDict, ReingestReport, ResultRow
@@ -47,7 +47,12 @@ def test_rename_carries_empty_nested_containers(
     new = f"{PROJECT}.pkg.util.Assist"
 
     report = rename(
-        store.fetch_all, PROJECT, root, old, "Assist", reingest=updater.reingest
+        store.fetch_all,
+        PROJECT,
+        root,
+        old,
+        "Assist",
+        hooks=RenameHooks(reingest=updater.reingest),
     )
 
     assert report.applied, report.message
@@ -115,7 +120,7 @@ def test_rename_rejects_an_undeclared_empty_container_replacement(
         root,
         f"{PROJECT}.pkg.util.Helper",
         "Assist",
-        reingest=updater.reingest,
+        hooks=RenameHooks(reingest=updater.reingest),
     )
 
     assert report.verdict is not None
@@ -214,7 +219,7 @@ def test_declaration_read_failure_reports_the_committed_rename(
         root,
         f"{PROJECT}.pkg.util.Helper",
         "Assist",
-        reingest=reingest,
+        hooks=RenameHooks(reingest=reingest),
     )
 
     assert report.applied

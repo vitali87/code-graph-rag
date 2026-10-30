@@ -19,7 +19,7 @@ from tree_sitter import Node
 
 from codebase_rag import constants as cs
 from codebase_rag.dead_code import collect_dead_code, default_dead_code_config
-from codebase_rag.editing.rename import RenameRefused, rename
+from codebase_rag.editing.rename import RenameHooks, RenameRefused, rename
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.python.overloads import (
     folded_overload_stubs,
@@ -335,7 +335,7 @@ def test_rename_rewrites_every_stub_with_the_implementation(
         root,
         f"{PROJECT}.pkg.util.command",
         "cmd",
-        reingest=updater.reingest,
+        hooks=RenameHooks(reingest=updater.reingest),
     )
     assert report.applied, report.message
     assert report.ambiguous == ()
@@ -374,7 +374,7 @@ def test_renaming_a_same_named_method_leaves_the_stubs_alone(
         root,
         f"{PROJECT}.pkg.util.Other.command",
         "cmd",
-        reingest=updater.reingest,
+        hooks=RenameHooks(reingest=updater.reingest),
     )
     assert report.applied, report.message
     util = (root / "pkg" / "util.py").read_text(encoding="utf-8")
@@ -1236,7 +1236,7 @@ def test_rename_of_a_nested_overloaded_function_rewrites_its_stubs(
         root,
         f"{PROJECT}.pkg.util.make.command",
         "cmd",
-        reingest=updater.reingest,
+        hooks=RenameHooks(reingest=updater.reingest),
     )
     assert report.applied, report.message
     util = (root / "pkg" / "util.py").read_text(encoding="utf-8")

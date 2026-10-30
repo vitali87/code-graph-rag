@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.editing.rename import rename
+from codebase_rag.editing.rename import RenameHooks, rename
 from codebase_rag.tests.test_edit_contract import PROJECT, _real_project
 
 _GO = shutil.which("go")
@@ -73,7 +73,14 @@ def _go_build(root: Path) -> None:
 
 def _rename(root: Path, files: dict[str, str], qn: str, new: str) -> None:
     store, updater = _real_project(root, files)
-    report = rename(store.fetch_all, PROJECT, root, qn, new, reingest=updater.reingest)
+    report = rename(
+        store.fetch_all,
+        PROJECT,
+        root,
+        qn,
+        new,
+        hooks=RenameHooks(reingest=updater.reingest),
+    )
     assert report.applied, report.message
 
 

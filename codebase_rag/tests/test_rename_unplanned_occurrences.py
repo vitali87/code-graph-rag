@@ -28,7 +28,7 @@ from codebase_rag.editing.occurrences import (
     _access,
     find_occurrences,
 )
-from codebase_rag.editing.rename import RenameRefused, rename
+from codebase_rag.editing.rename import RenameHooks, RenameRefused, rename
 from codebase_rag.graph_query import QueryFn
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
@@ -186,7 +186,7 @@ def test_the_rust_reexport_case_never_leaves_a_call_under_the_old_name(
             root,
             NEXT_STRING,
             "next_str",
-            reingest=updater.reingest,
+            hooks=RenameHooks(reingest=updater.reingest),
         )
     except RenameRefused as refused:
         assert ("call", "src/cmd/get.rs", 5, 20) in {
@@ -461,7 +461,7 @@ def test_a_call_through_an_unknown_object_refuses_even_with_allow_heuristic(
             CACHE_GET,
             "fetch",
             allow_heuristic=True,
-            reingest=updater.reingest,
+            hooks=RenameHooks(reingest=updater.reingest),
         )
 
     assert [
@@ -513,7 +513,7 @@ def test_allow_heuristic_rewrites_a_call_on_a_receiver_declared_as_the_class(
         NEXT_STRING,
         "next_str",
         allow_heuristic=True,
-        reingest=updater.reingest,
+        hooks=RenameHooks(reingest=updater.reingest),
     )
 
     assert report.applied, report.message
@@ -628,7 +628,7 @@ def test_allow_heuristic_rewrites_the_unplanned_site_and_reports_it(
         HELPER,
         "assist",
         allow_heuristic=True,
-        reingest=updater.reingest,
+        hooks=RenameHooks(reingest=updater.reingest),
     )
 
     assert report.applied, report.message
@@ -730,7 +730,12 @@ def test_a_complete_graph_renames_as_before_with_nothing_unplanned(
     root, store, updater = py_repo
 
     report = rename(
-        _query(store), PROJECT, root, HELPER, "assist", reingest=updater.reingest
+        _query(store),
+        PROJECT,
+        root,
+        HELPER,
+        "assist",
+        hooks=RenameHooks(reingest=updater.reingest),
     )
 
     assert report.applied, report.message
@@ -765,7 +770,12 @@ def test_prose_strings_locals_and_attributes_are_not_unplanned(
     store, updater = _indexed(root, {**PY, "pkg/notes.py": PROSE_AND_LOCALS})
 
     report = rename(
-        _query(store), PROJECT, root, HELPER, "assist", reingest=updater.reingest
+        _query(store),
+        PROJECT,
+        root,
+        HELPER,
+        "assist",
+        hooks=RenameHooks(reingest=updater.reingest),
     )
 
     assert report.applied, report.message
@@ -792,7 +802,12 @@ def test_a_same_named_symbol_the_graph_knows_is_not_unplanned(
     store, updater = _indexed(root, {**PY, "pkg/other.py": OTHER})
 
     report = rename(
-        _query(store), PROJECT, root, HELPER, "assist", reingest=updater.reingest
+        _query(store),
+        PROJECT,
+        root,
+        HELPER,
+        "assist",
+        hooks=RenameHooks(reingest=updater.reingest),
     )
 
     assert report.applied, report.message
@@ -857,7 +872,12 @@ def test_a_multi_name_import_line_stays_clean(tmp_path: Path) -> None:
     store, updater = _indexed(root, files)
 
     report = rename(
-        _query(store), PROJECT, root, HELPER, "assist", reingest=updater.reingest
+        _query(store),
+        PROJECT,
+        root,
+        HELPER,
+        "assist",
+        hooks=RenameHooks(reingest=updater.reingest),
     )
 
     assert report.applied, report.message
@@ -884,7 +904,12 @@ def test_another_language_ignored_dirs_and_cgrignore_are_not_scanned(
     store, updater = _indexed(root, {**PY, **outside})
 
     report = rename(
-        _query(store), PROJECT, root, HELPER, "assist", reingest=updater.reingest
+        _query(store),
+        PROJECT,
+        root,
+        HELPER,
+        "assist",
+        hooks=RenameHooks(reingest=updater.reingest),
     )
 
     assert report.applied, report.message
@@ -1114,7 +1139,7 @@ def test_a_call_on_an_object_from_the_classs_module_is_held_to_the_plan(
             CACHE_GET,
             "fetch",
             allow_heuristic=allow_heuristic,
-            reingest=updater.reingest,
+            hooks=RenameHooks(reingest=updater.reingest),
         )
 
     assert [
@@ -1232,7 +1257,7 @@ def test_a_module_level_import_of_a_namesake_still_binds_the_whole_file(
         root,
         HELPER,
         "assist",
-        reingest=updater.reingest,
+        hooks=RenameHooks(reingest=updater.reingest),
     )
 
     assert report.applied, report.message
@@ -1309,7 +1334,7 @@ def test_another_modules_same_named_class_is_not_the_target(
             CACHE_GET,
             "fetch",
             allow_heuristic=True,
-            reingest=updater.reingest,
+            hooks=RenameHooks(reingest=updater.reingest),
         )
 
     assert [
@@ -1351,7 +1376,7 @@ def test_the_targets_class_is_still_certain_beside_a_namesake(
         CACHE_GET,
         "fetch",
         allow_heuristic=True,
-        reingest=updater.reingest,
+        hooks=RenameHooks(reingest=updater.reingest),
     )
 
     assert report.applied, report.message
@@ -1628,7 +1653,7 @@ def test_the_twin_module_of_the_target_is_still_the_target(tmp_path: Path) -> No
         TWIN_GET,
         "fetch",
         allow_heuristic=True,
-        reingest=updater.reingest,
+        hooks=RenameHooks(reingest=updater.reingest),
     )
 
     assert report.applied, report.message
@@ -1669,7 +1694,7 @@ def test_a_parameter_named_like_the_class_shadows_it_only_in_its_function(
         CACHE_GET,
         "fetch",
         allow_heuristic=True,
-        reingest=updater.reingest,
+        hooks=RenameHooks(reingest=updater.reingest),
     )
 
     assert report.applied, report.message
@@ -1976,7 +2001,7 @@ def test_an_import_one_module_satisfies_is_still_rewritten(
         f"{PROJECT}.pkg.cache.Cache.get",
         "fetch",
         allow_heuristic=True,
-        reingest=updater.reingest,
+        hooks=RenameHooks(reingest=updater.reingest),
     )
 
     assert report.applied, report.message
@@ -2410,7 +2435,7 @@ def test_allow_heuristic_renames_the_companion_stub_with_its_module(
         qn,
         new_name,
         allow_heuristic=True,
-        reingest=updater.reingest,
+        hooks=RenameHooks(reingest=updater.reingest),
     )
 
     assert report.applied, report.message
@@ -2484,7 +2509,7 @@ def test_another_modules_stub_is_neither_refused_nor_rewritten(
         f"{PROJECT}.pkg.widget.Widget",
         "Gadget",
         allow_heuristic=allow_heuristic,
-        reingest=updater.reingest,
+        hooks=RenameHooks(reingest=updater.reingest),
     )
 
     assert report.applied, report.message
@@ -2501,7 +2526,12 @@ def test_a_module_with_no_stub_renames_as_before(tmp_path: Path, kind: str) -> N
     store, updater = _indexed(root, own)
 
     report = rename(
-        _query(store), PROJECT, root, qn, new_name, reingest=updater.reingest
+        _query(store),
+        PROJECT,
+        root,
+        qn,
+        new_name,
+        hooks=RenameHooks(reingest=updater.reingest),
     )
 
     assert report.applied, report.message
@@ -2526,7 +2556,7 @@ def test_a_stub_only_module_is_its_own_definition(tmp_path: Path) -> None:
         root,
         f"{PROJECT}.pkg.widget.make",
         "build",
-        reingest=updater.reingest,
+        hooks=RenameHooks(reingest=updater.reingest),
     )
 
     assert report.applied, report.message
@@ -2934,7 +2964,7 @@ def test_allow_heuristic_renames_an_import_under_the_targets_own_name(
         qn,
         "Renamed",
         allow_heuristic=True,
-        reingest=updater.reingest,
+        hooks=RenameHooks(reingest=updater.reingest),
     )
 
     assert report.applied, report.message
@@ -2966,7 +2996,7 @@ def test_an_import_under_the_targets_name_from_another_module_is_not_held(
         f"{PROJECT}.pkg.widget.Widget",
         "Gadget",
         allow_heuristic=True,
-        reingest=updater.reingest,
+        hooks=RenameHooks(reingest=updater.reingest),
     )
 
     assert report.applied, report.message
@@ -3066,7 +3096,7 @@ def test_allow_heuristic_renames_the_declaration_file_with_its_module(
         qn,
         new_name,
         allow_heuristic=True,
-        reingest=updater.reingest,
+        hooks=RenameHooks(reingest=updater.reingest),
     )
 
     assert report.applied, report.message
@@ -3111,7 +3141,7 @@ def test_another_modules_declaration_file_is_neither_refused_nor_rewritten(
         f"{PROJECT}.src.util.helper",
         "assist",
         allow_heuristic=allow_heuristic,
-        reingest=updater.reingest,
+        hooks=RenameHooks(reingest=updater.reingest),
     )
 
     assert report.applied, report.message
@@ -3159,7 +3189,7 @@ def test_a_same_named_declaration_nested_elsewhere_is_not_the_targets(
         f"{PROJECT}.src.util.helper",
         "assist",
         allow_heuristic=True,
-        reingest=updater.reingest,
+        hooks=RenameHooks(reingest=updater.reingest),
     )
 
     assert report.applied, report.message
@@ -3223,7 +3253,7 @@ def test_another_modules_class_bound_by_an_import_is_not_the_target(
         f"{PROJECT}.pkg.widget.Widget",
         "Gadget",
         allow_heuristic=allow_heuristic,
-        reingest=updater.reingest,
+        hooks=RenameHooks(reingest=updater.reingest),
     )
 
     assert report.applied, report.message
@@ -3639,7 +3669,7 @@ def test_the_generic_twins_rename_never_rewrites_the_plain_twins_call(
             CS_GENERIC_RUN,
             "Exec",
             allow_heuristic=True,
-            reingest=updater.reingest,
+            hooks=RenameHooks(reingest=updater.reingest),
         )
         unplanned = list(report.unplanned)
     except RenameRefused as refused:
@@ -3668,7 +3698,7 @@ def test_the_plain_twins_rename_never_claims_the_generic_twins_call(
             CS_PLAIN_RUN,
             "Exec",
             allow_heuristic=True,
-            reingest=updater.reingest,
+            hooks=RenameHooks(reingest=updater.reingest),
         )
 
     assert [
@@ -3693,7 +3723,7 @@ def test_a_complete_graph_renames_the_generic_twins_method_alone(
         root,
         CS_GENERIC_RUN,
         "Exec",
-        reingest=updater.reingest,
+        hooks=RenameHooks(reingest=updater.reingest),
     )
 
     assert report.applied, report.message

@@ -14,7 +14,7 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
-from codebase_rag.editing.rename import RenameRefused, rename
+from codebase_rag.editing.rename import RenameHooks, RenameRefused, rename
 from codebase_rag.tests.conftest import bare_registry, create_and_run_updater
 from codebase_rag.types_defs import PropertyDict, ResultRow
 from evals.recorded_graph import RecordedGraph
@@ -383,7 +383,7 @@ def test_verifier_failure_rolls_back(py_repo: tuple[Path, RecordedGraph]) -> Non
         root,
         f"{graph.project}.pkg.util.helper",
         "assist",
-        verify=lambda tree: False,
+        hooks=RenameHooks(verify=lambda tree: False),
     )
     assert report.applied is False
     assert {p: p.read_bytes() for p in root.rglob("*.py")} == before

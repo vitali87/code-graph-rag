@@ -33,6 +33,7 @@ refusals (`rename_plan`), and the postcondition contract
 """
 
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from .. import constants as cs
@@ -48,6 +49,7 @@ from .rename_spec import RenameRefused, RenameReport, RenameSite
 from .transaction import EditTransaction, StagedTree, VerificationResult
 
 __all__ = [
+    "RenameHooks",
     "RenameRefused",
     "RenameReport",
     "RenameSite",
@@ -55,6 +57,18 @@ __all__ = [
     "rename",
     "sites_for",
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class RenameHooks:
+    """What an applied rename runs besides the patch, each optional: `verify`
+    judges the staged tree before the commit, `reingest` holds the committed
+    rename to its postcondition contract, and `after_apply` is handed the
+    files a rename that stayed applied changed."""
+
+    verify: Callable[[StagedTree], VerificationResult | bool | None] | None = None
+    after_apply: Callable[[list[str]], None] | None = None
+    reingest: Reingest | None = None
 
 
 class Renamer(RenamePlanner):
@@ -66,20 +80,18 @@ class Renamer(RenamePlanner):
         project_name: str,
         repo_root: Path,
         *,
-        verify: Callable[[StagedTree], VerificationResult | bool | None] | None = None,
-        after_apply: Callable[[list[str]], None] | None = None,
-        reingest: Reingest | None = None,
+        hooks: RenameHooks = RenameHooks(),
         heuristic_opt_in: str = cs.MCPParamName.ALLOW_HEURISTIC,
     ) -> None:
         super().__init__(
             fetch_all, project_name, repo_root, heuristic_opt_in=heuristic_opt_in
         )
-        self.verify = verify
-        self.after_apply = after_apply
+        self.verify = hooks.verify
+        self.after_apply = hooks.after_apply
         # With a re-ingest the rename is held to its postcondition contract
         # (issue #1531): the delta of what it wrote is measured and the
         # transaction undone when the contract fails.
-        self.reingest = reingest
+        self.reingest = hooks.reingest
         # Per file, the `__all__` entries the last staging rewrote (see
         # `_stage`), which a rollback the history cannot confirm is read at.
         self._all_rewrites: AllRewrites = {}
@@ -245,23 +257,20 @@ def rename(
     *,
     allow_heuristic: bool = False,
     dry_run: bool = False,
-    verify: Callable[[StagedTree], VerificationResult | bool | None] | None = None,
-    after_apply: Callable[[list[str]], None] | None = None,
-    reingest: Reingest | None = None,
+    hooks: RenameHooks = RenameHooks(),
     heuristic_opt_in: str = cs.MCPParamName.ALLOW_HEURISTIC,
 ) -> RenameReport:
     """The op: plan (and refuse on ambiguity) or plan and apply.
 
-    With `reingest` the applied rename is measured through the structural
-    delta and undone when its postcondition contract fails (issue #1531).
+    With a `reingest` hook the applied rename is measured through the
+    structural delta and undone when its postcondition contract fails (issue
+    #1531).
     """
     renamer = Renamer(
         fetch_all,
         project_name,
         repo_root,
-        verify=verify,
-        after_apply=after_apply,
-        reingest=reingest,
+        hooks=hooks,
         heuristic_opt_in=heuristic_opt_in,
     )
     if dry_run:

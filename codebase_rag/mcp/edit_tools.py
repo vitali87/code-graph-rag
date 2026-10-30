@@ -158,7 +158,12 @@ class EditTools(LifecycleTools):
         allow_heuristic: bool,
         dry_run: bool,
     ) -> object:
-        from codebase_rag.editing.rename import RenameRefused, rename, sites_for
+        from codebase_rag.editing.rename import (
+            RenameHooks,
+            RenameRefused,
+            rename,
+            sites_for,
+        )
 
         # The selected project's relative paths are meaningful only under
         # the root it was indexed from; another project's paths must not be
@@ -187,7 +192,7 @@ class EditTools(LifecycleTools):
                 new_name,
                 allow_heuristic=allow_heuristic,
                 dry_run=dry_run,
-                reingest=reingest,
+                hooks=RenameHooks(reingest=reingest),
                 heuristic_opt_in=cs.MCPParamName.ALLOW_HEURISTIC,
             )
         except RenameRefused as refused:

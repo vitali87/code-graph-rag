@@ -20,7 +20,7 @@ from codebase_rag.editing import (
     rename_expectation,
     verify,
 )
-from codebase_rag.editing.rename import rename
+from codebase_rag.editing.rename import RenameHooks, rename
 from codebase_rag.editing.transaction import load_history
 from codebase_rag.exceptions import ReingestAborted
 from codebase_rag.graph_updater import GraphUpdater
@@ -604,7 +604,7 @@ def test_real_rename_passes_its_contract_and_lists_affected_tests(
         root,
         f"{PROJECT}.pkg.util.helper",
         "assist",
-        reingest=updater.reingest,
+        hooks=RenameHooks(reingest=updater.reingest),
     )
     assert report.applied, report.message
     assert report.verdict is not None
@@ -659,7 +659,7 @@ def test_real_rename_passes_longer_project_prefixes_to_contract_query(
         root,
         f"{PROJECT}.pkg.util.helper",
         "assist",
-        reingest=updater.reingest,
+        hooks=RenameHooks(reingest=updater.reingest),
     )
 
     assert report.applied, report.message
@@ -704,7 +704,7 @@ def test_real_rename_is_undone_when_the_contract_fails(
         root,
         f"{PROJECT}.pkg.util.helper",
         "assist",
-        reingest=updater.reingest,
+        hooks=RenameHooks(reingest=updater.reingest),
     )
 
     assert not report.applied
@@ -759,7 +759,7 @@ def test_real_class_rename_passes_its_contract(temp_repo: Path) -> None:
         root,
         f"{PROJECT}.pkg.util.Helper",
         "Assist",
-        reingest=updater.reingest,
+        hooks=RenameHooks(reingest=updater.reingest),
     )
     assert report.applied, report.message
     assert report.verdict is not None
@@ -786,7 +786,7 @@ def test_real_rename_survives_a_pre_existing_duplicate(temp_repo: Path) -> None:
         root,
         f"{PROJECT}.pkg.util.helper",
         "assist",
-        reingest=updater.reingest,
+        hooks=RenameHooks(reingest=updater.reingest),
     )
     # `twin` duplicated `helper` before the edit; the rename introduced nothing.
     assert report.applied, report.message
@@ -811,7 +811,7 @@ def test_real_rename_survives_a_pre_existing_arity_fault(temp_repo: Path) -> Non
         root,
         f"{PROJECT}.pkg.util.helper",
         "assist",
-        reingest=updater.reingest,
+        hooks=RenameHooks(reingest=updater.reingest),
     )
     # `broken()` was wrong before the edit; a rename maps no sites.
     assert report.applied, report.message
@@ -840,7 +840,7 @@ def test_a_measurement_failure_is_reported_not_raised(temp_repo: Path) -> None:
         root,
         f"{PROJECT}.pkg.util.helper",
         "assist",
-        reingest=broken_reingest,
+        hooks=RenameHooks(reingest=broken_reingest),
     )
     # The transaction landed; the unmeasured contract is a message, not a traceback.
     assert report.applied
@@ -869,7 +869,7 @@ def test_verdict_serialises_as_an_object(temp_repo: Path) -> None:
         root,
         f"{PROJECT}.pkg.util.helper",
         "assist",
-        reingest=updater.reingest,
+        hooks=RenameHooks(reingest=updater.reingest),
     )
     assert report.verdict is not None
     payload = json.loads(json.dumps(report.verdict._asdict()))
@@ -896,7 +896,7 @@ def test_real_empty_class_rename_passes_its_contract(temp_repo: Path) -> None:
         root,
         f"{PROJECT}.pkg.util.Marker",
         "Flag",
-        reingest=updater.reingest,
+        hooks=RenameHooks(reingest=updater.reingest),
     )
     assert report.applied, report.message
     assert report.verdict is not None
@@ -933,7 +933,7 @@ def test_a_failed_contract_refuses_to_roll_back_over_a_later_edit(
         root,
         f"{PROJECT}.pkg.util.helper",
         "assist",
-        reingest=reingest_then_edit,
+        hooks=RenameHooks(reingest=reingest_then_edit),
     )
     # Not rolled back: the later edit would have been undone instead.
     assert not report.applied
@@ -975,7 +975,7 @@ def test_a_failed_rollback_reingest_is_reported_not_raised(temp_repo: Path) -> N
         root,
         f"{PROJECT}.pkg.util.helper",
         "assist",
-        reingest=flaky_reingest,
+        hooks=RenameHooks(reingest=flaky_reingest),
     )
     # The files are restored, the failure is in the report, and the graph is flagged.
     assert not report.applied
@@ -1012,7 +1012,7 @@ def _rename_with_failing_initial_reingest(temp_repo, error: Exception):
         root,
         f"{PROJECT}.pkg.util.helper",
         "assist",
-        reingest=failing_reingest,
+        hooks=RenameHooks(reingest=failing_reingest),
     )
 
 
@@ -1116,7 +1116,7 @@ def test_a_concurrent_undo_is_not_reported_as_applied(temp_repo: Path) -> None:
         root,
         f"{PROJECT}.pkg.util.helper",
         "assist",
-        reingest=reingest_then_undo,
+        hooks=RenameHooks(reingest=reingest_then_undo),
     )
 
     assert undone, "the concurrent undo never ran; the race was not exercised"
@@ -1164,7 +1164,7 @@ def test_an_evicted_transaction_is_not_reported_as_rolled_back(
         root,
         f"{PROJECT}.pkg.util.helper",
         "assist",
-        reingest=reingest_then_flood,
+        hooks=RenameHooks(reingest=reingest_then_flood),
     )
 
     # The rename IS still on disk, so it must not be reported as reverted.
@@ -1221,7 +1221,7 @@ def test_an_evicted_rename_survives_the_history_shrinking_again(
         root,
         f"{PROJECT}.pkg.util.helper",
         "assist",
-        reingest=reingest_evict_then_shrink,
+        hooks=RenameHooks(reingest=reingest_evict_then_shrink),
     )
 
     on_disk = (root / "pkg" / "util.py").read_text()
@@ -1269,7 +1269,7 @@ def test_an_unrelated_symbol_sharing_the_old_name_is_not_a_rollback(
         root,
         f"{PROJECT}.pkg.util.helper",
         "assist",
-        reingest=reingest_then_evict,
+        hooks=RenameHooks(reingest=reingest_then_evict),
     )
 
     # `Independent.helper` is still there, but it is not this rename's site.

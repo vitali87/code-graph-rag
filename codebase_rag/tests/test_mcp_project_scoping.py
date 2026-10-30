@@ -3951,6 +3951,7 @@ async def test_the_rename_handler_uses_the_guarded_reingest(tmp_path: Path) -> N
     from unittest.mock import MagicMock, patch
 
     from codebase_rag import graph_query as graph_query_module
+    from codebase_rag.editing.rename import RenameHooks
     from codebase_rag.utils.path_utils import derive_project_name
 
     project = derive_project_name(tmp_path)
@@ -3961,8 +3962,8 @@ async def test_the_rename_handler_uses_the_guarded_reingest(tmp_path: Path) -> N
     updater = MagicMock()
     seen: dict[str, object] = {}
 
-    def fake_rename(*_a: object, reingest: object = None, **_k: object) -> object:
-        seen["reingest"] = reingest
+    def fake_rename(*_a: object, hooks: RenameHooks, **_k: object) -> object:
+        seen["reingest"] = hooks.reingest
         raise RuntimeError("stop here; the callback identity is the subject")
 
     # Patched at the SOURCE module: `_run_rename` imports `rename` locally, so
