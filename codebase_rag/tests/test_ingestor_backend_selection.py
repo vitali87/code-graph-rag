@@ -19,7 +19,8 @@ from codebase_rag.graph_dialects import (
     DIALECT_SQLITE,
     get_dialect,
 )
-from codebase_rag.services.graph_service import GraphIngestor, _apply_memory_limit
+from codebase_rag.services.graph_queries import _apply_memory_limit
+from codebase_rag.services.graph_service import GraphIngestor
 
 
 class RecordingCursor:

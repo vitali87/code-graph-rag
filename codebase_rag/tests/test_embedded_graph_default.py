@@ -29,7 +29,7 @@ from codebase_rag.doctor import checks as health_checker
 from codebase_rag.doctor.checks import HealthChecker
 from codebase_rag.graph_dialects import DIALECT_MEMGRAPH, DIALECT_SQLITE, get_dialect
 from codebase_rag.mgclient_compat import _absent_driver
-from codebase_rag.services import graph_service
+from codebase_rag.services import graph_service, graph_session
 from codebase_rag.services.graph_service import GraphIngestor, GraphUnavailableError
 from codebase_rag.stack import manager as manager_module
 from codebase_rag.stack.constants import SERVICE_MEMGRAPH, SERVICE_QDRANT
@@ -263,7 +263,7 @@ def test_an_unwritable_graph_path_is_one_clear_error(tmp_path: Path) -> None:
 
 
 def test_memgraph_without_its_driver_says_what_to_install(monkeypatch) -> None:
-    monkeypatch.setattr(graph_service, "MGCLIENT_AVAILABLE", False)
+    monkeypatch.setattr(graph_session, "MGCLIENT_AVAILABLE", False)
     ingestor = GraphIngestor(
         host="localhost", port=7687, dialect=get_dialect(DIALECT_MEMGRAPH)
     )

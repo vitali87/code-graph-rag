@@ -192,7 +192,10 @@ def _observe_lock_contention(ingestor: GraphIngestor, waiting: Event) -> None:
         observed.__exit__.side_effect = lambda *_args: lock.release()
         return observed
 
-    for slot in ingestor.__slots__:
+    # Each class the ingestor composes declares the slots of its own state.
+    for slot in (
+        s for cls in type(ingestor).__mro__ for s in cls.__dict__.get("__slots__", ())
+    ):
         value = getattr(ingestor, slot)
         if isinstance(value, LockType):
             setattr(ingestor, slot, observe(value))

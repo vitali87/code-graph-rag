@@ -367,7 +367,7 @@ class _FakeConnection:
 
 @contextmanager
 def _memgraph(connection: _FakeConnection) -> Iterator[MagicMock]:
-    with patch("codebase_rag.services.graph_service.mgclient") as mgclient:
+    with patch("codebase_rag.services.graph_session.mgclient") as mgclient:
         mgclient.connect.return_value = connection
         yield mgclient
 
@@ -450,7 +450,7 @@ def test_a_failed_connection_still_names_the_server_at_the_default_level() -> No
     # "Connecting to Memgraph at host:port" was the only place a failed
     # connect named its target; mgclient's own error does not.
     with (
-        patch("codebase_rag.services.graph_service.mgclient") as mgclient,
+        patch("codebase_rag.services.graph_session.mgclient") as mgclient,
         _log_lines(_INFO) as lines,
     ):
         mgclient.connect.side_effect = ConnectionRefusedError("connection refused")

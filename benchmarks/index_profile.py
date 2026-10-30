@@ -25,7 +25,16 @@ STAGES = (
     ("embeddings: source extraction", ("_embedding_candidate",)),
     ("calls pass", ("_process_function_calls",)),
     ("definitions pass", ("_process_files",)),
-    ("graph store (ingest + SQLite)", ("graph_service.py", "embedded_graph/")),
+    (
+        "graph store (ingest + SQLite)",
+        (
+            "graph_service.py",
+            "graph_session.py",
+            "graph_batching.py",
+            "graph_queries.py",
+            "embedded_graph/",
+        ),
+    ),
     ("file scan + hashing", ("_scan_eligible_file", "hash_file")),
     ("imports / startup", ("_find_and_load",)),
 )
