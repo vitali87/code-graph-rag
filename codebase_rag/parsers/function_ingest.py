@@ -41,6 +41,7 @@ from .function_identity import FunctionResolution, name_start_point
 from .go import function_ingest as go_function_ingest
 from .go import interfaces as go_interfaces
 from .go.builds import GoBuilds
+from .java import function_ingest as java_function_ingest
 from .js_ts import function_ingest as js_ts_function_ingest
 from .js_ts import utils as js_ts_utils
 from .js_ts.utils import mark_js_ts_module_private
@@ -69,32 +70,6 @@ if TYPE_CHECKING:
     from ..types_defs import LanguageQueries
 
 
-def _java_anon_base_for_function(
-    func_node: Node, class_node_types: frozenset[str]
-) -> str | None:
-    # A Java method declared inside a method-body anonymous class
-    # (`createBoundField(){ return new BoundField(){ @Override write(){} } }`) is
-    # captured here as a FUNCTION (the class-method pass skips method-nested defs),
-    # so it needs its base-type override link too. Walk to the nearest enclosing
-    # type: an anon `class_body` (parent object_creation) before any NAMED class
-    # overrides that base; return the base type name (generics stripped).
-    current = func_node.parent
-    while current is not None:
-        if current.type in class_node_types:
-            return None
-        if current.type == cs.TS_CLASS_BODY:
-            parent = current.parent
-            if parent is not None and parent.type == cs.TS_OBJECT_CREATION_EXPRESSION:
-                type_node = parent.child_by_field_name(cs.FIELD_TYPE)
-                if type_node is not None and type_node.text is not None:
-                    return type_node.text.decode(cs.ENCODING_UTF8).split(
-                        cs.CHAR_ANGLE_OPEN, 1
-                    )[0]
-            return None
-        current = current.parent
-    return None
-
-
 class FunctionIngest:
     """Writes every Function node a file's function captures yield, and the
     DEFINES edges held until every parent is registered. A language's own
@@ -112,7 +87,6 @@ class FunctionIngest:
         "simple_name_lookup",
         "module_qn_to_file_path",
         "facts",
-        "java_anon_overrides",
         "cpp_definition_spans",
         "folded_overloads",
         "pending_endpoints",
@@ -124,6 +98,7 @@ class FunctionIngest:
         "csharp",
         "go",
         "js_ts",
+        "java",
     )
 
     def __init__(
@@ -157,7 +132,6 @@ class FunctionIngest:
         self.simple_name_lookup = simple_name_lookup
         self.module_qn_to_file_path = module_qn_to_file_path
         self.facts = facts
-        self.java_anon_overrides = java_anon_overrides
         self.cpp_definition_spans = cpp_definition_spans
         self.folded_overloads = folded_overloads
         self.pending_endpoints = pending_endpoints
@@ -170,6 +144,7 @@ class FunctionIngest:
         self.js_ts = js_ts_function_ingest.JsTsFunctionIngest(
             self, function_registry, facts
         )
+        self.java = java_function_ingest.JavaFunctionIngest(java_anon_overrides)
         self.cpp = cpp_function_ingest.CppFunctionIngest(
             self,
             method_host=method_host,
@@ -598,34 +573,14 @@ class FunctionIngest:
         if language == cs.SupportedLanguage.CPP:
             self.cpp.record_template_child_location(func_node, module_qn, location)
 
-        # A method-body anonymous-class override (`new Base(){ @Override m(){} }`
-        # inside a method) is captured as a function here; record it so the deferred
-        # pass emits an OVERRIDES edge to Base.m, keeping the dispatch-only override
-        # live (field-initialiser anon overrides are recorded in the class-method
-        # pass).
         if language == cs.SupportedLanguage.JAVA and resolution.name:
-            self._record_java_anon_override(
+            self.java.record_anonymous_override(
                 func_node, resolution, module_qn, lang_config
             )
 
         self._create_function_relationships(
             func_node, resolution, module_qn, language, lang_config
         )
-
-    def _record_java_anon_override(
-        self,
-        func_node: Node,
-        resolution: FunctionResolution,
-        module_qn: str,
-        lang_config: LanguageSpec,
-    ) -> None:
-        base = _java_anon_base_for_function(
-            func_node, frozenset(lang_config.class_node_types)
-        )
-        if base and resolution.name:
-            self.java_anon_overrides.append(
-                (resolution.qualified_name, resolution.name, base, module_qn)
-            )
 
     def _build_function_props(
         self,

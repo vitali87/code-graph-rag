@@ -27,7 +27,7 @@ from ..enum_variants import emit_declared_variants, is_python_enum
 from ..field_nodes import PendingFieldType, emit_declared_fields
 from ..go import class_ingest as go_class_ingest
 from ..go import interfaces as go_ifaces
-from ..java import utils as java_utils
+from ..java import class_ingest as java_class_ingest
 from ..js_ts import class_ingest as js_ts_class_ingest
 from ..js_ts import utils as js_ts_utils
 from ..js_ts.utils import mark_js_ts_module_private
@@ -72,26 +72,6 @@ if TYPE_CHECKING:
     from ..import_processor import ImportProcessor
 
 
-def _java_anonymous_base_type(method_node: Node, class_node: Node) -> str | None:
-    # If `method_node` sits inside an anonymous class body between it and
-    # `class_node` (`new Base(){ ... m() ... }`), return the anon class's base type
-    # name (the object_creation's `type` field, generic args stripped). None when the
-    # method belongs directly to the enclosing class, not an anonymous subclass.
-    current = method_node.parent
-    while current is not None and current is not class_node:
-        if current.type == cs.TS_CLASS_BODY:
-            parent = current.parent
-            if parent is not None and parent.type == cs.TS_OBJECT_CREATION_EXPRESSION:
-                type_node = parent.child_by_field_name(cs.FIELD_TYPE)
-                if type_node is not None and type_node.text is not None:
-                    return type_node.text.decode(cs.ENCODING_UTF8).split(
-                        cs.CHAR_ANGLE_OPEN, 1
-                    )[0]
-                return None
-        current = current.parent
-    return None
-
-
 def _class_start_point(
     class_node: Node, language: cs.SupportedLanguage
 ) -> tuple[int, int]:
@@ -108,12 +88,8 @@ def _signatured_method_qn(
     method_node: Node, class_qn: str, language: cs.SupportedLanguage
 ) -> str | None:
     if language == cs.SupportedLanguage.JAVA:
-        method_info = java_utils.extract_method_info(method_node)
-        if method_name := method_info.get(cs.KEY_NAME):
-            parameters = method_info.get(cs.KEY_PARAMETERS, [])
-            param_sig = f"({','.join(parameters)})" if parameters else cs.EMPTY_PARENS
-            return f"{class_qn}.{method_name}{param_sig}"
-    elif language == cs.SupportedLanguage.CSHARP:
+        return java_class_ingest.signatured_method_qn(method_node, class_qn)
+    if language == cs.SupportedLanguage.CSHARP:
         return csharp_class_ingest.signatured_method_qn(method_node, class_qn)
     return None
 
@@ -173,7 +149,6 @@ class ClassIngest:
         "import_processor",
         "facts",
         "class_owner_module",
-        "java_anon_overrides",
         "go_interfaces",
         "cpp_definition_spans",
         "pending_field_types",
@@ -186,6 +161,7 @@ class ClassIngest:
         "go",
         "dart",
         "js_ts",
+        "java",
     )
 
     def __init__(
@@ -239,7 +215,6 @@ class ClassIngest:
         self.import_processor = import_processor
         self.facts = facts
         self.class_owner_module = class_owner_module
-        self.java_anon_overrides = java_anon_overrides
         self.go_interfaces = go_interfaces
         self.cpp_definition_spans = cpp_definition_spans
         self.pending_field_types = pending_field_types
@@ -304,6 +279,12 @@ class ClassIngest:
             function_registry=function_registry,
             module_qn_to_file_path=module_qn_to_file_path,
             import_processor=import_processor,
+        )
+        self.java = java_class_ingest.JavaClassIngest(
+            ingestor=ingestor,
+            function_registry=function_registry,
+            facts=facts,
+            anon_overrides=java_anon_overrides,
         )
 
     def _resolve_to_qn(
@@ -1216,20 +1197,10 @@ class ClassIngest:
             cs.NodeLabel.METHOD.value,
             ingested_qn,
         )
-        # A Java method declared inside an anonymous class body
-        # (`new Base(){ @Override m(){} }`) is ingested here under the enclosing
-        # class but really overrides the anon class's base type. Record it so a
-        # deferred pass emits the OVERRIDES edge once the base is registered;
-        # with override-reachability that keeps the dispatch-only override live.
-        if (
-            language == cs.SupportedLanguage.JAVA
-            and module_qn is not None
-            and (base := _java_anonymous_base_type(method_node, scope.class_node))
-        ):
-            method_name = ingested_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1].split(
-                cs.CHAR_PAREN_OPEN, 1
-            )[0]
-            self.java_anon_overrides.append((ingested_qn, method_name, base, module_qn))
+        if language == cs.SupportedLanguage.JAVA and module_qn is not None:
+            self.java.record_anonymous_override(
+                method_node, scope.class_node, ingested_qn, module_qn
+            )
         # Record where this method landed so Pass-3 call attribution
         # reuses the registered qn/label instead of re-deriving them.
         # The walks diverge on preprocessor-distorted C++ class bodies
@@ -1261,26 +1232,7 @@ class ClassIngest:
         ):
             self.facts.function_locations[span] = location
         if scope.language == cs.SupportedLanguage.JAVA:
-            self._register_java_name_alias(module_qn, method_node, location)
-
-    def _register_java_name_alias(
-        self, module_qn: str, method_node: Node, location: FunctionLocation
-    ) -> None:
-        # The javac frontend (issue #1181) keys a call target at the callee NAME
-        # token, but function_span_key keys at the declaration start -- the
-        # modifiers, so `    public String handle(` records col 4 while the tool
-        # reports the col of `handle`. Register a SECOND location at the name so
-        # the semantic join resolves, mirroring the Go alias.
-        # setdefault, not assignment: two methods sharing a line could put this
-        # alias on another method's span key, and the span record is the
-        # authoritative one.
-        name_node = method_node.child_by_field_name(cs.FIELD_NAME)
-        if name_node is None:
-            return
-        self.facts.function_locations.setdefault(
-            (module_qn, name_node.start_point[0] + 1, name_node.start_point[1]),
-            location,
-        )
+            self.java.register_name_alias(module_qn, method_node, location)
 
     def process_all_method_overrides(self, module_qns: Collection[str] = ()) -> None:
         # Every module the graph holds, read-back ones included: a C++ type
@@ -1297,7 +1249,7 @@ class ClassIngest:
             module_qns={*self.module_qn_to_file_path, *module_qns},
             linked_apart=self.go_interfaces.keys(),
         )
-        self._resolve_java_anon_overrides()
+        self.java.resolve_anonymous_overrides()
 
     def _override_walk_implementers(self) -> dict[str, set[str]]:
         # The walk visits a class's superclasses and interfaces together and
@@ -1332,51 +1284,6 @@ class ClassIngest:
         # is a Rust impl target with no node of its own.
         path = self.facts.rehydrated_definition_paths.get(implementer_qn)
         return path is not None and not path.endswith((cs.EXT_RS, cs.EXT_GO))
-
-    def _resolve_java_anon_overrides(self) -> None:
-        # Emit OVERRIDES edges for Java anonymous-class methods recorded at ingestion
-        # (`new Base(){ @Override m(){} }`). The base type is resolved by UNIQUE
-        # global simple-name match among type declarations (the base is usually in
-        # another file; a full import resolve is unnecessary and this stays
-        # revive-only; an ambiguous or unfound base is skipped). Each base method
-        # directly on the base whose simple name matches gets an OVERRIDES edge from
-        # the anon override, so override-reachability keeps the dispatch-only method
-        # live when the base is reachable.
-        type_decls = (cs.NodeLabel.CLASS, cs.NodeLabel.INTERFACE, cs.NodeLabel.ENUM)
-        for anon_qn, method_name, base_type, _module_qn in self.java_anon_overrides:
-            # A method-body anonymous override is registered as a FUNCTION (via the
-            # function-ingest path), a field-initializer one as a METHOD. The graph
-            # matches an edge endpoint by LABEL + qn, so emit the source with the qn's
-            # ACTUAL registered label; a hard-coded Method label drops the edge for
-            # the Function-labelled overrides (the eval matches by qn and would hide
-            # this, but the production Cypher would not).
-            anon_type = self.function_registry.get(anon_qn)
-            if anon_type is None:
-                continue
-            anon_label = anon_type
-            base_candidates = [
-                qn
-                for qn in self.function_registry.find_ending_with(base_type)
-                if self.function_registry.get(qn) in type_decls
-            ]
-            if len(base_candidates) != 1:
-                continue
-            base_qn = base_candidates[0]
-            base_prefix = f"{base_qn}{cs.SEPARATOR_DOT}"
-            for qn, label in self.function_registry.find_with_prefix(base_qn):
-                if (
-                    label == cs.NodeLabel.METHOD
-                    and qn.startswith(base_prefix)
-                    and cs.SEPARATOR_DOT
-                    not in qn[len(base_prefix) :].split(cs.CHAR_PAREN_OPEN, 1)[0]
-                    and qn[len(base_prefix) :].split(cs.CHAR_PAREN_OPEN, 1)[0]
-                    == method_name
-                ):
-                    self.ingestor.ensure_relationship_batch(
-                        (anon_label, cs.KEY_QUALIFIED_NAME, anon_qn),
-                        cs.RelationshipType.OVERRIDES,
-                        (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, qn),
-                    )
 
     def _resolve_class_name(
         self,
