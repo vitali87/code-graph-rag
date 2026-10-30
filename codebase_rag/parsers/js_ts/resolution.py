@@ -73,7 +73,7 @@ class JsTsResolverHost(Protocol):
     it.
 
     A chain's first hop is resolved as that call written alone would be
-    (`resolve_function_call`), and `_verdict` says how surely it bound: a
+    (`resolve_call`), and `_verdict` says how surely it bound: a
     guessed callee types nothing after it. The rest is resolution every
     language shares: the class hierarchy walk and inherited-method lookup,
     the re-export walk, the parsed module trees, the type and direct-import
@@ -81,17 +81,7 @@ class JsTsResolverHost(Protocol):
 
     _verdict: str
 
-    def resolve_function_call(
-        self,
-        call_name: str,
-        module_qn: str,
-        local_var_types: dict[str, str] | None = None,
-        class_context: str | None = None,
-        caller_qn: str | None = None,
-        language: cs.SupportedLanguage | None = None,
-        call_point: int | None = None,
-        constructing: bool = False,
-    ) -> tuple[str, str] | None: ...
+    def resolve_call(self, call: CallSite) -> tuple[str, str] | None: ...
 
     def _mro(self, class_qn: str) -> list[str]: ...
 
@@ -397,20 +387,17 @@ class JsTsResolver:
         return class_qn
 
     def fold_js_call_hop(
-        self,
-        parts: list[str],
-        module_qn: str,
-        local_var_types: dict[str, str] | None,
-        class_context: str | None,
-        caller_qn: str | None,
-        language: cs.SupportedLanguage | None,
-        call_point: int | None,
+        self, parts: list[str], chain: CallSite
     ) -> tuple[str, list[str]] | None:
         # `TBox.create().with(1)`, `this.with(1).bump()`: the base is no typed
         # local, but its first hop binds the way that call written alone
-        # does. Its return types the rest of the chain (issue #2468).
+        # does, in the caller `chain` is written in. Its return types the
+        # rest of the chain (issue #2468).
+        language = chain.language
         if language not in cs.JS_TS_LANGUAGES or len(parts) < 2:
             return None
+        module_qn, local_var_types = chain.module_qn, chain.local_var_types
+        call_point = chain.call_point
         base, hop = parts[0], parts[1]
         if (
             cs.CHAR_PAREN_OPEN in base
@@ -442,20 +429,13 @@ class JsTsResolver:
             base,
             method,
             named,
-            CallSite(
-                f"{base}{cs.SEPARATOR_DOT}{method}",
-                module_qn,
-                local_var_types,
-                class_context,
-                caller_qn,
-                language,
-                call_point,
-                False,
+            chain._replace(
+                call_name=f"{base}{cs.SEPARATOR_DOT}{method}", constructing=False
             ),
         )
         if callee_qn is None:
             return None
-        receiver = class_context if is_this else named
+        receiver = chain.class_context if is_this else named
         static = this_static or named is not None
         returned = self._host._hop_return_type(callee_qn, language, static, receiver)
         return (returned, parts[1:]) if returned else None
@@ -502,15 +482,7 @@ class JsTsResolver:
         # The callee of the chain's first hop, bound exactly or not at all: a
         # callee bound only by name is a guess, and typing the rest of the
         # chain from its return would build every later hop on that guess.
-        resolved = self._host.resolve_function_call(
-            call.call_name,
-            call.module_qn,
-            call.local_var_types,
-            call.class_context,
-            call.caller_qn,
-            call.language,
-            call.call_point,
-        )
+        resolved = self._host.resolve_call(call)
         if resolved is not None:
             return (
                 resolved[1] if self._host._verdict == cs.EdgeResolution.EXACT else None

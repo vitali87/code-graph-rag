@@ -80,6 +80,22 @@ def _file_language(suffix: str) -> cs.SupportedLanguage | None:
     return get_language_for_extension(suffix)
 
 
+def _rejoin_dart_named_constructor(
+    parts: list[str], language: cs.SupportedLanguage | None
+) -> list[str]:
+    # The bare `p.Box.named(1)` (no `new`) has no construction node, so the
+    # class and its named constructor arrive as two hops; rejoined, they take
+    # the path `new p.Box.named(1)` takes (issue #2084).
+    if (
+        language == cs.SupportedLanguage.DART
+        and len(parts) >= 3
+        and cs.CHAR_PAREN_OPEN not in parts[1]
+        and cs.CHAR_PAREN_OPEN in parts[2]
+    ):
+        return [parts[0], f"{parts[1]}{cs.SEPARATOR_DOT}{parts[2]}", *parts[3:]]
+    return parts
+
+
 class CallResolver:
     __slots__ = (
         "python_name_typed_params",
@@ -407,32 +423,37 @@ class CallResolver:
         """`constructing`: the call is a Java/C# `new X(...)`, so `call_name`
         names a TYPE and the simple-name fallback must not offer a method or
         function that merely shares the name."""
+        return self.resolve_call(
+            CallSite(
+                call_name,
+                module_qn,
+                local_var_types,
+                class_context,
+                caller_qn,
+                language,
+                call_point,
+                constructing,
+            )
+        )
+
+    def resolve_call(self, call: CallSite) -> Resolved | None:
+        """`resolve_function_call` for a request already gathered into a
+        `CallSite`, as a stage or a language resolver holds one."""
         self._verdict = cs.EdgeResolution.EXACT
         result = self._reject_class_via_value_receiver(
-            self.python.redirect_protocol_method(
-                self._resolve_function_call(
-                    call_name,
-                    module_qn,
-                    local_var_types,
-                    class_context,
-                    caller_qn,
-                    language,
-                    call_point,
-                    constructing,
-                )
-            ),
-            call_name,
-            module_qn,
-            class_context,
-            local_var_types,
-            language,
+            self.python.redirect_protocol_method(self._resolve_function_call(call)),
+            call.call_name,
+            call.module_qn,
+            call.class_context,
+            call.local_var_types,
+            call.language,
         )
         if result is not None and self.rust.rust_lands_outside_crate(
-            call_name, module_qn, result[1], language
+            call.call_name, call.module_qn, result[1], call.language
         ):
             return None
         if result is not None and self.python.receiver_typed_by_name(
-            call_name, caller_qn
+            call.call_name, call.caller_qn
         ):
             # The receiver's class is only what its parameter's name spells
             # (`payload` -> `Payload`): a guess, never an exact binding (#2608).
@@ -950,28 +971,11 @@ class CallResolver:
             return {result}
         return set()
 
-    def _resolve_function_call(
-        self,
-        call_name: str,
-        module_qn: str,
-        local_var_types: dict[str, str] | None = None,
-        class_context: str | None = None,
-        caller_qn: str | None = None,
-        language: cs.SupportedLanguage | None = None,
-        call_point: int | None = None,
-        constructing: bool = False,
-    ) -> tuple[str, str] | None:
-        call = CallSite(
-            call_name,
-            module_qn,
-            self.rust.rust_scoped_local_types(
-                local_var_types, module_qn, caller_qn, language
-            ),
-            class_context,
-            caller_qn,
-            language,
-            call_point,
-            constructing,
+    def _resolve_function_call(self, call: CallSite) -> tuple[str, str] | None:
+        call = call._replace(
+            local_var_types=self.rust.rust_scoped_local_types(
+                call.local_var_types, call.module_qn, call.caller_qn, call.language
+            )
         )
         handled, result = self._resolve_caller_scoped_stages(call)
         if handled:
@@ -991,45 +995,68 @@ class CallResolver:
             )
             return self._simple_resolution_cache[cache_key]
 
+        handled, result = self._resolve_by_shape_or_receiver(call, cache_key)
+        if handled:
+            return result
+        handled, result = self._resolve_by_imports_or_owner(call, cache_key)
+        if handled:
+            return result
+
+        result = self._try_resolve_via_trie(
+            call.call_name,
+            call.module_qn,
+            call.language,
+            call.call_point,
+            call.constructing,
+        )
+        self._remember_cacheable(cache_key, result)
+        return result
+
+    def _resolve_by_shape_or_receiver(
+        self, call: CallSite, cache_key: tuple[str, str, bool] | None
+    ) -> tuple[bool, tuple[str, str] | None]:
+        # The caller-independent stages that read the call's own shape (an
+        # IIFE, a super call, a chain, a Rust path) or its receiver's type,
+        # ahead of the import probe.
         handled, result = self._resolve_structural_call(call)
         if handled:
-            return result
+            return True, result
         handled, result = self.rust.resolve_rust_prefixed_or_local(call, cache_key)
         if handled:
-            return result
+            return True, result
         handled, result = self.rust.resolve_rust_external_path(call, cache_key)
         if handled:
-            return result
+            return True, result
         handled, result = self._resolve_typed_receiver_or_csharp(call)
         if handled:
-            return result
+            return True, result
         # Ahead of the import probe: for a receiver it cannot place, that probe
         # binds `subprocess.run` to a same-module function named `run`.
         if self.python.receiver_is_external_python_module(call):
             self._remember_cacheable(cache_key, None)
-            return None
-        handled, result = self._resolve_imported_or_module_member(call, cache_key)
-        if handled:
-            return result
-        handled, result = self._resolve_external_target(call, cache_key)
-        if handled:
-            return result
-        handled, result = self._resolve_untyped_member_or_unresolvable(call, cache_key)
-        if handled:
-            return result
-        handled, result = self.rust.resolve_rust_named_owner(call, cache_key)
-        if handled:
-            return result
-        if self.python.untyped_receiver_guess_is_ambiguous(call):
-            logger.debug(ls.CALL_AMBIGUOUS_UNTYPED_RECEIVER, call_name=call_name)
-            self._remember_cacheable(cache_key, None)
-            return None
+            return True, None
+        return False, None
 
-        result = self._try_resolve_via_trie(
-            call_name, module_qn, language, call_point, constructing
-        )
-        self._remember_cacheable(cache_key, result)
-        return result
+    def _resolve_by_imports_or_owner(
+        self, call: CallSite, cache_key: tuple[str, str, bool] | None
+    ) -> tuple[bool, tuple[str, str] | None]:
+        # The stages that bind the call through what the module imports or
+        # declares, or through the one owner its member can belong to, ahead
+        # of the bare-name trie.
+        for stage in (
+            self._resolve_imported_or_module_member,
+            self._resolve_external_target,
+            self._resolve_untyped_member_or_unresolvable,
+            self.rust.resolve_rust_named_owner,
+        ):
+            handled, result = stage(call, cache_key)
+            if handled:
+                return True, result
+        if self.python.untyped_receiver_guess_is_ambiguous(call):
+            logger.debug(ls.CALL_AMBIGUOUS_UNTYPED_RECEIVER, call_name=call.call_name)
+            self._remember_cacheable(cache_key, None)
+            return True, None
+        return False, None
 
     def _resolve_caller_scoped_stages(
         self, call: CallSite
@@ -1136,15 +1163,7 @@ class CallResolver:
             # (`auto`/trailing/decltype, e.g. fmt's get_container(out).append) fell to
             # the bare-method trie before chained typing existed, so preserve that
             # fallback for C++ to avoid dropping edges the typing can't yet recover.
-            return True, self._resolve_chained_call(
-                call_name,
-                module_qn,
-                call.local_var_types,
-                call.class_context,
-                call.caller_qn,
-                call.language,
-                call.call_point,
-            )
+            return True, self._resolve_chained_call(call)
 
         return self.rust.resolve_rust_inline_scope(call)
 
@@ -1530,6 +1549,17 @@ class CallResolver:
             call_name = folded_key
         else:
             return None
+        return self._direct_import_target(call_name, imported_qn, language, module_qn)
+
+    def _direct_import_target(
+        self,
+        call_name: str,
+        imported_qn: str,
+        language: cs.SupportedLanguage | None,
+        module_qn: str | None,
+    ) -> tuple[str, str] | None:
+        # The definition the import `call_name` names binds to.
+        #
         # Gated on the CALLER's language AND on the import being a
         # `use function` binding.
         #
@@ -1549,17 +1579,8 @@ class CallResolver:
         # and it SURVIVED the language gate because the caller is PHP. The two
         # are independent axes. `php_function_imports` already records which
         # local names arrived via `use function`, so this needs no new parsing.
-        if (
-            language == cs.SupportedLanguage.PHP
-            and php_resolution.is_php_function_import(
-                self.import_processor.php, call_name, module_qn
-            )
-            and imported_qn not in self.function_registry
-            and (
-                php_qn := php_resolution.php_target_for_namespace_import(
-                    self.import_processor.php, self.function_registry, imported_qn
-                )
-            )
+        if language == cs.SupportedLanguage.PHP and (
+            php_qn := self._php_function_import_qn(call_name, imported_qn, module_qn)
         ):
             logger.debug(ls.CALL_DIRECT_IMPORT, call_name=call_name, qn=php_qn)
             return self.function_registry[php_qn], php_qn
@@ -1579,6 +1600,21 @@ class CallResolver:
             logger.debug(ls.CALL_DIRECT_IMPORT, call_name=call_name, qn=direct)
             return self.function_registry[direct], direct
         return None
+
+    def _php_function_import_qn(
+        self, call_name: str, imported_qn: str, module_qn: str | None
+    ) -> str | None:
+        # The PHP function a `use function` import names through its
+        # namespace, when the written target is no definition itself.
+        if not php_resolution.is_php_function_import(
+            self.import_processor.php, call_name, module_qn
+        ):
+            return None
+        if imported_qn in self.function_registry:
+            return None
+        return php_resolution.php_target_for_namespace_import(
+            self.import_processor.php, self.function_registry, imported_qn
+        )
 
     def _try_resolve_qualified_call(
         self,
@@ -1983,7 +2019,22 @@ class CallResolver:
             )
         ):
             return result
+        return self._resolve_same_module_free_function(
+            object_name, method_name, call_name, separator, module_qn, language
+        )
 
+    def _resolve_same_module_free_function(
+        self,
+        object_name: str,
+        method_name: str,
+        call_name: str,
+        separator: str,
+        module_qn: str,
+        language: cs.SupportedLanguage | None,
+    ) -> tuple[str, str] | None:
+        # `recv.f()` bound to the caller module's own free `f`: a guess, and
+        # one only some receivers allow.
+        #
         # A JS/TS dotted call binds to a same-module free function ONLY through
         # a module-ish receiver (`exports.render()`, `this.render()` in the
         # CommonJS/prototype pattern). An ordinary identifier receiver
@@ -2382,14 +2433,7 @@ class CallResolver:
         return resolve_js_builtin_call(call_name)
 
     def _infer_chained_object_type(
-        self,
-        object_expr: str,
-        module_qn: str,
-        local_var_types: dict[str, str] | None,
-        class_context: str | None = None,
-        caller_qn: str | None = None,
-        language: cs.SupportedLanguage | None = None,
-        call_point: int | None = None,
+        self, object_expr: str, call: CallSite
     ) -> str | None:
         # Type of a chained receiver expression like `c.Root()` using the shared
         # method_return_types map: the base is a typed local (`c` -> Command), and
@@ -2405,6 +2449,7 @@ class CallResolver:
         base = parts[0]
         if not base:
             return None
+        module_qn, language, caller_qn = call.module_qn, call.language, call.caller_qn
         if cs.CHAR_PAREN_OPEN in base:
             # A Rust chain rooted in an associated-function call
             # (`Ping::new(msg).into_frame()`): type the base from the assoc fn's
@@ -2412,40 +2457,18 @@ class CallResolver:
             # (`parser(ia, cb).parse()`, C++): type it from the factory's recorded
             # return type. Other paren bases stay unresolved.
             current_type = self.rust.infer_rust_assoc_base_type(
-                base, module_qn, call_point, rust_caller(language, caller_qn)
-            ) or self._infer_call_base_type(
-                base,
-                module_qn,
-                local_var_types,
-                class_context,
-                caller_qn,
-                language,
-                call_point,
-            )
-        elif (
-            folded := self._fold_import_prefix_hop(
-                parts, module_qn, local_var_types, call_point, language
-            )
-        ) is not None:
+                base, module_qn, call.call_point, rust_caller(language, caller_qn)
+            ) or self._infer_call_base_type(base, call)
+        elif (folded := self._fold_import_prefix_hop(parts, call)) is not None:
             # `p.Box(1).height` under `import '...' as p;`: the base names an
             # IMPORT, not a local, so the local lookup below would end the
             # chain before the construction hop is seen (issue #2033). Fold
             # the prefix into the next hop and type that hop instead.
             current_type, parts = folded
-        elif (
-            folded := self.js_ts.fold_js_call_hop(
-                parts,
-                module_qn,
-                local_var_types,
-                class_context,
-                caller_qn,
-                language,
-                call_point,
-            )
-        ) is not None:
+        elif (folded := self.js_ts.fold_js_call_hop(parts, call)) is not None:
             current_type, parts = folded
-        elif local_var_types:
-            current_type = local_var_types.get(base)
+        elif call.local_var_types:
+            current_type = call.local_var_types.get(base)
         else:
             return None
         for part in parts[1:]:
@@ -2549,12 +2572,7 @@ class CallResolver:
         )
 
     def _fold_import_prefix_hop(
-        self,
-        parts: list[str],
-        module_qn: str,
-        local_var_types: dict[str, str] | None = None,
-        call_point: int | None = None,
-        language: cs.SupportedLanguage | None = None,
+        self, parts: list[str], call: CallSite
     ) -> tuple[str, list[str]] | None:
         # An import prefix followed by a CONSTRUCTION hop (`p`, `Box()`, ...)
         # collapses to that class: the prefix carries no type of its own, and
@@ -2564,22 +2582,15 @@ class CallResolver:
         # construction the registry knows.
         if len(parts) < 2:
             return None
-        # The bare `p.Box.named(1)` (no `new`) has no construction node, so
-        # the class and its named constructor arrive as two hops; rejoined,
-        # they take the path `new p.Box.named(1)` takes (issue #2084).
-        if (
-            language == cs.SupportedLanguage.DART
-            and len(parts) >= 3
-            and cs.CHAR_PAREN_OPEN not in parts[1]
-            and cs.CHAR_PAREN_OPEN in parts[2]
-        ):
-            parts = [parts[0], f"{parts[1]}{cs.SEPARATOR_DOT}{parts[2]}", *parts[3:]]
+        module_qn, local_var_types = call.module_qn, call.local_var_types
+        language = call.language
+        parts = _rejoin_dart_named_constructor(parts, language)
         prefix, hop = parts[0], parts[1]
         if cs.CHAR_PAREN_OPEN in prefix or cs.CHAR_PAREN_OPEN not in hop:
             return None
         # A binding of that name at this site shadows the import, whether or
         # not a type could be inferred for it (issue #2033).
-        if self.dart.dart_prefix_is_shadowed(prefix, module_qn, call_point):
+        if self.dart.dart_prefix_is_shadowed(prefix, module_qn, call.call_point):
             return None
         # `new X.named(1).m` splits to base `X` + hop `named()`: the base is
         # the CLASS itself and the hop is its named constructor, so the
@@ -2601,6 +2612,14 @@ class CallResolver:
         # the resolver had emitted none.
         if local_var_types and prefix in local_var_types:
             return None
+        return self._prefixed_hop_type(prefix, hop, parts, module_qn)
+
+    def _prefixed_hop_type(
+        self, prefix: str, hop: str, parts: list[str], module_qn: str
+    ) -> tuple[str, list[str]] | None:
+        # The type the hop after an import prefix hands the rest of the chain:
+        # the class the prefixed module defines under the hop's name, or what
+        # its function of that name returns.
         name = hop.split(cs.CHAR_PAREN_OPEN, 1)[0]
         hit = self._unique_prefixed_definition(
             self.dart.dart_prefix_targets(prefix, module_qn), name
@@ -2673,16 +2692,7 @@ class CallResolver:
             or type_name
         )
 
-    def _infer_call_base_type(
-        self,
-        base: str,
-        module_qn: str,
-        local_var_types: dict[str, str] | None,
-        class_context: str | None,
-        caller_qn: str | None,
-        language: cs.SupportedLanguage | None = None,
-        call_point: int | None = None,
-    ) -> str | None:
+    def _infer_call_base_type(self, base: str, call: CallSite) -> str | None:
         # `parser(ia, cb).parse()`: the receiver is a bare-identifier factory call.
         # Resolve the callee to its function/method qn and return its recorded
         # return type. When none resolves, a C++ callee may instead be a
@@ -2691,9 +2701,10 @@ class CallResolver:
         # cut at `<` or `(`, whichever comes first, since template args can carry
         # their own parens. A JS/TS construction (`new Box()`) has no callee to
         # resolve: it is the instance it builds.
+        module_qn, language = call.module_qn, call.language
         if (
             constructed := self.js_ts.infer_js_construction_base_type(
-                base, module_qn, language, call_point
+                base, module_qn, language, call.call_point
             )
         ) is not None:
             return constructed
@@ -2711,14 +2722,8 @@ class CallResolver:
             if language != cs.SupportedLanguage.CPP:
                 return None
             callee = callee.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT)
-        resolved = self.resolve_function_call(
-            callee,
-            module_qn,
-            local_var_types,
-            class_context,
-            caller_qn,
-            language,
-            call_point,
+        resolved = self.resolve_call(
+            call._replace(call_name=callee, constructing=False)
         )
         if resolved is not None:
             return_type = self._callee_return_type(resolved[1], language)
@@ -2790,16 +2795,8 @@ class CallResolver:
                 full_object_type = resolved_class
         return full_object_type
 
-    def _resolve_chained_call(
-        self,
-        call_name: str,
-        module_qn: str,
-        local_var_types: dict[str, str] | None = None,
-        class_context: str | None = None,
-        caller_qn: str | None = None,
-        language: cs.SupportedLanguage | None = None,
-        call_point: int | None = None,
-    ) -> tuple[str, str] | None:
+    def _resolve_chained_call(self, call: CallSite) -> tuple[str, str] | None:
+        call_name, module_qn, language = call.call_name, call.module_qn, call.language
         match = _CHAINED_METHOD_PATTERN.search(call_name)
         if not match:
             return None
@@ -2810,22 +2807,14 @@ class CallResolver:
 
         python = self.type_inference.python_type_inference
         object_type = python.expression_analyzer.infer_expression_return_type(
-            object_expr, module_qn, local_var_types
-        ) or self._infer_chained_object_type(
-            object_expr,
-            module_qn,
-            local_var_types,
-            class_context,
-            caller_qn,
-            language,
-            call_point,
-        )
+            object_expr, module_qn, call.local_var_types
+        ) or self._infer_chained_object_type(object_expr, call)
         if object_type and (class_value := class_value_of(object_type)):
             # The class itself, not an instance: only a static member binds.
             return self.js_ts.js_static_member_target(class_value, final_method)
         if object_type:
             full_object_type = self._qualify_chained_object_type(
-                object_type, module_qn, rust_caller(language, caller_qn)
+                object_type, module_qn, rust_caller(language, call.caller_qn)
             )
 
             method_qn = f"{full_object_type}.{final_method}"
@@ -2872,12 +2861,9 @@ class CallResolver:
             cs.SupportedLanguage.C,
         ):
             return self._resolve_function_call(
-                final_method,
-                module_qn,
-                local_var_types,
-                class_context,
-                caller_qn,
-                language,
+                call._replace(
+                    call_name=final_method, call_point=None, constructing=False
+                )
             )
 
         return None

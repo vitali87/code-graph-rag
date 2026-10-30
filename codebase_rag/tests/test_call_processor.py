@@ -9,6 +9,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers.call_site import CallSite
 from codebase_rag.parsers.js_ts.calls import iife_target_name
 
 if TYPE_CHECKING:
@@ -16,6 +17,11 @@ if TYPE_CHECKING:
 
     from codebase_rag.parsers.call_processor import CallProcessor
     from codebase_rag.types_defs import LanguageQueries
+
+
+def _chain_call(call_name: str) -> CallSite:
+    # A chained call in `proj.views` with nothing else known about its caller.
+    return CallSite(call_name, "proj.views", None, None, None, None, None, False)
 
 
 @pytest.fixture
@@ -936,7 +942,7 @@ class TestResolveChainedCall:
         self, processor_with_types: CallProcessor
     ) -> None:
         result = processor_with_types._resolver._resolve_chained_call(
-            "unknown().method", "proj.views"
+            _chain_call("unknown().method")
         )
         assert result is None
 
@@ -944,7 +950,7 @@ class TestResolveChainedCall:
         self, processor_with_types: CallProcessor
     ) -> None:
         result = processor_with_types._resolver._resolve_chained_call(
-            "simple_call", "proj.views"
+            _chain_call("simple_call")
         )
         assert result is None
 
@@ -952,7 +958,7 @@ class TestResolveChainedCall:
         self, processor_with_types: CallProcessor
     ) -> None:
         result = processor_with_types._resolver._resolve_chained_call(
-            "unknown_object.method_one().method_two", "proj.views"
+            _chain_call("unknown_object.method_one().method_two")
         )
         assert result is None
 

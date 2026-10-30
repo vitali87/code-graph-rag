@@ -12,6 +12,7 @@ from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.call_resolver import CallResolver
+from codebase_rag.parsers.call_site import CallSite
 from codebase_rag.parsers.definition_facts import DefinitionFacts
 from codebase_rag.parsers.import_processor import ImportProcessor
 from codebase_rag.parsers.type_inference import TypeInferenceEngine
@@ -985,9 +986,16 @@ class TestResolveChainedCall:
         }
 
         result = processor._resolver._resolve_chained_call(
-            "qs.all().filter",
-            "proj.views",
-            {"qs": "QuerySet"},
+            CallSite(
+                "qs.all().filter",
+                "proj.views",
+                {"qs": "QuerySet"},
+                None,
+                None,
+                None,
+                None,
+                False,
+            )
         )
         if result is not None:
             assert "filter" in result[1] or "QuerySet" in result[1]
@@ -996,9 +1004,16 @@ class TestResolveChainedCall:
         self, call_resolver: CallResolver
     ) -> None:
         result = call_resolver._resolve_chained_call(
-            "unknown.method().next",
-            "proj.module",
-            None,
+            CallSite(
+                "unknown.method().next",
+                "proj.module",
+                None,
+                None,
+                None,
+                None,
+                None,
+                False,
+            )
         )
         assert result is None
 
