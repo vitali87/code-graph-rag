@@ -77,7 +77,7 @@ jobs:
           for attempt in 1 2 3; do
             if uv run --no-sync python -c "
           from huggingface_hub import snapshot_download
-          snapshot_download('microsoft/unixcoder-base')
+          snapshot_download('microsoft/unixcoder-base', revision='5604afdc964f6c53782a6813140ade5216b99006')
           "; then
               exit 0
             fi

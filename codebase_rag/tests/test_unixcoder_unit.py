@@ -346,3 +346,45 @@ class TestDecode:
 
         with pytest.raises(TypeError):
             instance.decode(source_ids)
+
+
+class TestPinnedRevision:
+    def test_every_artifact_loads_at_the_given_revision(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Unpinned, `from_pretrained` follows the repo's `main`, so whatever is
+        # pushed there next is what runs; each artifact must name the commit.
+        seen: dict[str, dict[str, object]] = {}
+        config = MagicMock(hidden_size=4, vocab_size=8)
+        model = MagicMock()
+        model.embeddings.word_embeddings.weight = nn.Parameter(torch.zeros(8, 4))
+        loaded = {
+            "RobertaTokenizer": MagicMock(),
+            "RobertaConfig": config,
+            "RobertaModel": model,
+        }
+        for name, value in loaded.items():
+
+            def load(
+                *_args: object,
+                _name: str = name,
+                _value: object = value,
+                **kwargs: object,
+            ) -> object:
+                seen[_name] = kwargs
+                return _value
+
+            monkeypatch.setattr(getattr(_unixcoder, name), "from_pretrained", load)
+
+        UniXcoder("some/model", "abc1234def")
+
+        assert set(seen) == set(loaded)
+        assert all(
+            kwargs.get("revision") == "abc1234def" for kwargs in seen.values()
+        ), seen
+
+    def test_the_embedder_pins_a_commit(self) -> None:
+        from codebase_rag import constants as cs
+
+        assert len(cs.UNIXCODER_REVISION) == 40
+        int(cs.UNIXCODER_REVISION, 16)

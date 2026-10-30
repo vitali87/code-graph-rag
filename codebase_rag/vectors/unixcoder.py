@@ -24,13 +24,17 @@ class BeamSearch:
 
 
 class UniXcoder(nn.Module):
-    def __init__(self, model_name: str) -> None:
+    def __init__(self, model_name: str, revision: str) -> None:
         super().__init__()
-        self.tokenizer: RobertaTokenizer = RobertaTokenizer.from_pretrained(model_name)
-        self.config: RobertaConfig = RobertaConfig.from_pretrained(model_name)
+        self.tokenizer: RobertaTokenizer = RobertaTokenizer.from_pretrained(
+            model_name, revision=revision
+        )
+        self.config: RobertaConfig = RobertaConfig.from_pretrained(
+            model_name, revision=revision
+        )
         self.config.is_decoder = True
         self.model: RobertaModel = RobertaModel.from_pretrained(
-            model_name, config=self.config
+            model_name, config=self.config, revision=revision
         )
 
         self.register_buffer(

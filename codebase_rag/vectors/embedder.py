@@ -245,7 +245,7 @@ if has_torch() and has_transformers():
 
     @lru_cache(maxsize=1)
     def get_model() -> UniXcoder:
-        model = UniXcoder(cs.UNIXCODER_MODEL)
+        model = UniXcoder(cs.UNIXCODER_MODEL, cs.UNIXCODER_REVISION)
         model.eval()
         device = _select_device()
         if device != cs.EmbeddingDevice.CPU:

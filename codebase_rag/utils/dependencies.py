@@ -14,6 +14,7 @@ from codebase_rag.constants import (
     MODULE_TORCH,
     MODULE_TRANSFORMERS,
     UNIXCODER_MODEL,
+    UNIXCODER_REVISION,
     EmbeddingProvider,
     VectorStoreBackend,
 )
@@ -113,11 +114,13 @@ def has_local_embedding_weights() -> bool:
         # The config alone is not the model: a cache holding only config.json
         # satisfies AutoConfig and then fails in the embedder when the
         # weights turn out to be missing. Resolve every artifact UniXcoder
-        # loads, all with local_files_only, so the probe answers the question
-        # the tests actually ask.
-        AutoConfig.from_pretrained(UNIXCODER_MODEL, local_files_only=True)
-        AutoTokenizer.from_pretrained(UNIXCODER_MODEL, local_files_only=True)
-        AutoModel.from_pretrained(UNIXCODER_MODEL, local_files_only=True)
+        # loads, at the commit it loads them from and all with
+        # local_files_only, so the probe answers the question the tests
+        # actually ask.
+        for loader in (AutoConfig, AutoTokenizer, AutoModel):
+            loader.from_pretrained(
+                UNIXCODER_MODEL, revision=UNIXCODER_REVISION, local_files_only=True
+            )
     except Exception:  # noqa: BLE001 -- optional component: any failure reads as unavailable
         return False
     return True

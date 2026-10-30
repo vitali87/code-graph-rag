@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from codebase_rag import constants as cs
 from codebase_rag.utils import dependencies
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -90,11 +91,15 @@ def test_unit_suite_jobs_prefetch_this_model_before_pytest(
     workflow: str, job: str
 ) -> None:
     steps = _steps_for(workflow, job)
+    # The embedder loads cs.UNIXCODER_REVISION, so a prefetch of any other
+    # commit leaves the suite downloading the pinned one mid-run.
     prefetch_at = [
         index
         for index, step in enumerate(steps)
-        if f'snapshot_download("{EMBEDDING_MODEL}")' in _step_script(step)
-        or f"snapshot_download('{EMBEDDING_MODEL}')" in _step_script(step)
+        if f'snapshot_download("{EMBEDDING_MODEL}", revision="{cs.UNIXCODER_REVISION}")'
+        in _step_script(step)
+        or f"snapshot_download('{EMBEDDING_MODEL}', revision='{cs.UNIXCODER_REVISION}')"
+        in _step_script(step)
     ]
     pytest_at = [
         index
@@ -103,8 +108,9 @@ def test_unit_suite_jobs_prefetch_this_model_before_pytest(
     ]
 
     assert prefetch_at, (
-        f"{workflow}:{job} does not prefetch {EMBEDDING_MODEL}, so a hub "
-        "failure surfaces mid-pytest instead of in a named step"
+        f"{workflow}:{job} does not prefetch {EMBEDDING_MODEL} at "
+        f"{cs.UNIXCODER_REVISION}, so a hub failure surfaces mid-pytest instead "
+        "of in a named step"
     )
     assert min(prefetch_at) < min(pytest_at), (
         f"{workflow}:{job} prefetches after running the suite, which defeats it"
@@ -220,3 +226,7 @@ class TestLocalWeightsProbe:
 
         assert len(seen) == 3
         assert all(kwargs.get("local_files_only") is True for kwargs in seen), seen
+        # It must find the commit the embedder loads, not whatever `main` is.
+        assert all(
+            kwargs.get("revision") == cs.UNIXCODER_REVISION for kwargs in seen
+        ), seen

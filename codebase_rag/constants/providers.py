@@ -88,6 +88,10 @@ MODEL_ID_SUGGESTION_LIMIT = 20
 HTTP_OK = 200
 
 UNIXCODER_MODEL = "microsoft/unixcoder-base"
+# The commit of UNIXCODER_MODEL that is loaded, so a later push to the model
+# repo cannot change or replace the weights cgr runs. CI prefetches the same
+# commit; move both together.
+UNIXCODER_REVISION = "5604afdc964f6c53782a6813140ade5216b99006"
 EMBEDDING_DEFAULT_BATCH_SIZE = 64
 EMBEDDING_DEFAULT_MAX_LENGTH = 512
 EMBEDDING_CACHE_FILENAME = ".embedding_cache.json"
