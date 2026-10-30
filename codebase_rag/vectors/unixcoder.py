@@ -2,12 +2,25 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from dataclasses import dataclass
+
 import torch
 from torch import nn
 from transformers import RobertaConfig, RobertaModel, RobertaTokenizer
 
 from .. import constants as cs
 from .. import exceptions as ex
+
+
+@dataclass(frozen=True, slots=True)
+class BeamSearch:
+    """How `UniXcoder.generate` searches: `beam_size` hypotheses kept per
+    step, at most `max_length` tokens each, stopping on `eos_id` (None takes
+    the model config's end-of-sequence token)."""
+
+    eos_id: int | list[int] | None = None
+    beam_size: int = 5
+    max_length: int = 64
 
 
 class UniXcoder(nn.Module):
@@ -123,9 +136,7 @@ class UniXcoder(nn.Module):
         source_ids: torch.Tensor,
         *,
         decoder_only: bool = True,
-        eos_id: int | list[int] | None = None,
-        beam_size: int = 5,
-        max_length: int = 64,
+        search: BeamSearch = BeamSearch(),
     ) -> torch.Tensor:
         # self.bias is registered as buffer (Tensor) but typed as Module by ty
         bias: torch.Tensor = getattr(self, cs.UNIXCODER_BUFFER_BIAS)
@@ -137,6 +148,7 @@ class UniXcoder(nn.Module):
             mask = source_ids.ne(pad_id)
             mask = mask.unsqueeze(1) * mask.unsqueeze(2)
 
+        eos_id = search.eos_id
         if eos_id is None:
             # transformers 5.5 widened config.eos_token_id to int |
             # list[int] | None (models may declare several EOS tokens);
@@ -146,6 +158,7 @@ class UniXcoder(nn.Module):
             raise ValueError(ex.UNIXCODER_NO_EOS_TOKEN)
 
         device = source_ids.device
+        beam_size, max_length = search.beam_size, search.max_length
 
         preds = []
         zero = torch.LongTensor(1).fill_(0).to(device)

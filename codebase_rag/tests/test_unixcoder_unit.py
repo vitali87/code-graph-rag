@@ -16,6 +16,7 @@ _unixcoder = importlib.import_module("codebase_rag.vectors.unixcoder")
 
 nn = torch.nn
 Beam = _unixcoder.Beam
+BeamSearch = _unixcoder.BeamSearch
 UniXcoder = _unixcoder.UniXcoder
 
 
@@ -313,7 +314,9 @@ class TestGenerate:
         instance = self._make()
         source_ids = torch.tensor([[0, 5, 6, 7], [0, 5, 1, 1]])
 
-        preds = instance.generate(source_ids, beam_size=2, max_length=3)
+        preds = instance.generate(
+            source_ids, search=BeamSearch(beam_size=2, max_length=3)
+        )
 
         assert preds.shape == (2, 2, 3)
 
