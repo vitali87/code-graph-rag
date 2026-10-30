@@ -135,13 +135,20 @@ and the deferred IMPORTS edges and their flush for itself. A new language's
 import parsing goes in an importer in its own package, registered in that
 lookup.
 
-The call pass has moved Go, C++, Dart and C# the same way: `CallProcessor`
-builds a `GoCallResolution`, `CppCallResolution`, `DartCallResolution` and
-`CSharpCallResolution` (each in `parsers/<language>/calls.py`) and hands
-each its language's callee binding, fan-outs and the edges the language
-writes without a call node. It keeps for itself the scan of a caller's
+The call pass has moved most languages the same way: `CallProcessor` builds
+a `GoCallResolution`, `CppCallResolution`, `DartCallResolution`,
+`CSharpCallResolution`, `JsTsCallResolution`, `PythonCallResolution`,
+`JavaCallResolution`, `ScalaCallResolution` and `PhpCallResolution` (each in
+`parsers/<language>/calls.py`, with C's `CCallResolution` beside C++'s) and
+hands each its language's callee binding, fan-outs and the edges the
+language writes without a call node. What reads nothing of the pass is
+module functions in the same files: Rust's macro-token call names, Lua's
+caller names, and the JS/TS value peels and call-name shapes the shared
+walkers apply. `CallProcessor` keeps for itself the scan of a caller's
 calls, the site and resolution every edge carries (`parsers/edge_site.py`
-holds the part a collaborator writes through) and the name-based resolver.
+holds the part a collaborator writes through), the name-based resolver, and
+what languages share: the reference walkers, callable-parameter flow, the
+class pass's qualified names and the construction a `new` runs.
 
 ## Example: Adding C# Support
 
