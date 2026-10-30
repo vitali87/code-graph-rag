@@ -13,6 +13,7 @@ from loguru import logger
 from pydantic_ai import Agent, DeferredToolRequests, Tool
 
 from codebase_rag import constants as cs
+from codebase_rag import exceptions as ex
 from codebase_rag import logs as ls
 from codebase_rag import tool_errors as te
 from codebase_rag.services.llm import create_rag_orchestrator, run_to_text_answer
@@ -146,7 +147,11 @@ class RetrievalTools(ToolHandlerBase):
     async def semantic_search(
         self, natural_language_query: str, top_k: int = 5, project: str | None = None
     ) -> str:
-        assert self._semantic_search_tool is not None
+        search_tool = self._semantic_search_tool
+        if search_tool is None:
+            # Registered only with the semantic extra installed; a direct
+            # call without it gets the answer the tool itself gives.
+            return te.failure(ex.SEMANTIC_EXTRA)
         logger.info(ls.MCP_SEMANTIC_SEARCH.format(query=natural_language_query))
         # The underlying tool already accepted `project` and passes it to
         # `search_embeddings`, which filters in the vector store. Only this
@@ -175,7 +180,7 @@ class RetrievalTools(ToolHandlerBase):
                 cs.MCPToolName.SEMANTIC_SEARCH,
             ):
                 return refusal
-            result = await plain_function(self._semantic_search_tool)(
+            result = await plain_function(search_tool)(
                 query=natural_language_query, top_k=top_k, project=project
             )
         if isinstance(result, te.ToolFailure):

@@ -118,16 +118,19 @@ class ToolHandlerBase:
         and behind the refusals every graph read takes: the registry's
         dispatcher (tools.py)."""
 
-    def _workspace_root_refusal(self) -> te.ToolFailure | None:
-        assert self.workspace is not None
+    def _workspace_root_refusal(
+        self, workspace: WorkspaceConfig
+    ) -> te.ToolFailure | None:
+        """Why the root-bound tools are refused under `workspace`: this
+        server's directory is none of its repositories."""
         root = Path(self.project_root).resolve()
-        repos = [repo.repo_path() for repo in self.workspace.repos]
+        repos = [repo.repo_path() for repo in workspace.repos]
         if root in repos:
             return None
         return te.ToolFailure(
             mcs.MCP_ROOT_OUTSIDE_WORKSPACE.format(
                 root=root,
-                workspace=self.workspace.name,
+                workspace=workspace.name,
                 known=cs.SEPARATOR_COMMA_SPACE.join(map(str, repos)),
             )
         )
@@ -362,7 +365,7 @@ class ToolHandlerBase:
                     known=cs.SEPARATOR_COMMA_SPACE.join(names),
                 )
             )
-        default = self._workspace_default_project()
+        default = self._workspace_default_project(self.workspace)
         if default is None:
             return None, te.ToolFailure(
                 mcs.MCP_WORKSPACE_DEFAULT_AMBIGUOUS.format(
@@ -386,7 +389,7 @@ class ToolHandlerBase:
         """
         if self.workspace is None:
             return derive_project_name(Path(self.project_root)), None
-        default = self._workspace_default_project()
+        default = self._workspace_default_project(self.workspace)
         if default is not None:
             return default, None
         names = self.workspace.project_names()
@@ -418,19 +421,18 @@ class ToolHandlerBase:
             project, known, mcs.MCP_FIXED_ROOT_NOT_INDEXED
         )
 
-    def _workspace_default_project(self) -> str | None:
-        """The workspace project a request without `project` means.
+    def _workspace_default_project(self, workspace: WorkspaceConfig) -> str | None:
+        """The project of `workspace` a request without `project` means.
 
         The repo rooted at this server's directory, if the workspace has
         one; else the only project, if it has one; else nothing, and the
         caller must say which. Never a guess between several.
         """
-        assert self.workspace is not None
         root = Path(self.project_root).resolve()
-        for repo in self.workspace.repos:
+        for repo in workspace.repos:
             if repo.repo_path() == root:
                 return repo.project_name
-        names = self.workspace.project_names()
+        names = workspace.project_names()
         return names[0] if len(names) == 1 else None
 
     def _source_root_for(self, project_name: str) -> Path | None:

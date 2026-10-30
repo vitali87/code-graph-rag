@@ -105,9 +105,10 @@ async def test_the_default_project_is_the_repo_rooted_here_or_the_only_one(
     (tmp_path / "b").mkdir()
     ws = _workspace(tmp_path, ("a", ALPHA), ("b", BETA))
     registry = _registry(tmp_path, ws, root="b")
-    assert registry._workspace_default_project() == BETA
-    only = _registry(tmp_path, _workspace(tmp_path, ("a", ALPHA)), root="elsewhere")
-    assert only._workspace_default_project() == ALPHA
+    assert registry._workspace_default_project(ws) == BETA
+    one = _workspace(tmp_path, ("a", ALPHA))
+    only = _registry(tmp_path, one, root="elsewhere")
+    assert only._workspace_default_project(one) == ALPHA
 
 
 @pytest.mark.anyio

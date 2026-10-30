@@ -6,6 +6,8 @@ import pytest
 from mcp.types import ImageContent, TextContent
 
 from codebase_rag import constants as cs
+from codebase_rag import exceptions as ex
+from codebase_rag import tool_errors as te
 from codebase_rag.exceptions import ReingestAborted
 from codebase_rag.mcp import constants as mcs
 from codebase_rag.mcp.client import query_mcp_server
@@ -101,6 +103,27 @@ class TestSemanticSearchRegistration:
 
         assert cs.MCPToolName.SEMANTIC_SEARCH not in registry._tools
         assert registry._semantic_search_tool is None
+
+    async def test_semantic_search_without_its_tool_says_what_to_install(
+        self, temp_project_root: Path
+    ) -> None:
+        # Unregistered without the extra, but a direct call still gets the
+        # semantic tool's own answer rather than an internal error.
+        with patch(
+            "codebase_rag.mcp.tools.has_semantic_dependencies",
+            return_value=False,
+        ):
+            registry = MCPToolsRegistry(
+                project_root=str(temp_project_root),
+                ingestor=MagicMock(),
+                cypher_gen=MagicMock(),
+            )
+
+        result = await registry.semantic_search("find auth functions")
+
+        assert isinstance(result, te.ToolFailure)
+        assert result == te.failure(ex.SEMANTIC_EXTRA)
+        registry.ingestor.list_projects.assert_not_called()
 
     def test_semantic_search_registered_with_deps(
         self, temp_project_root: Path

@@ -770,17 +770,16 @@ class MCPToolsRegistry(
         workspace need not serve (`_fixed_root_project`); they run only when
         that directory is one of its repositories.
         """
-        if self.workspace is None:
+        workspace = self.workspace
+        if workspace is None:
             return
-        root_refusal = self._workspace_root_refusal()
+        root_refusal = self._workspace_root_refusal(workspace)
         for name, metadata in self._tools.items():
             if name == cs.MCPToolName.WIPE_DATABASE:
                 refusal: te.ToolFailure | None = te.ToolFailure(
                     mcs.MCP_WIPE_REFUSED_IN_WORKSPACE.format(
-                        workspace=self.workspace.name,
-                        known=cs.SEPARATOR_COMMA_SPACE.join(
-                            self.workspace.project_names()
-                        ),
+                        workspace=workspace.name,
+                        known=cs.SEPARATOR_COMMA_SPACE.join(workspace.project_names()),
                     )
                 )
             elif name in _ROOT_BOUND_TOOLS:
