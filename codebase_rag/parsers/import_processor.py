@@ -1,3 +1,16 @@
+"""The import pass: each file's import map, the sites its bindings were
+written at, and the IMPORTS edges they make.
+
+`ImportProcessor` builds one importer per language package and looks a
+file's language up to hand its importer the file's import captures; the
+importer writes the shared import map and records its sites and edges
+through this processor. It keeps what every language shares: the import
+map, the per-module state a re-parse clears, the import sites (issue
+#1522), the names a module could not resolve (issue #1568) and the queue of
+IMPORTS edges held until every file is parsed, which the `ImportEdges` it
+owns lands on their targets (`import_edges`, with the module lookups in
+`import_targets`)."""
+
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Protocol
@@ -7,13 +20,7 @@ from tree_sitter import Node, QueryCursor
 
 from .. import constants as cs
 from .. import logs as ls
-from ..language_spec import (
-    LANGUAGE_SPECS,
-    LanguageSpec,
-    get_language_for_extension,
-    language_family,
-    own_extension_module_qn,
-)
+from ..language_spec import LanguageSpec, get_language_for_extension, language_family
 from ..node_text import sorted_captures
 from ..services import IngestorProtocol
 from ..types_defs import (
@@ -21,20 +28,16 @@ from ..types_defs import (
     FunctionLocation,
     FunctionRegistryTrieProtocol,
     FunctionSpanKey,
-    LanguageFamily,
     LanguageQueries,
     PropertyDict,
     StemSiblingModules,
 )
-from ..utils.path_utils import (
-    base_module_qn,
-    declaration_extension,
-    module_extension,
-)
+from . import import_targets
 from .cpp.imports import CppImporter
 from .csharp.imports import CSharpImporter
 from .dart.imports import DartImporter
 from .go.imports import GoImporter
+from .import_edges import ImportEdges
 from .java.imports import JavaImporter
 from .js_ts.imports import JsTsImporter
 from .js_ts.reexports import js_ts_module_qn
@@ -51,65 +54,7 @@ from .stdlib_extractor import (
     flush_stdlib_cache,
     get_stdlib_cache_stats,
 )
-from .utils import follow_reexports, import_site_props, is_project_qn, shared_or_new
-
-
-def _names_js_module(site: PropertyDict | None) -> bool:
-    # `export * from` and `import * as ns` record `*` as their imported name,
-    # and `const m = require("./m")` records none: each names the module
-    # itself, never a name inside it (issues #2464, #2934).
-    if site is None:
-        return False
-    imported = site.get(cs.KEY_IMPORTED_NAME)
-    return imported is None or imported == cs.IMPORTED_NAME_WILDCARD
-
-
-def _external_module_name(module_path: str) -> str:
-    """The display name for an ExternalModule qn.
-
-    The last DOTTED segment names a package path (`os.path` -> `path`,
-    `std.fmt` -> `fmt`), but a C/C++ header carries its EXTENSION in that
-    position, so every `.h` include minted an ExternalModule called `h`:
-    `std.stdio.h`, `std.signal.h` and `std.sys.types.h` alike (issue #1758).
-    A header is named by its own stem instead, the same name
-    `_cpp_include_local_name` binds it under, so the node and the local name
-    agree.
-
-    The header rule is deliberately confined to the `std.` prefix that
-    `_cpp_include_full_name` puts on an include, AND to qns of three or more
-    segments. This function serves EVERY language's external imports, and a
-    package whose last segment is literally `h` is a real thing (the Python
-    HTTP/2 library), so an unconditional rule would rename `mypkg.h` to
-    `mypkg` for languages that have no header extensions at all.
-
-    The three-segment floor leaves one known inconsistency: `<std.h>` has the
-    two-segment qn `std.h`, indistinguishable here from a package `h` under
-    `std`, so its node is named `h` while `_cpp_include_local_name` binds it
-    as `std`. Lowering the floor to two would rename every `<pkg.h>`-shaped
-    external of every language; `<std.h>` is not a real header, so the
-    inconsistency is the cheaper of the two errors.
-
-    A second, unfixable-here case: this sees only the qn, and slash
-    segmentation has already erased the difference between a PATH and dots
-    inside one basename. `<foo/bar.h>` and `<foo.bar.h>` both become
-    `std.foo.bar.h`, yet `_cpp_include_local_name` binds the first as `bar`
-    (basename stem) and the second as `foo` (first stem segment). One name
-    must therefore disagree with its binding, and no rule at this layer can
-    tell which. It is `<foo/bar.h>` -- a real path, the common shape -- that
-    is served correctly; `<foo.bar.h>` gets `bar` where its binding says
-    `foo`. Fixing that means passing the ORIGINAL include path down to node
-    creation rather than deriving from the qn, which is a wider change than
-    the naming defect warrants (#1758).
-    """
-    segments = module_path.split(cs.SEPARATOR_DOT)
-    # `stdio.h` occupies the last TWO dotted segments, stem and extension.
-    if (
-        len(segments) >= 3
-        and module_path.startswith(cs.IMPORT_STD_PREFIX)
-        and f"{cs.SEPARATOR_DOT}{segments[-1]}" in (cs.EXT_H, cs.EXT_HPP)
-    ):
-        return segments[-2]
-    return segments[-1]
+from .utils import follow_reexports, import_site_props, shared_or_new
 
 
 class LanguageImporter(Protocol):
@@ -155,12 +100,14 @@ class ImportProcessor:
         "go",
         "python",
         "_importers",
+        "_edges",
     )
 
     def __init__(
         self,
         repo_path: Path,
         project_name: str,
+        *,
         ingestor: IngestorProtocol | None = None,
         function_registry: FunctionRegistryTrieProtocol | None = None,
         exclude_paths: frozenset[str] | None = None,
@@ -181,6 +128,46 @@ class ImportProcessor:
         # exported function's qn, so a whole-module require alias called
         # directly (`const f = require('./m'); f(x)`) resolves to it.
         self.commonjs_direct_exports: dict[str, str] = {}
+        # IMPORTS edges held back until every file is parsed, so internal
+        # targets verify against the full module registry (issue #652).
+        self._deferred_import_edges: list[DeferredImportEdge] = []
+        # Per module qn: every name the module referenced and could not
+        # resolve, from any pass (a dropped import, an include naming no
+        # file, a base class resolved nowhere, a call with no callee). The
+        # class and call processors record into the same dict; the updater
+        # writes it onto the Module node after Pass 3, and matches an added
+        # file against it to find the modules that waited (issue #1568).
+        self.unresolved_references: dict[str, set[str]] = {}
+        # Per scope qn: the site props of each bound import name (#1522),
+        # attached to the IMPORTS edge when the deferred edge flushes.
+        self._import_sites: dict[str, dict[str, PropertyDict]] = {}
+        # Sub-scope site entries a file wrote under OTHER scope keys (Rust
+        # fn/inline-mod uses), so its re-parse can retract them (#1522).
+        self._import_site_owners: dict[str, set[tuple[str, str]]] = {}
+        # (scope, name) -> the file module that wrote the CURRENT entry, so a
+        # re-parse retracts only entries it still owns: a fn-local inline mod
+        # in src/a.rs and src/a/b/mod.rs can share a scope key and a name.
+        self._import_site_writers: dict[tuple[str, str], str] = {}
+        self.stdlib_extractor = StdlibExtractor(
+            function_registry, repo_path, project_name
+        )
+        self._build_importers(shared_or_new(module_qn_to_file_path, dict))
+        self._importers = self._language_importers()
+        # Where a deferred IMPORTS edge lands, by the layouts of the
+        # importers whose languages decide it.
+        self._edges = ImportEdges(
+            self,
+            java=self.java,
+            js_ts=self.js_ts,
+            julia=self.julia,
+            csharp=self.csharp,
+            scala=self.scala,
+        )
+
+    def _build_importers(self, module_qn_to_file_path: dict[str, Path]) -> None:
+        # Each language's importer. Python's, Go's and JS/TS's layouts are
+        # discovered as they are built, in that order.
+        repo_path, project_name = self.repo_path, self.project_name
         # Julia's using/import parsing and the file, stem and declared-module
         # indices its targets resolve through: the importer writes the import
         # map above, under a nested module's own key where one encloses the
@@ -202,26 +189,6 @@ class ImportProcessor:
             project_name=project_name,
             import_mapping=self.import_mapping,
         )
-        # IMPORTS edges held back until every file is parsed, so internal
-        # targets verify against the full module registry (issue #652).
-        self._deferred_import_edges: list[DeferredImportEdge] = []
-        # Per module qn: every name the module referenced and could not
-        # resolve, from any pass (a dropped import, an include naming no
-        # file, a base class resolved nowhere, a call with no callee). The
-        # class and call processors record into the same dict; the updater
-        # writes it onto the Module node after Pass 3, and matches an added
-        # file against it to find the modules that waited (issue #1568).
-        self.unresolved_references: dict[str, set[str]] = {}
-        # Per scope qn: the site props of each bound import name (#1522),
-        # attached to the IMPORTS edge when the deferred edge flushes.
-        self._import_sites: dict[str, dict[str, PropertyDict]] = {}
-        # Sub-scope site entries a file wrote under OTHER scope keys (Rust
-        # fn/inline-mod uses), so its re-parse can retract them (#1522).
-        self._import_site_owners: dict[str, set[tuple[str, str]]] = {}
-        # (scope, name) -> the file module that wrote the CURRENT entry, so a
-        # re-parse retracts only entries it still owns: a fn-local inline mod
-        # in src/a.rs and src/a/b/mod.rs can share a scope key and a name.
-        self._import_site_writers: dict[tuple[str, str], str] = {}
         # Rust's `use` parsing, its Cargo crate, workspace and target layout,
         # and the per-scope maps the call resolver reads: the importer writes
         # the import map and sites above and queues its edges through this
@@ -242,10 +209,6 @@ class ImportProcessor:
             project_name=project_name,
             import_mapping=self.import_mapping,
         )
-        # Scala's import parsing and the package index its imports resolve
-        # through once every module is known: the importer writes the import
-        # map and reads the sites above, and queues its edges through this
-        # processor, whose flush lands the project's own on their modules.
         # C#'s `using` parsing, each file's declared namespaces and the
         # evidence that pins a namespace `using` to the modules it uses: the
         # importer writes the import map above and records its sites and
@@ -256,6 +219,10 @@ class ImportProcessor:
             project_name=project_name,
             import_mapping=self.import_mapping,
         )
+        # Scala's import parsing and the package index its imports resolve
+        # through once every module is known: the importer writes the import
+        # map and reads the sites above, and queues its edges through this
+        # processor, whose flush lands the project's own on their modules.
         self.scala = ScalaImporter(
             self,
             repo_path=repo_path,
@@ -289,9 +256,6 @@ class ImportProcessor:
             repo_path=repo_path,
             project_name=project_name,
             import_mapping=self.import_mapping,
-        )
-        self.stdlib_extractor = StdlibExtractor(
-            function_registry, repo_path, project_name
         )
 
         # Python's import and from-import parsing and the package layout a
@@ -327,11 +291,13 @@ class ImportProcessor:
             repo_path=repo_path,
             project_name=project_name,
             import_mapping=self.import_mapping,
-            module_qn_to_file_path=shared_or_new(module_qn_to_file_path, dict),
+            module_qn_to_file_path=module_qn_to_file_path,
         )
+
+    def _language_importers(self) -> dict[cs.SupportedLanguage, LanguageImporter]:
         # The importer each language's files go to; a language with none
         # binds nothing, its import nodes only logged.
-        self._importers: dict[cs.SupportedLanguage, LanguageImporter] = {
+        return {
             cs.SupportedLanguage.PYTHON: self.python,
             cs.SupportedLanguage.JS: self.js_ts,
             cs.SupportedLanguage.TS: self.js_ts,
@@ -624,47 +590,6 @@ class ImportProcessor:
             self.rust.finalise_rust_function_scope_uses(module_qn, function_locations)
             self.rust.retract_rust_mod_scope_uses(module_qn)
 
-    def _emit_csharp_internal_imports(
-        self,
-        entry: DeferredImportEdge,
-        declaring: dict[str, set[str]],
-        known_module_qns: set[str],
-    ) -> int:
-        """IMPORTS edges for a `using` of a namespace declared in the repo.
-
-        A `using` names a NAMESPACE. When indexed modules declare it, the edge
-        lands on the specific modules this file actually uses: either a
-        resolved call/reference/inherit crossed into the module, or the file
-        mentions a type name the module declares under that namespace. A
-        namespace-keyed ExternalModule would be a dead end no edge ever
-        connects to the defining files (issue #1347).
-        """
-        if self.ingestor is None:
-            return 0
-        emitted = 0
-        for target_module_qn in self.csharp.using_targets(entry.module_qn, declaring):
-            if target_module_qn not in known_module_qns:
-                continue
-            self._emit_import_edge(entry, cs.NodeLabel.MODULE, target_module_qn)
-            emitted += 1
-        return emitted
-
-    def _emit_import_edge(
-        self, entry: DeferredImportEdge, target_label: str, target_qn: str
-    ) -> None:
-        if self.ingestor is None:
-            return
-        from_spec = (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, entry.module_qn)
-        to_spec = (target_label, cs.KEY_QUALIFIED_NAME, target_qn)
-        if entry.site:
-            self.ingestor.ensure_relationship_batch(
-                from_spec, cs.RelationshipType.IMPORTS, to_spec, properties=entry.site
-            )
-        else:
-            self.ingestor.ensure_relationship_batch(
-                from_spec, cs.RelationshipType.IMPORTS, to_spec
-            )
-
     def drop_deferred_import_edges(
         self, module_qns: set[str], language: cs.SupportedLanguage
     ) -> None:
@@ -694,308 +619,16 @@ class ImportProcessor:
         if not deferred or self.ingestor is None:
             return 0
         self._deferred_import_edges = []
-        known_module_qns = set(known_module_paths)
-        module_aliases = self._module_alias_map(known_module_qns)
-        siblings = self.stem_sibling_modules(known_module_paths)
-        # namespace -> the indexed modules DECLARING it, from the per-file
-        # scan done at parse time: C# namespaces need not mirror directory
-        # names, so path-based guessing cannot answer "is this internal". An
-        # incremental run only re-parses CHANGED files, so unchanged C#
-        # modules recover their namespaces here from a targeted parse of
-        # their source, or the internal detection would silently fail in
-        # watch mode and resurrect the dead-end ExternalModule.
-        self.csharp.recover_unparsed_csharp_state(known_module_paths)
-        csharp_namespace_modules = self.csharp.csharp_namespace_modules(
-            known_module_qns
-        )
-        emitted = 0
-        for entry in deferred:
-            # `from pkg.transport import TTransport` is ambiguous in
-            # Python: TTransport may be an item OR a submodule. The stdlib
-            # extractor strips it as an item, anchoring the edge at the
-            # package; when the FULL dotted name verifies as a real module,
-            # the submodule is the true target.
-            if entry.language == cs.SupportedLanguage.PYTHON and (
-                full_target := self._verify_internal_import_target(
-                    entry.full_name,
-                    known_module_paths,
-                    module_aliases,
-                    entry.language,
-                    siblings,
-                )
-            ):
-                self._emit_import_edge(entry, cs.NodeLabel.MODULE, full_target)
-                emitted += 1
-                continue
-            if self._is_rust_project_import(entry):
-                emitted += self._flush_rust_project_import(
-                    entry, known_module_paths, module_aliases, siblings
-                )
-                continue
-            if entry.language == cs.SupportedLanguage.JULIA and (
-                entry.full_name == self.project_name
-                or entry.full_name.startswith(f"{self.project_name}{cs.SEPARATOR_DOT}")
-            ):
-                # A Julia `using`/`import` target resolved to a file-based
-                # project qn at parse time: verify it against the real module
-                # qns, not the generic resolver (which would externalise the
-                # bare project name).
-                candidate = entry.full_name
-                importer_pkg = self.julia.julia_nested_pkg_root(
-                    known_module_paths.get(entry.module_qn, "")
-                )
-                target = None
-                while True:
-                    target = self._verify_internal_import_target(
-                        candidate, known_module_paths, module_aliases, entry.language
-                    )
-                    target_pkg = (
-                        self.julia.julia_nested_pkg_root(
-                            known_module_paths.get(target, "")
-                        )
-                        if target is not None
-                        else None
-                    )
-                    if target_pkg is not None and target_pkg != importer_pkg:
-                        # A target in ANOTHER nested package is unreachable
-                        # from here; one in the SAME nested package is a
-                        # normal sibling import (issue #1882).
-                        target = None
-                    if target is not None:
-                        break
-                    trimmed = candidate.rsplit(cs.SEPARATOR_DOT, 1)[0]
-                    if trimmed in (candidate, self.project_name):
-                        break
-                    candidate = trimmed
-                if target == entry.module_qn:
-                    # `using .SelfModule` inside the file's own module: a
-                    # self-import edge is meaningless.
-                    continue
-                if target is None:
-                    logger.debug(
-                        ls.IMP_DROPPED_PHANTOM_TARGET,
-                        from_module=entry.module_qn,
-                        to_module=entry.full_name,
-                    )
-                    continue
-                self._emit_import_edge(entry, cs.NodeLabel.MODULE, target)
-                emitted += 1
-                continue
-            if entry.language == cs.SupportedLanguage.CSHARP and (
-                declaring := csharp_namespace_modules.get(entry.full_name)
-            ):
-                emitted += self._emit_csharp_internal_imports(
-                    entry, declaring, known_module_qns
-                )
-                continue
-            if self.scala.is_scala_project_import(entry):
-                emitted += self._flush_scala_project_import(entry, known_module_qns)
-                continue
-            emitted += self._flush_resolved_import(
-                entry, known_module_paths, module_aliases, siblings
-            )
-        return emitted
-
-    def _flush_scala_project_import(
-        self, entry: DeferredImportEdge, known_module_qns: set[str]
-    ) -> int:
-        # A path into the project's own packages lands on the module
-        # declaring its member; never on an ExternalModule.
-        if entry.full_name not in known_module_qns:
-            return 0
-        self._emit_import_edge(entry, cs.NodeLabel.MODULE, entry.full_name)
-        return 1
-
-    def _is_rust_project_import(self, entry: DeferredImportEdge) -> bool:
-        return entry.language == cs.SupportedLanguage.RUST and is_project_qn(
-            entry.full_name, self.project_name
-        )
-
-    def _flush_rust_project_import(
-        self,
-        entry: DeferredImportEdge,
-        known_module_paths: dict[str, str],
-        module_aliases: dict[str, str],
-        siblings: StemSiblingModules,
-    ) -> int:
-        # A crate::/super::/self:: use path was rewritten to a project
-        # qn at parse time. The module target is the longest prefix
-        # that verifies: the full path for a module import, minus the
-        # item for item imports, further for enum variants and
-        # associated items (use crate::color::Color::Red). Never
-        # externalise a local path (the phantom ExternalModule would
-        # orphan; issue #1007).
-        candidate = entry.full_name
-        target = None
-        while True:
-            target = self._verify_internal_import_target(
-                candidate, known_module_paths, module_aliases, entry.language, siblings
-            )
-            if target is not None:
-                break
-            trimmed = candidate.rsplit(cs.SEPARATOR_DOT, 1)[0]
-            if trimmed in (candidate, self.project_name):
-                break
-            candidate = trimmed
-        if target == entry.module_qn:
-            # `use super::*` in an inline mod resolves to the file's
-            # own module; a self-import edge is meaningless.
-            return 0
-        if target is None:
-            logger.debug(
-                ls.IMP_DROPPED_PHANTOM_TARGET,
-                from_module=entry.module_qn,
-                to_module=entry.full_name,
-            )
-            self.note_unresolved(entry.module_qn, entry.full_name)
-            return 0
-        self._emit_import_edge(entry, cs.NodeLabel.MODULE, target)
-        return 1
-
-    def _flush_resolved_import(
-        self,
-        entry: DeferredImportEdge,
-        known_module_paths: dict[str, str],
-        module_aliases: dict[str, str],
-        siblings: StemSiblingModules,
-    ) -> int:
-        module_path = self._resolve_module_path(
-            entry.full_name, entry.language, known_module_paths, entry.site
-        )
-        target_label = self._module_label(module_path)
-        if target_label == cs.NodeLabel.EXTERNAL_MODULE:
-            # An external import target has no file pass to create its
-            # node; without one here the IMPORTS edge MERGEs against
-            # nothing and is silently dropped (issue #652).
-            self._ensure_external_module_node(module_path, entry.full_name)
-        else:
-            verified = self._verify_internal_import_target(
-                module_path,
-                known_module_paths,
-                module_aliases,
-                entry.language,
-                siblings,
-            )
-            if verified is None and entry.language == cs.SupportedLanguage.PYTHON:
-                # A package-anchored guess that names no sibling module is an
-                # ABSOLUTE import in Python semantics (`import sys` inside a
-                # package); re-resolve it as one.
-                if absolute := self._python_absolute_fallback(
-                    module_path, entry.module_qn
-                ):
-                    self._ensure_external_module_node(absolute, entry.full_name)
-                    target_label = cs.NodeLabel.EXTERNAL_MODULE
-                    verified = absolute
-            if verified is None:
-                logger.debug(
-                    ls.IMP_DROPPED_PHANTOM_TARGET,
-                    from_module=entry.module_qn,
-                    to_module=module_path,
-                )
-                self.note_unresolved(entry.module_qn, module_path)
-                self.note_unresolved(entry.module_qn, entry.full_name)
-                return 0
-            module_path = verified
-        if entry.language in cs.JS_TS_LANGUAGES and _names_js_module(entry.site):
-            # `export * from "./add"` in `math/index.ts` stores the module
-            # `math.add`, which the resolution above reads as the name `add`
-            # of the `math` barrel: the barrel itself (issue #2464). A
-            # namespace import or whole-module `require` beside a directory's
-            # `index.ts` or a same-named file read the same way, so
-            # `import * as m from "./utils/math"` imported `utils.index`
-            # (issue #2934).
-            module_path = (
-                self._verify_internal_import_target(
-                    entry.full_name,
-                    known_module_paths,
-                    module_aliases,
-                    entry.language,
-                    siblings,
-                )
-                or module_path
-            )
-        if module_path == entry.module_qn and entry.language in cs.JS_TS_LANGUAGES:
-            # A module importing itself is no edge.
-            return 0
-        self._emit_import_edge(entry, target_label, module_path)
-        logger.debug(
-            ls.IMP_CREATED_RELATIONSHIP,
-            from_module=entry.module_qn,
-            to_module=module_path,
-            full_name=entry.full_name,
-        )
-        return 1
+        return self._edges.flush(deferred, known_module_paths)
 
     def stem_sibling_modules(
         self, module_paths: Mapping[str, Path | str]
     ) -> StemSiblingModules:
-        """Each family's module on a stem whose files carry their extension.
-
-        A module qn that is its path-derived name plus its own extension was
-        suffixed by the disambiguator, and importers of its language still
-        write the bare name. Where one family has several such files (`util.js`
-        and `util.ts` beside `util.py`), the one the in-family rule would have
-        named bare is taken: an implementation over a declaration, then the
-        first in walk order.
-        """
-        found: list[tuple[tuple[bool, str], str, LanguageFamily, str]] = []
-        for qn, raw_path in module_paths.items():
-            if not raw_path:
-                continue
-            path = Path(raw_path)
-            language = get_language_for_extension(path.suffix)
-            # Most modules carry no extension segment; skip them before paying
-            # for the path arithmetic below.
-            if language is None or not qn.endswith(module_extension(path.name)):
-                continue
-            try:
-                rel = path.relative_to(self.repo_path)
-            except ValueError:
-                continue
-            base = base_module_qn(rel, self.project_name)
-            if qn == own_extension_module_qn(base, path.name):
-                rank = (declaration_extension(path.name) is not None, rel.as_posix())
-                found.append((rank, base, language_family(language), qn))
-        siblings: StemSiblingModules = {}
-        for _rank, base, family, qn in sorted(found, key=lambda item: item[0]):
-            siblings.setdefault(base, {}).setdefault(family, qn)
-        return siblings
-
-    def _own_language_target(
-        self,
-        name: str,
-        family: LanguageFamily,
-        module_paths: Mapping[str, Path | str],
-        siblings: StemSiblingModules,
-    ) -> str:
-        """`name` re-rooted on its stem's module of the importer's family.
-
-        The longest prefix that names a module decides: one the importer can
-        reach keeps the name as written, and a stem whose module is missing or
-        in another family is swapped for the family's own sibling. A name
-        under a real submodule (`proj.util.sub.f`) therefore stays put.
-        """
-        parts = name.split(cs.SEPARATOR_DOT)
-        for end in range(len(parts), 1, -1):
-            prefix = cs.SEPARATOR_DOT.join(parts[:end])
-            holder = module_paths.get(prefix)
-            if holder is not None and self._reachable_module(holder, family):
-                return name
-            own = siblings.get(prefix, {}).get(family)
-            if own is not None:
-                return f"{own}{name[len(prefix) :]}"
-            if holder is not None:
-                return name
-        return name
-
-    @staticmethod
-    def _reachable_module(path: Path | str, family: LanguageFamily) -> bool:
-        # A module with no file (an inline Rust `mod`, a rehydrated qn) or of
-        # an unknown language is given the benefit of the doubt.
-        if not path:
-            return True
-        language = get_language_for_extension(Path(path).suffix)
-        return language is None or language in family
+        """Each family's module on a stem whose files carry their extension
+        (`import_targets.stem_sibling_modules`)."""
+        return import_targets.stem_sibling_modules(
+            module_paths, self.repo_path, self.project_name
+        )
 
     def point_imports_at_own_language_siblings(
         self, module_paths: Mapping[str, Path]
@@ -1032,174 +665,17 @@ class ImportProcessor:
             return
         family = language_family(language)
         for local_name, full_name in mapping.items():
-            target = self._own_language_target(
+            target = import_targets.own_language_target(
                 full_name, family, module_paths, siblings
             )
             if target != full_name:
                 mapping[local_name] = target
 
-    def _module_alias_map(self, known_module_qns: set[str]) -> dict[str, str]:
-        # A module reached through its container's name: pkg/__init__.py,
-        # shared/index.js, utils/mod.rs. Importers write the container qn; the real
-        # Module node lives at the index-file leaf.
-        aliases: dict[str, str] = {}
-        for qn in known_module_qns:
-            base, _, leaf = qn.rpartition(cs.SEPARATOR_DOT)
-            if base and leaf in cs.MODULE_INDEX_FILE_STEMS:
-                aliases[base] = qn
-        return aliases
-
-    def _python_absolute_fallback(self, module_path: str, module_qn: str) -> str | None:
-        package_qn = module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
-        prefix = f"{package_qn}{cs.SEPARATOR_DOT}"
-        if not module_path.startswith(prefix):
-            return None
-        written = module_path[len(prefix) :]
-        if not written:
-            return None
-        absolute = self.stdlib_extractor.extract_module_path(
-            written, cs.SupportedLanguage.PYTHON
-        )
-        project_prefix = f"{self.project_name}{cs.SEPARATOR_DOT}"
-        if not absolute or absolute.startswith(project_prefix):
-            return None
-        return absolute
-
-    def _verify_internal_import_target(
-        self,
-        module_path: str,
-        known_module_paths: dict[str, str],
-        module_aliases: dict[str, str],
-        language: cs.SupportedLanguage,
-        siblings: StemSiblingModules | None = None,
-    ) -> str | None:
-        if siblings:
-            module_path = self._own_language_target(
-                module_path, language_family(language), known_module_paths, siblings
-            )
-        if module_path in known_module_paths:
-            return module_path
-        if alias := module_aliases.get(module_path):
-            return alias
-        # A path resolved from the wrong root (`use crate::utils` written outside
-        # src/) still names a unique real module; a whole-segment suffix match
-        # recovers it. Ambiguity means no edge, not a guess.
-        prefix = f"{self.project_name}{cs.SEPARATOR_DOT}"
-        if not module_path.startswith(prefix):
-            return None
-        tail = module_path[len(prefix) :]
-        if not tail:
-            return None
-        suffix = f"{cs.SEPARATOR_DOT}{tail}"
-        matches = {qn for qn in known_module_paths if qn.endswith(suffix)}
-        matches.update(
-            real for base, real in module_aliases.items() if base.endswith(suffix)
-        )
-        if len(matches) > 1:
-            # A polyglot repo can hold same-named modules in several
-            # languages (thrift: src/protocol/__init__.py vs
-            # src/ext/protocol.h); the importing language can only target
-            # its own modules, so tie-break by file extension. Inline
-            # modules (no file) stay eligible.
-            matches = {
-                qn
-                for qn in matches
-                if self._path_matches_language(known_module_paths.get(qn, ""), language)
-            }
-        if len(matches) == 1:
-            return matches.pop()
-        return None
-
-    @staticmethod
-    def _path_matches_language(path: str, language: cs.SupportedLanguage) -> bool:
-        if not path:
-            return True
-        spec = LANGUAGE_SPECS.get(language)
-        if spec is None:
-            return True
-        return path.endswith(tuple(spec.file_extensions))
-
-    def _is_local_js_import(self, full_name: str) -> bool:
-        return full_name.startswith(self.project_name + cs.SEPARATOR_DOT)
-
-    def _module_label(self, module_path: str) -> cs.NodeLabel:
-        # #498: import targets outside the project prefix live under the
-        # dedicated ExternalModule label (mirroring Package/ExternalPackage).
-        if module_path == self.project_name or module_path.startswith(
-            self.project_name + cs.SEPARATOR_DOT
-        ):
-            return cs.NodeLabel.MODULE
-        return cs.NodeLabel.EXTERNAL_MODULE
-
     def ensure_external_module_node(self, module_path: str) -> None:
         # Public entry for non-import callers (deferred inheritance): an external
         # base keeps its edge by targeting the same ExternalModule node an import of
         # it would mint.
-        self._ensure_external_module_node(module_path, module_path)
-
-    def _ensure_external_module_node(self, module_path: str, full_name: str) -> None:
-        if not self.ingestor or not module_path:
-            return
-        if cs.SEPARATOR_DOUBLE_COLON in module_path:
-            name = module_path.rsplit(cs.SEPARATOR_DOUBLE_COLON, 1)[-1]
-        else:
-            name = _external_module_name(module_path)
-        self.ingestor.ensure_node_batch(
-            cs.NodeLabel.EXTERNAL_MODULE,
-            {
-                cs.KEY_NAME: name,
-                cs.KEY_QUALIFIED_NAME: module_path,
-                cs.KEY_PATH: full_name,
-            },
-        )
-
-    def _resolve_rust_import_path(self, import_path: str) -> str:
-        # Local (crate::/super::/self::) paths never reach this point: they
-        # are rewritten to project qns at parse time and short-circuited in
-        # flush_deferred_import_edges. Only external paths (std::fmt) remain.
-        parts = import_path.split(cs.SEPARATOR_DOUBLE_COLON)
-        module_path = (
-            cs.SEPARATOR_DOUBLE_COLON.join(parts[:-1]) if len(parts) > 1 else parts[0]
-        )
-
-        self._ensure_external_module_node(module_path, import_path)
-        return module_path
-
-    def _resolve_module_path(
-        self,
-        full_name: str,
-        language: cs.SupportedLanguage,
-        known_module_paths: Mapping[str, str] | None = None,
-        site: PropertyDict | None = None,
-    ) -> str:
-        project_prefix = self.project_name + cs.SEPARATOR_DOT
-        match language:
-            # Java MODULE semantics: internal imports point to file-level MODULE
-            # nodes (project.utils.StringUtils) because Java files are named after
-            # their primary class. External imports point to package-level
-            # (java.util) because we lack source code for file-level nodes. This
-            # asymmetry is intentional.
-            case cs.SupportedLanguage.JAVA:
-                if full_name.startswith(project_prefix):
-                    return self.java.java_owning_module_qn(full_name)
-            case (
-                cs.SupportedLanguage.JS
-                | cs.SupportedLanguage.TS
-                | cs.SupportedLanguage.TSX
-            ):
-                if self._is_local_js_import(full_name):
-                    return self.js_ts.resolve_js_internal_module(
-                        full_name, known_module_paths, site
-                    )
-            case cs.SupportedLanguage.RUST:
-                return self._resolve_rust_import_path(full_name)
-
-        module_path = self.stdlib_extractor.extract_module_path(full_name, language)
-        # The bare project name is first-party too: a Go import of the module
-        # path itself binds the module's root package, whose qn is exactly it.
-        if self._module_label(module_path) == cs.NodeLabel.EXTERNAL_MODULE:
-            self._ensure_external_module_node(module_path, full_name)
-        return module_path
+        self._edges.ensure_external_module_node(module_path, module_path)
 
     def note_unresolved(self, module_qn: str, name: str) -> None:
         """Record that `module_qn` referenced `name` and could not resolve it

@@ -276,7 +276,7 @@ class TestExternalModuleNodeCreation:
             function_registry=None,
         )
 
-        module_path = processor._resolve_module_path(
+        module_path = processor._edges.resolve_module_path(
             full_name="java.util.List",
             language=cs.SupportedLanguage.JAVA,
         )
@@ -301,7 +301,7 @@ class TestExternalModuleNodeCreation:
             function_registry=None,
         )
 
-        module_path = processor._resolve_rust_import_path(
+        module_path = processor._edges.resolve_rust_import_path(
             import_path="std::collections::HashMap",
         )
 
@@ -323,7 +323,7 @@ class TestExternalModuleNodeCreation:
             function_registry=None,
         )
 
-        module_path = processor._resolve_rust_import_path(
+        module_path = processor._edges.resolve_rust_import_path(
             import_path="std::collections::HashMap",
         )
 
@@ -453,7 +453,7 @@ class TestProjectPrefixMatching:
             function_registry=None,
         )
 
-        result = processor._resolve_module_path(
+        result = processor._edges.resolve_module_path(
             full_name="myapp_v2.utils.Helper",
             language=cs.SupportedLanguage.JAVA,
         )
@@ -473,7 +473,7 @@ class TestProjectPrefixMatching:
             function_registry=None,
         )
 
-        result = processor._resolve_module_path(
+        result = processor._edges.resolve_module_path(
             full_name="myapp.utils.Helper",
             language=cs.SupportedLanguage.JAVA,
         )

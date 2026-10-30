@@ -142,7 +142,7 @@ def test_the_two_segment_floor_keeps_a_bare_std_header_named_by_its_extension() 
     `len(segments) >= 3` left every other assertion in this file green
     (#1758 review).
     """
-    from codebase_rag.parsers.import_processor import _external_module_name
+    from codebase_rag.parsers.import_edges import _external_module_name
 
     assert _external_module_name("std.h") == "h"
     assert _external_module_name("std.hpp") == "hpp"
@@ -159,7 +159,7 @@ def test_the_header_rule_does_not_rename_other_languages_externals() -> None:
     `mypkg.h` to `mypkg` for languages that have no headers at all, so the
     rule is confined to the `std.` prefix `_cpp_include_full_name` applies.
     """
-    from codebase_rag.parsers.import_processor import _external_module_name
+    from codebase_rag.parsers.import_edges import _external_module_name
 
     # The header shapes the rule exists for.
     assert _external_module_name("std.stdio.h") == "stdio"
