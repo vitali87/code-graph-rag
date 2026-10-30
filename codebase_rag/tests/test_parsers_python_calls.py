@@ -28,7 +28,10 @@ _FILES = {
     "deco.py": (
         "def register(fn):\n    return fn\n\n"
         "@register\ndef handler():\n    return 1\n\n"
-        "def outer():\n    @register\n    def inner():\n        return 1\n"
+        "def outer():\n    @register\n    def inner():\n        return 1\n\n"
+        "def wrap(fn):\n    return fn\n\n"
+        "def own():\n    def wrap(fn):\n        return fn\n\n"
+        "    @wrap\n    def inner():\n        return 1\n"
     ),
     "bag.py": (
         "class Bag:\n"
@@ -77,20 +80,21 @@ def test_a_bare_decorator_runs_at_module_load_only_at_module_scope(
     assert module_callees == {"pp.deco.register"}
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "a bare decorator on a function nested in another function runs "
-        "`register(inner)` each time the outer function runs, but no pass "
-        "writes that CALLS edge: the module pass skips it (not at module load) "
-        "and the outer function's call pass sees no call node for a bare "
-        "decorator, while `@register(...)` there is linked as an ordinary call"
-    ),
-)
 def test_a_bare_decorator_inside_a_function_is_that_functions_call(
     calls: set[tuple[str, str]],
 ) -> None:
+    # `register(inner)` runs each time `outer` runs; `inner` itself never
+    # calls it.
     assert ("pp.deco.outer", "pp.deco.register") in calls
+    assert ("pp.deco.outer.inner", "pp.deco.register") not in calls
+
+
+def test_a_bare_decorator_inside_a_function_binds_in_that_functions_scope(
+    calls: set[tuple[str, str]],
+) -> None:
+    # `own`'s local `wrap` shadows the module's.
+    assert ("pp.deco.own", "pp.deco.own.wrap") in calls
+    assert ("pp.deco.own", "pp.deco.wrap") not in calls
 
 
 @pytest.mark.parametrize(

@@ -206,8 +206,8 @@ def _truthiness_operands(node: Node) -> list[Node | None]:
 def _bare_decorator_name(decorator_node: Node) -> str | None:
     # A bare decorator `@task` / `@pkg.deco` (no call parens) is not a
     # `call` node, so the normal call pass misses it even though applying
-    # it runs `task(func)` at module load. A call decorator `@deco(...)`
-    # IS already captured, so skip it here.
+    # it runs `task(func)` where the definition runs. A call decorator
+    # `@deco(...)` IS already captured, so skip it here.
     named = decorator_node.named_children
     if not named:
         return None
@@ -217,16 +217,20 @@ def _bare_decorator_name(decorator_node: Node) -> str | None:
     return None
 
 
-def _runs_at_module_load(node: Node) -> bool:
-    # A definition runs at module load only at module or class-body scope;
-    # nested inside a function body it runs at that function's call time,
-    # so its decorator is not a module-load call.
+def _enclosing_function(node: Node) -> Node | None:
+    # The function whose body runs the definition `node`; None at module or
+    # class-body scope, where it runs at module load. A class nested in a
+    # function runs its body when that function runs, so the walk passes it.
     ancestor = node.parent
     while ancestor is not None:
         if ancestor.type == cs.TS_PY_FUNCTION_DEFINITION:
-            return False
+            return ancestor
         ancestor = ancestor.parent
-    return True
+    return None
+
+
+def _runs_at_module_load(node: Node) -> bool:
+    return _enclosing_function(node) is None
 
 
 def _find_init_method(class_body: Node) -> Node | None:
@@ -435,32 +439,46 @@ class PythonCallResolution(LanguageCalls):
         root_node: Node,
         lang_config: LanguageSpec,
     ) -> None:
-        # Emit `(Module)->decorator` CALLS for bare decorators on functions,
-        # methods, AND classes: the decoration executes at module-load time,
-        # so the module is the caller. Only first-party callables get an edge.
+        # Emit CALLS for bare decorators on functions, methods, AND classes.
+        # The decoration executes where the definition does: at module load
+        # at module or class-body scope, so the module is the caller, and
+        # each time the enclosing function runs inside one, so that function
+        # is. Only first-party callables get an edge.
         module_spec = (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn)
         alias_map: dict[str, str] | None = None
         for node in nodes:
             parent = node.parent
             if parent is None or parent.type != cs.TS_PY_DECORATED_DEFINITION:
                 continue
-            if not _runs_at_module_load(parent):
-                continue
+            caller_spec, caller_qn = module_spec, None
+            if (enclosing := _enclosing_function(parent)) is not None:
+                if (loc := self._host._recorded_caller(enclosing, module_qn)) is None:
+                    continue
+                caller_qn = loc.qualified_name
+                caller_spec = (loc.label, cs.KEY_QUALIFIED_NAME, caller_qn)
             alias_map = self._emit_decorator_calls_on(
-                parent, module_spec, module_qn, root_node, lang_config, alias_map
+                parent,
+                caller_spec,
+                caller_qn,
+                module_qn,
+                root_node,
+                lang_config,
+                alias_map,
             )
 
     def _emit_decorator_calls_on(
         self,
         parent: Node,
-        module_spec: tuple[str, str, str],
+        caller_spec: tuple[str, str, str],
+        caller_qn: str | None,
         module_qn: str,
         root_node: Node,
         lang_config: LanguageSpec,
         alias_map: dict[str, str] | None,
     ) -> dict[str, str] | None:
-        # One decorated definition's bare decorators, each a module-load CALLS
-        # edge; returns the (lazily built) local-alias map for the next one.
+        # One decorated definition's bare decorators, each a CALLS edge from
+        # `caller_spec`; returns the (lazily built) local-alias map for the
+        # next one.
         decorator_labels = (
             cs.NodeLabel.FUNCTION,
             cs.NodeLabel.METHOD,
@@ -474,14 +492,14 @@ class PythonCallResolution(LanguageCalls):
             if not name:
                 continue
             callee, alias_map = self._resolve_decorator_callee(
-                name, module_qn, root_node, lang_config, alias_map
+                name, module_qn, root_node, lang_config, alias_map, caller_qn
             )
             if callee and callee[0] in decorator_labels:
-                self._emit_bare_decorator_targets(module_spec, *callee)
+                self._emit_bare_decorator_targets(caller_spec, *callee)
         return alias_map
 
     def _emit_bare_decorator_targets(
-        self, module_spec: tuple[str, str, str], callee_type: str, callee_qn: str
+        self, caller_spec: tuple[str, str, str], callee_type: str, callee_qn: str
     ) -> None:
         # `@deco` runs `deco(func)`, so it binds as that call does: each
         # same-named definition is a candidate, and a class is constructed.
@@ -509,7 +527,7 @@ class PythonCallResolution(LanguageCalls):
                         targets.append((callee_type, variant))
                 for label, target_qn in targets:
                     self._host._emit_rel(
-                        module_spec,
+                        caller_spec,
                         cs.RelationshipType.CALLS,
                         (label, cs.KEY_QUALIFIED_NAME, target_qn),
                     )
@@ -523,9 +541,12 @@ class PythonCallResolution(LanguageCalls):
         root_node: Node,
         lang_config: LanguageSpec,
         alias_map: dict[str, str] | None,
+        caller_qn: str | None,
     ) -> tuple[tuple[str, str] | None, dict[str, str] | None]:
+        # Inside a function the decorator's name is looked up from that
+        # function's scope first, so a decorator it defines itself binds.
         resolver = self._resolver
-        callee = resolver.resolve_function_call(name, module_qn)
+        callee = resolver.resolve_function_call(name, module_qn, caller_qn=caller_qn)
         if not callee and cs.SEPARATOR_DOT not in name:
             # `@alias` where `alias = task` still calls task at load;
             # reuse the local-alias fallback the call pass uses.
