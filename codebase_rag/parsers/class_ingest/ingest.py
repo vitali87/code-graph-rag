@@ -16,7 +16,6 @@ from ..anchor_hash import anchor_hash_props
 from ..cpp import class_ingest as cpp_class_ingest
 from ..csharp import class_ingest as csharp_class_ingest
 from ..dart import class_ingest as dart_class_ingest
-from ..definition_facts import DefinitionFacts
 from ..enum_variants import emit_declared_variants
 from ..field_nodes import PendingFieldType, emit_declared_fields
 from ..go import class_ingest as go_class_ingest
@@ -41,16 +40,10 @@ from .class_methods import ClassMethods, MethodScope
 from .deferred_inherits import DeferredInherits
 
 if TYPE_CHECKING:
-    from ...services import IngestorProtocol
-    from ...types_defs import (
-        DeferredParentLink,
-        FunctionRegistryTrieProtocol,
-        LanguageQueries,
-        SimpleNameLookup,
-    )
+    from ...types_defs import DeferredParentLink, LanguageQueries
+    from ..definition_context import DefinitionContext
     from ..function_ingest import FunctionIngest
     from ..go.interface_ingest import GoInterfaceIngest
-    from ..import_processor import ImportProcessor
 
 
 class _WrittenClass(NamedTuple):
@@ -82,7 +75,6 @@ class ClassIngest:
         "_function_ingest",
         "ingestor",
         "repo_path",
-        "project_name",
         "function_registry",
         "simple_name_lookup",
         "module_qn_to_file_path",
@@ -118,15 +110,8 @@ class ClassIngest:
         method_host: MethodIngestHost,
         function_ingest: FunctionIngest,
         go_interface_ingest: GoInterfaceIngest,
-        ingestor: IngestorProtocol,
-        repo_path: Path,
-        project_name: str,
-        function_registry: FunctionRegistryTrieProtocol,
-        simple_name_lookup: SimpleNameLookup,
-        module_qn_to_file_path: dict[str, Path],
+        context: DefinitionContext,
         flow_capture_enabled: bool,
-        import_processor: ImportProcessor,
-        facts: DefinitionFacts,
         class_owner_module: dict[str, str],
         dart_annotated_overrides: dict[str, list[tuple[str, str]]],
         java_anon_overrides: list[tuple[str, str, str, str]],
@@ -152,14 +137,13 @@ class ClassIngest:
         # A class's lexical parent and its DEFINES edge are the function
         # pass's, shared with every function it ingests.
         self._function_ingest = function_ingest
-        self.ingestor = ingestor
-        self.repo_path = repo_path
-        self.project_name = project_name
-        self.function_registry = function_registry
-        self.simple_name_lookup = simple_name_lookup
-        self.module_qn_to_file_path = module_qn_to_file_path
-        self.import_processor = import_processor
-        self.facts = facts
+        self.ingestor = context.ingestor
+        self.repo_path = context.repo_path
+        self.function_registry = context.function_registry
+        self.simple_name_lookup = context.simple_name_lookup
+        self.module_qn_to_file_path = context.module_qn_to_file_path
+        self.import_processor = context.import_processor
+        self.facts = context.facts
         self.class_owner_module = class_owner_module
         self.pending_field_types = pending_field_types
         # Shared with the function pass, which emits them once every parent
@@ -168,91 +152,59 @@ class ClassIngest:
         # Non-C++ INHERITS/IMPLEMENTS held back until every class is
         # registered; resolve_deferred_inherits re-resolves the guesses.
         self._deferred_inherits: list[DeferredInherit] = []
-        self._inherits = DeferredInherits(
-            self,
-            ingestor=ingestor,
-            project_name=project_name,
-            function_registry=function_registry,
-            import_processor=import_processor,
-            facts=facts,
-        )
+        self._inherits = DeferredInherits(self, context)
         self._methods = ClassMethods(
             self,
             method_host=method_host,
-            repo_path=repo_path,
-            facts=facts,
+            repo_path=context.repo_path,
+            facts=context.facts,
             cpp_definition_spans=cpp_definition_spans,
             folded_overloads=folded_overloads,
         )
         self.cpp = cpp_class_ingest.CppClassIngest(
             self,
             function_ingest.cpp,
-            ingestor=ingestor,
-            repo_path=repo_path,
-            project_name=project_name,
-            function_registry=function_registry,
-            module_qn_to_file_path=module_qn_to_file_path,
-            import_processor=import_processor,
-            facts=facts,
+            context,
             module_interfaces=cpp_module_interfaces,
             interfaces_parsed_this_run=cpp_interfaces_parsed_this_run,
         )
         self.c = cpp_class_ingest.CClassIngest(self.cpp)
         self.rust = rust_class_ingest.RustClassIngest(
             self,
+            context,
             method_host=method_host,
-            ingestor=ingestor,
-            repo_path=repo_path,
-            project_name=project_name,
-            function_registry=function_registry,
-            module_qn_to_file_path=module_qn_to_file_path,
             flow_capture_enabled=flow_capture_enabled,
-            import_processor=import_processor,
-            facts=facts,
             impl_owner_module=rust_impl_owner_module,
             impl_method_traits=rust_impl_method_traits,
             inherent_impl_methods=rust_inherent_impl_methods,
             deferred_parent_links=deferred_parent_links,
         )
         self.csharp = csharp_class_ingest.CSharpClassIngest(
-            repo_path=repo_path,
-            function_registry=function_registry,
-            module_qn_to_file_path=module_qn_to_file_path,
-            import_processor=import_processor,
-            facts=facts,
+            context,
             methods=csharp_methods,
             override_methods=csharp_override_methods,
             partial_index=csharp_partial_index,
             type_locations=csharp_type_locations,
         )
         self.go = go_class_ingest.GoClassIngest(
-            repo_path=repo_path,
-            facts=facts,
+            repo_path=context.repo_path,
+            facts=context.facts,
             type_locations=go_type_locations,
             interfaces=go_interfaces,
             interface_ingest=go_interface_ingest,
         )
         self.dart = dart_class_ingest.DartClassIngest(
-            self,
-            ingestor=ingestor,
-            function_registry=function_registry,
-            facts=facts,
-            annotated_overrides=dart_annotated_overrides,
+            self, context, annotated_overrides=dart_annotated_overrides
         )
-        self.js_ts = js_ts_class_ingest.JsTsClassIngest(
-            function_registry=function_registry,
-            module_qn_to_file_path=module_qn_to_file_path,
-            import_processor=import_processor,
-        )
+        self.js_ts = js_ts_class_ingest.JsTsClassIngest(context)
         self.java = java_class_ingest.JavaClassIngest(
-            ingestor=ingestor,
-            function_registry=function_registry,
-            facts=facts,
-            anon_overrides=java_anon_overrides,
+            context, anon_overrides=java_anon_overrides
         )
-        self.python = python_class_ingest.PythonClassIngest(function_registry, facts)
+        self.python = python_class_ingest.PythonClassIngest(
+            context.function_registry, context.facts
+        )
         self.php = php_class_ingest.PhpClassIngest()
-        self.scala = scala_class_ingest.ScalaClassIngest(import_processor)
+        self.scala = scala_class_ingest.ScalaClassIngest(context.import_processor)
         self._languages = self._language_ingests()
         self._neutral = LanguageClassIngest()
         self._unwalked_read_back_suffixes = self._unwalked_suffixes()

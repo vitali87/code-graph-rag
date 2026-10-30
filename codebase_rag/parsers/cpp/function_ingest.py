@@ -21,15 +21,12 @@ from ... import logs as ls
 from ...types_defs import (
     CppDefinitionSpan,
     FunctionLocation,
-    FunctionRegistryTrieProtocol,
     OverloadSignature,
     PropertyDict,
-    SimpleNameLookup,
 )
 from ...utils.path_utils import cached_relative_path, cached_resolve_posix
 from ..anchor_hash import anchor_hash_props
 from ..ast_fingerprint import fingerprint_props
-from ..definition_facts import DefinitionFacts
 from ..endpoints import emit_endpoints
 from ..function_identity import FunctionResolution, name_start_point
 from ..language_definitions import LanguageFunctionIngest
@@ -41,8 +38,8 @@ from .utils import record_cpp_definition_span
 
 if TYPE_CHECKING:
     from ...language_spec import LanguageSpec
-    from ...services import IngestorProtocol
     from ...types_defs import LanguageQueries
+    from ..definition_context import DefinitionContext
 
 
 class CppFunctionHost(Protocol):
@@ -188,26 +185,21 @@ class CppFunctionIngest(LanguageFunctionIngest):
     def __init__(
         self,
         host: CppFunctionHost,
+        context: DefinitionContext,
         *,
         method_host: MethodIngestHost,
-        ingestor: IngestorProtocol,
-        repo_path: Path,
-        function_registry: FunctionRegistryTrieProtocol,
-        simple_name_lookup: SimpleNameLookup,
-        module_qn_to_file_path: dict[str, Path],
-        facts: DefinitionFacts,
         cpp_definition_spans: dict[str, list[CppDefinitionSpan]],
     ) -> None:
         self._host = host
         # What an out-of-class method is written through, and where its
         # docstring is read from.
         self._method_host = method_host
-        self.ingestor = ingestor
-        self.repo_path = repo_path
-        self.function_registry = function_registry
-        self.simple_name_lookup = simple_name_lookup
-        self.module_qn_to_file_path = module_qn_to_file_path
-        self.facts = facts
+        self.ingestor = context.ingestor
+        self.repo_path = context.repo_path
+        self.function_registry = context.function_registry
+        self.simple_name_lookup = context.simple_name_lookup
+        self.module_qn_to_file_path = context.module_qn_to_file_path
+        self.facts = context.facts
         self.cpp_definition_spans = cpp_definition_spans
         self._deferred_methods: list[_DeferredMethod] = []
         self._deferred_containment: list[_DeferredContainment] = []

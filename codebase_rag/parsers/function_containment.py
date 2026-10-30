@@ -23,16 +23,14 @@ from ..language_spec import LanguageSpec
 from ..types_defs import (
     DeferredParentLink,
     FunctionLocation,
-    FunctionRegistryTrieProtocol,
     FunctionSpanKey,
 )
-from .definition_facts import DefinitionFacts
 from .function_identity import FunctionResolution
 from .language_definitions import LanguageFunctionIngest
 from .utils import function_span_key
 
 if TYPE_CHECKING:
-    from ..services import IngestorProtocol
+    from .definition_context import DefinitionContext
 
 
 class ContainmentHost(Protocol):
@@ -73,18 +71,14 @@ class FunctionContainment:
     def __init__(
         self,
         host: ContainmentHost,
-        *,
-        ingestor: IngestorProtocol,
-        function_registry: FunctionRegistryTrieProtocol,
-        module_qn_to_file_path: dict[str, Path],
-        facts: DefinitionFacts,
+        context: DefinitionContext,
         deferred_parent_links: list[DeferredParentLink],
     ) -> None:
         self._host = host
-        self.ingestor = ingestor
-        self.function_registry = function_registry
-        self.module_qn_to_file_path = module_qn_to_file_path
-        self.facts = facts
+        self.ingestor = context.ingestor
+        self.function_registry = context.function_registry
+        self.module_qn_to_file_path = context.module_qn_to_file_path
+        self.facts = context.facts
         # Shared with the class pass, whose methods defer their containment
         # here too; emptied in place by resolve_deferred_parent_links.
         self._deferred_parent_links = deferred_parent_links

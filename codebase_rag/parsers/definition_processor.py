@@ -25,6 +25,7 @@ from ..utils.path_utils import (
 )
 from .class_ingest import ClassIngest
 from .cpp.file_ingest import CppFileIngest
+from .definition_context import DefinitionContext
 from .definition_docstring import extract_definition_docstring
 from .definition_facts import DefinitionFacts
 from .definition_prune import RemovedFile, forget_file
@@ -141,29 +142,26 @@ class DefinitionProcessor:
         self.pending_field_types: list[PendingFieldType] = []
         self.func_class_captures_cache = func_class_captures_cache
         self._init_language_maps()
-        self.function_ingest = self._new_function_ingest()
-        self.go_interface_ingest = self._new_go_interface_ingest()
-        self.class_ingest = self._new_class_ingest()
-        self.js_ts_module_system = JsTsModuleSystem(
-            host=self,
-            function_ingest=self.function_ingest,
+        context = DefinitionContext(
             ingestor=ingestor,
             repo_path=repo_path,
+            project_name=project_name,
             function_registry=function_registry,
             simple_name_lookup=simple_name_lookup,
             module_qn_to_file_path=module_qn_to_file_path,
             import_processor=import_processor,
             facts=self.facts,
         )
+        self.function_ingest = self._new_function_ingest(context)
+        self.go_interface_ingest = self._new_go_interface_ingest(context)
+        self.class_ingest = self._new_class_ingest(context)
+        self.js_ts_module_system = JsTsModuleSystem(
+            host=self, function_ingest=self.function_ingest, context=context
+        )
         self.js_ts_ingest = JsTsIngest(
             host=self,
             function_ingest=self.function_ingest,
-            ingestor=ingestor,
-            repo_path=repo_path,
-            function_registry=function_registry,
-            simple_name_lookup=simple_name_lookup,
-            module_qn_to_file_path=module_qn_to_file_path,
-            facts=self.facts,
+            context=context,
             class_owner_module=self.class_owner_module,
         )
         self._modules = ModuleNodes(
@@ -265,15 +263,10 @@ class DefinitionProcessor:
         # absent from the rows rehydration fetches.
         self.cpp_interfaces_parsed_this_run: set[str] = set()
 
-    def _new_function_ingest(self) -> FunctionIngest:
+    def _new_function_ingest(self, context: DefinitionContext) -> FunctionIngest:
         return FunctionIngest(
             method_host=self,
-            ingestor=self.ingestor,
-            repo_path=self.repo_path,
-            function_registry=self.function_registry,
-            simple_name_lookup=self.simple_name_lookup,
-            module_qn_to_file_path=self.module_qn_to_file_path,
-            facts=self.facts,
+            context=context,
             go_builds=self.go_builds,
             go_methods=self.go_methods,
             java_anon_overrides=self.java_anon_overrides,
@@ -287,16 +280,10 @@ class DefinitionProcessor:
             deferred_parent_links=self._deferred_parent_links,
         )
 
-    def _new_go_interface_ingest(self) -> GoInterfaceIngest:
+    def _new_go_interface_ingest(self, context: DefinitionContext) -> GoInterfaceIngest:
         return GoInterfaceIngest(
             method_host=self,
-            ingestor=self.ingestor,
-            repo_path=self.repo_path,
-            project_name=self.project_name,
-            function_registry=self.function_registry,
-            import_processor=self.import_processor,
-            module_qn_to_file_path=self.module_qn_to_file_path,
-            facts=self.facts,
+            context=context,
             go_methods=self.go_methods,
             go_interfaces=self.go_interfaces,
             go_interfaces_parsed=self.go_interfaces_parsed,
@@ -308,20 +295,13 @@ class DefinitionProcessor:
             go_builds=self.go_builds,
         )
 
-    def _new_class_ingest(self) -> ClassIngest:
+    def _new_class_ingest(self, context: DefinitionContext) -> ClassIngest:
         return ClassIngest(
             method_host=self,
             function_ingest=self.function_ingest,
             go_interface_ingest=self.go_interface_ingest,
-            ingestor=self.ingestor,
-            repo_path=self.repo_path,
-            project_name=self.project_name,
-            function_registry=self.function_registry,
-            simple_name_lookup=self.simple_name_lookup,
-            module_qn_to_file_path=self.module_qn_to_file_path,
+            context=context,
             flow_capture_enabled=self.flow_capture_enabled,
-            import_processor=self.import_processor,
-            facts=self.facts,
             class_owner_module=self.class_owner_module,
             dart_annotated_overrides=self.dart_annotated_overrides,
             java_anon_overrides=self.java_anon_overrides,

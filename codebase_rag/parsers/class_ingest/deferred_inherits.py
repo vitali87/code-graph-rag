@@ -21,16 +21,13 @@ from typing import TYPE_CHECKING, Protocol
 
 from ... import constants as cs
 from ...types_defs import DeferredInherit
-from ..definition_facts import DefinitionFacts
 from ..language_definitions import LanguageClassIngest
 from ..utils import written_simple_name
 from . import base_targets as bt
 from . import relationships as rel
 
 if TYPE_CHECKING:
-    from ...services import IngestorProtocol
-    from ...types_defs import FunctionRegistryTrieProtocol
-    from ..import_processor import ImportProcessor
+    from ..definition_context import DefinitionContext
 
 
 class InheritHost(Protocol):
@@ -63,19 +60,14 @@ class DeferredInherits:
     def __init__(
         self,
         host: InheritHost,
-        *,
-        ingestor: IngestorProtocol,
-        project_name: str,
-        function_registry: FunctionRegistryTrieProtocol,
-        import_processor: ImportProcessor,
-        facts: DefinitionFacts,
+        context: DefinitionContext,
     ) -> None:
         self._host = host
-        self.ingestor = ingestor
-        self.project_name = project_name
-        self.function_registry = function_registry
-        self.import_processor = import_processor
-        self.facts = facts
+        self.ingestor = context.ingestor
+        self.project_name = context.project_name
+        self.function_registry = context.function_registry
+        self.import_processor = context.import_processor
+        self.facts = context.facts
 
     def resolve(self, deferred: list[DeferredInherit]) -> int:
         """Write the edge of every held-back base that resolves; the number

@@ -23,7 +23,6 @@ from ... import constants as cs
 from ... import logs as ls
 from ...types_defs import (
     FunctionLocation,
-    FunctionRegistryTrieProtocol,
     PropertyDict,
 )
 from ...utils import qn_markers
@@ -31,7 +30,6 @@ from ..class_ingest.relationships import (
     create_implements_relationship,
     create_inheritance_relationship,
 )
-from ..definition_facts import DefinitionFacts
 from ..method_ingest import MethodIngestHost, ingest_method
 from . import interfaces as go_ifaces
 from . import utils as go_utils
@@ -51,8 +49,7 @@ from .builds import (
 )
 
 if TYPE_CHECKING:
-    from ...services import IngestorProtocol
-    from ..import_processor import ImportProcessor
+    from ..definition_context import DefinitionContext
 
 # The labels a Go type that can carry methods is registered under: a struct
 # (Class) or any other defined type (Type, as `type HandlerFunc func()`).
@@ -303,13 +300,7 @@ class GoInterfaceIngest:
         self,
         *,
         method_host: MethodIngestHost,
-        ingestor: IngestorProtocol,
-        repo_path: Path,
-        project_name: str,
-        function_registry: FunctionRegistryTrieProtocol,
-        import_processor: ImportProcessor,
-        module_qn_to_file_path: dict[str, Path],
-        facts: DefinitionFacts,
+        context: DefinitionContext,
         go_methods: dict[str, go_ifaces.GoMethodSpec],
         go_interfaces: dict[str, go_ifaces.GoInterfaceDecl],
         go_interfaces_parsed: dict[str, str],
@@ -323,13 +314,13 @@ class GoInterfaceIngest:
         # What an interface's method specs are written through: the
         # definition pass's graph, registries and pending fact queues.
         self._method_host = method_host
-        self.ingestor = ingestor
-        self.repo_path = repo_path
-        self.project_name = project_name
-        self.function_registry = function_registry
-        self.import_processor = import_processor
-        self.module_qn_to_file_path = module_qn_to_file_path
-        self.facts = facts
+        self.ingestor = context.ingestor
+        self.repo_path = context.repo_path
+        self.project_name = context.project_name
+        self.function_registry = context.function_registry
+        self.import_processor = context.import_processor
+        self.module_qn_to_file_path = context.module_qn_to_file_path
+        self.facts = context.facts
         # Go method qn (receiver methods and interface method specs) -> its
         # parameter count and package, from the parse or read back.
         self.go_methods = go_methods

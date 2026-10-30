@@ -8,7 +8,6 @@ INHERITS/IMPLEMENTS resolution) and hands JS/TS's part to the
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from tree_sitter import Node
@@ -21,8 +20,7 @@ from ..language_definitions import LanguageClassIngest
 from . import utils as js_ts_utils
 
 if TYPE_CHECKING:
-    from ...types_defs import FunctionRegistryTrieProtocol
-    from ..import_processor import ImportProcessor
+    from ..definition_context import DefinitionContext
 
 
 class JsTsClassIngest(LanguageClassIngest):
@@ -36,16 +34,10 @@ class JsTsClassIngest(LanguageClassIngest):
     # TypeScript keeps a type and a value of one name apart (issue #2520).
     separate_declaration_spaces = True
 
-    def __init__(
-        self,
-        *,
-        function_registry: FunctionRegistryTrieProtocol,
-        module_qn_to_file_path: dict[str, Path],
-        import_processor: ImportProcessor,
-    ) -> None:
-        self.function_registry = function_registry
-        self.module_qn_to_file_path = module_qn_to_file_path
-        self.import_processor = import_processor
+    def __init__(self, context: DefinitionContext) -> None:
+        self.function_registry = context.function_registry
+        self.module_qn_to_file_path = context.module_qn_to_file_path
+        self.import_processor = context.import_processor
 
     def repeats_member_signature(
         self, method_node: Node, seen_signatures: set[str]

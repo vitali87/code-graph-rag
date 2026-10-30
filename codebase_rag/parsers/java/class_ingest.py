@@ -19,9 +19,7 @@ from ..language_definitions import LanguageClassIngest
 from . import utils as java_utils
 
 if TYPE_CHECKING:
-    from ...services import IngestorProtocol
-    from ...types_defs import FunctionRegistryTrieProtocol
-    from ..definition_facts import DefinitionFacts
+    from ..definition_context import DefinitionContext
 
 
 def _anonymous_base_type(method_node: Node, class_node: Node) -> str | None:
@@ -65,15 +63,13 @@ class JavaClassIngest(LanguageClassIngest):
 
     def __init__(
         self,
+        context: DefinitionContext,
         *,
-        ingestor: IngestorProtocol,
-        function_registry: FunctionRegistryTrieProtocol,
-        facts: DefinitionFacts,
         anon_overrides: list[tuple[str, str, str, str]],
     ) -> None:
-        self.ingestor = ingestor
-        self.function_registry = function_registry
-        self.facts = facts
+        self.ingestor = context.ingestor
+        self.function_registry = context.function_registry
+        self.facts = context.facts
         self.anon_overrides = anon_overrides
 
     def method_qualified_name(self, method_node: Node, class_qn: str) -> str | None:

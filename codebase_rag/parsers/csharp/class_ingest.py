@@ -31,9 +31,7 @@ from . import utils as csharp_utils
 from .arity import CSharpArityIndex
 
 if TYPE_CHECKING:
-    from ...types_defs import FunctionRegistryTrieProtocol
-    from ..definition_facts import DefinitionFacts
-    from ..import_processor import ImportProcessor
+    from ..definition_context import DefinitionContext
 
 
 def _record_parameter_types(member_node: Node, field_types: dict[str, str]) -> None:
@@ -89,22 +87,18 @@ class CSharpClassIngest(LanguageClassIngest):
 
     def __init__(
         self,
+        context: DefinitionContext,
         *,
-        repo_path: Path,
-        function_registry: FunctionRegistryTrieProtocol,
-        module_qn_to_file_path: dict[str, Path],
-        import_processor: ImportProcessor,
-        facts: DefinitionFacts,
         methods: set[str],
         override_methods: set[str],
         partial_index: dict[str, list[str]],
         type_locations: dict[tuple[str, int], str],
     ) -> None:
-        self.repo_path = repo_path
-        self.function_registry = function_registry
-        self.module_qn_to_file_path = module_qn_to_file_path
-        self.import_processor = import_processor
-        self.facts = facts
+        self.repo_path = context.repo_path
+        self.function_registry = context.function_registry
+        self.module_qn_to_file_path = context.module_qn_to_file_path
+        self.import_processor = context.import_processor
+        self.facts = context.facts
         self.methods = methods
         self.override_methods = override_methods
         self._partial_index = partial_index

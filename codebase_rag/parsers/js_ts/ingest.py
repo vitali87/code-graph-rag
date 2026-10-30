@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -17,11 +16,8 @@ from ...node_text import (
 )
 from ...types_defs import (
     ASTNode,
-    FunctionRegistryTrieProtocol,
     PropertyDict,
-    SimpleNameLookup,
 )
-from ..definition_facts import DefinitionFacts
 from ..method_ingest import DocstringHost, module_function_props
 from .utils import (
     arrow_binding_name,
@@ -33,8 +29,8 @@ from .utils import (
 
 if TYPE_CHECKING:
     from ...language_spec import LanguageSpec
-    from ...services import IngestorProtocol
     from ...types_defs import LanguageQueries
+    from ..definition_context import DefinitionContext
     from ..function_ingest import FunctionIngest
 
 
@@ -60,12 +56,7 @@ class JsTsIngest:
         *,
         host: DocstringHost,
         function_ingest: FunctionIngest,
-        ingestor: IngestorProtocol,
-        repo_path: Path,
-        function_registry: FunctionRegistryTrieProtocol,
-        simple_name_lookup: SimpleNameLookup,
-        module_qn_to_file_path: dict[str, Path],
-        facts: DefinitionFacts,
+        context: DefinitionContext,
         class_owner_module: dict[str, str],
     ) -> None:
         self._host = host
@@ -76,12 +67,12 @@ class JsTsIngest:
         # a function's lexical parent and holds the DEFINES edge that waits
         # for that parent to register.
         self._function_ingest = function_ingest
-        self.ingestor = ingestor
-        self.repo_path = repo_path
-        self.function_registry = function_registry
-        self.simple_name_lookup = simple_name_lookup
-        self.module_qn_to_file_path = module_qn_to_file_path
-        self.facts = facts
+        self.ingestor = context.ingestor
+        self.repo_path = context.repo_path
+        self.function_registry = context.function_registry
+        self.simple_name_lookup = context.simple_name_lookup
+        self.module_qn_to_file_path = context.module_qn_to_file_path
+        self.facts = context.facts
         self.class_owner_module = class_owner_module
 
     def ingest_prototype_inheritance(

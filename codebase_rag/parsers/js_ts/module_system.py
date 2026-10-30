@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import textwrap
 from collections.abc import Mapping
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -17,20 +16,14 @@ from ...node_text import (
     sorted_captures,
 )
 from ...types_defs import ASTNode
-from ..definition_facts import DefinitionFacts
 from ..method_ingest import DocstringHost, ingest_exported_function
 from ..utils import function_span_key
 from .utils import get_js_ts_language_obj, is_export_inside_function
 
 if TYPE_CHECKING:
-    from ...services import IngestorProtocol
-    from ...types_defs import (
-        FunctionRegistryTrieProtocol,
-        LanguageQueries,
-        SimpleNameLookup,
-    )
+    from ...types_defs import LanguageQueries
+    from ..definition_context import DefinitionContext
     from ..function_ingest import FunctionIngest
-    from ..import_processor import ImportProcessor
 
 
 def _es6_declaration_name(export_function: ASTNode | None) -> str | None:
@@ -67,13 +60,7 @@ class JsTsModuleSystem:
         *,
         host: DocstringHost,
         function_ingest: FunctionIngest,
-        ingestor: IngestorProtocol,
-        repo_path: Path,
-        function_registry: FunctionRegistryTrieProtocol,
-        simple_name_lookup: SimpleNameLookup,
-        module_qn_to_file_path: dict[str, Path],
-        import_processor: ImportProcessor,
-        facts: DefinitionFacts,
+        context: DefinitionContext,
     ) -> None:
         self._host = host
         # The span-claim protocol every JS/TS registration path shares: one
@@ -81,13 +68,13 @@ class JsTsModuleSystem:
         # the claim before registering and claims after (deliberate
         # different-name twins still register).
         self._function_ingest = function_ingest
-        self.ingestor = ingestor
-        self.repo_path = repo_path
-        self.function_registry = function_registry
-        self.simple_name_lookup = simple_name_lookup
-        self.module_qn_to_file_path = module_qn_to_file_path
-        self.import_processor = import_processor
-        self.facts = facts
+        self.ingestor = context.ingestor
+        self.repo_path = context.repo_path
+        self.function_registry = context.function_registry
+        self.simple_name_lookup = context.simple_name_lookup
+        self.module_qn_to_file_path = context.module_qn_to_file_path
+        self.import_processor = context.import_processor
+        self.facts = context.facts
         self._processed_imports: set[str] = set()
         self._pending_direct_module_exports: list[tuple[ASTNode, bool]] = []
 

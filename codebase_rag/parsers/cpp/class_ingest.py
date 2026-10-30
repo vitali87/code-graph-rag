@@ -30,10 +30,8 @@ from .type_inference import CppTypeInferenceEngine
 
 if TYPE_CHECKING:
     from ...language_spec import LanguageSpec
-    from ...services import IngestorProtocol
-    from ...types_defs import FunctionRegistryTrieProtocol, LanguageQueries
-    from ..definition_facts import DefinitionFacts
-    from ..import_processor import ImportProcessor
+    from ...types_defs import LanguageQueries
+    from ..definition_context import DefinitionContext
     from .function_ingest import CppFunctionIngest
 
 
@@ -154,14 +152,8 @@ class CppClassIngest(LanguageClassIngest):
         self,
         host: CppClassHost,
         function_ingest: CppFunctionIngest,
+        context: DefinitionContext,
         *,
-        ingestor: IngestorProtocol,
-        repo_path: Path,
-        project_name: str,
-        function_registry: FunctionRegistryTrieProtocol,
-        module_qn_to_file_path: dict[str, Path],
-        import_processor: ImportProcessor,
-        facts: DefinitionFacts,
         module_interfaces: set[str],
         interfaces_parsed_this_run: set[str],
     ) -> None:
@@ -169,13 +161,13 @@ class CppClassIngest(LanguageClassIngest):
         # An INHERITS base resolves through the lookup out-of-class methods
         # use.
         self._function_ingest = function_ingest
-        self.ingestor = ingestor
-        self.repo_path = repo_path
-        self.project_name = project_name
-        self.function_registry = function_registry
-        self.module_qn_to_file_path = module_qn_to_file_path
-        self.import_processor = import_processor
-        self.facts = facts
+        self.ingestor = context.ingestor
+        self.repo_path = context.repo_path
+        self.project_name = context.project_name
+        self.function_registry = context.function_registry
+        self.module_qn_to_file_path = context.module_qn_to_file_path
+        self.import_processor = context.import_processor
+        self.facts = context.facts
         self.module_interfaces = module_interfaces
         self.interfaces_parsed_this_run = interfaces_parsed_this_run
         # The INHERITS edges a class's relationships hold back, read by the

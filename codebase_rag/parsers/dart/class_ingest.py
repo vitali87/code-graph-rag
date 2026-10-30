@@ -23,9 +23,8 @@ from . import utils as dart_utils
 from .type_inference import DartTypeInferenceEngine
 
 if TYPE_CHECKING:
-    from ...services import IngestorProtocol
-    from ...types_defs import DeferredInherit, FunctionRegistryTrieProtocol
-    from ..definition_facts import DefinitionFacts
+    from ...types_defs import DeferredInherit
+    from ..definition_context import DefinitionContext
 
 
 class DartClassHost(Protocol):
@@ -61,16 +60,14 @@ class DartClassIngest(LanguageClassIngest):
     def __init__(
         self,
         host: DartClassHost,
+        context: DefinitionContext,
         *,
-        ingestor: IngestorProtocol,
-        function_registry: FunctionRegistryTrieProtocol,
-        facts: DefinitionFacts,
         annotated_overrides: dict[str, list[tuple[str, str]]],
     ) -> None:
         self._host = host
-        self.ingestor = ingestor
-        self.function_registry = function_registry
-        self.facts = facts
+        self.ingestor = context.ingestor
+        self.function_registry = context.function_registry
+        self.facts = context.facts
         # The `@override` methods of each class, recorded as it is ingested
         # and judged by flag_external_overrides once every class is.
         self.annotated_overrides = annotated_overrides

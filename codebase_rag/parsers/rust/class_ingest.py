@@ -31,7 +31,6 @@ from ...utils.path_utils import cached_relative_path, cached_resolve_posix
 from ..class_ingest import base_targets as bt
 from ..class_ingest import identity as id_
 from ..class_ingest.utils import body_method_nodes, skip_method
-from ..definition_facts import DefinitionFacts
 from ..language_definitions import LanguageClassIngest
 from ..method_ingest import MethodIngestHost, ingest_method
 from ..utils import function_span_key
@@ -40,9 +39,8 @@ from .type_inference import RustTypeInferenceEngine
 
 if TYPE_CHECKING:
     from ...language_spec import LanguageSpec
-    from ...services import IngestorProtocol
-    from ...types_defs import FunctionRegistryTrieProtocol, LanguageQueries
-    from ..import_processor import ImportProcessor
+    from ...types_defs import LanguageQueries
+    from ..definition_context import DefinitionContext
 
 
 class RustClassHost(Protocol):
@@ -121,16 +119,10 @@ class RustClassIngest(LanguageClassIngest):
     def __init__(
         self,
         host: RustClassHost,
+        context: DefinitionContext,
         *,
         method_host: MethodIngestHost,
-        ingestor: IngestorProtocol,
-        repo_path: Path,
-        project_name: str,
-        function_registry: FunctionRegistryTrieProtocol,
-        module_qn_to_file_path: dict[str, Path],
         flow_capture_enabled: bool,
-        import_processor: ImportProcessor,
-        facts: DefinitionFacts,
         impl_owner_module: dict[str, str],
         impl_method_traits: dict[str, str],
         inherent_impl_methods: set[str],
@@ -139,14 +131,14 @@ class RustClassIngest(LanguageClassIngest):
         self._host = host
         # What an impl block's methods are written through.
         self._method_host = method_host
-        self.ingestor = ingestor
-        self.repo_path = repo_path
-        self.project_name = project_name
-        self.function_registry = function_registry
-        self.module_qn_to_file_path = module_qn_to_file_path
+        self.ingestor = context.ingestor
+        self.repo_path = context.repo_path
+        self.project_name = context.project_name
+        self.function_registry = context.function_registry
+        self.module_qn_to_file_path = context.module_qn_to_file_path
         self.flow_capture_enabled = flow_capture_enabled
-        self.import_processor = import_processor
-        self.facts = facts
+        self.import_processor = context.import_processor
+        self.facts = context.facts
         self.impl_owner_module = impl_owner_module
         self.impl_method_traits = impl_method_traits
         self.inherent_impl_methods = inherent_impl_methods

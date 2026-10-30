@@ -14,11 +14,9 @@ from ..types_defs import (
     CppDefinitionSpan,
     DeferredParentLink,
     FunctionLocation,
-    FunctionRegistryTrieProtocol,
     FunctionSpanKey,
     PendingTypeFact,
     PropertyDict,
-    SimpleNameLookup,
 )
 from ..utils import qn_markers
 from ..utils.path_utils import cached_relative_path, cached_resolve_posix
@@ -30,7 +28,6 @@ from .cpp.utils import record_cpp_definition_span
 from .csharp import function_ingest as csharp_function_ingest
 from .dart import function_ingest as dart_function_ingest
 from .dart import utils as dart_utils
-from .definition_facts import DefinitionFacts
 from .endpoints import queue_endpoints
 from .function_containment import FunctionContainment
 from .function_identity import FunctionResolution, name_start_point
@@ -59,8 +56,8 @@ from .utils import (
 )
 
 if TYPE_CHECKING:
-    from ..services import IngestorProtocol
     from ..types_defs import LanguageQueries
+    from .definition_context import DefinitionContext
 
 # Rust and Julia macros live in a separate namespace from functions (Julia's
 # `@name` vs `name`).
@@ -112,12 +109,7 @@ class FunctionIngest:
         self,
         *,
         method_host: MethodIngestHost,
-        ingestor: IngestorProtocol,
-        repo_path: Path,
-        function_registry: FunctionRegistryTrieProtocol,
-        simple_name_lookup: SimpleNameLookup,
-        module_qn_to_file_path: dict[str, Path],
-        facts: DefinitionFacts,
+        context: DefinitionContext,
         go_builds: GoBuilds,
         go_methods: dict[str, go_interfaces.GoMethodSpec],
         java_anon_overrides: list[tuple[str, str, str, str]],
@@ -133,62 +125,48 @@ class FunctionIngest:
         # What a method the function pass finds is written through, and
         # where a definition's docstring is read from.
         self._method_host = method_host
-        self.ingestor = ingestor
-        self.repo_path = repo_path
-        self.function_registry = function_registry
-        self.simple_name_lookup = simple_name_lookup
-        self.module_qn_to_file_path = module_qn_to_file_path
-        self.facts = facts
+        self.ingestor = context.ingestor
+        self.repo_path = context.repo_path
+        self.function_registry = context.function_registry
+        self.simple_name_lookup = context.simple_name_lookup
+        self.module_qn_to_file_path = context.module_qn_to_file_path
+        self.facts = context.facts
         self.cpp_definition_spans = cpp_definition_spans
         self.pending_endpoints = pending_endpoints
         self.pending_type_facts = pending_type_facts
         self.pending_parameter_types = pending_parameter_types
         self._naming = FunctionNaming(self)
-        self._containment = FunctionContainment(
-            self,
-            ingestor=ingestor,
-            function_registry=function_registry,
-            module_qn_to_file_path=module_qn_to_file_path,
-            facts=facts,
-            deferred_parent_links=deferred_parent_links,
-        )
+        self._containment = FunctionContainment(self, context, deferred_parent_links)
         self.cpp = cpp_function_ingest.CppFunctionIngest(
             self,
+            context,
             method_host=method_host,
-            ingestor=ingestor,
-            repo_path=repo_path,
-            function_registry=function_registry,
-            simple_name_lookup=simple_name_lookup,
-            module_qn_to_file_path=module_qn_to_file_path,
-            facts=facts,
             cpp_definition_spans=cpp_definition_spans,
         )
-        self.rust = rust_function_ingest.RustFunctionIngest(self, ingestor, facts)
+        self.rust = rust_function_ingest.RustFunctionIngest(
+            self, context.ingestor, context.facts
+        )
         self.csharp = csharp_function_ingest.CSharpFunctionIngest(
             method_host=method_host,
-            facts=facts,
+            facts=context.facts,
             methods=csharp_methods,
             override_methods=csharp_override_methods,
             deferred_parent_links=deferred_parent_links,
         )
         self.go = go_function_ingest.GoFunctionIngest(
             self,
+            context,
             method_host=method_host,
-            repo_path=repo_path,
-            function_registry=function_registry,
-            simple_name_lookup=simple_name_lookup,
-            module_qn_to_file_path=module_qn_to_file_path,
-            facts=facts,
             builds=go_builds,
             methods=go_methods,
             deferred_parent_links=deferred_parent_links,
         )
         self.js_ts = js_ts_function_ingest.JsTsFunctionIngest(
-            self, function_registry, facts, folded_overloads
+            self, context.function_registry, context.facts, folded_overloads
         )
         self.java = java_function_ingest.JavaFunctionIngest(java_anon_overrides)
         self.python = python_function_ingest.PythonFunctionIngest(folded_overloads)
-        self.dart = dart_function_ingest.DartFunctionIngest(facts)
+        self.dart = dart_function_ingest.DartFunctionIngest(context.facts)
         self.php = php_function_ingest.PhpFunctionIngest()
         self.lua = lua_function_ingest.LuaFunctionIngest()
         # The collaborator each language's functions go to; a language with

@@ -20,10 +20,7 @@ from ...node_text import safe_decode_text
 from ...types_defs import (
     DeferredParentLink,
     FunctionLocation,
-    FunctionRegistryTrieProtocol,
-    SimpleNameLookup,
 )
-from ..definition_facts import DefinitionFacts
 from ..language_definitions import LanguageFunctionIngest
 from ..method_ingest import MethodIngestHost, ingest_method
 from . import interfaces as go_interfaces
@@ -33,6 +30,7 @@ from .builds import GoBuilds
 if TYPE_CHECKING:
     from ...language_spec import LanguageSpec
     from ...types_defs import FunctionSpanKey, LanguageQueries
+    from ..definition_context import DefinitionContext
 
 
 class GoFunctionHost(Protocol):
@@ -88,13 +86,9 @@ class GoFunctionIngest(LanguageFunctionIngest):
     def __init__(
         self,
         host: GoFunctionHost,
+        context: DefinitionContext,
         *,
         method_host: MethodIngestHost,
-        repo_path: Path,
-        function_registry: FunctionRegistryTrieProtocol,
-        simple_name_lookup: SimpleNameLookup,
-        module_qn_to_file_path: dict[str, Path],
-        facts: DefinitionFacts,
         builds: GoBuilds,
         methods: dict[str, go_interfaces.GoMethodSpec],
         deferred_parent_links: list[DeferredParentLink],
@@ -102,11 +96,11 @@ class GoFunctionIngest(LanguageFunctionIngest):
         self._host = host
         # What a receiver method is written through.
         self._method_host = method_host
-        self.repo_path = repo_path
-        self.function_registry = function_registry
-        self.simple_name_lookup = simple_name_lookup
-        self.module_qn_to_file_path = module_qn_to_file_path
-        self.facts = facts
+        self.repo_path = context.repo_path
+        self.function_registry = context.function_registry
+        self.simple_name_lookup = context.simple_name_lookup
+        self.module_qn_to_file_path = context.module_qn_to_file_path
+        self.facts = context.facts
         self.builds = builds
         self.methods = methods
         # Shared with the class pass, which emits them once every parent

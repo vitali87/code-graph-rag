@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.parsers.definition_context import DefinitionContext
 from codebase_rag.parsers.definition_facts import DefinitionFacts
 from codebase_rag.parsers.js_ts.module_system import JsTsModuleSystem
 from codebase_rag.tests.conftest import create_mock_node
@@ -46,13 +47,16 @@ def module_system(
     return JsTsModuleSystem(
         host=host,
         function_ingest=function_ingest,
-        ingestor=mock_ingestor,
-        repo_path=Path("/test/repo"),
-        function_registry=mock_function_registry,
-        simple_name_lookup=defaultdict(set),
-        module_qn_to_file_path={},
-        import_processor=mock_import_processor,
-        facts=DefinitionFacts(),
+        context=DefinitionContext(
+            ingestor=mock_ingestor,
+            repo_path=Path("/test/repo"),
+            project_name="repo",
+            function_registry=mock_function_registry,
+            simple_name_lookup=defaultdict(set),
+            module_qn_to_file_path={},
+            import_processor=mock_import_processor,
+            facts=DefinitionFacts(),
+        ),
     )
 
 

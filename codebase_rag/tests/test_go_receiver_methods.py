@@ -230,24 +230,29 @@ def test_container_resolution_uses_directory_for_disambiguated_modules() -> None
     # qn-prefix package comparison places it in a phantom package. Directory
     # grouping must still bind the method to the real type node.
     from codebase_rag.constants import NodeLabel
+    from codebase_rag.parsers.definition_context import DefinitionContext
     from codebase_rag.parsers.function_ingest import FunctionIngest
     from codebase_rag.parsers.go.builds import GoBuilds
 
     functions = FunctionIngest(
         method_host=MagicMock(),
-        ingestor=MagicMock(),
-        repo_path=Path("/repo"),
-        function_registry={"proj.svc.types.go.Point": NodeLabel.CLASS},  # type: ignore[arg-type]
-        simple_name_lookup={"Point": {"proj.svc.types.go.Point"}},
-        module_qn_to_file_path={
-            "proj.svc.ops": Path("/repo/svc/ops.go"),
-            "proj.svc.types.go": Path("/repo/svc/types.go"),
-        },
-        facts=DefinitionFacts(
-            go_package_names={
-                "proj.svc.ops": "shapes",
-                "proj.svc.types.go": "shapes",
-            }
+        context=DefinitionContext(
+            ingestor=MagicMock(),
+            repo_path=Path("/repo"),
+            project_name="proj",
+            function_registry={"proj.svc.types.go.Point": NodeLabel.CLASS},  # type: ignore[arg-type]
+            simple_name_lookup={"Point": {"proj.svc.types.go.Point"}},
+            module_qn_to_file_path={
+                "proj.svc.ops": Path("/repo/svc/ops.go"),
+                "proj.svc.types.go": Path("/repo/svc/types.go"),
+            },
+            import_processor=MagicMock(),
+            facts=DefinitionFacts(
+                go_package_names={
+                    "proj.svc.ops": "shapes",
+                    "proj.svc.types.go": "shapes",
+                }
+            ),
         ),
         go_builds=GoBuilds(Path("/repo")),
         go_methods={},
