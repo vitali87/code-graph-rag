@@ -840,6 +840,7 @@ class JsTsCallResolution(LanguageCalls):
     anonymous_calls_reach_module = True
     keys_members_by_symbol = True
     types_locals = True
+    imports_bind_calls = True
     binds_builtin_calls = True
     short_circuit_values = True
     # A `new X(...)` runs X's `constructor` method (leaf name `constructor`,

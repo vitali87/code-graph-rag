@@ -381,6 +381,7 @@ class DartCallResolution(LanguageCalls):
     # #873) in a file with no call expression.
     scans_callers_without_calls = True
     types_locals = True
+    imports_bind_calls = True
     runs_declared_constructors = True
     # A getter in argument position is read, not torn off (issue #869).
     property_args_are_reads = True

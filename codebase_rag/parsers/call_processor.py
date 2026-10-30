@@ -2505,7 +2505,7 @@ class CallProcessor:
     def _ingest_unresolved_call(
         self, ctx: CallScan, call_node: Node, call_name: str
     ) -> None:
-        if call_name and ctx.language not in cs.IMPORT_BOUND_CALL_LANGUAGES:
+        if call_name and not ctx.calls.imports_bind_calls:
             # The callee may be defined by a file added later; keep
             # its simple name so that file's arrival re-parses this
             # one (issue #1568). Not where an import would be needed

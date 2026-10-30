@@ -119,6 +119,14 @@ class LanguageCalls:
     # A property in argument position is a VALUE READ, whose edge the
     # property-read pass owns, never a callback handed over.
     property_args_are_reads: ClassVar[bool] = False
+    # A definition in another file is reachable only through an import (or a
+    # Rust `use`): a call the resolver could not bind waits on an import,
+    # which the importer lookup finds from the graph, so recording the
+    # callee's name would only re-parse every module that calls a method of
+    # that name (issue #1568). Where same-package or same-namespace
+    # definitions are seen with no import at all (Go, Java, C#, C++ and
+    # their like), the recorded name is the only link.
+    imports_bind_calls: ClassVar[bool] = False
 
     def collect_callable_field_bindings(
         self, root_node: Node, module_qn: str, call_nodes: list[Node]

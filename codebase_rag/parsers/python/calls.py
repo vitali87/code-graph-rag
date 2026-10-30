@@ -374,6 +374,7 @@ class PythonCallResolution(LanguageCalls):
     references_arguments = True
     binds_callable_fields = True
     types_locals = True
+    imports_bind_calls = True
     dispatches_protocol_stubs = True
     fans_out_member_aliases = True
 
