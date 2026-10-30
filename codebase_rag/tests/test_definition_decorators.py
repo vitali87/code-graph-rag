@@ -104,7 +104,11 @@ class RecordedGraph:
             label, props = str(c.args[0]), dict(c.args[1])
             qn = props.get(cs.KEY_QUALIFIED_NAME)
             if isinstance(qn, str):
-                self.nodes[qn] = (label, props)
+                # Repeated rows of one node MERGE, as the graph sink's
+                # `SET n += props` does: a class's `field_types` row lands
+                # after its full row.
+                _, held = self.nodes.get(qn, (label, {}))
+                self.nodes[qn] = (label, {**held, **props})
         self.project = project
         self.root = root
 

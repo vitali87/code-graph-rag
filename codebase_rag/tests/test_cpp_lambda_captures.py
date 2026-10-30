@@ -178,7 +178,9 @@ void testStateMachine() {
         f"Expected at least 3 functions, found {len(function_calls)}"
     )
 
-    class_names = {call[0][1]["name"] for call in class_calls}
+    # A class with typed fields also gets a partial `field_types` row that
+    # MERGEs into its node; only the full row carries the name.
+    class_names = {call[0][1]["name"] for call in class_calls if "name" in call[0][1]}
     assert "Resource" in class_names, f"Resource class not found in {class_names}"
 
     function_names = {call[0][1]["name"] for call in function_calls}
