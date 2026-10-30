@@ -62,6 +62,18 @@ class FileScan:
     changed_entries: list[tuple[Path, str, bool, bytes]] = field(default_factory=list)
     single_gone_key: str | None = None
 
+    def mark_unreadable(self, filepath: Path, file_key: str) -> None:
+        """Count a walked file this run could not read, and mark it for retry."""
+        self.unreadable_count += 1
+        self.unreadable_keys.add(file_key)
+        # Marked for retry unless the path is GONE (vanished, or a broken
+        # symlink): those would refuse the fast path on every later run. A
+        # file that exists but cannot be reached (a permission failure on it
+        # or its directory) is marked; `exists()` alone reads such a file as
+        # gone.
+        if not vanished(filepath):
+            self.new_hashes[file_key] = cs.HASH_CACHE_UNREADABLE
+
     def log_counts(self, changed_count: int) -> None:
         """Log how many files were skipped, changed and unreadable."""
         if self.skipped_count > 0:
@@ -70,6 +82,21 @@ class FileScan:
             logger.info(ls.INCREMENTAL_CHANGED, count=changed_count)
         if self.unreadable_count > 0:
             logger.info(ls.INCREMENTAL_UNREADABLE, count=self.unreadable_count)
+
+
+def _never_indexed(
+    file_key: str, baseline: HashBaseline, preexisting_paths: frozenset[str] | None
+) -> bool:
+    """Whether a changed file is new to the graph: named by neither the cache,
+    the keys forced through a re-parse, nor the graph's own module paths. A
+    graph that could not be read (None) cannot show a file is absent, so none
+    reads as new."""
+    return (
+        file_key not in baseline.old_hashes
+        and file_key not in baseline.forced_reparse_keys
+        and preexisting_paths is not None
+        and file_key not in preexisting_paths
+    )
 
 
 def _log_skipped_symlinks(repo_path: Path, rel_paths: list[str]) -> None:
@@ -411,16 +438,7 @@ class TreeScan:
             ) and self._single_target_vanished(filepath):
                 scan.single_gone_key = file_key
                 return True
-            scan.unreadable_count += 1
-            scan.unreadable_keys.add(file_key)
-            # Marked for retry unless the path is GONE (vanished, or
-            # a broken symlink): those would refuse the fast path on
-            # every later run. A file that exists but cannot be
-            # reached (a permission failure on it or its directory)
-            # is marked; `exists()` alone reads such a file as gone
-            # .
-            if not vanished(filepath):
-                scan.new_hashes[file_key] = cs.HASH_CACHE_UNREADABLE
+            scan.mark_unreadable(filepath, file_key)
             return True
         # A file marked unreadable by the previous run is hashed
         # whatever its mtime: the mark is not a digest, so the
@@ -462,11 +480,8 @@ class TreeScan:
             # state and cache entry (#1755).
             if self._single_target_vanished(filepath):
                 scan.single_gone_key = file_key
-                return
-            scan.unreadable_count += 1
-            scan.unreadable_keys.add(file_key)
-            if not vanished(filepath):
-                scan.new_hashes[file_key] = cs.HASH_CACHE_UNREADABLE
+            else:
+                scan.mark_unreadable(filepath, file_key)
             return
         current_hash, file_bytes = hashed
         # The hash keys the CHECKED-IN source (cache invalidation follows
@@ -486,12 +501,7 @@ class TreeScan:
             scan.skipped_count += 1
             return
 
-        is_new = (
-            file_key not in old_hashes
-            and file_key not in baseline.forced_reparse_keys
-            and preexisting_paths is not None
-            and file_key not in preexisting_paths
-        )
+        is_new = _never_indexed(file_key, baseline, preexisting_paths)
         if not is_new:
             logger.debug(ls.FILE_HASH_CHANGED, path=file_key)
         else:
