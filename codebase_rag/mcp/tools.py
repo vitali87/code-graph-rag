@@ -1,5 +1,6 @@
-"""The MCP tools registry: every tool this server offers, its schema and
-its handler, and the dispatch from a tool name to that handler.
+"""The MCP tools registry: which tools this server offers, the handler
+serving each, and the dispatch from a tool name to that handler. Each
+tool's input schema is in tool_schemas.py.
 
 The handlers live in per-group modules the registry composes: the graph's
 writers (lifecycle_tools.py), the deterministic graph queries
@@ -13,7 +14,7 @@ refusals.
 
 import asyncio
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from pathlib import Path
 
 from loguru import logger
@@ -49,9 +50,6 @@ from codebase_rag.tools.structural_search import create_structural_search_tool
 from codebase_rag.types_defs import (
     GraphRefusal,
     MCPHandlerType,
-    MCPInputSchema,
-    MCPInputSchemaProperties,
-    MCPInputSchemaProperty,
     MCPToolSchema,
 )
 from codebase_rag.utils.dependencies import has_ast_grep, has_semantic_dependencies
@@ -60,6 +58,7 @@ from codebase_rag.utils.terminal_console import terminal_aware_console
 from codebase_rag.workspaces import WorkspaceConfig
 
 from . import constants as mcs
+from . import tool_schemas as mts
 from .analysis_tools import AnalysisTools
 from .edit_tools import EditTools
 from .file_tools import FileTools
@@ -68,49 +67,15 @@ from .handler_base import run_in_thread
 from .retrieval_tools import RetrievalTools
 
 
-def _param(
-    kind: mcs.MCPSchemaType,
-    description: str,
-    *,
-    default: str | int | float | bool | None = None,
-    minimum: int | None = None,
-    items: dict[str, str] | None = None,
-    value_type: mcs.MCPSchemaType | None = None,
-) -> MCPInputSchemaProperty:
-    """One input property of an MCP tool's JSON schema; `value_type` is the
-    type of an object's values when it is used as a map."""
-    prop = MCPInputSchemaProperty(type=kind, description=description)
-    if default is not None:
-        prop["default"] = default
-    if minimum is not None:
-        prop["minimum"] = minimum
-    if items is not None:
-        prop["items"] = items
-    if value_type is not None:
-        prop["additionalProperties"] = {mcs.MCPSchemaField.TYPE: value_type}
-    return prop
-
-
-def _tool(
-    name: cs.MCPToolName,
-    handler: MCPHandlerType,
-    properties: MCPInputSchemaProperties | None = None,
-    required: Sequence[str] = (),
-    *,
-    returns_json: bool = True,
-) -> ToolMetadata:
-    """An MCP tool: its description from `td.MCP_TOOLS`, an object schema of
-    `properties`, and the handler serving it."""
+def _tool(name: cs.MCPToolName, handler: MCPHandlerType) -> ToolMetadata:
+    """An MCP tool: its description from `td.MCP_TOOLS`, its schema from
+    `tool_schemas`, and the handler serving it."""
     return ToolMetadata(
         name=name,
         description=td.MCP_TOOLS[name],
-        input_schema=MCPInputSchema(
-            type=mcs.MCPSchemaType.OBJECT,
-            properties=dict(properties or {}),
-            required=list(required),
-        ),
+        input_schema=mts.input_schema(name),
         handler=handler,
-        returns_json=returns_json,
+        returns_json=mts.returns_json(name),
     )
 
 
@@ -337,428 +302,51 @@ class MCPToolsRegistry(
 
     def _build_tools(self) -> dict[str, ToolMetadata]:
         """Every tool this server offers, by name: its schema and handler."""
-        tools: dict[str, ToolMetadata] = {
-            cs.MCPToolName.LIST_PROJECTS: _tool(
-                cs.MCPToolName.LIST_PROJECTS, self.list_projects
-            ),
-            cs.MCPToolName.DELETE_PROJECT: _tool(
-                cs.MCPToolName.DELETE_PROJECT,
-                self.delete_project,
-                {
-                    cs.MCPParamName.PROJECT_NAME: _param(
-                        mcs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT_NAME
-                    )
-                },
-                [cs.MCPParamName.PROJECT_NAME],
-            ),
-            cs.MCPToolName.WIPE_DATABASE: _tool(
-                cs.MCPToolName.WIPE_DATABASE,
-                self.wipe_database,
-                {
-                    cs.MCPParamName.CONFIRM: _param(
-                        mcs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_CONFIRM
-                    )
-                },
-                [cs.MCPParamName.CONFIRM],
-                returns_json=False,
-            ),
-            cs.MCPToolName.INDEX_REPOSITORY: _tool(
-                cs.MCPToolName.INDEX_REPOSITORY,
-                self.index_repository,
-                returns_json=False,
-            ),
-            cs.MCPToolName.UPDATE_REPOSITORY: _tool(
-                cs.MCPToolName.UPDATE_REPOSITORY,
-                self.update_repository,
-                returns_json=False,
-            ),
-            cs.MCPToolName.REINGEST: _tool(
-                cs.MCPToolName.REINGEST,
-                self.reingest,
-                {
-                    cs.MCPParamName.PATHS: _param(
-                        mcs.MCPSchemaType.ARRAY,
-                        td.MCP_PARAM_REINGEST_PATHS,
-                        items={mcs.MCPSchemaField.TYPE: mcs.MCPSchemaType.STRING},
-                    ),
-                    cs.MCPParamName.DELETED: _param(
-                        mcs.MCPSchemaType.ARRAY,
-                        td.MCP_PARAM_REINGEST_DELETED,
-                        items={mcs.MCPSchemaField.TYPE: mcs.MCPSchemaType.STRING},
-                    ),
-                },
-                [cs.MCPParamName.PATHS],
-            ),
-            cs.MCPToolName.RESOLVE: self._graph_tool(
-                cs.MCPToolName.RESOLVE,
-                {cs.MCPParamName.TARGET: td.MCP_PARAM_TARGET},
-                [cs.MCPParamName.TARGET],
-                self.resolve,
-            ),
-            cs.MCPToolName.DEFINITION: self._graph_tool(
-                cs.MCPToolName.DEFINITION,
-                {cs.MCPParamName.QUALIFIED_NAME: td.MCP_PARAM_QUALIFIED_NAME},
-                [cs.MCPParamName.QUALIFIED_NAME],
-                self.definition,
-            ),
-            cs.MCPToolName.CALLERS: self._graph_tool(
-                cs.MCPToolName.CALLERS,
-                {
-                    cs.MCPParamName.QUALIFIED_NAME: td.MCP_PARAM_QUALIFIED_NAME,
-                    cs.MCPParamName.DEPTH: td.MCP_PARAM_DEPTH,
-                },
-                [cs.MCPParamName.QUALIFIED_NAME],
-                self.callers,
-                integer_params={cs.MCPParamName.DEPTH},
-            ),
-            cs.MCPToolName.CALLEES: self._graph_tool(
-                cs.MCPToolName.CALLEES,
-                {
-                    cs.MCPParamName.QUALIFIED_NAME: td.MCP_PARAM_QUALIFIED_NAME,
-                    cs.MCPParamName.DEPTH: td.MCP_PARAM_DEPTH,
-                },
-                [cs.MCPParamName.QUALIFIED_NAME],
-                self.callees,
-                integer_params={cs.MCPParamName.DEPTH},
-            ),
-            cs.MCPToolName.IMPLEMENTORS: self._graph_tool(
-                cs.MCPToolName.IMPLEMENTORS,
-                {
-                    cs.MCPParamName.QUALIFIED_NAME: td.MCP_PARAM_QUALIFIED_NAME,
-                    cs.MCPParamName.DEPTH: td.MCP_PARAM_DEPTH,
-                },
-                [cs.MCPParamName.QUALIFIED_NAME],
-                self.implementors,
-                integer_params={cs.MCPParamName.DEPTH},
-            ),
-            cs.MCPToolName.OVERRIDES: self._graph_tool(
-                cs.MCPToolName.OVERRIDES,
-                {
-                    cs.MCPParamName.QUALIFIED_NAME: td.MCP_PARAM_QUALIFIED_NAME,
-                    cs.MCPParamName.DEPTH: td.MCP_PARAM_DEPTH,
-                },
-                [cs.MCPParamName.QUALIFIED_NAME],
-                self.overrides,
-                integer_params={cs.MCPParamName.DEPTH},
-            ),
-            cs.MCPToolName.ANNOTATE: self._graph_tool(
-                cs.MCPToolName.ANNOTATE,
-                {
-                    cs.MCPParamName.TARGET: td.MCP_PARAM_TARGET,
-                    cs.MCPParamName.BODY: td.MCP_PARAM_GLOSS_BODY,
-                    cs.MCPParamName.KIND: td.MCP_PARAM_GLOSS_KIND,
-                    cs.MCPParamName.MENTIONS: td.MCP_PARAM_GLOSS_MENTIONS,
-                    cs.MCPParamName.AUTHOR: td.MCP_PARAM_GLOSS_AUTHOR,
-                },
-                [cs.MCPParamName.TARGET, cs.MCPParamName.BODY, cs.MCPParamName.KIND],
-                self.annotate,
-            ),
-            cs.MCPToolName.GLOSSES: self._graph_tool(
-                cs.MCPToolName.GLOSSES,
-                {cs.MCPParamName.TARGET: td.MCP_PARAM_TARGET},
-                [cs.MCPParamName.TARGET],
-                self.glosses,
-            ),
-            cs.MCPToolName.IMPORTERS: self._graph_tool(
-                cs.MCPToolName.IMPORTERS,
-                {
-                    cs.MCPParamName.MODULE_QN: td.MCP_PARAM_MODULE_QN,
-                    cs.MCPParamName.THROUGH_REEXPORTS: td.MCP_PARAM_THROUGH_REEXPORTS,
-                },
-                [cs.MCPParamName.MODULE_QN],
-                self.importers,
-                boolean_params={cs.MCPParamName.THROUGH_REEXPORTS},
-            ),
-            cs.MCPToolName.TESTS_REACHING: self._graph_tool(
-                cs.MCPToolName.TESTS_REACHING,
-                {cs.MCPParamName.QUALIFIED_NAME: td.MCP_PARAM_QUALIFIED_NAME},
-                [cs.MCPParamName.QUALIFIED_NAME],
-                self.tests_reaching,
-            ),
-            cs.MCPToolName.ENDPOINTS: self._graph_tool(
-                cs.MCPToolName.ENDPOINTS, {}, [], self.endpoints
-            ),
-            cs.MCPToolName.ENDPOINT_CALLERS: self._graph_tool(
-                cs.MCPToolName.ENDPOINT_CALLERS,
-                {cs.MCPParamName.TARGET: td.MCP_PARAM_ENDPOINT_TARGET},
-                [cs.MCPParamName.TARGET],
-                self.endpoint_callers,
-            ),
-            cs.MCPToolName.REMOTE_DEPENDENCIES: self._graph_tool(
-                cs.MCPToolName.REMOTE_DEPENDENCIES, {}, [], self.remote_dependencies
-            ),
-            cs.MCPToolName.RENAME: _tool(
-                cs.MCPToolName.RENAME,
-                self.rename,
-                {
-                    cs.MCPParamName.QUALIFIED_NAME: _param(
-                        mcs.MCPSchemaType.STRING, td.MCP_PARAM_QUALIFIED_NAME
-                    ),
-                    cs.MCPParamName.NEW_NAME: _param(
-                        mcs.MCPSchemaType.STRING, td.MCP_PARAM_NEW_NAME
-                    ),
-                    cs.MCPParamName.ALLOW_HEURISTIC: _param(
-                        mcs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_ALLOW_HEURISTIC
-                    ),
-                    cs.MCPParamName.DRY_RUN: _param(
-                        mcs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_RENAME_DRY_RUN
-                    ),
-                    cs.MCPParamName.PROJECT: _param(
-                        mcs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
-                    ),
-                },
-                [cs.MCPParamName.QUALIFIED_NAME, cs.MCPParamName.NEW_NAME],
-            ),
-            cs.MCPToolName.CONTEXT: _tool(
-                cs.MCPToolName.CONTEXT,
-                self.context,
-                {
-                    cs.MCPParamName.TARGET: _param(
-                        mcs.MCPSchemaType.STRING, td.MCP_PARAM_CONTEXT_TARGET
-                    ),
-                    cs.MCPParamName.BUDGET_TOKENS: _param(
-                        mcs.MCPSchemaType.INTEGER, td.MCP_PARAM_BUDGET_TOKENS
-                    ),
-                    cs.MCPParamName.PROJECT: _param(
-                        mcs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
-                    ),
-                },
-                [cs.MCPParamName.TARGET],
-            ),
-            cs.MCPToolName.QUERY_CODE_GRAPH: _tool(
-                cs.MCPToolName.QUERY_CODE_GRAPH,
-                self.query_code_graph,
-                {
-                    cs.MCPParamName.NATURAL_LANGUAGE_QUERY: _param(
-                        mcs.MCPSchemaType.STRING, td.MCP_PARAM_NATURAL_LANGUAGE_QUERY
-                    ),
-                    cs.MCPParamName.PROJECT: _param(
-                        mcs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
-                    ),
-                },
-                [cs.MCPParamName.NATURAL_LANGUAGE_QUERY],
-            ),
-            cs.MCPToolName.GET_CODE_SNIPPET: _tool(
-                cs.MCPToolName.GET_CODE_SNIPPET,
-                self.get_code_snippet,
-                {
-                    cs.MCPParamName.QUALIFIED_NAME: _param(
-                        mcs.MCPSchemaType.STRING, td.MCP_PARAM_QUALIFIED_NAME
-                    )
-                },
-                [cs.MCPParamName.QUALIFIED_NAME],
-            ),
-            cs.MCPToolName.SURGICAL_REPLACE_CODE: _tool(
-                cs.MCPToolName.SURGICAL_REPLACE_CODE,
-                self.surgical_replace_code,
-                {
-                    cs.MCPParamName.FILE_PATH: _param(
-                        mcs.MCPSchemaType.STRING, td.MCP_PARAM_FILE_PATH
-                    ),
-                    cs.MCPParamName.TARGET_CODE: _param(
-                        mcs.MCPSchemaType.STRING, td.MCP_PARAM_TARGET_CODE
-                    ),
-                    cs.MCPParamName.REPLACEMENT_CODE: _param(
-                        mcs.MCPSchemaType.STRING, td.MCP_PARAM_REPLACEMENT_CODE
-                    ),
-                },
-                [
-                    cs.MCPParamName.FILE_PATH,
-                    cs.MCPParamName.TARGET_CODE,
-                    cs.MCPParamName.REPLACEMENT_CODE,
-                ],
-                returns_json=False,
-            ),
-            cs.MCPToolName.READ_FILE: _tool(
-                cs.MCPToolName.READ_FILE,
-                self.read_file,
-                {
-                    cs.MCPParamName.FILE_PATH: _param(
-                        mcs.MCPSchemaType.STRING, td.MCP_PARAM_FILE_PATH
-                    ),
-                    cs.MCPParamName.OFFSET: _param(
-                        mcs.MCPSchemaType.INTEGER,
-                        td.MCP_PARAM_OFFSET,
-                        minimum=mcs.MCP_READ_OFFSET_MINIMUM,
-                    ),
-                    cs.MCPParamName.LIMIT: _param(
-                        mcs.MCPSchemaType.INTEGER,
-                        td.MCP_PARAM_LIMIT,
-                        minimum=mcs.MCP_READ_LIMIT_MINIMUM,
-                    ),
-                },
-                [cs.MCPParamName.FILE_PATH],
-                returns_json=False,
-            ),
-            cs.MCPToolName.WRITE_FILE: _tool(
-                cs.MCPToolName.WRITE_FILE,
-                self.write_file,
-                {
-                    cs.MCPParamName.FILE_PATH: _param(
-                        mcs.MCPSchemaType.STRING, td.MCP_PARAM_FILE_PATH
-                    ),
-                    cs.MCPParamName.CONTENT: _param(
-                        mcs.MCPSchemaType.STRING, td.MCP_PARAM_CONTENT
-                    ),
-                },
-                [
-                    cs.MCPParamName.FILE_PATH,
-                    cs.MCPParamName.CONTENT,
-                ],
-                returns_json=False,
-            ),
-            cs.MCPToolName.LIST_DIRECTORY: _tool(
-                cs.MCPToolName.LIST_DIRECTORY,
-                self.list_directory,
-                {
-                    cs.MCPParamName.DIRECTORY_PATH: _param(
-                        mcs.MCPSchemaType.STRING,
-                        td.MCP_PARAM_DIRECTORY_PATH,
-                        default=cs.MCP_DEFAULT_DIRECTORY,
-                    )
-                },
-                returns_json=False,
-            ),
+        handlers: dict[cs.MCPToolName, MCPHandlerType] = {
+            cs.MCPToolName.LIST_PROJECTS: self.list_projects,
+            cs.MCPToolName.DELETE_PROJECT: self.delete_project,
+            cs.MCPToolName.WIPE_DATABASE: self.wipe_database,
+            cs.MCPToolName.INDEX_REPOSITORY: self.index_repository,
+            cs.MCPToolName.UPDATE_REPOSITORY: self.update_repository,
+            cs.MCPToolName.REINGEST: self.reingest,
+            cs.MCPToolName.RESOLVE: self.resolve,
+            cs.MCPToolName.DEFINITION: self.definition,
+            cs.MCPToolName.CALLERS: self.callers,
+            cs.MCPToolName.CALLEES: self.callees,
+            cs.MCPToolName.IMPLEMENTORS: self.implementors,
+            cs.MCPToolName.OVERRIDES: self.overrides,
+            cs.MCPToolName.ANNOTATE: self.annotate,
+            cs.MCPToolName.GLOSSES: self.glosses,
+            cs.MCPToolName.IMPORTERS: self.importers,
+            cs.MCPToolName.TESTS_REACHING: self.tests_reaching,
+            cs.MCPToolName.ENDPOINTS: self.endpoints,
+            cs.MCPToolName.ENDPOINT_CALLERS: self.endpoint_callers,
+            cs.MCPToolName.REMOTE_DEPENDENCIES: self.remote_dependencies,
+            cs.MCPToolName.RENAME: self.rename,
+            cs.MCPToolName.CONTEXT: self.context,
+            cs.MCPToolName.QUERY_CODE_GRAPH: self.query_code_graph,
+            cs.MCPToolName.GET_CODE_SNIPPET: self.get_code_snippet,
+            cs.MCPToolName.SURGICAL_REPLACE_CODE: self.surgical_replace_code,
+            cs.MCPToolName.READ_FILE: self.read_file,
+            cs.MCPToolName.WRITE_FILE: self.write_file,
+            cs.MCPToolName.LIST_DIRECTORY: self.list_directory,
         }
         if self._semantic_search_tool is not None:
-            tools[cs.MCPToolName.SEMANTIC_SEARCH] = _tool(
-                cs.MCPToolName.SEMANTIC_SEARCH,
-                self.semantic_search,
-                {
-                    cs.MCPParamName.NATURAL_LANGUAGE_QUERY: _param(
-                        mcs.MCPSchemaType.STRING, td.MCP_PARAM_NATURAL_LANGUAGE_QUERY
-                    ),
-                    cs.MCPParamName.TOP_K: _param(
-                        mcs.MCPSchemaType.INTEGER, td.MCP_PARAM_TOP_K, default=5
-                    ),
-                    cs.MCPParamName.PROJECT: _param(
-                        mcs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
-                    ),
-                },
-                [cs.MCPParamName.NATURAL_LANGUAGE_QUERY],
-                returns_json=False,
-            )
-
+            handlers[cs.MCPToolName.SEMANTIC_SEARCH] = self.semantic_search
         if self._structural_available:
-            tools[cs.MCPToolName.STRUCTURAL_SEARCH] = _tool(
-                cs.MCPToolName.STRUCTURAL_SEARCH,
-                self.structural_search,
-                {
-                    cs.MCPParamName.PATTERN: _param(
-                        mcs.MCPSchemaType.STRING, td.MCP_PARAM_PATTERN
-                    ),
-                    cs.MCPParamName.LANGUAGE: _param(
-                        mcs.MCPSchemaType.STRING, td.MCP_PARAM_LANGUAGE
-                    ),
-                },
-                [cs.MCPParamName.PATTERN],
-                returns_json=False,
-            )
-            tools[cs.MCPToolName.STRUCTURAL_REPLACE] = _tool(
-                cs.MCPToolName.STRUCTURAL_REPLACE,
-                self.structural_replace,
-                {
-                    cs.MCPParamName.PATTERN: _param(
-                        mcs.MCPSchemaType.STRING, td.MCP_PARAM_PATTERN
-                    ),
-                    cs.MCPParamName.REWRITE: _param(
-                        mcs.MCPSchemaType.STRING, td.MCP_PARAM_REWRITE
-                    ),
-                    cs.MCPParamName.LANGUAGE: _param(
-                        mcs.MCPSchemaType.STRING, td.MCP_PARAM_LANGUAGE
-                    ),
-                    cs.MCPParamName.DRY_RUN: _param(
-                        mcs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_DRY_RUN, default=True
-                    ),
-                },
-                [cs.MCPParamName.PATTERN, cs.MCPParamName.REWRITE],
-                returns_json=False,
-            )
-
+            handlers[cs.MCPToolName.STRUCTURAL_SEARCH] = self.structural_search
+            handlers[cs.MCPToolName.STRUCTURAL_REPLACE] = self.structural_replace
         # Unconditional: both read the graph only. get_function_source lives in
         # semantic_search.py but touches none of the embedding machinery, so
         # gating it on the semantic extra would hide a graph-only tool behind
         # a dependency it never uses.
-        tools[cs.MCPToolName.FIND_DUPLICATE_CODE] = _tool(
-            cs.MCPToolName.FIND_DUPLICATE_CODE,
-            self.find_duplicate_code,
-            {
-                cs.MCPParamName.PROJECT: _param(
-                    mcs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
-                ),
-                cs.MCPParamName.THRESHOLD: _param(
-                    mcs.MCPSchemaType.NUMBER,
-                    td.MCP_PARAM_THRESHOLD,
-                    default=cs.DUPLICATES_DEFAULT_THRESHOLD,
-                ),
-                cs.MCPParamName.MIN_SIZE: _param(
-                    mcs.MCPSchemaType.INTEGER,
-                    td.MCP_PARAM_MIN_SIZE,
-                    default=cs.DUPLICATES_DEFAULT_MIN_NODES,
-                ),
-                cs.MCPParamName.LIMIT: _param(
-                    mcs.MCPSchemaType.INTEGER,
-                    td.MCP_PARAM_DUPLICATES_LIMIT,
-                    default=cs.DUPLICATES_DEFAULT_GROUP_LIMIT,
-                ),
-            },
-            returns_json=False,
-        )
-        tools[cs.MCPToolName.GET_FUNCTION_SOURCE] = _tool(
-            cs.MCPToolName.GET_FUNCTION_SOURCE,
-            self.get_function_source,
-            {
-                cs.MCPParamName.NODE_ID: _param(
-                    mcs.MCPSchemaType.INTEGER, td.MCP_PARAM_NODE_ID
-                )
-            },
-            [cs.MCPParamName.NODE_ID],
-            returns_json=False,
-        )
-
-        tools[cs.MCPToolName.ASK_AGENT] = _tool(
-            cs.MCPToolName.ASK_AGENT,
-            self.ask_agent,
-            {
-                cs.MCPParamName.QUESTION: _param(
-                    mcs.MCPSchemaType.STRING, td.MCP_PARAM_QUESTION
-                )
-            },
-            [cs.MCPParamName.QUESTION],
-        )
-
-        tools[cs.MCPToolName.FLOW_VERDICT] = _tool(
-            cs.MCPToolName.FLOW_VERDICT,
-            self.flow_verdict,
-            {
-                cs.MCPParamName.SOURCE_QN: _param(
-                    mcs.MCPSchemaType.STRING, td.MCP_PARAM_SOURCE_QN
-                ),
-                cs.MCPParamName.SINK_QN: _param(
-                    mcs.MCPSchemaType.STRING, td.MCP_PARAM_SINK_QN
-                ),
-            },
-            [cs.MCPParamName.SOURCE_QN, cs.MCPParamName.SINK_QN],
-        )
-
-        traceback_params: MCPInputSchemaProperties = {
-            cs.MCPParamName.TRACEBACK_TEXT: _param(
-                mcs.MCPSchemaType.STRING, td.MCP_PARAM_TRACEBACK_TEXT
-            ),
-            cs.MCPParamName.PATH_PREFIX_MAP: _param(
-                mcs.MCPSchemaType.OBJECT,
-                td.MCP_PARAM_PATH_PREFIX_MAP,
-                value_type=mcs.MCPSchemaType.STRING,
-            ),
-        }
-        for name, handler in (
-            (cs.MCPToolName.EXPLAIN_TRACEBACK, self.explain_traceback),
-            (cs.MCPToolName.RANK_ROOT_CAUSES, self.rank_root_causes),
-        ):
-            tools[name] = _tool(
-                name, handler, traceback_params, [cs.MCPParamName.TRACEBACK_TEXT]
-            )
-        return tools
+        handlers[cs.MCPToolName.FIND_DUPLICATE_CODE] = self.find_duplicate_code
+        handlers[cs.MCPToolName.GET_FUNCTION_SOURCE] = self.get_function_source
+        handlers[cs.MCPToolName.ASK_AGENT] = self.ask_agent
+        handlers[cs.MCPToolName.FLOW_VERDICT] = self.flow_verdict
+        handlers[cs.MCPToolName.EXPLAIN_TRACEBACK] = self.explain_traceback
+        handlers[cs.MCPToolName.RANK_ROOT_CAUSES] = self.rank_root_causes
+        return {name: _tool(name, handler) for name, handler in handlers.items()}
 
     def _hold_tools_to_workspace(self) -> None:
         """Refuse, under a workspace, the tools that would act outside it.
@@ -789,29 +377,7 @@ class MCPToolsRegistry(
             if refusal is not None:
                 metadata.handler = _refusing_handler(refusal, metadata.returns_json)
 
-    # --- the graph queries' schema and dispatch (issue #1523) ---------------------
-
-    def _graph_tool(
-        self,
-        name: cs.MCPToolName,
-        params: dict[str, str],
-        required: list[str],
-        handler: MCPHandlerType,
-        integer_params: set[str] | None = None,
-        boolean_params: set[str] | None = None,
-    ) -> ToolMetadata:
-        # String parameters unless named otherwise, and the `project` every
-        # graph read is scoped by.
-        kinds = dict.fromkeys(integer_params or (), mcs.MCPSchemaType.INTEGER)
-        kinds |= dict.fromkeys(boolean_params or (), mcs.MCPSchemaType.BOOLEAN)
-        properties = {
-            key: _param(kinds.get(key, mcs.MCPSchemaType.STRING), description)
-            for key, description in params.items()
-        }
-        properties[cs.MCPParamName.PROJECT] = _param(
-            mcs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
-        )
-        return _tool(name, handler, properties, required)
+    # --- the graph queries' dispatch (issue #1523) -------------------------------
 
     async def _graph_query[T](
         self,
