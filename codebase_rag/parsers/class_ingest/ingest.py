@@ -26,7 +26,7 @@ from ..dart.type_inference import DartTypeInferenceEngine
 from ..definition_facts import DefinitionFacts
 from ..enum_variants import emit_declared_variants, is_python_enum
 from ..field_nodes import PendingFieldType, emit_declared_fields
-from ..go import GoTypeInferenceEngine
+from ..go import class_ingest as go_class_ingest
 from ..go import interfaces as go_ifaces
 from ..java import utils as java_utils
 from ..js_ts import utils as js_ts_utils
@@ -176,7 +176,6 @@ class ClassIngest:
         "class_owner_module",
         "dart_annotated_overrides",
         "java_anon_overrides",
-        "go_type_locations",
         "go_interfaces",
         "cpp_definition_spans",
         "pending_field_types",
@@ -186,6 +185,7 @@ class ClassIngest:
         "cpp",
         "rust",
         "csharp",
+        "go",
     )
 
     def __init__(
@@ -241,7 +241,6 @@ class ClassIngest:
         self.class_owner_module = class_owner_module
         self.dart_annotated_overrides = dart_annotated_overrides
         self.java_anon_overrides = java_anon_overrides
-        self.go_type_locations = go_type_locations
         self.go_interfaces = go_interfaces
         self.cpp_definition_spans = cpp_definition_spans
         self.pending_field_types = pending_field_types
@@ -291,6 +290,9 @@ class ClassIngest:
             override_methods=csharp_override_methods,
             partial_index=csharp_partial_index,
             type_locations=csharp_type_locations,
+        )
+        self.go = go_class_ingest.GoClassIngest(
+            repo_path=repo_path, facts=facts, type_locations=go_type_locations
         )
 
     def _resolve_to_qn(
@@ -1102,15 +1104,8 @@ class ClassIngest:
                 class_qn, file_path, class_start_line
             )
         if language == cs.SupportedLanguage.GO and file_path is not None:
-            # Reverse index for the go/types frontend's implements facts: each
-            # ImplementsPair end (a declaring identifier position) joins back to
-            # this type's qn + node label after Pass 2. A Go type_spec's
-            # start_point IS the name token, so the position matches directly --
-            # no name alias (unlike Go funcs, keyed at the func keyword).
-            rel_path = cached_relative_path(file_path, self.repo_path).as_posix()
-            self.go_type_locations[(rel_path, class_start_line, class_start_col)] = (
-                class_qn,
-                str(label),
+            self.go.record_type_location(
+                class_qn, label, file_path, class_start_line, class_start_col
             )
         return None
 
@@ -1127,11 +1122,7 @@ class ClassIngest:
         if language == cs.SupportedLanguage.CPP:
             self.cpp.record_field_types(member_node, class_qn)
         elif language == cs.SupportedLanguage.GO:
-            # Record Go struct field types so a field-hop receiver
-            # (`engine.trees.get()`) resolves, and a local bound from such a call
-            # (`root := engine.trees.get(m)`) picks up the return type.
-            if field_types := GoTypeInferenceEngine().build_field_type_map(class_node):
-                self.facts.class_field_types[class_qn] = field_types
+            self.go.record_field_types(class_node, class_qn)
         elif language == cs.SupportedLanguage.RUST:
             self.rust.record_field_types(class_node, class_qn)
         elif language == cs.SupportedLanguage.DART:

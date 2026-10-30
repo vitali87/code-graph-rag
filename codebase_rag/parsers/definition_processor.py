@@ -391,8 +391,8 @@ class DefinitionProcessor:
 
     def resolve_deferred_go_methods(self) -> int:
         """Ingest the Go receiver methods held until every receiver type is
-        registered (`FunctionIngest.resolve_deferred_go_methods`)."""
-        return self.function_ingest.resolve_deferred_go_methods()
+        registered (`GoFunctionIngest.resolve_deferred_methods`)."""
+        return self.function_ingest.go.resolve_deferred_methods()
 
     def resolve_deferred_parent_links(self) -> int:
         """Emit the non-module DEFINES held until every pass has registered

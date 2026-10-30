@@ -262,5 +262,5 @@ def test_container_resolution_uses_directory_for_disambiguated_modules() -> None
         deferred_parent_links=[],
     )
 
-    resolved = functions._resolve_go_container_qn("proj.svc.ops", "Point")
+    resolved = functions.go.container_qn("proj.svc.ops", "Point")
     assert resolved == "proj.svc.types.go.Point", resolved

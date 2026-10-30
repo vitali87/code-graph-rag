@@ -23,8 +23,8 @@ from tree_sitter import Node
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.parsers import function_ingest
 from codebase_rag.parsers.document_tier import DocumentTier
+from codebase_rag.parsers.go import function_ingest as go_function_ingest
 from codebase_rag.sync.checkout_state import state_file
 from codebase_rag.tests.test_incremental_inbound_deferred_targets import (
     Snapshot,
@@ -294,7 +294,7 @@ def test_a_failing_go_method_registration_still_restores_the_other_edges(
     _index(store, root, force=True)
     assert _MAIN_TO_NEW_BOX in _calls(_snapshot(store)), "fixture must produce it"
     _edit_after_cache(root / "util.go", root, "//")
-    original = function_ingest.ingest_method
+    original = go_function_ingest.ingest_method
 
     def fail_go(*args: object, **kwargs: object) -> str | None:
         bound = inspect.signature(original).bind(*args, **kwargs)
@@ -303,7 +303,7 @@ def test_a_failing_go_method_registration_still_restores_the_other_edges(
         return original(*args, **kwargs)
 
     with monkeypatch.context() as patch:
-        patch.setattr(function_ingest, "ingest_method", fail_go)
+        patch.setattr(go_function_ingest, "ingest_method", fail_go)
         with pytest.raises(RuntimeError, match="go method ingestion failed"):
             _index(store, root, force=False)
 
