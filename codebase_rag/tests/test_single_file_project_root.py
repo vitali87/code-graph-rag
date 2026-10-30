@@ -29,10 +29,11 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.graph_updater import GraphUpdater, _project_root_for_single_file
+from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.sync.checkout_state import state_dir, state_file
 from codebase_rag.tests.conftest import get_nodes
+from codebase_rag.updater.single_file_root import project_root_for_single_file
 
 PY = cs.SupportedLanguage.PYTHON
 
@@ -190,7 +191,7 @@ def test_the_root_is_the_nearest_cached_ancestor(tmp_path: Path) -> None:
     target = inner / "pkg" / "mod.py"
     target.write_text("x = 1\n", encoding="utf-8")
 
-    assert _project_root_for_single_file(target) == inner
+    assert project_root_for_single_file(target) == inner
 
 
 def test_a_first_ever_run_uses_the_git_root(tmp_path: Path) -> None:
@@ -212,7 +213,7 @@ def test_a_first_ever_run_uses_the_git_root(tmp_path: Path) -> None:
     target = root / "pkg" / "mod.py"
     target.write_text("x = 1\n", encoding="utf-8")
 
-    assert _project_root_for_single_file(target) == root
+    assert project_root_for_single_file(target) == root
 
 
 def test_a_worktree_style_git_file_also_marks_the_root(tmp_path: Path) -> None:
@@ -223,7 +224,7 @@ def test_a_worktree_style_git_file_also_marks_the_root(tmp_path: Path) -> None:
     target = root / "pkg" / "mod.py"
     target.write_text("x = 1\n", encoding="utf-8")
 
-    assert _project_root_for_single_file(target) == root
+    assert project_root_for_single_file(target) == root
 
 
 def test_the_nearest_marker_wins_whichever_kind_it_is(tmp_path: Path) -> None:
@@ -242,7 +243,7 @@ def test_the_nearest_marker_wins_whichever_kind_it_is(tmp_path: Path) -> None:
     target = inner / "pkg" / "mod.py"
     target.write_text("x = 1\n", encoding="utf-8")
 
-    assert _project_root_for_single_file(target) == inner
+    assert project_root_for_single_file(target) == inner
 
 
 def test_a_target_under_no_marker_falls_back_to_its_parent(tmp_path: Path) -> None:
@@ -262,7 +263,7 @@ def test_a_target_under_no_marker_falls_back_to_its_parent(tmp_path: Path) -> No
     target.parent.mkdir()
     target.write_text("x = 1\n", encoding="utf-8")
 
-    assert _project_root_for_single_file(target) == target.parent
+    assert project_root_for_single_file(target) == target.parent
 
 
 def test_the_cache_must_be_a_file_not_a_directory(tmp_path: Path) -> None:
@@ -288,7 +289,7 @@ def test_the_cache_must_be_a_file_not_a_directory(tmp_path: Path) -> None:
     target = root / "mod.py"
     target.write_text("x = 1\n", encoding="utf-8")
 
-    assert _project_root_for_single_file(target) == target.parent, (
+    assert project_root_for_single_file(target) == target.parent, (
         "a DIRECTORY named like the hash cache was accepted as a project "
         "root; every single-file run below it would then be misrooted"
     )
@@ -353,7 +354,7 @@ def test_a_cached_root_outranks_a_nearer_git_marker(tmp_path: Path) -> None:
     target = inner / "pkg" / "module_a.py"
     target.write_text("x = 1\n", encoding="utf-8")
 
-    assert _project_root_for_single_file(target) == outer, (
+    assert project_root_for_single_file(target) == outer, (
         "a nested .git outranked the cached root that actually indexed the "
         "file; the update would write a second identity for it"
     )
@@ -390,7 +391,7 @@ def test_a_cache_left_by_a_removed_checkout_does_not_outrank_a_nested_git(
     outer, inner, target = _nested_checkout(tmp_path)
     _cache_listing(outer, "other-checkout/pkg/mod.py", "README.md")
 
-    assert _project_root_for_single_file(target) == inner
+    assert project_root_for_single_file(target) == inner
 
 
 def test_a_new_file_in_a_nested_checkout_the_cached_root_indexed_roots_there(
@@ -404,7 +405,7 @@ def test_a_new_file_in_a_nested_checkout_the_cached_root_indexed_roots_there(
     outer, _inner, target = _nested_checkout(tmp_path)
     _cache_listing(outer, "lib/pkg/sibling.py")
 
-    assert _project_root_for_single_file(target) == outer
+    assert project_root_for_single_file(target) == outer
 
 
 def test_a_cache_listing_only_a_lookalike_directory_does_not_outrank_it(
@@ -414,7 +415,7 @@ def test_a_cache_listing_only_a_lookalike_directory_does_not_outrank_it(
     outer, inner, target = _nested_checkout(tmp_path)
     _cache_listing(outer, "lib-old/pkg/mod.py", "lib.py")
 
-    assert _project_root_for_single_file(target) == inner
+    assert project_root_for_single_file(target) == inner
 
 
 @pytest.mark.parametrize("content", ["{", "[]", "null"])
@@ -425,7 +426,7 @@ def test_an_unreadable_cache_does_not_outrank_a_nested_git(
     outer, inner, target = _nested_checkout(tmp_path)
     state_file(outer, cs.HASH_CACHE_FILENAME).write_text(content, encoding="utf-8")
 
-    assert _project_root_for_single_file(target) == inner
+    assert project_root_for_single_file(target) == inner
 
 
 def test_a_cache_an_older_cgr_left_in_the_tree_is_held_to_the_same_rule(
@@ -437,11 +438,11 @@ def test_a_cache_an_older_cgr_left_in_the_tree_is_held_to_the_same_rule(
     legacy = outer / cs.HASH_CACHE_FILENAME
     legacy.write_text(json.dumps({"elsewhere.py": "0"}), encoding="utf-8")
 
-    assert _project_root_for_single_file(target) == inner
+    assert project_root_for_single_file(target) == inner
 
     legacy.write_text(json.dumps({"lib/pkg/mod.py": "0"}), encoding="utf-8")
 
-    assert _project_root_for_single_file(target) == outer
+    assert project_root_for_single_file(target) == outer
 
 
 def test_an_unrelated_cache_still_marks_the_root_with_no_nested_git(
@@ -455,7 +456,7 @@ def test_an_unrelated_cache_still_marks_the_root_with_no_nested_git(
     target = root / "pkg" / "mod.py"
     target.write_text("x = 1\n", encoding="utf-8")
 
-    assert _project_root_for_single_file(target) == root
+    assert project_root_for_single_file(target) == root
 
 
 def test_a_cache_further_up_that_lists_the_nested_checkout_still_wins(
@@ -473,7 +474,7 @@ def test_a_cache_further_up_that_lists_the_nested_checkout_still_wins(
     _cache_listing(outer, "gone.py")
     _cache_listing(top, "outer/lib/pkg/mod.py")
 
-    assert _project_root_for_single_file(target) == top
+    assert project_root_for_single_file(target) == top
 
 
 def test_the_nearest_git_still_wins_when_no_cache_exists(tmp_path: Path) -> None:
@@ -490,7 +491,7 @@ def test_the_nearest_git_still_wins_when_no_cache_exists(tmp_path: Path) -> None
     target = inner / "pkg" / "mod.py"
     target.write_text("x = 1\n", encoding="utf-8")
 
-    assert _project_root_for_single_file(target) == inner
+    assert project_root_for_single_file(target) == inner
 
 
 def test_a_single_file_run_creates_no_hash_cache(
