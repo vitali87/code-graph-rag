@@ -13,6 +13,8 @@ from pathlib import Path
 
 import pytest
 
+from codebase_rag import constants as cs
+
 pytest.importorskip("cgr_graph_rs")
 
 from scripts import rust_wheel_parity as parity
@@ -88,6 +90,7 @@ def test_check_runs_without_code_graph_rag(recording: Path) -> None:
         check=False,
         capture_output=True,
         text=True,
+        encoding=cs.ENCODING_UTF8,
         timeout=120,
     )
     assert result.returncode == 0, result.stderr
