@@ -1641,6 +1641,24 @@ def _advance_past_settled(progress: Progress, task: TaskID, scan: _FileScan) -> 
         progress.advance(task, scan.skipped_count + scan.unreadable_count)
 
 
+def _without_stale_targets(
+    fact: PendingTypeFact, stale_modules: set[str]
+) -> PendingTypeFact:
+    # A target defined in a file this re-parse deletes loses its inbound
+    # edges with it, so the name that reached it must be resolved again
+    # rather than counted as bound (issue #3007 meets #1527).
+    if not fact.resolved_targets:
+        return fact
+    kept = frozenset(
+        target
+        for target in fact.resolved_targets
+        if not any(
+            target.startswith(f"{module}{cs.SEPARATOR_DOT}") for module in stale_modules
+        )
+    )
+    return fact._replace(resolved_targets=kept)
+
+
 def _package_modules(module_files: Mapping[str, Path]) -> frozenset[str]:
     # The module qns that are a package's `__init__.py`: a relative import
     # there resolves against the package itself (issue #3192).
@@ -1695,6 +1713,9 @@ class GraphUpdater:
         # path -> module qualified name as the graph records it, read once
         # per rehydration for the requeues (issue #1935).
         self._module_qns_by_path: dict[str, str] | None = None
+        # qn -> the types its RETURNS/ACCEPTS reach, read once per
+        # incremental rehydration (issue #3007).
+        self._resolved_type_targets: dict[str, set[str]] = {}
         if repo_path.is_file():
             resolved = repo_path.resolve()
             self._single_file = resolved
@@ -2606,7 +2627,9 @@ class GraphUpdater:
         self._ungroup_rehydrated_non_partials()
         # Return/parameter annotations resolve against the complete registry
         # (issue #1527), so a type defined in a later file still gets its edge.
-        typed = self.factory.definition_processor.emit_type_edges()
+        typed = self.factory.definition_processor.emit_type_edges(
+            self._restore_requeued_imports
+        )
         if typed:
             logger.info(ls.TYPE_EDGES_EMITTED, count=typed)
         return known_module_paths
@@ -2684,6 +2707,20 @@ class GraphUpdater:
                     )
                 pending.append(holder)
         return restored
+
+    def _restore_requeued_imports(self, module_qn: str) -> None:
+        """Parse the imports of an unchanged module for its requeued
+        annotations, which resolve through them as a fresh index's do: no
+        re-parsed file need reach it (#3007 review)."""
+        module_paths = self.factory.definition_processor.module_qn_to_file_path
+        path = module_paths.get(module_qn)
+        if path is None or not self._restore_module_imports(module_qn, path):
+            return
+        import_processor = self.factory.import_processor
+        # Re-pointed as the closure walk re-points what it restores (#2586).
+        import_processor.point_module_imports_at_own_language_siblings(
+            module_qn, module_paths, import_processor.stem_sibling_modules(module_paths)
+        )
 
     def _restore_module_imports(self, module_qn: str, path: Path) -> bool:
         """Parse one unchanged module's imports; False when Pass 2 would not."""
@@ -3822,8 +3859,27 @@ class GraphUpdater:
                 if isinstance(param_types, list)
                 else None,
                 path,
+                frozenset(self._resolved_type_targets.get(qn, ())),
             )
         )
+
+    def _read_resolved_type_targets(self, project_params: PropertyParams) -> None:
+        # What each unchanged definition's annotations already resolved to,
+        # when its file was last parsed with its imports. Requeuing re-resolves
+        # without them, so a bound name is left alone (issue #3007).
+        self._resolved_type_targets = {}
+        if self._is_full_build or not isinstance(self.ingestor, QueryProtocol):
+            return
+        rows = self._owned_rows(
+            self.ingestor.fetch_all(
+                cs.CYPHER_PROJECT_TYPE_EDGE_TARGETS, project_params
+            ),
+            cs.KEY_QUALIFIED_NAME,
+        )
+        for row in rows:
+            qn, target = row.get(cs.KEY_QUALIFIED_NAME), row.get(cs.KEY_TARGET_QN)
+            if isinstance(qn, str) and isinstance(target, str):
+                self._resolved_type_targets.setdefault(qn, set()).add(target)
 
     def _requeue_member_types[P: (PendingParameterType, PendingFieldType)](
         self,
@@ -3961,6 +4017,7 @@ class GraphUpdater:
                 self.ingestor.fetch_all(cs.CYPHER_ALL_DEFINITION_QNS, project_params),
                 cs.KEY_QUALIFIED_NAME,
             )
+            self._read_resolved_type_targets(project_params)
         except Exception:
             # Rehydration completes cross-file resolution for files this run
             # did not re-parse: a FULL build parsed them all, so it degrades
@@ -9149,7 +9206,7 @@ class GraphUpdater:
         } | {qn for qn, path in qn_to_path.items() if path in stale_paths}
         pending = self.factory.definition_processor.pending_type_facts
         pending[:] = [
-            fact
+            _without_stale_targets(fact, stale_modules)
             for fact in pending
             if (
                 fact.path not in stale_keys

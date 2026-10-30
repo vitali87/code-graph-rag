@@ -21,7 +21,7 @@ Contract for the two properties:
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Container, Mapping
 from typing import NamedTuple
 
 from tree_sitter import Node
@@ -304,6 +304,20 @@ def queue_type_facts(
     )
 
 
+def _resolved_by(name: str, resolved_targets: frozenset[str]) -> list[str]:
+    # The targets a name was already bound to through its file's imports at
+    # the last parse; see PendingTypeFact.resolved_targets (issue #3007). A
+    # bare `Match` is one binding in its file, so a target of that name is
+    # it; a qualified `crate::later::Match` is bound only by a target it
+    # spells the tail of, never by an edge to `matcher::Match`.
+    tail = name.removeprefix(_RUST_CRATE_ROOT)
+    return [
+        target
+        for target in resolved_targets
+        if target == tail or target.endswith(f"{cs.SEPARATOR_DOT}{tail}")
+    ]
+
+
 class TypeReferenceResolver:
     """Resolve the names an annotation mentions to project type nodes."""
 
@@ -320,6 +334,9 @@ class TypeReferenceResolver:
         self._prefix = f"{project_name}{cs.SEPARATOR_DOT}"
         # Only generic C# types are recorded: an absent qn declares none.
         self._csharp_arity = csharp_generic_arity or {}
+        self._unparsed: Container[str] = frozenset()
+        self._restore_imports: Callable[[str], None] | None = None
+        self._imports_tried: set[str] = set()
 
     def _is_type(self, qn: str) -> bool:
         # An annotation is a type position: a TS `type`/`interface` sharing
@@ -337,6 +354,33 @@ class TypeReferenceResolver:
         each part to its group, as parsing builds them.
         """
         self._partial_groups = partial_groups
+
+    def join_unparsed(
+        self,
+        unparsed: Container[str],
+        restore_imports: Callable[[str], None] | None = None,
+    ) -> None:
+        """The definitions an incremental run restored from the graph rather
+        than parsed: those of every file it left unchanged. `restore_imports`
+        loads the imports of such a file, which that run did not parse, by
+        its module qn."""
+        self._unparsed = unparsed
+        self._restore_imports = restore_imports
+
+    def _imports_loaded(self, module_qn: str) -> bool:
+        """Whether `module_qn`'s imports were missing and are held now."""
+        if (
+            self._restore_imports is None
+            or module_qn in self._imports
+            or module_qn in self._imports_tried
+        ):
+            return False
+        self._imports_tried.add(module_qn)
+        self._restore_imports(module_qn)
+        return module_qn in self._imports
+
+    def is_unparsed(self, qn: str) -> bool:
+        return qn in self._unparsed
 
     def _every_part(self, types: Mapping[str, None]) -> list[str]:
         # A reference to a partial type names every part, not one chosen
@@ -453,7 +497,12 @@ class TypeReferenceResolver:
         return ranked[0]
 
     def resolve_annotation(
-        self, annotation: str, module_qn: str, path: str | None = None
+        self,
+        annotation: str,
+        module_qn: str,
+        path: str | None = None,
+        resolved_targets: frozenset[str] = frozenset(),
+        requeued: bool = False,
     ) -> list[str]:
         # A C# annotation's type arguments decide which of two same-named
         # types it means; elsewhere the name alone is looked up, as ever.
@@ -464,7 +513,26 @@ class TypeReferenceResolver:
         )
         found: dict[str, None] = {}
         for name, arity in written:
+            if bound := _resolved_by(name, resolved_targets):
+                # The binding stands, but a partial type's parts come and go
+                # with their files: `_every_part` names the ones there are now.
+                found.update(
+                    dict.fromkeys(
+                        qn
+                        for qn in bound
+                        if qn in self._partial_groups and self._is_type(qn)
+                    )
+                )
+                continue
             qn = self.resolve(name, module_qn, arity)
+            # A requeued annotation's file was not parsed, so its imports may
+            # not be held, and without them the type reached is only the
+            # nearest same-named guess: `from matcher.core import Match as
+            # Bar` reached another file's `Bar` (#3007 review). They are
+            # loaded once such a name reaches a type, and the name resolved
+            # again as a fresh index resolves it.
+            if qn is not None and requeued and self._imports_loaded(module_qn):
+                qn = self.resolve(name, module_qn, arity)
             if qn is not None:
                 found.setdefault(qn, None)
         return self._every_part(found)
@@ -487,7 +555,13 @@ def _emit_returns(
 ) -> int:
     if fact.return_type is None:
         return 0
-    targets = resolver.resolve_annotation(fact.return_type, fact.module_qn, fact.path)
+    targets = resolver.resolve_annotation(
+        fact.return_type,
+        fact.module_qn,
+        fact.path,
+        fact.resolved_targets,
+        resolver.is_unparsed(fact.qualified_name),
+    )
     for target_qn in targets:
         ingestor.ensure_relationship_batch(
             source, cs.RelationshipType.RETURNS, _target_spec(resolver, target_qn)
@@ -502,11 +576,12 @@ def _emit_accepts(
     source: tuple[str, str, str],
 ) -> int:
     accepted: dict[str, None] = {}
+    requeued = resolver.is_unparsed(fact.qualified_name)
     for annotation in fact.param_types or ():
         if not annotation:
             continue
         for target_qn in resolver.resolve_annotation(
-            annotation, fact.module_qn, fact.path
+            annotation, fact.module_qn, fact.path, fact.resolved_targets, requeued
         ):
             accepted.setdefault(target_qn, None)
     for target_qn in accepted:
