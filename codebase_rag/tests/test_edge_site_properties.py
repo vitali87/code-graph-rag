@@ -616,13 +616,13 @@ def test_call_site_cache_is_not_keyed_by_recycled_node_ids() -> None:
     call_a = first_call(src_a)
     call_b = first_call(src_b)
     cp._site_node = call_a
-    cp._emit_rel(
+    cp.emit_rel(
         ("Function", "qualified_name", "x"),
         "CALLS",
         ("Function", "qualified_name", "f"),
     )
     cp._site_node = call_b
-    cp._emit_rel(
+    cp.emit_rel(
         ("Function", "qualified_name", "x"),
         "CALLS",
         ("Function", "qualified_name", "g"),

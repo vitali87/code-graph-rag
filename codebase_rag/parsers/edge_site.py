@@ -6,13 +6,16 @@ it walks, and `_site_scoped` puts them back when the pass returns, so a
 nested pass cannot leak its last node into the edges its caller emits next.
 A language's call collaborator sets the same two on the processor that owns
 it, and `host_site_scoped` does that restoring for the collaborator's
-passes."""
+passes; the edges themselves it writes through the processor's own writer
+(`emit_rel`)."""
 
 from collections.abc import Callable
 from functools import wraps
 from typing import Concatenate, Protocol
 
 from tree_sitter import Node
+
+from ..types_defs import PropertyDict
 
 
 class EdgeSiteHost(Protocol):
@@ -21,6 +24,19 @@ class EdgeSiteHost(Protocol):
 
     _site_node: Node | None
     _resolution: str
+
+
+class EdgeWriterHost(EdgeSiteHost, Protocol):
+    """The writer every CALLS, REFERENCES and INSTANTIATES edge of the pass
+    goes through, which stamps it with the edge site."""
+
+    def emit_rel(
+        self,
+        from_spec: tuple[str, str, str],
+        rel_type: str,
+        to_spec: tuple[str, str, str],
+        properties: PropertyDict | None = None,
+    ) -> None: ...
 
 
 class EdgeSiteOwner(Protocol):

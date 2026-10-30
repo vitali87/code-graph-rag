@@ -20,6 +20,7 @@ from tree_sitter import Node
 from .. import constants as cs
 from .call_callbacks import CallbackEdges
 from .call_construction import CallConstruction
+from .call_host import VerdictHost
 from .call_nodes import call_target_name
 from .call_resolver import CallResolver
 from .callable_flow import CallableFlow
@@ -76,14 +77,11 @@ def _exceeds_receiver_chain_cap(call_node: Node) -> bool:
     return False
 
 
-class BindingHost(EdgeSiteHost, Protocol):
+class BindingHost(EdgeSiteHost, VerdictHost, Protocol):
     """What a call node's binding calls on the call pass that builds it: the
     record of a name a module could not resolve (issue #1568). Beside the
-    edge site, which the binding sets to the node it scans, and `_verdict`,
-    how surely that node binds its callee, reset per node and read when its
-    edges are emitted."""
-
-    _verdict: str
+    edge site, which the binding sets to the node it scans, and the verdict,
+    reset per node and read when its edges are emitted."""
 
     def _note_unresolved(self, module_qn: str, name: str) -> None: ...
 
@@ -135,10 +133,10 @@ class CallBinding:
         host._resolution = cs.EdgeResolution.EXACT
         # A callee bound by a language frontend (Jedi, the Java and C#
         # engines, the Go frontend, a typed C++ operator) never passes
-        # through `_noted`, which is where a resolver answer sets the
+        # through `noted`, which is where a resolver answer sets the
         # verdict; without this reset such an edge would inherit the
         # label the previous call node left behind (issue #1526).
-        host._verdict = cs.EdgeResolution.EXACT
+        host.verdict = cs.EdgeResolution.EXACT
         if ctx.calls.ingest_call_shape(ctx, call_node):
             return
         call_name = self._scan_call_name(ctx, call_node)
@@ -477,7 +475,7 @@ class CallBinding:
             # `.get(...)`) says nothing about the receiver: fanning it out
             # turned one guess into exact edges to every conformer, test
             # doubles included (issue #2931). It stays one heuristic edge.
-            and self._host._verdict != cs.EdgeResolution.HEURISTIC
+            and self._host.verdict != cs.EdgeResolution.HEURISTIC
             and (
                 dispatch_targets := self._resolver.python.protocol_dispatch_targets(
                     callee_qn
@@ -589,7 +587,7 @@ class CallBinding:
             targets = [callee_qn]
         # The resolver's verdict on this callee, then one edge per
         # same-named candidate when the callee fans out (issue #1526).
-        host._resolution = host._verdict
+        host._resolution = host.verdict
         targets, exact_in_every_build = ctx.calls.build_targets(
             ctx.module_qn, callee_type, callee_qn, targets
         )

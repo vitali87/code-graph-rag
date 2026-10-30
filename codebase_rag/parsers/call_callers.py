@@ -19,7 +19,8 @@ from .. import constants as cs
 from .. import logs as ls
 from ..language_spec import LanguageSpec
 from ..node_text import sorted_captures
-from ..types_defs import FunctionLocation, LanguageQueries
+from ..types_defs import LanguageQueries
+from .call_host import CallStrategyHost, RecordedCallerHost
 from .call_ownership import (
     RegisteredNames,
     body_function_nodes,
@@ -78,17 +79,11 @@ def _class_qn_for_calls(
     )
 
 
-class CallerHost(Protocol):
+class CallerHost(CallStrategyHost, RecordedCallerHost, Protocol):
     """What the caller scan calls on the call pass that builds it: the caller
     pass a function, method or module's calls go through, where the
     definition pass recorded a function node, the record of a caller whose
     pass failed, and a language's call strategy."""
-
-    def _calls_for(self, language: str | None) -> LanguageCalls: ...
-
-    def _recorded_caller(
-        self, func_node: Node, module_qn: str
-    ) -> FunctionLocation | None: ...
 
     def _record_caller_failure(
         self, message: str, caller: str, error: Exception
@@ -149,7 +144,7 @@ class CallerScan:
         owned_func_nodes = self._attributable_func_nodes(
             func_nodes, language, module_qn
         )
-        language_calls = self._host._calls_for(language)
+        language_calls = self._host.calls_for(language)
         for func_node in func_nodes:
             # Anything scoped inside a class body -- a method, and a function
             # nested in a method -- is walked by ingest_class_body_callers
@@ -181,7 +176,7 @@ class CallerScan:
             except Exception as e:  # noqa: BLE001 -- isolation: one unit's failure must not end the run
                 # One pathological function costs its own edges, not every
                 # other function's in the file (issue #3173).
-                loc = self._host._recorded_caller(func_node, module_qn)
+                loc = self._host.recorded_caller(func_node, module_qn)
                 caller = (
                     loc.qualified_name
                     if loc is not None
@@ -206,7 +201,7 @@ class CallerScan:
         # the AST -- the walks diverge on preprocessor-distorted C++
         # class bodies, TS declaration merging, and duplicate-suffixed
         # qns, and every divergence is a phantom caller (issue #652).
-        if loc := host._recorded_caller(func_node, module_qn):
+        if loc := host.recorded_caller(func_node, module_qn):
             filtered = self._filtered_calls_for(
                 func_node, language, file_calls, owned_func_nodes
             )
@@ -227,7 +222,7 @@ class CallerScan:
         # to that type's node. Attribute its body's calls to that method
         # node, not a phantom module-rooted qn, so the CALLS edges join to a
         # real node.
-        language_calls = host._calls_for(language)
+        language_calls = host.calls_for(language)
         if bound := language_calls.bound_method_caller(func_node, func_name, module_qn):
             caller_qn, container_qn = bound
             filtered = self._filtered_calls_for(
@@ -281,7 +276,7 @@ class CallerScan:
         all_call_nodes, call_starts = file_calls.call_nodes, file_calls.call_starts
         if all_call_nodes is None or call_starts is None:
             return None
-        language_calls = self._host._calls_for(language)
+        language_calls = self._host.calls_for(language)
         if language_calls.owns_nested_calls:
             return calls_owned_by(
                 func_node, owned_func_nodes, all_call_nodes, call_starts
@@ -310,7 +305,7 @@ class CallerScan:
             captures = sorted_captures(cursor, root_node)
             class_nodes = captures.get(cs.CAPTURE_CLASS, [])
 
-        language_calls = self._host._calls_for(language)
+        language_calls = self._host.calls_for(language)
         for class_node in class_nodes:
             class_name = language_calls.class_name(class_node)
             if not class_name:
@@ -363,7 +358,7 @@ class CallerScan:
             # emits as the phantom Outer.run).
             if not self._method_in_class_body(method_node, body_node, lang_config):
                 continue
-            method_name = host._calls_for(language).method_name(method_node, module_qn)
+            method_name = host.calls_for(language).method_name(method_node, module_qn)
             if not method_name:
                 continue
             # method_nodes includes functions nested inside methods. Build the
@@ -371,7 +366,7 @@ class CallerScan:
             # the method-dropping Class.nested) and label a nested function
             # FUNCTION, so the CALLS edge joins the real node.
             class_context = class_qn
-            if loc := host._recorded_caller(method_node, module_qn):
+            if loc := host.recorded_caller(method_node, module_qn):
                 # Reuse the definition pass's recorded qn/label; the class
                 # walk's structural derivation diverges from it on
                 # preprocessor-distorted C++ class bodies and on TS
@@ -431,7 +426,7 @@ class CallerScan:
         if path_parts:
             joined = cs.SEPARATOR_DOT.join([*path_parts, func_name])
             return f"{class_qn}{cs.SEPARATOR_DOT}{joined}", cs.NodeLabel.FUNCTION
-        member = self._host._calls_for(language).member_name(func_node, func_name)
+        member = self._host.calls_for(language).member_name(func_node, func_name)
         return f"{class_qn}{cs.SEPARATOR_DOT}{member}", cs.NodeLabel.METHOD
 
     @staticmethod
@@ -473,7 +468,7 @@ class CallerScan:
             # function's flat filter owns it.
             exclusion_nodes = (
                 self._attributable_func_nodes(sorted_func_nodes, language, module_qn)
-                if self._host._calls_for(language).anonymous_calls_reach_module
+                if self._host.calls_for(language).anonymous_calls_reach_module
                 else sorted_func_nodes
             )
             return top_level_calls(
@@ -522,7 +517,7 @@ class CallerScan:
             if name_node.text is None:
                 return None
             return name_node.text.decode(cs.ENCODING_UTF8)
-        return self._host._calls_for(lang_config.language).scope_name(function_node)
+        return self._host.calls_for(lang_config.language).scope_name(function_node)
 
     def _attributable_func_nodes(
         self, func_nodes: list[Node], language: cs.SupportedLanguage, module_qn: str
@@ -536,7 +531,7 @@ class CallerScan:
         # callback pattern). Returning only attributable nodes as the exclusion
         # set lets an anonymous arrow's calls bubble up to the nearest named
         # function/method, matching where the oracle attributes them.
-        return self._host._calls_for(language).attributable(func_nodes, module_qn)
+        return self._host.calls_for(language).attributable(func_nodes, module_qn)
 
     def _class_pass_owns(
         self, func_node: Node, lang_config: LanguageSpec, language: cs.SupportedLanguage
@@ -548,4 +543,4 @@ class CallerScan:
             return False
         if class_node.child_by_field_name(cs.FIELD_BODY) is None:
             return False
-        return bool(self._host._calls_for(language).class_name(class_node))
+        return bool(self._host.calls_for(language).class_name(class_node))

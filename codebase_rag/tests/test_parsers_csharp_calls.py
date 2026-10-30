@@ -62,7 +62,7 @@ _FILES = {
 @pytest.fixture
 def graph(temp_repo: Path, mock_ingestor: RecordingIngestor) -> RecordingIngestor:
     updater = index(temp_repo / "cp", mock_ingestor, _FILES)
-    strategy = updater.factory.call_processor._calls_for(cs.SupportedLanguage.CSHARP)
+    strategy = updater.factory.call_processor.calls_for(cs.SupportedLanguage.CSHARP)
     assert isinstance(strategy, CSharpCallResolution)
     return mock_ingestor
 

@@ -51,8 +51,8 @@ _FILES = {
 def graph(temp_repo: Path, mock_ingestor: RecordingIngestor) -> RecordingIngestor:
     updater = index(temp_repo / "cx", mock_ingestor, _FILES)
     processor = updater.factory.call_processor
-    assert isinstance(processor._calls_for(cs.SupportedLanguage.CPP), CppCallResolution)
-    assert isinstance(processor._calls_for(cs.SupportedLanguage.C), CCallResolution)
+    assert isinstance(processor.calls_for(cs.SupportedLanguage.CPP), CppCallResolution)
+    assert isinstance(processor.calls_for(cs.SupportedLanguage.C), CCallResolution)
     return mock_ingestor
 
 

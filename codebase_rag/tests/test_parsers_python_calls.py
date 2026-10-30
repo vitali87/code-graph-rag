@@ -67,7 +67,7 @@ _FILES = {
 def calls(temp_repo: Path, mock_ingestor: RecordingIngestor) -> set[tuple[str, str]]:
     updater = index(temp_repo / "pp", mock_ingestor, _FILES)
     assert isinstance(
-        updater.factory.call_processor._calls_for(_PY), PythonCallResolution
+        updater.factory.call_processor.calls_for(_PY), PythonCallResolution
     )
     return edges(mock_ingestor, cs.RelationshipType.CALLS)
 

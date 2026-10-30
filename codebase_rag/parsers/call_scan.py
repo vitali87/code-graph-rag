@@ -19,33 +19,24 @@ from tree_sitter import Node, QueryCursor
 from .. import constants as cs
 from .. import logs as ls
 from ..node_text import sorted_captures
-from ..types_defs import LanguageQueries, PropertyDict
+from ..types_defs import LanguageQueries
 from .call_binding import CallBinding
+from .call_host import CallStrategyHost
 from .call_resolver import CallResolver, Resolved
 from .callable_flow import CallableFlow
 from .cpp import calls as cpp_calls
-from .edge_site import EdgeSiteHost
+from .edge_site import EdgeWriterHost
 from .flow_access import FlowProcessor
 from .io_access import IOAccessProcessor
-from .language_calls import CallScan, LanguageCalls
+from .language_calls import CallScan
 from .rpc_exposure import GoRpcExposureProcessor
 from .scope_boundaries import flow_scope_boundaries
 
 
-class CallScanHost(EdgeSiteHost, Protocol):
+class CallScanHost(EdgeWriterHost, CallStrategyHost, Protocol):
     """What a caller's scan calls on the call pass that owns it: a
     language's call strategy, the resolver call that notes its verdict, the
     edge writer and the record of a failed caller."""
-
-    def _calls_for(self, language: str | None) -> LanguageCalls: ...
-
-    def _emit_rel(
-        self,
-        from_spec: tuple[str, str, str],
-        rel_type: str,
-        to_spec: tuple[str, str, str],
-        properties: PropertyDict | None = None,
-    ) -> None: ...
 
     def _resolve_noting(self, *args: Any, **kwargs: Any) -> Resolved | None: ...
 
@@ -103,7 +94,7 @@ class CallerCalls:
         local_var_types, span_bindings, cpp_spans = self._caller_local_types(
             caller_node, caller_qn, module_qn, language, class_context
         )
-        language_calls = self._host._calls_for(language)
+        language_calls = self._host.calls_for(language)
         language_calls.record_local_names(
             caller_node, caller_qn, caller_type, module_qn
         )
@@ -230,7 +221,7 @@ class CallerCalls:
     ]:
         """The caller's local types, its span-scoped bindings and its C++
         declaration windows."""
-        language_calls = self._host._calls_for(language)
+        language_calls = self._host.calls_for(language)
         if not language_calls.types_locals:
             return None, [], []
         try:
@@ -269,7 +260,7 @@ class CallerCalls:
     ) -> list[tuple[int, int, str, str]]:
         if local_var_types is None:
             return []
-        return self._host._calls_for(language).span_bindings(
+        return self._host.calls_for(language).span_bindings(
             caller_node, module_qn, class_context, local_var_types
         )
 
@@ -301,7 +292,7 @@ class CallerCalls:
         class_context: str | None,
         local_var_types: dict[str, str] | None,
     ) -> frozenset[str]:
-        ordered_params = self._host._calls_for(language).parameter_names(caller_node)
+        ordered_params = self._host.calls_for(language).parameter_names(caller_node)
         if ordered_params is None:
             return frozenset()
         self._flow.record_caller(
@@ -331,7 +322,7 @@ class CallerCalls:
         # a call, so callers that read a property but make no other call must
         # still reach this pass before the early return below.
         if prop_names := self._resolver.function_registry.property_names():
-            self._host._calls_for(language).ingest_property_reads(
+            self._host.calls_for(language).ingest_property_reads(
                 caller_node,
                 caller_spec,
                 caller_qn,
@@ -356,7 +347,7 @@ class CallerCalls:
         span_bindings: list[tuple[int, int, str, str]],
         caller_params: frozenset[str],
     ) -> CallScan:
-        calls = self._host._calls_for(language)
+        calls = self._host.calls_for(language)
         resolver = self._resolver
         resolve_func = self._host._resolve_noting
         builtins, operators = calls.binds_builtin_calls, calls.binds_operator_calls
@@ -390,6 +381,6 @@ class CallerCalls:
             resolve_func=resolve_func,
             resolve_builtin=resolve_builtin,
             resolve_cpp_op=resolve_cpp_op,
-            ensure_rel=self._host._emit_rel,
+            ensure_rel=self._host.emit_rel,
             arg_ref_rel=arg_ref_rel,
         )

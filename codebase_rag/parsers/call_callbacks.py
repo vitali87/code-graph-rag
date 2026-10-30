@@ -18,8 +18,9 @@ from tree_sitter import Node
 
 from .. import constants as cs
 from ..node_text import safe_decode_text
-from ..types_defs import FunctionLocation, FunctionRegistryTrieProtocol
+from ..types_defs import FunctionRegistryTrieProtocol
 from ..utils import qn_markers
+from .call_host import CallStrategyHost, RecordedCallerHost
 from .call_nodes import parse_call_arguments
 from .call_resolver import Resolved
 from .dart import calls as dart_calls
@@ -230,17 +231,11 @@ class RefEmitScope(NamedTuple):
     ensure_rel: Callable[..., None]
 
 
-class CallbackHost(EdgeSiteHost, Protocol):
+class CallbackHost(EdgeSiteHost, CallStrategyHost, RecordedCallerHost, Protocol):
     """What the callback edges call on the call pass that builds them: the
     call strategy of the language a value is written in, and where the
     definition pass recorded a function node. Beside the edge site, whose
     resolution a fan-out of one reference marks while it writes."""
-
-    def _calls_for(self, language: str | None) -> LanguageCalls: ...
-
-    def _recorded_caller(
-        self, func_node: Node, module_qn: str
-    ) -> FunctionLocation | None: ...
 
 
 class CallbackEdges:
@@ -274,7 +269,7 @@ class CallbackEdges:
         # every container peeled, so a walk that meets one again later knows
         # its values are already out.
         is_dart = language == cs.SupportedLanguage.DART
-        short_circuits = self._host._calls_for(language).short_circuit_values
+        short_circuits = self._host.calls_for(language).short_circuit_values
         out: list[Node] = []
         stack = [value]
         while stack:
@@ -335,7 +330,7 @@ class CallbackEdges:
                 arg_node, source_spec, ensure_rel, caller_qn, rel_type, module_qn
             )
             return
-        language_calls = self._host._calls_for(language)
+        language_calls = self._host.calls_for(language)
         if language_calls.emit_functor_callback(
             arg_node, source_spec, module_qn, local_var_types, ensure_rel
         ):
@@ -482,7 +477,7 @@ class CallbackEdges:
         # chosen (#1543). The resolver's single-target verdict would
         # otherwise let an exact floor keep every one of them.
         prev_resolution = host._resolution
-        language_calls = host._calls_for(language)
+        language_calls = host.calls_for(language)
         targets = registry.variants(res_qn)
         host._resolution = (
             cs.EdgeResolution.OVERLOAD if len(targets) > 1 else resolution
@@ -541,7 +536,7 @@ class CallbackEdges:
         self._host._site_node = arg_node
         if (
             module_qn is not None
-            and (loc := self._host._recorded_caller(arg_node, module_qn)) is not None
+            and (loc := self._host.recorded_caller(arg_node, module_qn)) is not None
         ):
             ensure_rel(
                 source_spec,

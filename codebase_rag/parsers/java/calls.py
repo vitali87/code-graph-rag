@@ -17,9 +17,10 @@ from typing import TYPE_CHECKING, Protocol
 from tree_sitter import Node
 
 from ... import constants as cs
-from ...types_defs import FunctionLocation, LanguageQueries, PropertyDict
+from ...types_defs import LanguageQueries
+from ..call_host import RecordedCallerHost, VerdictHost
 from ..class_ingest.identity import build_nested_qualified_name_for_class
-from ..edge_site import EdgeSiteHost, host_site_scoped
+from ..edge_site import EdgeWriterHost, host_site_scoped
 from ..language_calls import UNDECIDED_CALLEE, Callee, CallScan, LanguageCalls
 from ..utils import written_simple_name
 from . import utils as java_utils
@@ -31,32 +32,17 @@ if TYPE_CHECKING:
     from ..call_resolver import CallResolver
 
 
-class JavaCallHost(EdgeSiteHost, Protocol):
+class JavaCallHost(EdgeWriterHost, VerdictHost, RecordedCallerHost, Protocol):
     """What Java call resolution sets and calls on the call pass that builds
-    it. Beside the edge site, `_verdict`, how surely the call node being
-    scanned binds its callee, which a tie between overloads lowers to
-    `overload`; the record of a name no definition answers yet, which a
-    file added later may define; the construction a `Type::new` references,
-    as the pass constructs a `new`; and, for the constructors an enum
-    constant runs, the edge emitter, a definition's recorded location and
-    own name, and the caller scan, which gives a class's member the
+    it. Beside the edge site, the verdict, which a tie between overloads
+    lowers to `overload`; the record of a name no definition answers yet,
+    which a file added later may define; the construction a `Type::new`
+    references, as the pass constructs a `new`; and, for the constructors an
+    enum constant runs, the edge emitter, a definition's recorded location
+    and own name, and the caller scan, which gives a class's member the
     qualified name the class pass does."""
 
-    _verdict: str
-
     def _note_unresolved(self, module_qn: str, name: str) -> None: ...
-
-    def _emit_rel(
-        self,
-        from_spec: tuple[str, str, str],
-        rel_type: str,
-        to_spec: tuple[str, str, str],
-        properties: PropertyDict | None = None,
-    ) -> None: ...
-
-    def _recorded_caller(
-        self, func_node: Node, module_qn: str
-    ) -> FunctionLocation | None: ...
 
     def _get_node_name(self, node: Node, field: str = cs.FIELD_NAME) -> str | None: ...
 
@@ -180,7 +166,7 @@ class JavaCallResolution(LanguageCalls):
                 for target_label, target_qn in targets:
                     # A bare `NONE` has no argument list for the site to
                     # count, yet it is a zero-argument invocation all the same.
-                    host._emit_rel(
+                    host.emit_rel(
                         caller_spec,
                         cs.RelationshipType.CALLS,
                         (target_label, cs.KEY_QUALIFIED_NAME, target_qn),
@@ -195,7 +181,7 @@ class JavaCallResolution(LanguageCalls):
         queries: Mapping[cs.SupportedLanguage, LanguageQueries],
     ) -> tuple[str, str] | None:
         host = self._host
-        if loc := host._recorded_caller(ctor_node, module_qn):
+        if loc := host.recorded_caller(ctor_node, module_qn):
             return loc.label, loc.qualified_name
         # The class pass's own derivation, for a run that did not re-record
         # this file's definitions.
@@ -228,7 +214,7 @@ class JavaCallResolution(LanguageCalls):
         current = enum_node.parent
         while current is not None:
             if current.type in cs.JAVA_METHOD_NODE_TYPES:
-                if loc := self._host._recorded_caller(current, module_qn):
+                if loc := self._host.recorded_caller(current, module_qn):
                     return (loc.label, cs.KEY_QUALIFIED_NAME, loc.qualified_name)
                 break
             current = current.parent
@@ -320,7 +306,7 @@ class JavaCallResolution(LanguageCalls):
         )
         if not ties:
             return
-        self._host._verdict = cs.EdgeResolution.OVERLOAD
+        self._host.verdict = cs.EdgeResolution.OVERLOAD
         prev_resolution = self._host._resolution
         self._host._resolution = cs.EdgeResolution.OVERLOAD
         registry = self._resolver.function_registry
@@ -371,7 +357,7 @@ class JavaCallResolution(LanguageCalls):
             self._host._note_unresolved(ctx.module_qn, parts.method_name)
             return None
         self._host._resolution = (
-            cs.EdgeResolution.OVERLOAD if len(edges) > 1 else self._host._verdict
+            cs.EdgeResolution.OVERLOAD if len(edges) > 1 else self._host.verdict
         )
         for label, target_qn in edges:
             ensure_rel(

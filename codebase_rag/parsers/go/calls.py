@@ -16,12 +16,12 @@ from tree_sitter import Node
 
 from ... import constants as cs
 from ...node_text import decode_node_text, safe_decode_text
-from ...types_defs import LanguageQueries, PropertyDict
+from ...types_defs import LanguageQueries
 from ...utils import qn_markers
-from ..call_host import ValueReferenceHost, VerdictNotingHost
+from ..call_host import ValueReferenceHost, VerdictHost
 from ..callable_params import go_parameter_names
 from ..definition_facts import DefinitionFacts
-from ..edge_site import EdgeSiteHost, host_site_scoped
+from ..edge_site import EdgeWriterHost, host_site_scoped
 from ..language_calls import UNDECIDED_CALLEE, Callee, LanguageCalls
 from ..scope_boundaries import flow_scope_boundaries
 from . import utils as go_utils
@@ -31,24 +31,13 @@ if TYPE_CHECKING:
     from ..call_resolver import CallResolver
 
 
-class GoCallHost(EdgeSiteHost, ValueReferenceHost, VerdictNotingHost, Protocol):
+class GoCallHost(EdgeWriterHost, VerdictHost, ValueReferenceHost, Protocol):
     """What Go call resolution reads and sets on the call pass that builds it.
 
     Beside the edge site, which the fan-outs set per edge and put back as
-    the pass's own emitters do: `_verdict`, how surely the last resolve
-    bound its callee, which `_noted` notes and a chain root's binding is
-    judged by; the callee name the pass reads off a call node; and the
-    reference walkers Go shares with other languages."""
-
-    _verdict: str
-
-    def _emit_rel(
-        self,
-        from_spec: tuple[str, str, str],
-        rel_type: str,
-        to_spec: tuple[str, str, str],
-        properties: PropertyDict | None = None,
-    ) -> None: ...
+    the pass's own emitters do: the verdict, which `noted` notes and a chain
+    root's binding is judged by; the callee name the pass reads off a call
+    node; and the reference walkers Go shares with other languages."""
 
     def _get_call_target_name(
         self, call_node: Node, language: cs.SupportedLanguage | None = None
@@ -582,7 +571,7 @@ class GoCallResolution(LanguageCalls):
         ):
             callee_info = chained.callee
         elif callee_info is None:
-            callee_info = self._host._noted(
+            callee_info = self._host.noted(
                 self._resolver.resolve_function_call(
                     call_name,
                     module_qn,
@@ -687,7 +676,7 @@ class GoCallResolution(LanguageCalls):
         ):
             return None
         owned = root_callee[0] == cs.NodeLabel.FUNCTION
-        if self._host._verdict != cs.EdgeResolution.EXACT:
+        if self._host.verdict != cs.EdgeResolution.EXACT:
             return owned, None
         return owned, self._result_class(root_callee)
 
@@ -1058,7 +1047,7 @@ class GoCallResolution(LanguageCalls):
         # unless the type resolves to a registered first-party Class.
         host = self._host
         registry = self._resolver.function_registry
-        ensure_rel = host._emit_rel
+        ensure_rel = host.emit_rel
         stack: list[Node] = list(caller_node.children)
         while stack:
             node = stack.pop()
@@ -1242,7 +1231,7 @@ class GoCallResolution(LanguageCalls):
         # wraps the bare identifier one level down, so unwrap before resolving.
         host = self._host
         resolve_func = self._resolver.resolve_function_call
-        ensure_rel = host._emit_rel
+        ensure_rel = host.emit_rel
         stack: list[Node] = list(caller_node.children)
         while stack:
             node = host._site_node = stack.pop()

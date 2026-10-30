@@ -20,12 +20,12 @@ from tree_sitter import Node
 
 from ... import constants as cs
 from ...node_text import decode_node_text, safe_decode_text
-from ...types_defs import FunctionLocation, LanguageQueries, PropertyDict
+from ...types_defs import LanguageQueries
 from ...utils import qn_markers
-from ..call_host import CallbackEdgeHost, ResolvedCallHost
+from ..call_host import CallbackEdgeHost, RecordedCallerHost, ResolvedCallHost
 from ..callable_params import cpp_parameter_names
 from ..definition_facts import DefinitionFacts
-from ..edge_site import EdgeSiteHost, host_site_scoped
+from ..edge_site import EdgeWriterHost, host_site_scoped
 from ..language_calls import CallScan, LanguageCalls
 from ..scope_boundaries import flow_scope_boundaries
 from . import local_types as cpp_local_types
@@ -42,24 +42,14 @@ if TYPE_CHECKING:
     from ..call_resolver import CallResolver
 
 
-class CppCallHost(EdgeSiteHost, CallbackEdgeHost, ResolvedCallHost, Protocol):
+class CppCallHost(
+    EdgeWriterHost, RecordedCallerHost, CallbackEdgeHost, ResolvedCallHost, Protocol
+):
     """What C++ call resolution calls on the call pass that builds it: the
     edge emitter, the location the definition pass recorded for a function
     node, the binding, whose ingest of a call bound to its callee writes the
     edges every resolved call writes, and the callback edges a passed
     functor's reference goes through like any other callback's."""
-
-    def _emit_rel(
-        self,
-        from_spec: tuple[str, str, str],
-        rel_type: str,
-        to_spec: tuple[str, str, str],
-        properties: PropertyDict | None = None,
-    ) -> None: ...
-
-    def _recorded_caller(
-        self, func_node: Node, module_qn: str
-    ) -> FunctionLocation | None: ...
 
 
 class CppCallScan(Protocol):
@@ -261,7 +251,7 @@ class CppCallResolution(LanguageCalls):
         # passes never diverge.
         if (
             cpp_utils.is_macro_invocation_artifact(func_node)
-            and self._host._recorded_caller(func_node, module_qn) is None
+            and self._host.recorded_caller(func_node, module_qn) is None
         ):
             return None
         # C and C++ share the function_definition/declarator shape, so the
@@ -785,7 +775,7 @@ class CppCallResolution(LanguageCalls):
         if class_qn is None:
             return
         registry = self._resolver.function_registry
-        ensure_rel = self._host._emit_rel
+        ensure_rel = self._host.emit_rel
         # The return statement is the construction site (issue #1522).
         self._host._site_node = node
         for class_variant in registry.variants(class_qn):
@@ -919,7 +909,7 @@ class CppCallResolution(LanguageCalls):
         registry = self._resolver.function_registry
         for target_type, target_qn in sorted(targets):
             for variant in registry.variants(target_qn):
-                self._host._emit_rel(
+                self._host.emit_rel(
                     caller_spec,
                     cs.RelationshipType.CALLS,
                     (target_type, cs.KEY_QUALIFIED_NAME, variant),
@@ -993,7 +983,7 @@ class CppCallResolution(LanguageCalls):
             variant_type = registry.get(class_variant)
             if variant_type is not None and variant_type != cs.NodeLabel.CLASS:
                 continue
-            self._host._emit_rel(
+            self._host.emit_rel(
                 caller_spec,
                 cs.RelationshipType.INSTANTIATES,
                 (cs.NodeLabel.CLASS, cs.KEY_QUALIFIED_NAME, class_variant),
@@ -1025,24 +1015,11 @@ class CppCallResolution(LanguageCalls):
                     continue
                 emitted_target_qns.add(target_key)
                 for variant in registry.variants(target_qn):
-                    self._host._emit_rel(
+                    self._host.emit_rel(
                         caller_spec,
                         cs.RelationshipType.CALLS,
                         (target_type, cs.KEY_QUALIFIED_NAME, variant),
                     )
-
-
-class CCallHost(EdgeSiteHost, Protocol):
-    """What C's function-value references call on the call pass that builds
-    them: the edge emitter."""
-
-    def _emit_rel(
-        self,
-        from_spec: tuple[str, str, str],
-        rel_type: str,
-        to_spec: tuple[str, str, str],
-        properties: PropertyDict | None = None,
-    ) -> None: ...
 
 
 class CCallResolution(LanguageCalls):
@@ -1065,7 +1042,7 @@ class CCallResolution(LanguageCalls):
 
     def __init__(
         self,
-        host: CCallHost,
+        host: EdgeWriterHost,
         resolver: CallResolver,
         module_qn_to_file_path: dict[str, Path],
     ) -> None:
@@ -1166,7 +1143,7 @@ class CCallResolution(LanguageCalls):
             self._host._site_node = ident
             self._host._resolution = resolution
             for target_qn in targets:
-                self._host._emit_rel(
+                self._host.emit_rel(
                     caller_spec,
                     cs.RelationshipType.REFERENCES,
                     (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, target_qn),

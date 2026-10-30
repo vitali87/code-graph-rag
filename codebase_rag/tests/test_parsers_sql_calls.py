@@ -32,7 +32,7 @@ _SCHEMA = (
 @pytest.fixture
 def graph(temp_repo: Path, mock_ingestor: RecordingIngestor) -> RecordingIngestor:
     updater = index(temp_repo / "sq", mock_ingestor, {"db.sql": _SCHEMA})
-    strategy = updater.factory.call_processor._calls_for(cs.SupportedLanguage.SQL)
+    strategy = updater.factory.call_processor.calls_for(cs.SupportedLanguage.SQL)
     assert isinstance(strategy, SqlCallResolution)
     return mock_ingestor
 
@@ -67,7 +67,7 @@ def test_routines_and_invocations_are_named_by_their_object_reference(
     temp_repo: Path, mock_ingestor: RecordingIngestor
 ) -> None:
     updater = index(temp_repo / "sq", mock_ingestor, {"db.sql": "SELECT 1;\n"})
-    strategy = updater.factory.call_processor._calls_for(cs.SupportedLanguage.SQL)
+    strategy = updater.factory.call_processor.calls_for(cs.SupportedLanguage.SQL)
     root = parse(
         cs.SupportedLanguage.SQL,
         "CREATE FUNCTION Api.Get(x integer) RETURNS integer LANGUAGE sql "

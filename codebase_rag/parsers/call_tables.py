@@ -17,7 +17,6 @@ from tree_sitter import Node
 
 from .. import constants as cs
 from ..node_text import safe_decode_text
-from ..types_defs import PropertyDict
 from .call_callbacks import (
     FLOW_ARG_REF_TYPES,
     PY_SEQUENCE_LITERAL_TYPES,
@@ -25,11 +24,11 @@ from .call_callbacks import (
     RefEmitScope,
     scoped_candidates,
 )
+from .call_host import CallStrategyHost
 from .call_resolver import CallResolver
-from .edge_site import EdgeSiteHost, host_site_scoped
+from .edge_site import EdgeWriterHost, host_site_scoped
 from .js_ts import bindings as js_bindings
 from .js_ts import calls as js_calls
-from .language_calls import LanguageCalls
 
 # Dispatch-table literals whose values may name handler functions: Python dict
 # and JS/TS object (key/value pairs), Python list/set/tuple and JS/TS array
@@ -45,20 +44,10 @@ class UnownedScopes(Protocol):
     def is_unowned_scope(self, node: Node, module_qn: str) -> bool: ...
 
 
-class ReferenceHost(EdgeSiteHost, Protocol):
+class ReferenceHost(EdgeWriterHost, CallStrategyHost, Protocol):
     """What the reference walkers call on the call pass that builds them: the
     edge writer, and the call strategy of the language a scope is written in.
     Beside the edge site, which each walk sets to the node it visits."""
-
-    def _emit_rel(
-        self,
-        from_spec: tuple[str, str, str],
-        rel_type: str,
-        to_spec: tuple[str, str, str],
-        properties: PropertyDict | None = None,
-    ) -> None: ...
-
-    def _calls_for(self, language: str | None) -> LanguageCalls: ...
 
 
 class TableReferences:
@@ -106,7 +95,7 @@ class TableReferences:
         # getter descriptor) must be scanned here too or the callbacks inside are
         # orphaned and report as dead.
         resolve_func = self._resolver.resolve_function_call
-        ensure_rel = self._host._emit_rel
+        ensure_rel = self._host.emit_rel
         scope = RefEmitScope(
             caller_spec,
             module_qn,

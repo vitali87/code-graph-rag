@@ -14,20 +14,18 @@ the call node being scanned."""
 from typing import Protocol
 
 from .. import constants as cs
+from .call_host import VerdictHost
 from .call_resolver import CallResolver
 from .definition_facts import DefinitionFacts
 from .edge_site import EdgeSiteHost
 from .language_calls import CallScan
 
 
-class ConstructionHost(EdgeSiteHost, Protocol):
-    """What the construction path reads on the call pass that builds it:
-    `_verdict`, how surely the call node being scanned binds its class,
-    which a construction with one target carries. Beside the edge site,
-    whose resolution a construction with several targets marks
+class ConstructionHost(EdgeSiteHost, VerdictHost, Protocol):
+    """What the construction path reads on the call pass that builds it: the
+    verdict, which a construction with one target carries. Beside the edge
+    site, whose resolution a construction with several targets marks
     overloaded."""
-
-    _verdict: str
 
 
 class CallConstruction:
@@ -70,7 +68,7 @@ class CallConstruction:
                 and variant not in self._facts.macro_qns
             ]
         host._resolution = (
-            cs.EdgeResolution.OVERLOAD if len(class_variants) > 1 else host._verdict
+            cs.EdgeResolution.OVERLOAD if len(class_variants) > 1 else host.verdict
         )
         for class_variant in class_variants:
             # A duplicate-suffixed variant may be a DIFFERENT kind
@@ -135,7 +133,7 @@ class CallConstruction:
         # FILTERED target set (#1882).
         if fn_variants:
             host._resolution = (
-                cs.EdgeResolution.OVERLOAD if len(fn_variants) > 1 else host._verdict
+                cs.EdgeResolution.OVERLOAD if len(fn_variants) > 1 else host.verdict
             )
             for node_type, variant in sorted(fn_variants):
                 ctx.ensure_rel(
@@ -152,7 +150,7 @@ class CallConstruction:
             for variant in registry.variants(ctor_qn)
         ]
         host._resolution = (
-            cs.EdgeResolution.OVERLOAD if len(ctor_edges) > 1 else host._verdict
+            cs.EdgeResolution.OVERLOAD if len(ctor_edges) > 1 else host.verdict
         )
         for ctor_type, variant in ctor_edges:
             ctx.ensure_rel(

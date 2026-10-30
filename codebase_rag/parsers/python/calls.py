@@ -21,12 +21,17 @@ from tree_sitter import Node
 from ... import constants as cs
 from ...language_spec import LanguageSpec
 from ...node_text import safe_decode_text
-from ...types_defs import FunctionLocation, LanguageQueries, PropertyDict
-from ..call_host import CallbackEdgeHost, ValueReferenceHost, VerdictNotingHost
+from ...types_defs import LanguageQueries
+from ..call_host import (
+    CallbackEdgeHost,
+    RecordedCallerHost,
+    ValueReferenceHost,
+    VerdictHost,
+)
 from ..call_nodes import call_target_name, parse_call_arguments
 from ..call_resolver import PY_EXTERNAL_TARGET
 from ..callable_params import python_parameter_names
-from ..edge_site import EdgeSiteHost, host_site_scoped
+from ..edge_site import EdgeWriterHost, host_site_scoped
 from ..js_ts import calls as js_calls
 from ..language_calls import UNDECIDED_CALLEE, Callee, LanguageCalls
 from ..scope_boundaries import PY_SCOPE_BOUNDARY_TYPES, flow_scope_boundaries
@@ -38,30 +43,19 @@ if TYPE_CHECKING:
 
 
 class PythonCallHost(
-    EdgeSiteHost, ValueReferenceHost, CallbackEdgeHost, VerdictNotingHost, Protocol
+    EdgeWriterHost,
+    VerdictHost,
+    RecordedCallerHost,
+    ValueReferenceHost,
+    CallbackEdgeHost,
+    Protocol,
 ):
     """What Python call resolution calls on the call pass that builds it: the
-    edge emitter, the note of how surely a name-based resolve binds the call
-    node being scanned, a function node's recorded location, and the
-    reference walkers and callback edges Python shares with other languages,
-    through which a function passed to a higher-order builtin gets its edge
-    like any other callback. Beside the edge site, `_verdict`, how surely
-    the call node being scanned binds its callee, which a single Protocol
-    conformer's edge carries."""
-
-    _verdict: str
-
-    def _emit_rel(
-        self,
-        from_spec: tuple[str, str, str],
-        rel_type: str,
-        to_spec: tuple[str, str, str],
-        properties: PropertyDict | None = None,
-    ) -> None: ...
-
-    def _recorded_caller(
-        self, func_node: Node, module_qn: str
-    ) -> FunctionLocation | None: ...
+    edge emitter, the verdict a name-based resolve notes for the call node
+    being scanned and a single Protocol conformer's edge carries, a function
+    node's recorded location, and the reference walkers and callback edges
+    Python shares with other languages, through which a function passed to
+    a higher-order builtin gets its edge like any other callback."""
 
 
 class PythonCallScan(Protocol):
@@ -423,7 +417,7 @@ class PythonCallResolution(LanguageCalls):
                 continue
             caller_spec, caller_qn = module_spec, None
             if (enclosing := _enclosing_function(parent)) is not None:
-                if (loc := self._host._recorded_caller(enclosing, module_qn)) is None:
+                if (loc := self._host.recorded_caller(enclosing, module_qn)) is None:
                     continue
                 caller_qn = loc.qualified_name
                 caller_spec = (loc.label, cs.KEY_QUALIFIED_NAME, caller_qn)
@@ -489,7 +483,7 @@ class PythonCallResolution(LanguageCalls):
                     case cs.NodeLabel.FUNCTION | cs.NodeLabel.METHOD as kind:
                         targets.append((kind, variant))
                     case cs.NodeLabel.CLASS:
-                        # `_emit_rel` writes a CALLS to a Class as INSTANTIATES.
+                        # `emit_rel` writes a CALLS to a Class as INSTANTIATES.
                         targets.append((cs.NodeLabel.CLASS, variant))
                         init_qn = f"{variant}{cs.SEPARATOR_DOT}{cs.PY_METHOD_INIT}"
                         if init_qn in registry:
@@ -497,7 +491,7 @@ class PythonCallResolution(LanguageCalls):
                     case None if callee_type != cs.NodeLabel.CLASS:
                         targets.append((callee_type, variant))
                 for label, target_qn in targets:
-                    self._host._emit_rel(
+                    self._host.emit_rel(
                         caller_spec,
                         cs.RelationshipType.CALLS,
                         (label, cs.KEY_QUALIFIED_NAME, target_qn),
@@ -549,10 +543,10 @@ class PythonCallResolution(LanguageCalls):
             if scope is None:
                 continue
             for site, method in references:
-                if (target := self._host._recorded_caller(method, module_qn)) is None:
+                if (target := self._host.recorded_caller(method, module_qn)) is None:
                     continue
                 self._host._site_node = site
-                self._host._emit_rel(
+                self._host.emit_rel(
                     scope,
                     cs.RelationshipType.REFERENCES,
                     (target.label, cs.KEY_QUALIFIED_NAME, target.qualified_name),
@@ -567,7 +561,7 @@ class PythonCallResolution(LanguageCalls):
         ancestor = class_node.parent
         while ancestor is not None:
             if ancestor.type == cs.TS_PY_FUNCTION_DEFINITION:
-                owner = self._host._recorded_caller(ancestor, module_qn)
+                owner = self._host.recorded_caller(ancestor, module_qn)
                 if owner is None:
                     return None
                 return (owner.label, cs.KEY_QUALIFIED_NAME, owner.qualified_name)
@@ -783,7 +777,7 @@ class PythonCallResolution(LanguageCalls):
         if callee_info == PY_EXTERNAL_TARGET:
             callee_info = None
         elif callee_info is None:
-            callee_info = self._host._noted(
+            callee_info = self._host.noted(
                 self._resolver.resolve_function_call(
                     call_name,
                     ctx.module_qn,
@@ -862,7 +856,7 @@ class PythonCallResolution(LanguageCalls):
         # a fan-out like any other same-named candidate set (issue #1526):
         # renaming one conformer must not rewrite the shared call site.
         self._host._resolution = (
-            cs.EdgeResolution.OVERLOAD if len(edges) > 1 else self._host._verdict
+            cs.EdgeResolution.OVERLOAD if len(edges) > 1 else self._host.verdict
         )
         for conformer_type, target_qn in edges:
             ensure_rel(
@@ -1066,7 +1060,7 @@ class PythonCallResolution(LanguageCalls):
             return False
         for callee_type, callee_qn in targets:
             for target_qn in self._resolver.function_registry.variants(callee_qn):
-                self._host._emit_rel(
+                self._host.emit_rel(
                     caller_spec,
                     cs.RelationshipType.CALLS,
                     (callee_type, cs.KEY_QUALIFIED_NAME, target_qn),
@@ -1104,7 +1098,7 @@ class PythonCallResolution(LanguageCalls):
             )
             for method in methods:
                 for variant in self._resolver.function_registry.variants(method):
-                    self._host._emit_rel(
+                    self._host.emit_rel(
                         caller_spec,
                         cs.RelationshipType.CALLS,
                         (callee_type, cs.KEY_QUALIFIED_NAME, variant),
@@ -1367,7 +1361,7 @@ class PythonCallResolution(LanguageCalls):
             ):
                 seen.add(callee_qn)
                 for target_qn in registry.variants(callee_qn):
-                    self._host._emit_rel(
+                    self._host.emit_rel(
                         caller_spec,
                         cs.RelationshipType.CALLS,
                         (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, target_qn),

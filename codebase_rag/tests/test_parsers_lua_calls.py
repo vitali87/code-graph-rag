@@ -29,7 +29,7 @@ def test_each_function_values_calls_belong_to_its_registered_node(
     temp_repo: Path, mock_ingestor: RecordingIngestor
 ) -> None:
     updater = index(temp_repo / "lp", mock_ingestor, {"main.lua": _MAIN})
-    strategy = updater.factory.call_processor._calls_for(cs.SupportedLanguage.LUA)
+    strategy = updater.factory.call_processor.calls_for(cs.SupportedLanguage.LUA)
     assert isinstance(strategy, LuaCallResolution)
     callers = {
         source

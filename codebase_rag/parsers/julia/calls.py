@@ -9,23 +9,12 @@ and hands Julia's part to the `JuliaCallResolution` it builds."""
 
 from __future__ import annotations
 
-from typing import Protocol
-
 from tree_sitter import Node
 
 from ... import constants as cs
-from ...types_defs import FunctionLocation
+from ..call_host import RecordedCallerHost
 from ..language_calls import CallName, LanguageCalls
 from . import utils as julia_utils
-
-
-class JuliaCallHost(Protocol):
-    """What Julia's caller naming reads on the call pass that builds it: the
-    location the definition pass recorded for a function node."""
-
-    def _recorded_caller(
-        self, func_node: Node, module_qn: str
-    ) -> FunctionLocation | None: ...
 
 
 class JuliaCallResolution(LanguageCalls):
@@ -42,7 +31,7 @@ class JuliaCallResolution(LanguageCalls):
     separate_macro_namespace = True
     functions_shadow_types = True
 
-    def __init__(self, host: JuliaCallHost) -> None:
+    def __init__(self, host: RecordedCallerHost) -> None:
         self._host = host
 
     def caller_name(self, func_node: Node, module_qn: str) -> str | None:
@@ -84,7 +73,7 @@ class JuliaCallResolution(LanguageCalls):
         if name:
             return name
         if (
-            recorded := self._host._recorded_caller(func_node, module_qn)
+            recorded := self._host.recorded_caller(func_node, module_qn)
         ) is not None and recorded.is_named:
             return recorded.qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
         return None

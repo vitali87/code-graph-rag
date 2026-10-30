@@ -23,11 +23,16 @@ from tree_sitter import Node
 from ... import constants as cs
 from ...language_spec import LanguageSpec
 from ...node_text import decode_node_text, safe_decode_text
-from ...types_defs import FunctionLocation, LanguageQueries, PropertyDict
-from ..call_host import CallbackEdgeHost, ValueReferenceHost
+from ...types_defs import FunctionLocation, LanguageQueries
+from ..call_host import (
+    CallbackEdgeHost,
+    RecordedCallerHost,
+    ValueReferenceHost,
+    VerdictHost,
+)
 from ..callable_params import js_ts_parameter_names
 from ..definition_docstring import extract_definition_docstring
-from ..edge_site import EdgeSiteHost, host_site_scoped
+from ..edge_site import EdgeWriterHost, host_site_scoped
 from ..field_nodes import declared_fields
 from ..language_calls import UNDECIDED_NAME, CallName, CallScan, LanguageCalls
 from ..scope_boundaries import flow_scope_boundaries
@@ -39,30 +44,22 @@ if TYPE_CHECKING:
     from ..call_resolver import CallResolver
 
 
-class JsTsCallHost(EdgeSiteHost, ValueReferenceHost, CallbackEdgeHost, Protocol):
+class JsTsCallHost(
+    EdgeWriterHost,
+    VerdictHost,
+    RecordedCallerHost,
+    ValueReferenceHost,
+    CallbackEdgeHost,
+    Protocol,
+):
     """What JS/TS call resolution reads and calls on the call pass that builds
     it: the edge emitter, a function node's own name and the location the
     definition pass recorded for it, the callee name a `function` field
     spells, the reference walkers and callback edges JS/TS shares with other
-    languages, and `_verdict`, how surely the call node being scanned binds
-    its callee, which a member pick its receiver's declared type confirms
-    raises to exact."""
-
-    _verdict: str
-
-    def _emit_rel(
-        self,
-        from_spec: tuple[str, str, str],
-        rel_type: str,
-        to_spec: tuple[str, str, str],
-        properties: PropertyDict | None = None,
-    ) -> None: ...
+    languages, and the verdict, which a member pick its receiver's declared
+    type confirms raises to exact."""
 
     def _get_node_name(self, node: Node, field: str = cs.FIELD_NAME) -> str | None: ...
-
-    def _recorded_caller(
-        self, func_node: Node, module_qn: str
-    ) -> FunctionLocation | None: ...
 
     def _function_field_call_name(
         self, func_child: Node, calls: LanguageCalls
@@ -817,7 +814,7 @@ class JsTsCallResolution(LanguageCalls):
         # branch of the caller pass reuses the registered qn). A GENERATED
         # record (anonymous callback, IIFE) keeps the historical
         # bubble-to-module attribution.
-        recorded = self._host._recorded_caller(func_node, module_qn)
+        recorded = self._host.recorded_caller(func_node, module_qn)
         if recorded is not None and recorded.is_named:
             return recorded.qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
         return None
@@ -842,7 +839,7 @@ class JsTsCallResolution(LanguageCalls):
             if self._host._get_node_name(n)
             or js_ts_utils.arrow_binding_name(n)
             or (
-                (recorded := self._host._recorded_caller(n, module_qn)) is not None
+                (recorded := self._host.recorded_caller(n, module_qn)) is not None
                 and recorded.is_named
             )
         ]
@@ -1125,7 +1122,7 @@ class JsTsCallResolution(LanguageCalls):
         # only by span.
         if other_peels == 0 and paren_peels <= 1 and not iife_callee_name(target):
             return None
-        return self._host._recorded_caller(target, module_qn)
+        return self._host.recorded_caller(target, module_qn)
 
     def _branch_callee_functions(
         self, call_node: Node, module_qn: str
@@ -1151,7 +1148,7 @@ class JsTsCallResolution(LanguageCalls):
                     cs.TS_GENERATOR_FUNCTION,
                     cs.TS_ARROW_FUNCTION,
                 )
-                and (loc := self._host._recorded_caller(node, module_qn)) is not None
+                and (loc := self._host.recorded_caller(node, module_qn)) is not None
             ):
                 locations.append(loc)
             elif _branch_operands(node, stack):
@@ -1243,7 +1240,7 @@ class JsTsCallResolution(LanguageCalls):
         # not define (`Map`, a library class, `any`) cannot be that class, so
         # there is no edge, as for a local `new Map()`. Anything else stays
         # the heuristic it is.
-        if self._host._verdict != cs.EdgeResolution.HEURISTIC:
+        if self._host.verdict != cs.EdgeResolution.HEURISTIC:
             return callee_info
         func = call_node.child_by_field_name(cs.FIELD_FUNCTION)
         if func is not None and func.type in cs.TS_JS_PREFIXED_CALLEES:
@@ -1262,7 +1259,7 @@ class JsTsCallResolution(LanguageCalls):
         if owner_qn in self._resolver._mro(
             self._resolver._follow_reexports(declared.qn)
         ):
-            self._host._verdict = cs.EdgeResolution.EXACT
+            self._host.verdict = cs.EdgeResolution.EXACT
         return callee_info
 
     def _receiver_declaration(
@@ -1690,7 +1687,7 @@ class JsTsCallResolution(LanguageCalls):
                 for target_qn in registry.variants(res_qn):
                     if target_qn != caller_qn and target_qn not in seen:
                         seen.add(target_qn)
-                        self._host._emit_rel(
+                        self._host.emit_rel(
                             caller_spec,
                             cs.RelationshipType.REFERENCES,
                             (res_label, cs.KEY_QUALIFIED_NAME, target_qn),
@@ -1737,7 +1734,7 @@ class JsTsCallResolution(LanguageCalls):
             cs.TS_GENERATOR_FUNCTION,
         ):
             return True
-        recorded = self._host._recorded_caller(node, module_qn)
+        recorded = self._host.recorded_caller(node, module_qn)
         return recorded is None or not recorded.is_named
 
     def reset_run_state(self) -> None:
@@ -2290,4 +2287,4 @@ class JsTsCallResolution(LanguageCalls):
         fn_node, _container = relevant[0]
         if fn_node is None:
             return None
-        return self._host._recorded_caller(fn_node, module_qn)
+        return self._host.recorded_caller(fn_node, module_qn)

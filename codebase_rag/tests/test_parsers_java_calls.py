@@ -47,7 +47,7 @@ _RUN = f"{_SRC}.Use.Use.run(List<String>,Thing)"
 @pytest.fixture
 def graph(temp_repo: Path, mock_ingestor: RecordingIngestor) -> RecordingIngestor:
     updater = index(temp_repo / "jp", mock_ingestor, _FILES)
-    strategy = updater.factory.call_processor._calls_for(cs.SupportedLanguage.JAVA)
+    strategy = updater.factory.call_processor.calls_for(cs.SupportedLanguage.JAVA)
     assert isinstance(strategy, JavaCallResolution)
     return mock_ingestor
 

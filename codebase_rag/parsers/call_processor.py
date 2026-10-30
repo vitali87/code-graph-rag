@@ -8,8 +8,8 @@ local types, the side passes that read it (I/O, RPC exposure, data flow),
 the callable parameters it records, the references its language writes, and
 the `CallScan` every one of its call nodes is bound with by the
 `CallBinding`. It owns the edge site and the resolution each edge carries,
-and writes every edge (`_emit_rel`). A language's share of the pass is the
-`LanguageCalls` strategy its package builds, looked up by `_calls_for`; what
+and writes every edge (`emit_rel`). A language's share of the pass is the
+`LanguageCalls` strategy its package builds, looked up by `calls_for`; what
 languages share is in the collaborators beside this module: the reference
 walkers (`call_references`, and `call_tables` for the functions a literal
 holds), the callback edges they write through (`call_callbacks`),
@@ -122,7 +122,7 @@ class CallProcessor:
         "_note_unresolved",
         "_site_node",
         "_resolution",
-        "_verdict",
+        "verdict",
         "_site_cache",
         "repo_path",
         "project_name",
@@ -187,7 +187,7 @@ class CallProcessor:
         # #1526): noted where the scan resolves it, adjusted by the judgments
         # that follow, and read when its edges are emitted. The passes over
         # its arguments resolve their own references and keep their own.
-        self._verdict: str = cs.EdgeResolution.EXACT
+        self.verdict: str = cs.EdgeResolution.EXACT
         # Keyed by the node OBJECT, not Node.id: tree-sitter recycles ids
         # across trees, and holding the node keeps its id from being reused.
         self._site_cache: tuple[Node, PropertyDict] | None = None
@@ -328,12 +328,12 @@ class CallProcessor:
             cs.SupportedLanguage.JULIA: self._julia,
         }
 
-    def _calls_for(self, language: str | None) -> LanguageCalls:
+    def calls_for(self, language: str | None) -> LanguageCalls:
         if language is None:
             return self._default_calls
         return self._language_calls.get(language, self._default_calls)
 
-    def _emit_rel(
+    def emit_rel(
         self,
         from_spec: tuple[str, str, str],
         rel_type: str,
@@ -413,7 +413,7 @@ class CallProcessor:
         # (keyword name or positional index) and resolved by
         # finalize_field_bindings after every file's ctor metadata (param
         # order + param->attribute renames) is collected.
-        calls = self._calls_for(language)
+        calls = self.calls_for(language)
         if not calls.binds_callable_fields:
             return
         try:
@@ -502,7 +502,7 @@ class CallProcessor:
             # entries reachable; scan before the no-calls early return so a file
             # that only defines functions and a table is still covered. Runs for
             # every flow language with an object/array/dict literal form.
-            calls = self._calls_for(language)
+            calls = self.calls_for(language)
             calls.ingest_module_references(
                 root_node,
                 module_qn,
@@ -546,7 +546,7 @@ class CallProcessor:
             if module_qn is not None:
                 self._js.forget_file_bindings(module_qn)
 
-    def _recorded_caller(
+    def recorded_caller(
         self, func_node: Node, module_qn: str
     ) -> FunctionLocation | None:
         # The registry membership check guards incremental runs, where an
@@ -594,15 +594,15 @@ class CallProcessor:
             rel_path = cached_relative_path(path, self.repo_path).as_posix()
         logger.error(message, caller=caller, path=rel_path, error=error)
 
-    def _noted[R: tuple[str, str] | None](self, resolved: R) -> R:
+    def noted[R: tuple[str, str] | None](self, resolved: R) -> R:
         """`resolved`, with its verdict noted as the call node's."""
-        self._verdict = verdict_of(resolved)
+        self.verdict = verdict_of(resolved)
         return resolved
 
     def _resolve_noting(self, *args: Any, **kwargs: Any) -> Resolved | None:
         """The resolver's answer for the call node being scanned, its verdict
         noted for the edge the scan emits."""
-        return self._noted(self._resolver.resolve_function_call(*args, **kwargs))
+        return self.noted(self._resolver.resolve_function_call(*args, **kwargs))
 
     def _link_sql_routine(
         self,
@@ -636,7 +636,7 @@ class CallProcessor:
             # One routine with overloads the call site's types would choose.
             self._resolution = cs.EdgeResolution.OVERLOAD
         for target_qn in targets:
-            self._emit_rel(
+            self.emit_rel(
                 caller_spec,
                 cs.RelationshipType.CALLS,
                 (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, target_qn),
@@ -686,7 +686,7 @@ class CallProcessor:
     ) -> None:
         # Pre-pass for symbol-keyed member dispatch (issue #989), one walk
         # per JS/TS file.
-        calls = self._calls_for(language)
+        calls = self.calls_for(language)
         if not calls.keys_members_by_symbol:
             return
         try:
@@ -719,7 +719,7 @@ class CallProcessor:
     def _get_call_target_name(
         self, call_node: Node, language: cs.SupportedLanguage | None = None
     ) -> str | None:
-        return call_target_name(call_node, self._calls_for(language))
+        return call_target_name(call_node, self.calls_for(language))
 
     @staticmethod
     def _function_field_call_name(func_child: Node, calls: LanguageCalls) -> str | None:

@@ -42,7 +42,7 @@ _FILES = {
 
 def _indexed(temp_repo: Path, mock_ingestor: RecordingIngestor) -> RecordingIngestor:
     updater = index(temp_repo / "proj", mock_ingestor, _FILES)
-    calls = updater.factory.call_processor._calls_for(_PHP)
+    calls = updater.factory.call_processor.calls_for(_PHP)
     assert isinstance(calls, PhpCallResolution)
     return mock_ingestor
 
@@ -93,7 +93,7 @@ def test_new_is_named_by_the_classs_simple_name(
     temp_repo: Path, mock_ingestor: RecordingIngestor
 ) -> None:
     updater = index(temp_repo / "proj", mock_ingestor, {"src/a.php": "<?php\n"})
-    calls = updater.factory.call_processor._calls_for(_PHP)
+    calls = updater.factory.call_processor.calls_for(_PHP)
     root = parse(_PHP, "<?php\n$b = new \\App\\Models\\Box();\n$c = new Lid;\nf();\n")
     creations = [
         calls.node_call_name(node)

@@ -1,21 +1,29 @@
-"""What several languages' call collaborators reach on the call pass that
+"""What the call pass's collaborators reach on the `CallProcessor` that
 builds them, declared once for their host Protocols to take.
 
-`CallProcessor` holds the collaborators every language shares as its own
-attributes, and a language's collaborator calls their methods directly: the
-reference walkers (`references`) and the dispatch-table walk (`tables`),
-which still give a function used as a value rather than called (stored by
-an assignment, handed back by a return, held in a collection literal or a
+The processor looks a file's language up to its call strategy
+(`calls_for`), knows where the definition pass recorded each function node
+(`recorded_caller`), and notes how surely a resolver answer binds the call
+node being scanned (`noted`), the verdict that node's edges carry. It holds
+the collaborators every language shares as its own attributes, and a
+language's collaborator calls their methods directly: the reference
+walkers (`references`) and the dispatch-table walk (`tables`), which still
+give a function used as a value rather than called (stored by an
+assignment, handed back by a return, held in a collection literal or a
 parameter default) its edge; the callback edges (`callbacks`) a function
 handed over as a value writes; and the binding (`binding`) whose ingest of
-a bound call writes the edges every resolved call writes. The processor
-also notes how surely a resolver answer binds the call node being scanned,
-the verdict that node's edge carries. A collaborator's host Protocol takes
-the members it uses from here rather than spelling them out again."""
+a bound call writes the edges every resolved call writes. A collaborator's
+host Protocol takes the members it uses from here, and the edge writer from
+`edge_site`, rather than spelling them out again."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol
+
+from tree_sitter import Node
+
+from ..types_defs import FunctionLocation
+from .language_calls import LanguageCalls
 
 if TYPE_CHECKING:
     from .call_binding import CallBinding
@@ -24,11 +32,31 @@ if TYPE_CHECKING:
     from .call_tables import TableReferences
 
 
-class VerdictNotingHost(Protocol):
-    """The note of how surely a resolver answer binds the call node being
-    scanned."""
+class CallStrategyHost(Protocol):
+    """The call strategy of the language a node is written in; the base,
+    which adds nothing, for a language with none or no language at all."""
 
-    def _noted[R: tuple[str, str] | None](self, resolved: R) -> R: ...
+    def calls_for(self, language: str | None) -> LanguageCalls: ...
+
+
+class RecordedCallerHost(Protocol):
+    """Where the definition pass recorded a function node, for a caller the
+    registry still holds."""
+
+    def recorded_caller(
+        self, func_node: Node, module_qn: str
+    ) -> FunctionLocation | None: ...
+
+
+class VerdictHost(Protocol):
+    """How surely the call node being scanned binds its callee (issue
+    #1526), and the note that sets it from a resolver answer. Reset per
+    call node and read when its edges are emitted; the judgments that follow
+    a resolve raise or lower it."""
+
+    verdict: str
+
+    def noted[R: tuple[str, str] | None](self, resolved: R) -> R: ...
 
 
 class ValueReferenceHost(Protocol):

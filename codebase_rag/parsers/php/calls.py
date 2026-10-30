@@ -16,19 +16,13 @@ from tree_sitter import Node
 from ... import constants as cs
 from ...language_spec import LANGUAGE_FQN_SPECS
 from ...utils.fqn_resolver import scoped_name_parts
+from ..call_host import VerdictHost
 from ..language_calls import UNDECIDED_CALLEE, Callee, LanguageCalls
 from . import class_names
 from . import utils as php_utils
 
 if TYPE_CHECKING:
     from ..call_resolver import CallResolver
-
-
-class PhpCallHost(Protocol):
-    """What PHP call resolution calls on the call pass that builds it: the
-    note of how surely a resolver answer binds the call node being scanned."""
-
-    def _noted[R: tuple[str, str] | None](self, resolved: R) -> R: ...
 
 
 class PhpCallScan(Protocol):
@@ -65,7 +59,7 @@ class PhpCallResolution(LanguageCalls):
 
     inherits_constructors = True
 
-    def __init__(self, host: PhpCallHost, resolver: CallResolver) -> None:
+    def __init__(self, host: VerdictHost, resolver: CallResolver) -> None:
         self._host = host
         self._resolver = resolver
 
@@ -116,7 +110,7 @@ class PhpCallResolution(LanguageCalls):
         path = class_names.new_expression_class_path(call_node)
         if not path:
             return None
-        return self._host._noted(
+        return self._host.noted(
             self._resolver.resolve_php_class_path(path, ctx.module_qn)
         )
 
@@ -131,7 +125,7 @@ class PhpCallResolution(LanguageCalls):
         path = class_names.receiver_class_path(call_node, ctx.php_scope_classes)
         if not path:
             return None
-        return self._host._noted(
+        return self._host.noted(
             self._resolver.resolve_php_method_on_class_path(
                 path, call_name, ctx.module_qn
             )

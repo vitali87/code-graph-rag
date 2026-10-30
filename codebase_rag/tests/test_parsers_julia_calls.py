@@ -28,7 +28,7 @@ def julia_calls(
     temp_repo: Path, mock_ingestor: RecordingIngestor
 ) -> JuliaCallResolution:
     updater = index(temp_repo / "jl", mock_ingestor, {"main.jl": _MAIN})
-    strategy = updater.factory.call_processor._calls_for(_JULIA)
+    strategy = updater.factory.call_processor.calls_for(_JULIA)
     assert isinstance(strategy, JuliaCallResolution)
     return strategy
 

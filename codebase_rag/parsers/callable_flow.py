@@ -23,10 +23,11 @@ from .. import constants as cs
 from ..node_text import safe_decode_text
 from ..types_defs import PropertyDict
 from .call_callbacks import FLOW_ARG_REF_TYPES, CallbackEdges
+from .call_host import VerdictHost
 from .call_nodes import parse_call_arguments
 from .call_resolver import CallResolver
 from .callable_params import callable_parameter_invocations
-from .edge_site import EdgeSiteHost, host_site_scoped
+from .edge_site import EdgeWriterHost, host_site_scoped
 from .go import calls as go_calls
 from .js_ts import calls as js_calls
 from .utils import node_site_properties
@@ -88,21 +89,11 @@ class _FileCallableFlow:
         self.passed: list[_PassedCallback] = []
 
 
-class FlowHost(EdgeSiteHost, Protocol):
+class FlowHost(EdgeWriterHost, VerdictHost, Protocol):
     """What callable-parameter flow calls on the call pass that builds it:
     the edge writer, and the verdict a resolved argument notes for the call
     node being scanned. Beside the edge site, whose resolution a passed
     callback records for its deferred edge."""
-
-    def _emit_rel(
-        self,
-        from_spec: tuple[str, str, str],
-        rel_type: str,
-        to_spec: tuple[str, str, str],
-        properties: PropertyDict | None = None,
-    ) -> None: ...
-
-    def _noted[R: tuple[str, str] | None](self, resolved: R) -> R: ...
 
 
 class CallableFlow:
@@ -328,7 +319,7 @@ class CallableFlow:
             return None
         if not (text := safe_decode_text(node)):
             return None
-        resolved = self._host._noted(
+        resolved = self._host.noted(
             self._resolver.resolve_function_call(
                 text, module_qn, local_var_types, class_context, caller_qn
             )
@@ -556,7 +547,7 @@ class CallableFlow:
             for site in self._param_invocation_sites(
                 invocations, source_qn, passed.param_name
             ):
-                self._host._emit_rel(
+                self._host.emit_rel(
                     passed.source_spec, passed.rel_type, passed.target_spec, site
                 )
 
@@ -599,7 +590,7 @@ class CallableFlow:
         self, returned_callables: dict[str, set[str]]
     ) -> None:
         registry = self._resolver.function_registry
-        ensure_rel = self._host._emit_rel
+        ensure_rel = self._host.emit_rel
         # A nested closure a function returns is reachable whenever that function
         # is reached (created and handed back as the return value). Nested
         # functions are no longer roots, so this producer edge keeps a genuinely
@@ -646,7 +637,7 @@ class CallableFlow:
         if closure_type is None:
             return
         scope_type = registry.get(fc.scope_qn) or cs.NodeLabel.MODULE
-        self._host._emit_rel(
+        self._host.emit_rel(
             (scope_type, cs.KEY_QUALIFIED_NAME, fc.scope_qn),
             cs.RelationshipType.CALLS,
             (closure_type, cs.KEY_QUALIFIED_NAME, closure_qn),
@@ -718,7 +709,7 @@ class CallableFlow:
                 continue
             for variant in registry.variants(target_qn):
                 for site in sites:
-                    self._host._emit_rel(
+                    self._host.emit_rel(
                         source_spec,
                         cs.RelationshipType.CALLS,
                         (target_type, cs.KEY_QUALIFIED_NAME, variant),

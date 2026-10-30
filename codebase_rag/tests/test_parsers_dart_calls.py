@@ -42,7 +42,7 @@ _FILES = {
 @pytest.fixture
 def graph(temp_repo: Path, mock_ingestor: RecordingIngestor) -> RecordingIngestor:
     updater = index(temp_repo / "dp", mock_ingestor, _FILES)
-    strategy = updater.factory.call_processor._calls_for(cs.SupportedLanguage.DART)
+    strategy = updater.factory.call_processor.calls_for(cs.SupportedLanguage.DART)
     assert isinstance(strategy, DartCallResolution)
     return mock_ingestor
 
@@ -80,7 +80,7 @@ def test_calls_and_methods_are_named_by_the_dart_shapes(
     temp_repo: Path, mock_ingestor: RecordingIngestor
 ) -> None:
     updater = index(temp_repo / "dp", mock_ingestor, {"lib/a.dart": "void f() {}\n"})
-    strategy = updater.factory.call_processor._calls_for(cs.SupportedLanguage.DART)
+    strategy = updater.factory.call_processor.calls_for(cs.SupportedLanguage.DART)
     root = parse(cs.SupportedLanguage.DART, "class C {\n  C.named();\n}\n")
     # A named constructor's `name` field is its CLASS; the declared name is
     # the last identifier.

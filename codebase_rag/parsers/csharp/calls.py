@@ -19,9 +19,8 @@ from tree_sitter import Node
 from ... import constants as cs
 from ...language_spec import LanguageSpec
 from ...node_text import decode_node_text, safe_decode_text
-from ...types_defs import PropertyDict
-from ..call_host import VerdictNotingHost
-from ..edge_site import EdgeSiteHost, host_site_scoped
+from ..call_host import VerdictHost
+from ..edge_site import EdgeWriterHost, host_site_scoped
 from ..language_calls import UNDECIDED_CALLEE, Callee, LanguageCalls
 from ..utils import module_qn_for_entity
 from . import utils as csharp_utils
@@ -31,18 +30,10 @@ if TYPE_CHECKING:
     from ..call_resolver import CallResolver
 
 
-class CSharpCallHost(EdgeSiteHost, VerdictNotingHost, Protocol):
+class CSharpCallHost(EdgeWriterHost, VerdictHost, Protocol):
     """What C#'s call passes call on the call pass that builds them: the edge
     emitter, and the note of how surely a name-based resolve binds the call
     node being scanned."""
-
-    def _emit_rel(
-        self,
-        from_spec: tuple[str, str, str],
-        rel_type: str,
-        to_spec: tuple[str, str, str],
-        properties: PropertyDict | None = None,
-    ) -> None: ...
 
 
 class CSharpCallScan(Protocol):
@@ -387,7 +378,7 @@ class CSharpCallResolution(LanguageCalls):
             # bare call has already exhausted C#'s legitimate scopes
             # (local function, enclosing type, and static import), so a
             # miss is external rather than a name-wide guess (#2005).
-            callee_info = self._host._noted(
+            callee_info = self._host.noted(
                 self._resolver.resolve_function_call(
                     call_name,
                     ctx.module_qn,
@@ -659,7 +650,7 @@ class CSharpCallResolution(LanguageCalls):
         ):
             seen.add(name)
             if prop_qn != caller_qn:
-                self._host._emit_rel(
+                self._host.emit_rel(
                     caller_spec,
                     cs.RelationshipType.REFERENCES,
                     (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, prop_qn),
@@ -708,7 +699,7 @@ class CSharpCallResolution(LanguageCalls):
                 )
                 if prop_qn is not None and prop_qn != caller_qn and prop_qn not in seen:
                     seen.add(prop_qn)
-                    self._host._emit_rel(
+                    self._host.emit_rel(
                         caller_spec,
                         cs.RelationshipType.REFERENCES,
                         (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, prop_qn),

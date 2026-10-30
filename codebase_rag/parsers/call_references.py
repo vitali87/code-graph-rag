@@ -172,7 +172,7 @@ class ReferenceWalkers:
         # name/attribute RHS counts (calls resolve as calls); the walk stops at
         # nested scope boundaries, which own their own pass.
         resolve_func = self._resolver.resolve_function_call
-        ensure_rel = self._host._emit_rel
+        ensure_rel = self._host.emit_rel
         scope = RefEmitScope(
             caller_spec,
             module_qn,
@@ -295,7 +295,7 @@ class ReferenceWalkers:
         # this walk too, and its boolean `||`/`&&` operands
         # would fabricate phantom edges (a bool named like a
         # method falsely revives it).
-        short_circuits = self._host._calls_for(language).short_circuit_values
+        short_circuits = self._host.calls_for(language).short_circuit_values
         is_logical = short_circuits and js_calls.is_logical_binary(value)
         # Position matters for `&&` only: a function value
         # is always truthy, so the LEFT operand of `&&` can
@@ -419,7 +419,7 @@ class ReferenceWalkers:
         # and drops the edge when __init__ is absent, as it always is for a
         # JS/TS class.
         resolve_func = self._resolver.resolve_function_call
-        ensure_rel = self._host._emit_rel
+        ensure_rel = self._host.emit_rel
         scope = RefEmitScope(
             caller_spec,
             module_qn,
@@ -529,7 +529,7 @@ class ReferenceWalkers:
         # it share the `return_statement` node type, and the emit path
         # resolves bare names and self-attributes alike.
         resolve_func = self._resolver.resolve_function_call
-        ensure_rel = self._host._emit_rel
+        ensure_rel = self._host.emit_rel
         # An expression-bodied arrow (`const persistImpl = (config) =>
         # (set, get, api) => {...}`, zustand's curried middleware shape) has NO
         # return_statement; its body IS the implicit return. Reference the inner
@@ -665,7 +665,7 @@ class ReferenceWalkers:
         if params is None:
             return
         resolve_func = self._resolver.resolve_function_call
-        ensure_rel = self._host._emit_rel
+        ensure_rel = self._host.emit_rel
         for param in params.named_children:
             self._host._site_node = param
             # TS carries a param default in required_parameter's `value` field;

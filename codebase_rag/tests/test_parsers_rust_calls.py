@@ -22,7 +22,7 @@ _RS = cs.SupportedLanguage.RUST
 @pytest.fixture
 def strategy(temp_repo: Path, mock_ingestor: RecordingIngestor) -> RustCallResolution:
     updater = index(temp_repo / "rp", mock_ingestor, RUST_CRATE)
-    calls = updater.factory.call_processor._calls_for(_RS)
+    calls = updater.factory.call_processor.calls_for(_RS)
     assert isinstance(calls, RustCallResolution)
     return calls
 

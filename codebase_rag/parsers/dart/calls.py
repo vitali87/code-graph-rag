@@ -17,9 +17,10 @@ from tree_sitter import Node
 from ... import constants as cs
 from ...language_spec import LanguageSpec
 from ...node_text import safe_decode_text
-from ...types_defs import LanguageQueries, PropertyDict
+from ...types_defs import LanguageQueries
 from ...utils import qn_markers
-from ..edge_site import EdgeSiteHost, host_site_scoped
+from ..call_host import VerdictHost
+from ..edge_site import EdgeWriterHost, host_site_scoped
 from ..language_calls import CallName, CallScan, LanguageCalls
 from . import utils as dart_utils
 
@@ -27,20 +28,10 @@ if TYPE_CHECKING:
     from ..call_resolver import CallResolver
 
 
-class DartCallHost(EdgeSiteHost, Protocol):
+class DartCallHost(EdgeWriterHost, VerdictHost, Protocol):
     """What Dart's call passes read and call on the call pass that builds
-    them: the edge emitter, and `_verdict`, how surely the call node being
+    them: the edge emitter, and the verdict, how surely the call node being
     scanned bound its callee."""
-
-    _verdict: str
-
-    def _emit_rel(
-        self,
-        from_spec: tuple[str, str, str],
-        rel_type: str,
-        to_spec: tuple[str, str, str],
-        properties: PropertyDict | None = None,
-    ) -> None: ...
 
 
 VALUE_WRAPPER_TYPES = frozenset(
@@ -644,7 +635,7 @@ class DartCallResolution(LanguageCalls):
         if not registry.is_property(res_qn) or res_qn == caller_qn:
             return
         seen.add(read_name)
-        self._host._emit_rel(
+        self._host.emit_rel(
             caller_spec,
             cs.RelationshipType.REFERENCES,
             (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, res_qn),
@@ -689,7 +680,7 @@ class DartCallResolution(LanguageCalls):
                 continue
             self._host._site_node = delegation.site
             self._host._resolution = cs.EdgeResolution.EXACT
-            self._host._emit_rel(
+            self._host.emit_rel(
                 caller_spec,
                 cs.RelationshipType.CALLS,
                 (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, target_qn),
@@ -733,7 +724,7 @@ class DartCallResolution(LanguageCalls):
         self._host._resolution = (
             cs.EdgeResolution.OVERLOAD
             if len(owner_variants) > 1
-            else self._host._verdict
+            else self._host.verdict
         )
         for class_variant in owner_variants:
             ensure_rel(

@@ -37,7 +37,7 @@ _RUN = f"{_SRC}.app.App.App.run"
 
 def _calls(temp_repo: Path, mock_ingestor: RecordingIngestor) -> set[tuple[str, str]]:
     updater = index(temp_repo / "proj", mock_ingestor, _FILES)
-    strategy = updater.factory.call_processor._calls_for(cs.SupportedLanguage.SCALA)
+    strategy = updater.factory.call_processor.calls_for(cs.SupportedLanguage.SCALA)
     assert isinstance(strategy, ScalaCallResolution)
     return edges(mock_ingestor, cs.RelationshipType.CALLS)
 
@@ -75,7 +75,7 @@ def test_new_and_infix_calls_are_named_by_their_own_shapes(
     temp_repo: Path, mock_ingestor: RecordingIngestor
 ) -> None:
     updater = index(temp_repo / "proj", mock_ingestor, {"src/a.scala": "object A\n"})
-    strategy = updater.factory.call_processor._calls_for(cs.SupportedLanguage.SCALA)
+    strategy = updater.factory.call_processor.calls_for(cs.SupportedLanguage.SCALA)
     root = parse(
         cs.SupportedLanguage.SCALA,
         "object U { val a = new Box[Int](1); val b = xs map f; val c = o.done }\n",
