@@ -28,7 +28,7 @@ from codebase_rag.editing.rename import RenameRefused, rename
 from codebase_rag.graph_query import QueryFn
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.parsers import call_processor as cp
+from codebase_rag.parsers import callable_flow
 from codebase_rag.tests.conftest import create_and_run_updater, get_relationships
 from codebase_rag.types_defs import PropertyDict, PropertyParams, ResultRow
 from evals.cgr_graph import StatefulIngestor
@@ -354,7 +354,7 @@ def test_a_receiver_with_no_recorded_invocation_keeps_a_plain_siteless_edge(
     # edge stays, with no site and no `via_param`: a site-less row merges on
     # its endpoints alone, so the property would land on any direct call
     # between the same pair and hide that real site from a rename.
-    monkeypatch.setattr(cp, "callable_parameter_invocations", lambda *_: {})
+    monkeypatch.setattr(callable_flow, "callable_parameter_invocations", lambda *_: {})
     mock = _index(temp_repo, PY_ISSUE)
 
     edges = _rels(mock, "CALLS", ".pkg.util.apply", ".pkg.main.double")

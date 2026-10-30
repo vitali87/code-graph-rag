@@ -18,7 +18,7 @@ import pytest
 from tree_sitter import Language, Parser
 
 from codebase_rag import constants as cs
-from codebase_rag.parsers.call_processor import _exceeds_receiver_chain_cap
+from codebase_rag.parsers.call_binding import _exceeds_receiver_chain_cap
 from codebase_rag.parsers.call_resolver import CallResolver
 from codebase_rag.parsers.call_site import split_receiver_chain
 from evals.cgr_graph import capture
@@ -160,7 +160,7 @@ def test_handlers_at_every_level_of_a_nested_literal_are_referenced(
 
 
 def test_a_deeply_nested_literal_is_expanded_once(tmp_path: Path) -> None:
-    from codebase_rag.parsers import call_processor
+    from codebase_rag.parsers import call_callbacks
 
     depth = 2_000
     (tmp_path / "t.py").write_text(
@@ -168,7 +168,7 @@ def test_a_deeply_nested_literal_is_expanded_once(tmp_path: Path) -> None:
         "def table():\n    x = " + "[" * depth + "h" + "]" * depth + "\n    return x\n",
         encoding="utf-8",
     )
-    original = call_processor._first_class_value_children
+    original = call_callbacks._first_class_value_children
     visits = 0
 
     def counting(*args, **kwargs):
@@ -176,7 +176,7 @@ def test_a_deeply_nested_literal_is_expanded_once(tmp_path: Path) -> None:
         visits += 1
         return original(*args, **kwargs)
 
-    with patch.object(call_processor, "_first_class_value_children", counting):
+    with patch.object(call_callbacks, "_first_class_value_children", counting):
         refs = _references(capture(tmp_path, "proj"))
 
     assert ("proj.t.table", "proj.t.h") in refs

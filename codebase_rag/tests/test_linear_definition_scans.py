@@ -31,7 +31,12 @@ from tree_sitter import Node
 
 from codebase_rag import constants as cs
 from codebase_rag import function_registry
-from codebase_rag.parsers import call_processor, definition_docstring, export_detection
+from codebase_rag.parsers import (
+    call_ownership,
+    call_processor,
+    definition_docstring,
+    export_detection,
+)
 from codebase_rag.parsers.csharp import type_inference as cs_type_inference
 from codebase_rag.parsers.java import variable_analyzer
 from codebase_rag.parsers.js_ts import calls as js_calls
@@ -320,8 +325,8 @@ def test_method_call_ownership_is_linear_in_class_methods(
     scan = _Scan(
         _csharp_source,
         "c_sharp",
-        (call_processor,),
-        functions=frozenset({"_calls_owned_by"}),
+        (call_ownership,),
+        functions=frozenset({"calls_owned_by"}),
     )
     small, large = _growth(tmp_path, scan, mock_ingestor)
     _assert_linear(small, large, "per-method call ownership")

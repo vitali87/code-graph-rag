@@ -723,7 +723,7 @@ class TestBuildNestedQualifiedName:
         assert func_node is not None
 
         lang_config = queries[cs.SupportedLanguage.PYTHON]["config"]
-        result = call_processor._build_nested_qualified_name(
+        result = call_processor._callers.build_nested_qualified_name(
             func_node, "proj.module", "my_func", lang_config
         )
         assert result == "proj.module.my_func"
@@ -758,7 +758,7 @@ def outer():
         assert inner_func is not None
 
         lang_config = queries[cs.SupportedLanguage.PYTHON]["config"]
-        result = call_processor._build_nested_qualified_name(
+        result = call_processor._callers.build_nested_qualified_name(
             inner_func, "proj.module", "inner", lang_config
         )
         assert result == "proj.module.outer.inner"
@@ -782,7 +782,7 @@ class MyClass:
         assert func_node is not None
 
         lang_config = queries[cs.SupportedLanguage.PYTHON]["config"]
-        result = call_processor._build_nested_qualified_name(
+        result = call_processor._callers.build_nested_qualified_name(
             func_node, "proj.module", "my_method", lang_config
         )
         assert result is None
@@ -1092,11 +1092,11 @@ class TestProcessCallsInFileErrorHandling:
         tree = parser.parse(b"def foo(): pass")
         root_node = tree.root_node
 
-        from codebase_rag.parsers.call_processor import CallProcessor
+        from codebase_rag.parsers.call_callers import CallerScan
 
         with patch.object(
-            CallProcessor,
-            "_process_calls_in_functions",
+            CallerScan,
+            "ingest_function_callers",
             side_effect=RuntimeError("Simulated failure"),
         ):
             with patch("codebase_rag.parsers.call_processor.logger") as mock_logger:
@@ -1136,11 +1136,11 @@ class TestProcessCallsInFileErrorHandling:
         tree = parser.parse(b"def foo(): pass")
         root_node = tree.root_node
 
-        from codebase_rag.parsers.call_processor import CallProcessor
+        from codebase_rag.parsers.call_callers import CallerScan
 
         with patch.object(
-            CallProcessor,
-            "_process_calls_in_functions",
+            CallerScan,
+            "ingest_function_callers",
             side_effect=ValueError("Test exception"),
         ):
             call_processor.process_calls_in_file(
@@ -1236,9 +1236,9 @@ def other():
         outer_func = find_first_node_of_type(root, "function_definition")
         assert outer_func is not None
 
-        filtered = call_processor._filter_calls_in_node(
-            all_call_nodes, call_starts, outer_func
-        )
+        from codebase_rag.parsers.call_ownership import calls_in_node
+
+        filtered = calls_in_node(all_call_nodes, call_starts, outer_func)
         assert len(filtered) == 1
 
 
@@ -1336,12 +1336,11 @@ class TestProcessCallsInFunctionsWithoutCombined:
         tree = parser.parse(code.encode(cs.ENCODING_UTF8))
         root_node = tree.root_node
 
-        cp._process_calls_in_functions(
+        cp._callers.ingest_function_callers(
             root_node,
             "proj.module",
             cs.SupportedLanguage.PYTHON,
             queries,
-            combined_captures=None,
         )
 
     def test_without_combined_captures_no_functions(
@@ -1367,12 +1366,11 @@ class TestProcessCallsInFunctionsWithoutCombined:
         tree = parser.parse(code.encode(cs.ENCODING_UTF8))
         root_node = tree.root_node
 
-        cp._process_calls_in_functions(
+        cp._callers.ingest_function_callers(
             root_node,
             "proj.module",
             cs.SupportedLanguage.PYTHON,
             queries,
-            combined_captures=None,
         )
 
 
@@ -1404,12 +1402,11 @@ class MyClass:
         tree = parser.parse(code.encode(cs.ENCODING_UTF8))
         root_node = tree.root_node
 
-        cp._process_calls_in_classes(
+        cp._callers.ingest_class_callers(
             root_node,
             "proj.module",
             cs.SupportedLanguage.PYTHON,
             queries,
-            combined_captures=None,
         )
 
 
@@ -1446,14 +1443,12 @@ class MyClass:
         body_node = class_node.child_by_field_name("body")
         assert body_node is not None
 
-        cp._process_methods_in_class(
+        cp._callers.ingest_class_body_callers(
             body_node,
             "proj.module.MyClass",
             "proj.module",
             cs.SupportedLanguage.PYTHON,
             queries,
-            sorted_func_nodes=None,
-            func_node_starts=None,
         )
 
 
@@ -1583,7 +1578,7 @@ class TestGetRustImplClassName:
         impl_node = find_first_node_of_type(root, "impl_item")
         assert impl_node is not None
 
-        result = call_processor._get_class_name_for_node(
-            impl_node, cs.SupportedLanguage.RUST
+        result = call_processor._calls_for(cs.SupportedLanguage.RUST).class_name(
+            impl_node
         )
         assert result is not None

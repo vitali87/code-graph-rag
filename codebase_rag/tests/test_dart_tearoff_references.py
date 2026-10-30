@@ -218,7 +218,7 @@ def test_closure_argument_is_not_unwrapped_as_ternary(tmp_path: Path) -> None:
     # suffix with the grammar's flat operator nodes. The grammar wraps the
     # body in `function_expression_body`, and the expansion additionally
     # excludes nested-scope nodes outright.
-    from codebase_rag.parsers.call_processor import _first_class_value_children
+    from codebase_rag.parsers.call_callbacks import _first_class_value_children
 
     parsers, _ = load_parsers()
     if "dart" not in parsers:

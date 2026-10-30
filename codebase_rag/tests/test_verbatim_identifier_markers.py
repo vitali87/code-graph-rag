@@ -11,7 +11,7 @@ invokes it -- the gap that let this bug survive #2014's partial fix.
 
 Three of the ten routed readers are reachable without graph fixtures and are
 tested behaviourally (`qn_markers.natural_qn`, which graph_updater calls,
-`call_processor._scope_qn_candidates`, `dead_code._is_root`). The remaining
+`call_callbacks.scope_qn_candidates`, `dead_code._is_root`). The remaining
 five are methods on parser classes whose fixtures would cost far more than
 the assertion is worth; `TestEveryRoutedReaderUsesTheHelper` is a structural
 backstop for those, and is deliberately the weakest thing here.
@@ -101,7 +101,7 @@ class TestGraphUpdaterNaturalQn:
 
 
 class TestScopeCandidateReaders:
-    """`call_processor._scope_qn_candidates`, driven directly.
+    """`call_callbacks.scope_qn_candidates`, driven directly.
 
     The early-exit guard these sites used (`MARKER not in last`) is TRUE for a
     verbatim identifier, so before the fix a verbatim scope produced a second
@@ -110,32 +110,32 @@ class TestScopeCandidateReaders:
 
     def test_a_verbatim_scope_yields_no_second_candidate(self) -> None:
         """Was `['pkg.@event', 'pkg.']`: the extra candidate was corrupt."""
-        from codebase_rag.parsers.call_processor import _scope_qn_candidates
+        from codebase_rag.parsers.call_callbacks import scope_qn_candidates
 
-        assert _scope_qn_candidates("pkg.@event") == ["pkg.@event"]
+        assert scope_qn_candidates("pkg.@event") == ["pkg.@event"]
 
     def test_a_marked_scope_still_yields_its_natural_form(self) -> None:
         """The behaviour the guard exists for must survive the fix."""
-        from codebase_rag.parsers.call_processor import _scope_qn_candidates
+        from codebase_rag.parsers.call_callbacks import scope_qn_candidates
 
-        assert _scope_qn_candidates("pkg.useStore@7") == [
+        assert scope_qn_candidates("pkg.useStore@7") == [
             "pkg.useStore@7",
             "pkg.useStore",
         ]
 
     def test_a_marked_verbatim_scope_yields_the_written_name(self) -> None:
         """Both at once: the marker goes, the verbatim name stays."""
-        from codebase_rag.parsers.call_processor import _scope_qn_candidates
+        from codebase_rag.parsers.call_callbacks import scope_qn_candidates
 
-        assert _scope_qn_candidates("pkg.@event@12") == [
+        assert scope_qn_candidates("pkg.@event@12") == [
             "pkg.@event@12",
             "pkg.@event",
         ]
 
     def test_an_unmarked_scope_is_unchanged(self) -> None:
-        from codebase_rag.parsers.call_processor import _scope_qn_candidates
+        from codebase_rag.parsers.call_callbacks import scope_qn_candidates
 
-        assert _scope_qn_candidates("pkg.plain") == ["pkg.plain"]
+        assert scope_qn_candidates("pkg.plain") == ["pkg.plain"]
 
 
 class TestDeadCodeRootLeaf:
@@ -201,6 +201,7 @@ class TestEveryRoutedReaderUsesTheHelper:
     MODULES = (
         "codebase_rag.graph_updater",
         "codebase_rag.dead_code",
+        "codebase_rag.parsers.call_callbacks",
         "codebase_rag.parsers.call_processor",
         "codebase_rag.parsers.call_resolver",
         "codebase_rag.parsers.class_ingest.method_override",
