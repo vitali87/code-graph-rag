@@ -41,7 +41,6 @@ from .duplicates import _jaccard
 from .graph_query import QueryFn, _longer_project_prefixes, _opt_int, _prefix
 from .language_spec import get_language_for_extension
 from .parser_loader import load_parsers
-from .parsers.js_ts.commonjs_exports import is_commonjs_module
 from .types_defs import PropertyDict, ReingestReport, ResultRow
 
 _METHOD_LABELS = frozenset({cs.NodeLabel.METHOD.value})
@@ -1432,6 +1431,9 @@ class _JsExports(NamedTuple):
 
 def _js_exports(text: str, language: cs.SupportedLanguage) -> _JsExports:
     """Read a JS/TS module's top-level statements for what they export."""
+    # Local import: `codebase_rag.parsers` stays out of the CLI's startup.
+    from .parsers.js_ts.commonjs_exports import is_commonjs_module
+
     parser = load_parsers()[0].get(language)
     if parser is None:
         return _JsExports()
