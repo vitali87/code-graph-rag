@@ -33,6 +33,7 @@ from codebase_rag.types_defs import NODE_SCHEMAS, RELATIONSHIP_SCHEMAS
 
 PYPI_CACHE_FILE = Path(__file__).parent.parent / ".pypi_cache.json"
 PYPI_CACHE_TTL_SECONDS = 86400
+PYPI_JSON_URL = "https://pypi.org/pypi/{name}/json"
 _PYPI_CACHE_LOCK = Lock()
 # The committed doc carrying the `dependencies` section. Its summaries are the
 # fallback when PyPI cannot be reached, so an offline or throttled run (a CI
@@ -342,9 +343,9 @@ def fetch_pypi_summary(package_name: str, cache: dict[str, tuple[str, float]]) -
         if cached and now - cached[1] < PYPI_CACHE_TTL_SECONDS:
             return cached[0]
 
-    url = f"https://pypi.org/pypi/{package_name}/json"
+    url = PYPI_JSON_URL.format(name=package_name)
     try:
-        with urllib.request.urlopen(url, timeout=5) as response:
+        with urllib.request.urlopen(url, timeout=5) as response:  # noqa: S310 - fixed https://pypi.org URL
             charset = response.headers.get_content_charset() or ENCODING_UTF8
             data = json.loads(response.read().decode(charset))
             summary = data.get("info", {}).get("summary", "") or ""
