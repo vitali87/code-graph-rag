@@ -14,6 +14,10 @@ from codebase_rag import constants as cs
 from codebase_rag import logs
 from codebase_rag.constants import PyInstallerPackage
 
+# A onefile build takes minutes; past this PyInstaller is stuck, and the build
+# must fail rather than hold the CI job until the runner's own limit.
+PYINSTALLER_TIMEOUT_S = 3600
+
 
 def _get_treesitter_packages() -> list[str]:
     with open(cs.PYPROJECT_PATH, "rb") as f:
@@ -101,7 +105,13 @@ def build_binary() -> bool:
     logger.info(logs.BUILD_PROGRESS)
 
     try:
-        subprocess.run(cmd, check=True, capture_output=True, text=True)
+        subprocess.run(
+            cmd,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=PYINSTALLER_TIMEOUT_S,
+        )
         logger.success(logs.BUILD_SUCCESS)
 
         binary_file = binary_name
@@ -133,6 +143,14 @@ def build_binary() -> bool:
         logger.error(
             logs.BUILD_FAILED.format(lang=binary_name, stdout=e.stdout, stderr=e.stderr)
         )
+        logger.error(logs.BUILD_STDOUT.format(stdout=e.stdout))
+        logger.error(logs.BUILD_STDERR.format(stderr=e.stderr))
+        return False
+
+    except subprocess.TimeoutExpired as e:
+        # The exception names the command and the limit; the partial output
+        # shows where the build stalled.
+        logger.error(str(e))
         logger.error(logs.BUILD_STDOUT.format(stdout=e.stdout))
         logger.error(logs.BUILD_STDERR.format(stderr=e.stderr))
         return False
