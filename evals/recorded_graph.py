@@ -8,7 +8,7 @@ edit can be exercised against a real index without a database.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock, _Call, call
 
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
@@ -37,8 +37,8 @@ class RecordingIngestor:
             getattr(self, name).reset_mock()
 
     @property
-    def method_calls(self) -> list:
-        result = []
+    def method_calls(self) -> list[_Call]:
+        result: list[_Call] = []
         for name in self._TRACKED:
             mock_attr = self.__dict__[name]
             for c in mock_attr.call_args_list:
@@ -98,155 +98,178 @@ class RecordedGraph:
     ) -> list[ResultRow]:
         p = params or {}
         qn = str(p.get(cs.KEY_QN, ""))
-        if query == cq.CYPHER_PROJECT_ROOT_PATH:
-            return [{cs.KEY_ROOT_PATH: self.root_path}] if self.root_path else []
-        if query == cq.CYPHER_PROJECT_IS_INCOMPLETE:
-            # No marker: this fixture's graph was indexed by a run that
-            # finished. An unanswered query would raise, and
-            # `marker.persisted_incomplete` reads a raise as "cannot tell, refuse",
-            # so leaving it out makes every reingest here refuse.
-            return []
-        if query == cq.CYPHER_GRAPH_DEFINITION:
-            return [self._node_row(qn)] if qn in self.nodes else []
-        if query == cq.CYPHER_GRAPH_RESOLVE_NAME:
-            # The rename's cross-check asks for the symbol's namesakes, whose
-            # sites are theirs and not unplanned occurrences (issue #2564).
-            prefix = str(p.get(cs.KEY_PROJECT_PREFIX, ""))
-            suffix = str(p.get(cs.KEY_SUFFIX, ""))
-            labels = {label.value for label in cs.DEFINITION_NODE_LABELS}
-            return [
-                self._node_row(name)
-                for name, node in self.nodes.items()
-                if name.startswith(prefix)
-                and node[cs.KEY_LABEL] in labels
-                and (
-                    name == qn
-                    or name.endswith(suffix)
-                    or node.get(cs.KEY_NAME) == p.get(cs.KEY_NAME)
-                )
-            ]
-        if query in (
-            cq.CYPHER_GRAPH_CALLERS,
-            cq.CYPHER_GRAPH_REFERENCES,
-            cq.CYPHER_GRAPH_TYPE_EDGES,
-        ):
-            rels = {
-                cq.CYPHER_GRAPH_CALLERS: {"CALLS"},
-                cq.CYPHER_GRAPH_REFERENCES: {"REFERENCES", "INSTANTIATES"},
-                cq.CYPHER_GRAPH_TYPE_EDGES: {"INHERITS", "ACCEPTS", "RETURNS"},
-            }[query]
-            # `$label IN labels(target)`: the twin-aware reads scope to one.
-            label = p.get(cs.KEY_LABEL)
-            out: list[ResultRow] = []
-            for src, rel, dst, props in self.edges:
-                if dst != qn or rel not in rels or src not in self.nodes:
-                    continue
-                if label is not None and label not in self.labels.get(dst, set()):
-                    continue
-                out.append(
-                    {
-                        cs.KEY_LABEL: self.nodes[src][cs.KEY_LABEL],
-                        cs.KEY_QUALIFIED_NAME: src,
-                        cs.KEY_PATH: self.nodes[src].get(cs.KEY_PATH),
-                        cs.KEY_REL_TYPE: rel,
-                        **{
-                            k: props.get(k)
-                            for k in (
-                                cs.KEY_LINE,
-                                cs.KEY_COL,
-                                cs.KEY_END_LINE,
-                                cs.KEY_END_COL,
-                                cs.KEY_ARG_COUNT,
-                                cs.KEY_KWARG_NAMES,
-                                cs.KEY_RESOLUTION,
-                            )
-                        },
-                    }
-                )
-            return out
-        if query == cq.CYPHER_GRAPH_IMPLEMENTORS:
-            return [
+        match query:
+            case cq.CYPHER_PROJECT_ROOT_PATH:
+                return [{cs.KEY_ROOT_PATH: self.root_path}] if self.root_path else []
+            case cq.CYPHER_PROJECT_IS_INCOMPLETE:
+                # No marker: this fixture's graph was indexed by a run that
+                # finished. An unanswered query would raise, and
+                # `marker.persisted_incomplete` reads a raise as "cannot tell, refuse",
+                # so leaving it out makes every reingest here refuse.
+                return []
+            case cq.CYPHER_GRAPH_DEFINITION:
+                return [self._node_row(qn)] if qn in self.nodes else []
+            case cq.CYPHER_GRAPH_RESOLVE_NAME:
+                return self._namesake_rows(qn, p)
+            case (
+                cq.CYPHER_GRAPH_CALLERS
+                | cq.CYPHER_GRAPH_REFERENCES
+                | cq.CYPHER_GRAPH_TYPE_EDGES
+            ):
+                return self._incoming_rows(query, qn, p)
+            case cq.CYPHER_GRAPH_IMPLEMENTORS:
+                return self._implementor_rows(qn)
+            case cq.CYPHER_GRAPH_OVERRIDES:
+                return self._override_rows(qn)
+            case cq.CYPHER_GRAPH_IMPORTERS:
+                return self._importer_rows(qn)
+            case cq.CYPHER_GRAPH_GO_IMPLEMENTERS_UNKNOWN:
+                return self._go_implementers_unknown_rows(p)
+            case cq.CYPHER_GRAPH_CALLBACK_SITES:
+                return self._callback_site_rows(qn)
+            case _:
+                raise AssertionError(f"unexpected query: {query[:50]}")
+
+    def _namesake_rows(self, qn: str, p: PropertyDict) -> list[ResultRow]:
+        # The rename's cross-check asks for the symbol's namesakes, whose
+        # sites are theirs and not unplanned occurrences (issue #2564).
+        prefix = str(p.get(cs.KEY_PROJECT_PREFIX, ""))
+        suffix = str(p.get(cs.KEY_SUFFIX, ""))
+        labels = {label.value for label in cs.DEFINITION_NODE_LABELS}
+        return [
+            self._node_row(name)
+            for name, node in self.nodes.items()
+            if name.startswith(prefix)
+            and node[cs.KEY_LABEL] in labels
+            and (
+                name == qn
+                or name.endswith(suffix)
+                or node.get(cs.KEY_NAME) == p.get(cs.KEY_NAME)
+            )
+        ]
+
+    def _incoming_rows(self, query: str, qn: str, p: PropertyDict) -> list[ResultRow]:
+        rels = {
+            cq.CYPHER_GRAPH_CALLERS: {"CALLS"},
+            cq.CYPHER_GRAPH_REFERENCES: {"REFERENCES", "INSTANTIATES"},
+            cq.CYPHER_GRAPH_TYPE_EDGES: {"INHERITS", "ACCEPTS", "RETURNS"},
+        }[query]
+        # `$label IN labels(target)`: the twin-aware reads scope to one.
+        label = p.get(cs.KEY_LABEL)
+        out: list[ResultRow] = []
+        for src, rel, dst, props in self.edges:
+            if dst != qn or rel not in rels or src not in self.nodes:
+                continue
+            if label is not None and label not in self.labels.get(dst, set()):
+                continue
+            out.append(
                 {
                     cs.KEY_LABEL: self.nodes[src][cs.KEY_LABEL],
                     cs.KEY_QUALIFIED_NAME: src,
                     cs.KEY_PATH: self.nodes[src].get(cs.KEY_PATH),
                     cs.KEY_REL_TYPE: rel,
-                }
-                for src, rel, dst, _props in self.edges
-                if dst == qn and rel in ("INHERITS", "IMPLEMENTS") and src in self.nodes
-            ]
-        if query == cq.CYPHER_GRAPH_OVERRIDES:
-            out = []
-            for src, rel, dst, props in self.edges:
-                if rel != "OVERRIDES":
-                    continue
-                for a, b in ((src, dst), (dst, src)):
-                    if b == qn and a in self.nodes:
-                        out.append(
-                            {
-                                cs.KEY_LABEL: self.nodes[a][cs.KEY_LABEL],
-                                cs.KEY_QUALIFIED_NAME: a,
-                                cs.KEY_PATH: self.nodes[a].get(cs.KEY_PATH),
-                                cs.KEY_REL_TYPE: rel,
-                                cs.KEY_RESOLUTION: props.get(cs.KEY_RESOLUTION),
-                            }
+                    **{
+                        k: props.get(k)
+                        for k in (
+                            cs.KEY_LINE,
+                            cs.KEY_COL,
+                            cs.KEY_END_LINE,
+                            cs.KEY_END_COL,
+                            cs.KEY_ARG_COUNT,
+                            cs.KEY_KWARG_NAMES,
+                            cs.KEY_RESOLUTION,
                         )
-            return out
-        if query == cq.CYPHER_GRAPH_IMPORTERS:
-            out = []
-            for src, rel, dst, props in self.edges:
-                if rel != "IMPORTS" or dst != qn or src not in self.nodes:
-                    continue
-                out.append(
-                    {
-                        cs.KEY_QUALIFIED_NAME: src,
-                        cs.KEY_PATH: self.nodes[src].get(cs.KEY_PATH),
-                        **{
-                            k: props.get(k)
-                            for k in (
-                                cs.KEY_LINE,
-                                cs.KEY_COL,
-                                cs.KEY_END_LINE,
-                                cs.KEY_END_COL,
-                                cs.KEY_ALIAS,
-                                cs.KEY_IMPORTED_NAME,
-                            )
-                        },
-                    }
-                )
-            return out
-        if query == cq.CYPHER_GRAPH_GO_IMPLEMENTERS_UNKNOWN:
-            prefix = str(p.get(cs.KEY_PROJECT_PREFIX, ""))
-            marked = sorted(
-                {
-                    src
-                    for src, rel, dst, _props in self.edges
-                    if rel == "DEFINES_METHOD"
-                    and self.nodes.get(dst, {}).get(cs.KEY_NAME) == p.get(cs.KEY_NAME)
-                    and src.startswith(prefix)
-                    and "Interface" in self.labels.get(src, set())
-                    and self.nodes[src].get(cs.KEY_IMPLEMENTERS_UNKNOWN)
+                    },
                 }
             )
-            return [
+        return out
+
+    def _implementor_rows(self, qn: str) -> list[ResultRow]:
+        return [
+            {
+                cs.KEY_LABEL: self.nodes[src][cs.KEY_LABEL],
+                cs.KEY_QUALIFIED_NAME: src,
+                cs.KEY_PATH: self.nodes[src].get(cs.KEY_PATH),
+                cs.KEY_REL_TYPE: rel,
+            }
+            for src, rel, dst, _props in self.edges
+            if dst == qn and rel in ("INHERITS", "IMPLEMENTS") and src in self.nodes
+        ]
+
+    def _override_rows(self, qn: str) -> list[ResultRow]:
+        out: list[ResultRow] = []
+        for src, rel, dst, props in self.edges:
+            if rel != "OVERRIDES":
+                continue
+            for a, b in ((src, dst), (dst, src)):
+                if b == qn and a in self.nodes:
+                    out.append(
+                        {
+                            cs.KEY_LABEL: self.nodes[a][cs.KEY_LABEL],
+                            cs.KEY_QUALIFIED_NAME: a,
+                            cs.KEY_PATH: self.nodes[a].get(cs.KEY_PATH),
+                            cs.KEY_REL_TYPE: rel,
+                            cs.KEY_RESOLUTION: props.get(cs.KEY_RESOLUTION),
+                        }
+                    )
+        return out
+
+    def _importer_rows(self, qn: str) -> list[ResultRow]:
+        out: list[ResultRow] = []
+        for src, rel, dst, props in self.edges:
+            if rel != "IMPORTS" or dst != qn or src not in self.nodes:
+                continue
+            out.append(
                 {
                     cs.KEY_QUALIFIED_NAME: src,
                     cs.KEY_PATH: self.nodes[src].get(cs.KEY_PATH),
-                    cs.KEY_IMPLEMENTERS_UNKNOWN: self.nodes[src].get(
-                        cs.KEY_IMPLEMENTERS_UNKNOWN
-                    ),
+                    **{
+                        k: props.get(k)
+                        for k in (
+                            cs.KEY_LINE,
+                            cs.KEY_COL,
+                            cs.KEY_END_LINE,
+                            cs.KEY_END_COL,
+                            cs.KEY_ALIAS,
+                            cs.KEY_IMPORTED_NAME,
+                        )
+                    },
                 }
-                for src in marked
-            ]
-        if query == cq.CYPHER_GRAPH_CALLBACK_SITES:
-            return [
-                {
-                    cs.KEY_QUALIFIED_NAME: src,
-                    cs.KEY_LINE: props.get(cs.KEY_LINE),
-                    cs.KEY_COL: props.get(cs.KEY_COL),
-                    cs.KEY_VIA_PARAM: props[cs.KEY_VIA_PARAM],
-                }
-                for src, rel, dst, props in self.edges
-                if rel == "CALLS" and dst == qn and props.get(cs.KEY_VIA_PARAM)
-            ]
-        raise AssertionError(f"unexpected query: {query[:50]}")
+            )
+        return out
+
+    def _go_implementers_unknown_rows(self, p: PropertyDict) -> list[ResultRow]:
+        prefix = str(p.get(cs.KEY_PROJECT_PREFIX, ""))
+        marked = sorted(
+            {
+                src
+                for src, rel, dst, _props in self.edges
+                if rel == "DEFINES_METHOD"
+                and self.nodes.get(dst, {}).get(cs.KEY_NAME) == p.get(cs.KEY_NAME)
+                and src.startswith(prefix)
+                and "Interface" in self.labels.get(src, set())
+                and self.nodes[src].get(cs.KEY_IMPLEMENTERS_UNKNOWN)
+            }
+        )
+        return [
+            {
+                cs.KEY_QUALIFIED_NAME: src,
+                cs.KEY_PATH: self.nodes[src].get(cs.KEY_PATH),
+                cs.KEY_IMPLEMENTERS_UNKNOWN: self.nodes[src].get(
+                    cs.KEY_IMPLEMENTERS_UNKNOWN
+                ),
+            }
+            for src in marked
+        ]
+
+    def _callback_site_rows(self, qn: str) -> list[ResultRow]:
+        return [
+            {
+                cs.KEY_QUALIFIED_NAME: src,
+                cs.KEY_LINE: props.get(cs.KEY_LINE),
+                cs.KEY_COL: props.get(cs.KEY_COL),
+                cs.KEY_VIA_PARAM: props[cs.KEY_VIA_PARAM],
+            }
+            for src, rel, dst, props in self.edges
+            if rel == "CALLS" and dst == qn and props.get(cs.KEY_VIA_PARAM)
+        ]
