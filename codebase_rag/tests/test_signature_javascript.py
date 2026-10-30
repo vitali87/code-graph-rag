@@ -134,7 +134,7 @@ def test_a_dropped_parameter_the_body_still_reads_refuses(temp_repo: Path) -> No
         # not bound yet when `b`'s default runs.
         ("(a = 1, b = a)", "the default of b reads `a`"),
         # `(b = g(), a = f())` would call `g` before `f` on `helper()`.
-        ("(a = f(), b = g())", "run code"),
+        ("(a = f(), b = g())", "would run in the other order"),
     ],
     ids=["reads-later", "runs-code"],
 )
