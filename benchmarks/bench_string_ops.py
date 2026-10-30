@@ -1,12 +1,10 @@
-import re
 import time
 
 from benchmarks import harness
+from codebase_rag.parsers.call_site import SEPARATOR_PATTERN
 
 WARMUP_RUNS = 3
 BENCH_RUNS = 100
-
-SEPARATOR_PATTERN = re.compile(r"[.:]|::")
 
 
 def generate_qualified_names(count: int) -> list[str]:
