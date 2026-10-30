@@ -25,7 +25,7 @@ from .import_processor import ImportProcessor
 from .java import resolution as java_resolution
 from .js_ts.resolution import JsTsResolver, bind_receiver, class_value_of
 from .js_ts.resolution import resolve_builtin_call as resolve_js_builtin_call
-from .lua import utils as lua_utils
+from .lua.resolution import LuaResolver, lua_member_spellings, lua_package_methods
 from .php import resolution as php_resolution
 from .php.class_names import ClassPath as PhpClassPath
 from .python import resolution as python_resolution
@@ -109,6 +109,7 @@ class CallResolver:
         "dart",
         "java",
         "csharp",
+        "lua",
     )
 
     def __init__(
@@ -204,6 +205,7 @@ class CallResolver:
         self.csharp = CSharpResolver(
             self, function_registry, import_processor, type_inference
         )
+        self.lua = LuaResolver(self, function_registry)
 
     def record_ctor_params(self, class_qn: str, params: tuple[str, ...]) -> None:
         self._ctor_params[class_qn] = params
@@ -1190,10 +1192,8 @@ class CallResolver:
         # The same probe for a Lua table member spelled with the other
         # separator than its definition (`Account.deposit` for
         # `function Account:deposit`), in a file the import probe skipped.
-        if call.language == cs.SupportedLanguage.LUA and (
-            result := self._try_resolve_lua_same_module_member(call_name, module_qn)
-        ):
-            self._remember_cacheable(cache_key, result)
+        handled, result = self.lua.resolve_lua_same_module_member(call, cache_key)
+        if handled:
             return True, result
 
         handled, result = self.rust.resolve_rust_module_qualified(call, cache_key)
@@ -2002,9 +2002,7 @@ class CallResolver:
         # `Account:new()`) names its member exactly, so it must answer before
         # the same-module free-function guess below: a `local function
         # deposit` is not `Account`'s member (issue #2481).
-        if language == cs.SupportedLanguage.LUA and (
-            result := self._try_resolve_lua_same_module_member(call_name, module_qn)
-        ):
+        if result := self.lua.lua_same_module_member(call_name, module_qn, language):
             return result
 
         # A same-module associated-function call `Type::assoc()` (`Ping::new()`):
@@ -2113,14 +2111,9 @@ class CallResolver:
         var_type: str,
         language: cs.SupportedLanguage | None = None,
     ) -> tuple[str, str] | None:
-        # A Lua instance reaches its class's members under either spelling:
-        # `acc:deposit()` is `Account:deposit`, `s.area(s)` and `s:twice()`
-        # may name a member defined with the other separator.
-        method_qns = (
-            lua_utils.member_spellings(class_qn, method_name, separator)
-            if language == cs.SupportedLanguage.LUA
-            else (f"{class_qn}{separator}{method_name}",)
-        )
+        method_qns = lua_member_spellings(
+            language, class_qn, method_name, separator
+        ) or (f"{class_qn}{separator}{method_name}",)
         for method_qn in method_qns:
             if method_qn in self.function_registry:
                 logger.debug(
@@ -2155,10 +2148,16 @@ class CallResolver:
         if object_name not in import_map:
             return None
 
-        if language == cs.SupportedLanguage.LUA:
-            return self._try_resolve_lua_module_member(
-                import_map[object_name], object_name, method_name, separator, call_name
-            )
+        handled, result = self.lua.resolve_lua_module_member(
+            import_map[object_name],
+            object_name,
+            method_name,
+            separator,
+            call_name,
+            language,
+        )
+        if handled:
+            return result
 
         target = import_map[object_name]
         if (
@@ -2186,45 +2185,6 @@ class CallResolver:
             return self.function_registry[method_qn], method_qn
         return self._try_resolve_package_member(class_qn, method_name)
 
-    def _try_resolve_lua_module_member(
-        self,
-        imported_qn: str,
-        alias: str,
-        member: str,
-        separator: str,
-        call_name: str,
-    ) -> tuple[str, str] | None:
-        # `require` binds the table a module returns. The module usually names
-        # it after the alias (`local Storage = {}` in storage/Storage.lua);
-        # otherwise (`local M = {}`) the package-member search finds the one
-        # table holding the member. Both spellings throughout: `util:method()`
-        # reaches `M:method`, `util.add()` reaches `M.add` (issue #2481).
-        for owner_qn in (f"{imported_qn}{cs.SEPARATOR_DOT}{alias}", imported_qn):
-            if result := self._lua_table_member(owner_qn, member, separator, call_name):
-                return result
-        return self._try_resolve_package_member(
-            imported_qn, member, cs.SupportedLanguage.LUA
-        )
-
-    def _try_resolve_lua_same_module_member(
-        self, call_name: str, module_qn: str
-    ) -> tuple[str, str] | None:
-        if (split := lua_utils.split_member_call(call_name)) is None:
-            return None
-        table_path, separator, member = split
-        return self._lua_table_member(
-            f"{module_qn}{cs.SEPARATOR_DOT}{table_path}", member, separator, call_name
-        )
-
-    def _lua_table_member(
-        self, owner_qn: str, member: str, separator: str, call_name: str
-    ) -> tuple[str, str] | None:
-        for qn in lua_utils.member_spellings(owner_qn, member, separator):
-            if qn in self.function_registry:
-                logger.debug(ls.CALL_LUA_TABLE_MEMBER, call_name=call_name, qn=qn)
-                return self.function_registry[qn], qn
-        return None
-
     def _try_resolve_package_member(
         self,
         package_qn: str,
@@ -2251,19 +2211,7 @@ class CallResolver:
             if qn.count(cs.SEPARATOR_DOT) == member_depth
             and qn.rsplit(cs.SEPARATOR_DOT, 1)[-1] == member_name
         ]
-        if language == cs.SupportedLanguage.LUA:
-            # A Lua module's returned table holds `M.add` one segment below
-            # the file, like a Go file's function, but its colon-method
-            # `M:method` is that one segment itself (issue #2481).
-            candidates += [
-                qn
-                for qn, _ in members
-                if qn.count(cs.SEPARATOR_DOT) == member_depth - 1
-                and qn.rsplit(cs.SEPARATOR_DOT, 1)[-1].partition(
-                    cs.LUA_METHOD_SEPARATOR
-                )[2]
-                == member_name
-            ]
+        candidates += lua_package_methods(language, members, member_depth, member_name)
         if not candidates:
             return None
         member_qn = min(candidates)
