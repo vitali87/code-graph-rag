@@ -16,6 +16,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers.file_parse import parse_file_root
 
 _ENTRY = (Path("m.py"), "m.py", True, b"def f():\n    return 1\n")
 
@@ -73,14 +74,13 @@ def test_a_complete_language_is_still_pre_parsed(
 def test_the_definition_pass_skips_a_language_without_a_parser(
     tmp_path: Path, python_parsers: tuple[dict, dict]
 ) -> None:
-    parsers, queries = python_parsers
+    _, queries = python_parsers
     partial = {
         lang: {k: v for k, v in q.items() if k != cs.KEY_PARSER}
         for lang, q in queries.items()
     }
-    processor = _updater(tmp_path, parsers, partial).factory.definition_processor
     assert (
-        processor._parse_file_root(
+        parse_file_root(
             tmp_path / "m.py", cs.SupportedLanguage.PYTHON, partial, _ENTRY[3], None
         )
         is None

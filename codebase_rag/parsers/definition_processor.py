@@ -5,52 +5,45 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from loguru import logger
-from tree_sitter import QueryCursor
 
 from .. import constants as cs
 from .. import logs as ls
 from ..language_spec import has_other_language_sibling, own_extension_module_qn
-from ..node_text import sorted_captures
 from ..types_defs import (
     ASTNode,
     CppDefinitionSpan,
     DeferredParentLink,
     FunctionRegistryTrieProtocol,
     PendingTypeFact,
-    PropertyDict,
     SimpleNameLookup,
 )
 from ..utils.path_utils import (
     base_module_qn,
     cached_relative_path,
-    cached_resolve_posix,
     declaration_extension,
     has_implementation_sibling,
 )
-from ..utils.source_encoding import grammar_bytes
 from .class_ingest import ClassIngest
 from .cpp.file_ingest import CppFileIngest
-from .cpp.preproc_recovery import parse_with_preproc_recovery
 from .definition_docstring import extract_definition_docstring
 from .definition_facts import DefinitionFacts
 from .definition_prune import RemovedFile, forget_file
 from .dependency_parser import read_manifest
 from .field_nodes import PendingFieldType
+from .file_parse import file_combined_captures, parse_file_root
 from .function_ingest import FunctionIngest
 from .go.builds import Expr, GoBuilds
 from .go.file_ingest import GoFileIngest
 from .go.interface_ingest import GoInterfaceIngest
 from .go.interfaces import GoInterfaceDecl, GoMethodSpec
 from .go.link_state import GoLinkState
-from .interface_fingerprint import interface_fingerprint
-from .java.generated import generator_hint
 from .js_ts.file_ingest import JsTsFileIngest
 from .js_ts.ingest import JsTsIngest
 from .js_ts.module_system import JsTsModuleSystem
 from .js_ts.overloads import signature_docstring
 from .julia.file_ingest import JuliaFileIngest
 from .language_definitions import LanguageFileIngest
-from .module_docstring import extract_module_docstring
+from .module_node import ModuleNodes
 from .notebook import is_notebook_path
 from .parameter_nodes import PendingParameterType
 from .php.file_ingest import PhpFileIngest
@@ -63,10 +56,23 @@ if TYPE_CHECKING:
     from ..services import IngestorProtocol
     from ..types_defs import LanguageQueries
     from .import_processor import ImportProcessor
-from .io_access import FLOW_REGISTERED_LANGUAGES
 
 
 class DefinitionProcessor:
+    """The definition pass: each file's Module node and the classes,
+    functions and imports in it, written for the later passes to resolve
+    against.
+
+    `process_file` parses a file (`file_parse.py`), settles its module qn
+    and writes its module (`module_node.py`), hands its imports to the
+    import pass and runs the class and function passes this pass builds,
+    `ClassIngest` and `FunctionIngest`. A language's share of a file is the
+    `LanguageFileIngest` collaborator its language looks up to. The pass
+    holds the maps its passes share and the later passes read, the
+    `resolve_deferred_*` entry points that settle what each pass held back
+    until every file was parsed, and the external packages a manifest
+    names."""
+
     def __init__(
         self,
         ingestor: IngestorProtocol,
@@ -97,10 +103,6 @@ class DefinitionProcessor:
         self.unignore_paths = unignore_paths
         # The maps this pass fills for type inference and the call pass.
         self.facts = DefinitionFacts()
-        # Each Go file's build constraint, for telling a name each build
-        # declares again (`i_linux.go`, `i_windows.go`) from a redeclaration
-        # (shared with the call resolver and type inference).
-        self.go_builds = GoBuilds(repo_path)
         # {class qn: module qn of the file that DECLARED it}, written for
         # EVERY language at class ingest. `facts.class_inheritance` and
         # `facts.class_field_types` are keyed by a class qn, and a class records
@@ -113,15 +115,81 @@ class DefinitionProcessor:
         # needed because both of those maps are written by every language's
         # ingest (#1772).
         self.class_owner_module: dict[str, str] = {}
-        # {class_qn: [(method_qn, method_name)]} for Dart @override methods;
-        # whether they override an EXTERNAL base is only decidable once every
-        # class is registered, so resolve_deferred_inherits consumes this.
-        self.dart_annotated_overrides: dict[str, list[tuple[str, str]]] = {}
         # {module qn: start bytes of the overload declarations that fold into
         # their implementation}: Python's `@overload` stubs (issue #2590) and
         # TypeScript's overload signatures (issue #2457). Both the function and
         # the method pass skip them so the implementation owns the name.
         self.folded_overloads: dict[str, frozenset[int]] = {}
+        # Repo-relative prefixes of annotation-processor output (issue #1140):
+        # modules under one are stamped generated with a processor hint.
+        self.generated_source_prefixes: list[str] = []
+        # Non-module DEFINES held back until every parent is registered,
+        # written by the function and the class passes alike.
+        self._deferred_parent_links: list[DeferredParentLink] = []
+        # {manifest path: why its content could not be parsed}, for the one
+        # WARNING the updater logs per run in place of a line per file.
+        self.unparsable_manifests: dict[Path, str] = {}
+        # Route-decorated handlers deferred from Pass 2: endpoint templates
+        # need router mount prefixes, which may live in modules parsed later
+        # (issue #877). (label, qn, route decorators, module_qn).
+        self.pending_endpoints: list[
+            tuple[cs.NodeLabel, str, list[str], str | None]
+        ] = []
+        # Return/parameter annotations awaiting the full registry (#1527).
+        self.pending_type_facts: list[PendingTypeFact] = []
+        self.pending_parameter_types: list[PendingParameterType] = []
+        self.pending_field_types: list[PendingFieldType] = []
+        self.func_class_captures_cache = func_class_captures_cache
+        self._init_language_maps()
+        self.function_ingest = self._new_function_ingest()
+        self.go_interface_ingest = self._new_go_interface_ingest()
+        self.class_ingest = self._new_class_ingest()
+        self.js_ts_module_system = JsTsModuleSystem(
+            host=self,
+            function_ingest=self.function_ingest,
+            ingestor=ingestor,
+            repo_path=repo_path,
+            function_registry=function_registry,
+            simple_name_lookup=simple_name_lookup,
+            module_qn_to_file_path=module_qn_to_file_path,
+            import_processor=import_processor,
+            facts=self.facts,
+        )
+        self.js_ts_ingest = JsTsIngest(
+            host=self,
+            function_ingest=self.function_ingest,
+            ingestor=ingestor,
+            repo_path=repo_path,
+            function_registry=function_registry,
+            simple_name_lookup=simple_name_lookup,
+            module_qn_to_file_path=module_qn_to_file_path,
+            facts=self.facts,
+            class_owner_module=self.class_owner_module,
+        )
+        self._modules = ModuleNodes(
+            self,
+            ingestor=ingestor,
+            repo_path=repo_path,
+            project_name=project_name,
+            flow_capture_enabled=flow_capture_enabled,
+        )
+        # Reached by name as well: the graph updater keeps the source of a SQL
+        # file it re-reads through `keep_sql_source`.
+        self._sql = SqlFileIngest(self.facts)
+        self._languages = self._file_ingests()
+        self._neutral = LanguageFileIngest()
+
+    def _init_language_maps(self) -> None:
+        # The containers one language's collaborators fill, for a later pass
+        # of that language, the call pass or the graph updater to read.
+        # Each Go file's build constraint, for telling a name each build
+        # declares again (`i_linux.go`, `i_windows.go`) from a redeclaration
+        # (shared with the call resolver and type inference).
+        self.go_builds = GoBuilds(self.repo_path)
+        # {class_qn: [(method_qn, method_name)]} for Dart @override methods;
+        # whether they override an EXTERNAL base is only decidable once every
+        # class is registered, so resolve_deferred_inherits consumes this.
+        self.dart_annotated_overrides: dict[str, list[tuple[str, str]]] = {}
         # {Rust impl target qn: module of the file whose `impl Trait for T`
         # recorded its pair}. A primitive or foreign target (`u64`) has no
         # class node, so `class_owner_module` never names that file, and the
@@ -144,9 +212,6 @@ class DefinitionProcessor:
         # C# partial parts grouped by their namespace-qualified key, the
         # index behind `facts.csharp_partial_groups`.
         self._csharp_partial_index: dict[str, list[str]] = {}
-        # Repo-relative prefixes of annotation-processor output (issue #1140):
-        # modules under one are stamped generated with a processor hint.
-        self.generated_source_prefixes: list[str] = []
         # (rel_file, type_start_line, type_start_col) -> (class qn, node label)
         # for every ingested Go type. Go's type_spec start_point IS the name
         # token, so the frontend's pair positions join here directly (no alias).
@@ -179,9 +244,6 @@ class DefinitionProcessor:
         # the reverse of the Roslyn fact keys, so partial declaration groups
         # join back to the Pass-2 Class nodes.
         self.csharp_type_locations: dict[tuple[str, int], str] = {}
-        # Non-module DEFINES held back until every parent is registered,
-        # written by the function and the class passes alike.
-        self._deferred_parent_links: list[DeferredParentLink] = []
         # {rel path: [full line spans]} of every C/C++ function/method the
         # tree-sitter pass ingested; the hybrid C++ frontend's macro-use
         # CALLS resolve against these after Pass 2 (see CppDefinitionSpan).
@@ -202,27 +264,15 @@ class DefinitionProcessor:
         # interface's node write is still in the ingestor's buffer, so it is
         # absent from the rows rehydration fetches.
         self.cpp_interfaces_parsed_this_run: set[str] = set()
-        # {manifest path: why its content could not be parsed}, for the one
-        # WARNING the updater logs per run in place of a line per file.
-        self.unparsable_manifests: dict[Path, str] = {}
-        # Route-decorated handlers deferred from Pass 2: endpoint templates
-        # need router mount prefixes, which may live in modules parsed later
-        # (issue #877). (label, qn, route decorators, module_qn).
-        self.pending_endpoints: list[
-            tuple[cs.NodeLabel, str, list[str], str | None]
-        ] = []
-        # Return/parameter annotations awaiting the full registry (#1527).
-        self.pending_type_facts: list[PendingTypeFact] = []
-        self.pending_parameter_types: list[PendingParameterType] = []
-        self.pending_field_types: list[PendingFieldType] = []
-        self.func_class_captures_cache = func_class_captures_cache
-        self.function_ingest = FunctionIngest(
+
+    def _new_function_ingest(self) -> FunctionIngest:
+        return FunctionIngest(
             method_host=self,
-            ingestor=ingestor,
-            repo_path=repo_path,
-            function_registry=function_registry,
-            simple_name_lookup=simple_name_lookup,
-            module_qn_to_file_path=module_qn_to_file_path,
+            ingestor=self.ingestor,
+            repo_path=self.repo_path,
+            function_registry=self.function_registry,
+            simple_name_lookup=self.simple_name_lookup,
+            module_qn_to_file_path=self.module_qn_to_file_path,
             facts=self.facts,
             go_builds=self.go_builds,
             go_methods=self.go_methods,
@@ -236,14 +286,16 @@ class DefinitionProcessor:
             pending_parameter_types=self.pending_parameter_types,
             deferred_parent_links=self._deferred_parent_links,
         )
-        self.go_interface_ingest = GoInterfaceIngest(
+
+    def _new_go_interface_ingest(self) -> GoInterfaceIngest:
+        return GoInterfaceIngest(
             method_host=self,
-            ingestor=ingestor,
-            repo_path=repo_path,
-            project_name=project_name,
-            function_registry=function_registry,
-            import_processor=import_processor,
-            module_qn_to_file_path=module_qn_to_file_path,
+            ingestor=self.ingestor,
+            repo_path=self.repo_path,
+            project_name=self.project_name,
+            function_registry=self.function_registry,
+            import_processor=self.import_processor,
+            module_qn_to_file_path=self.module_qn_to_file_path,
             facts=self.facts,
             go_methods=self.go_methods,
             go_interfaces=self.go_interfaces,
@@ -255,18 +307,20 @@ class DefinitionProcessor:
             go_pair_builds=self.go_pair_builds,
             go_builds=self.go_builds,
         )
-        self.class_ingest = ClassIngest(
+
+    def _new_class_ingest(self) -> ClassIngest:
+        return ClassIngest(
             method_host=self,
             function_ingest=self.function_ingest,
             go_interface_ingest=self.go_interface_ingest,
-            ingestor=ingestor,
-            repo_path=repo_path,
-            project_name=project_name,
-            function_registry=function_registry,
-            simple_name_lookup=simple_name_lookup,
-            module_qn_to_file_path=module_qn_to_file_path,
-            flow_capture_enabled=flow_capture_enabled,
-            import_processor=import_processor,
+            ingestor=self.ingestor,
+            repo_path=self.repo_path,
+            project_name=self.project_name,
+            function_registry=self.function_registry,
+            simple_name_lookup=self.simple_name_lookup,
+            module_qn_to_file_path=self.module_qn_to_file_path,
+            flow_capture_enabled=self.flow_capture_enabled,
+            import_processor=self.import_processor,
             facts=self.facts,
             class_owner_module=self.class_owner_module,
             dart_annotated_overrides=self.dart_annotated_overrides,
@@ -287,47 +341,24 @@ class DefinitionProcessor:
             folded_overloads=self.folded_overloads,
             deferred_parent_links=self._deferred_parent_links,
         )
-        self.js_ts_module_system = JsTsModuleSystem(
-            host=self,
-            function_ingest=self.function_ingest,
-            ingestor=ingestor,
-            repo_path=repo_path,
-            function_registry=function_registry,
-            simple_name_lookup=simple_name_lookup,
-            module_qn_to_file_path=module_qn_to_file_path,
-            import_processor=import_processor,
-            facts=self.facts,
-        )
-        self.js_ts_ingest = JsTsIngest(
-            host=self,
-            function_ingest=self.function_ingest,
-            ingestor=ingestor,
-            repo_path=repo_path,
-            function_registry=function_registry,
-            simple_name_lookup=simple_name_lookup,
-            module_qn_to_file_path=module_qn_to_file_path,
-            facts=self.facts,
-            class_owner_module=self.class_owner_module,
-        )
-        # Reached by name as well: the graph updater keeps the source of a SQL
-        # file it re-reads through `keep_sql_source`.
-        self._sql = SqlFileIngest(self.facts)
+
+    def _file_ingests(self) -> dict[cs.SupportedLanguage, LanguageFileIngest]:
         js_ts = JsTsFileIngest(
-            ingestor=ingestor,
-            import_processor=import_processor,
+            ingestor=self.ingestor,
+            import_processor=self.import_processor,
             ingest=self.js_ts_ingest,
             module_system=self.js_ts_module_system,
             function_ingest=self.function_ingest.js_ts,
         )
         # The collaborator each language's files go to; a language with none
         # takes the neutral answers.
-        self._languages: dict[cs.SupportedLanguage, LanguageFileIngest] = {
+        return {
             cs.SupportedLanguage.PYTHON: PythonFileIngest(self.class_ingest.python),
             cs.SupportedLanguage.JS: js_ts,
             cs.SupportedLanguage.TS: js_ts,
             cs.SupportedLanguage.TSX: js_ts,
             cs.SupportedLanguage.RUST: RustFileIngest(
-                self.function_ingest.rust, import_processor, self.facts
+                self.function_ingest.rust, self.import_processor, self.facts
             ),
             cs.SupportedLanguage.GO: GoFileIngest(self.facts),
             cs.SupportedLanguage.CPP: CppFileIngest(self.class_ingest.cpp, self.facts),
@@ -335,7 +366,6 @@ class DefinitionProcessor:
             cs.SupportedLanguage.PHP: PhpFileIngest(),
             cs.SupportedLanguage.SQL: self._sql,
         }
-        self._neutral = LanguageFileIngest()
 
     def _for(self, language: cs.SupportedLanguage) -> LanguageFileIngest:
         return self._languages.get(language, self._neutral)
@@ -597,7 +627,7 @@ class DefinitionProcessor:
 
             language_ingest = self._for(language)
             source_bytes = language_ingest.read_source(file_path, source_bytes)
-            parsed = self._parse_file_root(
+            parsed = parse_file_root(
                 file_path, language, queries, source_bytes, pre_parsed
             )
             if parsed is None:
@@ -607,22 +637,17 @@ class DefinitionProcessor:
                 file_path, relative_path_str, root_node, source_bytes
             )
 
-            module_qn = base_module_qn(relative_path, self.project_name)
-            module_qn = self._disambiguate_module_qn(module_qn, file_path)
-            self.module_qn_to_file_path[module_qn] = file_path
-            language_ingest.record_module_facts(module_qn, root_node)
-
-            self._ingest_module_node(
-                file_path,
-                relative_path,
-                module_qn,
-                language,
-                root_node,
-                structural_elements,
+            module_qn = self._register_module(
+                file_path, relative_path, language, root_node, structural_elements
             )
 
-            combined_captures = self._file_combined_captures(
-                file_path, root_node, language, queries, pre_combined_captures
+            combined_captures = file_combined_captures(
+                self.func_class_captures_cache,
+                file_path,
+                root_node,
+                language,
+                queries,
+                pre_combined_captures,
             )
 
             # A reused updater's second run re-parses this module into a map
@@ -650,46 +675,9 @@ class DefinitionProcessor:
             self._fold_overloads(
                 root_node, module_qn, language, queries, combined_captures
             )
-            # A language whose types own the names its functions share runs
-            # its class pass first, and no inline-module pass (Julia's
-            # `JuliaFileIngest` says why).
-            if language_ingest.types_before_functions:
-                self.class_ingest.ingest_classes_and_methods(
-                    root_node,
-                    module_qn,
-                    language,
-                    queries,
-                    combined_captures=combined_captures,
-                )
-                self.function_ingest.ingest_all_functions(
-                    root_node,
-                    module_qn,
-                    language,
-                    queries,
-                    combined_captures=combined_captures,
-                )
-            else:
-                self.class_ingest.ingest_inline_modules(
-                    root_node,
-                    module_qn,
-                    language,
-                    queries,
-                    combined_captures=combined_captures,
-                )
-                self.function_ingest.ingest_all_functions(
-                    root_node,
-                    module_qn,
-                    language,
-                    queries,
-                    combined_captures=combined_captures,
-                )
-                self.class_ingest.ingest_classes_and_methods(
-                    root_node,
-                    module_qn,
-                    language,
-                    queries,
-                    combined_captures=combined_captures,
-                )
+            self._ingest_definitions(
+                root_node, module_qn, language, queries, combined_captures
+            )
             language_ingest.finalise(root_node, module_qn, language, queries)
 
             return (root_node, language)
@@ -698,29 +686,79 @@ class DefinitionProcessor:
             logger.error(ls.DEF_PARSE_FAILED.format(path=file_path, error=e))
             return None
 
-    def _parse_file_root(
+    def _register_module(
         self,
         file_path: Path,
+        relative_path: Path,
+        language: cs.SupportedLanguage,
+        root_node: ASTNode,
+        structural_elements: dict[Path, str | None],
+    ) -> str:
+        # The file's module qn, mapped back to the file and written as its
+        # Module node.
+        module_qn = base_module_qn(relative_path, self.project_name)
+        module_qn = self._disambiguate_module_qn(module_qn, file_path)
+        self.module_qn_to_file_path[module_qn] = file_path
+        self._for(language).record_module_facts(module_qn, root_node)
+
+        self._modules.write(
+            file_path,
+            relative_path,
+            module_qn,
+            language,
+            root_node,
+            structural_elements,
+        )
+        return module_qn
+
+    def _ingest_definitions(
+        self,
+        root_node: ASTNode,
+        module_qn: str,
         language: cs.SupportedLanguage,
         queries: Mapping[cs.SupportedLanguage, LanguageQueries],
-        source_bytes: bytes | None,
-        pre_parsed: tuple[ASTNode, dict[str, list] | None] | None,
-    ) -> tuple[ASTNode, dict[str, list] | None] | None:
-        if pre_parsed is not None:
-            root_node, pre_combined_captures = pre_parsed
-        else:
-            if source_bytes is None:
-                source_bytes = file_path.read_bytes()
-            parser = queries[language].get(cs.KEY_PARSER)
-            if parser is None:
-                logger.warning(ls.DEF_NO_PARSER.format(language=language))
-                return None
-            tree = parse_with_preproc_recovery(
-                parser, grammar_bytes(source_bytes, language, file_path), language
+        combined_captures: dict[str, list] | None,
+    ) -> None:
+        # A language whose types own the names its functions share runs
+        # its class pass first, and no inline-module pass (Julia's
+        # `JuliaFileIngest` says why).
+        if self._for(language).types_before_functions:
+            self.class_ingest.ingest_classes_and_methods(
+                root_node,
+                module_qn,
+                language,
+                queries,
+                combined_captures=combined_captures,
             )
-            root_node = tree.root_node
-            pre_combined_captures = None
-        return root_node, pre_combined_captures
+            self.function_ingest.ingest_all_functions(
+                root_node,
+                module_qn,
+                language,
+                queries,
+                combined_captures=combined_captures,
+            )
+            return
+        self.class_ingest.ingest_inline_modules(
+            root_node,
+            module_qn,
+            language,
+            queries,
+            combined_captures=combined_captures,
+        )
+        self.function_ingest.ingest_all_functions(
+            root_node,
+            module_qn,
+            language,
+            queries,
+            combined_captures=combined_captures,
+        )
+        self.class_ingest.ingest_classes_and_methods(
+            root_node,
+            module_qn,
+            language,
+            queries,
+            combined_captures=combined_captures,
+        )
 
     def keep_sql_source(
         self, file_path: Path, root_node: ASTNode, parsed: bytes
@@ -728,63 +766,6 @@ class DefinitionProcessor:
         """Note the bytes a SQL tree was parsed from, when its text is not them
         (`SqlFileIngest.keep_source`)."""
         self._sql.keep_source(file_path, root_node, parsed)
-
-    def _ingest_module_node(
-        self,
-        file_path: Path,
-        relative_path: Path,
-        module_qn: str,
-        language: cs.SupportedLanguage,
-        root_node: ASTNode,
-        structural_elements: dict[Path, str | None],
-    ) -> None:
-        relative_path_str = relative_path.as_posix()
-        module_props: PropertyDict = {
-            cs.KEY_QUALIFIED_NAME: module_qn,
-            cs.KEY_NAME: file_path.name,
-            cs.KEY_PATH: relative_path_str,
-            cs.KEY_ABSOLUTE_PATH: cached_resolve_posix(file_path),
-            cs.KEY_FLOW_COVERED: (
-                self.flow_capture_enabled and language in FLOW_REGISTERED_LANGUAGES
-            ),
-        }
-        if docstring := self._get_module_docstring(root_node, language):
-            module_props[cs.KEY_DOCSTRING] = docstring
-        if fingerprint := interface_fingerprint(root_node, language):
-            module_props[cs.KEY_INTERFACE_FINGERPRINT] = fingerprint
-        self._for(language).record_module_props(root_node, module_props)
-        if self.generated_source_prefixes and (
-            hint := generator_hint(relative_path_str, self.generated_source_prefixes)
-        ):
-            module_props[cs.KEY_GENERATED] = True
-            module_props[cs.KEY_GENERATOR] = hint
-        self.ingestor.ensure_node_batch(cs.NodeLabel.MODULE, module_props)
-
-        parent_rel_path = relative_path.parent
-        parent_container_qn = structural_elements.get(parent_rel_path)
-        if parent_container_qn:
-            parent_label, parent_key, parent_val = (
-                cs.NodeLabel.PACKAGE,
-                cs.KEY_QUALIFIED_NAME,
-                parent_container_qn,
-            )
-        elif parent_rel_path != Path("."):
-            parent_label, parent_key, parent_val = (
-                cs.NodeLabel.FOLDER,
-                cs.KEY_ABSOLUTE_PATH,
-                cached_resolve_posix(self.repo_path / parent_rel_path),
-            )
-        else:
-            parent_label, parent_key, parent_val = (
-                cs.NodeLabel.PROJECT,
-                cs.KEY_NAME,
-                self.project_name,
-            )
-        self.ingestor.ensure_relationship_batch(
-            (parent_label, parent_key, parent_val),
-            cs.RelationshipType.CONTAINS_MODULE,
-            (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
-        )
 
     def _fold_overloads(
         self,
@@ -800,58 +781,6 @@ class DefinitionProcessor:
             )
         ) is not None:
             self.folded_overloads[module_qn] = folded
-
-    def _file_combined_captures(
-        self,
-        file_path: Path,
-        root_node: ASTNode,
-        language: cs.SupportedLanguage,
-        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
-        pre_combined_captures: dict[str, list] | None,
-    ) -> dict[str, list] | None:
-        if pre_combined_captures is not None:
-            combined_captures = pre_combined_captures
-        else:
-            combined_captures = None
-            combined_query = queries[language][cs.QUERY_FUNC_CLASS_IMPORT]
-            if combined_query:
-                cursor = QueryCursor(combined_query)
-                combined_captures = sorted_captures(cursor, root_node)
-        # An UNAVAILABLE query is not an empty result. `combined_captures`
-        # stays None when the language has no combined query (or building
-        # it raised), and caching {} for that would tell the call walk
-        # "this file has no functions" when the truth is "nobody looked".
-        # Measured: it attributed a call to the MODULE alongside the
-        # correct function-owned edge, so the graph gained a spurious
-        # `proj.pkg.caller CALLS ...` beside `proj.pkg.caller.run CALLS
-        # ...` (PR #1833). Absent is the honest state there, and
-        # it is what the reader already falls back on.
-        if self.func_class_captures_cache is not None and (
-            combined_captures is not None
-        ):
-            # Write unconditionally, including the EMPTY entry. The two
-            # truthiness guards this replaces both skipped the write when
-            # the file yielded nothing, which LEFT THE PREVIOUS PARSE'S
-            # ENTRY in place -- captures holding nodes from a tree that
-            # has since been discarded.
-            #
-            # A file emptied (or made unparseable) between runs is exactly
-            # that case: its AST cache is correctly refreshed to the empty
-            # tree, but `_process_function_calls` reads these captures, so
-            # it walked the OLD call sites and re-emitted a CALLS edge out
-            # of a function that no longer exists in the source (#1794).
-            # `_load_ast_from_disk` already pops this cache on eviction for
-            # the same reason; the re-parse path has to keep it true too.
-            #
-            # An absent entry and an empty one are not the same thing to
-            # the reader: absent means "not parsed this run, look at the
-            # AST", empty means "parsed, and it has nothing".
-            cache_entry: dict[str, list] = {}
-            for key in (cs.CAPTURE_FUNCTION, cs.CAPTURE_CLASS, cs.CAPTURE_CALL):
-                if combined_captures and key in combined_captures:
-                    cache_entry[key] = combined_captures[key]
-            self.func_class_captures_cache[file_path] = cache_entry
-        return combined_captures
 
     def process_dependencies(self, filepath: Path) -> None:
         logger.debug(ls.DEF_PARSING_DEPENDENCY.format(path=filepath))
@@ -883,20 +812,6 @@ class DefinitionProcessor:
             (cs.NodeLabel.EXTERNAL_PACKAGE, cs.KEY_NAME, dep_name),
             properties=rel_properties,
         )
-
-    def _get_module_docstring(
-        self, root_node: ASTNode, language: cs.SupportedLanguage
-    ) -> str | None:
-        """The documentation for a whole file, in whatever form its language uses.
-
-        Python's is a string literal and reuses `_get_docstring`; every other
-        language marks it with a comment convention, which needs the marker
-        prefixes in `module_docstring` because the grammars report a doc
-        comment and an ordinary one as the same node type.
-        """
-        if language == cs.SupportedLanguage.PYTHON:
-            return self._get_docstring(root_node, language)
-        return extract_module_docstring(root_node, language)
 
     def _get_docstring(
         self, node: ASTNode, language: cs.SupportedLanguage
