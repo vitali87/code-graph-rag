@@ -15,11 +15,11 @@ from loguru import logger
 from codebase_rag import constants as cs
 from codebase_rag.dead_code import dead_code_from_graph, default_dead_code_config
 from codebase_rag.types_defs import DeadCodeConfig
+from codebase_rag.utils.atomic_write import write_text_atomic
 
 from . import constants as ec
 from . import logs as ls
 from .cgr_graph import capture
-from .report_io import write_text_atomic
 from .score import _prf
 from .types_defs import DiffBucket, LocationStats, ScoreResult, ScoreRow
 

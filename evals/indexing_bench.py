@@ -25,11 +25,11 @@ from rich.table import Table
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.utils.atomic_write import write_text_atomic
 
 from . import constants as ec
 from . import logs as ls
 from .cgr_graph import CapturingIngestor
-from .report_io import write_text_atomic
 from .types_defs import IndexingStats
 
 console = Console()

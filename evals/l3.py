@@ -10,12 +10,12 @@ from rich.table import Table
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.types_defs import PropertyDict, PropertyValue, ResultRow
+from codebase_rag.utils.atomic_write import write_text_atomic
 
 from . import constants as ec
 from . import logs as ls
 from .calls_trace import trace_calls
 from .cgr_graph import extract_cgr_calls
-from .report_io import write_text_atomic
 
 console = Console()
 

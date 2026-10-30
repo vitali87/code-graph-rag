@@ -39,8 +39,7 @@ from codebase_rag.capture import resolve_capture
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.sync.checkout_state import state_dir
-
-from .report_io import write_text_atomic
+from codebase_rag.utils.atomic_write import write_text_atomic
 
 CORPUS_DIR = Path(__file__).parent / "flows_corpus"
 EXPECTED_FILE = CORPUS_DIR / "expected.json"

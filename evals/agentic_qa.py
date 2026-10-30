@@ -37,9 +37,10 @@ if TYPE_CHECKING:
     from codebase_rag.services.graph_service import GraphIngestor
     from codebase_rag.services.llm import CypherAgent
 
+from codebase_rag.utils.atomic_write import write_text_atomic
+
 from . import constants as ec
 from . import logs as ls
-from .report_io import write_text_atomic
 from .retrieval.python import (
     _callee_name,
     first_party_property_names,

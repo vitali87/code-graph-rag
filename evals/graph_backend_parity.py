@@ -40,10 +40,10 @@ from codebase_rag import constants as cs
 from codebase_rag.graph_dialects import get_dialect
 from codebase_rag.services.graph_service import GraphIngestor
 from codebase_rag.types_defs import JsonValue, PropertyValue, ResultRow, ResultValue
+from codebase_rag.utils.atomic_write import write_text_atomic
 
 from . import constants as ec
 from . import logs as ls
-from .report_io import write_text_atomic
 from .types_defs import ParityDump, ParityQueryRecording, ParityRecording
 
 app = typer.Typer(no_args_is_help=True)
