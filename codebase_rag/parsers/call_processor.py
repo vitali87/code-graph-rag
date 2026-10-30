@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from bisect import bisect_left, bisect_right
 from collections import defaultdict
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from functools import lru_cache, wraps
 from pathlib import Path
@@ -238,6 +238,11 @@ class _CallScanContext:
     cpp_indirection: dict[str, int] | None = None
     py_flow: FlowBindings | None = None
 
+    @property
+    def py_caller(self) -> Node | None:
+        # The body the Python-only flow analysis reads; None elsewhere.
+        return self.caller_node if self.is_python else None
+
 
 class _FlowTargets(NamedTuple):
     # What the bindings reaching a Python call decide: the callables a bare
@@ -255,35 +260,55 @@ _FLOW_CALLABLE_LABELS = frozenset({NodeType.FUNCTION, NodeType.METHOD, NodeType.
 _WITH_MANAGER_PROBE = "with-manager"
 
 
+# Bodies of their own: a `with` inside one is that body's, not its parent's.
+_PY_OWN_SCOPES = frozenset(
+    {cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_CLASS_DEFINITION, cs.TS_PY_LAMBDA}
+)
+
+
 def _python_with_managers(caller: Node) -> list[tuple[Node, Node, bool]]:
     """Each context manager expression a body enters, with its `with` item
     and whether its statement is `async`; nested defs and classes are their
     own callers."""
     found: list[tuple[Node, Node, bool]] = []
+    for statement in _python_with_statements(caller):
+        is_async = any(c.type == cs.TS_PY_ASYNC for c in statement.children)
+        found.extend(
+            (item, manager, is_async) for item, manager in _with_managers(statement)
+        )
+    return found
+
+
+def _python_with_statements(caller: Node) -> Iterator[Node]:
     stack = list(caller.children)
     while stack:
         node = stack.pop()
-        if node.type in (
-            cs.TS_PY_FUNCTION_DEFINITION,
-            cs.TS_PY_CLASS_DEFINITION,
-            cs.TS_PY_LAMBDA,
-        ):
+        if node.type in _PY_OWN_SCOPES:
             continue
         if node.type == cs.TS_PY_WITH_STATEMENT:
-            is_async = any(c.type == cs.TS_PY_ASYNC for c in node.children)
-            items = [n for n in node.named_children if n.type != cs.TS_PY_BLOCK]
-            while items:
-                item = items.pop()
-                if item.type != cs.TS_PY_WITH_ITEM:
-                    items.extend(item.named_children)
-                    continue
-                value = item.child_by_field_name(cs.FIELD_VALUE)
-                if value is not None and value.type == cs.TS_PY_AS_PATTERN:
-                    value = value.named_children[0] if value.named_children else None
-                if value is not None:
-                    found.append((item, value, is_async))
+            yield node
         stack.extend(node.children)
+
+
+def _with_managers(statement: Node) -> list[tuple[Node, Node]]:
+    # A parenthesized item list nests its items one level down.
+    found: list[tuple[Node, Node]] = []
+    items = [n for n in statement.named_children if n.type != cs.TS_PY_BLOCK]
+    while items:
+        item = items.pop()
+        if item.type != cs.TS_PY_WITH_ITEM:
+            items.extend(item.named_children)
+        elif (manager := _with_item_manager(item)) is not None:
+            found.append((item, manager))
     return found
+
+
+def _with_item_manager(item: Node) -> Node | None:
+    # `with m as x:` enters m.
+    value = item.child_by_field_name(cs.FIELD_VALUE)
+    if value is not None and value.type == cs.TS_PY_AS_PATTERN:
+        return value.named_children[0] if value.named_children else None
+    return value
 
 
 _TYPED_LANGUAGES = frozenset(
@@ -2197,6 +2222,7 @@ class CallProcessor:
         "_resolution",
         "_site_cache",
         "_py_flow_cache",
+        "_py_assign_cache",
         "repo_path",
         "project_name",
         "module_qn_to_file_path",
@@ -2271,6 +2297,9 @@ class CallProcessor:
         # through a rebound local (calls, property reads, passed references);
         # keyed by the node object for the same reason as the site cache.
         self._py_flow_cache: tuple[Node, FlowBindings] | None = None
+        # How often each name is assigned in that body, as its text shows:
+        # the test that decides whether the analysis can help at all.
+        self._py_assign_cache: tuple[Node, dict[str, int]] | None = None
         self.repo_path = repo_path
         self.project_name = project_name
         # Dispatchers that name their callee in a string argument, declared in
@@ -5871,10 +5900,9 @@ class CallProcessor:
                     ctx.caller_qn,
                     cs.RelationshipType.REFERENCES,
                     ctx.language,
-                    caller_node=ctx.caller_node if ctx.is_python else None,
+                    caller_node=ctx.py_caller,
                 )
-            if ctx.is_python:
-                self._record_python_chained_call(ctx, call_node)
+            self._record_python_chained_call(ctx, call_node)
             return
         if ctx.language == cs.SupportedLanguage.SQL:
             self._ingest_sql_routine_call(ctx, call_name)
@@ -6212,16 +6240,7 @@ class CallProcessor:
         rebinds a name resolves as it always did.
         """
         base, dot, _rest = call_name.partition(cs.SEPARATOR_DOT)
-        # Gates that need no analysis, so a body is walked only when one of
-        # its calls goes through a local that can be decided: a receiver the
-        # flat map typed at all (every binding of an untyped one is untyped
-        # too), or a bare name the function binds itself.
-        if dot:
-            if not call_var_types or base not in call_var_types:
-                return None
-        elif ctx.caller_node.type != cs.TS_PY_MODULE and (
-            base not in self._resolver.python_local_names.get(ctx.caller_qn, ())
-        ):
+        if not self._flow_may_decide(ctx, base, bool(dot), call_var_types):
             return None
         if ctx.py_flow is None:
             ctx.py_flow = self._python_flow(ctx.caller_node)
@@ -6237,6 +6256,48 @@ class CallProcessor:
             return None
         views = self._flow_views(bindings, base, call_var_types or {}, ctx.module_qn)
         return _FlowTargets((), views) if views else None
+
+    def _assignments(self, caller_node: Node, name: str) -> int:
+        """How many times the body's text assigns `name` (`name = `, `a,
+        name = `, `name: T = `, `(name := `), counted on its text.
+
+        The analysis decides a name only through what is assigned to it, so
+        a body that never assigns the name (or, for a receiver, assigns it
+        once) is not analysed for it. Over-counting is harmless; an
+        assignment through a parenthesized target split across lines is
+        missed, which leaves that use to the flat map.
+        """
+        cached = self._py_assign_cache
+        if cached is None or cached[0] is not caller_node:
+            cached = (caller_node, {})
+            self._py_assign_cache = cached
+        counts = cached[1]
+        if (count := counts.get(name)) is None:
+            pattern = cs.PY_ASSIGNED_NAME_PATTERN.format(name=re.escape(name)).encode()
+            count = counts[name] = len(re.findall(pattern, caller_node.text or b""))
+        return count
+
+    def _flow_may_decide(
+        self,
+        ctx: _CallScanContext,
+        base: str,
+        receiver: bool,
+        call_var_types: dict[str, str] | None,
+    ) -> bool:
+        """Gates that need no analysis, so a body is walked only when one of
+        its calls goes through a local that can be decided: a receiver the
+        flat map typed at all (every binding of an untyped one is untyped
+        too) and assigned twice, or a bare name the function binds itself
+        and assigns (a nested def resolves without the analysis)."""
+        if receiver:
+            return base in (call_var_types or {}) and (
+                self._assignments(ctx.caller_node, base) >= 2
+            )
+        if ctx.caller_node.type != cs.TS_PY_MODULE and (
+            base not in self._resolver.python_local_names.get(ctx.caller_qn, ())
+        ):
+            return False
+        return self._assignments(ctx.caller_node, base) >= 1
 
     def _python_flow(self, caller_node: Node) -> FlowBindings:
         cached = self._py_flow_cache
@@ -6311,8 +6372,11 @@ class CallProcessor:
         ):
             return None
         # Checked before the body is analysed: an untyped name has no
-        # binding this could type either.
-        if (name := safe_decode_text(name_node)) not in var_types:
+        # binding this could type either, and one assigned once is the flat
+        # map's.
+        if (name := safe_decode_text(name_node)) not in var_types or (
+            self._assignments(caller_node, name) < 2
+        ):
             return None
         flow = self._python_flow(caller_node)
         if name not in flow.rebound or not (bindings := flow.name_at(name_node)):
@@ -6325,9 +6389,14 @@ class CallProcessor:
         """The functions a local passed as an argument holds where it is
         passed (`b = handler; run(b)`), followed the way a bare call through
         it is; None leaves the argument to the name lookup, as before."""
-        if arg_node.type != cs.TS_PY_IDENTIFIER or (
-            ctx.caller_node.type != cs.TS_PY_MODULE
-            and name not in self._resolver.python_local_names.get(ctx.caller_qn, ())
+        if (
+            not ctx.is_python
+            or arg_node.type != cs.TS_PY_IDENTIFIER
+            or (
+                ctx.caller_node.type != cs.TS_PY_MODULE
+                and name not in self._resolver.python_local_names.get(ctx.caller_qn, ())
+            )
+            or not self._assignments(ctx.caller_node, name)
         ):
             return None
         if ctx.py_flow is None:
@@ -6359,23 +6428,36 @@ class CallProcessor:
     def _flow_binding_callees(
         self, ctx: _CallScanContext, binding: Binding, seen: set[int]
     ) -> list[tuple[str, str, str]] | None:
-        registry = self._resolver.function_registry
         if binding.kind == BindingKind.DEFINITION and binding.definition is not None:
-            name = safe_decode_text(
-                binding.definition.child_by_field_name(cs.FIELD_NAME)
-            )
-            qn = f"{ctx.caller_qn}{cs.SEPARATOR_DOT}{name}"
-            if not name or qn not in registry:
-                return None
-            return [(registry[qn], qn, cs.EdgeResolution.EXACT)]
+            return self._flow_definition_callee(ctx, binding.definition)
         value = binding.value
         if binding.kind != BindingKind.ASSIGN or value is None:
             return None
-        if value.type == cs.TS_PY_IDENTIFIER and ctx.py_flow is not None:
-            if (upstream := ctx.py_flow.name_at(value)) is not None:
-                if any(b.kind == BindingKind.ENTRY for b in upstream):
-                    return None
-                return self._flow_callees(ctx, upstream, seen)
+        if (
+            value.type == cs.TS_PY_IDENTIFIER
+            and ctx.py_flow is not None
+            and (upstream := ctx.py_flow.name_at(value)) is not None
+        ):
+            # A copy (`v2 = v1`): what v1 holds there, unless a binding of
+            # it comes from outside the body.
+            if any(b.kind == BindingKind.ENTRY for b in upstream):
+                return None
+            return self._flow_callees(ctx, upstream, seen)
+        return self._flow_value_callee(ctx, value)
+
+    def _flow_definition_callee(
+        self, ctx: _CallScanContext, definition: Node
+    ) -> list[tuple[str, str, str]] | None:
+        registry = self._resolver.function_registry
+        name = safe_decode_text(definition.child_by_field_name(cs.FIELD_NAME))
+        qn = f"{ctx.caller_qn}{cs.SEPARATOR_DOT}{name}"
+        if not name or qn not in registry:
+            return None
+        return [(registry[qn], qn, cs.EdgeResolution.EXACT)]
+
+    def _flow_value_callee(
+        self, ctx: _CallScanContext, value: Node
+    ) -> list[tuple[str, str, str]] | None:
         if value.type not in (cs.TS_PY_IDENTIFIER, cs.TS_PY_ATTRIBUTE):
             return None
         text = safe_decode_text(value)
@@ -7774,7 +7856,7 @@ class CallProcessor:
                 ctx.caller_qn,
                 ctx.arg_ref_rel,
                 ctx.language,
-                caller_node=ctx.caller_node if ctx.is_python else None,
+                caller_node=ctx.py_caller,
             )
 
     def _emit_js_this_dispatch(
@@ -7842,7 +7924,7 @@ class CallProcessor:
                     ctx.caller_qn,
                     ctx.arg_ref_rel,
                     ctx.language,
-                    caller_node=ctx.caller_node if ctx.is_python else None,
+                    caller_node=ctx.py_caller,
                 )
             return
 
@@ -7855,7 +7937,7 @@ class CallProcessor:
                 ctx.module_qn,
                 ctx.local_var_types,
                 ctx.class_context,
-                ctx if ctx.is_python else None,
+                ctx,
             )
         if ctx.is_arg_ref_lang:
             # Functions are first-class values: a first-party callee may STORE
@@ -7875,7 +7957,7 @@ class CallProcessor:
                 ctx.caller_qn,
                 cs.RelationshipType.REFERENCES,
                 ctx.language,
-                caller_node=ctx.caller_node if ctx.is_python else None,
+                caller_node=ctx.py_caller,
             )
         self._ingest_first_party_call(ctx, call_node, call_name, callee_type, callee_qn)
 
@@ -10723,6 +10805,8 @@ class CallProcessor:
     ) -> None:
         """`factory()()` calls what factory returns, as `x = factory(); x()`
         does: record it the same way, as many calls deep as it is written."""
+        if not ctx.is_python:
+            return
         depth = 0
         function = call_node.child_by_field_name(cs.TS_FIELD_FUNCTION)
         while function is not None and function.type == cs.TS_PY_CALL:
@@ -11149,7 +11233,7 @@ class CallProcessor:
         module_qn: str,
         local_var_types: dict[str, str] | None,
         class_context: str | None,
-        py_ctx: _CallScanContext | None = None,
+        scan_ctx: _CallScanContext | None = None,
     ) -> None:
         # Record, for each call-site argument that names a callable, whether it is a
         # concrete function or a parameter of the caller (a pass-through). The
@@ -11177,8 +11261,8 @@ class CallProcessor:
             arg_text = safe_decode_text(arg_node)
             if not arg_text:
                 continue
-            if py_ctx is not None and (
-                passed := self._flow_passed_callables(py_ctx, arg_node, arg_text)
+            if scan_ctx is not None and (
+                passed := self._flow_passed_callables(scan_ctx, arg_node, arg_text)
             ):
                 self._flow_bucket.args.extend(
                     _CallableFlowArg(callee_qn, position, keyword_name, qn, "", "")
