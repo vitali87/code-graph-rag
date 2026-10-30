@@ -45,7 +45,7 @@ from .java import function_ingest as java_function_ingest
 from .js_ts import function_ingest as js_ts_function_ingest
 from .js_ts import utils as js_ts_utils
 from .js_ts.utils import mark_js_ts_module_private
-from .lua import utils as lua_utils
+from .lua import function_ingest as lua_function_ingest
 from .method_ingest import MethodIngestHost
 from .parameter_nodes import (
     PendingParameterType,
@@ -403,24 +403,9 @@ class FunctionIngest:
         lang_config: LanguageSpec,
     ) -> FunctionResolution:
         func_name = self._extract_function_name(func_node)
-        # A function expression that is the VALUE of a table-constructor field
-        # (`s = { set = function() end }`) is named by its key, under the table
-        # it is built into: qn `s.set`, name `set`. Before, the enclosing
-        # assignment's left side named it, so every function in the table was
-        # `s` and only an `@line` suffix told them apart (issue #1631).
         display_name: str | None = None
-
-        if (
-            not func_name
-            and language == cs.SupportedLanguage.LUA
-            and func_node.type == cs.TS_LUA_FUNCTION_DEFINITION
-        ):
-            func_name, display_name = self._extract_lua_field_function_name(func_node)
-            # A field value whose field has no name is anonymous; only a
-            # function that is NOT a field value may take the assignment's
-            # name (#1750).
-            if not func_name and not lua_utils.is_field_value(func_node):
-                func_name = self._extract_lua_assignment_function_name(func_node)
+        if not func_name and language == cs.SupportedLanguage.LUA:
+            func_name, display_name = lua_function_ingest.function_name(func_node)
 
         is_anonymous = not func_name
         if not func_name:
@@ -713,23 +698,6 @@ class FunctionIngest:
             return f"{cs.PREFIX_IIFE_DIRECT}{func_node.start_point[0]}_{func_node.start_point[1]}"
 
         return f"{cs.PREFIX_ANONYMOUS}{func_node.start_point[0]}_{func_node.start_point[1]}"
-
-    def _extract_lua_assignment_function_name(self, func_node: Node) -> str | None:
-        return lua_utils.extract_assigned_name(
-            func_node,
-            accepted_var_types=cs.LUA_NAMING_ASSIGNMENT_TARGETS,
-        )
-
-    def _extract_lua_field_function_name(
-        self, func_node: Node
-    ) -> tuple[str | None, str | None]:
-        """(`table.key` path, `key`) for a table field's function value, else Nones.
-
-        The walk lives in `lua_utils.field_function_path`, shared with the
-        call pass so both name the node identically (#1631).
-        """
-        found = lua_utils.field_function_path(func_node)
-        return found if found is not None else (None, None)
 
     def _build_nested_qualified_name(
         self,
