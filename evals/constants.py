@@ -468,8 +468,9 @@ JAVA_SCORED_NODE_KIND_VALUES: frozenset[str] = frozenset(
 JAVA_ORACLE_DIRNAME = "java_oracle"
 JAVA_ORACLE_SOURCE = "Oracle.java"
 JAVA_ORACLE_CLASS = "Oracle"
-JAVAC_BIN = "javac"
-JAVA_BIN = "java"
+# The toolchain the Java frontend runs, under the names the evals use.
+JAVAC_BIN = cs.JAVAC_BIN
+JAVA_BIN = cs.JAVA_BIN
 JAVA_CP_FLAG = "-cp"
 SCALA_SUFFIXES = (".scala", ".sc")
 SCALA_ORACLE_DIRNAME = "scala_oracle"
