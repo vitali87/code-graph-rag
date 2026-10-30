@@ -1,6 +1,7 @@
 import re
 from collections.abc import Callable
 from pathlib import Path
+from typing import NoReturn
 
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
@@ -175,13 +176,80 @@ _NOT_MODELLED: frozenset[str] = frozenset(
         cq.CYPHER_UNANCHORED_GLOSSES,
     }
 )
+# Incomplete-run markers this double never writes, so "none" is the honest
+# answer to each. Modelled rather than left to the not-emulated assertion
+# because their readers refuse on a failed read:
+#
+# `CYPHER_PROJECT_IS_INCOMPLETE` reads a project's outstanding markers.
+# `marker.persisted_incomplete` treats an unreadable store as "cannot tell ->
+# refuse", so an unmodelled query makes every marker-consulting path refuse and
+# looks exactly like a production guard firing (PR #1547).
+#
+# `CYPHER_CLI_SYNC_MARKER_OWNER` reads the CLI sync's own marker, which `cgr
+# watch` reads before each scoped write (review of PR 3365). Unmodelled, that
+# read would fail and the watcher would refuse every edit it is handed.
+_UNWRITTEN_MARKER_QUERIES: frozenset[str] = frozenset(
+    {
+        cq.CYPHER_PROJECT_IS_INCOMPLETE,
+        cq.CYPHER_CLI_SYNC_MARKER_OWNER,
+    }
+)
+# The query families one row method answers, told apart by the query.
+_DELTA_QUERIES: frozenset[str] = frozenset(
+    {
+        cq.CYPHER_DELTA_DEFINITIONS,
+        cq.CYPHER_DELTA_DEFINITIONS_BY_QN,
+        cq.CYPHER_DELTA_SITES,
+        cq.CYPHER_DELTA_MODULE_IMPORTS,
+        cq.CYPHER_DELTA_NAMED_IMPORTS,
+        cq.CYPHER_DELTA_MODULES,
+        cq.CYPHER_DELTA_MODULE_IMPORTERS,
+        cq.CYPHER_DELTA_CALLERS_OF,
+        cq.CYPHER_DELTA_REMOTE_CALLERS_OF,
+        cq.CYPHER_DELTA_REMOTE_DIRECT_CALLERS_OF,
+        cq.CYPHER_DELTA_RUST_MODULES,
+        cq.CYPHER_DELTA_RUST_TEST_FNS,
+        cq.CYPHER_DUPLICATE_FINGERPRINTS,
+        cq.CYPHER_DEAD_CODE_NODES,
+        cq.CYPHER_DEAD_CODE_RELS,
+    }
+)
+_GRAPH_QUERIES: frozenset[str] = frozenset(
+    {
+        cq.CYPHER_GRAPH_DEFINITION,
+        cq.CYPHER_GRAPH_CALLERS,
+        cq.CYPHER_GRAPH_REFERENCES,
+        cq.CYPHER_GRAPH_TYPE_EDGES,
+        cq.CYPHER_GRAPH_IMPLEMENTORS,
+        cq.CYPHER_GRAPH_OVERRIDES,
+        cq.CYPHER_GRAPH_IMPORTERS,
+        cq.CYPHER_GRAPH_RESOLVE_NAME,
+        cq.CYPHER_GRAPH_RESOLVE_LOCATION,
+        cq.CYPHER_GRAPH_CALLEES,
+        cq.CYPHER_GRAPH_CALLERS_OF,
+        cq.CYPHER_GRAPH_CALLEES_OF,
+    }
+)
+_CONTEXT_QUERIES: frozenset[str] = frozenset(
+    {
+        cq.CYPHER_CONTEXT_HOTNESS,
+        cq.CYPHER_CONTEXT_TYPES,
+        cq.CYPHER_CONTEXT_DOC_SECTIONS,
+    }
+)
+_INTERFACE_QUERIES: frozenset[str] = frozenset(
+    {
+        cs.CYPHER_INTERFACE_FINGERPRINTS,
+        cs.CYPHER_INTERFACE_BOUNDARY_EDGES,
+        cs.CYPHER_INTERFACE_FLOW_SOURCE_PATHS,
+    }
+)
 _MODULE_QN_LABELS = frozenset(
     {
         _MODULE_LABEL,
         cs.NodeLabel.MODULE_INTERFACE.value,
     }
 )
-_DEFINITION_LABELS = frozenset(label.value for label in cs.SYMBOL_DEFINITION_LABELS)
 _INBOUND_DEPENDENT_RELS = frozenset(
     {
         cs.RelationshipType.CALLS.value,
@@ -248,6 +316,10 @@ _CHECK_KEY_FIELDS = (cs.KEY_QUALIFIED_NAME, cs.KEY_ABSOLUTE_PATH, cs.KEY_NAME)
 
 def _str(value: PropertyValue | None) -> str:
     return value if isinstance(value, str) else ""
+
+
+def _project_prefix(params: PropertyDict | None) -> str:
+    return _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
 
 
 def _result(value: PropertyValue | None) -> ResultValue:
@@ -1343,64 +1415,23 @@ class StatefulIngestor:
                 return self._project_sync_rows()
             case cs.CYPHER_ALL_FILE_PATHS:
                 return self._path_rows(_FILE_LABEL)
-            case (
-                cq.CYPHER_DELTA_DEFINITIONS
-                | cq.CYPHER_DELTA_DEFINITIONS_BY_QN
-                | cq.CYPHER_DELTA_SITES
-                | cq.CYPHER_DELTA_MODULE_IMPORTS
-                | cq.CYPHER_DELTA_NAMED_IMPORTS
-                | cq.CYPHER_DELTA_MODULES
-                | cq.CYPHER_DELTA_MODULE_IMPORTERS
-                | cq.CYPHER_DELTA_CALLERS_OF
-                | cq.CYPHER_DELTA_REMOTE_CALLERS_OF
-                | cq.CYPHER_DELTA_REMOTE_DIRECT_CALLERS_OF
-                | cq.CYPHER_DELTA_RUST_MODULES
-                | cq.CYPHER_DELTA_RUST_TEST_FNS
-                | cq.CYPHER_DUPLICATE_FINGERPRINTS
-                | cq.CYPHER_DEAD_CODE_NODES
-                | cq.CYPHER_DEAD_CODE_RELS
-            ):
+            case _ if query in _DELTA_QUERIES:
                 return self._delta_rows(query, params or {})
             case cq.CYPHER_PROJECT_ROOT_PATH:
                 return self._project_root_rows(params or {})
             case cq.CYPHER_GRAPH_NODE_EXISTS:
-                # Any node in any project: the unknown-target refusal asks
-                # whether the name is in the graph at all (issue #3244).
-                wanted = _str((params or {}).get(cs.KEY_QN))
-                rows: list[ResultRow] = [
-                    {cs.KEY_QUALIFIED_NAME: wanted}
-                    for props in self.nodes.values()
-                    if props.get(cs.KEY_QUALIFIED_NAME) == wanted
-                ]
-                return rows[:1]
+                return self._node_exists_rows(params)
             case cq.CYPHER_CLAIM_PROJECT_ROOT:
                 return self._claim_project_root(params or {})
             case cq.CYPHER_MARK_CLAIMED_PROJECT_INCOMPLETE:
                 return self._mark_claimed_project(params or {})
-            case (
-                cq.CYPHER_GRAPH_DEFINITION
-                | cq.CYPHER_GRAPH_CALLERS
-                | cq.CYPHER_GRAPH_REFERENCES
-                | cq.CYPHER_GRAPH_TYPE_EDGES
-                | cq.CYPHER_GRAPH_IMPLEMENTORS
-                | cq.CYPHER_GRAPH_OVERRIDES
-                | cq.CYPHER_GRAPH_IMPORTERS
-                | cq.CYPHER_GRAPH_RESOLVE_NAME
-                | cq.CYPHER_GRAPH_RESOLVE_LOCATION
-                | cq.CYPHER_GRAPH_CALLEES
-                | cq.CYPHER_GRAPH_CALLERS_OF
-                | cq.CYPHER_GRAPH_CALLEES_OF
-            ):
+            case _ if query in _GRAPH_QUERIES:
                 return self._graph_rows(query, params or {})
             case cs.CYPHER_SAME_NAMED_CSHARP_TYPES:
                 return self._same_named_csharp_type_rows(params or {})
             case cq.CYPHER_GRAPH_GO_IMPLEMENTERS_UNKNOWN:
                 return self._go_implementers_unknown_rows(params or {})
-            case (
-                cq.CYPHER_CONTEXT_HOTNESS
-                | cq.CYPHER_CONTEXT_TYPES
-                | cq.CYPHER_CONTEXT_DOC_SECTIONS
-            ):
+            case _ if query in _CONTEXT_QUERIES:
                 return self._context_rows(query, params or {})
             case cs.CYPHER_ALL_FOLDER_PATHS:
                 return self._path_rows(_FOLDER_LABEL)
@@ -1413,569 +1444,82 @@ class StatefulIngestor:
             case cs.CYPHER_REPO_FOLDER_PATHS:
                 return self._repo_path_rows(_FOLDER_LABEL, params or {})
             case cs.CYPHER_PROJECT_PACKAGE_PATHS:
-                name = _text(params.get(cs.KEY_PROJECT_NAME)) if params else None
-                prefix = _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
-                return [
-                    row
-                    for row in self._path_rows(_PACKAGE_LABEL)
-                    if isinstance(qn := row.get(cs.KEY_QUALIFIED_NAME), str)
-                    and (qn == name or (prefix is not None and qn.startswith(prefix)))
-                ]
+                return self._project_package_path_rows(params)
             case cs.CYPHER_PROJECT_PRUNABLE_MODULES:
-                name = _text(params.get(cs.KEY_PROJECT_NAME)) if params else None
-                prefix = _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
-                prunable: list[ResultRow] = []
-                for (label, _uid), props in self.nodes.items():
-                    qn = _text(props.get(cs.KEY_QUALIFIED_NAME))
-                    path = _text(props.get(cs.KEY_PATH))
-                    if label != _MODULE_LABEL or qn is None or path is None:
-                        continue
-                    if qn == name or (prefix is not None and qn.startswith(prefix)):
-                        prunable.append({cs.KEY_PATH: path, cs.KEY_QUALIFIED_NAME: qn})
-                return prunable
+                return self._prunable_module_rows(params)
             case cs.CYPHER_PROJECT_OUTSIDE_FILE_KEYS:
                 return self._project_outside_file_keys(params or {})
             case cs.CYPHER_FILE_CONTAINERS:
                 return self._file_containers(params or {})
             case cs.CYPHER_CONTAINER_KIND:
-                # Which container kind the graph records for one directory.
-                # Matches on absolute_path across BOTH labels, as the real
-                # query does, so a directory holding two container nodes (the
-                # very defect #1798 is about) returns both rows rather than
-                # silently picking one.
-                wanted = _text(params.get(cs.KEY_PATH)) if params else ""
-                return [
-                    {"labels": [node_label]}
-                    for (node_label, _uid), props in self.nodes.items()
-                    if node_label in (_PACKAGE_LABEL, _FOLDER_LABEL)
-                    and _text(props.get(cs.KEY_ABSOLUTE_PATH)) == wanted
-                ]
-            case cq.CYPHER_PROJECT_IS_INCOMPLETE:
-                # Outstanding incomplete-run markers for a project. This
-                # double never writes one, so the honest answer is "none".
-                # Modelled rather than left to the not-emulated assertion
-                # because `marker.persisted_incomplete` treats an unreadable store
-                # as "cannot tell -> refuse", so an unmodelled query makes
-                # every marker-consulting path refuse and looks exactly like
-                # a production guard firing (PR #1547).
-                return []
-            case cq.CYPHER_CLI_SYNC_MARKER_OWNER:
-                # The CLI sync's own marker, which `cgr watch` reads before
-                # each scoped write (review of PR 3365). Never kept here, for
-                # the reason above: unmodelled, that read would fail and the
-                # watcher would refuse every edit it is handed.
+                return self._container_kind_rows(params)
+            case _ if query in _UNWRITTEN_MARKER_QUERIES:
                 return []
             case cq.CYPHER_CHECK_SCOPE_NODES:
-                return [
-                    {
-                        cs.KEY_LABEL: label,
-                        cs.KEY_PROPS: _result_props(self.nodes[(label, uid)]),
-                    }
-                    for (label, uid) in sorted(
-                        self._check_scope(params or {}),
-                        key=lambda n: (n[0], _str(n[1])),
-                    )
-                ]
+                return self._check_scope_node_rows(params)
             case cq.CYPHER_CHECK_PROJECT_IO_LINKS:
                 return self._check_project_io_links(params or {})
             case cq.CYPHER_CHECK_SHARED_NODES:
-                return [
-                    {
-                        cs.KEY_LABEL: label,
-                        cs.KEY_PROPS: _result_props(props),
-                        cs.KEY_INBOUND: len(self._in.get((label, uid), ())),
-                    }
-                    for (label, uid), props in self.nodes.items()
-                    if label in _SHARED_ORPHAN_LABELS
-                ]
+                return self._check_shared_node_rows()
             case cq.CYPHER_CHECK_SCOPE_EDGES:
                 return self._check_scope_edges(params or {})
             case cs.CYPHER_INBOUND_EDGES:
                 return self._inbound_edge_rows(params or {})
             case cq.CYPHER_TRACE_EDGES_AT_PATHS:
-                # Trace-derived CALLS edges touching the re-parsed files, in
-                # both directions (issue #2429). Only an edge a test wrote
-                # with `dynamic` set matches, as in the store. The carry's
-                # follow-up reads are issued only for edges this returned,
-                # so they are deliberately not modelled: a test reaching
-                # them needs a real case here.
-                raw_paths = params.get(cs.CYPHER_PARAM_PATHS) if params else None
-                return self._trace_edge_rows(
-                    set(raw_paths) if isinstance(raw_paths, list) else set(),
-                    _str((params or {}).get(cs.KEY_PREFIX)),
-                )
+                return self._trace_edges_at_paths_rows(params)
             case cs.CYPHER_AFFECTED_CALLER_PATHS:
-                raw_paths = params.get(cs.CYPHER_PARAM_PATHS) if params else None
-                prefix = str(params.get(cs.KEY_PROJECT_PREFIX, "")) if params else ""
-                reindexed: set[str] = (
-                    set(raw_paths) if isinstance(raw_paths, list) else set()
-                )
-                callers: set[str] = set()
-                for (
-                    from_label,
-                    from_val,
-                    rel_type,
-                    to_label,
-                    to_val,
-                    _site,
-                ) in self._edges_into(reindexed):
-                    if rel_type not in _AFFECTED_CALLER_RELS:
-                        continue
-                    caller = self.nodes.get((from_label, from_val))
-                    if caller is None:
-                        continue
-                    caller_path = caller.get(cs.KEY_PATH)
-                    if (
-                        not isinstance(caller_path, str)
-                        or caller_path in reindexed
-                        or not str(_text(from_val)).startswith(prefix)
-                        or not str(_text(to_val)).startswith(prefix)
-                    ):
-                        continue
-                    callers.add(caller_path)
-                return [{cs.KEY_CALLER_PATH: path} for path in sorted(callers)]
+                return self._affected_caller_rows(params)
             case cs.CYPHER_FOREIGN_MEMBER_PATHS:
-                raw_paths = params.get(cs.CYPHER_PARAM_PATHS) if params else None
-                return self._foreign_member_rows(
-                    set(raw_paths) if isinstance(raw_paths, list) else set(),
-                    _text(params.get(cs.KEY_PROJECT_NAME)) if params else None,
-                    _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None,
-                )
+                return self._foreign_member_path_rows(params)
             case cs.CYPHER_ALL_DEFINITION_QNS:
-                prefix = _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
-                defs: list[ResultRow] = []
-                for (label, uid), props in self.nodes.items():
-                    if label not in _DEFINITION_LABELS:
-                        continue
-                    qn = props.get(cs.KEY_QUALIFIED_NAME, uid)
-                    if not _str(qn).startswith(prefix):
-                        continue
-                    row: ResultRow = {
-                        cs.KEY_QUALIFIED_NAME: _text(qn),
-                        cs.KEY_LABEL: label,
-                        cs.KEY_NAME: _text(props.get(cs.KEY_NAME)),
-                        cs.KEY_IS_PROPERTY: bool(props.get(cs.KEY_IS_PROPERTY)),
-                        cs.KEY_MEMBER_ALIASES: [_text(a) for a in raw_aliases]
-                        if isinstance(
-                            raw_aliases := props.get(cs.KEY_MEMBER_ALIASES), list
-                        )
-                        else None,
-                        cs.KEY_NON_METHOD_MEMBERS: [_text(n) for n in raw_values]
-                        if isinstance(
-                            raw_values := props.get(cs.KEY_NON_METHOD_MEMBERS), list
-                        )
-                        else None,
-                        cs.KEY_IS_MACRO: bool(props.get(cs.KEY_IS_MACRO)),
-                        cs.KEY_IS_BODY_SCOPED_NAME: bool(
-                            props.get(cs.KEY_IS_BODY_SCOPED_NAME)
-                        ),
-                        cs.KEY_PATH: _text(props.get(cs.KEY_PATH)),
-                        cs.KEY_START_LINE: _int(props.get(cs.KEY_START_LINE)),
-                        cs.KEY_END_LINE: _int(props.get(cs.KEY_END_LINE)),
-                        cs.KEY_MODIFIERS: [_text(m) for m in raw_modifiers]
-                        if isinstance(
-                            raw_modifiers := props.get(cs.KEY_MODIFIERS), list
-                        )
-                        else None,
-                        cs.KEY_DECORATORS: [_text(d) for d in raw_decorators]
-                        if isinstance(
-                            raw_decorators := props.get(cs.KEY_DECORATORS), list
-                        )
-                        else None,
-                        cs.KEY_RETURN_TYPE: _text(props[cs.KEY_RETURN_TYPE])
-                        if cs.KEY_RETURN_TYPE in props
-                        else None,
-                        cs.KEY_PARAM_TYPES: [_text(p) for p in raw_param_types]
-                        if isinstance(
-                            raw_param_types := props.get(cs.KEY_PARAM_TYPES), list
-                        )
-                        else None,
-                        cs.KEY_NAMESPACE: _text(props[cs.KEY_NAMESPACE])
-                        if cs.KEY_NAMESPACE in props
-                        else None,
-                        cs.KEY_EXTENSION_RECEIVER: _text(
-                            props.get(cs.KEY_EXTENSION_RECEIVER)
-                        ),
-                        cs.KEY_EXTENSION_NAMESPACE: _text(
-                            props.get(cs.KEY_EXTENSION_NAMESPACE)
-                        ),
-                        cs.KEY_EXTENSION_RECEIVER_ARITY: arity
-                        if isinstance(
-                            arity := props.get(cs.KEY_EXTENSION_RECEIVER_ARITY), int
-                        )
-                        else None,
-                        cs.KEY_IS_OBJECT_MEMBER: bool(
-                            props.get(cs.KEY_IS_OBJECT_MEMBER)
-                        ),
-                        cs.KEY_SIGNATURE: _text(props[cs.KEY_SIGNATURE])
-                        if cs.KEY_SIGNATURE in props
-                        else None,
-                        cs.KEY_DECLARED_IN_CLASS: bool(
-                            props.get(cs.KEY_DECLARED_IN_CLASS)
-                        ),
-                        cs.KEY_GENERIC_ARITY: _int(props.get(cs.KEY_GENERIC_ARITY)),
-                        cs.KEY_IS_EXPORTED: bool(props[cs.KEY_IS_EXPORTED])
-                        if cs.KEY_IS_EXPORTED in props
-                        else None,
-                        cs.KEY_EMBEDS: _texts(props.get(cs.KEY_EMBEDS)),
-                    }
-                    defs.append(row)
-                return defs
+                return self._definition_qn_rows(params)
             case cs.CYPHER_PROJECT_PARAMETER_TYPES:
-                prefix = _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
-                return [
-                    {
-                        cs.KEY_QUALIFIED_NAME: _text(props.get(cs.KEY_QUALIFIED_NAME)),
-                        cs.KEY_TYPE_NAME: _text(props[cs.KEY_TYPE_NAME]),
-                        cs.KEY_PATH: _text(props.get(cs.KEY_PATH)),
-                    }
-                    for (label, _uid), props in self.nodes.items()
-                    if label == cs.NodeLabel.PARAMETER.value
-                    and cs.KEY_TYPE_NAME in props
-                    and (_text(props.get(cs.KEY_QUALIFIED_NAME)) or "").startswith(
-                        prefix
-                    )
-                ]
+                return self._typed_member_rows(cs.NodeLabel.PARAMETER.value, params)
             case cs.CYPHER_PROJECT_FIELD_TYPES:
                 # The Field counterpart (issue #1805), read by the incremental
                 # requeue for the same reason as the Parameter query above.
-                prefix = _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
-                return [
-                    {
-                        cs.KEY_QUALIFIED_NAME: _text(props.get(cs.KEY_QUALIFIED_NAME)),
-                        cs.KEY_TYPE_NAME: _text(props[cs.KEY_TYPE_NAME]),
-                        cs.KEY_PATH: _text(props.get(cs.KEY_PATH)),
-                    }
-                    for (label, _uid), props in self.nodes.items()
-                    if label == cs.NodeLabel.FIELD.value
-                    and cs.KEY_TYPE_NAME in props
-                    and (_text(props.get(cs.KEY_QUALIFIED_NAME)) or "").startswith(
-                        prefix
-                    )
-                ]
+                return self._typed_member_rows(cs.NodeLabel.FIELD.value, params)
             case cs.CYPHER_PROJECT_CONSTANT_TYPES:
                 # The Constant counterpart (issue #1806), for the same reason.
-                prefix = _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
-                return [
-                    {
-                        cs.KEY_QUALIFIED_NAME: _text(props.get(cs.KEY_QUALIFIED_NAME)),
-                        cs.KEY_TYPE_NAME: _text(props[cs.KEY_TYPE_NAME]),
-                        cs.KEY_PATH: _text(props.get(cs.KEY_PATH)),
-                    }
-                    for (label, _uid), props in self.nodes.items()
-                    if label == cs.NodeLabel.CONSTANT.value
-                    and cs.KEY_TYPE_NAME in props
-                    and (_text(props.get(cs.KEY_QUALIFIED_NAME)) or "").startswith(
-                        prefix
-                    )
-                ]
+                return self._typed_member_rows(cs.NodeLabel.CONSTANT.value, params)
             case cs.CYPHER_ALL_IMPLEMENTS:
-                return self._implements_rows(
-                    _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
-                )
+                return self._implements_rows(_project_prefix(params))
             case cs.CYPHER_ALL_RUST_OVERRIDES:
-                return self._rust_override_rows(
-                    _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
-                )
+                return self._rust_override_rows(_project_prefix(params))
             case cs.CYPHER_RUST_TRAITS_WITH_REQUIRED_METHODS:
-                return self._rust_required_trait_rows(
-                    _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
-                )
+                return self._rust_required_trait_rows(_project_prefix(params))
             case cs.CYPHER_ALL_INHERITS:
-                prefix = _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
-                inherits: list[tuple[str, int, ResultRow]] = []
-                for edge in self.keyed_edges:
-                    _from_label, from_val, rel_type, _to_label, to_val, _site = edge
-                    if rel_type != _INHERITS_REL or not _str(from_val).startswith(
-                        prefix
-                    ):
-                        continue
-                    raw_index = self.edge_props.get(edge, {}).get(cs.KEY_BASE_INDEX)
-                    index = raw_index if isinstance(raw_index, int) else None
-                    inherits.append(
-                        (
-                            str(_text(from_val)),
-                            index if index is not None else 0,
-                            {
-                                cs.KEY_CHILD_QN: _text(from_val),
-                                cs.KEY_BASE_QN: _text(to_val),
-                                cs.KEY_BASE_INDEX: index,
-                            },
-                        )
-                    )
-                inherits.sort(key=lambda item: (item[0], item[1]))
-                return [row for _child, _index, row in inherits]
+                return self._inherits_rows(params)
             case cs.CYPHER_ALL_MODULE_QNS:
-                prefix = _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
-                module_rows: list[ResultRow] = []
-                for (label, _uid), props in self.nodes.items():
-                    if label not in _MODULE_QN_LABELS or not _str(
-                        props.get(cs.KEY_QUALIFIED_NAME)
-                    ).startswith(prefix):
-                        continue
-                    module_row: ResultRow = {
-                        cs.KEY_QUALIFIED_NAME: _text(props.get(cs.KEY_QUALIFIED_NAME)),
-                        cs.KEY_LABEL: label,
-                        cs.KEY_PHP_NAMESPACE: _text(props.get(cs.KEY_PHP_NAMESPACE)),
-                    }
-                    module_rows.append(module_row)
-                return module_rows
+                return self._module_qn_rows(params)
             case cs.CYPHER_PROJECT_MODULE_PATHS:
-                project_name = (
-                    _text(params.get(cs.KEY_PROJECT_NAME)) if params else None
-                )
-                prefix = _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
-                project_rows: list[ResultRow] = []
-                for (label, _uid), props in self.nodes.items():
-                    if label != _MODULE_LABEL:
-                        continue
-                    qn = _text(props.get(cs.KEY_QUALIFIED_NAME)) or ""
-                    if qn == project_name or (prefix and qn.startswith(prefix)):
-                        project_rows.append(
-                            {
-                                cs.KEY_PATH: _text(props.get(cs.KEY_PATH)),
-                                cs.KEY_QUALIFIED_NAME: qn,
-                            }
-                        )
-                return project_rows
-            case cq.CYPHER_LIST_PROJECTS:
-                # Every Project node, by name (issue #1970): the updater
-                # decides ownership of a prefix-scoped row by the longest
-                # registered name.
-                return sorted(
-                    (
-                        {
-                            cs.KEY_NAME: _str(uid),
-                            cs.KEY_ROOT_PATH: _result(props.get(cs.KEY_ROOT_PATH)),
-                        }
-                        for (label, uid), props in self.nodes.items()
-                        if label == cs.NodeLabel.PROJECT.value
-                    ),
-                    key=lambda row: str(row[cs.KEY_NAME]),
-                )
+                return self._project_module_path_rows(params)
             case cs.CYPHER_ALL_MODULE_PATHS_INTERNAL:
-                rows: list[ResultRow] = []
-                for (label, _uid), props in self.nodes.items():
-                    if label != _MODULE_LABEL:
-                        continue
-                    row: ResultRow = {
-                        cs.KEY_PATH: _text(props.get(cs.KEY_PATH)),
-                        cs.KEY_QUALIFIED_NAME: _text(props.get(cs.KEY_QUALIFIED_NAME)),
-                    }
-                    rows.append(row)
-                return rows
+                return self._module_path_rows()
             case er.CYPHER_PROJECT_MODULES | ep.CYPHER_PROJECT_PY_MODULES:
-                # Route rehydration. These MUST be emulated rather than left to
-                # the refusal below: their readers wrap the call in
-                # `except Exception: return []`, so a raise is caught and
-                # turned straight back into an empty result -- the fail-closed
-                # default defeated one layer down, invisibly (raised on #1716).
-                prefix = _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
-                raw_exts = params.get("extensions") if params else None
-                # CYPHER_PROJECT_MODULES filters on a passed extension list;
-                # the PY variant hardcodes `.py` in its Cypher.
-                suffixes = (
-                    tuple(e for e in raw_exts if isinstance(e, str))
-                    if isinstance(raw_exts, list)
-                    else (".py",)
-                )
-                return [
-                    {cs.KEY_QUALIFIED_NAME: qn, cs.KEY_PATH: path}
-                    for (label, _uid), props in self.nodes.items()
-                    if label == _MODULE_LABEL
-                    and (qn := _text(props.get(cs.KEY_QUALIFIED_NAME)) or "")
-                    and prefix
-                    and qn.startswith(prefix)
-                    and (path := _text(props.get(cs.KEY_PATH)) or "").endswith(suffixes)
-                ]
+                return self._route_module_rows(params)
             case ep.CYPHER_PROJECT_ROUTE_HANDLERS:
-                prefix = _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
-                return [
-                    {
-                        cs.KEY_LABELS: [label],
-                        cs.KEY_QUALIFIED_NAME: qn,
-                        "decorators": [d for d in decorators if isinstance(d, str)],
-                    }
-                    for (label, _uid), props in self.nodes.items()
-                    if label in _ROUTE_HANDLER_LABELS
-                    and (qn := _text(props.get(cs.KEY_QUALIFIED_NAME)) or "")
-                    and prefix
-                    and qn.startswith(prefix)
-                    and isinstance(decorators := props.get("decorators"), list)
-                    and decorators
-                ]
+                return self._route_handler_rows(params)
             case cs.CYPHER_UNRESOLVED_IMPORTER_PATHS:
-                # Importers whose IMPORTS edge points at an UNRESOLVED target
-                # named after one of the given modules (issue #1682). Emulated
-                # for the same reason as the specifier query below: falling
-                # through returned [], which reads as "no waiters" and is why
-                # that issue's tests could only cover the query layer.
-                names = params.get(cs.CYPHER_PARAM_MODULE_NAMES) if params else None
-                prefix = _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
-                wanted_names = (
-                    [n for n in names if isinstance(n, str)]
-                    if isinstance(names, list)
-                    else []
-                )
-                importer_rows: list[ResultRow] = []
-                if not wanted_names or not prefix:
-                    return importer_rows
-                seen_paths: set[str] = set()
-                for from_label, from_val, rel_type, _to_label, to_val in self.edges:
-                    if rel_type != cs.RelationshipType.IMPORTS.value:
-                        continue
-                    importer = self.nodes.get((from_label, from_val))
-                    if importer is None:
-                        continue
-                    importer_path = _text(importer.get(cs.KEY_PATH))
-                    importer_qn = _text(importer.get(cs.KEY_QUALIFIED_NAME)) or ""
-                    if not importer_path or not importer_qn.startswith(prefix):
-                        continue
-                    target_qn = _text(to_val) or ""
-                    # The target must be UNRESOLVED: a first-party one is a
-                    # real module and its importer is found by the inbound
-                    # edge lookup instead.
-                    if target_qn.startswith(prefix):
-                        continue
-                    if any(
-                        target_qn == name
-                        or target_qn.startswith(f"{name}{cs.SEPARATOR_DOT}")
-                        for name in wanted_names
-                    ):
-                        if importer_path not in seen_paths:
-                            seen_paths.add(importer_path)
-                            importer_rows.append({cs.KEY_CALLER_PATH: importer_path})
-                return importer_rows
+                return self._unresolved_importer_rows(params)
             case cs.CYPHER_UNRESOLVED_REFERENCE_WAITERS:
-                # Modules whose recorded unresolved references an added file
-                # satisfies, by an exact name or under a qn prefix (issue
-                # #1568). Emulated for the same reason as the specifier
-                # lookup below: an unanswered query reads as "no waiters".
-                prefix = _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
-                own_name = _text(params.get(cs.KEY_PROJECT_NAME)) if params else None
-                raw_names = params.get(cs.CYPHER_PARAM_NAMES) if params else None
-                raw_prefixes = params.get(cs.CYPHER_PARAM_PREFIXES) if params else None
-                wanted = (
-                    {n for n in raw_names if isinstance(n, str)}
-                    if isinstance(raw_names, list)
-                    else set()
-                )
-                wanted_prefixes = (
-                    [p for p in raw_prefixes if isinstance(p, str)]
-                    if isinstance(raw_prefixes, list)
-                    else []
-                )
-                waiting: set[str] = set()
-                for (label, _uid), props in self.nodes.items():
-                    if label != _MODULE_LABEL:
-                        continue
-                    path = _text(props.get(cs.KEY_PATH))
-                    qn = _text(props.get(cs.KEY_QUALIFIED_NAME)) or ""
-                    recorded = props.get(cs.KEY_UNRESOLVED_REFERENCES)
-                    in_project = (prefix and qn.startswith(prefix)) or qn == own_name
-                    if not path or not in_project:
-                        continue
-                    if not isinstance(recorded, list):
-                        continue
-                    if any(
-                        n in wanted
-                        or any(str(n).startswith(p) for p in wanted_prefixes)
-                        for n in recorded
-                    ):
-                        waiting.add(path)
-                return [{cs.KEY_CALLER_PATH: p} for p in sorted(waiting)]
+                return self._unresolved_reference_waiter_rows(params)
             case cs.CYPHER_LINKING_DOCUMENT_PATHS:
                 return self._linking_document_rows(params or {})
             case cs.CYPHER_PACKAGE_URI_IMPORTS:
                 return self._package_uri_import_rows(params or {})
-            case (
-                cs.CYPHER_INTERFACE_FINGERPRINTS
-                | cs.CYPHER_INTERFACE_BOUNDARY_EDGES
-                | cs.CYPHER_INTERFACE_FLOW_SOURCE_PATHS
-            ):
+            case _ if query in _INTERFACE_QUERIES:
                 return self._interface_rows(query, params or {})
             case cs.CYPHER_BROKEN_LINK_DOCUMENTS:
                 return self._broken_link_rows(params or {})
             case cs.CYPHER_UNRESOLVED_SPECIFIER_IMPORTERS:
-                # Modules carrying a dropped relative specifier (issue #1714).
-                # Emulated rather than left to fall through: an unanswered
-                # query returns [] here, which is indistinguishable from "no
-                # waiters" and would let an end-to-end test pass against a
-                # lookup that never ran.
-                prefix = _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
-                waiter_rows: list[ResultRow] = []
-                for (label, _uid), props in self.nodes.items():
-                    if label != _MODULE_LABEL:
-                        continue
-                    path = _text(props.get(cs.KEY_PATH))
-                    qn = _text(props.get(cs.KEY_QUALIFIED_NAME)) or ""
-                    specifiers = props.get(cs.KEY_UNRESOLVED_SPECIFIERS)
-                    if not path or not (prefix and qn.startswith(prefix)):
-                        continue
-                    if not isinstance(specifiers, list) or not specifiers:
-                        continue
-                    waiter_rows.append(
-                        {
-                            cs.KEY_CALLER_PATH: path,
-                            cs.CYPHER_KEY_SPECIFIERS: list(specifiers),
-                        }
-                    )
-                return waiter_rows
+                return self._unresolved_specifier_rows(params)
             case cs.CYPHER_COUNT_PROJECT_MODULES:
-                # A COUNT query yields exactly ONE row. Falling through to []
-                # was the sharpest of the gaps: its caller reads `rows[0]
-                # ["count"]`, so an empty list raises IndexError, the handler
-                # returns, and the orphaned-hash-cache check never runs at all
-                # (issue #1716).
-                project_name = (
-                    _text(params.get(cs.KEY_PROJECT_NAME)) if params else None
-                )
-                prefix = _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
-                total = sum(
-                    1
-                    for (label, _uid), props in self.nodes.items()
-                    if label == _MODULE_LABEL
-                    and (
-                        (qn := _text(props.get(cs.KEY_QUALIFIED_NAME)) or "")
-                        == project_name
-                        or (prefix and qn.startswith(prefix))
-                    )
-                )
-                return [{cs.KEY_COUNT: total}]
+                return self._module_count_rows(params)
             case cs.CYPHER_ALL_CSHARP_TYPE_LOCATIONS:
-                prefix = _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
-                return [
-                    {
-                        cs.KEY_QUALIFIED_NAME: qn,
-                        cs.KEY_PATH: path,
-                        cs.KEY_START_LINE: _int(props.get(cs.KEY_START_LINE)),
-                        cs.KEY_MODIFIERS: _result(props.get(cs.KEY_MODIFIERS)),
-                    }
-                    for (label, _uid), props in self.nodes.items()
-                    if label in _CSHARP_TYPE_LABELS
-                    and (qn := _text(props.get(cs.KEY_QUALIFIED_NAME)) or "")
-                    and prefix
-                    and qn.startswith(prefix)
-                    and (path := _text(props.get(cs.KEY_PATH)) or "").endswith(
-                        cs.EXT_CS
-                    )
-                ]
+                return self._csharp_type_location_rows(params)
             case cs.CYPHER_ALL_GO_TYPE_LOCATIONS:
-                prefix = _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
-                return [
-                    {
-                        cs.KEY_LABEL: label,
-                        cs.KEY_QUALIFIED_NAME: qn,
-                        cs.KEY_PATH: _text(props.get(cs.KEY_PATH)),
-                        cs.KEY_START_LINE: _int(props.get(cs.KEY_START_LINE)),
-                        cs.KEY_START_COL: _int(props.get(cs.KEY_START_COL)),
-                    }
-                    for (label, _uid), props in self.nodes.items()
-                    if label in _GO_TYPE_LABELS
-                    and (qn := _text(props.get(cs.KEY_QUALIFIED_NAME)) or "")
-                    and prefix
-                    and qn.startswith(prefix)
-                ]
+                return self._go_type_location_rows(params)
             case cs.CYPHER_ALL_FUNCTION_LOCATIONS:
                 prefix = _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
                 return self._definition_location_rows(
@@ -1984,29 +1528,507 @@ class StatefulIngestor:
             case cs.CYPHER_ALL_METHOD_LOCATIONS:
                 prefix = _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
                 return self._definition_location_rows(prefix, cs.NodeLabel.METHOD.value)
+            case _ if query in _NOT_MODELLED:
+                return []
             case _:
-                if query in _NOT_MODELLED:
-                    return []
-                # Fail CLOSED. An unemulated query answered [] is
-                # indistinguishable from a genuinely empty result, so a test
-                # can pass because a lookup silently returned nothing -- which
-                # is how #1682's waiting-importer path went uncovered for a
-                # whole release (issue #1716). A new query must be emulated
-                # here, or named in _NOT_MODELLED with a reason.
-                #
-                # When you hit this, read it as "the double is missing a
-                # case", not as a defect in the code under test. Some callers
-                # catch a failed read and treat it as "cannot tell -> refuse"
-                # (`marker.persisted_incomplete` does), so this assertion surfaces
-                # as a REFUSAL from production rather than as an error naming
-                # the double -- a real guard firing and a missing case here
-                # look exactly alike from the test's side. Twice in one
-                # session (PR #1835, PR #1547) that cost a wrong diagnosis
-                # before the stack was read.
-                raise AssertionError(
-                    f"{type(self).__name__} does not emulate this query, and it "
-                    f"is not in _NOT_MODELLED. Add a case or a reason:\n{query}"
+                return self._unemulated(query)
+
+    def _unemulated(self, query: str) -> NoReturn:
+        # Fail CLOSED. An unemulated query answered [] is
+        # indistinguishable from a genuinely empty result, so a test
+        # can pass because a lookup silently returned nothing -- which
+        # is how #1682's waiting-importer path went uncovered for a
+        # whole release (issue #1716). A new query must be emulated
+        # in `fetch_all`, or named in _NOT_MODELLED with a reason.
+        #
+        # When you hit this, read it as "the double is missing a
+        # case", not as a defect in the code under test. Some callers
+        # catch a failed read and treat it as "cannot tell -> refuse"
+        # (`marker.persisted_incomplete` does), so this assertion surfaces
+        # as a REFUSAL from production rather than as an error naming
+        # the double -- a real guard firing and a missing case here
+        # look exactly alike from the test's side. Twice in one
+        # session (PR #1835, PR #1547) that cost a wrong diagnosis
+        # before the stack was read.
+        raise AssertionError(
+            f"{type(self).__name__} does not emulate this query, and it "
+            f"is not in _NOT_MODELLED. Add a case or a reason:\n{query}"
+        )
+
+    def _foreign_member_path_rows(self, params: PropertyDict | None) -> list[ResultRow]:
+        raw_paths = params.get(cs.CYPHER_PARAM_PATHS) if params else None
+        return self._foreign_member_rows(
+            set(raw_paths) if isinstance(raw_paths, list) else set(),
+            _text(params.get(cs.KEY_PROJECT_NAME)) if params else None,
+            _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None,
+        )
+
+    def _trace_edges_at_paths_rows(
+        self, params: PropertyDict | None
+    ) -> list[ResultRow]:
+        # Trace-derived CALLS edges touching the re-parsed files, in
+        # both directions (issue #2429). Only an edge a test wrote
+        # with `dynamic` set matches, as in the store. The carry's
+        # follow-up reads are issued only for edges this returned,
+        # so they are deliberately not modelled: a test reaching
+        # them needs a real case in `fetch_all`.
+        raw_paths = params.get(cs.CYPHER_PARAM_PATHS) if params else None
+        return self._trace_edge_rows(
+            set(raw_paths) if isinstance(raw_paths, list) else set(),
+            _str((params or {}).get(cs.KEY_PREFIX)),
+        )
+
+    def _node_exists_rows(self, params: PropertyDict | None) -> list[ResultRow]:
+        # Any node in any project: the unknown-target refusal asks
+        # whether the name is in the graph at all (issue #3244).
+        wanted = _str((params or {}).get(cs.KEY_QN))
+        rows: list[ResultRow] = [
+            {cs.KEY_QUALIFIED_NAME: wanted}
+            for props in self.nodes.values()
+            if props.get(cs.KEY_QUALIFIED_NAME) == wanted
+        ]
+        return rows[:1]
+
+    def _project_package_path_rows(
+        self, params: PropertyDict | None
+    ) -> list[ResultRow]:
+        name = _text(params.get(cs.KEY_PROJECT_NAME)) if params else None
+        prefix = _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
+        return [
+            row
+            for row in self._path_rows(_PACKAGE_LABEL)
+            if isinstance(qn := row.get(cs.KEY_QUALIFIED_NAME), str)
+            and (qn == name or (prefix is not None and qn.startswith(prefix)))
+        ]
+
+    def _prunable_module_rows(self, params: PropertyDict | None) -> list[ResultRow]:
+        name = _text(params.get(cs.KEY_PROJECT_NAME)) if params else None
+        prefix = _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
+        prunable: list[ResultRow] = []
+        for (label, _uid), props in self.nodes.items():
+            qn = _text(props.get(cs.KEY_QUALIFIED_NAME))
+            path = _text(props.get(cs.KEY_PATH))
+            if label != _MODULE_LABEL or qn is None or path is None:
+                continue
+            if qn == name or (prefix is not None and qn.startswith(prefix)):
+                prunable.append({cs.KEY_PATH: path, cs.KEY_QUALIFIED_NAME: qn})
+        return prunable
+
+    def _container_kind_rows(self, params: PropertyDict | None) -> list[ResultRow]:
+        # Which container kind the graph records for one directory.
+        # Matches on absolute_path across BOTH labels, as the real
+        # query does, so a directory holding two container nodes (the
+        # very defect #1798 is about) returns both rows rather than
+        # silently picking one.
+        wanted = _text(params.get(cs.KEY_PATH)) if params else ""
+        return [
+            {"labels": [node_label]}
+            for (node_label, _uid), props in self.nodes.items()
+            if node_label in (_PACKAGE_LABEL, _FOLDER_LABEL)
+            and _text(props.get(cs.KEY_ABSOLUTE_PATH)) == wanted
+        ]
+
+    def _check_scope_node_rows(self, params: PropertyDict | None) -> list[ResultRow]:
+        return [
+            {
+                cs.KEY_LABEL: label,
+                cs.KEY_PROPS: _result_props(self.nodes[(label, uid)]),
+            }
+            for (label, uid) in sorted(
+                self._check_scope(params or {}),
+                key=lambda n: (n[0], _str(n[1])),
+            )
+        ]
+
+    def _check_shared_node_rows(self) -> list[ResultRow]:
+        return [
+            {
+                cs.KEY_LABEL: label,
+                cs.KEY_PROPS: _result_props(props),
+                cs.KEY_INBOUND: len(self._in.get((label, uid), ())),
+            }
+            for (label, uid), props in self.nodes.items()
+            if label in _SHARED_ORPHAN_LABELS
+        ]
+
+    def _affected_caller_rows(self, params: PropertyDict | None) -> list[ResultRow]:
+        raw_paths = params.get(cs.CYPHER_PARAM_PATHS) if params else None
+        prefix = str(params.get(cs.KEY_PROJECT_PREFIX, "")) if params else ""
+        reindexed: set[str] = set(raw_paths) if isinstance(raw_paths, list) else set()
+        callers: set[str] = set()
+        for (
+            from_label,
+            from_val,
+            rel_type,
+            to_label,
+            to_val,
+            _site,
+        ) in self._edges_into(reindexed):
+            if rel_type not in _AFFECTED_CALLER_RELS:
+                continue
+            caller = self.nodes.get((from_label, from_val))
+            if caller is None:
+                continue
+            caller_path = caller.get(cs.KEY_PATH)
+            if (
+                not isinstance(caller_path, str)
+                or caller_path in reindexed
+                or not str(_text(from_val)).startswith(prefix)
+                or not str(_text(to_val)).startswith(prefix)
+            ):
+                continue
+            callers.add(caller_path)
+        return [{cs.KEY_CALLER_PATH: path} for path in sorted(callers)]
+
+    def _definition_qn_rows(self, params: PropertyDict | None) -> list[ResultRow]:
+        prefix = _project_prefix(params)
+        defs: list[ResultRow] = []
+        for (label, uid), props in self.nodes.items():
+            if label not in cs.SYMBOL_DEFINITION_LABELS:
+                continue
+            qn = props.get(cs.KEY_QUALIFIED_NAME, uid)
+            if not _str(qn).startswith(prefix):
+                continue
+            row: ResultRow = {
+                cs.KEY_QUALIFIED_NAME: _text(qn),
+                cs.KEY_LABEL: label,
+                cs.KEY_NAME: _text(props.get(cs.KEY_NAME)),
+                cs.KEY_IS_PROPERTY: bool(props.get(cs.KEY_IS_PROPERTY)),
+                cs.KEY_MEMBER_ALIASES: [_text(a) for a in raw_aliases]
+                if isinstance(raw_aliases := props.get(cs.KEY_MEMBER_ALIASES), list)
+                else None,
+                cs.KEY_NON_METHOD_MEMBERS: [_text(n) for n in raw_values]
+                if isinstance(raw_values := props.get(cs.KEY_NON_METHOD_MEMBERS), list)
+                else None,
+                cs.KEY_IS_MACRO: bool(props.get(cs.KEY_IS_MACRO)),
+                cs.KEY_IS_BODY_SCOPED_NAME: bool(props.get(cs.KEY_IS_BODY_SCOPED_NAME)),
+                cs.KEY_PATH: _text(props.get(cs.KEY_PATH)),
+                cs.KEY_START_LINE: _int(props.get(cs.KEY_START_LINE)),
+                cs.KEY_END_LINE: _int(props.get(cs.KEY_END_LINE)),
+                cs.KEY_MODIFIERS: [_text(m) for m in raw_modifiers]
+                if isinstance(raw_modifiers := props.get(cs.KEY_MODIFIERS), list)
+                else None,
+                cs.KEY_DECORATORS: [_text(d) for d in raw_decorators]
+                if isinstance(raw_decorators := props.get(cs.KEY_DECORATORS), list)
+                else None,
+                cs.KEY_RETURN_TYPE: _text(props[cs.KEY_RETURN_TYPE])
+                if cs.KEY_RETURN_TYPE in props
+                else None,
+                cs.KEY_PARAM_TYPES: [_text(p) for p in raw_param_types]
+                if isinstance(raw_param_types := props.get(cs.KEY_PARAM_TYPES), list)
+                else None,
+                cs.KEY_NAMESPACE: _text(props[cs.KEY_NAMESPACE])
+                if cs.KEY_NAMESPACE in props
+                else None,
+                cs.KEY_EXTENSION_RECEIVER: _text(props.get(cs.KEY_EXTENSION_RECEIVER)),
+                cs.KEY_EXTENSION_NAMESPACE: _text(
+                    props.get(cs.KEY_EXTENSION_NAMESPACE)
+                ),
+                cs.KEY_EXTENSION_RECEIVER_ARITY: arity
+                if isinstance(arity := props.get(cs.KEY_EXTENSION_RECEIVER_ARITY), int)
+                else None,
+                cs.KEY_IS_OBJECT_MEMBER: bool(props.get(cs.KEY_IS_OBJECT_MEMBER)),
+                cs.KEY_SIGNATURE: _text(props[cs.KEY_SIGNATURE])
+                if cs.KEY_SIGNATURE in props
+                else None,
+                cs.KEY_DECLARED_IN_CLASS: bool(props.get(cs.KEY_DECLARED_IN_CLASS)),
+                cs.KEY_GENERIC_ARITY: _int(props.get(cs.KEY_GENERIC_ARITY)),
+                cs.KEY_IS_EXPORTED: bool(props[cs.KEY_IS_EXPORTED])
+                if cs.KEY_IS_EXPORTED in props
+                else None,
+                cs.KEY_EMBEDS: _texts(props.get(cs.KEY_EMBEDS)),
+            }
+            defs.append(row)
+        return defs
+
+    def _typed_member_rows(
+        self, member_label: str, params: PropertyDict | None
+    ) -> list[ResultRow]:
+        prefix = _project_prefix(params)
+        return [
+            {
+                cs.KEY_QUALIFIED_NAME: _text(props.get(cs.KEY_QUALIFIED_NAME)),
+                cs.KEY_TYPE_NAME: _text(props[cs.KEY_TYPE_NAME]),
+                cs.KEY_PATH: _text(props.get(cs.KEY_PATH)),
+            }
+            for (label, _uid), props in self.nodes.items()
+            if label == member_label
+            and cs.KEY_TYPE_NAME in props
+            and (_text(props.get(cs.KEY_QUALIFIED_NAME)) or "").startswith(prefix)
+        ]
+
+    def _inherits_rows(self, params: PropertyDict | None) -> list[ResultRow]:
+        prefix = _project_prefix(params)
+        inherits: list[tuple[str, int, ResultRow]] = []
+        for edge in self.keyed_edges:
+            _from_label, from_val, rel_type, _to_label, to_val, _site = edge
+            if rel_type != _INHERITS_REL or not _str(from_val).startswith(prefix):
+                continue
+            raw_index = self.edge_props.get(edge, {}).get(cs.KEY_BASE_INDEX)
+            index = raw_index if isinstance(raw_index, int) else None
+            inherits.append(
+                (
+                    str(_text(from_val)),
+                    index if index is not None else 0,
+                    {
+                        cs.KEY_CHILD_QN: _text(from_val),
+                        cs.KEY_BASE_QN: _text(to_val),
+                        cs.KEY_BASE_INDEX: index,
+                    },
                 )
+            )
+        inherits.sort(key=lambda item: (item[0], item[1]))
+        return [row for _child, _index, row in inherits]
+
+    def _module_qn_rows(self, params: PropertyDict | None) -> list[ResultRow]:
+        prefix = _project_prefix(params)
+        module_rows: list[ResultRow] = []
+        for (label, _uid), props in self.nodes.items():
+            if label not in _MODULE_QN_LABELS or not _str(
+                props.get(cs.KEY_QUALIFIED_NAME)
+            ).startswith(prefix):
+                continue
+            module_row: ResultRow = {
+                cs.KEY_QUALIFIED_NAME: _text(props.get(cs.KEY_QUALIFIED_NAME)),
+                cs.KEY_LABEL: label,
+                cs.KEY_PHP_NAMESPACE: _text(props.get(cs.KEY_PHP_NAMESPACE)),
+            }
+            module_rows.append(module_row)
+        return module_rows
+
+    def _project_module_path_rows(self, params: PropertyDict | None) -> list[ResultRow]:
+        project_name = _text(params.get(cs.KEY_PROJECT_NAME)) if params else None
+        prefix = _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
+        project_rows: list[ResultRow] = []
+        for (label, _uid), props in self.nodes.items():
+            if label != _MODULE_LABEL:
+                continue
+            qn = _text(props.get(cs.KEY_QUALIFIED_NAME)) or ""
+            if qn == project_name or (prefix and qn.startswith(prefix)):
+                project_rows.append(
+                    {
+                        cs.KEY_PATH: _text(props.get(cs.KEY_PATH)),
+                        cs.KEY_QUALIFIED_NAME: qn,
+                    }
+                )
+        return project_rows
+
+    def _module_path_rows(self) -> list[ResultRow]:
+        rows: list[ResultRow] = []
+        for (label, _uid), props in self.nodes.items():
+            if label != _MODULE_LABEL:
+                continue
+            row: ResultRow = {
+                cs.KEY_PATH: _text(props.get(cs.KEY_PATH)),
+                cs.KEY_QUALIFIED_NAME: _text(props.get(cs.KEY_QUALIFIED_NAME)),
+            }
+            rows.append(row)
+        return rows
+
+    def _route_module_rows(self, params: PropertyDict | None) -> list[ResultRow]:
+        # Route rehydration. These MUST be emulated rather than left to
+        # the refusal below: their readers wrap the call in
+        # `except Exception: return []`, so a raise is caught and
+        # turned straight back into an empty result -- the fail-closed
+        # default defeated one layer down, invisibly (raised on #1716).
+        prefix = _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
+        raw_exts = params.get("extensions") if params else None
+        # CYPHER_PROJECT_MODULES filters on a passed extension list;
+        # the PY variant hardcodes `.py` in its Cypher.
+        suffixes = (
+            tuple(e for e in raw_exts if isinstance(e, str))
+            if isinstance(raw_exts, list)
+            else (".py",)
+        )
+        return [
+            {cs.KEY_QUALIFIED_NAME: qn, cs.KEY_PATH: path}
+            for (label, _uid), props in self.nodes.items()
+            if label == _MODULE_LABEL
+            and (qn := _text(props.get(cs.KEY_QUALIFIED_NAME)) or "")
+            and prefix
+            and qn.startswith(prefix)
+            and (path := _text(props.get(cs.KEY_PATH)) or "").endswith(suffixes)
+        ]
+
+    def _route_handler_rows(self, params: PropertyDict | None) -> list[ResultRow]:
+        prefix = _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
+        return [
+            {
+                cs.KEY_LABELS: [label],
+                cs.KEY_QUALIFIED_NAME: qn,
+                "decorators": [d for d in decorators if isinstance(d, str)],
+            }
+            for (label, _uid), props in self.nodes.items()
+            if label in _ROUTE_HANDLER_LABELS
+            and (qn := _text(props.get(cs.KEY_QUALIFIED_NAME)) or "")
+            and prefix
+            and qn.startswith(prefix)
+            and isinstance(decorators := props.get("decorators"), list)
+            and decorators
+        ]
+
+    def _unresolved_importer_rows(self, params: PropertyDict | None) -> list[ResultRow]:
+        # Importers whose IMPORTS edge points at an UNRESOLVED target
+        # named after one of the given modules (issue #1682). Emulated
+        # for the same reason as the specifier query below: falling
+        # through returned [], which reads as "no waiters" and is why
+        # that issue's tests could only cover the query layer.
+        names = params.get(cs.CYPHER_PARAM_MODULE_NAMES) if params else None
+        prefix = _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
+        wanted_names = (
+            [n for n in names if isinstance(n, str)] if isinstance(names, list) else []
+        )
+        importer_rows: list[ResultRow] = []
+        if not wanted_names or not prefix:
+            return importer_rows
+        seen_paths: set[str] = set()
+        for from_label, from_val, rel_type, _to_label, to_val in self.edges:
+            if rel_type != cs.RelationshipType.IMPORTS.value:
+                continue
+            importer = self.nodes.get((from_label, from_val))
+            if importer is None:
+                continue
+            importer_path = _text(importer.get(cs.KEY_PATH))
+            importer_qn = _text(importer.get(cs.KEY_QUALIFIED_NAME)) or ""
+            if not importer_path or not importer_qn.startswith(prefix):
+                continue
+            target_qn = _text(to_val) or ""
+            # The target must be UNRESOLVED: a first-party one is a
+            # real module and its importer is found by the inbound
+            # edge lookup instead.
+            if target_qn.startswith(prefix):
+                continue
+            if any(
+                target_qn == name or target_qn.startswith(f"{name}{cs.SEPARATOR_DOT}")
+                for name in wanted_names
+            ):
+                if importer_path not in seen_paths:
+                    seen_paths.add(importer_path)
+                    importer_rows.append({cs.KEY_CALLER_PATH: importer_path})
+        return importer_rows
+
+    def _unresolved_reference_waiter_rows(
+        self, params: PropertyDict | None
+    ) -> list[ResultRow]:
+        # Modules whose recorded unresolved references an added file
+        # satisfies, by an exact name or under a qn prefix (issue
+        # #1568). Emulated for the same reason as the specifier
+        # lookup below: an unanswered query reads as "no waiters".
+        prefix = _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
+        own_name = _text(params.get(cs.KEY_PROJECT_NAME)) if params else None
+        raw_names = params.get(cs.CYPHER_PARAM_NAMES) if params else None
+        raw_prefixes = params.get(cs.CYPHER_PARAM_PREFIXES) if params else None
+        wanted = (
+            {n for n in raw_names if isinstance(n, str)}
+            if isinstance(raw_names, list)
+            else set()
+        )
+        wanted_prefixes = (
+            [p for p in raw_prefixes if isinstance(p, str)]
+            if isinstance(raw_prefixes, list)
+            else []
+        )
+        waiting: set[str] = set()
+        for (label, _uid), props in self.nodes.items():
+            if label != _MODULE_LABEL:
+                continue
+            path = _text(props.get(cs.KEY_PATH))
+            qn = _text(props.get(cs.KEY_QUALIFIED_NAME)) or ""
+            recorded = props.get(cs.KEY_UNRESOLVED_REFERENCES)
+            in_project = (prefix and qn.startswith(prefix)) or qn == own_name
+            if not path or not in_project:
+                continue
+            if not isinstance(recorded, list):
+                continue
+            if any(
+                n in wanted or any(str(n).startswith(p) for p in wanted_prefixes)
+                for n in recorded
+            ):
+                waiting.add(path)
+        return [{cs.KEY_CALLER_PATH: p} for p in sorted(waiting)]
+
+    def _unresolved_specifier_rows(
+        self, params: PropertyDict | None
+    ) -> list[ResultRow]:
+        # Modules carrying a dropped relative specifier (issue #1714).
+        # Emulated rather than left to fall through: an unanswered
+        # query returns [] here, which is indistinguishable from "no
+        # waiters" and would let an end-to-end test pass against a
+        # lookup that never ran.
+        prefix = _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
+        waiter_rows: list[ResultRow] = []
+        for (label, _uid), props in self.nodes.items():
+            if label != _MODULE_LABEL:
+                continue
+            path = _text(props.get(cs.KEY_PATH))
+            qn = _text(props.get(cs.KEY_QUALIFIED_NAME)) or ""
+            specifiers = props.get(cs.KEY_UNRESOLVED_SPECIFIERS)
+            if not path or not (prefix and qn.startswith(prefix)):
+                continue
+            if not isinstance(specifiers, list) or not specifiers:
+                continue
+            waiter_rows.append(
+                {
+                    cs.KEY_CALLER_PATH: path,
+                    cs.CYPHER_KEY_SPECIFIERS: list(specifiers),
+                }
+            )
+        return waiter_rows
+
+    def _module_count_rows(self, params: PropertyDict | None) -> list[ResultRow]:
+        # A COUNT query yields exactly ONE row. Falling through to []
+        # was the sharpest of the gaps: its caller reads `rows[0]
+        # ["count"]`, so an empty list raises IndexError, the handler
+        # returns, and the orphaned-hash-cache check never runs at all
+        # (issue #1716).
+        project_name = _text(params.get(cs.KEY_PROJECT_NAME)) if params else None
+        prefix = _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
+        total = sum(
+            1
+            for (label, _uid), props in self.nodes.items()
+            if label == _MODULE_LABEL
+            and (
+                (qn := _text(props.get(cs.KEY_QUALIFIED_NAME)) or "") == project_name
+                or (prefix and qn.startswith(prefix))
+            )
+        )
+        return [{cs.KEY_COUNT: total}]
+
+    def _csharp_type_location_rows(
+        self, params: PropertyDict | None
+    ) -> list[ResultRow]:
+        prefix = _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
+        return [
+            {
+                cs.KEY_QUALIFIED_NAME: qn,
+                cs.KEY_PATH: path,
+                cs.KEY_START_LINE: _int(props.get(cs.KEY_START_LINE)),
+                cs.KEY_MODIFIERS: _result(props.get(cs.KEY_MODIFIERS)),
+            }
+            for (label, _uid), props in self.nodes.items()
+            if label in _CSHARP_TYPE_LABELS
+            and (qn := _text(props.get(cs.KEY_QUALIFIED_NAME)) or "")
+            and prefix
+            and qn.startswith(prefix)
+            and (path := _text(props.get(cs.KEY_PATH)) or "").endswith(cs.EXT_CS)
+        ]
+
+    def _go_type_location_rows(self, params: PropertyDict | None) -> list[ResultRow]:
+        prefix = _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
+        return [
+            {
+                cs.KEY_LABEL: label,
+                cs.KEY_QUALIFIED_NAME: qn,
+                cs.KEY_PATH: _text(props.get(cs.KEY_PATH)),
+                cs.KEY_START_LINE: _int(props.get(cs.KEY_START_LINE)),
+                cs.KEY_START_COL: _int(props.get(cs.KEY_START_COL)),
+            }
+            for (label, _uid), props in self.nodes.items()
+            if label in _GO_TYPE_LABELS
+            and (qn := _text(props.get(cs.KEY_QUALIFIED_NAME)) or "")
+            and prefix
+            and qn.startswith(prefix)
+        ]
 
     def _definition_location_rows(
         self, prefix: str | None, target_label: str

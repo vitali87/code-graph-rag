@@ -25,7 +25,6 @@ from codebase_rag.language_spec import get_language_for_extension
 from .cgr_graph import capture
 
 _MODULE = cs.NodeLabel.MODULE.value
-_DEFINITION_LABELS = frozenset(label.value for label in cs.SYMBOL_DEFINITION_LABELS)
 # Semantic def-to-def edges that must never cross a language boundary.
 # IMPORTS/CONTAINS/DEFINES are excluded: an import can point at an external
 # stub, and CONTAINS/DEFINES are module-internal by construction.
@@ -285,7 +284,7 @@ def cgr_polyglot(target: Path, project: str) -> PolyglotReport:
 
     defs_by_lang: dict[cs.SupportedLanguage, set[str]] = {}
     for (label, _uid), props in ingestor.nodes.items():
-        if label not in _DEFINITION_LABELS:
+        if label not in cs.SYMBOL_DEFINITION_LABELS:
             continue
         qn = props.get(cs.KEY_QUALIFIED_NAME)
         if not isinstance(qn, str):
