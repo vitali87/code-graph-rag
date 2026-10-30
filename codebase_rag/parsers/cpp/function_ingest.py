@@ -174,6 +174,10 @@ class CppFunctionIngest(LanguageFunctionIngest):
         "_deferred_prototypes",
     )
 
+    # A C++ definition is named through its declarator, a lambda by where it
+    # is written, and either is qualified by the scopes around it.
+    resolves_own_identity = True
+
     def __init__(
         self,
         host: CppFunctionHost,
@@ -766,8 +770,13 @@ class CppFunctionIngest(LanguageFunctionIngest):
         )
         return True
 
-    def record_template_child_location(
-        self, func_node: Node, module_qn: str, location: FunctionLocation
+    def record_function(
+        self,
+        func_node: Node,
+        resolution: FunctionResolution,
+        module_qn: str,
+        lang_config: LanguageSpec,
+        location: FunctionLocation,
     ) -> None:
         # A template wrapper's body walk in Pass 3 visits the INNER definition (it
         # starts on its own line), so record the entry under the child's span too
@@ -829,6 +838,25 @@ class CppFunctionIngest(LanguageFunctionIngest):
             )
         )
         return True
+
+    def extra_relationships(
+        self,
+        func_node: Node,
+        resolution: FunctionResolution,
+        module_qn: str,
+        parent_label: str,
+        parent_qn: str,
+    ) -> None:
+        if resolution.is_exported:
+            self.ingestor.ensure_relationship_batch(
+                (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
+                cs.RelationshipType.EXPORTS,
+                (
+                    cs.NodeLabel.FUNCTION,
+                    cs.KEY_QUALIFIED_NAME,
+                    resolution.qualified_name,
+                ),
+            )
 
     def resolve_deferred_containment(self) -> int:
         """Emit DEFINES for functions nested in out-of-class C++ method bodies.

@@ -29,6 +29,7 @@ from . import utils as csharp_utils
 if TYPE_CHECKING:
     from ...language_spec import LanguageSpec
     from ...types_defs import LanguageQueries
+    from ..function_identity import FunctionResolution
 
 
 def _nearest_preceding_type(
@@ -65,6 +66,13 @@ class CSharpFunctionIngest(LanguageFunctionIngest):
         "override_methods",
         "_deferred_parent_links",
     )
+
+    # A C# method registers signature-suffixed (`Run(int)`), a shape
+    # structural re-derivation cannot reproduce, and its parameterless
+    # overload sibling exactly SHADOWS the guess. Methods register in the
+    # class pass after the function pass, so the guess carries the parent
+    # NODE's span for the deferred resolver to swap in the recorded identity.
+    pins_parent_span = True
 
     def __init__(
         self,
@@ -116,8 +124,13 @@ class CSharpFunctionIngest(LanguageFunctionIngest):
             func_node, module_qn, lang_config, lang_queries, file_path
         )
 
-    def record_local_function(
-        self, func_node: Node, qualified_name: str, module_qn: str
+    def record_function(
+        self,
+        func_node: Node,
+        resolution: FunctionResolution,
+        module_qn: str,
+        lang_config: LanguageSpec,
+        location: FunctionLocation,
     ) -> None:
         # Pin a C# local function to its HOST scope (method/ctor/enclosing local
         # fn) by span, plus its declared parameter count, so bare-name call
@@ -130,7 +143,7 @@ class CSharpFunctionIngest(LanguageFunctionIngest):
             host = host.parent
         if host is None:
             return
-        self.facts.csharp_local_functions[qualified_name] = (
+        self.facts.csharp_local_functions[resolution.qualified_name] = (
             function_span_key(module_qn, host),
             len(csharp_utils.extract_parameter_type_names(func_node)),
         )

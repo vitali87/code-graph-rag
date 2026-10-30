@@ -10,6 +10,7 @@ are `JsTsIngest` and `JsTsModuleSystem`."""
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple, Protocol
 
 from tree_sitter import Node
@@ -64,27 +65,55 @@ class _DeferredAnonymous(NamedTuple):
 
 class JsTsFunctionIngest(LanguageFunctionIngest):
     """Holds back anonymous JS/TS function expressions until their file's
-    flush, and marks what a JS/TS function's name is visible to.
+    flush, skips TypeScript's folded overload signatures, and marks what a
+    JS/TS function's name is visible to.
 
-    Built and owned by `FunctionIngest`. The registry and the definition
-    facts are the pass's own, held by reference."""
+    Built and owned by `FunctionIngest`. The registry, the definition facts
+    and the folded overloads are the pass's own, held by reference."""
 
-    __slots__ = ("_host", "function_registry", "facts", "_deferred_anonymous")
+    __slots__ = (
+        "_host",
+        "function_registry",
+        "facts",
+        "folded_overloads",
+        "_deferred_anonymous",
+    )
+
+    # TypeScript keeps a type and a value of one name apart (issue #2520).
+    separate_declaration_spaces = True
 
     def __init__(
         self,
         host: JsTsFunctionHost,
         function_registry: FunctionRegistryTrieProtocol,
         facts: DefinitionFacts,
+        folded_overloads: dict[str, frozenset[int]],
     ) -> None:
         self._host = host
         self.function_registry = function_registry
         self.facts = facts
+        # The definition pass fills it per module.
+        self.folded_overloads = folded_overloads
         # Unnamed JS/TS function expressions held back until the named
         # JS passes have claimed their spans (one node per source function).
         self._deferred_anonymous: list[_DeferredAnonymous] = []
 
-    def defers_anonymous(
+    def skips_function(
+        self,
+        func_node: Node,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        lang_config: LanguageSpec,
+        lang_queries: LanguageQueries,
+        file_path: Path | None,
+    ) -> bool:
+        # A TypeScript overload signature folds into its implementation's
+        # node (issue #2457); plain JavaScript declares none.
+        if language == cs.SupportedLanguage.JS:
+            return False
+        return func_node.start_byte in self.folded_overloads.get(module_qn, frozenset())
+
+    def defers_registration(
         self,
         func_node: Node,
         resolution: FunctionResolution,
@@ -144,7 +173,15 @@ class JsTsFunctionIngest(LanguageFunctionIngest):
             func_props[cs.KEY_IS_BODY_SCOPED_NAME] = True
             self.function_registry.mark_body_scoped_name(qualified_name)
 
-    def recorded_parent(
+    def anonymous_class_name(self, class_node: Node) -> str | None:
+        # An anonymous class expression (`static Proxy = class {...}`) has no
+        # `name` field; recover its binding name so a closure nested in its
+        # methods keeps the full `Outer.Proxy.method.<name>` path the call
+        # pass builds, instead of an orphaned `Outer.method.<name>` (issue
+        # #970).
+        return js_ts_utils.class_binding_name(class_node)
+
+    def enclosing_parent(
         self, current: Node, func_qn: str, module_qn: str
     ) -> tuple[str, str, FunctionSpanKey | None] | None:
         # Reuse the enclosing function's REGISTERED identity when its span is

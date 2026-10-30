@@ -17,6 +17,7 @@ from ..language_definitions import LanguageFunctionIngest
 
 if TYPE_CHECKING:
     from ...language_spec import LanguageSpec
+    from ...types_defs import FunctionLocation
     from ..function_identity import FunctionResolution
 
 
@@ -58,12 +59,13 @@ class JavaFunctionIngest(LanguageFunctionIngest):
     def __init__(self, anon_overrides: list[tuple[str, str, str, str]]) -> None:
         self.anon_overrides = anon_overrides
 
-    def record_anonymous_override(
+    def record_function(
         self,
         func_node: Node,
         resolution: FunctionResolution,
         module_qn: str,
         lang_config: LanguageSpec,
+        location: FunctionLocation,
     ) -> None:
         # A method-body anonymous-class override (`new Base(){ @Override m(){} }`
         # inside a method) is captured as a function here; record it so the deferred

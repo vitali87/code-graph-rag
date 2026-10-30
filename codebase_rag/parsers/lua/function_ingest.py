@@ -4,11 +4,13 @@ binds it.
 
 `FunctionIngest` owns what every language shares (the scan of a file's
 function captures, a function's identity, node and DEFINES edge) and names
-a nameless Lua function through `function_name`; it holds no Lua state."""
+a nameless Lua function through the `LuaFunctionIngest` it builds; it holds
+no Lua state."""
 
 from tree_sitter import Node
 
 from ... import constants as cs
+from ..language_definitions import LanguageFunctionIngest
 from . import utils as lua_utils
 
 
@@ -46,3 +48,14 @@ def _field_function_name(func_node: Node) -> tuple[str | None, str | None]:
     """
     found = lua_utils.field_function_path(func_node)
     return found if found is not None else (None, None)
+
+
+class LuaFunctionIngest(LanguageFunctionIngest):
+    """Names a Lua function value that has no name of its own.
+
+    Built and owned by `FunctionIngest`."""
+
+    __slots__ = ()
+
+    def nameless_function_name(self, func_node: Node) -> tuple[str | None, str | None]:
+        return function_name(func_node)

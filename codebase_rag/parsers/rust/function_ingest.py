@@ -75,11 +75,12 @@ class RustFunctionIngest(LanguageFunctionIngest):
         self.facts = facts
         self._deferred_body_local: list[_DeferredBodyLocal] = []
 
-    def defers_body_local(
+    def defers_registration(
         self,
         func_node: Node,
         resolution: FunctionResolution,
         module_qn: str,
+        language: cs.SupportedLanguage,
         lang_config: LanguageSpec,
         lang_queries: LanguageQueries,
     ) -> bool:
@@ -140,8 +141,13 @@ class RustFunctionIngest(LanguageFunctionIngest):
         if return_type := rs_utils.extract_return_type_name(func_node, None):
             self.facts.method_return_types[qualified_name] = return_type
 
-    def reference_closure(
-        self, func_node: Node, parent_label: str, parent_qn: str, closure_qn: str
+    def extra_relationships(
+        self,
+        func_node: Node,
+        resolution: FunctionResolution,
+        module_qn: str,
+        parent_label: str,
+        parent_qn: str,
     ) -> None:
         # A Rust closure is a value constructed at its definition site (a `.map`
         # arg, spawn body, `let` binding), so it is used wherever it is written.
@@ -153,8 +159,15 @@ class RustFunctionIngest(LanguageFunctionIngest):
         self.ingestor.ensure_relationship_batch(
             (parent_label, cs.KEY_QUALIFIED_NAME, parent_qn),
             cs.RelationshipType.REFERENCES,
-            (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, closure_qn),
+            (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, resolution.qualified_name),
         )
+
+    def is_body_local(self, func_node: Node) -> bool:
+        # A const/static initializer is a body like a function's, but it is no
+        # function node, so the shared walk climbs out of it to the impl above
+        # and calls the item inside it a method of that type. It is a free
+        # function local to the initializer (issue #1037).
+        return rs_utils.is_body_local(func_node)
 
     @staticmethod
     def inline_module_parent(

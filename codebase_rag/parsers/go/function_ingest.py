@@ -31,6 +31,7 @@ from . import utils as go_utils
 from .builds import GoBuilds
 
 if TYPE_CHECKING:
+    from ...language_spec import LanguageSpec
     from ...types_defs import FunctionSpanKey, LanguageQueries
 
 
@@ -113,7 +114,17 @@ class GoFunctionIngest(LanguageFunctionIngest):
         self._deferred_parent_links = deferred_parent_links
         self._deferred_methods: list[_DeferredMethod] = []
 
-    def defers_receiver_method(self, func_node: Node, module_qn: str) -> bool:
+    def skips_function(
+        self,
+        func_node: Node,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        lang_config: LanguageSpec,
+        lang_queries: LanguageQueries,
+        file_path: Path | None,
+    ) -> bool:
+        # A receiver method waits for its receiver type, which a file parsed
+        # later may declare (resolve_deferred_methods).
         if not go_utils.is_receiver_method(func_node):
             return False
         receiver_type = go_utils.extract_receiver_type_name(func_node)
@@ -279,7 +290,7 @@ class GoFunctionIngest(LanguageFunctionIngest):
             (module_qn, name_node.start_point[0] + 1, name_node.start_point[1])
         ] = location
 
-    def record_return_types(self, func_node: Node, qualified_name: str) -> None:
+    def record_return_type(self, func_node: Node, qualified_name: str) -> None:
         # Go free functions record their FIRST return type in a
         # dedicated map so `cm, err := getManager()` types cm under the
         # (T, error) idiom (viper's false Get->Get self edge). Not
@@ -295,8 +306,8 @@ class GoFunctionIngest(LanguageFunctionIngest):
         if return_type := go_utils.extract_return_type_name(func_node):
             self.facts.method_return_types[qualified_name] = return_type
 
-    def receiver_method_parent(
-        self, current: Node, module_qn: str
+    def enclosing_parent(
+        self, current: Node, func_qn: str, module_qn: str
     ) -> tuple[str, str, FunctionSpanKey | None] | None:
         # A Go receiver method's node lives under its receiver type
         # (module.Type.Method); identity resolution alone gives the

@@ -27,13 +27,11 @@ from ..utils.path_utils import cached_relative_path, cached_resolve_posix
 from . import export_detection
 from .anchor_hash import anchor_hash_props
 from .ast_fingerprint import fingerprint_props
-from .callable_params import (
-    callable_parameter_indices,
-    python_positional_parameter_names,
-)
+from .callable_params import callable_parameter_indices
 from .cpp import function_ingest as cpp_function_ingest
 from .cpp.utils import record_cpp_definition_span
 from .csharp import function_ingest as csharp_function_ingest
+from .dart import function_ingest as dart_function_ingest
 from .dart import utils as dart_utils
 from .definition_facts import DefinitionFacts
 from .endpoints import queue_endpoints
@@ -49,8 +47,8 @@ from .language_definitions import LanguageFunctionIngest
 from .lua import function_ingest as lua_function_ingest
 from .method_ingest import MethodIngestHost
 from .parameter_nodes import PendingParameterType, emit_declared_parameters
-from .php import utils as php_utils
-from .positional_params import declared_positional_params
+from .php import function_ingest as php_function_ingest
+from .python import function_ingest as python_function_ingest
 from .rust import function_ingest as rust_function_ingest
 from .rust import utils as rs_utils
 from .type_facts import extract_type_facts, queue_type_facts, type_facts_props
@@ -75,7 +73,9 @@ class FunctionIngest:
     holds what waits for every type until its `resolve_deferred_*` pass:
     C/C++'s out-of-class method definitions and held-back nodes, Go's
     receiver methods, C#'s `#if`-orphaned members, Rust's body-local items
-    and JS/TS's anonymous function expressions."""
+    and JS/TS's anonymous function expressions. Each answers the
+    `LanguageFunctionIngest` hooks this pass looks it up by language to
+    call."""
 
     __slots__ = (
         "_method_host",
@@ -86,7 +86,6 @@ class FunctionIngest:
         "module_qn_to_file_path",
         "facts",
         "cpp_definition_spans",
-        "folded_overloads",
         "pending_endpoints",
         "pending_type_facts",
         "pending_parameter_types",
@@ -97,6 +96,10 @@ class FunctionIngest:
         "go",
         "js_ts",
         "java",
+        "python",
+        "dart",
+        "php",
+        "lua",
         "_languages",
         "_neutral",
     )
@@ -133,7 +136,6 @@ class FunctionIngest:
         self.module_qn_to_file_path = module_qn_to_file_path
         self.facts = facts
         self.cpp_definition_spans = cpp_definition_spans
-        self.folded_overloads = folded_overloads
         self.pending_endpoints = pending_endpoints
         self.pending_type_facts = pending_type_facts
         self.pending_parameter_types = pending_parameter_types
@@ -172,12 +174,17 @@ class FunctionIngest:
             deferred_parent_links=deferred_parent_links,
         )
         self.js_ts = js_ts_function_ingest.JsTsFunctionIngest(
-            self, function_registry, facts
+            self, function_registry, facts, folded_overloads
         )
         self.java = java_function_ingest.JavaFunctionIngest(java_anon_overrides)
+        self.python = python_function_ingest.PythonFunctionIngest(folded_overloads)
+        self.dart = dart_function_ingest.DartFunctionIngest(facts)
+        self.php = php_function_ingest.PhpFunctionIngest()
+        self.lua = lua_function_ingest.LuaFunctionIngest()
         # The collaborator each language's functions go to; a language with
         # none takes the neutral answers.
         self._languages: dict[cs.SupportedLanguage, LanguageFunctionIngest] = {
+            cs.SupportedLanguage.PYTHON: self.python,
             cs.SupportedLanguage.JS: self.js_ts,
             cs.SupportedLanguage.TS: self.js_ts,
             cs.SupportedLanguage.TSX: self.js_ts,
@@ -185,7 +192,10 @@ class FunctionIngest:
             cs.SupportedLanguage.RUST: self.rust,
             cs.SupportedLanguage.GO: self.go,
             cs.SupportedLanguage.CPP: self.cpp,
+            cs.SupportedLanguage.LUA: self.lua,
+            cs.SupportedLanguage.PHP: self.php,
             cs.SupportedLanguage.CSHARP: self.csharp,
+            cs.SupportedLanguage.DART: self.dart,
         }
         self._neutral = LanguageFunctionIngest()
 
@@ -217,11 +227,12 @@ class FunctionIngest:
             lang_queries = queries[language]
         file_path = self.module_qn_to_file_path.get(module_qn)
         has_classes = bool(captures.get(cs.CAPTURE_CLASS))
+        language_ingest = self._for(language)
 
         for func_node in captures.get(cs.CAPTURE_FUNCTION, []):
             if has_classes and self._is_method(func_node, lang_config):
                 continue
-            if self._skip_language_function(
+            if language_ingest.skips_function(
                 func_node, module_qn, language, lang_config, lang_queries, file_path
             ):
                 continue
@@ -229,7 +240,7 @@ class FunctionIngest:
             resolution = self._resolve_function_identity(
                 func_node, module_qn, language, lang_config, file_path
             )
-            if not resolution or self._defer_function_registration(
+            if not resolution or language_ingest.defers_registration(
                 func_node, resolution, module_qn, language, lang_config, lang_queries
             ):
                 continue
@@ -237,79 +248,7 @@ class FunctionIngest:
             self._register_function(
                 func_node, resolution, module_qn, language, lang_config, lang_queries
             )
-            self._record_free_function_return_type(
-                func_node, language, resolution.qualified_name
-            )
-
-    def _skip_language_function(
-        self,
-        func_node: Node,
-        module_qn: str,
-        language: cs.SupportedLanguage,
-        lang_config: LanguageSpec,
-        lang_queries: LanguageQueries,
-        file_path: Path | None,
-    ) -> bool:
-        match language:
-            case cs.SupportedLanguage.CSHARP:
-                return self.csharp.skips_function(
-                    func_node, module_qn, language, lang_config, lang_queries, file_path
-                )
-            case cs.SupportedLanguage.CPP:
-                return self.cpp.skips_function(
-                    func_node, module_qn, language, lang_config, lang_queries, file_path
-                )
-            case cs.SupportedLanguage.GO:
-                return self.go.defers_receiver_method(func_node, module_qn)
-            case (
-                cs.SupportedLanguage.PYTHON
-                | cs.SupportedLanguage.TS
-                | cs.SupportedLanguage.TSX
-            ):
-                return func_node.start_byte in self.folded_overloads.get(
-                    module_qn, frozenset()
-                )
-            case _:
-                return False
-
-    def _defer_function_registration(
-        self,
-        func_node: Node,
-        resolution: FunctionResolution,
-        module_qn: str,
-        language: cs.SupportedLanguage,
-        lang_config: LanguageSpec,
-        lang_queries: LanguageQueries,
-    ) -> bool:
-        if language in cs.JS_TS_LANGUAGES:
-            return self.js_ts.defers_anonymous(
-                func_node, resolution, module_qn, language, lang_config, lang_queries
-            )
-        if language == cs.SupportedLanguage.RUST:
-            return self.rust.defers_body_local(
-                func_node, resolution, module_qn, lang_config, lang_queries
-            )
-        return False
-
-    def _record_free_function_return_type(
-        self, func_node: Node, language: cs.SupportedLanguage, qualified_name: str
-    ) -> None:
-        if language == cs.SupportedLanguage.CPP:
-            self.cpp.record_return_type(func_node, qualified_name)
-
-        if language == cs.SupportedLanguage.RUST:
-            self.rust.record_return_type(func_node, qualified_name)
-
-        # A Dart free function's return type: a call-bound local
-        # (`var g = makeIt()` via the enrichment pass) types from
-        # this map.
-        if language == cs.SupportedLanguage.DART and (
-            return_type := dart_utils.return_type_name(func_node)
-        ):
-            self.facts.method_return_types[qualified_name] = return_type
-
-        if language == cs.SupportedLanguage.GO:
-            self.go.record_return_types(func_node, qualified_name)
+            language_ingest.record_return_type(func_node, resolution.qualified_name)
 
     def _function_span_claimed(self, module_qn: str, func_node: Node) -> bool:
         # A span is claimed when a pass recorded THIS function node's location;
@@ -410,8 +349,8 @@ class FunctionIngest:
         language: cs.SupportedLanguage,
         lang_config: LanguageSpec,
     ) -> FunctionResolution | None:
-        if language == cs.SupportedLanguage.CPP:
-            return self.cpp.resolve_function(func_node, module_qn)
+        if (language_ingest := self._for(language)).resolves_own_identity:
+            return language_ingest.resolve_function(func_node, module_qn)
         return self._resolve_generic_function(
             func_node, module_qn, language, lang_config
         )
@@ -425,8 +364,10 @@ class FunctionIngest:
     ) -> FunctionResolution:
         func_name = self._extract_function_name(func_node)
         display_name: str | None = None
-        if not func_name and language == cs.SupportedLanguage.LUA:
-            func_name, display_name = lua_function_ingest.function_name(func_node)
+        if not func_name:
+            func_name, display_name = self._for(language).nameless_function_name(
+                func_node
+            )
 
         is_anonymous = not func_name
         if not func_name:
@@ -448,8 +389,12 @@ class FunctionIngest:
         language: cs.SupportedLanguage,
         lang_config: LanguageSpec,
     ) -> str:
-        if language == cs.SupportedLanguage.RUST:
-            return self.rust.qualified_name(func_node, module_qn, func_name)
+        if (
+            qualified_name := self._for(language).qualified_name(
+                func_node, module_qn, func_name
+            )
+        ) is not None:
+            return qualified_name
 
         nested_qn = self._build_nested_qualified_name(
             func_node, module_qn, func_name, lang_config
@@ -465,11 +410,16 @@ class FunctionIngest:
         lang_config: LanguageSpec,
         lang_queries: LanguageQueries,
     ) -> None:
+        language_ingest = self._for(language)
         unique_qn = self.function_registry.register_unique_qn(
             resolution.qualified_name,
             func_node.start_point[0] + 1,
             func_node.start_point[1],
-            kind=cs.NodeLabel.FUNCTION if language in cs.JS_TS_LANGUAGES else None,
+            kind=(
+                cs.NodeLabel.FUNCTION
+                if language_ingest.separate_declaration_spaces
+                else None
+            ),
         )
         if unique_qn != resolution.qualified_name:
             resolution = resolution._replace(qualified_name=unique_qn)
@@ -477,8 +427,9 @@ class FunctionIngest:
         func_props = self._build_function_props(
             func_node, resolution, module_qn, lang_queries, language
         )
-        if language in cs.JS_TS_LANGUAGES:
-            self.js_ts.mark_name_scope(func_node, resolution.qualified_name, func_props)
+        language_ingest.mark_name_scope(
+            func_node, resolution.qualified_name, func_props
+        )
         is_macro = func_node.type in (
             cs.TS_RS_MACRO_DEFINITION,
             cs.TS_JULIA_MACRO_DEFINITION,
@@ -561,12 +512,7 @@ class FunctionIngest:
         self.facts.function_locations[function_span_key(module_qn, func_node)] = (
             location
         )
-        if language == cs.SupportedLanguage.GO:
-            self.go.register_name_alias(module_qn, func_node, location)
-        if language == cs.SupportedLanguage.CSHARP:
-            self.csharp.record_local_function(
-                func_node, resolution.qualified_name, module_qn
-            )
+        language_ingest.register_name_alias(module_qn, func_node, location)
         record_cpp_definition_span(
             self.cpp_definition_spans,
             language,
@@ -576,13 +522,9 @@ class FunctionIngest:
             cs.NodeLabel.FUNCTION.value,
             resolution.qualified_name,
         )
-        if language == cs.SupportedLanguage.CPP:
-            self.cpp.record_template_child_location(func_node, module_qn, location)
-
-        if language == cs.SupportedLanguage.JAVA and resolution.name:
-            self.java.record_anonymous_override(
-                func_node, resolution, module_qn, lang_config
-            )
+        language_ingest.record_function(
+            func_node, resolution, module_qn, lang_config, location
+        )
 
         self._create_function_relationships(
             func_node, resolution, module_qn, language, lang_config
@@ -597,6 +539,7 @@ class FunctionIngest:
         language: cs.SupportedLanguage,
     ) -> PropertyDict:
         file_path = self.module_qn_to_file_path.get(module_qn)
+        language_ingest = self._for(language)
         modifiers, decorators = extract_modifiers_and_decorators(
             func_node, lang_queries
         )
@@ -625,16 +568,12 @@ class FunctionIngest:
         # declare optionality store every parameter marked with it (issue
         # #2517). The rest stay absent, which reads as "kinds unknown"
         # downstream rather than as "zero positional parameters".
-        if language == cs.SupportedLanguage.PYTHON:
-            props[cs.KEY_POSITIONAL_PARAMS] = python_positional_parameter_names(
-                func_node
-            )
-        elif (declared := declared_positional_params(func_node, language)) is not None:
-            props[cs.KEY_POSITIONAL_PARAMS] = declared
+        if (
+            positional := language_ingest.positional_params(func_node, language)
+        ) is not None:
+            props[cs.KEY_POSITIONAL_PARAMS] = positional
         props.update(type_facts_props(extract_type_facts(func_node, language)))
-        if language == cs.SupportedLanguage.DART and dart_utils.is_top_level_main(
-            func_node
-        ):
+        if language_ingest.is_program_main(func_node):
             props[cs.KEY_IS_PROGRAM_MAIN] = True
         props.update(fingerprint_props(func_node))
         props.update(anchor_hash_props(func_node, decorators))
@@ -649,7 +588,8 @@ class FunctionIngest:
         language: cs.SupportedLanguage,
         lang_config: LanguageSpec,
     ) -> None:
-        if language == cs.SupportedLanguage.CPP and self.cpp.defers_containment(
+        language_ingest = self._for(language)
+        if language_ingest.defers_containment(
             func_node, resolution.qualified_name, module_qn, lang_config
         ):
             return
@@ -665,22 +605,9 @@ class FunctionIngest:
             module_qn,
             parent_span=parent_span,
         )
-
-        if language == cs.SupportedLanguage.RUST:
-            self.rust.reference_closure(
-                func_node, parent_type, parent_qn, resolution.qualified_name
-            )
-
-        if resolution.is_exported and language == cs.SupportedLanguage.CPP:
-            self.ingestor.ensure_relationship_batch(
-                (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
-                cs.RelationshipType.EXPORTS,
-                (
-                    cs.NodeLabel.FUNCTION,
-                    cs.KEY_QUALIFIED_NAME,
-                    resolution.qualified_name,
-                ),
-            )
+        language_ingest.extra_relationships(
+            func_node, resolution, module_qn, parent_type, parent_qn
+        )
 
     def _extract_function_name(self, func_node: Node) -> str | None:
         name_node = func_node.child_by_field_name(cs.FIELD_NAME)
@@ -753,6 +680,7 @@ class FunctionIngest:
         skip_classes: bool,
     ) -> list[str] | None:
         path_parts: list[str] = []
+        language_ingest = self._for(lang_config.language)
 
         while current and current.type not in lang_config.module_node_types:
             result = self._process_ancestor_for_path(
@@ -762,13 +690,12 @@ class FunctionIngest:
                 return None
             if result is not None:
                 path_parts.append(result)
-            # A PHP anonymous class's part already spells the callable it is
-            # written in, as that callable is registered; naming the
-            # callables around it again here would put the closure under a
-            # different path than the class's own methods (issue #2538).
+            # A part can already spell the scopes above it (a PHP anonymous
+            # class's spells the callable it is written in), so the walk
+            # resumes where its language says.
             current = (
-                php_utils.anonymous_class_anchor_stop(current)
-                if result is not None and current.type == cs.TS_PHP_ANONYMOUS_CLASS
+                language_ingest.next_path_ancestor(current)
+                if result is not None
                 else current.parent
             )
 
@@ -819,16 +746,9 @@ class FunctionIngest:
         if self._is_nested_within_class_member(func_node, class_node, lang_config):
             if name := self._extract_node_name(class_node):
                 return name
-            # A PHP anonymous class is named as the definition pass names it,
-            # under the callable it is written in (issue #2538).
-            if name := php_utils.anonymous_class_scope_name(class_node):
-                return name
-            # An anonymous class expression (`static Proxy = class {...}`) has no
-            # `name` field; recover its binding name so a closure nested in its
-            # methods keeps the full `Outer.Proxy.method.<name>` path the call
-            # pass builds, instead of an orphaned `Outer.method.<name>` (issue
-            # #970).
-            return js_ts_utils.class_binding_name(class_node)
+            # A class with no `name` field (a PHP anonymous class, a JS class
+            # expression) is named the way its language names it.
+            return self._for(lang_config.language).anonymous_class_name(class_node)
         return False
 
     def _is_nested_within_class_member(
@@ -862,13 +782,7 @@ class FunctionIngest:
         return f"{module_qn}.{func_name}"
 
     def _is_method(self, func_node: Node, lang_config: LanguageSpec) -> bool:
-        # A const/static initializer is a body like a function's, but it is no
-        # function node, so the shared walk climbs out of it to the impl above
-        # and calls the item inside it a method of that type. It is a free
-        # function local to the initializer (issue #1037).
-        if lang_config.language == cs.SupportedLanguage.RUST and rs_utils.is_body_local(
-            func_node
-        ):
+        if self._for(lang_config.language).is_body_local(func_node):
             return False
         return is_method_node(func_node, lang_config)
 
@@ -1026,6 +940,7 @@ class FunctionIngest:
     ) -> tuple[str, str, FunctionSpanKey | None] | None:
         # The parent a function nested in `current` (an enclosing function)
         # binds to; None when no distinct parent qn can be derived.
+        language_ingest = self._for(language)
         parent_label = (
             cs.NodeLabel.METHOD
             if self._is_method(current, lang_config)
@@ -1036,14 +951,8 @@ class FunctionIngest:
         # callback: anonymous scopes contribute no segment to the child qn,
         # so trimming would skip the callback and hoist the child to the
         # nearest named ancestor.
-        if language == cs.SupportedLanguage.GO and (
-            receiver_parent := self.go.receiver_method_parent(current, module_qn)
-        ):
-            return receiver_parent
-        if language in cs.JS_TS_LANGUAGES and (
-            recorded_parent := self.js_ts.recorded_parent(current, func_qn, module_qn)
-        ):
-            return recorded_parent
+        if enclosing := language_ingest.enclosing_parent(current, func_qn, module_qn):
+            return enclosing
         resolution = (
             self._resolve_function_identity(
                 current, module_qn, language, lang_config, file_path
@@ -1058,15 +967,9 @@ class FunctionIngest:
         )
         if not parent_qn or parent_qn == func_qn:
             return None
-        # A C# method registers signature-suffixed (`Run(int)`), a shape
-        # structural re-derivation cannot reproduce, and its parameterless
-        # overload sibling exactly SHADOWS the guess. Methods register in
-        # the class pass after this one, so the guess carries the parent
-        # NODE's span for the deferred resolver to swap in the recorded
-        # identity.
         span = (
             function_span_key(module_qn, current)
-            if language == cs.SupportedLanguage.CSHARP
+            if language_ingest.pins_parent_span
             else None
         )
         return parent_label, parent_qn, span
@@ -1095,8 +998,8 @@ class FunctionIngest:
 
             current = current.parent
 
-        if language == cs.SupportedLanguage.RUST and (
-            inline_parent := self.rust.inline_module_parent(func_node, func_qn)
+        if inline_parent := self._for(language).inline_module_parent(
+            func_node, func_qn
         ):
             return inline_parent
 
