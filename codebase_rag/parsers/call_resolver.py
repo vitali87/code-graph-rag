@@ -23,6 +23,7 @@ from .go import utils as go_utils
 from .go.link_state import GoLinkState
 from .go.resolution import GoResolver
 from .import_processor import ImportProcessor
+from .java import resolution as java_resolution
 from .js_ts.resolution import JsTsResolver, bind_receiver, class_value_of
 from .js_ts.resolution import resolve_builtin_call as resolve_js_builtin_call
 from .lua import utils as lua_utils
@@ -1228,27 +1229,9 @@ class CallResolver:
         return self._go.go_declaration_is_visible(declaration_qn, module_qn)
 
     def java_constructor_targets(self, class_qn: str) -> set[tuple[str, str]]:
-        # A Java constructor is registered as a method directly under its class whose
-        # simple name equals the class's simple name (`Foo.Foo(int)`). `new Foo(...)`
-        # resolves to the CLASS, so redirect a CALLS edge to each declared constructor
-        # (all overloads); argument-type overload selection is not attempted, which is
-        # unnecessary for reachability and never fabricates a call to a
-        # non-constructor. Only constructors DIRECTLY on the class match (a nested
-        # class's constructor has an extra qn segment and is excluded).
-        # A duplicate-suffixed class (`Box@8` for `class Box<T>` beside `class
-        # Box`) declares its constructor under its natural name, so the
-        # marker is not part of the name to match (issue #2007), and nor is a
-        # generic twin's CLR arity (`PB`1` declares `PB(...)`, issue #2579).
-        simple = qn_markers.strip_arity_marker(
-            qn_markers.strip_dup_marker(class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1])
+        return java_resolution.java_constructor_targets(
+            self.function_registry, class_qn
         )
-        targets: set[tuple[str, str]] = set()
-        for qn, node_type in self.function_registry.find_with_prefix(class_qn):
-            head = qn.split(cs.CHAR_PAREN_OPEN, 1)[0]
-            parent, dot, mname = head.rpartition(cs.SEPARATOR_DOT)
-            if dot and parent == class_qn and mname == simple:
-                targets.add((node_type, qn))
-        return targets
 
     def cpp_destructor_targets(self, class_qn: str) -> set[tuple[str, str]]:
         return self._cpp.cpp_destructor_targets(class_qn)

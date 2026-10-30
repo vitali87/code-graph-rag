@@ -208,6 +208,7 @@ class TestEveryRoutedReaderUsesTheHelper:
         "codebase_rag.parsers.csharp.class_ingest",
         "codebase_rag.parsers.function_ingest",
         "codebase_rag.parsers.go.calls",
+        "codebase_rag.parsers.java.resolution",
         "codebase_rag.parsers.js_ts.resolution",
         "codebase_rag.parsers.rust.rehydration",
         "evals.cgr_graph",
