@@ -12,7 +12,7 @@ from codebase_rag.config import (
     load_cgr_instructions,
 )
 from codebase_rag.prompts import build_rag_orchestrator_prompt
-from codebase_rag.services.llm import create_rag_orchestrator
+from codebase_rag.services.llm import OrchestratorPrompt, create_rag_orchestrator
 
 
 @pytest.fixture
@@ -115,7 +115,9 @@ def test_create_rag_orchestrator_reads_project_instructions(
     extra = "Honor scoped read-only mode."
     (temp_repo / CGR_INSTRUCTIONS_FILENAME).write_text(extra, encoding="utf-8")
 
-    agent, system_prompt = create_rag_orchestrator(tools=[], project_root=temp_repo)
+    agent, system_prompt = create_rag_orchestrator(
+        tools=[], prompt=OrchestratorPrompt(project_root=temp_repo)
+    )
 
     assert extra in system_prompt
     orchestrator_agent = mock_agent[None, str | DeferredToolRequests]
@@ -141,7 +143,8 @@ def test_create_rag_orchestrator_skips_instructions_when_disabled(
     (temp_repo / CGR_INSTRUCTIONS_FILENAME).write_text("REPO SECRET", encoding="utf-8")
 
     _, system_prompt = create_rag_orchestrator(
-        tools=[], project_root=temp_repo, load_instructions=False
+        tools=[],
+        prompt=OrchestratorPrompt(project_root=temp_repo, load_instructions=False),
     )
 
     assert "GLOBAL SECRET" not in system_prompt
@@ -164,6 +167,8 @@ def test_create_rag_orchestrator_reads_global_instructions(
 
     isolated_global.write_text("global directive ABC", encoding="utf-8")
 
-    _, system_prompt = create_rag_orchestrator(tools=[], project_root=None)
+    _, system_prompt = create_rag_orchestrator(
+        tools=[], prompt=OrchestratorPrompt(project_root=None)
+    )
 
     assert "global directive ABC" in system_prompt

@@ -16,7 +16,11 @@ from codebase_rag import constants as cs
 from codebase_rag import exceptions as ex
 from codebase_rag import logs as ls
 from codebase_rag import tool_errors as te
-from codebase_rag.services.llm import create_rag_orchestrator, run_to_text_answer
+from codebase_rag.services.llm import (
+    OrchestratorPrompt,
+    create_rag_orchestrator,
+    run_to_text_answer,
+)
 from codebase_rag.tools import tool_descriptions as td
 from codebase_rag.tools.codebase_query import create_query_tool
 from codebase_rag.types_defs import CodeSnippetResultDict, QueryResultDict
@@ -97,7 +101,8 @@ class RetrievalTools(ToolHandlerBase):
                 tools.append(self._structural_search_tool)
                 tools.append(self._structural_editor_tool)
             self._rag_agent, _ = create_rag_orchestrator(
-                tools=tools, project_root=Path(self.project_root)
+                tools=tools,
+                prompt=OrchestratorPrompt(project_root=Path(self.project_root)),
             )
         return self._rag_agent
 

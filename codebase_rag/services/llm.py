@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
@@ -335,13 +336,23 @@ async def run_to_text_answer(
     return output
 
 
+@dataclass(frozen=True, slots=True)
+class OrchestratorPrompt:
+    """What the main agent's system prompt is built from besides its tools:
+    the CGR instructions for `project_root` (none read without
+    `load_instructions`), the `active_projects` it serves and the graph
+    `backend` its query rules describe (None reads GRAPH_BACKEND)."""
+
+    project_root: Path | None = None
+    load_instructions: bool = True
+    active_projects: list[str] | None = None
+    backend: str | None = None
+
+
 def create_rag_orchestrator(
     tools: list[Tool[None]],
     *,
-    project_root: Path | None = None,
-    load_instructions: bool = True,
-    active_projects: list[str] | None = None,
-    backend: str | None = None,
+    prompt: OrchestratorPrompt = OrchestratorPrompt(),
 ) -> tuple[Agent[None, str | DeferredToolRequests], str]:
     """Build the main agent and return it with its system prompt."""
     try:
@@ -349,13 +360,15 @@ def create_rag_orchestrator(
         llm = _create_provider_model(config)
 
         project_instructions = (
-            load_cgr_instructions(project_root) if load_instructions else None
+            load_cgr_instructions(prompt.project_root)
+            if prompt.load_instructions
+            else None
         )
         system_prompt = build_rag_orchestrator_prompt(
             tools,
             project_instructions=project_instructions,
-            active_projects=active_projects,
-            backend=backend,
+            active_projects=prompt.active_projects,
+            backend=prompt.backend,
         )
 
         # Specialised explicitly: the checker cannot infer the output type

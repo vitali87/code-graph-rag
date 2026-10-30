@@ -65,6 +65,7 @@ from .providers.base import get_provider_from_config
 from .services import ReadOnlyQueryProtocol
 from .services.llm import (
     CypherGenerator,
+    OrchestratorPrompt,
     create_rag_orchestrator,
     create_research_agent,
     run_to_text_answer,
@@ -1932,9 +1933,11 @@ def _initialize_services_and_agent(
 
     rag_agent, system_prompt = create_rag_orchestrator(
         tools=agentic_tools,
-        project_root=Path(repo_path),
-        load_instructions=app_context.session.load_cgr_instructions,
-        active_projects=active_projects,
+        prompt=OrchestratorPrompt(
+            project_root=Path(repo_path),
+            load_instructions=app_context.session.load_cgr_instructions,
+            active_projects=active_projects,
+        ),
     )
     return rag_agent, confirmation_tool_names, system_prompt
 
