@@ -265,8 +265,9 @@ _ORDER: tuple[tuple[str, str, str, str], ...] = (
 )
 
 
-# `run` delegates its deferred-resolution stages to `DeferredResolution` so
-# that the scoped re-ingest path (#1524) can reuse the same sequence. The ordering
+# `run` hands each stretch of its sequence to a phase method, and its
+# deferred-resolution stages to `DeferredResolution` so that the scoped
+# re-ingest path (#1524) can reuse the same sequence. The ordering
 # constraints hold wherever those stages LIVE, not only in `run`, so the
 # guard scans `run` plus the helpers it delegates to. Without this, extracting
 # the block would make every pinned pair vacuous -- the anti-vacuity test
@@ -293,6 +294,10 @@ _ORDER: tuple[tuple[str, str, str, str], ...] = (
 # into are reached as well. Each name maps to the file and class that define
 # it.
 _DELEGATES: dict[str, tuple[Path, str]] = {
+    "_prepare_pass_2": (_SOURCE, "GraphUpdater"),
+    "_run_definition_passes": (_SOURCE, "GraphUpdater"),
+    "_run_call_pass": (_SOURCE, "GraphUpdater"),
+    "_run_post_passes": (_SOURCE, "GraphUpdater"),
     "resolve_deferred_definitions": (_DEFERRED, "DeferredResolution"),
     "_resolve_cpp_definitions": (_DEFERRED, "DeferredResolution"),
     "_resolve_parents": (_DEFERRED, "DeferredResolution"),

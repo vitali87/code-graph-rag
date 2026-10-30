@@ -610,6 +610,19 @@ class GraphUpdater:
         A Ctrl+C can land after that and before the return (#2442), so where
         the interrupt surfaced does not say whether the graph is whole.
         """
+        if self._start_run(force):
+            self._finish_in_sync_run()
+            self.graph_pruner.retire_legacy_dotted_project()
+            return
+        self._prepare_pass_2(force)
+        known_module_paths = self._run_definition_passes(force)
+        self._run_call_pass(known_module_paths)
+        self._run_post_passes()
+        self._close_run()
+
+    def _start_run(self, force: bool) -> bool:
+        """Reset the per-run state and settle what the caches can still be
+        trusted for; whether the graph is already in sync with the tree."""
         # First, so an interrupt anywhere below reads this run's answer, not
         # a reused updater's previous one.
         self.committed = False
@@ -668,11 +681,10 @@ class GraphUpdater:
         self._run.exclusion_match = None
         self._run.cache_project_match = None
         self._run.graph_state_unknown = False
-        if not force and self._is_already_in_sync():
-            self._finish_in_sync_run()
-            self.graph_pruner.retire_legacy_dotted_project()
-            return
+        return not force and self._is_already_in_sync()
 
+    def _prepare_pass_2(self, force: bool) -> None:
+        """Pass 1, and the compiler frontends whose facts Pass 2 reads."""
         # Cleared only when a REAL indexing run begins: an in-sync no-op above
         # must keep the last run's ownership map, which a later watch-event
         # prefix sweep still reads (issue #1025).
@@ -712,6 +724,9 @@ class GraphUpdater:
         # during Pass 2, so loading them here (before Pass 2) is correct.
         self.frontend_runner.run_go_frontend()
 
+    def _run_definition_passes(self, force: bool) -> dict[str, str]:
+        """Pass 2, the joins that need its registrations, and the deferred
+        definition-level stages; the module qn -> path map they produced."""
         logger.info(ls.PASS_2_FILES)
         try:
             self._process_files(force=force)
@@ -760,7 +775,9 @@ class GraphUpdater:
             self.module_seeding.prune_stale_seeded_module_qns()
 
             known_module_paths = self.deferred_resolution.resolve_deferred_definitions(
-                self._run, rehydrate=not force, reparsed_keys=self._reparsed_file_keys
+                self._run,
+                rehydrate=not force,
+                reparsed_keys=self._reparsed_file_keys,
             )
         finally:
             # After the deferred stages, as `_reingest_resolve` does, so an
@@ -771,7 +788,10 @@ class GraphUpdater:
             # their targets' subtrees are already gone, so it restores them
             # on the way out, Go receiver methods included.
             self.edge_carry.restore_pending_inbound_edges(self._run)
+        return known_module_paths
 
+    def _run_call_pass(self, known_module_paths: dict[str, str]) -> None:
+        """Pass 3, and the edges that join against what it resolved."""
         logger.info(ls.FOUND_FUNCTIONS, count=len(self.function_registry))
         # The resolver memoises name -> qn answers and module languages
         # across files; on a reused updater (any caller that holds one across
@@ -812,6 +832,8 @@ class GraphUpdater:
             self.known_module_paths()
         )
 
+    def _run_post_passes(self) -> None:
+        """The passes that need every module parsed and every call resolved."""
         # Deferred endpoint emission: every module is parsed now, so router
         # mount prefixes (possibly cross-module) can resolve (issue #877).
         self.endpoint_linker.emit_pending_endpoints(self._run)
@@ -845,6 +867,8 @@ class GraphUpdater:
             self.exclude_paths, self.unignore_paths
         )
 
+    def _close_run(self) -> None:
+        """Prune, embed and commit: the steps that make the run's graph whole."""
         self.graph_pruner.prune_orphan_nodes(self._run, self.prepared_state_dir)
         self.gloss_reanchor.reanchor()
         # The prune issues its own deletes and has no flush of its own, so the
