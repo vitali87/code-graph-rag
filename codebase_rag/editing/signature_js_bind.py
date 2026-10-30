@@ -3,8 +3,9 @@ a new parameter as the caller spells it, the rewritten header, and every
 call site bound and rewritten; and the JavaScript dialect itself.
 
 JavaScript has no keyword arguments, so a site is rewritten positionally. A
-default the site skips is passed as `undefined`, which selects the default
-just as leaving the argument out does; a site whose arguments run code is
+default the site skips is passed as `void 0`, which selects the default just
+as leaving the argument out does (the name `undefined` would not: a caller
+can bind it to anything); a site whose arguments run code is
 left unmapped when the new order would run them in another order, since
 there is no keyword to keep them where they were written.
 """
@@ -24,6 +25,7 @@ from .signature_js import (
     _params_of,
     _parser,
     _refuse_body_conflicts,
+    _refuse_forward_defaults,
     _take_receiver,
 )
 from .signature_spec import (
@@ -91,10 +93,11 @@ def _definition_edits(
     own = {p.name: p for p in header.params}
     texts = [own[spec.name].text if spec.name in carried else spec.text for spec in new]
     params = f"({cs.SEPARATOR_COMMA_SPACE.join(texts)})"
-    if _probe_params(params) is None:
+    if (probed := _probe_params(params)) is None:
         raise SignatureRefused(
             cs.SIGNATURE_JS_INVALID_HEADER.format(qn=header.qn, text=params)
         )
+    _refuse_forward_defaults(header.qn, *probed)
     return [_Edit(header.path, header.span, params)]
 
 
@@ -167,7 +170,7 @@ def _render_arguments(
         )
     while values and values[-1] is None:
         values.pop()
-    parts = [found[0] if found else cs.TS_JS_UNDEFINED for found in values]
+    parts = [found[0] if found else cs.JS_SKIPPED_ARGUMENT for found in values]
     return f"({cs.SEPARATOR_COMMA_SPACE.join(parts)})"
 
 

@@ -86,10 +86,12 @@ def test_names_swap_places() -> None:
     assert _render("helper(x, y)", [B, A], [_Source(1), _Source(0)]) == "(y, x)"
 
 
-def test_a_skipped_default_is_passed_as_undefined() -> None:
+def test_a_skipped_default_is_passed_as_void_0() -> None:
+    # Not `undefined`: inside `function run(undefined) { helper(x); }` that
+    # name holds whatever run was given, and the default would not apply.
     assert (
         _render("helper(x)", [A, B, C], [_Source(0), _Source(1), _Source(literal="5")])
-        == "(x, undefined, 5)"
+        == "(x, void 0, 5)"
     )
 
 
@@ -100,7 +102,7 @@ def test_trailing_defaults_the_site_skips_stay_out() -> None:
 def test_values_that_run_code_keep_their_order() -> None:
     assert (
         _render("helper(f(), g())", [A, C, B], [_Source(0), None, _Source(1)])
-        == "(f(), undefined, g())"
+        == "(f(), void 0, g())"
     )
 
 
@@ -112,8 +114,8 @@ def test_values_that_run_code_are_never_reordered() -> None:
 SOURCE = "function helper(a, b = 'x') {\n  return String(a) + b;\n}\n"
 
 
-def _header() -> _Header:
-    data = SOURCE.encode(cs.ENCODING_UTF8)
+def _header(source: str = SOURCE) -> _Header:
+    data = source.encode(cs.ENCODING_UTF8)
     node = _find_definition(_parser().parse(data).root_node, "helper", 1, 3)
     assert node is not None
     params = node.child_by_field_name(cs.FIELD_PARAMETERS)
@@ -159,3 +161,11 @@ def test_a_header_that_would_not_parse_refuses() -> None:
 
     with pytest.raises(SignatureRefused, match="not valid JavaScript"):
         _definition_edits(header, [header.params[0], broken], set(), [])
+
+
+def test_a_reorder_that_moves_a_default_before_what_it_reads_refuses() -> None:
+    header = _header("function helper(a = 1, b = a) {\n  return b;\n}\n")
+    swapped = [header.params[1], header.params[0]]
+
+    with pytest.raises(SignatureRefused, match="the default of b reads `a`"):
+        _definition_edits(header, swapped, {"a", "b"}, [])

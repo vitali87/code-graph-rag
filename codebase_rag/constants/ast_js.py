@@ -542,3 +542,6 @@ TS_JS_NULL = "null"
 TS_JS_UNDEFINED = "undefined"
 TS_JS_ACCESSOR_KEYWORDS = frozenset({"get", "set"})
 JS_RECEIVER_METHODS = frozenset({"call", "apply"})
+# The argument passed for a default a call skips: undefined even where the
+# caller has bound the name `undefined` to something else.
+JS_SKIPPED_ARGUMENT = "void 0"
