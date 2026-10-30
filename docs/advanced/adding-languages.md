@@ -150,6 +150,17 @@ holds the part a collaborator writes through), the name-based resolver, and
 what languages share: the reference walkers, callable-parameter flow, the
 class pass's qualified names and the construction a `new` runs.
 
+That resolver has moved Rust, JS/TS, Go, C++, Python, PHP and Dart the same
+way: `CallResolver` builds a `RustResolver`, `JsTsResolver`, `GoResolver`,
+`CppResolver`, `PythonResolver`, `PhpResolver` and `DartResolver` (each in
+`parsers/<language>/resolution.py`, beside plain functions such as Java's
+constructor lookup and PHP's namespace-import gates) and reaches its
+language's stages and lookups through it, while each calls back through a
+narrow host protocol for what every language shares. `CallResolver` keeps the
+order the stages run in, the resolution cache and the verdict each `Resolved`
+answer carries, the simple-name fallback and the class and method lookups;
+`parsers/call_site.py` holds the `CallSite` request its stages read.
+
 The definition pass has moved its per-language method groups as well.
 `ClassIngest` (`class_ingest/ingest.py`) builds a `CppClassIngest`,
 `RustClassIngest`, `CSharpClassIngest`, `GoClassIngest`, `DartClassIngest`,
