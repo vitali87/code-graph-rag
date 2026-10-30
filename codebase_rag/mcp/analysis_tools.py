@@ -3,59 +3,99 @@ symbol: the flow-reachability verdict between a source and a sink, and the
 traceback explanation and root-cause ranking (issue #227).
 """
 
+from __future__ import annotations
+
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from codebase_rag import constants as cs
+from codebase_rag.types_defs import GraphRefusal
 
 from . import constants as mcs
 from .handler_base import ToolHandlerBase, run_in_thread
+from .types_defs import (
+    CandidateSection,
+    ExplainedSection,
+    FlowVerdictResult,
+    FrameSection,
+    RankedSection,
+    ResolutionSection,
+    RootCauseRanking,
+    TracebackExplanation,
+)
 
 if TYPE_CHECKING:
     from codebase_rag.crash_correlation import (
+        FrameContext,
         FrameResolutionRate,
+        RootCause,
         RootCauseReport,
         TracebackReport,
     )
 
 
-def _resolution_section(resolution: "FrameResolutionRate") -> dict:
+def _resolution_section(resolution: FrameResolutionRate) -> ResolutionSection:
     # `rate` is a property, so `_asdict()` omits it; mapped explicitly
     # because the ratio is the number the caller acts on (issue #227).
-    return {
-        "total": resolution.total,
-        "resolved": resolution.resolved,
-        "rate": resolution.rate,
-    }
+    return ResolutionSection(
+        total=resolution.total,
+        resolved=resolution.resolved,
+        rate=resolution.rate,
+    )
 
 
-def _explained_section(report: "TracebackReport") -> dict:
+def _frame_section(frame: FrameContext) -> FrameSection:
+    return FrameSection(
+        path=frame.path,
+        line=frame.line,
+        name=frame.name,
+        qualified_name=frame.qualified_name,
+        label=frame.label,
+        unresolved_reason=frame.unresolved_reason,
+        callers=frame.callers,
+        callees=frame.callees,
+        flow_sources=frame.flow_sources,
+    )
+
+
+def _candidate_section(candidate: RootCause) -> CandidateSection:
+    return CandidateSection(
+        qualified_name=candidate.qualified_name,
+        path=candidate.path,
+        line=candidate.line,
+        score=candidate.score,
+        reasons=candidate.reasons,
+        call_path=candidate.call_path,
+    )
+
+
+def _explained_section(report: TracebackReport) -> ExplainedSection:
     """One exception of an explained traceback: the one that propagated, or
     a member of an ExceptionGroup, with members of its own (issue #3235)."""
-    return {
-        "exception_type": report.exception_type,
-        "exception_message": report.exception_message,
-        "frames": [frame._asdict() for frame in report.frames],
-        "resolution": _resolution_section(report.resolution),
-        "note": report.note,
-        "members": [_explained_section(member) for member in report.members],
-        "omitted_members": report.omitted_members,
-    }
+    return ExplainedSection(
+        exception_type=report.exception_type,
+        exception_message=report.exception_message,
+        frames=[_frame_section(frame) for frame in report.frames],
+        resolution=_resolution_section(report.resolution),
+        note=report.note,
+        members=[_explained_section(member) for member in report.members],
+        omitted_members=report.omitted_members,
+    )
 
 
-def _ranked_section(report: "RootCauseReport") -> dict:
+def _ranked_section(report: RootCauseReport) -> RankedSection:
     """One exception's ranking, as `_explained_section` lays it out."""
-    return {
-        "exception_type": report.exception_type,
-        "exception_message": report.exception_message,
-        "failing": report.failing,
-        "anchor_is_crash_site": report.anchor_is_crash_site,
-        "candidates": [candidate._asdict() for candidate in report.candidates],
-        "resolution": _resolution_section(report.resolution),
-        "note": report.note,
-        "members": [_ranked_section(member) for member in report.members],
-        "omitted_members": report.omitted_members,
-    }
+    return RankedSection(
+        exception_type=report.exception_type,
+        exception_message=report.exception_message,
+        failing=report.failing,
+        anchor_is_crash_site=report.anchor_is_crash_site,
+        candidates=[_candidate_section(c) for c in report.candidates],
+        resolution=_resolution_section(report.resolution),
+        note=report.note,
+        members=[_ranked_section(member) for member in report.members],
+        omitted_members=report.omitted_members,
+    )
 
 
 class AnalysisTools(ToolHandlerBase):
@@ -63,12 +103,13 @@ class AnalysisTools(ToolHandlerBase):
 
     async def flow_verdict(
         self, source_qualified_name: str, sink_qualified_name: str
-    ) -> dict:
+    ) -> FlowVerdictResult | GraphRefusal:
         from codebase_rag.flow_verdict import flow_reachability_verdict
 
-        project, workspace_refusal = self._fixed_root_project()
-        if project is None:
-            return {cs.DICT_KEY_ERROR: workspace_refusal}
+        fixed = self._fixed_root_project()
+        if fixed[0] is None:
+            return GraphRefusal(error=fixed[1])
+        project = fixed[0]
         # The edge scan and coverage read must see one consistent graph:
         # index/update handlers hold this lock while they delete and
         # rebuild, and an interleaved read would mix generations. The guard
@@ -77,18 +118,18 @@ class AnalysisTools(ToolHandlerBase):
         # partial graph (PR #1547).
         async with self._ingestor_lock:
             if refusal := await run_in_thread(self._unindexed_refusal, project):
-                return {cs.DICT_KEY_ERROR: refusal}
+                return GraphRefusal(error=refusal)
             if refusal := await run_in_thread(
                 self.marker.partial_graph_refusal, project, cs.MCPToolName.FLOW_VERDICT
             ):
-                return {cs.DICT_KEY_ERROR: refusal}
+                return GraphRefusal(error=refusal)
             if refusal := await run_in_thread(
                 self._flow_endpoint_refusal,
                 project,
                 source_qualified_name,
                 sink_qualified_name,
             ):
-                return {cs.DICT_KEY_ERROR: refusal}
+                return GraphRefusal(error=refusal)
             result = await run_in_thread(
                 flow_reachability_verdict,
                 self.ingestor.fetch_all,
@@ -96,31 +137,31 @@ class AnalysisTools(ToolHandlerBase):
                 source_qualified_name,
                 sink_qualified_name,
             )
-        return {
-            "verdict": result.verdict,
-            "path": list(result.path),
-            "gaps": list(result.gaps),
-            # Where the path crosses a service boundary (issue #1603).
-            "remote_hops": [list(hop) for hop in result.remote_hops],
-        }
+        return FlowVerdictResult(
+            verdict=result.verdict,
+            path=list(result.path),
+            gaps=list(result.gaps),
+            remote_hops=[list(hop) for hop in result.remote_hops],
+        )
 
     async def explain_traceback(
         self, traceback_text: str, path_prefix_map: dict[str, str] | None = None
-    ) -> dict:
+    ) -> TracebackExplanation | GraphRefusal:
         from codebase_rag.crash_correlation import explain_traceback
 
-        project, workspace_refusal = self._fixed_root_project()
-        if project is None:
-            return {cs.DICT_KEY_ERROR: workspace_refusal}
+        fixed = self._fixed_root_project()
+        if fixed[0] is None:
+            return GraphRefusal(error=fixed[1])
+        project = fixed[0]
         async with self._ingestor_lock:
             if refusal := await run_in_thread(self._unindexed_refusal, project):
-                return {cs.DICT_KEY_ERROR: refusal}
+                return GraphRefusal(error=refusal)
             if refusal := await run_in_thread(
                 self.marker.partial_graph_refusal,
                 project,
                 cs.MCPToolName.EXPLAIN_TRACEBACK,
             ):
-                return {cs.DICT_KEY_ERROR: refusal}
+                return GraphRefusal(error=refusal)
             report = await run_in_thread(
                 explain_traceback,
                 self.ingestor.fetch_all,
@@ -129,29 +170,30 @@ class AnalysisTools(ToolHandlerBase):
                 traceback_text,
                 path_prefix_map,
             )
-        return {
+        return TracebackExplanation(
             **_explained_section(report),
-            "flow_gaps": list(report.flow_gaps),
-            "inferred_checkout_root": report.inferred_root,
-        }
+            flow_gaps=list(report.flow_gaps),
+            inferred_checkout_root=report.inferred_root,
+        )
 
     async def rank_root_causes(
         self, traceback_text: str, path_prefix_map: dict[str, str] | None = None
-    ) -> dict:
+    ) -> RootCauseRanking | GraphRefusal:
         from codebase_rag.crash_correlation import rank_root_causes
 
-        project, workspace_refusal = self._fixed_root_project()
-        if project is None:
-            return {cs.DICT_KEY_ERROR: workspace_refusal}
+        fixed = self._fixed_root_project()
+        if fixed[0] is None:
+            return GraphRefusal(error=fixed[1])
+        project = fixed[0]
         async with self._ingestor_lock:
             if refusal := await run_in_thread(self._unindexed_refusal, project):
-                return {cs.DICT_KEY_ERROR: refusal}
+                return GraphRefusal(error=refusal)
             if refusal := await run_in_thread(
                 self.marker.partial_graph_refusal,
                 project,
                 cs.MCPToolName.RANK_ROOT_CAUSES,
             ):
-                return {cs.DICT_KEY_ERROR: refusal}
+                return GraphRefusal(error=refusal)
             report = await run_in_thread(
                 rank_root_causes,
                 self.ingestor.fetch_all,
@@ -160,12 +202,12 @@ class AnalysisTools(ToolHandlerBase):
                 traceback_text,
                 path_prefix_map,
             )
-        return {
+        return RootCauseRanking(
             **_ranked_section(report),
-            "flow_used": report.flow_used,
-            "flow_gaps": list(report.flow_gaps),
-            "inferred_checkout_root": report.inferred_root,
-        }
+            flow_used=report.flow_used,
+            flow_gaps=list(report.flow_gaps),
+            inferred_checkout_root=report.inferred_root,
+        )
 
     def _flow_endpoint_refusal(
         self, project_name: str, source: str, sink: str

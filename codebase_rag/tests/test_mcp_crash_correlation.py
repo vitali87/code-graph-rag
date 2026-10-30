@@ -190,3 +190,32 @@ async def test_rank_root_causes_returns_ranked_candidates(tmp_path):
         f"{project}.app.service.dispatch",
         f"{project}.app.service.handle",
     )
+
+
+def test_the_traceback_payloads_carry_every_field_of_their_reports() -> None:
+    # The payload sections are built field by field, so a field added to a
+    # report must be added to its section too, or the tool drops it.
+    from codebase_rag.crash_correlation import (
+        FrameContext,
+        RootCause,
+        RootCauseReport,
+        TracebackReport,
+    )
+    from codebase_rag.mcp.types_defs import (
+        CandidateSection,
+        FrameSection,
+        RootCauseRanking,
+        TracebackExplanation,
+    )
+
+    assert list(FrameSection.__annotations__) == list(FrameContext._fields)
+    assert list(CandidateSection.__annotations__) == list(RootCause._fields)
+    # Each report's fields, as its payload names them; an arity finding is
+    # not part of the payload.
+    renamed = {"inferred_root": "inferred_checkout_root"}
+    for report, payload, left_out in (
+        (TracebackReport, TracebackExplanation, {"arity"}),
+        (RootCauseReport, RootCauseRanking, set()),
+    ):
+        fields = {renamed.get(field, field) for field in report._fields} - left_out
+        assert fields <= set(payload.__required_keys__), report.__name__
