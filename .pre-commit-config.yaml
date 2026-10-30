@@ -65,7 +65,7 @@ repos:
     hooks:
       - id: generate-readme
         name: generate README sections
-        entry: uv run --frozen --no-sync python scripts/hooks/generate_readme.py
+        entry: uv run --frozen --no-sync python -m scripts.hooks.generate_readme
         language: system
         pass_filenames: false
         always_run: true

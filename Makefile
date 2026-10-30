@@ -95,7 +95,7 @@ pre-commit: ## Run all pre-commit checks locally (comprehensive test before comm
 	@echo "3. Type checking..."
 	$(PYTHON) ty check --exclude codebase_rag/tests/
 	@echo "4. Generating README sections..."
-	$(PYTHON) python scripts/hooks/generate_readme.py
+	$(PYTHON) python -m scripts.hooks.generate_readme
 	@echo "5. Running security checks..."
 	$(PYTHON) bandit -c pyproject.toml --severity-level high -r codebase_rag/ --exclude codebase_rag/tests/,scripts/
 	@echo "6. Running unit tests (integration tests skipped - run 'make test-integration' separately)..."
