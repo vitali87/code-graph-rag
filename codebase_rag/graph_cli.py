@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, NamedTuple
@@ -97,7 +96,7 @@ def _run_query_and_emit(
     # logged as a failed write with a traceback.
     if refusal is not None:
         typer.secho(refusal.message, fg=cs.Color.RED, err=True)
-        sys.exit(refusal.exit_code)
+        raise typer.Exit(refusal.exit_code)
     _emit(result)
 
 

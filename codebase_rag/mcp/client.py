@@ -62,9 +62,9 @@ def main(
             print(result["output"])  # noqa: T201
         else:
             print(json.dumps(result))  # noqa: T201
-    except Exception as e:  # noqa: BLE001 -- command boundary: reported to the user, not a traceback
+    except Exception as e:  # command boundary: reported to the user, not a traceback
         print(f"Error: {e}", file=sys.stderr)  # noqa: T201
-        sys.exit(1)
+        raise typer.Exit(1) from e
 
 
 if __name__ == "__main__":
