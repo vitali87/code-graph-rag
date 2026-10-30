@@ -88,19 +88,19 @@ def create_or_update_label(
         response = requests.patch(
             url, headers=headers, json=data, timeout=REQUEST_TIMEOUT_SECONDS
         )
-        action = "Updated"
+        action, verb = "Updated", "update"
     else:
         url = GITHUB_LABELS_URL.format(repo=repo)
         response = requests.post(
             url, headers=headers, json=data, timeout=REQUEST_TIMEOUT_SECONDS
         )
-        action = "Created"
+        action, verb = "Created", "create"
 
     if response.status_code in (200, 201):
         print(f"OK {action} label: {label['name']}")
         return True
     else:
-        print(f"Failed to {action.lower()} label: {label['name']}")
+        print(f"Failed to {verb} label: {label['name']}")
         print(f"   Response: {response.status_code} - {response.text}")
         return False
 
