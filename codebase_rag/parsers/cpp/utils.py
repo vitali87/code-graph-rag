@@ -198,12 +198,14 @@ def _namespace_name(namespace: Node) -> str | None:
     return None
 
 
+# `export` is a keyword, so a name spelled so is always the export marker.
 _EXPORT_CANDIDATE_TYPES = frozenset(
     {
         cs.CppNodeType.EXPORT,
         cs.CppNodeType.EXPORT_KEYWORD,
         cs.CppNodeType.IDENTIFIER,
         cs.CppNodeType.PRIMITIVE_TYPE,
+        cs.CppNodeType.TYPE_IDENTIFIER,
     }
 )
 
@@ -222,20 +224,28 @@ _EXPORT_STOP_TYPES = frozenset(
 )
 
 
+def _is_export_marker(node: Node) -> bool:
+    return (
+        node.type in _EXPORT_CANDIDATE_TYPES
+        and node.text is not None
+        and safe_decode_text(node) == cs.CppNodeType.EXPORT
+    )
+
+
 def is_exported(node: Node) -> bool:
+    # A grammar without C++20 modules reads `export int area()` with
+    # `export` as the definition's own type, its first child, which the
+    # walk over the siblings before each ancestor never reaches.
+    if node.children and _is_export_marker(node.children[0]):
+        return True
     current = node
-    export_text = cs.CppNodeType.EXPORT
     while current.parent:
         parent = current.parent
 
         for child in parent.children:
             if child == current:
                 break
-            if (
-                child.type in _EXPORT_CANDIDATE_TYPES
-                and child.text
-                and safe_decode_text(child) == export_text
-            ):
+            if _is_export_marker(child):
                 return True
 
         if current.type in _EXPORT_STOP_TYPES:

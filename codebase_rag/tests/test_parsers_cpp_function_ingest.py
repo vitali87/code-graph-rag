@@ -30,7 +30,11 @@ _FILES = {
         "void Base::paint() {\n  auto inner = []() { return 2; };\n  inner();\n}\n"
         "Base make_base() { return Base(); }\n"
     ),
-    "src/core.cppm": "export module shapes.core;\nexport int area() { return 1; }\n",
+    "src/core.cppm": (
+        "export module shapes.core;\n"
+        "export int area() { return 1; }\n"
+        "int helper() { return 2; }\n"
+    ),
 }
 
 
@@ -113,19 +117,11 @@ def test_the_class_lookup_finds_a_class_defined_in_another_file(
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "tree-sitter-cpp reads `export int area()` with `export` as the "
-        "function's own type, which cpp_utils.is_exported (looking only at "
-        "the siblings before the node) never sees, so the resolution is not "
-        "exported and extra_relationships writes no Module EXPORTS edge for a "
-        "module interface's exported function"
-    ),
-)
 def test_an_exported_module_function_is_exported_by_its_module(
     updater: GraphUpdater, mock_ingestor: RecordingIngestor
 ) -> None:
-    assert ("cx.src.core", "cx.src.core.area") in edges(
-        mock_ingestor, cs.RelationshipType.EXPORTS
-    )
+    # tree-sitter-cpp reads `export` there as the function's own type.
+    exports = edges(mock_ingestor, cs.RelationshipType.EXPORTS)
+    assert ("cx.src.core", "cx.src.core.area") in exports
+    # A function written without `export` stays the unit's own.
+    assert ("cx.src.core", "cx.src.core.helper") not in exports
