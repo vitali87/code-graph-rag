@@ -258,7 +258,7 @@ def test_a_real_inline_module_named_file_is_seeded_so_an_add_cannot_take_its_qn(
 ) -> None:
     """The CONSEQUENCE of narrowing the predicate, not the predicate itself.
 
-    `_seed_module_qns_from_graph` exists so an incremental ADD whose basename
+    `seed_module_qns_from_graph` exists so an incremental ADD whose basename
     collides with an already-indexed sibling of another language cannot
     re-claim the bare qn. Skipping every path starting with the inline prefix
     excluded a REAL file called `inline_module_widget.py` from that seed, so
@@ -282,7 +282,9 @@ def test_a_real_inline_module_named_file_is_seeded_so_an_add_cannot_take_its_qn(
     # The real file owns the bare qn after a clean pass.
     updater = _updater(repo, store)
     seeded = updater.factory.definition_processor.module_qn_to_file_path
-    updater._seed_module_qns_from_graph({"other.py", "inline_module_widget.py"})
+    updater.module_seeding.seed_module_qns_from_graph(
+        {"other.py", "inline_module_widget.py"}
+    )
     # The map stores the absolute path of the file owning each qn.
     owner = seeded.get("proj.inline_module_widget")
     assert owner is not None, (

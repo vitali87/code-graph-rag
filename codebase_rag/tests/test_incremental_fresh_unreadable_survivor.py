@@ -86,7 +86,9 @@ def test_a_fresh_updater_keeps_an_unreadable_survivors_module(
         return real_read_bytes(self)
 
     with (
-        patch("codebase_rag.graph_updater._opens_for_reading", return_value=True)
+        patch(
+            "codebase_rag.updater.module_seeding._opens_for_reading", return_value=True
+        )
         if opens
         else nullcontext(),
         patch("builtins.open", open_denied),

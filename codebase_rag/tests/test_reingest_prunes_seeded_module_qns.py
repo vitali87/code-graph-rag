@@ -1,6 +1,6 @@
 """`reingest` must prune the seeded module-qn map, like `run()` does (#1712).
 
-`_prune_stale_seeded_module_qns` was reachable only from `run()`. An MCP
+`prune_stale_seeded_module_qns` was reachable only from `run()`. An MCP
 session that indexes once and then only makes scoped re-ingest calls holds a
 retained updater that never re-enters `run()`, so a qn whose Module another
 writer deleted stayed in `module_qn_to_file_path` with a real path -- still
@@ -72,7 +72,7 @@ class BufferingIngestor:
 
 
 def test_the_fake_satisfies_the_protocol_the_prune_gates_on() -> None:
-    """`_prune_stale_seeded_module_qns` returns early unless this holds.
+    """`prune_stale_seeded_module_qns` returns early unless this holds.
 
     `QueryProtocol` is runtime-checkable, so `isinstance` inspects the CLASS:
     a method supplied by `__getattr__` does not satisfy it. A fake missing

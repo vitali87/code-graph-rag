@@ -130,7 +130,7 @@ def test_the_seed_prune_reads_only_this_projects_modules(
         return rows
 
     monkeypatch.setattr(store, "fetch_all", _recording)
-    updater._prune_stale_seeded_module_qns()
+    updater.module_seeding.prune_stale_seeded_module_qns()
     monkeypatch.undo()
 
     qns = [
@@ -193,7 +193,7 @@ def test_an_unreadable_module_read_on_a_seeded_map_still_warns(
     warnings: list[str] = []
     sink = logger.add(warnings.append, level="WARNING", format="{message}")
     try:
-        updater._prune_stale_seeded_module_qns()
+        updater.module_seeding.prune_stale_seeded_module_qns()
     finally:
         logger.remove(sink)
 

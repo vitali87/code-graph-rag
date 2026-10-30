@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Protocol
 
 
@@ -11,3 +12,13 @@ class WalkScope(Protocol):
 
     exclude_paths: frozenset[str] | None
     unignore_paths: frozenset[str] | None
+
+
+class FileStateRemover(Protocol):
+    """The updater's own removal of a file from its state, called through
+    the updater so every route to a re-parse strips the old entry the same
+    way (`GraphUpdater.remove_file_from_state`)."""
+
+    def remove_file_from_state(
+        self, file_path: Path, frontend_current: bool = False
+    ) -> None: ...

@@ -245,7 +245,9 @@ def test_a_survivor_that_opens_but_cannot_be_read_keeps_its_module(
         return real_read_bytes(self)
 
     with (
-        patch("codebase_rag.graph_updater._opens_for_reading", return_value=True),
+        patch(
+            "codebase_rag.updater.module_seeding._opens_for_reading", return_value=True
+        ),
         patch("builtins.open", open_denied),
         patch.object(Path, "read_bytes", read_bytes_denied),
     ):

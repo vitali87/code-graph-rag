@@ -611,7 +611,7 @@ def test_a_parsed_interface_is_not_revived_on_a_later_run(temp_repo: Path) -> No
 def test_seeded_module_qns_are_pruned_when_the_graph_loses_them(
     temp_repo: Path,
 ) -> None:
-    # `_seed_module_qns_from_graph` only ever adds, so on a reused updater a
+    # `seed_module_qns_from_graph` only ever adds, so on a reused updater a
     # qn whose Module another writer deleted -- a second updater, a
     # delete_project then re-index, a run in another clone -- stayed in
     # module_qn_to_file_path for the life of the process. Unlike a rehydrated
@@ -687,7 +687,7 @@ def test_an_empty_module_read_does_not_prune_the_seeded_map(
 
     store.fetch_all = _empty  # type: ignore[method-assign]
     try:
-        updater._prune_stale_seeded_module_qns()
+        updater.module_seeding.prune_stale_seeded_module_qns()
     finally:
         store.fetch_all = original  # type: ignore[method-assign]
 
@@ -710,7 +710,7 @@ def test_a_failed_module_read_does_not_prune_the_seeded_map(
 
     store.fetch_all = _boom  # type: ignore[method-assign]
     try:
-        updater._prune_stale_seeded_module_qns()
+        updater.module_seeding.prune_stale_seeded_module_qns()
     finally:
         store.fetch_all = original  # type: ignore[method-assign]
 
