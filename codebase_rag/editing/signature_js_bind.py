@@ -220,4 +220,5 @@ JAVASCRIPT = SignatureDialect(
     site_arguments=_site_arguments,
     bind_arguments=_bind_arguments,
     render_arguments=_render_arguments,
+    defaults_last=False,
 )

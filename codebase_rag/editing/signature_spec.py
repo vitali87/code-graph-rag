@@ -163,6 +163,9 @@ class SignatureDialect(NamedTuple):
     render_arguments: Callable[
         [Sequence[ParamSpec], Sequence[_Source | None], Mapping[int, _Binding]], str
     ]
+    # Python refuses a required parameter after a defaulted one; JavaScript
+    # allows it, and a site that leaves such a parameter out stays unmapped.
+    defaults_last: bool = True
 
 
 # --- the mapping ------------------------------------------------------------------

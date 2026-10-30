@@ -115,10 +115,32 @@ def _take_receiver(
 
 
 def _check_literal(spec: ParamSpec, literal: str) -> None:
-    """Nothing to check: JavaScript declares no parameter types.
+    """Refuse a mapped value that is not exactly one argument.
 
-    A literal that is not an expression fails the parse gate after staging.
+    JavaScript declares no parameter types to check it against, but `1, 2`
+    would still parse once written into a call, as two arguments, and shift
+    every value after it. The value is probed as the only argument of a call
+    and must come back as that whole argument.
     """
+    probe = cs.SIGNATURE_JS_CALL_PROBE.format(args=literal).encode(cs.ENCODING_UTF8)
+    root = _parser().parse(probe).root_node
+    statement = root.named_children[0] if root.named_child_count == 1 else None
+    call = statement.named_children[0] if statement is not None else None
+    args = (
+        call.child_by_field_name(cs.FIELD_ARGUMENTS)
+        if call is not None and call.type == cs.TS_CALL_EXPRESSION
+        else None
+    )
+    values = args.named_children if args is not None else []
+    if (
+        root.has_error
+        or len(values) != 1
+        or values[0].type in (cs.TS_SPREAD_ELEMENT, cs.TS_COMMENT)
+        or _text(values[0], probe) != literal.strip()
+    ):
+        raise SignatureRefused(
+            cs.SIGNATURE_JS_BAD_LITERAL.format(literal=literal, name=spec.name)
+        )
 
 
 def _reads(node: Node, name: str) -> Iterator[Node]:
