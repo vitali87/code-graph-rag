@@ -94,22 +94,31 @@ def test_a_module_implementation_implements_only_a_parsed_interface(
     }
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "an `export class Shape {...}` in a module interface mis-parses as a "
-        "function definition whose declarator is the `class` keyword; the "
-        "class extra_class_nodes recovers is registered as `<module>.class` "
-        "(and `export struct` as `<module>.struct`), and `export class Empty "
-        "{};` registers nothing"
-    ),
-)
 def test_an_exported_module_class_is_registered_under_its_own_name(
     temp_repo: Path, mock_ingestor: RecordingIngestor
 ) -> None:
+    # The grammar reads none of these as a class specifier: `export` parses
+    # as a type, the keyword as a declarator, and an empty body as a
+    # braced initialiser.
     index(
         temp_repo / "cx",
         mock_ingestor,
-        {"a.cppm": "export module a;\nexport class Shape { public: int area(); };\n"},
+        {
+            "a.cppm": (
+                "export module a;\n"
+                "export class Shape { public: int area(); };\n"
+                "export struct Point { int x; };\n"
+                "export class Empty {};\n"
+                "export class Fwd;\n"
+            )
+        },
     )
-    assert _classes(mock_ingestor) == ["cx.a.Shape"]
+    assert _classes(mock_ingestor) == ["cx.a.Empty", "cx.a.Point", "cx.a.Shape"]
+    assert {
+        target
+        for source, target in edges(mock_ingestor, cs.RelationshipType.EXPORTS)
+        if source == "cx.a"
+    } == {"cx.a.Empty", "cx.a.Point", "cx.a.Shape"}
+    assert edges(mock_ingestor, cs.RelationshipType.DEFINES_METHOD) == {
+        ("cx.a.Shape", "cx.a.Shape.area")
+    }

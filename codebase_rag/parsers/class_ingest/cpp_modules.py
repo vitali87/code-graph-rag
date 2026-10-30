@@ -163,6 +163,9 @@ def find_cpp_exported_classes(root_node: Node) -> list[Node]:
         if (
             node.type == cs.CppNodeType.FUNCTION_DEFINITION
             and _is_exported_class_definition(node)
+        ) or (
+            node.type == cs.CppNodeType.DECLARATION
+            and _is_exported_class_declaration(node)
         ):
             exported_class_nodes.append(node)
         stack.extend(node.children)
@@ -186,4 +189,17 @@ def _is_exported_class_definition(node: Node) -> bool:
     return (
         cs.CPP_EXPORT_CLASS_PREFIX in node_text
         or cs.CPP_EXPORT_STRUCT_PREFIX in node_text
+    )
+
+
+def _is_exported_class_declaration(node: Node) -> bool:
+    # A body that holds no statement (`export class Empty {};`) mis-parses
+    # as a declaration brace-initialising a variable instead. A bodyless
+    # `export class Fwd;` defines nothing, so it is not one.
+    return decode_node_stripped(node).startswith(
+        (cs.CPP_EXPORT_CLASS_PREFIX, cs.CPP_EXPORT_STRUCT_PREFIX)
+    ) and any(
+        child.type == cs.TS_CPP_INIT_DECLARATOR
+        and any(part.type == cs.TS_CPP_INITIALIZER_LIST for part in child.children)
+        for child in node.children
     )

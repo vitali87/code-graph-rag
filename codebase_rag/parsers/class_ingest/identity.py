@@ -25,7 +25,15 @@ def resolve_class_identity(
     lang_config: LanguageSpec,
     file_path: Path | None,
 ) -> tuple[str, str, bool] | None:
-    if (fqn_config := LANGUAGE_FQN_SPECS.get(language)) and file_path:
+    # An `export class` mis-parse keeps its name where the FQN spec does not
+    # look (it reads the `class` keyword as the declarator), so the fallback
+    # names it, and qualifies it as the C++ function and call passes qualify
+    # a module unit's names.
+    if (
+        (fqn_config := LANGUAGE_FQN_SPECS.get(language))
+        and file_path
+        and not _is_cpp_exported_class_parse(class_node, language)
+    ):
         class_name = fqn_config.get_name(class_node)
         warn_if_name_truncated(class_node, class_name, file_path)
         if class_name:
@@ -44,10 +52,7 @@ def resolve_class_identity(
             # so same-stem cross-language siblings get distinct class/method qns.
             class_qn = module_qn + cs.SEPARATOR_DOT + cs.SEPARATOR_DOT.join(parts)
             if language == cs.SupportedLanguage.CPP:
-                is_exported = (
-                    class_node.type == cs.CppNodeType.FUNCTION_DEFINITION
-                    or cpp_utils.is_exported(class_node)
-                )
+                is_exported = cpp_utils.is_exported(class_node)
             else:
                 is_exported = export_detection.is_exported(
                     class_node, class_name, language
@@ -64,7 +69,7 @@ def resolve_class_identity_fallback(
     lang_config: LanguageSpec,
 ) -> tuple[str, str, bool] | None:
     if language == cs.SupportedLanguage.CPP:
-        if class_node.type == cs.CppNodeType.FUNCTION_DEFINITION:
+        if _is_cpp_exported_class_parse(class_node, language):
             class_name = cpp_utils.extract_exported_class_name(class_node)
             is_exported = True
         else:
@@ -84,6 +89,17 @@ def resolve_class_identity_fallback(
     )
     is_exported = export_detection.is_exported(class_node, class_name, language)
     return nested_qn or f"{module_qn}.{class_name}", class_name, is_exported
+
+
+def _is_cpp_exported_class_parse(
+    class_node: Node, language: cs.SupportedLanguage
+) -> bool:
+    # The class captures never yield these node types; only the recovery of
+    # an `export class` mis-parse hands one to the class pass.
+    return (
+        language == cs.SupportedLanguage.CPP
+        and class_node.type in cs.CPP_EXPORTED_CLASS_PARSE_TYPES
+    )
 
 
 def extract_cpp_class_name(class_node: Node) -> str | None:

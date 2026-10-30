@@ -207,6 +207,10 @@ _EXPORT_CANDIDATE_TYPES = frozenset(
     }
 )
 
+_CLASS_NAME_TOKEN_TYPES = frozenset(
+    {cs.CppNodeType.IDENTIFIER, cs.CppNodeType.TYPE_IDENTIFIER}
+)
+
 _EXPORT_STOP_TYPES = frozenset(
     {
         cs.CppNodeType.DECLARATION,
@@ -241,15 +245,27 @@ def is_exported(node: Node) -> bool:
     return False
 
 
+def _tokens(node: Node) -> Iterator[Node]:
+    # The leaves under `node`, in source order.
+    if not node.children:
+        yield node
+    for child in node.children:
+        yield from _tokens(child)
+
+
 def extract_exported_class_name(class_node: Node) -> str | None:
-    return next(
-        (
-            safe_decode_text(child)
-            for child in class_node.children
-            if child.type == cs.CppNodeType.IDENTIFIER and child.text
-        ),
-        None,
-    )
+    # `export class Shape {...}` mis-parses with no class specifier, and
+    # whether the keyword and the name land in the declarator, an ERROR or
+    # an init_declarator shifts with the grammar's error recovery. The name
+    # is the token right after the keyword, wherever it sits.
+    tokens = _tokens(class_node)
+    for token in tokens:
+        if token.text and safe_decode_text(token) in cs.CPP_EXPORTED_CLASS_KEYWORDS:
+            name = next(tokens, None)
+            if name is None or name.type not in _CLASS_NAME_TOKEN_TYPES:
+                return None
+            return safe_decode_text(name) or None
+    return None
 
 
 def extract_operator_name(operator_node: Node) -> str:

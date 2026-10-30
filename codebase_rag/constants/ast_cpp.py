@@ -151,6 +151,11 @@ CPP_KEYWORD_STATIC = "static"
 TS_CPP_STORAGE_CLASS_SPECIFIER = "storage_class_specifier"
 TS_CPP_TYPE_QUALIFIER = "type_qualifier"
 CPP_EXPORTED_CLASS_KEYWORDS = frozenset({CPP_KEYWORD_CLASS, CPP_KEYWORD_STRUCT})
+# What `export class Foo {...}` mis-parses as, with no class specifier: a
+# function definition, or a declaration when the body holds no statement.
+CPP_EXPORTED_CLASS_PARSE_TYPES = frozenset(
+    {CppNodeType.FUNCTION_DEFINITION, CppNodeType.DECLARATION}
+)
 
 # A C/C++ class/struct/union tag with no body is a forward declaration
 # (`class Widget;`); making it its own node collides with the real
