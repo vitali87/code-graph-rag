@@ -816,8 +816,8 @@ def test_reingest_keeps_the_hash_cache_current(fixture_root: Path) -> None:
             "svc.go",
             [
                 "run_go_frontend",
-                "_rehydrate_go_type_locations",
-                "_rehydrate_function_locations",
+                "rehydrate_go_type_locations",
+                "rehydrate_function_locations",
                 "join_implements",
             ],
             ["run_csharp_frontend", "run_java_frontend"],
@@ -826,14 +826,14 @@ def test_reingest_keeps_the_hash_cache_current(fixture_root: Path) -> None:
             "Svc.cs",
             [
                 "run_csharp_frontend",
-                "_rehydrate_csharp_type_locations",
+                "rehydrate_csharp_type_locations",
                 "join_partials",
             ],
             ["run_go_frontend"],
         ),
         (
             "Svc.java",
-            ["run_java_frontend", "_rehydrate_function_locations"],
+            ["run_java_frontend", "rehydrate_function_locations"],
             ["run_go_frontend"],
         ),
         (
@@ -859,10 +859,10 @@ def test_reingest_reruns_the_language_frontend(
     updater = create_and_run_updater(temp_repo, mock_ingestor)
     owners = {
         "run_go_frontend": updater.frontend_runner,
-        "_rehydrate_go_type_locations": updater,
-        "_rehydrate_function_locations": updater,
+        "rehydrate_go_type_locations": updater.graph_rehydrator,
+        "rehydrate_function_locations": updater.graph_rehydrator,
         "run_csharp_frontend": updater.frontend_runner,
-        "_rehydrate_csharp_type_locations": updater,
+        "rehydrate_csharp_type_locations": updater.graph_rehydrator,
         "run_java_frontend": updater.frontend_runner,
         "run_python_frontend": updater.frontend_runner,
     }

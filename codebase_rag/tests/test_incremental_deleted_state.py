@@ -248,7 +248,9 @@ def test_a_rehydrated_updater_forgets_a_deleted_module_qn(temp_repo: Path) -> No
     (root / "other.py").write_text("def x():\n    return 2\n", encoding="utf-8")
     _bump(root, "other.py")
     updater.run(force=False)
-    assert "proj.util" in updater._rehydrated_module_qns, "the shape did not rehydrate"
+    assert "proj.util" in updater.graph_rehydrator.module_qns, (
+        "the shape did not rehydrate"
+    )
     assert "proj.util" in updater.known_module_paths()
 
     (root / "util.py").unlink()
@@ -312,7 +314,9 @@ def test_rehydration_rebuilds_module_qns_instead_of_accumulating(
     (root / "other.py").write_text("def x():\n    return 2\n", encoding="utf-8")
     _bump(root, "other.py")
     updater.run(force=False)
-    assert "proj.util" in updater._rehydrated_module_qns, "the shape did not rehydrate"
+    assert "proj.util" in updater.graph_rehydrator.module_qns, (
+        "the shape did not rehydrate"
+    )
 
     # Another writer deletes the Module from the graph. This updater is never
     # told: it does not re-parse the file and no removal runs through it, so
@@ -322,9 +326,11 @@ def test_rehydration_rebuilds_module_qns_instead_of_accumulating(
     for key in removed:
         del store.nodes[key]
 
-    updater._rehydrate_registry_from_graph()
+    updater.graph_rehydrator.rehydrate_registry_from_graph(
+        updater._run, updater._reparsed_file_keys
+    )
 
-    assert "proj.util" not in updater._rehydrated_module_qns
+    assert "proj.util" not in updater.graph_rehydrator.module_qns
 
 
 def test_a_failed_module_query_leaves_the_rehydrated_set_intact(
@@ -338,7 +344,7 @@ def test_a_failed_module_query_leaves_the_rehydrated_set_intact(
     store = StatefulIngestor()
     updater = _updater(store, root, cs.SupportedLanguage.PYTHON)
     updater.run(force=True)
-    updater._rehydrated_module_qns.add("proj.stale")
+    updater.graph_rehydrator.module_qns.add("proj.stale")
 
     original = store.fetch_all
 
@@ -353,11 +359,13 @@ def test_a_failed_module_query_leaves_the_rehydrated_set_intact(
     store.fetch_all = _boom  # type: ignore[method-assign]
     try:
         updater._run.is_full_build = True
-        updater._rehydrate_registry_from_graph()
+        updater.graph_rehydrator.rehydrate_registry_from_graph(
+            updater._run, updater._reparsed_file_keys
+        )
     finally:
         store.fetch_all = original  # type: ignore[method-assign]
 
-    assert "proj.stale" in updater._rehydrated_module_qns
+    assert "proj.stale" in updater.graph_rehydrator.module_qns
 
 
 class _BufferingIngestor(StatefulIngestor):
@@ -413,13 +421,17 @@ def test_a_cpp_interface_parsed_this_run_survives_rehydration(
     # bare `clear()` this test was written against drops both.
     dp.cpp_module_interfaces.add("proj.STALE")
     rebuilt: list[frozenset[str]] = []
-    real_rehydrate = second._rehydrate_registry_from_graph
+    real_rehydrate = second.graph_rehydrator.rehydrate_registry_from_graph
 
-    def _observe() -> None:
-        real_rehydrate()
+    def _observe(*args: object) -> None:
+        real_rehydrate(*args)
         rebuilt.append(frozenset(dp.cpp_module_interfaces))
 
-    with patch.object(second, "_rehydrate_registry_from_graph", side_effect=_observe):
+    with patch.object(
+        second.graph_rehydrator,
+        "rehydrate_registry_from_graph",
+        side_effect=_observe,
+    ):
         second.run(force=False)
     store.flush_all()
 
@@ -685,7 +697,7 @@ def test_an_empty_module_read_does_not_prune_the_seeded_map(
 def test_a_failed_module_read_does_not_prune_the_seeded_map(
     temp_repo: Path,
 ) -> None:
-    # Same posture for a raising read, matching _rehydrate_registry_from_graph.
+    # Same posture for a raising read, matching rehydrate_registry_from_graph.
     updater, store = _seeded_updater(temp_repo)
     before = dict(updater.factory.definition_processor.module_qn_to_file_path)
 

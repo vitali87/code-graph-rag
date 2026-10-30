@@ -178,7 +178,9 @@ def test_every_producer_records_the_owning_file(tmp_path: Path) -> None:
     assert _path_of(captured, ".Holder.other") == "foo/__init__.py"
     # Rehydration: a fresh updater re-reads the facts from the graph.
     fresh = _updater(repo, store)
-    fresh._rehydrate_registry_from_graph()
+    fresh.graph_rehydrator.rehydrate_registry_from_graph(
+        fresh._run, fresh._reparsed_file_keys
+    )
     rehydrated = fresh.factory.definition_processor.pending_type_facts
     assert _path_of(rehydrated, ".use") == "foo.py"
     assert _path_of(rehydrated, ".Holder.other") == "foo/__init__.py"

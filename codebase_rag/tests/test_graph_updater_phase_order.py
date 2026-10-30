@@ -68,7 +68,7 @@ _SOURCE = Path(__file__).resolve().parents[1] / "graph_updater.py"
 #   flush" -- `flush_all` is called twice, so it is a poor anchor.
 # * "Before the partial join on an incremental run: rebuild the type
 #   locations for unchanged .cs files" (#1229) -- a genuine
-#   `_rehydrate_csharp_type_locations` -> `join_partials`
+#   `rehydrate_csharp_type_locations` -> `join_partials`
 #   dependency, but the comment sits above the enclosing `if`, not above
 #   the call. `_comment_above` reads the block directly above a call, and
 #   widening it to look through an enclosing statement would risk
@@ -99,7 +99,7 @@ _ORDER: tuple[tuple[str, str, str, str], ...] = (
         "filled during Pass 2, so they must load before it",
     ),
     (
-        "_rehydrate_go_type_locations",
+        "rehydrate_go_type_locations",
         "join_implements",
         # Stated above the earlier call, in the block that follows it.
         "earlier:col-keyed indexes",
@@ -146,7 +146,7 @@ _ORDER: tuple[tuple[str, str, str, str], ...] = (
     ),
     # -- the deferred-resolution pipeline --
     (
-        "_rehydrate_registry_from_graph",
+        "rehydrate_registry_from_graph",
         "resolve_deferred_cpp_methods",
         "after rehydration",
         "an out-of-class method's class is only known once the registry is "
@@ -162,13 +162,13 @@ _ORDER: tuple[tuple[str, str, str, str], ...] = (
         "attribute to it, not the Module",
     ),
     (
-        "_rehydrate_registry_from_graph",
+        "rehydrate_registry_from_graph",
         "resolve_hybrid_expansion_calls",
         "after rehydration",
         "an expansion call's callee join needs spans for unchanged files too",
     ),
     (
-        "_rehydrate_registry_from_graph",
+        "rehydrate_registry_from_graph",
         "resolve_deferred_forward_declarations",
         "after rehydration",
         'the "does a real definition exist?" check must see definitions in '

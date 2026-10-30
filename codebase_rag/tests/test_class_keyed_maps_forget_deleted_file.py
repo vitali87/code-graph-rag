@@ -300,8 +300,10 @@ def test_a_rehydrated_class_is_pruned_with_its_file(temp_repo: Path) -> None:
         queries=queries,
         project_name="proj",
     )
-    updater._rehydrate_registry_from_graph()
-    updater._rehydrate_class_inheritance_from_graph()
+    updater.graph_rehydrator.rehydrate_registry_from_graph(
+        updater._run, updater._reparsed_file_keys
+    )
+    updater.graph_rehydrator.rehydrate_class_inheritance_from_graph(updater._run)
 
     processor = updater.factory.definition_processor
     inheritance = processor.facts.class_inheritance

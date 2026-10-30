@@ -347,7 +347,7 @@ class TestIncrementalScenario:
         # risk binding a call/override to the wrong base); a single-base class is
         # order-free and is still rehydrated; a fully-ordered class is rehydrated
         # in base_index order; and a class already parsed locally is left alone.
-        from codebase_rag.graph_updater import GraphUpdater
+        from codebase_rag.updater.rehydration import rehydrated_bases_by_child
 
         rows: list[dict[str, object]] = [
             # Ordered multi-base -> rehydrated in index order.
@@ -361,7 +361,7 @@ class TestIncrementalScenario:
             # Already parsed locally -> not touched.
             {cs.KEY_CHILD_QN: "p.Local", cs.KEY_BASE_QN: "p.W", cs.KEY_BASE_INDEX: 0},
         ]
-        result = GraphUpdater._rehydrated_bases_by_child(rows, {"p.Local": ["p.W"]})
+        result = rehydrated_bases_by_child(rows, {"p.Local": ["p.W"]})
         assert result == {"p.Ok": ["p.A", "p.B"], "p.Solo": ["p.Z"]}
 
     def test_incremental_preserves_multiple_inheritance_dispatch(

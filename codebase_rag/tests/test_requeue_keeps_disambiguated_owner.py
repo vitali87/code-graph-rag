@@ -180,9 +180,18 @@ def test_the_recorded_owner_map_is_scoped_to_this_project(tmp_path: Path) -> Non
         queries={},
     )
     assert updater.project_name == "proj"
-    assert updater._recorded_module_qn("settings.py") == "proj.settings.py"
-    assert updater._recorded_module_qn("src/lib.rs") == "proj.src.lib"
-    assert updater._recorded_module_qn("unknown.py") == "proj.unknown"
+    assert (
+        updater.graph_rehydrator.recorded_module_qn("settings.py", updater._run)
+        == "proj.settings.py"
+    )
+    assert (
+        updater.graph_rehydrator.recorded_module_qn("src/lib.rs", updater._run)
+        == "proj.src.lib"
+    )
+    assert (
+        updater.graph_rehydrator.recorded_module_qn("unknown.py", updater._run)
+        == "proj.unknown"
+    )
     # Read once per rehydration, not per fact.
     assert store.reads == 1
 
@@ -190,7 +199,7 @@ def test_the_recorded_owner_map_is_scoped_to_this_project(tmp_path: Path) -> Non
 def test_a_failed_module_read_degrades_on_a_full_build_and_aborts_an_incremental_run(
     tmp_path: Path,
 ) -> None:
-    """The posture every read in `_rehydrate_registry_from_graph` takes
+    """The posture every read in `rehydrate_registry_from_graph` takes
     (local review): a full build parsed every file and falls back to the
     bare derivation; an incremental run would requeue under the wrong
     owner, so the outage propagates."""
@@ -204,11 +213,14 @@ def test_a_failed_module_read_degrades_on_a_full_build_and_aborts_an_incremental
         queries={},
     )
     updater._run.is_full_build = True
-    assert updater._recorded_module_qn("settings.py") == "proj.settings"
-    updater._module_qns_by_path = None
+    assert (
+        updater.graph_rehydrator.recorded_module_qn("settings.py", updater._run)
+        == "proj.settings"
+    )
+    updater.graph_rehydrator._module_qns_by_path = None
     updater._run.is_full_build = False
     with pytest.raises(RuntimeError):
-        updater._recorded_module_qn("settings.py")
+        updater.graph_rehydrator.recorded_module_qn("settings.py", updater._run)
 
 
 def test_a_real_file_named_like_an_inline_module_is_not_synthetic() -> None:
@@ -309,4 +321,7 @@ def test_a_nested_projects_module_is_not_this_files_owner(tmp_path: Path) -> Non
         parsers={},
         queries={},
     )
-    assert updater._recorded_module_qn("api.py") == "proj.api"
+    assert (
+        updater.graph_rehydrator.recorded_module_qn("api.py", updater._run)
+        == "proj.api"
+    )

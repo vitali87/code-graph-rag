@@ -69,7 +69,7 @@ def test_incremental_registry_contains_only_the_requested_project(
 def test_incremental_modules_contain_only_the_requested_project(
     rehydrated_updater: GraphUpdater,
 ) -> None:
-    assert rehydrated_updater._rehydrated_module_qns == {
+    assert rehydrated_updater.graph_rehydrator.module_qns == {
         "proj.models",
         "proj.caller",
     }

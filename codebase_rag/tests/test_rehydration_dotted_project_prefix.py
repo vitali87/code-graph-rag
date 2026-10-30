@@ -50,7 +50,7 @@ def test_an_incremental_run_rehydrates_its_own_project_only(tmp_path: Path) -> N
     registry = set(updater.function_registry.keys())
     assert not {qn for qn in registry if qn.startswith("svc.v2.")}
     assert "svc.api.helper" in registry
-    assert updater._rehydrated_module_qns == {"svc.api", "svc.caller"}
+    assert updater.graph_rehydrator.module_qns == {"svc.api", "svc.caller"}
     inheritance = updater.factory.definition_processor.facts.class_inheritance
     assert inheritance == {"svc.api.Child": ["svc.api.Base"]}
     assert (
@@ -92,7 +92,7 @@ def test_the_longer_named_project_still_rehydrates_itself(tmp_path: Path) -> Non
         "svc.v2.caller.caller",
         "svc.v2.extra.only_here",
     }
-    assert updater._rehydrated_module_qns == {
+    assert updater.graph_rehydrator.module_qns == {
         "svc.v2.api",
         "svc.v2.caller",
         "svc.v2.extra",

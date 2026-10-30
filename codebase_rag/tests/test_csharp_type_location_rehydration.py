@@ -85,7 +85,7 @@ def test_rehydration_lets_partial_group_span_an_unchanged_file(tmp_path: Path) -
         [("dirA/W.cs", 5), ("dirB/W.cs", 3)]
     ]
 
-    updater._rehydrate_csharp_type_locations()
+    updater.graph_rehydrator.rehydrate_csharp_type_locations(updater._run)
     csharp_joins.join_partials(updater.factory.definition_processor)
 
     group = dp.facts.csharp_partial_groups.get("proj.dirA.W")
@@ -107,7 +107,7 @@ def test_without_rehydration_the_unchanged_part_is_dropped(tmp_path: Path) -> No
         [("dirA/W.cs", 5), ("dirB/W.cs", 3)]
     ]
 
-    updater._rehydrate_csharp_type_locations()
+    updater.graph_rehydrator.rehydrate_csharp_type_locations(updater._run)
     csharp_joins.join_partials(updater.factory.definition_processor)
 
     assert dp.facts.csharp_partial_groups == {}
@@ -125,7 +125,7 @@ def test_rehydration_keeps_the_fresh_pass2_entry(tmp_path: Path) -> None:
     dp = updater.factory.definition_processor
     dp.csharp_type_locations[("dirA/W.cs", 9)] = "proj.dirA.W"  # fresh Pass-2 line
 
-    updater._rehydrate_csharp_type_locations()
+    updater.graph_rehydrator.rehydrate_csharp_type_locations(updater._run)
 
     # The fresh Pass-2 line survives; the join keys off the current fact
     # position, so the stale rehydrated (path, 5) entry is simply never queried.
@@ -165,7 +165,9 @@ def test_rehydration_noops_without_query_protocol(tmp_path: Path) -> None:
     )
     dp = updater.factory.definition_processor
 
-    updater._rehydrate_csharp_type_locations()  # must not raise
+    updater.graph_rehydrator.rehydrate_csharp_type_locations(
+        updater._run
+    )  # must not raise
 
     assert dp.csharp_type_locations == {}
 
@@ -182,7 +184,7 @@ def test_rehydration_reraises_query_error_on_incremental(tmp_path: Path) -> None
     updater._run.is_full_build = False
 
     with pytest.raises(RuntimeError):
-        updater._rehydrate_csharp_type_locations()
+        updater.graph_rehydrator.rehydrate_csharp_type_locations(updater._run)
 
 
 def test_rehydration_tolerates_query_error_on_full_build(tmp_path: Path) -> None:
@@ -196,7 +198,9 @@ def test_rehydration_tolerates_query_error_on_full_build(tmp_path: Path) -> None
     )
     updater._run.is_full_build = True
 
-    updater._rehydrate_csharp_type_locations()  # must not raise
+    updater.graph_rehydrator.rehydrate_csharp_type_locations(
+        updater._run
+    )  # must not raise
 
     assert updater.factory.definition_processor.csharp_type_locations == {}
 
@@ -223,6 +227,6 @@ def test_rehydration_skips_malformed_rows(tmp_path: Path) -> None:
     )
     dp = updater.factory.definition_processor
 
-    updater._rehydrate_csharp_type_locations()
+    updater.graph_rehydrator.rehydrate_csharp_type_locations(updater._run)
 
     assert dp.csharp_type_locations == {("good.cs", 4): "proj.Good"}
