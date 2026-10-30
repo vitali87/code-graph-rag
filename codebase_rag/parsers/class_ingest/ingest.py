@@ -21,8 +21,7 @@ from ..anchor_hash import anchor_hash_props
 from ..cpp import class_ingest as cpp_class_ingest
 from ..cpp.utils import record_cpp_definition_span
 from ..csharp import class_ingest as csharp_class_ingest
-from ..dart import utils as dart_utils
-from ..dart.type_inference import DartTypeInferenceEngine
+from ..dart import class_ingest as dart_class_ingest
 from ..definition_facts import DefinitionFacts
 from ..enum_variants import emit_declared_variants, is_python_enum
 from ..field_nodes import PendingFieldType, emit_declared_fields
@@ -174,7 +173,6 @@ class ClassIngest:
         "import_processor",
         "facts",
         "class_owner_module",
-        "dart_annotated_overrides",
         "java_anon_overrides",
         "go_interfaces",
         "cpp_definition_spans",
@@ -186,6 +184,7 @@ class ClassIngest:
         "rust",
         "csharp",
         "go",
+        "dart",
     )
 
     def __init__(
@@ -239,7 +238,6 @@ class ClassIngest:
         self.import_processor = import_processor
         self.facts = facts
         self.class_owner_module = class_owner_module
-        self.dart_annotated_overrides = dart_annotated_overrides
         self.java_anon_overrides = java_anon_overrides
         self.go_interfaces = go_interfaces
         self.cpp_definition_spans = cpp_definition_spans
@@ -293,6 +291,13 @@ class ClassIngest:
         )
         self.go = go_class_ingest.GoClassIngest(
             repo_path=repo_path, facts=facts, type_locations=go_type_locations
+        )
+        self.dart = dart_class_ingest.DartClassIngest(
+            self,
+            ingestor=ingestor,
+            function_registry=function_registry,
+            facts=facts,
+            annotated_overrides=dart_annotated_overrides,
         )
 
     def _resolve_to_qn(
@@ -477,7 +482,7 @@ class ClassIngest:
                 entry, child_type, resolved, is_dart, dart_implements, heuristic
             )
             emitted += 1
-        self._flag_dart_external_overrides(dart_implements)
+        self.dart.flag_external_overrides(dart_implements)
         self.rust.flag_external_trait_overrides()
         return emitted
 
@@ -494,59 +499,6 @@ class ClassIngest:
         ):
             return entry.child_label
         return str(held)
-
-    def _flag_dart_external_overrides(
-        self,
-        implements_map: dict[str, list[str]],
-    ) -> None:
-        # Every Dart class ultimately extends Object, so an @override whose
-        # name NO registered ancestor defines can only target external code:
-        # a framework base (direct or through any chain of first-party
-        # classes), an implemented external interface, or Object itself
-        # (toString/hashCode/operator==, invoked by interpolation and
-        # collections). Those methods root the dead-code walk; a name a
-        # registered ancestor defines resolves via OVERRIDES edges and must
-        # stay an ordinary candidate. Runs here because ancestry is only
-        # known after every class is registered; the partial row MERGEs into
-        # the node ingested during Pass 2.
-        for child_qn, methods in self.dart_annotated_overrides.items():
-            for method_qn, method_name in methods:
-                if self._registered_ancestor_defines(
-                    child_qn, method_name, implements_map
-                ):
-                    continue
-                self.ingestor.ensure_node_batch(
-                    cs.NodeLabel.METHOD,
-                    {
-                        cs.KEY_QUALIFIED_NAME: method_qn,
-                        cs.KEY_OVERRIDES_EXTERNAL: True,
-                    },
-                )
-
-    def _registered_ancestor_defines(
-        self,
-        class_qn: str,
-        name: str,
-        implements_map: dict[str, list[str]],
-    ) -> bool:
-        seen: set[str] = set()
-        stack = list(self.facts.class_inheritance.get(class_qn, []))
-        stack.extend(implements_map.get(class_qn, []))
-        while stack:
-            ancestor = stack.pop()
-            if ancestor in seen:
-                continue
-            seen.add(ancestor)
-            if self.function_registry.get(ancestor) is None:
-                continue
-            if (
-                self.function_registry.get(f"{ancestor}{cs.SEPARATOR_DOT}{name}")
-                is not None
-            ):
-                return True
-            stack.extend(self.facts.class_inheritance.get(ancestor, []))
-            stack.extend(implements_map.get(ancestor, []))
-        return False
 
     def _js_reexport_target(self, entry: DeferredInherit) -> str | None:
         """The class a JS/TS base reaches through its module's exports.
@@ -1055,19 +1007,7 @@ class ClassIngest:
                 self.import_processor.import_mapping.get(module_qn),
             )
         if language == cs.SupportedLanguage.DART:
-            self._record_dart_heritage(member_node, class_qn, module_qn)
-
-    def _record_dart_heritage(
-        self, member_node: Node, class_qn: str, module_qn: str
-    ) -> None:
-        if type_args := pe.extract_dart_extends_type_args(
-            member_node,
-            module_qn,
-            partial(self._resolve_to_qn, language=cs.SupportedLanguage.DART),
-        ):
-            self.facts.dart_extends_type_args[class_qn] = type_args
-        if on_type := dart_utils.extension_on_type(member_node):
-            self.facts.dart_extension_on_types[class_qn] = on_type
+            self.dart.record_heritage(member_node, class_qn, module_qn)
 
     def _record_php_namespace(
         self, class_node: Node, class_props: PropertyDict
@@ -1126,13 +1066,7 @@ class ClassIngest:
         elif language == cs.SupportedLanguage.RUST:
             self.rust.record_field_types(class_node, class_qn)
         elif language == cs.SupportedLanguage.DART:
-            # Record Dart field types (`Greeter buddy;`) so a field-typed
-            # receiver (`buddy.greet()`, `this.buddy.hail()`) resolves
-            # through the field's declared type.
-            if field_types := DartTypeInferenceEngine().build_field_type_map(
-                class_node
-            ):
-                self.facts.class_field_types[class_qn] = field_types
+            self.dart.record_field_types(class_node, class_qn)
         elif language == cs.SupportedLanguage.CSHARP:
             self.csharp.record_class_members(
                 member_node, class_qn, module_qn, modifiers, file_path
@@ -1303,7 +1237,7 @@ class ClassIngest:
             # unknowable here (it may live in a file parsed later), so only
             # RECORD the annotated methods; resolve_deferred_inherits decides
             # once every class is registered.
-            annotated_override_sink = self.dart_annotated_overrides
+            annotated_override_sink = self.dart.annotated_overrides
         return external_override_names, annotated_override_sink
 
     def _record_ingested_method(
@@ -1315,16 +1249,8 @@ class ClassIngest:
             self.csharp.record_method(
                 scope.class_qn, module_qn, method_node, ingested_qn
             )
-        # Record Dart return types (a constructor "returns" its class)
-        # so a local bound from a static factory or named constructor
-        # (`var s = Greeter.create()`) types from the RECORDED return
-        # instead of guessing the class from the call's base name.
-        if language == cs.SupportedLanguage.DART and (
-            dart_return := dart_utils.return_type_name(method_node)
-        ):
-            self.facts.method_return_types[ingested_qn] = dart_return
-            if method_node.type in cs.DART_CONSTRUCTOR_SIGNATURE_TYPES:
-                self.facts.dart_constructor_qns.add(ingested_qn)
+        if language == cs.SupportedLanguage.DART:
+            self.dart.record_method_return_type(method_node, ingested_qn)
         # Rust trait bodies reach here rather than the impl path above;
         # a trait is no module either (issue #1086).
         rs_utils.record_effective_module(
