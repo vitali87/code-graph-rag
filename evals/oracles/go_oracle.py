@@ -26,6 +26,7 @@ def _run_go_oracle_payload(target: Path) -> OraclePayload:
         text=True,
         encoding=cs.ENCODING_UTF8,
         check=True,
+        timeout=ec.ORACLE_RUN_TIMEOUT_S,
         env={**os.environ, ec.GO_MODULE_ENV: ec.GO_MODULE_OFF},
     )
     payload: OraclePayload = json.loads(proc.stdout or "{}")

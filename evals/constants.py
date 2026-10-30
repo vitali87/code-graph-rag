@@ -5,6 +5,10 @@ from codebase_rag import constants as cs
 
 PY_SUFFIX = ".py"
 MODULE_START_LINE = 0
+# One oracle pass over its target, compile included where the toolchain
+# compiles on run (`go run`, `scala-cli run`): minutes on the largest eval
+# corpus, so this only stops a wedged toolchain from hanging the eval.
+ORACLE_RUN_TIMEOUT_S = 1800
 
 SCORED_NODE_KINDS: tuple[cs.NodeLabel, ...] = (
     cs.NodeLabel.MODULE,
@@ -196,6 +200,7 @@ CLANG_INCLUDE_DIR = "include"
 CLANG_SEVERITY_ERROR = 3
 XCRUN_SDK_PATH_CMD: tuple[str, ...] = ("xcrun", "--show-sdk-path")
 CLANG_RESOURCE_DIR_CMD: tuple[str, ...] = ("clang", "-print-resource-dir")
+CLANG_PROBE_TIMEOUT_S = 30
 
 CPP_SOURCE_GLOBS: tuple[str, ...] = ("*.cc", "*.cpp", "*.cxx")
 CPP_HEADER_GLOBS: tuple[str, ...] = ("*.h", "*.hpp", "*.hh", "*.hxx")
@@ -307,7 +312,10 @@ OS_NT = "nt"
 CARGO_BIN = "cargo"
 CARGO_RUN = "run"
 CARGO_BUILD = "build"
+# A release build of the oracle and its crates, fetched on a cold cache.
+CARGO_BUILD_TIMEOUT_S = 1800
 CARGO_METADATA = "metadata"
+CARGO_METADATA_TIMEOUT_S = 60
 CARGO_FORMAT_VERSION = "--format-version"
 CARGO_FORMAT_VERSION_1 = "1"
 CARGO_NO_DEPS = "--no-deps"
@@ -384,6 +392,10 @@ NODE_ORACLE_SCRIPT_GLOB = "*.js"
 # because a full node stack trace buries the one line that explains the skip.
 NODE_SKIP_NO_BINARY = "{binary} is not on PATH"
 NODE_SKIP_INSTALL_FAILED = "npm install failed for this oracle: {stderr}"
+NODE_SKIP_INSTALL_TIMEOUT = (
+    "npm install for this oracle did not finish within {seconds}s (an "
+    "unreachable registry will do this); skipping rather than blocking the run"
+)
 NODE_SKIP_CANNOT_REQUIRE = "this node cannot require({package}): {stderr}"
 SKIP_REASON_STDERR_CHARS = 400
 # A child forked from a process that holds a live gRPC client (the Milvus Lite
@@ -424,6 +436,7 @@ NODE_BUILTIN_MODULES: frozenset[str] = frozenset(
 NODE_PROBE_TIMEOUT_S = 30
 NPM_BIN = "npm"
 NPM_INSTALL = "install"
+NPM_INSTALL_TIMEOUT_S = 900
 NPM_FLAGS: tuple[str, ...] = ("--no-audit", "--no-fund")
 NODE_MODULES_DIRNAME = "node_modules"
 # npm creates node_modules before populating it, so its existence is not proof
@@ -434,6 +447,7 @@ NODE_DEPS_LOCK = ".node-deps-lock"
 NODE_DEPS_LOCK_TRIES = 600
 NODE_DEPS_LOCK_POLL_SECONDS = 0.5
 NODE_ORACLE_FAILED = "{script} exited {code}: {stderr}"
+NODE_ORACLE_TIMED_OUT = "{script} did not finish within {seconds}s"
 TS_DTS_SUFFIX = ".d.ts"
 TS_SCORES_FILENAME = "ts_scores.csv"
 TS_DIFF_FILENAME = "ts_diff.json"
@@ -472,6 +486,7 @@ JAVA_ORACLE_CLASS = "Oracle"
 JAVAC_BIN = cs.JAVAC_BIN
 JAVA_BIN = cs.JAVA_BIN
 JAVA_CP_FLAG = "-cp"
+JAVAC_TIMEOUT_S = 300
 SCALA_SUFFIXES = (".scala", ".sc")
 SCALA_ORACLE_DIRNAME = "scala_oracle"
 SCALA_ORACLE_SOURCE = "Oracle.scala"
@@ -643,6 +658,7 @@ RG_PY_GLOB = "*.py"
 RG_SEARCH_PATH = "."
 RG_NULL_SEP = "\x00"
 RG_OK_RETURNCODES: frozenset[int] = frozenset({0, 1})
+RG_TIMEOUT_S = 600
 
 PATTERN_SEP = "\n"
 GREP_NAME_TEMPLATE = r"\b{name}\b"

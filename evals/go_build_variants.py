@@ -74,6 +74,9 @@ FRONTENDS = ("treesitter", "gotypes", "gotypes-windows", "gotypes-darwin")
 # cgr's cap on an interface's method-set alternatives: past it the set is
 # unknown and links nothing.
 _ALTERNATIVES_CAP = 64
+# A vet of one generated build takes seconds; past this the toolchain is
+# wedged, and the build counts as not passing, as a failed vet does.
+_GO_VET_TIMEOUT_S = 600
 _WIDE_TAG = re.compile(r"\bc\d{3}w\d+\b")
 _WIDE_NAME = re.compile(r"(?:Wide|CallWide)(\d+)")
 _NOT_HEURISTIC = {None, "None", cs.EdgeResolution.EXACT, cs.EdgeResolution.OVERLOAD}
@@ -567,16 +570,19 @@ def build_status(root: Path, builds: tuple[Build, ...]) -> dict[str, bool]:
             "GOARCH": "amd64",
             "CGO_ENABLED": "0",
         }
-        status[build.name] = (
-            subprocess.run(
+        try:
+            vetted = subprocess.run(
                 [go, "vet", "./..."],
                 cwd=root,
                 capture_output=True,
                 check=False,
                 env=env,
-            ).returncode
-            == 0
-        )
+                timeout=_GO_VET_TIMEOUT_S,
+            )
+        except subprocess.TimeoutExpired:
+            status[build.name] = False
+            continue
+        status[build.name] = vetted.returncode == 0
     return status
 
 

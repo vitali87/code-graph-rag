@@ -35,6 +35,7 @@ def _run_scala_oracle_payload(target: Path) -> OraclePayload:
         text=True,
         encoding=cs.ENCODING_UTF8,
         check=True,
+        timeout=ec.ORACLE_RUN_TIMEOUT_S,
     )
     # capture_output hides scala-cli's stderr; if stdout is not the expected JSON
     # (a compile error, a changed launcher banner) surface both streams instead

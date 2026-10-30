@@ -243,8 +243,13 @@ def ensure_node_deps(oracle_dir: Path) -> None:
                 # error text raised on a failed install.
                 encoding=cs.ENCODING_UTF8,
                 check=True,
+                timeout=ec.NPM_INSTALL_TIMEOUT_S,
             )
             marker.touch()
+    except subprocess.TimeoutExpired as e:
+        raise NodeOracleUnavailable(
+            ec.NODE_SKIP_INSTALL_TIMEOUT.format(seconds=e.timeout)
+        ) from e
     except subprocess.CalledProcessError as e:
         # A failed `npm install` is an unavailable toolchain, not a test error:
         # its stderr is the most useful thing a developer can be shown here.
@@ -277,18 +282,24 @@ def run_node_oracle_payload(
     reason = node_oracle_skip_reason(oracle_dir)
     if reason is not None:
         raise NodeOracleUnavailable(reason)
-    proc = subprocess.run(
-        [node, str(script), *args],
-        capture_output=True,
-        text=True,
-        # Node writes UTF-8 JSON. `text=True` alone decodes with the LOCALE
-        # encoding, which is cp1252 on a Windows runner, so any non-ASCII
-        # identifier or path comes back mangled and the payload disagrees with
-        # the source. Reading a name like "Café" then fails far from here, as a
-        # lookup miss rather than as a decode error.
-        encoding=cs.ENCODING_UTF8,
-        check=False,
-    )
+    try:
+        proc = subprocess.run(
+            [node, str(script), *args],
+            capture_output=True,
+            text=True,
+            # Node writes UTF-8 JSON. `text=True` alone decodes with the LOCALE
+            # encoding, which is cp1252 on a Windows runner, so any non-ASCII
+            # identifier or path comes back mangled and the payload disagrees
+            # with the source. Reading a name like "Café" then fails far from
+            # here, as a lookup miss rather than as a decode error.
+            encoding=cs.ENCODING_UTF8,
+            check=False,
+            timeout=ec.ORACLE_RUN_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError(
+            ec.NODE_ORACLE_TIMED_OUT.format(script=script.name, seconds=e.timeout)
+        ) from e
     if proc.returncode != 0:
         raise RuntimeError(
             ec.NODE_ORACLE_FAILED.format(

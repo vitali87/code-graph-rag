@@ -253,7 +253,9 @@ def _capture_path(command: tuple[str, ...]) -> str | None:
             text=True,
             encoding=cs.ENCODING_UTF8,
             check=True,
+            timeout=ec.CLANG_PROBE_TIMEOUT_S,
         ).stdout.strip()
+    # TimeoutExpired is a SubprocessError: a hung probe skips its headers too.
     except (subprocess.SubprocessError, OSError):
         return None
     return out or None

@@ -62,6 +62,7 @@ def _ensure_compiled() -> None:
             text=True,
             encoding=cs.ENCODING_UTF8,
             check=True,
+            timeout=ec.JAVAC_TIMEOUT_S,
         )
 
 
@@ -76,6 +77,7 @@ def _run_java_oracle_payload(target: Path) -> OraclePayload:
         text=True,
         encoding=cs.ENCODING_UTF8,
         check=True,
+        timeout=ec.ORACLE_RUN_TIMEOUT_S,
     )
     payload: OraclePayload = json.loads(proc.stdout or "{}")
     return payload

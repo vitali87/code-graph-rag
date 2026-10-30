@@ -158,27 +158,33 @@ def grep_call_edges(
 ) -> set[NameEdge]:
     if not first_party:
         return set()
-    completed = subprocess.run(
-        [
-            ec.RG_BIN,
-            ec.RG_ONLY_MATCHING,
-            ec.RG_WITH_FILENAME,
-            ec.RG_NO_LINE_NUMBER,
-            ec.RG_NO_HEADING,
-            ec.RG_NULL,
-            ec.RG_GLOB_FLAG,
-            ec.RG_PY_GLOB,
-            ec.RG_PATTERN_FILE_FLAG,
-            ec.RG_STDIN,
-            ec.RG_SEARCH_PATH,
-        ],
-        cwd=target,
-        input=_grep_patterns(first_party, mode),
-        capture_output=True,
-        text=True,
-        encoding=cs.ENCODING_UTF8,
-        check=False,
-    )
+    try:
+        completed = subprocess.run(
+            [
+                ec.RG_BIN,
+                ec.RG_ONLY_MATCHING,
+                ec.RG_WITH_FILENAME,
+                ec.RG_NO_LINE_NUMBER,
+                ec.RG_NO_HEADING,
+                ec.RG_NULL,
+                ec.RG_GLOB_FLAG,
+                ec.RG_PY_GLOB,
+                ec.RG_PATTERN_FILE_FLAG,
+                ec.RG_STDIN,
+                ec.RG_SEARCH_PATH,
+            ],
+            cwd=target,
+            input=_grep_patterns(first_party, mode),
+            capture_output=True,
+            text=True,
+            encoding=cs.ENCODING_UTF8,
+            check=False,
+            timeout=ec.RG_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        # Handled as a failed rg run is below: the baseline reports nothing.
+        logger.warning(ls.RG_TIMED_OUT.format(seconds=ec.RG_TIMEOUT_S))
+        return set()
     if completed.returncode not in ec.RG_OK_RETURNCODES:
         logger.warning(completed.stderr.strip())
         return set()

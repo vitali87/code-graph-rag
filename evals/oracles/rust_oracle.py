@@ -45,6 +45,7 @@ def _binary_path() -> Path:
         text=True,
         encoding=cs.ENCODING_UTF8,
         check=True,
+        timeout=ec.CARGO_METADATA_TIMEOUT_S,
     )
     target_dir = Path(json.loads(proc.stdout)[ec.CARGO_META_TARGET_DIR_KEY])
     return target_dir / ec.CARGO_RELEASE_DIRNAME / (ec.RUST_ORACLE_BIN + _exe_suffix())
@@ -88,6 +89,7 @@ def _ensure_oracle_built() -> Path:
                 text=True,
                 encoding=cs.ENCODING_UTF8,
                 check=True,
+                timeout=ec.CARGO_BUILD_TIMEOUT_S,
             )
     return binary
 
@@ -99,6 +101,7 @@ def _run_rust_oracle_payload(target: Path) -> OraclePayload:
         text=True,
         encoding=cs.ENCODING_UTF8,
         check=True,
+        timeout=ec.ORACLE_RUN_TIMEOUT_S,
     )
     payload: OraclePayload = json.loads(proc.stdout or "{}")
     return payload

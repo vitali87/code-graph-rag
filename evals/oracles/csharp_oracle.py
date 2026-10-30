@@ -157,6 +157,7 @@ def _run_csharp_oracle_payload(target: Path) -> OraclePayload:
         text=True,
         encoding=cs.ENCODING_UTF8,
         check=True,
+        timeout=ec.ORACLE_RUN_TIMEOUT_S,
         env={
             **os.environ,
             **_DOTNET_ENV,
