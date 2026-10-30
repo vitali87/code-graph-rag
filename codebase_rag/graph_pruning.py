@@ -48,6 +48,18 @@ class _Orphan(NamedTuple):
     absolute_path: str
 
 
+def _orphan(
+    path: str, key: str, abs_path: ResultValue | None, label: str, qn: ResultValue
+) -> _Orphan:
+    """The orphan at `path` as its delete keys it."""
+    read_at = abs_path if isinstance(abs_path, str) and abs_path else key
+    # Package rows are read by qualified name, and one is deleted by it:
+    # two can share an absolute path (issue #2451).
+    if label == cs.NodeLabel.PACKAGE and isinstance(qn, str) and qn:
+        return _Orphan(path, qn, read_at)
+    return _Orphan(path, key, read_at)
+
+
 class GraphPruner:
     """The orphan prune that closes a sync, and the marker that owes a
     cut-short prune to the next run.
@@ -99,61 +111,8 @@ class GraphPruner:
             return
 
         logger.info(ls.PRUNE_START)
-        total_pruned = 0
         tally = _PruneTally()
-
-        repo_abs = self._repo_path.resolve().as_posix()
-        # Scoped to this repository or project: unscoped, the reads pulled
-        # every node of every project in the shared graph on each sync with
-        # changes (issue #2405). The rows they no longer return were all
-        # skipped below anyway, as outside the repository or not owned.
-        repo_scope = repo_scope_params(repo_abs)
-        project_scope: PropertyParams = {
-            cs.KEY_PROJECT_NAME: self._project_name,
-            cs.KEY_PROJECT_PREFIX: f"{self._project_name}{cs.SEPARATOR_DOT}",
-        }
-        prune_specs: list[tuple[str, PropertyParams, str, str]] = [
-            (cs.CYPHER_REPO_FILE_PATHS, repo_scope, cs.CYPHER_DELETE_FILE, "File"),
-            (
-                cs.CYPHER_PROJECT_PRUNABLE_MODULES,
-                project_scope,
-                cs.CYPHER_DELETE_MODULE,
-                "Module",
-            ),
-            (
-                cs.CYPHER_REPO_FOLDER_PATHS,
-                repo_scope,
-                cs.CYPHER_DELETE_FOLDER,
-                "Folder",
-            ),
-            (
-                cs.CYPHER_PROJECT_PACKAGE_PATHS,
-                project_scope,
-                cs.CYPHER_DELETE_PACKAGE_BY_QN,
-                "Package",
-            ),
-        ]
-        # A directory is represented by exactly one of Folder and Package,
-        # decided by identify_structure this run; the node of the other kind
-        # is stale even though the directory exists (issue #1570).
-        packages_now = {
-            rel.as_posix()
-            for rel, qn in self._factory.structure_processor.structural_elements.items()
-            if qn
-        }
-
-        read_failed = False
-        for query_all, scope, delete_query, label in prune_specs:
-            try:
-                rows = graph.fetch_all(query_all, scope)
-            except Exception as exc:  # noqa: BLE001 -- any engine's driver error; the read degrades
-                # A graph that cannot be read cannot be pruned safely; the
-                # next healthy run sweeps whatever this one left behind.
-                logger.warning(ls.PRUNE_QUERY_FAILED, label=label, error=exc)
-                read_failed = True
-                continue
-            orphans = self._orphan_rows(run, rows, label, repo_abs, packages_now, tally)
-            total_pruned += self._delete_orphans(graph, orphans, label, delete_query)
+        total_pruned, read_failed = self._prune_labels(graph, run, tally)
 
         # Rows left for the next healthy run are only swept by one that
         # actually prunes, so owe it through a marker the in-sync fast path
@@ -186,6 +145,69 @@ class GraphPruner:
         else:
             logger.info(ls.PRUNE_SKIP)
 
+    def _prune_specs(self, repo_abs: str) -> list[tuple[str, PropertyParams, str, str]]:
+        """Per label: the read of its nodes, its scope, and its delete."""
+        # Scoped to this repository or project: unscoped, the reads pulled
+        # every node of every project in the shared graph on each sync with
+        # changes (issue #2405). The rows they no longer return were all
+        # skipped below anyway, as outside the repository or not owned.
+        repo_scope = repo_scope_params(repo_abs)
+        project_scope: PropertyParams = {
+            cs.KEY_PROJECT_NAME: self._project_name,
+            cs.KEY_PROJECT_PREFIX: f"{self._project_name}{cs.SEPARATOR_DOT}",
+        }
+        return [
+            (cs.CYPHER_REPO_FILE_PATHS, repo_scope, cs.CYPHER_DELETE_FILE, "File"),
+            (
+                cs.CYPHER_PROJECT_PRUNABLE_MODULES,
+                project_scope,
+                cs.CYPHER_DELETE_MODULE,
+                "Module",
+            ),
+            (
+                cs.CYPHER_REPO_FOLDER_PATHS,
+                repo_scope,
+                cs.CYPHER_DELETE_FOLDER,
+                "Folder",
+            ),
+            (
+                cs.CYPHER_PROJECT_PACKAGE_PATHS,
+                project_scope,
+                cs.CYPHER_DELETE_PACKAGE_BY_QN,
+                "Package",
+            ),
+        ]
+
+    def _prune_labels(
+        self, graph: QueryProtocol, run: PruneRun, tally: _PruneTally
+    ) -> tuple[int, bool]:
+        """Delete every label's orphans; how many went, and whether a read
+        failed."""
+        repo_abs = self._repo_path.resolve().as_posix()
+        # A directory is represented by exactly one of Folder and Package,
+        # decided by identify_structure this run; the node of the other kind
+        # is stale even though the directory exists (issue #1570).
+        packages_now = {
+            rel.as_posix()
+            for rel, qn in self._factory.structure_processor.structural_elements.items()
+            if qn
+        }
+
+        total_pruned = 0
+        read_failed = False
+        for query_all, scope, delete_query, label in self._prune_specs(repo_abs):
+            try:
+                rows = graph.fetch_all(query_all, scope)
+            except Exception as exc:  # noqa: BLE001 -- any engine's driver error; the read degrades
+                # A graph that cannot be read cannot be pruned safely; the
+                # next healthy run sweeps whatever this one left behind.
+                logger.warning(ls.PRUNE_QUERY_FAILED, label=label, error=exc)
+                read_failed = True
+                continue
+            orphans = self._orphan_rows(run, rows, label, repo_abs, packages_now, tally)
+            total_pruned += self._delete_orphans(graph, orphans, label, delete_query)
+        return total_pruned, read_failed
+
     def _record_prune_pending(
         self, run: PruneRun, state_dir: Path, pending: bool
     ) -> None:
@@ -214,6 +236,9 @@ class GraphPruner:
         try:
             (state_dir / cs.PRUNE_PENDING_FILENAME).unlink(missing_ok=True)
         except OSError:
+            # Best effort, as the write above is: a marker left behind only
+            # owes one more prune, and the run it sends past the in-sync fast
+            # path settles it again.
             logger.debug(ls.PRUNE_PENDING_NOT_UPDATED)
 
     def _orphan_rows(
@@ -252,6 +277,15 @@ class GraphPruner:
         qn = r.get("qualified_name", "")
         if self._foreign_row(path, abs_path, repo_abs):
             return None
+        if not self._owned_row(run, qn, tally):
+            return None
+        key = self._stale_orphan_key(path, abs_path, label, packages_now)
+        if key is None:
+            return None
+        return _orphan(path, key, abs_path, label, qn)
+
+    def _owned_row(self, run: PruneRun, qn: ResultValue, tally: _PruneTally) -> bool:
+        """Whether this project owns a row's node, so this prune may judge it."""
         # The root directory's own node is qualified as exactly the
         # project name, with no dot: testing only the dotted prefix
         # dropped it here and let a stale root Package survive beside
@@ -265,22 +299,13 @@ class GraphPruner:
         # healthy run, which prunes the whole project again
         # (PR #2125). Path-keyed rows carry no qn and
         # still prune.
-        if isinstance(qn, str) and qn:
-            owned = self._owns(qn)
-            if run.registry_unread:
-                tally.registry_skipped += 1
-                return None
-            if not owned:
-                return None
-        key = self._stale_orphan_key(path, abs_path, label, packages_now)
-        if key is None:
-            return None
-        read_at = abs_path if isinstance(abs_path, str) and abs_path else key
-        # Package rows are read by qualified name, and one is deleted by it:
-        # two can share an absolute path (issue #2451).
-        if label == cs.NodeLabel.PACKAGE and isinstance(qn, str) and qn:
-            return _Orphan(path, qn, read_at)
-        return _Orphan(path, key, read_at)
+        if not isinstance(qn, str) or not qn:
+            return True
+        owned = self._owns(qn)
+        if run.registry_unread:
+            tally.registry_skipped += 1
+            return False
+        return owned
 
     def _foreign_row(
         self, path: str, abs_path: ResultValue | None, repo_abs: str
