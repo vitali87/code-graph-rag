@@ -98,6 +98,8 @@ MCP_DESTRUCTIVE_TOOLS = frozenset(
         MCPToolName.RENAME,
         MCPToolName.CHANGE_SIGNATURE,
         MCPToolName.MOVE,
+        MCPToolName.EXTRACT,
+        MCPToolName.INLINE,
         MCPToolName.SURGICAL_REPLACE_CODE,
         MCPToolName.WRITE_FILE,
         MCPToolName.STRUCTURAL_REPLACE,

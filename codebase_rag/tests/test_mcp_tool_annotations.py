@@ -39,6 +39,8 @@ WRITERS = frozenset(
         cs.MCPToolName.RENAME,
         cs.MCPToolName.CHANGE_SIGNATURE,
         cs.MCPToolName.MOVE,
+        cs.MCPToolName.EXTRACT,
+        cs.MCPToolName.INLINE,
         cs.MCPToolName.SURGICAL_REPLACE_CODE,
         cs.MCPToolName.WRITE_FILE,
         cs.MCPToolName.STRUCTURAL_REPLACE,
@@ -47,7 +49,7 @@ WRITERS = frozenset(
 )
 # The graph-driven edit operations, each called with arguments that would
 # rewrite the repository if the server ran it.
-EDIT_CALLS: list[tuple[cs.MCPToolName, dict[str, str | list[str]]]] = [
+EDIT_CALLS: list[tuple[cs.MCPToolName, dict[str, str | int | list[str]]]] = [
     (
         cs.MCPToolName.CHANGE_SIGNATURE,
         {"qualified_name": "proj.lib.helper", "new_params": ["a", "b"]},
@@ -56,6 +58,16 @@ EDIT_CALLS: list[tuple[cs.MCPToolName, dict[str, str | list[str]]]] = [
         cs.MCPToolName.MOVE,
         {"qualified_name": "proj.lib.helper", "target_module": "proj.other"},
     ),
+    (
+        cs.MCPToolName.EXTRACT,
+        {
+            "qualified_name": "proj.lib.helper",
+            "start_line": 2,
+            "end_line": 2,
+            "new_name": "inner",
+        },
+    ),
+    (cs.MCPToolName.INLINE, {"qualified_name": "proj.lib.helper"}),
 ]
 
 
@@ -91,7 +103,9 @@ async def _tools() -> dict[str, Tool]:
     return {tool.name: tool for tool in listed.tools}
 
 
-async def _call(name: str, arguments: dict[str, str | list[str]]) -> CallToolResult:
+async def _call(
+    name: str, arguments: dict[str, str | int | list[str]]
+) -> CallToolResult:
     server, _ingestor = mcp_server.create_server()
     async with Client(server, mode="legacy") as client:
         return await client.call_tool(name, arguments)
@@ -142,6 +156,8 @@ async def test_the_destructive_tools_say_so(repo: Path, no_llm: None) -> None:
         cs.MCPToolName.STRUCTURAL_REPLACE,
         cs.MCPToolName.CHANGE_SIGNATURE,
         cs.MCPToolName.MOVE,
+        cs.MCPToolName.EXTRACT,
+        cs.MCPToolName.INLINE,
     ):
         annotations = tools[name].annotations
         assert annotations is not None
@@ -185,7 +201,7 @@ async def test_a_read_only_server_refuses_an_edit_operation(
     no_llm: None,
     read_only: None,
     name: cs.MCPToolName,
-    arguments: dict[str, str | list[str]],
+    arguments: dict[str, str | int | list[str]],
 ) -> None:
     before = _files(repo)
 

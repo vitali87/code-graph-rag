@@ -131,8 +131,8 @@ answers `found: false` for a qualified name it does not find.
 
 Each tool tells the client whether it writes: `readOnlyHint` on the tools that
 only read, and `destructiveHint` on `wipe_database`, `delete_project`,
-`index_repository`, `rename`, `change_signature`, `move`,
-`surgical_replace_code`, `write_file` and `structural_replace`. All of them carry `openWorldHint: false`: none reaches
+`index_repository`, `rename`, `change_signature`, `move`, `extract`,
+`inline`, `surgical_replace_code`, `write_file` and `structural_replace`. All of them carry `openWorldHint: false`: none reaches
 past this server's graph and files. A client with its own approval rules can
 key them on these.
 
