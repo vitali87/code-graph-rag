@@ -150,16 +150,26 @@ holds the part a collaborator writes through), the name-based resolver, and
 what languages share: the reference walkers, callable-parameter flow, the
 class pass's qualified names and the construction a `new` runs.
 
-That resolver has moved Rust, JS/TS, Go, C++, Python, PHP and Dart the same
-way: `CallResolver` builds a `RustResolver`, `JsTsResolver`, `GoResolver`,
-`CppResolver`, `PythonResolver`, `PhpResolver` and `DartResolver` (each in
-`parsers/<language>/resolution.py`, beside plain functions such as Java's
-constructor lookup and PHP's namespace-import gates) and reaches its
-language's stages and lookups through it, while each calls back through a
-narrow host protocol for what every language shares. `CallResolver` keeps the
-order the stages run in, the resolution cache and the verdict each `Resolved`
-answer carries, the simple-name fallback and the class and method lookups;
-`parsers/call_site.py` holds the `CallSite` request its stages read.
+That resolver has moved every language the same way: `CallResolver` builds a
+`RustResolver`, `JsTsResolver`, `GoResolver`, `CppResolver`,
+`PythonResolver`, `PhpResolver`, `DartResolver`, `JavaResolver`,
+`CSharpResolver`, `LuaResolver`, `ScalaResolver` and `JuliaResolver` (each
+in `parsers/<language>/resolution.py`, beside plain functions such as PHP's
+namespace-import gates and Lua's member spellings) and holds each as a
+public attribute (`resolver.go`, `resolver.csharp`, ...). Its pipeline
+reaches a language's stages and lookups through that attribute, and the call
+pass reaches them the same way (`resolver.go.go_variant_callees(...)`); a
+language's stage checks the call's language itself, so the pipeline runs it
+without an `if language == ...` gate. Each resolver calls back through a
+narrow host protocol for what every language shares. `CallResolver` keeps
+the order the stages run in, the resolution cache and the verdict each
+`Resolved` answer carries (so PHP's class-path lookups, which hand one back,
+stay on it), the simple-name fallback, the class and method lookups with the
+C3 order and class-body member aliases they follow, and the import-prefix
+fold that types a call chain for every language; `parsers/call_site.py`
+holds the `CallSite` request its stages read. A new language's resolution
+goes in a resolver in its own package, built by `CallResolver` beside the
+others.
 
 The definition pass has moved its per-language method groups as well.
 `ClassIngest` (`class_ingest/ingest.py`) builds a `CppClassIngest`,
