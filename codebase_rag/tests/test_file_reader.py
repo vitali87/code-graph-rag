@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 from pydantic_ai import Tool
@@ -175,12 +176,16 @@ class TestCreateFileReaderTool:
         self, file_reader: FileReader, sample_text_file: Path
     ) -> None:
         tool = create_file_reader_tool(file_reader)
-        result = await tool.function(file_path="sample.txt")
+        result = await tool.function(
+            MagicMock(tool_call_approved=False), file_path="sample.txt"
+        )
         assert "Hello, World!" in result
 
     async def test_tool_function_returns_error_string(
         self, file_reader: FileReader
     ) -> None:
         tool = create_file_reader_tool(file_reader)
-        result = await tool.function(file_path="nonexistent.txt")
+        result = await tool.function(
+            MagicMock(tool_call_approved=False), file_path="nonexistent.txt"
+        )
         assert "Error:" in result

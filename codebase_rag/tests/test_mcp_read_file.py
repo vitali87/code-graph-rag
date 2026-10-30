@@ -1,5 +1,5 @@
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -52,9 +52,6 @@ def mcp_registry(temp_project_root: Path) -> MCPToolsRegistry:
         cypher_gen=mock_cypher_gen,
     )
 
-    registry._file_reader_tool = MagicMock()
-    registry._file_reader_tool.function = AsyncMock()
-
     return registry
 
 
@@ -65,14 +62,10 @@ class TestReadFileWithoutPagination:
         self, mcp_registry: MCPToolsRegistry, sample_file: Path
     ) -> None:
         expected_content = sample_file.read_text(encoding="utf-8")
-        mock_func = mcp_registry._file_reader_tool.function
-        assert isinstance(mock_func, AsyncMock)
-        mock_func.return_value = expected_content
 
         result = await mcp_registry.read_file("test_file.txt")
 
         assert result == expected_content
-        mock_func.assert_called_once_with(file_path="test_file.txt")
 
 
 class TestReadFileWithPagination:

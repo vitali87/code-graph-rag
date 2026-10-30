@@ -25,8 +25,9 @@ class MCPToolName(StrEnum):
     ENDPOINTS = "endpoints"
     ENDPOINT_CALLERS = "endpoint_callers"
     REMOTE_DEPENDENCIES = "remote_dependencies"
-    # Graph-driven edit operations (issue #1532).
+    # Graph-driven edit operations (issues #1532, #1533).
     RENAME = "rename"
+    CHANGE_SIGNATURE = "change_signature"
     CONTEXT = "context"
     QUERY_CODE_GRAPH = "query_code_graph"
     GET_CODE_SNIPPET = "get_code_snippet"
@@ -47,6 +48,72 @@ class MCPToolName(StrEnum):
     # never into source files, and read back per symbol.
     ANNOTATE = "annotate"
     GLOSSES = "glosses"
+
+
+# The tools that only read: the graph, the project's files, or an agent
+# answer whose writes `ask_agent` always denies. Named this way round so a new
+# tool counts as writing, and `--read-only` withholds it, until someone adds
+# it here; `test_every_tool_is_classified` keeps these sets in step (#3458).
+MCP_READ_ONLY_TOOLS = frozenset(
+    {
+        MCPToolName.LIST_PROJECTS,
+        MCPToolName.RESOLVE,
+        MCPToolName.DEFINITION,
+        MCPToolName.CALLERS,
+        MCPToolName.CALLEES,
+        MCPToolName.IMPLEMENTORS,
+        MCPToolName.OVERRIDES,
+        MCPToolName.IMPORTERS,
+        MCPToolName.TESTS_REACHING,
+        MCPToolName.ENDPOINTS,
+        MCPToolName.ENDPOINT_CALLERS,
+        MCPToolName.REMOTE_DEPENDENCIES,
+        MCPToolName.CONTEXT,
+        MCPToolName.QUERY_CODE_GRAPH,
+        MCPToolName.GET_CODE_SNIPPET,
+        MCPToolName.READ_FILE,
+        MCPToolName.LIST_DIRECTORY,
+        MCPToolName.SEMANTIC_SEARCH,
+        MCPToolName.STRUCTURAL_SEARCH,
+        MCPToolName.FIND_DUPLICATE_CODE,
+        MCPToolName.GET_FUNCTION_SOURCE,
+        MCPToolName.ASK_AGENT,
+        MCPToolName.FLOW_VERDICT,
+        MCPToolName.EXPLAIN_TRACEBACK,
+        MCPToolName.RANK_ROOT_CAUSES,
+        MCPToolName.GLOSSES,
+    }
+)
+# Writers that overwrite or remove what was there: source files, a project's
+# graph, the whole database. The other writers add a note or sync the graph
+# with the files.
+MCP_DESTRUCTIVE_TOOLS = frozenset(
+    {
+        MCPToolName.DELETE_PROJECT,
+        MCPToolName.WIPE_DATABASE,
+        MCPToolName.INDEX_REPOSITORY,
+        MCPToolName.RENAME,
+        MCPToolName.CHANGE_SIGNATURE,
+        MCPToolName.SURGICAL_REPLACE_CODE,
+        MCPToolName.WRITE_FILE,
+        MCPToolName.STRUCTURAL_REPLACE,
+    }
+)
+# Writers that change nothing more when called again with the same arguments.
+MCP_IDEMPOTENT_TOOLS = frozenset(
+    {
+        MCPToolName.DELETE_PROJECT,
+        MCPToolName.WIPE_DATABASE,
+        MCPToolName.INDEX_REPOSITORY,
+        MCPToolName.UPDATE_REPOSITORY,
+        MCPToolName.REINGEST,
+        MCPToolName.WRITE_FILE,
+    }
+)
+MCP_READ_ONLY_REFUSED = (
+    "{name} writes, and this server runs read-only (--read-only or "
+    "MCP_READ_ONLY=true), so it was not run."
+)
 
 
 class MCPTransport(StrEnum):
@@ -123,6 +190,8 @@ class MCPParamName(StrEnum):
     THROUGH_REEXPORTS = "through_reexports"
     NEW_NAME = "new_name"
     ALLOW_HEURISTIC = "allow_heuristic"
+    NEW_PARAMS = "new_params"
+    MAPPING = "mapping"
     BUDGET_TOKENS = "budget_tokens"
 
 
@@ -142,6 +211,12 @@ MCP_READ_LIMIT_MINIMUM = 1
 MCP_READ_OFFSET_NEGATIVE = "offset {offset} is negative"
 MCP_READ_LIMIT_NOT_POSITIVE = "limit {limit} is not positive"
 MCP_READ_PAST_END = "offset {offset} is past the end of {path} ({total} lines)"
+# A likely credential store is not served: the client's model would read
+# it, and repository text can ask for it as easily as for source (#3457).
+MCP_READ_SENSITIVE_REFUSED = (
+    "{path} looks like a credential file, so it is not served over MCP. "
+    "Export CGR_ALLOW_SENSITIVE_READS=true in the server's environment to serve it."
+)
 # A `path:line` target whose line no source file can reach; sent on, it
 # overflows the 64-bit Bolt integer in the driver.
 MCP_RESOLVE_LINE_OUT_OF_RANGE = "Line {line} of {path} is out of range."
@@ -153,6 +228,7 @@ MCP_INDEX_ERROR = "Error indexing repository: {error}"
 MCP_WRITE_SUCCESS = "Successfully wrote file: {path}"
 MCP_UNKNOWN_TOOL_ERROR = "Unknown tool: {name}"
 MCP_TOOL_EXEC_ERROR = "Error executing tool '{name}': {error}"
+MCP_INPUT_VALIDATION_ERROR = "Input validation error: {error}"
 MCP_UPDATE_SUCCESS = "Successfully updated repository at {path} (no database wipe)."
 MCP_UPDATE_ERROR = "Error updating repository: {error}"
 MCP_REINGEST_ERROR = "Error re-ingesting files: {error}"

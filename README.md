@@ -61,11 +61,7 @@ Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by c
 ## Latest News 🔥
 
 <!-- SECTION:latest_news -->
-- **Security Enhancements**: Incorporates an OSS Scanner build image and threat model.
-- **Data Export**: Ensures all node properties within the graph are exported.
-- **SQL Fixes**: Addresses several SQL-related issues including grammar errors and dead-code roots.
-- **Rust Fixes**: Improves indexing of methods and handling of types in Rust code.
-- **Build Fixes**: Repairs build issues related to eMudhra root certificates and distrusted components.
+- **MiniMax Models Added**: Current MiniMax text models have been included.
 <!-- /SECTION:latest_news -->
 
 See [NEWS.md](NEWS.md) for the full history.
@@ -233,6 +229,10 @@ Please see [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines. Good 
 For issues or questions, check the [Troubleshooting](docs/advanced/troubleshooting.md) guide first, then open an issue.
 
 If cgr is useful to you, please consider pledging support on [GitHub Sponsors](https://github.com/sponsors/vitali87). cgr links the page under `cgr --version` and, in a terminal, after most commands finish; set `CGR_SPONSOR_PLEDGE=false` to hide that line.
+
+## Accessibility
+
+[ACCESSIBILITY.md](ACCESSIBILITY.md) describes what cgr and its documentation support for people using assistive technology or alternative settings, the known limitations and their workarounds, and how to report a barrier.
 
 ## License
 

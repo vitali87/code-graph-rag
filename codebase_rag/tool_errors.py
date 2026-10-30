@@ -53,6 +53,7 @@ NONINTERACTIVE_REDIRECT = "redirection is not available"
 NONINTERACTIVE_FOLLOW_SYMLINKS = "symlink-following traversal is not available"
 NONINTERACTIVE_FIND_MUTATES = "find's mutating actions are not available"
 NONINTERACTIVE_PATH_ESCAPES = "absolute and parent-traversal paths are not available"
+NONINTERACTIVE_SENSITIVE_FILE = "reading files that may hold credentials needs approval"
 NONINTERACTIVE_OPTION_CARRIED_INPUT = (
     "options that read file lists or run programs are not available"
 )

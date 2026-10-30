@@ -496,10 +496,12 @@ def _fit(candidates: Iterable[_Candidate], budget: int) -> _Fitted:
         if trimmed:
             truncated = True
         if not source:
-            # No source to quote, or a target too big for even its first
-            # line: only the latter is a candidate the budget left out.
+            # A target too big for even its first line returns nothing,
+            # since its neighbours alone would read as context for it
+            # (issue #3005). A candidate with no source to quote is skipped.
             if trimmed:
                 omitted.add(candidate)
+                return _Fitted([], omitted.sample, omitted.count, 0, truncated)
             continue
         used += tokens
         pieces.append(
@@ -537,8 +539,8 @@ def _sized(
     if not is_target:
         return None
     # The target itself must fit: keep as many of its lines as the budget
-    # allows and say so. A budget too small for even its first line leaves
-    # it out rather than padding with nothing.
+    # allows and say so. A budget too small for even its first line keeps
+    # none, and `_fit` then returns no pieces at all.
     source, tokens = _trim(candidate, span, source, room)
     return source, tokens, True
 

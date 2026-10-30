@@ -1,0 +1,116 @@
+name: Deferred Release
+
+# version-bump.yml waits about 45 minutes for main's CI before it releases a
+# bump. When CI takes longer, it tags the version as a deferred release and
+# leaves the release as a draft, and nothing else looked at it again until
+# the next merge, which faced the same wait (v0.4.1's CI passed 2.5 minutes
+# after its wait ended). This workflow runs each time CI on main completes and
+# publishes that draft once CI has passed at its tag.
+#
+# Every fact is read again here, never taken from the triggering run: the run
+# only says that it is time to look. Nothing from it is checked out or run.
+on:
+  workflow_run: # zizmor: ignore[dangerous-triggers] runs main's own code only, see above
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions: read-all
+
+env:
+  DEFERRED_RELEASE_MARKER: release-deferred
+
+jobs:
+  publish:
+    name: Publish the deferred release
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository))
+    # The bump job's own queue. A bump run already under way may have decided
+    # to release the same change; going after it, this job sees what that run
+    # tagged and released instead of shipping the change a second time.
+    concurrency:
+      group: version-bump-main
+      cancel-in-progress: false
+      queue: max
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ssh-key: ${{ secrets.VERSION_BUMP_SSH_KEY }}
+          # The tag push below goes over this deploy key: a push over
+          # GITHUB_TOKEN would start no publishing workflow.
+          persist-credentials: true
+
+      - name: Publish the deferred release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if ! LATEST=$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name); then
+            echo "::error::could not read the latest release; refusing to publish"
+            exit 1
+          fi
+          if ! TAGS=$(git ls-remote --tags origin "refs/tags/v*"); then
+            echo "::error::could not list the release tags; refusing to publish"
+            exit 1
+          fi
+          # Only the newest version is released: an older one would go out
+          # behind a newer tag that already holds it.
+          TAG=$(printf '%s\n' "$TAGS" | awk -F'refs/tags/' 'NF > 1 {print $2}' \
+            | grep -xE 'v[0-9]+\.[0-9]+\.[0-9]+' | sort -V | tail -n 1 || true)
+          if [ -z "$TAG" ] ||
+              [ "$(printf '%s\n%s\n' "$TAG" "$LATEST" | sort -V | tail -n 1)" = "$LATEST" ]; then
+            echo "${LATEST} is the newest release; nothing is deferred"
+            exit 0
+          fi
+          # The bump job leaves a draft only for a release it deferred. A
+          # draft someone wrote by hand is theirs to publish.
+          if ! DRAFTS=$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+              --jq '.[] | select(.draft and .author.login == "github-actions[bot]") | "\(.id) \(.tag_name)"'); then
+            echo "::error::could not list the draft releases; refusing to publish"
+            exit 1
+          fi
+          DRAFT=$(printf '%s\n' "$DRAFTS" | awk -v tag="$TAG" '$2 == tag {print $1; exit}')
+          if [[ ! "$DRAFT" =~ ^[1-9][0-9]*$ ]]; then
+            echo "${TAG} has no deferred release waiting"
+            exit 0
+          fi
+          # Red or still running alike: the run that settles it starts this
+          # workflow again.
+          if ! python3 scripts/require_green_ci.py "refs/tags/${TAG}"; then
+            echo "::notice::CI is not proven for ${TAG} yet; its release waits for the run that proves it"
+            exit 0
+          fi
+          OBJECT=$(printf '%s\n' "$TAGS" | awk -F'\t' -v ref="refs/tags/${TAG}" '$2 == ref {print $1}')
+          COMMIT=$(printf '%s\n' "$TAGS" | awk -F'\t' -v ref="refs/tags/${TAG}^{}" '$2 == ref {print $1}')
+          # An annotated tag is the deferral itself. Replacing it with the
+          # plain tag a release gets is the push publish.yml,
+          # docker-publish.yml and build-binaries.yml start from, as on a
+          # release that was never deferred. A plain tag here was replaced
+          # by an earlier attempt that stopped before the draft went public.
+          if [ -n "$COMMIT" ]; then
+            if [[ ! "$OBJECT" =~ ^[0-9a-f]{40}$ || ! "$COMMIT" =~ ^[0-9a-f]{40}$ ]] ||
+                ! MESSAGE=$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${OBJECT}" --jq .message); then
+              echo "::error::could not read the annotation of ${TAG}; refusing to publish"
+              exit 1
+            fi
+            if [[ "$MESSAGE" != "${DEFERRED_RELEASE_MARKER}:"* ]]; then
+              echo "::error::${TAG} is annotated, but not as a deferred release; refusing to replace it"
+              exit 1
+            fi
+            git fetch --no-tags --depth=1 origin "$COMMIT"
+            git push --force-with-lease="refs/tags/${TAG}:${OBJECT}" origin "${COMMIT}:refs/tags/${TAG}"
+          fi
+          gh api -X PATCH "repos/${GITHUB_REPOSITORY}/releases/${DRAFT}" \
+            -F draft=false -f make_latest=true > /dev/null
+          echo "- **Release:** ${TAG} published, now that CI has passed at it" >> "$GITHUB_STEP_SUMMARY"

@@ -52,11 +52,13 @@ file, span, reason) at the indentation the slice prints them with, so a
 slice of one-line call sites cannot print many times its budget in
 metadata (issue #3243). The target is special: when it
 alone exceeds the budget it is trimmed to the most leading lines that fit
-and the slice is marked `truncated`; a budget too small for even its first
-line names it in `omitted` instead. `omitted_count` counts every
-candidate that did not fit, and `omitted` names the best-ranked ten of
-them with the reason each would have been included; beside the pieces,
-the printed slice adds only those fields.
+and the slice is marked `truncated`. A budget too small for even its first
+line returns no pieces at all: the slice is marked `truncated`, names
+only the target in `omitted`, and `cgr context` exits 1. A slice never
+holds neighbours without its target. Otherwise `omitted_count` counts
+every candidate that did not fit, and `omitted` names the best-ranked ten
+of them with the reason each would have been included; beside the
+pieces, the printed slice adds only those fields.
 
 A central symbol has thousands of callers and tests, nearly all of which a
 budget leaves out. Their sources are read only for a candidate whose
