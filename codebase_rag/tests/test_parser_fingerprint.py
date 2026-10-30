@@ -189,6 +189,105 @@ class TestComputeParserFingerprint:
             f"them would not refresh the parser fingerprint: {uncovered}"
         )
 
+    # Modules the parse path imports that cannot change the nodes and edges it
+    # writes, each with the reason; anything else it reaches must be hashed.
+    _INERT_PARSE_IMPORTS = {
+        "__init__.py": "package marker; installs the tree-sitter Point fix",
+        "tree_sitter_point.py": "stops a crash in Point getters, same values",
+        "config.py": "the settings that steer parsing are hashed by value",
+        "capture.py": "the resolved capture selection is hashed by value",
+        "cli_help.py": "help text the capture module imports",
+        "logs.py": "log message templates",
+        "exceptions.py": "exception types",
+        "tool_errors.py": "error payload shapes",
+        "types_defs.py": "type declarations",
+        "models.py": "agent-facing data models",
+        "providers/base.py": "LLM provider plumbing the settings module imports",
+        "utils/provider_urls.py": "LLM provider URLs",
+        "utils/terminal_console.py": "terminal output",
+        "utils/__init__.py": "package marker",
+        "services/__init__.py": "re-exports the graph client protocol",
+        "graph_dialects.py": "graph engine syntax for queries, not parsing",
+        "graph_query.py": "reads an existing graph for the endpoint linker",
+        "cypher_queries.py": "read queries over an existing graph",
+        "dead_code.py": "a graph analysis, reached through the query module",
+        "utils/source_extraction.py": "reads snippets back for queries",
+        "embedded_graph/__init__.py": "the Rust tree bridge only changes speed",
+        "embedded_graph/constants.py": "the Rust tree bridge only changes speed",
+        "embedded_graph/extension.py": "the Rust tree bridge only changes speed",
+    }
+
+    def test_every_module_the_parse_path_imports_is_hashed_or_inert(self) -> None:
+        """Follow the rule from the other end, for every import at once.
+
+        The listed files above were found one bug at a time: a module that
+        shapes parser output but sat outside the hashed directories (the
+        node text reader, the qualified-name markers) left existing graphs
+        on stale output with no warning. Walking the parsers' and analyzers'
+        imports makes the next such module fail here until it is either
+        hashed or named inert with a reason.
+        """
+        package_root = Path(cs.__file__).resolve().parent.parent
+
+        def _covered(rel: str) -> bool:
+            return rel in cs.PARSER_FINGERPRINT_SOURCE_FILES or rel.startswith(
+                tuple(f"{d}/" for d in cs.PARSER_FINGERPRINT_SOURCE_DIRS)
+            )
+
+        def _module_file(dotted: str) -> str | None:
+            parts = dotted.split(".")
+            if parts[0] != package_root.name:
+                return None
+            base = package_root.joinpath(*parts[1:])
+            for candidate in (base.with_suffix(".py"), base / "__init__.py"):
+                if candidate.is_file():
+                    return candidate.relative_to(package_root).as_posix()
+            return None
+
+        def _imported(rel: str) -> set[str]:
+            package = [package_root.name, *rel.split("/")[:-1]]
+            names: set[str] = set()
+            for node in ast.walk(
+                ast.parse((package_root / rel).read_text(encoding=cs.ENCODING_UTF8))
+            ):
+                if isinstance(node, ast.Import):
+                    names.update(alias.name for alias in node.names)
+                elif isinstance(node, ast.ImportFrom):
+                    if node.level:
+                        base = package[: len(package) - node.level + 1]
+                        module = ".".join(
+                            [*base, *([node.module] if node.module else [])]
+                        )
+                    else:
+                        module = node.module or ""
+                    names.add(module)
+                    names.update(f"{module}.{alias.name}" for alias in node.names)
+            return {found for name in names if (found := _module_file(name))}
+
+        seen: set[str] = set()
+        pending = [
+            path.relative_to(package_root).as_posix()
+            for directory in ("parsers", "analyzers")
+            for path in (package_root / directory).rglob(cs.PY_SOURCE_GLOB)
+        ]
+        while pending:
+            rel = pending.pop()
+            if rel not in seen:
+                seen.add(rel)
+                pending.extend(_imported(rel) - seen)
+
+        unhashed = sorted(
+            rel
+            for rel in seen
+            if not _covered(rel) and rel not in self._INERT_PARSE_IMPORTS
+        )
+        assert not unhashed, (
+            "the parse path imports these modules, which the parser fingerprint "
+            f"does not hash and which are not named inert: {unhashed}"
+        )
+        stale = sorted(set(self._INERT_PARSE_IMPORTS) - seen)
+        assert not stale, f"no longer imported by the parse path: {stale}"
+
     def test_unchanged_tree_same_fingerprint(self, tmp_path: Path) -> None:
         pkg = tmp_path / "pkg"
         parsers_dir = pkg / cs.PARSER_FINGERPRINT_SOURCE_DIRS[0]

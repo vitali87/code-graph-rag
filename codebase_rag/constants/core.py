@@ -421,6 +421,18 @@ PARSER_FINGERPRINT_SOURCE_FILES: tuple[str, ...] = (
     # Decides which bytes the grammar reads for a Python source, so every name
     # in a declared-encoding file depends on it (issue #2445).
     "utils/source_encoding.py",
+    # Read the text of every node the parsers name things from.
+    "node_text.py",
+    # Build and split the qualified names the graph keys on.
+    "utils/qn_markers.py",
+    "utils/fqn_resolver.py",
+    # Decide which endpoints the endpoint pass emits.
+    "path_filters.py",
+    # Bound how deep type inference recurses, so a changed limit changes what
+    # it infers.
+    "decorators.py",
+    # Read the tsconfig and package.json files JS/TS module resolution follows.
+    "utils/json_io.py",
 )
 PY_SOURCE_GLOB = "*.py"
 # The bundled Roslyn C# frontend tool is parser code too, though .cs/.csproj
