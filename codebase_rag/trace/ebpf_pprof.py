@@ -561,28 +561,45 @@ def _report(unsymbolised: Counter[str], unmapped_paths: Counter[str]) -> None:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class FrameResolution:
+    """Which of a profile's frames count and how each reaches the repository.
+
+    ``language`` selects the symbol demangler (native runtimes) or the
+    managed-runtime frame path (Python name normalisation, JVM
+    package-derived paths), the latter reusing the language's existing
+    ingest-time frame resolver; ``path_map`` rewrites build-time path
+    prefixes to the repository prefix; ``build_id`` filters to one binary's
+    mapping.
+    """
+
+    language: str = tcs.TRACE_LANGUAGE_GO
+    path_map: list[tuple[str, str]] | None = None
+    build_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SampleLabeling:
+    """How sample labels pick samples and tag edges: ``service`` (a ``key,
+    value`` pair) filters samples, ``workload_label`` maps a sample label to
+    per-edge ``workloads``, and ``workload`` is the workload of an edge no
+    label tagged."""
+
+    service: tuple[str, str] | None = None
+    workload_label: str | None = None
+    workload: str | None = None
+
+
 def convert_ebpf_pprof(
     profile_path: Path,
     repo_root: Path,
     output: Path,
     *,
-    workload: str | None = None,
-    path_map: list[tuple[str, str]] | None = None,
-    build_id: str | None = None,
-    service: tuple[str, str] | None = None,
-    workload_label: str | None = None,
-    language: str = tcs.TRACE_LANGUAGE_GO,
+    frames: FrameResolution = FrameResolution(),
+    labels: SampleLabeling = SampleLabeling(),
 ) -> int:
-    """Convert an eBPF-profiler pprof profile to project call edges.
-
-    ``path_map`` rewrites build-time path prefixes to the repository prefix;
-    ``build_id`` filters to one binary's mapping; ``service`` (a ``key, value``
-    pair) filters samples; ``workload_label`` maps a sample label to per-edge
-    ``workloads``; ``language`` selects the symbol demangler (native runtimes)
-    or the managed-runtime frame path (Python name normalisation, JVM
-    package-derived paths), the latter reusing the language's existing
-    ingest-time frame resolver.
-    """
+    """Convert an eBPF-profiler pprof profile to project call edges."""
+    language = frames.language
     interpreted = language in _INTERPRETED_LANGUAGES
     if language not in _SUPPORTED_LANGUAGES:
         raise TraceFormatError(
@@ -604,19 +621,19 @@ def convert_ebpf_pprof(
     else:
         root_prefix = repo_root.resolve().as_posix() + "/"
         name_fn = _INTERPRETED_NAME_FNS.get(language) or _DEMANGLERS[language]
-        builder = _FrameBuilder(profile, root_prefix, path_map or [], name_fn)
+        builder = _FrameBuilder(profile, root_prefix, frames.path_map or [], name_fn)
     edges, unsymbolised = _accumulate(
         profile,
         builder,
-        build_id=build_id,
-        service=service,
-        workload_label=workload_label,
-        default_workload=workload,
+        build_id=frames.build_id,
+        service=labels.service,
+        workload_label=labels.workload_label,
+        default_workload=labels.workload,
         interpreted=interpreted,
     )
     _report(unsymbolised, builder.unmapped_paths)
 
-    fallback = (workload,) if workload else ()
+    fallback = (labels.workload,) if labels.workload else ()
     records = [
         CallRecord(
             caller=caller,

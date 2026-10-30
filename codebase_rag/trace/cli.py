@@ -197,7 +197,7 @@ def _convert_ebpf(
     commit: str | None,
 ) -> int:
     """Convert an eBPF-profiler pprof profile with re-anchoring and filtering."""
-    from .ebpf_pprof import convert_ebpf_pprof
+    from .ebpf_pprof import FrameResolution, SampleLabeling, convert_ebpf_pprof
 
     repo = _require_repo(repo_path)
     mappings = [
@@ -211,12 +211,14 @@ def _convert_ebpf(
         profile_file,
         repo_root=repo,
         output=resolved_output,
-        workload=workload,
-        path_map=mappings,
-        build_id=build_id,
-        service=service_pair,
-        workload_label=label,
-        language=language or tcs.TRACE_LANGUAGE_GO,
+        frames=FrameResolution(
+            language=language or tcs.TRACE_LANGUAGE_GO,
+            path_map=mappings,
+            build_id=build_id,
+        ),
+        labels=SampleLabeling(
+            service=service_pair, workload_label=label, workload=workload
+        ),
     )
 
 

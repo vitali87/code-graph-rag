@@ -18,6 +18,8 @@ from codebase_rag import constants as cs
 from codebase_rag import logs as ls
 from codebase_rag.trace import constants as tcs
 from codebase_rag.trace.ebpf_pprof import (
+    FrameResolution,
+    SampleLabeling,
     _prefix_matches,
     _reanchor,
     convert_ebpf_pprof,
@@ -122,20 +124,26 @@ def _profile_bytes() -> bytes:
     return strings + functions + mappings + locations + samples
 
 
-def _convert(tmp_path, **kwargs):
+def _convert(tmp_path, *, path_map=None, build_id=None, labels=SampleLabeling()):
     profile = tmp_path / "cpu.pb.gz"
     profile.write_bytes(gzip.compress(_profile_bytes()))
     output = tmp_path / "trace.jsonl"
-    path_map = [("/build/src/", tmp_path.as_posix() + "/src/")]
-    kwargs.setdefault("path_map", path_map)
-    count = convert_ebpf_pprof(profile, repo_root=tmp_path, output=output, **kwargs)
+    if path_map is None:
+        path_map = [("/build/src/", tmp_path.as_posix() + "/src/")]
+    count = convert_ebpf_pprof(
+        profile,
+        repo_root=tmp_path,
+        output=output,
+        frames=FrameResolution(path_map=path_map, build_id=build_id),
+        labels=labels,
+    )
     header, records = read_trace_file(output)
     return count, header, list(records)
 
 
 def test_reanchors_paths_and_captures_seen_through_edge(tmp_path):
     count, header, records = _convert(
-        tmp_path, build_id="abc123", workload_label="endpoint"
+        tmp_path, build_id="abc123", labels=SampleLabeling(workload_label="endpoint")
     )
 
     assert header.language == tcs.TRACE_LANGUAGE_GO
@@ -168,7 +176,9 @@ def test_unsymbolised_locations_are_counted_per_mapping(tmp_path):
 def test_service_label_filters_samples(tmp_path):
     # A non-matching service selector drops every sample, so no edges remain.
     count, _header, records = _convert(
-        tmp_path, build_id="abc123", service=("service", "billing")
+        tmp_path,
+        build_id="abc123",
+        labels=SampleLabeling(service=("service", "billing")),
     )
     assert count == 0
     assert records == []
@@ -190,7 +200,7 @@ def test_unmapped_build_paths_are_reported_not_resolved(tmp_path):
 
 def test_workload_falls_back_to_cli_value_without_a_label(tmp_path):
     _count, _header, records = _convert(
-        tmp_path, build_id="abc123", workload="prod-overlay"
+        tmp_path, build_id="abc123", labels=SampleLabeling(workload="prod-overlay")
     )
     assert records
     for record in records:
@@ -205,7 +215,7 @@ def test_unsupported_language_is_rejected(tmp_path):
             profile,
             repo_root=tmp_path,
             output=tmp_path / "out.jsonl",
-            language="cobol",
+            frames=FrameResolution(language="cobol"),
         )
 
 
@@ -365,7 +375,9 @@ def test_reanchored_path_cannot_escape_the_repository(tmp_path):
             profile,
             repo_root=tmp_path,
             output=output,
-            path_map=[("/build/src/", tmp_path.as_posix() + "/src/")],
+            frames=FrameResolution(
+                path_map=[("/build/src/", tmp_path.as_posix() + "/src/")]
+            ),
         )
     finally:
         logger.remove(sink_id)
@@ -635,15 +647,19 @@ def _py_profile_bytes(src_abs: str) -> bytes:
     return table + functions + mappings + locations + samples
 
 
-def _py_convert(tmp_path, **kwargs):
+def _py_convert(tmp_path, build_id=None):
     src = tmp_path / "app" / "service.py"
     src.parent.mkdir(parents=True, exist_ok=True)
     src.write_text("x = 1\n", encoding="utf-8")
     profile = tmp_path / "py.pb.gz"
     profile.write_bytes(gzip.compress(_py_profile_bytes(src.as_posix())))
     output = tmp_path / "trace.jsonl"
-    kwargs.setdefault("language", tcs.TRACE_LANGUAGE_PYTHON)
-    count = convert_ebpf_pprof(profile, repo_root=tmp_path, output=output, **kwargs)
+    count = convert_ebpf_pprof(
+        profile,
+        repo_root=tmp_path,
+        output=output,
+        frames=FrameResolution(language=tcs.TRACE_LANGUAGE_PYTHON, build_id=build_id),
+    )
     header, records = read_trace_file(output)
     return count, header, list(records), output
 
@@ -831,15 +847,19 @@ def _jvm_profile_bytes() -> bytes:
     return table + functions + mappings + locations + samples
 
 
-def _jvm_convert(tmp_path, **kwargs):
+def _jvm_convert(tmp_path):
     src = tmp_path / "src" / "main" / "java" / "workload" / "Service.java"
     src.parent.mkdir(parents=True, exist_ok=True)
     src.write_text("class Service {}\n", encoding="utf-8")
     profile = tmp_path / "jvm.pb.gz"
     profile.write_bytes(gzip.compress(_jvm_profile_bytes()))
     output = tmp_path / "trace.jsonl"
-    kwargs.setdefault("language", tcs.TRACE_LANGUAGE_JVM)
-    count = convert_ebpf_pprof(profile, repo_root=tmp_path, output=output, **kwargs)
+    count = convert_ebpf_pprof(
+        profile,
+        repo_root=tmp_path,
+        output=output,
+        frames=FrameResolution(language=tcs.TRACE_LANGUAGE_JVM),
+    )
     header, records = read_trace_file(output)
     return count, header, list(records), output
 
@@ -919,7 +939,7 @@ def test_jvm_scala_frames_attribute_to_the_scala_file(tmp_path):
         profile,
         repo_root=tmp_path,
         output=output,
-        language=tcs.TRACE_LANGUAGE_JVM,
+        frames=FrameResolution(language=tcs.TRACE_LANGUAGE_JVM),
     )
     _header, records = read_trace_file(output)
     materialized = list(records)
@@ -952,7 +972,7 @@ def test_jvm_stem_matching_both_java_and_scala_is_ambiguous(tmp_path):
             profile,
             repo_root=tmp_path,
             output=output,
-            language=tcs.TRACE_LANGUAGE_JVM,
+            frames=FrameResolution(language=tcs.TRACE_LANGUAGE_JVM),
         )
     finally:
         logger.remove(sink)
