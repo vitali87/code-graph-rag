@@ -2551,6 +2551,23 @@ def _js_this(root: Node, this: Node) -> str | None:
     return cs.DELTA_RECEIVER_CLASS if names_class else cs.DELTA_RECEIVER_INSTANCE
 
 
+def _constructs(call: Node, class_name: str) -> bool:
+    # `Cart()` builds an instance of the class it names.
+    return _node_text(call.child_by_field_name(cs.FIELD_FUNCTION)) == class_name
+
+
+def _python_local(name: Node, class_name: str) -> str | None:
+    # `c = Cart()` then `c.tax(3)`: a name its def binds once, from the
+    # class's own construction, holds an instance wherever it is read (PR
+    # #3311 review). The parsers package is deferred, as for `_js_this`.
+    from .parsers.py.ast_analyzer import sole_bound_call
+
+    call = sole_bound_call(name)
+    if call is not None and _constructs(call, class_name):
+        return cs.DELTA_RECEIVER_INSTANCE
+    return None
+
+
 def _receiver(
     access: Node,
     root: Node,
@@ -2574,7 +2591,7 @@ def _receiver(
             return {
                 cs.PY_KEYWORD_SELF: cs.DELTA_RECEIVER_INSTANCE,
                 cs.PY_KEYWORD_CLS: cs.DELTA_RECEIVER_CLASS,
-            }.get(text)
+            }.get(text) or _python_local(target, class_name)
         return None
     if target.type == cs.TS_THIS:
         if language in cs.JS_TS_LANGUAGES:
@@ -2582,10 +2599,8 @@ def _receiver(
         return _own_receiver(caller)
     if target.type in _CONSTRUCTION_TYPES:
         return cs.DELTA_RECEIVER_INSTANCE
-    if target.type == cs.TS_PY_CALL:
-        # `Cart()` builds an instance of the class it names.
-        if _node_text(target.child_by_field_name(cs.FIELD_FUNCTION)) == class_name:
-            return cs.DELTA_RECEIVER_INSTANCE
+    if target.type == cs.TS_PY_CALL and _constructs(target, class_name):
+        return cs.DELTA_RECEIVER_INSTANCE
     return None
 
 

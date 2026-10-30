@@ -201,9 +201,12 @@ Each call site is read back from the caller's source at its recorded
 position: whether it calls the member, and what it calls it through. An
 instance is `Cart()`, `new Cart()`, Python's `self` or `this` in an instance
 method; the class is its own name, Python's `cls`, or `this` in a static
-method (and a Java call with no receiver there). A variable, a parameter or
-a factory's result may hold either, so a site written through one is
-`unknown`. JavaScript and TypeScript `this` is read from where it is
+method (and a Java call with no receiver there). A Python name its function
+binds once, by `c = Cart()` (annotated or not), is an instance too: it is
+not a parameter, no `global` or `nonlocal` declares it, and no lambda or
+comprehension around the call binds it for itself. Any other variable, a
+parameter or a factory's result may hold either, so a site written through
+one is `unknown`. JavaScript and TypeScript `this` is read from where it is
 written: an arrow takes the `this` around it, so one in a static field or
 method names the class, and a plain function's own `this` is `unknown`.
 Java's `this` is read from the caller's definition, also in a file the
@@ -221,10 +224,10 @@ member there.
 | `reads_method`   | A read of what was a property or getter and is now a method: it yields the method instead of the value, which TypeScript rejects where a value is expected (TS2322). |
 | `needs_instance` | A call through the class of what is now an instance method (`Cart.tax(3)`): TypeScript rejects it (TS2339), JavaScript finds no such member, Java rejects a non-static method from a static context. |
 | `needs_class`    | A call through an instance of what is now static, in JavaScript and TypeScript (TS2576). Java allows it, so it reads `ok` there. |
-| `rebound`        | A Python call whose receiver is bound where it was not, or no longer bound where it was: `Cart().tax(3)` once `@staticmethod` is gone passes the instance as `x`, and `Cart.make()` once `@classmethod` is gone passes nothing for `cls`. A call through the class of a plain method binds nothing, so `Cart.tax(3)` reads `ok`, and a refactor that drops `self` as it adds `@staticmethod` keeps what each argument fills. |
+| `rebound`        | A Python call whose receiver is bound where it was not, or no longer bound where it was: `Cart().tax(3)`, or `c.tax(3)` after `c = Cart()`, once `@staticmethod` is gone passes the instance as `x`, and `Cart.make()` once `@classmethod` is gone passes nothing for `cls`. A call through the class of a plain method binds nothing, so `Cart.tax(3)` reads `ok`, and a refactor that drops `self` as it adds `@staticmethod` keeps what each argument fills. |
 | `inaccessible`   | A caller outside the class of a member made `private`: in TypeScript any caller outside the class body, in Java a caller in another file. |
 | `ok`             | The call is written the way the new convention takes it. |
-| `unknown`        | The call's form cannot be read (a receiver held in a variable, a method handed on as a value, two calls of the same name starting where the site does), the parameters moved as well (`signature_changes` judges the count), a member was made `protected` (a subclass keeps it) or Java-`private` with the caller in the same file (a nested class keeps it), or the edge was bound by name alone. |
+| `unknown`        | The call's form cannot be read (a receiver held in a variable other than one bound once from the class, a method handed on as a value, two calls of the same name starting where the site does), the parameters moved as well (`signature_changes` judges the count), a member was made `protected` (a subclass keeps it) or Java-`private` with the caller in the same file (a nested class keeps it), or the edge was bound by name alone. |
 
 Every verdict but `ok` and `unknown` is a finding and trips
 `--fail-on-found`. A Java member with no visibility modifier is

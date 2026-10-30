@@ -561,6 +561,150 @@ def test_a_receiver_the_call_does_not_show_is_no_finding(temp_repo: Path) -> Non
     assert not has_findings(held_only)
 
 
+def test_a_local_bound_once_from_the_class_is_rebound(temp_repo: Path) -> None:
+    # `c = Cart()` is how Python code usually holds an instance: a name its
+    # function binds once, from the class itself, holds one wherever it is
+    # read, so `c.tax(3)` binds it as `Cart().tax(3)` does (PR #3311 review).
+    shop = (
+        "from cart import Cart\n\n\n"
+        "def via_local():\n    c = Cart()\n    return c.tax(3)\n\n\n"
+        "def via_annotated():\n    c: Cart = Cart()\n    return c.tax(3)\n"
+    )
+    edited = CART_PY.replace("    @staticmethod\n", "")
+
+    delta = _edit(temp_repo, {"cart.py": CART_PY, "shop.py": shop}, "cart.py", edited)
+
+    assert _verdicts(delta, "tax") == {
+        "via_local": cs.DELTA_CONVENTION_REBOUND,
+        "via_annotated": cs.DELTA_CONVENTION_REBOUND,
+    }
+    assert has_findings(delta)
+    for error in _python(temp_repo, "via_local", "via_annotated"):
+        assert "takes 1 positional argument but 2 were given" in error
+
+
+LOCALS_PY = """from cart import Cart
+
+
+def factory():
+    return Cart
+
+
+def local():
+    c = Cart()
+    return c.tax(1)
+
+
+def annotated():
+    c: Cart = Cart()
+    return c.tax(2)
+
+
+def rebound(flag):
+    c = factory()
+    if flag:
+        c = Cart()
+    return c.tax(3)
+
+
+def of_factory():
+    c = factory()
+    return c.tax(4)
+
+
+def unpacked():
+    c, d = Cart(), Cart()
+    return c.tax(5)
+
+
+def iterated():
+    for c in Cart():
+        return c.tax(6)
+
+
+def in_a_lambda():
+    c = Cart()
+    return (lambda c: c.tax(7))(factory())
+
+
+def swapped_by_nonlocal():
+    c = Cart()
+
+    def swap():
+        nonlocal c
+        c = factory()
+
+    swap()
+    return c.tax(8)
+
+
+def unbound_here():
+    return c.tax(9)
+
+
+def param_reassigned(c):
+    if c is None:
+        c = Cart()
+    return c.tax(10)
+
+
+m = Cart()
+HELD = m.tax(11)
+"""
+
+
+def _local_receiver(root: Path, call: str) -> str | None:
+    # The receiver read at `call`'s `tax`, wherever LOCALS_PY writes it.
+    (root / "shop.py").write_text(LOCALS_PY, encoding="utf-8")
+    tax = _method("tax", "cart.py", ("x",))
+    empty = Snapshot(frozenset(), {}, {}, (), {}, {})
+    ((line, text),) = [
+        (n, text) for n, text in enumerate(LOCALS_PY.splitlines(), 1) if call in text
+    ]
+    site = _call("shop.py", line, text.index(call), tax)
+
+    read = _site_form(_SourceTrees(root), site, tax, empty)
+
+    assert read is not None
+    assert read.called
+    return read.receiver
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        pytest.param("tax(1)", id="bound-once"),
+        pytest.param("tax(2)", id="annotated"),
+    ],
+)
+def test_a_local_bound_once_from_the_class_is_an_instance(
+    temp_repo: Path, call: str
+) -> None:
+    assert _local_receiver(temp_repo, call) == cs.DELTA_RECEIVER_INSTANCE
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        # A branch that may rebind it, a factory's result, an unpacking, a
+        # loop over an instance, the lambda's own parameter, a nested def's
+        # `nonlocal` rebinding, a name the function does not bind, a
+        # parameter it rebinds, and a module's global may each hold anything.
+        pytest.param("tax(3)", id="rebound-in-a-branch"),
+        pytest.param("tax(4)", id="factory"),
+        pytest.param("tax(5)", id="unpacked"),
+        pytest.param("tax(6)", id="loop-target"),
+        pytest.param("tax(7)", id="lambda-parameter"),
+        pytest.param("tax(8)", id="nonlocal"),
+        pytest.param("tax(9)", id="not-bound-here"),
+        pytest.param("tax(10)", id="parameter"),
+        pytest.param("tax(11)", id="module-global"),
+    ],
+)
+def test_a_local_held_any_other_way_is_not_read(temp_repo: Path, call: str) -> None:
+    assert _local_receiver(temp_repo, call) is None
+
+
 def test_a_graph_that_recorded_no_decorators_is_not_compared(
     temp_repo: Path,
 ) -> None:
