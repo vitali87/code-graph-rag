@@ -3,6 +3,7 @@ from __future__ import annotations
 from enum import StrEnum
 
 from codebase_rag.constants import MCPToolName
+from codebase_rag.types_defs import MCPInstructionHint
 
 
 class AgenticToolName(StrEnum):
@@ -147,15 +148,21 @@ MCP_DELETE_PROJECT = (
     "Use list_projects first to see available projects."
 )
 
+# Each description opens with what the tool does, not a warning or a list of
+# other tools: a client that defers tools behind a search matches the agent's
+# keywords against this text and shows it as the result, and an opening that
+# names other tools makes this one turn up in their searches.
 MCP_WIPE_DATABASE = (
-    "WARNING: Completely wipe the entire database, removing ALL indexed projects. "
-    "This cannot be undone. Use delete_project for removing individual projects."
+    "Wipe the entire graph database, removing ALL indexed projects. "
+    "WARNING: this cannot be undone. Use delete_project for removing "
+    "individual projects."
 )
 
 MCP_INDEX_REPOSITORY = (
-    "WARNING: Clears all data for the current project including its embeddings. "
-    "Parse and ingest the repository into the Memgraph knowledge graph. "
-    "Use update_repository for incremental updates. Only use when explicitly requested."
+    "Index the repository: parse it and ingest it into the Memgraph knowledge "
+    "graph. WARNING: clears all data for the current project first, including "
+    "its embeddings. Use update_repository for incremental updates. Only use "
+    "when explicitly requested."
 )
 
 MCP_UPDATE_REPOSITORY = (
@@ -389,13 +396,13 @@ MCP_PARAM_MAPPING = (
 )
 
 MCP_QUERY_CODE_GRAPH = (
-    "Prefer the deterministic tools (resolve, definition, callers, callees, "
-    "implementors, overrides, importers, tests_reaching) when you know the "
-    "exact name or location: they run fixed queries with no LLM. Use this for "
-    "open-ended questions. "
-    "Query the codebase knowledge graph using natural language. "
+    "Query the codebase knowledge graph using natural language, for "
+    "open-ended questions; an LLM writes the graph query. "
     "Ask questions like 'What functions call UserService.create_user?' or "
     "'Show me all classes that implement the Repository interface'. "
+    "Prefer the deterministic tools (resolve, definition, callers, callees, "
+    "implementors, overrides, importers, tests_reaching) when you know the "
+    "exact name or location: they run fixed queries with no LLM. "
     "Pass `project` to restrict results to one indexed project; use "
     "list_projects for the available names. Omit it to search them all. "
     "The scope is enforced on the results before they are capped, so it "
@@ -405,7 +412,9 @@ MCP_QUERY_CODE_GRAPH = (
 
 MCP_GET_CODE_SNIPPET = (
     "Retrieve source code for a function, class, or method by its qualified name. "
-    "Returns the source code, file path, line numbers, and docstring."
+    "Returns the source code, file path, line numbers, and docstring. "
+    "`definition` returns the same and also the decorators and the line of "
+    "the `def`/`class`."
 )
 
 _MCP_DELTA_NOTE = (
@@ -425,14 +434,21 @@ MCP_SURGICAL_REPLACE_CODE = (
 )
 
 MCP_READ_FILE = (
-    "Read the contents of a file from the project. Supports pagination for large files."
+    "Read the text of a file from the project, by its path relative to the "
+    "project root. `offset` (0-based line) and `limit` page through large "
+    "files. Files that look like credentials (`.env`, private keys) are "
+    "refused unless the server allows sensitive reads."
 )
 
 MCP_WRITE_FILE = (
     "Write content to a file, creating it if it doesn't exist." + _MCP_DELTA_NOTE
 )
 
-MCP_LIST_DIRECTORY = "List contents of a directory in the project."
+MCP_LIST_DIRECTORY = (
+    "List the files and subdirectories of a directory in the project, sorted "
+    "by name, one per line. The path is relative to the project root "
+    "(default: the root)."
+)
 
 MCP_SEMANTIC_SEARCH = (
     "Performs a semantic search for functions based on a natural language query "
@@ -604,6 +620,106 @@ MCP_PARAM_PATH_PREFIX_MAP = (
     '{"/usr/lib/python3.12/site-packages": "src"}. Needed only when the '
     "root cannot be inferred from the frame paths, such as an installed "
     "copy of the package"
+)
+
+# The server's MCP `instructions`. A client that defers tools behind a search
+# shows its agent only their names, and nothing in `callers` or `context` says
+# to reach for them instead of grep; this text does. It rides in every
+# session's context, so it stays short.
+MCP_SERVER_INSTRUCTIONS = (
+    "code-graph-rag holds a knowledge graph of the indexed code, built by "
+    "parsing it: functions, methods, classes and modules, and the calls, "
+    "imports and inheritance between them. For questions about how code "
+    "connects (who calls a function, what a change breaks, which tests cover "
+    "it, where logic is duplicated) use these tools rather than grep and "
+    "reading whole files: the graph follows the call and import edges that a "
+    "text search misses or over-matches."
+)
+MCP_SERVER_INSTRUCTIONS_BULLET = "\n- "
+MCP_SERVER_INSTRUCTION_HINTS = (
+    MCPInstructionHint(
+        (MCPToolName.RESOLVE,),
+        "`resolve` turns a bare name or `path:line` into qualified names; "
+        "most tools take a qualified name.",
+    ),
+    MCPInstructionHint(
+        (
+            MCPToolName.CALLERS,
+            MCPToolName.CALLEES,
+            MCPToolName.IMPLEMENTORS,
+            MCPToolName.OVERRIDES,
+            MCPToolName.IMPORTERS,
+            MCPToolName.TESTS_REACHING,
+        ),
+        "Relationships, as fixed queries with no LLM: `callers`, `callees`, "
+        "`implementors`, `overrides`, `importers`, and `tests_reaching` for "
+        "the tests that reach a symbol.",
+    ),
+    MCPInstructionHint(
+        (MCPToolName.DEFINITION, MCPToolName.CONTEXT),
+        "Reading code: `definition` gives one definition's source and "
+        "location; `context` gives a task a ranked slice (source, callers, "
+        "callees, tests) within a token budget.",
+    ),
+    # One line per search tool: two of them need an extra installed, and a
+    # line is sent only when all its tools are listed.
+    MCPInstructionHint(
+        (MCPToolName.FIND_DUPLICATE_CODE,),
+        "`find_duplicate_code` finds copy-pasted functions.",
+    ),
+    MCPInstructionHint(
+        (MCPToolName.STRUCTURAL_SEARCH,),
+        "`structural_search` finds code by AST pattern rather than text.",
+    ),
+    MCPInstructionHint(
+        (MCPToolName.SEMANTIC_SEARCH,),
+        "`semantic_search` finds functions by what they do, from a plain description.",
+    ),
+    MCPInstructionHint(
+        (
+            MCPToolName.ENDPOINTS,
+            MCPToolName.ENDPOINT_CALLERS,
+            MCPToolName.REMOTE_DEPENDENCIES,
+        ),
+        "Across services: `endpoints` a project exposes, `endpoint_callers` "
+        "that reach one, and a project's `remote_dependencies`.",
+    ),
+    MCPInstructionHint(
+        (
+            MCPToolName.EXPLAIN_TRACEBACK,
+            MCPToolName.RANK_ROOT_CAUSES,
+            MCPToolName.FLOW_VERDICT,
+        ),
+        "Debugging: `explain_traceback` and `rank_root_causes` map a Python "
+        "traceback onto the graph; `flow_verdict` says whether data flows "
+        "from a source to a sink.",
+    ),
+    MCPInstructionHint(
+        (MCPToolName.QUERY_CODE_GRAPH,),
+        "`query_code_graph` takes an open-ended question in plain English "
+        "(an LLM writes the query); prefer the tools above when you know the "
+        "name.",
+    ),
+    MCPInstructionHint(
+        (MCPToolName.RENAME, MCPToolName.CHANGE_SIGNATURE),
+        "Refactoring: `rename` and `change_signature` rewrite every reference "
+        "and call site the graph knows.",
+    ),
+    MCPInstructionHint(
+        (MCPToolName.REINGEST,),
+        "After editing files outside this server, pass their paths to "
+        "`reingest` so the graph matches the code.",
+    ),
+    MCPInstructionHint(
+        (MCPToolName.ANNOTATE, MCPToolName.GLOSSES),
+        "`annotate` files a note on a definition for later sessions; "
+        "`glosses` reads them back.",
+    ),
+    MCPInstructionHint(
+        (MCPToolName.LIST_PROJECTS,),
+        "`list_projects` names the indexed projects; pass one as `project` "
+        "where a tool takes it.",
+    ),
 )
 
 MCP_TOOLS: dict[MCPToolName, str] = {

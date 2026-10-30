@@ -215,7 +215,10 @@ def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngesto
             return _create_error_content(error_msg)
 
     server = Server(
-        cs.MCP_SERVER_NAME, on_list_tools=list_tools, on_call_tool=call_tool
+        cs.MCP_SERVER_NAME,
+        instructions=tools.server_instructions(),
+        on_list_tools=list_tools,
+        on_call_tool=call_tool,
     )
     return server, ingestor
 

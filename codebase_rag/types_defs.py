@@ -27,6 +27,7 @@ from .constants import (
     DUPLICATES_MAX_CANDIDATE_PAIRS,
     DUPLICATES_MAX_SIMILAR_GROUPS,
     AuditCheck,
+    MCPToolName,
     NodeLabel,
     RelationshipType,
     SupportedLanguage,
@@ -910,6 +911,14 @@ class MCPToolSchema(NamedTuple):
     name: str
     description: str
     inputSchema: MCPInputSchema
+
+
+class MCPInstructionHint(NamedTuple):
+    """One line of the server's `instructions`, sent only when every tool it
+    names is listed."""
+
+    tools: tuple[MCPToolName, ...]
+    text: str
 
 
 class QueryResultDict(TypedDict, total=False):

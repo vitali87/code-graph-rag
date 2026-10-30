@@ -4028,6 +4028,17 @@ class MCPToolsRegistry:
         mode only those that never write (issue #3458)."""
         return not settings.MCP_READ_ONLY or name in cs.MCP_READ_ONLY_TOOLS
 
+    def server_instructions(self) -> str:
+        """The server's MCP `instructions`, naming only the tools it lists:
+        a read-only server, or one missing an optional extra, must not point
+        an agent at a tool it cannot call."""
+        listed = {schema.name for schema in self.get_tool_schemas()}
+        return td.MCP_SERVER_INSTRUCTIONS + "".join(
+            td.MCP_SERVER_INSTRUCTIONS_BULLET + hint.text
+            for hint in td.MCP_SERVER_INSTRUCTION_HINTS
+            if listed.issuperset(hint.tools)
+        )
+
     def get_tool_handler(self, name: str) -> tuple[MCPHandlerType, bool] | None:
         metadata = self._tools.get(name)
         return None if metadata is None else (metadata.handler, metadata.returns_json)
