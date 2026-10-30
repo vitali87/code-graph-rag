@@ -823,7 +823,7 @@ class TestResolveJavaMethodCall:
 
         local_var_types = {"obj": "MyClass"}
 
-        result = resolver.resolve_java_method_call(
+        result = resolver.java.resolve_java_method_call(
             call_node,
             "com.example.App",
             local_var_types,
@@ -851,7 +851,7 @@ class TestResolveJavaMethodCall:
         tree = parser.parse(java_code)
         call_node = tree.root_node.children[0].children[0]
 
-        result = resolver.resolve_java_method_call(
+        result = resolver.java.resolve_java_method_call(
             call_node,
             "com.example.App",
             {},

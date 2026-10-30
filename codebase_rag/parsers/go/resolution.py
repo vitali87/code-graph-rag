@@ -5,7 +5,9 @@ reaches in the builds that compile the caller.
 
 `CallResolver` owns what every language shares (the order the stages run in,
 the resolution cache and the verdict each answer carries, the simple-name
-fallback) and hands Go's part to the `GoResolver` it builds."""
+fallback) and hands Go's part to the `GoResolver` it builds, which also
+bridges the call pass to the go/types answer the Go engine
+(`GoTypeInferenceEngine`) holds for a call site."""
 
 from __future__ import annotations
 
@@ -14,6 +16,7 @@ from pathlib import Path, PurePath
 from typing import TYPE_CHECKING, Protocol
 
 from loguru import logger
+from tree_sitter import Node
 
 from ... import constants as cs
 from ... import logs as ls
@@ -576,3 +579,12 @@ class GoResolver:
             ):
                 return found
         return None
+
+    def resolve_go_call_site(
+        self,
+        call_node: Node,
+        module_qn: str,
+    ) -> tuple[str, str] | None:
+        return self.type_inference.go_type_inference.resolve_go_call_site(
+            call_node, module_qn
+        )

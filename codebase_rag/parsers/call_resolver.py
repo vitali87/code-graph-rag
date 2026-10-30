@@ -124,6 +124,7 @@ class CallResolver:
         "python",
         "php",
         "dart",
+        "java",
     )
 
     def __init__(
@@ -212,6 +213,9 @@ class CallResolver:
         )
         self.dart = DartResolver(
             self, function_registry, import_processor, type_inference, facts
+        )
+        self.java = java_resolution.JavaResolver(
+            self, function_registry, type_inference
         )
 
     def record_ctor_params(self, class_qn: str, params: tuple[str, ...]) -> None:
@@ -398,10 +402,7 @@ class CallResolver:
         # just to clear an empty dict.
         if (csharp := self.type_inference._csharp_type_inference) is not None:
             csharp._call_memo.clear()
-        # The Java class headers (issue #2470) were read off the trees the
-        # last pass saw; a re-parsed superclass must be walked again.
-        if (java := self.type_inference._java_type_inference) is not None:
-            java.reset_resolution_memos()
+        self.java.reset_resolution_memos()
 
     def resolve_function_call(
         self,
@@ -922,11 +923,6 @@ class CallResolver:
         # `__init__`, so a class here is a duplicate the schema rejects outright
         # (issue #1650).
         return {target for target in targets if target[0] != cs.NodeLabel.CLASS.value}
-
-    def java_constructor_targets(self, class_qn: str) -> set[tuple[str, str]]:
-        return java_resolution.java_constructor_targets(
-            self.function_registry, class_qn
-        )
 
     def _interface_impl_map(self) -> dict[str, str]:
         # Map an interface to its SOLE first-party implementer. A call typed to an
@@ -3667,33 +3663,6 @@ class CallResolver:
         # the caller cannot depend on; search again among those it can.
         return self.rust.rust_reachable_type(class_name, module_qn)
 
-    def resolve_java_method_call(
-        self,
-        call_node: Node,
-        module_qn: str,
-        local_var_types: dict[str, str] | None,
-        caller_qn: str | None = None,
-    ) -> tuple[str, str] | None:
-        java_engine = self.type_inference.java_type_inference
-
-        result = self.python.redirect_protocol_method(
-            java_engine.resolve_java_method_call(
-                call_node, local_var_types, module_qn, caller_qn
-            )
-        )
-
-        if result:
-            call_text = (
-                call_node.text.decode(cs.ENCODING_UTF8)
-                if call_node.text
-                else cs.TEXT_UNKNOWN
-            )
-            logger.debug(
-                ls.CALL_JAVA_RESOLVED, call_text=call_text, method_qn=result[1]
-            )
-
-        return result
-
     def resolve_csharp_method_call(
         self,
         call_node: Node,
@@ -3703,22 +3672,4 @@ class CallResolver:
     ) -> tuple[str, str] | None:
         return self.type_inference.csharp_type_inference.resolve_csharp_method_call(
             call_node, local_var_types, module_qn, caller_qn
-        )
-
-    def resolve_go_call_site(
-        self,
-        call_node: Node,
-        module_qn: str,
-    ) -> tuple[str, str] | None:
-        return self.type_inference.go_type_inference.resolve_go_call_site(
-            call_node, module_qn
-        )
-
-    def resolve_java_call_site(
-        self,
-        call_node: Node,
-        module_qn: str,
-    ) -> tuple[str, str] | None:
-        return self.type_inference.java_type_inference.resolve_java_call_site(
-            call_node, module_qn
         )

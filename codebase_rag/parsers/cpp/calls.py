@@ -717,7 +717,7 @@ class CppCallResolution:
                 # ancestors stay in the walk via the closure.
                 continue
             self._emit_lifecycle_targets(
-                caller_spec, self._resolver.java_constructor_targets(base_qn)
+                caller_spec, self._resolver.java.java_constructor_targets(base_qn)
             )
 
     def _registered_ancestors(self, class_qn: str) -> list[str]:
@@ -834,7 +834,7 @@ class CppCallResolution:
             variant_type = registry.get(class_variant)
             if variant_type is not None and variant_type != cs.NodeLabel.CLASS:
                 continue
-            targets = self._resolver.java_constructor_targets(
+            targets = self._resolver.java.java_constructor_targets(
                 class_variant
             ) | self._resolver.cpp.cpp_destructor_targets(class_variant)
             for target_type, target_qn in sorted(targets):

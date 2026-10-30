@@ -85,11 +85,13 @@ class JavaCallResolution:
         # its proof that the call leaves the repo, so no first-party
         # edge is fabricated. Any miss (incl. the frontend being off, so
         # both fact maps are empty) falls back to today's Java resolver.
-        callee_info = self._resolver.resolve_java_call_site(call_node, ctx.module_qn)
+        callee_info = self._resolver.java.resolve_java_call_site(
+            call_node, ctx.module_qn
+        )
         if callee_info == JAVA_EXTERNAL_TARGET:
             callee_info = None
         elif callee_info is None:
-            callee_info = self._resolver.resolve_java_method_call(
+            callee_info = self._resolver.java.resolve_java_method_call(
                 call_node, ctx.module_qn, ctx.local_var_types, ctx.caller_qn
             )
             if callee_info is not None:

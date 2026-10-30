@@ -450,7 +450,7 @@ class GoCallResolution:
         # module and suppresses trie fabrication. Any miss (incl. the
         # frontend being off, so both fact maps are empty) falls back to
         # today's Go resolver with call_point preserved.
-        callee_info = self._resolver.resolve_go_call_site(call_node, module_qn)
+        callee_info = self._resolver.go.resolve_go_call_site(call_node, module_qn)
         if callee_info == GO_EXTERNAL_TARGET:
             callee_info = None
         elif (

@@ -3921,7 +3921,7 @@ class CallProcessor:
         ctor_edges = [
             (ctor_type, variant)
             for ctor_type, ctor_qn in sorted(
-                self._resolver.java_constructor_targets(callee_qn)
+                self._resolver.java.java_constructor_targets(callee_qn)
             )
             for variant in self._resolver.function_registry.variants(ctor_qn)
         ]
@@ -3963,7 +3963,7 @@ class CallProcessor:
             if self._resolver.function_registry.get(class_variant)
             in (None, cs.NodeLabel.CLASS)
             for ctor_type, ctor_qn in sorted(
-                self._resolver.java_constructor_targets(class_variant)
+                self._resolver.java.java_constructor_targets(class_variant)
             )
             for variant in self._resolver.function_registry.variants(ctor_qn)
         ]
