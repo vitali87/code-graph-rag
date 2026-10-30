@@ -1129,7 +1129,10 @@ class TestGoRpcTypedClientEvidence:
         # participating root id.
         from codebase_rag.capture import resolve_capture
         from codebase_rag.parser_loader import load_parsers
-        from codebase_rag.parsers.io_access.processor import IOAccessProcessor
+        from codebase_rag.parsers.io_access.processor import (
+            IOAccessProcessor,
+            PackageFileLookups,
+        )
 
         parsers, _ = load_parsers()
         caller_src = (
@@ -1169,8 +1172,10 @@ class TestGoRpcTypedClientEvidence:
             MagicMock(),
             import_processor,
             selection=resolve_capture([cs.CaptureGroup.IO.value]),
-            module_paths={"proj.svc.service": decl_path},
-            ast_cache=cache,  # type: ignore[arg-type]
+            package_files=PackageFileLookups(
+                module_paths={"proj.svc.service": decl_path},
+                ast_cache=cache,  # type: ignore[arg-type]
+            ),
         )
         caller_fn = next(
             c
@@ -1314,7 +1319,10 @@ class TestGoRpcTypedClientEvidence:
         # would place it in a phantom package. Directory grouping keeps it.
         from codebase_rag.capture import resolve_capture
         from codebase_rag.parser_loader import load_parsers
-        from codebase_rag.parsers.io_access.processor import IOAccessProcessor
+        from codebase_rag.parsers.io_access.processor import (
+            IOAccessProcessor,
+            PackageFileLookups,
+        )
 
         parsers, _ = load_parsers()
         decl_src = (
@@ -1352,11 +1360,13 @@ class TestGoRpcTypedClientEvidence:
             MagicMock(),
             import_processor,
             selection=resolve_capture([cs.CaptureGroup.IO.value]),
-            module_paths={
-                "proj.svc.service.go": decl_path,
-                "proj.svc.create": tmp_path / "svc" / "create.go",
-            },
-            ast_cache=_FakeCache(),  # type: ignore[arg-type]
+            package_files=PackageFileLookups(
+                module_paths={
+                    "proj.svc.service.go": decl_path,
+                    "proj.svc.create": tmp_path / "svc" / "create.go",
+                },
+                ast_cache=_FakeCache(),  # type: ignore[arg-type]
+            ),
         )
         caller_fn = next(
             c

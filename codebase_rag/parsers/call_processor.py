@@ -70,6 +70,7 @@ from .go import calls as go_calls
 from .go.link_state import GoLinkState
 from .import_processor import ImportProcessor
 from .io_access import IOAccessProcessor
+from .io_access.processor import PackageFileLookups
 from .java import calls as java_calls
 from .js_ts import calls as js_calls
 from .julia import calls as julia_calls
@@ -262,9 +263,11 @@ class CallProcessor:
             ingestor,
             import_processor,
             selection=selection,
-            module_paths=self.module_qn_to_file_path,
-            ast_cache=ast_cache,
-            go_package_names=self.facts.go_package_names,
+            package_files=PackageFileLookups(
+                module_paths=self.module_qn_to_file_path,
+                ast_cache=ast_cache,
+                go_package_names=self.facts.go_package_names,
+            ),
             project_name=project_name,
         )
         self._dispatch_registry = DispatchRegistryProcessor(

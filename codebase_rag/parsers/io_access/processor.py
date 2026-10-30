@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterator, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import NamedTuple
 
@@ -327,6 +328,23 @@ def _lean_handles_for(language: cs.SupportedLanguage) -> _LeanHandles | None:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class PackageFileLookups:
+    """The sibling-file lookups the package-level field map reads: Go splits
+    a struct declaration and its method files across one directory.
+
+    `module_paths` maps a module qn to its file and `ast_cache` holds the
+    parsed trees of those files. `go_package_names` maps a Go module qn to its
+    `package` clause; membership is (directory, clause), so an external
+    `package svc_test` file shares a directory with `package svc` production
+    files without sharing their fields. The mappings are shared with the
+    run, not copied, so files parsed later are seen."""
+
+    module_paths: Mapping[str, Path] | None = None
+    ast_cache: ASTCacheProtocol | None = None
+    go_package_names: Mapping[str, str] | None = None
+
+
 class IOAccessProcessor:
     """Detects I/O reads/writes in a function body and emits READS_FROM /
     WRITES_TO edges to synthetic Resource nodes."""
@@ -337,9 +355,7 @@ class IOAccessProcessor:
         import_processor: ImportProcessor,
         *,
         selection: CaptureSelection,
-        module_paths: Mapping[str, Path] | None = None,
-        ast_cache: ASTCacheProtocol | None = None,
-        go_package_names: Mapping[str, str] | None = None,
+        package_files: PackageFileLookups | None = None,
         project_name: str | None = None,
     ) -> None:
         self.ingestor = ingestor
@@ -351,15 +367,11 @@ class IOAccessProcessor:
         # When neither I/O edge is enabled, skip the body walk entirely.
         self._selection = selection
         self._enabled = selection.io_enabled
-        # Sibling-file lookups for the package-level field map: Go splits a
-        # struct declaration and its method files across one directory.
-        self._module_paths = shared_or_new(module_paths, dict)
-        self._ast_cache = ast_cache
-        # Go module qn -> `package` clause; membership is (directory, clause),
-        # so an external `package svc_test` file shares a directory with
-        # `package svc` production files without sharing their fields.
+        files = package_files or PackageFileLookups()
+        self._module_paths = shared_or_new(files.module_paths, dict)
+        self._ast_cache = files.ast_cache
         self._go_package_names: Mapping[str, str] = shared_or_new(
-            go_package_names, dict
+            files.go_package_names, dict
         )
         # (package_qn, sorted root ids of every participating file) ->
         # {field name: service stem} for connect-client-typed struct fields
