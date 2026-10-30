@@ -12,7 +12,6 @@ raising, so a damaged state directory costs a rescan, never a run.
 import hashlib
 import json
 import os
-import secrets
 import stat
 import time
 from pathlib import Path
@@ -23,6 +22,7 @@ from .. import constants as cs
 from .. import logs as ls
 from ..config import settings
 from ..types_defs import JsonValue
+from ..utils.atomic_write import open_temp_sibling, write_text_atomic
 from ..utils.json_io import load_json, loads_json
 
 type FileHashCache = dict[str, str]
@@ -93,9 +93,7 @@ def load_delombok_state(state_path: Path) -> dict:
 
 def save_delombok_state(state_path: Path, state: dict) -> None:
     try:
-        state_path.write_text(
-            json.dumps(state, sort_keys=True), encoding=cs.ENCODING_UTF8
-        )
+        write_text_atomic(state_path, json.dumps(state, sort_keys=True))
     except OSError:
         return None
 
@@ -216,21 +214,14 @@ def save_exclusion_state(state_path: Path, state: dict[str, list[str] | str]) ->
     if isinstance(project, str):
         projects[project] = {k: v for k, v in state.items() if k != "project"}
     try:
-        state_path.write_text(
+        write_text_atomic(
+            state_path,
             json.dumps(
                 {**state, cs.EXCLUSION_STATE_PROJECTS_KEY: projects}, sort_keys=True
             ),
-            encoding=cs.ENCODING_UTF8,
         )
     except OSError:
         return None
-
-
-# Bounded so a directory that somehow rejects every candidate ends the publish
-# instead of spinning; with 8 random bytes a collision is already vanishingly
-# unlikely, so more than a few attempts would only mask a real filesystem
-# problem.
-_TEMP_NAME_ATTEMPTS = 8
 
 
 # Read once at import rather than `os.name` at each use: `pathlib.Path()`
@@ -238,6 +229,8 @@ _TEMP_NAME_ATTEMPTS = 8
 # simulate Windows made every `Path()` inside the publish raise
 # NotImplementedError on this host. A module flag can be patched in isolation.
 _WINDOWS = os.name == "nt"
+# The hash cache is readable by its owner only.
+_HASH_CACHE_MODE = 0o600
 
 
 def _open_exclusive_temp(cache_path: Path) -> tuple[int, str]:
@@ -252,16 +245,8 @@ def _open_exclusive_temp(cache_path: Path) -> tuple[int, str]:
     `O_NOFOLLOW` is POSIX; on platforms lacking it the flag is 0 and the
     random name plus `O_EXCL` still prevent reuse of a planted path.
     """
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
-    for _ in range(_TEMP_NAME_ATTEMPTS):
-        candidate = cache_path.with_name(
-            f"{cache_path.name}.{secrets.token_hex(8)}.tmp"
-        )
-        try:
-            return os.open(candidate, flags, 0o600), str(candidate)
-        except FileExistsError:
-            continue
-    raise OSError(f"could not create a temporary file beside {cache_path}")
+    descriptor, candidate = open_temp_sibling(cache_path, _HASH_CACHE_MODE)
+    return descriptor, str(candidate)
 
 
 def _fsync_no_follow(path: Path) -> None:
@@ -539,7 +524,7 @@ def load_parser_fingerprint(stamp_path: Path) -> str | None:
 
 def save_parser_fingerprint(stamp_path: Path, fingerprint: str) -> None:
     try:
-        stamp_path.write_text(fingerprint, encoding="utf-8")
+        write_text_atomic(stamp_path, fingerprint)
     except OSError as e:
         logger.warning(ls.PARSER_FINGERPRINT_SAVE_FAILED, path=stamp_path, error=e)
 
@@ -583,7 +568,7 @@ def stamp_names_selected_store(stamp: Path) -> bool:
 
 def save_embeddings_store(stamp: Path) -> None:
     try:
-        stamp.write_text(str(settings.VECTOR_STORE_BACKEND), encoding=cs.ENCODING_UTF8)
+        write_text_atomic(stamp, str(settings.VECTOR_STORE_BACKEND))
     except OSError:
         # Best effort, as for the pending marker: without the stamp the next
         # sync runs the pass again, which is slower but loses nothing.
@@ -595,7 +580,8 @@ def save_embeddings_owed(marker: Path, project_name: str, owed: bool) -> bool:
     try:
         if owed:
             # The name is for whoever lists the state directory; the file's
-            # presence is what the sync reads.
+            # presence is what the sync reads, so a write cut short still
+            # records the debt and needs no temporary sibling.
             marker.write_text(project_name, encoding=cs.ENCODING_UTF8)
         else:
             marker.unlink(missing_ok=True)
@@ -644,8 +630,7 @@ def load_dir_mtimes(cache_path: Path) -> DirMtimesCache:
 def save_dir_mtimes(cache_path: Path, mtimes: DirMtimesCache) -> None:
     try:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
-        with cache_path.open("w", encoding="utf-8") as f:
-            json.dump(mtimes, f)
+        write_text_atomic(cache_path, json.dumps(mtimes))
     except OSError as exc:
         logger.debug(ls.STATE_CACHE_UNWRITABLE, path=cache_path, error=exc)
 

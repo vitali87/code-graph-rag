@@ -13,6 +13,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from codebase_rag.mcp.tools import MCPToolsRegistry
+from codebase_rag.tools import file_writer
 from codebase_rag.tools.file_reader import FileReader
 from codebase_rag.tools.file_writer import FileWriter
 
@@ -36,13 +37,13 @@ async def test_a_read_runs_off_the_event_loop(tmp_path: Path) -> None:
 async def test_a_write_runs_off_the_event_loop(tmp_path: Path) -> None:
     loop_thread = threading.current_thread()
     seen: list[threading.Thread] = []
-    real = Path.write_text
+    real = file_writer.write_text_atomic
 
-    def spy(self: Path, *args: object, **kwargs: object) -> int:
+    def spy(path: Path, text: str) -> None:
         seen.append(threading.current_thread())
-        return real(self, *args, **kwargs)
+        real(path, text)
 
-    with patch.object(Path, "write_text", spy):
+    with patch.object(file_writer, "write_text_atomic", spy):
         result = await FileWriter(str(tmp_path)).create_file("new/b.py", "y = 2\n")
     assert result.success
     assert (tmp_path / "new" / "b.py").read_text(encoding="utf-8") == "y = 2\n"

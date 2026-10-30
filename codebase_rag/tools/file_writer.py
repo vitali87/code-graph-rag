@@ -6,11 +6,11 @@ from pathlib import Path
 from loguru import logger
 from pydantic_ai import Tool
 
-from .. import constants as cs
 from .. import logs as ls
 from .. import tool_errors as te
 from ..decorators import validate_project_path
 from ..types_defs import AfterWrite
+from ..utils.atomic_write import write_text_atomic
 from . import tool_descriptions as td
 from .schemas import FileCreationResult
 
@@ -42,7 +42,9 @@ class FileWriter:
 def _create_file_sync(file_path: Path, content: str) -> FileCreationResult:
     try:
         file_path.parent.mkdir(parents=True, exist_ok=True)
-        file_path.write_text(content, encoding=cs.ENCODING_UTF8)
+        # Whole or not at all, as an edit is: a write cut short must not
+        # leave a truncated file where the old one was.
+        write_text_atomic(file_path, content)
         logger.info(ls.FILE_WRITER_SUCCESS.format(chars=len(content), path=file_path))
         return FileCreationResult(file_path=str(file_path))
     except Exception as e:  # noqa: BLE001 -- tool boundary: any failure becomes the tool's error result

@@ -28,6 +28,7 @@ import codebase_rag.codec.schema_pb2 as pb
 from .. import constants as cs
 from .. import logs as ls
 from ..language_spec import get_language_spec
+from ..utils.atomic_write import write_text_atomic
 
 type JsonDict = dict[str, object]
 _DIST_NAME = "code-graph-rag"
@@ -214,9 +215,7 @@ def write_manifest(
     manifest = build_manifest(index_dir, source, capture)
     index_dir.mkdir(parents=True, exist_ok=True)
     out_path = index_dir / MANIFEST_FILE
-    out_path.write_text(
-        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    write_text_atomic(out_path, json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     return out_path
 
 

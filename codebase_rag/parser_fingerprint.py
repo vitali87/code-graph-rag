@@ -19,6 +19,7 @@ from loguru import logger
 
 from . import constants as cs
 from . import logs as ls
+from .utils.atomic_write import write_text_atomic
 from .utils.json_io import loads_json
 
 if TYPE_CHECKING:
@@ -263,7 +264,7 @@ def _write_state_map(
     if state_dir is None:
         return
     try:
-        (state_dir / name).write_text(json.dumps(entries), encoding=cs.ENCODING_UTF8)
+        write_text_atomic(state_dir / name, json.dumps(entries))
     except OSError:
         # Both maps only spare work: a lost answer costs the next timed-out
         # probe its retry, and a lost record makes `unknown` hash as itself.

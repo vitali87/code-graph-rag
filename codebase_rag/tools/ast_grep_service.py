@@ -19,6 +19,7 @@ from .. import constants as cs
 from ..config import load_ignore_patterns
 from ..language_spec import get_language_for_extension
 from ..types_defs import StructuralReplaceChange, StructuralSearchMatch
+from ..utils.atomic_write import write_text_atomic
 from ..utils.path_utils import is_symlink_entry, should_skip_path
 
 if TYPE_CHECKING:
@@ -258,7 +259,9 @@ class AstGrepService:
                 )
             )
             if not dry_run:
-                abs_path.write_text(new_source, encoding=cs.ENCODING_UTF8)
+                # Whole or not at all: a rewrite cut short must not leave the
+                # user's source truncated.
+                write_text_atomic(abs_path, new_source)
             changes.append(
                 StructuralReplaceChange(
                     file=rel,

@@ -37,6 +37,7 @@ from ..services import QueryingIngestorProtocol
 from ..sync.checkout_state import state_file
 from ..sync.state import load_exclusion_state, load_project_stamps
 from ..types_defs import LanguageQueries, PropertyDict, ReingestReport
+from ..utils.atomic_write import write_bytes_atomic
 from ..utils.path_utils import derive_project_name, should_skip_path
 from .delta import StructuralDelta, normalise_paths, observe
 from .isolation import GraphStore, IsolationGuard
@@ -318,7 +319,7 @@ class _FileSnapshot:
             return
         if not self._readable or self._content is None or self._times is None:
             return
-        self._path.write_bytes(self._content)
+        write_bytes_atomic(self._path, self._content)
         os.utime(self._path, ns=self._times)
 
 
