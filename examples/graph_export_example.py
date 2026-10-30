@@ -1,13 +1,10 @@
 #!/usr/bin/env python3
 
-import sys
 from pathlib import Path
 from typing import Annotated
 
 import typer
 from loguru import logger
-
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from codebase_rag import cli_help as ch
 from codebase_rag import logs
@@ -68,9 +65,9 @@ def analyze_graph(graph_file: str) -> None:
 
     try:
         _perform_graph_analysis(graph_file)
-    except Exception as e:  # noqa: BLE001 -- command boundary: reported to the user, not a traceback
+    except Exception as e:  # command boundary: reported to the user, not a traceback
         logger.error(logs.GRAPH_ANALYSIS_ERROR.format(error=e))
-        sys.exit(1)
+        raise typer.Exit(1) from e
 
 
 def _perform_graph_analysis(graph_file: str) -> None:

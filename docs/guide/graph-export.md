@@ -75,7 +75,7 @@ for func in functions[:5]:
 ## Example Analysis Script
 
 ```bash
-python examples/graph_export_example.py my_graph.json
+uv run python examples/graph_export_example.py my_graph.json
 ```
 
 ![python examples/graph_export_example.py summarising the exported graph: relationship counts, example functions and classes](../assets/demos/graph-export-example.gif)
