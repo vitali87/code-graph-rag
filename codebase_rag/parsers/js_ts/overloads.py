@@ -36,6 +36,7 @@ from tree_sitter import Node
 
 from ... import constants as cs
 from ...node_text import safe_decode_text
+from ..definition_docstring import extract_definition_docstring
 
 # Each wraps one declaration: `export ...`, `declare ...`, `export declare ...`.
 _WRAPPERS = frozenset({cs.TS_EXPORT_STATEMENT, cs.TS_AMBIENT_DECLARATION})
@@ -127,6 +128,22 @@ def implementation_signatures(declaration: Node) -> list[Node]:
         sibling = sibling.prev_named_sibling
     found.reverse()
     return found
+
+
+def signature_docstring(node: Node, language: cs.SupportedLanguage) -> str | None:
+    # A TypeScript overload set is documented on its signatures, the part a
+    # caller sees, and they fold into the implementation's node (issue
+    # #2457): with no doc of its own, the function keeps the first one.
+    if language not in (cs.SupportedLanguage.TS, cs.SupportedLanguage.TSX):
+        return None
+    return next(
+        (
+            doc
+            for signature in implementation_signatures(node)
+            if (doc := extract_definition_docstring(signature, language))
+        ),
+        None,
+    )
 
 
 def _folded(block: Node) -> Iterator[int]:

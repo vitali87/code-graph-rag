@@ -1,10 +1,12 @@
 """The hook points the definition pass reaches each language's own behaviour
-through. `ClassIngest` and `FunctionIngest` each build one collaborator per
-language from that language's package (`parsers/<language>/class_ingest.py`,
-`function_ingest.py`), a subclass of the base here that overrides what its
-language does differently, and look a definition's language up to call it.
-A language with no collaborator, and every hook its collaborator leaves
-alone, takes the neutral answer given here: the shared rule, or nothing."""
+through. `ClassIngest`, `FunctionIngest` and `DefinitionProcessor` each build
+one collaborator per language from that language's package
+(`parsers/<language>/class_ingest.py`, `function_ingest.py`,
+`file_ingest.py`), a subclass of the base here that overrides what its
+language does differently, and look a definition's or a file's language up
+to call it. A language with no collaborator, and every hook its collaborator
+leaves alone, takes the neutral answer given here: the shared rule, or
+nothing."""
 
 from __future__ import annotations
 
@@ -363,3 +365,79 @@ class LanguageFunctionIngest:
     def next_path_ancestor(self, node: Node) -> Node | None:
         # Where the nested-qn walk resumes above a node that gave it a part.
         return node.parent
+
+
+class LanguageFileIngest:
+    """What `DefinitionProcessor` asks the collaborator of a file's language
+    around the shared parse, Module node and passes: how the file is read
+    and its parse settled, what its Module node records, what runs before
+    and after its imports, the order its function and class passes run in,
+    and what runs once they have."""
+
+    __slots__ = ()
+
+    # Whether the file's class pass runs before its function pass, with no
+    # inline-module pass ahead of either.
+    types_before_functions: ClassVar[bool] = False
+
+    def read_source(self, file_path: Path, source_bytes: bytes | None) -> bytes | None:
+        # The bytes the file is parsed from; None reads the file at parse.
+        return source_bytes
+
+    def settle_parse(
+        self,
+        file_path: Path,
+        relative_path: str,
+        root_node: Node,
+        source_bytes: bytes | None,
+    ) -> None:
+        return None
+
+    def record_module_facts(self, module_qn: str, root_node: Node) -> None:
+        return None
+
+    def record_module_props(self, root_node: Node, module_props: PropertyDict) -> None:
+        return None
+
+    def reserve_names(
+        self,
+        combined_captures: dict[str, list] | None,
+        module_qn: str,
+        lang_queries: LanguageQueries,
+        file_path: Path,
+    ) -> None:
+        # Names a later pass's definitions are owed, reserved before the
+        # function pass registers any.
+        return None
+
+    def ingest_after_imports(
+        self,
+        root_node: Node,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
+        file_path: Path,
+    ) -> None:
+        return None
+
+    def folded_overloads(
+        self,
+        root_node: Node,
+        language: cs.SupportedLanguage,
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
+        combined_captures: dict[str, list] | None,
+    ) -> frozenset[int] | None:
+        # The start bytes of the overload declarations that fold into their
+        # implementation, which the function and method passes skip; None
+        # where the language folds none.
+        return None
+
+    def finalise(
+        self,
+        root_node: Node,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
+    ) -> None:
+        # What runs once the file's function and class passes have.
+        return None

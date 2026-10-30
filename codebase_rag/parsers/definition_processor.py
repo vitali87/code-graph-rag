@@ -10,7 +10,7 @@ from tree_sitter import QueryCursor
 from .. import constants as cs
 from .. import logs as ls
 from ..language_spec import has_other_language_sibling, own_extension_module_qn
-from ..node_text import safe_decode_with_fallback, sorted_captures
+from ..node_text import sorted_captures
 from ..types_defs import (
     ASTNode,
     CppDefinitionSpan,
@@ -29,53 +29,41 @@ from ..utils.path_utils import (
 )
 from ..utils.source_encoding import grammar_bytes
 from .class_ingest import ClassIngest
+from .cpp.file_ingest import CppFileIngest
 from .cpp.preproc_recovery import parse_with_preproc_recovery
-from .cpp.type_inference import CppTypeInferenceEngine
 from .definition_docstring import extract_definition_docstring
 from .definition_facts import DefinitionFacts
 from .definition_prune import RemovedFile, forget_file
 from .dependency_parser import read_manifest
 from .field_nodes import PendingFieldType
 from .function_ingest import FunctionIngest
-from .go import utils as go_utils
 from .go.builds import Expr, GoBuilds
+from .go.file_ingest import GoFileIngest
 from .go.interface_ingest import GoInterfaceIngest
 from .go.interfaces import GoInterfaceDecl, GoMethodSpec
 from .go.link_state import GoLinkState
 from .interface_fingerprint import interface_fingerprint
 from .java.generated import generator_hint
+from .js_ts.file_ingest import JsTsFileIngest
 from .js_ts.ingest import JsTsIngest
 from .js_ts.module_system import JsTsModuleSystem
-from .js_ts.overloads import folded_overload_signatures, implementation_signatures
+from .js_ts.overloads import signature_docstring
+from .julia.file_ingest import JuliaFileIngest
+from .language_definitions import LanguageFileIngest
 from .module_docstring import extract_module_docstring
 from .notebook import is_notebook_path
 from .parameter_nodes import PendingParameterType
-from .php.namespaces import declared_namespace
-from .python.overloads import folded_overload_stubs
-from .sql.recovery import lost_sql_functions
-from .utils import get_function_captures
+from .php.file_ingest import PhpFileIngest
+from .python.docstring import python_docstring
+from .python.file_ingest import PythonFileIngest
+from .rust.file_ingest import RustFileIngest
+from .sql.file_ingest import SqlFileIngest
 
 if TYPE_CHECKING:
     from ..services import IngestorProtocol
     from ..types_defs import LanguageQueries
     from .import_processor import ImportProcessor
 from .io_access import FLOW_REGISTERED_LANGUAGES
-
-
-def _signature_docstring(node: ASTNode, language: cs.SupportedLanguage) -> str | None:
-    # A TypeScript overload set is documented on its signatures, the part a
-    # caller sees, and they fold into the implementation's node (issue
-    # #2457): with no doc of its own, the function keeps the first one.
-    if language not in (cs.SupportedLanguage.TS, cs.SupportedLanguage.TSX):
-        return None
-    return next(
-        (
-            doc
-            for signature in implementation_signatures(node)
-            if (doc := extract_definition_docstring(signature, language))
-        ),
-        None,
-    )
 
 
 class DefinitionProcessor:
@@ -191,9 +179,6 @@ class DefinitionProcessor:
         # the reverse of the Roslyn fact keys, so partial declaration groups
         # join back to the Pass-2 Class nodes.
         self.csharp_type_locations: dict[tuple[str, int], str] = {}
-        # Alias names seen with conflicting underlying types across scopes/files;
-        # dropped from type_aliases so their receivers fall back to name-only.
-        self._type_alias_conflicts: set[str] = set()
         # Non-module DEFINES held back until every parent is registered,
         # written by the function and the class passes alike.
         self._deferred_parent_links: list[DeferredParentLink] = []
@@ -324,6 +309,36 @@ class DefinitionProcessor:
             facts=self.facts,
             class_owner_module=self.class_owner_module,
         )
+        # Reached by name as well: the graph updater keeps the source of a SQL
+        # file it re-reads through `keep_sql_source`.
+        self._sql = SqlFileIngest(self.facts)
+        js_ts = JsTsFileIngest(
+            ingestor=ingestor,
+            import_processor=import_processor,
+            ingest=self.js_ts_ingest,
+            module_system=self.js_ts_module_system,
+            function_ingest=self.function_ingest.js_ts,
+        )
+        # The collaborator each language's files go to; a language with none
+        # takes the neutral answers.
+        self._languages: dict[cs.SupportedLanguage, LanguageFileIngest] = {
+            cs.SupportedLanguage.PYTHON: PythonFileIngest(self.class_ingest.python),
+            cs.SupportedLanguage.JS: js_ts,
+            cs.SupportedLanguage.TS: js_ts,
+            cs.SupportedLanguage.TSX: js_ts,
+            cs.SupportedLanguage.RUST: RustFileIngest(
+                self.function_ingest.rust, import_processor, self.facts
+            ),
+            cs.SupportedLanguage.GO: GoFileIngest(self.facts),
+            cs.SupportedLanguage.CPP: CppFileIngest(self.class_ingest.cpp, self.facts),
+            cs.SupportedLanguage.JULIA: JuliaFileIngest(),
+            cs.SupportedLanguage.PHP: PhpFileIngest(),
+            cs.SupportedLanguage.SQL: self._sql,
+        }
+        self._neutral = LanguageFileIngest()
+
+    def _for(self, language: cs.SupportedLanguage) -> LanguageFileIngest:
+        return self._languages.get(language, self._neutral)
 
     def begin_run(self) -> None:
         # What a run records about itself: a reused updater must not treat
@@ -580,25 +595,22 @@ class DefinitionProcessor:
                 )
                 return None
 
-            source_bytes = self._read_sql_once(file_path, language, source_bytes)
+            language_ingest = self._for(language)
+            source_bytes = language_ingest.read_source(file_path, source_bytes)
             parsed = self._parse_file_root(
                 file_path, language, queries, source_bytes, pre_parsed
             )
             if parsed is None:
                 return None
             root_node, pre_combined_captures = parsed
-            if language == cs.SupportedLanguage.SQL:
-                self._settle_sql_file(
-                    file_path, relative_path_str, root_node, source_bytes
-                )
+            language_ingest.settle_parse(
+                file_path, relative_path_str, root_node, source_bytes
+            )
 
             module_qn = base_module_qn(relative_path, self.project_name)
             module_qn = self._disambiguate_module_qn(module_qn, file_path)
             self.module_qn_to_file_path[module_qn] = file_path
-            if language == cs.SupportedLanguage.GO and (
-                package_name := go_utils.extract_package_name(root_node)
-            ):
-                self.facts.go_package_names[module_qn] = package_name
+            language_ingest.record_module_facts(module_qn, root_node)
 
             self._ingest_module_node(
                 file_path,
@@ -621,13 +633,9 @@ class DefinitionProcessor:
             self.facts.function_locations.drop_module(module_qn)
             # Before the function pass below, which would otherwise take a
             # class's plain name first (issue #2621).
-            if language == cs.SupportedLanguage.PYTHON:
-                self.class_ingest.python.reserve_class_qns(
-                    combined_captures,
-                    module_qn,
-                    queries[language][cs.QUERY_CONFIG],
-                    file_path,
-                )
+            language_ingest.reserve_names(
+                combined_captures, module_qn, queries[language], file_path
+            )
 
             self.import_processor.parse_imports(
                 root_node,
@@ -636,46 +644,16 @@ class DefinitionProcessor:
                 queries,
                 pre_captures=combined_captures,
             )
-            if language in cs.JS_TS_LANGUAGES:
-                self.js_ts_module_system.ingest_missing_import_patterns(
-                    root_node, module_qn, language, queries
-                )
-                # Written AFTER parse_imports, which is what fills the set, and
-                # unconditionally rather than only when non-empty: the node
-                # already exists from the batch above, so the flush MERGEs and
-                # `SET n += props`, which updates a property but never removes
-                # one. Writing the empty list is therefore the only way a
-                # re-parse can CLEAR specifiers whose target now exists
-                # (issue #1714).
-                self.ingestor.ensure_node_batch(
-                    cs.NodeLabel.MODULE,
-                    {
-                        cs.KEY_QUALIFIED_NAME: module_qn,
-                        cs.KEY_UNRESOLVED_SPECIFIERS: sorted(
-                            self.import_processor.js_ts.unresolved_specifiers.get(
-                                module_qn, ()
-                            )
-                        ),
-                    },
-                )
-            if language == cs.SupportedLanguage.CPP:
-                self.class_ingest.cpp.ingest_module_declarations(
-                    root_node, module_qn, file_path
-                )
-                CppTypeInferenceEngine().collect_type_aliases(
-                    root_node, self.facts.type_aliases, self._type_alias_conflicts
-                )
+            language_ingest.ingest_after_imports(
+                root_node, module_qn, language, queries, file_path
+            )
             self._fold_overloads(
                 root_node, module_qn, language, queries, combined_captures
             )
-            if language == cs.SupportedLanguage.JULIA:
-                # Julia ingests types BEFORE functions: a struct and a free
-                # function may share a name (separate namespaces), and the
-                # TYPE is the primary owner of it (issue #1882).
-                # The inline-module pass is skipped: a Julia `module` block
-                # is the file's declared module (an import index), not a
-                # nested module node, so a synthetic `fileqn.Module` node
-                # would clobber that model.
+            # A language whose types own the names its functions share runs
+            # its class pass first, and no inline-module pass (Julia's
+            # `JuliaFileIngest` says why).
+            if language_ingest.types_before_functions:
                 self.class_ingest.ingest_classes_and_methods(
                     root_node,
                     module_qn,
@@ -712,12 +690,7 @@ class DefinitionProcessor:
                     queries,
                     combined_captures=combined_captures,
                 )
-            if language == cs.SupportedLanguage.RUST:
-                self._finalise_rust_file(module_qn, root_node)
-            if language in cs.JS_TS_LANGUAGES:
-                self._ingest_js_ts_module_extras(
-                    root_node, module_qn, language, queries
-                )
+            language_ingest.finalise(root_node, module_qn, language, queries)
 
             return (root_node, language)
 
@@ -749,57 +722,12 @@ class DefinitionProcessor:
             pre_combined_captures = None
         return root_node, pre_combined_captures
 
-    @staticmethod
-    def _read_sql_once(
-        file_path: Path, language: cs.SupportedLanguage, source_bytes: bytes | None
-    ) -> bytes | None:
-        # Read once: the call pass reads DDL from the bytes parsed (#3181).
-        if language == cs.SupportedLanguage.SQL and source_bytes is None:
-            return file_path.read_bytes()
-        return source_bytes
-
-    def _settle_sql_file(
-        self,
-        file_path: Path,
-        relative_path: str,
-        root_node: ASTNode,
-        source: bytes | None,
-    ) -> None:
-        if source is None:
-            return
-        self._warn_lost_sql_functions(file_path, relative_path, root_node, source)
-        self.keep_sql_source(
-            file_path,
-            root_node,
-            grammar_bytes(source, cs.SupportedLanguage.SQL, file_path),
-        )
-
     def keep_sql_source(
         self, file_path: Path, root_node: ASTNode, parsed: bytes
     ) -> None:
-        """Note the bytes a SQL tree was parsed from, when its text is not them."""
-        start, end = root_node.start_byte, root_node.end_byte
-        # A blanked statement that opens or closes the file lies outside the
-        # root's span, where an unrecovered parse leaves only whitespace.
-        if (
-            root_node.text == parsed[start:end]
-            and not parsed[:start].strip()
-            and not parsed[end:].strip()
-        ):
-            self.facts.sql_sources.pop(file_path, None)
-        else:
-            self.facts.sql_sources[file_path] = parsed
-
-    @staticmethod
-    def _warn_lost_sql_functions(
-        file_path: Path, relative_path: str, root_node: ASTNode, source: bytes | None
-    ) -> None:
-        # A function even a statement-isolated parse cannot read is missing
-        # from the graph with its calls; the sync says so (issue #3180).
-        if source is None:
-            source = file_path.read_bytes()
-        if count := lost_sql_functions(source, root_node):
-            logger.warning(ls.SQL_FUNCTIONS_UNPARSED, path=relative_path, count=count)
+        """Note the bytes a SQL tree was parsed from, when its text is not them
+        (`SqlFileIngest.keep_source`)."""
+        self._sql.keep_source(file_path, root_node, parsed)
 
     def _ingest_module_node(
         self,
@@ -824,10 +752,7 @@ class DefinitionProcessor:
             module_props[cs.KEY_DOCSTRING] = docstring
         if fingerprint := interface_fingerprint(root_node, language):
             module_props[cs.KEY_INTERFACE_FINGERPRINT] = fingerprint
-        if language == cs.SupportedLanguage.PHP and (
-            namespace := declared_namespace(root_node)
-        ):
-            module_props[cs.KEY_PHP_NAMESPACE] = namespace
+        self._for(language).record_module_props(root_node, module_props)
         if self.generated_source_prefixes and (
             hint := generator_hint(relative_path_str, self.generated_source_prefixes)
         ):
@@ -869,18 +794,12 @@ class DefinitionProcessor:
         queries: Mapping[cs.SupportedLanguage, LanguageQueries],
         combined_captures: dict[str, list] | None,
     ) -> None:
-        match language:
-            case cs.SupportedLanguage.PYTHON:
-                self.folded_overloads[module_qn] = folded_overload_stubs(root_node)
-            case cs.SupportedLanguage.TS | cs.SupportedLanguage.TSX:
-                # The signatures are function captures, so the passes that
-                # register them read the same nodes this folds.
-                if combined_captures is None:
-                    found = get_function_captures(root_node, language, queries)
-                    combined_captures = found.captures if found else {}
-                self.folded_overloads[module_qn] = folded_overload_signatures(
-                    combined_captures.get(cs.CAPTURE_FUNCTION, ())
-                )
+        if (
+            folded := self._for(language).folded_overloads(
+                root_node, language, queries, combined_captures
+            )
+        ) is not None:
+            self.folded_overloads[module_qn] = folded
 
     def _file_combined_captures(
         self,
@@ -933,47 +852,6 @@ class DefinitionProcessor:
                     cache_entry[key] = combined_captures[key]
             self.func_class_captures_cache[file_path] = cache_entry
         return combined_captures
-
-    def _finalise_rust_file(self, module_qn: str, root_node: ASTNode) -> None:
-        # The methods above have claimed their names; a body-local item
-        # may now take what is left of the one it shares.
-        self.function_ingest.rust.flush_deferred_body_local()
-        # Function-body uses key on the REGISTERED qn of their
-        # enclosing function, knowable only now that dedup variants
-        # (`natural@<line>`) have been handed out.
-        self.import_processor.rust.finalise_rust_function_scope_uses(
-            module_qn, self.facts.function_locations
-        )
-        # Block-local items key on their own registered qn, which
-        # the same pass has just handed out.
-        self.import_processor.rust.record_rust_block_items(
-            module_qn, root_node, self.facts.function_locations
-        )
-        # Inline-mod maps were visible to this file's own impl
-        # ingestion above; retract them until the flush-time
-        # arbitration decides key ownership across all files.
-        self.import_processor.rust.retract_rust_mod_scope_uses(module_qn)
-
-    def _ingest_js_ts_module_extras(
-        self,
-        root_node: ASTNode,
-        module_qn: str,
-        language: cs.SupportedLanguage,
-        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
-    ) -> None:
-        js_ts, module_system = self.js_ts_ingest, self.js_ts_module_system
-        js_ts.ingest_object_literal_methods(root_node, module_qn, language, queries)
-        module_system.ingest_commonjs_exports(root_node, module_qn, language, queries)
-        module_system.ingest_es6_exports(root_node, module_qn, language, queries)
-        js_ts.ingest_assignment_arrow_functions(root_node, module_qn, language, queries)
-        js_ts.ingest_prototype_inheritance(root_node, module_qn, language, queries)
-        # Named passes above have claimed their function nodes;
-        # only genuinely anonymous spans (callbacks, IIFEs) still
-        # need their held-back registration.
-        self.function_ingest.js_ts.flush_deferred_anonymous()
-        # Direct module.exports functions finalise by SPAN now that
-        # every node's minted qn is recorded.
-        module_system.finalise_direct_module_exports(module_qn)
 
     def process_dependencies(self, filepath: Path) -> None:
         logger.debug(ls.DEF_PARSING_DEPENDENCY.format(path=filepath))
@@ -1035,30 +913,7 @@ class DefinitionProcessor:
         with nothing failing.
         """
         if language != cs.SupportedLanguage.PYTHON:
-            return extract_definition_docstring(node, language) or _signature_docstring(
+            return extract_definition_docstring(node, language) or signature_docstring(
                 node, language
             )
-        if node.type == cs.TS_PY_MODULE:
-            # A module node has no `body` field: its statements are direct
-            # children, one level shallower than a class or function body.
-            statements = node.children
-        else:
-            body_node = node.child_by_field_name(cs.FIELD_BODY)
-            if not body_node:
-                return None
-            statements = body_node.children
-        if not statements:
-            return None
-        first_statement = statements[0]
-        if (
-            first_statement.type == cs.TS_PY_EXPRESSION_STATEMENT
-            and first_statement.children
-            and first_statement.children[0].type == cs.TS_PY_STRING
-        ):
-            text = first_statement.children[0].text
-            if text is not None:
-                result: str = safe_decode_with_fallback(
-                    first_statement.children[0]
-                ).strip(cs.DOCSTRING_STRIP_CHARS)
-                return result
-        return None
+        return python_docstring(node)
