@@ -523,13 +523,80 @@ def test_a_typescript_re_export_binds_only_what_its_target_exports(
     assert _callers(delta) == dangling
 
 
-def test_a_typescript_re_export_of_a_default_export_is_not_dangling(
+@pytest.mark.parametrize(
+    ("text", "dangling"),
+    [
+        pytest.param(f"export default {_TS_PLAIN_SLUG}", [], id="named-function"),
+        # Every `export default` exports `default`, named or not.
+        pytest.param(
+            "export default function (s: string): string {\n  return s;\n}\n",
+            [],
+            id="anonymous-function",
+        ),
+        pytest.param(
+            "export default async function (s: string): Promise<string> {\n"
+            "  return s;\n}\n",
+            [],
+            id="anonymous-async-function",
+        ),
+        pytest.param(
+            "export default (s: string): string => s.toLowerCase();\n",
+            [],
+            id="arrow-function",
+        ),
+        pytest.param(f"{_TS_PLAIN_SLUG}\nexport default slug;\n", [], id="identifier"),
+        pytest.param(
+            "class Slugger {}\n\nexport default new Slugger();\n",
+            [],
+            id="constructed-value",
+        ),
+        # Negative: a literal is importable, but no call runs on it.
+        pytest.param(
+            "export default { lower: true };\n", [("page", "util")], id="object-literal"
+        ),
+        # Negative: an interface is erased from the emitted JavaScript.
+        pytest.param(
+            "export default interface Slug {\n  s: string;\n}\n",
+            [("page", "util")],
+            id="interface",
+        ),
+    ],
+)
+def test_a_typescript_re_export_of_a_default_export(
+    temp_repo: Path, text: str, dangling: list[tuple[str, str]]
+) -> None:
+    delta = _move_ts(temp_repo, 'export { default as slug } from "./text";\n', text)
+
+    assert _callers(delta) == dangling
+
+
+def test_a_re_export_of_an_anonymous_default_class_is_not_dangling(
     temp_repo: Path,
 ) -> None:
-    delta = _move_ts(
-        temp_repo,
-        'export { default as slug } from "./text";\n',
-        f"export default {_TS_PLAIN_SLUG}",
+    # Greptile, PR #3312: the graph holds `export default class { }` as the
+    # module's `default`, which `export { default as Widget }` re-exports.
+    # A call of one of its methods is reported as for any moved class.
+    widget = 'export class Widget {\n  name(): string {\n    return "w";\n  }\n}\n'
+    app = (
+        'import { Widget } from "./util";\n\n'
+        "export function page(): Widget {\n  return new Widget();\n}\n"
+    )
+    store, updater = _index(temp_repo, {"src/util.ts": widget, "src/app.ts": app})
+    (temp_repo / "src/text.ts").write_text(
+        widget.replace("export class Widget", "export default class"),
+        encoding="utf-8",
+    )
+    (temp_repo / "src/util.ts").write_text(
+        'export { default as Widget } from "./text";\n', encoding="utf-8"
+    )
+    paths = ["src/util.ts", "src/text.ts"]
+
+    delta = observe(
+        store.fetch_all,
+        PROJECT,
+        paths,
+        lambda: updater.reingest(paths),
+        repo_root=temp_repo,
     )
 
     assert delta["dangling_callers"] == []

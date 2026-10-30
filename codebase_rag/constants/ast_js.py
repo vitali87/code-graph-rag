@@ -98,6 +98,22 @@ TS_OBJECT = "object"
 TS_TEMPLATE_STRING = "template_string"
 TS_TEMPLATE_SUBSTITUTION = "template_substitution"
 TS_ARRAY = "array"
+# Literal values no call can run on (`export default { ... }`), as Python's
+# `name = None` is.
+JS_LITERAL_VALUE_TYPES = frozenset(
+    {
+        TS_OBJECT,
+        TS_ARRAY,
+        TS_TEMPLATE_STRING,
+        "string",
+        "number",
+        "regex",
+        "true",
+        "false",
+        "null",
+        "undefined",
+    }
+)
 
 # When a variable_declarator's value is one of these, the variable binds the
 # call/construction RESULT, not a function, so an arrow inside its arguments

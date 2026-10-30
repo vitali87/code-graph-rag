@@ -1349,12 +1349,16 @@ class _AfterBindings:
         `slug` as `export { slug } from "./text"` does, and `export { s as
         slug }` shares the `s` it imports under that name. The graph records
         no edge for such an export. An `import type { slug }` binds no value
-        for it to export.
+        for it to export. Any other `export default` value (`export default
+        class { }`, an arrow, `new Slugger()`) is the module's own `default`,
+        though a literal serves no caller.
         """
         exports = self._js_exports(path)
         local = exports.local.get(name)
         if local is None:
             return False
+        if local == cs.JS_DEFAULT_EXPORT_NAME:
+            return not (for_callers and name in exports.inert)
         if f"{module}{cs.SEPARATOR_DOT}{local}" in self._facts(path)[0]:
             return True
         # `import * as ns` binds a module object, never one of its names.
@@ -1414,8 +1418,11 @@ class _JsExports(NamedTuple):
     # `{exported: local}` for each value the module exports of its own:
     # `export { local as exported }` without `from` (a clause with `from` is
     # an IMPORTS edge in the graph), `export function local`, and `export
-    # default local` as `default`.
+    # default local` as `default`. A default no local name holds maps
+    # `default` to itself, which no identifier can be.
     local: dict[str, str] = {}
+    # The exported names bound to a literal (`export default { ... }`).
+    inert: frozenset[str] = frozenset()
     # Whether the module publishes through `module.exports` alone.
     commonjs: bool = False
 
@@ -1441,6 +1448,7 @@ def _js_exports(text: str, language: cs.SupportedLanguage) -> _JsExports:
     starts: set[tuple[int, int]] = set()
     type_only: set[tuple[int, int, str | None]] = set()
     local: dict[str, str] = {}
+    inert: set[str] = set()
     for statement in root.children:
         if statement.type not in (cs.TS_EXPORT_STATEMENT, cs.TS_IMPORT_STATEMENT):
             continue
@@ -1451,6 +1459,7 @@ def _js_exports(text: str, language: cs.SupportedLanguage) -> _JsExports:
         if statement.type == cs.TS_EXPORT_STATEMENT:
             starts.add(at)
             local.update(_js_declared_exports(statement))
+            inert.update(_js_literal_exports(statement))
         # Only an `export { ... }` without `from` shares the module's own
         # bindings: an import, like a re-export, always names its source.
         shares_own = statement.child_by_field_name(cs.FIELD_SOURCE) is None
@@ -1460,7 +1469,11 @@ def _js_exports(text: str, language: cs.SupportedLanguage) -> _JsExports:
             elif shares_own:
                 local[bound] = name
     return _JsExports(
-        frozenset(starts), frozenset(type_only), local, is_commonjs_module(root)
+        starts=frozenset(starts),
+        type_only=frozenset(type_only),
+        local=local,
+        inert=frozenset(inert),
+        commonjs=is_commonjs_module(root),
     )
 
 
@@ -1489,25 +1502,47 @@ def _js_specifier_nodes(statement: Node) -> Iterator[Node]:
 def _js_declared_exports(statement: Node) -> Iterator[tuple[str, str]]:
     """(exported, local) for each value an export statement declares.
 
-    `export function slug` exports `slug`; `export default function slug`
-    and `export default slug;` export `slug` as `default`.
+    `export function slug` exports `slug`. Every `export default` exports
+    `default`: `export default function slug` and `export default slug;` as
+    the local `slug`, any other value as `default` itself. A type
+    (`interface`, `type`) or an ambient declaration (`declare function`)
+    exports no value.
     """
-    declaration = statement.child_by_field_name(cs.FIELD_DECLARATION)
-    if declaration is None:
-        declaration = statement.child_by_field_name(cs.FIELD_VALUE)
-    default = any(child.type == cs.TS_EXPORT_DEFAULT for child in statement.children)
-    for local in _js_value_names(declaration):
-        yield (cs.JS_DEFAULT_EXPORT_NAME if default else local), local
-
-
-def _js_value_names(node: Node | None) -> Iterator[str]:
-    """The values a declaration, or an identifier, names at run time.
-
-    A type (`interface`, `type`) or an ambient declaration (`declare
-    function`) has none, nor does an anonymous `export default` value.
-    """
-    if node is None or node.type in _TS_DECLARATIONS_WITHOUT_VALUES:
+    value = _js_exported_value(statement)
+    if value is None or value.type in _TS_DECLARATIONS_WITHOUT_VALUES:
         return
+    names = _js_value_names(value)
+    if not _js_is_default(statement):
+        yield from ((local, local) for local in names)
+        return
+    yield cs.JS_DEFAULT_EXPORT_NAME, next(names, cs.JS_DEFAULT_EXPORT_NAME)
+
+
+def _js_literal_exports(statement: Node) -> Iterator[str]:
+    """`default`, when `export default` takes a literal no call runs on."""
+    value = _js_exported_value(statement)
+    if (
+        _js_is_default(statement)
+        and value is not None
+        and value.type in cs.JS_LITERAL_VALUE_TYPES
+    ):
+        yield cs.JS_DEFAULT_EXPORT_NAME
+
+
+def _js_exported_value(statement: Node) -> Node | None:
+    """What an export statement declares, or the value `export default` takes."""
+    declaration = statement.child_by_field_name(cs.FIELD_DECLARATION)
+    if declaration is not None:
+        return declaration
+    return statement.child_by_field_name(cs.FIELD_VALUE)
+
+
+def _js_is_default(statement: Node) -> bool:
+    return any(child.type == cs.TS_EXPORT_DEFAULT for child in statement.children)
+
+
+def _js_value_names(node: Node) -> Iterator[str]:
+    """The names a declaration, or an identifier, binds at run time."""
     if node.type == cs.TS_IDENTIFIER:
         yield _node_text(node)
         return
