@@ -592,7 +592,7 @@ def test_a_FRESH_updater_still_detects_the_flip(tmp_path: Path, direction: str) 
 def test_a_directory_recorded_as_BOTH_kinds_is_reconciled(tmp_path: Path) -> None:
     """A duplicated directory must reconcile whatever is on disk.
 
-    `_recorded_container_kinds` reads every row, not the first. A directory
+    `ContainerFlips.recorded_kinds` reads every row, not the first. A directory
     can already hold both a Package and a Folder node -- the unscoped
     hydration derives the whole repo and emits the kind on disk now while the
     old one survives (#1872) -- and row order is unspecified. Taking the
@@ -617,7 +617,7 @@ def test_a_directory_recorded_as_BOTH_kinds_is_reconciled(tmp_path: Path) -> Non
 
     directory = root / "pkg"
     structure = updater.factory.structure_processor
-    assert updater._recorded_container_kinds(directory) == {"Package"}, (
+    assert updater.container_flips.recorded_kinds(directory) == {"Package"}, (
         "fixture guard: the initial index must record exactly one kind"
     )
 
@@ -636,7 +636,7 @@ def test_a_directory_recorded_as_BOTH_kinds_is_reconciled(tmp_path: Path) -> Non
         },
     )
     store.flush_all()
-    assert updater._recorded_container_kinds(directory) == {"Package", "Folder"}, (
+    assert updater.container_flips.recorded_kinds(directory) == {"Package", "Folder"}, (
         "fixture guard: the directory must now hold both identities"
     )
 
@@ -645,7 +645,7 @@ def test_a_directory_recorded_as_BOTH_kinds_is_reconciled(tmp_path: Path) -> Non
     assert structure.is_package_dir(directory), (
         "fixture guard: the directory is still a package on disk"
     )
-    assert updater._package_ness_changed(structure, "pkg"), (
+    assert updater.container_flips._package_ness_changed(structure, "pkg"), (
         "a directory holding BOTH container identities was reported as "
         "unchanged, so nothing would ever prune the stale one"
     )

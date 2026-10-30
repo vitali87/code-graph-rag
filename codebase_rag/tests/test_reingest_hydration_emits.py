@@ -286,7 +286,7 @@ def test_an_unreadable_container_query_aborts_before_deriving(
 ) -> None:
     """ "I could not ask" must not be read as "there is nothing there".
 
-    `_recorded_container_kinds` returns an empty set for BOTH cases. If the
+    `ContainerFlips.recorded_kinds` returns an empty set for BOTH cases. If the
     uncontained walk treated a failed read as an absent container, a
     transient store failure would derive and emit EVERY ancestor, giving any
     that had changed on disk a second identity beside its old one -- the
