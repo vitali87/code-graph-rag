@@ -7,12 +7,15 @@ calls no function body holds. Each share is a bisection of the start
 offsets, never another walk of the tree."""
 
 from bisect import bisect_left, bisect_right
+from collections.abc import Mapping
+from pathlib import Path
 from typing import Protocol
 
 from tree_sitter import Node, Query, QueryCursor
 
 from .. import constants as cs
 from ..node_text import sorted_captures
+from ..types_defs import LanguageQueries
 from .dart import utils as dart_utils
 from .julia import utils as julia_utils
 
@@ -33,6 +36,70 @@ class RegisteredNames(Protocol):
     or None while it stays anonymous."""
 
     def registered_name(self, func_node: Node, module_qn: str) -> str | None: ...
+
+
+def collect_all_call_nodes(
+    root_node: Node,
+    language: cs.SupportedLanguage,
+    queries: Mapping[cs.SupportedLanguage, LanguageQueries],
+) -> tuple[list[Node], list[int]]:
+    """The file's call nodes in start order, and their start offsets."""
+    calls_query = queries[language].get(cs.QUERY_CALLS)
+    if not calls_query:
+        return [], []
+    cursor = QueryCursor(calls_query)
+    captures = sorted_captures(cursor, root_node)
+    call_nodes = captures.get(cs.CAPTURE_CALL, [])
+    call_starts = [n.start_byte for n in call_nodes]
+    return call_nodes, call_starts
+
+
+def file_combined_captures(
+    file_path: Path,
+    root_node: Node,
+    language_queries: LanguageQueries,
+    func_class_captures_cache: dict[Path, dict] | None,
+) -> dict[str, list[Node]]:
+    """The file's function, class and call captures: the definition pass's,
+    when it cached them, else the combined query's."""
+    if func_class_captures_cache is not None and file_path in func_class_captures_cache:
+        return func_class_captures_cache[file_path]
+    combined_query = language_queries[cs.QUERY_FUNC_CLASS]
+    if combined_query:
+        cursor = QueryCursor(combined_query)
+        return sorted_captures(cursor, root_node)
+    return {}
+
+
+def file_call_nodes(
+    combined_captures: dict[str, list[Node]],
+    root_node: Node,
+    language: cs.SupportedLanguage,
+    queries: Mapping[cs.SupportedLanguage, LanguageQueries],
+) -> tuple[list[Node], list[int] | None, list[int] | None]:
+    """The file's call nodes plus the call/function start offsets the
+    per-scope filters bisect; both offset lists stay None when the file
+    captured no function or class to filter by."""
+    cached_calls = combined_captures.get(cs.CAPTURE_CALL)
+    if cached_calls is not None:
+        all_call_nodes = cached_calls
+        call_starts: list[int] | None = None
+    else:
+        all_call_nodes, call_starts = collect_all_call_nodes(
+            root_node, language, queries
+        )
+
+    sorted_func_nodes = combined_captures.get(cs.CAPTURE_FUNCTION)
+    if sorted_func_nodes or combined_captures.get(cs.CAPTURE_CLASS):
+        if cached_calls is not None:
+            call_starts = [n.start_byte for n in all_call_nodes]
+        func_node_starts = (
+            [n.start_byte for n in sorted_func_nodes] if sorted_func_nodes else None
+        )
+    else:
+        call_starts = None
+        func_node_starts = None
+    return all_call_nodes, call_starts, func_node_starts
 
 
 def _start_byte(node: Node) -> int:

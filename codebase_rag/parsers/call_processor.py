@@ -1,19 +1,20 @@
 """The call pass: the CALLS, REFERENCES and INSTANTIATES edges of every file.
 
 `CallProcessor` drives the pass and keeps for itself the order the steps run
-in: per file, the callers its `CallerScan` names and the module's own share
-of the calls; per caller, its local types, the side passes that read it (I/O,
-RPC exposure, data flow), the callable parameters it records and the
-references its language writes; and the `CallScan` every one of its call
-nodes is bound with by the `CallBinding`. It owns the edge site and the
-resolution each edge carries, and writes every edge (`_emit_rel`). A
-language's share of the pass is the `LanguageCalls` strategy its package
-builds, looked up by `_calls_for`; what languages share is in the
-collaborators beside this module: the reference walkers (`call_references`,
-and `call_tables` for the functions a literal holds), the callback edges
-they write through (`call_callbacks`), callable-parameter flow
-(`callable_flow`) and the construction a class callee runs
-(`call_construction`)."""
+in: per file, the callers its `CallerScan` names (`call_callers`, sharing
+out the file's calls through `call_ownership`) and the module's own share of
+the calls, each scanned by its `CallerCalls` (`call_scan`): the caller's
+local types, the side passes that read it (I/O, RPC exposure, data flow),
+the callable parameters it records, the references its language writes, and
+the `CallScan` every one of its call nodes is bound with by the
+`CallBinding`. It owns the edge site and the resolution each edge carries,
+and writes every edge (`_emit_rel`). A language's share of the pass is the
+`LanguageCalls` strategy its package builds, looked up by `_calls_for`; what
+languages share is in the collaborators beside this module: the reference
+walkers (`call_references`, and `call_tables` for the functions a literal
+holds), the callback edges they write through (`call_callbacks`),
+callable-parameter flow (`callable_flow`) and the construction a class
+callee runs (`call_construction`)."""
 
 from collections.abc import Callable, Mapping
 from functools import wraps
@@ -21,13 +22,13 @@ from pathlib import Path
 from typing import Any, Concatenate
 
 from loguru import logger
-from tree_sitter import Node, QueryCursor
+from tree_sitter import Node
 
 from .. import constants as cs
 from .. import logs as ls
 from ..capture import ALL_ENABLED, CaptureSelection
 from ..language_spec import LanguageSpec
-from ..node_text import decode_node_text, sorted_captures
+from ..node_text import decode_node_text
 from ..services import IngestorProtocol
 from ..types_defs import (
     ASTCacheProtocol,
@@ -48,8 +49,14 @@ from .call_nodes import (
     function_field_call_name,
     parse_call_arguments,
 )
+from .call_ownership import (
+    collect_all_call_nodes,
+    file_call_nodes,
+    file_combined_captures,
+)
 from .call_references import ReferenceWalkers, flow_scope_boundaries
 from .call_resolver import CallResolver, Resolved
+from .call_scan import CallerCalls
 from .call_tables import TableReferences
 from .callable_flow import CallableFlow
 from .cpp import calls as cpp_calls
@@ -147,11 +154,10 @@ class CallProcessor:
         "_construction",
         "_binding",
         "_callers",
+        "_scan",
         "failed_call_files",
         "_call_file",
-        "_io_processor",
         "_flow_processor",
-        "_rpc_exposure",
         "_dispatch_registry",
     )
 
@@ -222,27 +228,7 @@ class CallProcessor:
         self._rust = rs_calls.RustCallResolution(self._resolver)
         self._lua = lua_calls.LuaCallResolution()
         self._julia = julia_calls.JuliaCallResolution(self)
-        # The call strategy each language's files go to; JS, TS and TSX share
-        # one. A language with none, and a walk that names no language, get
-        # the base, which adds nothing to the pass.
-        self._language_calls: dict[str, LanguageCalls] = {
-            cs.SupportedLanguage.PYTHON: self._python,
-            cs.SupportedLanguage.JS: self._js,
-            cs.SupportedLanguage.TS: self._js,
-            cs.SupportedLanguage.TSX: self._js,
-            cs.SupportedLanguage.JAVA: self._java,
-            cs.SupportedLanguage.GO: self._go,
-            cs.SupportedLanguage.CPP: self._cpp,
-            cs.SupportedLanguage.C: self._c,
-            cs.SupportedLanguage.PHP: self._php,
-            cs.SupportedLanguage.CSHARP: self._csharp,
-            cs.SupportedLanguage.DART: self._dart,
-            cs.SupportedLanguage.SCALA: self._scala,
-            cs.SupportedLanguage.SQL: self._sql,
-            cs.SupportedLanguage.RUST: self._rust,
-            cs.SupportedLanguage.LUA: self._lua,
-            cs.SupportedLanguage.JULIA: self._julia,
-        }
+        self._language_calls = self._language_call_lookup()
         self._default_calls = LanguageCalls()
         # What every language shares: the edge a function handed over as a
         # value keeps alive, the walks that find such values, callable-
@@ -272,7 +258,7 @@ class CallProcessor:
         self.failed_call_files: set[Path] = set()
         self._call_file: Path | None = None
         selection = capture if capture is not None else ALL_ENABLED
-        self._io_processor = IOAccessProcessor(
+        io_access = IOAccessProcessor(
             ingestor,
             import_processor,
             selection=selection,
@@ -286,7 +272,7 @@ class CallProcessor:
             selection=selection,
             function_registry=function_registry,
         )
-        self._rpc_exposure = GoRpcExposureProcessor(
+        rpc_exposure = GoRpcExposureProcessor(
             ingestor=ingestor,
             import_processor=import_processor,
             selection=selection,
@@ -305,6 +291,38 @@ class CallProcessor:
             function_locations=self.facts.function_locations,
             project_name=project_name,
         )
+        self._scan = CallerCalls(
+            self,
+            self._resolver,
+            self._flow,
+            self._binding,
+            io_access=io_access,
+            rpc_exposure=rpc_exposure,
+            flow_access=self._flow_processor,
+        )
+
+    def _language_call_lookup(self) -> dict[str, LanguageCalls]:
+        # The call strategy each language's files go to; JS, TS and TSX share
+        # one. A language with none, and a walk that names no language, get
+        # the base, which adds nothing to the pass.
+        return {
+            cs.SupportedLanguage.PYTHON: self._python,
+            cs.SupportedLanguage.JS: self._js,
+            cs.SupportedLanguage.TS: self._js,
+            cs.SupportedLanguage.TSX: self._js,
+            cs.SupportedLanguage.JAVA: self._java,
+            cs.SupportedLanguage.GO: self._go,
+            cs.SupportedLanguage.CPP: self._cpp,
+            cs.SupportedLanguage.C: self._c,
+            cs.SupportedLanguage.PHP: self._php,
+            cs.SupportedLanguage.CSHARP: self._csharp,
+            cs.SupportedLanguage.DART: self._dart,
+            cs.SupportedLanguage.SCALA: self._scala,
+            cs.SupportedLanguage.SQL: self._sql,
+            cs.SupportedLanguage.RUST: self._rust,
+            cs.SupportedLanguage.LUA: self._lua,
+            cs.SupportedLanguage.JULIA: self._julia,
+        }
 
     def _calls_for(self, language: str | None) -> LanguageCalls:
         if language is None:
@@ -354,21 +372,6 @@ class CallProcessor:
         # -- `_get_call_target_name` decodes call targets separately and is
         # routed through the same helper.
         return None if text is None else decode_node_text(text)
-
-    def _collect_all_call_nodes(
-        self,
-        root_node: Node,
-        language: cs.SupportedLanguage,
-        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
-    ) -> tuple[list[Node], list[int]]:
-        calls_query = queries[language].get(cs.QUERY_CALLS)
-        if not calls_query:
-            return [], []
-        cursor = QueryCursor(calls_query)
-        captures = sorted_captures(cursor, root_node)
-        call_nodes = captures.get(cs.CAPTURE_CALL, [])
-        call_starts = [n.start_byte for n in call_nodes]
-        return call_nodes, call_starts
 
     def _module_qn(self, file_path: Path, relative_path: Path) -> str:
         # The definition pass is the single source of truth for module qns:
@@ -420,9 +423,7 @@ class CallProcessor:
                 else None
             )
             if call_nodes is None:
-                call_nodes, _ = self._collect_all_call_nodes(
-                    root_node, language, queries
-                )
+                call_nodes, _ = collect_all_call_nodes(root_node, language, queries)
             calls.collect_callable_field_bindings(root_node, module_qn, call_nodes)
         except Exception as e:  # noqa: BLE001 -- isolation: one unit's failure must not end the run
             self.failed_call_files.add(file_path)
@@ -470,11 +471,11 @@ class CallProcessor:
 
             call_name_cache: dict[int, str | None] = {}
 
-            combined_captures = self._file_combined_captures(
+            combined_captures = file_combined_captures(
                 file_path, root_node, queries[language], func_class_captures_cache
             )
 
-            all_call_nodes, call_starts, func_node_starts = self._file_call_nodes(
+            all_call_nodes, call_starts, func_node_starts = file_call_nodes(
                 combined_captures, root_node, language, queries
             )
             sorted_func_nodes = combined_captures.get(cs.CAPTURE_FUNCTION)
@@ -541,55 +542,6 @@ class CallProcessor:
             if module_qn is not None:
                 self._js.forget_file_bindings(module_qn)
 
-    @staticmethod
-    def _file_combined_captures(
-        file_path: Path,
-        root_node: Node,
-        language_queries: LanguageQueries,
-        func_class_captures_cache: dict[Path, dict] | None,
-    ) -> dict[str, list[Node]]:
-        if (
-            func_class_captures_cache is not None
-            and file_path in func_class_captures_cache
-        ):
-            return func_class_captures_cache[file_path]
-        combined_query = language_queries[cs.QUERY_FUNC_CLASS]
-        if combined_query:
-            cursor = QueryCursor(combined_query)
-            return sorted_captures(cursor, root_node)
-        return {}
-
-    def _file_call_nodes(
-        self,
-        combined_captures: dict[str, list[Node]],
-        root_node: Node,
-        language: cs.SupportedLanguage,
-        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
-    ) -> tuple[list[Node], list[int] | None, list[int] | None]:
-        # The file's call nodes plus the call/function start offsets the
-        # per-scope filters bisect; both offset lists stay None when the file
-        # captured no function or class to filter by.
-        cached_calls = combined_captures.get(cs.CAPTURE_CALL)
-        if cached_calls is not None:
-            all_call_nodes = cached_calls
-            call_starts: list[int] | None = None
-        else:
-            all_call_nodes, call_starts = self._collect_all_call_nodes(
-                root_node, language, queries
-            )
-
-        sorted_func_nodes = combined_captures.get(cs.CAPTURE_FUNCTION)
-        if sorted_func_nodes or combined_captures.get(cs.CAPTURE_CLASS):
-            if cached_calls is not None:
-                call_starts = [n.start_byte for n in all_call_nodes]
-            func_node_starts = (
-                [n.start_byte for n in sorted_func_nodes] if sorted_func_nodes else None
-            )
-        else:
-            call_starts = None
-            func_node_starts = None
-        return all_call_nodes, call_starts, func_node_starts
-
     def _recorded_caller(
         self, func_node: Node, module_qn: str
     ) -> FunctionLocation | None:
@@ -613,144 +565,18 @@ class CallProcessor:
         call_nodes: list[Node] | None = None,
         call_name_cache: dict[int, str | None] | None = None,
     ) -> None:
-        local_var_types, span_bindings, cpp_spans = self._caller_local_types(
-            caller_node, caller_qn, module_qn, language, class_context
-        )
-        language_calls = self._calls_for(language)
-        language_calls.record_local_names(
-            caller_node, caller_qn, caller_type, module_qn
-        )
-
-        caller_spec = (caller_type, cs.KEY_QUALIFIED_NAME, caller_qn)
-
-        self._io_processor.process_io_for_caller(
-            caller_node, caller_spec, module_qn, language
-        )
-        self._rpc_exposure.process_caller(caller_node, module_qn, language)
-        self._flow_processor.process_flow_for_caller(
+        # The scan is `CallerCalls`'s; `_site_scoped` restores the site and
+        # resolution it leaves behind.
+        self._scan.ingest(
             caller_node,
-            caller_spec,
-            caller_qn,
-            module_qn,
-            language,
-            class_context,
-            local_var_types,
-        )
-
-        caller_params = self._record_caller_flow_params(
-            caller_node,
-            caller_qn,
-            module_qn,
-            language,
-            queries,
-            class_context,
-            local_var_types,
-        )
-        self._ingest_caller_property_reads(
-            caller_node,
-            caller_spec,
-            caller_qn,
-            module_qn,
-            language,
-            queries,
-            class_context,
-            local_var_types,
-        )
-        language_calls.ingest_caller_references(
-            caller_node,
-            caller_spec,
             caller_qn,
             caller_type,
             module_qn,
             language,
             queries,
             class_context,
-            local_var_types,
-        )
-
-        if call_nodes is None:
-            calls_query = queries[language].get(cs.QUERY_CALLS)
-            if not calls_query:
-                return
-            cursor = QueryCursor(calls_query)
-            captures = sorted_captures(cursor, caller_node)
-            call_nodes = captures.get(cs.CAPTURE_CALL, [])
-
-        if not call_nodes:
-            return
-
-        ctx = self._call_scan_context(
-            caller_node,
-            caller_qn,
-            caller_spec,
-            module_qn,
-            language,
-            queries,
-            class_context,
+            call_nodes,
             call_name_cache,
-            local_var_types,
-            span_bindings,
-            caller_params,
-        )
-        self._ingest_call_nodes(ctx, call_nodes, cpp_spans)
-        # Edges the later passes emit (decorators, property reads, operator
-        # dispatch) are exact bindings; they must not carry the verdict the
-        # last call node of this loop left behind.
-        self._resolution = cs.EdgeResolution.EXACT
-
-    def _caller_local_types(
-        self,
-        caller_node: Node,
-        caller_qn: str,
-        module_qn: str,
-        language: cs.SupportedLanguage,
-        class_context: str | None,
-    ) -> tuple[
-        dict[str, str] | None,
-        list[tuple[int, int, str, str]],
-        list[tuple[int, int, str, str]],
-    ]:
-        """The caller's local types, its span-scoped bindings and its C++
-        declaration windows."""
-        language_calls = self._calls_for(language)
-        if not language_calls.types_locals:
-            return None, [], []
-        try:
-            local_var_types = (
-                self._resolver.type_inference.build_local_variable_type_map(
-                    caller_node, module_qn, language, class_context
-                )
-            )
-            cpp_spans = language_calls.local_type_spans(
-                caller_node, module_qn, local_var_types
-            )
-            # Rust match arms and iterator-adaptor closures both reuse one
-            # binding name for different types at different byte ranges (`cmd`
-            # per arm; `|x|` per collection); the flat map keeps only one. These
-            # span-scoped bindings let each call resolve against the binding
-            # containing it.
-            span_bindings = self._span_bindings(
-                caller_node, module_qn, class_context, language, local_var_types
-            )
-        except Exception as e:  # noqa: BLE001 -- isolation: one unit's failure must not end the run
-            # A walk that still fails on some shape costs this caller its local
-            # types, not the file its calls: they resolve untyped (#3173).
-            self._record_caller_failure(ls.CALLER_LOCAL_TYPES_FAILED, caller_qn, e)
-            return {}, [], []
-        return local_var_types, span_bindings, cpp_spans
-
-    def _span_bindings(
-        self,
-        caller_node: Node,
-        module_qn: str,
-        class_context: str | None,
-        language: cs.SupportedLanguage,
-        local_var_types: dict[str, str] | None,
-    ) -> list[tuple[int, int, str, str]]:
-        if local_var_types is None:
-            return []
-        return self._calls_for(language).span_bindings(
-            caller_node, module_qn, class_context, local_var_types
         )
 
     def _record_caller_failure(
@@ -763,127 +589,6 @@ class CallProcessor:
             # POSIX on every OS, like the other paths the logs name.
             rel_path = cached_relative_path(path, self.repo_path).as_posix()
         logger.error(message, caller=caller, path=rel_path, error=error)
-
-    def _ingest_call_nodes(
-        self,
-        ctx: CallScan,
-        call_nodes: list[Node],
-        cpp_spans: list[tuple[int, int, str, str]],
-    ) -> None:
-        # A C++ name whose declarations disagree (a block local `B b` hiding
-        # a `::B b` field) is typed per call by the declaration in force
-        # there, for every use the call makes of it: a receiver, a functor
-        # called (`b(1)`) or handed over (`keep(b)`), an operator operand.
-        flat_types = ctx.local_var_types
-        for call_node in call_nodes:
-            if cpp_spans and flat_types is not None:
-                ctx.local_var_types = cpp_calls.types_at(
-                    flat_types, cpp_spans, call_node.start_byte
-                )
-            self._binding.ingest_call_node(ctx, call_node)
-
-    def _record_caller_flow_params(
-        self,
-        caller_node: Node,
-        caller_qn: str,
-        module_qn: str,
-        language: cs.SupportedLanguage,
-        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
-        class_context: str | None,
-        local_var_types: dict[str, str] | None,
-    ) -> frozenset[str]:
-        ordered_params = self._calls_for(language).parameter_names(caller_node)
-        if ordered_params is None:
-            return frozenset()
-        self._flow.record_caller(
-            caller_node,
-            caller_qn,
-            ordered_params,
-            module_qn,
-            language,
-            local_var_types,
-            class_context,
-            flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
-        )
-        return frozenset(ordered_params)
-
-    def _ingest_caller_property_reads(
-        self,
-        caller_node: Node,
-        caller_spec: tuple[str, str, str],
-        caller_qn: str,
-        module_qn: str,
-        language: cs.SupportedLanguage,
-        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
-        class_context: str | None,
-        local_var_types: dict[str, str] | None,
-    ) -> None:
-        # Runs independently of call_nodes: a getter access is an attribute, not
-        # a call, so callers that read a property but make no other call must
-        # still reach this pass before the early return below.
-        if prop_names := self._resolver.function_registry.property_names():
-            self._calls_for(language).ingest_property_reads(
-                caller_node,
-                caller_spec,
-                caller_qn,
-                module_qn,
-                local_var_types,
-                class_context,
-                queries[language][cs.QUERY_CONFIG],
-                prop_names,
-            )
-
-    def _call_scan_context(
-        self,
-        caller_node: Node,
-        caller_qn: str,
-        caller_spec: tuple[str, str, str],
-        module_qn: str,
-        language: cs.SupportedLanguage,
-        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
-        class_context: str | None,
-        call_name_cache: dict[int, str | None] | None,
-        local_var_types: dict[str, str] | None,
-        span_bindings: list[tuple[int, int, str, str]],
-        caller_params: frozenset[str],
-    ) -> CallScan:
-        calls = self._calls_for(language)
-        resolver = self._resolver
-        resolve_func = self._resolve_noting
-        builtins, operators = calls.binds_builtin_calls, calls.binds_operator_calls
-        resolve_builtin = resolver.resolve_builtin_call if builtins else None
-        resolve_cpp_op = resolver.cpp.resolve_cpp_operator_call if operators else None
-        # A method-group pass is not an invocation: C# records it as
-        # REFERENCES everywhere (CALLS here put 282 phantom edges into the
-        # Polly call graph, retrieval precision 1.0 -> 0.92); flow languages
-        # keep their historical CALLS form for external/builtin callees.
-        arg_ref_rel = (
-            cs.RelationshipType.CALLS
-            if calls.flows_callables
-            else cs.RelationshipType.REFERENCES
-        )
-        return CallScan(
-            caller_node=caller_node,
-            caller_qn=caller_qn,
-            caller_spec=caller_spec,
-            module_qn=module_qn,
-            language=language,
-            queries=queries,
-            calls=calls,
-            class_context=class_context,
-            call_name_cache=call_name_cache,
-            local_var_types=local_var_types,
-            span_bindings=span_bindings,
-            caller_params=caller_params,
-            # The dispatch fan-out treats a receiver typed to a template
-            # parameter like an untyped receiver rather than an external.
-            cpp_template_params=calls.template_params(caller_node),
-            resolve_func=resolve_func,
-            resolve_builtin=resolve_builtin,
-            resolve_cpp_op=resolve_cpp_op,
-            ensure_rel=self._emit_rel,
-            arg_ref_rel=arg_ref_rel,
-        )
 
     def _noted[R: tuple[str, str] | None](self, resolved: R) -> R:
         """`resolved`, with its verdict noted as the call node's."""

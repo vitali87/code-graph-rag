@@ -9,6 +9,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers.call_ownership import collect_all_call_nodes
 from codebase_rag.parsers.call_site import CallSite
 from codebase_rag.parsers.js_ts.calls import iife_target_name
 
@@ -1174,7 +1175,6 @@ class TestCallProcessorSlots:
 class TestCollectAllCallNodes:
     def test_returns_empty_when_no_calls_query(
         self,
-        call_processor: CallProcessor,
         parsers_and_queries: tuple,
     ) -> None:
         parsers, queries = parsers_and_queries
@@ -1185,7 +1185,7 @@ class TestCollectAllCallNodes:
         root = parse_code(code, cs.SupportedLanguage.PYTHON, parsers)
 
         empty_queries: dict = {cs.SupportedLanguage.PYTHON: {cs.QUERY_CALLS: None}}
-        call_nodes, call_starts = call_processor._collect_all_call_nodes(
+        call_nodes, call_starts = collect_all_call_nodes(
             root, cs.SupportedLanguage.PYTHON, empty_queries
         )
         assert call_nodes == []
@@ -1193,7 +1193,6 @@ class TestCollectAllCallNodes:
 
     def test_returns_call_nodes_for_code_with_calls(
         self,
-        call_processor: CallProcessor,
         parsers_and_queries: tuple,
     ) -> None:
         parsers, queries = parsers_and_queries
@@ -1202,7 +1201,7 @@ class TestCollectAllCallNodes:
 
         code = "foo()\nbar()"
         root = parse_code(code, cs.SupportedLanguage.PYTHON, parsers)
-        call_nodes, call_starts = call_processor._collect_all_call_nodes(
+        call_nodes, call_starts = collect_all_call_nodes(
             root, cs.SupportedLanguage.PYTHON, queries
         )
         assert len(call_nodes) >= 2
@@ -1213,7 +1212,6 @@ class TestCollectAllCallNodes:
 class TestFilterCallsInNode:
     def test_filters_calls_within_container(
         self,
-        call_processor: CallProcessor,
         parsers_and_queries: tuple,
     ) -> None:
         parsers, queries = parsers_and_queries
@@ -1228,7 +1226,7 @@ def other():
     bar()
 """
         root = parse_code(code, cs.SupportedLanguage.PYTHON, parsers)
-        all_call_nodes, call_starts = call_processor._collect_all_call_nodes(
+        all_call_nodes, call_starts = collect_all_call_nodes(
             root, cs.SupportedLanguage.PYTHON, queries
         )
         assert len(all_call_nodes) >= 2
