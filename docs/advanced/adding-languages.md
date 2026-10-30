@@ -150,6 +150,23 @@ holds the part a collaborator writes through), the name-based resolver, and
 what languages share: the reference walkers, callable-parameter flow, the
 class pass's qualified names and the construction a `new` runs.
 
+The definition pass has moved its per-language method groups as well.
+`ClassIngest` (`class_ingest/ingest.py`) builds a `CppClassIngest`,
+`RustClassIngest`, `CSharpClassIngest`, `GoClassIngest`, `DartClassIngest`,
+`JsTsClassIngest`, `JavaClassIngest` and `PythonClassIngest` (each in
+`parsers/<language>/class_ingest.py`), and `FunctionIngest`
+(`function_ingest.py`) a `CppFunctionIngest`, `RustFunctionIngest`,
+`CSharpFunctionIngest`, `GoFunctionIngest`, `JsTsFunctionIngest` and
+`JavaFunctionIngest` (each in `parsers/<language>/function_ingest.py`);
+PHP's class namespace and Lua's function naming are plain functions in the
+same modules. Each collaborator holds what its language defers, such as
+C++'s forward declarations and out-of-class methods or Go's receiver
+methods, and the `resolve_deferred_*` pass that settles it. The passes keep
+the scan of a file's captures, a definition's node, identity, members and
+DEFINES edge, the non-C++ INHERITS/IMPLEMENTS resolution and the override
+walk. A new language's class or function ingestion goes in a collaborator
+in its own package, built by the pass beside the others.
+
 ## Example: Adding C# Support
 
 ```bash
