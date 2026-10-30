@@ -210,31 +210,39 @@ def profile_protobuf_serialization() -> list[Timing]:
     import tempfile
     tmp_dir = Path(tempfile.mkdtemp())
     try:
-        ingestor = ProtobufFileIngestor(output_path=str(tmp_dir))
+        def populated_ingestor() -> ProtobufFileIngestor:
+            ingestor = ProtobufFileIngestor(output_path=str(tmp_dir))
+            for i in range(100):
+                ingestor.ensure_node_batch("Function", {
+                    "qualified_name": f"project.mod.func_{i}",
+                    "name": f"func_{i}",
+                    "path": "src/mod.py",
+                    "start_line": i * 10,
+                    "end_line": i * 10 + 5,
+                })
+            # The second hundred calls two ahead rather than one, so the
+            # ingestor keeps 200 distinct edges instead of merging them to 100.
+            for i in range(200):
+                ingestor.ensure_relationship_batch(
+                    ("Function", "qualified_name", f"project.mod.func_{i % 100}"),
+                    "CALLS",
+                    ("Function", "qualified_name", f"project.mod.func_{(i + 1 + i // 100) % 100}"),
+                )
+            return ingestor
 
-        for i in range(100):
-            ingestor.ensure_node_batch("Function", {
-                "qualified_name": f"project.mod.func_{i}",
-                "name": f"func_{i}",
-                "path": f"src/mod.py",
-                "start_line": i * 10,
-                "end_line": i * 10 + 5,
-            })
-        for i in range(200):
-            ingestor.ensure_relationship_batch(
-                ("Function", "qualified_name", f"project.mod.func_{i % 100}"),
-                "CALLS",
-                ("Function", "qualified_name", f"project.mod.func_{(i+1) % 100}"),
-            )
+        # A flush with nothing new since the last one writes nothing, so each
+        # timed run flushes an ingestor of its own.
+        flush_runs = 5
+        ingestors = iter([populated_ingestor() for _ in range(flush_runs)])
 
         def flush_protobuf():
-            ingestor.flush_all()
+            next(ingestors).flush_all()
 
-        r = benchmark(flush_protobuf, runs=5, label="protobuf flush (100 nodes, 200 rels)")
+        r = benchmark(flush_protobuf, runs=flush_runs, label="protobuf flush (100 nodes, 200 rels)")
         results.append(r)
         print(f"  {r['label']}: avg={r['avg_ms']:.2f}ms")
 
-        index_file = tmp_dir / "graph_code_index.pb"
+        index_file = tmp_dir / cs.PROTOBUF_INDEX_FILE
         if index_file.exists():
             size = index_file.stat().st_size
             print(f"  Output size: {size} bytes")
@@ -248,10 +256,9 @@ def profile_protobuf_serialization() -> list[Timing]:
             results.append(r2)
             print(f"  {r2['label']}: avg={r2['avg_ms']:.3f}ms")
 
-        for node_path in tmp_dir.iterdir():
-            if node_path.suffix == ".pb":
-                sz = node_path.stat().st_size
-                print(f"  Protobuf file: {node_path.name} ({sz} bytes)")
+        for node_path in sorted(tmp_dir.iterdir()):
+            sz = node_path.stat().st_size
+            print(f"  Protobuf file: {node_path.name} ({sz} bytes)")
 
     finally:
         shutil.rmtree(tmp_dir)
