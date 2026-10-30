@@ -501,13 +501,15 @@ def test_gate_is_required_between_bump_push_and_release_side_effects() -> None:
 
 
 # gh lists the drafts from a fixture through the real jq, so the filter that
-# picks which ones to delete is exercised too.
+# picks which ones to delete is exercised too. jq on Windows ends each line
+# with CRLF, which gh on the Ubuntu runner never does: left in, the CR sticks
+# to the tag name and the step deletes its own draft as an older one.
 RELEASE_STUBS = r"""
 gh() {
   printf 'gh %s\n' "$*" >> calls
   case "$1 $2" in
     "release create" | "api -X") return 0 ;;
-    "api repos/$GITHUB_REPOSITORY/releases?per_page=100") jq -r "$4" releases.json ;;
+    "api repos/$GITHUB_REPOSITORY/releases?per_page=100") jq -r "$4" releases.json | tr -d '\r' ;;
     *) return 1 ;;
   esac
 }
