@@ -30,7 +30,7 @@ from .lua.resolution import LuaResolver, lua_member_spellings, lua_package_metho
 from .php import resolution as php_resolution
 from .php.class_names import ClassPath as PhpClassPath
 from .python import resolution as python_resolution
-from .python import resolve_class_name
+from .python import resolve_class_name as resolve_imported_class_name
 from .rust.resolution import RustResolver, rust_caller
 from .scala.resolution import ScalaResolver
 from .type_inference import TypeInferenceEngine
@@ -108,7 +108,7 @@ class CallResolver:
         "facts",
         "_interface_impl_cache",
         "_simple_resolution_cache",
-        "_verdict",
+        "verdict",
         "_resolution_labels",
         "_wildcard_cache",
         "_field_bindings",
@@ -166,7 +166,7 @@ class CallResolver:
         # binds a callee marks it, and the entry point hands it back with the
         # answer. Memoised beside the cache so a hit reports the same
         # confidence as the miss.
-        self._verdict: str = cs.EdgeResolution.EXACT
+        self.verdict: str = cs.EdgeResolution.EXACT
         self._resolution_labels: dict[tuple[str, str, bool], str] = {}
         self._wildcard_cache: dict[int, list[tuple[str, str]]] = {}
         self._field_bindings: dict[tuple[str, str], set[str]] = {}
@@ -264,7 +264,7 @@ class CallResolver:
     def _ctor_params_owner(self, class_qn: str) -> tuple[str, tuple[str, ...]]:
         # Nearest self-or-ancestor with a non-empty recorded ctor param list
         # (a subclass with no __init__ has an empty list, so keep walking).
-        for ancestor in self._mro(class_qn):
+        for ancestor in self.mro(class_qn):
             if params := self._ctor_params.get(ancestor):
                 return ancestor, params
         return class_qn, self._ctor_params.get(class_qn, ())
@@ -272,12 +272,12 @@ class CallResolver:
     def _ctor_param_owner(self, class_qn: str, param: str) -> str:
         # Nearest self-or-ancestor whose ctor declares `param`, so an
         # inherited keyword binding attaches to the class that owns the field.
-        for ancestor in self._mro(class_qn):
+        for ancestor in self.mro(class_qn):
             if param in self._ctor_params.get(ancestor, ()):
                 return ancestor
         return class_qn
 
-    def _mro(self, class_qn: str) -> list[str]:
+    def mro(self, class_qn: str) -> list[str]:
         # BFS over the inheritance graph, self first; guards cycles.
         seen: set[str] = set()
         order: list[str] = []
@@ -322,14 +322,14 @@ class CallResolver:
             return self._field_bindings.get((next(iter(classes)), field), set())
         return set()
 
-    def _resolve_class_qn_from_type(
+    def resolve_class_qn_from_type(
         self, var_type: str, import_map: dict[str, str], module_qn: str
     ) -> str:
-        var_type = self._strip_optional(var_type)
+        var_type = self.strip_optional(var_type)
         if cs.SEPARATOR_DOUBLE_COLON in var_type:
             return self.rust.resolve_rust_class_qn(var_type, module_qn)
         if cs.SEPARATOR_DOT in var_type:
-            return self._follow_reexports(var_type)
+            return self.follow_reexports(var_type)
         if var_type in import_map:
             # A Rust import target is a raw `::`-path (`crate::parse::Parse`) that
             # is not a registry qn; resolve it to the real type node so both
@@ -338,14 +338,14 @@ class CallResolver:
             target = import_map[var_type]
             if cs.SEPARATOR_DOUBLE_COLON in target:
                 return self.rust.resolve_rust_class_qn(target, module_qn)
-            return self._follow_reexports(target)
+            return self.follow_reexports(target)
         if (
             scoped := self.rust.rust_glob_imported_type(var_type, module_qn)
         ) is not None:
             return scoped
-        return self._resolve_class_name(var_type, module_qn) or ""
+        return self.resolve_class_name(var_type, module_qn) or ""
 
-    def _strip_optional(self, var_type: str) -> str:
+    def strip_optional(self, var_type: str) -> str:
         # An Optional annotation (X | None) names a single concrete class; reduce it
         # so attribute/operator resolution can find that class. Genuine multi-type
         # unions stay unresolved (ambiguous).
@@ -358,7 +358,7 @@ class CallResolver:
         ]
         return non_none[0] if len(non_none) == 1 else var_type
 
-    def _follow_reexports(self, class_qn: str) -> str:
+    def follow_reexports(self, class_qn: str) -> str:
         if class_qn in self.function_registry:
             return class_qn
         # A JS/TS barrel passes on only what it exports: a type it imports
@@ -372,7 +372,7 @@ class CallResolver:
             return followed
         return self.rust.rust_glob_reexported_type(followed) or followed
 
-    def _try_resolve_method(
+    def try_resolve_method(
         self, class_qn: str, method_name: str, separator: str = cs.SEPARATOR_DOT
     ) -> tuple[str, str] | None:
         # A class-body alias of the name (issue #2620) lists every method
@@ -382,7 +382,7 @@ class CallResolver:
         method_qn = f"{class_qn}{separator}{method_name}"
         if method_qn in self.function_registry:
             return self.function_registry[method_qn], method_qn
-        return self._resolve_inherited_method(class_qn, method_name)
+        return self.resolve_inherited_method(class_qn, method_name)
 
     def reset_resolution_caches(self) -> None:
         # The watch pass deletes EVERY CALLS edge and recomputes them
@@ -439,7 +439,7 @@ class CallResolver:
     def resolve_call(self, call: CallSite) -> Resolved | None:
         """`resolve_function_call` for a request already gathered into a
         `CallSite`, as a stage or a language resolver holds one."""
-        self._verdict = cs.EdgeResolution.EXACT
+        self.verdict = cs.EdgeResolution.EXACT
         result = self._reject_class_via_value_receiver(
             self.python.redirect_protocol_method(self._resolve_function_call(call)),
             call.call_name,
@@ -457,8 +457,8 @@ class CallResolver:
         ):
             # The receiver's class is only what its parameter's name spells
             # (`payload` -> `Payload`): a guess, never an exact binding (#2608).
-            self._verdict = cs.EdgeResolution.HEURISTIC
-        return None if result is None else Resolved(*result, self._verdict)
+            self.verdict = cs.EdgeResolution.HEURISTIC
+        return None if result is None else Resolved(*result, self.verdict)
 
     def _reject_class_via_value_receiver(
         self,
@@ -473,7 +473,7 @@ class CallResolver:
 
         Two independent paths reach a class by discarding the receiver and
         looking the trailing name up on its own: `_try_resolve_module_method`
-        (same module) and `_try_resolve_via_trie` (cross module). Both then look
+        (same module) and `try_resolve_via_trie` (cross module). Both then look
         like construction to the emit site, which records INSTANTIATES for any
         callee that resolved to a Class.
 
@@ -531,13 +531,13 @@ class CallResolver:
         head, _, rest = receiver.partition(cs.SEPARATOR_DOT)
         if not head or not head.isidentifier():
             return None
-        base = self._receiver_base_qn(head, module_qn)
+        base = self.receiver_base_qn(head, module_qn)
         if base is None:
             return None
         owner = base if not rest else f"{base}{cs.SEPARATOR_DOT}{rest}"
         if self.function_registry.get(owner) != cs.NodeLabel.CLASS:
             return None
-        for ancestor in self._mro(owner):
+        for ancestor in self.mro(owner):
             candidate = f"{ancestor}{cs.SEPARATOR_DOT}{member}"
             if self.function_registry.get(candidate) == cs.NodeLabel.CLASS:
                 return candidate
@@ -575,7 +575,7 @@ class CallResolver:
             head, module_qn, resolved_qn, class_context, local_var_types
         ):
             return True
-        base = self._receiver_base_qn(head, module_qn)
+        base = self.receiver_base_qn(head, module_qn)
         if base is None:
             return False
         # Resolve the WHOLE receiver, not just its head. `mod_a.instance` has a
@@ -593,7 +593,7 @@ class CallResolver:
         # check.
         if self.function_registry.get(full) == cs.NodeLabel.CLASS:
             return self._class_is_nested_in(resolved_qn, full)
-        return self._import_target_is_a_namespace(full)
+        return self.import_target_is_a_namespace(full)
 
     def _receiver_owns_nested_class(
         self,
@@ -618,29 +618,29 @@ class CallResolver:
         var_type = local_var_types.get(head)
         if not var_type:
             return False
-        typed_qn = self._resolve_class_name(self._strip_optional(var_type), module_qn)
+        typed_qn = self.resolve_class_name(self.strip_optional(var_type), module_qn)
         return bool(
             typed_qn
             and self.function_registry.get(typed_qn) == cs.NodeLabel.CLASS
             and self._class_is_nested_in(resolved_qn, typed_qn)
         )
 
-    def _receiver_base_qn(self, head: str, module_qn: str) -> str | None:
+    def receiver_base_qn(self, head: str, module_qn: str) -> str | None:
         """The qn the receiver's first segment names, if it names a namespace.
 
-        `_resolve_class_name` follows the import map without checking what it
+        `resolve_class_name` follows the import map without checking what it
         landed on, so it answers `mod_a.helper` for an imported FUNCTION named
         `helper`. Confirm the qn it returns really is a Class before trusting
         it; the name alone is not evidence of classness.
         """
-        class_qn = self._resolve_class_name(head, module_qn)
+        class_qn = self.resolve_class_name(head, module_qn)
         if class_qn and self.function_registry.get(class_qn) == cs.NodeLabel.CLASS:
             return class_qn
         import_map = self.import_processor.import_mapping.get(module_qn) or {}
         if (imported := import_map.get(head)) is not None:
             if self.function_registry.get(
                 imported
-            ) == cs.NodeLabel.CLASS or self._import_target_is_a_namespace(imported):
+            ) == cs.NodeLabel.CLASS or self.import_target_is_a_namespace(imported):
                 return imported
             # An imported name that is neither a class nor a namespace may be
             # an alias defined in the module it was imported FROM
@@ -662,12 +662,12 @@ class CallResolver:
         target = self.python.module_level_alias_target(name, module_qn)
         if target is None:
             return None
-        alias_qn = self._resolve_class_name(target, module_qn)
+        alias_qn = self.resolve_class_name(target, module_qn)
         if alias_qn and self.function_registry.get(alias_qn) == cs.NodeLabel.CLASS:
             return alias_qn
         return None
 
-    def _cached_module_root(self, module_qn: str) -> Node | None:
+    def cached_module_root(self, module_qn: str) -> Node | None:
         file_path = self.type_inference.module_qn_to_file_path.get(module_qn)
         if file_path is None:
             return None
@@ -694,10 +694,10 @@ class CallResolver:
             return False
         return any(
             class_qn.startswith(f"{ancestor}{cs.SEPARATOR_DOT}")
-            for ancestor in self._mro(owner_qn)
+            for ancestor in self.mro(owner_qn)
         )
 
-    def _import_target_is_a_namespace(self, target: str) -> bool:
+    def import_target_is_a_namespace(self, target: str) -> bool:
         """Whether an imported name refers to something you construct THROUGH.
 
         A class (`from m import Outer` then `Outer.Inner()`) or a module
@@ -756,7 +756,7 @@ class CallResolver:
         # `scope`, then in its variant-stripped form, then `scope`'s own
         # body-scoped name.
         return (
-            self._scope_candidate(scope, call_name, language)
+            self.scope_candidate(scope, call_name, language)
             or self._dup_variant_scope_candidate(scope, call_name, language)
             or self._own_body_scoped_name(scope, call_name)
         )
@@ -797,7 +797,7 @@ class CallResolver:
             and self.function_registry[scope] == cs.NodeLabel.CLASS.value
         )
 
-    def _scope_candidate(
+    def scope_candidate(
         self, scope: str, call_name: str, language: cs.SupportedLanguage | None
     ) -> tuple[str, str] | None:
         candidate = f"{scope}{cs.SEPARATOR_DOT}{call_name}"
@@ -824,7 +824,7 @@ class CallResolver:
         natural_scope = qn_markers.natural_qn(scope)
         if natural_scope == scope:
             return None
-        return self._scope_candidate(natural_scope, call_name, language)
+        return self.scope_candidate(natural_scope, call_name, language)
 
     def _bare_call_allowed(
         self, language: cs.SupportedLanguage | None, qn: str
@@ -913,7 +913,7 @@ class CallResolver:
         # override does), so it must not be a call target; a concrete sibling/impl
         # wins. Abstract methods only "reached" polymorphically are handled as
         # dead-code roots, not by a spurious CALLS edge.
-        if (base := self._try_resolve_method(class_context, method_name)) and (
+        if (base := self.try_resolve_method(class_context, method_name)) and (
             not self.function_registry.is_abstract(base[1])
         ):
             targets.add(base)
@@ -967,7 +967,7 @@ class CallResolver:
         impl_qn = self._interface_impl_map().get(class_qn)
         if impl_qn is None:
             return set()
-        if result := self._try_resolve_method(impl_qn, method_name):
+        if result := self.try_resolve_method(impl_qn, method_name):
             return {result}
         return set()
 
@@ -990,7 +990,7 @@ class CallResolver:
 
         cache_key = self._resolution_cache_key(call)
         if cache_key is not None and cache_key in self._simple_resolution_cache:
-            self._verdict = self._resolution_labels.get(
+            self.verdict = self._resolution_labels.get(
                 cache_key, cs.EdgeResolution.EXACT
             )
             return self._simple_resolution_cache[cache_key]
@@ -1002,14 +1002,14 @@ class CallResolver:
         if handled:
             return result
 
-        result = self._try_resolve_via_trie(
+        result = self.try_resolve_via_trie(
             call.call_name,
             call.module_qn,
             call.language,
             call.call_point,
             call.constructing,
         )
-        self._remember_cacheable(cache_key, result)
+        self.remember_cacheable(cache_key, result)
         return result
 
     def _resolve_by_shape_or_receiver(
@@ -1033,7 +1033,7 @@ class CallResolver:
         # Ahead of the import probe: for a receiver it cannot place, that probe
         # binds `subprocess.run` to a same-module function named `run`.
         if self.python.receiver_is_external_python_module(call):
-            self._remember_cacheable(cache_key, None)
+            self.remember_cacheable(cache_key, None)
             return True, None
         return False, None
 
@@ -1054,7 +1054,7 @@ class CallResolver:
                 return True, result
         if self.python.untyped_receiver_guess_is_ambiguous(call):
             logger.debug(ls.CALL_AMBIGUOUS_UNTYPED_RECEIVER, call_name=call.call_name)
-            self._remember_cacheable(cache_key, None)
+            self.remember_cacheable(cache_key, None)
             return True, None
         return False, None
 
@@ -1194,13 +1194,13 @@ class CallResolver:
         if result := self._try_resolve_via_imports(
             call_name, module_qn, call.local_var_types, call.language, call.caller_qn
         ):
-            self._remember_cacheable(cache_key, result)
+            self.remember_cacheable(cache_key, result)
             return True, result
 
-        if result := self._try_resolve_same_module(
+        if result := self.try_resolve_same_module(
             call_name, module_qn, call.call_point
         ):
-            self._remember_cacheable(cache_key, result)
+            self.remember_cacheable(cache_key, result)
             return True, result
 
         handled, result = self.go.resolve_go_same_package(call, cache_key)
@@ -1237,7 +1237,7 @@ class CallResolver:
         if cs.SEPARATOR_DOT not in call_name and self._is_external_import(
             call_name, module_qn, call.language
         ):
-            self._remember_cacheable(cache_key, None)
+            self.remember_cacheable(cache_key, None)
             return True, None
 
         # A dotted call on an import whose target still holds a raw
@@ -1247,7 +1247,7 @@ class CallResolver:
         # the repo. The symbol is unindexed; do not let the last-segment trie
         # fallback rebind it to an unrelated first-party function.
         if self._is_external_path_import(call_name, module_qn):
-            self._remember_cacheable(cache_key, None)
+            self.remember_cacheable(cache_key, None)
             return True, None
 
         # A member call `obj.method` whose receiver has a KNOWN inferred type that is
@@ -1257,7 +1257,7 @@ class CallResolver:
         # rebind it to an unrelated first-party method of the same name. Untyped
         # receivers keep the fallback (their type is unknown, not known-external).
         if self._receiver_type_is_external(call_name, module_qn, call.local_var_types):
-            self._remember_cacheable(cache_key, None)
+            self.remember_cacheable(cache_key, None)
             return True, None
         return False, None
 
@@ -1285,12 +1285,12 @@ class CallResolver:
                 # #2609). Only the call site's AST can say that, so the call
                 # processor confirms or drops the pick from the receiver's
                 # declaration; this caller-independent verdict is what caches.
-                self._verdict = cs.EdgeResolution.HEURISTIC
-            self._remember_cacheable(cache_key, result)
+                self.verdict = cs.EdgeResolution.HEURISTIC
+            self.remember_cacheable(cache_key, result)
             return True, result
         return self.rust.resolve_rust_unresolvable_import(call, cache_key)
 
-    def _remember_cacheable(
+    def remember_cacheable(
         self, cache_key: tuple[str, str, bool] | None, result: tuple[str, str] | None
     ) -> None:
         if cache_key is not None:
@@ -1300,7 +1300,7 @@ class CallResolver:
         self, cache_key: tuple[str, str, bool], result: tuple[str, str] | None
     ) -> None:
         self._simple_resolution_cache[cache_key] = result
-        self._resolution_labels[cache_key] = self._verdict
+        self._resolution_labels[cache_key] = self.verdict
 
     def _is_external_path_import(self, call_name: str, module_qn: str) -> bool:
         # True when the dotted call's object segment is imported from a target
@@ -1388,7 +1388,7 @@ class CallResolver:
             return False
         return f"{project_root}{cs.SEPARATOR_DOT}{target}" not in self.function_registry
 
-    def _two_part_receiver_type(
+    def two_part_receiver_type(
         self, call_name: str, local_var_types: dict[str, str] | None
     ) -> str | None:
         """The inferred local type of `obj` in a two-part `obj.method` call, or None."""
@@ -1399,7 +1399,7 @@ class CallResolver:
             return None
         return local_var_types.get(parts[0])
 
-    def _registered_class_qn(self, class_qn: str, module_qn: str) -> str | None:
+    def registered_class_qn(self, class_qn: str, module_qn: str) -> str | None:
         """The registry's spelling of a first-party class qn, or None if unindexed.
 
         A first-party qn may be written without the project prefix (a bare
@@ -1429,19 +1429,19 @@ class CallResolver:
         # absent from the map) or a project-rooted type is left alone: its method may
         # still be resolved by the fallback (e.g. a cross-file imported-class call the
         # precise path missed), so only a provably external type is suppressed.
-        var_type = self._two_part_receiver_type(call_name, local_var_types)
+        var_type = self.two_part_receiver_type(call_name, local_var_types)
         if var_type is None:
             return False
         import_map = self.import_processor.import_mapping.get(module_qn, {})
-        class_qn = self._resolve_class_qn_from_type(var_type, import_map, module_qn)
+        class_qn = self.resolve_class_qn_from_type(var_type, import_map, module_qn)
         if not class_qn:
             return True
         # A project-rooted qn is always treated as first-party; otherwise the
-        # registry decides, under either spelling (see `_registered_class_qn`).
+        # registry decides, under either spelling (see `registered_class_qn`).
         project_root = module_qn.split(cs.SEPARATOR_DOT, 1)[0]
         if class_qn.split(cs.SEPARATOR_DOT, 1)[0] == project_root:
             return False
-        return self._registered_class_qn(class_qn, module_qn) is None
+        return self.registered_class_qn(class_qn, module_qn) is None
 
     def _try_resolve_iife(
         self, call_name: str, module_qn: str
@@ -1490,7 +1490,7 @@ class CallResolver:
                 return None
             import_map = {}
 
-        if result := self._try_resolve_direct_import(
+        if result := self.try_resolve_direct_import(
             call_name, import_map, language, module_qn
         ):
             return result
@@ -1500,7 +1500,7 @@ class CallResolver:
         ):
             return result
 
-        if result := self._try_resolve_qualified_call(
+        if result := self.try_resolve_qualified_call(
             call_name, import_map, module_qn, local_var_types, language
         ):
             return result
@@ -1511,9 +1511,9 @@ class CallResolver:
         self, path: PhpClassPath, module_qn: str
     ) -> Resolved | None:
         """The class a fully qualified PHP class path names, and how surely."""
-        self._verdict = cs.EdgeResolution.EXACT
+        self.verdict = cs.EdgeResolution.EXACT
         found = self.php.php_class_path(path, module_qn)
-        return None if found is None else Resolved(*found, self._verdict)
+        return None if found is None else Resolved(*found, self.verdict)
 
     def resolve_php_method_on_class_path(
         self, path: PhpClassPath, method_name: str, module_qn: str
@@ -1525,7 +1525,7 @@ class CallResolver:
         method = self.php.php_method(owner[1], method_name)
         return None if method is None else Resolved(*method, owner.resolution)
 
-    def _try_resolve_direct_import(
+    def try_resolve_direct_import(
         self,
         call_name: str,
         import_map: dict[str, str],
@@ -1616,7 +1616,7 @@ class CallResolver:
             self.import_processor.php, self.function_registry, imported_qn
         )
 
-    def _try_resolve_qualified_call(
+    def try_resolve_qualified_call(
         self,
         call_name: str,
         import_map: dict[str, str],
@@ -1690,7 +1690,7 @@ class CallResolver:
             return None
         for _, imported_qn in wildcards:
             if result := self._try_wildcard_qns(call_name, imported_qn):
-                self._verdict = cs.EdgeResolution.HEURISTIC
+                self.verdict = cs.EdgeResolution.HEURISTIC
                 return result
         return None
 
@@ -1708,7 +1708,7 @@ class CallResolver:
                 return self.function_registry[wildcard_qn], wildcard_qn
         return None
 
-    def _try_resolve_same_module(
+    def try_resolve_same_module(
         self, call_name: str, module_qn: str, call_point: int | None = None
     ) -> tuple[str, str] | None:
         same_module_func_qn = f"{module_qn}.{call_name}"
@@ -1731,7 +1731,7 @@ class CallResolver:
             return self.function_registry[same_module_func_qn], same_module_func_qn
         return None
 
-    def _nameable_candidates(
+    def nameable_candidates(
         self, candidates: list[str], module_qn: str, call_point: int | None = None
     ) -> list[str]:
         # The simple-name fallback matches on the last name segment alone, so
@@ -1740,11 +1740,11 @@ class CallResolver:
         # a generated TypeScript client, issue #945). That one is impossible,
         # so drop it; a candidate whose language cannot be determined is kept,
         # so the fallback still answers wherever this evidence is missing.
-        caller_language = self._module_language(module_qn)
+        caller_language = self.module_language(module_qn)
         reachable = [
             qn
             for qn in candidates
-            if self._languages_can_call(caller_language, self._module_language(qn))
+            if self._languages_can_call(caller_language, self.module_language(qn))
             # A Rust block-local item is nameable inside its own block
             # alone, and the site-gated probe answered there already
             # (issue #1061); by simple name it is never a candidate.
@@ -1759,13 +1759,13 @@ class CallResolver:
         unscoped = [
             qn
             for qn in reachable
-            if self.function_registry.get(self._parent_qn(qn))
+            if self.function_registry.get(self.parent_qn(qn))
             not in _SCOPING_PARENT_TYPES
         ]
         return unscoped or reachable
 
     @staticmethod
-    def _parent_qn(qualified_name: str) -> str:
+    def parent_qn(qualified_name: str) -> str:
         return qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[0]
 
     @staticmethod
@@ -1822,14 +1822,14 @@ class CallResolver:
         modules = self.type_inference.module_qn_to_file_path
         probe = qualified_name
         while cs.SEPARATOR_DOT in probe:
-            probe = self._parent_qn(probe)
+            probe = self.parent_qn(probe)
             if (path := modules.get(probe)) is not None:
                 if get_language_for_extension(path.suffix) == cs.SupportedLanguage.SQL:
                     return probe
                 return None
         return None
 
-    def _module_language(self, qualified_name: str) -> cs.SupportedLanguage | None:
+    def module_language(self, qualified_name: str) -> cs.SupportedLanguage | None:
         # The language of the module a qn lives in, found by walking off its
         # trailing segments until one names an ingested module (a caller's own
         # module qn hits on the first probe). Cached per qn: the fallback asks
@@ -1853,20 +1853,20 @@ class CallResolver:
                 break
             if cs.SEPARATOR_DOT not in probe:
                 break
-            probe = self._parent_qn(probe)
+            probe = self.parent_qn(probe)
         self._module_language_cache[qualified_name] = language
         return language
 
-    def _trie_candidates(
+    def trie_candidates(
         self, call_name: str, module_qn: str, call_point: int | None = None
     ) -> list[str]:
-        return self._nameable_candidates(
+        return self.nameable_candidates(
             self.function_registry.find_ending_with(trie_search_name(call_name)),
             module_qn,
             call_point,
         )
 
-    def _try_resolve_via_trie(
+    def try_resolve_via_trie(
         self,
         call_name: str,
         module_qn: str,
@@ -1875,7 +1875,7 @@ class CallResolver:
         constructing: bool = False,
     ) -> tuple[str, str] | None:
         search_name = trie_search_name(call_name)
-        possible_matches = self._trie_candidates(call_name, module_qn, call_point)
+        possible_matches = self.trie_candidates(call_name, module_qn, call_point)
         if search_name == call_name:
             # A bare name never reaches an object literal's function value;
             # a member call (`opts.retry.delay()`) still does (issue #2435).
@@ -1913,7 +1913,7 @@ class CallResolver:
             ]
         elif (
             search_name == call_name
-            and (language or self._module_language(module_qn))
+            and (language or self.module_language(module_qn))
             == cs.SupportedLanguage.PYTHON
         ):
             # A bare Python name is looked up in local, enclosing, global and
@@ -1935,12 +1935,12 @@ class CallResolver:
             possible_matches, module_qn, call_name, language
         )
 
-        best_candidate_qn = self._best_trie_candidate(possible_matches, module_qn)
+        best_candidate_qn = self.best_trie_candidate(possible_matches, module_qn)
         logger.debug(ls.CALL_TRIE_FALLBACK, call_name=call_name, qn=best_candidate_qn)
-        self._verdict = cs.EdgeResolution.HEURISTIC
+        self.verdict = cs.EdgeResolution.HEURISTIC
         return self.function_registry[best_candidate_qn], best_candidate_qn
 
-    def _best_trie_candidate(self, possible_matches: list[str], module_qn: str) -> str:
+    def best_trie_candidate(self, possible_matches: list[str], module_qn: str) -> str:
         if len(possible_matches) == 1:
             return possible_matches[0]
         caller_parts = module_qn.split(cs.SEPARATOR_DOT)
@@ -2054,7 +2054,7 @@ class CallResolver:
             return None
         resolved = self._try_resolve_module_method(method_name, call_name, module_qn)
         if resolved is not None:
-            self._verdict = cs.EdgeResolution.HEURISTIC
+            self.verdict = cs.EdgeResolution.HEURISTIC
         return resolved
 
     def _try_resolve_static_type_method(
@@ -2062,7 +2062,7 @@ class CallResolver:
     ) -> tuple[str, str] | None:
         if not (
             class_qn := self.rust.rust_glob_imported_type(object_name, module_qn)
-            or self._resolve_class_name(object_name, module_qn)
+            or self.resolve_class_name(object_name, module_qn)
         ):
             return None
         method_qn = f"{class_qn}{cs.SEPARATOR_DOT}{method_name}"
@@ -2075,7 +2075,7 @@ class CallResolver:
                 var_type=object_name,
             )
             return self.function_registry[method_qn], method_qn
-        return self._resolve_inherited_method(class_qn, method_name)
+        return self.resolve_inherited_method(class_qn, method_name)
 
     def _try_resolve_via_local_type(
         self,
@@ -2093,10 +2093,8 @@ class CallResolver:
 
         var_type = local_var_types[object_name]
 
-        if class_qn := self._resolve_class_qn_from_type(
-            var_type, import_map, module_qn
-        ):
-            if result := self._try_method_on_class(
+        if class_qn := self.resolve_class_qn_from_type(var_type, import_map, module_qn):
+            if result := self.try_method_on_class(
                 class_qn,
                 method_name,
                 separator,
@@ -2120,7 +2118,7 @@ class CallResolver:
             )
         return None
 
-    def _try_method_on_class(
+    def try_method_on_class(
         self,
         class_qn: str,
         method_name: str,
@@ -2144,7 +2142,7 @@ class CallResolver:
                 )
                 return self.function_registry[method_qn], method_qn
 
-        if inherited := self._resolve_inherited_method(class_qn, method_name):
+        if inherited := self.resolve_inherited_method(class_qn, method_name):
             logger.debug(
                 ls.CALL_TYPE_INFERRED_INHERITED,
                 call_name=call_name,
@@ -2187,7 +2185,7 @@ class CallResolver:
             # Unfollowed, `Get::new()` missed here and the simple-name
             # search bound it to whichever `Get` it reached first, as an
             # exact edge (issue #2542).
-            target = self._follow_reexports(target)
+            target = self.follow_reexports(target)
         class_qn = self._resolve_imported_class_qn(
             target, object_name, method_name, separator
         )
@@ -2202,9 +2200,9 @@ class CallResolver:
                 ls.CALL_IMPORT_STATIC, call_name=call_name, method_qn=method_qn
             )
             return self.function_registry[method_qn], method_qn
-        return self._try_resolve_package_member(class_qn, method_name)
+        return self.try_resolve_package_member(class_qn, method_name)
 
-    def _try_resolve_package_member(
+    def try_resolve_package_member(
         self,
         package_qn: str,
         member_name: str,
@@ -2235,7 +2233,7 @@ class CallResolver:
             return None
         member_qn = min(candidates)
         if len(candidates) > 1:
-            self._verdict = cs.EdgeResolution.HEURISTIC
+            self.verdict = cs.EdgeResolution.HEURISTIC
         logger.debug(ls.CALL_PACKAGE_MEMBER, member=member_name, qn=member_qn)
         return self.function_registry[member_qn], member_qn
 
@@ -2279,7 +2277,7 @@ class CallResolver:
 
         if local_var_types and attribute_ref in local_var_types:
             var_type = local_var_types[attribute_ref]
-            if class_qn := self._resolve_class_qn_from_type(
+            if class_qn := self.resolve_class_qn_from_type(
                 var_type, import_map, module_qn
             ):
                 method_qn = f"{class_qn}.{method_name}"
@@ -2293,7 +2291,7 @@ class CallResolver:
                     )
                     return self.function_registry[method_qn], method_qn
 
-                if inherited_method := self._resolve_inherited_method(
+                if inherited_method := self.resolve_inherited_method(
                     class_qn, method_name
                 ):
                     logger.debug(
@@ -2337,7 +2335,7 @@ class CallResolver:
 
         if local_var_types and class_name in local_var_types:
             var_type = local_var_types[class_name]
-            if class_qn := self._resolve_class_qn_from_type(
+            if class_qn := self.resolve_class_qn_from_type(
                 var_type, import_map, module_qn
             ):
                 method_qn = f"{class_qn}.{method_name}"
@@ -2351,7 +2349,7 @@ class CallResolver:
                     )
                     return self.function_registry[method_qn], method_qn
 
-                if inherited_method := self._resolve_inherited_method(
+                if inherited_method := self.resolve_inherited_method(
                     class_qn, method_name
                 ):
                     logger.debug(
@@ -2404,7 +2402,7 @@ class CallResolver:
         current_type = local_var_types.get(parts[0])
         if not current_type:
             return None
-        class_qn = self._resolve_class_qn_from_type(current_type, import_map, module_qn)
+        class_qn = self.resolve_class_qn_from_type(current_type, import_map, module_qn)
         for field in parts[1:-1]:
             if not class_qn:
                 return None
@@ -2413,7 +2411,7 @@ class CallResolver:
             ).get(field)
             if not field_type:
                 return None
-            class_qn = self._chain_class_qn(field_type, module_qn)
+            class_qn = self.chain_class_qn(field_type, module_qn)
         if not class_qn:
             return None
         method_name = parts[-1]
@@ -2427,7 +2425,7 @@ class CallResolver:
                 var_type=current_type,
             )
             return self.function_registry[method_qn], method_qn
-        return self._resolve_inherited_method(class_qn, method_name)
+        return self.resolve_inherited_method(class_qn, method_name)
 
     def resolve_builtin_call(self, call_name: str) -> tuple[str, str] | None:
         return resolve_js_builtin_call(call_name)
@@ -2502,15 +2500,15 @@ class CallResolver:
             found = self.js_ts.js_static_member(class_value, method)
             if found is None:
                 return None
-            return self._hop_return_type(found[0], language, True, class_value)
-        class_qn = self._chain_class_qn(
+            return self.hop_return_type(found[0], language, True, class_value)
+        class_qn = self.chain_class_qn(
             receiver_type, module_qn, rust_caller(language, caller_qn)
         )
-        return self._hop_return_type(
+        return self.hop_return_type(
             f"{class_qn}{cs.SEPARATOR_DOT}{method}", language, False, class_qn
         )
 
-    def _hop_return_type(
+    def hop_return_type(
         self,
         callable_qn: str,
         language: cs.SupportedLanguage | None,
@@ -2535,9 +2533,9 @@ class CallResolver:
         # Read right after the callee resolved. A JS/TS callee bound only by
         # name is a guess, and typing the rest of the chain from its return
         # would build every later hop on that guess.
-        if language in cs.JS_TS_LANGUAGES and self._verdict != cs.EdgeResolution.EXACT:
+        if language in cs.JS_TS_LANGUAGES and self.verdict != cs.EdgeResolution.EXACT:
             return None
-        return self._hop_return_type(callee_qn, language)
+        return self.hop_return_type(callee_qn, language)
 
     def _drop_named_constructor(self, name: str, target: str) -> str:
         """`Box.named` -> `Box` when the dotted name is not a definition but
@@ -2562,7 +2560,7 @@ class CallResolver:
         the CLASS and the hop its named constructor (issue #2033). Asked
         before the import map, since a class in this module is not an import.
         """
-        own = self._resolve_class_qn_from_type(
+        own = self.resolve_class_qn_from_type(
             name,
             self.import_processor.import_mapping.get(module_qn, {}),
             module_qn,
@@ -2621,7 +2619,7 @@ class CallResolver:
         # the class the prefixed module defines under the hop's name, or what
         # its function of that name returns.
         name = hop.split(cs.CHAR_PAREN_OPEN, 1)[0]
-        hit = self._unique_prefixed_definition(
+        hit = self.unique_prefixed_definition(
             self.dart.dart_prefix_targets(prefix, module_qn), name
         )
         if hit is None:
@@ -2644,9 +2642,9 @@ class CallResolver:
         # the caller another import's same-named class could win (Copilot,
         # PR #2040).
         returned = self.type_inference.facts.method_return_types.get(qn)
-        return (self._chain_class_qn(returned, target), parts[1:]) if returned else None
+        return (self.chain_class_qn(returned, target), parts[1:]) if returned else None
 
-    def _unique_prefixed_definition(
+    def unique_prefixed_definition(
         self, targets: list[str], name: str
     ) -> tuple[str, str, cs.NodeLabel] | None:
         # Imports sharing a prefix are searched together, and `p.Box` names
@@ -2675,7 +2673,7 @@ class CallResolver:
         member = self._drop_named_constructor(name, target)
         return f"{target}{cs.SEPARATOR_DOT}{member}"
 
-    def _chain_class_qn(
+    def chain_class_qn(
         self, type_name: str, module_qn: str, rust_caller: str | None = None
     ) -> str:
         # Resolve a bare type name from a chained-call hop to its class qn, honoring
@@ -2688,7 +2686,7 @@ class CallResolver:
             return scoped
         import_map = self.import_processor.import_mapping.get(module_qn, {})
         return (
-            self._resolve_class_qn_from_type(type_name, import_map, module_qn)
+            self.resolve_class_qn_from_type(type_name, import_map, module_qn)
             or type_name
         )
 
@@ -2728,23 +2726,23 @@ class CallResolver:
         if resolved is not None:
             return_type = self._callee_return_type(resolved[1], language)
             if return_type:
-                return self._resolve_type_to_class_qn(return_type, module_qn)
+                return self.resolve_type_to_class_qn(return_type, module_qn)
         if language in (cs.SupportedLanguage.CPP, cs.SupportedLanguage.DART):
             # Constructor temporary: `X(...)` resolved to a ctor (never a
             # recorded return) or to nothing at all; if X names a registered
             # class, that class IS the receiver type (C++ `Reader<T>(...)`,
             # Dart `_Usage(...).generate()`).
-            return self._resolve_type_to_class_qn(callee, module_qn)
+            return self.resolve_type_to_class_qn(callee, module_qn)
         return None
 
-    def _resolve_type_to_class_qn(self, type_path: str, module_qn: str) -> str | None:
+    def resolve_type_to_class_qn(self, type_path: str, module_qn: str) -> str | None:
         # Resolve a recorded return-type path to a registered CLASS qn. A factory
         # return type names a class, but the plain class-name resolver can return a
         # same-named factory METHOD (nlohmann's basic_json has both a `parser` class
         # and a `parser()` factory), so filter to class-labeled nodes. Try the
         # import-aware resolver first (same-file bare types, imports), then a
         # class-only suffix match on the qualified path, then on the bare name.
-        candidate = self._chain_class_qn(type_path, module_qn)
+        candidate = self.chain_class_qn(type_path, module_qn)
         if candidate and self.function_registry.get(candidate) == cs.NodeLabel.CLASS:
             return candidate
         matches = [
@@ -2789,7 +2787,7 @@ class CallResolver:
         if cs.SEPARATOR_DOT not in object_type:
             # Honor imports (Rust `use` targets are raw `::`-paths) so an
             # imported chained type (`Get::new(k).into_frame()`) resolves.
-            if resolved_class := self._chain_class_qn(
+            if resolved_class := self.chain_class_qn(
                 object_type, module_qn, rust_caller
             ):
                 full_object_type = resolved_class
@@ -2829,7 +2827,7 @@ class CallResolver:
                 )
                 return self.function_registry[method_qn], method_qn
 
-            if inherited_method := self._resolve_inherited_method(
+            if inherited_method := self.resolve_inherited_method(
                 full_object_type, final_method
             ):
                 logger.debug(
@@ -2893,7 +2891,7 @@ class CallResolver:
             logger.debug(ls.CALL_SUPER_NO_PARENTS, class_qn=current_class_qn)
             return None
 
-        if result := self._resolve_inherited_method(
+        if result := self.resolve_inherited_method(
             current_class_qn, method_name, own_members=False
         ):
             callee_type, parent_method_qn = result
@@ -2977,7 +2975,7 @@ class CallResolver:
         ):
             return False, None
         order = self._binding_aware_mro(class_context, member) or [
-            self._follow_reexports(class_qn) for class_qn in self._mro(class_context)
+            self.follow_reexports(class_qn) for class_qn in self.mro(class_context)
         ]
         hidden = False
         for owner in order:
@@ -3018,7 +3016,7 @@ class CallResolver:
         visited: set[str] = set()
         queue: deque[str] = deque([class_qn])
         while queue:
-            current = self._follow_reexports(queue.popleft())
+            current = self.follow_reexports(queue.popleft())
             if current in visited:
                 continue
             visited.add(current)
@@ -3033,7 +3031,7 @@ class CallResolver:
             mapping: dict[str, set[str]] = defaultdict(set)
             for subclass_qn, bases in self.facts.class_inheritance.items():
                 for base in bases:
-                    mapping[self._follow_reexports(base)].add(subclass_qn)
+                    mapping[self.follow_reexports(base)].add(subclass_qn)
             self._subclass_map_cache = mapping
         return self._subclass_map_cache
 
@@ -3076,7 +3074,7 @@ class CallResolver:
             if cls in active:
                 return None
             bases = [
-                self._follow_reexports(base)
+                self.follow_reexports(base)
                 for base in self.facts.class_inheritance.get(cls, [])
             ]
             sequences: list[list[str]] = []
@@ -3090,7 +3088,7 @@ class CallResolver:
             return order
 
         return linearise(class_qn, frozenset()) or [
-            self._follow_reexports(qn) for qn in self._mro(class_qn)
+            self.follow_reexports(qn) for qn in self.mro(class_qn)
         ]
 
     @staticmethod
@@ -3111,7 +3109,7 @@ class CallResolver:
             sequences = [seq[1:] if seq[0] == head else seq for seq in sequences]
         return order
 
-    def _resolve_inherited_method(
+    def resolve_inherited_method(
         self, class_qn: str, method_name: str, own_members: bool = True
     ) -> tuple[str, str] | None:
         # Every caller has already looked for a def of the name on class_qn
@@ -3135,7 +3133,7 @@ class CallResolver:
         # `run = None` or `run = _impl`.
         if (order := self._binding_aware_mro(class_qn, method_name)) is not None:
             return self._resolve_inherited_along_mro(order, method_name)
-        return self._resolve_inherited_breadth_first(class_qn, method_name)
+        return self.resolve_inherited_breadth_first(class_qn, method_name)
 
     def _resolve_inherited_along_mro(
         self, order: list[str], method_name: str
@@ -3150,7 +3148,7 @@ class CallResolver:
                 return None
         return None
 
-    def _resolve_inherited_breadth_first(
+    def resolve_inherited_breadth_first(
         self, class_qn: str, method_name: str
     ) -> tuple[str, str] | None:
         bfs_queue = deque(
@@ -3163,7 +3161,7 @@ class CallResolver:
             # may be a package re-export (class_ingest.ClassIngest) rather than
             # the real definition (class_ingest.ingest.ClassIngest); follow the
             # re-export so the inherited method qn matches the registry.
-            parent_class_qn = self._follow_reexports(bfs_queue.popleft())
+            parent_class_qn = self.follow_reexports(bfs_queue.popleft())
             parent_method_qn = f"{parent_class_qn}.{method_name}"
 
             if alias := self._member_alias(parent_class_qn, method_name):
@@ -3237,7 +3235,7 @@ class CallResolver:
             type_name = self.facts.type_aliases[type_name]
         return type_name
 
-    def _resolve_class_name(self, class_name: str, module_qn: str) -> str | None:
+    def resolve_class_name(self, class_name: str, module_qn: str) -> str | None:
         # A Rust name the file imports from an external crate is that
         # crate's type. The lookup below skips an unregistered import target
         # and searches first-party types by simple name, which bound
@@ -3251,7 +3249,7 @@ class CallResolver:
         # stem shadowing its class name) cannot mask the real class.
         if (package_type := self.go.go_package_type(class_name, module_qn)) is not None:
             return package_type
-        resolved = resolve_class_name(
+        resolved = resolve_imported_class_name(
             self._dealias_type(class_name),
             module_qn,
             self.import_processor,

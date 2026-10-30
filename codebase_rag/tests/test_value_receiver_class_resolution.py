@@ -2,7 +2,7 @@
 
 Two resolution paths reach a class by discarding the receiver and looking the
 trailing name up alone -- `_try_resolve_module_method` within a module and
-`_try_resolve_via_trie` across modules. The emit site then records INSTANTIATES
+`try_resolve_via_trie` across modules. The emit site then records INSTANTIATES
 for any callee that resolved to a Class, so a method call became a construction.
 
 Measured on gin-gonic/gin before the fix: all 82 INSTANTIATES edges targeted a

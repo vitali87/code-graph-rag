@@ -11,7 +11,7 @@ primary:
 
 So `Proc<int>.f` is reachable structurally and never by a call. The cause is on
 the CALL side, not in the node name: `CppTypeInference` maps a receiver to its
-"bare C++ type name", stripping template arguments, because `_resolve_class_name`
+"bare C++ type name", stripping template arguments, because `resolve_class_name`
 takes bare names -- a contract documented in three places with 15 call sites
 through it. `Proc<int>` and `Proc` therefore reduce to the same key.
 
@@ -94,7 +94,7 @@ def test_a_call_on_a_specialized_receiver_is_attributed_to_the_primary(
 @pytest.mark.xfail(
     reason="specialization dispatch needs the receiver type to keep its "
     "template arguments; the C++ type map is bare-name by contract and 15 "
-    "call sites resolve through _resolve_class_name (issue #1188)",
+    "call sites resolve through resolve_class_name (issue #1188)",
     strict=True,
 )
 def test_a_call_on_a_specialized_receiver_should_reach_the_specialization(

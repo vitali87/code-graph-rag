@@ -11,13 +11,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol
 
-from tree_sitter import Node
-
 from ... import constants as cs
 from ...types_defs import CppOperatorSignature, FunctionRegistryTrieProtocol
 from ...utils import qn_markers
 from ..definition_facts import DefinitionFacts
 from ..parameter_nodes import c_family_parameter_list
+from ..resolver_host import ResolverHost
 from . import utils as cpp_utils
 
 if TYPE_CHECKING:
@@ -25,29 +24,15 @@ if TYPE_CHECKING:
     from ..type_inference import TypeInferenceEngine
 
 
-class CppResolverHost(Protocol):
-    """What C++ resolution reads and calls on the `CallResolver` that builds it.
+class CppResolverHost(ResolverHost, Protocol):
+    """What C++ resolution reads and calls on the `CallResolver` that builds it:
+    the lookups every language shares, whose parsed module trees a free
+    operator's declarations are read from, and a recorded return type to a
+    registered class."""
 
-    The lookups every language shares: a written type to its class, a
-    recorded return type to a registered class, a class's bases and its own
-    or inherited method, and the parsed module trees a free operator's
-    declarations are read from."""
-
-    def _resolve_class_qn_from_type(
-        self, var_type: str, import_map: dict[str, str], module_qn: str
-    ) -> str: ...
-
-    def _resolve_type_to_class_qn(
+    def resolve_type_to_class_qn(
         self, type_path: str, module_qn: str
     ) -> str | None: ...
-
-    def _mro(self, class_qn: str) -> list[str]: ...
-
-    def _try_resolve_method(
-        self, class_qn: str, method_name: str, separator: str = cs.SEPARATOR_DOT
-    ) -> tuple[str, str] | None: ...
-
-    def _cached_module_root(self, module_qn: str) -> Node | None: ...
 
 
 class CppResolver:
@@ -128,7 +113,7 @@ class CppResolver:
         return_type = self.type_inference.facts.method_return_types.get(caller_qn)
         if not return_type:
             return None
-        return self._host._resolve_type_to_class_qn(return_type, module_qn)
+        return self._host.resolve_type_to_class_qn(return_type, module_qn)
 
     def cpp_dispatch_targets(
         self,
@@ -181,9 +166,9 @@ class CppResolver:
         # comparison) with no first-party callee; nlohmann's
         # `token == token_type::x` must not rebind to an unrelated class's
         # operator== and fan out to all its overload variants.
-        # _try_resolve_method covers both the direct member and one
+        # `try_resolve_method` covers both the direct member and one
         # INHERITED from a base (Derived : Base with Base::operator==).
-        return self._host._try_resolve_method(operand_type_qn, call_name)
+        return self._host.try_resolve_method(operand_type_qn, call_name)
 
     def cpp_free_operator_for_type(
         self, call_name: str, operand_type_qn: str, position: int, arity: int
@@ -223,10 +208,10 @@ class CppResolver:
         if param.type_name in signature.template_params:
             return True
         import_map = self.import_processor.import_mapping.get(signature.module_qn, {})
-        param_qn = self._host._resolve_class_qn_from_type(
+        param_qn = self._host.resolve_class_qn_from_type(
             param.type_name, import_map, signature.module_qn
         )
-        return bool(param_qn) and param_qn in self._host._mro(operand_type_qn)
+        return bool(param_qn) and param_qn in self._host.mro(operand_type_qn)
 
     def _cpp_free_operator_signatures(
         self, free_qn: str
@@ -252,7 +237,7 @@ class CppResolver:
         self, module_qn: str
     ) -> dict[str, tuple[CppOperatorSignature, ...]]:
         found: dict[str, list[CppOperatorSignature]] = {}
-        root = self._host._cached_module_root(module_qn)
+        root = self._host.cached_module_root(module_qn)
         if root is None:
             return {}
         engine = self.type_inference.cpp_type_inference
@@ -297,7 +282,7 @@ class CppResolver:
         if not var_type:
             return None
         import_map = self.import_processor.import_mapping.get(module_qn, {})
-        resolved = self._host._resolve_class_qn_from_type(
+        resolved = self._host.resolve_class_qn_from_type(
             var_type, import_map, module_qn
         )
         if resolved and resolved in self.function_registry:

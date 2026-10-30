@@ -185,11 +185,11 @@ class TestLanguageEvidenceOnIncrementalRuns:
 
     def test_language_comes_from_the_reparsed_map_first(self) -> None:
         resolver = self._resolver({"proj.web.a": Path("web/a.ts")}, {})
-        assert resolver._module_language("proj.web.a.outer") is cs.SupportedLanguage.TS
+        assert resolver.module_language("proj.web.a.outer") is cs.SupportedLanguage.TS
 
     def test_language_falls_back_to_the_rehydrated_path(self) -> None:
         resolver = self._resolver({}, {"proj.web.a.outer": "web/a.ts"})
-        assert resolver._module_language("proj.web.a.outer") is cs.SupportedLanguage.TS
+        assert resolver.module_language("proj.web.a.outer") is cs.SupportedLanguage.TS
 
     def test_unknown_module_has_no_language(self) -> None:
-        assert self._resolver({}, {})._module_language("proj.web.a") is None
+        assert self._resolver({}, {}).module_language("proj.web.a") is None

@@ -42,7 +42,7 @@ class CppTypeInferenceEngine:
     # function body, so the resolver binds a member-dispatch call
     # (`obj->method()` / `obj.method()`) to the method on the receiver's class
     # instead of guessing by bare method name. Bare names only: the resolver
-    # turns a name into a class qn via _resolve_class_name, so
+    # turns a name into a class qn via `resolve_class_name`, so
     # pointer/reference/const/template wrappers are stripped to the underlying
     # type identifier.
     __slots__ = ()

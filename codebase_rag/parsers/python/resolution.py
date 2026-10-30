@@ -26,6 +26,7 @@ from ...types_defs import FunctionRegistryTrieProtocol
 from ...utils import qn_markers
 from ..call_site import CallSite, split_receiver_chain, trie_search_name
 from ..definition_facts import DefinitionFacts
+from ..resolver_host import ResolverHost
 from ..semantic_call_join import call_site_key, declared_location
 
 if TYPE_CHECKING:
@@ -112,45 +113,33 @@ def _python_callee_name_node(call_node: Node) -> Node | None:
     return None
 
 
-class PythonResolverHost(Protocol):
+class PythonResolverHost(ResolverHost, Protocol):
     """What Python resolution reads and calls on the `CallResolver` that
     builds it.
 
-    The lookups every language shares, which a Python rule narrows or vetoes:
-    the module-language memo and parsed module trees, a written type to its
-    class and the registry's spelling of a class, a class's own or inherited
-    method, what a receiver's head names, and the simple-name fallback's
-    candidates."""
+    The lookups every language shares, which a Python rule narrows or vetoes,
+    and those only Python asks: the registry's spelling of a class, a
+    written type with its optional stripped, a two-part call's receiver
+    type, what a receiver's head names, whether an import target is a
+    namespace, and the simple-name fallback's candidates."""
 
-    def _module_language(self, qualified_name: str) -> cs.SupportedLanguage | None: ...
+    def registered_class_qn(self, class_qn: str, module_qn: str) -> str | None: ...
 
-    def _cached_module_root(self, module_qn: str) -> Node | None: ...
+    def strip_optional(self, var_type: str) -> str: ...
 
-    def _resolve_class_qn_from_type(
-        self, var_type: str, import_map: dict[str, str], module_qn: str
-    ) -> str: ...
-
-    def _registered_class_qn(self, class_qn: str, module_qn: str) -> str | None: ...
-
-    def _strip_optional(self, var_type: str) -> str: ...
-
-    def _two_part_receiver_type(
+    def two_part_receiver_type(
         self, call_name: str, local_var_types: dict[str, str] | None
     ) -> str | None: ...
 
-    def _try_resolve_method(
-        self, class_qn: str, method_name: str, separator: str = cs.SEPARATOR_DOT
-    ) -> tuple[str, str] | None: ...
+    def receiver_base_qn(self, head: str, module_qn: str) -> str | None: ...
 
-    def _receiver_base_qn(self, head: str, module_qn: str) -> str | None: ...
+    def import_target_is_a_namespace(self, target: str) -> bool: ...
 
-    def _import_target_is_a_namespace(self, target: str) -> bool: ...
-
-    def _nameable_candidates(
+    def nameable_candidates(
         self, candidates: list[str], module_qn: str, call_point: int | None = None
     ) -> list[str]: ...
 
-    def _trie_candidates(
+    def trie_candidates(
         self, call_name: str, module_qn: str, call_point: int | None = None
     ) -> list[str]: ...
 
@@ -305,10 +294,10 @@ class PythonResolver:
         if not receiver_type:
             return False, None
         import_map = self.import_processor.import_mapping.get(module_qn, {})
-        class_qn = self._host._resolve_class_qn_from_type(
+        class_qn = self._host.resolve_class_qn_from_type(
             receiver_type, import_map, module_qn
         )
-        if class_qn and (hit := self._host._try_resolve_method(class_qn, method)):
+        if class_qn and (hit := self._host.try_resolve_method(class_qn, method)):
             return True, hit
         return True, None
 
@@ -322,7 +311,7 @@ class PythonResolver:
         decides: `Alias = Outer` followed by `Alias = make()` holds a value
         by the time anything runs, so it names nothing (#1672).
         """
-        root_node = self._host._cached_module_root(module_qn)
+        root_node = self._host.cached_module_root(module_qn)
         if root_node is None:
             return None
         bound: str | None = None
@@ -387,7 +376,7 @@ class PythonResolver:
         methods = {
             resolved[1]
             for conformer in conformers
-            if (resolved := self._host._try_resolve_method(conformer, method_name))
+            if (resolved := self._host.try_resolve_method(conformer, method_name))
         }
         # The definers of a same-named method, read from the registry, which
         # an incremental run holds whole: the class hierarchy those scans
@@ -413,14 +402,14 @@ class PythonResolver:
         ]
         for definer, qn in definers.items():
             if (len(named) == 1 and definer == named[0]) or all(
-                self._host._try_resolve_method(definer, m) for m in required
+                self._host.try_resolve_method(definer, m) for m in required
             ):
                 methods.add(qn)
         targets: set[tuple[str, str]] = set()
         # The same reachability bound the simple-name fallback uses applies:
         # nothing written in a language the Protocol's own cannot call into
         # conforms to it (issue #945).
-        for qn in self._host._nameable_candidates(sorted(methods), class_qn):
+        for qn in self._host.nameable_candidates(sorted(methods), class_qn):
             definer, dot, name = qn.rpartition(cs.SEPARATOR_DOT)
             if dot and name == method_name and definer not in protocols:
                 targets.add((self.function_registry[qn], qn))
@@ -470,16 +459,16 @@ class PythonResolver:
         # stays as it was.
         if language != cs.SupportedLanguage.PYTHON:
             return False
-        var_type = self._host._two_part_receiver_type(call_name, local_var_types)
+        var_type = self._host.two_part_receiver_type(call_name, local_var_types)
         if var_type is None:
             return False
         import_map = self.import_processor.import_mapping.get(module_qn, {})
-        class_qn = self._host._resolve_class_qn_from_type(
+        class_qn = self._host.resolve_class_qn_from_type(
             var_type, import_map, module_qn
         )
         if not class_qn:
             return False
-        registered = self._host._registered_class_qn(class_qn, module_qn)
+        registered = self._host.registered_class_qn(class_qn, module_qn)
         if registered is None:
             return False
         if self.function_registry[registered] != cs.NodeLabel.CLASS.value:
@@ -488,7 +477,7 @@ class PythonResolver:
         # Own or inherited under the registered spelling. The precise
         # local-type path has normally already answered both, so this
         # re-check matters where that path used an unprefixed class qn.
-        if self._host._try_resolve_method(registered, method_name) is not None:
+        if self._host.try_resolve_method(registered, method_name) is not None:
             return False
         # A bare type name that several classes in THIS module carry (two
         # functions each defining a local `Analyzer`) resolved to one of them
@@ -497,7 +486,7 @@ class PythonResolver:
         # same-named class in another module, a CHILD module of a package
         # included, is unrelated and does not rescue the call. The annotation
         # is reduced first: `Product | None` names `Product`.
-        simple_type = self._host._strip_optional(var_type).rsplit(cs.SEPARATOR_DOT, 1)[
+        simple_type = self._host.strip_optional(var_type).rsplit(cs.SEPARATOR_DOT, 1)[
             -1
         ]
         return not any(
@@ -540,7 +529,7 @@ class PythonResolver:
         # the language, and their answers share the module-keyed cache with
         # the call scan's, so a gate on `call.language` alone would let a
         # pre-pass cache the very guess the scan is meant to refuse.
-        language = call.language or self._host._module_language(call.module_qn)
+        language = call.language or self._host.module_language(call.module_qn)
         return language == cs.SupportedLanguage.PYTHON
 
     def receiver_is_external_python_module(self, call: CallSite) -> bool:
@@ -587,9 +576,9 @@ class PythonResolver:
         project_root = module_qn.split(cs.SEPARATOR_DOT, 1)[0]
         if target.split(cs.SEPARATOR_DOT, 1)[0] == project_root:
             return False
-        if self._host._registered_class_qn(target, module_qn) is not None:
+        if self._host.registered_class_qn(target, module_qn) is not None:
             return False
-        if self._host._import_target_is_a_namespace(
+        if self._host.import_target_is_a_namespace(
             f"{project_root}{cs.SEPARATOR_DOT}{target}"
         ):
             return False
@@ -628,12 +617,12 @@ class PythonResolver:
         if self._receiver_is_bound(call, parts, on_self):
             return False
         if (
-            len(self._host._trie_candidates(call_name, call.module_qn, call.call_point))
+            len(self._host.trie_candidates(call_name, call.module_qn, call.call_point))
             < 2
         ):
             return False
         # Last, being the one probe that reads the module's AST.
-        return on_self or self._host._receiver_base_qn(head, call.module_qn) is None
+        return on_self or self._host.receiver_base_qn(head, call.module_qn) is None
 
     def _receiver_is_bound(
         self, call: CallSite, parts: list[str], on_self: bool
@@ -666,7 +655,7 @@ class PythonResolver:
         if not local_var_types or not (var_type := local_var_types.get(operand_text)):
             return set()
         import_map = self.import_processor.import_mapping.get(module_qn, {})
-        class_qn = self._host._resolve_class_qn_from_type(
+        class_qn = self._host.resolve_class_qn_from_type(
             var_type, import_map, module_qn
         )
         if not class_qn:
@@ -682,7 +671,7 @@ class PythonResolver:
             classes = {class_qn}
         targets: set[tuple[str, str]] = set()
         for candidate in classes:
-            if resolved := self._host._try_resolve_method(candidate, dunder):
+            if resolved := self._host.try_resolve_method(candidate, dunder):
                 targets.add(resolved)
         return targets
 
@@ -735,7 +724,7 @@ class PythonResolver:
             if candidate in protocols:
                 continue
             if all(
-                self._host._try_resolve_method(candidate, method)
+                self._host.try_resolve_method(candidate, method)
                 for method in protocol_methods
             ):
                 result.add(candidate)
@@ -766,12 +755,12 @@ class PythonResolver:
         if not returned:
             return set()
         import_map = self.import_processor.import_mapping.get(module_qn, {})
-        class_qn = self._host._resolve_class_qn_from_type(
+        class_qn = self._host.resolve_class_qn_from_type(
             returned, import_map, module_qn
         )
         if not class_qn or self.function_registry.get(class_qn) != cs.NodeLabel.CLASS:
             return set()
-        hit = self._host._try_resolve_method(class_qn, cs.PY_DUNDER_CALL)
+        hit = self._host.try_resolve_method(class_qn, cs.PY_DUNDER_CALL)
         return {hit} if hit else set()
 
     def resolve_python_call_site(

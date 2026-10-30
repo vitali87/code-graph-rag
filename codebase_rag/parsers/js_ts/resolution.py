@@ -11,13 +11,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol
 
-from tree_sitter import Node
-
 from ... import constants as cs
 from ...node_text import safe_decode_text
 from ...types_defs import FunctionRegistryTrieProtocol
 from ...utils import qn_markers
 from ..call_site import CallSite
+from ..resolver_host import ResolverHost
 from . import utils as js_ts_utils
 
 if TYPE_CHECKING:
@@ -78,44 +77,18 @@ def resolve_builtin_call(call_name: str) -> tuple[str, str] | None:
     return None
 
 
-class JsTsResolverHost(Protocol):
+class JsTsResolverHost(ResolverHost, Protocol):
     """What JS/TS resolution reads and calls on the `CallResolver` that builds
     it.
 
     A chain's first hop is resolved as that call written alone would be
-    (`resolve_call`), and `_verdict` says how surely it bound: a
-    guessed callee types nothing after it. The rest is resolution every
-    language shares: the class hierarchy walk and inherited-method lookup,
-    the re-export walk, the parsed module trees, the type and direct-import
-    lookups, and the return type a hop hands the next one."""
-
-    _verdict: str
+    (`resolve_call`), and `verdict` says how surely it bound: a guessed
+    callee types nothing after it. The rest is resolution every language
+    shares, and the return type a hop hands the next one."""
 
     def resolve_call(self, call: CallSite) -> tuple[str, str] | None: ...
 
-    def _mro(self, class_qn: str) -> list[str]: ...
-
-    def _follow_reexports(self, class_qn: str) -> str: ...
-
-    def _cached_module_root(self, module_qn: str) -> Node | None: ...
-
-    def _resolve_class_qn_from_type(
-        self, var_type: str, import_map: dict[str, str], module_qn: str
-    ) -> str: ...
-
-    def _try_resolve_direct_import(
-        self,
-        call_name: str,
-        import_map: dict[str, str],
-        language: cs.SupportedLanguage | None = None,
-        module_qn: str | None = None,
-    ) -> tuple[str, str] | None: ...
-
-    def _resolve_inherited_method(
-        self, class_qn: str, method_name: str, own_members: bool = True
-    ) -> tuple[str, str] | None: ...
-
-    def _hop_return_type(
+    def hop_return_type(
         self,
         callable_qn: str,
         language: cs.SupportedLanguage | None,
@@ -328,7 +301,7 @@ class JsTsResolver:
             return None
         # The chain's end resolves as a direct import of it would, so a
         # CommonJS whole-module export there is still reached.
-        return self._host._try_resolve_direct_import(
+        return self._host.try_resolve_direct_import(
             call_name, {call_name: followed}, language, module_qn
         )
 
@@ -338,7 +311,7 @@ class JsTsResolver:
         declaring a static of that name, field or accessor included, which
         hides every parent's; one with no method body answers nothing.
         Instance members are a different namespace and never answer."""
-        for owner in self._host._mro(class_qn):
+        for owner in self._host.mro(class_qn):
             declared, line = self.type_inference.js_static_member(owner, method)
             if declared:
                 return (
@@ -385,7 +358,7 @@ class JsTsResolver:
             self._js_return_class_cache[key] = returned
             return returned
         class_qn = (
-            self._host._follow_reexports(returned)
+            self._host.follow_reexports(returned)
             if returned and cs.SEPARATOR_DOT in returned
             else None
         )
@@ -447,7 +420,7 @@ class JsTsResolver:
             return None
         receiver = chain.class_context if is_this else named
         static = this_static or named is not None
-        returned = self._host._hop_return_type(callee_qn, language, static, receiver)
+        returned = self._host.hop_return_type(callee_qn, language, static, receiver)
         return (returned, parts[1:]) if returned else None
 
     def _first_hop_callee(
@@ -468,7 +441,7 @@ class JsTsResolver:
         # The class a base name is at the call: declared in this module or
         # imported, and not rebound by a parameter or local around the call.
         # A same-named class elsewhere in the project is never it.
-        root = self._host._cached_module_root(module_qn)
+        root = self._host.cached_module_root(module_qn)
         site = (
             root.named_descendant_for_byte_range(call_point, call_point)
             if root is not None and call_point is not None
@@ -481,7 +454,7 @@ class JsTsResolver:
         )
         if class_qn is None:
             return None
-        class_qn = self._host._follow_reexports(class_qn)
+        class_qn = self._host.follow_reexports(class_qn)
         return (
             class_qn
             if self.function_registry.get(class_qn) == cs.NodeLabel.CLASS
@@ -495,7 +468,7 @@ class JsTsResolver:
         resolved = self._host.resolve_call(call)
         if resolved is not None:
             return (
-                resolved[1] if self._host._verdict == cs.EdgeResolution.EXACT else None
+                resolved[1] if self._host.verdict == cs.EdgeResolution.EXACT else None
             )
         # `this.m()` in an arrow: name resolution climbs from the arrow to its
         # method, not the class, so the call processor anchors such a call on
@@ -505,7 +478,7 @@ class JsTsResolver:
         own_qn = f"{call.class_context}{cs.SEPARATOR_DOT}{method}"
         if own_qn in self.function_registry:
             return own_qn
-        inherited = self._host._resolve_inherited_method(call.class_context, method)
+        inherited = self._host.resolve_inherited_method(call.class_context, method)
         return inherited[1] if inherited else None
 
     def _js_this_names_class(
@@ -514,7 +487,7 @@ class JsTsResolver:
         # `this` / `super` at the call: the class inside a static member, an
         # instance inside an instance member, and neither (None) inside a
         # plain function or an object literal's method.
-        root = self._host._cached_module_root(module_qn)
+        root = self._host.cached_module_root(module_qn)
         if root is None or call_point is None:
             return None
         return js_ts_utils.this_names_class_at(root, call_point)
@@ -535,7 +508,7 @@ class JsTsResolver:
         # file's tree, a `Box` the caller binds itself cannot be ruled out.
         if language not in cs.JS_TS_LANGUAGES or call_point is None:
             return None
-        root = self._host._cached_module_root(module_qn)
+        root = self._host.cached_module_root(module_qn)
         if root is None:
             return None
         construction = js_ts_utils.construction_at(root, call_point, base)
@@ -550,6 +523,6 @@ class JsTsResolver:
             return None
         import_map = self.import_processor.import_mapping.get(module_qn, {})
         return (
-            self._host._resolve_class_qn_from_type(var_type, import_map, module_qn)
+            self._host.resolve_class_qn_from_type(var_type, import_map, module_qn)
             or None
         )

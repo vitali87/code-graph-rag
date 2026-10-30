@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Protocol
 from ... import constants as cs
 from ...types_defs import FunctionRegistryTrieProtocol
 from ..definition_facts import DefinitionFacts
+from ..resolver_host import ResolverHost
 
 if TYPE_CHECKING:
     from ..call_site import CallSite
@@ -22,25 +23,17 @@ if TYPE_CHECKING:
     from ..type_inference import TypeInferenceEngine
 
 
-class DartResolverHost(Protocol):
+class DartResolverHost(ResolverHost, Protocol):
     """What Dart resolution reads and calls on the `CallResolver` that builds
-    it.
+    it: the lookups every language shares, the one definition an import
+    prefix's libraries hold for a name, and a chained hop's type name to its
+    class."""
 
-    The lookups every language shares: a class's inherited method, the
-    re-export walk, the one definition an import prefix's libraries hold for
-    a name, and a chained hop's type name to its class."""
-
-    def _resolve_inherited_method(
-        self, class_qn: str, method_name: str, own_members: bool = True
-    ) -> tuple[str, str] | None: ...
-
-    def _follow_reexports(self, class_qn: str) -> str: ...
-
-    def _unique_prefixed_definition(
+    def unique_prefixed_definition(
         self, targets: list[str], name: str
     ) -> tuple[str, str, cs.NodeLabel] | None: ...
 
-    def _chain_class_qn(
+    def chain_class_qn(
         self, type_name: str, module_qn: str, rust_caller: str | None = None
     ) -> str: ...
 
@@ -180,7 +173,7 @@ class DartResolver:
             # An own member shadows every inherited and extension one, even
             # when it records no return type.
             member_qn = own_qn
-        elif found := self._host._resolve_inherited_method(
+        elif found := self._host.resolve_inherited_method(
             class_qn, member
         ) or self.dart_extension_member(class_qn, member, module_qn):
             member_qn = found[1]
@@ -208,7 +201,7 @@ class DartResolver:
             return written
         prefix, dot, name = written.partition(cs.SEPARATOR_DOT)
         if dot:
-            hit = self._host._unique_prefixed_definition(
+            hit = self._host.unique_prefixed_definition(
                 self.dart_prefix_targets(prefix, module_qn), name
             )
             if hit is not None:
@@ -225,7 +218,7 @@ class DartResolver:
             ]
             if len(imported) == 1:
                 return imported[0]
-        return self._host._chain_class_qn(written, module_qn)
+        return self._host.chain_class_qn(written, module_qn)
 
     def dart_extension_member(
         self, class_qn: str, member: str, module_qn: str
@@ -296,7 +289,7 @@ class DartResolver:
         frontier = [class_qn]
         while frontier:
             parents = {
-                self._host._follow_reexports(parent)
+                self._host.follow_reexports(parent)
                 for child in frontier
                 for parent in self.facts.class_inheritance.get(child, [])
             } - seen

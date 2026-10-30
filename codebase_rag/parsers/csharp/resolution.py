@@ -11,12 +11,13 @@ engine (`CSharpTypeInferenceEngine`), which the resolver bridges to."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 from tree_sitter import Node
 
 from ... import constants as cs
 from ...types_defs import FunctionRegistryTrieProtocol
+from ..resolver_host import ResolverHost
 
 if TYPE_CHECKING:
     from ..call_site import CallSite
@@ -42,16 +43,6 @@ def _split_csharp_qualified_path(path: str) -> list[str]:
     return parts
 
 
-class CSharpResolverHost(Protocol):
-    """What C# resolution calls on the `CallResolver` that builds it: the
-    inherited-method lookup every language shares, for a member a qualified
-    path names on a type that only inherits it."""
-
-    def _resolve_inherited_method(
-        self, class_qn: str, method_name: str, own_members: bool = True
-    ) -> tuple[str, str] | None: ...
-
-
 class CSharpResolver:
     """Binds C# qualified paths and ranks same-named C# types by C# lookup.
 
@@ -70,7 +61,7 @@ class CSharpResolver:
 
     def __init__(
         self,
-        host: CSharpResolverHost,
+        host: ResolverHost,
         function_registry: FunctionRegistryTrieProtocol,
         import_processor: ImportProcessor,
         type_inference: TypeInferenceEngine,
@@ -216,7 +207,7 @@ class CSharpResolver:
         if method_qn in self.function_registry:
             return self.function_registry[method_qn], method_qn
         if cs.SEPARATOR_DOT not in member_name:
-            return self._host._resolve_inherited_method(class_qn, member_name)
+            return self._host.resolve_inherited_method(class_qn, member_name)
         return None
 
     def _csharp_path_starts_with_imported_namespace(

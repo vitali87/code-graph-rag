@@ -13,11 +13,10 @@ from __future__ import annotations
 from collections import deque
 from typing import TYPE_CHECKING, NamedTuple, Protocol
 
-from tree_sitter import Node
-
 from ... import constants as cs
 from ...types_defs import FunctionRegistryTrieProtocol
 from ..definition_facts import DefinitionFacts
+from ..resolver_host import ResolverHost
 from . import class_names as php_class_names
 from .class_names import ClassPath as PhpClassPath
 from .class_names import ascii_fold as _php_fold
@@ -178,26 +177,17 @@ def php_import_key(call_name: str, import_map: dict[str, str]) -> str | None:
     return matches[0] if len(matches) == 1 else None
 
 
-class PhpResolverHost(Protocol):
+class PhpResolverHost(ResolverHost, Protocol):
     """What PHP resolution reads and calls on the `CallResolver` that builds it.
 
-    `_verdict` is how surely the class path being resolved binds: a global
+    `verdict` is how surely the class path being resolved binds: a global
     path reaching another file's class by name alone marks it a guess. The
-    rest is resolution every language shares: the module-language memo and
-    parsed module trees, the re-export walk, a qn's parent, and the
+    rest is resolution every language shares, a qn's parent, and the
     simple-name fallback's ranking."""
 
-    _verdict: str
+    def parent_qn(self, qualified_name: str) -> str: ...
 
-    def _module_language(self, qualified_name: str) -> cs.SupportedLanguage | None: ...
-
-    def _cached_module_root(self, module_qn: str) -> Node | None: ...
-
-    def _follow_reexports(self, class_qn: str) -> str: ...
-
-    def _parent_qn(self, qualified_name: str) -> str: ...
-
-    def _best_trie_candidate(
+    def best_trie_candidate(
         self, possible_matches: list[str], module_qn: str
     ) -> str: ...
 
@@ -281,13 +271,13 @@ class PhpResolver:
                 return None
             return self.function_registry[candidates[0]], candidates[0]
         if own := next(
-            (qn for qn in candidates if self._host._parent_qn(qn) == module_qn), None
+            (qn for qn in candidates if self._host.parent_qn(qn) == module_qn), None
         ):
             return self.function_registry[own], own
         if not candidates:
             return None
-        best = self._host._best_trie_candidate(candidates, module_qn)
-        self._host._verdict = cs.EdgeResolution.HEURISTIC
+        best = self._host.best_trie_candidate(candidates, module_qn)
+        self._host.verdict = cs.EdgeResolution.HEURISTIC
         return self.function_registry[best], best
 
     def _php_class_candidates(self, symbol: str) -> list[str]:
@@ -309,14 +299,14 @@ class PhpResolver:
         # The ASCII-folded namespace PHP declares `class_qn` in; None when its
         # file is not PHP or its declaration cannot be read this run, which
         # never passes for the global namespace.
-        if self._host._module_language(class_qn) != cs.SupportedLanguage.PHP:
+        if self._host.module_language(class_qn) != cs.SupportedLanguage.PHP:
             return None
         module_qn = self._php_module_of(class_qn)
         if module_qn is None:
             return None
         declared = self._php_class_namespaces.get(module_qn)
         if declared is None:
-            root = self._host._cached_module_root(module_qn)
+            root = self._host.cached_module_root(module_qn)
             declared = (
                 {
                     qn: tuple(_php_fold(part) for part in namespace)
@@ -334,7 +324,7 @@ class PhpResolver:
         modules = self.type_inference.module_qn_to_file_path
         probe = qualified_name
         while cs.SEPARATOR_DOT in probe:
-            probe = self._host._parent_qn(probe)
+            probe = self._host.parent_qn(probe)
             if probe in modules:
                 return probe
         return None
@@ -353,7 +343,7 @@ class PhpResolver:
         queue = deque([class_qn])
         seen = {class_qn}
         while queue:
-            owner = self._host._follow_reexports(queue.popleft())
+            owner = self._host.follow_reexports(queue.popleft())
             if (
                 method_qn := self._php_declared_method(owner, method_name, wanted)
             ) is not None:
@@ -386,7 +376,7 @@ class PhpResolver:
                     continue
                 owner_qn, _, leaf = qn.rpartition(cs.SEPARATOR_DOT)
                 if (folded := _php_fold(leaf)) == leaf or (
-                    self._host._module_language(owner_qn) != cs.SupportedLanguage.PHP
+                    self._host.module_language(owner_qn) != cs.SupportedLanguage.PHP
                 ):
                     continue
                 if kind == cs.NodeLabel.METHOD:

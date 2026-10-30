@@ -361,7 +361,7 @@ class CppCallResolution(LanguageCalls):
             return None
         normalized = class_name.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT)
         leaf = normalized.rsplit(cs.SEPARATOR_DOT, 1)[-1]
-        class_qn = self._resolver._resolve_class_name(leaf, module_qn)
+        class_qn = self._resolver.resolve_class_name(leaf, module_qn)
         if not class_qn or not class_qn.endswith(normalized):
             return None
         caller_qn = f"{class_qn}{cs.SEPARATOR_DOT}{func_name}"
@@ -605,7 +605,7 @@ class CppCallResolution(LanguageCalls):
         # to nothing and the constructed class's ctor stays edge-free.
         # The cross-file typedef/using map covers file/namespace-scope
         # aliases; a BODY-local alias is what that collector skips, so
-        # it comes from the caller-scoped map (_resolve_class_name then
+        # it comes from the caller-scoped map (`resolve_class_name` then
         # follows any further alias chain). Binding the callee to the
         # class drops into the call pass's class branch, emitting INSTANTIATES
         # + ctor CALLS like any construction. Gated on alias-map
@@ -632,7 +632,7 @@ class CppCallResolution(LanguageCalls):
         if (
             lookup_name != call_name or call_name in self._resolver.facts.type_aliases
         ) and (
-            aliased_qn := self._resolver._resolve_class_name(lookup_name, ctx.module_qn)
+            aliased_qn := self._resolver.resolve_class_name(lookup_name, ctx.module_qn)
         ):
             return (cs.NodeLabel.CLASS, aliased_qn)
         return None
@@ -659,7 +659,7 @@ class CppCallResolution(LanguageCalls):
         # always targets the CLASS: rebind so the call pass's class branch
         # emits INSTANTIATES plus the full ctor/dtor redirect.
         leaf = call_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
-        class_qn = self._resolver._resolve_class_name(leaf, ctx.module_qn)
+        class_qn = self._resolver.resolve_class_name(leaf, ctx.module_qn)
         if class_qn is not None and (
             class_qn == call_name or class_qn.endswith(f"{cs.SEPARATOR_DOT}{call_name}")
         ):
@@ -704,7 +704,7 @@ class CppCallResolution(LanguageCalls):
         # and argument keeps its name-based resolution.
         if (class_qn := self._functor_class(node, module_qn, var_types)) is None:
             return None
-        return self._resolver._try_resolve_method(class_qn, cs.CPP_OPERATOR_CALL_NAME)
+        return self._resolver.try_resolve_method(class_qn, cs.CPP_OPERATOR_CALL_NAME)
 
     def _functor_class(
         self, node: Node, module_qn: str, var_types: dict[str, str] | None
@@ -730,7 +730,7 @@ class CppCallResolution(LanguageCalls):
             )
         ):
             return local_qn
-        class_qn = self._resolver._resolve_class_name(type_name, module_qn)
+        class_qn = self._resolver.resolve_class_name(type_name, module_qn)
         # The same spelling calls a function (`make(x)`) as often as it
         # constructs a class (`Cmp(x)`); only a class is a functor.
         if (
@@ -815,7 +815,7 @@ class CppCallResolution(LanguageCalls):
                     continue
                 name = _member_init_head_name(initializer)
                 class_qn = (
-                    self._resolver._resolve_type_to_class_qn(name, module_qn)
+                    self._resolver.resolve_type_to_class_qn(name, module_qn)
                     if name
                     else None
                 )
@@ -927,9 +927,7 @@ class CppCallResolution(LanguageCalls):
                     continue
                 name = _member_init_head_name(initializer)
                 if name and (
-                    resolved := self._resolver._resolve_type_to_class_qn(
-                        name, module_qn
-                    )
+                    resolved := self._resolver.resolve_type_to_class_qn(name, module_qn)
                 ):
                     named.add(resolved)
         return named
@@ -967,7 +965,7 @@ class CppCallResolution(LanguageCalls):
                 continue
             type_name = _declaration_type_name(node)
             class_qn = (
-                self._resolver._resolve_type_to_class_qn(type_name, module_qn)
+                self._resolver.resolve_type_to_class_qn(type_name, module_qn)
                 if type_name
                 else None
             )

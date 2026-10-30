@@ -22,6 +22,7 @@ from ... import constants as cs
 from ... import logs as ls
 from ...types_defs import FunctionRegistryTrieProtocol
 from ..definition_facts import DefinitionFacts
+from ..resolver_host import ResolverHost
 from . import interfaces as go_ifaces
 from . import utils as go_utils
 from .builds import ALWAYS, Expr, all_of, holds_wherever, possible
@@ -39,21 +40,13 @@ if TYPE_CHECKING:
 _GO_PACKAGE_FUNCTION_TYPES = frozenset({cs.NodeLabel.FUNCTION})
 
 
-class GoResolverHost(Protocol):
-    """What Go resolution reads and calls on the `CallResolver` that builds it.
+class GoResolverHost(ResolverHost, Protocol):
+    """What Go resolution reads and calls on the `CallResolver` that builds it:
+    the resolution every language shares, which a Go stage hands a narrowed
+    question to or falls back on, the simple-name fallback, and the
+    breadth-first method lookup along a type's embedded bases."""
 
-    The resolution every language shares, which a Go stage hands a narrowed
-    question to or falls back on: the module-language memo, the cache
-    bookkeeping that records an answer with its verdict, the simple-name
-    fallback, and the method lookups along a type's bases."""
-
-    def _module_language(self, qualified_name: str) -> cs.SupportedLanguage | None: ...
-
-    def _remember_cacheable(
-        self, cache_key: tuple[str, str, bool] | None, result: tuple[str, str] | None
-    ) -> None: ...
-
-    def _try_resolve_via_trie(
+    def try_resolve_via_trie(
         self,
         call_name: str,
         module_qn: str,
@@ -62,11 +55,7 @@ class GoResolverHost(Protocol):
         constructing: bool = False,
     ) -> tuple[str, str] | None: ...
 
-    def _try_resolve_method(
-        self, class_qn: str, method_name: str, separator: str = cs.SEPARATOR_DOT
-    ) -> tuple[str, str] | None: ...
-
-    def _resolve_inherited_breadth_first(
+    def resolve_inherited_breadth_first(
         self, class_qn: str, method_name: str
     ) -> tuple[str, str] | None: ...
 
@@ -265,7 +254,7 @@ class GoResolver:
             )
             # The directory alone would let `pkg/helper.py`'s `helper` pass
             # for a Go function of `pkg`.
-            if self._host._module_language(qn) == cs.SupportedLanguage.GO
+            if self._host.module_language(qn) == cs.SupportedLanguage.GO
             and self.go_declaration_is_visible(qn, module_qn)
         ]
 
@@ -294,7 +283,7 @@ class GoResolver:
                 )
             )
         ):
-            self._host._remember_cacheable(cache_key, result)
+            self._host.remember_cacheable(cache_key, result)
             return True, result
         return False, None
 
@@ -406,7 +395,7 @@ class GoResolver:
                     method_name, ()
                 )
             ]
-            if result := self._host._try_resolve_method(implementer, method_name):
+            if result := self._host.try_resolve_method(implementer, method_name):
                 found.append(result)
             for target in found:
                 targets.setdefault(target, {})[implementer] = guessed
@@ -545,7 +534,7 @@ class GoResolver:
             call
         ):
             return False, None
-        return True, self._host._try_resolve_via_trie(
+        return True, self._host.try_resolve_via_trie(
             call.call_name, call.module_qn, call.language, call.call_point
         )
 
@@ -574,7 +563,7 @@ class GoResolver:
             variant_qn = f"{variant}{cs.SEPARATOR_DOT}{method_name}"
             if variant_qn in self.function_registry:
                 return self.function_registry[variant_qn], variant_qn
-            if found := self._host._resolve_inherited_breadth_first(
+            if found := self._host.resolve_inherited_breadth_first(
                 variant, method_name
             ):
                 return found

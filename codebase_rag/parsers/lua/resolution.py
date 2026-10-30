@@ -17,6 +17,7 @@ from loguru import logger
 from ... import constants as cs
 from ... import logs as ls
 from ...types_defs import FunctionRegistryTrieProtocol
+from ..resolver_host import ResolverHost
 from . import utils as lua_utils
 
 if TYPE_CHECKING:
@@ -58,17 +59,13 @@ def lua_package_methods(
     ]
 
 
-class LuaResolverHost(Protocol):
+class LuaResolverHost(ResolverHost, Protocol):
     """What Lua resolution calls on the `CallResolver` that builds it: the
-    cache bookkeeping that records an answer with its verdict, and the
-    package-member search every language shares, which finds the one table
-    of a required module that holds a member."""
+    cache record of an answer with its verdict, and the package-member
+    search, which finds the one table of a required module that holds a
+    member."""
 
-    def _remember_cacheable(
-        self, cache_key: tuple[str, str, bool] | None, result: tuple[str, str] | None
-    ) -> None: ...
-
-    def _try_resolve_package_member(
+    def try_resolve_package_member(
         self,
         package_qn: str,
         member_name: str,
@@ -96,7 +93,7 @@ class LuaResolver:
         if result := self.lua_same_module_member(
             call.call_name, call.module_qn, call.language
         ):
-            self._host._remember_cacheable(cache_key, result)
+            self._host.remember_cacheable(cache_key, result)
             return True, result
         return False, None
 
@@ -145,7 +142,7 @@ class LuaResolver:
         for owner_qn in (f"{imported_qn}{cs.SEPARATOR_DOT}{alias}", imported_qn):
             if result := self._lua_table_member(owner_qn, member, separator, call_name):
                 return result
-        return self._host._try_resolve_package_member(
+        return self._host.try_resolve_package_member(
             imported_qn, member, cs.SupportedLanguage.LUA
         )
 

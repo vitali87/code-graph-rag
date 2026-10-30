@@ -268,7 +268,7 @@ def test_a_class_use_does_not_resolve_to_a_php_function(tmp_path: Path) -> None:
     import_map = {"format": "App.Text.format"}
 
     assert (
-        resolver._try_resolve_direct_import(
+        resolver.try_resolve_direct_import(
             "format", import_map, cs.SupportedLanguage.PHP, "proj.caller"
         )
         is None
@@ -282,7 +282,7 @@ def test_a_class_use_does_not_resolve_to_a_php_function(tmp_path: Path) -> None:
     # resolve, so the None above is the binding-kind gate rather than the
     # fallback being switched off.
     resolver.import_processor.php.php_function_imports = {"proj.caller": {"format"}}
-    assert resolver._try_resolve_direct_import(
+    assert resolver.try_resolve_direct_import(
         "format", import_map, cs.SupportedLanguage.PHP, "proj.caller"
     ) == (cs.NodeLabel.FUNCTION, "proj.text.format")
 
@@ -331,7 +331,7 @@ def test_a_call_through_a_use_function_alias_is_case_insensitive(
     import_map = {"format": "App.Text.format"}
 
     for spelling in ("format", "FORMAT", "Format"):
-        assert resolver._try_resolve_direct_import(
+        assert resolver.try_resolve_direct_import(
             spelling, import_map, cs.SupportedLanguage.PHP, "proj.caller"
         ) == (cs.NodeLabel.FUNCTION, "proj.text.format"), (
             f"calling the alias as {spelling!r} did not resolve; PHP function "
@@ -342,7 +342,7 @@ def test_a_call_through_a_use_function_alias_is_case_insensitive(
     # The control: a name that was never imported must still decline, so the
     # fold is case-insensitivity rather than accepting anything.
     assert (
-        resolver._try_resolve_direct_import(
+        resolver.try_resolve_direct_import(
             "unrelated",
             {"unrelated": "App.Text.format"},
             cs.SupportedLanguage.PHP,
@@ -382,7 +382,7 @@ def test_two_import_keys_differing_only_in_case_resolve_to_nothing(
     )
 
     assert (
-        resolver._try_resolve_direct_import(
+        resolver.try_resolve_direct_import(
             "Format",
             {"format": "App.Text.format", "FORMAT": "App.Money.format"},
             cs.SupportedLanguage.PHP,
@@ -423,7 +423,7 @@ def test_a_fully_qualified_import_resolves(tmp_path: Path) -> None:
     )
     resolver.function_registry = _registry({"proj.text.format": "Function"})
 
-    assert resolver._try_resolve_direct_import(
+    assert resolver.try_resolve_direct_import(
         "format",
         {"format": ".App.Text.format"},
         cs.SupportedLanguage.PHP,
@@ -436,7 +436,7 @@ def test_a_fully_qualified_import_resolves(tmp_path: Path) -> None:
 
     # The control: the unqualified spelling still resolves, so the strip is a
     # normalisation rather than something that only works with a backslash.
-    assert resolver._try_resolve_direct_import(
+    assert resolver.try_resolve_direct_import(
         "format",
         {"format": "App.Text.format"},
         cs.SupportedLanguage.PHP,
@@ -464,7 +464,7 @@ def test_an_unknown_caller_module_does_not_resolve(tmp_path: Path) -> None:
     resolver.function_registry = _registry({"proj.text.format": "Function"})
 
     assert (
-        resolver._try_resolve_direct_import(
+        resolver.try_resolve_direct_import(
             "format", {"format": "App.Text.format"}, cs.SupportedLanguage.PHP, None
         )
         is None
@@ -570,7 +570,7 @@ def test_a_non_php_caller_never_resolves_through_php_namespaces(
         None,
     ):
         assert (
-            resolver._try_resolve_direct_import(
+            resolver.try_resolve_direct_import(
                 "format", import_map, language, "proj.caller"
             )
             is None
@@ -579,7 +579,7 @@ def test_a_non_php_caller_never_resolves_through_php_namespaces(
             "PHP function; the fallback must be gated on the caller's language"
         )
 
-    assert resolver._try_resolve_direct_import(
+    assert resolver.try_resolve_direct_import(
         "format", import_map, cs.SupportedLanguage.PHP, "proj.caller"
     ) == (cs.NodeLabel.FUNCTION, "proj.text.format"), (
         "the PHP caller stopped resolving too, so the guard disabled the "

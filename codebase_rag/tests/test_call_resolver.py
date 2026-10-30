@@ -262,14 +262,14 @@ class TestTryResolveDirectImport:
         call_resolver.function_registry["external.module.func"] = cs.NodeLabel.FUNCTION
         import_map = {"func": "external.module.func"}
 
-        result = call_resolver._try_resolve_direct_import("func", import_map)
+        result = call_resolver.try_resolve_direct_import("func", import_map)
         assert result is not None
         assert result[1] == "external.module.func"
 
     def test_returns_none_for_unimported(self, call_resolver: CallResolver) -> None:
         import_map = {"other_func": "external.module.other_func"}
 
-        result = call_resolver._try_resolve_direct_import("func", import_map)
+        result = call_resolver.try_resolve_direct_import("func", import_map)
         assert result is None
 
     def test_returns_none_for_unregistered_import(
@@ -277,7 +277,7 @@ class TestTryResolveDirectImport:
     ) -> None:
         import_map = {"func": "external.module.func"}
 
-        result = call_resolver._try_resolve_direct_import("func", import_map)
+        result = call_resolver.try_resolve_direct_import("func", import_map)
         assert result is None
 
 
@@ -285,14 +285,14 @@ class TestTryResolveSameModule:
     def test_resolves_same_module_function(self, call_resolver: CallResolver) -> None:
         call_resolver.function_registry["proj.module.my_func"] = cs.NodeLabel.FUNCTION
 
-        result = call_resolver._try_resolve_same_module("my_func", "proj.module")
+        result = call_resolver.try_resolve_same_module("my_func", "proj.module")
         assert result is not None
         assert result[1] == "proj.module.my_func"
 
     def test_returns_none_for_unknown_function(
         self, call_resolver: CallResolver
     ) -> None:
-        result = call_resolver._try_resolve_same_module("unknown_func", "proj.module")
+        result = call_resolver.try_resolve_same_module("unknown_func", "proj.module")
         assert result is None
 
 
@@ -301,12 +301,12 @@ class TestTryResolveViaTrie:
         call_resolver.function_registry["proj.utils.helper"] = cs.NodeLabel.FUNCTION
         call_resolver.function_registry["proj.other.helper"] = cs.NodeLabel.FUNCTION
 
-        result = call_resolver._try_resolve_via_trie("helper", "proj.utils")
+        result = call_resolver.try_resolve_via_trie("helper", "proj.utils")
         assert result is not None
         assert result[1] == "proj.utils.helper"
 
     def test_returns_none_for_no_match(self, call_resolver: CallResolver) -> None:
-        result = call_resolver._try_resolve_via_trie("nonexistent", "proj.module")
+        result = call_resolver.try_resolve_via_trie("nonexistent", "proj.module")
         assert result is None
 
     def test_handles_qualified_call_name(self, call_resolver: CallResolver) -> None:
@@ -314,7 +314,7 @@ class TestTryResolveViaTrie:
             cs.NodeLabel.METHOD
         )
 
-        result = call_resolver._try_resolve_via_trie("Class.method", "proj.module")
+        result = call_resolver.try_resolve_via_trie("Class.method", "proj.module")
         assert result is not None
         assert result[1] == "proj.module.Class.method"
 
@@ -494,7 +494,7 @@ class TestTryMethodOnClass:
     def test_resolves_method_on_class(self, call_resolver: CallResolver) -> None:
         call_resolver.function_registry["proj.models.User.save"] = cs.NodeLabel.METHOD
 
-        result = call_resolver._try_method_on_class(
+        result = call_resolver.try_method_on_class(
             "proj.models.User",
             "save",
             cs.SEPARATOR_DOT,
@@ -513,7 +513,7 @@ class TestTryMethodOnClass:
             "proj.models.BaseModel"
         ]
 
-        result = call_resolver._try_method_on_class(
+        result = call_resolver.try_method_on_class(
             "proj.models.User",
             "validate",
             cs.SEPARATOR_DOT,
@@ -525,7 +525,7 @@ class TestTryMethodOnClass:
         assert result[1] == "proj.models.BaseModel.validate"
 
     def test_returns_none_for_unknown_method(self, call_resolver: CallResolver) -> None:
-        result = call_resolver._try_method_on_class(
+        result = call_resolver.try_method_on_class(
             "proj.models.User",
             "unknown",
             cs.SEPARATOR_DOT,
@@ -730,7 +730,7 @@ class TestTryResolveQualifiedCall:
         call_resolver.function_registry["proj.models.User.save"] = cs.NodeLabel.METHOD
         import_map = {"User": "proj.models.User"}
 
-        result = call_resolver._try_resolve_qualified_call(
+        result = call_resolver.try_resolve_qualified_call(
             "User.save",
             import_map,
             "proj.views",
@@ -744,7 +744,7 @@ class TestTryResolveQualifiedCall:
         import_map = {"DB": "proj.models.DB"}
         local_var_types = {"self.db": "DB"}
 
-        result = call_resolver._try_resolve_qualified_call(
+        result = call_resolver.try_resolve_qualified_call(
             "self.db.query",
             import_map,
             "proj.service",
@@ -754,7 +754,7 @@ class TestTryResolveQualifiedCall:
         assert result[1] == "proj.models.DB.query"
 
     def test_returns_none_for_no_separator(self, call_resolver: CallResolver) -> None:
-        result = call_resolver._try_resolve_qualified_call(
+        result = call_resolver.try_resolve_qualified_call(
             "simple_func",
             {},
             "proj.module",
@@ -765,7 +765,7 @@ class TestTryResolveQualifiedCall:
 
 class TestResolveClassQnFromType:
     def test_returns_dotted_type_as_is(self, call_resolver: CallResolver) -> None:
-        result = call_resolver._resolve_class_qn_from_type(
+        result = call_resolver.resolve_class_qn_from_type(
             "proj.models.User",
             {},
             "proj.views",
@@ -775,7 +775,7 @@ class TestResolveClassQnFromType:
     def test_resolves_from_import_map(self, call_resolver: CallResolver) -> None:
         import_map = {"User": "proj.models.User"}
 
-        result = call_resolver._resolve_class_qn_from_type(
+        result = call_resolver.resolve_class_qn_from_type(
             "User",
             import_map,
             "proj.views",
@@ -787,7 +787,7 @@ class TestResolveClassQnFromType:
     ) -> None:
         call_resolver.function_registry["proj.views.LocalClass"] = cs.NodeLabel.CLASS
 
-        result = call_resolver._resolve_class_qn_from_type(
+        result = call_resolver.resolve_class_qn_from_type(
             "LocalClass",
             {},
             "proj.views",
@@ -869,7 +869,7 @@ class TestResolveInheritedMethod:
             "proj.base.BaseClass"
         ]
 
-        result = call_resolver._resolve_inherited_method(
+        result = call_resolver.resolve_inherited_method(
             "proj.module.ChildClass", "method"
         )
         assert result is not None
@@ -886,14 +886,14 @@ class TestResolveInheritedMethod:
             "proj.base.GrandparentClass"
         ]
 
-        result = call_resolver._resolve_inherited_method(
+        result = call_resolver.resolve_inherited_method(
             "proj.module.ChildClass", "method"
         )
         assert result is not None
         assert result[1] == "proj.base.GrandparentClass.method"
 
     def test_returns_none_for_unknown_class(self, call_resolver: CallResolver) -> None:
-        result = call_resolver._resolve_inherited_method("unknown.Class", "method")
+        result = call_resolver.resolve_inherited_method("unknown.Class", "method")
         assert result is None
 
     def test_returns_none_for_unknown_method(self, call_resolver: CallResolver) -> None:
@@ -901,7 +901,7 @@ class TestResolveInheritedMethod:
             "proj.base.ParentClass"
         ]
 
-        result = call_resolver._resolve_inherited_method(
+        result = call_resolver.resolve_inherited_method(
             "proj.module.ChildClass", "unknown_method"
         )
         assert result is None
@@ -915,7 +915,7 @@ class TestResolveInheritedMethod:
         call_resolver.facts.class_inheritance["proj.base.ParentA"] = ["proj.base.Root"]
         call_resolver.facts.class_inheritance["proj.base.ParentB"] = ["proj.base.Root"]
 
-        result = call_resolver._resolve_inherited_method("proj.module.Child", "method")
+        result = call_resolver.resolve_inherited_method("proj.module.Child", "method")
         assert result is not None
         assert result[1] == "proj.base.Root.method"
 
@@ -1133,7 +1133,7 @@ class TestDequeBfs:
             "proj.base.ParentB",
         ]
 
-        result = call_resolver._resolve_inherited_method("proj.module.Child", "method")
+        result = call_resolver.resolve_inherited_method("proj.module.Child", "method")
         assert result is not None
         assert result[1] == "proj.base.ParentA.method"
 
@@ -1144,7 +1144,7 @@ class TestDequeBfs:
         call_resolver.facts.class_inheritance["proj.module.Child"] = ["proj.mid.Middle"]
         call_resolver.facts.class_inheritance["proj.mid.Middle"] = ["proj.base.Root"]
 
-        result = call_resolver._resolve_inherited_method(
+        result = call_resolver.resolve_inherited_method(
             "proj.module.Child", "deep_method"
         )
         assert result is not None
@@ -1154,7 +1154,7 @@ class TestDequeBfs:
         call_resolver.facts.class_inheritance["proj.A"] = ["proj.B"]
         call_resolver.facts.class_inheritance["proj.B"] = ["proj.A"]
 
-        result = call_resolver._resolve_inherited_method("proj.A", "missing")
+        result = call_resolver.resolve_inherited_method("proj.A", "missing")
         assert result is None
 
 
@@ -1230,7 +1230,7 @@ class TestDeterministicResolution:
 
         results = []
         for _ in range(20):
-            result = call_resolver._try_resolve_via_trie("helper", "proj.delta.module")
+            result = call_resolver.try_resolve_via_trie("helper", "proj.delta.module")
             assert result is not None
             results.append(result[1])
 
@@ -1246,7 +1246,7 @@ class TestDeterministicResolution:
         call_resolver.function_registry["proj.mid.compute"] = cs.NodeLabel.FUNCTION
         call_resolver.function_registry["proj.aaa.compute"] = cs.NodeLabel.FUNCTION
 
-        result = call_resolver._try_resolve_via_trie("compute", "other.module")
+        result = call_resolver.try_resolve_via_trie("compute", "other.module")
         assert result is not None
         assert result[1] == "proj.aaa.compute"
 
@@ -1257,7 +1257,7 @@ class TestDeterministicResolution:
         call_resolver.function_registry["proj.far.away.process"] = cs.NodeLabel.FUNCTION
         call_resolver.function_registry["proj.module.process"] = cs.NodeLabel.FUNCTION
 
-        result = call_resolver._try_resolve_via_trie("process", "proj.module.caller")
+        result = call_resolver.try_resolve_via_trie("process", "proj.module.caller")
         assert result is not None
         # proj.module.process is closer to proj.module.caller
         assert result[1] == "proj.module.process"
@@ -1281,7 +1281,7 @@ class TestDeterministicResolution:
         for name in names:
             call_resolver.function_registry[name] = cs.NodeLabel.FUNCTION
 
-        result = call_resolver._try_resolve_via_trie("run", "other.caller")
+        result = call_resolver.try_resolve_via_trie("run", "other.caller")
         assert result is not None
         assert result[1] == "proj.m01.run"
 

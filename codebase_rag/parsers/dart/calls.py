@@ -666,7 +666,7 @@ class DartCallResolution(LanguageCalls):
                 written = dart_utils.superclass_type(caller_node)
                 if written is None:
                     continue
-                owner_qn = resolver._follow_reexports(
+                owner_qn = resolver.follow_reexports(
                     resolver.dart.resolve_dart_written_type(written, module_qn)
                 )
             simple = qn_markers.strip_dup_marker(

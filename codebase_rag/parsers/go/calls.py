@@ -466,7 +466,7 @@ class GoCallResolution(LanguageCalls):
         package_hit = self._package_receiver_qn(receiver_type, func_name, module_qn)
         if package_hit is not None:
             return package_hit
-        container_qn = self._resolver._resolve_class_name(receiver_type, module_qn) or (
+        container_qn = self._resolver.resolve_class_name(receiver_type, module_qn) or (
             f"{module_qn}{cs.SEPARATOR_DOT}{receiver_type}"
         )
         caller_qn = f"{container_qn}{cs.SEPARATOR_DOT}{func_name}"
@@ -639,14 +639,14 @@ class GoCallResolution(LanguageCalls):
             if class_qn is None:
                 break
             class_qn = self._result_class(
-                self._resolver._try_resolve_method(class_qn, hop)
+                self._resolver.try_resolve_method(class_qn, hop)
             )
         # A struct lacking the method may still promote it from an embedded
         # field, which this walk does not model; that stays the resolver's
         # call, as it does for a typed variable
         # (`PythonResolver.typed_receiver_lacks_method`).
         callee = (
-            self._resolver._try_resolve_method(class_qn, method) if class_qn else None
+            self._resolver.try_resolve_method(class_qn, method) if class_qn else None
         )
         return _ValueReceiverCallee(owned or callee is not None, callee)
 
@@ -1083,7 +1083,7 @@ class GoCallResolution(LanguageCalls):
         registered under the FILE that declares them (`proj.m.types.Error`),
         so the lookup crosses the file segment the source never names.
 
-        Deliberately not `_resolve_class_name`: its last step is a repo-wide
+        Deliberately not `resolve_class_name`: its last step is a repo-wide
         search by simple name, which bound `Error{}` in package `m` to a
         same-named struct in package `a`, or to a Python `class Error`, and
         dead-code then revived the wrong type while reporting the constructed

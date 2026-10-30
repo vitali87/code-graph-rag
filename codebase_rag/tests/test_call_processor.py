@@ -557,7 +557,7 @@ class TestResolveInheritedMethod:
     def test_finds_method_in_parent(
         self, processor_with_inheritance: CallProcessor
     ) -> None:
-        result = processor_with_inheritance._resolver._resolve_inherited_method(
+        result = processor_with_inheritance._resolver.resolve_inherited_method(
             "proj.Child", "parentMethod"
         )
         assert result is not None
@@ -566,7 +566,7 @@ class TestResolveInheritedMethod:
     def test_finds_method_in_grandparent(
         self, processor_with_inheritance: CallProcessor
     ) -> None:
-        result = processor_with_inheritance._resolver._resolve_inherited_method(
+        result = processor_with_inheritance._resolver.resolve_inherited_method(
             "proj.Child", "grandparentMethod"
         )
         assert result is not None
@@ -575,7 +575,7 @@ class TestResolveInheritedMethod:
     def test_method_not_found_returns_none(
         self, processor_with_inheritance: CallProcessor
     ) -> None:
-        result = processor_with_inheritance._resolver._resolve_inherited_method(
+        result = processor_with_inheritance._resolver.resolve_inherited_method(
             "proj.Child", "nonExistent"
         )
         assert result is None
@@ -583,7 +583,7 @@ class TestResolveInheritedMethod:
     def test_unknown_class_returns_none(
         self, processor_with_inheritance: CallProcessor
     ) -> None:
-        result = processor_with_inheritance._resolver._resolve_inherited_method(
+        result = processor_with_inheritance._resolver.resolve_inherited_method(
             "proj.Unknown", "someMethod"
         )
         assert result is None
@@ -995,7 +995,7 @@ class TestTryResolveMethod:
     def test_resolves_direct_method(
         self, processor_with_methods: CallProcessor
     ) -> None:
-        result = processor_with_methods._resolver._try_resolve_method(
+        result = processor_with_methods._resolver.try_resolve_method(
             "proj.models.User", "save"
         )
         assert result is not None
@@ -1004,7 +1004,7 @@ class TestTryResolveMethod:
     def test_resolves_inherited_method(
         self, processor_with_methods: CallProcessor
     ) -> None:
-        result = processor_with_methods._resolver._try_resolve_method(
+        result = processor_with_methods._resolver.try_resolve_method(
             "proj.models.User", "validate"
         )
         assert result is not None
@@ -1013,7 +1013,7 @@ class TestTryResolveMethod:
     def test_returns_none_for_unknown_method(
         self, processor_with_methods: CallProcessor
     ) -> None:
-        result = processor_with_methods._resolver._try_resolve_method(
+        result = processor_with_methods._resolver.try_resolve_method(
             "proj.models.User", "unknown_method"
         )
         assert result is None
@@ -1044,7 +1044,7 @@ class TestResolveClassQnFromType:
         self, processor_with_imports: CallProcessor
     ) -> None:
         import_map = {"User": "proj.models.User"}
-        result = processor_with_imports._resolver._resolve_class_qn_from_type(
+        result = processor_with_imports._resolver.resolve_class_qn_from_type(
             "User", import_map, "proj.service"
         )
         assert result == "proj.models.User"
@@ -1053,7 +1053,7 @@ class TestResolveClassQnFromType:
         self, processor_with_imports: CallProcessor
     ) -> None:
         import_map: dict[str, str] = {}
-        result = processor_with_imports._resolver._resolve_class_qn_from_type(
+        result = processor_with_imports._resolver.resolve_class_qn_from_type(
             "proj.models.User", import_map, "proj.service"
         )
         assert result == "proj.models.User"
@@ -1062,7 +1062,7 @@ class TestResolveClassQnFromType:
         self, processor_with_imports: CallProcessor
     ) -> None:
         import_map: dict[str, str] = {}
-        result = processor_with_imports._resolver._resolve_class_qn_from_type(
+        result = processor_with_imports._resolver.resolve_class_qn_from_type(
             "UnknownClass", import_map, "proj.service"
         )
         assert result == ""

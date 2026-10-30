@@ -1147,7 +1147,7 @@ class PythonVariableAnalyzer:
         Candidates of different types -- `widget if flag else engine` -- become
         the union an annotation would spell (`Widget | Engine`), so the resolver
         applies the one policy it already has for a genuine multi-type union
-        (`_strip_optional`: it "stays unresolved"). Typing only the first branch
+        (`strip_optional`: it "stays unresolved"). Typing only the first branch
         drops the other's call, and leaving the receiver untyped hands it to the
         bare-name fallback, which picks one of the two arbitrarily. Only `| None`
         is ignored when comparing: an Optional and its bare type are the same
@@ -1301,7 +1301,7 @@ class PythonVariableAnalyzer:
         breadth-first `Child, A, B, X` that put a base's operator ahead of a
         grandparent's. A hierarchy C3 rejects (inconsistent bases, a cycle, or
         one it cannot see all of) falls back to breadth-first, which is what
-        CallResolver._mro still uses; a wrong order there costs an operator's
+        CallResolver.mro still uses; a wrong order there costs an operator's
         result type, never a crash.
         """
         return self._get_c3_mro(class_qn, ()) or self._get_bfs_mro(class_qn)

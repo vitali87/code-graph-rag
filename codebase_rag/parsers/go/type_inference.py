@@ -241,7 +241,7 @@ class GoTypeInferenceEngine:
     # Maps local variable / parameter / receiver names to their bare Go type name
     # within a function or method body, so the resolver can bind a receiver-dispatch
     # call (`d.method()`) to the method node on the type. Bare names only: the
-    # resolver turns a name into a class qn via the same _resolve_class_name path the
+    # resolver turns a name into a class qn via the same `resolve_class_name` path the
     # definition pass uses, so pointer/generic wrappers are stripped here down to the
     # underlying type identifier. Another package's type keeps its qualifier
     # (`geo.Shape`), which TypeInferenceEngine resolves through the file's imports

@@ -10,13 +10,14 @@ probe each scope is asked through) and hands Julia's part to the
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 from loguru import logger
 
 from ... import constants as cs
 from ... import logs as ls
 from ...types_defs import FunctionRegistryTrieProtocol
+from ..resolver_host import ResolverHost
 
 if TYPE_CHECKING:
     from ..call_site import CallSite
@@ -48,20 +49,6 @@ def _julia_caller_scopes(caller_qn: str, module_qn: str) -> list[str]:
     return scopes
 
 
-class JuliaResolverHost(Protocol):
-    """What Julia resolution calls on the `CallResolver` that builds it: the
-    direct-import probe every language shares, asked once per module scope
-    the caller sits in."""
-
-    def _try_resolve_direct_import(
-        self,
-        call_name: str,
-        import_map: dict[str, str],
-        language: cs.SupportedLanguage | None = None,
-        module_qn: str | None = None,
-    ) -> tuple[str, str] | None: ...
-
-
 class JuliaResolver:
     """Binds Julia calls through the `using`s of the scopes they are made in.
 
@@ -75,7 +62,7 @@ class JuliaResolver:
 
     def __init__(
         self,
-        host: JuliaResolverHost,
+        host: ResolverHost,
         function_registry: FunctionRegistryTrieProtocol,
         import_processor: ImportProcessor,
     ) -> None:
@@ -99,7 +86,7 @@ class JuliaResolver:
             import_map = self.import_processor.import_mapping.get(scope)
             if not import_map:
                 continue
-            if result := self._host._try_resolve_direct_import(
+            if result := self._host.try_resolve_direct_import(
                 call_name, import_map, language, scope
             ):
                 return result

@@ -190,7 +190,7 @@ def test_a_rehydrated_updater_forgets_a_deleted_definitions_language(
 ) -> None:
     # The watcher's shape: a fresh updater whose FIRST run is incremental,
     # so the untouched util.rs definitions are read back from the graph and
-    # `rehydrated_definition_paths` records them. `_module_language` falls
+    # `rehydrated_definition_paths` records them. `module_language` falls
     # through to those paths for a definition qn, so removing the file's
     # state must drop them too, or the replacement util.py still answers
     # RUST for `proj.util.helper` and the call it now provides is refused.

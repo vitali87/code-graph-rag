@@ -98,7 +98,7 @@ def test_a_typed_receiver_whose_class_defines_the_method_still_binds(
 
 
 def test_an_inherited_method_still_binds_to_the_base(tmp_path: Path) -> None:
-    # `_try_resolve_method` includes the inheritance walk, so a method the
+    # `try_resolve_method` includes the inheritance walk, so a method the
     # class gets from a first-party base is found, not dropped.
     repo = _build(tmp_path, _PRODUCT_INHERITS_GO, _DECOY_COLLIDES, _APP_PARAM)
     assert _go_edges(repo) == {"proj.models.Base.go"}

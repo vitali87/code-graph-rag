@@ -9,22 +9,14 @@ stages."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 from ... import constants as cs
 from ...types_defs import FunctionRegistryTrieProtocol
+from ..resolver_host import ResolverHost
 
 if TYPE_CHECKING:
     from ..import_processor import ImportProcessor
-
-
-class ScalaResolverHost(Protocol):
-    """What Scala resolution calls on the `CallResolver` that builds it: the
-    own-or-inherited method lookup every language shares."""
-
-    def _try_resolve_method(
-        self, class_qn: str, method_name: str, separator: str = cs.SEPARATOR_DOT
-    ) -> tuple[str, str] | None: ...
 
 
 class ScalaResolver:
@@ -40,7 +32,7 @@ class ScalaResolver:
 
     def __init__(
         self,
-        host: ScalaResolverHost,
+        host: ResolverHost,
         function_registry: FunctionRegistryTrieProtocol,
         import_processor: ImportProcessor,
     ) -> None:
@@ -71,7 +63,7 @@ class ScalaResolver:
         )
         if class_qn is None:
             return None
-        result = self._host._try_resolve_method(class_qn, member)
+        result = self._host.try_resolve_method(class_qn, member)
         if result is None or result[0] != cs.NodeLabel.METHOD:
             return None
         return result

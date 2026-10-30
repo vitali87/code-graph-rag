@@ -1202,7 +1202,7 @@ class JsTsCallResolution(LanguageCalls):
         if owner is not None:
             if (own := f"{owner[1]}{cs.SEPARATOR_DOT}{member}") in registry:
                 return registry[own], own
-            if inherited := self._resolver._resolve_inherited_method(owner[1], member):
+            if inherited := self._resolver.resolve_inherited_method(owner[1], member):
                 return inherited
         return function_prototype_builtin(invoker)
 
@@ -1256,9 +1256,7 @@ class JsTsCallResolution(LanguageCalls):
         if declared.foreign:
             return None
         owner_qn = callee_info[1].rpartition(cs.SEPARATOR_DOT)[0]
-        if owner_qn in self._resolver._mro(
-            self._resolver._follow_reexports(declared.qn)
-        ):
+        if owner_qn in self._resolver.mro(self._resolver.follow_reexports(declared.qn)):
             self._host.verdict = cs.EdgeResolution.EXACT
         return callee_info
 
@@ -1470,7 +1468,7 @@ class JsTsCallResolution(LanguageCalls):
         if head in import_map:
             if self._resolver._is_external_import(head, module_qn):
                 return _ReceiverDeclaration(name, foreign=True)
-            head_qn = self._resolver._resolve_class_qn_from_type(
+            head_qn = self._resolver.resolve_class_qn_from_type(
                 head, import_map, module_qn
             )
             qn = f"{head_qn}{cs.SEPARATOR_DOT}{rest}" if rest else head_qn
@@ -1566,7 +1564,7 @@ class JsTsCallResolution(LanguageCalls):
         )
         if cast_type is not None:
             return (
-                self._resolver._resolve_class_name(cast_type, module_qn)
+                self._resolver.resolve_class_name(cast_type, module_qn)
                 if cast_type
                 else None
             )
@@ -1594,7 +1592,7 @@ class JsTsCallResolution(LanguageCalls):
             # trie never fires and an unrelated same-named getter is not revived.
             if (recv_type := (local_var_types or {}).get(recv_name)) is not None:
                 return recv_type
-            return self._resolver._resolve_class_name(recv_name, module_qn)
+            return self._resolver.resolve_class_name(recv_name, module_qn)
         return None
 
     @host_site_scoped
@@ -1681,7 +1679,7 @@ class JsTsCallResolution(LanguageCalls):
             # (an inherited getter still invokes real code); emit only
             # when the resolved target is a registered property, so a
             # same-named data field or regular method never links.
-            resolved = self._resolver._try_resolve_method(class_qn, name)
+            resolved = self._resolver.try_resolve_method(class_qn, name)
             if resolved is not None and registry.is_property(resolved[1]):
                 res_label, res_qn = resolved
                 for target_qn in registry.variants(res_qn):

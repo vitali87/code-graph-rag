@@ -9,7 +9,7 @@ fallback) and hands Rust's part to the `RustResolver` it builds."""
 from __future__ import annotations
 
 from collections.abc import Collection
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 from loguru import logger
 
@@ -20,6 +20,7 @@ from ..definition_facts import DefinitionFacts
 from . import utils as rs_utils
 
 if TYPE_CHECKING:
+    from ..call_resolver import CallResolver
     from ..call_site import CallSite
     from ..import_processor import ImportProcessor
     from ..type_inference import TypeInferenceEngine
@@ -141,72 +142,6 @@ def _rust_block_serves_site(block: _RustBlockScope, name: str, call_point: int) 
     return not any(s <= call_point < e and name in items for s, e, items in item_scopes)
 
 
-class RustResolverHost(Protocol):
-    """What Rust resolution reads and calls on the `CallResolver` that builds it.
-
-    `_verdict` is how surely the answer being built binds its callee: the
-    owner lookup sets it with the method it picks, and `_remember_cacheable`
-    memoises it beside the answer, so a cache hit reports what the miss did.
-    The rest is resolution every language shares, which a Rust stage hands a
-    narrowed question to or falls back on: the module-language memo, the
-    class and type lookups, the scope, same-module and qualified probes, and
-    the simple-name fallback's candidate filter and ranking."""
-
-    _verdict: str
-
-    def _module_language(self, qualified_name: str) -> cs.SupportedLanguage | None: ...
-
-    def _remember_cacheable(
-        self, cache_key: tuple[str, str, bool] | None, result: tuple[str, str] | None
-    ) -> None: ...
-
-    def _nameable_candidates(
-        self, candidates: list[str], module_qn: str, call_point: int | None = None
-    ) -> list[str]: ...
-
-    def _best_trie_candidate(
-        self, possible_matches: list[str], module_qn: str
-    ) -> str: ...
-
-    def _resolve_class_name(self, class_name: str, module_qn: str) -> str | None: ...
-
-    def _resolve_class_qn_from_type(
-        self, var_type: str, import_map: dict[str, str], module_qn: str
-    ) -> str: ...
-
-    def _chain_class_qn(
-        self, type_name: str, module_qn: str, rust_caller: str | None = None
-    ) -> str: ...
-
-    def _scope_candidate(
-        self, scope: str, call_name: str, language: cs.SupportedLanguage | None
-    ) -> tuple[str, str] | None: ...
-
-    def _try_method_on_class(
-        self,
-        class_qn: str,
-        method_name: str,
-        separator: str,
-        call_name: str,
-        object_name: str,
-        var_type: str,
-        language: cs.SupportedLanguage | None = None,
-    ) -> tuple[str, str] | None: ...
-
-    def _try_resolve_qualified_call(
-        self,
-        call_name: str,
-        import_map: dict[str, str],
-        module_qn: str,
-        local_var_types: dict[str, str] | None,
-        language: cs.SupportedLanguage | None = None,
-    ) -> tuple[str, str] | None: ...
-
-    def _try_resolve_same_module(
-        self, call_name: str, module_qn: str, call_point: int | None = None
-    ) -> tuple[str, str] | None: ...
-
-
 class RustResolver:
     """Binds Rust calls by Rust's own scoping and path rules.
 
@@ -214,7 +149,10 @@ class RustResolver:
     (whose `RustImporter` holds every `use`, block item and Cargo fact read
     here), the type inference engine and the definition facts are the
     resolver's own, held by reference and read as they stand when a call
-    resolves: the earlier passes fill them before the call pass runs."""
+    resolves: the earlier passes fill them before the call pass runs. A Rust
+    stage hands a narrowed question to, or falls back on, the resolution
+    every language shares on that resolver, and sets its `verdict` with the
+    method an owner lookup picks."""
 
     __slots__ = (
         "_host",
@@ -226,7 +164,7 @@ class RustResolver:
 
     def __init__(
         self,
-        host: RustResolverHost,
+        host: CallResolver,
         function_registry: FunctionRegistryTrieProtocol,
         import_processor: ImportProcessor,
         type_inference: TypeInferenceEngine,
@@ -244,7 +182,7 @@ class RustResolver:
         # namespace the way rustc does, globs and their re-exports included,
         # before the bare-name search can pick a same-named type from
         # anywhere (issue #2542).
-        if self._host._module_language(module_qn) != cs.SupportedLanguage.RUST:
+        if self._host.module_language(module_qn) != cs.SupportedLanguage.RUST:
             return None
         return self._rust_scope_type(f"{module_qn}{cs.SEPARATOR_DOT}{name}")
 
@@ -252,7 +190,7 @@ class RustResolver:
         # A Rust glob re-export (`pub use inner::*;`) binds no name the
         # re-export walk can follow, so a type exported through one stayed a
         # dead qn and every method called on it lost its edge (issue #2542).
-        if self._host._module_language(qn) != cs.SupportedLanguage.RUST:
+        if self._host.module_language(qn) != cs.SupportedLanguage.RUST:
             return None
         return self._rust_scope_type(qn)
 
@@ -437,7 +375,7 @@ class RustResolver:
         # probe reads `T`'s own members alone, so a block written away from
         # `T`'s definition, or a trait default `T` inherits, is found the
         # way a scoped `use` finds it (PR #2791).
-        result = self._host._try_resolve_qualified_call(
+        result = self._host.try_resolve_qualified_call(
             call.call_name,
             {first: block_target},
             call.module_qn,
@@ -534,7 +472,7 @@ class RustResolver:
         if bound == cs.RUST_UNRESOLVABLE_QN:
             return None
         if bound in self.function_registry:
-            if own := self._host._try_method_on_class(
+            if own := self._host.try_method_on_class(
                 bound, item, cs.SEPARATOR_DOT, call.call_name, type_name, type_name
             ):
                 return own
@@ -566,7 +504,7 @@ class RustResolver:
                 call_name, module_qn, call.caller_qn
             )
             if decided:
-                self._host._remember_cacheable(cache_key, prefixed)
+                self._host.remember_cacheable(cache_key, prefixed)
                 return True, prefixed
 
         # Rust name resolution prefers items defined in the module itself: a
@@ -577,11 +515,11 @@ class RustResolver:
         # this point same-module wins. Elsewhere imports shadow module-level
         # definitions.
         if call.language == cs.SupportedLanguage.RUST and (
-            result := self._host._try_resolve_same_module(
+            result := self._host.try_resolve_same_module(
                 call_name, module_qn, call.call_point
             )
         ):
-            self._host._remember_cacheable(cache_key, result)
+            self._host.remember_cacheable(cache_key, result)
             return True, result
         return False, None
 
@@ -599,7 +537,7 @@ class RustResolver:
                 call.call_name, call.module_qn, call.caller_qn
             )
         ):
-            self._host._remember_cacheable(cache_key, None)
+            self._host.remember_cacheable(cache_key, None)
             return True, None
         return False, None
 
@@ -636,7 +574,7 @@ class RustResolver:
         result = self._rust_owned_method(
             item, call, frozenset(), frozenset({object_path[-1]})
         )
-        self._host._remember_cacheable(cache_key, result)
+        self._host.remember_cacheable(cache_key, result)
         return True, result
 
     def resolve_rust_named_owner(
@@ -664,7 +602,7 @@ class RustResolver:
             # `Self` means the caller's impl target, so the answer is the
             # caller's, never the module's.
             if object_path != [cs.RS_SELF_TYPE]:
-                self._host._remember_cacheable(cache_key, result)
+                self._host.remember_cacheable(cache_key, result)
             return True, result
         if call.language != cs.SupportedLanguage.RUST:
             return False, None
@@ -672,7 +610,7 @@ class RustResolver:
         if not receiver or (types := rs_utils.literal_receiver_types(receiver)) is None:
             return False, None
         result = self._rust_owned_method(item, call, frozenset(), types)
-        self._host._remember_cacheable(cache_key, result)
+        self._host.remember_cacheable(cache_key, result)
         return True, result
 
     def _rust_qualifier_types(
@@ -695,7 +633,7 @@ class RustResolver:
             if class_context in self.function_registry:
                 return frozenset(owners)
             qualifier = class_context.rpartition(cs.SEPARATOR_DOT)[2]
-        type_qn = self._host._resolve_class_name(qualifier, module_qn)
+        type_qn = self._host.resolve_class_name(qualifier, module_qn)
         if type_qn is not None and self.function_registry.get(type_qn) in (
             _RS_OWNER_NODE_TYPES
         ):
@@ -722,7 +660,7 @@ class RustResolver:
         """
         candidates = [
             qn
-            for qn in self._host._nameable_candidates(
+            for qn in self._host.nameable_candidates(
                 self.function_registry.find_ending_with(item),
                 call.module_qn,
                 call.call_point,
@@ -733,9 +671,9 @@ class RustResolver:
         if not candidates:
             logger.debug(ls.CALL_RUST_OWNER_UNRESOLVED, call_name=call.call_name)
             return None
-        best = self._host._best_trie_candidate(candidates, call.module_qn)
+        best = self._host.best_trie_candidate(candidates, call.module_qn)
         owner = best.rpartition(cs.SEPARATOR_DOT)[0]
-        self._host._verdict = (
+        self._host.verdict = (
             cs.EdgeResolution.EXACT
             if owner in owners
             or (self_type is not None and owner not in self.function_registry)
@@ -864,7 +802,7 @@ class RustResolver:
         return not any(
             qn.rpartition(cs.SEPARATOR_DOT)[2] == name
             and self.function_registry.get(qn) in cs.RS_TYPE_SCOPE_LABELS
-            and self._host._module_language(qn) == cs.SupportedLanguage.RUST
+            and self._host.module_language(qn) == cs.SupportedLanguage.RUST
             for qn in self.function_registry.find_ending_with(name)
         )
 
@@ -1003,7 +941,7 @@ class RustResolver:
             # that took the scope's flat qn answers to that name too, and
             # is out of scope wherever its block is not (issue #1061).
             if (
-                local := self._host._scope_candidate(
+                local := self._host.scope_candidate(
                     scope, call_name, cs.SupportedLanguage.RUST
                 )
             ) and not self.rust_block_item_hidden(local[1], module_qn, call_point):
@@ -1079,7 +1017,7 @@ class RustResolver:
                 call.call_name, call.module_qn, call.caller_qn
             )
             if decided:
-                self._host._remember_cacheable(cache_key, result)
+                self._host.remember_cacheable(cache_key, result)
                 return True, result
         return False, None
 
@@ -1125,7 +1063,7 @@ class RustResolver:
             return self._decide_rust_module_item(mapped, object_path[1:], item, scope)
         # A registered type as the first segment is an associated-function
         # call, owned by the class-resolution paths.
-        if self._host._resolve_class_name(head, module_qn):
+        if self._host.resolve_class_name(head, module_qn):
             return None, False
         import_mapping = self.import_processor.import_mapping
         for scope in _rust_enclosing_scopes(module_qn, caller_qn):
@@ -1300,7 +1238,7 @@ class RustResolver:
         """
         if (
             cs.SEPARATOR_DOT in path
-            or self._host._module_language(module_qn) != cs.SupportedLanguage.RUST
+            or self._host.module_language(module_qn) != cs.SupportedLanguage.RUST
         ):
             return False
         head = path.split(cs.SEPARATOR_DOUBLE_COLON, 1)[0]
@@ -1606,13 +1544,13 @@ class RustResolver:
             block_hit := self._rust_block_import_at(module_qn, type_name, call_point)
         ):
             class_qn = (
-                self._host._resolve_class_qn_from_type(
+                self._host.resolve_class_qn_from_type(
                     type_name, {type_name: block_hit[0]}, module_qn
                 )
                 or type_name
             )
         else:
-            class_qn = self._host._chain_class_qn(type_name, module_qn, rust_caller)
+            class_qn = self._host.chain_class_qn(type_name, module_qn, rust_caller)
         ret = self.type_inference.facts.method_return_types.get(
             f"{class_qn}{cs.SEPARATOR_DOT}{method}"
         )
@@ -1636,9 +1574,7 @@ class RustResolver:
             and (ret_hit := self._rust_block_import_at(module_qn, ret, call_point))
         ):
             return (
-                self._host._resolve_class_qn_from_type(
-                    ret, {ret: ret_hit[0]}, module_qn
-                )
+                self._host.resolve_class_qn_from_type(ret, {ret: ret_hit[0]}, module_qn)
                 or ret
             )
         return ret
@@ -1678,8 +1614,8 @@ class RustResolver:
         # Rust to Rust only: every other language's candidates, and a module
         # of unknown language, keep their behaviour.
         if (
-            self._host._module_language(module_qn) != cs.SupportedLanguage.RUST
-            or self._host._module_language(target_qn) != cs.SupportedLanguage.RUST
+            self._host.module_language(module_qn) != cs.SupportedLanguage.RUST
+            or self._host.module_language(target_qn) != cs.SupportedLanguage.RUST
         ):
             return True
         return self.import_processor.rust.rust_crate_reaches(module_qn, target_qn)
