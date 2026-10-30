@@ -320,6 +320,17 @@ class GraphUpdater:
         # updater; a reused one already holds live state (issue #1524).
         self._reingest_hydrated = False
 
+        self._build_parse_stages(configured_unignore_paths=unignore_paths)
+        self._build_sync_stages()
+        self._build_closing_stages()
+
+    def _build_parse_stages(
+        self, configured_unignore_paths: frozenset[str] | None
+    ) -> None:
+        """The passes that turn source into graph nodes and edges, the
+        compiler frontends layered over them, and the definition-level stages
+        they defer until every file is parsed. `configured_unignore_paths` is
+        the caller's set, before a run adds its generated-source roots."""
         self.factory = ProcessorFactory(
             ingestor=self._sink,
             repo_path=self.repo_path,
@@ -337,7 +348,7 @@ class GraphUpdater:
         self.generated_sources = GeneratedSources(
             factory=self.factory,
             repo_path=self.repo_path,
-            configured_unignore_paths=unignore_paths,
+            configured_unignore_paths=configured_unignore_paths,
         )
         # What an incremental sync reads back from the graph for the files it
         # did not re-parse.
@@ -409,6 +420,12 @@ class GraphUpdater:
             import_closure=self.import_closure,
             known_module_paths=self.known_module_paths,
         )
+
+    def _build_sync_stages(self) -> None:
+        """What lets a sync re-parse only what changed: the lookups that widen
+        a re-parse, the state it carries across the delete, the post-passes
+        and caches a finished sync records, and the walk and Pass 2 built on
+        them."""
         # The files a change sends back for a re-parse beside the changed ones.
         self.dependent_lookup = DependentLookup(
             graph=self._graph,
@@ -516,6 +533,9 @@ class GraphUpdater:
             delete_module_entities=self._delete_module_entities,
             package_flip_dirs=self._package_flip_dirs,
         )
+
+    def _build_closing_stages(self) -> None:
+        """The scoped re-ingest's planners, and the passes that close a sync."""
         # The container kind of each directory a scoped re-ingest touches.
         self.container_flips = ContainerFlips(
             graph=self._graph,
