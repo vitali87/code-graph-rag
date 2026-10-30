@@ -28,8 +28,14 @@ _DEFINITIONS = frozenset(
         cs.TS_METHOD_DEFINITION,
     }
 )
-# `{ a }` in an object literal reads `a` as well.
-_READS = frozenset({cs.TS_IDENTIFIER, cs.TS_SHORTHAND_PROPERTY_IDENTIFIER})
+# `{ a }` in an object literal reads `a` as well, and `({ a } = o)` assigns it.
+_READS = frozenset(
+    {
+        cs.TS_IDENTIFIER,
+        cs.TS_SHORTHAND_PROPERTY_IDENTIFIER,
+        cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN,
+    }
+)
 
 
 def _parser() -> Parser:
@@ -74,6 +80,13 @@ def _params_of(params: Node, source: bytes, qn: str) -> list[ParamSpec]:
                     qn=qn, text=_text(child, source)
                 )
             )
+        # Sloppy mode allows `(a, a)`, and the body sees the last one: the
+        # mapping finds a name by its first position, so it would bind the
+        # wrong value.
+        if any(seen.name == spec.name for seen in specs):
+            raise SignatureRefused(
+                cs.SIGNATURE_JS_DUPLICATE_PARAM.format(qn=qn, name=spec.name)
+            )
         specs.append(spec)
     return specs
 
@@ -86,6 +99,10 @@ def _take_receiver(
     A constructor runs through `new` and `super(...)`, and an accessor is read
     or assigned: the graph lists none of those as call sites, so changing the
     header would leave every one of them behind.
+
+    The dialect passes the graph label and the parsed specs because Python
+    takes `self` or `cls` out of them; JavaScript has no receiver to take, so
+    label and specs go unused here.
     """
     if node.type != cs.TS_METHOD_DEFINITION:
         return None
@@ -131,6 +148,28 @@ def _uses(header: _Header, name: str) -> bool:
     ]
     parts = [*defaults, body] if body is not None else defaults
     return any(next(_reads(part, name), None) is not None for part in parts)
+
+
+def _refuse_forward_defaults(qn: str, params: Node, source: bytes) -> None:
+    """Refuse a default that reads its own parameter or a later one.
+
+    Parameters are bound left to right, so such a default throws
+    ReferenceError whenever a call leaves its slot out. A reorder makes one
+    out of a valid header, `(a = 1, b = a)` becoming `(b = a, a = 1)`, so
+    the writer runs this on every parameter list it is about to write.
+    """
+    names = [spec.name for spec in _params_of(params, source, qn)]
+    for index, child in enumerate(params.named_children):
+        value = child.child_by_field_name(cs.FIELD_RIGHT)
+        if value is None:
+            continue
+        for later in names[index:]:
+            if next(_reads(value, later), None) is not None:
+                raise SignatureRefused(
+                    cs.SIGNATURE_JS_DEFAULT_READS_LATER.format(
+                        qn=qn, name=names[index], later=later
+                    )
+                )
 
 
 def _refuse_body_conflicts(
