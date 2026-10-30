@@ -50,6 +50,9 @@ except ModuleNotFoundError:  # pragma: no cover - Windows
 RSS_UNAVAILABLE = -1
 
 _CHILD_ENV_FLAG = "CGR_BENCH_INDEXING_CHILD"
+# Far above any corpus the README reports (minutes at most): a child that
+# outlives it is stuck, and the parent must not wait on it forever.
+_CHILD_TIMEOUT_S = 3600
 
 
 @dataclass(frozen=True)
@@ -168,25 +171,31 @@ def measure_indexing(corpus: Path, project_name: str) -> IndexingMeasurement:
         # process's, which is exactly the run's.
         return _measure_in_this_process(corpus, project_name)
 
-    completed = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            _module_name(),
-            str(corpus),
-            "--project-name",
-            project_name,
-            "--json",
-        ],
-        capture_output=True,
-        text=True,
-        encoding=cs.ENCODING_UTF8,
-        # Handled below: the child's stderr is surfaced in the raised message,
-        # which says more than CalledProcessError's return code alone.
-        check=False,
-        env={**os.environ, _CHILD_ENV_FLAG: "1"},
-        cwd=Path(__file__).resolve().parent.parent,
-    )
+    try:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                _module_name(),
+                str(corpus),
+                "--project-name",
+                project_name,
+                "--json",
+            ],
+            capture_output=True,
+            text=True,
+            encoding=cs.ENCODING_UTF8,
+            # Handled below: the child's stderr is surfaced in the raised
+            # message, which says more than CalledProcessError's return code.
+            check=False,
+            env={**os.environ, _CHILD_ENV_FLAG: "1"},
+            cwd=Path(__file__).resolve().parent.parent,
+            timeout=_CHILD_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise ValueError(
+            f"benchmark subprocess timed out after {_CHILD_TIMEOUT_S}s"
+        ) from error
     if completed.returncode != 0:
         raise ValueError(
             f"benchmark subprocess failed ({completed.returncode}): "
