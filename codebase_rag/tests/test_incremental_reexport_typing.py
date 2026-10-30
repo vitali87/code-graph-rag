@@ -19,12 +19,13 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.graph_updater import GraphUpdater, _file_module_holding
+from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.rust import rehydration as rs_rehydration
 from codebase_rag.parsers.rust import utils as rs_utils
 from codebase_rag.tests.conftest import force_mtime_after_cache
 from codebase_rag.types_defs import PropertyValue, ResultRow
+from codebase_rag.updater.import_closure import ImportClosure, _file_module_holding
 from evals.cgr_graph import StatefulIngestor
 
 _CALLS = cs.RelationshipType.CALLS.value
@@ -405,13 +406,13 @@ class TestPythonPackageReexport:
         # A forced run parses every file, so every import map is already
         # there and no module is read a second time.
         restored: list[str] = []
-        original = GraphUpdater._restore_module_imports
+        original = ImportClosure._restore_module_imports
 
-        def record(updater: GraphUpdater, module_qn: str, path: Path) -> bool:
+        def record(closure: ImportClosure, module_qn: str, path: Path) -> bool:
             restored.append(module_qn)
-            return original(updater, module_qn, path)
+            return original(closure, module_qn, path)
 
-        monkeypatch.setattr(GraphUpdater, "_restore_module_imports", record)
+        monkeypatch.setattr(ImportClosure, "_restore_module_imports", record)
         root = tmp_path / "proj"
         _materialise(root, PY_FIXTURE)
         _updater(StatefulIngestor(), root, "python").run(force=True)
