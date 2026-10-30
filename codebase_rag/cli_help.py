@@ -1,5 +1,7 @@
 from enum import StrEnum
 
+from .constants.lang_tooling import LANG_DEFAULT_GRAMMAR_URL
+
 
 class CLICommandName(StrEnum):
     # In the order `cgr --help` lists them, panel by panel.
@@ -551,7 +553,7 @@ HELP_EXPORTED_GRAPH_FILE = "Path to the exported_graph.json file."
 
 HELP_GRAMMAR_URL = (
     "Tree-sitter grammar repository URL. Defaults to "
-    "https://github.com/tree-sitter/tree-sitter-<language_name>."
+    f"{LANG_DEFAULT_GRAMMAR_URL.format(name='<language_name>')}."
 )
 HELP_KEEP_SUBMODULE = (
     "Keep the grammar git submodule when removing the language. By default, remove it."

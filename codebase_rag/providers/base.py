@@ -548,7 +548,7 @@ def check_ollama_running(endpoint: str | None = None) -> bool:
 
 
 def check_litellm_proxy_running(
-    endpoint: str = "http://localhost:4000", api_key: str | None = None
+    endpoint: str = cs.LITELLM_DEFAULT_ENDPOINT, api_key: str | None = None
 ) -> bool:
     try:
         base_url = strip_v1_suffix(endpoint)

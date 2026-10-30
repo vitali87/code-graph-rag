@@ -42,6 +42,15 @@ class GoogleProviderType(StrEnum):
 OPENAI_DEFAULT_ENDPOINT = "https://api.openai.com/v1"
 MINIMAX_DEFAULT_ENDPOINT = "https://api.minimax.io/v1"
 LITELLM_DEFAULT_ENDPOINT = "http://localhost:4000/v1"
+OLLAMA_DEFAULT_BASE_URL = "http://localhost:11434"
+# Where each provider issues API keys, named when one is missing.
+OPENAI_API_KEYS_URL = "https://platform.openai.com/api-keys"
+ANTHROPIC_API_KEYS_URL = "https://console.anthropic.com/settings/keys"
+GOOGLE_API_KEYS_URL = "https://console.cloud.google.com/apis/credentials"
+AZURE_API_KEYS_URL = "https://portal.azure.com/"
+MINIMAX_API_KEYS_URL = (
+    "https://platform.minimax.io/user-center/basic-information/interface-key"
+)
 # pydantic-ai module whose presence decides whether the LiteLLM provider registers.
 PYDANTIC_AI_LITELLM_MODULE = "pydantic_ai.providers.litellm"
 MINIMAX_ANTHROPIC_SDK_PATH = "/anthropic"

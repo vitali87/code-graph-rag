@@ -77,27 +77,27 @@ class ApiKeyInfoEntry(TypedDict):
 API_KEY_INFO: dict[str, ApiKeyInfoEntry] = {
     cs.Provider.OPENAI: {
         "env_var": "OPENAI_API_KEY",
-        "url": "https://platform.openai.com/api-keys",
+        "url": cs.OPENAI_API_KEYS_URL,
         "name": "OpenAI",
     },
     cs.Provider.ANTHROPIC: {
         "env_var": "ANTHROPIC_API_KEY",
-        "url": "https://console.anthropic.com/settings/keys",
+        "url": cs.ANTHROPIC_API_KEYS_URL,
         "name": "Anthropic",
     },
     cs.Provider.GOOGLE: {
         "env_var": "GOOGLE_API_KEY",
-        "url": "https://console.cloud.google.com/apis/credentials",
+        "url": cs.GOOGLE_API_KEYS_URL,
         "name": "Google AI",
     },
     cs.Provider.AZURE: {
         "env_var": "AZURE_API_KEY",
-        "url": "https://portal.azure.com/",
+        "url": cs.AZURE_API_KEYS_URL,
         "name": "Azure OpenAI",
     },
     cs.Provider.MINIMAX: {
         "env_var": "MINIMAX_API_KEY",
-        "url": "https://platform.minimax.io/user-center/basic-information/interface-key",
+        "url": cs.MINIMAX_API_KEYS_URL,
         "name": "MiniMax",
     },
 }
@@ -316,7 +316,7 @@ class AppConfig(BaseSettings):
     CYPHER_THINKING_BUDGET: int | None = None
     CYPHER_SERVICE_ACCOUNT_FILE: str | None = None
 
-    OLLAMA_BASE_URL: str = "http://localhost:11434"
+    OLLAMA_BASE_URL: str = cs.OLLAMA_DEFAULT_BASE_URL
 
     @property
     def ollama_endpoint(self) -> str:
