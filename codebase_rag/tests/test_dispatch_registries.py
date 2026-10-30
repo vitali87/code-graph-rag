@@ -200,8 +200,8 @@ def test_dynamic_producer_value_stays_out(tmp_path: Path) -> None:
 
 def test_partial_capture_selections_never_dangle(tmp_path: Path) -> None:
     # Dropping either side's relationship must not leave the suffix
-    # resolution with a dangling endpoint (the structural audit inside _run
-    # is the assertion).
+    # resolution with a dangling endpoint: the structural audit inside _run
+    # checks that, and each case keeps exactly the side still selected.
     files = {
         "flows.py": (
             "from prefect import flow\n\n"
@@ -212,8 +212,25 @@ def test_partial_capture_selections_never_dangle(tmp_path: Path) -> None:
             'def schedule(client):\n    client.deploy(workflow_name="run-things/dev")\n'
         ),
     }
-    for i, tokens in enumerate((["io", "-writes_to"], ["io", "-exposes"])):
-        _run(tmp_path / f"case{i}", files, capture=resolve_capture(tokens))
+    resolution = (
+        "resource::DISPATCH::run-things/dev",
+        RESOLVES_TO,
+        "resource::DISPATCH::run-things",
+    )
+    without_writes = _run(
+        tmp_path / "case0", files, capture=resolve_capture(["io", "-writes_to"])
+    )
+    assert without_writes == {
+        ("case0.flows.run_things", EXPOSES, "resource::DISPATCH::run-things"),
+        resolution,
+    }
+    without_exposes = _run(
+        tmp_path / "case1", files, capture=resolve_capture(["io", "-exposes"])
+    )
+    assert without_exposes == {
+        ("case1.producer.schedule", WRITES_TO, "resource::DISPATCH::run-things/dev"),
+        resolution,
+    }
 
 
 def test_escaped_key_joins_plain_spelling(tmp_path: Path) -> None:
@@ -311,8 +328,13 @@ def test_finalize_seeds_registrations_from_database(tmp_path: Path) -> None:
         producer.root_node, "proj.producer", cs2.SupportedLanguage.PYTHON
     )
     processor.finalize()
-    resolves = get_relationships(ingestor, RESOLVES_TO)
-    assert resolves, ingestor.ensure_relationship_batch.call_args_list
+    resolves = {
+        (str(r.source), str(r.target)) for r in get_relationships(ingestor, RESOLVES_TO)
+    }
+    # The seeded registration anchors the produced key's suffix resolution.
+    assert resolves == {
+        ("resource::DISPATCH::run-things/dev", "resource::DISPATCH::run-things")
+    }, ingestor.ensure_relationship_batch.call_args_list
 
 
 def test_registration_seed_tolerates_unreadable_graph(tmp_path: Path) -> None:
@@ -336,8 +358,9 @@ def test_registration_seed_tolerates_unreadable_graph(tmp_path: Path) -> None:
         def get(self, qn: str):
             return cs.NodeLabel.FUNCTION if qn.endswith(".schedule") else None
 
+    ingestor = _DownIngestor()
     processor = DispatchRegistryProcessor(
-        ingestor=_DownIngestor(),
+        ingestor=ingestor,
         selection=ALL_ENABLED,
         function_registry=_Registry(),
     )
@@ -348,6 +371,13 @@ def test_registration_seed_tolerates_unreadable_graph(tmp_path: Path) -> None:
         producer.root_node, "proj.producer", cs2.SupportedLanguage.PYTHON
     )
     processor.finalize()  # must not raise
+    # The producer's own sink still lands; with no seed there is nothing
+    # registered for its key to resolve onto.
+    writes = {
+        (str(r.source), str(r.target)) for r in get_relationships(ingestor, WRITES_TO)
+    }
+    assert writes == {("proj.producer.schedule", "resource::DISPATCH::run-things/dev")}
+    assert not get_relationships(ingestor, RESOLVES_TO)
 
 
 def test_resolves_only_capture_still_links_suffix(tmp_path: Path) -> None:

@@ -3,12 +3,14 @@
 # subprocess-shaped: these tests fake the delombok run (no jar in CI) and
 # assert the graph gains the expanded member while the on-disk source lacks
 # it, the hash cache keys the checked-in bytes, and every missing piece
-# degrades to raw parsing.
+# degrades to raw parsing. Everything else is real: the jar is a file the
+# configured `LOMBOK_JAR` names, found and digested by the module's own
+# lookup, and the graph is the suite's recording ingestor.
 from __future__ import annotations
 
 import shutil
+import sys
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -19,6 +21,7 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.java import lombok as java_lombok
 from codebase_rag.sync.checkout_state import state_file
 from codebase_rag.tests.conftest import get_nodes
+from evals.recorded_graph import RecordingIngestor
 
 _RAW = (
     "package com.app;\n\nimport lombok.Getter;\n\n@Getter\n"
@@ -49,8 +52,21 @@ def _fake_java(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-def _fake_delombok(monkeypatch: pytest.MonkeyPatch) -> None:
+def _use_jar(monkeypatch: pytest.MonkeyPatch, jar: Path) -> None:
+    # A configured path that is no file reads as no jar, without falling
+    # back to a developer's ~/.m2.
+    monkeypatch.setattr(java_lombok.settings, "LOMBOK_JAR", str(jar))
+
+
+def _jar(directory: Path, name: str = "lombok-1.18.30.jar") -> Path:
+    jar = directory / name
+    jar.write_bytes(b"jar")
+    return jar
+
+
+def _fake_delombok(monkeypatch: pytest.MonkeyPatch, jar_dir: Path) -> None:
     _fake_java(monkeypatch)
+    _use_jar(monkeypatch, _jar(jar_dir))
 
     def fake_run(java, jar, source_root, out_dir):
         for original in Path(source_root).rglob("*.java"):
@@ -65,14 +81,11 @@ def _fake_delombok(monkeypatch: pytest.MonkeyPatch) -> None:
         return True
 
     monkeypatch.setattr(java_lombok, "_run_delombok", fake_run)
-    monkeypatch.setattr(
-        java_lombok, "find_lombok_jar", lambda: Path("/fake/lombok.jar")
-    )
 
 
-def _index_repo_with_mock_ingestor(repo: Path) -> MagicMock:
+def _index_repo(repo: Path) -> RecordingIngestor:
     parsers, queries = load_parsers()
-    mock = MagicMock()
+    mock = RecordingIngestor()
     GraphUpdater(
         ingestor=mock,
         repo_path=repo,
@@ -83,7 +96,7 @@ def _index_repo_with_mock_ingestor(repo: Path) -> MagicMock:
     return mock
 
 
-def _method_qns(mock: MagicMock) -> set[str]:
+def _method_qns(mock: RecordingIngestor) -> set[str]:
     return {
         c.properties["qualified_name"]
         for c in get_nodes(mock)
@@ -96,9 +109,12 @@ def test_expanded_member_lands_in_the_graph(
 ) -> None:
     repo = tmp_path / "proj"
     _write_repo(repo)
-    _fake_delombok(monkeypatch)
-    mock = _index_repo_with_mock_ingestor(repo)
+    _fake_delombok(monkeypatch, tmp_path)
+    mock = _index_repo(repo)
     assert any("Widget.getName" in qn for qn in _method_qns(mock))
+    # The expanded bytes are keyed by the ORIGINAL path.
+    module_paths = {n.properties.get("path") for n in get_nodes(mock, "Module")}
+    assert "src/main/java/com/app/Widget.java" in module_paths
     # The overlay never touches the checked-in source.
     assert "@Getter" in (repo / "src/main/java/com/app/Widget.java").read_text()
 
@@ -109,9 +125,14 @@ def test_without_a_jar_raw_source_parses_unchanged(
     repo = tmp_path / "proj"
     _write_repo(repo)
     _fake_java(monkeypatch)
-    monkeypatch.setattr(java_lombok, "find_lombok_jar", lambda: None)
-    mock = _index_repo_with_mock_ingestor(repo)
+    _use_jar(monkeypatch, tmp_path / "absent.jar")
+    assert java_lombok.find_lombok_jar() is None
+    mock = _index_repo(repo)
     assert not any("Widget.getName" in qn for qn in _method_qns(mock))
+    # Raw parsing still indexes the class itself.
+    assert "proj.src.main.java.com.app.Widget.Widget" in {
+        n.properties["qualified_name"] for n in get_nodes(mock, "Class")
+    }
 
 
 def test_lombok_free_build_never_invokes_delombok(
@@ -124,17 +145,18 @@ def test_lombok_free_build_never_invokes_delombok(
         "package com.app;\npublic class Plain {}\n", encoding="utf-8"
     )
     _fake_java(monkeypatch)
-    monkeypatch.setattr(
-        java_lombok, "find_lombok_jar", lambda: Path("/fake/lombok.jar")
-    )
+    _use_jar(monkeypatch, _jar(tmp_path))
     calls: list[str] = []
     monkeypatch.setattr(
         java_lombok,
         "_run_delombok",
         lambda *a: calls.append("run") or True,
     )
-    _index_repo_with_mock_ingestor(repo)
+    mock = _index_repo(repo)
     assert calls == []
+    assert "proj.src.main.java.com.app.Plain.Plain" in {
+        n.properties["qualified_name"] for n in get_nodes(mock, "Class")
+    }
 
 
 def test_hash_cache_keys_the_checked_in_source(
@@ -144,9 +166,9 @@ def test_hash_cache_keys_the_checked_in_source(
     # parse consumed overlay bytes; a reused updater re-parses it.
     repo = tmp_path / "proj"
     _write_repo(repo)
-    _fake_delombok(monkeypatch)
+    _fake_delombok(monkeypatch, tmp_path)
     parsers, queries = load_parsers()
-    mock = MagicMock()
+    mock = RecordingIngestor()
     updater = GraphUpdater(
         ingestor=mock,
         repo_path=repo,
@@ -172,7 +194,7 @@ def test_hash_cache_keys_the_checked_in_source(
 def test_real_delombok_end_to_end(tmp_path: Path) -> None:
     repo = tmp_path / "proj"
     _write_repo(repo)
-    mock = _index_repo_with_mock_ingestor(repo)
+    mock = _index_repo(repo)
     assert any("Widget.getName" in qn for qn in _method_qns(mock))
 
 
@@ -182,10 +204,8 @@ def test_no_java_degrades_to_raw_parsing(
     repo = tmp_path / "proj"
     _write_repo(repo)
     monkeypatch.setattr(java_lombok.shutil, "which", lambda _c: None)
-    monkeypatch.setattr(
-        java_lombok, "find_lombok_jar", lambda: Path("/fake/lombok.jar")
-    )
-    mock = _index_repo_with_mock_ingestor(repo)
+    _use_jar(monkeypatch, _jar(tmp_path))
+    mock = _index_repo(repo)
     assert not any("Widget.getName" in qn for qn in _method_qns(mock))
 
 
@@ -199,9 +219,9 @@ def test_jar_appearing_after_a_raw_index_forces_the_reparse(
     repo = tmp_path / "proj"
     _write_repo(repo)
     _fake_java(monkeypatch)
-    monkeypatch.setattr(java_lombok, "find_lombok_jar", lambda: None)
+    _use_jar(monkeypatch, tmp_path / "absent.jar")
     parsers, queries = load_parsers()
-    mock = MagicMock()
+    mock = RecordingIngestor()
     updater = GraphUpdater(
         ingestor=mock,
         repo_path=repo,
@@ -211,16 +231,16 @@ def test_jar_appearing_after_a_raw_index_forces_the_reparse(
     )
     updater.run()
     assert not any(".getName(" in qn for qn in _method_qns(mock))
-    _fake_delombok(monkeypatch)
+    _fake_delombok(monkeypatch, tmp_path)
     mock.reset_mock()
     updater.run()
     # Under the bare class qn: the forced re-parse drops the raw parse's
     # registry entries first (issue #1657), so the class is not re-registered
     # as a `Widget@N` duplicate. The graph-side delete is covered by
-    # `test_a_forced_reparse_deletes_the_files_old_subtree_first`, which a
-    # MagicMock cannot observe.
+    # `test_a_forced_reparse_deletes_the_files_old_subtree_first`: a recording
+    # ingestor holds no graph to observe it in.
     assert "proj.src.main.java.com.app.Widget.Widget.getName()" in _method_qns(mock)
-    monkeypatch.setattr(java_lombok, "find_lombok_jar", lambda: None)
+    _use_jar(monkeypatch, tmp_path / "absent.jar")
     mock.reset_mock()
     updater.run()
     assert not any(".getName(" in qn for qn in _method_qns(mock))
@@ -245,7 +265,7 @@ def test_a_forced_reparse_deletes_the_files_old_subtree_first(
     repo = tmp_path / "proj"
     _write_repo(repo)
     _fake_java(monkeypatch)
-    monkeypatch.setattr(java_lombok, "find_lombok_jar", lambda: None)
+    _use_jar(monkeypatch, tmp_path / "absent.jar")
     parsers, queries = load_parsers()
     # Default capture: the store models the graph, not the optional network
     # resource pass ALL_ENABLED would switch on, and the Widget nodes this
@@ -262,7 +282,7 @@ def test_a_forced_reparse_deletes_the_files_old_subtree_first(
 
     # The jar appears: the checked-in bytes are unchanged, so only the overlay
     # identity forces Widget.java back through the parser.
-    _fake_delombok(monkeypatch)
+    _fake_delombok(monkeypatch, tmp_path)
     updater.run()
 
     classes = sorted(
@@ -303,22 +323,18 @@ def test_jar_version_change_alone_marks_the_state_changed(
     # annotation edit, so the files go through one honest reparse.
     repo = tmp_path / "proj"
     _write_repo(repo)
-    _fake_delombok(monkeypatch)
-    monkeypatch.setattr(
-        java_lombok, "find_lombok_jar", lambda: Path("/fake/lombok-1.18.30.jar")
-    )
+    _fake_delombok(monkeypatch, tmp_path)
     parsers, queries = load_parsers()
     updater = GraphUpdater(
-        ingestor=MagicMock(),
+        ingestor=RecordingIngestor(),
         repo_path=repo,
         parsers=parsers,
         queries=queries,
         capture=ALL_ENABLED,
     )
     updater.run()
-    monkeypatch.setattr(
-        java_lombok, "find_lombok_jar", lambda: Path("/fake/lombok-1.18.42.jar")
-    )
+    assert java_lombok.current_lombok_version() == "1.18.30"
+    _use_jar(monkeypatch, _jar(tmp_path, "lombok-1.18.42.jar"))
     updater.run()
     assert updater._delombok_state_changed
 
@@ -340,7 +356,7 @@ def test_replaced_same_named_jar_flips_the_state(
     # the identity must digest the CONTENT.
     jar = tmp_path / "lombok.jar"
     jar.write_bytes(b"first")
-    monkeypatch.setattr(java_lombok, "find_lombok_jar", lambda: jar)
+    _use_jar(monkeypatch, jar)
     first = java_lombok.current_lombok_identity()
     jar.write_bytes(b"second")
     assert java_lombok.current_lombok_identity() != first
@@ -353,10 +369,10 @@ def test_failed_run_never_commits_the_overlay_state(
 
     repo = tmp_path / "proj"
     _write_repo(repo)
-    _fake_delombok(monkeypatch)
+    _fake_delombok(monkeypatch, tmp_path)
     parsers, queries = load_parsers()
     updater = GraphUpdater(
-        ingestor=MagicMock(),
+        ingestor=RecordingIngestor(),
         repo_path=repo,
         parsers=parsers,
         queries=queries,
@@ -370,3 +386,62 @@ def test_failed_run_never_commits_the_overlay_state(
     with pytest.raises(RuntimeError):
         updater.run()
     assert not state_file(repo, cs.DELOMBOK_STATE_FILENAME).exists()
+
+
+def test_lombok_in_a_gradle_kotlin_build_counts(tmp_path: Path) -> None:
+    build = tmp_path / "build.gradle.kts"
+    build.write_text(
+        'dependencies { compileOnly("org.projectlombok:lombok:1.18.30") }\n',
+        encoding="utf-8",
+    )
+    assert java_lombok._lombok_used(tmp_path)
+    build.write_text("plugins { java }\n", encoding="utf-8")
+    assert not java_lombok._lombok_used(tmp_path)
+
+
+def test_the_overlay_keeps_only_changed_files_keyed_by_repo_path(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "repo/src/main/java"
+    out_dir = tmp_path / "out"
+    for root, text in ((source_root, _RAW), (out_dir, _EXPANDED)):
+        (root / "com/app").mkdir(parents=True)
+        (root / "com/app/Widget.java").write_text(text, encoding="utf-8")
+        (root / "com/app/Plain.java").write_text("class Plain {}\n", "utf-8")
+    # An expansion with no original is not the repo's.
+    (out_dir / "com/app/Stray.java").write_text("class Stray {}\n", "utf-8")
+
+    overlay = java_lombok._overlay_from_root(tmp_path / "repo", source_root, out_dir)
+
+    assert overlay == {"src/main/java/com/app/Widget.java": _EXPANDED.encode()}
+
+
+def test_the_overlay_identity_tracks_paths_and_bytes() -> None:
+    overlay = {"a/W.java": b"one", "b/X.java": b"two"}
+    identity = java_lombok.overlay_identity(overlay)
+    assert java_lombok.overlay_identity({}) == ""
+    assert java_lombok.overlay_identity(dict(reversed(overlay.items()))) == identity
+    assert java_lombok.overlay_identity({**overlay, "b/X.java": b"three"}) != identity
+    assert java_lombok.overlay_identity({"a/W.java": b"one"}) != identity
+
+
+def test_a_jar_name_without_a_version_is_its_own_version() -> None:
+    assert java_lombok.lombok_jar_version(Path("lombok-1.18.30.jar")) == "1.18.30"
+    assert java_lombok.lombok_jar_version(Path("lombok.jar")) == "lombok.jar"
+
+
+def test_a_delombok_run_that_exits_non_zero_degrades(tmp_path: Path) -> None:
+    # A real child that refuses `-jar ... delombok`: the interpreter itself.
+    source_root = tmp_path / "src"
+    source_root.mkdir()
+    ran = java_lombok._run_delombok(
+        sys.executable, _jar(tmp_path), source_root, tmp_path / "out"
+    )
+    assert ran is False
+
+
+def test_a_delombok_run_whose_java_cannot_start_degrades(tmp_path: Path) -> None:
+    ran = java_lombok._run_delombok(
+        str(tmp_path / "no-such-java"), _jar(tmp_path), tmp_path, tmp_path / "out"
+    )
+    assert ran is False
