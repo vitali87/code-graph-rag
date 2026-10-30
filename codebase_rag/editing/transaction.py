@@ -579,21 +579,28 @@ def undo_transaction(repo_root: Path, transaction_id: str) -> TransactionOutcome
     root = repo_root.resolve()
     with _repo_lock(root):
         entries = load_history(root)
-        newest = str(entries[-1].get(cs.EDIT_KEY_ID, "")) if entries else ""
+        if not entries:
+            # No edit is newest, so not even an empty id names one.
+            raise TransactionConflict(
+                cs.EDIT_NOTHING_RECORDED.format(transaction_id=transaction_id)
+            )
+        newest = str(entries[-1].get(cs.EDIT_KEY_ID, ""))
         if newest != transaction_id:
             raise TransactionConflict(
                 cs.EDIT_NOT_NEWEST.format(transaction_id=transaction_id, newest=newest)
             )
-        outcome = _undo_newest(root)
-    assert outcome is not None
-    return outcome
+        return _undo_entry(root, entries)
 
 
 def _undo_newest(root: Path) -> TransactionOutcome | None:
     """Reverse the newest history entry under the caller's lock; None if empty."""
     entries = load_history(root)
-    if not entries:
-        return None
+    return _undo_entry(root, entries) if entries else None
+
+
+def _undo_entry(root: Path, entries: list[dict]) -> TransactionOutcome:
+    """Reverse `entries[-1]`, the newest of the loaded, non-empty history,
+    under the caller's lock."""
     entry = entries[-1]
     reverse = EditTransaction(root, record=False)
     for staged in entry_files(entry):

@@ -21,6 +21,7 @@ from codebase_rag.editing import (
     VerificationResult,
     transaction,
     undo_last,
+    undo_transaction,
 )
 from codebase_rag.editing.cli import cli as edits_cli
 from codebase_rag.editing.transaction import load_history
@@ -323,6 +324,22 @@ def test_undo_stops_at_a_file_that_changed_since(repo: Path) -> None:
     assert (repo / "pkg" / "a.py").read_text() == "one\n"
     assert (repo / "pkg" / "b.py").read_text() == "hand edit\n"
     assert len(load_history(repo)) == 2
+
+
+@pytest.mark.parametrize("transaction_id", ["", "tx-gone"])
+def test_undo_transaction_refuses_an_empty_history(
+    repo: Path, transaction_id: str
+) -> None:
+    # With nothing recorded the newest id reads as "", which an empty id
+    # matched: the undo then found no entry and failed an assert instead of
+    # refusing.
+    original = _tree_digest(repo)
+
+    with pytest.raises(TransactionConflict, match="No edit is recorded"):
+        undo_transaction(repo, transaction_id)
+
+    assert _tree_digest(repo) == original
+    assert load_history(repo) == []
 
 
 def test_undo_count_walks_newest_first(repo: Path) -> None:

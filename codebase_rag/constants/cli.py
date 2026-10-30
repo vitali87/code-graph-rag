@@ -837,6 +837,9 @@ EDIT_NOT_NEWEST = (
     "Transaction {transaction_id} is not the newest recorded edit ({newest}); "
     "undo the later edit first"
 )
+EDIT_NOTHING_RECORDED = (
+    "No edit is recorded, so transaction {transaction_id!r} cannot be undone"
+)
 EDIT_VERIFICATION_FAILED = (
     "Verification failed; the working tree is untouched: {reason}"
 )
