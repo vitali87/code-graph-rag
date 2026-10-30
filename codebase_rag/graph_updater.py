@@ -19,9 +19,7 @@ from .capture import CaptureSelection, default_capture
 from .config import settings
 from .function_registry import FunctionRegistryTrie
 from .graph_pruning import GraphPruner
-from .language_spec import (
-    get_language_spec,
-)
+from .language_spec import get_language_spec
 from .parsers.ast_grep_tier import AstGrepTier
 from .parsers.csharp import graph_joins as csharp_joins
 from .parsers.document_tier import DocumentTier
@@ -29,19 +27,11 @@ from .parsers.endpoint_linker import EndpointLinker
 from .parsers.factory import ProcessorFactory
 from .parsers.go import graph_joins as go_joins
 from .parsers.stdlib_extractor import flush_stdlib_cache
-from .services import (
-    IngestorProtocol,
-    NodeUpdateProtocol,
-    QueryProtocol,
-)
+from .services import IngestorProtocol, NodeUpdateProtocol, QueryProtocol
 from .services.filtering import filtering_ingestor
 from .sync.checkout_state import prepare_state_dir
 from .sync.lock import holds_sync_lock
-from .sync.state import (
-    DirMtimesCache,
-    FileHashCache,
-    load_hash_cache,
-)
+from .sync.state import DirMtimesCache, FileHashCache, load_hash_cache
 from .trace.carry import CapturedTraceEdge
 from .types_defs import (
     LanguageQueries,
@@ -164,7 +154,10 @@ class GraphUpdater:
 
     Parses each supported source file into definitions, imports, and calls,
     resolves them across files, and streams the resulting nodes and edges to
-    the configured ingestor.
+    the configured ingestor. Each part of that work is a collaborator in
+    `codebase_rag/updater/` (and `GraphPruner`, `EmbeddingSync`,
+    `EndpointLinker`); this class builds them, holds the state they share,
+    and sequences them in `run` and `reingest`.
     """
 
     def __init__(
@@ -1225,6 +1218,7 @@ class GraphUpdater:
         self.unignore_paths = self.generated_sources.refresh(self.prepared_state_dir)
 
     def _process_files(self, force: bool = False) -> None:
+        """Pass 2, refilling `_reparsed_file_keys` with the files it parses."""
         self.file_pass.process_files(
             self._run, self.prepared_state_dir, force, self._reparsed_file_keys
         )
