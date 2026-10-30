@@ -13,7 +13,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from codebase_rag import constants as cs
-from codebase_rag.tests.conftest import get_relationships, run_updater
+from codebase_rag.tests.conftest import get_nodes, get_relationships, run_updater
 
 HDR = """
 #pragma once
@@ -47,10 +47,10 @@ def _write_same_stem_fixture(repo: Path) -> None:
 
 def _node_keys(mock_ingestor: MagicMock) -> set[tuple[str, str]]:
     keys = set()
-    for c in mock_ingestor.ensure_node_batch.call_args_list:
-        props = c.args[1]
+    for c in get_nodes(mock_ingestor):
+        props = c.properties
         key = props.get("qualified_name") or props.get("path") or props.get("name")
-        keys.add((str(c.args[0]), key))
+        keys.add((str(c.label), key))
     return keys
 
 
@@ -64,14 +64,14 @@ def test_out_of_line_method_calls_attribute_to_method_node(
     helper_calls = [
         call
         for call in get_relationships(mock_ingestor, cs.RelationshipType.CALLS.value)
-        if str(call.args[2][2]).endswith(".helper") and ".print" in str(call.args[0][2])
+        if str(call.target).endswith(".helper") and ".print" in str(call.source)
     ]
     assert helper_calls
     for call in helper_calls:
-        from_label, _, from_qn = call.args[0]
-        assert str(from_label) == cs.NodeLabel.METHOD.value, call.args
-        assert ".Directive.print" in str(from_qn), call.args
-        assert (str(from_label), from_qn) in keys, call.args
+        from_label, _, from_qn = call.from_spec
+        assert str(from_label) == cs.NodeLabel.METHOD.value, call
+        assert ".Directive.print" in str(from_qn), call
+        assert (str(from_label), from_qn) in keys, call
 
 
 def test_include_imports_edge_targets_real_header_module(
@@ -84,9 +84,9 @@ def test_include_imports_edge_targets_real_header_module(
     cpp_module = f"{temp_repo.name}.Directive"
     header_module = f"{temp_repo.name}.Directive.h"
     import_targets = {
-        str(call.args[2][2])
+        str(call.target)
         for call in get_relationships(mock_ingestor, cs.RelationshipType.IMPORTS.value)
-        if str(call.args[0][2]) == cpp_module
+        if str(call.source) == cpp_module
     }
     assert header_module in import_targets, import_targets
     # The self-import phantom (stem resolved to the includer's own qn) must
@@ -111,8 +111,8 @@ def test_subdir_include_resolves_via_path_suffix(
     cpp_module = f"{project}.src.ast.Directive"
     header_module = f"{project}.src.ast.Directive.h"
     import_targets = {
-        str(call.args[2][2])
+        str(call.target)
         for call in get_relationships(mock_ingestor, cs.RelationshipType.IMPORTS.value)
-        if str(call.args[0][2]) == cpp_module
+        if str(call.source) == cpp_module
     }
     assert header_module in import_targets, import_targets

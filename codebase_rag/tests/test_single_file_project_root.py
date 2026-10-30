@@ -32,6 +32,7 @@ from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater, _project_root_for_single_file
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.sync.checkout_state import state_dir, state_file
+from codebase_rag.tests.conftest import get_nodes
 
 PY = cs.SupportedLanguage.PYTHON
 
@@ -72,23 +73,17 @@ def _run(repo_path: Path, parsers_and_queries: tuple[dict, dict]) -> MagicMock:
 def _modules(mock: MagicMock) -> set[tuple[str, str]]:
     return {
         (
-            str((call.args[1] if len(call.args) > 1 else {}).get("path", "")),
-            str(
-                (call.args[1] if len(call.args) > 1 else {}).get(
-                    cs.KEY_QUALIFIED_NAME, ""
-                )
-            ),
+            str(n.properties.get("path", "")),
+            str(n.properties.get(cs.KEY_QUALIFIED_NAME, "")),
         )
-        for call in mock.ensure_node_batch.call_args_list
-        if str(call.args[0]) == cs.NodeLabel.MODULE.value
+        for n in get_nodes(mock, cs.NodeLabel.MODULE.value)
     }
 
 
 def _project_roots(mock: MagicMock) -> list[str]:
     roots = [
-        str((call.args[1] if len(call.args) > 1 else {}).get("root_path", ""))
-        for call in mock.ensure_node_batch.call_args_list
-        if str(call.args[0]) == cs.NodeLabel.PROJECT.value
+        str(n.properties.get("root_path", ""))
+        for n in get_nodes(mock, cs.NodeLabel.PROJECT.value)
     ]
     roots += [
         str((args[1] if len(args) > 1 else {}).get("root_path", ""))

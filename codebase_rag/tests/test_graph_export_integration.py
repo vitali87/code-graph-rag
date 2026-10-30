@@ -7,6 +7,8 @@ from tempfile import NamedTemporaryFile
 from codebase_rag.graph_loader import load_graph
 from codebase_rag.tests.conftest import (
     create_and_run_updater,
+    get_nodes,
+    get_relationships,
 )
 from codebase_rag.types_defs import GraphData, GraphMetadata
 
@@ -16,9 +18,9 @@ def build_graph_data_from_mock(mock_ingestor) -> GraphData:
     node_id_counter = 1
     key_to_id: dict[tuple[str, str], int] = {}
 
-    for call in mock_ingestor.ensure_node_batch.call_args_list:
-        label = str(call[0][0])
-        props = call[0][1]
+    for call in get_nodes(mock_ingestor):
+        label = str(call.label)
+        props = call.properties
 
         qn = props.get("qualified_name")
         name = props.get("name")
@@ -46,11 +48,11 @@ def build_graph_data_from_mock(mock_ingestor) -> GraphData:
             )
 
     relationships = []
-    for call in mock_ingestor.ensure_relationship_batch.call_args_list:
-        from_tuple = call[0][0]
-        rel_type = call[0][1]
-        to_tuple = call[0][2]
-        props = call[0][3] if len(call[0]) > 3 else {}
+    for call in get_relationships(mock_ingestor):
+        from_tuple = call.from_spec
+        rel_type = call.rel_type
+        to_tuple = call.to_spec
+        props = call.properties
 
         from_key = (str(from_tuple[0]), from_tuple[2])
         to_key = (str(to_tuple[0]), to_tuple[2])

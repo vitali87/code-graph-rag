@@ -19,6 +19,7 @@ from codebase_rag import constants as cs
 from codebase_rag.capture import resolve_capture
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_relationships
 
 _PAGE = (
     Path(__file__).resolve().parents[2] / "docs" / "architecture" / "data-flow-edges.md"
@@ -78,16 +79,16 @@ def _produced_edges(tmp_path: Path) -> set[_Edge]:
         capture=resolve_capture([cs.CaptureGroup.IO.value]),
     ).run()
     edges: set[_Edge] = set()
-    for call in mock.ensure_relationship_batch.call_args_list:
-        if str(call.args[1]) != cs.RelationshipType.FLOWS_TO:
+    for call in get_relationships(mock):
+        if str(call.rel_type) != cs.RelationshipType.FLOWS_TO:
             continue
-        props = call.args[3] if len(call.args) > 3 else call.kwargs.get("properties")
+        props = call.properties
         props = props or {}
         via = props.get(_VIA)
         edges.add(
             (
-                str(call.args[0][2]),
-                str(call.args[2][2]),
+                str(call.source),
+                str(call.target),
                 str(props.get(cs.KEY_KIND)),
                 str(via) if via is not None else None,
             )

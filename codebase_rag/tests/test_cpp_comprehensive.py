@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -592,19 +591,15 @@ void runComprehensiveTest() {
 
     run_updater(cpp_comprehensive_project, mock_ingestor)
 
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    all_relationships = get_relationships(mock_ingestor)
 
     call_relationships = get_relationships(mock_ingestor, "CALLS")
-    [c for c in all_relationships if c.args[1] == "DEFINES"]
+    [c for c in all_relationships if c.rel_type == "DEFINES"]
     inherits_relationships = get_relationships(mock_ingestor, "INHERITS")
     imports_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     comprehensive_calls = [
-        call
-        for call in call_relationships
-        if "comprehensive_example" in call.args[0][2]
+        call for call in call_relationships if "comprehensive_example" in call.source
     ]
 
     assert len(comprehensive_calls) >= 20, (
@@ -614,7 +609,7 @@ void runComprehensiveTest() {
     comprehensive_inherits = [
         call
         for call in inherits_relationships
-        if "comprehensive_example" in call.args[0][2]
+        if "comprehensive_example" in call.source
     ]
 
     assert len(comprehensive_inherits) >= 8, (
@@ -622,9 +617,7 @@ void runComprehensiveTest() {
     )
 
     comprehensive_imports = [
-        call
-        for call in imports_relationships
-        if "comprehensive_example" in call.args[0][2]
+        call for call in imports_relationships if "comprehensive_example" in call.source
     ]
 
     assert len(comprehensive_imports) >= 10, (
@@ -889,7 +882,7 @@ int main() {
     header_imports = [
         call
         for call in imports_relationships
-        if "engine.h" in call.args[2][2] or "iostream" in call.args[2][2]
+        if "engine.h" in call.target or "iostream" in call.target
     ]
 
     assert len(header_imports) >= 2, (
@@ -899,7 +892,7 @@ int main() {
     component_inheritance = [
         call
         for call in inherits_relationships
-        if "Component" in call.args[2][2] or "System" in call.args[2][2]
+        if "Component" in call.target or "System" in call.target
     ]
 
     assert len(component_inheritance) >= 2, (

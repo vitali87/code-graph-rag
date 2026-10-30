@@ -1397,9 +1397,7 @@ void demonstrateAllOperators() {
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
     comprehensive_calls = [
-        call
-        for call in call_relationships
-        if "comprehensive_operators" in call.args[0][2]
+        call for call in call_relationships if "comprehensive_operators" in call.source
     ]
 
     assert len(comprehensive_calls) >= 5, (

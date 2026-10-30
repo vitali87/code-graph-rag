@@ -123,7 +123,7 @@ print("Partial result:", add_5_10(3))  -- 5 + 10 + 3 = 18
     run_updater(project, mock_ingestor)
 
     created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
-    fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
+    fn_qns = {c.properties["qualified_name"] for c in created_functions}
 
     closures_qn = f"{project.name}.closures"
 
@@ -360,7 +360,7 @@ print("Middleware result:", result)
     run_updater(project, mock_ingestor)
 
     created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
-    fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
+    fn_qns = {c.properties["qualified_name"] for c in created_functions}
 
     decorators_qn = f"{project.name}.decorators"
     middleware_qn = f"{project.name}.middleware"
@@ -584,7 +584,7 @@ events:emit("test", "Should not show regular listener")
     run_updater(project, mock_ingestor)
 
     created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
-    fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
+    fn_qns = {c.properties["qualified_name"] for c in created_functions}
 
     events_qn = f"{project.name}.events"
 
@@ -854,7 +854,7 @@ print("Is -2 positive and even?", is_positive_and_even(-2))
     run_updater(project, mock_ingestor)
 
     created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
-    fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
+    fn_qns = {c.properties["qualified_name"] for c in created_functions}
 
     functional_qn = f"{project.name}.functional"
 

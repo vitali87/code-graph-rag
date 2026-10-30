@@ -31,7 +31,7 @@ def _qns_by_path(
 ) -> dict[str, str]:
     out: dict[str, str] = {}
     for node in get_nodes(mock_ingestor, label):
-        props = node[0][1]
+        props = node.properties
         qn = str(props.get(KEY_QUALIFIED_NAME))
         if qn.rsplit(".", 1)[-1] == name:
             out[str(props.get(KEY_PATH))] = qn
@@ -45,7 +45,7 @@ def test_same_stem_files_get_distinct_module_qns(
     create_and_run_updater(project, mock_ingestor, skip_if_missing="cpp")
 
     modules = {
-        str(node[0][1].get(KEY_PATH)): str(node[0][1].get(KEY_QUALIFIED_NAME))
+        str(node.properties.get(KEY_PATH)): str(node.properties.get(KEY_QUALIFIED_NAME))
         for node in get_nodes(mock_ingestor, NodeLabel.MODULE)
     }
     py_mod = modules.get("pkg/shape.py")
@@ -71,7 +71,7 @@ def test_same_stem_methods_do_not_collide(
     # The method qn must derive from its own (disambiguated) module qn, not a
     # bare recomputed prefix patched up by register_unique_qn's @N dedup.
     modules = {
-        str(node[0][1].get(KEY_PATH)): str(node[0][1].get(KEY_QUALIFIED_NAME))
+        str(node.properties.get(KEY_PATH)): str(node.properties.get(KEY_QUALIFIED_NAME))
         for node in get_nodes(mock_ingestor, NodeLabel.MODULE)
     }
     py_mod = modules["pkg/shape.py"]

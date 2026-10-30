@@ -59,7 +59,7 @@ def _write(root: Path, files: dict[str, str]) -> None:
 
 def _edges(mock_ingestor: MagicMock, rel_type: str) -> list[tuple[str, str, str]]:
     return [
-        (str(c.args[0][2]), str(c.args[2][0]), str(c.args[2][2]))
+        (str(c.source), str(c.target_label), str(c.target))
         for c in get_relationships(mock_ingestor, rel_type)
     ]
 

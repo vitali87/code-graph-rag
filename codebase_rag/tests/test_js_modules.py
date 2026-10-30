@@ -193,7 +193,7 @@ exports.ExportedClass = class ExportedClass {
         call
         for call in all_nodes
         if any(
-            file in call[0][1]["qualified_name"]
+            file in call.properties["qualified_name"]
             for file in ["commonjs_exports", "exports_shorthand"]
         )
     ]
@@ -385,7 +385,7 @@ export function enhancedFetch(url, options) {
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     reexport_imports = [
-        call for call in import_relationships if "reexports" in call.args[0][2]
+        call for call in import_relationships if "reexports" in call.source
     ]
 
     assert len(reexport_imports) >= 3, (
@@ -530,10 +530,10 @@ export function hybridFunction() {
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     mixed_imports = [
-        call for call in import_relationships if "mixed_modules" in call.args[0][2]
+        call for call in import_relationships if "mixed_modules" in call.source
     ]
 
-    imported_modules = [call.args[2][2] for call in mixed_imports]
+    imported_modules = [call.target for call in mixed_imports]
 
     assert any("react" in module.lower() for module in imported_modules), (
         "Missing ES6 React import"
@@ -550,7 +550,7 @@ export function hybridFunction() {
     mixed_functions = [
         call
         for call in function_calls
-        if "mixed_modules" in call[0][1]["qualified_name"]
+        if "mixed_modules" in call.properties["qualified_name"]
     ]
 
     assert len(mixed_functions) >= 3, (
@@ -558,11 +558,15 @@ export function hybridFunction() {
     )
 
     umd_functions = [
-        call for call in function_calls if "umd_module" in call[0][1]["qualified_name"]
+        call
+        for call in function_calls
+        if "umd_module" in call.properties["qualified_name"]
     ]
 
     umd_classes = [
-        call for call in class_calls if "umd_module" in call[0][1]["qualified_name"]
+        call
+        for call in class_calls
+        if "umd_module" in call.properties["qualified_name"]
     ]
 
     assert len(umd_functions) >= 2, (
@@ -732,15 +736,15 @@ export function useA() {
     circular_imports = [
         call
         for call in import_relationships
-        if "circular_a" in call.args[0][2] or "circular_b" in call.args[0][2]
+        if "circular_a" in call.source or "circular_b" in call.source
     ]
 
     a_imports_b = any(
-        "circular_a" in call.args[0][2] and "circular_b" in call.args[2][2]
+        "circular_a" in call.source and "circular_b" in call.target
         for call in circular_imports
     )
     b_imports_a = any(
-        "circular_b" in call.args[0][2] and "circular_a" in call.args[2][2]
+        "circular_b" in call.source and "circular_a" in call.target
         for call in circular_imports
     )
 
@@ -750,15 +754,15 @@ export function useA() {
     es6_circular_imports = [
         call
         for call in import_relationships
-        if "es6_circular_a" in call.args[0][2] or "es6_circular_b" in call.args[0][2]
+        if "es6_circular_a" in call.source or "es6_circular_b" in call.source
     ]
 
     es6_a_imports_b = any(
-        "es6_circular_a" in call.args[0][2] and "es6_circular_b" in call.args[2][2]
+        "es6_circular_a" in call.source and "es6_circular_b" in call.target
         for call in es6_circular_imports
     )
     es6_b_imports_a = any(
-        "es6_circular_b" in call.args[0][2] and "es6_circular_a" in call.args[2][2]
+        "es6_circular_b" in call.source and "es6_circular_a" in call.target
         for call in es6_circular_imports
     )
 
@@ -988,7 +992,7 @@ export const utils = new Proxy({}, {
     dynamic_functions = [
         call
         for call in function_calls
-        if "dynamic_exports" in call[0][1]["qualified_name"]
+        if "dynamic_exports" in call.properties["qualified_name"]
     ]
 
     assert len(dynamic_functions) >= 2, (
@@ -998,7 +1002,7 @@ export const utils = new Proxy({}, {
     es6_dynamic_nodes = [
         call
         for call in function_calls + class_calls
-        if "es6_dynamic_exports" in call[0][1]["qualified_name"]
+        if "es6_dynamic_exports" in call.properties["qualified_name"]
     ]
 
     assert len(es6_dynamic_nodes) >= 2, (
@@ -1090,7 +1094,7 @@ export { useReExports };
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     aliased_re_export_imports = [
-        call for call in import_relationships if "aliased_re_exports" in call.args[0][2]
+        call for call in import_relationships if "aliased_re_exports" in call.source
     ]
 
     assert len(aliased_re_export_imports) >= 3, (
@@ -1098,7 +1102,7 @@ export { useReExports };
         f"found {len(aliased_re_export_imports)}"
     )
 
-    imported_modules = [call.args[2][2] for call in aliased_re_export_imports]
+    imported_modules = [call.target for call in aliased_re_export_imports]
     expected_modules = [
         "source_module",
         "utils_module",
@@ -1208,16 +1212,14 @@ export function useImports() {
     calls_relationships = get_relationships(mock_ingestor, "CALLS")
 
     comprehensive_imports = [
-        call
-        for call in import_relationships
-        if "comprehensive_modules" in call.args[0][2]
+        call for call in import_relationships if "comprehensive_modules" in call.source
     ]
 
     assert len(comprehensive_imports) >= 6, (
         f"Expected at least 6 comprehensive imports, found {len(comprehensive_imports)}"
     )
 
-    imported_modules = [call.args[2][2] for call in comprehensive_imports]
+    imported_modules = [call.target for call in comprehensive_imports]
 
     assert any("fs" in module for module in imported_modules), "Missing fs import"
     assert any("path" in module for module in imported_modules), "Missing path import"
@@ -1234,11 +1236,11 @@ export function useImports() {
     comprehensive_functions = [
         call
         for call in function_calls
-        if "comprehensive_modules" in call[0][1]["qualified_name"]
+        if "comprehensive_modules" in call.properties["qualified_name"]
     ]
 
     created_functions = {
-        call[0][1]["qualified_name"] for call in comprehensive_functions
+        call.properties["qualified_name"] for call in comprehensive_functions
     }
     project_name = javascript_modules_project.name
 

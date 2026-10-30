@@ -26,6 +26,7 @@ from codebase_rag import constants as cs
 from codebase_rag.capture import resolve_capture
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_relationships
 
 _FINDING_RELS = {
     cs.RelationshipType.HAS_SMELL.value,
@@ -41,9 +42,9 @@ _PLAIN = "def helper():\n    return 1\n"
 
 def _finding_edges(mock: MagicMock) -> set[tuple[str, str]]:
     return {
-        (str(call.args[0][2]), str(call.args[2][2]))
-        for call in mock.ensure_relationship_batch.call_args_list
-        if str(call.args[1]) in _FINDING_RELS
+        (str(call.source), str(call.target))
+        for call in get_relationships(mock)
+        if str(call.rel_type) in _FINDING_RELS
     }
 
 

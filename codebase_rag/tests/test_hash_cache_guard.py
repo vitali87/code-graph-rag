@@ -15,7 +15,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag import graph_updater as graph_updater_module
 from codebase_rag.sync.checkout_state import state_file
-from codebase_rag.tests.conftest import create_and_run_updater
+from codebase_rag.tests.conftest import create_and_run_updater, get_nodes
 
 
 def test_query_failure_keeps_cache_and_sync(
@@ -46,9 +46,9 @@ def test_query_failure_keeps_cache_and_sync(
     assert count_queries
     assert cache_path.is_file()
     module_qns = {
-        c.args[1].get(cs.KEY_QUALIFIED_NAME)
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c.args[0] == cs.NodeLabel.MODULE
+        c.properties.get(cs.KEY_QUALIFIED_NAME)
+        for c in get_nodes(mock_ingestor)
+        if c.label == cs.NodeLabel.MODULE
     }
     assert any(str(qn).endswith(".m") for qn in module_qns), module_qns
 
@@ -120,9 +120,9 @@ def test_a_cache_that_cannot_be_discarded_does_not_end_the_run(
     # with a MATCHING hash would pass for the wrong reason, since the run
     # would skip the file as unchanged rather than because the discard failed.
     module_qns = {
-        c.args[1].get(cs.KEY_QUALIFIED_NAME)
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c.args[0] == cs.NodeLabel.MODULE
+        c.properties.get(cs.KEY_QUALIFIED_NAME)
+        for c in get_nodes(mock_ingestor)
+        if c.label == cs.NodeLabel.MODULE
     }
     assert any(str(qn).endswith(".m") for qn in module_qns), module_qns
 

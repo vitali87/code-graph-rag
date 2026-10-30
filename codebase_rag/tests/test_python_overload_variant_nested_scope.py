@@ -37,9 +37,7 @@ def test_variant_caller_nested_call_binds_to_own_nested(
         encoding="utf-8",
     )
     create_and_run_updater(root, mock_ingestor, skip_if_missing=None)
-    calls = {
-        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
-    }
+    calls = {(c.source, c.target) for c in get_relationships(mock_ingestor, "CALLS")}
     assert any(
         ".command" in f and t.endswith(".command.decorator") for f, t in calls
     ), sorted(calls)

@@ -51,8 +51,8 @@ def _write(root: Path, files: dict[str, str]) -> None:
 def _calls(mock_ingestor: MagicMock) -> dict[tuple[str, str], str | None]:
     edges: dict[tuple[str, str], str | None] = {}
     for c in get_relationships(mock_ingestor, cs.RelationshipType.CALLS):
-        props = c.kwargs.get("properties") or (c.args[3] if len(c.args) > 3 else {})
-        edges[(c.args[0][2], c.args[2][2])] = props.get(cs.KEY_RESOLUTION)
+        props = c.properties
+        edges[(c.source, c.target)] = props.get(cs.KEY_RESOLUTION)
     return edges
 
 

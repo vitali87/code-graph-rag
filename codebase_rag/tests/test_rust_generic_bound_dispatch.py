@@ -166,7 +166,7 @@ def _write(project: Path, files: dict[str, str]) -> None:
 
 def _calls(mock_ingestor: MagicMock) -> set[tuple[str, str]]:
     return {
-        (call[0][0][2], call[0][2][2])
+        (call.source, call.target)
         for call in get_relationships(mock_ingestor, RelationshipType.CALLS.value)
     }
 

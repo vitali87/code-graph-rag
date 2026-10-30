@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from codebase_rag.tests.conftest import get_nodes, get_relationships
 from evals.dead_code import cgr_dead_code, default_dead_code_config
 
 
@@ -77,14 +78,11 @@ def test_anon_override_edge_source_label_matches_node(tmp_path: Path) -> None:
         pytest.skip("java parser not available")
     ing = MagicMock()
     GraphUpdater(ingestor=ing, repo_path=root, parsers=parsers, queries=queries).run()
-    label_of = {
-        c.args[1].get("qualified_name"): c.args[0]
-        for c in ing.ensure_node_batch.call_args_list
-    }
-    for c in ing.ensure_relationship_batch.call_args_list:
-        if c.args[1] != "OVERRIDES":
+    label_of = {c.properties.get("qualified_name"): c.label for c in get_nodes(ing)}
+    for c in get_relationships(ing):
+        if c.rel_type != "OVERRIDES":
             continue
-        src_label, _, src_qn = c.args[0]
+        src_label, _, src_qn = c.from_spec
         if src_qn in label_of:
             assert src_label == label_of[src_qn], (
                 f"OVERRIDES source label {src_label} != node label "

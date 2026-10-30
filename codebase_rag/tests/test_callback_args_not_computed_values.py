@@ -49,7 +49,7 @@ module.exports = clamp;
 
 def _edges(mock_ingestor: MagicMock) -> set[tuple[str, str, str]]:
     return {
-        (str(c.args[1]), str(c.args[0][2]), str(c.args[2][2]))
+        (str(c.rel_type), str(c.source), str(c.target))
         for rel in (cs.RelationshipType.CALLS, cs.RelationshipType.REFERENCES)
         for c in get_relationships(mock_ingestor, rel.value)
     }

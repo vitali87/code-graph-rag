@@ -17,7 +17,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_relationships, run_updater
 
 SKIP = "dart"
 
@@ -191,14 +191,14 @@ Edge = tuple[str, str, int | None, int | None]
 
 def _edges(mock_ingestor: MagicMock, rel: str) -> list[Edge]:
     out: list[Edge] = []
-    for c in mock_ingestor.ensure_relationship_batch.call_args_list:
-        if str(c.args[1]) != rel:
+    for c in get_relationships(mock_ingestor):
+        if str(c.rel_type) != rel:
             continue
-        props = c.kwargs.get("properties") or {}
+        props = c.properties
         out.append(
             (
-                str(c.args[0][2]),
-                str(c.args[2][2]),
+                str(c.source),
+                str(c.target),
                 props.get(cs.KEY_LINE),
                 props.get(cs.KEY_COL),
             )

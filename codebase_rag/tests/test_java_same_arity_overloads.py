@@ -18,7 +18,7 @@ from codebase_rag.parsers.java.method_resolver import (
     _overload_rank,
     _same_type,
 )
-from codebase_rag.tests.conftest import create_and_run_updater
+from codebase_rag.tests.conftest import create_and_run_updater, get_relationships
 from codebase_rag.types_defs import (
     JavaCandidateLookups,
     JavaOverloadRank,
@@ -566,14 +566,12 @@ def calls(tmp_path_factory: pytest.TempPathFactory) -> dict[str, dict[str, str]]
     ingestor = MagicMock()
     create_and_run_updater(root, ingestor, skip_if_missing="java")
     edges: dict[str, dict[str, str]] = {}
-    for c in ingestor.ensure_relationship_batch.call_args_list:
-        if c.args[1] != cs.RelationshipType.CALLS:
+    for c in get_relationships(ingestor):
+        if c.rel_type != cs.RelationshipType.CALLS:
             continue
-        props = (
-            c.kwargs.get("properties") or (c.args[3] if len(c.args) > 3 else {}) or {}
-        )
-        caller = str(c.args[0][2]).removeprefix(f"{ACME}.")
-        callee = str(c.args[2][2]).removeprefix(f"{ACME}.")
+        props = c.properties
+        caller = str(c.source).removeprefix(f"{ACME}.")
+        callee = str(c.target).removeprefix(f"{ACME}.")
         edges.setdefault(caller, {})[callee] = str(props.get(cs.KEY_RESOLUTION))
     return edges
 

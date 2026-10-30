@@ -9,13 +9,15 @@ from tree_sitter import Node
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_nodes
 
 
 def _exported_by_qn(mock: MagicMock) -> dict[str, bool]:
     # qualified_name -> is_exported for every Function/Method node ingested.
     out: dict[str, bool] = {}
-    for c in mock.ensure_node_batch.call_args_list:
-        label, props = c.args[0], c.args[1]
+    for c in get_nodes(mock):
+        label = c.label
+        props = c.properties
         if label in (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD):
             out[props[cs.KEY_QUALIFIED_NAME]] = props.get(cs.KEY_IS_EXPORTED, False)
     return out

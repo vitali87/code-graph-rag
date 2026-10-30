@@ -203,8 +203,8 @@ def test_singleton_pattern_cross_file_calls(
 
     found_calls = set()
     for call in actual_calls:
-        caller_qn = call.args[0][2]
-        callee_qn = call.args[2][2]
+        caller_qn = call.source
+        callee_qn = call.target
 
         if caller_qn.startswith(f"{project_name}."):
             caller_short = caller_qn[len(project_name) + 1 :]
@@ -292,8 +292,8 @@ def test_deep_package_hierarchy_cross_file_calls(
 
     found_calls = set()
     for call in actual_calls:
-        caller_qn = call.args[0][2]
-        callee_qn = call.args[2][2]
+        caller_qn = call.source
+        callee_qn = call.target
 
         if caller_qn.startswith(f"{project_name}."):
             caller_short = caller_qn[len(project_name) + 1 :]
@@ -367,8 +367,8 @@ def test_chained_cross_file_calls(
 
     call_graph: dict[str, set[str]] = {}
     for call in actual_calls:
-        caller = call.args[0][2]
-        callee = call.args[2][2]
+        caller = call.source
+        callee = call.target
 
         if caller.startswith(f"{project_name}."):
             caller = caller[len(project_name) + 1 :]

@@ -17,7 +17,7 @@ def csharp_project(temp_repo: Path) -> Path:
 
 
 def _call_targets(mock_ingestor: MagicMock) -> set[str]:
-    return {c.args[2][2] for c in get_relationships(mock_ingestor, "CALLS")}
+    return {c.target for c in get_relationships(mock_ingestor, "CALLS")}
 
 
 def test_intra_file_method_call(csharp_project: Path, mock_ingestor: MagicMock) -> None:
@@ -127,13 +127,11 @@ public class A {
 
 
 def _reference_targets(mock_ingestor: MagicMock) -> set[str]:
-    return {c.args[2][2] for c in get_relationships(mock_ingestor, "REFERENCES")}
+    return {c.target for c in get_relationships(mock_ingestor, "REFERENCES")}
 
 
 def _call_pairs(mock_ingestor: MagicMock) -> set[tuple[str, str]]:
-    return {
-        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
-    }
+    return {(c.source, c.target) for c in get_relationships(mock_ingestor, "CALLS")}
 
 
 LOCAL_FN_SHADOW_SRC = """

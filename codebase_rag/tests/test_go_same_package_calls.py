@@ -20,7 +20,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag import graph_updater as gu
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.tests.conftest import create_and_run_updater
+from codebase_rag.tests.conftest import create_and_run_updater, get_relationships
 
 GO_MOD = "module example.com/proj\n\ngo 1.24\n"
 
@@ -104,11 +104,11 @@ def _calls(root: Path, files: dict[str, str]) -> dict[tuple[str, str], set[str]]
     ingestor = MagicMock()
     create_and_run_updater(root, ingestor)
     edges: dict[tuple[str, str], set[str]] = {}
-    for c in ingestor.ensure_relationship_batch.call_args_list:
-        if c.args[1] != cs.RelationshipType.CALLS:
+    for c in get_relationships(ingestor):
+        if c.rel_type != cs.RelationshipType.CALLS:
             continue
-        props = c.kwargs.get("properties") or (c.args[3] if len(c.args) > 3 else {})
-        key = (str(c.args[0][2]), str(c.args[2][2]))
+        props = c.properties
+        key = (str(c.source), str(c.target))
         edges.setdefault(key, set()).add(str(props.get(cs.KEY_RESOLUTION)))
     return edges
 

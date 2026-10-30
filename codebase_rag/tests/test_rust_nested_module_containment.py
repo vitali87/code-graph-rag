@@ -42,7 +42,7 @@ def _project(temp_repo: Path) -> Path:
 def _defines_pairs(mock_ingestor: MagicMock) -> set[tuple[str, str, str]]:
     # (parent_label, parent_qn, child_qn) for DEFINES edges.
     return {
-        (call[0][0][0], call[0][0][2], call[0][2][2])
+        (call.source_label, call.source, call.target)
         for call in get_relationships(mock_ingestor, RelationshipType.DEFINES.value)
     }
 
@@ -69,13 +69,13 @@ def test_rust_impl_method_in_module_binds_to_nested_type(
     inner = "rs_mod.src.lib.inner"
 
     method_qns = {
-        str(node[0][1].get(KEY_QUALIFIED_NAME))
+        str(node.properties.get(KEY_QUALIFIED_NAME))
         for node in get_nodes(mock_ingestor, NodeLabel.METHOD)
     }
     assert f"{inner}.Widget.build" in method_qns, method_qns
 
     defines_method = {
-        (call[0][0][2], call[0][2][2])
+        (call.source, call.target)
         for call in get_relationships(
             mock_ingestor, RelationshipType.DEFINES_METHOD.value
         )

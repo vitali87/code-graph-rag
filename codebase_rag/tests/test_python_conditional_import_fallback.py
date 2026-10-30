@@ -32,9 +32,7 @@ def test_conditional_import_local_fallback_gets_call_edge(
         encoding="utf-8",
     )
     create_and_run_updater(root, mock_ingestor, skip_if_missing=None)
-    calls = {
-        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
-    }
+    calls = {(c.source, c.target) for c in get_relationships(mock_ingestor, "CALLS")}
     assert any(
         f.endswith(".get_text_stdin") and t.endswith("._winconsole.helper")
         for f, t in calls
@@ -66,9 +64,7 @@ def test_unconditional_import_shadowing_gets_no_fanout(
         encoding="utf-8",
     )
     create_and_run_updater(root, mock_ingestor, skip_if_missing=None)
-    calls = {
-        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
-    }
+    calls = {(c.source, c.target) for c in get_relationships(mock_ingestor, "CALLS")}
     assert not any(
         f.endswith(".use") and t.endswith(".user.helper") for f, t in calls
     ), "shadowed local def wrongly kept alive by the fan-out"

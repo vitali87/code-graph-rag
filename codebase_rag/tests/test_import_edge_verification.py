@@ -12,29 +12,29 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from codebase_rag import constants as cs
-from codebase_rag.tests.conftest import get_relationships, run_updater
+from codebase_rag.tests.conftest import get_nodes, get_relationships, run_updater
 
 
 def _import_targets(mock_ingestor: MagicMock, from_qn: str) -> set[str]:
     return {
-        call.args[2][2]
+        call.target
         for call in get_relationships(mock_ingestor, cs.RelationshipType.IMPORTS.value)
-        if call.args[0][2] == from_qn
+        if call.source == from_qn
     }
 
 
 def _node_keys(mock_ingestor: MagicMock) -> set[tuple[str, str]]:
     return {
-        (str(c.args[0]), c.args[1].get("qualified_name"))
-        for c in mock_ingestor.ensure_node_batch.call_args_list
+        (str(c.label), c.properties.get("qualified_name"))
+        for c in get_nodes(mock_ingestor)
     }
 
 
 def _assert_no_dangling_imports(mock_ingestor: MagicMock) -> None:
     node_keys = _node_keys(mock_ingestor)
     for call in get_relationships(mock_ingestor, cs.RelationshipType.IMPORTS.value):
-        to_label, _, to_qn = call.args[2]
-        assert (str(to_label), to_qn) in node_keys, call.args
+        to_label, _, to_qn = call.to_spec
+        assert (str(to_label), to_qn) in node_keys, call
 
 
 def test_python_broken_import_emits_no_phantom_edge(
@@ -72,7 +72,7 @@ def test_js_explicit_extension_resolves_to_module(
     # The item mapping must also drop the extension or calls to createB
     # resolve against a phantom qn.
     calls = {
-        (call.args[0][2], call.args[2][2])
+        (call.source, call.target)
         for call in get_relationships(mock_ingestor, cs.RelationshipType.CALLS.value)
     }
     assert (f"{project}.a.runA", f"{project}.b.createB") in calls, calls
@@ -295,8 +295,8 @@ int helper() { return 1; }
 
     node_keys = _node_keys(mock_ingestor)
     for call in get_relationships(mock_ingestor, cs.RelationshipType.IMPLEMENTS.value):
-        to_label, _, to_qn = call.args[2]
-        assert (str(to_label), to_qn) in node_keys, call.args
+        to_label, _, to_qn = call.to_spec
+        assert (str(to_label), to_qn) in node_keys, call
 
 
 def test_cpp_module_impl_with_interface_still_links(
@@ -320,7 +320,7 @@ int internal_helper() { return 7; }
 
     project = temp_repo.name
     implements = {
-        (call.args[0][2], call.args[2][2])
+        (call.source, call.target)
         for call in get_relationships(
             mock_ingestor, cs.RelationshipType.IMPLEMENTS.value
         )
@@ -378,7 +378,7 @@ public class SimpleHashMap<K, V> {
 
     for rel_type in (cs.RelationshipType.IMPLEMENTS, cs.RelationshipType.INHERITS):
         for call in get_relationships(mock_ingestor, rel_type.value):
-            assert call.args[0][2] != call.args[2][2], call.args
+            assert call.source != call.target, call
 
 
 def test_lua_require_of_missing_module_emits_no_phantom(

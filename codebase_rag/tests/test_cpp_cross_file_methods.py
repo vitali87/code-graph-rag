@@ -23,12 +23,16 @@ from codebase_rag.tests.conftest import (
 
 def _get_method_qns(mock_ingestor: MagicMock) -> set[str]:
     """Return all Method qualified names recorded in the ingestor."""
-    return {call[0][1]["qualified_name"] for call in get_nodes(mock_ingestor, "Method")}
+    return {
+        call.properties["qualified_name"] for call in get_nodes(mock_ingestor, "Method")
+    }
 
 
 def _get_class_qns(mock_ingestor: MagicMock) -> set[str]:
     """Return all Class qualified names recorded in the ingestor."""
-    return {call[0][1]["qualified_name"] for call in get_nodes(mock_ingestor, "Class")}
+    return {
+        call.properties["qualified_name"] for call in get_nodes(mock_ingestor, "Class")
+    }
 
 
 def _get_defines_method_edges(
@@ -37,8 +41,8 @@ def _get_defines_method_edges(
     """Return ``(class_qn, method_qn)`` pairs from DEFINES_METHOD rels."""
     edges: list[tuple[str, str]] = []
     for rel in get_relationships(mock_ingestor, "DEFINES_METHOD"):
-        class_qn = rel.args[0][2]
-        method_qn = rel.args[2][2]
+        class_qn = rel.source
+        method_qn = rel.target
         edges.append((class_qn, method_qn))
     return edges
 

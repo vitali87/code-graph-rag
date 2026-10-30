@@ -36,9 +36,7 @@ def test_cast_receiver_resolves_cross_file(
         encoding="utf-8",
     )
     create_and_run_updater(root, mock_ingestor, skip_if_missing="java")
-    calls = {
-        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
-    }
+    calls = {(c.source, c.target) for c in get_relationships(mock_ingestor, "CALLS")}
     assert any(
         f.endswith(".M.use(Object)") and t.endswith(".Reader.nextX()") for f, t in calls
     ), sorted(t for f, t in calls if "nextX" in t)
@@ -69,9 +67,7 @@ def test_nested_parenthesized_cast_receiver_resolves(
         encoding="utf-8",
     )
     create_and_run_updater(root, mock_ingestor, skip_if_missing="java")
-    calls = {
-        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
-    }
+    calls = {(c.source, c.target) for c in get_relationships(mock_ingestor, "CALLS")}
     assert any(
         f.endswith(".M.use(Object)") and t.endswith(".Reader.nextX()") for f, t in calls
     ), sorted(t for f, t in calls if "nextX" in t)
@@ -101,9 +97,7 @@ def test_parenthesized_identifier_receiver_resolves(
         encoding="utf-8",
     )
     create_and_run_updater(root, mock_ingestor, skip_if_missing="java")
-    calls = {
-        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
-    }
+    calls = {(c.source, c.target) for c in get_relationships(mock_ingestor, "CALLS")}
     assert any(
         f.endswith(".M.use(Reader)") and t.endswith(".Reader.nextX()") for f, t in calls
     ), sorted(t for f, t in calls if "nextX" in t)
@@ -141,9 +135,7 @@ def test_qualified_cast_receiver_does_not_bind_to_same_package_decoy(
         encoding="utf-8",
     )
     create_and_run_updater(root, mock_ingestor, skip_if_missing="java")
-    calls = {
-        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
-    }
+    calls = {(c.source, c.target) for c in get_relationships(mock_ingestor, "CALLS")}
     assert not any(
         f.endswith(".M.use(Object)") and t.endswith(".example.Reader.nextX()")
         for f, t in calls

@@ -15,7 +15,7 @@ from codebase_rag.tests.conftest import create_and_run_updater, get_relationship
 def _edges(mock_ingestor: MagicMock) -> set[tuple[str, str]]:
     calls = get_relationships(mock_ingestor, "CALLS")
     refs = get_relationships(mock_ingestor, "REFERENCES")
-    return {(c.args[0][2], c.args[2][2]) for c in calls + refs}
+    return {(c.source, c.target) for c in calls + refs}
 
 
 def _project(temp_repo: Path, body: str) -> Path:

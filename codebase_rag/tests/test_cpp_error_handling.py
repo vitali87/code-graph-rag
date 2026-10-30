@@ -900,7 +900,7 @@ void demonstrateComprehensiveErrorHandling() {
     comprehensive_calls = [
         call
         for call in call_relationships
-        if "comprehensive_error_handling" in call.args[0][2]
+        if "comprehensive_error_handling" in call.source
     ]
 
     assert len(comprehensive_calls) >= 2, (

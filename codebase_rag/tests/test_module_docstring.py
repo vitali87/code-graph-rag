@@ -15,6 +15,7 @@ from tree_sitter import Language, Parser
 from codebase_rag.constants import SupportedLanguage
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_nodes
 
 try:
     import tree_sitter_python as tspython
@@ -45,9 +46,11 @@ def updater(temp_repo: Path, mock_ingestor: MagicMock) -> GraphUpdater:
 
 def _module_props(updater: GraphUpdater, name: str) -> dict:
     """The properties of the one `Module` node written for `name`."""
-    calls = updater.ingestor.ensure_node_batch.call_args_list
+    calls = get_nodes(updater.ingestor)
     modules = [
-        c[0][1] for c in calls if c[0][0] == "Module" and c[0][1].get("name") == name
+        c.properties
+        for c in calls
+        if c.label == "Module" and c.properties.get("name") == name
     ]
     assert len(modules) == 1, f"expected one Module node for {name}, got {len(modules)}"
     return modules[0]

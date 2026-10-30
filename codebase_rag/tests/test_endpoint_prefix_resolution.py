@@ -18,6 +18,7 @@ from codebase_rag import constants as cs
 from codebase_rag.capture import resolve_capture
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_relationships
 
 _CAPTURE_IO = resolve_capture([cs.CaptureGroup.IO.value])
 EXPOSES = cs.RelationshipType.EXPOSES.value
@@ -44,9 +45,9 @@ def _run(tmp_path: Path, files: dict[str, str]) -> set[tuple[str, str]]:
     # The endpoint qn is project-scoped (resource::ENDPOINT::<project>::
     # <identity>); the identity is the last ::-part.
     return {
-        (c.args[0][2], c.args[2][2].split("::")[-1])
-        for c in mock.ensure_relationship_batch.call_args_list
-        if str(c.args[1]) == EXPOSES
+        (c.source, c.target.split("::")[-1])
+        for c in get_relationships(mock)
+        if str(c.rel_type) == EXPOSES
     }
 
 
@@ -364,9 +365,9 @@ class TestIncrementalMountChanges:
         updater.endpoint_linker.emit_pending_endpoints(updater._run)
 
         exposes = {
-            (c.args[0][2], c.args[2][2].split("::")[-1])
-            for c in mock.ensure_relationship_batch.call_args_list
-            if str(c.args[1]) == EXPOSES
+            (c.source, c.target.split("::")[-1])
+            for c in get_relationships(mock)
+            if str(c.rel_type) == EXPOSES
         }
         assert (f"{project}.routes.get_user", "GET /api/users/{user_id}") in exposes, (
             exposes

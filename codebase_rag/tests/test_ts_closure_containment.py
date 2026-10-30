@@ -32,9 +32,9 @@ def test_function_in_anonymous_callback_defined_by_callback(
 
     # (parent_qn, child_qn) for DEFINES edges into `inner`.
     parents = {
-        call[0][0][2]
+        call.source
         for call in get_relationships(mock_ingestor, RelationshipType.DEFINES.value)
-        if str(call[0][2][2]).endswith(".inner")
+        if str(call.target).endswith(".inner")
     }
     assert parents, "no DEFINES edge into inner"
     # The parent must be the anonymous callback, not the named driver.

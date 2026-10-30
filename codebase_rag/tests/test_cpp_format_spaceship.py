@@ -62,7 +62,7 @@ void testNumberFormatting() {
         f"Expected at least 2 functions, found {len(function_calls)}"
     )
 
-    function_names = {call[0][1]["name"] for call in function_calls}
+    function_names = {call.properties["name"] for call in function_calls}
     expected_functions = {"testBasicFormatting", "testNumberFormatting"}
 
     assert expected_functions.issubset(function_names), (
@@ -144,7 +144,7 @@ void testSpaceshipOperator() {
         f"Expected at least 1 function, found {len(function_calls)}"
     )
 
-    class_names = {call[0][1]["name"] for call in class_calls}
+    class_names = {call.properties["name"] for call in class_calls}
     expected_classes = {"Point", "CustomCompare"}
 
     assert expected_classes.issubset(class_names), (
@@ -215,7 +215,7 @@ void analyzeData() {
         f"Expected at least 1 function, found {len(function_calls)}"
     )
 
-    class_names = {call[0][1]["name"] for call in class_calls}
+    class_names = {call.properties["name"] for call in class_calls}
     assert "DataPoint" in class_names, f"DataPoint struct not found in {class_names}"
 
 

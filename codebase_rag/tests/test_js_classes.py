@@ -377,14 +377,12 @@ const eagleHunt = eagle.hunt(); // Eagle specific
     ]
 
     relationship_calls = [
-        call
-        for call in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(call[0]) >= 3 and call[0][1] == "INHERITS"
+        call for call in get_relationships(mock_ingestor) if call.rel_type == "INHERITS"
     ]
 
     for expected_child, expected_parent in expected_inherits:
         found = any(
-            call[0][0] == expected_child and call[0][2] == expected_parent
+            call.from_spec == expected_child and call.to_spec == expected_parent
             for call in relationship_calls
         )
         assert found, (
@@ -393,17 +391,13 @@ const eagleHunt = eagle.hunt(); // Eagle specific
         )
 
     call_relationships = [
-        call
-        for call in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(call[0]) >= 3 and call[0][1] == "CALLS"
+        call for call in get_relationships(mock_ingestor) if call.rel_type == "CALLS"
     ]
 
     super_calls = [
         call
         for call in call_relationships
-        if "constructor" in call.args[0][2]
-        or "move" in call.args[0][2]
-        or "fly" in call.args[0][2]
+        if "constructor" in call.source or "move" in call.source or "fly" in call.source
     ]
 
     assert len(super_calls) >= 3, (
@@ -575,10 +569,9 @@ const customPowerUser = PowerUser.createWithPermissions('Dave', 'dave@example.co
     static_method_calls = [
         call
         for call in call_relationships
-        if "static_features" in call.args[0][2]
+        if "static_features" in call.source
         and any(
-            static_method in call.args[2][2]
-            for static_method in expected_static_methods
+            static_method in call.target for static_method in expected_static_methods
         )
     ]
 
@@ -941,7 +934,7 @@ const userInfo = user.toString();
     class_expression_classes = [
         call
         for call in class_calls
-        if "class_expressions" in call[0][1]["qualified_name"]
+        if "class_expressions" in call.properties["qualified_name"]
     ]
 
     assert len(class_expression_classes) >= 3, (
@@ -949,13 +942,11 @@ const userInfo = user.toString();
     )
 
     relationship_calls = [
-        call
-        for call in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(call[0]) >= 3 and call[0][1] == "INHERITS"
+        call for call in get_relationships(mock_ingestor) if call.rel_type == "INHERITS"
     ]
 
     inheritance_relationships = [
-        call for call in relationship_calls if "class_expressions" in call[0][0][2]
+        call for call in relationship_calls if "class_expressions" in call.source
     ]
 
     assert len(inheritance_relationships) >= 2, (
@@ -964,9 +955,9 @@ const userInfo = user.toString();
     # `Swimmable(Flyable(Animal))`: Animal is reached only by recursing into
     # the nested mixin call.
     duck_parents = {
-        str(call[0][2][2])
+        str(call.target)
         for call in inheritance_relationships
-        if str(call[0][0][2]).endswith(".Duck")
+        if str(call.source).endswith(".Duck")
     }
     assert any(parent.endswith("Animal") for parent in duck_parents), duck_parents
 
@@ -1076,9 +1067,7 @@ const testResult = testClasses();
     inherits_relationships = get_relationships(mock_ingestor, "INHERITS")
 
     comprehensive_calls = [
-        call
-        for call in call_relationships
-        if "comprehensive_classes" in call.args[0][2]
+        call for call in call_relationships if "comprehensive_classes" in call.source
     ]
 
     assert len(comprehensive_calls) >= 5, (
@@ -1088,7 +1077,7 @@ const testResult = testClasses();
     class_inheritance = [
         call
         for call in inherits_relationships
-        if "comprehensive_classes" in call.args[0][2]
+        if "comprehensive_classes" in call.source
     ]
 
     assert len(class_inheritance) >= 1, (
@@ -1096,11 +1085,10 @@ const testResult = testClasses();
     )
 
     for relationship in comprehensive_calls:
-        assert len(relationship.args) == 3, "Call relationship should have 3 args"
-        assert relationship.args[1] == "CALLS", "Second arg should be 'CALLS'"
+        assert relationship.rel_type == "CALLS", "Expected a CALLS relationship"
 
-        source_module = relationship.args[0][2]
-        target_module = relationship.args[2][2]
+        source_module = relationship.source
+        target_module = relationship.target
 
         assert "comprehensive_classes" in source_module, (
             f"Source module should contain test file name: {source_module}"

@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -402,9 +401,9 @@ console.log(container.getValue());
     generic_classes = [
         call
         for call in class_calls
-        if "generic_types" in call[0][1]["qualified_name"]
+        if "generic_types" in call.properties["qualified_name"]
         and any(
-            class_name in call[0][1]["qualified_name"]
+            class_name in call.properties["qualified_name"]
             for class_name in [
                 "Repository",
                 "Dictionary",
@@ -424,9 +423,9 @@ console.log(container.getValue());
     generic_functions = [
         call
         for call in function_calls
-        if "generic_types" in call[0][1]["qualified_name"]
+        if "generic_types" in call.properties["qualified_name"]
         and any(
-            func_name in call[0][1]["qualified_name"]
+            func_name in call.properties["qualified_name"]
             for func_name in ["merge", "pick", "omit", "compare"]
         )
     ]
@@ -440,9 +439,9 @@ console.log(container.getValue());
     generic_interfaces = [
         call
         for call in interface_calls
-        if "generic_types" in call[0][1]["qualified_name"]
+        if "generic_types" in call.properties["qualified_name"]
         and any(
-            interface_name in call[0][1]["qualified_name"]
+            interface_name in call.properties["qualified_name"]
             for interface_name in ["Container", "KeyValuePair"]
         )
     ]
@@ -816,9 +815,9 @@ console.log('API routes:', apiRoutes);
     utility_classes = [
         call
         for call in class_calls
-        if "utility_types" in call[0][1]["qualified_name"]
+        if "utility_types" in call.properties["qualified_name"]
         and any(
-            class_name in call[0][1]["qualified_name"]
+            class_name in call.properties["qualified_name"]
             for class_name in [
                 "EntityValidator",
                 "ProxyBuilder",
@@ -837,9 +836,9 @@ console.log('API routes:', apiRoutes);
     utility_interfaces = [
         call
         for call in interface_calls
-        if "utility_types" in call[0][1]["qualified_name"]
+        if "utility_types" in call.properties["qualified_name"]
         and any(
-            interface_name in call[0][1]["qualified_name"]
+            interface_name in call.properties["qualified_name"]
             for interface_name in ["User", "EventPayloads"]
         )
     ]
@@ -1216,9 +1215,9 @@ console.log('Route parsing and conditional types working correctly');
     conditional_classes = [
         call
         for call in class_calls
-        if "conditional_types" in call[0][1]["qualified_name"]
+        if "conditional_types" in call.properties["qualified_name"]
         and any(
-            class_name in call[0][1]["qualified_name"]
+            class_name in call.properties["qualified_name"]
             for class_name in [
                 "ConditionalTypeProcessor",
                 "ConditionalEventEmitter",
@@ -1237,9 +1236,9 @@ console.log('Route parsing and conditional types working correctly');
     conditional_functions = [
         call
         for call in function_calls
-        if "conditional_types" in call[0][1]["qualified_name"]
+        if "conditional_types" in call.properties["qualified_name"]
         and any(
-            func_name in call[0][1]["qualified_name"]
+            func_name in call.properties["qualified_name"]
             for func_name in ["isString", "isNumber", "isArray", "createTypeGuard"]
         )
     ]
@@ -1638,9 +1637,9 @@ console.log('Template literal types are working correctly');
     template_literal_classes = [
         call
         for call in class_calls
-        if "template_literal_types" in call[0][1]["qualified_name"]
+        if "template_literal_types" in call.properties["qualified_name"]
         and any(
-            class_name in call[0][1]["qualified_name"]
+            class_name in call.properties["qualified_name"]
             for class_name in [
                 "QueryBuilder",
                 "TemplateEventEmitter",
@@ -1761,17 +1760,15 @@ console.log('All advanced type patterns working correctly');
 
     run_updater(typescript_advanced_types_project, mock_ingestor)
 
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    all_relationships = get_relationships(mock_ingestor)
 
     calls_relationships = get_relationships(mock_ingestor, "CALLS")
-    [c for c in all_relationships if c.args[1] == "DEFINES"]
+    [c for c in all_relationships if c.rel_type == "DEFINES"]
 
     comprehensive_calls = [
         call
         for call in calls_relationships
-        if "comprehensive_advanced_types" in call.args[0][2]
+        if "comprehensive_advanced_types" in call.source
     ]
 
     assert len(comprehensive_calls) >= 3, (
@@ -1783,8 +1780,8 @@ console.log('All advanced type patterns working correctly');
     comprehensive_functions = [
         call
         for call in function_calls
-        if "comprehensive_advanced_types" in call[0][1]["qualified_name"]
-        and "transform" in call[0][1]["qualified_name"]
+        if "comprehensive_advanced_types" in call.properties["qualified_name"]
+        and "transform" in call.properties["qualified_name"]
     ]
 
     assert len(comprehensive_functions) >= 1, (
@@ -1796,9 +1793,9 @@ console.log('All advanced type patterns working correctly');
     comprehensive_classes = [
         call
         for call in class_calls
-        if "comprehensive_advanced_types" in call[0][1]["qualified_name"]
+        if "comprehensive_advanced_types" in call.properties["qualified_name"]
         and any(
-            class_name in call[0][1]["qualified_name"]
+            class_name in call.properties["qualified_name"]
             for class_name in ["Repository", "AdvancedTypeExample"]
         )
     ]

@@ -9,6 +9,7 @@ from codebase_rag import constants as cs
 from codebase_rag.capture import resolve_capture
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_nodes, get_relationships
 
 RT = cs.RelationshipType
 NL = cs.NodeLabel
@@ -29,8 +30,8 @@ def _run(tmp_path: Path, tokens: list[str]) -> tuple[set[str], set[str]]:
         queries=queries,
         capture=resolve_capture(tokens),
     ).run()
-    rels = {str(c.args[1]) for c in mock.ensure_relationship_batch.call_args_list}
-    node_labels = {str(c.args[0]) for c in mock.ensure_node_batch.call_args_list}
+    rels = {str(c.rel_type) for c in get_relationships(mock)}
+    node_labels = {str(c.label) for c in get_nodes(mock)}
     return rels, node_labels
 
 

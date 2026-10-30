@@ -97,8 +97,8 @@ def _calls(root: Path, files: dict[str, str], grammar: str) -> _Calls:
     mock = MagicMock()
     create_and_run_updater(root, mock, skip_if_missing=grammar)
     return {
-        (str(c.args[0][2]).split(".", 1)[1], str(c.args[2][2]).split(".", 1)[1]): str(
-            (c.kwargs.get("properties") or {}).get(cs.KEY_RESOLUTION)
+        (str(c.source).split(".", 1)[1], str(c.target).split(".", 1)[1]): str(
+            c.properties.get(cs.KEY_RESOLUTION)
         )
         for c in get_relationships(mock, cs.RelationshipType.CALLS)
     }

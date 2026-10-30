@@ -26,7 +26,7 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers import method_ingest
 from codebase_rag.parsers.class_ingest import ingest as class_ingest_module
 from codebase_rag.services.protobuf_service import ProtobufFileIngestor
-from codebase_rag.tests.conftest import get_relationships, run_updater
+from codebase_rag.tests.conftest import get_nodes, get_relationships, run_updater
 from evals.cgr_graph import StatefulIngestor
 
 TYPE_AND_FUNCTION_TS = """export type input<T> = { value: T };
@@ -189,9 +189,9 @@ def _write(repo: Path, files: dict[str, str]) -> None:
 
 def _nodes(mock_ingestor: MagicMock) -> set[tuple[str, str]]:
     return {
-        (str(c.args[0]), c.args[1][cs.KEY_QUALIFIED_NAME])
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if cs.KEY_QUALIFIED_NAME in c.args[1]
+        (str(c.label), c.properties[cs.KEY_QUALIFIED_NAME])
+        for c in get_nodes(mock_ingestor)
+        if cs.KEY_QUALIFIED_NAME in c.properties
     }
 
 
@@ -200,14 +200,14 @@ def _edges(
 ) -> list[tuple[str, str, str, str, str | None]]:
     edges = []
     for c in get_relationships(mock_ingestor, rel_type.value):
-        props = c.args[3] if len(c.args) > 3 else c.kwargs.get("properties")
+        props = c.properties
         resolution = props.get(cs.KEY_RESOLUTION) if props else None
         edges.append(
             (
-                str(c.args[0][0]),
-                c.args[0][2],
-                str(c.args[2][0]),
-                c.args[2][2],
+                str(c.source_label),
+                c.source,
+                str(c.target_label),
+                c.target,
                 resolution,
             )
         )
@@ -729,9 +729,9 @@ class TestMethodContainerOnATwin:
             host, member, container_qn, label, cs.SupportedLanguage.TS
         )
         return [
-            c.args[0]
-            for c in ingestor.ensure_relationship_batch.call_args_list
-            if c.args[1] == cs.RelationshipType.DEFINES_METHOD
+            c.from_spec
+            for c in get_relationships(ingestor)
+            if c.rel_type == cs.RelationshipType.DEFINES_METHOD
         ]
 
     @pytest.mark.parametrize(

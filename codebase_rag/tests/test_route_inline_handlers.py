@@ -19,6 +19,7 @@ from codebase_rag import constants as cs
 from codebase_rag.capture import resolve_capture
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_relationships
 
 _CAPTURE_IO = resolve_capture([cs.CaptureGroup.IO.value])
 _EXPOSES = cs.RelationshipType.EXPOSES.value
@@ -45,11 +46,11 @@ def _exposes(
     ).run()
     prefix = f"{tmp_path.name}."
     out: dict[str, set[tuple[str, str]]] = {}
-    for call in mock.ensure_relationship_batch.call_args_list:
-        if str(call.args[1]) != _EXPOSES:
+    for call in get_relationships(mock):
+        if str(call.rel_type) != _EXPOSES:
             continue
-        label, _key, qn = call.args[0]
-        identity = call.args[2][2].split("::")[-1]
+        label, _key, qn = call.from_spec
+        identity = call.target.split("::")[-1]
         out.setdefault(identity, set()).add((str(label), qn.removeprefix(prefix)))
     return out
 

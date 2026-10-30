@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -299,7 +298,7 @@ console.log(newRepo.name); // OK
     access_inheritance = [
         call
         for call in inheritance_relationships
-        if "ExtendedDemo" in call.args[0][2] and "AccessModifierDemo" in call.args[2][2]
+        if "ExtendedDemo" in call.source and "AccessModifierDemo" in call.target
     ]
 
     assert len(access_inheritance) >= 1, (
@@ -641,12 +640,11 @@ console.log(car.start());
         call
         for call in inheritance_relationships
         if any(
-            concrete in call.args[0][2]
+            concrete in call.source
             for concrete in ["Dog", "Bird", "UserRepository", "Car"]
         )
         and any(
-            abstract in call.args[2][2]
-            for abstract in ["Animal", "Repository", "Vehicle"]
+            abstract in call.target for abstract in ["Animal", "Repository", "Vehicle"]
         )
     ]
 
@@ -933,9 +931,9 @@ service.process();
     parameter_property_methods = [
         call
         for call in method_calls
-        if "parameter_properties" in call[0][1]["qualified_name"]
+        if "parameter_properties" in call.properties["qualified_name"]
         and any(
-            pattern in call[0][1]["qualified_name"]
+            pattern in call.properties["qualified_name"]
             for pattern in ["getName", "getAge", "getValue", "getConfig"]
         )
     ]
@@ -1111,21 +1109,17 @@ console.log(userRepo.name); // users
 
     run_updater(typescript_classes_project, mock_ingestor)
 
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    all_relationships = get_relationships(mock_ingestor)
 
     calls_relationships = get_relationships(mock_ingestor, "CALLS")
-    [c for c in all_relationships if c.args[1] == "DEFINES"]
+    [c for c in all_relationships if c.rel_type == "DEFINES"]
     inherits_relationships = get_relationships(mock_ingestor, "INHERITS")
     implements_relationships = [
-        c for c in all_relationships if c.args[1] == "IMPLEMENTS"
+        c for c in all_relationships if c.rel_type == "IMPLEMENTS"
     ]
 
     comprehensive_calls = [
-        call
-        for call in calls_relationships
-        if "comprehensive_classes" in call.args[0][2]
+        call for call in calls_relationships if "comprehensive_classes" in call.source
     ]
 
     assert len(comprehensive_calls) >= 3, (
@@ -1137,7 +1131,7 @@ console.log(userRepo.name); // users
     comprehensive_classes = [
         call
         for call in class_calls
-        if "comprehensive_classes" in call[0][1]["qualified_name"]
+        if "comprehensive_classes" in call.properties["qualified_name"]
     ]
 
     assert len(comprehensive_classes) >= 4, (
@@ -1147,13 +1141,13 @@ console.log(userRepo.name); // users
     ts_inheritance = [
         call
         for call in inherits_relationships
-        if "comprehensive_classes" in call.args[0][2]
+        if "comprehensive_classes" in call.source
     ]
 
     [
         call
         for call in implements_relationships
-        if "comprehensive_classes" in call.args[0][2]
+        if "comprehensive_classes" in call.source
     ]
 
     assert len(ts_inheritance) >= 1, (

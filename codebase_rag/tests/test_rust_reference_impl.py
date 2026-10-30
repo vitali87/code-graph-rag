@@ -101,14 +101,14 @@ def _short(qn: object) -> str:
 
 
 def _qns(indexed: MagicMock, label: cs.NodeLabel) -> set[str]:
-    return {_short(c.args[1][cs.KEY_QUALIFIED_NAME]) for c in get_nodes(indexed, label)}
+    return {
+        _short(c.properties[cs.KEY_QUALIFIED_NAME]) for c in get_nodes(indexed, label)
+    }
 
 
 def _rels(indexed: MagicMock, rel: cs.RelationshipType) -> dict[tuple[str, str], str]:
     return {
-        (_short(c.args[0][2]), _short(c.args[2][2])): str(
-            (c.kwargs.get("properties") or {}).get(cs.KEY_RESOLUTION)
-        )
+        (_short(c.source), _short(c.target)): str(c.properties.get(cs.KEY_RESOLUTION))
         for c in get_relationships(indexed, rel)
     }
 

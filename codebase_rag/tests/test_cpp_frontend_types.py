@@ -7,7 +7,11 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag.parsers.cpp.frontend import cpp_frontend_available, run_cpp_frontend
-from codebase_rag.tests.conftest import get_nodes, get_qualified_names
+from codebase_rag.tests.conftest import (
+    get_nodes,
+    get_qualified_names,
+    get_relationships,
+)
 
 pytestmark = pytest.mark.skipif(
     not cpp_frontend_available(),
@@ -67,9 +71,9 @@ def test_frontend_emits_type_aliases(temp_repo: Path) -> None:
     )
 
     defines = [
-        (c.args[0][0], c.args[0][2], c.args[2][2])
-        for c in ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "DEFINES"
+        (c.source_label, c.source, c.target)
+        for c in get_relationships(ingestor)
+        if c.rel_type == "DEFINES"
     ]
     # namespace-scoped alias defined by its Module; member alias by its Class.
     assert any(

@@ -291,14 +291,12 @@ void demonstrateSingleInheritance() {
     ]
 
     relationship_calls = [
-        call
-        for call in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(call[0]) >= 3 and call[0][1] == "INHERITS"
+        call for call in get_relationships(mock_ingestor) if call.rel_type == "INHERITS"
     ]
 
     for expected_child, expected_parent in expected_inherits:
         found = any(
-            call[0][0] == expected_child and call[0][2] == expected_parent
+            call.from_spec == expected_child and call.to_spec == expected_parent
             for call in relationship_calls
         )
         assert found, (
@@ -311,9 +309,9 @@ void demonstrateSingleInheritance() {
     virtual_calls = [
         call
         for call in call_relationships
-        if "single_inheritance" in call.args[0][2]
+        if "single_inheritance" in call.source
         and any(
-            method in call.args[2][2]
+            method in call.target
             for method in ["speak", "move", "eat", "sleep", "fetch", "purr"]
         )
     ]
@@ -666,15 +664,13 @@ void testAnimalAbilities() {
     ]
 
     relationship_calls = [
-        call
-        for call in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(call[0]) >= 3 and call[0][1] == "INHERITS"
+        call for call in get_relationships(mock_ingestor) if call.rel_type == "INHERITS"
     ]
 
     found_relationships = 0
     for expected_child, expected_parent in expected_multiple_inherits:
         found = any(
-            call[0][0] == expected_child and call[0][2] == expected_parent
+            call.from_spec == expected_child and call.to_spec == expected_parent
             for call in relationship_calls
         )
         if found:
@@ -1048,15 +1044,13 @@ void testAbstractDestructors() {
     ]
 
     relationship_calls = [
-        call
-        for call in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(call[0]) >= 3 and call[0][1] == "INHERITS"
+        call for call in get_relationships(mock_ingestor) if call.rel_type == "INHERITS"
     ]
 
     found_abstract_relationships = 0
     for expected_child, expected_parent in expected_abstract_inherits:
         found = any(
-            call[0][0] == expected_child and call[0][2] == expected_parent
+            call.from_spec == expected_child and call.to_spec == expected_parent
             for call in relationship_calls
         )
         if found:
@@ -1071,9 +1065,9 @@ void testAbstractDestructors() {
     virtual_interface_calls = [
         call
         for call in call_relationships
-        if "abstract_interfaces" in call.args[0][2]
+        if "abstract_interfaces" in call.source
         and any(
-            method in call.args[2][2]
+            method in call.target
             for method in ["draw", "move", "resize", "area", "perimeter", "describe"]
         )
     ]
@@ -1342,7 +1336,7 @@ void testTemplateInheritance() {
     comprehensive_inherits = [
         call
         for call in inherits_relationships
-        if "comprehensive_inheritance" in call.args[0][2]
+        if "comprehensive_inheritance" in call.source
     ]
 
     assert len(comprehensive_inherits) >= 6, (
@@ -1352,7 +1346,7 @@ void testTemplateInheritance() {
     comprehensive_calls = [
         call
         for call in call_relationships
-        if "comprehensive_inheritance" in call.args[0][2]
+        if "comprehensive_inheritance" in call.source
     ]
 
     assert len(comprehensive_calls) >= 15, (
@@ -1360,16 +1354,13 @@ void testTemplateInheritance() {
     )
 
     for relationship in comprehensive_inherits:
-        # from_spec, "INHERITS", to_spec, and a base_index property dict so
-        # incremental rehydration can restore multiple-inheritance base order.
-        assert len(relationship.args) == 4, (
-            "Inheritance relationship should have 4 args (incl. base_index props)"
-        )
-        assert relationship.args[1] == "INHERITS", "Second arg should be 'INHERITS'"
-        assert "base_index" in relationship.args[3], "Fourth arg carries base_index"
+        # INHERITS carries a base_index property so incremental rehydration
+        # can restore multiple-inheritance base order.
+        assert relationship.rel_type == "INHERITS", "Expected an INHERITS relationship"
+        assert "base_index" in relationship.properties, "INHERITS carries base_index"
 
-        source_class = relationship.args[0][2]
-        target_class = relationship.args[2][2]
+        source_class = relationship.source
+        target_class = relationship.target
 
         assert "comprehensive_inheritance" in source_class, (
             f"Source class should contain test file name: {source_class}"
@@ -1577,13 +1568,11 @@ void demonstrateEdgeCases() {
     run_updater(cpp_inheritance_project, mock_ingestor)
 
     relationship_calls = [
-        call
-        for call in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(call[0]) >= 3 and call[0][1] == "INHERITS"
+        call for call in get_relationships(mock_ingestor) if call.rel_type == "INHERITS"
     ]
 
     edge_case_inherits = [
-        call for call in relationship_calls if "edge_case_inheritance" in call[0][0][2]
+        call for call in relationship_calls if "edge_case_inheritance" in call.source
     ]
 
     assert len(edge_case_inherits) >= 10, (
@@ -1591,7 +1580,7 @@ void demonstrateEdgeCases() {
     )
 
     specialization_inherits = [
-        call for call in edge_case_inherits if "std::vector<int>" in str(call[0][0])
+        call for call in edge_case_inherits if "std::vector<int>" in str(call.from_spec)
     ]
 
     assert len(specialization_inherits) >= 1, (
@@ -1601,7 +1590,7 @@ void demonstrateEdgeCases() {
     crtp_inherits = [
         call
         for call in edge_case_inherits
-        if "CRTP" in call[0][0][2] and "CRTP" in call[0][2][2]
+        if "CRTP" in call.source and "CRTP" in call.target
     ]
 
     assert len(crtp_inherits) >= 1, (
@@ -1611,9 +1600,9 @@ void demonstrateEdgeCases() {
     diamond_inherits = [
         call
         for call in edge_case_inherits
-        if ("LeftMixin" in call[0][0][2] and "VirtualBase" in call[0][2][2])
-        or ("RightMixin" in call[0][0][2] and "VirtualBase" in call[0][2][2])
-        or ("DiamondDerived" in call[0][0][2])
+        if ("LeftMixin" in call.source and "VirtualBase" in call.target)
+        or ("RightMixin" in call.source and "VirtualBase" in call.target)
+        or ("DiamondDerived" in call.source)
     ]
 
     assert len(diamond_inherits) >= 3, (
@@ -1623,7 +1612,7 @@ void demonstrateEdgeCases() {
     nested_ns_inherits = [
         call
         for call in edge_case_inherits
-        if "NestedTemplate" in call[0][2][2] or "ComplexBase" in call[0][2][2]
+        if "NestedTemplate" in call.target or "ComplexBase" in call.target
     ]
 
     assert len(nested_ns_inherits) >= 2, (
@@ -1633,9 +1622,7 @@ void demonstrateEdgeCases() {
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     edge_case_calls = [
-        call
-        for call in call_relationships
-        if "edge_case_inheritance" in call.args[0][2]
+        call for call in call_relationships if "edge_case_inheritance" in call.source
     ]
 
     assert len(edge_case_calls) >= 5, (

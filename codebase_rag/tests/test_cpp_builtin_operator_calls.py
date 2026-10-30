@@ -58,13 +58,11 @@ VEC_HPP = """struct Vec {
 def _calls(mock_ingestor: MagicMock) -> list[tuple[str, str, str]]:
     edges = []
     for call in get_relationships(mock_ingestor, cs.RelationshipType.CALLS.value):
-        props = call.kwargs.get("properties") or (
-            call.args[3] if len(call.args) > 3 else {}
-        )
+        props = call.properties
         edges.append(
             (
-                str(call.args[0][2]),
-                str(call.args[2][2]),
+                str(call.source),
+                str(call.target),
                 str((props or {}).get(cs.KEY_RESOLUTION)),
             )
         )

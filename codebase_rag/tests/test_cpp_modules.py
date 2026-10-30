@@ -795,15 +795,15 @@ void showcaseModuleFeatures() {
     [
         call
         for call in imports_relationships
-        if "module_usage" in call.args[0][2]
+        if "module_usage" in call.source
         and any(
-            module_name in str(call.args[2])
+            module_name in str(call.to_spec)
             for module_name in ["math_operations", "data_structures"]
         )
     ]
 
     module_function_calls = [
-        call for call in call_relationships if "module_usage" in call.args[0][2]
+        call for call in call_relationships if "module_usage" in call.source
     ]
 
     # builtin operator edges no longer emitted (#652)

@@ -34,9 +34,9 @@ def test_rust_trait_method_defined_by_interface_node(
     )
     # (parent_label, parent_qn) pairs for the trait's method.
     parents = {
-        (call[0][0][0], call[0][0][2])
+        (call.source_label, call.source)
         for call in defines_method
-        if str(call[0][2][2]).endswith(".Shape.area")
+        if str(call.target).endswith(".Shape.area")
     }
     assert (NodeLabel.INTERFACE.value, "rs_trait.src.lib.Shape") in parents, parents
     # The wrong Class-labelled parent must not be emitted.

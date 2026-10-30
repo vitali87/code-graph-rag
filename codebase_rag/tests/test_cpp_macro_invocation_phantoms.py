@@ -12,7 +12,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from codebase_rag import constants as cs
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_nodes, run_updater
 
 MODULE_SCOPE_CATCH_CC = """
 void format_system_error(int error_code, const char* message) noexcept {
@@ -100,9 +100,9 @@ view(const view& s) { helper(s); }
 def _def_qns(mock_ingestor: MagicMock) -> set[str]:
     labels = {cs.NodeLabel.FUNCTION.value, cs.NodeLabel.METHOD.value}
     return {
-        c.args[1].get("qualified_name")
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if str(c.args[0]) in labels
+        c.properties.get("qualified_name")
+        for c in get_nodes(mock_ingestor)
+        if str(c.label) in labels
     }
 
 

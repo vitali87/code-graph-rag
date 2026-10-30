@@ -110,7 +110,7 @@ def _module_paths(ingestor: MagicMock) -> dict[str, set[str]]:
     """{module qn: every path any write recorded for it}."""
     found: dict[str, set[str]] = {}
     for call in get_nodes(ingestor, cs.NodeLabel.MODULE.value):
-        props = call[0][1]
+        props = call.properties
         path = props.get(cs.KEY_PATH)
         entry = found.setdefault(props[cs.KEY_QUALIFIED_NAME], set())
         if isinstance(path, str):
@@ -120,21 +120,21 @@ def _module_paths(ingestor: MagicMock) -> dict[str, set[str]]:
 
 def _file_paths(ingestor: MagicMock) -> set[str]:
     return {
-        call[0][1][cs.KEY_PATH] for call in get_nodes(ingestor, cs.NodeLabel.FILE.value)
+        call.properties[cs.KEY_PATH]
+        for call in get_nodes(ingestor, cs.NodeLabel.FILE.value)
     }
 
 
 def _edges(ingestor: MagicMock, rel: cs.RelationshipType) -> set[tuple[str, str]]:
     return {
-        (call.args[0][2], call.args[2][2])
-        for call in get_relationships(ingestor, rel.value)
+        (call.source, call.target) for call in get_relationships(ingestor, rel.value)
     }
 
 
 def _function_props(ingestor: MagicMock, qn: str) -> PropertyDict:
     for call in get_nodes(ingestor, cs.NodeLabel.FUNCTION.value):
-        if call[0][1][cs.KEY_QUALIFIED_NAME] == qn:
-            return call[0][1]
+        if call.properties[cs.KEY_QUALIFIED_NAME] == qn:
+            return call.properties
     raise AssertionError(f"no Function node {qn}")
 
 

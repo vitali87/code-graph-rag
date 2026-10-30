@@ -15,7 +15,7 @@ SKIP = "c_sharp"
 
 def _start_line(mock_ingestor: MagicMock, node_type: str, leaf: str) -> int:
     for call in get_nodes(mock_ingestor, node_type):
-        props = call[0][1]
+        props = call.properties
         if props[cs.KEY_QUALIFIED_NAME].split("(", 1)[0].endswith(leaf):
             return props[cs.KEY_START_LINE]
     raise AssertionError(f"{node_type} {leaf} not found")

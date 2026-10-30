@@ -26,7 +26,7 @@ from codebase_rag.sync.state import (
     load_hash_cache,
     publish_hash_cache,
 )
-from codebase_rag.tests.conftest import force_mtime_after_cache
+from codebase_rag.tests.conftest import force_mtime_after_cache, get_nodes
 
 
 @pytest.fixture
@@ -51,9 +51,9 @@ _EXCLUDED_QNS = frozenset(
 
 def _emitted_qns(mock_ingestor: MagicMock) -> set[str]:
     return {
-        call.args[1]["qualified_name"]
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if len(call.args) > 1 and "qualified_name" in call.args[1]
+        str(n.properties["qualified_name"])
+        for n in get_nodes(mock_ingestor)
+        if "qualified_name" in n.properties
     }
 
 
@@ -1266,9 +1266,9 @@ class TestFastPathInSync:
             queries=queries,
         ).run()
         indexed_functions = {
-            str(call.args[1].get(cs.KEY_QUALIFIED_NAME))
-            for call in mock_ingestor.ensure_node_batch.call_args_list
-            if call.args[0] == cs.NodeLabel.FUNCTION
+            str(call.properties.get(cs.KEY_QUALIFIED_NAME))
+            for call in get_nodes(mock_ingestor)
+            if call.label == cs.NodeLabel.FUNCTION
         }
         assert any("edited_after_the_stamp" in qn for qn in indexed_functions), (
             "the edit never reached the graph against a future stamp: "

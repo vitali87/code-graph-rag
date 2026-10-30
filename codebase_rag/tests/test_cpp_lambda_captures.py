@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_nodes, run_updater
+from codebase_rag.tests.conftest import get_nodes, get_relationships, run_updater
 
 
 @pytest.fixture
@@ -77,7 +77,7 @@ void testInitCaptures() {
         f"Expected at least 2 functions, found {len(function_calls)}"
     )
 
-    function_names = {call[0][1]["name"] for call in function_calls}
+    function_names = {call.properties["name"] for call in function_calls}
     expected_functions = {"testBasicCaptures", "testInitCaptures"}
 
     assert expected_functions.issubset(function_names), (
@@ -178,10 +178,10 @@ void testStateMachine() {
         f"Expected at least 3 functions, found {len(function_calls)}"
     )
 
-    class_names = {call[0][1]["name"] for call in class_calls}
+    class_names = {call.properties["name"] for call in class_calls}
     assert "Resource" in class_names, f"Resource class not found in {class_names}"
 
-    function_names = {call[0][1]["name"] for call in function_calls}
+    function_names = {call.properties["name"] for call in function_calls}
     expected_functions = {
         "testGeneralizedCaptures",
         "testResourceCaptures",
@@ -230,16 +230,10 @@ void validateLambdaCaptures() {
 
     function_calls = get_nodes(mock_ingestor, "Function")
 
-    all_relationships = [
-        call for call in mock_ingestor.ensure_relationship_batch.call_args_list
-    ]
+    all_relationships = [call for call in get_relationships(mock_ingestor)]
 
-    call_relationships = [
-        c for c in all_relationships if len(c.args) > 1 and c.args[1] == "CALLS"
-    ]
-    defines_relationships = [
-        c for c in all_relationships if len(c.args) > 1 and c.args[1] == "DEFINES"
-    ]
+    call_relationships = [c for c in all_relationships if c.rel_type == "CALLS"]
+    defines_relationships = [c for c in all_relationships if c.rel_type == "DEFINES"]
 
     assert len(function_calls) >= 1, (
         f"Expected at least 1 function, found {len(function_calls)}"
@@ -247,7 +241,7 @@ void validateLambdaCaptures() {
     assert len(call_relationships) >= 0, "Should have CALLS relationships"
     assert len(defines_relationships) >= 0, "Should have DEFINES relationships"
 
-    function_names = {call[0][1]["name"] for call in function_calls}
+    function_names = {call.properties["name"] for call in function_calls}
     assert "validateLambdaCaptures" in function_names, (
         f"validateLambdaCaptures function not found in {function_names}"
     )

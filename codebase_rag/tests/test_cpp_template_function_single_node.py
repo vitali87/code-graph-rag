@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from codebase_rag import constants as cs
-from codebase_rag.tests.conftest import get_relationships, run_updater
+from codebase_rag.tests.conftest import get_nodes, get_relationships, run_updater
 
 SAX_HDR = """
 struct Aaa {
@@ -31,17 +31,17 @@ def test_template_function_registers_one_node_and_owns_its_calls(
     run_updater(temp_repo, mock_ingestor)
 
     function_qns = [
-        c.args[1]["qualified_name"]
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if str(c.args[0]) == cs.NodeLabel.FUNCTION.value
-        and "run_parse" in c.args[1]["qualified_name"]
+        c.properties["qualified_name"]
+        for c in get_nodes(mock_ingestor)
+        if str(c.label) == cs.NodeLabel.FUNCTION.value
+        and "run_parse" in c.properties["qualified_name"]
     ]
     project = temp_repo.name
     assert function_qns == [f"{project}.sax.run_parse"], function_qns
 
     start_object_calls = {
-        call.args[0][2]
+        call.source
         for call in get_relationships(mock_ingestor, cs.RelationshipType.CALLS.value)
-        if str(call.args[2][2]).endswith(".start_object")
+        if str(call.target).endswith(".start_object")
     }
     assert start_object_calls == {f"{project}.sax.run_parse"}, start_object_calls

@@ -46,10 +46,10 @@ def test_class_nested_types_bind_to_enclosing_class(
 
     parents: dict[str, tuple[str, str]] = {}
     for call in get_relationships(mock_ingestor, cs.RelationshipType.DEFINES.value):
-        to_qn = str(call.args[2][2])
+        to_qn = str(call.target)
         parents[to_qn.rsplit(".", 1)[-1]] = (
-            str(call.args[0][0]),
-            str(call.args[0][2]),
+            str(call.source_label),
+            str(call.source),
         )
 
     for nested in ("RelationInfo", "State", "Cell"):

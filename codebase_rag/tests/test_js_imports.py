@@ -83,16 +83,14 @@ const data = shared;
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     default_imports = [
-        call
-        for call in import_relationships
-        if "es6_default_imports" in call.args[0][2]
+        call for call in import_relationships if "es6_default_imports" in call.source
     ]
 
     assert len(default_imports) >= 5, (
         f"Expected at least 5 default imports, found {len(default_imports)}"
     )
 
-    imported_modules = [call.args[2][2] for call in default_imports]
+    imported_modules = [call.target for call in default_imports]
     expected_modules = [
         "react",
         "javascript_imports_test.src.components.Button",
@@ -142,14 +140,14 @@ useEffect(() => {});
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     named_imports = [
-        call for call in import_relationships if "es6_named_imports" in call.args[0][2]
+        call for call in import_relationships if "es6_named_imports" in call.source
     ]
 
     assert len(named_imports) >= 8, (
         f"Expected at least 8 named imports, found {len(named_imports)}"
     )
 
-    imported_modules = [call.args[2][2] for call in named_imports]
+    imported_modules = [call.target for call in named_imports]
     expected_patterns = [
         "helpers",
         "constants",
@@ -191,16 +189,14 @@ const url = constants.API_URL;
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     namespace_imports = [
-        call
-        for call in import_relationships
-        if "es6_namespace_imports" in call.args[0][2]
+        call for call in import_relationships if "es6_namespace_imports" in call.source
     ]
 
     assert len(namespace_imports) >= 4, (
         f"Expected at least 4 namespace imports, found {len(namespace_imports)}"
     )
 
-    imported_modules = [call.args[2][2] for call in namespace_imports]
+    imported_modules = [call.target for call in namespace_imports]
     expected_modules = [
         "react",
         "javascript_imports_test.src.utils.helpers",
@@ -263,14 +259,14 @@ const sum = mathAdd(1, 2);
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     commonjs_imports = [
-        call for call in import_relationships if "commonjs_imports" in call.args[0][2]
+        call for call in import_relationships if "commonjs_imports" in call.source
     ]
 
     assert len(commonjs_imports) >= 8, (
         f"Expected at least 8 CommonJS imports, found {len(commonjs_imports)}"
     )
 
-    imported_modules = [call.args[2][2] for call in commonjs_imports]
+    imported_modules = [call.target for call in commonjs_imports]
     expected_modules = [
         "fs",
         "path",
@@ -319,14 +315,14 @@ const finalUrl = apiEndpoint;
     aliased_imports = [
         call
         for call in import_relationships
-        if "commonjs_aliased_destructuring" in call.args[0][2]
+        if "commonjs_aliased_destructuring" in call.source
     ]
 
     assert len(aliased_imports) >= 3, (
         f"Expected at least 3 aliased destructuring imports, found {len(aliased_imports)}"
     )
 
-    imported_modules = [call.args[2][2] for call in aliased_imports]
+    imported_modules = [call.target for call in aliased_imports]
     expected_modules = [
         "javascript_imports_test.src.utils.helpers",
         "javascript_imports_test.src.utils.constants",
@@ -391,15 +387,13 @@ const url = constants.API_URL;
 
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
-    relative_imports = [
-        call for call in import_relationships if "Input" in call.args[0][2]
-    ]
+    relative_imports = [call for call in import_relationships if "Input" in call.source]
 
     assert len(relative_imports) >= 6, (
         f"Expected at least 6 relative imports, found {len(relative_imports)}"
     )
 
-    imported_modules = [call.args[2][2] for call in relative_imports]
+    imported_modules = [call.target for call in relative_imports]
     project_name = javascript_imports_project.name
 
     expected_patterns = [
@@ -458,14 +452,14 @@ const debounced = debounce(() => {});
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     package_imports = [
-        call for call in import_relationships if "package_imports" in call.args[0][2]
+        call for call in import_relationships if "package_imports" in call.source
     ]
 
     assert len(package_imports) >= 10, (
         f"Expected at least 10 package imports, found {len(package_imports)}"
     )
 
-    imported_modules = [call.args[2][2] for call in package_imports]
+    imported_modules = [call.target for call in package_imports]
     expected_packages = [
         "react",
         "react-dom",
@@ -537,7 +531,7 @@ modulePromise.then(({ shared }) => {
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     dynamic_calls = [
-        call for call in call_relationships if "dynamic_imports" in call.args[0][2]
+        call for call in call_relationships if "dynamic_imports" in call.source
     ]
 
     assert len(dynamic_calls) >= 1, (
@@ -587,14 +581,14 @@ const url = API_URL;
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     mixed_imports = [
-        call for call in import_relationships if "mixed_imports" in call.args[0][2]
+        call for call in import_relationships if "mixed_imports" in call.source
     ]
 
     assert len(mixed_imports) >= 6, (
         f"Expected at least 6 mixed imports, found {len(mixed_imports)}"
     )
 
-    imported_modules = [call.args[2][2] for call in mixed_imports]
+    imported_modules = [call.target for call in mixed_imports]
 
     expected_patterns = [
         "react",
@@ -643,14 +637,14 @@ require('./also-side-effects');
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     error_file_imports = [
-        call for call in import_relationships if "error_imports" in call.args[0][2]
+        call for call in import_relationships if "error_imports" in call.source
     ]
 
     assert len(error_file_imports) >= 3, (
         f"Expected at least 3 valid imports despite errors, found {len(error_file_imports)}"
     )
 
-    imported_modules = [call.args[2][2] for call in error_file_imports]
+    imported_modules = [call.target for call in error_file_imports]
     expected_valid = ["react", "fs", "path"]
 
     for expected in expected_valid:
@@ -735,7 +729,7 @@ export { useUtils };
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     consumer_imports = [
-        call for call in import_relationships if "consumer" in call.args[0][2]
+        call for call in import_relationships if "consumer" in call.source
     ]
 
     assert len(consumer_imports) >= 2, (
@@ -743,14 +737,14 @@ export { useUtils };
     )
 
     re_export_imports = [
-        call for call in import_relationships if "utils_index" in call.args[0][2]
+        call for call in import_relationships if "utils_index" in call.source
     ]
 
     assert len(re_export_imports) >= 2, (
         f"Expected at least 2 re-export import relationships, found {len(re_export_imports)}"
     )
 
-    re_export_targets = [call.args[2][2] for call in re_export_imports]
+    re_export_targets = [call.target for call in re_export_imports]
 
     expected_targets = ["math_utils", "string_utils"]
     for expected in expected_targets:
@@ -807,9 +801,7 @@ const url = API_URL;
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
     comprehensive_imports = [
-        call
-        for call in import_relationships
-        if "comprehensive_imports" in call.args[0][2]
+        call for call in import_relationships if "comprehensive_imports" in call.source
     ]
 
     assert len(comprehensive_imports) >= 10, (
@@ -817,11 +809,10 @@ const url = API_URL;
     )
 
     for relationship in comprehensive_imports:
-        assert len(relationship.args) == 3, "Import relationship should have 3 args"
-        assert relationship.args[1] == "IMPORTS", "Second arg should be 'IMPORTS'"
+        assert relationship.rel_type == "IMPORTS", "Expected an IMPORTS relationship"
 
-        source_module = relationship.args[0][2]
-        target_module = relationship.args[2][2]
+        source_module = relationship.source
+        target_module = relationship.target
 
         assert "comprehensive_imports" in source_module, (
             f"Source module should contain test file name: {source_module}"
@@ -922,7 +913,7 @@ const area = multiply(PI, 2);
     regression_imports = [
         call
         for call in import_relationships
-        if "regression_multiple_destructured" in call.args[0][2]
+        if "regression_multiple_destructured" in call.source
     ]
 
     assert len(regression_imports) >= 7, (
@@ -930,7 +921,7 @@ const area = multiply(PI, 2);
         f"found {len(regression_imports)}. This suggests the regression fix may not be working."
     )
 
-    imported_modules = [call.args[2][2] for call in regression_imports]
+    imported_modules = [call.target for call in regression_imports]
 
     expected_patterns = [
         "helpers",

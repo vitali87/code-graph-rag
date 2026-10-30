@@ -10,7 +10,11 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from codebase_rag import constants as cs
-from codebase_rag.tests.conftest import create_and_run_updater, get_relationships
+from codebase_rag.tests.conftest import (
+    create_and_run_updater,
+    get_nodes,
+    get_relationships,
+)
 
 
 def test_macro_rules_registers_function_and_invocation_resolves(
@@ -33,14 +37,12 @@ def test_macro_rules_registers_function_and_invocation_resolves(
     )
     create_and_run_updater(root, mock_ingestor, skip_if_missing="rust")
     functions = {
-        c.args[1][cs.KEY_QUALIFIED_NAME]
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c.args[0] == cs.NodeLabel.FUNCTION
+        c.properties[cs.KEY_QUALIFIED_NAME]
+        for c in get_nodes(mock_ingestor)
+        if c.label == cs.NodeLabel.FUNCTION
     }
     assert any(qn.endswith(".square") for qn in functions), sorted(functions)
-    calls = {
-        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
-    }
+    calls = {(c.source, c.target) for c in get_relationships(mock_ingestor, "CALLS")}
     assert any(f.endswith(".use_it") and t.endswith(".square") for f, t in calls), (
         sorted(t for _, t in calls)
     )
@@ -82,9 +84,7 @@ def test_macro_and_fn_namespaces_do_not_cross_bind(
         encoding="utf-8",
     )
     create_and_run_updater(root, mock_ingestor, skip_if_missing="rust")
-    calls = {
-        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
-    }
+    calls = {(c.source, c.target) for c in get_relationships(mock_ingestor, "CALLS")}
     assert not any(f.endswith(".fmt") and t.endswith(".write") for f, t in calls), (
         "std write! macro bound the first-party fn write"
     )
@@ -186,9 +186,9 @@ def test_macro_export_attribute_marks_exported(
     )
     create_and_run_updater(root, mock_ingestor, skip_if_missing="rust")
     props = {
-        c.args[1][cs.KEY_QUALIFIED_NAME]: c.args[1]
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c.args[0] == cs.NodeLabel.FUNCTION
+        c.properties[cs.KEY_QUALIFIED_NAME]: c.properties
+        for c in get_nodes(mock_ingestor)
+        if c.label == cs.NodeLabel.FUNCTION
     }
     exported = next(v for k, v in props.items() if k.endswith(".pub_square"))
     private = next(v for k, v in props.items() if k.endswith(".private_square"))

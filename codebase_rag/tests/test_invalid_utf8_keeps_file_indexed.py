@@ -112,7 +112,7 @@ def test_the_call_pass_still_links_the_file(
     # guard living outside the test file is easy to silence by accident.
     _index(temp_repo, mock_ingestor, _BAD)
     edges = {
-        (call.args[0][2], call.args[2][2])
+        (call.source, call.target)
         for call in get_relationships(mock_ingestor, RelationshipType.CALLS.value)
     }
     assert ("proj.a.caller", _UNTOUCHED_SIBLING) in edges

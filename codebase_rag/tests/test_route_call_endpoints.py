@@ -44,9 +44,9 @@ def _run(
         capture=_CAPTURE_IO,
     ).run()
     return {
-        (str(c.args[0][0]), c.args[0][2], c.args[2][2].split("::")[-1])
-        for c in mock.ensure_relationship_batch.call_args_list
-        if str(c.args[1]) == EXPOSES
+        (str(c.source_label), c.source, c.target.split("::")[-1])
+        for c in get_relationships(mock)
+        if str(c.rel_type) == EXPOSES
     }
 
 

@@ -54,9 +54,7 @@ def _write_project(root: Path) -> None:
 
 
 def _pairs(mock_ingestor: MagicMock, rel_type: str) -> set[tuple[str, str]]:
-    return {
-        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, rel_type)
-    }
+    return {(c.source, c.target) for c in get_relationships(mock_ingestor, rel_type)}
 
 
 def _has(pairs: set[tuple[str, str]], child_suffix: str, parent_suffix: str) -> bool:

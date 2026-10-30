@@ -19,7 +19,7 @@ export class Circle extends Base implements Shape, Drawable {}
 
 def _pairs(mock_ingestor: MagicMock, rel: str) -> set[tuple[str, str]]:
     return {
-        (call[0][0][2], call[0][2][2]) for call in get_relationships(mock_ingestor, rel)
+        (call.source, call.target) for call in get_relationships(mock_ingestor, rel)
     }
 
 

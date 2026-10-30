@@ -36,7 +36,7 @@ impl From<Foo> for u8 {
     create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
 
     method_qns = {
-        str(node[0][1].get(KEY_QUALIFIED_NAME))
+        str(node.properties.get(KEY_QUALIFIED_NAME))
         for node in get_nodes(mock_ingestor, NodeLabel.METHOD)
     }
     assert any(qn.endswith(".u8.from") for qn in method_qns), (

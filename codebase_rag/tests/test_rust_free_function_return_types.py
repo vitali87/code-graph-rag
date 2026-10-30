@@ -15,7 +15,7 @@ from tree_sitter import Language, Parser
 
 from codebase_rag import constants as cs
 from codebase_rag.parsers.rust import type_inference as rs_ti
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_relationships, run_updater
 from evals.dead_code import cgr_dead_code, default_dead_code_config
 
 try:
@@ -48,9 +48,9 @@ def _run_calls(
         (temp_repo / name).write_text(source, encoding="utf-8")
     run_updater(temp_repo, mock_ingestor, skip_if_missing="rust")
     return {
-        (c.args[0][2], c.args[2][2])
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == cs.RelationshipType.CALLS and c.args[2][2].endswith(".run")
+        (c.source, c.target)
+        for c in get_relationships(mock_ingestor)
+        if c.rel_type == cs.RelationshipType.CALLS and c.target.endswith(".run")
     }
 
 

@@ -74,7 +74,7 @@ func connect() (thirdparty.Client, error) {
 
 
 def _calls(ingestor: MagicMock) -> set[tuple[str, str]]:
-    return {(c.args[0][2], c.args[2][2]) for c in get_relationships(ingestor, "CALLS")}
+    return {(c.source, c.target) for c in get_relationships(ingestor, "CALLS")}
 
 
 def _build(temp_repo: Path, name: str, source: str) -> set[tuple[str, str]]:
@@ -175,9 +175,7 @@ def test_flow_return_taint_honors_receiver_typing(temp_repo: Path) -> None:
         capture=_CAPTURE_IO,
     ).run()
 
-    flows = {
-        (c.args[0][2], c.args[2][2]) for c in get_relationships(ingestor, "FLOWS_TO")
-    }
+    flows = {(c.source, c.target) for c in get_relationships(ingestor, "FLOWS_TO")}
     assert not any(
         source.endswith("provider.Get") and target.endswith("provider.Get")
         for source, target in flows

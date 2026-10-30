@@ -10,7 +10,11 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from codebase_rag import constants as cs
-from codebase_rag.tests.conftest import create_and_run_updater
+from codebase_rag.tests.conftest import (
+    create_and_run_updater,
+    get_nodes,
+    get_relationships,
+)
 from codebase_rag.types_defs import PropertyValue
 
 # The issue's reproduction, verbatim: the class is on line 4, the shim on 12.
@@ -273,31 +277,31 @@ def _index(repo: Path, mock: MagicMock, src: str) -> str:
 def _defs(mock: MagicMock, name: str) -> set[tuple[str, str, PropertyValue]]:
     return {
         (
-            str(c.args[0]),
-            str(c.args[1][cs.KEY_QUALIFIED_NAME]),
-            c.args[1].get(cs.KEY_START_LINE),
+            str(c.label),
+            str(c.properties[cs.KEY_QUALIFIED_NAME]),
+            c.properties.get(cs.KEY_START_LINE),
         )
-        for c in mock.ensure_node_batch.call_args_list
-        if str(c.args[0])
+        for c in get_nodes(mock)
+        if str(c.label)
         in (cs.NodeLabel.CLASS, cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD)
-        and c.args[1].get(cs.KEY_NAME) == name
+        and c.properties.get(cs.KEY_NAME) == name
     }
 
 
 def _edges_from(mock: MagicMock, caller_qn: str) -> set[_Edge]:
     out: set[_Edge] = set()
-    for c in mock.ensure_relationship_batch.call_args_list:
-        rel = str(c.args[1])
+    for c in get_relationships(mock):
+        rel = str(c.rel_type)
         if rel not in (cs.RelationshipType.CALLS, cs.RelationshipType.INSTANTIATES):
             continue
-        if c.args[0][2] != caller_qn:
+        if c.source != caller_qn:
             continue
-        props = c.kwargs.get("properties") or (c.args[3] if len(c.args) > 3 else {})
+        props = c.properties
         out.add(
             (
                 rel,
-                str(c.args[2][0]),
-                str(c.args[2][2]),
+                str(c.target_label),
+                str(c.target),
                 (props or {}).get(cs.KEY_RESOLUTION),
             )
         )
@@ -306,10 +310,9 @@ def _edges_from(mock: MagicMock, caller_qn: str) -> set[_Edge]:
 
 def _references_from(mock: MagicMock, source_qn: str) -> set[tuple[str, str]]:
     return {
-        (str(c.args[2][0]), str(c.args[2][2]))
-        for c in mock.ensure_relationship_batch.call_args_list
-        if str(c.args[1]) == cs.RelationshipType.REFERENCES
-        and c.args[0][2] == source_qn
+        (str(c.target_label), str(c.target))
+        for c in get_relationships(mock)
+        if str(c.rel_type) == cs.RelationshipType.REFERENCES and c.source == source_qn
     }
 
 

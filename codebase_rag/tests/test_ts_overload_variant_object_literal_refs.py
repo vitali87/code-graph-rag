@@ -31,9 +31,9 @@ def _referenced_from_variant(temp_repo: Path, mock_ingestor: MagicMock) -> set[s
     (root / "react.ts").write_text(_SOURCE, encoding="utf-8")
     create_and_run_updater(root, mock_ingestor, skip_if_missing="typescript")
     return {
-        c.args[2][2]
+        c.target
         for c in get_relationships(mock_ingestor, "REFERENCES")
-        if c.args[0][2].endswith(".useStore@2")
+        if c.source.endswith(".useStore@2")
     }
 
 

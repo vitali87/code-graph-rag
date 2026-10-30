@@ -1,10 +1,14 @@
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_node_names, get_relationships, run_updater
+from codebase_rag.tests.conftest import (
+    get_node_names,
+    get_nodes,
+    get_relationships,
+    run_updater,
+)
 
 
 @pytest.fixture
@@ -134,7 +138,7 @@ const total = sum(1, 2, 3, 4, 5);
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     function_calls_found = [
-        call for call in call_relationships if "basic_types" in call.args[0][2]
+        call for call in call_relationships if "basic_types" in call.source
     ]
 
     assert len(function_calls_found) >= 5, (
@@ -327,9 +331,9 @@ interface PaymentMethod {
 
     interface_nodes = [
         call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] in ["Class", "Interface"]
-        and "interfaces_types" in call[0][1].get("qualified_name", "")
+        for call in get_nodes(mock_ingestor)
+        if call.label in ["Class", "Interface"]
+        and "interfaces_types" in call.properties.get("qualified_name", "")
     ]
 
     assert len(interface_nodes) >= 3, (
@@ -352,13 +356,11 @@ interface PaymentMethod {
     )
 
     relationship_calls = [
-        call
-        for call in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(call[0]) >= 3 and call[0][1] == "INHERITS"
+        call for call in get_relationships(mock_ingestor) if call.rel_type == "INHERITS"
     ]
 
     interface_inheritance = [
-        call for call in relationship_calls if "interfaces_types" in call[0][0][2]
+        call for call in relationship_calls if "interfaces_types" in call.source
     ]
 
     assert len(interface_inheritance) >= 1, (
@@ -980,36 +982,29 @@ addEventListener('click', (event) => {
 
     run_updater(typescript_types_project, mock_ingestor)
 
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    all_relationships = get_relationships(mock_ingestor)
 
     call_relationships = get_relationships(mock_ingestor, "CALLS")
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
     implements_relationships = [
-        c for c in all_relationships if c.args[1] == "IMPLEMENTS"
+        c for c in all_relationships if c.rel_type == "IMPLEMENTS"
     ]
 
     comprehensive_calls = [
-        call for call in call_relationships if "comprehensive_types" in call.args[0][2]
+        call for call in call_relationships if "comprehensive_types" in call.source
     ]
 
     assert len(comprehensive_calls) >= 5, (
         f"Expected at least 5 comprehensive type calls, found {len(comprehensive_calls)}"
     )
 
-    [
-        call
-        for call in implements_relationships
-        if "comprehensive_types" in call.args[0][2]
-    ]
+    [call for call in implements_relationships if "comprehensive_types" in call.source]
 
     for relationship in comprehensive_calls:
-        assert len(relationship.args) == 3, "Call relationship should have 3 args"
-        assert relationship.args[1] == "CALLS", "Second arg should be 'CALLS'"
+        assert relationship.rel_type == "CALLS", "Expected a CALLS relationship"
 
-        source_module = relationship.args[0][2]
-        target_module = relationship.args[2][2]
+        source_module = relationship.source
+        target_module = relationship.target
 
         assert "comprehensive_types" in source_module, (
             f"Source module should contain test file name: {source_module}"

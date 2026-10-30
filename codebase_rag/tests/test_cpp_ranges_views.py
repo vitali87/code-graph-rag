@@ -988,9 +988,7 @@ void demonstrateRangeGraphProcessing() {
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
     range_processing_calls = [
-        call
-        for call in call_relationships
-        if "range_graph_processing" in call.args[0][2]
+        call for call in call_relationships if "range_graph_processing" in call.source
     ]
 
     # builtin operator edges no longer emitted (#652)

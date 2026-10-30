@@ -11,13 +11,16 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from codebase_rag.tests.conftest import create_and_run_updater, get_relationships
+from codebase_rag.tests.conftest import (
+    create_and_run_updater,
+    get_nodes,
+    get_relationships,
+)
 
 
 def _refs(mock_ingestor: MagicMock) -> set[tuple[str, str]]:
     return {
-        (c.args[0][2], c.args[2][2])
-        for c in get_relationships(mock_ingestor, "REFERENCES")
+        (c.source, c.target) for c in get_relationships(mock_ingestor, "REFERENCES")
     }
 
 
@@ -44,9 +47,9 @@ def test_member_assigned_arrow_in_curried_anon_is_referenced(
         t for _, t in refs if "persistImpl" in t
     )
     nodes = {
-        c.args[1]["qualified_name"]
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if str(c.args[0]) == "Function"
+        c.properties["qualified_name"]
+        for c in get_nodes(mock_ingestor)
+        if str(c.label) == "Function"
     }
     assert not any(".persistImpl.anonymous_1_" in qn for qn in nodes), sorted(nodes)
 

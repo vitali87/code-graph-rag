@@ -8,6 +8,7 @@ from codebase_rag import constants as cs
 from codebase_rag.capture import resolve_capture
 from codebase_rag.services import QueryProtocol
 from codebase_rag.services.filtering import FilteringIngestor, filtering_ingestor
+from codebase_rag.tests.conftest import get_nodes, get_relationships
 
 RT = cs.RelationshipType
 NL = cs.NodeLabel
@@ -48,8 +49,8 @@ def test_call_shape_forwards_properties_as_kwarg() -> None:
         (NL.EXTERNAL_PACKAGE, cs.KEY_NAME, "flask"),
         properties=props,
     )
-    c = inner.ensure_relationship_batch.call_args
-    assert c.kwargs.get("properties") == props
+    c = get_relationships(inner)[-1]
+    assert c.properties == props
 
 
 def test_call_shape_forwards_positional_properties() -> None:
@@ -80,7 +81,7 @@ def test_disabled_node_dropped_enabled_kept() -> None:
     ing, inner = _wrap([])  # io off → Resource off
     ing.ensure_node_batch(NL.RESOURCE, {QN: "resource::FILE::x"})
     ing.ensure_node_batch(NL.FUNCTION, {QN: "m.a"})
-    labels = [c.args[0] for c in inner.ensure_node_batch.call_args_list]
+    labels = [c.label for c in get_nodes(inner)]
     assert NL.FUNCTION in labels
     assert NL.RESOURCE not in labels
 

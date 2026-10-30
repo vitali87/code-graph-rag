@@ -76,20 +76,16 @@ def _imports(mock_ingestor: MagicMock, module_qn: str) -> list[tuple[str, str, i
     # one row per binding the file writes.
     rows: list[tuple[str, str, int]] = []
     for c in get_relationships(mock_ingestor, cs.RelationshipType.IMPORTS):
-        if c.args[0][2] != module_qn:
+        if c.source != module_qn:
             continue
-        site = c.kwargs.get("properties") or {}
-        rows.append(
-            (c.args[2][2], site.get(cs.KEY_IMPORTED_NAME), site.get(cs.KEY_LINE))
-        )
+        site = c.properties
+        rows.append((c.target, site.get(cs.KEY_IMPORTED_NAME), site.get(cs.KEY_LINE)))
     return sorted(rows)
 
 
 def _targets(mock_ingestor: MagicMock, rel: str, source_qn: str) -> set[str]:
     return {
-        c.args[2][2]
-        for c in get_relationships(mock_ingestor, rel)
-        if c.args[0][2] == source_qn
+        c.target for c in get_relationships(mock_ingestor, rel) if c.source == source_qn
     }
 
 

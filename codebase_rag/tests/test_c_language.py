@@ -140,7 +140,9 @@ class TestCFunctionNodes:
         run_updater(c_project, mock_ingestor, skip_if_missing="c")
         func_nodes = get_nodes(mock_ingestor, cs.NodeLabel.FUNCTION)
         add_nodes = [
-            n for n in func_nodes if "add" in n[0][1].get(cs.KEY_QUALIFIED_NAME, "")
+            n
+            for n in func_nodes
+            if "add" in n.properties.get(cs.KEY_QUALIFIED_NAME, "")
         ]
         assert len(add_nodes) > 0
 
@@ -163,10 +165,12 @@ class TestCStructNodes:
         run_updater(c_project, mock_ingestor, skip_if_missing="c")
         class_nodes = get_nodes(mock_ingestor, cs.NodeLabel.CLASS)
         point_nodes = [
-            n for n in class_nodes if "Point" in n[0][1].get(cs.KEY_QUALIFIED_NAME, "")
+            n
+            for n in class_nodes
+            if "Point" in n.properties.get(cs.KEY_QUALIFIED_NAME, "")
         ]
         assert len(point_nodes) > 0
-        qn = point_nodes[0][0][1][cs.KEY_QUALIFIED_NAME]
+        qn = point_nodes[0].properties[cs.KEY_QUALIFIED_NAME]
         assert "." in qn
 
 
@@ -213,14 +217,8 @@ class TestCCallsRelationships:
     ) -> None:
         run_updater(c_project, mock_ingestor, skip_if_missing="c")
         calls = get_relationships(mock_ingestor, str(cs.RelationshipType.CALLS))
-        call_pairs = []
-        for c in calls:
-            src = c.args[0] if c.args else c[0][0]
-            tgt = c.args[2] if len(c.args) > 2 else c[0][2]
-            if isinstance(src, tuple) and isinstance(tgt, tuple):
-                call_pairs.append((src, tgt))
         found_greet = any(
-            "main" in str(src) and "greet" in str(tgt) for src, tgt in call_pairs
+            "main" in str(c.source) and "greet" in str(c.target) for c in calls
         )
         assert found_greet
 
@@ -231,9 +229,7 @@ class TestCCallsRelationships:
     ) -> None:
         run_updater(c_project, mock_ingestor, skip_if_missing="c")
         calls = get_relationships(mock_ingestor, str(cs.RelationshipType.CALLS))
-        main_calls = [
-            c for c in calls if "main" in str(c.args[0] if c.args else c[0][0])
-        ]
+        main_calls = [c for c in calls if "main" in str(c.source)]
         assert len(main_calls) >= 2
 
 
@@ -269,7 +265,7 @@ class TestCImportsRelationships:
         external_modules = get_nodes(mock_ingestor, cs.NodeLabel.EXTERNAL_MODULE)
         has_stdio = any("stdio" in str(n) for n in external_modules)
         has_utils = any(
-            "utils" in n[0][1].get(cs.KEY_QUALIFIED_NAME, "") for n in module_nodes
+            "utils" in n.properties.get(cs.KEY_QUALIFIED_NAME, "") for n in module_nodes
         )
         assert has_stdio or has_utils
 
@@ -280,7 +276,9 @@ class TestCImportsRelationships:
     ) -> None:
         run_updater(c_project, mock_ingestor, skip_if_missing="c")
         module_nodes = get_nodes(mock_ingestor, cs.NodeLabel.MODULE)
-        module_qnames = {n[0][1].get(cs.KEY_QUALIFIED_NAME, "") for n in module_nodes}
+        module_qnames = {
+            n.properties.get(cs.KEY_QUALIFIED_NAME, "") for n in module_nodes
+        }
         assert any("utils" in qn for qn in module_qnames)
 
 
@@ -292,7 +290,7 @@ class TestCFileAndModuleNodes:
     ) -> None:
         run_updater(c_project, mock_ingestor, skip_if_missing="c")
         file_nodes = get_nodes(mock_ingestor, cs.NodeLabel.FILE)
-        file_paths = {n[0][1].get(cs.KEY_PATH, "") for n in file_nodes}
+        file_paths = {n.properties.get(cs.KEY_PATH, "") for n in file_nodes}
         assert any("main.c" in p for p in file_paths)
         assert any("types.c" in p for p in file_paths)
 
@@ -303,7 +301,9 @@ class TestCFileAndModuleNodes:
     ) -> None:
         run_updater(c_project, mock_ingestor, skip_if_missing="c")
         module_nodes = get_nodes(mock_ingestor, cs.NodeLabel.MODULE)
-        module_names = {n[0][1].get(cs.KEY_QUALIFIED_NAME, "") for n in module_nodes}
+        module_names = {
+            n.properties.get(cs.KEY_QUALIFIED_NAME, "") for n in module_nodes
+        }
         assert any("main" in name for name in module_names)
 
     def test_header_file_node_created(
@@ -313,7 +313,7 @@ class TestCFileAndModuleNodes:
     ) -> None:
         run_updater(c_project, mock_ingestor, skip_if_missing="c")
         file_nodes = get_nodes(mock_ingestor, cs.NodeLabel.FILE)
-        file_paths = {n[0][1].get(cs.KEY_PATH, "") for n in file_nodes}
+        file_paths = {n.properties.get(cs.KEY_PATH, "") for n in file_nodes}
         assert any("utils.h" in p for p in file_paths)
 
 
@@ -367,5 +367,7 @@ class TestCPackageDetection:
     ) -> None:
         run_updater(c_subdir_project, mock_ingestor, skip_if_missing="c")
         package_nodes = get_nodes(mock_ingestor, cs.NodeLabel.PACKAGE)
-        package_qnames = {n[0][1].get(cs.KEY_QUALIFIED_NAME, "") for n in package_nodes}
+        package_qnames = {
+            n.properties.get(cs.KEY_QUALIFIED_NAME, "") for n in package_nodes
+        }
         assert any("src" in qn for qn in package_qnames)

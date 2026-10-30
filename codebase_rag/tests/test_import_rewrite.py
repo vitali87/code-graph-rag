@@ -11,7 +11,7 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag.editing import ImportRewriter, ImportSite, SymbolMove
-from codebase_rag.tests.conftest import create_and_run_updater
+from codebase_rag.tests.conftest import create_and_run_updater, get_relationships
 
 
 def _assert_parses(parses: bool | None, grammar: str) -> None:
@@ -45,11 +45,11 @@ def _site(
 def _sites_from_graph(mock, importer_suffix: str) -> list[ImportSite]:
     """The IMPORTS edges the indexer produced for one importer, as ImportSites."""
     out = []
-    for c in mock.ensure_relationship_batch.call_args_list:
-        if str(c.args[1]) != cs.RelationshipType.IMPORTS:
+    for c in get_relationships(mock):
+        if str(c.rel_type) != cs.RelationshipType.IMPORTS:
             continue
-        props = c.kwargs.get("properties") or {}
-        src = str(c.args[0][2])
+        props = c.properties
+        src = str(c.source)
         if not src.endswith(importer_suffix) or cs.KEY_LINE not in props:
             continue
         out.append((props, src))

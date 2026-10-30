@@ -18,7 +18,7 @@ from codebase_rag import constants as cs
 from codebase_rag.cypher_queries import build_merge_relationship_query
 from codebase_rag.services.graph_diff import _rel_map
 from codebase_rag.services.protobuf_service import ProtobufFileIngestor
-from codebase_rag.tests.conftest import create_and_run_updater
+from codebase_rag.tests.conftest import create_and_run_updater, get_relationships
 from codebase_rag.types_defs import PropertyDict
 
 
@@ -38,15 +38,10 @@ def _span(text: str, needle: str, occurrence: int = 0) -> tuple[int, int, int, i
 def _edges(
     mock: MagicMock, rel_type: str
 ) -> list[tuple[str, str, PropertyDict | None]]:
-    out = []
-    for c in mock.ensure_relationship_batch.call_args_list:
-        if c.args[1] != rel_type:
-            continue
-        props = c.kwargs.get("properties")
-        if props is None and len(c.args) > 3:
-            props = c.args[3]
-        out.append((str(c.args[0][2]), str(c.args[2][2]), props))
-    return out
+    return [
+        (str(r.source), str(r.target), r.properties)
+        for r in get_relationships(mock, rel_type)
+    ]
 
 
 def _site(props: PropertyDict | None) -> tuple[Any, ...]:
@@ -633,11 +628,11 @@ def test_call_site_cache_is_not_keyed_by_recycled_node_ids() -> None:
         ("Function", "qualified_name", "g"),
     )
 
-    (first, second) = ingestor.ensure_relationship_batch.call_args_list
-    assert first.kwargs["properties"][cs.KEY_ARG_COUNT] == 1
-    assert second.kwargs["properties"][cs.KEY_ARG_COUNT] == 3
-    assert second.kwargs["properties"][cs.KEY_KWARG_NAMES] == ["k"]
-    assert _site(second.kwargs["properties"]) == _span(src_b, "g(1, 2, k=3)")
+    first, second = get_relationships(ingestor)
+    assert first.properties[cs.KEY_ARG_COUNT] == 1
+    assert second.properties[cs.KEY_ARG_COUNT] == 3
+    assert second.properties[cs.KEY_KWARG_NAMES] == ["k"]
+    assert _site(second.properties) == _span(src_b, "g(1, 2, k=3)")
     # An id collision cannot be forced from a test, so the behavioural check
     # above passes on the old code too; the key must be the node itself.
     assert cp._site_cache is not None

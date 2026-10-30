@@ -140,7 +140,7 @@ class Person extends Named with Aged {
 
     run_updater(scala_project, mock_ingestor, skip_if_missing=SKIP)
 
-    targets = {str(c.args[2][2]) for c in get_relationships(mock_ingestor, "INHERITS")}
+    targets = {str(c.target) for c in get_relationships(mock_ingestor, "INHERITS")}
     assert _endswith_any(targets, "Named"), sorted(targets)
     assert _endswith_any(targets, "Aged"), sorted(targets)
 
@@ -169,7 +169,7 @@ class Calc {
     run_updater(scala_project, mock_ingestor, skip_if_missing=SKIP)
 
     pairs = {
-        (str(c.args[0][2]), str(c.args[2][2]))
+        (str(c.source), str(c.target))
         for c in get_relationships(mock_ingestor, "CALLS")
     }
     assert any(
@@ -255,7 +255,7 @@ class QualifiedGeneric extends foo.Service[Int] {
     # satisfied. The fixtures share base names on purpose, so only the pair
     # distinguishes a correct edge from a plausible wrong one.
     pairs = {
-        (str(c.args[0][2]).split(".")[-1], str(c.args[2][2]).split(".")[-1])
+        (str(c.source).split(".")[-1], str(c.target).split(".")[-1])
         for c in get_relationships(mock_ingestor, "INHERITS")
     }
 
@@ -300,7 +300,7 @@ class Consumer extends foo.Service[Int] {
     run_updater(scala_project, mock_ingestor, skip_if_missing=SKIP)
 
     targets = {
-        str(c.args[0][2]).split(".")[-1]: str(c.args[2][2])
+        str(c.source).split(".")[-1]: str(c.target)
         for c in get_relationships(mock_ingestor, "INHERITS")
     }
 

@@ -654,13 +654,11 @@ void demonstrateTemplateTemplateParameters() {
     )
 
     relationship_calls = [
-        call
-        for call in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(call[0]) >= 3 and call[0][1] == "INHERITS"
+        call for call in get_relationships(mock_ingestor) if call.rel_type == "INHERITS"
     ]
 
     stack_inheritance = any(
-        "Stack" in call[0][0][2] and "Container" in call[0][2][2]
+        "Stack" in call.source and "Container" in call.target
         for call in relationship_calls
     )
     assert stack_inheritance, "Expected inheritance relationship Stack -> Container"
@@ -1004,16 +1002,14 @@ void demonstrateConcepts() {
     )
 
     relationship_calls = [
-        call
-        for call in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(call[0]) >= 3 and call[0][1] == "INHERITS"
+        call for call in get_relationships(mock_ingestor) if call.rel_type == "INHERITS"
     ]
 
     crtp_inheritance = [
         call
         for call in relationship_calls
-        if ("MyClass" in call[0][0][2] and "Counter" in call[0][2][2])
-        or ("AnotherClass" in call[0][0][2] and "Counter" in call[0][2][2])
+        if ("MyClass" in call.source and "Counter" in call.target)
+        or ("AnotherClass" in call.source and "Counter" in call.target)
     ]
 
     assert len(crtp_inheritance) >= 1, (
@@ -1215,9 +1211,7 @@ void demonstrateComprehensiveTemplates() {
     inherits_relationships = get_relationships(mock_ingestor, "INHERITS")
 
     comprehensive_calls = [
-        call
-        for call in call_relationships
-        if "comprehensive_templates" in call.args[0][2]
+        call for call in call_relationships if "comprehensive_templates" in call.source
     ]
 
     assert len(comprehensive_calls) >= 10, (
@@ -1227,7 +1221,7 @@ void demonstrateComprehensiveTemplates() {
     template_inheritance = [
         call
         for call in inherits_relationships
-        if "comprehensive_templates" in call.args[0][2]
+        if "comprehensive_templates" in call.source
     ]
 
     assert len(template_inheritance) >= 2, (

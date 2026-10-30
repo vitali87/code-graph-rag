@@ -7,6 +7,7 @@ import tomli_w
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_relationships
 
 
 @pytest.fixture
@@ -267,13 +268,13 @@ def test_contains_package_relationships(
 
     package_relationships = [
         call
-        for call in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(call[0]) >= 3 and call[0][1] == "CONTAINS_PACKAGE"
+        for call in get_relationships(mock_ingestor)
+        if call.rel_type == "CONTAINS_PACKAGE"
     ]
 
     for expected_parent, expected_child in expected_package_relationships:
         found = any(
-            call[0][0] == expected_parent and call[0][2] == expected_child
+            call.from_spec == expected_parent and call.to_spec == expected_child
             for call in package_relationships
         )
         assert found, (
@@ -343,13 +344,13 @@ def test_contains_folder_relationships(
 
     folder_relationships = [
         call
-        for call in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(call[0]) >= 3 and call[0][1] == "CONTAINS_FOLDER"
+        for call in get_relationships(mock_ingestor)
+        if call.rel_type == "CONTAINS_FOLDER"
     ]
 
     for expected_parent, expected_child in expected_folder_relationships:
         found = any(
-            call[0][0] == expected_parent and call[0][2] == expected_child
+            call.from_spec == expected_parent and call.to_spec == expected_child
             for call in folder_relationships
         )
         assert found, (
@@ -499,13 +500,13 @@ def test_contains_file_relationships(
 
     file_relationships = [
         call
-        for call in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(call[0]) >= 3 and call[0][1] == "CONTAINS_FILE"
+        for call in get_relationships(mock_ingestor)
+        if call.rel_type == "CONTAINS_FILE"
     ]
 
     for expected_parent, expected_file in expected_file_relationships:
         found = any(
-            call[0][0] == expected_parent and call[0][2] == expected_file
+            call.from_spec == expected_parent and call.to_spec == expected_file
             for call in file_relationships
         )
         assert found, (
@@ -540,16 +541,16 @@ def test_depends_on_external_python_requirements(
 
     dependency_relationships = [
         call
-        for call in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(call[0]) >= 3 and call[0][1] == "DEPENDS_ON_EXTERNAL"
+        for call in get_relationships(mock_ingestor)
+        if call.rel_type == "DEPENDS_ON_EXTERNAL"
     ]
 
     for dep_name, version_spec in expected_python_deps:
         found = any(
             (
-                call[0][0] == ("Project", "name", project_name)
-                and call[0][2] == ("ExternalPackage", "name", dep_name)
-                and call[1].get("properties", {}).get("version_spec") == version_spec
+                call.from_spec == ("Project", "name", project_name)
+                and call.to_spec == ("ExternalPackage", "name", dep_name)
+                and call.properties.get("version_spec") == version_spec
             )
             for call in dependency_relationships
         )
@@ -585,15 +586,15 @@ def test_depends_on_external_pyproject_toml(
 
     dependency_relationships = [
         call
-        for call in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(call[0]) >= 3 and call[0][1] == "DEPENDS_ON_EXTERNAL"
+        for call in get_relationships(mock_ingestor)
+        if call.rel_type == "DEPENDS_ON_EXTERNAL"
     ]
 
     for dep_name in expected_pyproject_deps:
         found = any(
             (
-                call[0][0] == ("Project", "name", project_name)
-                and call[0][2] == ("ExternalPackage", "name", dep_name)
+                call.from_spec == ("Project", "name", project_name)
+                and call.to_spec == ("ExternalPackage", "name", dep_name)
             )
             for call in dependency_relationships
         )
@@ -630,16 +631,16 @@ def test_depends_on_external_package_json(
 
     dependency_relationships = [
         call
-        for call in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(call[0]) >= 3 and call[0][1] == "DEPENDS_ON_EXTERNAL"
+        for call in get_relationships(mock_ingestor)
+        if call.rel_type == "DEPENDS_ON_EXTERNAL"
     ]
 
     for dep_name, version_spec in expected_npm_deps:
         found = any(
             (
-                call[0][0] == ("Project", "name", project_name)
-                and call[0][2] == ("ExternalPackage", "name", dep_name)
-                and call[1].get("properties", {}).get("version_spec") == version_spec
+                call.from_spec == ("Project", "name", project_name)
+                and call.to_spec == ("ExternalPackage", "name", dep_name)
+                and call.properties.get("version_spec") == version_spec
             )
             for call in dependency_relationships
         )
@@ -674,15 +675,15 @@ def test_depends_on_external_cargo_toml(
 
     dependency_relationships = [
         call
-        for call in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(call[0]) >= 3 and call[0][1] == "DEPENDS_ON_EXTERNAL"
+        for call in get_relationships(mock_ingestor)
+        if call.rel_type == "DEPENDS_ON_EXTERNAL"
     ]
 
     for dep_name in expected_rust_deps:
         found = any(
             (
-                call[0][0] == ("Project", "name", project_name)
-                and call[0][2] == ("ExternalPackage", "name", dep_name)
+                call.from_spec == ("Project", "name", project_name)
+                and call.to_spec == ("ExternalPackage", "name", dep_name)
             )
             for call in dependency_relationships
         )
@@ -716,15 +717,15 @@ def test_depends_on_external_go_mod(
 
     dependency_relationships = [
         call
-        for call in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(call[0]) >= 3 and call[0][1] == "DEPENDS_ON_EXTERNAL"
+        for call in get_relationships(mock_ingestor)
+        if call.rel_type == "DEPENDS_ON_EXTERNAL"
     ]
 
     for dep_name in expected_go_deps:
         found = any(
             (
-                call[0][0] == ("Project", "name", project_name)
-                and call[0][2] == ("ExternalPackage", "name", dep_name)
+                call.from_spec == ("Project", "name", project_name)
+                and call.to_spec == ("ExternalPackage", "name", dep_name)
             )
             for call in dependency_relationships
         )
@@ -760,15 +761,15 @@ def test_depends_on_external_gemfile(
 
     dependency_relationships = [
         call
-        for call in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(call[0]) >= 3 and call[0][1] == "DEPENDS_ON_EXTERNAL"
+        for call in get_relationships(mock_ingestor)
+        if call.rel_type == "DEPENDS_ON_EXTERNAL"
     ]
 
     for dep_name in expected_ruby_deps:
         found = any(
             (
-                call[0][0] == ("Project", "name", project_name)
-                and call[0][2] == ("ExternalPackage", "name", dep_name)
+                call.from_spec == ("Project", "name", project_name)
+                and call.to_spec == ("ExternalPackage", "name", dep_name)
             )
             for call in dependency_relationships
         )
@@ -802,15 +803,15 @@ def test_depends_on_external_composer_json(
 
     dependency_relationships = [
         call
-        for call in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(call[0]) >= 3 and call[0][1] == "DEPENDS_ON_EXTERNAL"
+        for call in get_relationships(mock_ingestor)
+        if call.rel_type == "DEPENDS_ON_EXTERNAL"
     ]
 
     for dep_name in expected_php_deps:
         found = any(
             (
-                call[0][0] == ("Project", "name", project_name)
-                and call[0][2] == ("ExternalPackage", "name", dep_name)
+                call.from_spec == ("Project", "name", project_name)
+                and call.to_spec == ("ExternalPackage", "name", dep_name)
             )
             for call in dependency_relationships
         )
@@ -844,15 +845,15 @@ def test_depends_on_external_csproj(
 
     dependency_relationships = [
         call
-        for call in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(call[0]) >= 3 and call[0][1] == "DEPENDS_ON_EXTERNAL"
+        for call in get_relationships(mock_ingestor)
+        if call.rel_type == "DEPENDS_ON_EXTERNAL"
     ]
 
     for dep_name in expected_dotnet_deps:
         found = any(
             (
-                call[0][0] == ("Project", "name", project_name)
-                and call[0][2] == ("ExternalPackage", "name", dep_name)
+                call.from_spec == ("Project", "name", project_name)
+                and call.to_spec == ("ExternalPackage", "name", dep_name)
             )
             for call in dependency_relationships
         )
@@ -880,9 +881,9 @@ def test_mixed_structure_and_dependencies(
     )
     updater.run()
 
-    all_calls = mock_ingestor.ensure_relationship_batch.call_args_list
+    all_calls = get_relationships(mock_ingestor)
 
-    relationship_types = {call[0][1] for call in all_calls if len(call[0]) >= 3}
+    relationship_types = {call.rel_type for call in all_calls}
 
     expected_types = {
         "CONTAINS_PACKAGE",
@@ -894,26 +895,10 @@ def test_mixed_structure_and_dependencies(
     missing_types = expected_types - relationship_types
     assert not missing_types, f"Missing relationship types: {missing_types}"
 
-    package_calls = [
-        call
-        for call in all_calls
-        if len(call[0]) >= 3 and call[0][1] == "CONTAINS_PACKAGE"
-    ]
-    folder_calls = [
-        call
-        for call in all_calls
-        if len(call[0]) >= 3 and call[0][1] == "CONTAINS_FOLDER"
-    ]
-    file_calls = [
-        call
-        for call in all_calls
-        if len(call[0]) >= 3 and call[0][1] == "CONTAINS_FILE"
-    ]
-    dep_calls = [
-        call
-        for call in all_calls
-        if len(call[0]) >= 3 and call[0][1] == "DEPENDS_ON_EXTERNAL"
-    ]
+    package_calls = [call for call in all_calls if call.rel_type == "CONTAINS_PACKAGE"]
+    folder_calls = [call for call in all_calls if call.rel_type == "CONTAINS_FOLDER"]
+    file_calls = [call for call in all_calls if call.rel_type == "CONTAINS_FILE"]
+    dep_calls = [call for call in all_calls if call.rel_type == "DEPENDS_ON_EXTERNAL"]
 
     assert len(package_calls) > 0, "Should have CONTAINS_PACKAGE relationships"
     assert len(folder_calls) > 0, "Should have CONTAINS_FOLDER relationships"
@@ -958,13 +943,13 @@ def test_edge_cases_empty_folders_and_special_files(
 
     project_name = project_path.name
 
-    all_calls = mock_ingestor.ensure_relationship_batch.call_args_list
+    all_calls = get_relationships(mock_ingestor)
 
     empty_folder_found = any(
         (
-            call[0][0] == ("Project", "name", project_name)
-            and call[0][1] == "CONTAINS_FOLDER"
-            and call[0][2] == _folder_id(project_path, "empty")
+            call.from_spec == ("Project", "name", project_name)
+            and call.rel_type == "CONTAINS_FOLDER"
+            and call.to_spec == _folder_id(project_path, "empty")
         )
         for call in all_calls
     )
@@ -973,11 +958,14 @@ def test_edge_cases_empty_folders_and_special_files(
     hidden_file_found = any(
         (
             (
-                call[0][0] == ("Project", "name", project_name)
-                or call[0][0] == ("Package", "qualified_name", project_name)
+                call.from_spec
+                in (
+                    ("Project", "name", project_name),
+                    ("Package", "qualified_name", project_name),
+                )
             )
-            and call[0][1] == "CONTAINS_FILE"
-            and call[0][2] == _file_id(project_path, ".env")
+            and call.rel_type == "CONTAINS_FILE"
+            and call.to_spec == _file_id(project_path, ".env")
         )
         for call in all_calls
     )
@@ -985,9 +973,9 @@ def test_edge_cases_empty_folders_and_special_files(
 
     hidden_workflow_found = any(
         (
-            call[0][0] == _folder_id(project_path, ".github/workflows")
-            and call[0][1] == "CONTAINS_FILE"
-            and call[0][2] == _file_id(project_path, ".github/workflows/ci.yml")
+            call.from_spec == _folder_id(project_path, ".github/workflows")
+            and call.rel_type == "CONTAINS_FILE"
+            and call.to_spec == _file_id(project_path, ".github/workflows/ci.yml")
         )
         for call in all_calls
     )
@@ -998,11 +986,14 @@ def test_edge_cases_empty_folders_and_special_files(
         special_file_found = any(
             (
                 (
-                    call[0][0] == ("Project", "name", project_name)
-                    or call[0][0] == ("Package", "qualified_name", project_name)
+                    call.from_spec
+                    in (
+                        ("Project", "name", project_name),
+                        ("Package", "qualified_name", project_name),
+                    )
                 )
-                and call[0][1] == "CONTAINS_FILE"
-                and call[0][2] == _file_id(project_path, special_file)
+                and call.rel_type == "CONTAINS_FILE"
+                and call.to_spec == _file_id(project_path, special_file)
             )
             for call in all_calls
         )

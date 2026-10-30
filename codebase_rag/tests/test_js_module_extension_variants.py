@@ -7,11 +7,11 @@ from codebase_rag.tests.conftest import get_nodes, get_relationships, run_update
 
 
 def _function_qns(ingestor: MagicMock) -> set[str]:
-    return {c.args[1]["qualified_name"] for c in get_nodes(ingestor, "Function")}
+    return {c.properties["qualified_name"] for c in get_nodes(ingestor, "Function")}
 
 
 def _call_pairs(ingestor: MagicMock) -> set[tuple[str, str]]:
-    return {(c.args[0][2], c.args[2][2]) for c in get_relationships(ingestor, "CALLS")}
+    return {(c.source, c.target) for c in get_relationships(ingestor, "CALLS")}
 
 
 def test_mjs_module_functions_and_calls_ingested(temp_repo: Path) -> None:

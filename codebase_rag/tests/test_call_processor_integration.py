@@ -60,7 +60,7 @@ def main():
         calls = get_relationships(mock_ingestor, cs.RelationshipType.CALLS)
         assert len(calls) > 0
 
-        call_targets = [c.args[2][2] for c in calls]
+        call_targets = [c.target for c in calls]
         helper_calls = [t for t in call_targets if "helper" in t]
         assert len(helper_calls) >= 1
 
@@ -97,7 +97,7 @@ class MyClass:
 
         calls = get_relationships(mock_ingestor, cs.RelationshipType.CALLS)
 
-        caller_qns = [c.args[0][2] for c in calls]
+        caller_qns = [c.source for c in calls]
         main_caller = [qn for qn in caller_qns if "main" in qn]
         assert len(main_caller) >= 1
 
@@ -144,7 +144,7 @@ def process():
 
         calls = get_relationships(mock_ingestor, cs.RelationshipType.CALLS)
 
-        call_targets = [c.args[2][2] for c in calls]
+        call_targets = [c.target for c in calls]
         format_calls = [t for t in call_targets if "format_string" in t]
         assert len(format_calls) >= 1
 
@@ -179,7 +179,7 @@ setup()
 
         calls = get_relationships(mock_ingestor, cs.RelationshipType.CALLS)
 
-        caller_types = [c.args[0][0] for c in calls]
+        caller_types = [c.source_label for c in calls]
         module_callers = [t for t in caller_types if t == cs.NodeLabel.MODULE]
         assert len(module_callers) >= 1
 
@@ -293,7 +293,7 @@ function process(data) {
         # A synthetic builtin.* qn never has a node, so its CALLS edge was
         # always dropped by the database (issue #652); builtin resolution
         # must therefore emit NO edge, mirroring the C++ operator rule.
-        call_targets = [c.args[2][2] for c in calls]
+        call_targets = [c.target for c in calls]
         builtin_calls = [t for t in call_targets if cs.BUILTIN_PREFIX in t]
         assert not builtin_calls, builtin_calls
 
@@ -372,7 +372,7 @@ public class Calculator {
 
         calls = get_relationships(mock_ingestor, cs.RelationshipType.CALLS)
 
-        call_targets = [c.args[2][2] for c in calls]
+        call_targets = [c.target for c in calls]
         add_calls = [t for t in call_targets if "add" in t]
         assert len(add_calls) >= 1
 
@@ -411,7 +411,7 @@ void main_func() {
 
         calls = get_relationships(mock_ingestor, cs.RelationshipType.CALLS)
 
-        call_targets = [c.args[2][2] for c in calls]
+        call_targets = [c.target for c in calls]
         helper_calls = [t for t in call_targets if "helper" in t]
         assert len(helper_calls) >= 1
 
@@ -488,7 +488,7 @@ fn main_func() {
 
         calls = get_relationships(mock_ingestor, cs.RelationshipType.CALLS)
 
-        call_targets = [c.args[2][2] for c in calls]
+        call_targets = [c.target for c in calls]
         helper_calls = [t for t in call_targets if "helper" in t]
         assert len(helper_calls) >= 1
 
@@ -699,7 +699,7 @@ def main():
 
         calls = get_relationships(mock_ingestor, cs.RelationshipType.CALLS)
 
-        call_targets = [c.args[2][2] for c in calls]
+        call_targets = [c.target for c in calls]
         all_funcs_called = all(
             any(f in t for t in call_targets) for f in ["a", "b", "c"]
         )
@@ -751,7 +751,7 @@ def main():
         assert len(calls) >= 1
 
         # Builder() is a class instantiation, not a function call
-        class_targets = [c for c in calls if c.args[2][0] == cs.NodeLabel.CLASS]
+        class_targets = [c for c in calls if c.target_label == cs.NodeLabel.CLASS]
         assert len(class_targets) == 0
 
     def test_handles_init_py_module_qn(
@@ -786,7 +786,7 @@ package_func()
 
         calls = get_relationships(mock_ingestor, cs.RelationshipType.CALLS)
 
-        caller_qns = [c.args[0][2] for c in calls]
+        caller_qns = [c.source for c in calls]
         package_callers = [qn for qn in caller_qns if "mypackage" in qn]
         assert len(package_callers) >= 1
 
@@ -827,10 +827,10 @@ helper()
 
         calls = get_relationships(mock_ingestor, cs.RelationshipType.CALLS)
 
-        class_targets = [c for c in calls if c.args[2][0] == cs.NodeLabel.CLASS]
+        class_targets = [c for c in calls if c.target_label == cs.NodeLabel.CLASS]
         assert class_targets == []
 
-        helper_calls = [c for c in calls if "helper" in c.args[2][2]]
+        helper_calls = [c for c in calls if "helper" in c.target]
         assert len(helper_calls) >= 1
 
     def test_function_does_not_call_class_python(
@@ -866,5 +866,5 @@ def factory():
 
         calls = get_relationships(mock_ingestor, cs.RelationshipType.CALLS)
 
-        class_targets = [c for c in calls if c.args[2][0] == cs.NodeLabel.CLASS]
+        class_targets = [c for c in calls if c.target_label == cs.NodeLabel.CLASS]
         assert class_targets == []

@@ -1,11 +1,10 @@
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
 from codebase_rag.constants import NodeLabel
-from codebase_rag.tests.conftest import get_relationships, run_updater
+from codebase_rag.tests.conftest import get_nodes, get_relationships, run_updater
 
 
 @pytest.fixture
@@ -364,13 +363,13 @@ export {};
 
     run_updater(typescript_declarations_project, mock_ingestor)
 
-    all_nodes = mock_ingestor.ensure_node_batch.call_args_list
+    all_nodes = get_nodes(mock_ingestor)
 
     ambient_nodes = [
         call
         for call in all_nodes
-        if "ambient_declarations" in call[0][1].get("qualified_name", "")
-        and call[0][0] in ["Function", "Class", "Interface", "Namespace", "Module"]
+        if "ambient_declarations" in call.properties.get("qualified_name", "")
+        and call.label in ["Function", "Class", "Interface", "Namespace", "Module"]
     ]
 
     assert len(ambient_nodes) >= 5, (
@@ -380,22 +379,22 @@ export {};
     function_calls = [
         call
         for call in all_nodes
-        if call[0][0] == NodeLabel.FUNCTION
-        and "ambient_declarations" in call[0][1].get("qualified_name", "")
+        if call.label == NodeLabel.FUNCTION
+        and "ambient_declarations" in call.properties.get("qualified_name", "")
     ]
 
     interface_calls = [
         call
         for call in all_nodes
-        if call[0][0] == NodeLabel.INTERFACE
-        and "ambient_declarations" in call[0][1].get("qualified_name", "")
+        if call.label == NodeLabel.INTERFACE
+        and "ambient_declarations" in call.properties.get("qualified_name", "")
     ]
 
     [
         call
         for call in all_nodes
-        if call[0][0] == NodeLabel.CLASS
-        and "ambient_declarations" in call[0][1].get("qualified_name", "")
+        if call.label == NodeLabel.CLASS
+        and "ambient_declarations" in call.properties.get("qualified_name", "")
     ]
 
     assert len(function_calls) >= 2, (
@@ -803,13 +802,13 @@ export {};
 
     run_updater(typescript_declarations_project, mock_ingestor)
 
-    all_nodes = mock_ingestor.ensure_node_batch.call_args_list
+    all_nodes = get_nodes(mock_ingestor)
 
     module_nodes = [
         call
         for call in all_nodes
-        if "module_declarations" in call[0][1].get("qualified_name", "")
-        and call[0][0] in ["Module", "Namespace", "Interface", "Class", "Function"]
+        if "module_declarations" in call.properties.get("qualified_name", "")
+        and call.label in ["Module", "Namespace", "Interface", "Class", "Function"]
     ]
 
     assert len(module_nodes) >= 8, (
@@ -819,22 +818,22 @@ export {};
     interface_calls = [
         call
         for call in all_nodes
-        if call[0][0] == NodeLabel.INTERFACE
-        and "module_declarations" in call[0][1].get("qualified_name", "")
+        if call.label == NodeLabel.INTERFACE
+        and "module_declarations" in call.properties.get("qualified_name", "")
     ]
 
     class_calls = [
         call
         for call in all_nodes
-        if call[0][0] == NodeLabel.CLASS
-        and "module_declarations" in call[0][1].get("qualified_name", "")
+        if call.label == NodeLabel.CLASS
+        and "module_declarations" in call.properties.get("qualified_name", "")
     ]
 
     function_calls = [
         call
         for call in all_nodes
-        if call[0][0] == NodeLabel.FUNCTION
-        and "module_declarations" in call[0][1].get("qualified_name", "")
+        if call.label == NodeLabel.FUNCTION
+        and "module_declarations" in call.properties.get("qualified_name", "")
     ]
 
     assert len(interface_calls) >= 5, (
@@ -1215,12 +1214,12 @@ export {};
 
     run_updater(typescript_declarations_project, mock_ingestor)
 
-    all_nodes = mock_ingestor.ensure_node_batch.call_args_list
+    all_nodes = get_nodes(mock_ingestor)
 
     global_nodes = [
         call
         for call in all_nodes
-        if "global_augmentations" in call[0][1].get("qualified_name", "")
+        if "global_augmentations" in call.properties.get("qualified_name", "")
     ]
 
     assert len(global_nodes) >= 10, (
@@ -1230,22 +1229,22 @@ export {};
     interface_calls = [
         call
         for call in all_nodes
-        if call[0][0] == NodeLabel.INTERFACE
-        and "global_augmentations" in call[0][1].get("qualified_name", "")
+        if call.label == NodeLabel.INTERFACE
+        and "global_augmentations" in call.properties.get("qualified_name", "")
     ]
 
     [
         call
         for call in all_nodes
-        if call[0][0] == NodeLabel.CLASS
-        and "global_augmentations" in call[0][1].get("qualified_name", "")
+        if call.label == NodeLabel.CLASS
+        and "global_augmentations" in call.properties.get("qualified_name", "")
     ]
 
     [
         call
         for call in all_nodes
-        if call[0][0] == NodeLabel.FUNCTION
-        and "global_augmentations" in call[0][1].get("qualified_name", "")
+        if call.label == NodeLabel.FUNCTION
+        and "global_augmentations" in call.properties.get("qualified_name", "")
     ]
 
     assert len(interface_calls) >= 5, (
@@ -1344,29 +1343,27 @@ export {};
 
     run_updater(typescript_declarations_project, mock_ingestor)
 
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    all_relationships = get_relationships(mock_ingestor)
 
     calls_relationships = get_relationships(mock_ingestor, "CALLS")
-    [c for c in all_relationships if c.args[1] == "DEFINES"]
+    [c for c in all_relationships if c.rel_type == "DEFINES"]
 
     comprehensive_calls = [
         call
         for call in calls_relationships
-        if "comprehensive_declarations" in call.args[0][2]
+        if "comprehensive_declarations" in call.source
     ]
 
     assert len(comprehensive_calls) >= 1, (
         f"Expected at least 1 comprehensive declaration call, found {len(comprehensive_calls)}"
     )
 
-    all_nodes = mock_ingestor.ensure_node_batch.call_args_list
+    all_nodes = get_nodes(mock_ingestor)
 
     comprehensive_declarations = [
         call
         for call in all_nodes
-        if "comprehensive_declarations" in call[0][1].get("qualified_name", "")
+        if "comprehensive_declarations" in call.properties.get("qualified_name", "")
     ]
 
     assert len(comprehensive_declarations) >= 5, (

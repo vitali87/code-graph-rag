@@ -18,7 +18,7 @@ from tree_sitter import Language, Parser
 from codebase_rag import constants as cs
 from codebase_rag.parsers.rust import type_inference as rs_ti
 from codebase_rag.parsers.rust import utils as rs_utils
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_relationships, run_updater
 from evals.dead_code import cgr_dead_code, default_dead_code_config
 
 try:
@@ -49,9 +49,9 @@ def _run_calls(temp_repo: Path, mock_ingestor: MagicMock) -> set[tuple[str, str]
     (temp_repo / "m.rs").write_text(TRAIT_OBJECT_CALLERS, encoding="utf-8")
     run_updater(temp_repo, mock_ingestor, skip_if_missing="rust")
     return {
-        (c.args[0][2], c.args[2][2])
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == cs.RelationshipType.CALLS and c.args[2][2].endswith(".run")
+        (c.source, c.target)
+        for c in get_relationships(mock_ingestor)
+        if c.rel_type == cs.RelationshipType.CALLS and c.target.endswith(".run")
     }
 
 
@@ -88,11 +88,11 @@ def test_boxed_dyn_return_type_binds_to_trait_method(
     )
     run_updater(temp_repo, mock_ingestor, skip_if_missing="rust")
     bound = {
-        c.args[2][2]
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == cs.RelationshipType.CALLS
-        and c.args[0][2].endswith(".use_made")
-        and c.args[2][2].endswith(".run")
+        c.target
+        for c in get_relationships(mock_ingestor)
+        if c.rel_type == cs.RelationshipType.CALLS
+        and c.source.endswith(".use_made")
+        and c.target.endswith(".run")
     }
     assert bound == {f"{temp_repo.name}.m.Svc.run"}, sorted(bound)
 

@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from codebase_rag import constants as cs
-from codebase_rag.tests.conftest import get_relationships, run_updater
+from codebase_rag.tests.conftest import get_nodes, get_relationships, run_updater
 
 CPP = """
 namespace math {
@@ -42,13 +42,13 @@ def test_user_defined_operator_overload_wins_and_builtins_emit_no_edge(
     run_updater(temp_repo, mock_ingestor)
 
     node_keys = {
-        (str(c.args[0]), c.args[1].get("qualified_name"))
-        for c in mock_ingestor.ensure_node_batch.call_args_list
+        (str(c.label), c.properties.get("qualified_name"))
+        for c in get_nodes(mock_ingestor)
     }
     calls = get_relationships(mock_ingestor, cs.RelationshipType.CALLS.value)
-    operator_targets = [call for call in calls if "operator" in str(call.args[2][2])]
+    operator_targets = [call for call in calls if "operator" in str(call.target)]
     assert operator_targets, calls
     for call in operator_targets:
-        to_label, _, to_qn = call.args[2]
-        assert not str(to_qn).startswith("builtin."), call.args
-        assert (str(to_label), to_qn) in node_keys, call.args
+        to_label, _, to_qn = call.to_spec
+        assert not str(to_qn).startswith("builtin."), call
+        assert (str(to_label), to_qn) in node_keys, call

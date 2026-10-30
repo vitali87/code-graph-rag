@@ -32,7 +32,7 @@ def _endswith_any(names: set[str], suffix: str) -> bool:
 
 def _props_for(mock_ingestor: MagicMock, node_type: str, suffix: str) -> dict:
     for call in get_nodes(mock_ingestor, node_type):
-        props = call[0][1]
+        props = call.properties
         if props["qualified_name"].endswith(suffix):
             return props
     raise AssertionError(f"no {node_type} ending with {suffix!r}")
@@ -128,7 +128,7 @@ mixin Swimmer {
     assert _endswith_any(methods, "mixed.Swimmer.speed"), sorted(methods)
     assert _endswith_any(methods, "mixed.Swimmer.swim"), sorted(methods)
     defines = {
-        (str(r[0][0][2]), str(r[0][2][2]))
+        (str(r.source), str(r.target))
         for r in get_relationships(mock_ingestor, "DEFINES_METHOD")
     }
     assert any(
@@ -175,7 +175,7 @@ void run() {}
     run_updater(dart_project, mock_ingestor, skip_if_missing=SKIP)
 
     imports = get_relationships(mock_ingestor, "IMPORTS")
-    targets = {c.args[2][2] for c in imports}
+    targets = {c.target for c in imports}
     # External package + dart core kept verbatim; relative import resolves
     # to the internal module qn.
     assert any("package:flutter/material.dart" in t for t in targets), targets
@@ -201,11 +201,11 @@ mixin Diver on StatefulWidget {}
     run_updater(dart_project, mock_ingestor, skip_if_missing=SKIP)
 
     inherits = {
-        (c.args[0][2].split(".")[-1], c.args[2][2].split(".")[-1])
+        (c.source.split(".")[-1], c.target.split(".")[-1])
         for c in get_relationships(mock_ingestor, "INHERITS")
     }
     implements = {
-        (c.args[0][2].split(".")[-1], c.args[2][2].split(".")[-1])
+        (c.source.split(".")[-1], c.target.split(".")[-1])
         for c in get_relationships(mock_ingestor, "IMPLEMENTS")
     }
     # `with Swimmer` (mixin) and `mixin Diver on StatefulWidget` (on-clause)
@@ -236,11 +236,11 @@ class _HomePageState extends State<HomePage> with Mix implements Comparable<int>
     run_updater(dart_project, mock_ingestor, skip_if_missing=SKIP)
 
     inherits = {
-        (c.args[0][2].split(".")[-1], c.args[2][2].split(".")[-1])
+        (c.source.split(".")[-1], c.target.split(".")[-1])
         for c in get_relationships(mock_ingestor, "INHERITS")
     }
     implements = {
-        (c.args[0][2].split(".")[-1], c.args[2][2].split(".")[-1])
+        (c.source.split(".")[-1], c.target.split(".")[-1])
         for c in get_relationships(mock_ingestor, "IMPLEMENTS")
     }
     assert ("_HomePageState", "State") in inherits, inherits
@@ -268,7 +268,7 @@ enum Kind implements Shape {
     run_updater(dart_project, mock_ingestor, skip_if_missing=SKIP)
 
     implements = {
-        (c.args[0][2].split(".")[-1], c.args[2][2].split(".")[-1])
+        (c.source.split(".")[-1], c.target.split(".")[-1])
         for c in get_relationships(mock_ingestor, "IMPLEMENTS")
     }
     assert ("Kind", "Shape") in implements, implements
@@ -295,9 +295,7 @@ dependencies:
     (dart_project / "main.dart").write_text("void main() {}\n", encoding="utf-8")
     run_updater(dart_project, mock_ingestor, skip_if_missing=SKIP)
 
-    names = {
-        c.args[2][2] for c in get_relationships(mock_ingestor, "DEPENDS_ON_EXTERNAL")
-    }
+    names = {c.target for c in get_relationships(mock_ingestor, "DEPENDS_ON_EXTERNAL")}
     for pkg in ("http", "provider", "flutter"):
         assert pkg in names, f"missing dependency {pkg}: {names}"
 
@@ -323,6 +321,6 @@ dev_dependencies:
     run_updater(dart_project, mock_ingestor, skip_if_missing=SKIP)
 
     deps = get_relationships(mock_ingestor, "DEPENDS_ON_EXTERNAL")
-    names = {c.args[2][2] for c in deps}
+    names = {c.target for c in deps}
     for pkg in ("http", "provider", "mockito"):
         assert pkg in names, f"missing dependency {pkg}: {names}"

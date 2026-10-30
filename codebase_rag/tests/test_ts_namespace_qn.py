@@ -33,7 +33,7 @@ def test_typescript_namespace_class_qn_includes_namespace(
     create_and_run_updater(project, mock_ingestor, skip_if_missing="typescript")
 
     class_qns = {
-        str(node[0][1].get(KEY_QUALIFIED_NAME))
+        str(node.properties.get(KEY_QUALIFIED_NAME))
         for node in get_nodes(mock_ingestor, NodeLabel.CLASS)
     }
     # The namespaced class and the top-level class must be distinct nodes.

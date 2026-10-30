@@ -76,27 +76,25 @@ def _tail(qn: str) -> str:
 
 def _imports(ingestor: MagicMock) -> set[tuple[str, str]]:
     return {
-        (_tail(c.args[0][2]), _tail(c.args[2][2]))
+        (_tail(c.source), _tail(c.target))
         for c in get_relationships(ingestor, cs.RelationshipType.IMPORTS)
-        if c.args[2][0] == cs.NodeLabel.MODULE
+        if c.target_label == cs.NodeLabel.MODULE
     }
 
 
 def _external_imports(ingestor: MagicMock) -> set[tuple[str, str]]:
     return {
-        (_tail(c.args[0][2]), c.args[2][2])
+        (_tail(c.source), c.target)
         for c in get_relationships(ingestor, cs.RelationshipType.IMPORTS)
-        if c.args[2][0] == cs.NodeLabel.EXTERNAL_MODULE
+        if c.target_label == cs.NodeLabel.EXTERNAL_MODULE
     }
 
 
 def _calls(ingestor: MagicMock) -> dict[tuple[str, str], str]:
     out: dict[tuple[str, str], str] = {}
     for c in get_relationships(ingestor, cs.RelationshipType.CALLS):
-        props = c.kwargs.get("properties") or {}
-        out[(_tail(c.args[0][2]), _tail(c.args[2][2]))] = props.get(
-            cs.KEY_RESOLUTION, ""
-        )
+        props = c.properties
+        out[(_tail(c.source), _tail(c.target))] = props.get(cs.KEY_RESOLUTION, "")
     return out
 
 

@@ -230,8 +230,8 @@ const varResults = varFunctions.map(fn => fn());
     nested_functions = [
         call
         for call in function_calls
-        if "basic_closures" in call[0][1]["qualified_name"]
-        and len(call[0][1]["qualified_name"].split(SEPARATOR_DOT)) > 3
+        if "basic_closures" in call.properties["qualified_name"]
+        and len(call.properties["qualified_name"].split(SEPARATOR_DOT)) > 3
     ]
 
     assert len(nested_functions) >= 5, (
@@ -241,7 +241,7 @@ const varResults = varFunctions.map(fn => fn());
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     closure_calls = [
-        call for call in call_relationships if "basic_closures" in call.args[0][2]
+        call for call in call_relationships if "basic_closures" in call.source
     ]
 
     assert len(closure_calls) >= 10, (
@@ -510,8 +510,8 @@ tryCatchScope();
     nested_scoping_functions = [
         call
         for call in function_calls
-        if "variable_scoping" in call[0][1]["qualified_name"]
-        and len(call[0][1]["qualified_name"].split(SEPARATOR_DOT)) > 3
+        if "variable_scoping" in call.properties["qualified_name"]
+        and len(call.properties["qualified_name"].split(SEPARATOR_DOT)) > 3
     ]
 
     assert len(nested_scoping_functions) >= 8, (
@@ -788,7 +788,7 @@ const nestedResult = nested();
     hoisting_classes = [
         call
         for call in class_calls
-        if "hoisting_behavior" in call[0][1]["qualified_name"]
+        if "hoisting_behavior" in call.properties["qualified_name"]
     ]
 
     assert len(hoisting_classes) >= 1, (
@@ -1141,7 +1141,7 @@ const allConfig = Config.getAll();
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     module_calls = [
-        call for call in call_relationships if "module_patterns" in call.args[0][2]
+        call for call in call_relationships if "module_patterns" in call.source
     ]
 
     assert len(module_calls) >= 15, (
@@ -1153,7 +1153,7 @@ const allConfig = Config.getAll();
     module_functions = [
         call
         for call in function_calls
-        if "module_patterns" in call[0][1]["qualified_name"]
+        if "module_patterns" in call.properties["qualified_name"]
     ]
 
     assert len(module_functions) >= 20, (
@@ -1339,9 +1339,7 @@ const scopeResult = accessScopes();
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
     comprehensive_calls = [
-        call
-        for call in call_relationships
-        if "comprehensive_closures" in call.args[0][2]
+        call for call in call_relationships if "comprehensive_closures" in call.source
     ]
 
     assert len(comprehensive_calls) >= 8, (
@@ -1349,11 +1347,10 @@ const scopeResult = accessScopes();
     )
 
     for relationship in comprehensive_calls:
-        assert len(relationship.args) == 3, "Call relationship should have 3 args"
-        assert relationship.args[1] == "CALLS", "Second arg should be 'CALLS'"
+        assert relationship.rel_type == "CALLS", "Expected a CALLS relationship"
 
-        source_module = relationship.args[0][2]
-        target_module = relationship.args[2][2]
+        source_module = relationship.source
+        target_module = relationship.target
 
         assert "comprehensive_closures" in source_module, (
             f"Source module should contain test file name: {source_module}"

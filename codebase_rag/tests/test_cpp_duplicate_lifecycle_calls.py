@@ -29,10 +29,9 @@ void use() { Box b(1); }
     )
     run_updater(project, mock_ingestor)
 
-    calls = {str(call.args[2][2]) for call in get_relationships(mock_ingestor, "CALLS")}
+    calls = {str(call.target) for call in get_relationships(mock_ingestor, "CALLS")}
     instantiates = {
-        str(call.args[2][2])
-        for call in get_relationships(mock_ingestor, "INSTANTIATES")
+        str(call.target) for call in get_relationships(mock_ingestor, "INSTANTIATES")
     }
     variants = {
         target for target in instantiates if target.endswith("Box") or "Box@" in target
@@ -74,7 +73,7 @@ void use() { Derived d(1); }
     run_updater(project, mock_ingestor)
 
     call_edges = [
-        (str(call.args[0][2]), str(call.args[2][2]))
+        (str(call.source), str(call.target))
         for call in get_relationships(mock_ingestor, "CALLS")
     ]
     pairs = set(call_edges)

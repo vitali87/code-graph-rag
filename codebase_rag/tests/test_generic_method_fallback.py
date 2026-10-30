@@ -17,6 +17,7 @@ from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.import_processor import ImportProcessor
+from codebase_rag.tests.conftest import get_relationships
 
 UPDATER_RUN = "repo.pkg.updater.GraphUpdater.run"
 SESSION_RUN = "repo.pkg.driver.Session.run"
@@ -49,14 +50,14 @@ def _index(tmp_path: Path, files: dict[str, str]) -> set[_Edge]:
     mock = MagicMock()
     GraphUpdater(ingestor=mock, repo_path=root, parsers=parsers, queries=queries).run()
     edges: set[_Edge] = set()
-    for call in mock.ensure_relationship_batch.call_args_list:
-        props = call.args[3] if len(call.args) > 3 else call.kwargs.get("properties")
+    for call in get_relationships(mock):
+        props = call.properties
         resolution = props.get(cs.KEY_RESOLUTION) if props else None
         edges.add(
             (
-                call.args[0][2],
-                str(call.args[1]),
-                call.args[2][2],
+                call.source,
+                str(call.rel_type),
+                call.target,
                 str(resolution) if resolution else None,
             )
         )

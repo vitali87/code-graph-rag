@@ -32,7 +32,7 @@ class Holder extends Box<String> implements Comparable<Holder> {}
 def _pairs(mock_ingestor: MagicMock, rel: str) -> set[tuple[str, str]]:
     # (source_qn, target_qn) for the given relationship.
     return {
-        (call[0][0][2], call[0][2][2]) for call in get_relationships(mock_ingestor, rel)
+        (call.source, call.target) for call in get_relationships(mock_ingestor, rel)
     }
 
 

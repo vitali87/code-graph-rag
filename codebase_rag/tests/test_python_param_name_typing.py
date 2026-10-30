@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.tests.conftest import create_and_run_updater
+from codebase_rag.tests.conftest import create_and_run_updater, get_relationships
 
 _ISSUE_EXPRESSIONS = """\
 class A:
@@ -62,12 +62,12 @@ def _index(
     (pkg / "query.py").write_text(query)
     create_and_run_updater(repo, mock)
     found: Edges = {}
-    for c in mock.ensure_relationship_batch.call_args_list:
-        if str(c.args[1]) not in rels:
+    for c in get_relationships(mock):
+        if str(c.rel_type) not in rels:
             continue
-        props = c.kwargs.get("properties") or {}
-        caller = str(c.args[0][2]).split(".pkg.", 1)[-1]
-        callee = str(c.args[2][2]).split(".pkg.", 1)[-1]
+        props = c.properties
+        caller = str(c.source).split(".pkg.", 1)[-1]
+        callee = str(c.target).split(".pkg.", 1)[-1]
         found.setdefault((caller, callee), set()).add(str(props.get(cs.KEY_RESOLUTION)))
     return found
 

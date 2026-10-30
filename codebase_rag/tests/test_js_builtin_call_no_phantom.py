@@ -42,9 +42,7 @@ def test_builtin_calls_emit_no_phantom_edges(
 
     calls = get_relationships(mock_ingestor, cs.RelationshipType.CALLS.value)
     builtin_targets = [
-        call.args
-        for call in calls
-        if str(call.args[2][2]).startswith(BUILTIN_QN_PREFIX)
+        call for call in calls if str(call.target).startswith(BUILTIN_QN_PREFIX)
     ]
     assert not builtin_targets, builtin_targets
 
@@ -59,7 +57,7 @@ def test_callback_passed_to_builtin_stays_reachable(
 
     project = temp_repo.name
     called = {
-        (call.args[0][2], call.args[2][2])
+        (call.source, call.target)
         for call in get_relationships(mock_ingestor, cs.RelationshipType.CALLS.value)
     }
     assert (f"{project}.app.scheduleTick", f"{project}.app.onTick") in called, called

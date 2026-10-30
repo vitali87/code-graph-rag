@@ -13,6 +13,7 @@ from codebase_rag import graph_updater as gu
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.frontends.protocol import ImplementsPair
 from codebase_rag.parsers.go import graph_joins as go_joins
+from codebase_rag.tests.conftest import get_nodes
 from codebase_rag.types_defs import PropertyDict, ResultRow
 
 
@@ -266,8 +267,8 @@ def test_nodes_persist_start_and_name_columns(tmp_path: Path) -> None:
         ingestor=mock, repo_path=repo, parsers=parsers, queries=queries
     ).run()
     by_label: dict[str, list[PropertyDict]] = {}
-    for call in mock.ensure_node_batch.call_args_list:
-        by_label.setdefault(str(call.args[0]), []).append(call.args[1])
+    for call in get_nodes(mock):
+        by_label.setdefault(str(call.label), []).append(call.properties)
     classes = [p for p in by_label.get("Class", []) if p.get(cs.KEY_NAME) == "Widget"]
     functions = [
         p for p in by_label.get("Function", []) if p.get(cs.KEY_NAME) == "main"

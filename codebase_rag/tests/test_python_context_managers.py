@@ -6,7 +6,12 @@ import pytest
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.tests.conftest import get_node_names, get_nodes, get_qualified_names
+from codebase_rag.tests.conftest import (
+    get_node_names,
+    get_nodes,
+    get_qualified_names,
+    get_relationships,
+)
 
 
 @pytest.fixture
@@ -317,15 +322,13 @@ def test_context_manager_function_calls(
     ]
 
     calls_relationships = [
-        call
-        for call in mock_ingestor.ensure_relationship_batch.call_args_list
-        if call[0][1] == "CALLS"
+        call for call in get_relationships(mock_ingestor) if call.rel_type == "CALLS"
     ]
 
     actual_calls = set()
     for call in calls_relationships:
-        caller_info = call[0][0]
-        callee_info = call[0][2]
+        caller_info = call.from_spec
+        callee_info = call.to_spec
 
         caller_qn = caller_info[2]
         callee_qn = callee_info[2]
@@ -394,13 +397,11 @@ def test_context_manager_in_control_structures(
     assert function_qn in created_functions, f"Missing function: {function_qn}"
 
     calls_relationships = [
-        call
-        for call in mock_ingestor.ensure_relationship_batch.call_args_list
-        if call[0][1] == "CALLS"
+        call for call in get_relationships(mock_ingestor) if call.rel_type == "CALLS"
     ]
 
     function_calls_found = [
-        call for call in calls_relationships if call[0][0][2] == function_qn
+        call for call in calls_relationships if call.source == function_qn
     ]
 
     assert function_calls_found, (
@@ -462,8 +463,8 @@ def test_decorated_context_manager_function(
     )
 
     for call in function_calls:
-        if call[0][1]["qualified_name"] == expected_function:
-            assert "decorators" in call[0][1], (
+        if call.properties["qualified_name"] == expected_function:
+            assert "decorators" in call.properties, (
                 "Function should have decorators property"
             )
             break

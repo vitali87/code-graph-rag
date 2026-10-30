@@ -45,9 +45,9 @@ def _run(
     # is a defect even when no assertion looks at it (issue #652 gate).
     _audit_recorded_graph(mock)
     return {
-        (c.args[0][2], str(c.args[1]), c.args[2][2])
-        for c in mock.ensure_relationship_batch.call_args_list
-        if str(c.args[1]) in (EXPOSES, WRITES_TO, RESOLVES_TO)
+        (c.source, str(c.rel_type), c.target)
+        for c in get_relationships(mock)
+        if str(c.rel_type) in (EXPOSES, WRITES_TO, RESOLVES_TO)
     }
 
 

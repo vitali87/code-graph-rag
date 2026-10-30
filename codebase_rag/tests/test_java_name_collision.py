@@ -112,18 +112,12 @@ public class Service {
     other_calls = 0
 
     for call in call_relationships:
-        if len(call.args) > 2:
-            from_tuple = call.args[0]
-            to_tuple = call.args[2]
-            if isinstance(from_tuple, tuple) and len(from_tuple) >= 3:
-                from_qn = from_tuple[2]
-                if isinstance(to_tuple, tuple) and len(to_tuple) >= 3:
-                    to_qn = to_tuple[2]
-                    if "Service" in from_qn and "processData" in from_qn:
-                        if "utils.Helper" in to_qn and "utilsMethod" in to_qn:
-                            utils_calls += 1
-                        elif "other.Helper" in to_qn:
-                            other_calls += 1
+        from_qn, to_qn = str(call.source), str(call.target)
+        if "Service" in from_qn and "processData" in from_qn:
+            if "utils.Helper" in to_qn and "utilsMethod" in to_qn:
+                utils_calls += 1
+            elif "other.Helper" in to_qn:
+                other_calls += 1
 
     assert utils_calls == 1, (
         f"Expected 1 call to utils.Helper.utilsMethod(), found {utils_calls}. "
@@ -222,18 +216,12 @@ public class Service {
     other_calls = 0
 
     for call in call_relationships:
-        if len(call.args) > 2:
-            from_tuple = call.args[0]
-            to_tuple = call.args[2]
-            if isinstance(from_tuple, tuple) and len(from_tuple) >= 3:
-                from_qn = from_tuple[2]
-                if isinstance(to_tuple, tuple) and len(to_tuple) >= 3:
-                    to_qn = to_tuple[2]
-                    if "Service" in from_qn and "processData" in from_qn:
-                        if "app.Helper" in to_qn and "appMethod" in to_qn:
-                            app_calls += 1
-                        elif "other.Helper" in to_qn:
-                            other_calls += 1
+        from_qn, to_qn = str(call.source), str(call.target)
+        if "Service" in from_qn and "processData" in from_qn:
+            if "app.Helper" in to_qn and "appMethod" in to_qn:
+                app_calls += 1
+            elif "other.Helper" in to_qn:
+                other_calls += 1
 
     assert app_calls == 1, (
         f"Expected 1 call to app.Helper.appMethod(), found {app_calls}. "

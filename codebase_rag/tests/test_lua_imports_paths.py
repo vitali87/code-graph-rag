@@ -1,10 +1,9 @@
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import create_and_run_updater
+from codebase_rag.tests.conftest import create_and_run_updater, get_relationships
 
 
 @pytest.mark.parametrize(
@@ -54,6 +53,6 @@ return 0
     else:
         assert target.startswith(expect_target), target
 
-    rels = cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
-    imports = [c for c in rels if c.args[1] == "IMPORTS"]
-    assert any(module_qn in c.args[0][2] for c in imports), imports
+    rels = get_relationships(mock_ingestor)
+    imports = [c for c in rels if c.rel_type == "IMPORTS"]
+    assert any(module_qn in c.source for c in imports), imports

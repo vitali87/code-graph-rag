@@ -15,6 +15,7 @@ from codebase_rag import constants as cs
 from codebase_rag.tests.conftest import (
     create_and_run_updater,
     force_mtime_after_cache,
+    get_nodes,
 )
 
 
@@ -64,9 +65,9 @@ def test_fully_unreadable_graph_still_completes_the_rebuild(
     }
     assert "m.py" in deleted_paths, deleted_paths
     module_qns = {
-        c.args[1].get(cs.KEY_QUALIFIED_NAME)
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c.args[0] == cs.NodeLabel.MODULE
+        c.properties.get(cs.KEY_QUALIFIED_NAME)
+        for c in get_nodes(mock_ingestor)
+        if c.label == cs.NodeLabel.MODULE
     }
     assert any(str(qn).endswith(".m") for qn in module_qns), module_qns
 
@@ -116,9 +117,9 @@ def test_full_build_module_qn_rehydration_failure_degrades(
     # happens when the rehydration query is never reached.
     assert failed_queries
     module_qns = {
-        c.args[1].get(cs.KEY_QUALIFIED_NAME)
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c.args[0] == cs.NodeLabel.MODULE
+        c.properties.get(cs.KEY_QUALIFIED_NAME)
+        for c in get_nodes(mock_ingestor)
+        if c.label == cs.NodeLabel.MODULE
     }
     assert any(str(qn).endswith(".m") for qn in module_qns), module_qns
 
@@ -142,9 +143,9 @@ def test_full_build_inherits_rehydration_failure_degrades(
 
     assert failed_queries
     module_qns = {
-        c.args[1].get(cs.KEY_QUALIFIED_NAME)
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c.args[0] == cs.NodeLabel.MODULE
+        c.properties.get(cs.KEY_QUALIFIED_NAME)
+        for c in get_nodes(mock_ingestor)
+        if c.label == cs.NodeLabel.MODULE
     }
     assert any(str(qn).endswith(".m") for qn in module_qns), module_qns
 

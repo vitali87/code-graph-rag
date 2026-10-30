@@ -106,8 +106,8 @@ def _sites(root: Path, files: dict[str, str], grammar: str) -> _Sites:
     out: _Sites = []
     for rel in (cs.RelationshipType.CALLS, cs.RelationshipType.INSTANTIATES):
         for c in get_relationships(mock, rel):
-            props = c.kwargs.get("properties") or {}
-            callee = str(c.args[2][2]).rsplit(".", 1)[1]
+            props = c.properties
+            callee = str(c.target).rsplit(".", 1)[1]
             out.append(
                 (str(rel), callee, int(props[cs.KEY_LINE]), int(props[cs.KEY_COL]))
             )

@@ -57,9 +57,7 @@ def test_templated_class_member_call_resolves_to_natural_qn(
         "};\n",
     )
     run_updater(temp_repo, mock_ingestor, skip_if_missing="cpp")
-    calls = {
-        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
-    }
+    calls = {(c.source, c.target) for c in get_relationships(mock_ingestor, "CALLS")}
     p = temp_repo.name
     # the in-class `open() { close(); }` edge must land on the same natural qn
     assert (f"{p}.box.Box.open", f"{p}.box.Box.close") in calls, sorted(

@@ -52,9 +52,9 @@ def _write_fixture(repo: Path) -> None:
 def _lambda_defines(mock_ingestor: MagicMock) -> dict[str, tuple[str, str]]:
     parents: dict[str, tuple[str, str]] = {}
     for call in get_relationships(mock_ingestor, cs.RelationshipType.DEFINES.value):
-        to_qn = str(call.args[2][2])
+        to_qn = str(call.target)
         if cs.PREFIX_LAMBDA in to_qn:
-            parents[to_qn] = (str(call.args[0][0]), str(call.args[0][2]))
+            parents[to_qn] = (str(call.source_label), str(call.source))
     return parents
 
 

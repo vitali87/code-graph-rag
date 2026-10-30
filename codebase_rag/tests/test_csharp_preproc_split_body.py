@@ -146,7 +146,7 @@ def test_if_truncated_class_body_orphan_members_are_methods(
     method_qns = get_node_names(mock_ingestor, cs.NodeLabel.METHOD.value)
     assert any(".Reader.BlockCopyChars" in qn for qn in method_qns), method_qns
     defines_method_targets = {
-        c.args[2][2] for c in get_relationships(mock_ingestor, "DEFINES_METHOD")
+        c.target for c in get_relationships(mock_ingestor, "DEFINES_METHOD")
     }
     assert any(".Reader.BlockCopyChars" in qn for qn in defines_method_targets), (
         defines_method_targets
@@ -159,12 +159,12 @@ def test_if_truncated_class_body_orphan_members_are_methods(
     shift_calls = [
         c
         for c in get_relationships(mock_ingestor, "CALLS")
-        if ".Reader.Shift" in c.args[2][2]
+        if ".Reader.Shift" in c.target
     ]
     assert shift_calls, "expected a CALLS edge into Reader.Shift"
     for c in shift_calls:
-        caller_label, _, caller_qn = c.args[0]
-        assert caller_label == cs.NodeLabel.METHOD.value, c.args[0]
+        caller_label, _, caller_qn = c.from_spec
+        assert caller_label == cs.NodeLabel.METHOD.value, c.from_spec
         assert ".Reader.BlockCopyChars" in caller_qn, caller_qn
 
 

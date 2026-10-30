@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag.constants import NodeLabel
-from codebase_rag.tests.conftest import get_qualified_names, run_updater
+from codebase_rag.tests.conftest import get_nodes, get_qualified_names, run_updater
 
 
 @pytest.fixture
@@ -99,10 +99,10 @@ public abstract class AbstractOnlyClass {
 
     run_updater(java_edge_cases_project, mock_ingestor, skip_if_missing="java")
 
-    all_calls = mock_ingestor.ensure_node_batch.call_args_list
-    class_calls = [call for call in all_calls if call[0][0] == NodeLabel.CLASS]
-    interface_calls = [call for call in all_calls if call[0][0] == NodeLabel.INTERFACE]
-    enum_calls = [call for call in all_calls if call[0][0] == NodeLabel.ENUM]
+    all_calls = get_nodes(mock_ingestor)
+    class_calls = [call for call in all_calls if call.label == NodeLabel.CLASS]
+    interface_calls = [call for call in all_calls if call.label == NodeLabel.INTERFACE]
+    enum_calls = [call for call in all_calls if call.label == NodeLabel.ENUM]
 
     created_classes = get_qualified_names(class_calls)
     created_interfaces = get_qualified_names(interface_calls)
@@ -218,10 +218,10 @@ public class ArrayFormats {
 
     run_updater(java_edge_cases_project, mock_ingestor, skip_if_missing="java")
 
-    all_calls = mock_ingestor.ensure_node_batch.call_args_list
-    class_calls = [call for call in all_calls if call[0][0] == NodeLabel.CLASS]
-    interface_calls = [call for call in all_calls if call[0][0] == NodeLabel.INTERFACE]
-    enum_calls = [call for call in all_calls if call[0][0] == NodeLabel.ENUM]
+    all_calls = get_nodes(mock_ingestor)
+    class_calls = [call for call in all_calls if call.label == NodeLabel.CLASS]
+    interface_calls = [call for call in all_calls if call.label == NodeLabel.INTERFACE]
+    enum_calls = [call for call in all_calls if call.label == NodeLabel.ENUM]
 
     created_classes = get_qualified_names(class_calls)
     created_interfaces = get_qualified_names(interface_calls)
@@ -341,8 +341,8 @@ public class UnicodeConstants {
 
     run_updater(java_edge_cases_project, mock_ingestor, skip_if_missing="java")
 
-    all_calls = mock_ingestor.ensure_node_batch.call_args_list
-    class_calls = [call for call in all_calls if call[0][0] == NodeLabel.CLASS]
+    all_calls = get_nodes(mock_ingestor)
+    class_calls = [call for call in all_calls if call.label == NodeLabel.CLASS]
 
     created_classes = get_qualified_names(class_calls)
 
@@ -449,8 +449,8 @@ enum EnumWithVeryLongNameThatTestsEnumNameLengthLimitationsAndParsingCapabilitie
 
     run_updater(java_edge_cases_project, mock_ingestor, skip_if_missing="java")
 
-    all_calls = mock_ingestor.ensure_node_batch.call_args_list
-    class_calls = [call for call in all_calls if call[0][0] == NodeLabel.CLASS]
+    all_calls = get_nodes(mock_ingestor)
+    class_calls = [call for call in all_calls if call.label == NodeLabel.CLASS]
 
     created_classes = get_qualified_names(class_calls)
 
@@ -596,8 +596,8 @@ public class DeeplyNestedGenerics {
 
     run_updater(java_edge_cases_project, mock_ingestor, skip_if_missing="java")
 
-    all_calls = mock_ingestor.ensure_node_batch.call_args_list
-    class_calls = [call for call in all_calls if call[0][0] == NodeLabel.CLASS]
+    all_calls = get_nodes(mock_ingestor)
+    class_calls = [call for call in all_calls if call.label == NodeLabel.CLASS]
 
     created_classes = get_qualified_names(class_calls)
 
@@ -800,8 +800,8 @@ class ComplexInheritance
 
     run_updater(java_edge_cases_project, mock_ingestor, skip_if_missing="java")
 
-    all_calls = mock_ingestor.ensure_node_batch.call_args_list
-    class_calls = [call for call in all_calls if call[0][0] == NodeLabel.CLASS]
+    all_calls = get_nodes(mock_ingestor)
+    class_calls = [call for call in all_calls if call.label == NodeLabel.CLASS]
 
     created_classes = get_qualified_names(class_calls)
 
@@ -926,8 +926,8 @@ class WeirdGenerics<T,U,V> {
 
     run_updater(java_edge_cases_project, mock_ingestor, skip_if_missing="java")
 
-    all_calls = mock_ingestor.ensure_node_batch.call_args_list
-    class_calls = [call for call in all_calls if call[0][0] == NodeLabel.CLASS]
+    all_calls = get_nodes(mock_ingestor)
+    class_calls = [call for call in all_calls if call.label == NodeLabel.CLASS]
 
     created_classes = get_qualified_names(class_calls)
 
@@ -1075,8 +1075,8 @@ public class BoundaryValues {
 
     run_updater(java_edge_cases_project, mock_ingestor, skip_if_missing="java")
 
-    all_calls = mock_ingestor.ensure_node_batch.call_args_list
-    class_calls = [call for call in all_calls if call[0][0] == NodeLabel.CLASS]
+    all_calls = get_nodes(mock_ingestor)
+    class_calls = [call for call in all_calls if call.label == NodeLabel.CLASS]
 
     created_classes = get_qualified_names(class_calls)
 
@@ -1209,8 +1209,8 @@ public class CommentEdgeCases {
 
     run_updater(java_edge_cases_project, mock_ingestor, skip_if_missing="java")
 
-    all_calls = mock_ingestor.ensure_node_batch.call_args_list
-    class_calls = [call for call in all_calls if call[0][0] == NodeLabel.CLASS]
+    all_calls = get_nodes(mock_ingestor)
+    class_calls = [call for call in all_calls if call.label == NodeLabel.CLASS]
 
     created_classes = get_qualified_names(class_calls)
 
@@ -1285,8 +1285,8 @@ def test_whitespace_edge_cases(
 
     run_updater(java_edge_cases_project, mock_ingestor, skip_if_missing="java")
 
-    all_calls = mock_ingestor.ensure_node_batch.call_args_list
-    class_calls = [call for call in all_calls if call[0][0] == NodeLabel.CLASS]
+    all_calls = get_nodes(mock_ingestor)
+    class_calls = [call for call in all_calls if call.label == NodeLabel.CLASS]
 
     created_classes = get_qualified_names(class_calls)
 
@@ -1443,8 +1443,8 @@ class AnotherClassInSameFile {
 
     run_updater(java_edge_cases_project, mock_ingestor, skip_if_missing="java")
 
-    all_calls = mock_ingestor.ensure_node_batch.call_args_list
-    class_calls = [call for call in all_calls if call[0][0] == NodeLabel.CLASS]
+    all_calls = get_nodes(mock_ingestor)
+    class_calls = [call for call in all_calls if call.label == NodeLabel.CLASS]
 
     created_classes = get_qualified_names(class_calls)
 
@@ -1685,10 +1685,10 @@ public class NestedClassModifiers {
 
     run_updater(java_edge_cases_project, mock_ingestor, skip_if_missing="java")
 
-    all_calls = mock_ingestor.ensure_node_batch.call_args_list
-    class_calls = [call for call in all_calls if call[0][0] == NodeLabel.CLASS]
-    interface_calls = [call for call in all_calls if call[0][0] == NodeLabel.INTERFACE]
-    enum_calls = [call for call in all_calls if call[0][0] == NodeLabel.ENUM]
+    all_calls = get_nodes(mock_ingestor)
+    class_calls = [call for call in all_calls if call.label == NodeLabel.CLASS]
+    interface_calls = [call for call in all_calls if call.label == NodeLabel.INTERFACE]
+    enum_calls = [call for call in all_calls if call.label == NodeLabel.ENUM]
 
     created_classes = get_qualified_names(class_calls)
     created_interfaces = get_qualified_names(interface_calls)
@@ -1905,9 +1905,9 @@ public class GenericVarianceEdgeCases {
 
     run_updater(java_edge_cases_project, mock_ingestor, skip_if_missing="java")
 
-    all_calls = mock_ingestor.ensure_node_batch.call_args_list
-    class_calls = [call for call in all_calls if call[0][0] == NodeLabel.CLASS]
-    interface_calls = [call for call in all_calls if call[0][0] == NodeLabel.INTERFACE]
+    all_calls = get_nodes(mock_ingestor)
+    class_calls = [call for call in all_calls if call.label == NodeLabel.CLASS]
+    interface_calls = [call for call in all_calls if call.label == NodeLabel.INTERFACE]
 
     created_classes = get_qualified_names(class_calls)
     get_qualified_names(interface_calls)
@@ -2152,10 +2152,10 @@ class ImplementingClass implements AnnotatedInterface {
 
     run_updater(java_edge_cases_project, mock_ingestor, skip_if_missing="java")
 
-    all_calls = mock_ingestor.ensure_node_batch.call_args_list
-    class_calls = [call for call in all_calls if call[0][0] == NodeLabel.CLASS]
-    enum_calls = [call for call in all_calls if call[0][0] == NodeLabel.ENUM]
-    interface_calls = [call for call in all_calls if call[0][0] == NodeLabel.INTERFACE]
+    all_calls = get_nodes(mock_ingestor)
+    class_calls = [call for call in all_calls if call.label == NodeLabel.CLASS]
+    enum_calls = [call for call in all_calls if call.label == NodeLabel.ENUM]
+    interface_calls = [call for call in all_calls if call.label == NodeLabel.INTERFACE]
 
     created_classes = get_qualified_names(class_calls)
     created_enums = get_qualified_names(enum_calls)
@@ -2414,8 +2414,8 @@ public class OperatorEdgeCases {
 
     run_updater(java_edge_cases_project, mock_ingestor, skip_if_missing="java")
 
-    all_calls = mock_ingestor.ensure_node_batch.call_args_list
-    class_calls = [call for call in all_calls if call[0][0] == NodeLabel.CLASS]
+    all_calls = get_nodes(mock_ingestor)
+    class_calls = [call for call in all_calls if call.label == NodeLabel.CLASS]
 
     created_classes = get_qualified_names(class_calls)
 

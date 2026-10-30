@@ -57,9 +57,9 @@ def test_destructured_require_resolves_the_commonjs_condition(
     run_updater(dual_package_workspace, mock_ingestor, skip_if_missing="javascript")
 
     targets = {
-        call.args[2][2]
+        call.target
         for call in get_relationships(mock_ingestor, "IMPORTS")
-        if "app.main" in call.args[0][2]
+        if "app.main" in call.source
     }
 
     assert any(target.endswith("cjs.admin") for target in targets), targets

@@ -4,14 +4,14 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from codebase_rag import constants as cs
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_relationships, run_updater
 
 
 def _calls(mock_ingestor: MagicMock) -> set[tuple[str, str]]:
     out: set[tuple[str, str]] = set()
-    for c in mock_ingestor.ensure_relationship_batch.call_args_list:
-        if c.args[1] == cs.RelationshipType.CALLS:
-            out.add((c.args[0][2], c.args[2][2]))
+    for c in get_relationships(mock_ingestor):
+        if c.rel_type == cs.RelationshipType.CALLS:
+            out.add((c.source, c.target))
     return out
 
 

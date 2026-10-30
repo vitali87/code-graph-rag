@@ -16,16 +16,20 @@ from codebase_rag.parsers.type_facts import (
     type_reference_names,
 )
 from codebase_rag.sync.checkout_state import state_file
-from codebase_rag.tests.conftest import create_and_run_updater, recorded_edges
+from codebase_rag.tests.conftest import (
+    create_and_run_updater,
+    get_nodes,
+    recorded_edges,
+)
 
 
 def _props(mock: MagicMock, label: str) -> dict[str, dict]:
     """Properties per qualified name."""
     merged: dict[str, dict] = {}
-    for c in mock.ensure_node_batch.call_args_list:
-        if str(c.args[0]) != label:
+    for c in get_nodes(mock):
+        if str(c.label) != label:
             continue
-        merged.setdefault(c.args[1][cs.KEY_QUALIFIED_NAME], {}).update(c.args[1])
+        merged.setdefault(c.properties[cs.KEY_QUALIFIED_NAME], {}).update(c.properties)
     return merged
 
 

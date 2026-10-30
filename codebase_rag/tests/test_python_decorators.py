@@ -194,7 +194,7 @@ def test_simple_function_decorators(
     function_calls = get_nodes(mock_ingestor, "Function")
 
     for call in function_calls:
-        func_props = call[0][1]
+        func_props = call.properties
         func_qn = func_props["qualified_name"]
 
         if func_qn in expected_decorators:
@@ -238,7 +238,7 @@ def test_class_decorators(decorator_project: Path, mock_ingestor: MagicMock) -> 
     class_calls = get_nodes(mock_ingestor, "Class")
 
     for call in class_calls:
-        class_props = call[0][1]
+        class_props = call.properties
         class_qn = class_props["qualified_name"]
 
         if class_qn in expected_decorators:
@@ -301,7 +301,7 @@ def test_method_decorators(decorator_project: Path, mock_ingestor: MagicMock) ->
     method_calls = get_nodes(mock_ingestor, "Method")
 
     for call in method_calls:
-        method_props = call[0][1]
+        method_props = call.properties
         method_qn = method_props["qualified_name"]
 
         if method_qn in expected_decorators:
@@ -353,7 +353,7 @@ def test_nested_function_decorators(
 
     nested_func_found = False
     for call in function_calls:
-        func_props = call[0][1]
+        func_props = call.properties
         if func_props["qualified_name"] == expected_qn:
             nested_func_found = True
 
@@ -404,7 +404,7 @@ def test_decorator_with_complex_arguments(
 
         func_found = False
         for call in function_calls:
-            func_props = call[0][1]
+            func_props = call.properties
             if func_props["qualified_name"] == expected_qn:
                 func_found = True
 
@@ -443,7 +443,7 @@ def test_empty_decorators_for_undecorated_functions(
     for expected_qn in undecorated_functions:
         func_found = False
         for call in function_calls:
-            func_props = call[0][1]
+            func_props = call.properties
             if func_props["qualified_name"] == expected_qn:
                 func_found = True
 

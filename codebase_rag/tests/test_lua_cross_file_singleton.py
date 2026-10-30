@@ -140,8 +140,8 @@ def test_lua_singleton_pattern_cross_file_calls(
 
     found_calls = set()
     for call in actual_calls:
-        caller_qn = call.args[0][2]
-        callee_qn = call.args[2][2]
+        caller_qn = call.source
+        callee_qn = call.target
 
         if caller_qn.startswith(f"{project_name}."):
             caller_short = caller_qn[len(project_name) + 1 :]

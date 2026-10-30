@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 
 from codebase_rag import constants as cs
 from codebase_rag.parsers.python import variable_analyzer
-from codebase_rag.tests.conftest import create_and_run_updater
+from codebase_rag.tests.conftest import create_and_run_updater, get_relationships
 from codebase_rag.types_defs import ASTNode
 
 _SOURCE = """\
@@ -44,9 +44,9 @@ def dispatch():
 def _calls(repo: Path, mock: MagicMock) -> set[tuple[str, str]]:
     prefix = f"{repo.name}."
     return {
-        (str(c.args[0][2]).removeprefix(prefix), str(c.args[2][2]).removeprefix(prefix))
-        for c in mock.ensure_relationship_batch.call_args_list
-        if c.args[1] == cs.RelationshipType.CALLS.value
+        (str(c.source).removeprefix(prefix), str(c.target).removeprefix(prefix))
+        for c in get_relationships(mock)
+        if c.rel_type == cs.RelationshipType.CALLS.value
     }
 
 

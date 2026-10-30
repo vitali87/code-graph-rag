@@ -15,6 +15,7 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag.parsers.ast_grep_tier import AstGrepTier
+from codebase_rag.tests.conftest import get_nodes
 
 _WALLET = """\
 // SPDX-License-Identifier: MIT
@@ -55,8 +56,8 @@ def nodes(tmp_path_factory: pytest.TempPathFactory) -> _Nodes:
     mock = MagicMock()
     AstGrepTier(mock, root, "proj").process_file(path, {})
     out: _Nodes = {}
-    for call in mock.ensure_node_batch.call_args_list:
-        label, props = str(call.args[0]), call.args[1]
+    for call in get_nodes(mock):
+        label, props = str(call.label), call.properties
         if label in (cs.NodeLabel.METHOD.value, cs.NodeLabel.FUNCTION.value):
             qn = str(props[cs.KEY_QUALIFIED_NAME]).removeprefix("proj.Wallet_sol.")
             out[qn] = (label, props[cs.KEY_START_LINE], props[cs.KEY_END_LINE])

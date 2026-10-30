@@ -10,7 +10,11 @@ import collections
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag.doctor import graph_audit as ga
-from codebase_rag.tests.conftest import recorded_nodes, recorded_relationships
+from codebase_rag.tests.conftest import (
+    get_nodes,
+    recorded_nodes,
+    recorded_relationships,
+)
 from codebase_rag.types_defs import GraphNodeRecord, GraphRelRecord, PropertyDict
 
 QN = cs.UniqueKeyType.QUALIFIED_NAME.value
@@ -347,9 +351,9 @@ class TestExportNameCollision:
         run_updater(temp_repo, mock_ingestor)
 
         function_qns = {
-            c.args[1]["qualified_name"]
-            for c in mock_ingestor.ensure_node_batch.call_args_list
-            if str(c.args[0]) == cs.NodeLabel.FUNCTION.value
+            c.properties["qualified_name"]
+            for c in get_nodes(mock_ingestor)
+            if str(c.label) == cs.NodeLabel.FUNCTION.value
         }
         module_level = [
             qn

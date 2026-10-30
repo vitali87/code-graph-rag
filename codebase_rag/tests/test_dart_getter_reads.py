@@ -14,7 +14,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.tests.conftest import recorded_triples
+from codebase_rag.tests.conftest import get_nodes, recorded_triples
 
 REFERENCES = cs.RelationshipType.REFERENCES.value
 
@@ -53,9 +53,11 @@ def test_getter_is_marked_is_property(tmp_path: Path) -> None:
         {"m.dart": "class Money {\n  bool get enabled => true;\n}\n"},
     )
     props: dict[str, dict] = {}
-    for c in mock.ensure_node_batch.call_args_list:
-        if c.args[0] == cs.NodeLabel.METHOD:
-            props.setdefault(c.args[1][cs.KEY_QUALIFIED_NAME], {}).update(c.args[1])
+    for c in get_nodes(mock):
+        if c.label == cs.NodeLabel.METHOD:
+            props.setdefault(c.properties[cs.KEY_QUALIFIED_NAME], {}).update(
+                c.properties
+            )
     enabled = next(v for k, v in props.items() if k.endswith("Money.enabled"))
     assert enabled.get(cs.KEY_IS_PROPERTY) is True, enabled
 

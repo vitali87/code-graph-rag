@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.tests.conftest import get_relationships
+from codebase_rag.tests.conftest import get_nodes, get_relationships
 
 SOURCE = """
 const obj = {
@@ -19,9 +19,9 @@ module.exports = { obj }
 
 def _function_nodes(mock_ingestor: MagicMock) -> dict[str, str]:
     return {
-        c.args[1]["qualified_name"]: c.args[1].get("name")
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if str(c.args[0]) == "Function"
+        c.properties["qualified_name"]: c.properties.get("name")
+        for c in get_nodes(mock_ingestor)
+        if str(c.label) == "Function"
     }
 
 
@@ -48,5 +48,5 @@ def test_computed_symbol_member_keeps_its_bracketed_name(
     calls = get_relationships(mock_ingestor, "CALLS")
     helper_qn = f"{project}.obj.helper"
     assert any(
-        call.args[0][2] == member_qn and call.args[2][2] == helper_qn for call in calls
-    ), [c.args for c in calls]
+        call.source == member_qn and call.target == helper_qn for call in calls
+    ), [c for c in calls]

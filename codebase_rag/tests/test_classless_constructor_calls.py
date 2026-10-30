@@ -4,15 +4,15 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from codebase_rag import constants as cs
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_relationships, run_updater
 
 
 def _edges(mock_ingestor: MagicMock, rel: str) -> list[tuple[str, str, str]]:
     # edges of a given type as (caller_qn, callee_label, callee_qn).
     out: list[tuple[str, str, str]] = []
-    for c in mock_ingestor.ensure_relationship_batch.call_args_list:
-        if c.args[1] == rel:
-            out.append((c.args[0][2], c.args[2][0], c.args[2][2]))
+    for c in get_relationships(mock_ingestor):
+        if c.rel_type == rel:
+            out.append((c.source, c.target_label, c.target))
     return out
 
 

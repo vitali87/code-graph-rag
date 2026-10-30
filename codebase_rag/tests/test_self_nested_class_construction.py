@@ -31,7 +31,7 @@ def _source_target_pairs(
     mock_ingestor: MagicMock, rel: RelationshipType
 ) -> set[tuple[str, str]]:
     return {
-        (call[0][0][2], call[0][2][2])
+        (call.source, call.target)
         for call in get_relationships(mock_ingestor, rel.value)
     }
 
@@ -39,7 +39,7 @@ def _source_target_pairs(
 def _labelled_calls(mock_ingestor: MagicMock) -> set[tuple[str, str, str]]:
     """(source qn, TARGET LABEL, target qn) for every CALLS edge."""
     return {
-        (call[0][0][2], call[0][2][0], call[0][2][2])
+        (call.source, call.target_label, call.target)
         for call in get_relationships(mock_ingestor, RelationshipType.CALLS.value)
     }
 

@@ -35,7 +35,7 @@ def _targets(project: Path, mock_ingestor: MagicMock, source: str) -> set[str]:
     GraphUpdater(
         ingestor=mock_ingestor, repo_path=project, parsers=parsers, queries=queries
     ).run()
-    return {c.args[2][2] for c in get_relationships(mock_ingestor, "CALLS")}
+    return {c.target for c in get_relationships(mock_ingestor, "CALLS")}
 
 
 def test_nested_call_is_typed_from_its_selected_overload(

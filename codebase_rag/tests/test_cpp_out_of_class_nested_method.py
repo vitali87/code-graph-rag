@@ -13,6 +13,7 @@ from unittest.mock import MagicMock
 from codebase_rag import constants as cs
 from codebase_rag.doctor import graph_audit as ga
 from codebase_rag.tests.conftest import (
+    get_nodes,
     get_relationships,
     recorded_nodes,
     recorded_relationships,
@@ -62,9 +63,9 @@ def test_out_of_line_method_of_nested_class_binds_to_real_class(
     run_updater(temp_repo, mock_ingestor)
 
     class_qns = {
-        c.args[1]["qualified_name"]
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if str(c.args[0]) == cs.NodeLabel.CLASS.value
+        c.properties["qualified_name"]
+        for c in get_nodes(mock_ingestor)
+        if str(c.label) == cs.NodeLabel.CLASS.value
     }
     # The forward-declared member also mints a dot-form Class node
     # (Outer.Inner); the defined class keeps the literal Outer::Inner
@@ -74,7 +75,7 @@ def test_out_of_line_method_of_nested_class_binds_to_real_class(
     )
 
     method_parents = {
-        str(call.args[2][2]): str(call.args[0][2])
+        str(call.target): str(call.source)
         for call in get_relationships(
             mock_ingestor, cs.RelationshipType.DEFINES_METHOD.value
         )

@@ -89,7 +89,7 @@ public class UnusedThing
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
     imports = {
-        (str(c.args[0][0]), str(c.args[0][2]), str(c.args[2][0]), str(c.args[2][2]))
+        (str(c.source_label), str(c.source), str(c.target_label), str(c.target))
         for c in get_relationships(mock_ingestor, "IMPORTS")
     }
     installer = next(
@@ -164,7 +164,7 @@ public class Provider
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
     imports = {
-        (str(c.args[0][2]), str(c.args[2][0]), str(c.args[2][2]))
+        (str(c.source), str(c.target_label), str(c.target))
         for c in get_relationships(mock_ingestor, "IMPORTS")
     }
     wiring = next((f for f, _tl, _t in imports if f.endswith(".HostApp.Wiring")), None)
@@ -218,7 +218,7 @@ public class RemoteStorageProvider
     )
     assert emitted == 1
     edges = {
-        (str(c.args[0][2]), str(c.args[2][0]), str(c.args[2][2]))
+        (str(c.source), str(c.target_label), str(c.target))
         for c in get_relationships(mock_ingestor, "IMPORTS")
     }
     assert (installer_qn, "Module", provider_qn) in edges, edges
@@ -274,7 +274,7 @@ public class UnusedThing
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
     imports = {
-        (str(c.args[0][2]), str(c.args[2][0]), str(c.args[2][2]))
+        (str(c.source), str(c.target_label), str(c.target))
         for c in get_relationships(mock_ingestor, "IMPORTS")
     }
     holder = next((f for f, _tl, _t in imports if f.endswith(".HostApp.Holder")), None)
@@ -355,7 +355,7 @@ public class RemoteStorageProvider
     handler.dispatch(FileModifiedEvent(str(installer)))
 
     imports = {
-        (str(c.args[0][2]), str(c.args[2][2]))
+        (str(c.source), str(c.target))
         for c in get_relationships(mock_ingestor, "IMPORTS")
     }
     assert any(
@@ -408,7 +408,7 @@ public class RemoteStorageProvider
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
     imports = {
-        (str(c.args[0][2]), str(c.args[2][2]))
+        (str(c.source), str(c.target))
         for c in get_relationships(mock_ingestor, "IMPORTS")
     }
     assert not any(
@@ -447,7 +447,7 @@ public delegate void StorageChanged(string path);
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
     imports = {
-        (str(c.args[0][2]), str(c.args[2][0]), str(c.args[2][2]))
+        (str(c.source), str(c.target_label), str(c.target))
         for c in get_relationships(mock_ingestor, "IMPORTS")
     }
     assert any(
@@ -524,7 +524,7 @@ public class RemoteStorageProvider
     handler.dispatch(FileModifiedEvent(str(provider)))
 
     imports = {
-        (str(c.args[0][2]), str(c.args[2][2]))
+        (str(c.source), str(c.target))
         for c in get_relationships(mock_ingestor, "IMPORTS")
     }
     assert any(
@@ -572,7 +572,7 @@ public class RemoteStorageProvider
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
     imports = {
-        (str(c.args[0][2]), str(c.args[2][2]))
+        (str(c.source), str(c.target))
         for c in get_relationships(mock_ingestor, "IMPORTS")
     }
     assert not any(
@@ -645,7 +645,7 @@ public class RemoteStorageProvider
     handler.dispatch(FileDeletedEvent(str(provider)))
 
     imports = {
-        (str(c.args[0][2]), str(c.args[2][0]), str(c.args[2][2]))
+        (str(c.source), str(c.target_label), str(c.target))
         for c in get_relationships(mock_ingestor, "IMPORTS")
     }
     assert not any(
@@ -689,7 +689,7 @@ public class RemoteStorageProvider
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
     imports = {
-        (str(c.args[0][2]), str(c.args[2][0]), str(c.args[2][2]))
+        (str(c.source), str(c.target_label), str(c.target))
         for c in get_relationships(mock_ingestor, "IMPORTS")
     }
     assert any(

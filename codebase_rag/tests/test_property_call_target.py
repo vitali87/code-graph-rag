@@ -39,11 +39,9 @@ def prop_project(temp_repo: Path) -> Path:
 
 def _getter_edge_lines(mock_ingestor: MagicMock) -> list[int]:
     return [
-        call.kwargs["properties"]["line"]
+        call.properties["line"]
         for call in get_relationships(mock_ingestor, "CALLS")
-        if call.args[2][2].endswith("Config.value")
-        and "properties" in call.kwargs
-        and "line" in call.kwargs["properties"]
+        if call.target.endswith("Config.value") and "line" in call.properties
     ]
 
 

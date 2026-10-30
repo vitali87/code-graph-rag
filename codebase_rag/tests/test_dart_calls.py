@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.tests.conftest import recorded_edges, run_updater
+from codebase_rag.tests.conftest import get_nodes, recorded_edges, run_updater
 
 SKIP = "dart"
 
@@ -104,9 +104,9 @@ def test_named_constructor_registers_and_receives_call(
 ):
     run_updater(dart_calls_project, mock_ingestor, skip_if_missing=SKIP)
     methods = {
-        str(c.args[1].get("qualified_name"))
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if str(c.args[0]) == cs.NodeLabel.METHOD.value
+        str(c.properties.get("qualified_name"))
+        for c in get_nodes(mock_ingestor)
+        if str(c.label) == cs.NodeLabel.METHOD.value
     }
     # the grammar's name field on constructor_signature is the CLASS name;
     # the ctor's declared name is its LAST identifier

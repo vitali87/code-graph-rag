@@ -18,9 +18,7 @@ def csharp_project(temp_repo: Path) -> Path:
 
 
 def _pairs(mock_ingestor: MagicMock, rel_type: str) -> set[tuple[str, str]]:
-    return {
-        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, rel_type)
-    }
+    return {(c.source, c.target) for c in get_relationships(mock_ingestor, rel_type)}
 
 
 def test_object_creation_emits_instantiates_and_constructor_call(

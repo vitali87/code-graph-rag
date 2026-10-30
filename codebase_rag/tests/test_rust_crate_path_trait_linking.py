@@ -12,7 +12,11 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag.constants import RelationshipType
-from codebase_rag.tests.conftest import create_and_run_updater, get_relationships
+from codebase_rag.tests.conftest import (
+    create_and_run_updater,
+    get_nodes,
+    get_relationships,
+)
 
 _MAIN_RS = """\
 mod flags;
@@ -61,7 +65,7 @@ impl Flag for BeforeContext {
 
 def _pairs(mock_ingestor: MagicMock, rel: str) -> set[tuple[str, str]]:
     return {
-        (call[0][0][2], call[0][2][2]) for call in get_relationships(mock_ingestor, rel)
+        (call.source, call.target) for call in get_relationships(mock_ingestor, rel)
     }
 
 
@@ -6167,11 +6171,9 @@ def test_two_bodied_cfg_twin_mods_merge_into_one_module_node(
     create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
     base = "rs_cfg_twin_merged_node.src"
     module_qn_writes = [
-        props["qualified_name"]
-        for label, props in (
-            c[0] for c in mock_ingestor.ensure_node_batch.call_args_list
-        )
-        if label == "Module" and props["qualified_name"].startswith(f"{base}.foo.run")
+        n.properties["qualified_name"]
+        for n in get_nodes(mock_ingestor, "Module")
+        if str(n.properties["qualified_name"]).startswith(f"{base}.foo.run")
     ]
     # Both twins must have been ingested, and both must have written the
     # bare qn: one node identity, no @<start_line> variants.
@@ -6180,11 +6182,7 @@ def test_two_bodied_cfg_twin_mods_merge_into_one_module_node(
 
 def _module_qns(mock_ingestor: MagicMock) -> set[str]:
     return {
-        props["qualified_name"]
-        for label, props in (
-            c[0] for c in mock_ingestor.ensure_node_batch.call_args_list
-        )
-        if label == "Module"
+        str(n.properties["qualified_name"]) for n in get_nodes(mock_ingestor, "Module")
     }
 
 

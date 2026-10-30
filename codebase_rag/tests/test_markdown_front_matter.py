@@ -25,6 +25,7 @@ import pytest
 
 from codebase_rag.parsers import document_tier
 from codebase_rag.parsers.document_tier import parse_front_matter
+from codebase_rag.tests.conftest import get_nodes
 
 
 class TestParsing:
@@ -396,10 +397,10 @@ class TestIngestion:
         run_updater(project, mock_ingestor)
 
         modules = [
-            call.args[1]
-            for call in mock_ingestor.ensure_node_batch.call_args_list
-            if call.args[0] == NodeLabel.MODULE
-            and str(call.args[1].get("qualified_name", "")).endswith("plan_md")
+            call.properties
+            for call in get_nodes(mock_ingestor)
+            if call.label == NodeLabel.MODULE
+            and str(call.properties.get("qualified_name", "")).endswith("plan_md")
         ]
 
         assert modules, "no Module node emitted for plan.md"
@@ -439,10 +440,10 @@ class TestIngestion:
         run_updater(project, mock_ingestor)
 
         modules = [
-            call.args[1]
-            for call in mock_ingestor.ensure_node_batch.call_args_list
-            if call.args[0] == NodeLabel.MODULE
-            and str(call.args[1].get("qualified_name", "")).endswith("notes_md")
+            call.properties
+            for call in get_nodes(mock_ingestor)
+            if call.label == NodeLabel.MODULE
+            and str(call.properties.get("qualified_name", "")).endswith("notes_md")
         ]
 
         assert modules, "no Module node emitted for notes.md"
@@ -470,10 +471,10 @@ class TestIngestion:
 
         def module_props(ingestor: MagicMock) -> list[dict]:
             return [
-                call.args[1]
-                for call in ingestor.ensure_node_batch.call_args_list
-                if call.args[0] == NodeLabel.MODULE
-                and str(call.args[1].get("qualified_name", "")).endswith("doc_md")
+                call.properties
+                for call in get_nodes(ingestor)
+                if call.label == NodeLabel.MODULE
+                and str(call.properties.get("qualified_name", "")).endswith("doc_md")
             ]
 
         project = temp_repo / "md_reindex"

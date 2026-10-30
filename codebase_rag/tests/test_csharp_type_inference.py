@@ -21,7 +21,7 @@ def csharp_project(temp_repo: Path) -> Path:
 
 
 def _call_targets(mock_ingestor: MagicMock) -> set[str]:
-    return {c.args[2][2] for c in get_relationships(mock_ingestor, "CALLS")}
+    return {c.target for c in get_relationships(mock_ingestor, "CALLS")}
 
 
 def test_local_from_new_resolves_member_call(
@@ -117,12 +117,9 @@ public class Q {
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
     instantiates = {
-        (c.args[0][2], c.args[2][2])
-        for c in get_relationships(mock_ingestor, "INSTANTIATES")
+        (c.source, c.target) for c in get_relationships(mock_ingestor, "INSTANTIATES")
     }
-    calls = {
-        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
-    }
+    calls = {(c.source, c.target) for c in get_relationships(mock_ingestor, "CALLS")}
     assert any(
         source.endswith("Q.RunAlias") and target.endswith("Zeta.Widget")
         for source, target in instantiates
@@ -457,9 +454,7 @@ namespace N {
     )
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
-    calls = {
-        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
-    }
+    calls = {(c.source, c.target) for c in get_relationships(mock_ingestor, "CALLS")}
     assert any(
         source.endswith("N.App.Run(Holder)") and target.endswith("N.Widget.Ping")
         for source, target in calls
@@ -682,9 +677,7 @@ public class Q {
     )
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
-    calls = {
-        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
-    }
+    calls = {(c.source, c.target) for c in get_relationships(mock_ingestor, "CALLS")}
     assert any(
         source.endswith("Q.RunVerbatim") and target.endswith("@event.Fire")
         for source, target in calls

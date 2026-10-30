@@ -883,11 +883,11 @@ def test_flask_no_calls_to_class_nodes(
 
     function_calls = get_relationships(mock_ingestor, "CALLS")
 
-    class_calls = [call for call in function_calls if call.args[2][0] == "Class"]
+    class_calls = [call for call in function_calls if call.target_label == "Class"]
 
     assert not class_calls, (
         f"Expected no CALLS edges to Class nodes, found: "
-        f"{[(c.args[0][2], c.args[2][2]) for c in class_calls]}"
+        f"{[(c.source, c.target) for c in class_calls]}"
     )
 
 
@@ -903,13 +903,13 @@ def test_flask_controller_imports(
     auth_controller_imports = [
         call
         for call in import_calls
-        if "auth_controller" in call.args[0][2]
-        and ("models" in call.args[2][2] or "utils" in call.args[2][2])
+        if "auth_controller" in call.source
+        and ("models" in call.target or "utils" in call.target)
     ]
 
     assert len(auth_controller_imports) >= 2, (
         f"Expected AuthController to import models and utils modules, found: "
-        f"{[(c.args[0][2], c.args[2][2]) for c in auth_controller_imports]}"
+        f"{[(c.source, c.target) for c in auth_controller_imports]}"
     )
 
 
@@ -925,13 +925,13 @@ def test_flask_route_controller_calls(
     route_controller_calls = [
         call
         for call in function_calls
-        if "auth_route" in call.args[0][2]
-        and "auth_controller.AuthController.sign_in" in call.args[2][2]
+        if "auth_route" in call.source
+        and "auth_controller.AuthController.sign_in" in call.target
     ]
 
     assert route_controller_calls, (
         f"Expected auth route to call AuthController.sign_in, found: "
-        f"{[(c.args[0][2], c.args[2][2]) for c in route_controller_calls]}"
+        f"{[(c.source, c.target) for c in route_controller_calls]}"
     )
 
 
@@ -942,22 +942,22 @@ def test_typescript_structure_detection(
     """Test detection of TypeScript project structure."""
     run_updater(todo_app_project, mock_ingestor)
 
-    all_calls = cast(MagicMock, mock_ingestor.ensure_relationship_batch).call_args_list
+    all_calls = get_relationships(mock_ingestor)
 
     module_relationships = [
         call
         for call in all_calls
-        if call.args[1] == "CONTAINS_MODULE"
-        and "frontend" in call.args[0][2]
+        if call.rel_type == "CONTAINS_MODULE"
+        and "frontend" in call.source
         and any(
-            ts_pattern in call.args[2][2]
+            ts_pattern in call.target
             for ts_pattern in [".tsx", ".ts", "task-card", "auth-store"]
         )
     ]
 
     assert len(module_relationships) >= 2, (
         f"Expected multiple TypeScript modules to be detected, found: "
-        f"{[(c.args[0][2], c.args[2][2]) for c in module_relationships]}"
+        f"{[(c.source, c.target) for c in module_relationships]}"
     )
 
 
@@ -973,29 +973,27 @@ def test_typescript_hook_usage(
     ts_function_calls = [
         call
         for call in function_calls
-        if any(
-            ts_pattern in call.args[0][2] for ts_pattern in ["frontend", ".tsx", ".ts"]
-        )
+        if any(ts_pattern in call.source for ts_pattern in ["frontend", ".tsx", ".ts"])
     ]
 
     print(f"TypeScript function calls found: {len(ts_function_calls)}")
     for call in ts_function_calls[:10]:
-        print(f"  {call.args[0][2]} -> {call.args[2][2]}")
+        print(f"  {call.source} -> {call.target}")
 
     hook_calls = [
         call
         for call in function_calls
-        if ("task-card" in call.args[0][2] or "task-list" in call.args[0][2])
+        if ("task-card" in call.source or "task-list" in call.source)
         and (
-            "useAuthStore" in call.args[2][2]
-            or "useDeleteTaskMutation" in call.args[2][2]
-            or "useGetTasksOnUserQuery" in call.args[2][2]
+            "useAuthStore" in call.target
+            or "useDeleteTaskMutation" in call.target
+            or "useGetTasksOnUserQuery" in call.target
         )
     ]
 
     assert len(hook_calls) >= 0, (
         f"Expected components to use React hooks, found: "
-        f"{[(c.args[0][2], c.args[2][2]) for c in hook_calls]}"
+        f"{[(c.source, c.target) for c in hook_calls]}"
     )
 
 
@@ -1011,30 +1009,27 @@ def test_api_service_calls(
     api_related_calls = [
         call
         for call in function_calls
-        if any(pattern in call.args[0][2] for pattern in ["api", "queries", "services"])
-        or any(pattern in call.args[2][2] for pattern in ["api", "queries", "services"])
+        if any(pattern in call.source for pattern in ["api", "queries", "services"])
+        or any(pattern in call.target for pattern in ["api", "queries", "services"])
     ]
 
     print(f"API-related function calls found: {len(api_related_calls)}")
     for call in api_related_calls[:10]:
-        print(f"  {call.args[0][2]} -> {call.args[2][2]}")
+        print(f"  {call.source} -> {call.target}")
 
     api_service_calls = [
         call
         for call in function_calls
-        if ("queries" in call.args[0][2])
+        if ("queries" in call.source)
         and (
-            "api" in call.args[2][2]
-            and (
-                "getTasksOnUserAPI" in call.args[2][2]
-                or "getTagsAPI" in call.args[2][2]
-            )
+            "api" in call.target
+            and ("getTasksOnUserAPI" in call.target or "getTagsAPI" in call.target)
         )
     ]
 
     assert len(api_service_calls) >= 0, (
         f"Expected queries to call API services, found: "
-        f"{[(c.args[0][2], c.args[2][2]) for c in api_service_calls]}"
+        f"{[(c.source, c.target) for c in api_service_calls]}"
     )
 
 
@@ -1093,11 +1088,11 @@ def test_schema_inheritance_detection(
     schema_inheritance = [
         call
         for call in inheritance_calls
-        if ("UserSchema" in call.args[0][2] and "PlainUserSchema" in call.args[2][2])
-        or ("TaskSchema" in call.args[0][2] and "PlainTaskSchema" in call.args[2][2])
+        if ("UserSchema" in call.source and "PlainUserSchema" in call.target)
+        or ("TaskSchema" in call.source and "PlainTaskSchema" in call.target)
     ]
 
     assert len(schema_inheritance) >= 2, (
         f"Expected schema inheritance detection, found: "
-        f"{[(c.args[0][2], c.args[2][2]) for c in schema_inheritance]}"
+        f"{[(c.source, c.target) for c in schema_inheritance]}"
     )

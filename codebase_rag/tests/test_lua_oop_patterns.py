@@ -158,7 +158,7 @@ local breed = myDog:getBreed()  -- Should call Dog's getBreed
     main_qn = f"{project.name}.main"
 
     created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
-    fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
+    fn_qns = {c.properties["qualified_name"] for c in created_functions}
 
     assert f"{animal_qn}.Animal:new" in fn_qns or f"{animal_qn}.Animal.new" in fn_qns
     assert (
@@ -244,7 +244,7 @@ local quotient = calc.divide(20, 5)
     main_qn = f"{project.name}.main"
 
     created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
-    fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
+    fn_qns = {c.properties["qualified_name"] for c in created_functions}
 
     assert f"{calc_qn}.Calculator.add" in fn_qns
     assert f"{calc_qn}.Calculator.subtract" in fn_qns
@@ -331,7 +331,7 @@ local circle2 = shapes.createCircle(0, 0, 10)
     main_qn = f"{project.name}.main"
 
     created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
-    fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
+    fn_qns = {c.properties["qualified_name"] for c in created_functions}
 
     assert (
         f"{shape_qn}.ShapePrototype:clone" in fn_qns
@@ -462,7 +462,7 @@ local name = user:getName()  -- From User itself
     main_qn = f"{project.name}.main"
 
     created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
-    fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
+    fn_qns = {c.properties["qualified_name"] for c in created_functions}
 
     assert (
         f"{printable_qn}.Printable:toString" in fn_qns
@@ -562,7 +562,7 @@ config2:reset()
     main_qn = f"{project.name}.main"
 
     created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
-    fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
+    fn_qns = {c.properties["qualified_name"] for c in created_functions}
 
     assert (
         f"{config_qn}.Config:getInstance" in fn_qns

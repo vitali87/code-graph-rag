@@ -15,7 +15,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.tests.conftest import create_and_run_updater
+from codebase_rag.tests.conftest import create_and_run_updater, get_relationships
 
 _JS_SOURCE = (
     "function validate(config) { return !!config; }\n"
@@ -90,19 +90,17 @@ def _edges(repo: Path, mock: MagicMock, caller: str) -> dict[tuple[str, str], st
     # (relationship, callee) -> resolution, for edges out of `caller`.
     prefix = f"{repo.name}."
     out: dict[tuple[str, str], str] = {}
-    for c in mock.ensure_relationship_batch.call_args_list:
-        rel = str(c.args[1])
+    for c in get_relationships(mock):
+        rel = str(c.rel_type)
         if rel not in (
             cs.RelationshipType.CALLS.value,
             cs.RelationshipType.REFERENCES.value,
         ):
             continue
-        if str(c.args[0][2]).removeprefix(prefix) != caller:
+        if str(c.source).removeprefix(prefix) != caller:
             continue
-        props = (
-            c.kwargs.get("properties") or (c.args[3] if len(c.args) > 3 else {}) or {}
-        )
-        out[(rel, str(c.args[2][2]).removeprefix(prefix))] = str(
+        props = c.properties
+        out[(rel, str(c.target).removeprefix(prefix))] = str(
             props.get(cs.KEY_RESOLUTION)
         )
     return out

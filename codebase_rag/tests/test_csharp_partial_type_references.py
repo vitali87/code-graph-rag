@@ -115,7 +115,7 @@ def _cs_sources(root: Path) -> dict[str, str]:
 
 
 def _edges(mock_ingestor: MagicMock, rel: str) -> set[tuple[str, str]]:
-    return {(c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, rel)}
+    return {(c.source, c.target) for c in get_relationships(mock_ingestor, rel)}
 
 
 def _targets_of(edges: set[tuple[str, str]], owner_marker: str) -> set[str]:

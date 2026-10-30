@@ -51,9 +51,9 @@ func NewPoint(x int, y int) Point {
 
 def _names(mock_ingestor: MagicMock, label: NodeLabel) -> set[str]:
     return {
-        str(node[0][1].get(KEY_NAME))
+        str(node.properties.get(KEY_NAME))
         for node in get_nodes(mock_ingestor, label)
-        if str(node[0][1].get(KEY_NAME))
+        if str(node.properties.get(KEY_NAME))
     }
 
 

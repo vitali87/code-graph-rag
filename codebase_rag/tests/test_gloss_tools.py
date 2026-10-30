@@ -21,6 +21,7 @@ from codebase_rag import cypher_queries as cq
 from codebase_rag.gloss import notes as gloss
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.mcp.tools import MCPToolsRegistry
+from codebase_rag.tests.conftest import get_relationships
 from codebase_rag.tools import tool_descriptions as td
 from codebase_rag.types_defs import PropertyDict, ResultRow
 
@@ -877,8 +878,8 @@ def test_restoring_a_gloss_edge_bypasses_the_capture_filter(tmp_path: Path) -> N
         ]
     )
     restored = {
-        (call.args[0][0], call.args[1], call.args[2][2])
-        for call in ingestor.ensure_relationship_batch.call_args_list
+        (call.source_label, call.rel_type, call.target)
+        for call in get_relationships(ingestor)
     }
     assert restored == {
         ("Gloss", "ANNOTATES", RUN),

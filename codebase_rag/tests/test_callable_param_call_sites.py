@@ -29,7 +29,7 @@ from codebase_rag.graph_query import QueryFn
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers import call_processor as cp
-from codebase_rag.tests.conftest import create_and_run_updater
+from codebase_rag.tests.conftest import create_and_run_updater, get_relationships
 from codebase_rag.types_defs import PropertyDict, PropertyParams, ResultRow
 from evals.cgr_graph import StatefulIngestor
 
@@ -78,18 +78,11 @@ def _write(root: Path, files: dict[str, str]) -> None:
 def _rels(
     mock: MagicMock, rel_type: str, src_suffix: str, dst_suffix: str
 ) -> list[PropertyDict]:
-    out: list[PropertyDict] = []
-    for c in mock.ensure_relationship_batch.call_args_list:
-        if c.args[1] != rel_type:
-            continue
-        src, dst = str(c.args[0][2]), str(c.args[2][2])
-        if not (src.endswith(src_suffix) and dst.endswith(dst_suffix)):
-            continue
-        props = c.kwargs.get("properties")
-        if props is None and len(c.args) > 3:
-            props = c.args[3]
-        out.append(dict(props or {}))
-    return out
+    return [
+        dict(r.properties)
+        for r in get_relationships(mock, rel_type)
+        if str(r.source).endswith(src_suffix) and str(r.target).endswith(dst_suffix)
+    ]
 
 
 def _site(props: PropertyDict) -> Span | None:

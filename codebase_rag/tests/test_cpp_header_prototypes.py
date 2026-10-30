@@ -16,7 +16,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.tests.conftest import recorded_edges, run_updater
+from codebase_rag.tests.conftest import get_nodes, recorded_edges, run_updater
 
 UTILS_H = """
 int FreeHelper(int x);
@@ -63,9 +63,9 @@ def cpp_proto_project(temp_repo: Path) -> Path:
 
 def _functions(mock_ingestor: MagicMock) -> set[str]:
     return {
-        str(c.args[1][cs.KEY_QUALIFIED_NAME])
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if str(c.args[0]) == cs.NodeLabel.FUNCTION.value
+        str(c.properties[cs.KEY_QUALIFIED_NAME])
+        for c in get_nodes(mock_ingestor)
+        if str(c.label) == cs.NodeLabel.FUNCTION.value
     }
 
 

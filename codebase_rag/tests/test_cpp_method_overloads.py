@@ -93,10 +93,10 @@ def _final_methods(ingestor: RecordingIngestor, suffix: str) -> dict[str, dict]:
     # graph holds the LAST write per qn: a declaration and its definition are
     # one node whose location is the definition's.
     final: dict[str, dict] = {}
-    for call in ingestor.ensure_node_batch.call_args_list:
-        if str(call.args[0]) != cs.NodeLabel.METHOD.value:
+    for call in get_nodes(ingestor):
+        if str(call.label) != cs.NodeLabel.METHOD.value:
             continue
-        props = call.args[1]
+        props = call.properties
         qn = props[cs.KEY_QUALIFIED_NAME]
         if qn.endswith(suffix) or qn.rsplit(cs.DUP_QN_MARKER, 1)[0].endswith(suffix):
             final[qn] = props
@@ -106,24 +106,22 @@ def _final_methods(ingestor: RecordingIngestor, suffix: str) -> dict[str, dict]:
 def _calls(ingestor: RecordingIngestor) -> list[tuple[str, str, object]]:
     edges = []
     for call in get_relationships(ingestor, cs.RelationshipType.CALLS.value):
-        props = call.args[3] if len(call.args) > 3 else call.kwargs.get("properties")
+        props = call.properties
         props = props or {}
-        edges.append(
-            (str(call.args[0][2]), str(call.args[2][2]), props.get(cs.KEY_RESOLUTION))
-        )
+        edges.append((str(call.source), str(call.target), props.get(cs.KEY_RESOLUTION)))
     return edges
 
 
 def _overrides(ingestor: RecordingIngestor) -> set[tuple[str, str]]:
     return {
-        (str(call.args[0][2]), str(call.args[2][2]))
+        (str(call.source), str(call.target))
         for call in get_relationships(ingestor, cs.RelationshipType.OVERRIDES.value)
     }
 
 
 def _defines_method(ingestor: RecordingIngestor) -> set[tuple[str, str]]:
     return {
-        (str(call.args[0][2]), str(call.args[2][2]))
+        (str(call.source), str(call.target))
         for call in get_relationships(
             ingestor, cs.RelationshipType.DEFINES_METHOD.value
         )
@@ -1034,9 +1032,9 @@ def test_free_function_overloads_are_unchanged(temp_repo: Path) -> None:
     ingestor = _index(root)
 
     functions = {
-        call.args[1][cs.KEY_QUALIFIED_NAME]
-        for call in ingestor.ensure_node_batch.call_args_list
-        if str(call.args[0]) == cs.NodeLabel.FUNCTION.value
+        call.properties[cs.KEY_QUALIFIED_NAME]
+        for call in get_nodes(ingestor)
+        if str(call.label) == cs.NodeLabel.FUNCTION.value
     }
     assert functions == {
         f"{PROJECT}.free.h",
@@ -1786,9 +1784,9 @@ def _member_writes(ingestor: RecordingIngestor) -> list[tuple[str, int, str, dic
             {key: props[key] for key in keys if key in props},
         )
         for props in (
-            call.args[1]
-            for call in ingestor.ensure_node_batch.call_args_list
-            if str(call.args[0]) == cs.NodeLabel.METHOD.value
+            call.properties
+            for call in get_nodes(ingestor)
+            if str(call.label) == cs.NodeLabel.METHOD.value
         )
     )
 

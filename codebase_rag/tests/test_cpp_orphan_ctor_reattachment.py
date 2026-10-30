@@ -14,7 +14,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from codebase_rag import constants as cs
-from codebase_rag.tests.conftest import recorded_edges, run_updater
+from codebase_rag.tests.conftest import get_nodes, recorded_edges, run_updater
 
 ORPHANED_CTOR_CC = """
 struct file {
@@ -56,9 +56,9 @@ write2digits(char* buf) { buf[0] = '0'; }
 
 def _nodes(mock_ingestor: MagicMock, label: cs.NodeLabel) -> set[str]:
     return {
-        c.args[1].get("qualified_name")
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if str(c.args[0]) == label.value
+        c.properties.get("qualified_name")
+        for c in get_nodes(mock_ingestor)
+        if str(c.label) == label.value
     }
 
 

@@ -7,7 +7,7 @@ import pytest
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.tests.conftest import recorded_triples
+from codebase_rag.tests.conftest import get_relationships, recorded_triples
 
 
 def _run(tmp_path: Path, files: dict[str, str]) -> set[tuple[str, str, str]]:
@@ -75,9 +75,9 @@ def test_nested_class_method_qn_matches_registered_node(tmp_path: Path) -> None:
     updater.run()
     registry = updater.factory.call_processor._resolver.function_registry
     callers = {
-        c.args[0][2]
-        for c in mock.ensure_relationship_batch.call_args_list
-        if str(c.args[1]) == "CALLS" and c.args[2][2].endswith("m.helper")
+        c.source
+        for c in get_relationships(mock)
+        if str(c.rel_type) == "CALLS" and c.target.endswith("m.helper")
     }
     run_callers = {q for q in callers if q.endswith("run")}
     assert run_callers

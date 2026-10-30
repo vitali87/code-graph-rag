@@ -239,11 +239,11 @@ public class AnnotatedClass {
 
     run_updater(java_project, mock_ingestor, skip_if_missing="java")
 
-    all_calls = mock_ingestor.ensure_node_batch.call_args_list
+    all_calls = get_nodes(mock_ingestor)
 
-    class_calls = [call for call in all_calls if call[0][0] == NodeLabel.CLASS]
-    enum_calls = [call for call in all_calls if call[0][0] == NodeLabel.ENUM]
-    interface_calls = [call for call in all_calls if call[0][0] == NodeLabel.INTERFACE]
+    class_calls = [call for call in all_calls if call.label == NodeLabel.CLASS]
+    enum_calls = [call for call in all_calls if call.label == NodeLabel.ENUM]
+    interface_calls = [call for call in all_calls if call.label == NodeLabel.INTERFACE]
 
     created_classes = get_qualified_names(class_calls)
     created_enums = get_qualified_names(enum_calls)
@@ -353,10 +353,10 @@ public class WildcardExample {
 
     run_updater(java_project, mock_ingestor, skip_if_missing="java")
 
-    all_calls = mock_ingestor.ensure_node_batch.call_args_list
+    all_calls = get_nodes(mock_ingestor)
 
-    class_calls = [call for call in all_calls if call[0][0] == NodeLabel.CLASS]
-    interface_calls = [call for call in all_calls if call[0][0] == NodeLabel.INTERFACE]
+    class_calls = [call for call in all_calls if call.label == NodeLabel.CLASS]
+    interface_calls = [call for call in all_calls if call.label == NodeLabel.INTERFACE]
 
     created_classes = get_qualified_names(class_calls)
     created_interfaces = get_qualified_names(interface_calls)
@@ -659,10 +659,10 @@ public class LambdaExamples {
 
     run_updater(java_project, mock_ingestor, skip_if_missing="java")
 
-    all_calls = mock_ingestor.ensure_node_batch.call_args_list
+    all_calls = get_nodes(mock_ingestor)
 
-    class_calls = [call for call in all_calls if call[0][0] == NodeLabel.CLASS]
-    interface_calls = [call for call in all_calls if call[0][0] == NodeLabel.INTERFACE]
+    class_calls = [call for call in all_calls if call.label == NodeLabel.CLASS]
+    interface_calls = [call for call in all_calls if call.label == NodeLabel.INTERFACE]
 
     created_classes = get_qualified_names(class_calls)
     created_interfaces = get_qualified_names(interface_calls)

@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -32,13 +32,7 @@ def test_defines_method_relationship_is_created(
     class_qn = f"{project_name}.main.MyClass"
     method_qn = f"{project_name}.main.MyClass.my_method"
 
-    expected_call = call(
-        ("Class", "qualified_name", class_qn),
-        "DEFINES_METHOD",
-        ("Method", "qualified_name", method_qn),
-    )
+    [rel] = get_relationships(mock_ingestor, "DEFINES_METHOD")
 
-    actual_calls = get_relationships(mock_ingestor, "DEFINES_METHOD")
-
-    assert len(actual_calls) == 1
-    assert actual_calls[0] == expected_call
+    assert rel.from_spec == ("Class", "qualified_name", class_qn)
+    assert rel.to_spec == ("Method", "qualified_name", method_qn)

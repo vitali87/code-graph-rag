@@ -39,9 +39,7 @@ def test_untyped_receiver_member_call_binds_unique_prototype_method(
         encoding="utf-8",
     )
     create_and_run_updater(root, mock_ingestor, skip_if_missing="typescript")
-    calls = {
-        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
-    }
+    calls = {(c.source, c.target) for c in get_relationships(mock_ingestor, "CALLS")}
     assert any(
         f.endswith(".tryRender") and t.endswith(".View.render") for f, t in calls
     ), sorted(t for f, t in calls if "render" in t)
@@ -92,9 +90,7 @@ def test_var_require_visibility_disambiguates_member_call(
         encoding="utf-8",
     )
     create_and_run_updater(root, mock_ingestor, skip_if_missing="typescript")
-    calls = {
-        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
-    }
+    calls = {(c.source, c.target) for c in get_relationships(mock_ingestor, "CALLS")}
     assert any(
         f.endswith(".tryRender") and t.endswith(".view.View.render") for f, t in calls
     ), sorted(t for f, t in calls if "render" in t)
@@ -128,9 +124,7 @@ def test_invisible_singleton_member_is_not_bound(
         encoding="utf-8",
     )
     create_and_run_updater(root, mock_ingestor, skip_if_missing="typescript")
-    calls = {
-        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
-    }
+    calls = {(c.source, c.target) for c in get_relationships(mock_ingestor, "CALLS")}
     assert not any(
         f.startswith("exinv.unrelated") and "render" in t for f, t in calls
     ), "invisible singleton member wrongly bound"

@@ -23,7 +23,7 @@ from codebase_rag.models import Dependency
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers import dependency_parser
 from codebase_rag.parsers.dependency_parser import parse_dependencies
-from codebase_rag.tests.conftest import create_and_run_updater
+from codebase_rag.tests.conftest import create_and_run_updater, get_relationships
 from evals.cgr_graph import StatefulIngestor
 
 _NVM_FIXTURE_DIRS = (
@@ -128,9 +128,9 @@ def _write(path: Path, content: bytes | str) -> Path:
 
 def _depends_on(mock_ingestor: MagicMock) -> set[str]:
     return {
-        c.args[2][2]
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "DEPENDS_ON_EXTERNAL"
+        c.target
+        for c in get_relationships(mock_ingestor)
+        if c.rel_type == "DEPENDS_ON_EXTERNAL"
     }
 
 

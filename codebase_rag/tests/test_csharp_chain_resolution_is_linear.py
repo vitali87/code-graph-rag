@@ -114,7 +114,7 @@ def test_long_chain_still_resolves_every_link(
     (csharp_project / "A.cs").write_text(_chain_source(links), encoding="utf-8")
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
-    targets = {c.args[2][2] for c in get_relationships(mock_ingestor, "CALLS")}
+    targets = {c.target for c in get_relationships(mock_ingestor, "CALLS")}
     missing = [
         i for i in range(links) if not any(f"Ext.Step{i}(" in t for t in targets)
     ]
@@ -188,7 +188,7 @@ def test_real_world_mixed_arity_chain_resolves(
     )
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
-    targets = {c.args[2][2] for c in get_relationships(mock_ingestor, "CALLS")}
+    targets = {c.target for c in get_relationships(mock_ingestor, "CALLS")}
     for method in ("Comment(", "Copy(", "EmptyLine(", "Run("):
         assert any(f"DockerfileBuilderExtensions.{method}" in t for t in targets), (
             f"{method} did not resolve in the aspire-shaped chain: {sorted(targets)}"

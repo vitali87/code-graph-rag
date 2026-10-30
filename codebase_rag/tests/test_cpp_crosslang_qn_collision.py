@@ -31,7 +31,7 @@ def _make_project(temp_repo: Path) -> Path:
 def _methods_named(mock_ingestor: MagicMock, name: str) -> list[tuple[str, str]]:
     out: list[tuple[str, str]] = []
     for node in get_nodes(mock_ingestor, NodeLabel.METHOD):
-        props = node[0][1]
+        props = node.properties
         qn = str(props.get(KEY_QUALIFIED_NAME))
         if qn.rsplit(".", 1)[-1] == name:
             out.append((qn, str(props.get(KEY_PATH))))

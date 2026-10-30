@@ -14,6 +14,7 @@ from unittest.mock import MagicMock
 
 from codebase_rag import constants as cs
 from codebase_rag.function_registry import FunctionRegistryTrie
+from codebase_rag.tests.conftest import get_nodes
 from codebase_rag.tests.test_rust_crate_path_trait_linking import (
     _calls,
     _write,
@@ -40,9 +41,9 @@ _SAME_LINE = (
 
 def _function_qns(mock_ingestor: MagicMock) -> list[str]:
     return [
-        str(c.args[1]["qualified_name"])
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c.args[0] == "Function"
+        str(c.properties["qualified_name"])
+        for c in get_nodes(mock_ingestor)
+        if c.label == "Function"
     ]
 
 
@@ -144,14 +145,14 @@ def test_same_line_class_and_method_twins_stay_distinct(
     )
     create_and_run_updater(project, mock_ingestor, skip_if_missing="typescript")
     classes = [
-        str(c.args[1]["qualified_name"])
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c.args[0] == "Class" and ".A" in str(c.args[1]["qualified_name"])
+        str(c.properties["qualified_name"])
+        for c in get_nodes(mock_ingestor)
+        if c.label == "Class" and ".A" in str(c.properties["qualified_name"])
     ]
     methods = [
-        str(c.args[1]["qualified_name"])
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c.args[0] == "Method"
+        str(c.properties["qualified_name"])
+        for c in get_nodes(mock_ingestor)
+        if c.label == "Method"
     ]
     assert len(classes) == 3, classes
     assert len(classes) == len(set(classes)), classes

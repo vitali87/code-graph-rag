@@ -36,8 +36,7 @@ def test_pair_value_nested_in_pair_arrow_is_referenced(
     )
     create_and_run_updater(root, mock_ingestor, skip_if_missing="typescript")
     refs = {
-        (c.args[0][2], c.args[2][2])
-        for c in get_relationships(mock_ingestor, "REFERENCES")
+        (c.source, c.target) for c in get_relationships(mock_ingestor, "REFERENCES")
     }
     assert any(t.endswith(".onCreated.compute") for _, t in refs), sorted(
         t for _, t in refs if "compute" in t or "onCreated" in t

@@ -14,9 +14,7 @@ from codebase_rag.tests.conftest import create_and_run_updater, get_relationship
 
 
 def _calls(mock_ingestor: MagicMock) -> set[tuple[str, str]]:
-    return {
-        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
-    }
+    return {(c.source, c.target) for c in get_relationships(mock_ingestor, "CALLS")}
 
 
 def test_cast_wrapped_arrow_body_calls_attribute_to_binding(

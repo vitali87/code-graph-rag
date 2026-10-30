@@ -114,35 +114,23 @@ public class Main {
 
         cross_file_calls = []
         for call in call_relationships:
-            if len(call.args) >= 3:
-                source_tuple = call.args[0]
-                target_tuple = call.args[2]
+            source_qn = str(call.source)
+            target_qn = str(call.target)
 
-                if (
-                    isinstance(source_tuple, tuple)
-                    and len(source_tuple) >= 3
-                    and isinstance(target_tuple, tuple)
-                    and len(target_tuple) >= 3
-                ):
-                    source_qn = source_tuple[2]
-                    target_qn = target_tuple[2]
+            def extract_package(qn: str) -> str:
+                """Extract package path from qualified name."""
+                parts = qn.replace("()", "").replace("(", "").split(SEPARATOR_DOT)
+                for i in range(len(parts) - 1):
+                    if i + 1 < len(parts) and parts[i] == parts[i + 1]:
+                        return SEPARATOR_DOT.join(parts[: i + 1])
+                return SEPARATOR_DOT.join(parts[:-1])
 
-                    def extract_package(qn: str) -> str:
-                        """Extract package path from qualified name."""
-                        parts = (
-                            qn.replace("()", "").replace("(", "").split(SEPARATOR_DOT)
-                        )
-                        for i in range(len(parts) - 1):
-                            if i + 1 < len(parts) and parts[i] == parts[i + 1]:
-                                return SEPARATOR_DOT.join(parts[: i + 1])
-                        return SEPARATOR_DOT.join(parts[:-1])
+            source_package = extract_package(source_qn)
+            target_package = extract_package(target_qn)
 
-                    source_package = extract_package(source_qn)
-                    target_package = extract_package(target_qn)
-
-                    if source_package != target_package:
-                        cross_file_calls.append(call)
-                        print(f"  Cross-file CALL: {source_qn} -> {target_qn}")
+            if source_package != target_package:
+                cross_file_calls.append(call)
+                print(f"  Cross-file CALL: {source_qn} -> {target_qn}")
 
         print(f"\n### Total cross-file CALLS found: {len(cross_file_calls)}")
 

@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from codebase_rag import constants as cs
-from codebase_rag.tests.conftest import get_relationships, run_updater
+from codebase_rag.tests.conftest import get_nodes, get_relationships, run_updater
 
 ENGINE_HDR = """
 #pragma once
@@ -53,8 +53,8 @@ public:
 
 def _node_keys(mock_ingestor: MagicMock) -> set[tuple[str, str | None]]:
     return {
-        (str(c.args[0]), c.args[1].get("qualified_name"))
-        for c in mock_ingestor.ensure_node_batch.call_args_list
+        (str(c.label), c.properties.get("qualified_name"))
+        for c in get_nodes(mock_ingestor)
     }
 
 
@@ -68,8 +68,8 @@ def test_calls_inside_preproc_methods_attach_to_real_nodes(
     calls = get_relationships(mock_ingestor, cs.RelationshipType.CALLS.value)
     assert calls
     for call in calls:
-        from_label, _, from_qn = call.args[0]
-        assert (str(from_label), from_qn) in node_keys, call.args
+        from_label, _, from_qn = call.from_spec
+        assert (str(from_label), from_qn) in node_keys, call
 
 
 def test_preproc_method_callers_keep_full_class_chain(
@@ -81,8 +81,8 @@ def test_preproc_method_callers_keep_full_class_chain(
     grow_calls = [
         call
         for call in get_relationships(mock_ingestor, cs.RelationshipType.CALLS.value)
-        if str(call.args[2][2]).endswith(".grow")
+        if str(call.target).endswith(".grow")
     ]
     assert grow_calls
     for call in grow_calls:
-        assert ".engine.node.split" in str(call.args[0][2]), call.args
+        assert ".engine.node.split" in str(call.source), call

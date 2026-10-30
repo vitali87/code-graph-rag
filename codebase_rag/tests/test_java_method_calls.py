@@ -8,6 +8,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.tests.conftest import (
     get_node_names,
+    get_nodes,
     get_qualified_names,
     get_relationships,
 )
@@ -418,10 +419,10 @@ public class InterfaceExample {
     )
     updater.run()
 
-    all_calls = mock_ingestor.ensure_node_batch.call_args_list
+    all_calls = get_nodes(mock_ingestor)
 
-    class_calls = [call for call in all_calls if call[0][0] == NodeLabel.CLASS]
-    interface_calls = [call for call in all_calls if call[0][0] == NodeLabel.INTERFACE]
+    class_calls = [call for call in all_calls if call.label == NodeLabel.CLASS]
+    interface_calls = [call for call in all_calls if call.label == NodeLabel.INTERFACE]
 
     created_classes = get_qualified_names(class_calls)
     created_interfaces = get_qualified_names(interface_calls)
@@ -756,15 +757,8 @@ public class MainClass {
 
     helper_calls_count = 0
     for call in call_relationships:
-        if len(call.args) > 2:
-            from_tuple = call.args[0]
-            to_tuple = call.args[2]
-            if isinstance(from_tuple, tuple) and len(from_tuple) >= 3:
-                from_qn = from_tuple[2]
-                if isinstance(to_tuple, tuple) and len(to_tuple) >= 3:
-                    to_qn = to_tuple[2]
-                    if "MainClass" in from_qn and "Helper" in to_qn:
-                        helper_calls_count += 1
+        if "MainClass" in str(call.source) and "Helper" in str(call.target):
+            helper_calls_count += 1
 
     assert helper_calls_count >= 3, (
         f"Expected at least 3 cross-file CALLS relationships from MainClass to Helper methods, "

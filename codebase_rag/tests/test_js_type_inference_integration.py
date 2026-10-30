@@ -6,6 +6,7 @@ from codebase_rag import constants as cs
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.import_processor import ImportProcessor
 from codebase_rag.parsers.js_ts.type_inference import JsTypeInferenceEngine
+from codebase_rag.tests.conftest import get_relationships
 
 
 @pytest.fixture(scope="module")
@@ -712,9 +713,9 @@ export class Screen {
 
     project_name = project_path.name
     found = {
-        (c[0][0][2], c[0][2][2])
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c[0]) >= 3 and c[0][1] == "CALLS" and c[0][2][0] == cs.NodeLabel.METHOD
+        (c.source, c.target)
+        for c in get_relationships(mock_ingestor)
+        if c.rel_type == "CALLS" and c.target_label == cs.NodeLabel.METHOD
     }
     render = f"{project_name}.app.Widget.render"
     decoy = f"{project_name}.app.Banner.render"

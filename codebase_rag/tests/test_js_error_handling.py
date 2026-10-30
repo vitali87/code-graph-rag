@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -399,7 +398,9 @@ function cleanup() {
     class_calls = get_nodes(mock_ingestor, "Class")
 
     data_processor_class = [
-        call for call in class_calls if "DataProcessor" in call[0][1]["qualified_name"]
+        call
+        for call in class_calls
+        if "DataProcessor" in call.properties["qualified_name"]
     ]
 
     assert len(data_processor_class) >= 1, (
@@ -810,7 +811,7 @@ console.log('Recent errors:', aggregator.getRecent(1).length);
         call
         for call in inheritance_relationships
         if any(
-            error_name in call.args[0][2]
+            error_name in call.source
             for error_name in ["CustomError", "ValidationError", "NetworkError"]
         )
     ]
@@ -1269,9 +1270,9 @@ testGracefulDegradation();
     async_error_functions = [
         call
         for call in function_calls
-        if "async_errors" in call[0][1]["qualified_name"]
+        if "async_errors" in call.properties["qualified_name"]
         and any(
-            pattern in call[0][1]["qualified_name"]
+            pattern in call.properties["qualified_name"]
             for pattern in ["basicAsync", "multipleAsync", "withRetry", "withTimeout"]
         )
     ]
@@ -1285,9 +1286,9 @@ testGracefulDegradation();
     async_error_classes = [
         call
         for call in class_calls
-        if "async_errors" in call[0][1]["qualified_name"]
+        if "async_errors" in call.properties["qualified_name"]
         and any(
-            pattern in call[0][1]["qualified_name"]
+            pattern in call.properties["qualified_name"]
             for pattern in ["CircuitBreaker", "AsyncErrorCollector", "GracefulService"]
         )
     ]
@@ -1430,29 +1431,25 @@ async function performAsyncOperation(data) {
 
     run_updater(javascript_error_handling_project, mock_ingestor)
 
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    all_relationships = get_relationships(mock_ingestor)
 
     calls_relationships = get_relationships(mock_ingestor, "CALLS")
-    [c for c in all_relationships if c.args[1] == "DEFINES"]
+    [c for c in all_relationships if c.rel_type == "DEFINES"]
 
     comprehensive_calls = [
-        call
-        for call in calls_relationships
-        if "comprehensive_errors" in call.args[0][2]
+        call for call in calls_relationships if "comprehensive_errors" in call.source
     ]
 
     assert len(comprehensive_calls) >= 3, (
         f"Expected at least 3 comprehensive error calls, found {len(comprehensive_calls)}"
     )
 
-    all_nodes = mock_ingestor.ensure_node_batch.call_args_list
+    all_nodes = get_nodes(mock_ingestor)
 
     comprehensive_nodes = [
         call
         for call in all_nodes
-        if "comprehensive_errors" in call[0][1].get("qualified_name", "")
+        if "comprehensive_errors" in call.properties.get("qualified_name", "")
     ]
 
     assert len(comprehensive_nodes) >= 5, (

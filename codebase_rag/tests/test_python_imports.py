@@ -74,14 +74,14 @@ from http.server import HTTPServer
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     stdlib_imports = [
-        call for call in import_relationships if "stdlib_imports" in call.args[0][2]
+        call for call in import_relationships if "stdlib_imports" in call.source
     ]
 
     assert len(stdlib_imports) >= 15, (
         f"Expected at least 15 stdlib imports, found {len(stdlib_imports)}"
     )
 
-    imported_modules = [call.args[2][2] for call in stdlib_imports]
+    imported_modules = [call.target for call in stdlib_imports]
     expected_modules = [
         "os",
         "sys",
@@ -159,7 +159,7 @@ from ...models import User
         call
         for call in import_relationships
         if any(
-            test_file in call.args[0][2]
+            test_file in call.source
             for test_file in ["relative_imports", "relative_test", "nested_test"]
         )
     ]
@@ -168,7 +168,7 @@ from ...models import User
         f"Expected at least 8 relative imports, found {len(relative_imports)}"
     )
 
-    imported_modules = [call.args[2][2] for call in relative_imports]
+    imported_modules = [call.target for call in relative_imports]
     project_name = python_imports_project.name
 
     expected_patterns = [
@@ -250,14 +250,14 @@ class DataProcessor:
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     complex_imports = [
-        call for call in import_relationships if "complex_imports" in call.args[0][2]
+        call for call in import_relationships if "complex_imports" in call.source
     ]
 
     assert len(complex_imports) >= 12, (
         f"Expected at least 12 complex imports, found {len(complex_imports)}"
     )
 
-    imported_modules = [call.args[2][2] for call in complex_imports]
+    imported_modules = [call.target for call in complex_imports]
 
     wildcard_patterns = ["os", "typing"]
     for pattern in wildcard_patterns:
@@ -332,14 +332,14 @@ from marshmallow import Schema, fields, validate, post_load, pre_dump
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     framework_imports = [
-        call for call in import_relationships if "framework_imports" in call.args[0][2]
+        call for call in import_relationships if "framework_imports" in call.source
     ]
 
     assert len(framework_imports) >= 25, (
         f"Expected at least 25 framework imports, found {len(framework_imports)}"
     )
 
-    imported_modules = [call.args[2][2] for call in framework_imports]
+    imported_modules = [call.target for call in framework_imports]
 
     framework_categories = {
         "flask": ["flask", "flask_sqlalchemy", "flask_migrate"],
@@ -409,14 +409,14 @@ from yaml import load as yaml_load
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     alias_imports = [
-        call for call in import_relationships if "alias_imports" in call.args[0][2]
+        call for call in import_relationships if "alias_imports" in call.source
     ]
 
     assert len(alias_imports) >= 15, (
         f"Expected at least 15 aliased imports, found {len(alias_imports)}"
     )
 
-    imported_modules = [call.args[2][2] for call in alias_imports]
+    imported_modules = [call.target for call in alias_imports]
 
     expected_original_modules = [
         "numpy",
@@ -476,14 +476,14 @@ import sys, json  # trailing comma handled gracefully
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     error_file_imports = [
-        call for call in import_relationships if "error_imports" in call.args[0][2]
+        call for call in import_relationships if "error_imports" in call.source
     ]
 
     assert len(error_file_imports) >= 4, (
         f"Expected at least 4 valid imports despite errors, found {len(error_file_imports)}"
     )
 
-    imported_modules = [call.args[2][2] for call in error_file_imports]
+    imported_modules = [call.target for call in error_file_imports]
     expected_valid = ["os", "pathlib", "json", "datetime"]
 
     for expected in expected_valid:
@@ -537,9 +537,7 @@ if True:
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
     comprehensive_imports = [
-        call
-        for call in import_relationships
-        if "comprehensive_imports" in call.args[0][2]
+        call for call in import_relationships if "comprehensive_imports" in call.source
     ]
 
     assert len(comprehensive_imports) >= 15, (
@@ -547,11 +545,10 @@ if True:
     )
 
     for relationship in comprehensive_imports:
-        assert len(relationship.args) == 3, "Import relationship should have 3 args"
-        assert relationship.args[1] == "IMPORTS", "Second arg should be 'IMPORTS'"
+        assert relationship.rel_type == "IMPORTS", "Expected an IMPORTS relationship"
 
-        source_module = relationship.args[0][2]
-        target_module = relationship.args[2][2]
+        source_module = relationship.source
+        target_module = relationship.target
 
         assert "comprehensive_imports" in source_module, (
             f"Source module should contain test file name: {source_module}"

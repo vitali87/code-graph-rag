@@ -58,7 +58,7 @@ func NewPoint(x int, y int) Point {
 
 def _method_qns(mock_ingestor: MagicMock) -> set[str]:
     return {
-        str(node[0][1].get(KEY_QUALIFIED_NAME))
+        str(node.properties.get(KEY_QUALIFIED_NAME))
         for node in get_nodes(mock_ingestor, NodeLabel.METHOD)
     }
 
@@ -93,7 +93,7 @@ def test_go_free_function_not_a_method(
     create_and_run_updater(go_methods_project, mock_ingestor, skip_if_missing="go")
     project = go_methods_project.name
     function_qns = {
-        str(node[0][1].get(KEY_QUALIFIED_NAME))
+        str(node.properties.get(KEY_QUALIFIED_NAME))
         for node in get_nodes(mock_ingestor, NodeLabel.FUNCTION)
     }
     assert f"{project}.shapes.NewPoint" in function_qns
@@ -110,7 +110,7 @@ def test_go_method_defined_by_receiver_type(
     defines_method = get_relationships(
         mock_ingestor, RelationshipType.DEFINES_METHOD.value
     )
-    pairs = {(call[0][0][2], call[0][2][2]) for call in defines_method}
+    pairs = {(call.source, call.target) for call in defines_method}
     assert (f"{project}.shapes.Point", f"{project}.shapes.Point.Area") in pairs
     assert (
         f"{project}.shapes.Celsius",
@@ -150,7 +150,7 @@ def test_go_crossfile_method_binds_to_declaring_type(
     defines_method = get_relationships(
         mock_ingestor, RelationshipType.DEFINES_METHOD.value
     )
-    pairs = {(call[0][0][2], call[0][2][2]) for call in defines_method}
+    pairs = {(call.source, call.target) for call in defines_method}
     assert (f"{project}.types.Point", f"{project}.types.Point.Scale") in pairs
 
 

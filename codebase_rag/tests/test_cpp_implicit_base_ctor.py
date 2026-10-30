@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.tests.conftest import recorded_edges, run_updater
+from codebase_rag.tests.conftest import get_relationships, recorded_edges, run_updater
 
 MAIN_CPP = """
 class Base {
@@ -120,10 +120,10 @@ def test_explicit_base_init_still_resolves(
     assert _has(calls, ".Child.Child", ".Base.Base"), sorted(calls)
     raw = [
         c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if str(c.args[1]) == cs.RelationshipType.CALLS.value
-        and str(c.args[0][2]).endswith(".Child.Child")
-        and str(c.args[2][2]).endswith(".Base.Base")
+        for c in get_relationships(mock_ingestor)
+        if str(c.rel_type) == cs.RelationshipType.CALLS.value
+        and str(c.source).endswith(".Child.Child")
+        and str(c.target).endswith(".Base.Base")
     ]
     assert len(raw) == 1, raw
 

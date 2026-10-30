@@ -57,7 +57,7 @@ function standaloneFunction() {
     updater.run()
 
     created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
-    fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
+    fn_qns = {c.properties["qualified_name"] for c in created_functions}
 
     assert any(qn.endswith(".standaloneFunction") for qn in fn_qns), fn_qns
 
@@ -101,11 +101,11 @@ enum Role {
     updater.run()
 
     created_classes = get_nodes(mock_ingestor, NodeLabel.CLASS)
-    class_names = {c[0][1]["qualified_name"] for c in created_classes}
+    class_names = {c.properties["qualified_name"] for c in created_classes}
     assert any("User" in n for n in class_names), class_names
 
     created_interfaces = get_nodes(mock_ingestor, NodeLabel.INTERFACE)
-    iface_names = {c[0][1]["qualified_name"] for c in created_interfaces}
+    iface_names = {c.properties["qualified_name"] for c in created_interfaces}
     assert any("Serializable" in n for n in iface_names), iface_names
 
 

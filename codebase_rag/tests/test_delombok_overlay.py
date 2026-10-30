@@ -18,6 +18,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.java import lombok as java_lombok
 from codebase_rag.sync.checkout_state import state_file
+from codebase_rag.tests.conftest import get_nodes
 
 _RAW = (
     "package com.app;\n\nimport lombok.Getter;\n\n@Getter\n"
@@ -84,9 +85,9 @@ def _index_repo_with_mock_ingestor(repo: Path) -> MagicMock:
 
 def _method_qns(mock: MagicMock) -> set[str]:
     return {
-        c.args[1]["qualified_name"]
-        for c in mock.ensure_node_batch.call_args_list
-        if str(c.args[0]) == "Method"
+        c.properties["qualified_name"]
+        for c in get_nodes(mock)
+        if str(c.label) == "Method"
     }
 
 
@@ -159,9 +160,7 @@ def test_hash_cache_keys_the_checked_in_source(
     mock.reset_mock()
     updater.run()
     reparsed = {
-        c.args[1].get("path")
-        for c in mock.ensure_node_batch.call_args_list
-        if str(c.args[0]) == "Module"
+        c.properties.get("path") for c in get_nodes(mock) if str(c.label) == "Module"
     }
     assert "src/main/java/com/app/Widget.java" in reparsed
 

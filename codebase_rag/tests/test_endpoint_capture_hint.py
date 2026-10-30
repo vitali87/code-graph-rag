@@ -22,6 +22,7 @@ from codebase_rag.capture import resolve_capture
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.mcp.tools import MCPToolsRegistry
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_nodes
 from codebase_rag.types_defs import PropertyParams, ResultRow
 
 P = "orders"
@@ -115,9 +116,9 @@ class TestSyncRecordsTheCapture:
             capture=resolve_capture(tokens),
         ).run()
         return next(
-            call.args[1]
-            for call in mock.ensure_node_batch.call_args_list
-            if call.args[0] == cs.NodeLabel.PROJECT
+            call.properties
+            for call in get_nodes(mock)
+            if call.label == cs.NodeLabel.PROJECT
         )
 
     def test_a_default_sync_records_a_capture_without_io(self, tmp_path: Path) -> None:

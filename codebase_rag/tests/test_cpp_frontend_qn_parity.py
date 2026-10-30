@@ -7,7 +7,12 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag.parsers.cpp.frontend import cpp_frontend_available, run_cpp_frontend
-from codebase_rag.tests.conftest import get_nodes, get_qualified_names, run_updater
+from codebase_rag.tests.conftest import (
+    get_nodes,
+    get_qualified_names,
+    get_relationships,
+    run_updater,
+)
 
 pytestmark = pytest.mark.skipif(
     not cpp_frontend_available(),
@@ -173,7 +178,9 @@ def test_frontend_recovers_macro_mangled_class(temp_repo: Path) -> None:
     )
 
     widget = next(
-        c[0][1] for c in fe_class_nodes if c[0][1]["qualified_name"].endswith(".Widget")
+        c.properties
+        for c in fe_class_nodes
+        if c.properties["qualified_name"].endswith(".Widget")
     )
     assert widget["end_line"] > widget["start_line"], (
         f"expected a real multi-line span for Widget, got {widget}"
@@ -220,9 +227,9 @@ def test_frontend_emits_inheritance_and_operator(temp_repo: Path) -> None:
     )
 
     inherits = [
-        (c.args[0][2], c.args[2][2])
-        for c in fe_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == "INHERITS"
+        (c.source, c.target)
+        for c in get_relationships(fe_ingestor)
+        if c.rel_type == "INHERITS"
     ]
     assert any(
         src.endswith(".geo.Derived") and dst.endswith(".Base") for src, dst in inherits

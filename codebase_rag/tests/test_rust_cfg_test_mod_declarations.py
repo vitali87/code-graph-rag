@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from codebase_rag import constants as cs
+from codebase_rag.tests.conftest import get_nodes
 from codebase_rag.tests.test_rust_crate_path_trait_linking import (
     _write,
     create_and_run_updater,
@@ -22,8 +23,9 @@ from codebase_rag.tests.test_rust_crate_path_trait_linking import (
 
 def _module_prop(mock_ingestor: MagicMock, qn: str, key: str) -> list[str]:
     values: list[str] = []
-    for call in mock_ingestor.ensure_node_batch.call_args_list:
-        label, props = call.args
+    for call in get_nodes(mock_ingestor):
+        label = call.label
+        props = call.properties
         if label != cs.NodeLabel.MODULE or props.get(cs.KEY_QUALIFIED_NAME) != qn:
             continue
         value = props.get(key)

@@ -44,7 +44,7 @@ def julia_parser() -> "Parser":
 
 def _props_for(mock_ingestor: MagicMock, node_type: cs.NodeLabel, suffix: str) -> dict:
     for call in get_nodes(mock_ingestor, node_type):
-        props = call[0][1]
+        props = call.properties
         if props["qualified_name"].endswith(suffix):
             return props
     raise AssertionError(f"no {node_type} qn ending with {suffix!r}")
@@ -246,7 +246,7 @@ end
     assert not any("{" in qn for qn in class_qns), class_qns
 
     inherits = {
-        (c.args[0][2].split(".")[-1], c.args[2][2].split(".")[-1])
+        (c.source.split(".")[-1], c.target.split(".")[-1])
         for c in get_relationships(mock_ingestor, "INHERITS")
     }
     assert ("Dog", "Animal") in inherits, inherits
@@ -504,7 +504,7 @@ primitive type MyFloat <: Signed 32 end
     class_qns = get_node_names(mock_ingestor, cs.NodeLabel.CLASS)
     assert any(qn.endswith(".MyFloat") for qn in class_qns), class_qns
     inherits = {
-        (c.args[0][2].split(".")[-1], c.args[2][2].split(".")[-1])
+        (c.source.split(".")[-1], c.target.split(".")[-1])
         for c in get_relationships(mock_ingestor, "INHERITS")
     }
     assert ("MyFloat", "Signed") in inherits, inherits

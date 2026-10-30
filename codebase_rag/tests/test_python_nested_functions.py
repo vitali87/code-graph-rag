@@ -6,7 +6,7 @@ import pytest
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.tests.conftest import get_node_names
+from codebase_rag.tests.conftest import get_node_names, get_relationships
 
 
 @pytest.fixture
@@ -213,15 +213,13 @@ def test_nested_function_parent_child_relationships(
     ]
 
     defines_calls = [
-        call
-        for call in mock_ingestor.ensure_relationship_batch.call_args_list
-        if call[0][1] == "DEFINES"
+        call for call in get_relationships(mock_ingestor) if call.rel_type == "DEFINES"
     ]
 
     actual_relationships = set()
     for call in defines_calls:
-        parent_info = call[0][0]
-        child_info = call[0][2]
+        parent_info = call.from_spec
+        child_info = call.to_spec
 
         parent_tuple = (parent_info[0], parent_info[2])
         child_tuple = (child_info[0], child_info[2])
@@ -292,15 +290,13 @@ def main():
     ]
 
     calls_relationships = [
-        call
-        for call in mock_ingestor.ensure_relationship_batch.call_args_list
-        if call[0][1] == "CALLS"
+        call for call in get_relationships(mock_ingestor) if call.rel_type == "CALLS"
     ]
 
     actual_calls = set()
     for call in calls_relationships:
-        caller_info = call[0][0]
-        callee_info = call[0][2]
+        caller_info = call.from_spec
+        callee_info = call.to_spec
 
         caller_qn = caller_info[2]
         callee_qn = callee_info[2]

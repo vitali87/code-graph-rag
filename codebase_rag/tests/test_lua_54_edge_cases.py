@@ -221,7 +221,7 @@ print("State machine:", table.concat(machine_results, " -> "))
         pass
 
         created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
-        fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
+        fn_qns = {c.properties["qualified_name"] for c in created_functions}
 
         goto_qn = f"{project.name}.goto_labels"
 
@@ -431,7 +431,7 @@ print("Decomposed length:", norm_results.decomposed_len)
         pass
 
         created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
-        fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
+        fn_qns = {c.properties["qualified_name"] for c in created_functions}
 
         utf8_qn = f"{project.name}.utf8_lib"
 
@@ -681,7 +681,7 @@ end
         pass
 
         created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
-        fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
+        fn_qns = {c.properties["qualified_name"] for c in created_functions}
 
         bitwise_qn = f"{project.name}.bitwise_ops"
 

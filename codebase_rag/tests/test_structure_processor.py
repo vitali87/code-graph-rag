@@ -8,7 +8,7 @@ import pytest
 from codebase_rag.constants import SupportedLanguage
 from codebase_rag.models import LanguageSpec
 from codebase_rag.parsers.structure_processor import StructureProcessor
-from codebase_rag.tests.conftest import get_nodes
+from codebase_rag.tests.conftest import get_nodes, get_relationships
 
 
 def _make_mock_queries(
@@ -77,7 +77,7 @@ class TestIdentifyStructure:
 
         package_calls = get_nodes(mock_ingestor, "Package")
         assert len(package_calls) == 1
-        props = package_calls[0][0][1]
+        props = package_calls[0].properties
         assert props["qualified_name"] == "test_project.mypackage"
         assert props["name"] == "mypackage"
         assert props["path"] == "mypackage"
@@ -95,7 +95,7 @@ class TestIdentifyStructure:
 
         folder_calls = get_nodes(mock_ingestor, "Folder")
         assert len(folder_calls) == 1
-        props = folder_calls[0][0][1]
+        props = folder_calls[0].properties
         assert props["path"] == "myfolder"
         assert props["name"] == "myfolder"
 
@@ -116,7 +116,7 @@ class TestIdentifyStructure:
         processor.identify_structure()
 
         package_calls = get_nodes(mock_ingestor, "Package")
-        qualified_names = {c[0][1]["qualified_name"] for c in package_calls}
+        qualified_names = {c.properties["qualified_name"] for c in package_calls}
         assert qualified_names == {"test_project.parent", "test_project.parent.child"}
 
     def test_package_inside_folder(
@@ -138,10 +138,12 @@ class TestIdentifyStructure:
         package_calls = get_nodes(mock_ingestor, "Package")
 
         assert len(folder_calls) == 1
-        assert folder_calls[0][0][1]["path"] == "folder"
+        assert folder_calls[0].properties["path"] == "folder"
 
         assert len(package_calls) == 1
-        assert package_calls[0][0][1]["qualified_name"] == "test_project.folder.pkg"
+        assert (
+            package_calls[0].properties["qualified_name"] == "test_project.folder.pkg"
+        )
 
     def test_folder_inside_package(
         self,
@@ -162,10 +164,10 @@ class TestIdentifyStructure:
         folder_calls = get_nodes(mock_ingestor, "Folder")
 
         assert len(package_calls) == 1
-        assert package_calls[0][0][1]["qualified_name"] == "test_project.pkg"
+        assert package_calls[0].properties["qualified_name"] == "test_project.pkg"
 
         assert len(folder_calls) == 1
-        assert folder_calls[0][0][1]["path"] == "pkg/subfolder"
+        assert folder_calls[0].properties["path"] == "pkg/subfolder"
 
     def test_ignored_directories_are_skipped(
         self,
@@ -188,7 +190,7 @@ class TestIdentifyStructure:
         processor.identify_structure()
 
         folder_calls = get_nodes(mock_ingestor, "Folder")
-        folder_paths = {c[0][1]["path"] for c in folder_calls}
+        folder_paths = {c.properties["path"] for c in folder_calls}
 
         assert "valid" in folder_paths
         assert ".git" not in folder_paths
@@ -211,7 +213,7 @@ class TestIdentifyStructure:
         processor.identify_structure()
 
         folder_calls = get_nodes(mock_ingestor, "Folder")
-        folder_paths = {c[0][1]["path"] for c in folder_calls}
+        folder_paths = {c.properties["path"] for c in folder_calls}
         assert "pkg/__pycache__" not in folder_paths
 
     def test_package_parent_relationship_to_project(
@@ -228,11 +230,15 @@ class TestIdentifyStructure:
 
         rel_calls = [
             c
-            for c in mock_ingestor.ensure_relationship_batch.call_args_list
-            if c[0][1] == "CONTAINS_PACKAGE"
+            for c in get_relationships(mock_ingestor)
+            if c.rel_type == "CONTAINS_PACKAGE"
         ]
         assert len(rel_calls) == 1
-        from_spec, rel_type, to_spec = rel_calls[0][0]
+        from_spec, rel_type, to_spec = (
+            rel_calls[0].from_spec,
+            rel_calls[0].rel_type,
+            rel_calls[0].to_spec,
+        )
         assert from_spec == ("Project", "name", "test_project")
         assert rel_type == "CONTAINS_PACKAGE"
         assert to_spec == ("Package", "qualified_name", "test_project.pkg")
@@ -255,15 +261,15 @@ class TestIdentifyStructure:
 
         rel_calls = [
             c
-            for c in mock_ingestor.ensure_relationship_batch.call_args_list
-            if c[0][1] == "CONTAINS_PACKAGE"
+            for c in get_relationships(mock_ingestor)
+            if c.rel_type == "CONTAINS_PACKAGE"
         ]
         assert len(rel_calls) == 2
 
         child_rel = next(
-            c for c in rel_calls if c[0][2][2] == "test_project.parent.child"
+            c for c in rel_calls if c.target == "test_project.parent.child"
         )
-        from_spec, _, to_spec = child_rel[0]
+        from_spec = child_rel.from_spec
         assert from_spec == ("Package", "qualified_name", "test_project.parent")
 
     def test_folder_parent_relationship_to_project(
@@ -279,11 +285,15 @@ class TestIdentifyStructure:
 
         rel_calls = [
             c
-            for c in mock_ingestor.ensure_relationship_batch.call_args_list
-            if c[0][1] == "CONTAINS_FOLDER"
+            for c in get_relationships(mock_ingestor)
+            if c.rel_type == "CONTAINS_FOLDER"
         ]
         assert len(rel_calls) == 1
-        from_spec, rel_type, to_spec = rel_calls[0][0]
+        from_spec, rel_type, to_spec = (
+            rel_calls[0].from_spec,
+            rel_calls[0].rel_type,
+            rel_calls[0].to_spec,
+        )
         assert from_spec == ("Project", "name", "test_project")
         assert rel_type == "CONTAINS_FOLDER"
         assert to_spec == (
@@ -331,18 +341,20 @@ class TestProcessGenericFile:
 
         node_calls = get_nodes(mock_ingestor, "File")
         assert len(node_calls) == 1
-        props = node_calls[0][0][1]
+        props = node_calls[0].properties
         assert props["path"] == "pkg/data.json"
         assert props["name"] == "data.json"
         assert props["extension"] == ".json"
 
         rel_calls = [
-            c
-            for c in mock_ingestor.ensure_relationship_batch.call_args_list
-            if c[0][1] == "CONTAINS_FILE"
+            c for c in get_relationships(mock_ingestor) if c.rel_type == "CONTAINS_FILE"
         ]
         assert len(rel_calls) == 1
-        from_spec, _, to_spec = rel_calls[0][0]
+        from_spec, _, to_spec = (
+            rel_calls[0].from_spec,
+            rel_calls[0].rel_type,
+            rel_calls[0].to_spec,
+        )
         assert from_spec == ("Package", "qualified_name", "test_project.pkg")
         assert to_spec == (
             "File",
@@ -365,7 +377,7 @@ class TestProcessGenericFile:
 
         node_calls = get_nodes(mock_ingestor, "File")
         assert len(node_calls) == 1
-        stored = node_calls[0][0][1]["absolute_path"]
+        stored = node_calls[0].properties["absolute_path"]
 
         expected = (temp_repo.resolve() / "alias.md").as_posix()
         assert stored == expected
@@ -392,12 +404,14 @@ class TestProcessGenericFile:
         processor.process_generic_file(file_path, "readme.txt")
 
         rel_calls = [
-            c
-            for c in mock_ingestor.ensure_relationship_batch.call_args_list
-            if c[0][1] == "CONTAINS_FILE"
+            c for c in get_relationships(mock_ingestor) if c.rel_type == "CONTAINS_FILE"
         ]
         assert len(rel_calls) == 1
-        from_spec, _, _ = rel_calls[0][0]
+        from_spec, _, _ = (
+            rel_calls[0].from_spec,
+            rel_calls[0].rel_type,
+            rel_calls[0].to_spec,
+        )
         assert from_spec == (
             "Folder",
             "absolute_path",
@@ -420,16 +434,18 @@ class TestProcessGenericFile:
 
         node_calls = get_nodes(mock_ingestor, "File")
         assert len(node_calls) == 1
-        props = node_calls[0][0][1]
+        props = node_calls[0].properties
         assert props["path"] == "config.yaml"
 
         rel_calls = [
-            c
-            for c in mock_ingestor.ensure_relationship_batch.call_args_list
-            if c[0][1] == "CONTAINS_FILE"
+            c for c in get_relationships(mock_ingestor) if c.rel_type == "CONTAINS_FILE"
         ]
         assert len(rel_calls) == 1
-        from_spec, _, _ = rel_calls[0][0]
+        from_spec, _, _ = (
+            rel_calls[0].from_spec,
+            rel_calls[0].rel_type,
+            rel_calls[0].to_spec,
+        )
         assert from_spec == ("Project", "name", "test_project")
 
     def test_file_extension_extracted(
@@ -444,7 +460,7 @@ class TestProcessGenericFile:
         processor.process_generic_file(file_path, "script.sh")
 
         node_calls = get_nodes(mock_ingestor, "File")
-        assert node_calls[0][0][1]["extension"] == ".sh"
+        assert node_calls[0].properties["extension"] == ".sh"
 
     def test_file_without_extension(
         self,
@@ -458,7 +474,7 @@ class TestProcessGenericFile:
         processor.process_generic_file(file_path, "Makefile")
 
         node_calls = get_nodes(mock_ingestor, "File")
-        assert node_calls[0][0][1]["extension"] == ""
+        assert node_calls[0].properties["extension"] == ""
 
 
 class TestMultipleLanguages:
@@ -490,7 +506,7 @@ class TestMultipleLanguages:
         processor.identify_structure()
 
         package_calls = get_nodes(mock_ingestor, "Package")
-        qualified_names = {c[0][1]["qualified_name"] for c in package_calls}
+        qualified_names = {c.properties["qualified_name"] for c in package_calls}
         assert qualified_names == {"multi_lang.pypkg", "multi_lang.rustpkg"}
 
 

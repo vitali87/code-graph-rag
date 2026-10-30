@@ -54,8 +54,8 @@ def _index(root: Path, files: dict[str, str], mock_ingestor: MagicMock) -> str:
 def _edges(mock_ingestor: MagicMock, rel: cs.RelationshipType) -> _Edges:
     edges: _Edges = {}
     for c in get_relationships(mock_ingestor, rel):
-        props = c.kwargs.get("properties") or (c.args[3] if len(c.args) > 3 else {})
-        edges[(c.args[0][2], c.args[2][2])] = (props or {}).get(cs.KEY_RESOLUTION)
+        props = c.properties
+        edges[(c.source, c.target)] = (props or {}).get(cs.KEY_RESOLUTION)
     return edges
 
 

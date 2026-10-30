@@ -14,6 +14,7 @@ import pytest
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_nodes, get_relationships
 from evals.recorded_graph import RecordingIngestor
 
 PY_MAIN = """
@@ -106,12 +107,10 @@ def _index_from_scratch(repo_path: Path, ingestor: MagicMock) -> None:
 
 
 def _recorded_batches(ingestor: MagicMock) -> tuple[list, list]:
-    nodes = [
-        (str(c.args[0]), c.args[1]) for c in ingestor.ensure_node_batch.call_args_list
-    ]
+    nodes = [(str(c.label), c.properties) for c in get_nodes(ingestor)]
     rels = [
-        (c.args[0], str(c.args[1]), c.args[2], *c.args[3:])
-        for c in ingestor.ensure_relationship_batch.call_args_list
+        (r.from_spec, r.rel_type, r.to_spec, r.properties)
+        for r in get_relationships(ingestor)
     ]
     return nodes, rels
 

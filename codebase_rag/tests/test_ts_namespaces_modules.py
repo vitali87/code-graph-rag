@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -373,15 +372,15 @@ console.log(merged.size()); // 2
 
     run_updater(typescript_namespaces_project, mock_ingestor)
 
-    all_nodes = mock_ingestor.ensure_node_batch.call_args_list
+    all_nodes = get_nodes(mock_ingestor)
 
     namespace_like_nodes = [
         call
         for call in all_nodes
-        if call[0][0] in ["Namespace", "Module", "Class", "Interface"]
-        and "namespace_declarations" in call[0][1].get("qualified_name", "")
+        if call.label in ["Namespace", "Module", "Class", "Interface"]
+        and "namespace_declarations" in call.properties.get("qualified_name", "")
         and any(
-            ns_name in call[0][1].get("qualified_name", "")
+            ns_name in call.properties.get("qualified_name", "")
             for ns_name in ["Utilities", "DataProcessing", "Models", "Collections"]
         )
     ]
@@ -392,16 +391,16 @@ console.log(merged.size()); // 2
 
     function_calls = [
         call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] in ["Function", "Method"]
+        for call in get_nodes(mock_ingestor)
+        if call.label in ["Function", "Method"]
     ]
 
     namespace_functions = [
         call
         for call in function_calls
-        if "namespace_declarations" in call[0][1]["qualified_name"]
+        if "namespace_declarations" in call.properties["qualified_name"]
         and any(
-            pattern in call[0][1]["qualified_name"]
+            pattern in call.properties["qualified_name"]
             for pattern in [
                 "formatString",
                 "isEmail",
@@ -420,9 +419,9 @@ console.log(merged.size()); // 2
     namespace_classes = [
         call
         for call in class_calls
-        if "namespace_declarations" in call[0][1]["qualified_name"]
+        if "namespace_declarations" in call.properties["qualified_name"]
         and any(
-            class_name in call[0][1]["qualified_name"]
+            class_name in call.properties["qualified_name"]
             for class_name in ["UserModel", "ArrayList", "HashSet"]
         )
     ]
@@ -771,14 +770,14 @@ console.log('Valid method:', API.Http.isValidMethod('GET')); // true
 
     run_updater(typescript_namespaces_project, mock_ingestor)
 
-    all_nodes = mock_ingestor.ensure_node_batch.call_args_list
+    all_nodes = get_nodes(mock_ingestor)
 
     merged_namespace_nodes = [
         call
         for call in all_nodes
-        if "namespace_merging" in call[0][1].get("qualified_name", "")
+        if "namespace_merging" in call.properties.get("qualified_name", "")
         and any(
-            ns_name in call[0][1].get("qualified_name", "")
+            ns_name in call.properties.get("qualified_name", "")
             for ns_name in ["Utils", "User", "Status", "Calculator", "Logger", "API"]
         )
     ]
@@ -793,9 +792,9 @@ console.log('Valid method:', API.Http.isValidMethod('GET')); // true
     merged_functions = [
         call
         for call in get_nodes(mock_ingestor, "Method")
-        if "namespace_merging" in call[0][1]["qualified_name"]
+        if "namespace_merging" in call.properties["qualified_name"]
         and any(
-            pattern in call[0][1]["qualified_name"]
+            pattern in call.properties["qualified_name"]
             for pattern in [
                 "stringUtils",
                 "numberUtils",
@@ -812,22 +811,22 @@ console.log('Valid method:', API.Http.isValidMethod('GET')); // true
     interface_calls = [
         call
         for call in all_nodes
-        if call[0][0] == NodeLabel.INTERFACE
-        and "namespace_merging" in call[0][1].get("qualified_name", "")
+        if call.label == NodeLabel.INTERFACE
+        and "namespace_merging" in call.properties.get("qualified_name", "")
     ]
 
     enum_calls = [
         call
         for call in all_nodes
-        if call[0][0] == NodeLabel.ENUM
-        and "namespace_merging" in call[0][1].get("qualified_name", "")
+        if call.label == NodeLabel.ENUM
+        and "namespace_merging" in call.properties.get("qualified_name", "")
     ]
 
     class_calls = [
         call
         for call in all_nodes
-        if call[0][0] == NodeLabel.CLASS
-        and "namespace_merging" in call[0][1].get("qualified_name", "")
+        if call.label == NodeLabel.CLASS
+        and "namespace_merging" in call.properties.get("qualified_name", "")
     ]
 
     merging_nodes = len(interface_calls) + len(enum_calls) + len(class_calls)
@@ -1194,14 +1193,14 @@ if (ConditionalModule.IS_NODE) {
 
     run_updater(typescript_namespaces_project, mock_ingestor)
 
-    all_nodes = mock_ingestor.ensure_node_batch.call_args_list
+    all_nodes = get_nodes(mock_ingestor)
 
     module_pattern_nodes = [
         call
         for call in all_nodes
-        if "module_patterns" in call[0][1].get("qualified_name", "")
+        if "module_patterns" in call.properties.get("qualified_name", "")
         and any(
-            pattern in call[0][1].get("qualified_name", "")
+            pattern in call.properties.get("qualified_name", "")
             for pattern in [
                 "InternalUtils",
                 "ExportedUtils",
@@ -1218,15 +1217,15 @@ if (ConditionalModule.IS_NODE) {
     class_calls = [
         call
         for call in all_nodes
-        if call[0][0] == NodeLabel.CLASS
-        and "module_patterns" in call[0][1].get("qualified_name", "")
+        if call.label == NodeLabel.CLASS
+        and "module_patterns" in call.properties.get("qualified_name", "")
     ]
 
     interface_calls = [
         call
         for call in all_nodes
-        if call[0][0] == NodeLabel.INTERFACE
-        and "module_patterns" in call[0][1].get("qualified_name", "")
+        if call.label == NodeLabel.INTERFACE
+        and "module_patterns" in call.properties.get("qualified_name", "")
     ]
 
     module_classes_interfaces = len(class_calls) + len(interface_calls)
@@ -1241,9 +1240,9 @@ if (ConditionalModule.IS_NODE) {
     module_functions = [
         call
         for call in get_nodes(mock_ingestor, "Method")
-        if "module_patterns" in call[0][1]["qualified_name"]
+        if "module_patterns" in call.properties["qualified_name"]
         and any(
-            pattern in call[0][1]["qualified_name"]
+            pattern in call.properties["qualified_name"]
             for pattern in ["formatName", "createEmailValidator", "createService"]
         )
     ]
@@ -1347,31 +1346,29 @@ Conditional.log('Debug message');
 
     run_updater(typescript_namespaces_project, mock_ingestor)
 
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    all_relationships = get_relationships(mock_ingestor)
 
     calls_relationships = get_relationships(mock_ingestor, "CALLS")
-    [c for c in all_relationships if c.args[1] == "DEFINES"]
+    [c for c in all_relationships if c.rel_type == "DEFINES"]
 
     comprehensive_calls = [
         call
         for call in calls_relationships
-        if "comprehensive_namespaces" in call.args[0][2]
+        if "comprehensive_namespaces" in call.source
     ]
 
     assert len(comprehensive_calls) >= 5, (
         f"Expected at least 5 comprehensive namespace calls, found {len(comprehensive_calls)}"
     )
 
-    all_nodes = mock_ingestor.ensure_node_batch.call_args_list
+    all_nodes = get_nodes(mock_ingestor)
 
     comprehensive_namespaces = [
         call
         for call in all_nodes
-        if "comprehensive_namespaces" in call[0][1].get("qualified_name", "")
+        if "comprehensive_namespaces" in call.properties.get("qualified_name", "")
         and any(
-            ns_name in call[0][1].get("qualified_name", "")
+            ns_name in call.properties.get("qualified_name", "")
             for ns_name in [
                 "Basic",
                 "Nested",

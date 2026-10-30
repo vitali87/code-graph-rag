@@ -24,6 +24,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_fingerprint import compute_parser_fingerprint
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers import ast_grep_tier
+from codebase_rag.tests.conftest import get_nodes
 
 RUBY = (
     'require "json"\n'
@@ -85,9 +86,9 @@ def _sync(repo: Path) -> tuple[GraphUpdater, MagicMock]:
 
 def _names(ingestor: MagicMock, label: cs.NodeLabel) -> set[str]:
     return {
-        c.args[1].get(cs.KEY_NAME)
-        for c in ingestor.ensure_node_batch.call_args_list
-        if str(c.args[0]) == label.value
+        c.properties.get(cs.KEY_NAME)
+        for c in get_nodes(ingestor)
+        if str(c.label) == label.value
     }
 
 

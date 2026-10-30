@@ -28,9 +28,7 @@ def test_member_call_edges_both_prototype_twins(
         encoding="utf-8",
     )
     create_and_run_updater(root, mock_ingestor, skip_if_missing="typescript")
-    calls = {
-        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
-    }
+    calls = {(c.source, c.target) for c in get_relationships(mock_ingestor, "CALLS")}
     assert any(f.endswith(".View") and t.endswith(".View.lookup") for f, t in calls), (
         sorted(t for f, t in calls if "lookup" in t)
     )

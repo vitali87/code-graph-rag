@@ -37,11 +37,11 @@ def _write(root: Path, files: dict[str, str]) -> None:
 def _edges(mock_ingestor: MagicMock, rel_type: str) -> list[Edge]:
     return [
         (
-            str(c.args[0][0]),
-            c.args[0][2],
-            str(c.args[2][0]),
-            c.args[2][2],
-            c.args[3] if len(c.args) > 3 and c.args[3] else {},
+            str(c.source_label),
+            c.source,
+            str(c.target_label),
+            c.target,
+            c.properties,
         )
         for c in get_relationships(mock_ingestor, rel_type)
     ]

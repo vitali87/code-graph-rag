@@ -30,7 +30,11 @@ from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag import graph_query
 from codebase_rag.graph_cli import cli as graph_cli
-from codebase_rag.tests.conftest import create_and_run_updater, get_relationships
+from codebase_rag.tests.conftest import (
+    create_and_run_updater,
+    get_nodes,
+    get_relationships,
+)
 from codebase_rag.types_defs import PropertyDict, ResultRow
 
 SOURCE = """\
@@ -100,8 +104,8 @@ class RecordedGraph:
 
     def __init__(self, mock: MagicMock, project: str, root: Path) -> None:
         self.nodes: dict[str, tuple[str, PropertyDict]] = {}
-        for c in mock.ensure_node_batch.call_args_list:
-            label, props = str(c.args[0]), dict(c.args[1])
+        for c in get_nodes(mock):
+            label, props = str(c.label), dict(c.properties)
             qn = props.get(cs.KEY_QUALIFIED_NAME)
             if isinstance(qn, str):
                 self.nodes[qn] = (label, props)
@@ -274,19 +278,15 @@ def test_a_decorators_call_still_belongs_to_the_module(
     retry_qn = f"{module_qn}.retry"
     decorator_line = _line("@retry(times=3)")
     sources = {
-        c.args[0][2]
+        c.source
         for c in get_relationships(mock_ingestor, cs.RelationshipType.CALLS.value)
-        if c.args[2][2] == retry_qn
-        and (c.args[3] if len(c.args) > 3 else c.kwargs.get("properties") or {}).get(
-            cs.KEY_LINE
-        )
-        == decorator_line
+        if c.target == retry_qn and c.properties.get(cs.KEY_LINE) == decorator_line
     }
     assert sources == {module_qn}
     fetch_calls = [
         c
         for c in get_relationships(mock_ingestor, cs.RelationshipType.CALLS.value)
-        if c.args[0][2] == f"{module_qn}.fetch"
+        if c.source == f"{module_qn}.fetch"
     ]
     assert fetch_calls == []
 

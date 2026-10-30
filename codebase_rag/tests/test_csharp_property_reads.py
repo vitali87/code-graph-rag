@@ -20,11 +20,11 @@ def csharp_project(temp_repo: Path) -> Path:
 
 
 def _reference_targets(mock_ingestor: MagicMock) -> set[str]:
-    return {c.args[2][2] for c in get_relationships(mock_ingestor, "REFERENCES")}
+    return {c.target for c in get_relationships(mock_ingestor, "REFERENCES")}
 
 
 def _call_targets(mock_ingestor: MagicMock) -> set[str]:
-    return {c.args[2][2] for c in get_relationships(mock_ingestor, "CALLS")}
+    return {c.target for c in get_relationships(mock_ingestor, "CALLS")}
 
 
 def test_receiver_position_property_read_is_referenced(
@@ -208,7 +208,7 @@ public class Component {
     )
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
-    calls = {c.args[2][2] for c in get_relationships(mock_ingestor, "CALLS")}
+    calls = {c.target for c in get_relationships(mock_ingestor, "CALLS")}
     assert any(t.endswith("N.Component.Reload") for t in calls), calls
 
 

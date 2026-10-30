@@ -21,7 +21,11 @@ from codebase_rag.config import load_ignore_patterns
 from codebase_rag.dead_code import dead_code_from_graph, default_dead_code_config
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.tests.conftest import create_and_run_updater, get_relationships
+from codebase_rag.tests.conftest import (
+    create_and_run_updater,
+    get_nodes,
+    get_relationships,
+)
 from codebase_rag.tests.test_graph_updater_incremental_rename import InMemoryGraph
 from codebase_rag.utils.source_extraction import extract_source_lines
 
@@ -188,10 +192,12 @@ class TestNotebookCellsAreIndexed:
         create_and_run_updater(root, mock_ingestor)
 
         function = next(
-            c.args[1]
-            for c in mock_ingestor.ensure_node_batch.call_args_list
-            if c.args[0] == cs.NodeLabel.FUNCTION
-            and c.args[1][cs.KEY_QUALIFIED_NAME].endswith(".analysis.ipynb.summarize")
+            c.properties
+            for c in get_nodes(mock_ingestor)
+            if c.label == cs.NodeLabel.FUNCTION
+            and c.properties[cs.KEY_QUALIFIED_NAME].endswith(
+                ".analysis.ipynb.summarize"
+            )
         )
         assert function[cs.KEY_START_LINE] == _file_line(
             nb_path, "def summarize(xs):\n"
@@ -199,9 +205,9 @@ class TestNotebookCellsAreIndexed:
         assert function[cs.KEY_END_LINE] == _file_line(nb_path, "    return sum(xs)\n")
         site_line = _file_line(nb_path, "summarize(load())")
         sites = {
-            (c.args[2][2].rsplit(".", 1)[-1], c.kwargs["properties"][cs.KEY_LINE])
+            (c.target.rsplit(".", 1)[-1], c.properties[cs.KEY_LINE])
             for c in get_relationships(mock_ingestor, cs.RelationshipType.CALLS)
-            if c.args[0][2].endswith(".analysis.ipynb")
+            if c.source.endswith(".analysis.ipynb")
         }
         assert sites >= {("summarize", site_line), ("load", site_line)}, sites
 

@@ -36,9 +36,7 @@ def test_anon_method_call_edge_joins_a_real_node(
     calls = get_relationships(mock_ingestor, "CALLS")
     # the CALLS edge into helper must originate from a qn that is a registered
     # node, not a phantom `Class.make.read` that no node carries.
-    helper_callers = [
-        c.args[0][2] for c in calls if c.args[2][2].endswith(".helper(int)")
-    ]
+    helper_callers = [c.source for c in calls if c.target.endswith(".helper(int)")]
     assert helper_callers, "no caller recorded for helper"
     for caller_qn in helper_callers:
         assert caller_qn in registry, (
@@ -76,9 +74,7 @@ def test_anon_override_unqualified_call_binds_to_base(
         encoding="utf-8",
     )
     create_and_run_updater(root, mock_ingestor, skip_if_missing="java")
-    calls = {
-        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
-    }
+    calls = {(c.source, c.target) for c in get_relationships(mock_ingestor, "CALLS")}
     assert any(
         f.endswith(".read") and t.endswith(".Base.helper()") for f, t in calls
     ), sorted(t for f, t in calls if "helper" in t)
@@ -113,9 +109,7 @@ def test_anon_override_explicit_this_call_binds_to_base(
         encoding="utf-8",
     )
     create_and_run_updater(root, mock_ingestor, skip_if_missing="java")
-    calls = {
-        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
-    }
+    calls = {(c.source, c.target) for c in get_relationships(mock_ingestor, "CALLS")}
     assert any(
         f.endswith(".read") and t.endswith(".Base.helper()") for f, t in calls
     ), sorted(t for f, t in calls if "helper" in t)
@@ -147,9 +141,7 @@ def test_anon_own_method_unqualified_call_resolves(
         encoding="utf-8",
     )
     create_and_run_updater(root, mock_ingestor, skip_if_missing="java")
-    calls = {
-        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
-    }
+    calls = {(c.source, c.target) for c in get_relationships(mock_ingestor, "CALLS")}
     assert any(f.endswith(".read") and t.endswith(".helper") for f, t in calls), sorted(
         t for f, t in calls if "helper" in t
     )
@@ -178,9 +170,7 @@ def test_outside_call_does_not_bind_to_anon_local_method(
         encoding="utf-8",
     )
     create_and_run_updater(root, mock_ingestor, skip_if_missing="java")
-    calls = {
-        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
-    }
+    calls = {(c.source, c.target) for c in get_relationships(mock_ingestor, "CALLS")}
     assert not any(
         f.endswith(".M.use()") and t.endswith(".make.helper") for f, t in calls
     ), "outside call wrongly bound to an anon-class-local method (scope violation)"

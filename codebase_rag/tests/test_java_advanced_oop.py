@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag.constants import NodeLabel
-from codebase_rag.tests.conftest import get_qualified_names, run_updater
+from codebase_rag.tests.conftest import get_nodes, get_qualified_names, run_updater
 
 
 @pytest.fixture
@@ -102,9 +102,9 @@ public class Circle implements Shape, Movable {
 
     run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")
 
-    all_calls = mock_ingestor.ensure_node_batch.call_args_list
-    interface_calls = [call for call in all_calls if call[0][0] == NodeLabel.INTERFACE]
-    class_calls = [call for call in all_calls if call[0][0] == NodeLabel.CLASS]
+    all_calls = get_nodes(mock_ingestor)
+    interface_calls = [call for call in all_calls if call.label == NodeLabel.INTERFACE]
+    class_calls = [call for call in all_calls if call.label == NodeLabel.CLASS]
 
     created_interfaces = get_qualified_names(interface_calls)
     created_classes = get_qualified_names(class_calls)
@@ -204,9 +204,9 @@ public class GenericUtility {
 
     run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")
 
-    all_calls = mock_ingestor.ensure_node_batch.call_args_list
-    class_calls = [call for call in all_calls if call[0][0] == NodeLabel.CLASS]
-    interface_calls = [call for call in all_calls if call[0][0] == NodeLabel.INTERFACE]
+    all_calls = get_nodes(mock_ingestor)
+    class_calls = [call for call in all_calls if call.label == NodeLabel.CLASS]
+    interface_calls = [call for call in all_calls if call.label == NodeLabel.INTERFACE]
 
     created_classes = get_qualified_names(class_calls)
     created_interfaces = get_qualified_names(interface_calls)
@@ -356,8 +356,8 @@ public class Square extends AbstractRectangle {
 
     run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")
 
-    all_calls = mock_ingestor.ensure_node_batch.call_args_list
-    class_calls = [call for call in all_calls if call[0][0] == NodeLabel.CLASS]
+    all_calls = get_nodes(mock_ingestor)
+    class_calls = [call for call in all_calls if call.label == NodeLabel.CLASS]
 
     created_classes = get_qualified_names(class_calls)
 
@@ -470,8 +470,8 @@ public class MethodOverloading {
 
     run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")
 
-    all_calls = mock_ingestor.ensure_node_batch.call_args_list
-    method_calls = [call for call in all_calls if call[0][0] == NodeLabel.METHOD]
+    all_calls = get_nodes(mock_ingestor)
+    method_calls = [call for call in all_calls if call.label == NodeLabel.METHOD]
 
     created_methods = get_qualified_names(method_calls)
 
@@ -597,8 +597,8 @@ class NumberContainer extends Container<Number> {
 
     run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")
 
-    all_calls = mock_ingestor.ensure_node_batch.call_args_list
-    class_calls = [call for call in all_calls if call[0][0] == NodeLabel.CLASS]
+    all_calls = get_nodes(mock_ingestor)
+    class_calls = [call for call in all_calls if call.label == NodeLabel.CLASS]
 
     created_classes = get_qualified_names(class_calls)
 
@@ -741,9 +741,9 @@ public class Duck implements Amphibious {
 
     run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")
 
-    all_calls = mock_ingestor.ensure_node_batch.call_args_list
-    interface_calls = [call for call in all_calls if call[0][0] == NodeLabel.INTERFACE]
-    class_calls = [call for call in all_calls if call[0][0] == NodeLabel.CLASS]
+    all_calls = get_nodes(mock_ingestor)
+    interface_calls = [call for call in all_calls if call.label == NodeLabel.INTERFACE]
+    class_calls = [call for call in all_calls if call.label == NodeLabel.CLASS]
 
     created_interfaces = get_qualified_names(interface_calls)
     created_classes = get_qualified_names(class_calls)
@@ -936,9 +936,9 @@ public abstract class AbstractJpaRepository<T, ID extends Serializable>
 
     run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")
 
-    all_calls = mock_ingestor.ensure_node_batch.call_args_list
-    class_calls = [call for call in all_calls if call[0][0] == NodeLabel.CLASS]
-    interface_calls = [call for call in all_calls if call[0][0] == NodeLabel.INTERFACE]
+    all_calls = get_nodes(mock_ingestor)
+    class_calls = [call for call in all_calls if call.label == NodeLabel.CLASS]
+    interface_calls = [call for call in all_calls if call.label == NodeLabel.INTERFACE]
 
     created_classes = get_qualified_names(class_calls)
     created_interfaces = get_qualified_names(interface_calls)
@@ -1102,9 +1102,9 @@ class ConflictResolver implements Conflicting1, Conflicting2 {
 
     run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")
 
-    all_calls = mock_ingestor.ensure_node_batch.call_args_list
-    class_calls = [call for call in all_calls if call[0][0] == NodeLabel.CLASS]
-    interface_calls = [call for call in all_calls if call[0][0] == NodeLabel.INTERFACE]
+    all_calls = get_nodes(mock_ingestor)
+    class_calls = [call for call in all_calls if call.label == NodeLabel.CLASS]
+    interface_calls = [call for call in all_calls if call.label == NodeLabel.INTERFACE]
 
     created_classes = get_qualified_names(class_calls)
     created_interfaces = get_qualified_names(interface_calls)
@@ -1282,10 +1282,10 @@ enum Operation {
 
     run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")
 
-    all_calls = mock_ingestor.ensure_node_batch.call_args_list
-    class_calls = [call for call in all_calls if call[0][0] == NodeLabel.CLASS]
-    enum_calls = [call for call in all_calls if call[0][0] == NodeLabel.ENUM]
-    interface_calls = [call for call in all_calls if call[0][0] == NodeLabel.INTERFACE]
+    all_calls = get_nodes(mock_ingestor)
+    class_calls = [call for call in all_calls if call.label == NodeLabel.CLASS]
+    enum_calls = [call for call in all_calls if call.label == NodeLabel.ENUM]
+    interface_calls = [call for call in all_calls if call.label == NodeLabel.INTERFACE]
 
     created_classes = get_qualified_names(class_calls)
     created_enums = get_qualified_names(enum_calls)
@@ -1466,8 +1466,8 @@ public class AnnotationProcessor {
 
     run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")
 
-    all_calls = mock_ingestor.ensure_node_batch.call_args_list
-    class_calls = [call for call in all_calls if call[0][0] == NodeLabel.CLASS]
+    all_calls = get_nodes(mock_ingestor)
+    class_calls = [call for call in all_calls if call.label == NodeLabel.CLASS]
 
     created_classes = get_qualified_names(class_calls)
 
@@ -1672,9 +1672,9 @@ public class DeepNesting {
 
     run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")
 
-    all_calls = mock_ingestor.ensure_node_batch.call_args_list
-    class_calls = [call for call in all_calls if call[0][0] == NodeLabel.CLASS]
-    interface_calls = [call for call in all_calls if call[0][0] == NodeLabel.INTERFACE]
+    all_calls = get_nodes(mock_ingestor)
+    class_calls = [call for call in all_calls if call.label == NodeLabel.CLASS]
+    interface_calls = [call for call in all_calls if call.label == NodeLabel.INTERFACE]
 
     created_classes = get_qualified_names(class_calls)
     get_qualified_names(interface_calls)
@@ -1873,9 +1873,9 @@ public class StaticNestedInitialization {
 
     run_updater(java_advanced_oop_project, mock_ingestor, skip_if_missing="java")
 
-    all_calls = mock_ingestor.ensure_node_batch.call_args_list
-    class_calls = [call for call in all_calls if call[0][0] == NodeLabel.CLASS]
-    enum_calls = [call for call in all_calls if call[0][0] == NodeLabel.ENUM]
+    all_calls = get_nodes(mock_ingestor)
+    class_calls = [call for call in all_calls if call.label == NodeLabel.CLASS]
+    enum_calls = [call for call in all_calls if call.label == NodeLabel.ENUM]
 
     created_classes = get_qualified_names(class_calls)
     created_enums = get_qualified_names(enum_calls)

@@ -15,6 +15,7 @@ from codebase_rag.cypher_queries import CYPHER_LIST_PROJECTS
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services.graph_service import GraphIngestor
+from codebase_rag.tests.conftest import get_nodes
 
 
 def test_project_node_records_root_path(
@@ -30,13 +31,7 @@ def test_project_node_records_root_path(
 
     updater.run()
 
-    project_calls = [
-        props
-        for label, props in (
-            c.args for c in mock_ingestor.ensure_node_batch.call_args_list
-        )
-        if label == cs.NODE_PROJECT
-    ]
+    project_calls = [n.properties for n in get_nodes(mock_ingestor, cs.NODE_PROJECT)]
     assert project_calls, "no Project node was ingested"
     assert project_calls[0][cs.KEY_ROOT_PATH] == str(temp_repo.resolve())
 

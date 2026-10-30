@@ -886,7 +886,7 @@ void demonstrateCustomCoroutines() {
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
     custom_coroutine_calls = [
-        call for call in call_relationships if "custom_coroutines" in call.args[0][2]
+        call for call in call_relationships if "custom_coroutines" in call.source
     ]
 
     assert len(custom_coroutine_calls) >= 3, (

@@ -7,6 +7,7 @@ from tree_sitter import Language, Parser
 from codebase_rag.constants import SupportedLanguage
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_nodes, get_relationships
 
 try:
     import tree_sitter_python as tspython
@@ -191,9 +192,9 @@ dev = ["pytest>=7.0", "ruff"]
         )
         definition_processor.ingestor.flush_all()
 
-        node_calls = definition_processor.ingestor.ensure_node_batch.call_args_list
+        node_calls = get_nodes(definition_processor.ingestor)
         external_packages = [
-            c[0][1]["name"] for c in node_calls if c[0][0] == "ExternalPackage"
+            c.properties["name"] for c in node_calls if c.label == "ExternalPackage"
         ]
 
         assert "requests" in external_packages
@@ -223,9 +224,9 @@ flask[async]>=2.0
         )
         definition_processor.ingestor.flush_all()
 
-        node_calls = definition_processor.ingestor.ensure_node_batch.call_args_list
+        node_calls = get_nodes(definition_processor.ingestor)
         external_packages = [
-            c[0][1]["name"] for c in node_calls if c[0][0] == "ExternalPackage"
+            c.properties["name"] for c in node_calls if c.label == "ExternalPackage"
         ]
 
         assert "requests" in external_packages
@@ -258,9 +259,9 @@ flask[async]>=2.0
         )
         definition_processor.ingestor.flush_all()
 
-        node_calls = definition_processor.ingestor.ensure_node_batch.call_args_list
+        node_calls = get_nodes(definition_processor.ingestor)
         external_packages = [
-            c[0][1]["name"] for c in node_calls if c[0][0] == "ExternalPackage"
+            c.properties["name"] for c in node_calls if c.label == "ExternalPackage"
         ]
 
         assert "express" in external_packages
@@ -292,9 +293,9 @@ criterion = "0.5"
         definition_processor.factory.definition_processor.process_dependencies(cargo)
         definition_processor.ingestor.flush_all()
 
-        node_calls = definition_processor.ingestor.ensure_node_batch.call_args_list
+        node_calls = get_nodes(definition_processor.ingestor)
         external_packages = [
-            c[0][1]["name"] for c in node_calls if c[0][0] == "ExternalPackage"
+            c.properties["name"] for c in node_calls if c.label == "ExternalPackage"
         ]
 
         assert "serde" in external_packages
@@ -325,9 +326,9 @@ require github.com/sirupsen/logrus v1.9.0
         definition_processor.factory.definition_processor.process_dependencies(go_mod)
         definition_processor.ingestor.flush_all()
 
-        node_calls = definition_processor.ingestor.ensure_node_batch.call_args_list
+        node_calls = get_nodes(definition_processor.ingestor)
         external_packages = [
-            c[0][1]["name"] for c in node_calls if c[0][0] == "ExternalPackage"
+            c.properties["name"] for c in node_calls if c.label == "ExternalPackage"
         ]
 
         assert "github.com/gin-gonic/gin" in external_packages
@@ -353,9 +354,9 @@ gem 'redis', '~> 5.0'
         definition_processor.factory.definition_processor.process_dependencies(gemfile)
         definition_processor.ingestor.flush_all()
 
-        node_calls = definition_processor.ingestor.ensure_node_batch.call_args_list
+        node_calls = get_nodes(definition_processor.ingestor)
         external_packages = [
-            c[0][1]["name"] for c in node_calls if c[0][0] == "ExternalPackage"
+            c.properties["name"] for c in node_calls if c.label == "ExternalPackage"
         ]
 
         assert "rails" in external_packages
@@ -385,9 +386,9 @@ gem 'redis', '~> 5.0'
         definition_processor.factory.definition_processor.process_dependencies(composer)
         definition_processor.ingestor.flush_all()
 
-        node_calls = definition_processor.ingestor.ensure_node_batch.call_args_list
+        node_calls = get_nodes(definition_processor.ingestor)
         external_packages = [
-            c[0][1]["name"] for c in node_calls if c[0][0] == "ExternalPackage"
+            c.properties["name"] for c in node_calls if c.label == "ExternalPackage"
         ]
 
         assert "laravel/framework" in external_packages
@@ -418,9 +419,9 @@ gem 'redis', '~> 5.0'
         definition_processor.factory.definition_processor.process_dependencies(csproj)
         definition_processor.ingestor.flush_all()
 
-        node_calls = definition_processor.ingestor.ensure_node_batch.call_args_list
+        node_calls = get_nodes(definition_processor.ingestor)
         external_packages = [
-            c[0][1]["name"] for c in node_calls if c[0][0] == "ExternalPackage"
+            c.properties["name"] for c in node_calls if c.label == "ExternalPackage"
         ]
 
         assert "Newtonsoft.Json" in external_packages
@@ -437,16 +438,14 @@ class TestAddDependency:
         )
         definition_processor.ingestor.flush_all()
 
-        node_calls = definition_processor.ingestor.ensure_node_batch.call_args_list
-        external_packages = [c for c in node_calls if c[0][0] == "ExternalPackage"]
+        node_calls = get_nodes(definition_processor.ingestor)
+        external_packages = [c for c in node_calls if c.label == "ExternalPackage"]
 
         assert len(external_packages) >= 1
-        assert external_packages[0][0][1]["name"] == "test-package"
+        assert external_packages[0].properties["name"] == "test-package"
 
-        rel_calls = (
-            definition_processor.ingestor.ensure_relationship_batch.call_args_list
-        )
-        depends_on = [c for c in rel_calls if c[0][1] == "DEPENDS_ON_EXTERNAL"]
+        rel_calls = get_relationships(definition_processor.ingestor)
+        depends_on = [c for c in rel_calls if c.rel_type == "DEPENDS_ON_EXTERNAL"]
 
         assert len(depends_on) >= 1
 
@@ -458,13 +457,11 @@ class TestAddDependency:
         )
         definition_processor.ingestor.flush_all()
 
-        rel_calls = (
-            definition_processor.ingestor.ensure_relationship_batch.call_args_list
-        )
-        depends_on = [c for c in rel_calls if c[0][1] == "DEPENDS_ON_EXTERNAL"]
+        rel_calls = get_relationships(definition_processor.ingestor)
+        depends_on = [c for c in rel_calls if c.rel_type == "DEPENDS_ON_EXTERNAL"]
 
         assert len(depends_on) >= 1
-        props = depends_on[0].kwargs.get("properties", {})
+        props = depends_on[0].properties
         assert props.get("version_spec") == "^2.0.0"
         assert props.get("group") == "dev"
 
@@ -478,8 +475,8 @@ class TestAddDependency:
         )
         definition_processor.ingestor.flush_all()
 
-        node_calls = definition_processor.ingestor.ensure_node_batch.call_args_list
-        external_packages = [c for c in node_calls if c[0][0] == "ExternalPackage"]
+        node_calls = get_nodes(definition_processor.ingestor)
+        external_packages = [c for c in node_calls if c.label == "ExternalPackage"]
 
         assert len(external_packages) == 0
 
@@ -493,8 +490,8 @@ class TestAddDependency:
         )
         definition_processor.ingestor.flush_all()
 
-        node_calls = definition_processor.ingestor.ensure_node_batch.call_args_list
-        external_packages = [c for c in node_calls if c[0][0] == "ExternalPackage"]
+        node_calls = get_nodes(definition_processor.ingestor)
+        external_packages = [c for c in node_calls if c.label == "ExternalPackage"]
 
         assert len(external_packages) == 0
 
@@ -506,8 +503,8 @@ class TestAddDependency:
         definition_processor.factory.definition_processor._add_dependency("", "1.0.0")
         definition_processor.ingestor.flush_all()
 
-        node_calls = definition_processor.ingestor.ensure_node_batch.call_args_list
-        external_packages = [c for c in node_calls if c[0][0] == "ExternalPackage"]
+        node_calls = get_nodes(definition_processor.ingestor)
+        external_packages = [c for c in node_calls if c.label == "ExternalPackage"]
 
         assert len(external_packages) == 0
 
@@ -519,18 +516,16 @@ class TestAddDependency:
         )
         definition_processor.ingestor.flush_all()
 
-        node_calls = definition_processor.ingestor.ensure_node_batch.call_args_list
-        external_packages = [c for c in node_calls if c[0][0] == "ExternalPackage"]
+        node_calls = get_nodes(definition_processor.ingestor)
+        external_packages = [c for c in node_calls if c.label == "ExternalPackage"]
 
         assert len(external_packages) >= 1
-        assert external_packages[-1][0][1]["name"] == "unversioned-package"
+        assert external_packages[-1].properties["name"] == "unversioned-package"
 
-        rel_calls = (
-            definition_processor.ingestor.ensure_relationship_batch.call_args_list
-        )
-        depends_on = [c for c in rel_calls if c[0][1] == "DEPENDS_ON_EXTERNAL"]
+        rel_calls = get_relationships(definition_processor.ingestor)
+        depends_on = [c for c in rel_calls if c.rel_type == "DEPENDS_ON_EXTERNAL"]
         last_dep = depends_on[-1]
-        props = last_dep.kwargs.get("properties", {})
+        props = last_dep.properties
         assert "version_spec" not in props or props.get("version_spec") == ""
 
 
@@ -555,11 +550,11 @@ class TestProcessFile:
         root_node, language = result
         assert language == SupportedLanguage.PYTHON
 
-        node_calls = definition_processor.ingestor.ensure_node_batch.call_args_list
-        module_nodes = [c for c in node_calls if c[0][0] == "Module"]
+        node_calls = get_nodes(definition_processor.ingestor)
+        module_nodes = [c for c in node_calls if c.label == "Module"]
 
         assert len(module_nodes) >= 1
-        module_props = module_nodes[-1][0][1]
+        module_props = module_nodes[-1].properties
         assert module_props["name"] == "example.py"
         assert module_props["path"] == "example.py"
         assert "qualified_name" in module_props
@@ -583,11 +578,11 @@ class TestProcessFile:
 
         assert result is not None
 
-        node_calls = definition_processor.ingestor.ensure_node_batch.call_args_list
-        module_nodes = [c for c in node_calls if c[0][0] == "Module"]
+        node_calls = get_nodes(definition_processor.ingestor)
+        module_nodes = [c for c in node_calls if c.label == "Module"]
 
         assert len(module_nodes) >= 1
-        module_props = module_nodes[-1][0][1]
+        module_props = module_nodes[-1].properties
         qn = module_props["qualified_name"]
         assert "__init__" not in qn
         assert "mypackage" in qn
@@ -611,11 +606,11 @@ class TestProcessFile:
 
         assert result is not None
 
-        node_calls = definition_processor.ingestor.ensure_node_batch.call_args_list
-        module_nodes = [c for c in node_calls if c[0][0] == "Module"]
+        node_calls = get_nodes(definition_processor.ingestor)
+        module_nodes = [c for c in node_calls if c.label == "Module"]
 
         assert len(module_nodes) >= 1
-        module_props = module_nodes[-1][0][1]
+        module_props = module_nodes[-1].properties
         qn = module_props["qualified_name"]
         assert "pkg" in qn
         assert "subpkg" in qn
@@ -653,15 +648,13 @@ class TestProcessFile:
             {},
         )
 
-        rel_calls = (
-            definition_processor.ingestor.ensure_relationship_batch.call_args_list
-        )
-        contains_module = [c for c in rel_calls if c[0][1] == "CONTAINS_MODULE"]
+        rel_calls = get_relationships(definition_processor.ingestor)
+        contains_module = [c for c in rel_calls if c.rel_type == "CONTAINS_MODULE"]
 
         assert len(contains_module) >= 1
         rel = contains_module[-1]
-        from_tuple = rel[0][0]
-        to_tuple = rel[0][2]
+        from_tuple = rel.from_spec
+        to_tuple = rel.to_spec
         assert from_tuple[0] == "Project"
         assert to_tuple[0] == "Module"
 
@@ -684,14 +677,12 @@ class TestProcessFile:
             structural_elements,
         )
 
-        rel_calls = (
-            definition_processor.ingestor.ensure_relationship_batch.call_args_list
-        )
-        contains_module = [c for c in rel_calls if c[0][1] == "CONTAINS_MODULE"]
+        rel_calls = get_relationships(definition_processor.ingestor)
+        contains_module = [c for c in rel_calls if c.rel_type == "CONTAINS_MODULE"]
 
         assert len(contains_module) >= 1
         rel = contains_module[-1]
-        from_tuple = rel[0][0]
+        from_tuple = rel.from_spec
         assert from_tuple[0] == "Package"
         assert from_tuple[2] == "test_project.mypackage"
 
@@ -712,14 +703,12 @@ class TestProcessFile:
             {},
         )
 
-        rel_calls = (
-            definition_processor.ingestor.ensure_relationship_batch.call_args_list
-        )
-        contains_module = [c for c in rel_calls if c[0][1] == "CONTAINS_MODULE"]
+        rel_calls = get_relationships(definition_processor.ingestor)
+        contains_module = [c for c in rel_calls if c.rel_type == "CONTAINS_MODULE"]
 
         assert len(contains_module) >= 1
         rel = contains_module[-1]
-        from_tuple = rel[0][0]
+        from_tuple = rel.from_spec
         assert from_tuple[0] == "Folder"
         assert from_tuple[2] == (temp_repo / "scripts").resolve().as_posix()
 
@@ -775,8 +764,8 @@ def standalone():
 
         assert result is not None
 
-        node_calls = definition_processor.ingestor.ensure_node_batch.call_args_list
-        node_types = {c[0][0] for c in node_calls}
+        node_calls = get_nodes(definition_processor.ingestor)
+        node_types = {c.label for c in node_calls}
 
         assert "Module" in node_types
         assert "Class" in node_types or "Function" in node_types
@@ -815,8 +804,8 @@ def standalone():
 
         assert result is not None
 
-        node_calls = definition_processor.ingestor.ensure_node_batch.call_args_list
-        module_nodes = [c for c in node_calls if c[0][0] == "Module"]
+        node_calls = get_nodes(definition_processor.ingestor)
+        module_nodes = [c for c in node_calls if c.label == "Module"]
         assert len(module_nodes) >= 1
 
 
@@ -853,11 +842,11 @@ class TestProcessFileRust:
 
         assert result is not None
 
-        node_calls = definition_processor.ingestor.ensure_node_batch.call_args_list
-        module_nodes = [c for c in node_calls if c[0][0] == "Module"]
+        node_calls = get_nodes(definition_processor.ingestor)
+        module_nodes = [c for c in node_calls if c.label == "Module"]
 
         assert len(module_nodes) >= 1
-        module_props = module_nodes[-1][0][1]
+        module_props = module_nodes[-1].properties
         qn = module_props["qualified_name"]
         assert "mod" not in qn or "mod.rs" not in qn
         assert "utils" in qn

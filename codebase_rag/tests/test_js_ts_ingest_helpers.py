@@ -9,7 +9,7 @@ from tree_sitter import Language, Parser
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.js_ts import utils as js_ts_utils
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_nodes, get_relationships, run_updater
 
 try:
     import tree_sitter_javascript as tsjs
@@ -320,12 +320,12 @@ Person.prototype.farewell = function() {
 
         run_updater(temp_js_project, mock_ingestor)
 
-        calls = mock_ingestor.ensure_node_batch.call_args_list
+        calls = get_nodes(mock_ingestor)
         function_qns = [
-            call[0][1]["qualified_name"]
+            call.properties["qualified_name"]
             for call in calls
-            if call[0][0] == "Function"
-            and "prototype_test" in call[0][1].get("qualified_name", "")
+            if call.label == "Function"
+            and "prototype_test" in call.properties.get("qualified_name", "")
         ]
 
         assert any("Person" in qn for qn in function_qns)
@@ -362,8 +362,8 @@ Dog.prototype.bark = function() {
 
         run_updater(temp_js_project, mock_ingestor)
 
-        rel_calls = mock_ingestor.ensure_relationship_batch.call_args_list
-        inherits_rels = [call for call in rel_calls if call.args[1] == "INHERITS"]
+        rel_calls = get_relationships(mock_ingestor)
+        inherits_rels = [call for call in rel_calls if call.rel_type == "INHERITS"]
 
         assert len(inherits_rels) >= 1
 
@@ -392,12 +392,12 @@ const calculator = {
 
         run_updater(temp_js_project, mock_ingestor)
 
-        calls = mock_ingestor.ensure_node_batch.call_args_list
+        calls = get_nodes(mock_ingestor)
         function_qns = [
-            call[0][1]["qualified_name"]
+            call.properties["qualified_name"]
             for call in calls
-            if call[0][0] == "Function"
-            and "object_methods" in call[0][1].get("qualified_name", "")
+            if call.label == "Function"
+            and "object_methods" in call.properties.get("qualified_name", "")
         ]
 
         assert any("add" in qn for qn in function_qns)
@@ -423,12 +423,12 @@ const utils = {
 
         run_updater(temp_js_project, mock_ingestor)
 
-        calls = mock_ingestor.ensure_node_batch.call_args_list
+        calls = get_nodes(mock_ingestor)
         function_qns = [
-            call[0][1]["qualified_name"]
+            call.properties["qualified_name"]
             for call in calls
-            if call[0][0] == "Function"
-            and "arrow_functions" in call[0][1].get("qualified_name", "")
+            if call.label == "Function"
+            and "arrow_functions" in call.properties.get("qualified_name", "")
         ]
 
         assert any("double" in qn for qn in function_qns)
@@ -449,12 +449,12 @@ obj.method2 = (x) => x * 2;
 
         run_updater(temp_js_project, mock_ingestor)
 
-        calls = mock_ingestor.ensure_node_batch.call_args_list
+        calls = get_nodes(mock_ingestor)
         function_qns = [
-            call[0][1]["qualified_name"]
+            call.properties["qualified_name"]
             for call in calls
-            if call[0][0] == "Function"
-            and "assignment_arrows" in call[0][1].get("qualified_name", "")
+            if call.label == "Function"
+            and "assignment_arrows" in call.properties.get("qualified_name", "")
         ]
 
         assert any("method1" in qn for qn in function_qns)

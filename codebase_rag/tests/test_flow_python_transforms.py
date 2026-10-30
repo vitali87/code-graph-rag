@@ -27,6 +27,7 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.flow_access import FlowKind
 from codebase_rag.parsers.flow_access.processor import FlowProcessor
 from codebase_rag.parsers.io_access import python_name_binding_sites
+from codebase_rag.tests.conftest import get_relationships
 from codebase_rag.types_defs import PropertyParams, ResultRow
 
 FLOWS_TO = cs.RelationshipType.FLOWS_TO.value
@@ -51,15 +52,10 @@ def _run_flow(
         queries=queries,
         capture=capture,
     ).run()
-    edges: list[FlowEdge] = []
-    for c in mock.ensure_relationship_batch.call_args_list:
-        if str(c.args[1]) != FLOWS_TO:
-            continue
-        props = c.kwargs.get("properties")
-        if props is None and len(c.args) > 3:
-            props = c.args[3]
-        edges.append((c.args[0][2], c.args[2][2], dict(props or {})))
-    return edges
+    return [
+        (str(r.source), str(r.target), dict(r.properties))
+        for r in get_relationships(mock, FLOWS_TO)
+    ]
 
 
 def _has(edges: list[FlowEdge], frm: str, to: str, **props: str) -> bool:

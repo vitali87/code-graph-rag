@@ -148,9 +148,9 @@ fn demonstrate_functions() {
     function_call_relationships = [
         call
         for call in call_relationships
-        if "basic_functions" in call.args[0][2]
+        if "basic_functions" in call.source
         and any(
-            func_name in call.args[2][2]
+            func_name in call.target
             for func_name in [
                 "simple_function",
                 "function_with_params",
@@ -1128,9 +1128,9 @@ fn demonstrate_patterns() {
     pattern_call_relationships = [
         call
         for call in call_relationships
-        if "pattern_matching" in call.args[0][2]
+        if "pattern_matching" in call.source
         and any(
-            func_name in call.args[2][2]
+            func_name in call.target
             for func_name in ["match_color", "process_message", "match_with_guards"]
         )
     ]
@@ -1341,9 +1341,9 @@ fn demonstrate_function_usage() {
     closure_call_relationships = [
         call
         for call in call_relationships
-        if "closures" in call.args[0][2]
+        if "closures" in call.source
         and any(
-            func_name in call.args[2][2]
+            func_name in call.target
             for func_name in ["apply_twice", "apply_to_vec", "make_adder"]
         )
     ]
@@ -1774,15 +1774,13 @@ impl Debug for CustomStruct {
 
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
-    rust_imports = [
-        call for call in import_relationships if "imports" in call.args[0][2]
-    ]
+    rust_imports = [call for call in import_relationships if "imports" in call.source]
 
     assert len(rust_imports) >= 10, (
         f"Expected at least 10 import relationships, found {len(rust_imports)}"
     )
 
-    imported_modules = [call.args[2][2] for call in rust_imports]
+    imported_modules = [call.target for call in rust_imports]
 
     expected_std_imports = [
         "std::collections",
@@ -2100,9 +2098,9 @@ fn demonstrate_error_handling() {
     error_call_relationships = [
         call
         for call in call_relationships
-        if "error_handling" in call.args[0][2]
+        if "error_handling" in call.source
         and any(
-            func_name in call.args[2][2]
+            func_name in call.target
             for func_name in ["divide", "validate_and_parse", "find_word"]
         )
     ]
@@ -2407,7 +2405,7 @@ fn demonstrate_comprehensive_rust() {
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     comprehensive_calls = [
-        call for call in call_relationships if "comprehensive" in call.args[0][2]
+        call for call in call_relationships if "comprehensive" in call.source
     ]
 
     assert len(comprehensive_calls) >= 5, (
@@ -2415,7 +2413,7 @@ fn demonstrate_comprehensive_rust() {
     )
 
     comprehensive_imports = [
-        call for call in import_relationships if "comprehensive" in call.args[0][2]
+        call for call in import_relationships if "comprehensive" in call.source
     ]
 
     assert len(comprehensive_imports) >= 3, (
@@ -2423,11 +2421,10 @@ fn demonstrate_comprehensive_rust() {
     )
 
     for relationship in comprehensive_calls:
-        assert len(relationship.args) == 3, "Call relationship should have 3 args"
-        assert relationship.args[1] == "CALLS", "Second arg should be 'CALLS'"
+        assert relationship.rel_type == "CALLS", "Expected a CALLS relationship"
 
-        source_module = relationship.args[0][2]
-        target_module = relationship.args[2][2]
+        source_module = relationship.source
+        target_module = relationship.target
 
         assert "comprehensive" in source_module, (
             f"Source module should contain test file name: {source_module}"
@@ -3247,7 +3244,7 @@ async fn test_async_features() -> Result<String, ComplexError> {
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     edge_case_calls = [
-        call for call in call_relationships if "advanced_edge_cases" in call.args[0][2]
+        call for call in call_relationships if "advanced_edge_cases" in call.source
     ]
 
     assert len(edge_case_calls) >= 8, (
@@ -3257,9 +3254,7 @@ async fn test_async_features() -> Result<String, ComplexError> {
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     edge_case_imports = [
-        call
-        for call in import_relationships
-        if "advanced_edge_cases" in call.args[0][2]
+        call for call in import_relationships if "advanced_edge_cases" in call.source
     ]
 
     assert len(edge_case_imports) >= 5, (

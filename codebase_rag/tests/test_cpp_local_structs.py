@@ -126,8 +126,7 @@ def _index(temp_repo: Path, mock_ingestor: MagicMock, **files: str) -> None:
 
 def _edges(mock_ingestor: MagicMock, rel: RelationshipType) -> set[tuple[str, str]]:
     return {
-        (str(c.args[0][2]), str(c.args[2][2]))
-        for c in get_relationships(mock_ingestor, rel)
+        (str(c.source), str(c.target)) for c in get_relationships(mock_ingestor, rel)
     }
 
 
@@ -135,7 +134,7 @@ def _labelled_edges(
     mock_ingestor: MagicMock, rel: RelationshipType
 ) -> set[tuple[str, str, str, str]]:
     return {
-        (str(c.args[0][0]), str(c.args[0][2]), str(c.args[2][0]), str(c.args[2][2]))
+        (str(c.source_label), str(c.source), str(c.target_label), str(c.target))
         for c in get_relationships(mock_ingestor, rel)
     }
 

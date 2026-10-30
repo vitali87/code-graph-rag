@@ -20,6 +20,7 @@ from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.ast_grep_tier import AstGrepTier, load_pattern_configs
+from codebase_rag.tests.conftest import get_nodes, get_relationships
 
 PROJECT = "proj"
 CLASS = cs.NodeLabel.CLASS.value
@@ -59,23 +60,29 @@ def _nodes(mock: MagicMock, module_qn: str) -> list[Node]:
     this issue is about, and a set would hide them.
     """
     nodes: list[Node] = []
-    for c in mock.ensure_node_batch.call_args_list:
-        if str(c.args[0]) not in _DEFINITION_LABELS:
+    for c in get_nodes(mock):
+        if str(c.label) not in _DEFINITION_LABELS:
             continue
-        short = _short(c.args[1][cs.KEY_QUALIFIED_NAME], module_qn)
+        short = _short(c.properties[cs.KEY_QUALIFIED_NAME], module_qn)
         if short is not None:
-            nodes.append((str(c.args[0]), short, c.args[1][cs.KEY_START_LINE]))
+            nodes.append((str(c.label), short, c.properties[cs.KEY_START_LINE]))
     return nodes
 
 
 def _edges(mock: MagicMock, module_qn: str) -> set[Edge]:
     edges: set[Edge] = set()
-    for c in mock.ensure_relationship_batch.call_args_list:
-        parent = _short(c.args[0][2], module_qn)
-        child = _short(c.args[2][2], module_qn)
-        if str(c.args[1]) in _CONTAINMENT and parent and child:
+    for c in get_relationships(mock):
+        parent = _short(c.source, module_qn)
+        child = _short(c.target, module_qn)
+        if str(c.rel_type) in _CONTAINMENT and parent and child:
             edges.add(
-                (str(c.args[0][0]), parent, str(c.args[1]), str(c.args[2][0]), child)
+                (
+                    str(c.source_label),
+                    parent,
+                    str(c.rel_type),
+                    str(c.target_label),
+                    child,
+                )
             )
     return edges
 
@@ -135,11 +142,7 @@ def test_swift_methods_and_extension_members_hang_off_their_class(
 def test_swift_extension_does_not_rewrite_its_class(tmp_path: Path) -> None:
     # The extension used to MERGE onto the Class node and move it to line 12.
     mock, module_qn = _index(tmp_path, "Session.swift", SESSION_SWIFT)
-    classes = [
-        c.args[1]
-        for c in mock.ensure_node_batch.call_args_list
-        if str(c.args[0]) == CLASS
-    ]
+    classes = [c.properties for c in get_nodes(mock) if str(c.label) == CLASS]
     assert [(p[cs.KEY_START_LINE], p[cs.KEY_END_LINE]) for p in classes] == [(3, 10)]
 
 
@@ -517,9 +520,9 @@ def test_names_match_the_tree_sitter_tier_for_the_same_shapes(
         ingestor=mock, repo_path=tmp_path, parsers=parsers, queries=queries
     ).run()
     modules = {
-        c.args[1][cs.KEY_PATH]: c.args[1][cs.KEY_QUALIFIED_NAME]
-        for c in mock.ensure_node_batch.call_args_list
-        if str(c.args[0]) == MODULE
+        c.properties[cs.KEY_PATH]: c.properties[cs.KEY_QUALIFIED_NAME]
+        for c in get_nodes(mock)
+        if str(c.label) == MODULE
     }
     python_qn, kotlin_qn = modules["shapes.py"], modules["shapes.kt"]
     assert sorted(_nodes(mock, python_qn)) == sorted(

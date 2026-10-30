@@ -5,6 +5,7 @@ import pytest
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_relationships
 
 
 @pytest.fixture
@@ -241,14 +242,12 @@ def test_inheritance_relationships_are_created(
     ]
 
     relationship_calls = [
-        call
-        for call in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(call[0]) >= 3 and call[0][1] == "INHERITS"
+        call for call in get_relationships(mock_ingestor) if call.rel_type == "INHERITS"
     ]
 
     for expected_child, expected_parent in expected_inherits:
         found = any(
-            call[0][0] == expected_child and call[0][2] == expected_parent
+            call.from_spec == expected_child and call.to_spec == expected_parent
             for call in relationship_calls
         )
         assert found, (
@@ -301,14 +300,12 @@ def test_super_calls_are_tracked(
     ]
 
     call_relationships = [
-        call
-        for call in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(call[0]) >= 3 and call[0][1] == "CALLS"
+        call for call in get_relationships(mock_ingestor) if call.rel_type == "CALLS"
     ]
 
     for caller_qn, callee_qn in expected_super_calls:
         found = any(
-            call[0][0][2] == caller_qn and call[0][2][2] == callee_qn
+            call.source == caller_qn and call.target == callee_qn
             for call in call_relationships
         )
         assert found, f"Missing super() call: {caller_qn} CALLS {callee_qn}"
@@ -363,13 +360,13 @@ def test_method_overrides_are_detected(
 
     override_relationships = [
         call
-        for call in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(call[0]) >= 3 and call[0][1] == "OVERRIDES"
+        for call in get_relationships(mock_ingestor)
+        if call.rel_type == "OVERRIDES"
     ]
 
     for child_method, parent_method in expected_overrides:
         found = any(
-            call[0][0][2] == child_method and call[0][2][2] == parent_method
+            call.source == child_method and call.target == parent_method
             for call in override_relationships
         )
         assert found, (
@@ -405,14 +402,12 @@ def test_multiple_inheritance_is_handled(
     ]
 
     relationship_calls = [
-        call
-        for call in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(call[0]) >= 3 and call[0][1] == "INHERITS"
+        call for call in get_relationships(mock_ingestor) if call.rel_type == "INHERITS"
     ]
 
     for expected_child, expected_parent in expected_multiple_inheritance:
         found = any(
-            call[0][0] == expected_child and call[0][2] == expected_parent
+            call.from_spec == expected_child and call.to_spec == expected_parent
             for call in relationship_calls
         )
         assert found, (
@@ -449,14 +444,12 @@ def test_inherited_method_calls_are_resolved(
     ]
 
     call_relationships = [
-        call
-        for call in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(call[0]) >= 3 and call[0][1] == "CALLS"
+        call for call in get_relationships(mock_ingestor) if call.rel_type == "CALLS"
     ]
 
     for caller_qn, callee_qn in expected_inherited_calls:
         found = any(
-            call[0][0][2] == caller_qn and call[0][2][2] == callee_qn
+            call.source == caller_qn and call.target == callee_qn
             for call in call_relationships
         )
         assert found, f"Missing inherited method call: {caller_qn} CALLS {callee_qn}"
@@ -494,14 +487,12 @@ def test_deep_inheritance_chain(
     ]
 
     relationship_calls = [
-        call
-        for call in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(call[0]) >= 3 and call[0][1] == "INHERITS"
+        call for call in get_relationships(mock_ingestor) if call.rel_type == "INHERITS"
     ]
 
     for expected_child, expected_parent in expected_chain:
         found = any(
-            call[0][0] == expected_child and call[0][2] == expected_parent
+            call.from_spec == expected_child and call.to_spec == expected_parent
             for call in relationship_calls
         )
         assert found, (
@@ -687,14 +678,14 @@ def test_diamond_inheritance_mro_basic(
 
     override_relationships = [
         call
-        for call in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(call[0]) >= 3 and call[0][1] == "OVERRIDES"
+        for call in get_relationships(mock_ingestor)
+        if call.rel_type == "OVERRIDES"
     ]
 
     d_method_overrides = [
         call
         for call in override_relationships
-        if call[0][0][2] == f"{project_name}.diamond_mro.D.method"
+        if call.source == f"{project_name}.diamond_mro.D.method"
     ]
 
     assert len(d_method_overrides) == 0, (
@@ -718,7 +709,7 @@ def test_diamond_inheritance_mro_basic(
 
     for child_method, parent_method in expected_overrides:
         found = any(
-            call[0][0][2] == child_method and call[0][2][2] == parent_method
+            call.source == child_method and call.target == parent_method
             for call in override_relationships
         )
         assert found, (
@@ -744,21 +735,21 @@ def test_diamond_inheritance_mro_override_at_point(
 
     override_relationships = [
         call
-        for call in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(call[0]) >= 3 and call[0][1] == "OVERRIDES"
+        for call in get_relationships(mock_ingestor)
+        if call.rel_type == "OVERRIDES"
     ]
 
     e_override_found = any(
         (
-            call[0][0][2] == f"{project_name}.diamond_mro.E.method"
-            and call[0][2][2] == f"{project_name}.diamond_mro.B.method"
+            call.source == f"{project_name}.diamond_mro.E.method"
+            and call.target == f"{project_name}.diamond_mro.B.method"
         )
         for call in override_relationships
     )
 
     assert e_override_found, (
         "E.method should override B.method (nearest parent in MRO), "
-        f"but override relationships are: {[(call[0][0][2], call[0][2][2]) for call in override_relationships if 'E.method' in call[0][0][2]]}"
+        f"but override relationships are: {[(call.source, call.target) for call in override_relationships if 'E.method' in call.source]}"
     )
 
 
@@ -780,14 +771,14 @@ def test_complex_multiple_inheritance_mro(
 
     override_relationships = [
         call
-        for call in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(call[0]) >= 3 and call[0][1] == "OVERRIDES"
+        for call in get_relationships(mock_ingestor)
+        if call.rel_type == "OVERRIDES"
     ]
 
     i_shared_overrides = [
         call
         for call in override_relationships
-        if call[0][0][2] == f"{project_name}.diamond_mro.I.shared_method"
+        if call.source == f"{project_name}.diamond_mro.I.shared_method"
     ]
 
     assert len(i_shared_overrides) == 0, (
@@ -807,7 +798,7 @@ def test_complex_multiple_inheritance_mro(
 
     for child_method, parent_method in expected_complex_overrides:
         found = any(
-            call[0][0][2] == child_method and call[0][2][2] == parent_method
+            call.source == child_method and call.target == parent_method
             for call in override_relationships
         )
         assert found, (
@@ -833,8 +824,8 @@ def test_deep_diamond_chain_mro(
 
     override_relationships = [
         call
-        for call in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(call[0]) >= 3 and call[0][1] == "OVERRIDES"
+        for call in get_relationships(mock_ingestor)
+        if call.rel_type == "OVERRIDES"
     ]
 
     expected_deep_overrides = [
@@ -854,7 +845,7 @@ def test_deep_diamond_chain_mro(
 
     for child_method, parent_method in expected_deep_overrides:
         found = any(
-            call[0][0][2] == child_method and call[0][2][2] == parent_method
+            call.source == child_method and call.target == parent_method
             for call in override_relationships
         )
         assert found, (
@@ -864,7 +855,7 @@ def test_deep_diamond_chain_mro(
     m_deep_overrides = [
         call
         for call in override_relationships
-        if call[0][0][2] == f"{project_name}.diamond_mro.M.deep_method"
+        if call.source == f"{project_name}.diamond_mro.M.deep_method"
     ]
 
     assert len(m_deep_overrides) == 0, (
@@ -890,8 +881,8 @@ def test_asymmetric_diamond_mro(
 
     override_relationships = [
         call
-        for call in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(call[0]) >= 3 and call[0][1] == "OVERRIDES"
+        for call in get_relationships(mock_ingestor)
+        if call.rel_type == "OVERRIDES"
     ]
 
     expected_asym_overrides = [
@@ -907,7 +898,7 @@ def test_asymmetric_diamond_mro(
 
     for child_method, parent_method in expected_asym_overrides:
         found = any(
-            call[0][0][2] == child_method and call[0][2][2] == parent_method
+            call.source == child_method and call.target == parent_method
             for call in override_relationships
         )
         assert found, (
@@ -917,7 +908,7 @@ def test_asymmetric_diamond_mro(
     p_asym_overrides = [
         call
         for call in override_relationships
-        if call[0][0][2] == f"{project_name}.diamond_mro.P.asym_method"
+        if call.source == f"{project_name}.diamond_mro.P.asym_method"
     ]
 
     assert len(p_asym_overrides) == 0, (
@@ -943,14 +934,14 @@ def test_mro_nearest_override_selection(
 
     override_relationships = [
         call
-        for call in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(call[0]) >= 3 and call[0][1] == "OVERRIDES"
+        for call in get_relationships(mock_ingestor)
+        if call.rel_type == "OVERRIDES"
     ]
 
     e_method_overrides = [
-        (call[0][0][2], call[0][2][2])
+        (call.source, call.target)
         for call in override_relationships
-        if call[0][0][2] == f"{project_name}.diamond_mro.E.method"
+        if call.source == f"{project_name}.diamond_mro.E.method"
     ]
 
     assert len(e_method_overrides) == 1, (
@@ -964,8 +955,8 @@ def test_mro_nearest_override_selection(
 
     e_to_a_override = any(
         (
-            call[0][0][2] == f"{project_name}.diamond_mro.E.method"
-            and call[0][2][2] == f"{project_name}.diamond_mro.A.method"
+            call.source == f"{project_name}.diamond_mro.E.method"
+            and call.target == f"{project_name}.diamond_mro.A.method"
         )
         for call in override_relationships
     )

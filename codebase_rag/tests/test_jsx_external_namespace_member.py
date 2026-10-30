@@ -9,6 +9,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_relationships
 
 # Issue #2535: a JSX member tag (`<Prim.Item>`) whose namespace is imported from
 # an npm package named its member only through the last segment, so the
@@ -49,15 +50,15 @@ def _edges(tmp_path: Path, files: dict[str, str], lang_key: str) -> list[_Edge]:
     mock = MagicMock()
     GraphUpdater(ingestor=mock, repo_path=repo, parsers=parsers, queries=queries).run()
     edges: list[_Edge] = []
-    for call in mock.ensure_relationship_batch.call_args_list:
-        props = call.kwargs.get("properties") or {}
+    for call in get_relationships(mock):
+        props = call.properties
         resolution = props.get(cs.KEY_RESOLUTION)
         edges.append(
             _Edge(
-                call.args[0][2],
-                str(call.args[1]),
-                str(call.args[2][0]),
-                call.args[2][2],
+                call.source,
+                str(call.rel_type),
+                str(call.target_label),
+                call.target,
                 str(resolution) if resolution is not None else None,
             )
         )

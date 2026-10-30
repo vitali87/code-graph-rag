@@ -164,14 +164,14 @@ def _write(root: Path, name: str, source: str) -> None:
 
 def _start_lines(mock_ingestor: MagicMock, label: str) -> dict[str, int]:
     return {
-        c[0][1][cs.KEY_QUALIFIED_NAME]: c[0][1][cs.KEY_START_LINE]
+        c.properties[cs.KEY_QUALIFIED_NAME]: c.properties[cs.KEY_START_LINE]
         for c in get_nodes(mock_ingestor, label)
     }
 
 
 def _calls(mock_ingestor: MagicMock) -> set[tuple[str, str]]:
     return {
-        (c.args[0][2], c.args[2][2])
+        (c.source, c.target)
         for c in get_relationships(mock_ingestor, cs.RelationshipType.CALLS)
     }
 

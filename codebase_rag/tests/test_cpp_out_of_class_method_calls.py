@@ -47,9 +47,7 @@ def test_out_of_class_method_call_attributed_to_method_qn(
     calls = get_relationships(mock_ingestor, "CALLS")
     # ensure_relationship_batch(from_spec, rel_type, to_spec): from_spec[2] is
     # the caller qn, to_spec[2] the callee qn.
-    callers_of_helper = {
-        c.args[0][2] for c in calls if "helper_fn" in str(c.args[2][2])
-    }
+    callers_of_helper = {c.source for c in calls if "helper_fn" in str(c.target)}
     assert add_qn in callers_of_helper, (
         f"expected CALLS from {add_qn} to helper_fn; "
         f"got callers {sorted(callers_of_helper)}"

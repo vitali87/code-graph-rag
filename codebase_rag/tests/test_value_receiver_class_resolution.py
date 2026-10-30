@@ -41,7 +41,7 @@ from codebase_rag.tests.conftest import (
 
 def _targets(mock_ingestor: MagicMock, rel: RelationshipType) -> set[tuple[str, str]]:
     return {
-        (call[0][0][2], call[0][2][2])
+        (call.source, call.target)
         for call in get_relationships(mock_ingestor, rel.value)
     }
 

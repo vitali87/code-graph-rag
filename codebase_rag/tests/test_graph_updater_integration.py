@@ -53,7 +53,7 @@ def test_function_call_relationships_are_created(
     # Endpoints only: every CALLS edge also carries its call-site properties
     # (line/col/arg shape, issue #1522), which this test does not pin.
     actual_calls = [
-        (c.args[0], c.args[1], c.args[2])
+        (c.from_spec, c.rel_type, c.to_spec)
         for c in get_relationships(mock_ingestor, "CALLS")
     ]
 

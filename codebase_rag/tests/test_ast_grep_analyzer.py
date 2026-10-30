@@ -11,6 +11,7 @@ from codebase_rag import constants as cs
 from codebase_rag.capture import resolve_capture
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_nodes, get_relationships
 
 PATTERN = cs.NodeLabel.PATTERN.value
 CODE_SMELL = cs.NodeLabel.CODE_SMELL.value
@@ -55,18 +56,12 @@ def _run(tmp_path: Path, files: dict[str, str], tokens: list[str]) -> MagicMock:
 
 def _node_names(mock: MagicMock, label: str) -> set[str]:
     return {
-        c.args[1].get(cs.KEY_NAME)
-        for c in mock.ensure_node_batch.call_args_list
-        if str(c.args[0]) == label
+        c.properties.get(cs.KEY_NAME) for c in get_nodes(mock) if str(c.label) == label
     }
 
 
 def _rel_targets(mock: MagicMock, rel_type: str) -> set[str]:
-    return {
-        c.args[2][2]
-        for c in mock.ensure_relationship_batch.call_args_list
-        if str(c.args[1]) == rel_type
-    }
+    return {c.target for c in get_relationships(mock) if str(c.rel_type) == rel_type}
 
 
 def test_singleton_pattern_detected(tmp_path: Path) -> None:

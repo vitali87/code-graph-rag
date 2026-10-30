@@ -10,7 +10,7 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.tests.conftest import get_relationships, run_updater
+from codebase_rag.tests.conftest import get_nodes, get_relationships, run_updater
 
 SERVICE = """
 package com.example.myapp;
@@ -50,9 +50,9 @@ def _skip_without_java() -> None:
 
 def _import_edges(mock_ingestor: MagicMock, from_qn: str) -> list[tuple[str, str]]:
     return [
-        (str(call.args[2][0]), call.args[2][2])
+        (str(call.target_label), call.target)
         for call in get_relationships(mock_ingestor, cs.RelationshipType.IMPORTS.value)
-        if call.args[0][2] == from_qn
+        if call.source == from_qn
     ]
 
 
@@ -78,9 +78,9 @@ def test_maven_internal_import_creates_no_external_module(
     run_updater(temp_repo, mock_ingestor)
 
     external_qns = {
-        c.args[1].get("qualified_name")
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if str(c.args[0]) == str(cs.NodeLabel.EXTERNAL_MODULE)
+        c.properties.get("qualified_name")
+        for c in get_nodes(mock_ingestor)
+        if str(c.label) == str(cs.NodeLabel.EXTERNAL_MODULE)
     }
     internal = {qn for qn in external_qns if qn and "com.example.myapp" in qn}
     assert not internal, internal

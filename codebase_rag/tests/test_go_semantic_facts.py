@@ -39,9 +39,7 @@ def _byte_loc(source: str, needle: str) -> tuple[int, int]:
 
 
 def _pairs(mock_ingestor: MagicMock, rel_type: str) -> set[tuple[str, str]]:
-    return {
-        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, rel_type)
-    }
+    return {(c.source, c.target) for c in get_relationships(mock_ingestor, rel_type)}
 
 
 def _has(pairs: set[tuple[str, str]], caller_suffix: str, callee_suffix: str) -> bool:

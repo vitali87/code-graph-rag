@@ -24,9 +24,7 @@ Date.prototype.strftime = function (format) {
 
 
 def _calls(mock_ingestor: MagicMock) -> set[tuple[str, str]]:
-    return {
-        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
-    }
+    return {(c.source, c.target) for c in get_relationships(mock_ingestor, "CALLS")}
 
 
 def test_prototype_this_call_resolves_to_sibling_method(

@@ -34,13 +34,13 @@ import xml.etree.ElementTree
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     stdlib_imports = [
-        call for call in import_relationships if "stdlib_imports" in call.args[0][2]
+        call for call in import_relationships if "stdlib_imports" in call.source
     ]
     assert len(stdlib_imports) >= 10, (
         f"Expected at least 10 Python stdlib imports, found {len(stdlib_imports)}"
     )
 
-    imported_modules = [call.args[2][2] for call in stdlib_imports]
+    imported_modules = [call.target for call in stdlib_imports]
     expected_modules = [
         "collections",
         "datetime",
@@ -110,13 +110,13 @@ http.createServer();
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     js_imports = [
-        call for call in import_relationships if "stdlib_imports" in call.args[0][2]
+        call for call in import_relationships if "stdlib_imports" in call.source
     ]
     assert len(js_imports) >= 8, (
         f"Expected at least 8 JavaScript stdlib imports, found {len(js_imports)}"
     )
 
-    imported_modules = [call.args[2][2] for call in js_imports]
+    imported_modules = [call.target for call in js_imports]
     expected_modules = [
         "fs",
         "path",
@@ -191,13 +191,13 @@ const hasher = crypto.createHash('sha256');
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     ts_imports = [
-        call for call in import_relationships if "stdlib_imports" in call.args[0][2]
+        call for call in import_relationships if "stdlib_imports" in call.source
     ]
     assert len(ts_imports) >= 10, (
         f"Expected at least 10 TypeScript stdlib imports, found {len(ts_imports)}"
     )
 
-    imported_modules = [call.args[2][2] for call in ts_imports]
+    imported_modules = [call.target for call in ts_imports]
     expected_modules = [
         "fs",
         "path",
@@ -293,13 +293,13 @@ func main() {
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     go_imports = [
-        call for call in import_relationships if "stdlib_imports" in call.args[0][2]
+        call for call in import_relationships if "stdlib_imports" in call.source
     ]
     assert len(go_imports) >= 15, (
         f"Expected at least 15 Go stdlib imports, found {len(go_imports)}"
     )
 
-    imported_modules = [call.args[2][2] for call in go_imports]
+    imported_modules = [call.target for call in go_imports]
     expected_packages = [
         "fmt",
         "os",
@@ -404,13 +404,13 @@ fn main() {
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     rust_imports = [
-        call for call in import_relationships if "stdlib_imports" in call.args[0][2]
+        call for call in import_relationships if "stdlib_imports" in call.source
     ]
     assert len(rust_imports) >= 15, (
         f"Expected at least 15 Rust stdlib imports, found {len(rust_imports)}"
     )
 
-    imported_modules = [call.args[2][2] for call in rust_imports]
+    imported_modules = [call.target for call in rust_imports]
     expected_modules = [
         "std::collections",
         "std::io",
@@ -510,13 +510,13 @@ int main() {
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     cpp_imports = [
-        call for call in import_relationships if "stdlib_imports" in call.args[0][2]
+        call for call in import_relationships if "stdlib_imports" in call.source
     ]
     assert len(cpp_imports) >= 10, (
         f"Expected at least 10 C++ stdlib imports, found {len(cpp_imports)}"
     )
 
-    imported_modules = [call.args[2][2] for call in cpp_imports]
+    imported_modules = [call.target for call in cpp_imports]
     expected_headers = [
         "iostream",
         "vector",
@@ -613,13 +613,13 @@ public class StdlibImports {
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     java_imports = [
-        call for call in import_relationships if "StdlibImports" in call.args[0][2]
+        call for call in import_relationships if "StdlibImports" in call.source
     ]
     assert len(java_imports) >= 15, (
         f"Expected at least 15 Java stdlib imports, found {len(java_imports)}"
     )
 
-    imported_modules = [call.args[2][2] for call in java_imports]
+    imported_modules = [call.target for call in java_imports]
     expected_packages = [
         "java.util",
         "java.lang",
@@ -713,13 +713,13 @@ return {
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     lua_imports = [
-        call for call in import_relationships if "stdlib_usage" in call.args[0][2]
+        call for call in import_relationships if "stdlib_usage" in call.source
     ]
     assert len(lua_imports) >= 2, (
         f"Expected at least 2 Lua imports, found {len(lua_imports)}"
     )
 
-    imported_modules = [call.args[2][2] for call in lua_imports]
+    imported_modules = [call.target for call in lua_imports]
 
     assert any("my_custom_module" in module for module in imported_modules), (
         "Expected custom module import"
@@ -864,8 +864,8 @@ def test_all_languages_stdlib_consistency(
     ]
 
     for relationship in import_relationships:
-        source_module = relationship.args[0][2]
-        target_module = relationship.args[2][2]
+        source_module = relationship.source
+        target_module = relationship.target
 
         for forbidden_ending in forbidden_entity_endings:
             assert not target_module.endswith(forbidden_ending), (
@@ -873,7 +873,7 @@ def test_all_languages_stdlib_consistency(
                 f"{source_module} -> {target_module} (ends with {forbidden_ending})"
             )
 
-    imported_modules = [call.args[2][2] for call in import_relationships]
+    imported_modules = [call.target for call in import_relationships]
 
     python_correct = any(
         "collections" in module and not module.endswith(".defaultdict")

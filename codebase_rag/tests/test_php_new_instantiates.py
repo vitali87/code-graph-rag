@@ -48,12 +48,12 @@ def _graph(
     edges: set[Edge] = set()
     for rel in (cs.RelationshipType.CALLS, cs.RelationshipType.INSTANTIATES):
         for c in get_relationships(mock_ingestor, rel.value):
-            props = c.kwargs.get("properties") or {}
+            props = c.properties
             edges.add(
                 (
-                    str(c.args[0][2]),
+                    str(c.source),
                     rel.value,
-                    str(c.args[2][2]),
+                    str(c.target),
                     str(props.get(cs.KEY_RESOLUTION)),
                 )
             )

@@ -85,14 +85,14 @@ def _short(qn: str) -> str:
 
 def _nodes(mock_ingestor: MagicMock, label: str) -> dict[str, dict]:
     return {
-        _short(c.args[1]["qualified_name"]): c.args[1]
+        _short(c.properties["qualified_name"]): c.properties
         for c in get_nodes(mock_ingestor, label)
     }
 
 
 def _of_type_edges(mock_ingestor: MagicMock) -> set[tuple[str, str]]:
     return {
-        (_short(c.args[0][2]), _short(c.args[2][2]))
+        (_short(c.source), _short(c.target))
         for c in get_relationships(mock_ingestor, "OF_TYPE")
     }
 
@@ -293,7 +293,7 @@ def test_struct_definitions_are_still_classes(
     assert set(_nodes(mock_ingestor, "Union")) == {"d.num"}
     assert set(_nodes(mock_ingestor, "Enum")) == {"d.dir"}
     fields = {
-        (_short(c.args[0][2]), _short(c.args[2][2]))
+        (_short(c.source), _short(c.target))
         for c in get_relationships(mock_ingestor, "HAS_FIELD")
     }
     assert {("d.point", "d.point.x"), ("d.rect", "d.rect.w")} <= fields
@@ -442,7 +442,7 @@ def test_field_types_land_on_the_real_struct_not_a_phantom(
         ("lstate.GCUnion.h", "lobject.Table"),
     } <= edges
     written = {
-        _short(c.args[1]["qualified_name"])
+        _short(c.properties["qualified_name"])
         for label in ("Class", "Union", "Enum")
         for c in get_nodes(mock_ingestor, label)
     }

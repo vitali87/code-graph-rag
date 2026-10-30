@@ -7,7 +7,7 @@ from codebase_rag.tests.conftest import get_nodes, run_updater
 
 
 def _function_qns(ingestor: MagicMock) -> set[str]:
-    return {c.args[1]["qualified_name"] for c in get_nodes(ingestor, "Function")}
+    return {c.properties["qualified_name"] for c in get_nodes(ingestor, "Function")}
 
 
 def test_rust_src_bin_binaries_are_ingested(temp_repo: Path) -> None:

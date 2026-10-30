@@ -167,8 +167,8 @@ class TestIndex:
     ) -> None:
         create_and_run_updater(layout, mock_ingestor)
         root = layout.resolve()
-        for node_call in mock_ingestor.ensure_node_batch.call_args_list:
-            properties = node_call.args[1]
+        for node_call in get_nodes(mock_ingestor):
+            properties = node_call.properties
             absolute = properties.get(cs.KEY_ABSOLUTE_PATH)
             if isinstance(absolute, str):
                 assert Path(absolute).is_relative_to(root), properties
@@ -190,9 +190,9 @@ class TestIndex:
     ) -> None:
         create_and_run_updater(layout, mock_ingestor)
         containers = {
-            node_call.args[1].get(cs.KEY_PATH)
-            for node_call in mock_ingestor.ensure_node_batch.call_args_list
-            if node_call.args[0] in (cs.NodeLabel.PACKAGE, cs.NodeLabel.FOLDER)
+            node_call.properties.get(cs.KEY_PATH)
+            for node_call in get_nodes(mock_ingestor)
+            if node_call.label in (cs.NodeLabel.PACKAGE, cs.NodeLabel.FOLDER)
         }
         assert "app/vendored" not in containers
         assert "pkg/linkdir" not in containers
@@ -791,7 +791,7 @@ _TARGET_INSIDE = pytest.mark.parametrize(
 def _module_paths(ingestor: MagicMock) -> dict[str, set[str]]:
     found: dict[str, set[str]] = {}
     for node_call in get_nodes(ingestor, cs.NodeLabel.MODULE.value):
-        props = node_call[0][1]
+        props = node_call.properties
         path = props.get(cs.KEY_PATH)
         entry = found.setdefault(props[cs.KEY_QUALIFIED_NAME], set())
         if isinstance(path, str):

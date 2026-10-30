@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -303,9 +302,9 @@ void testTemplateAttributes() {
     attributed_functions = [
         call
         for call in defines_relationships
-        if "standard_attributes" in call.args[0][2]
+        if "standard_attributes" in call.source
         and any(
-            func in call.args[2][2]
+            func in call.target
             for func in [
                 "calculateImportantValue",
                 "createImportantString",
@@ -325,9 +324,9 @@ void testTemplateAttributes() {
     attribute_function_calls = [
         call
         for call in call_relationships
-        if "standard_attributes" in call.args[0][2]
+        if "standard_attributes" in call.source
         and any(
-            func in call.args[2][2]
+            func in call.target
             for func in [
                 "calculateImportantValue",
                 "createImportantString",
@@ -673,19 +672,17 @@ void testAttributeInheritance() {
 
     run_updater(cpp_attributes_project, mock_ingestor)
 
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    all_relationships = get_relationships(mock_ingestor)
 
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
-    [c for c in all_relationships if c.args[1] == "CALLS"]
+    [c for c in all_relationships if c.rel_type == "CALLS"]
 
     compiler_attributed_functions = [
         call
         for call in defines_relationships
-        if "compiler_attributes" in call.args[0][2]
+        if "compiler_attributes" in call.source
         and any(
-            func in call.args[2][2]
+            func in call.target
             for func in [
                 "fastFunction",
                 "slowFunction",
@@ -705,9 +702,9 @@ void testAttributeInheritance() {
     attributed_classes = [
         call
         for call in defines_relationships
-        if "compiler_attributes" in call.args[0][2]
+        if "compiler_attributes" in call.source
         and any(
-            cls in call.args[2][2]
+            cls in call.target
             for cls in ["PackedClass", "AttributedClass", "BaseClass", "DerivedClass"]
         )
     ]
@@ -1031,9 +1028,9 @@ void testUltimateAttributes() {
     edge_case_functions = [
         call
         for call in defines_relationships
-        if "attribute_edge_cases" in call.args[0][2]
+        if "attribute_edge_cases" in call.source
         and any(
-            func in call.args[2][2]
+            func in call.target
             for func in [
                 "multiAttributeFunction",
                 "complexAttributeFunction",
@@ -1050,7 +1047,7 @@ void testUltimateAttributes() {
     )
 
     complex_calls = [
-        call for call in call_relationships if "attribute_edge_cases" in call.args[0][2]
+        call for call in call_relationships if "attribute_edge_cases" in call.source
     ]
 
     assert len(complex_calls) >= 8, (
@@ -1214,15 +1211,13 @@ void testAttributePolymorphism() {
     inherits_relationships = get_relationships(mock_ingestor, "INHERITS")
 
     comprehensive_calls = [
-        call
-        for call in call_relationships
-        if "comprehensive_attributes" in call.args[0][2]
+        call for call in call_relationships if "comprehensive_attributes" in call.source
     ]
 
     comprehensive_defines = [
         call
         for call in defines_relationships
-        if "comprehensive_attributes" in call.args[0][2]
+        if "comprehensive_attributes" in call.source
     ]
 
     assert len(comprehensive_calls) >= 10, (
@@ -1236,7 +1231,7 @@ void testAttributePolymorphism() {
     attribute_inherits = [
         call
         for call in inherits_relationships
-        if "comprehensive_attributes" in call.args[0][2]
+        if "comprehensive_attributes" in call.source
     ]
 
     assert len(attribute_inherits) >= 1, (

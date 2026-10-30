@@ -21,6 +21,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.endpoints import url_matches_template
 from codebase_rag.parsers.io_access.constants import DYNAMIC_TARGET
+from codebase_rag.tests.conftest import get_relationships
 
 _CAPTURE_IO = resolve_capture([cs.CaptureGroup.IO.value])
 _ACCESS_RELS = {
@@ -50,12 +51,12 @@ def _accesses(
     ).run()
     marker = f"resource::{kind}::"
     out: dict[str, set[tuple[str, str]]] = {}
-    for call in mock.ensure_relationship_batch.call_args_list:
-        rel = str(call.args[1])
-        target_qn = call.args[2][2]
+    for call in get_relationships(mock):
+        rel = str(call.rel_type)
+        target_qn = call.target
         if rel not in _ACCESS_RELS or not target_qn.startswith(marker):
             continue
-        caller_qn = str(call.args[0][2])
+        caller_qn = str(call.source)
         # A rootful URL's resource is scoped to the project requesting it
         # (issue #3190); what is folded here is the URL itself.
         scope = f"{caller_qn.split('.', 1)[0]}::"

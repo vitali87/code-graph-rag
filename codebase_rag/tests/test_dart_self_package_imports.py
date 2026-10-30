@@ -20,7 +20,7 @@ from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.sync.checkout_state import state_file
-from codebase_rag.tests.conftest import create_and_run_updater
+from codebase_rag.tests.conftest import create_and_run_updater, get_relationships
 from codebase_rag.tests.test_incremental_deleted_dependents import (
     _materialise,
     _snapshot,
@@ -91,12 +91,12 @@ def _edges(repo: Path, mock: MagicMock, rel: str) -> set[tuple[str, str, str]]:
     prefix = f"{repo.name}."
     return {
         (
-            str(c.args[0][2]).removeprefix(prefix),
-            str(c.args[2][0]),
-            str(c.args[2][2]).removeprefix(prefix),
+            str(c.source).removeprefix(prefix),
+            str(c.target_label),
+            str(c.target).removeprefix(prefix),
         )
-        for c in mock.ensure_relationship_batch.call_args_list
-        if c.args[1] == rel
+        for c in get_relationships(mock)
+        if c.rel_type == rel
     }
 
 

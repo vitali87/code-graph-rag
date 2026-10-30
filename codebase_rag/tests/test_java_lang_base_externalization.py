@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from codebase_rag import constants as cs
-from codebase_rag.tests.conftest import get_relationships, run_updater
+from codebase_rag.tests.conftest import get_nodes, get_relationships, run_updater
 
 EXCEPTIONS_JAVA = """
 package errors;
@@ -46,15 +46,15 @@ public class FancyWidget extends Widget {
 
 def _pairs(mock_ingestor: MagicMock, rel_type: cs.RelationshipType) -> set[tuple]:
     return {
-        (call.args[0][2], str(call.args[2][0]), call.args[2][2])
+        (call.source, str(call.target_label), call.target)
         for call in get_relationships(mock_ingestor, rel_type.value)
     }
 
 
 def _node_keys(mock_ingestor: MagicMock) -> set[tuple[str, str]]:
     return {
-        (str(c.args[0]), c.args[1].get("qualified_name"))
-        for c in mock_ingestor.ensure_node_batch.call_args_list
+        (str(c.label), c.properties.get("qualified_name"))
+        for c in get_nodes(mock_ingestor)
     }
 
 

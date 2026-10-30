@@ -137,9 +137,9 @@ def calls(tmp_path_factory: pytest.TempPathFactory) -> _Calls:
     create_and_run_updater(root, mock, skip_if_missing="rust")
     return {
         (
-            str(c.args[0][2]).split(".src.", 1)[1],
-            str(c.args[2][2]).split(".src.", 1)[1],
-        ): str((c.kwargs.get("properties") or {}).get(cs.KEY_RESOLUTION))
+            str(c.source).split(".src.", 1)[1],
+            str(c.target).split(".src.", 1)[1],
+        ): str(c.properties.get(cs.KEY_RESOLUTION))
         for c in get_relationships(mock, cs.RelationshipType.CALLS)
     }
 

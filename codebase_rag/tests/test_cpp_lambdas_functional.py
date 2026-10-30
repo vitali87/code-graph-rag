@@ -849,9 +849,7 @@ void demonstrateComprehensiveLambdas() {
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
     comprehensive_calls = [
-        call
-        for call in call_relationships
-        if "comprehensive_lambdas" in call.args[0][2]
+        call for call in call_relationships if "comprehensive_lambdas" in call.source
     ]
 
     # builtin operator edges no longer emitted (#652)

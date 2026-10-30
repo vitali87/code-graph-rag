@@ -22,7 +22,7 @@ from codebase_rag.tests.conftest import get_relationships, run_updater
 
 def _inherits(mock_ingestor: MagicMock) -> set[tuple[str, str, str]]:
     return {
-        (call.args[0][2], str(call.args[2][0]), call.args[2][2])
+        (call.source, str(call.target_label), call.target)
         for call in get_relationships(mock_ingestor, cs.RelationshipType.INHERITS.value)
     }
 
@@ -89,7 +89,7 @@ impl Default for Config {
 
     project = temp_repo.name
     implements = {
-        (call.args[0][2], str(call.args[2][0]), call.args[2][2])
+        (call.source, str(call.target_label), call.target)
         for call in get_relationships(
             mock_ingestor, cs.RelationshipType.IMPLEMENTS.value
         )
@@ -160,7 +160,7 @@ impl fmt::Display for Error {
 
     project = temp_repo.name
     implements = {
-        (call.args[0][2], str(call.args[2][0]), call.args[2][2])
+        (call.source, str(call.target_label), call.target)
         for call in get_relationships(
             mock_ingestor, cs.RelationshipType.IMPLEMENTS.value
         )

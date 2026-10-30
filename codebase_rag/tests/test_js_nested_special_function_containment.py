@@ -46,7 +46,7 @@ def test_nested_special_functions_take_their_lexical_parent(
 
     project = temp_repo.name
     defines = {
-        (call.args[0][2], call.args[2][2])
+        (call.source, call.target)
         for call in get_relationships(mock_ingestor, cs.RelationshipType.DEFINES.value)
     }
     module_qn = f"{project}.app"

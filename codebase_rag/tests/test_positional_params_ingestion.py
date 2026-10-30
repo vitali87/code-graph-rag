@@ -23,7 +23,7 @@ from codebase_rag.tests.conftest import create_and_run_updater, get_nodes
 
 def _props_by_qn(mock_ingestor, label: str) -> dict[str, dict]:
     return {
-        call[0][1][cs.KEY_QUALIFIED_NAME]: call[0][1]
+        call.properties[cs.KEY_QUALIFIED_NAME]: call.properties
         for call in get_nodes(mock_ingestor, label)
     }
 

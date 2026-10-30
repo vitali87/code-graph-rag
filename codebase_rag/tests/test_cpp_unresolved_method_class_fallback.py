@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 from codebase_rag import constants as cs
 from codebase_rag.doctor import graph_audit as ga
 from codebase_rag.tests.conftest import (
+    get_nodes,
     get_relationships,
     recorded_nodes,
     recorded_relationships,
@@ -31,16 +32,16 @@ def test_unresolvable_out_of_line_method_anchors_to_module(
     run_updater(temp_repo, mock_ingestor)
 
     method_qns = {
-        c.args[1]["qualified_name"]
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if str(c.args[0]) == cs.NodeLabel.METHOD.value
+        c.properties["qualified_name"]
+        for c in get_nodes(mock_ingestor)
+        if str(c.label) == cs.NodeLabel.METHOD.value
     }
     bar_qn = next(qn for qn in method_qns if qn.endswith(".bar"))
 
     module_defines = {
-        str(call.args[2][2])
+        str(call.target)
         for call in get_relationships(mock_ingestor, cs.RelationshipType.DEFINES.value)
-        if str(call.args[0][0]) == cs.NodeLabel.MODULE.value
+        if str(call.source_label) == cs.NodeLabel.MODULE.value
     }
     assert bar_qn in module_defines
 

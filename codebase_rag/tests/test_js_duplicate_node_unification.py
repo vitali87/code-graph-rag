@@ -14,7 +14,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from codebase_rag import constants as cs
-from codebase_rag.tests.conftest import get_relationships, run_updater
+from codebase_rag.tests.conftest import get_nodes, get_relationships, run_updater
 
 EXPORTS_JS = """
 exports.readByte = function (b) {
@@ -100,14 +100,14 @@ def _function_nodes_by_location(
     mock_ingestor: MagicMock,
 ) -> dict[tuple[str, int], set[str]]:
     by_loc: dict[tuple[str, int], set[str]] = {}
-    for call in mock_ingestor.ensure_node_batch.call_args_list:
-        label = str(call.args[0])
+    for call in get_nodes(mock_ingestor):
+        label = str(call.label)
         if label not in (
             cs.NodeLabel.FUNCTION.value,
             cs.NodeLabel.METHOD.value,
         ):
             continue
-        props = call.args[1]
+        props = call.properties
         path = props.get(cs.KEY_PATH)
         start = props.get(cs.KEY_START_LINE)
         if path is None or start is None:
@@ -200,7 +200,7 @@ def test_true_anonymous_callback_still_gets_its_node(
 
 def _defines_pairs(mock_ingestor: MagicMock) -> set[tuple[str, str]]:
     return {
-        (str(call.args[0][2]), str(call.args[2][2]))
+        (str(call.source), str(call.target))
         for call in get_relationships(mock_ingestor, cs.RelationshipType.DEFINES.value)
     }
 
@@ -276,9 +276,9 @@ def test_calls_from_exported_function_attribute_to_named_node(
 
     project = temp_repo.name
     callers = {
-        str(call.args[0][2])
+        str(call.source)
         for call in get_relationships(mock_ingestor, cs.RelationshipType.CALLS.value)
-        if str(call.args[2][2]) == f"{project}.word.shift"
+        if str(call.target) == f"{project}.word.shift"
     }
     assert f"{project}.word.readWord" in callers, callers
 

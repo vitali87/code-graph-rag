@@ -45,7 +45,7 @@ def _project(temp_repo: Path) -> Path:
 def _defines_pairs(mock_ingestor: MagicMock) -> set[tuple[str, str, str]]:
     # (parent_label, parent_qn, child_qn) for DEFINES edges.
     return {
-        (call[0][0][0], call[0][0][2], call[0][2][2])
+        (call.source_label, call.source, call.target)
         for call in get_relationships(mock_ingestor, RelationshipType.DEFINES.value)
     }
 
@@ -57,13 +57,13 @@ def test_rust_closure_in_impl_method_defined_by_method(
     file_mod = "rs_clo.src.lib"
 
     method_qns = {
-        str(node[0][1].get(KEY_QUALIFIED_NAME))
+        str(node.properties.get(KEY_QUALIFIED_NAME))
         for node in get_nodes(mock_ingestor, NodeLabel.METHOD)
     }
     assert f"{file_mod}.Foo.run" in method_qns, method_qns
 
     function_qns = {
-        str(node[0][1].get(KEY_QUALIFIED_NAME))
+        str(node.properties.get(KEY_QUALIFIED_NAME))
         for node in get_nodes(mock_ingestor, NodeLabel.FUNCTION)
     }
 

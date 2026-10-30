@@ -7,14 +7,15 @@ import pytest
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_relationships
 
 
 def _calls(mock_ingestor: MagicMock) -> set[tuple[str, str]]:
     # CALLS edges as (caller_qn, callee_qn).
     out: set[tuple[str, str]] = set()
-    for c in mock_ingestor.ensure_relationship_batch.call_args_list:
-        if c.args[1] == "CALLS":
-            out.add((c.args[0][2], c.args[2][2]))
+    for c in get_relationships(mock_ingestor):
+        if c.rel_type == "CALLS":
+            out.add((c.source, c.target))
     return out
 
 

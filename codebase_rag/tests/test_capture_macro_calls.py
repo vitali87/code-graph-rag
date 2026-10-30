@@ -11,6 +11,7 @@ from codebase_rag import constants as cs
 from codebase_rag.capture import resolve_capture
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_relationships
 from codebase_rag.types_defs import PendingMacroCall
 
 _CALL = PendingMacroCall(
@@ -34,9 +35,7 @@ def _updater(tmp_path: Path, mock: MagicMock, tokens: list[str]) -> GraphUpdater
 
 def _emitted_calls(mock: MagicMock) -> int:
     return sum(
-        1
-        for c in mock.ensure_relationship_batch.call_args_list
-        if c.args[1] == cs.RelationshipType.CALLS
+        1 for c in get_relationships(mock) if c.rel_type == cs.RelationshipType.CALLS
     )
 
 

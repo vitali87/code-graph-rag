@@ -6,6 +6,7 @@ import pytest
 from codebase_rag.constants import NodeLabel
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_relationships
 
 
 @pytest.fixture
@@ -239,17 +240,17 @@ def test_basic_return_type_inference(
     project_name = return_type_project.name
 
     actual_calls = [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c[0]) >= 3 and c[0][1] == "CALLS"
+        c for c in get_relationships(mock_ingestor) if c.rel_type == "CALLS"
     ]
 
-    method_calls = [call for call in actual_calls if call[0][2][0] == NodeLabel.METHOD]
+    method_calls = [
+        call for call in actual_calls if call.target_label == NodeLabel.METHOD
+    ]
 
     found_method_calls = set()
     for call in method_calls:
-        caller_qn = call[0][0][2]
-        callee_qn = call[0][2][2]
+        caller_qn = call.source
+        callee_qn = call.target
         found_method_calls.add((caller_qn, callee_qn))
 
     expected_basic_calls = [
@@ -295,14 +296,14 @@ def test_fluent_interface_return_types(
 
     actual_calls = [
         c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c[0]) >= 3 and c[0][1] == "CALLS" and c[0][2][0] == NodeLabel.METHOD
+        for c in get_relationships(mock_ingestor)
+        if c.rel_type == "CALLS" and c.target_label == NodeLabel.METHOD
     ]
 
     found_method_calls = set()
     for call in actual_calls:
-        caller_qn = call[0][0][2]
-        callee_qn = call[0][2][2]
+        caller_qn = call.source
+        callee_qn = call.target
         found_method_calls.add((caller_qn, callee_qn))
 
     expected_fluent_calls = [
@@ -343,14 +344,14 @@ def test_nested_return_type_inference(
 
     actual_calls = [
         c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c[0]) >= 3 and c[0][1] == "CALLS" and c[0][2][0] == NodeLabel.METHOD
+        for c in get_relationships(mock_ingestor)
+        if c.rel_type == "CALLS" and c.target_label == NodeLabel.METHOD
     ]
 
     found_method_calls = set()
     for call in actual_calls:
-        caller_qn = call[0][0][2]
-        callee_qn = call[0][2][2]
+        caller_qn = call.source
+        callee_qn = call.target
         found_method_calls.add((caller_qn, callee_qn))
 
     expected_nested_calls = [
@@ -395,14 +396,14 @@ def test_service_method_return_types(
 
     actual_calls = [
         c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c[0]) >= 3 and c[0][1] == "CALLS" and c[0][2][0] == NodeLabel.METHOD
+        for c in get_relationships(mock_ingestor)
+        if c.rel_type == "CALLS" and c.target_label == NodeLabel.METHOD
     ]
 
     found_method_calls = set()
     for call in actual_calls:
-        caller_qn = call[0][0][2]
-        callee_qn = call[0][2][2]
+        caller_qn = call.source
+        callee_qn = call.target
         found_method_calls.add((caller_qn, callee_qn))
 
     expected_service_calls = [
@@ -443,14 +444,14 @@ def test_loop_variable_return_types(
 
     actual_calls = [
         c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c[0]) >= 3 and c[0][1] == "CALLS" and c[0][2][0] == NodeLabel.METHOD
+        for c in get_relationships(mock_ingestor)
+        if c.rel_type == "CALLS" and c.target_label == NodeLabel.METHOD
     ]
 
     found_method_calls = set()
     for call in actual_calls:
-        caller_qn = call[0][0][2]
-        callee_qn = call[0][2][2]
+        caller_qn = call.source
+        callee_qn = call.target
         found_method_calls.add((caller_qn, callee_qn))
 
     expected_loop_calls = [
@@ -557,9 +558,9 @@ class Screen:
 
     project_name = project_path.name
     found_method_calls = {
-        (c[0][0][2], c[0][2][2])
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(c[0]) >= 3 and c[0][1] == "CALLS" and c[0][2][0] == NodeLabel.METHOD
+        (c.source, c.target)
+        for c in get_relationships(mock_ingestor)
+        if c.rel_type == "CALLS" and c.target_label == NodeLabel.METHOD
     }
     render = f"{project_name}.app.Widget.render"
     decoy = f"{project_name}.app.Banner.render"

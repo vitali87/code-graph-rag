@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.tests.conftest import recorded_edges
+from codebase_rag.tests.conftest import get_nodes, recorded_edges
 
 FUNCTION = cs.NodeLabel.FUNCTION.value
 CLASS = cs.NodeLabel.CLASS.value
@@ -53,9 +53,7 @@ def _run(tmp_path: Path, files: dict[str, str]) -> MagicMock:
 
 def _node_names(mock: MagicMock, label: str) -> set[str]:
     return {
-        c.args[1].get(cs.KEY_NAME)
-        for c in mock.ensure_node_batch.call_args_list
-        if str(c.args[0]) == label
+        c.properties.get(cs.KEY_NAME) for c in get_nodes(mock) if str(c.label) == label
     }
 
 

@@ -176,7 +176,7 @@ try {
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     destructuring_calls = [
-        call for call in call_relationships if "object_destructuring" in call.args[0][2]
+        call for call in call_relationships if "object_destructuring" in call.source
     ]
 
     assert len(destructuring_calls) >= 4, (
@@ -329,7 +329,7 @@ const result = processArray([10, 20, 30, 40]);
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     array_destructuring_calls = [
-        call for call in call_relationships if "array_destructuring" in call.args[0][2]
+        call for call in call_relationships if "array_destructuring" in call.source
     ]
 
     assert len(array_destructuring_calls) >= 5, (
@@ -660,9 +660,7 @@ const response = processApiResponse({
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     destructuring_imports = [
-        call
-        for call in import_relationships
-        if "destructuring_imports" in call.args[0][2]
+        call for call in import_relationships if "destructuring_imports" in call.source
     ]
 
     assert len(destructuring_imports) >= 5, (
@@ -672,9 +670,7 @@ const response = processApiResponse({
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     destructuring_calls = [
-        call
-        for call in call_relationships
-        if "destructuring_imports" in call.args[0][2]
+        call for call in call_relationships if "destructuring_imports" in call.source
     ]
 
     assert len(destructuring_calls) >= 3, (
@@ -771,7 +767,7 @@ const formatted = formatData({
     comprehensive_calls = [
         call
         for call in call_relationships
-        if "comprehensive_destructuring" in call.args[0][2]
+        if "comprehensive_destructuring" in call.source
     ]
 
     assert len(comprehensive_calls) >= 3, (
@@ -779,11 +775,10 @@ const formatted = formatData({
     )
 
     for relationship in comprehensive_calls:
-        assert len(relationship.args) == 3, "Call relationship should have 3 args"
-        assert relationship.args[1] == "CALLS", "Second arg should be 'CALLS'"
+        assert relationship.rel_type == "CALLS", "Expected a CALLS relationship"
 
-        source_module = relationship.args[0][2]
-        target_module = relationship.args[2][2]
+        source_module = relationship.source
+        target_module = relationship.target
 
         assert "comprehensive_destructuring" in source_module, (
             f"Source module should contain test file name: {source_module}"

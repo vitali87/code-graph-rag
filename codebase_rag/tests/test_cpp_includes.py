@@ -153,14 +153,14 @@ void demonstrateStdLibrary() {
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     stdlib_imports = [
-        call for call in import_relationships if "stdlib_includes" in call.args[0][2]
+        call for call in import_relationships if "stdlib_includes" in call.source
     ]
 
     assert len(stdlib_imports) >= 10, (
         f"Expected at least 10 stdlib includes, found {len(stdlib_imports)}"
     )
 
-    imported_headers = [call.args[2][2] for call in stdlib_imports]
+    imported_headers = [call.target for call in stdlib_imports]
     expected_headers = [
         "iostream",
         "string",
@@ -266,14 +266,14 @@ void useLocalHeaders();
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     local_imports = [
-        call for call in import_relationships if "local_includes" in call.args[0][2]
+        call for call in import_relationships if "local_includes" in call.source
     ]
 
     assert len(local_imports) >= 4, (
         f"Expected at least 4 local includes, found {len(local_imports)}"
     )
 
-    imported_headers = [call.args[2][2] for call in local_imports]
+    imported_headers = [call.target for call in local_imports]
     expected_patterns = [
         "base",
         "types",
@@ -428,16 +428,14 @@ void demonstrateConditionalIncludes() {
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     conditional_imports = [
-        call
-        for call in import_relationships
-        if "conditional_includes" in call.args[0][2]
+        call for call in import_relationships if "conditional_includes" in call.source
     ]
 
     assert len(conditional_imports) >= 3, (
         f"Expected at least 3 conditional includes, found {len(conditional_imports)}"
     )
 
-    imported_headers = [call.args[2][2] for call in conditional_imports]
+    imported_headers = [call.target for call in conditional_imports]
     always_present = ["string", "vector", "memory"]
 
     for expected in always_present:
@@ -554,14 +552,14 @@ void demonstrateIncludeTypes() {
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     include_type_imports = [
-        call for call in import_relationships if "include_types" in call.args[0][2]
+        call for call in import_relationships if "include_types" in call.source
     ]
 
     assert len(include_type_imports) >= 8, (
         f"Expected at least 8 include relationships, found {len(include_type_imports)}"
     )
 
-    imported_headers = [call.args[2][2] for call in include_type_imports]
+    imported_headers = [call.target for call in include_type_imports]
 
     system_headers = ["iostream", "vector", "string", "algorithm", "memory", "map"]
     for expected in system_headers:
@@ -686,16 +684,14 @@ std::vector<int> PragmaClass::getItems() const {
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     guard_test_imports = [
-        call
-        for call in import_relationships
-        if "include_guards_test" in call.args[0][2]
+        call for call in import_relationships if "include_guards_test" in call.source
     ]
 
     assert len(guard_test_imports) >= 4, (
         f"Expected at least 4 include relationships, found {len(guard_test_imports)}"
     )
 
-    imported_headers = [call.args[2][2] for call in guard_test_imports]
+    imported_headers = [call.target for call in guard_test_imports]
 
     expected_headers = ["with_guards", "with_pragma", "iostream", "string"]
     for expected in expected_headers:
@@ -838,9 +834,7 @@ void demonstrateAllIncludes() {
     inherits_relationships = get_relationships(mock_ingestor, "INHERITS")
 
     comprehensive_imports = [
-        call
-        for call in import_relationships
-        if "comprehensive_includes" in call.args[0][2]
+        call for call in import_relationships if "comprehensive_includes" in call.source
     ]
 
     assert len(comprehensive_imports) >= 10, (
@@ -848,11 +842,10 @@ void demonstrateAllIncludes() {
     )
 
     for relationship in comprehensive_imports:
-        assert len(relationship.args) == 3, "Import relationship should have 3 args"
-        assert relationship.args[1] == "IMPORTS", "Second arg should be 'IMPORTS'"
+        assert relationship.rel_type == "IMPORTS", "Expected an IMPORTS relationship"
 
-        source_module = relationship.args[0][2]
-        target_module = relationship.args[2][2]
+        source_module = relationship.source
+        target_module = relationship.target
 
         assert "comprehensive_includes" in source_module, (
             f"Source module should contain test file name: {source_module}"
@@ -868,7 +861,7 @@ void demonstrateAllIncludes() {
     assert defines_relationships, "Should still have DEFINES relationships"
 
     inheritance_found = any(
-        "ComprehensiveIncludeDemo" in call.args[0][2] and "Base" in call.args[2][2]
+        "ComprehensiveIncludeDemo" in call.source and "Base" in call.target
         for call in inherits_relationships
     )
     assert inheritance_found, (
@@ -916,14 +909,14 @@ public:
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     module_imports = [
-        call for call in import_relationships if "module_imports" in call.args[0][2]
+        call for call in import_relationships if "module_imports" in call.source
     ]
 
     assert len(module_imports) >= 3, (
         f"Expected at least 3 module imports, found {len(module_imports)}"
     )
 
-    imported_modules = [call.args[2][2] for call in module_imports]
+    imported_modules = [call.target for call in module_imports]
 
     expected_patterns = ["iostream", "vector", "string"]
     for pattern in expected_patterns:
@@ -971,14 +964,14 @@ export namespace processor {
     import_relationships = get_relationships(mock_ingestor, "IMPORTS")
 
     partition_imports = [
-        call for call in import_relationships if "partition_imports" in call.args[0][2]
+        call for call in import_relationships if "partition_imports" in call.source
     ]
 
     assert len(partition_imports) >= 3, (
         f"Expected at least 3 partition imports, found {len(partition_imports)}"
     )
 
-    imported_modules = [call.args[2][2] for call in partition_imports]
+    imported_modules = [call.target for call in partition_imports]
 
     expected_stdlib = ["vector", "algorithm", "functional"]
     for pattern in expected_stdlib:

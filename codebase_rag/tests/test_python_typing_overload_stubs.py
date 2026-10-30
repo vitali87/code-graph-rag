@@ -25,7 +25,11 @@ from codebase_rag.parsers.python.overloads import (
     folded_overload_stubs,
     overload_stub_names,
 )
-from codebase_rag.tests.conftest import create_and_run_updater
+from codebase_rag.tests.conftest import (
+    create_and_run_updater,
+    get_nodes,
+    get_relationships,
+)
 from codebase_rag.tests.test_edit_contract import PROJECT, _real_project
 
 # (import line, decorator) for every way a module spells typing's overload.
@@ -102,25 +106,23 @@ def _line_of(text: str, needle: str) -> int:
 
 def _defs(mock: MagicMock, label: cs.NodeLabel) -> dict[str, dict]:
     return {
-        str(c.args[1][cs.KEY_QUALIFIED_NAME]): dict(c.args[1])
-        for c in mock.ensure_node_batch.call_args_list
-        if str(c.args[0]) == label.value
+        str(c.properties[cs.KEY_QUALIFIED_NAME]): dict(c.properties)
+        for c in get_nodes(mock)
+        if str(c.label) == label.value
     }
 
 
 def _edges(mock: MagicMock, rel: str) -> set[tuple[str, str, str | None]]:
     out: set[tuple[str, str, str | None]] = set()
-    for c in mock.ensure_relationship_batch.call_args_list:
-        if str(c.args[1]) != rel:
+    for c in get_relationships(mock):
+        if str(c.rel_type) != rel:
             continue
-        props = (
-            c.kwargs.get("properties") or (c.args[3] if len(c.args) > 3 else {}) or {}
-        )
+        props = c.properties
         resolution = props.get(cs.KEY_RESOLUTION)
         out.add(
             (
-                str(c.args[0][2]),
-                str(c.args[2][2]),
+                str(c.source),
+                str(c.target),
                 str(resolution) if resolution is not None else None,
             )
         )

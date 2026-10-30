@@ -19,7 +19,7 @@ def csharp_project(temp_repo: Path) -> Path:
 
 
 def _call_targets(mock_ingestor: MagicMock) -> set[str]:
-    return {c.args[2][2] for c in get_relationships(mock_ingestor, "CALLS")}
+    return {c.target for c in get_relationships(mock_ingestor, "CALLS")}
 
 
 def test_extension_on_first_party_type_binds(

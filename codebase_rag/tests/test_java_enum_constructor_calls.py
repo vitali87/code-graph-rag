@@ -14,7 +14,11 @@ from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag.dead_code import collect_dead_code, default_dead_code_config
 from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.tests.conftest import create_and_run_updater
+from codebase_rag.tests.conftest import (
+    create_and_run_updater,
+    get_nodes,
+    get_relationships,
+)
 from codebase_rag.types_defs import PropertyDict, ResultRow
 
 PROJECT = "jenum"
@@ -49,11 +53,11 @@ def _index(temp_repo: Path, mock_ingestor: MagicMock, body: str) -> GraphUpdater
 
 def _calls(mock_ingestor: MagicMock) -> dict[tuple[str, str, str], PropertyDict]:
     edges: dict[tuple[str, str, str], PropertyDict] = {}
-    for c in mock_ingestor.ensure_relationship_batch.call_args_list:
-        if c.args[1] != cs.RelationshipType.CALLS:
+    for c in get_relationships(mock_ingestor):
+        if c.rel_type != cs.RelationshipType.CALLS:
             continue
-        props = c.kwargs.get("properties") or {}
-        edges[(str(c.args[0][0]), str(c.args[0][2]), str(c.args[2][2]))] = props
+        props = c.properties
+        edges[(str(c.source_label), str(c.source), str(c.target))] = props
     return edges
 
 
@@ -70,8 +74,8 @@ def _dead(mock_ingestor: MagicMock) -> set[str]:
     # way the two Cypher reads return it, so the verdict is the one
     # `cgr dead-code` would print for this source.
     nodes: list[ResultRow] = []
-    for c in mock_ingestor.ensure_node_batch.call_args_list:
-        label, props = str(c.args[0]), c.args[1]
+    for c in get_nodes(mock_ingestor):
+        label, props = str(c.label), c.properties
         if label not in _DEAD_CODE_LABELS:
             continue
         nodes.append(
@@ -87,18 +91,16 @@ def _dead(mock_ingestor: MagicMock) -> set[str]:
         )
     rels: list[ResultRow] = [
         {
-            cs.KEY_FROM_LABEL: str(c.args[0][0]),
-            cs.KEY_FROM_QN: str(c.args[0][2]),
-            cs.KEY_REL_TYPE: str(c.args[1]),
-            cs.KEY_TO_LABEL: str(c.args[2][0]),
-            cs.KEY_TO_QN: str(c.args[2][2]),
-            cs.KEY_RESOLUTION: (c.kwargs.get("properties") or {}).get(
-                cs.KEY_RESOLUTION
-            ),
+            cs.KEY_FROM_LABEL: str(c.source_label),
+            cs.KEY_FROM_QN: str(c.source),
+            cs.KEY_REL_TYPE: str(c.rel_type),
+            cs.KEY_TO_LABEL: str(c.target_label),
+            cs.KEY_TO_QN: str(c.target),
+            cs.KEY_RESOLUTION: c.properties.get(cs.KEY_RESOLUTION),
         }
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if str(c.args[0][0]) in _DEAD_CODE_LABELS
-        and c.args[0][1] == cs.KEY_QUALIFIED_NAME
+        for c in get_relationships(mock_ingestor)
+        if str(c.source_label) in _DEAD_CODE_LABELS
+        and c.source_key == cs.KEY_QUALIFIED_NAME
     ]
     graph = MagicMock()
     graph.fetch_all = MagicMock(

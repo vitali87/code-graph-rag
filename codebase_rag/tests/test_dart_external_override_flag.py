@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from codebase_rag import constants as cs
-from codebase_rag.tests.conftest import create_and_run_updater
+from codebase_rag.tests.conftest import create_and_run_updater, get_nodes
 
 
 def _method_props(mock_ingestor: MagicMock) -> dict[str, dict]:
@@ -18,9 +18,11 @@ def _method_props(mock_ingestor: MagicMock) -> dict[str, dict]:
     # partial row (the deferred overrides_external update) merges into the
     # full row ingested during Pass 2.
     props: dict[str, dict] = {}
-    for c in mock_ingestor.ensure_node_batch.call_args_list:
-        if c.args[0] == cs.NodeLabel.METHOD:
-            props.setdefault(c.args[1][cs.KEY_QUALIFIED_NAME], {}).update(c.args[1])
+    for c in get_nodes(mock_ingestor):
+        if c.label == cs.NodeLabel.METHOD:
+            props.setdefault(c.properties[cs.KEY_QUALIFIED_NAME], {}).update(
+                c.properties
+            )
     return props
 
 

@@ -20,7 +20,7 @@ from codebase_rag.cypher_queries import (
     build_trace_confirm_calls_query,
 )
 from codebase_rag.dead_code import collect_dead_code, default_dead_code_config
-from codebase_rag.tests.conftest import create_and_run_updater
+from codebase_rag.tests.conftest import create_and_run_updater, get_relationships
 from codebase_rag.trace import constants as tcs
 from codebase_rag.trace.ingest import ingest_trace
 from codebase_rag.trace.records import (
@@ -36,13 +36,11 @@ PROJECT = "proj"
 
 def _edges(mock: MagicMock, rel: str) -> list[tuple[str, str, PropertyDict]]:
     out = []
-    for c in mock.ensure_relationship_batch.call_args_list:
-        if str(c.args[1]) != rel:
+    for c in get_relationships(mock):
+        if str(c.rel_type) != rel:
             continue
-        props = (
-            c.kwargs.get("properties") or (c.args[3] if len(c.args) > 3 else {}) or {}
-        )
-        out.append((str(c.args[0][2]), str(c.args[2][2]), props))
+        props = c.properties
+        out.append((str(c.source), str(c.target), props))
     return out
 
 

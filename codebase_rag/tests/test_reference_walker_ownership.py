@@ -26,6 +26,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_relationships
 
 _PRELUDE = "function target() { return 1; }\n"
 
@@ -43,10 +44,8 @@ def _reference_edges(tmp_path: Path, source: str) -> Counter[tuple[str, str]]:
         ingestor=ingestor, repo_path=repo, parsers=parsers, queries=queries
     ).run(force=True)
     found: Counter[tuple[str, str]] = Counter()
-    for call in ingestor.ensure_relationship_batch.call_args_list:
-        (_sl, _sk, src), rel, (_tl, _tk, tgt) = call.args[:3]
-        if rel == cs.RelationshipType.REFERENCES.value:
-            found[(str(src), str(tgt))] += 1
+    for rel in get_relationships(ingestor, cs.RelationshipType.REFERENCES.value):
+        found[(str(rel.source), str(rel.target))] += 1
     return found
 
 

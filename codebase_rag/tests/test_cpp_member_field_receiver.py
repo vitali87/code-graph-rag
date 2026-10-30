@@ -27,9 +27,9 @@ def _first_class_node(source: str):
 
 def _calls_from(mock_ingestor: MagicMock, caller_suffix: str) -> set[str]:
     return {
-        str(c.args[2][2])
+        str(c.target)
         for c in get_relationships(mock_ingestor, "CALLS")
-        if str(c.args[0][2]).endswith(caller_suffix)
+        if str(c.source).endswith(caller_suffix)
     }
 
 

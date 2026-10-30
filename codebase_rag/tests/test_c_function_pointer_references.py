@@ -56,9 +56,7 @@ def _index(temp_repo: Path, mock_ingestor: MagicMock, files: dict[str, str]) -> 
 
 
 def _edges(mock_ingestor: MagicMock, rel_type: str) -> set[tuple[str, str]]:
-    return {
-        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, rel_type)
-    }
+    return {(c.source, c.target) for c in get_relationships(mock_ingestor, rel_type)}
 
 
 def _qn(module: str, name: str) -> str:
@@ -74,7 +72,7 @@ def _dead_functions(mock_ingestor: MagicMock) -> set[str]:
     # assertion covers the whole path from edge to report.
     nodes: dict[tuple[str, PropertyValue], PropertyDict] = {}
     for call in get_nodes(mock_ingestor, cs.NodeLabel.FUNCTION):
-        props = call[0][1]
+        props = call.properties
         nodes[(cs.NodeLabel.FUNCTION.value, props[cs.KEY_QUALIFIED_NAME])] = {
             cs.KEY_PATH: props[cs.KEY_PATH],
             cs.KEY_NAME: props[cs.KEY_NAME],
@@ -85,8 +83,8 @@ def _dead_functions(mock_ingestor: MagicMock) -> set[str]:
             cs.KEY_END_LINE: props[cs.KEY_END_LINE],
         }
     rels: list[tuple[str, PropertyValue, str, str, PropertyValue]] = [
-        (c.args[0][0], c.args[0][2], str(c.args[1]), c.args[2][0], c.args[2][2])
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
+        (c.source_label, c.source, str(c.rel_type), c.target_label, c.target)
+        for c in get_relationships(mock_ingestor)
     ]
     config = default_dead_code_config(include_tests=True, include_classes=False)
     return dead_code_from_graph(nodes, rels, f"{PROJECT}.", config)

@@ -21,7 +21,7 @@ from codebase_rag import constants as cs
 from codebase_rag.cli import app
 from codebase_rag.services.graph_diff import diff_indexes
 from codebase_rag.services.protobuf_service import LABEL_TO_ONEOF_FIELD
-from codebase_rag.tests.conftest import create_and_run_updater
+from codebase_rag.tests.conftest import create_and_run_updater, get_nodes
 from codebase_rag.tests.test_protobuf_node_property_parity import _NOT_EXPORTED
 
 runner = CliRunner()
@@ -156,8 +156,8 @@ def test_every_property_a_run_writes_is_exported_or_listed(tmp_path: Path) -> No
     mock = MagicMock()
     create_and_run_updater(repo, mock)
     dropped: set[str] = set()
-    for call in mock.ensure_node_batch.call_args_list:
-        label, props = str(call.args[0]), call.args[1]
+    for call in get_nodes(mock):
+        label, props = str(call.label), call.properties
         oneof = LABEL_TO_ONEOF_FIELD[cs.NodeLabel(label)]
         message = pb.Node.DESCRIPTOR.fields_by_name[oneof].message_type
         fields = {field.name for field in message.fields}

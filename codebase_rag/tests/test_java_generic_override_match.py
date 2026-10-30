@@ -12,7 +12,7 @@ from codebase_rag.tests.conftest import create_and_run_updater, get_relationship
 
 
 def _edges(mock_ingestor: MagicMock, rel: str) -> set[tuple[str, str]]:
-    return {(c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, rel)}
+    return {(c.source, c.target) for c in get_relationships(mock_ingestor, rel)}
 
 
 def test_generic_type_var_rename_still_overrides(

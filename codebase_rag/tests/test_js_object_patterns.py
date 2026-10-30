@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -350,9 +349,9 @@ console.log(secureObject[Symbol.for('public')]); // shared
     # left by climbing to its object const's name; those are gone now, so assert
     # the real method functions are present.
     object_method_names = {
-        call[0][1].get("qualified_name", "").rsplit(".", 1)[-1].split("@")[0]
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if "object_literals" in call[0][1].get("qualified_name", "")
+        call.properties.get("qualified_name", "").rsplit(".", 1)[-1].split("@")[0]
+        for call in get_nodes(mock_ingestor)
+        if "object_literals" in call.properties.get("qualified_name", "")
     }
 
     assert {"square", "cube", "power"} <= object_method_names, (
@@ -781,9 +780,9 @@ console.log(users.map(u => u.getProfile()));
     # inner `.map()` arrow left by inheriting the userFactory const name; assert
     # the real methods instead.
     factory_method_names = {
-        call[0][1].get("qualified_name", "").rsplit(".", 1)[-1].split("@")[0]
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if "factory_functions" in call[0][1].get("qualified_name", "")
+        call.properties.get("qualified_name", "").rsplit(".", 1)[-1].split("@")[0]
+        for call in get_nodes(mock_ingestor)
+        if "factory_functions" in call.properties.get("qualified_name", "")
     }
 
     assert {"createAdmin", "createFromData", "createBatch"} <= factory_method_names, (
@@ -1163,7 +1162,7 @@ console.log(Email.isValid('test@example.com')); // true
     constructor_inheritance = [
         call
         for call in inheritance_relationships
-        if "constructor_patterns" in call.args[0][2]
+        if "constructor_patterns" in call.source
     ]
 
     assert len(constructor_inheritance) >= 1, (
@@ -1584,9 +1583,9 @@ console.log('Cloned:', cloned.toJSON());
     # canRun's run, etc.). This previously counted phantom nodes an inner arrow
     # left by inheriting a mixin const's name; assert the real methods instead.
     composition_method_names = {
-        call[0][1].get("qualified_name", "").rsplit(".", 1)[-1].split("@")[0]
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if "object_composition" in call[0][1].get("qualified_name", "")
+        call.properties.get("qualified_name", "").rsplit(".", 1)[-1].split("@")[0]
+        for call in get_nodes(mock_ingestor)
+        if "object_composition" in call.properties.get("qualified_name", "")
     }
 
     assert {"walk", "run", "swim", "fly"} <= composition_method_names, (
@@ -1683,17 +1682,13 @@ console.log(advanced.process());
 
     run_updater(javascript_object_patterns_project, mock_ingestor)
 
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    all_relationships = get_relationships(mock_ingestor)
 
     calls_relationships = get_relationships(mock_ingestor, "CALLS")
-    [c for c in all_relationships if c.args[1] == "DEFINES"]
+    [c for c in all_relationships if c.rel_type == "DEFINES"]
 
     comprehensive_calls = [
-        call
-        for call in calls_relationships
-        if "comprehensive_objects" in call.args[0][2]
+        call for call in calls_relationships if "comprehensive_objects" in call.source
     ]
 
     assert len(comprehensive_calls) >= 3, (
@@ -1705,7 +1700,7 @@ console.log(advanced.process());
     comprehensive_functions = [
         call
         for call in function_calls
-        if "comprehensive_objects" in call[0][1]["qualified_name"]
+        if "comprehensive_objects" in call.properties["qualified_name"]
     ]
 
     assert len(comprehensive_functions) >= 3, (

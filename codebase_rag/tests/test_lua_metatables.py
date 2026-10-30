@@ -101,7 +101,7 @@ print(tostring(scaled))
     run_updater(project, mock_ingestor)
 
     created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
-    fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
+    fn_qns = {c.properties["qualified_name"] for c in created_functions}
 
     vector_qn = f"{project.name}.vector"
 
@@ -221,7 +221,7 @@ end
     run_updater(project, mock_ingestor)
 
     created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
-    fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
+    fn_qns = {c.properties["qualified_name"] for c in created_functions}
 
     comp_qn = f"{project.name}.comparable"
 
@@ -385,7 +385,7 @@ print("Computed:", props.computed)
     run_updater(project, mock_ingestor)
 
     created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
-    fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
+    fn_qns = {c.properties["qualified_name"] for c in created_functions}
 
     proxy_qn = f"{project.name}.proxy"
 
@@ -548,7 +548,7 @@ emitter("test", "Hello World")
     run_updater(project, mock_ingestor)
 
     created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
-    fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
+    fn_qns = {c.properties["qualified_name"] for c in created_functions}
 
     callable_qn = f"{project.name}.callable"
 
@@ -751,7 +751,7 @@ print("Found by ID:", registry:get_by_id(id1).data)
     run_updater(project, mock_ingestor)
 
     created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
-    fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
+    fn_qns = {c.properties["qualified_name"] for c in created_functions}
 
     weak_qn = f"{project.name}.weak_refs"
 

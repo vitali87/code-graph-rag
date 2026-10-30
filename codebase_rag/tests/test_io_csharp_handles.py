@@ -15,6 +15,7 @@ from codebase_rag import constants as cs
 from codebase_rag.capture import resolve_capture
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_relationships
 
 READS_FROM = cs.RelationshipType.READS_FROM.value
 WRITES_TO = cs.RelationshipType.WRITES_TO.value
@@ -34,9 +35,9 @@ def _run(tmp_path: Path, files: dict[str, str]) -> set[tuple[str, str, str]]:
         capture=_CAPTURE_IO,
     ).run()
     return {
-        (c.args[0][2], str(c.args[1]), c.args[2][2])
-        for c in mock.ensure_relationship_batch.call_args_list
-        if str(c.args[1]) in (READS_FROM, WRITES_TO)
+        (c.source, str(c.rel_type), c.target)
+        for c in get_relationships(mock)
+        if str(c.rel_type) in (READS_FROM, WRITES_TO)
     }
 
 

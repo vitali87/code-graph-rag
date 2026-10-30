@@ -49,7 +49,7 @@ def _registry(entries: dict[str, str]) -> FunctionRegistryTrie:
 
 def _calls(mock_ingestor: MagicMock) -> set[tuple[str, str]]:
     return {
-        (str(call.args[0][2]), str(call.args[2][2]))
+        (str(call.source), str(call.target))
         for call in get_relationships(mock_ingestor, "CALLS")
     }
 

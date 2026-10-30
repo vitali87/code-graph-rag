@@ -20,6 +20,7 @@ from codebase_rag.flow_verdict import (
 )
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_nodes
 
 
 def _query_fn(
@@ -265,9 +266,9 @@ def test_cycles_terminate() -> None:
 
 def _module_props(mock_ingestor: MagicMock) -> dict[str, dict]:
     return {
-        c.args[1]["qualified_name"]: c.args[1]
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if str(c.args[0]) == "Module"
+        c.properties["qualified_name"]: c.properties
+        for c in get_nodes(mock_ingestor)
+        if str(c.label) == "Module"
     }
 
 
@@ -368,10 +369,10 @@ def test_inline_modules_are_never_spurious_coverage_gaps(
     updater.run()
     from codebase_rag import constants as cs
 
-    for call in mock_ingestor.ensure_node_batch.call_args_list:
-        if str(call.args[0]) != "Module":
+    for call in get_nodes(mock_ingestor):
+        if str(call.label) != "Module":
             continue
-        props = call.args[1]
+        props = call.properties
         if "path" not in props:
             # Partial MERGE updates onto an existing node carry no path and
             # must not erase the property either.

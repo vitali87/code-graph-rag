@@ -78,7 +78,7 @@ def test_sibling_inline_mod_functions_survive_the_prefix_sweep(
     mock_ingestor.reset_mock()
     updater._process_function_calls(only={project / "src" / "a.rs"})
     calls = {
-        (str(call.args[0][2]), str(call.args[2][2]))
+        (str(call.source), str(call.target))
         for call in get_relationships(mock_ingestor, "CALLS")
     }
     assert (go_qn, f"{base}.src.beta.helper") in calls, sorted(calls)

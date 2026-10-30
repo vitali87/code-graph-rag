@@ -124,7 +124,7 @@ def test_imported_class_method_calls_are_detected(
     actual_calls = get_relationships(mock_ingestor, "CALLS")
 
     method_calls = [
-        call for call in actual_calls if call.args[2][0] == NodeLabel.METHOD
+        call for call in actual_calls if call.target_label == NodeLabel.METHOD
     ]
 
     expected_method_calls = [
@@ -154,8 +154,8 @@ def test_imported_class_method_calls_are_detected(
 
     found_method_calls = set()
     for call in method_calls:
-        caller_qn = call.args[0][2]
-        callee_qn = call.args[2][2]
+        caller_qn = call.source
+        callee_qn = call.target
         found_method_calls.add((caller_qn, callee_qn))
 
     missing_calls = []
@@ -194,9 +194,9 @@ def test_cross_file_object_method_chaining(
         call
         for call in actual_calls
         if (
-            call.args[0][2]
+            call.source
             == f"{project_name}.services.user_service.UserService.batch_process"
-            and call.args[2][2] == f"{project_name}.models.user.User.get_name"
+            and call.target == f"{project_name}.models.user.User.get_name"
         )
     ]
 
@@ -209,9 +209,9 @@ def test_cross_file_object_method_chaining(
         call
         for call in actual_calls
         if (
-            call.args[0][2]
+            call.source
             == f"{project_name}.services.user_service.UserService.handle_user_creation"
-            and call.args[2][2] == f"{project_name}.models.user.User.set_name"
+            and call.target == f"{project_name}.models.user.User.set_name"
         )
     ]
 
@@ -252,9 +252,9 @@ def test_module_qualified_construction_receiver_binds_its_own_module(
 
     name = project.name
     targets = {
-        c.args[2][2]
+        c.target
         for c in get_relationships(mock_ingestor, "CALLS")
-        if c.args[0][2] == f"{name}.app.f"
+        if c.source == f"{name}.app.f"
     }
     assert f"{name}.mod.Cls.method" in targets, targets
     assert f"{name}.other.Cls.method" not in targets, targets
@@ -292,8 +292,8 @@ def test_module_qualified_factory_call_does_not_bind_a_same_named_class(
 
     name = project.name
     targets = {
-        c.args[2][2]
+        c.target
         for c in get_relationships(mock_ingestor, "CALLS")
-        if c.args[0][2] == f"{name}.app.b"
+        if c.source == f"{name}.app.b"
     }
     assert f"{name}.mod.factory.run" not in targets, targets

@@ -16,6 +16,7 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag.parsers.rust.utils import literal_receiver_types
+from codebase_rag.tests.conftest import get_relationships
 from codebase_rag.tests.test_rust_crate_path_trait_linking import (
     _write,
     create_and_run_updater,
@@ -43,11 +44,11 @@ def _index(
     )
     create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
     edges: dict[tuple[str, str], set[str]] = {}
-    for c in mock_ingestor.ensure_relationship_batch.call_args_list:
-        if str(c.args[1]) != cs.RelationshipType.CALLS:
+    for c in get_relationships(mock_ingestor):
+        if str(c.rel_type) != cs.RelationshipType.CALLS:
             continue
-        props = c.kwargs.get("properties") or {}
-        edges.setdefault((str(c.args[0][2]), str(c.args[2][2])), set()).add(
+        props = c.properties
+        edges.setdefault((str(c.source), str(c.target)), set()).add(
             str(props.get(cs.KEY_RESOLUTION))
         )
     return edges

@@ -29,6 +29,7 @@ from codebase_rag.parsers.definition_docstring import (
     libclang_docstring,
 )
 from codebase_rag.parsers.module_docstring import extract_module_docstring
+from codebase_rag.tests.conftest import get_nodes
 from codebase_rag.types_defs import ASTNode
 
 # Every language whose documentation is a COMMENT, with a declaration the
@@ -527,9 +528,11 @@ class TestReachesTheGraph:
 
     @staticmethod
     def _node_props(updater, label: str, name: str) -> dict:
-        calls = updater.ingestor.ensure_node_batch.call_args_list
+        calls = get_nodes(updater.ingestor)
         found = [
-            c[0][1] for c in calls if c[0][0] == label and c[0][1].get("name") == name
+            c.properties
+            for c in calls
+            if c.label == label and c.properties.get("name") == name
         ]
         # Fixture guard: a missing node is "the file was not processed", not
         # "the docstring is absent", and the two must not read the same.

@@ -41,9 +41,9 @@ def _calls_to_run(mock_ingestor: MagicMock) -> dict[str, str]:
     # map caller-qn -> callee-qn for every CALLS edge whose callee is a `run`.
     out: dict[str, str] = {}
     for c in get_relationships(mock_ingestor, "CALLS"):
-        callee = str(c.args[2][2])
+        callee = str(c.target)
         if callee.rsplit(".", 1)[-1] == "run":
-            out[str(c.args[0][2])] = callee
+            out[str(c.source)] = callee
     return out
 
 
@@ -266,10 +266,9 @@ def test_cpp_external_receiver_call_is_not_rebound_to_first_party(
     # `use` calls std::string::size, which is external; no CALLS edge from it to
     # the first-party Widget.size may be emitted.
     bad = [
-        (str(c.args[0][2]), str(c.args[2][2]))
+        (str(c.source), str(c.target))
         for c in get_relationships(mock_ingestor, "CALLS")
-        if str(c.args[0][2]).endswith(".use")
-        and str(c.args[2][2]).endswith(".Widget.size")
+        if str(c.source).endswith(".use") and str(c.target).endswith(".Widget.size")
     ]
     assert not bad, (
         f"std::string.size() must not resolve to first-party Widget.size, got {bad}"

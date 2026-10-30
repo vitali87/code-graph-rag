@@ -18,7 +18,11 @@ from tree_sitter import Language, Node, Parser
 
 from codebase_rag import constants as cs
 from codebase_rag.parsers.rust.utils import in_attribute_arguments
-from codebase_rag.tests.conftest import create_and_run_updater
+from codebase_rag.tests.conftest import (
+    create_and_run_updater,
+    get_nodes,
+    get_relationships,
+)
 from codebase_rag.types_defs import PropertyDict
 from evals.dead_code import cgr_dead_code, default_dead_code_config
 
@@ -52,9 +56,9 @@ def _index(project: Path, mock_ingestor: MagicMock, files: dict[str, str]) -> No
 
 def _calls(mock_ingestor: MagicMock) -> set[tuple[str, str, str]]:
     return {
-        (str(c.args[0][0]), str(c.args[0][2]), str(c.args[2][2]))
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == cs.RelationshipType.CALLS
+        (str(c.source_label), str(c.source), str(c.target))
+        for c in get_relationships(mock_ingestor)
+        if c.rel_type == cs.RelationshipType.CALLS
     }
 
 
@@ -111,8 +115,9 @@ def _dead_code_repo(tmp_path: Path) -> Path:
 def _node_props(
     mock_ingestor: MagicMock, label: cs.NodeLabel, qn_suffix: str
 ) -> PropertyDict:
-    for c in mock_ingestor.ensure_node_batch.call_args_list:
-        node_label, props = c.args
+    for c in get_nodes(mock_ingestor):
+        node_label = c.label
+        props = c.properties
         if node_label == label and str(props.get(cs.KEY_QUALIFIED_NAME, "")).endswith(
             qn_suffix
         ):

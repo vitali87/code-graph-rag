@@ -178,7 +178,7 @@ print("Sum:", sum)
         pass
 
         created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
-        fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
+        fn_qns = {c.properties["qualified_name"] for c in created_functions}
 
         attributes_qn = f"{project.name}.attributes"
 
@@ -379,7 +379,7 @@ print("Index results:", table.concat(index_results, ", "))
         pass
 
         created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
-        fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
+        fn_qns = {c.properties["qualified_name"] for c in created_functions}
 
         metamethods_qn = f"{project.name}.metamethods"
 
@@ -591,7 +591,7 @@ end
         pass
 
         created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
-        fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
+        fn_qns = {c.properties["qualified_name"] for c in created_functions}
 
         stdlib_qn = f"{project.name}.stdlib"
 
@@ -609,7 +609,7 @@ end
             assert expected_fn in fn_qns, f"Missing function: {expected_fn}"
 
         calls_rels = get_relationships(mock_ingestor, "CALLS")
-        call_edges = {(c.args[0][2], c.args[2][2]) for c in calls_rels}
+        call_edges = {(c.source, c.target) for c in calls_rels}
 
         # stdlib calls (math.*, string.*, table.*, io.*, os.*) are not first-party,
         # so the only CALLS edges are between StdLib methods: run_all_tests fans out
@@ -790,7 +790,7 @@ print("Control flow: break =", #control_results.break_test, "continue =", #contr
         pass
 
         created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
-        fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
+        fn_qns = {c.properties["qualified_name"] for c in created_functions}
 
         for_loops_qn = f"{project.name}.for_loops"
 

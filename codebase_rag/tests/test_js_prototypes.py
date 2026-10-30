@@ -1,11 +1,15 @@
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
 from codebase_rag.constants import SEPARATOR_DOT, NodeLabel
-from codebase_rag.tests.conftest import get_node_names, get_relationships, run_updater
+from codebase_rag.tests.conftest import (
+    get_node_names,
+    get_nodes,
+    get_relationships,
+    run_updater,
+)
 
 
 @pytest.fixture
@@ -441,7 +445,7 @@ myTask.outputTaskDetails();
     # its CALLS edge was always dropped by the database (issue #652); no
     # edge may be emitted for it at all.
     object_create_calls = [
-        call for call in call_relationships if "Object.create" in str(call.args[2][2])
+        call for call in call_relationships if "Object.create" in str(call.target)
     ]
 
     assert not object_create_calls, object_create_calls
@@ -652,9 +656,9 @@ square.scale(2);
     prototype_calls = [
         call
         for call in call_relationships
-        if "prototype_chain" in call.args[0][2]
+        if "prototype_chain" in call.source
         and any(
-            str(call.args[2][2]).endswith(f".{ctor}.{method}")
+            str(call.target).endswith(f".{ctor}.{method}")
             for ctor in ("Shape", "Rectangle", "Square", "ColoredSquare")
             for method in ("getPosition", "getArea", "setSize", "setColor", "move")
         )
@@ -1317,30 +1321,28 @@ console.log(dog.eat('bone')); // Works due to prototype chain
 
     run_updater(javascript_prototypes_project, mock_ingestor)
 
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    all_relationships = get_relationships(mock_ingestor)
 
     calls_relationships = get_relationships(mock_ingestor, "CALLS")
-    [c for c in all_relationships if c.args[1] == "DEFINES"]
+    [c for c in all_relationships if c.rel_type == "DEFINES"]
 
     comprehensive_calls = [
         call
         for call in calls_relationships
-        if "comprehensive_prototypes" in call.args[0][2]
+        if "comprehensive_prototypes" in call.source
     ]
 
     assert len(comprehensive_calls) >= 5, (
         f"Expected at least 5 comprehensive prototype calls, found {len(comprehensive_calls)}"
     )
 
-    all_nodes = mock_ingestor.ensure_node_batch.call_args_list
-    function_nodes = [call for call in all_nodes if call[0][0] == NodeLabel.FUNCTION]
+    all_nodes = get_nodes(mock_ingestor)
+    function_nodes = [call for call in all_nodes if call.label == NodeLabel.FUNCTION]
 
     comprehensive_functions = [
         call
         for call in function_nodes
-        if "comprehensive_prototypes" in call[0][1]["qualified_name"]
+        if "comprehensive_prototypes" in call.properties["qualified_name"]
     ]
 
     assert len(comprehensive_functions) >= 6, (

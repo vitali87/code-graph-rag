@@ -4,7 +4,12 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag.constants import NodeLabel
-from codebase_rag.tests.conftest import get_node_names, get_relationships, run_updater
+from codebase_rag.tests.conftest import (
+    get_node_names,
+    get_nodes,
+    get_relationships,
+    run_updater,
+)
 
 
 @pytest.fixture
@@ -250,13 +255,13 @@ void demonstrateThreadUtilities() {
         f"{project_name}.thread_basics.demonstrateThreadBasics",
     ]
 
-    all_calls = mock_ingestor.ensure_node_batch.call_args_list
-    class_calls = [call for call in all_calls if call[0][0] == NodeLabel.CLASS]
-    function_calls = [call for call in all_calls if call[0][0] == NodeLabel.FUNCTION]
-    method_calls = [call for call in all_calls if call[0][0] == NodeLabel.METHOD]
+    all_calls = get_nodes(mock_ingestor)
+    class_calls = [call for call in all_calls if call.label == NodeLabel.CLASS]
+    function_calls = [call for call in all_calls if call.label == NodeLabel.FUNCTION]
+    method_calls = [call for call in all_calls if call.label == NodeLabel.METHOD]
 
     created_entities = {
-        call[0][1]["qualified_name"]
+        call.properties["qualified_name"]
         for call in class_calls + function_calls + method_calls
     }
 
@@ -1847,7 +1852,7 @@ void runComprehensiveBenchmark() {
     comprehensive_calls = [
         call
         for call in call_relationships
-        if "comprehensive_concurrency" in call.args[0][2]
+        if "comprehensive_concurrency" in call.source
     ]
 
     assert len(comprehensive_calls) >= 10, (

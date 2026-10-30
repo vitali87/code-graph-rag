@@ -19,7 +19,7 @@ from codebase_rag import graph_updater as gu
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.cpp.frontend import cpp_frontend_available
 from codebase_rag.parsers.cpp.preproc_recovery import parse_with_preproc_recovery
-from codebase_rag.tests.conftest import recorded_edges, run_updater
+from codebase_rag.tests.conftest import get_nodes, recorded_edges, run_updater
 
 PROJECT = "proj"
 
@@ -76,10 +76,10 @@ MACRO_NAMES = (
 class _Graph:
     def __init__(self, ingestor: MagicMock) -> None:
         self.defs: dict[str, str] = {}
-        for c in ingestor.ensure_node_batch.call_args_list:
-            label = str(c.args[0])
+        for c in get_nodes(ingestor):
+            label = str(c.label)
             if label in (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD):
-                self.defs[c.args[1][cs.KEY_QUALIFIED_NAME]] = label
+                self.defs[c.properties[cs.KEY_QUALIFIED_NAME]] = label
         self.calls: set[tuple[str, str]] = recorded_edges(
             ingestor, cs.RelationshipType.CALLS
         )

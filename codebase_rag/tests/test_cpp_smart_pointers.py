@@ -4,7 +4,12 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag.constants import NodeLabel
-from codebase_rag.tests.conftest import get_node_names, get_relationships, run_updater
+from codebase_rag.tests.conftest import (
+    get_node_names,
+    get_nodes,
+    get_relationships,
+    run_updater,
+)
 
 
 @pytest.fixture
@@ -372,12 +377,12 @@ void demonstratePolymorphicUniquePtr() {
         f"{project_name}.unique_ptr_patterns.demonstrateUniquePtrBasics",
     ]
 
-    all_calls = mock_ingestor.ensure_node_batch.call_args_list
-    class_calls = [call for call in all_calls if call[0][0] == NodeLabel.CLASS]
-    function_calls = [call for call in all_calls if call[0][0] == NodeLabel.FUNCTION]
+    all_calls = get_nodes(mock_ingestor)
+    class_calls = [call for call in all_calls if call.label == NodeLabel.CLASS]
+    function_calls = [call for call in all_calls if call.label == NodeLabel.FUNCTION]
 
     created_entities = {
-        call[0][1]["qualified_name"] for call in class_calls + function_calls
+        call.properties["qualified_name"] for call in class_calls + function_calls
     }
 
     found_entities = [
@@ -1584,7 +1589,7 @@ void comprehensiveDemonstration() {
     comprehensive_calls = [
         call
         for call in call_relationships
-        if "comprehensive_smart_pointers" in call.args[0][2]
+        if "comprehensive_smart_pointers" in call.source
     ]
 
     assert len(comprehensive_calls) >= 8, (

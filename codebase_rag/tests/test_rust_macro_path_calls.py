@@ -159,9 +159,9 @@ def calls(tmp_path_factory: pytest.TempPathFactory) -> _Calls:
     create_and_run_updater(root, mock, skip_if_missing="rust")
     out: _Calls = {}
     for c in get_relationships(mock, cs.RelationshipType.CALLS):
-        props = c.kwargs.get("properties") or {}
-        caller = str(c.args[0][2]).split(".src.", 1)[-1]
-        callee = str(c.args[2][2]).split(".src.", 1)[-1]
+        props = c.properties
+        caller = str(c.source).split(".src.", 1)[-1]
+        callee = str(c.target).split(".src.", 1)[-1]
         out.setdefault(caller, {})[callee] = str(props.get(cs.KEY_RESOLUTION))
     return out
 

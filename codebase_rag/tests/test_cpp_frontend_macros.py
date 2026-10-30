@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag.parsers.cpp.frontend import cpp_frontend_available, run_cpp_frontend
-from codebase_rag.tests.conftest import recorded_edges
+from codebase_rag.tests.conftest import get_nodes, recorded_edges
 
 pytestmark = pytest.mark.skipif(
     not cpp_frontend_available(),
@@ -64,9 +64,9 @@ def _write(root: Path) -> None:
 
 def _functions(ingestor: MagicMock) -> set[str]:
     return {
-        c.args[1]["qualified_name"]
-        for c in ingestor.ensure_node_batch.call_args_list
-        if c.args[0] == "Function"
+        c.properties["qualified_name"]
+        for c in get_nodes(ingestor)
+        if c.label == "Function"
     }
 
 

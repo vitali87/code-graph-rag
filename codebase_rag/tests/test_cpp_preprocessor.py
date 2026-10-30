@@ -1058,7 +1058,7 @@ void demonstrateComprehensivePreprocessor() {
     comprehensive_calls = [
         call
         for call in call_relationships
-        if "comprehensive_preprocessor" in call.args[0][2]
+        if "comprehensive_preprocessor" in call.source
     ]
 
     assert len(comprehensive_calls) >= 3, (

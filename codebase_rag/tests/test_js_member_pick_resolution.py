@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from codebase_rag import constants as cs
-from codebase_rag.tests.conftest import create_and_run_updater
+from codebase_rag.tests.conftest import create_and_run_updater, get_relationships
 
 EXACT = cs.EdgeResolution.EXACT
 HEURISTIC = cs.EdgeResolution.HEURISTIC
@@ -35,16 +35,14 @@ CACHE_TS = "export class Cache { get(key: string): string { return key; } }\n"
 def _calls(mock: MagicMock, caller_suffix: str) -> dict[str, set[str]]:
     # callee qn (project prefix dropped) -> the labels its CALLS edges carry.
     found: dict[str, set[str]] = {}
-    for c in mock.ensure_relationship_batch.call_args_list:
-        if str(c.args[1]) != cs.RelationshipType.CALLS:
+    for c in get_relationships(mock):
+        if str(c.rel_type) != cs.RelationshipType.CALLS:
             continue
-        src = str(c.args[0][2])
+        src = str(c.source)
         if not src.endswith(caller_suffix):
             continue
-        props = (
-            c.kwargs.get("properties") or (c.args[3] if len(c.args) > 3 else {}) or {}
-        )
-        dst = str(c.args[2][2]).split(".", 1)[1]
+        props = c.properties
+        dst = str(c.target).split(".", 1)[1]
         found.setdefault(dst, set()).add(str(props.get(cs.KEY_RESOLUTION)))
     return found
 

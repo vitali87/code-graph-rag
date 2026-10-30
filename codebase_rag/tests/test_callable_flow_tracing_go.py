@@ -7,6 +7,7 @@ import pytest
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_relationships
 
 
 def _run_calls(tmp_path: Path, files: dict[str, str]) -> set[tuple[str, str]]:
@@ -20,9 +21,9 @@ def _run_calls(tmp_path: Path, files: dict[str, str]) -> set[tuple[str, str]]:
         ingestor=mock, repo_path=tmp_path, parsers=parsers, queries=queries
     ).run()
     out: set[tuple[str, str]] = set()
-    for c in mock.ensure_relationship_batch.call_args_list:
-        if c.args[1] == "CALLS":
-            out.add((c.args[0][2], c.args[2][2]))
+    for c in get_relationships(mock):
+        if c.rel_type == "CALLS":
+            out.add((c.source, c.target))
     return out
 
 

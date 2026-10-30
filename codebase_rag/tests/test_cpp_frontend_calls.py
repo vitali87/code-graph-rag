@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag.parsers.cpp.frontend import cpp_frontend_available, run_cpp_frontend
+from codebase_rag.tests.conftest import get_relationships
 
 pytestmark = pytest.mark.skipif(
     not cpp_frontend_available(),
@@ -59,10 +60,10 @@ def _write(root: Path) -> None:
 
 def _calls(ingestor: MagicMock) -> list[tuple[str, str, str, str]]:
     out = []
-    for c in ingestor.ensure_relationship_batch.call_args_list:
-        if c.args[1] == "CALLS":
-            (from_label, _, from_qn) = c.args[0]
-            (to_label, _, to_qn) = c.args[2]
+    for c in get_relationships(ingestor):
+        if c.rel_type == "CALLS":
+            (from_label, _, from_qn) = c.from_spec
+            (to_label, _, to_qn) = c.to_spec
             out.append((from_label, from_qn, to_label, to_qn))
     return out
 

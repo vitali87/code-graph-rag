@@ -9,7 +9,7 @@ import stat
 import subprocess
 import sys
 import tempfile
-from collections.abc import Generator, Iterator
+from collections.abc import Generator, Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, Self
@@ -35,7 +35,14 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers import native_trees
 from codebase_rag.parsers.python.ast_analyzer import clear_scope_facts
 from codebase_rag.sync.checkout_state import state_file
-from codebase_rag.types_defs import GraphNodeRecord, GraphRelRecord, ResultRow
+from codebase_rag.types_defs import (
+    GraphNodeRecord,
+    GraphRelRecord,
+    PropertyDict,
+    PropertyValue,
+    RelEndpointSpec,
+    ResultRow,
+)
 
 if TYPE_CHECKING:
     from codebase_rag.mcp.tools import MCPToolsRegistry
@@ -1144,61 +1151,111 @@ def _audit_recorded_graph(mock_ingestor: MagicMock) -> None:
     assert not violations, "\n".join(v.detail for v in violations)
 
 
-def recorded_nodes(ingestor: MagicMock) -> list[GraphNodeRecord]:
-    """Every node a recording ingestor was handed, in order."""
-    return [
-        GraphNodeRecord(str(c.args[0]), c.args[1])
+@dataclass(frozen=True, slots=True)
+class RecordedNode:
+    """One `ensure_node_batch` call a recording ingestor was handed."""
+
+    label: str
+    properties: PropertyDict
+
+
+@dataclass(frozen=True, slots=True)
+class RecordedRel:
+    """One `ensure_relationship_batch` call a recording ingestor was handed.
+
+    Each endpoint is named rather than indexed: `source` and `target` are the
+    values matched on `source_key` and `target_key` (usually the qualified
+    name), and `properties` is empty when the call passed none. It is not a
+    tuple, so a test still decoding the call by position (`c.args[0][2]`)
+    fails instead of reading the wrong field.
+    """
+
+    source_label: str
+    source_key: str
+    source: PropertyValue
+    rel_type: str
+    target_label: str
+    target_key: str
+    target: PropertyValue
+    properties: PropertyDict
+
+    @property
+    def from_spec(self) -> RelEndpointSpec:
+        return (self.source_label, self.source_key, self.source)
+
+    @property
+    def to_spec(self) -> RelEndpointSpec:
+        return (self.target_label, self.target_key, self.target)
+
+
+def _call_arg(c: Any, index: int, name: str) -> Any:
+    return c.args[index] if len(c.args) > index else c.kwargs.get(name)
+
+
+def get_nodes(ingestor: MagicMock, label: str | None = None) -> list[RecordedNode]:
+    """The nodes a recording ingestor was handed, in order; only `label`'s
+    when one is given."""
+    nodes = [
+        RecordedNode(str(_call_arg(c, 0, "label")), _call_arg(c, 1, "properties"))
         for c in ingestor.ensure_node_batch.call_args_list
     ]
+    return nodes if label is None else [n for n in nodes if n.label == label]
+
+
+def get_relationships(
+    ingestor: MagicMock, rel_type: str | None = None
+) -> list[RecordedRel]:
+    """The relationships a recording ingestor was handed, in order; only
+    `rel_type`'s when one is given."""
+    rels = []
+    for c in ingestor.ensure_relationship_batch.call_args_list:
+        source_label, source_key, source = _call_arg(c, 0, "from_spec")
+        target_label, target_key, target = _call_arg(c, 2, "to_spec")
+        rels.append(
+            RecordedRel(
+                str(source_label),
+                str(source_key),
+                source,
+                str(_call_arg(c, 1, "rel_type")),
+                str(target_label),
+                str(target_key),
+                target,
+                _call_arg(c, 3, "properties") or {},
+            )
+        )
+    return rels if rel_type is None else [r for r in rels if r.rel_type == rel_type]
+
+
+def recorded_nodes(ingestor: MagicMock) -> list[GraphNodeRecord]:
+    """Every recorded node, as the graph audit reads it."""
+    return [GraphNodeRecord(n.label, n.properties) for n in get_nodes(ingestor)]
 
 
 def recorded_relationships(ingestor: MagicMock) -> list[GraphRelRecord]:
-    """Every relationship a recording ingestor was handed, in order."""
+    """Every recorded relationship, as the graph audit reads it."""
     return [
-        GraphRelRecord(c.args[0], str(c.args[1]), c.args[2])
-        for c in ingestor.ensure_relationship_batch.call_args_list
+        GraphRelRecord(r.from_spec, r.rel_type, r.to_spec)
+        for r in get_relationships(ingestor)
     ]
 
 
 def recorded_edges(ingestor: MagicMock, rel_type: str) -> set[tuple[str, str]]:
-    """The `rel_type` relationships recorded, as (source key, target key):
-    the qualified name, or whatever value keys the endpoint's label."""
+    """The `rel_type` relationships recorded, as (source, target) values."""
     return {
-        (str(rel.from_spec[2]), str(rel.to_spec[2]))
-        for rel in recorded_relationships(ingestor)
-        if rel.rel_type == rel_type
+        (str(r.source), str(r.target)) for r in get_relationships(ingestor, rel_type)
     }
 
 
 def recorded_triples(ingestor: MagicMock) -> set[tuple[str, str, str]]:
-    """Every recorded relationship as (source key, type, target key)."""
+    """Every recorded relationship as (source, type, target) values."""
     return {
-        (str(rel.from_spec[2]), rel.rel_type, str(rel.to_spec[2]))
-        for rel in recorded_relationships(ingestor)
+        (str(r.source), r.rel_type, str(r.target)) for r in get_relationships(ingestor)
     }
 
 
-def get_relationships(mock_ingestor: MagicMock, rel_type: str) -> list:
-    """Extract relationships of a specific type from mock_ingestor calls."""
-    return [
-        c
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == rel_type
-    ]
-
-
-def get_nodes(mock_ingestor: MagicMock, node_type: str) -> list:
-    """Extract nodes of a specific type from mock_ingestor calls."""
-    return [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] == node_type
-    ]
-
-
-def get_qualified_names(calls: list) -> set[str]:
-    """Extract qualified names from a list of node calls."""
-    return {call[0][1]["qualified_name"] for call in calls}
+def get_qualified_names(nodes: Iterable[RecordedNode]) -> set[str]:
+    """The qualified names of `nodes`."""
+    return {str(n.properties["qualified_name"]) for n in nodes}
 
 
 def get_node_names(mock_ingestor: MagicMock, node_type: str) -> set[str]:

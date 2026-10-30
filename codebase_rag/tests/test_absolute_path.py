@@ -70,7 +70,7 @@ class TestAbsolutePathOnNodes:
         file_nodes = get_nodes(mock_ingestor, cs.NodeLabel.FILE)
         assert len(file_nodes) > 0
         for node_call in file_nodes:
-            props = node_call[0][1]
+            props = node_call.properties
             assert cs.KEY_ABSOLUTE_PATH in props
             abs_path = props[cs.KEY_ABSOLUTE_PATH]
             assert Path(abs_path).is_absolute()
@@ -88,7 +88,7 @@ class TestAbsolutePathOnNodes:
         internal_modules = get_nodes(mock_ingestor, cs.NodeLabel.MODULE)
         assert len(internal_modules) > 0
         for node_call in internal_modules:
-            props = node_call[0][1]
+            props = node_call.properties
             assert cs.KEY_ABSOLUTE_PATH in props
             abs_path = props[cs.KEY_ABSOLUTE_PATH]
             assert Path(abs_path).is_absolute()
@@ -105,7 +105,7 @@ class TestAbsolutePathOnNodes:
         package_nodes = get_nodes(mock_ingestor, cs.NodeLabel.PACKAGE)
         assert len(package_nodes) > 0
         for node_call in package_nodes:
-            props = node_call[0][1]
+            props = node_call.properties
             assert cs.KEY_ABSOLUTE_PATH in props
             abs_path = props[cs.KEY_ABSOLUTE_PATH]
             assert Path(abs_path).is_absolute()
@@ -122,7 +122,7 @@ class TestAbsolutePathOnNodes:
         func_nodes = get_nodes(mock_ingestor, cs.NodeLabel.FUNCTION)
         assert len(func_nodes) > 0
         for node_call in func_nodes:
-            props = node_call[0][1]
+            props = node_call.properties
             assert cs.KEY_ABSOLUTE_PATH in props
             assert cs.KEY_PATH in props
             abs_path = props[cs.KEY_ABSOLUTE_PATH]
@@ -140,7 +140,7 @@ class TestAbsolutePathOnNodes:
         class_nodes = get_nodes(mock_ingestor, cs.NodeLabel.CLASS)
         assert len(class_nodes) > 0
         for node_call in class_nodes:
-            props = node_call[0][1]
+            props = node_call.properties
             assert cs.KEY_ABSOLUTE_PATH in props
             assert cs.KEY_PATH in props
             abs_path = props[cs.KEY_ABSOLUTE_PATH]
@@ -158,7 +158,7 @@ class TestAbsolutePathOnNodes:
         method_nodes = get_nodes(mock_ingestor, cs.NodeLabel.METHOD)
         assert len(method_nodes) > 0
         for node_call in method_nodes:
-            props = node_call[0][1]
+            props = node_call.properties
             assert cs.KEY_ABSOLUTE_PATH in props
             assert cs.KEY_PATH in props
             abs_path = props[cs.KEY_ABSOLUTE_PATH]
@@ -176,7 +176,7 @@ class TestAbsolutePathOnNodes:
         folder_nodes = get_nodes(mock_ingestor, cs.NodeLabel.FOLDER)
         assert len(folder_nodes) > 0
         for node_call in folder_nodes:
-            props = node_call[0][1]
+            props = node_call.properties
             assert cs.KEY_ABSOLUTE_PATH in props
             abs_path = props[cs.KEY_ABSOLUTE_PATH]
             assert Path(abs_path).is_absolute()
@@ -192,10 +192,10 @@ class TestAbsolutePathOnNodes:
         run_updater(python_project, mock_ingestor)
         module_nodes = get_nodes(mock_ingestor, cs.NodeLabel.MODULE)
         mymodule_nodes = [
-            c for c in module_nodes if c[0][1].get(cs.KEY_NAME) == "mymodule.py"
+            c for c in module_nodes if c.properties.get(cs.KEY_NAME) == "mymodule.py"
         ]
         assert len(mymodule_nodes) == 1
-        props = mymodule_nodes[0][0][1]
+        props = mymodule_nodes[0].properties
         expected = (python_project / "mypkg" / "mymodule.py").resolve().as_posix()
         assert props[cs.KEY_ABSOLUTE_PATH] == expected
 
@@ -210,7 +210,7 @@ class TestAbsolutePathOnNodes:
         run_updater(python_project, mock_ingestor)
         file_nodes = get_nodes(mock_ingestor, cs.NodeLabel.FILE)
         for node_call in file_nodes:
-            abs_path = node_call[0][1][cs.KEY_ABSOLUTE_PATH]
+            abs_path = node_call.properties[cs.KEY_ABSOLUTE_PATH]
             assert "\\" not in abs_path
 
     def test_project_node_has_no_absolute_path(
@@ -225,7 +225,7 @@ class TestAbsolutePathOnNodes:
         project_nodes = get_nodes(mock_ingestor, cs.NodeLabel.PROJECT)
         assert len(project_nodes) > 0
         for node_call in project_nodes:
-            props = node_call[0][1]
+            props = node_call.properties
             assert cs.KEY_ABSOLUTE_PATH not in props
 
 
@@ -250,7 +250,7 @@ class TestTypeScriptAbsolutePath:
         interface_nodes = get_nodes(mock_ingestor, cs.NodeLabel.INTERFACE)
         assert len(interface_nodes) > 0
         for node_call in interface_nodes:
-            props = node_call[0][1]
+            props = node_call.properties
             assert cs.KEY_ABSOLUTE_PATH in props
             assert Path(props[cs.KEY_ABSOLUTE_PATH]).is_absolute()
 
@@ -266,7 +266,7 @@ class TestTypeScriptAbsolutePath:
         enum_nodes = get_nodes(mock_ingestor, cs.NodeLabel.ENUM)
         assert len(enum_nodes) > 0
         for node_call in enum_nodes:
-            props = node_call[0][1]
+            props = node_call.properties
             assert cs.KEY_ABSOLUTE_PATH in props
             assert Path(props[cs.KEY_ABSOLUTE_PATH]).is_absolute()
 
@@ -294,7 +294,7 @@ class TestCppModuleAbsolutePath:
         if len(mi_nodes) == 0:
             pytest.skip("No ModuleInterface nodes produced")
         for node_call in mi_nodes:
-            props = node_call[0][1]
+            props = node_call.properties
             assert cs.KEY_ABSOLUTE_PATH in props
             assert Path(props[cs.KEY_ABSOLUTE_PATH]).is_absolute()
 
@@ -311,6 +311,6 @@ class TestCppModuleAbsolutePath:
         if len(mi_nodes) == 0:
             pytest.skip("No ModuleImplementation nodes produced")
         for node_call in mi_nodes:
-            props = node_call[0][1]
+            props = node_call.properties
             assert cs.KEY_ABSOLUTE_PATH in props
             assert Path(props[cs.KEY_ABSOLUTE_PATH]).is_absolute()

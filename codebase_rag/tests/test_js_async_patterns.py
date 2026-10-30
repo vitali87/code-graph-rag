@@ -293,7 +293,7 @@ function handleProfileError(error) {
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     promise_calls = [
-        call for call in call_relationships if "promise_patterns" in call.args[0][2]
+        call for call in call_relationships if "promise_patterns" in call.source
     ]
 
     assert len(promise_calls) >= 8, (
@@ -1355,7 +1355,7 @@ consumeAsyncGenerator();
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     generator_calls = [
-        call for call in call_relationships if "generator_patterns" in call.args[0][2]
+        call for call in call_relationships if "generator_patterns" in call.source
     ]
 
     assert len(generator_calls) >= 5, (
@@ -1526,7 +1526,7 @@ function delay(ms) {
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
     comprehensive_calls = [
-        call for call in call_relationships if "comprehensive_async" in call.args[0][2]
+        call for call in call_relationships if "comprehensive_async" in call.source
     ]
 
     assert len(comprehensive_calls) >= 5, (
@@ -1534,11 +1534,10 @@ function delay(ms) {
     )
 
     for relationship in comprehensive_calls:
-        assert len(relationship.args) == 3, "Call relationship should have 3 args"
-        assert relationship.args[1] == "CALLS", "Second arg should be 'CALLS'"
+        assert relationship.rel_type == "CALLS", "Expected a CALLS relationship"
 
-        source_module = relationship.args[0][2]
-        target_module = relationship.args[2][2]
+        source_module = relationship.source
+        target_module = relationship.target
 
         assert "comprehensive_async" in source_module, (
             f"Source module should contain test file name: {source_module}"

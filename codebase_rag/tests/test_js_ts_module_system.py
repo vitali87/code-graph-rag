@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_nodes, get_relationships, run_updater
 
 # Ask the production loader, not `find_spec`. A grammar wheel whose ABI does
 # not match the installed `tree_sitter` imports fine and then raises from
@@ -42,8 +42,8 @@ function processFile(path) {
 
         run_updater(temp_js_project, mock_ingestor)
 
-        rel_calls = mock_ingestor.ensure_relationship_batch.call_args_list
-        imports_rels = [call for call in rel_calls if call.args[1] == "IMPORTS"]
+        rel_calls = get_relationships(mock_ingestor)
+        imports_rels = [call for call in rel_calls if call.rel_type == "IMPORTS"]
 
         assert len(imports_rels) >= 1
 
@@ -63,9 +63,11 @@ function read(path) {
 
         run_updater(temp_js_project, mock_ingestor)
 
-        calls = mock_ingestor.ensure_node_batch.call_args_list
+        calls = get_nodes(mock_ingestor)
         function_names = [
-            call[0][1].get("name", "") for call in calls if call[0][0] == "Function"
+            call.properties.get("name", "")
+            for call in calls
+            if call.label == "Function"
         ]
 
         assert "read" in function_names
@@ -89,12 +91,12 @@ exports.anotherHelper = () => 'arrow helper';
 
         run_updater(temp_js_project, mock_ingestor)
 
-        calls = mock_ingestor.ensure_node_batch.call_args_list
+        calls = get_nodes(mock_ingestor)
         function_qns = [
-            call[0][1]["qualified_name"]
+            call.properties["qualified_name"]
             for call in calls
-            if call[0][0] == "Function"
-            and "exports_dot" in call[0][1].get("qualified_name", "")
+            if call.label == "Function"
+            and "exports_dot" in call.properties.get("qualified_name", "")
         ]
 
         assert any("myHelper" in qn for qn in function_qns)
@@ -116,12 +118,12 @@ module.exports.update = (id, data) => ({ id, ...data });
 
         run_updater(temp_js_project, mock_ingestor)
 
-        calls = mock_ingestor.ensure_node_batch.call_args_list
+        calls = get_nodes(mock_ingestor)
         function_qns = [
-            call[0][1]["qualified_name"]
+            call.properties["qualified_name"]
             for call in calls
-            if call[0][0] == "Function"
-            and "module_exports" in call[0][1].get("qualified_name", "")
+            if call.label == "Function"
+            and "module_exports" in call.properties.get("qualified_name", "")
         ]
 
         assert any("create" in qn for qn in function_qns)
@@ -143,12 +145,12 @@ export const subtract = (a, b) => a - b;
 
         run_updater(temp_js_project, mock_ingestor)
 
-        calls = mock_ingestor.ensure_node_batch.call_args_list
+        calls = get_nodes(mock_ingestor)
         function_qns = [
-            call[0][1]["qualified_name"]
+            call.properties["qualified_name"]
             for call in calls
-            if call[0][0] == "Function"
-            and "es6_const" in call[0][1].get("qualified_name", "")
+            if call.label == "Function"
+            and "es6_const" in call.properties.get("qualified_name", "")
         ]
 
         assert any("add" in qn for qn in function_qns)
@@ -172,12 +174,12 @@ export function divide(a, b) {
 
         run_updater(temp_js_project, mock_ingestor)
 
-        calls = mock_ingestor.ensure_node_batch.call_args_list
+        calls = get_nodes(mock_ingestor)
         function_qns = [
-            call[0][1]["qualified_name"]
+            call.properties["qualified_name"]
             for call in calls
-            if call[0][0] == "Function"
-            and "es6_func" in call[0][1].get("qualified_name", "")
+            if call.label == "Function"
+            and "es6_func" in call.properties.get("qualified_name", "")
         ]
 
         assert any("multiply" in qn for qn in function_qns)
@@ -199,12 +201,12 @@ export function* range(start, end) {
 
         run_updater(temp_js_project, mock_ingestor)
 
-        calls = mock_ingestor.ensure_node_batch.call_args_list
+        calls = get_nodes(mock_ingestor)
         function_qns = [
-            call[0][1]["qualified_name"]
+            call.properties["qualified_name"]
             for call in calls
-            if call[0][0] == "Function"
-            and "es6_generator" in call[0][1].get("qualified_name", "")
+            if call.label == "Function"
+            and "es6_generator" in call.properties.get("qualified_name", "")
         ]
 
         assert any("range" in qn for qn in function_qns)
@@ -232,12 +234,12 @@ exports.legacyCreate = function() {
 
         run_updater(temp_js_project, mock_ingestor)
 
-        calls = mock_ingestor.ensure_node_batch.call_args_list
+        calls = get_nodes(mock_ingestor)
         function_qns = [
-            call[0][1]["qualified_name"]
+            call.properties["qualified_name"]
             for call in calls
-            if call[0][0] == "Function"
-            and "mixed" in call[0][1].get("qualified_name", "")
+            if call.label == "Function"
+            and "mixed" in call.properties.get("qualified_name", "")
         ]
 
         assert any("createEmitter" in qn for qn in function_qns)
@@ -266,9 +268,11 @@ function process() {
 
         run_updater(temp_js_project, mock_ingestor)
 
-        calls = mock_ingestor.ensure_node_batch.call_args_list
+        calls = get_nodes(mock_ingestor)
         function_names = [
-            call[0][1].get("name", "") for call in calls if call[0][0] == "Function"
+            call.properties.get("name", "")
+            for call in calls
+            if call.label == "Function"
         ]
 
         assert "loadModule" in function_names
@@ -300,12 +304,12 @@ export const calculate = (a: number, b: number): number => a + b;
 
         run_updater(temp_ts_project, mock_ingestor)
 
-        calls = mock_ingestor.ensure_node_batch.call_args_list
+        calls = get_nodes(mock_ingestor)
         function_qns = [
-            call[0][1]["qualified_name"]
+            call.properties["qualified_name"]
             for call in calls
-            if call[0][0] == "Function"
-            and "utils" in call[0][1].get("qualified_name", "")
+            if call.label == "Function"
+            and "utils" in call.properties.get("qualified_name", "")
         ]
 
         assert any("greet" in qn for qn in function_qns)
@@ -330,12 +334,12 @@ export const fetchJson = async <T>(url: string): Promise<T> => {
 
         run_updater(temp_ts_project, mock_ingestor)
 
-        calls = mock_ingestor.ensure_node_batch.call_args_list
+        calls = get_nodes(mock_ingestor)
         function_qns = [
-            call[0][1]["qualified_name"]
+            call.properties["qualified_name"]
             for call in calls
-            if call[0][0] == "Function"
-            and "async_utils" in call[0][1].get("qualified_name", "")
+            if call.label == "Function"
+            and "async_utils" in call.properties.get("qualified_name", "")
         ]
 
         assert any("fetchData" in qn for qn in function_qns)
@@ -363,12 +367,12 @@ export class UserService {
 
         run_updater(temp_ts_project, mock_ingestor)
 
-        calls = mock_ingestor.ensure_node_batch.call_args_list
+        calls = get_nodes(mock_ingestor)
         class_qns = [
-            call[0][1]["qualified_name"]
+            call.properties["qualified_name"]
             for call in calls
-            if call[0][0] == "Class"
-            and "service" in call[0][1].get("qualified_name", "")
+            if call.label == "Class"
+            and "service" in call.properties.get("qualified_name", "")
         ]
 
         assert any("UserService" in qn for qn in class_qns)
@@ -393,8 +397,8 @@ function processFiles(files) {
 
         run_updater(temp_js_project, mock_ingestor)
 
-        rel_calls = mock_ingestor.ensure_relationship_batch.call_args_list
-        imports_rels = [call for call in rel_calls if call.args[1] == "IMPORTS"]
+        rel_calls = get_relationships(mock_ingestor)
+        imports_rels = [call for call in rel_calls if call.rel_type == "IMPORTS"]
 
         assert len(imports_rels) >= 2
 
@@ -416,9 +420,11 @@ function readAndJoin(file, dir) {
 
         run_updater(temp_js_project, mock_ingestor)
 
-        calls = mock_ingestor.ensure_node_batch.call_args_list
+        calls = get_nodes(mock_ingestor)
         function_names = [
-            call[0][1].get("name", "") for call in calls if call[0][0] == "Function"
+            call.properties.get("name", "")
+            for call in calls
+            if call.label == "Function"
         ]
 
         assert "readAndJoin" in function_names
@@ -445,12 +451,12 @@ export const asyncHandler = async function(event) {
 
         run_updater(temp_js_project, mock_ingestor)
 
-        calls = mock_ingestor.ensure_node_batch.call_args_list
+        calls = get_nodes(mock_ingestor)
         function_qns = [
-            call[0][1]["qualified_name"]
+            call.properties["qualified_name"]
             for call in calls
-            if call[0][0] == "Function"
-            and "func_expr" in call[0][1].get("qualified_name", "")
+            if call.label == "Function"
+            and "func_expr" in call.properties.get("qualified_name", "")
         ]
 
         assert any("handler" in qn for qn in function_qns)
@@ -481,12 +487,12 @@ module.exports.anotherFetch = async (url) => {
 
         run_updater(temp_js_project, mock_ingestor)
 
-        calls = mock_ingestor.ensure_node_batch.call_args_list
+        calls = get_nodes(mock_ingestor)
         function_qns = [
-            call[0][1]["qualified_name"]
+            call.properties["qualified_name"]
             for call in calls
-            if call[0][0] == "Function"
-            and "async_exports" in call[0][1].get("qualified_name", "")
+            if call.label == "Function"
+            and "async_exports" in call.properties.get("qualified_name", "")
         ]
 
         assert any("fetchUsers" in qn for qn in function_qns)
@@ -508,12 +514,12 @@ class TestLargeFileWithManyExports:
 
         run_updater(temp_js_project, mock_ingestor)
 
-        calls = mock_ingestor.ensure_node_batch.call_args_list
+        calls = get_nodes(mock_ingestor)
         function_qns = [
-            call[0][1]["qualified_name"]
+            call.properties["qualified_name"]
             for call in calls
-            if call[0][0] == "Function"
-            and "many_exports" in call[0][1].get("qualified_name", "")
+            if call.label == "Function"
+            and "many_exports" in call.properties.get("qualified_name", "")
         ]
 
         assert len(function_qns) >= 10
@@ -541,8 +547,8 @@ module.exports = {
 
         run_updater(temp_js_project, mock_ingestor)
 
-        calls = mock_ingestor.ensure_node_batch.call_args_list
-        module_calls = [call for call in calls if call[0][0] == "Module"]
+        calls = get_nodes(mock_ingestor)
+        module_calls = [call for call in calls if call.label == "Module"]
 
         assert len(module_calls) >= 1
 
@@ -569,9 +575,11 @@ exports.readAndJoin = function(file, dir) {
 
         run_updater(temp_js_project, mock_ingestor)
 
-        calls = mock_ingestor.ensure_node_batch.call_args_list
+        calls = get_nodes(mock_ingestor)
         function_qns = [
-            call[0][1]["qualified_name"] for call in calls if call[0][0] == "Function"
+            call.properties["qualified_name"]
+            for call in calls
+            if call.label == "Function"
         ]
 
         assert any("readAndJoin" in qn for qn in function_qns)
@@ -599,12 +607,12 @@ exports.helper123 = function() {
 
         run_updater(temp_js_project, mock_ingestor)
 
-        calls = mock_ingestor.ensure_node_batch.call_args_list
+        calls = get_nodes(mock_ingestor)
         function_qns = [
-            call[0][1]["qualified_name"]
+            call.properties["qualified_name"]
             for call in calls
-            if call[0][0] == "Function"
-            and "special_names" in call[0][1].get("qualified_name", "")
+            if call.label == "Function"
+            and "special_names" in call.properties.get("qualified_name", "")
         ]
 
         assert any("$helper" in qn for qn in function_qns)
@@ -649,8 +657,8 @@ const { EventEmitter } = require('events');
 
         run_updater(temp_js_project, mock_ingestor)
 
-        rel_calls = mock_ingestor.ensure_relationship_batch.call_args_list
-        imports_rels = [call for call in rel_calls if call.args[1] == "IMPORTS"]
+        rel_calls = get_relationships(mock_ingestor)
+        imports_rels = [call for call in rel_calls if call.rel_type == "IMPORTS"]
 
         assert len(imports_rels) >= 1
 
@@ -677,12 +685,12 @@ class TestIIFEPatterns:
 
         run_updater(temp_js_project, mock_ingestor)
 
-        calls = mock_ingestor.ensure_node_batch.call_args_list
+        calls = get_nodes(mock_ingestor)
         function_qns = [
-            call[0][1]["qualified_name"]
+            call.properties["qualified_name"]
             for call in calls
-            if call[0][0] == "Function"
-            and "iife" in call[0][1].get("qualified_name", "")
+            if call.label == "Function"
+            and "iife" in call.properties.get("qualified_name", "")
         ]
 
         assert any("init" in qn for qn in function_qns)
@@ -712,12 +720,12 @@ export function createUser(data: Partial<User>): User {
 
         run_updater(temp_ts_project, mock_ingestor)
 
-        calls = mock_ingestor.ensure_node_batch.call_args_list
+        calls = get_nodes(mock_ingestor)
         function_qns = [
-            call[0][1]["qualified_name"]
+            call.properties["qualified_name"]
             for call in calls
-            if call[0][0] == "Function"
-            and "types" in call[0][1].get("qualified_name", "")
+            if call.label == "Function"
+            and "types" in call.properties.get("qualified_name", "")
         ]
 
         assert any("createUser" in qn for qn in function_qns)
@@ -746,12 +754,12 @@ export class ApiService {
 
         run_updater(temp_ts_project, mock_ingestor)
 
-        calls = mock_ingestor.ensure_node_batch.call_args_list
+        calls = get_nodes(mock_ingestor)
         class_qns = [
-            call[0][1]["qualified_name"]
+            call.properties["qualified_name"]
             for call in calls
-            if call[0][0] == "Class"
-            and "decorated" in call[0][1].get("qualified_name", "")
+            if call.label == "Class"
+            and "decorated" in call.properties.get("qualified_name", "")
         ]
 
         assert any("ApiService" in qn for qn in class_qns)

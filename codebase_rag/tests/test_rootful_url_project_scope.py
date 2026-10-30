@@ -17,7 +17,7 @@ from codebase_rag import constants as cs
 from codebase_rag.capture import resolve_capture
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.tests.conftest import recorded_triples
+from codebase_rag.tests.conftest import get_nodes, recorded_triples
 
 PROJECT = "alpha"
 _CAPTURE_IO = resolve_capture([cs.CaptureGroup.IO.value])
@@ -63,9 +63,9 @@ def graph(tmp_path_factory: pytest.TempPathFactory) -> tuple[_Edges, dict[str, d
     ).run()
     edges = recorded_triples(mock)
     resources = {
-        str(c.args[1][cs.KEY_QUALIFIED_NAME]): dict(c.args[1])
-        for c in mock.ensure_node_batch.call_args_list
-        if str(c.args[0]) == cs.NodeLabel.RESOURCE.value
+        str(c.properties[cs.KEY_QUALIFIED_NAME]): dict(c.properties)
+        for c in get_nodes(mock)
+        if str(c.label) == cs.NodeLabel.RESOURCE.value
     }
     return edges, resources
 

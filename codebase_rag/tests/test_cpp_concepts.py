@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -130,11 +129,8 @@ void demonstrateBasicConcepts() {
     concept_definitions = [
         call
         for call in defines_relationships
-        if "concept_definitions" in call.args[0][2]
-        and (
-            "concept" in call.args[2][2].lower()
-            or "template" in call.args[2][2].lower()
-        )
+        if "concept_definitions" in call.source
+        and ("concept" in call.target.lower() or "template" in call.target.lower())
     ]
 
     assert len(concept_definitions) >= 3, (
@@ -272,7 +268,7 @@ void demonstrateAdvancedConcepts() {
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     advanced_calls = [
-        call for call in call_relationships if "advanced_concepts" in call.args[0][2]
+        call for call in call_relationships if "advanced_concepts" in call.source
     ]
 
     # builtin operator edges no longer emitted (#652)
@@ -365,14 +361,12 @@ void demonstrateConceptComposition() {
 
     run_updater(cpp_concepts_project, mock_ingestor)
 
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    all_relationships = get_relationships(mock_ingestor)
 
     namespace_relationships = [
         call
         for call in all_relationships
-        if "concept_composition" in call.args[0][2] and "math" in str(call.args).lower()
+        if "concept_composition" in call.source and "math" in str(call).lower()
     ]
 
     assert len(namespace_relationships) >= 1, (
@@ -382,9 +376,7 @@ void demonstrateConceptComposition() {
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
     composition_definitions = [
-        call
-        for call in defines_relationships
-        if "concept_composition" in call.args[0][2]
+        call for call in defines_relationships if "concept_composition" in call.source
     ]
 
     # 4 real definitions: Calculator, square_root_estimate,

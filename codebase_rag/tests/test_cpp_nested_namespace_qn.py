@@ -12,7 +12,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from codebase_rag import constants as cs
-from codebase_rag.tests.conftest import get_relationships, run_updater
+from codebase_rag.tests.conftest import get_nodes, get_relationships, run_updater
 
 HDR_MODERN = """
 #pragma once
@@ -48,10 +48,10 @@ def _index(repo: Path, hdr: str, cpp: str, mock_ingestor: MagicMock) -> None:
 
 def _entity_qns(mock_ingestor: MagicMock, project: str) -> set[tuple[str, str]]:
     qns = set()
-    for c in mock_ingestor.ensure_node_batch.call_args_list:
-        label = str(c.args[0])
+    for c in get_nodes(mock_ingestor):
+        label = str(c.label)
         if label in ("Class", "Method", "Function"):
-            qn = str(c.args[1]["qualified_name"]).replace(project, "PROJ", 1)
+            qn = str(c.properties["qualified_name"]).replace(project, "PROJ", 1)
             qns.add((label, qn))
     return qns
 
@@ -87,17 +87,16 @@ def test_out_of_line_caller_binds_under_modern_namespace(
     _index(temp_repo, HDR_MODERN, CPP_MODERN, mock_ingestor)
 
     node_keys = {
-        (str(c.args[0]), c.args[1].get("qualified_name"))
-        for c in mock_ingestor.ensure_node_batch.call_args_list
+        (str(c.label), c.properties.get("qualified_name"))
+        for c in get_nodes(mock_ingestor)
     }
     calls = [
         call
         for call in get_relationships(mock_ingestor, cs.RelationshipType.CALLS.value)
-        if str(call.args[2][2]).endswith(".toPtr")
-        and "getTypes" in str(call.args[0][2])
+        if str(call.target).endswith(".toPtr") and "getTypes" in str(call.source)
     ]
     assert calls
     for call in calls:
-        from_label, _, from_qn = call.args[0]
-        assert str(from_label) == cs.NodeLabel.METHOD.value, call.args
-        assert (str(from_label), from_qn) in node_keys, call.args
+        from_label, _, from_qn = call.from_spec
+        assert str(from_label) == cs.NodeLabel.METHOD.value, call
+        assert (str(from_label), from_qn) in node_keys, call

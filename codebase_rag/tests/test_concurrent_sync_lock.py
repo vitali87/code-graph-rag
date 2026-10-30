@@ -47,6 +47,7 @@ from codebase_rag.sync.lock import (
     repo_sync_lock,
 )
 from codebase_rag.tests.cli_output import unstyle
+from codebase_rag.tests.conftest import get_nodes
 
 runner = CliRunner()
 
@@ -886,9 +887,9 @@ def test_the_lock_file_is_not_indexed_and_keeps_the_sync_in_sync(
     assert _lock_path(repo).is_file()
     assert not (repo / cs.SYNC_LOCK_FILENAME).exists()
     files = [
-        str(c.args[1])
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c.args[0] == cs.NodeLabel.FILE
+        str(c.properties)
+        for c in get_nodes(mock_ingestor)
+        if c.label == cs.NodeLabel.FILE
     ]
     assert any("core.py" in props for props in files)
     assert not any(cs.SYNC_LOCK_FILENAME in props for props in files)
@@ -911,9 +912,9 @@ def test_a_lock_name_left_in_the_tree_is_left_alone_and_not_indexed(
 
     assert legacy.read_text() == "4242\nclick\n"
     files = [
-        str(c.args[1])
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c.args[0] == cs.NodeLabel.FILE
+        str(c.properties)
+        for c in get_nodes(mock_ingestor)
+        if c.label == cs.NodeLabel.FILE
     ]
     assert any("core.py" in props for props in files)
     assert not any(cs.SYNC_LOCK_FILENAME in props for props in files)

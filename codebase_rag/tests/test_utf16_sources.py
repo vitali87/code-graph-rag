@@ -76,7 +76,7 @@ def _short(qn: object) -> str:
 
 def _calls(indexed: MagicMock) -> set[tuple[str, str]]:
     return {
-        (_short(c.args[0][2]), _short(c.args[2][2]))
+        (_short(c.source), _short(c.target))
         for c in get_relationships(indexed, cs.RelationshipType.CALLS)
     }
 
@@ -87,12 +87,13 @@ def test_a_wide_csharp_file_indexes_like_its_utf8_copy(
 ) -> None:
     cls = f"{encoding}.Acme.W{encoding}"
     methods = {
-        _short(c.args[1][cs.KEY_QUALIFIED_NAME]) for c in get_nodes(indexed, "Method")
+        _short(c.properties[cs.KEY_QUALIFIED_NAME])
+        for c in get_nodes(indexed, "Method")
     }
     assert {f"{cls}.Helper", f"{cls}.Use"} <= methods, methods
     assert (f"{cls}.Use", f"{cls}.Helper") in _calls(indexed)
     lines = {
-        _short(c.args[1][cs.KEY_QUALIFIED_NAME]): c.args[1].get(cs.KEY_START_LINE)
+        _short(c.properties[cs.KEY_QUALIFIED_NAME]): c.properties.get(cs.KEY_START_LINE)
         for c in get_nodes(indexed, "Method")
     }
     assert lines[f"{cls}.Helper"] == lines["Plain.Acme.Util.Helper"] == 5

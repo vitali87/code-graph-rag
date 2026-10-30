@@ -4,16 +4,16 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from codebase_rag import constants as cs
-from codebase_rag.tests.conftest import run_updater
+from codebase_rag.tests.conftest import get_relationships, run_updater
 
 
 def _calls(mock_ingestor: MagicMock) -> list[tuple[str, str, str]]:
     # CALLS edges as (caller_label, caller_qn, callee_qn).
     out: list[tuple[str, str, str]] = []
-    for c in mock_ingestor.ensure_relationship_batch.call_args_list:
-        if c.args[1] == cs.RelationshipType.CALLS:
-            caller_label, _caller_key, caller_qn = c.args[0]
-            _callee_label, _callee_key, callee_qn = c.args[2]
+    for c in get_relationships(mock_ingestor):
+        if c.rel_type == cs.RelationshipType.CALLS:
+            caller_label, _caller_key, caller_qn = c.from_spec
+            _callee_label, _callee_key, callee_qn = c.to_spec
             out.append((caller_label, caller_qn, callee_qn))
     return out
 

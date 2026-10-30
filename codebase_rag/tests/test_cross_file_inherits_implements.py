@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from codebase_rag import constants as cs
-from codebase_rag.tests.conftest import get_relationships, run_updater
+from codebase_rag.tests.conftest import get_nodes, get_relationships, run_updater
 
 FLYABLE_JAVA = """
 package animals;
@@ -76,8 +76,8 @@ impl Countable for CustomError {
 
 def _node_keys(mock_ingestor: MagicMock) -> set[tuple[str, str]]:
     return {
-        (str(c.args[0]), c.args[1].get("qualified_name"))
-        for c in mock_ingestor.ensure_node_batch.call_args_list
+        (str(c.label), c.properties.get("qualified_name"))
+        for c in get_nodes(mock_ingestor)
     }
 
 
@@ -91,13 +91,13 @@ def test_java_cross_file_base_and_interface_resolve(
 
     project = temp_repo.name
     inherits = {
-        (call.args[0][2], call.args[2][2])
+        (call.source, call.target)
         for call in get_relationships(mock_ingestor, cs.RelationshipType.INHERITS.value)
     }
     assert (f"{project}.Duck.Duck", f"{project}.Bird.Bird") in inherits, inherits
 
     implements = {
-        (call.args[0][2], call.args[2][2])
+        (call.source, call.target)
         for call in get_relationships(
             mock_ingestor, cs.RelationshipType.IMPLEMENTS.value
         )
@@ -117,8 +117,8 @@ def test_java_external_base_emits_no_phantom_edge(
     node_keys = _node_keys(mock_ingestor)
     inherits = get_relationships(mock_ingestor, cs.RelationshipType.INHERITS.value)
     for call in inherits:
-        to_label, _, to_qn = call.args[2]
-        assert (str(to_label), to_qn) in node_keys, call.args
+        to_label, _, to_qn = call.to_spec
+        assert (str(to_label), to_qn) in node_keys, call
 
 
 def test_rust_external_traits_emit_no_phantom_edges(
@@ -131,12 +131,12 @@ def test_rust_external_traits_emit_no_phantom_edges(
     node_keys = _node_keys(mock_ingestor)
     for rel_type in (cs.RelationshipType.INHERITS, cs.RelationshipType.IMPLEMENTS):
         for call in get_relationships(mock_ingestor, rel_type.value):
-            to_label, _, to_qn = call.args[2]
-            assert (str(to_label), to_qn) in node_keys, call.args
+            to_label, _, to_qn = call.to_spec
+            assert (str(to_label), to_qn) in node_keys, call
 
     # The first-party trait impl must survive the deferral.
     implements = {
-        (call.args[0][2], call.args[2][2])
+        (call.source, call.target)
         for call in get_relationships(
             mock_ingestor, cs.RelationshipType.IMPLEMENTS.value
         )

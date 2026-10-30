@@ -18,7 +18,11 @@ from tree_sitter import Language, Node, Parser
 
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.tests.conftest import create_and_run_updater, recorded_edges
+from codebase_rag.tests.conftest import (
+    create_and_run_updater,
+    get_relationships,
+    recorded_edges,
+)
 from codebase_rag.tests.test_incremental_added_dependents import _add_after_cache
 from codebase_rag.tests.test_incremental_deleted_dependents import (
     _index as _index_into,
@@ -73,11 +77,9 @@ def _calls(mock_ingestor: MagicMock) -> set[tuple[str, str]]:
 
 def _resolutions(mock_ingestor: MagicMock) -> dict[tuple[str, str], str]:
     return {
-        (str(c.args[0][2]), str(c.args[2][2])): str(
-            c.kwargs.get("properties", {}).get(cs.KEY_RESOLUTION)
-        )
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == cs.RelationshipType.CALLS
+        (str(c.source), str(c.target)): str(c.properties.get(cs.KEY_RESOLUTION))
+        for c in get_relationships(mock_ingestor)
+        if c.rel_type == cs.RelationshipType.CALLS
     }
 
 

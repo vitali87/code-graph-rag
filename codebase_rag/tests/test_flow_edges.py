@@ -10,6 +10,7 @@ from codebase_rag.capture import CaptureSelection, resolve_capture
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.flow_access import FlowKind
+from codebase_rag.tests.conftest import get_nodes, get_relationships
 
 FLOWS_TO = cs.RelationshipType.FLOWS_TO.value
 _CAPTURE_IO = resolve_capture([cs.CaptureGroup.IO.value])
@@ -38,23 +39,14 @@ def _run_flow(
         queries=queries,
         capture=capture,
     ).run()
-    edges: list[FlowEdge] = []
-    for c in mock.ensure_relationship_batch.call_args_list:
-        if str(c.args[1]) != FLOWS_TO:
-            continue
-        props = c.kwargs.get("properties")
-        if props is None and len(c.args) > 3:
-            props = c.args[3]
-        edges.append((c.args[0][2], c.args[2][2], dict(props or {})))
-    return edges
+    return [
+        (str(r.source), str(r.target), dict(r.properties))
+        for r in get_relationships(mock, FLOWS_TO)
+    ]
 
 
 def _node_qns(mock: MagicMock) -> set[str]:
-    return {
-        c.args[1].get(cs.KEY_QUALIFIED_NAME)
-        for c in mock.ensure_node_batch.call_args_list
-        if len(c.args) >= 2
-    }
+    return {n.properties.get(cs.KEY_QUALIFIED_NAME) for n in get_nodes(mock)}
 
 
 def _has(edges: list[FlowEdge], frm: str, to: str, **props: str) -> bool:

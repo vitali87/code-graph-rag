@@ -70,7 +70,10 @@ const V& choose_lead(const std::vector<V>& boxes, int floor) {
 def _props_by_name(
     mock_ingestor: RecordingIngestor, label: str
 ) -> dict[str, dict[str, object]]:
-    return {call[0][1]["name"]: call[0][1] for call in get_nodes(mock_ingestor, label)}
+    return {
+        call.properties["name"]: call.properties
+        for call in get_nodes(mock_ingestor, label)
+    }
 
 
 def test_function_fingerprints_match_across_renamed_copies(

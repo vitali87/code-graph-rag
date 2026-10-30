@@ -37,8 +37,7 @@ end
     assert mapping.get("Utils", "").endswith(".Utils"), mapping
 
     imports = {
-        (c.args[0][2], c.args[2][2])
-        for c in get_relationships(mock_ingestor, "IMPORTS")
+        (c.source, c.target) for c in get_relationships(mock_ingestor, "IMPORTS")
     }
     assert any(
         src.endswith(".main") and dst.endswith(".Utils") for src, dst in imports
@@ -102,8 +101,7 @@ end
     assert mapping.get("beta", "").endswith(".api"), mapping
 
     imports = {
-        (c.args[0][2], c.args[2][2])
-        for c in get_relationships(mock_ingestor, "IMPORTS")
+        (c.source, c.target) for c in get_relationships(mock_ingestor, "IMPORTS")
     }
     assert any(
         src.endswith(".main") and dst.endswith(".api") for src, dst in imports
@@ -142,8 +140,7 @@ end
     assert mapping.get("Utils") == f"{root}.Utils", mapping
 
     imports = {
-        (c.args[0][2], c.args[2][2])
-        for c in get_relationships(mock_ingestor, "IMPORTS")
+        (c.source, c.target) for c in get_relationships(mock_ingestor, "IMPORTS")
     }
     assert (module_qn, f"{root}.Utils") in imports, imports
 
@@ -185,8 +182,7 @@ end
     assert mapping.get("SimulationModels") == f"{root}.src.router.models", mapping
 
     imports = {
-        (c.args[0][2], c.args[2][2])
-        for c in get_relationships(mock_ingestor, "IMPORTS")
+        (c.source, c.target) for c in get_relationships(mock_ingestor, "IMPORTS")
     }
     assert (module_qn, f"{root}.src.router.models") in imports, imports
 
@@ -336,8 +332,7 @@ def test_excluded_module_not_in_discovery(
     ]
     assert all("generated/dep.jl" not in files for files in indexed), indexed
     imports = {
-        (c.args[0][2], c.args[2][2])
-        for c in get_relationships(mock_ingestor, "IMPORTS")
+        (c.source, c.target) for c in get_relationships(mock_ingestor, "IMPORTS")
     }
     module_qn = f"{project.name}.main"
     assert not any(src == module_qn for src, _ in imports), imports
@@ -359,8 +354,7 @@ def test_over_climb_relative_import_external(
     create_and_run_updater(project, mock_ingestor, skip_if_missing=SKIP)
 
     imports = {
-        (c.args[0][2], c.args[2][2])
-        for c in get_relationships(mock_ingestor, "IMPORTS")
+        (c.source, c.target) for c in get_relationships(mock_ingestor, "IMPORTS")
     }
     module_qn = f"{project.name}.a.b.c"
     prefix = f"{project.name}."
@@ -388,8 +382,7 @@ def test_nested_package_stem_not_matched(
     create_and_run_updater(project, mock_ingestor, skip_if_missing=SKIP)
 
     imports = {
-        (c.args[0][2], c.args[2][2])
-        for c in get_relationships(mock_ingestor, "IMPORTS")
+        (c.source, c.target) for c in get_relationships(mock_ingestor, "IMPORTS")
     }
     module_qn = f"{project.name}.main"
     prefix = f"{project.name}."
@@ -417,8 +410,7 @@ def test_dotted_absolute_import_stays_external(
     mapping = updater.factory.import_processor.import_mapping.get(module_qn, {})
     assert mapping.get("Models") != f"{project.name}.models", mapping
     imports = {
-        (c.args[0][2], c.args[2][2])
-        for c in get_relationships(mock_ingestor, "IMPORTS")
+        (c.source, c.target) for c in get_relationships(mock_ingestor, "IMPORTS")
     }
     # An ExternalModule edge for the as-written name is fine; the local
     # `models.jl` must not be the target.
@@ -539,8 +531,7 @@ def test_same_nested_package_import(temp_repo: Path, mock_ingestor: MagicMock) -
     create_and_run_updater(project, mock_ingestor, skip_if_missing=SKIP)
 
     imports = {
-        (c.args[0][2], c.args[2][2])
-        for c in get_relationships(mock_ingestor, "IMPORTS")
+        (c.source, c.target) for c in get_relationships(mock_ingestor, "IMPORTS")
     }
     prefix = f"{project.name}."
     assert any(
@@ -604,9 +595,7 @@ end
         f"{prefix}.Second.SecondFirst"
     )
 
-    calls = {
-        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
-    }
+    calls = {(c.source, c.target) for c in get_relationships(mock_ingestor, "CALLS")}
     assert (f"{prefix}.Outer.f", f"{prefix}.Outer.First.alpha") in calls, calls
     assert (
         f"{prefix}.Second.g",
@@ -643,9 +632,7 @@ end
         f"{prefix}.Outer.Inner.Helper"
     ), mapping
 
-    calls = {
-        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
-    }
+    calls = {(c.source, c.target) for c in get_relationships(mock_ingestor, "CALLS")}
     assert (
         f"{prefix}.Outer.Inner.f",
         f"{prefix}.Outer.Inner.Helper.alpha",
@@ -672,8 +659,7 @@ def test_nested_package_declared_module_import(
     create_and_run_updater(project, mock_ingestor, skip_if_missing=SKIP)
 
     imports = {
-        (c.args[0][2], c.args[2][2])
-        for c in get_relationships(mock_ingestor, "IMPORTS")
+        (c.source, c.target) for c in get_relationships(mock_ingestor, "IMPORTS")
     }
     prefix = f"{project.name}."
     assert any(
@@ -702,8 +688,7 @@ def test_absolute_external_path_not_captured(
     mapping = updater.factory.import_processor.import_mapping.get(module_qn, {})
     assert mapping.get("Models") == "ExternalPkg.Models", mapping
     imports = {
-        (c.args[0][2], c.args[2][2])
-        for c in get_relationships(mock_ingestor, "IMPORTS")
+        (c.source, c.target) for c in get_relationships(mock_ingestor, "IMPORTS")
     }
     prefix = f"{project.name}."
     assert not any(

@@ -174,7 +174,7 @@ public class Sample {
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
     defines = {
-        (c.args[0][0], c.args[0][2], c.args[2][2])
+        (c.source_label, c.source, c.target)
         for c in get_relationships(mock_ingestor, "DEFINES")
     }
     assert any(
@@ -210,8 +210,7 @@ public class Builder {
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
     defines = {
-        (c.args[0][2], c.args[2][2])
-        for c in get_relationships(mock_ingestor, "DEFINES")
+        (c.source, c.target) for c in get_relationships(mock_ingestor, "DEFINES")
     }
     parents = {parent for parent, child in defines if child.endswith("Go.Helper")}
     assert any(p.endswith("N.Builder.Go(int)") for p in parents), defines

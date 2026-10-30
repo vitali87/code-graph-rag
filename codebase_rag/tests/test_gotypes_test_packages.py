@@ -254,8 +254,8 @@ def test_test_file_calls_bind_through_the_facts(
 
     calls: dict[tuple[str, str], set[str]] = {}
     for c in get_relationships(ingestor, cs.RelationshipType.CALLS):
-        props = c.kwargs.get("properties") or {}
-        key = (str(c.args[0][2]), str(c.args[2][2]))
+        props = c.properties
+        key = (str(c.source), str(c.target))
         calls.setdefault(key, set()).add(str(props.get(cs.KEY_RESOLUTION)))
     exact = {cs.EdgeResolution.EXACT}
     assert (
@@ -544,7 +544,7 @@ def test_a_test_type_implements_edge_reaches_the_graph(
     run_updater(root, ingestor)
 
     edges = {
-        (str(c.args[0][2]), str(c.args[2][2]))
+        (str(c.source), str(c.target))
         for c in get_relationships(ingestor, cs.RelationshipType.IMPLEMENTS)
     }
     speaker = "proj.impl.speak.Speaker"
@@ -588,8 +588,8 @@ def test_calls_into_files_with_dotted_stems_are_exact_with_go_types(
 
     calls: dict[tuple[str, str], set[str]] = {}
     for c in get_relationships(ingestor, cs.RelationshipType.CALLS):
-        props = c.kwargs.get("properties") or {}
-        key = (str(c.args[0][2]), str(c.args[2][2]))
+        props = c.properties
+        key = (str(c.source), str(c.target))
         calls.setdefault(key, set()).add(str(props.get(cs.KEY_RESOLUTION)))
     exact = {cs.EdgeResolution.EXACT}
     for caller in ("proj.pkg.a.Run", "proj.pkg.tagged.Tagged"):

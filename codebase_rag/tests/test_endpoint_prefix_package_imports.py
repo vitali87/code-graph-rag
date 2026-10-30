@@ -18,6 +18,7 @@ from codebase_rag import constants as cs
 from codebase_rag.capture import resolve_capture
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_relationships
 
 PROJECT = "flaskpkg"
 _BLUEPRINT = """\
@@ -100,11 +101,11 @@ def _endpoints(root: Path, files: dict[str, str]) -> dict[str, set[str]]:
         capture=resolve_capture([cs.CaptureGroup.IO.value]),
     ).run()
     out: dict[str, set[str]] = {}
-    for c in mock.ensure_relationship_batch.call_args_list:
-        if str(c.args[1]) == cs.RelationshipType.EXPOSES.value:
-            identity = str(c.args[2][2]).rsplit("::", 1)[-1]
+    for c in get_relationships(mock):
+        if str(c.rel_type) == cs.RelationshipType.EXPOSES.value:
+            identity = str(c.target).rsplit("::", 1)[-1]
             out.setdefault(identity, set()).add(
-                str(c.args[0][2]).removeprefix(f"{PROJECT}.")
+                str(c.source).removeprefix(f"{PROJECT}.")
             )
     return out
 

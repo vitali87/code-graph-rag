@@ -57,9 +57,9 @@ def _put_calls(mock_ingestor: MagicMock) -> list[tuple[str, str]]:
     "both calls resolved to the primary" from "only one call exists".
     """
     return [
-        (c.args[0][2], c.args[2][2])
+        (c.source, c.target)
         for c in get_relationships(mock_ingestor, "CALLS")
-        if c.args[2][2].endswith(".put")
+        if c.target.endswith(".put")
     ]
 
 

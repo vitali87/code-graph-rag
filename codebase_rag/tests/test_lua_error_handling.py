@@ -275,7 +275,7 @@ end
     run_updater(project, mock_ingestor)
 
     created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
-    fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
+    fn_qns = {c.properties["qualified_name"] for c in created_functions}
 
     safe_ops_qn = f"{project.name}.safe_ops"
     error_types_qn = f"{project.name}.error_types"
@@ -649,7 +649,7 @@ end
     run_updater(project, mock_ingestor)
 
     created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
-    fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
+    fn_qns = {c.properties["qualified_name"] for c in created_functions}
 
     debugger_qn = f"{project.name}.debugger"
     validators_qn = f"{project.name}.validators"
@@ -907,7 +907,7 @@ end
     run_updater(project, mock_ingestor)
 
     created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
-    fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
+    fn_qns = {c.properties["qualified_name"] for c in created_functions}
 
     exceptions_qn = f"{project.name}.exceptions"
 
@@ -1158,7 +1158,7 @@ print("Degraded operation result:", result, "degraded:", degraded)
     run_updater(project, mock_ingestor)
 
     created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
-    fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
+    fn_qns = {c.properties["qualified_name"] for c in created_functions}
 
     resilience_qn = f"{project.name}.resilience"
 

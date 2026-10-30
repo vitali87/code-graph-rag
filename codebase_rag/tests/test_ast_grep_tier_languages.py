@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.tests.conftest import recorded_edges
+from codebase_rag.tests.conftest import get_nodes, get_relationships, recorded_edges
 
 FUNCTION = cs.NodeLabel.FUNCTION.value
 METHOD = cs.NodeLabel.METHOD.value
@@ -38,18 +38,14 @@ def _run(tmp_path: Path, files: dict[str, str]) -> MagicMock:
 
 def _node_names(mock: MagicMock, label: str) -> set[str]:
     return {
-        c.args[1].get(cs.KEY_NAME)
-        for c in mock.ensure_node_batch.call_args_list
-        if str(c.args[0]) == label
+        c.properties.get(cs.KEY_NAME) for c in get_nodes(mock) if str(c.label) == label
     }
 
 
 def _node_name_counts(mock: MagicMock, label: str) -> Counter[str]:
     """Emission counts per name, to catch a node emitted more than once."""
     return Counter(
-        c.args[1].get(cs.KEY_NAME)
-        for c in mock.ensure_node_batch.call_args_list
-        if str(c.args[0]) == label
+        c.properties.get(cs.KEY_NAME) for c in get_nodes(mock) if str(c.label) == label
     )
 
 
@@ -58,11 +54,7 @@ def _import_targets(mock: MagicMock) -> set[str]:
 
 
 def _defined(mock: MagicMock) -> set[str]:
-    return {
-        c.args[2][2]
-        for c in mock.ensure_relationship_batch.call_args_list
-        if str(c.args[1]) == DEFINES
-    }
+    return {c.target for c in get_relationships(mock) if str(c.rel_type) == DEFINES}
 
 
 KOTLIN = """package com.example.app
@@ -492,9 +484,9 @@ def test_kotlin_object_members_still_extracted(tmp_path: Path) -> None:
 def _module_qns(mock: MagicMock) -> list[str]:
     """Module qualified names in emission order, duplicates kept."""
     return [
-        c.args[1].get(cs.KEY_QUALIFIED_NAME)
-        for c in mock.ensure_node_batch.call_args_list
-        if str(c.args[0]) == MODULE
+        c.properties.get(cs.KEY_QUALIFIED_NAME)
+        for c in get_nodes(mock)
+        if str(c.label) == MODULE
     ]
 
 
@@ -599,9 +591,9 @@ def test_colliding_modules_keep_their_own_paths(tmp_path: Path) -> None:
         },
     )
     by_qn = {
-        c.args[1].get(cs.KEY_QUALIFIED_NAME): c.args[1].get(cs.KEY_PATH)
-        for c in mock.ensure_node_batch.call_args_list
-        if str(c.args[0]) == MODULE
+        c.properties.get(cs.KEY_QUALIFIED_NAME): c.properties.get(cs.KEY_PATH)
+        for c in get_nodes(mock)
+        if str(c.label) == MODULE
     }
     assert set(by_qn.values()) == {"build.sh", "build.bash"}, by_qn
 

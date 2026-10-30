@@ -316,9 +316,9 @@ void demonstrateFunctions() {
     function_calls_relationships = [
         call
         for call in call_relationships
-        if "basic_functions" in call.args[0][2]
+        if "basic_functions" in call.source
         and any(
-            func_name in call.args[2][2]
+            func_name in call.target
             for func_name in ["add", "multiply", "printMessage", "greet", "max"]
         )
     ]
@@ -624,13 +624,11 @@ void bankingDemo() {
         assert expected_qn in created_classes, f"Missing class: {expected_qn}"
 
     relationship_calls = [
-        call
-        for call in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(call[0]) >= 3 and call[0][1] == "INHERITS"
+        call for call in get_relationships(mock_ingestor) if call.rel_type == "INHERITS"
     ]
 
     inheritance_found = any(
-        "SavingsAccount" in call[0][0][2] and "BankAccount" in call[0][2][2]
+        "SavingsAccount" in call.source and "BankAccount" in call.target
         for call in relationship_calls
     )
     assert inheritance_found, (
@@ -642,9 +640,9 @@ void bankingDemo() {
     method_call_relationships = [
         call
         for call in call_relationships
-        if "member_functions" in call.args[0][2]
+        if "member_functions" in call.source
         and any(
-            method_name in call.args[2][2]
+            method_name in call.target
             for method_name in [
                 "deposit",
                 "withdraw",
@@ -817,7 +815,7 @@ void globalUtility() {
     inherits_relationships = get_relationships(mock_ingestor, "INHERITS")
 
     comprehensive_calls = [
-        call for call in call_relationships if "comprehensive_basic" in call.args[0][2]
+        call for call in call_relationships if "comprehensive_basic" in call.source
     ]
 
     assert len(comprehensive_calls) >= 8, (
@@ -825,9 +823,7 @@ void globalUtility() {
     )
 
     basic_inheritance = [
-        call
-        for call in inherits_relationships
-        if "comprehensive_basic" in call.args[0][2]
+        call for call in inherits_relationships if "comprehensive_basic" in call.source
     ]
 
     assert len(basic_inheritance) >= 1, (
@@ -835,11 +831,10 @@ void globalUtility() {
     )
 
     for relationship in comprehensive_calls:
-        assert len(relationship.args) == 3, "Call relationship should have 3 args"
-        assert relationship.args[1] == "CALLS", "Second arg should be 'CALLS'"
+        assert relationship.rel_type == "CALLS", "Expected a CALLS relationship"
 
-        source_module = relationship.args[0][2]
-        target_module = relationship.args[2][2]
+        source_module = relationship.source
+        target_module = relationship.target
 
         assert "comprehensive_basic" in source_module, (
             f"Source module should contain test file name: {source_module}"

@@ -8,7 +8,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.tests.conftest import recorded_triples
+from codebase_rag.tests.conftest import get_nodes, recorded_triples
 
 REFERENCES = cs.RelationshipType.REFERENCES.value
 
@@ -54,9 +54,9 @@ def _function_qns(tmp_path: Path, files: dict[str, str], lang_key: str) -> set[s
         ingestor=mock, repo_path=tmp_path, parsers=parsers, queries=queries
     ).run()
     return {
-        c.args[1][cs.KEY_QUALIFIED_NAME]
-        for c in mock.ensure_node_batch.call_args_list
-        if c.args[0] == cs.NodeLabel.FUNCTION
+        c.properties[cs.KEY_QUALIFIED_NAME]
+        for c in get_nodes(mock)
+        if c.label == cs.NodeLabel.FUNCTION
     }
 
 

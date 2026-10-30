@@ -14,6 +14,7 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag.parsers.endpoints import parse_route_decorator
+from codebase_rag.tests.conftest import get_nodes, get_relationships
 
 
 class TestParseRouteDecorator:
@@ -439,7 +440,7 @@ class TestPerProjectEndpointIdentity:
             "user-service__abc.app.main.health",
             ['@app.get("/health")'],
         )
-        node = ingestor.ensure_node_batch.call_args.args[1]
+        node = get_nodes(ingestor)[-1].properties
         assert node["qualified_name"] == (
             "resource::ENDPOINT::user-service__abc::GET /health"
         )
@@ -482,7 +483,7 @@ class TestHostAwareLinking:
             ]
         )
         assert created == 1
-        target = ingestor.ensure_relationship_batch.call_args.args[2][2]
+        target = get_relationships(ingestor)[-1].target
         assert "payment-service__99e" in target
 
     def test_underscore_host_matches_dash_project(self) -> None:
@@ -513,7 +514,7 @@ class TestHostAwareLinking:
             ]
         )
         assert created == 1
-        target = ingestor.ensure_relationship_batch.call_args.args[2][2]
+        target = get_relationships(ingestor)[-1].target
         assert "user-service__2ad" in target
 
     def test_legacy_rows_without_project_stay_permissive(self) -> None:
@@ -560,7 +561,7 @@ class TestHostAwareLinkingHardening:
             ]
         )
         assert created == 1
-        target = ingestor.ensure_relationship_batch.call_args.args[2][2]
+        target = get_relationships(ingestor)[-1].target
         assert "order__worker__2adc9027" in target
 
 
@@ -607,8 +608,8 @@ class TestPrefixTolerantLinking:
             ]
         )
         assert link_endpoints(ingestor) == 1
-        _args, kwargs = ingestor.ensure_relationship_batch.call_args
-        assert kwargs.get("properties") == {"lead_prefix": "/y/some-service"}
+        rel = get_relationships(ingestor)[-1]
+        assert rel.properties == {"lead_prefix": "/y/some-service"}
 
     def test_proxy_strip_links(self) -> None:
         from codebase_rag.parsers.endpoints import link_endpoints
@@ -655,9 +656,9 @@ class TestPrefixTolerantLinking:
             ]
         )
         assert link_endpoints(ingestor) == 1
-        _args, kwargs = ingestor.ensure_relationship_batch.call_args
-        assert "resource::ENDPOINT::svc::GET /api/cases" in _args[2]
-        assert not kwargs
+        rel = get_relationships(ingestor)[-1]
+        assert rel.target == "resource::ENDPOINT::svc::GET /api/cases"
+        assert not rel.properties
 
     def test_lead_naming_a_service_breaks_ties(self) -> None:
         from codebase_rag.parsers.endpoints import link_endpoints
@@ -670,8 +671,8 @@ class TestPrefixTolerantLinking:
             ]
         )
         assert link_endpoints(ingestor) == 1
-        args = ingestor.ensure_relationship_batch.call_args.args
-        assert "resource::ENDPOINT::service-b::GET /cases" in args[2]
+        rel = get_relationships(ingestor)[-1]
+        assert rel.target == "resource::ENDPOINT::service-b::GET /cases"
 
     def test_lead_is_bounded_at_two_segments(self) -> None:
         from codebase_rag.parsers.endpoints import link_endpoints
@@ -706,8 +707,8 @@ class TestMountPrefixLinking:
             ]
         )
         assert link_endpoints(ingestor) == 1
-        _args, kwargs = ingestor.ensure_relationship_batch.call_args
-        assert kwargs.get("properties") == {"mount_prefix": "/admin"}
+        rel = get_relationships(ingestor)[-1]
+        assert rel.properties == {"mount_prefix": "/admin"}
 
     def test_absolute_url_with_mounted_template_links(self) -> None:
         from codebase_rag.parsers.endpoints import link_endpoints
@@ -776,9 +777,9 @@ class TestMountPrefixLinking:
             ]
         )
         assert link_endpoints(ingestor) == 1
-        _args, kwargs = ingestor.ensure_relationship_batch.call_args
-        assert "resource::ENDPOINT::svc::GET /api/users" in _args[2]
-        assert not kwargs
+        rel = get_relationships(ingestor)[-1]
+        assert rel.target == "resource::ENDPOINT::svc::GET /api/users"
+        assert not rel.properties
 
     def test_url_suffix_wins_over_template_mount(self) -> None:
         # `/api/cases` strips its own lead to `GET /cases` before any
@@ -793,9 +794,9 @@ class TestMountPrefixLinking:
             ]
         )
         assert link_endpoints(ingestor) == 1
-        args, kwargs = ingestor.ensure_relationship_batch.call_args
-        assert "resource::ENDPOINT::svc::GET /cases" in args[2]
-        assert kwargs.get("properties") == {"lead_prefix": "/api"}
+        rel = get_relationships(ingestor)[-1]
+        assert rel.target == "resource::ENDPOINT::svc::GET /cases"
+        assert rel.properties == {"lead_prefix": "/api"}
 
 
 class TestSamePathInferredGroups:
@@ -827,8 +828,8 @@ class TestSamePathInferredGroups:
             ]
         )
         assert link_endpoints(ingestor) == 2
-        for call in ingestor.ensure_relationship_batch.call_args_list:
-            assert call.kwargs.get("properties") == {"mount_prefix": "/admin"}
+        for call in get_relationships(ingestor):
+            assert call.properties == {"mount_prefix": "/admin"}
 
     def test_suffix_group_on_one_path_links_every_method(self) -> None:
         from codebase_rag.parsers.endpoints import link_endpoints
@@ -866,8 +867,8 @@ class TestSamePathInferredGroups:
             ]
         )
         assert link_endpoints(ingestor) == 1
-        args = ingestor.ensure_relationship_batch.call_args.args
-        assert "GET /admin/enterprises" in args[2][2]
+        rel = get_relationships(ingestor)[-1]
+        assert "GET /admin/enterprises" in str(rel.target)
 
 
 class TestRootfulRelativeUrlMatch:
@@ -965,8 +966,8 @@ class TestRootfulCandidateScoping:
         ]
 
         assert link_endpoints(ingestor) == 1
-        args = ingestor.ensure_relationship_batch.call_args.args
-        assert "resource::ENDPOINT::frontend::GET /users/{id}" in args[2]
+        rel = get_relationships(ingestor)[-1]
+        assert rel.target == "resource::ENDPOINT::frontend::GET /users/{id}"
 
     def test_rootful_with_unknown_callers_does_not_fan_out(self) -> None:
         from codebase_rag.parsers.endpoints import link_endpoints

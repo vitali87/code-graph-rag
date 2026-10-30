@@ -62,7 +62,7 @@ local r = compute(4, 2)
 
     created_functions = get_nodes(mock_ingestor, NodeLabel.FUNCTION)
 
-    fn_qns = {c[0][1]["qualified_name"] for c in created_functions}
+    fn_qns = {c.properties["qualified_name"] for c in created_functions}
 
     expected_suffixes = {
         ".mod.local_add",

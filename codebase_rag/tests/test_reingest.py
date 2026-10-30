@@ -29,7 +29,11 @@ from codebase_rag.parsers.endpoint_prefixes import (
 from codebase_rag.parsers.endpoint_routes import CYPHER_PROJECT_MODULES
 from codebase_rag.parsers.go import graph_joins as go_joins
 from codebase_rag.sync.checkout_state import state_file
-from codebase_rag.tests.conftest import create_and_run_updater
+from codebase_rag.tests.conftest import (
+    create_and_run_updater,
+    get_nodes,
+    get_relationships,
+)
 from evals.cgr_graph import StatefulIngestor
 
 PROJECT = "reingest_fixture"
@@ -928,9 +932,9 @@ def _writes(mock: MagicMock, query: str) -> list[dict]:
 def _file_nodes(mock: MagicMock, path: Path) -> int:
     return sum(
         1
-        for c in mock.ensure_node_batch.call_args_list
-        if str(c.args[0]) == cs.NodeLabel.FILE.value
-        and c.args[1].get(cs.KEY_NAME) == path.name
+        for c in get_nodes(mock)
+        if str(c.label) == cs.NodeLabel.FILE.value
+        and c.properties.get(cs.KEY_NAME) == path.name
     )
 
 
@@ -1323,9 +1327,9 @@ class _QueryableSink:
     def exposes(self) -> set[tuple[str, str]]:
         rel = cs.RelationshipType.EXPOSES.value
         return {
-            (c.args[0][2].split(".", 1)[1], c.args[2][2].split("::")[-1])
-            for c in self.ensure_relationship_batch.call_args_list
-            if str(c.args[1]) == rel
+            (c.source.split(".", 1)[1], c.target.split("::")[-1])
+            for c in get_relationships(self)
+            if str(c.rel_type) == rel
         }
 
 

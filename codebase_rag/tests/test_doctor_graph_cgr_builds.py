@@ -112,9 +112,9 @@ def _heritage(mock_ingestor: MagicMock, rel_type: str) -> set[tuple[str, str, st
     """(child simple name, parent label, parent simple name) per edge."""
     return {
         (
-            str(c.args[0][2]).rsplit(".", 1)[-1],
-            str(c.args[2][0]),
-            str(c.args[2][2]).rsplit(".", 1)[-1],
+            str(c.source).rsplit(".", 1)[-1],
+            str(c.target_label),
+            str(c.target).rsplit(".", 1)[-1],
         )
         for c in get_relationships(mock_ingestor, rel_type)
     }

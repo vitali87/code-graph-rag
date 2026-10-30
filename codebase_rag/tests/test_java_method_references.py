@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.tests.conftest import create_and_run_updater
+from codebase_rag.tests.conftest import create_and_run_updater, get_relationships
 from codebase_rag.types_defs import PropertyDict
 from evals.dead_code import cgr_dead_code, default_dead_code_config
 
@@ -60,11 +60,9 @@ def _index(
     _write(temp_repo, files)
     create_and_run_updater(temp_repo, mock_ingestor, skip_if_missing="java")
     edges: list[tuple[str, str, str, PropertyDict]] = []
-    for c in mock_ingestor.ensure_relationship_batch.call_args_list:
-        props = (
-            c.kwargs.get("properties") or (c.args[3] if len(c.args) > 3 else {}) or {}
-        )
-        edges.append((str(c.args[1]), str(c.args[0][2]), str(c.args[2][2]), props))
+    for c in get_relationships(mock_ingestor):
+        props = c.properties
+        edges.append((str(c.rel_type), str(c.source), str(c.target), props))
     return edges
 
 

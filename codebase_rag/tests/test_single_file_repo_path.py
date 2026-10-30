@@ -10,6 +10,7 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.sync.checkout_state import state_file
 from codebase_rag.tests.conftest import (
     get_node_names,
+    get_nodes,
     get_relationships,
     run_updater,
 )
@@ -194,9 +195,9 @@ class TestSingleFileRunScope:
             if call.args and call.args[0] == cs.CYPHER_DELETE_MODULE
         }
         readded = {
-            call[0][1][cs.KEY_PATH]
-            for call in ingestor.ensure_node_batch.call_args_list
-            if call[0][0] == cs.NodeLabel.MODULE and cs.KEY_PATH in call[0][1]
+            call.properties[cs.KEY_PATH]
+            for call in get_nodes(ingestor)
+            if call.label == cs.NodeLabel.MODULE and cs.KEY_PATH in call.properties
         }
         return deleted - readded
 

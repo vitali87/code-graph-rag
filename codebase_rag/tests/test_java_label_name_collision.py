@@ -157,16 +157,11 @@ public interface Interface {
     defines_rels = get_relationships(mock_ingestor, "DEFINES")
     found_defines = False
     for rel in defines_rels:
-        if len(rel.args) >= 3:
-            to_spec = rel.args[2]
-            if isinstance(to_spec, tuple) and len(to_spec) >= 3:
-                to_label = to_spec[0]
-                to_qn = str(to_spec[2])
-                if to_qn.endswith(".Interface"):
-                    assert to_label == NodeLabel.INTERFACE, (
-                        f"DEFINES target label should be 'Interface', got '{to_label}'"
-                    )
-                    found_defines = True
+        if str(rel.target).endswith(".Interface"):
+            assert rel.target_label == NodeLabel.INTERFACE, (
+                f"DEFINES target label should be 'Interface', got '{rel.target_label}'"
+            )
+            found_defines = True
 
     assert found_defines, (
         "No DEFINES relationship found for Interface named 'Interface'"
@@ -194,16 +189,11 @@ public enum Enum {
     defines_rels = get_relationships(mock_ingestor, "DEFINES")
     found_defines = False
     for rel in defines_rels:
-        if len(rel.args) >= 3:
-            to_spec = rel.args[2]
-            if isinstance(to_spec, tuple) and len(to_spec) >= 3:
-                to_label = to_spec[0]
-                to_qn = str(to_spec[2])
-                if to_qn.endswith(".Enum"):
-                    assert to_label == NodeLabel.ENUM, (
-                        f"DEFINES target label should be 'Enum', got '{to_label}'"
-                    )
-                    found_defines = True
+        if str(rel.target).endswith(".Enum"):
+            assert rel.target_label == NodeLabel.ENUM, (
+                f"DEFINES target label should be 'Enum', got '{rel.target_label}'"
+            )
+            found_defines = True
 
     assert found_defines, "No DEFINES relationship found for Enum named 'Enum'"
 
@@ -246,12 +236,8 @@ public class Implementor implements Interface {
     implements_rels = get_relationships(mock_ingestor, "IMPLEMENTS")
     found_implements = False
     for rel in implements_rels:
-        if len(rel.args) >= 3:
-            from_spec = rel.args[0]
-            if isinstance(from_spec, tuple) and len(from_spec) >= 3:
-                from_qn = str(from_spec[2])
-                if from_qn.endswith(".Implementor"):
-                    found_implements = True
+        if str(rel.source).endswith(".Implementor"):
+            found_implements = True
 
     assert found_implements, (
         "No IMPLEMENTS relationship found for Implementor -> Interface"

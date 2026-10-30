@@ -22,7 +22,7 @@ def _exported_by_suffix(mock_ingestor: MagicMock) -> dict[str, bool]:
     result: dict[str, bool] = {}
     for label in (NodeLabel.METHOD, NodeLabel.FUNCTION):
         for call in get_nodes(mock_ingestor, label):
-            props = call[0][1]
+            props = call.properties
             result[props["qualified_name"]] = props.get("is_exported", False)
     return result
 
@@ -124,7 +124,7 @@ public class C : IThing {
 def _class_exported(mock_ingestor: MagicMock) -> dict[str, bool]:
     result: dict[str, bool] = {}
     for call in get_nodes(mock_ingestor, NodeLabel.CLASS):
-        props = call[0][1]
+        props = call.properties
         result[props["qualified_name"]] = props.get("is_exported", False)
     return result
 

@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from codebase_rag import constants as cs
-from codebase_rag.tests.conftest import get_relationships, run_updater
+from codebase_rag.tests.conftest import get_nodes, get_relationships, run_updater
 
 ARGUMENT_HDR = """
 #pragma once
@@ -63,11 +63,11 @@ def test_cross_header_base_resolves_to_defining_module(
     project = temp_repo.name
     inherits = get_relationships(mock_ingestor, cs.RelationshipType.INHERITS.value)
     aggregator_edges = [
-        call for call in inherits if str(call.args[0][2]).endswith(".ast.Aggregator")
+        call for call in inherits if str(call.source).endswith(".ast.Aggregator")
     ]
     assert aggregator_edges
     for call in aggregator_edges:
-        assert call.args[2][2] == f"{project}.src.Argument.ast.Argument", call.args
+        assert call.target == f"{project}.src.Argument.ast.Argument", call
 
 
 def test_unresolvable_external_base_emits_no_phantom_edge(
@@ -77,13 +77,13 @@ def test_unresolvable_external_base_emits_no_phantom_edge(
     run_updater(temp_repo, mock_ingestor)
 
     node_keys = {
-        (str(c.args[0]), c.args[1].get("qualified_name"))
-        for c in mock_ingestor.ensure_node_batch.call_args_list
+        (str(c.label), c.properties.get("qualified_name"))
+        for c in get_nodes(mock_ingestor)
     }
     inherits = get_relationships(mock_ingestor, cs.RelationshipType.INHERITS.value)
     for call in inherits:
-        to_label, _, to_qn = call.args[2]
-        assert (str(to_label), to_qn) in node_keys, call.args
+        to_label, _, to_qn = call.to_spec
+        assert (str(to_label), to_qn) in node_keys, call
 
 
 def test_spaced_template_base_resolves(
@@ -109,7 +109,7 @@ public:
 
     project = temp_repo.name
     inherits = get_relationships(mock_ingestor, cs.RelationshipType.INHERITS.value)
-    pairs = {(call.args[0][2], call.args[2][2]) for call in inherits}
+    pairs = {(call.source, call.target) for call in inherits}
     assert (f"{project}.spaced.Widget", f"{project}.spaced.Base") in pairs, pairs
 
 
@@ -134,7 +134,7 @@ public:
 
     inherits = get_relationships(mock_ingestor, cs.RelationshipType.INHERITS.value)
     for call in inherits:
-        assert call.args[0][2] != call.args[2][2], call.args
+        assert call.source != call.target, call
 
 
 def test_same_file_base_still_emits_inherits(
@@ -157,5 +157,5 @@ public:
 
     project = temp_repo.name
     inherits = get_relationships(mock_ingestor, cs.RelationshipType.INHERITS.value)
-    pairs = {(call.args[0][2], call.args[2][2]) for call in inherits}
+    pairs = {(call.source, call.target) for call in inherits}
     assert (f"{project}.bank.Savings", f"{project}.bank.Account") in pairs, pairs

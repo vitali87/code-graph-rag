@@ -1268,7 +1268,7 @@ void demonstrateComprehensiveConstructors() {
     comprehensive_calls = [
         call
         for call in call_relationships
-        if "comprehensive_constructors" in call.args[0][2]
+        if "comprehensive_constructors" in call.source
     ]
 
     assert len(comprehensive_calls) >= 5, (

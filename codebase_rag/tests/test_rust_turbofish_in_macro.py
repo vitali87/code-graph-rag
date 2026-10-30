@@ -60,11 +60,11 @@ def sites(tmp_path_factory: pytest.TempPathFactory) -> _Sites:
     out: _Sites = []
     for rel in (cs.RelationshipType.CALLS, cs.RelationshipType.INSTANTIATES):
         for c in get_relationships(mock, rel):
-            props = c.kwargs.get("properties") or {}
+            props = c.properties
             out.append(
                 (
-                    str(c.args[0][2]).rsplit(".", 1)[1],
-                    str(c.args[2][2]).split(".src.lib.", 1)[1],
+                    str(c.source).rsplit(".", 1)[1],
+                    str(c.target).split(".src.lib.", 1)[1],
                     int(props[cs.KEY_LINE]),
                 )
             )

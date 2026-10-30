@@ -14,14 +14,14 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag.parsers.python import external_stdlib_base_method_names
-from codebase_rag.tests.conftest import create_and_run_updater
+from codebase_rag.tests.conftest import create_and_run_updater, get_nodes
 
 
 def _method_props(mock_ingestor: MagicMock) -> dict[str, dict]:
     return {
-        c.args[1][cs.KEY_QUALIFIED_NAME]: c.args[1]
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c.args[0] == cs.NodeLabel.METHOD
+        c.properties[cs.KEY_QUALIFIED_NAME]: c.properties
+        for c in get_nodes(mock_ingestor)
+        if c.label == cs.NodeLabel.METHOD
     }
 
 

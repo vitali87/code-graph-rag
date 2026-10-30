@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -325,9 +324,9 @@ console.log((user as any).getValidationErrors()); // []
     decorator_functions = [
         call
         for call in function_calls
-        if "class_decorators" in call[0][1]["qualified_name"]
+        if "class_decorators" in call.properties["qualified_name"]
         and any(
-            pattern in call[0][1]["qualified_name"]
+            pattern in call.properties["qualified_name"]
             for pattern in ["Component", "Injectable", "Entity", "Singleton", "Monitor"]
         )
     ]
@@ -341,9 +340,9 @@ console.log((user as any).getValidationErrors()); // []
     decorated_classes = [
         call
         for call in class_calls
-        if "class_decorators" in call[0][1]["qualified_name"]
+        if "class_decorators" in call.properties["qualified_name"]
         and any(
-            class_name in call[0][1]["qualified_name"]
+            class_name in call.properties["qualified_name"]
             for class_name in [
                 "User",
                 "DatabaseConnection",
@@ -361,9 +360,7 @@ console.log((user as any).getValidationErrors()); // []
     inheritance_relationships = get_relationships(mock_ingestor, "INHERITS")
 
     decorator_inheritance = [
-        call
-        for call in inheritance_relationships
-        if "class_decorators" in call.args[0][2]
+        call for call in inheritance_relationships if "class_decorators" in call.source
     ]
 
     assert len(decorator_inheritance) >= 1, (
@@ -721,9 +718,9 @@ processor.saveToDatabase({ important: 'data' })
     method_decorators = [
         call
         for call in function_calls
-        if "method_decorators" in call[0][1]["qualified_name"]
+        if "method_decorators" in call.properties["qualified_name"]
         and any(
-            pattern in call[0][1]["qualified_name"]
+            pattern in call.properties["qualified_name"]
             for pattern in ["Log", "Time", "Retry", "Cache", "Validate", "Authorize"]
         )
     ]
@@ -737,9 +734,9 @@ processor.saveToDatabase({ important: 'data' })
     decorated_method_classes = [
         call
         for call in class_calls
-        if "method_decorators" in call[0][1]["qualified_name"]
+        if "method_decorators" in call.properties["qualified_name"]
         and any(
-            class_name in call[0][1]["qualified_name"]
+            class_name in call.properties["qualified_name"]
             for class_name in ["ApiService", "DataProcessor"]
         )
     ]
@@ -753,9 +750,9 @@ processor.saveToDatabase({ important: 'data' })
     decorated_methods = [
         call
         for call in method_calls
-        if "method_decorators" in call[0][1]["qualified_name"]
+        if "method_decorators" in call.properties["qualified_name"]
         and any(
-            method_name in call[0][1]["qualified_name"]
+            method_name in call.properties["qualified_name"]
             for method_name in ["getData", "createUser", "deleteUser", "processData"]
         )
     ]
@@ -1162,9 +1159,9 @@ console.log(product.timestamps); // Should initialize on first access
     property_decorators = [
         call
         for call in function_calls
-        if "property_decorators" in call[0][1]["qualified_name"]
+        if "property_decorators" in call.properties["qualified_name"]
         and any(
-            pattern in call[0][1]["qualified_name"]
+            pattern in call.properties["qualified_name"]
             for pattern in [
                 "ReadOnly",
                 "Observable",
@@ -1185,9 +1182,9 @@ console.log(product.timestamps); // Should initialize on first access
     decorated_property_classes = [
         call
         for call in class_calls
-        if "property_decorators" in call[0][1]["qualified_name"]
+        if "property_decorators" in call.properties["qualified_name"]
         and any(
-            class_name in call[0][1]["qualified_name"]
+            class_name in call.properties["qualified_name"]
             for class_name in ["User", "Product"]
         )
     ]
@@ -1537,9 +1534,9 @@ try {
     parameter_decorators = [
         call
         for call in function_calls
-        if "parameter_decorators" in call[0][1]["qualified_name"]
+        if "parameter_decorators" in call.properties["qualified_name"]
         and any(
-            pattern in call[0][1]["qualified_name"]
+            pattern in call.properties["qualified_name"]
             for pattern in [
                 "Log",
                 "Validate",
@@ -1560,9 +1557,9 @@ try {
     parameter_decorated_classes = [
         call
         for call in class_calls
-        if "parameter_decorators" in call[0][1]["qualified_name"]
+        if "parameter_decorators" in call.properties["qualified_name"]
         and any(
-            class_name in call[0][1]["qualified_name"]
+            class_name in call.properties["qualified_name"]
             for class_name in ["UserService", "OrderService", "ApiController"]
         )
     ]
@@ -1576,9 +1573,9 @@ try {
     decorated_parameter_methods = [
         call
         for call in method_calls
-        if "parameter_decorators" in call[0][1]["qualified_name"]
+        if "parameter_decorators" in call.properties["qualified_name"]
         and any(
-            method_name in call[0][1]["qualified_name"]
+            method_name in call.properties["qualified_name"]
             for method_name in [
                 "createUser",
                 "updateUserRole",
@@ -1667,17 +1664,15 @@ console.log((example as any).tableName); // 'comprehensive_items'
 
     run_updater(typescript_decorators_project, mock_ingestor)
 
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    all_relationships = get_relationships(mock_ingestor)
 
     calls_relationships = get_relationships(mock_ingestor, "CALLS")
-    [c for c in all_relationships if c.args[1] == "DEFINES"]
+    [c for c in all_relationships if c.rel_type == "DEFINES"]
 
     comprehensive_calls = [
         call
         for call in calls_relationships
-        if "comprehensive_decorators" in call.args[0][2]
+        if "comprehensive_decorators" in call.source
     ]
 
     assert len(comprehensive_calls) >= 2, (
@@ -1689,9 +1684,9 @@ console.log((example as any).tableName); // 'comprehensive_items'
     comprehensive_decorators = [
         call
         for call in function_calls
-        if "comprehensive_decorators" in call[0][1]["qualified_name"]
+        if "comprehensive_decorators" in call.properties["qualified_name"]
         and any(
-            pattern in call[0][1]["qualified_name"]
+            pattern in call.properties["qualified_name"]
             for pattern in ["Entity", "Log", "ReadOnly", "Required"]
         )
     ]
@@ -1705,7 +1700,7 @@ console.log((example as any).tableName); // 'comprehensive_items'
     comprehensive_class = [
         call
         for call in class_calls
-        if "ComprehensiveExample" in call[0][1]["qualified_name"]
+        if "ComprehensiveExample" in call.properties["qualified_name"]
     ]
 
     assert len(comprehensive_class) >= 1, (

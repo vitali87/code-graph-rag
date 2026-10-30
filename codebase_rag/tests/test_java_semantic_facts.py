@@ -50,7 +50,7 @@ def _call_targets(repo: Path) -> set[str]:
     parsers, queries = load_parsers()
     mock = MagicMock()
     GraphUpdater(ingestor=mock, repo_path=repo, parsers=parsers, queries=queries).run()
-    return {c.args[2][2] for c in get_relationships(mock, "CALLS")}
+    return {c.target for c in get_relationships(mock, "CALLS")}
 
 
 @pytest.mark.skipif(

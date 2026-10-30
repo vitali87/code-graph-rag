@@ -15,6 +15,7 @@ from codebase_rag.parsers.call_resolver import CallResolver
 from codebase_rag.parsers.definition_facts import DefinitionFacts
 from codebase_rag.parsers.import_processor import ImportProcessor
 from codebase_rag.parsers.type_inference import TypeInferenceEngine
+from codebase_rag.tests.conftest import get_relationships
 from codebase_rag.types_defs import QualifiedName
 
 if TYPE_CHECKING:
@@ -1332,9 +1333,9 @@ class TestDeterministicFileOrder:
             updater.run(force=True)
 
             calls = [
-                (c.args[0][2], c.args[1], c.args[2][2])
-                for c in ingestor.ensure_relationship_batch.call_args_list
-                if c.args[1] == cs.RelationshipType.CALLS
+                (c.source, c.rel_type, c.target)
+                for c in get_relationships(ingestor)
+                if c.rel_type == cs.RelationshipType.CALLS
             ]
             calls.sort()
             results.append(calls)
@@ -1358,9 +1359,9 @@ class TestDeterministicFileOrder:
             updater.run(force=True)
 
             calls = [
-                (c.args[0][2], c.args[2][2])
-                for c in ingestor.ensure_relationship_batch.call_args_list
-                if c.args[1] == cs.RelationshipType.CALLS
+                (c.source, c.target)
+                for c in get_relationships(ingestor)
+                if c.rel_type == cs.RelationshipType.CALLS
             ]
             calls.sort()
             results.append(calls)

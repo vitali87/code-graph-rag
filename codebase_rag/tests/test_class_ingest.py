@@ -137,9 +137,7 @@ def test_typescript_mixin_inheritance(
     project_name = typescript_mixin_project.name
 
     relationship_calls = [
-        call
-        for call in mock_ingestor.ensure_relationship_batch.call_args_list
-        if len(call[0]) >= 3 and call[0][1] == "INHERITS"
+        call for call in get_relationships(mock_ingestor) if call.rel_type == "INHERITS"
     ]
 
     expected_inherits = [
@@ -150,8 +148,7 @@ def test_typescript_mixin_inheritance(
     admin_inherits = [
         call
         for call in relationship_calls
-        if call[0][0][2] == expected_inherits[0]
-        and call[0][2][2] == expected_inherits[1]
+        if call.source == expected_inherits[0] and call.target == expected_inherits[1]
     ]
 
     assert len(admin_inherits) >= 1, "Admin should inherit from User"
@@ -166,7 +163,7 @@ def test_typescript_interface_implementation(
 
     interface_nodes = get_nodes(mock_ingestor, "Interface")
 
-    interface_qns = {call[0][1]["qualified_name"] for call in interface_nodes}
+    interface_qns = {call.properties["qualified_name"] for call in interface_nodes}
 
     expected_interfaces = [
         f"{project_name}.mixins.Printable",
@@ -302,7 +299,7 @@ def test_rust_impl_methods_are_ingested(
         f"{project_name}.lib.Rectangle.area",
     ]
 
-    method_qns = {call[0][1]["qualified_name"] for call in method_nodes}
+    method_qns = {call.properties["qualified_name"] for call in method_nodes}
 
     for expected in expected_methods:
         assert expected in method_qns, f"Method {expected} should be ingested"
@@ -315,7 +312,7 @@ def test_rust_impl_method_calls(
 
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
-    rust_calls = [call for call in call_relationships if "lib" in call.args[0][2]]
+    rust_calls = [call for call in call_relationships if "lib" in call.source]
 
     assert len(rust_calls) >= 3, "Expected at least 3 function calls in Rust code"
 
@@ -500,8 +497,8 @@ def test_java_single_interface_implementation(
     dog_implements = [
         call
         for call in implements_rels
-        if f"{project_name}.Dog.Dog" in call.args[0][2]
-        or f"{project_name}.Dog" in call.args[0][2]
+        if f"{project_name}.Dog.Dog" in call.source
+        or f"{project_name}.Dog" in call.source
     ]
 
     assert len(dog_implements) >= 1, "Dog should implement Animal interface"
@@ -519,8 +516,8 @@ def test_java_multiple_interface_implementation(
     duck_implements = [
         call
         for call in implements_rels
-        if f"{project_name}.Duck.Duck" in call.args[0][2]
-        or f"{project_name}.Duck" in call.args[0][2]
+        if f"{project_name}.Duck.Duck" in call.source
+        or f"{project_name}.Duck" in call.source
     ]
 
     assert len(duck_implements) >= 1, "Duck should implement multiple interfaces"
@@ -533,7 +530,7 @@ def test_java_interface_nodes_created(
 
     interface_nodes = get_nodes(mock_ingestor, "Interface")
 
-    interface_qns = {call[0][1]["qualified_name"] for call in interface_nodes}
+    interface_qns = {call.properties["qualified_name"] for call in interface_nodes}
 
     assert len(interface_qns) >= 1, "Should have at least one interface node"
 
@@ -593,7 +590,7 @@ def test_rust_inline_modules_are_ingested(
 
     module_nodes = get_nodes(mock_ingestor, "Module")
 
-    module_names = {call[0][1].get("name", "") for call in module_nodes}
+    module_names = {call.properties.get("name", "") for call in module_nodes}
 
     assert "main" in module_names or any("main" in name for name in module_names), (
         "main module should be ingested"
@@ -665,7 +662,7 @@ def test_method_override_chain(
     derived_method_a_overrides = [
         call
         for call in override_rels
-        if call.args[0][2] == f"{project_name}.base.DerivedClass.method_a"
+        if call.source == f"{project_name}.base.DerivedClass.method_a"
     ]
 
     assert len(derived_method_a_overrides) == 1, (
@@ -673,7 +670,7 @@ def test_method_override_chain(
     )
 
     if derived_method_a_overrides:
-        parent_qn = derived_method_a_overrides[0].args[2][2]
+        parent_qn = derived_method_a_overrides[0].target
         assert parent_qn == f"{project_name}.base.MiddleClass.method_a", (
             f"Should override MiddleClass.method_a, not {parent_qn}"
         )
@@ -699,7 +696,7 @@ def test_method_override_skips_non_overriding_methods(
     method_e_overrides = [
         call
         for call in override_rels
-        if call.args[0][2] == f"{project_name}.base.DerivedClass.method_e"
+        if call.source == f"{project_name}.base.DerivedClass.method_e"
     ]
 
     assert len(method_e_overrides) == 0, (
@@ -756,7 +753,7 @@ def test_nested_class_qualified_names(
 
     class_nodes = get_nodes(mock_ingestor, "Class")
 
-    class_qns = {call[0][1]["qualified_name"] for call in class_nodes}
+    class_qns = {call.properties["qualified_name"] for call in class_nodes}
 
     assert f"{project_name}.nested.OuterClass" in class_qns, "OuterClass should exist"
 
@@ -778,7 +775,7 @@ def test_nested_class_method_qualified_names(
 
     method_nodes = get_nodes(mock_ingestor, "Method")
 
-    method_qns = {call[0][1]["qualified_name"] for call in method_nodes}
+    method_qns = {call.properties["qualified_name"] for call in method_nodes}
 
     assert f"{project_name}.nested.OuterClass.outer_method" in method_qns, (
         "outer_method should have correct qualified name"
@@ -862,7 +859,7 @@ def test_abstract_method_overrides(
     circle_area_overrides = [
         call
         for call in override_rels
-        if call.args[0][2] == f"{project_name}.abstract_classes.Circle.area"
+        if call.source == f"{project_name}.abstract_classes.Circle.area"
     ]
 
     assert len(circle_area_overrides) == 1, "Circle.area should override Shape.area"
@@ -888,7 +885,7 @@ def test_non_abstract_method_override(
     rect_describe_overrides = [
         call
         for call in override_rels
-        if call.args[0][2] == f"{project_name}.abstract_classes.Rectangle.describe"
+        if call.source == f"{project_name}.abstract_classes.Rectangle.describe"
     ]
 
     assert len(rect_describe_overrides) == 1, (
@@ -963,7 +960,7 @@ def test_js_class_expression_inheritance(
 
     class_nodes = get_nodes(mock_ingestor, "Class")
 
-    class_qns = {call[0][1]["qualified_name"] for call in class_nodes}
+    class_qns = {call.properties["qualified_name"] for call in class_nodes}
 
     assert len(class_qns) >= 1, "Should have at least one class from expressions"
 
@@ -977,7 +974,7 @@ def test_js_class_expression_methods(
 
     method_nodes = get_nodes(mock_ingestor, "Method")
 
-    method_names = {call[0][1].get("name", "") for call in method_nodes}
+    method_names = {call.properties.get("name", "") for call in method_nodes}
 
     assert (
         "speak" in method_names or "fetch" in method_names or len(method_names) > 0
@@ -1060,7 +1057,7 @@ def test_cpp_template_class_methods(
 
     method_nodes = get_nodes(mock_ingestor, "Method")
 
-    method_qns = {call[0][1]["qualified_name"] for call in method_nodes}
+    method_qns = {call.properties["qualified_name"] for call in method_nodes}
 
     template_methods = [qn for qn in method_qns if "Container" in qn]
 
@@ -1077,7 +1074,7 @@ def test_cpp_template_inheritance(
     template_inherits = [
         call
         for call in inherits_rels
-        if "Container" in call.args[0][2] or "Container" in call.args[2][2]
+        if "Container" in call.source or "Container" in call.target
     ]
 
     assert len(template_inherits) >= 1, "Should have template class inheritance"
@@ -1223,7 +1220,7 @@ def test_go_struct_methods_are_ingested(
 
     method_nodes = get_nodes(mock_ingestor, "Method")
 
-    method_qns = {call[0][1]["qualified_name"] for call in method_nodes}
+    method_qns = {call.properties["qualified_name"] for call in method_nodes}
 
     expected_methods = [
         f"{project_name}.models.Dog.Speak",
@@ -1245,7 +1242,7 @@ def test_go_interface_nodes_created(
 
     interface_nodes = get_nodes(mock_ingestor, "Interface")
 
-    interface_qns = {call[0][1]["qualified_name"] for call in interface_nodes}
+    interface_qns = {call.properties["qualified_name"] for call in interface_nodes}
 
     assert len(interface_qns) >= 1, (
         f"Should have Go interface nodes, found: {interface_qns}"
@@ -1260,12 +1257,10 @@ def test_go_struct_nodes_created(
     project_name = go_struct_project.name
 
     class_nodes = [
-        call
-        for call in mock_ingestor.ensure_node_batch.call_args_list
-        if call[0][0] in ("Class", "Struct")
+        call for call in get_nodes(mock_ingestor) if call.label in ("Class", "Struct")
     ]
 
-    class_qns = {call[0][1]["qualified_name"] for call in class_nodes}
+    class_qns = {call.properties["qualified_name"] for call in class_nodes}
 
     expected_structs = [
         f"{project_name}.models.Dog",
@@ -1287,7 +1282,7 @@ def test_go_embedded_interface(
     mammal_inherits = [
         call
         for call in inherits_rels
-        if "Mammal" in call.args[0][2] or "Animal" in call.args[2][2]
+        if "Mammal" in call.source or "Animal" in call.target
     ]
 
     assert len(mammal_inherits) >= 0, "Mammal interface embedding should be detected"
@@ -1529,7 +1524,7 @@ def test_deeply_nested_classes_are_ingested(
 
     class_nodes = get_nodes(mock_ingestor, "Class")
 
-    class_qns = {call[0][1]["qualified_name"] for call in class_nodes}
+    class_qns = {call.properties["qualified_name"] for call in class_nodes}
 
     assert f"{project_name}.deep.Level1" in class_qns, "Level1 should exist"
 
@@ -1630,7 +1625,7 @@ def test_special_character_names_are_handled(
 
     class_nodes = get_nodes(mock_ingestor, "Class")
 
-    class_qns = {call[0][1]["qualified_name"] for call in class_nodes}
+    class_qns = {call.properties["qualified_name"] for call in class_nodes}
 
     assert any("Underscore" in qn for qn in class_qns), (
         "Classes with underscores should be ingested"
@@ -1690,9 +1685,7 @@ def test_multiple_inheritance_creates_all_relationships(
     inherits_rels = get_relationships(mock_ingestor, "INHERITS")
 
     derived_inherits = [
-        call
-        for call in inherits_rels
-        if f"{project_name}.multi.Derived" in call.args[0][2]
+        call for call in inherits_rels if f"{project_name}.multi.Derived" in call.source
     ]
 
     assert len(derived_inherits) >= 1, "Derived should have inheritance relationships"

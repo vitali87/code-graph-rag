@@ -10,7 +10,7 @@ from codebase_rag.exceptions import ReingestAborted
 from codebase_rag.mcp import constants as mcs
 from codebase_rag.mcp.client import query_mcp_server
 from codebase_rag.mcp.tools import MCPToolsRegistry
-from codebase_rag.tests.conftest import marker_store
+from codebase_rag.tests.conftest import get_nodes, marker_store
 
 pytestmark = [pytest.mark.anyio]
 
@@ -2434,9 +2434,7 @@ class TestIncompleteMarkerInvariant:
         assert not refusing.execute_write.called, (
             "the run issued a delete or write after before_write refused"
         )
-        written_labels = {
-            call.args[0] for call in refusing.ensure_node_batch.call_args_list
-        }
+        written_labels = {call.label for call in get_nodes(refusing)}
         assert cs.NodeLabel.FUNCTION not in written_labels, (
             "a definition was written after before_write refused"
         )

@@ -9,6 +9,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_relationships
 
 # Follow-up to issue #2535: a JSX member tag whose head is bound to a bare
 # package specifier (`import * as React from "react"`) was judged first-party
@@ -41,16 +42,16 @@ def _refs_from(
     mock = MagicMock()
     GraphUpdater(ingestor=mock, repo_path=repo, parsers=parsers, queries=queries).run()
     refs: list[_Edge] = []
-    for call in mock.ensure_relationship_batch.call_args_list:
-        if str(call.args[1]) != REFERENCES or call.args[0][2] != source:
+    for call in get_relationships(mock):
+        if str(call.rel_type) != REFERENCES or call.source != source:
             continue
-        props = call.kwargs.get("properties") or {}
+        props = call.properties
         resolution = props.get(cs.KEY_RESOLUTION)
         refs.append(
             _Edge(
-                call.args[0][2],
-                str(call.args[1]),
-                call.args[2][2],
+                call.source,
+                str(call.rel_type),
+                call.target,
                 str(resolution) if resolution is not None else None,
             )
         )

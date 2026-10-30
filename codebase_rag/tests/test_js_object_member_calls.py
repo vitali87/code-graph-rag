@@ -72,8 +72,8 @@ def _edges(mock_ingestor: MagicMock) -> _Edges:
     edges: _Edges = {}
     for rel in (cs.RelationshipType.CALLS, cs.RelationshipType.REFERENCES):
         for c in get_relationships(mock_ingestor, rel):
-            props = c.kwargs.get("properties") or (c.args[3] if len(c.args) > 3 else {})
-            key = (str(rel), c.args[0][2], c.args[2][2])
+            props = c.properties
+            key = (str(rel), c.source, c.target)
             edges[key] = (props or {}).get(cs.KEY_RESOLUTION)
     return edges
 
@@ -88,7 +88,7 @@ def _callees(edges: _Edges, caller: str) -> dict[str, str | None]:
 
 def _function_props(mock_ingestor: MagicMock) -> dict[str, dict]:
     return {
-        c.args[1][cs.KEY_QUALIFIED_NAME]: c.args[1]
+        c.properties[cs.KEY_QUALIFIED_NAME]: c.properties
         for c in get_nodes(mock_ingestor, cs.NodeLabel.FUNCTION)
     }
 

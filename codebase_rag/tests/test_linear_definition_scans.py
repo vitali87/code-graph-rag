@@ -165,16 +165,16 @@ def _assert_linear(small: int, large: int, what: str) -> None:
 
 
 def _calls_targets(ingestor: MagicMock) -> set[str]:
-    return {str(c.args[2][2]) for c in get_relationships(ingestor, "CALLS")}
+    return {str(c.target) for c in get_relationships(ingestor, "CALLS")}
 
 
 def _resolutions_into(ingestor: MagicMock, target_qn: str) -> set[str]:
     """The resolution of every CALLS edge into `target_qn`."""
     out: set[str] = set()
     for c in get_relationships(ingestor, "CALLS"):
-        if c.args[2][2] != target_qn:
+        if c.target != target_qn:
             continue
-        props = c.kwargs.get("properties") or (c.args[3] if len(c.args) > 3 else {})
+        props = c.properties
         out.add(str(props.get(cs.KEY_RESOLUTION)))
     return out
 

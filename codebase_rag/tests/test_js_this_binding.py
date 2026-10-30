@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -229,7 +228,7 @@ bound(); // preserved this
     this_context_callables = [
         call
         for call in all_callables
-        if "this_contexts" in call[0][1]["qualified_name"]
+        if "this_contexts" in call.properties["qualified_name"]
     ]
 
     assert len(this_context_callables) >= 10, (
@@ -424,10 +423,10 @@ console.log(result2); // [15, 20]
     # durable contract is that every first-party function handed to them
     # stays reachable through CALLS or REFERENCES edges.
     reachable_targets = {
-        str(call.args[2][2])
+        str(call.target)
         for rel in ("CALLS", "REFERENCES")
         for call in get_relationships(mock_ingestor, rel)
-        if "bind_call_apply" in call.args[0][2]
+        if "bind_call_apply" in call.source
     }
     project_name = javascript_this_project.name
     for bound_fn in ("greet", "sum", "multiply"):
@@ -680,9 +679,9 @@ regularFunction(10, 20, 30);
     arrow_functions = [
         call
         for call in function_calls
-        if "arrow_lexical_this" in call[0][1]["qualified_name"]
+        if "arrow_lexical_this" in call.properties["qualified_name"]
         and any(
-            pattern in call[0][1]["qualified_name"]
+            pattern in call.properties["qualified_name"]
             for pattern in ["arrow", "Arrow", "handleClick"]
         )
     ]
@@ -696,7 +695,7 @@ regularFunction(10, 20, 30);
     classes_with_arrows = [
         call
         for call in class_calls
-        if "arrow_lexical_this" in call[0][1]["qualified_name"]
+        if "arrow_lexical_this" in call.properties["qualified_name"]
     ]
 
     assert len(classes_with_arrows) >= 2, (
@@ -989,7 +988,7 @@ searchHandler.debouncedSearch('test query');
     callback_functions = [
         call
         for call in function_calls
-        if "callbacks_events" in call[0][1]["qualified_name"]
+        if "callbacks_events" in call.properties["qualified_name"]
     ]
 
     assert len(callback_functions) >= 10, (
@@ -1001,9 +1000,9 @@ searchHandler.debouncedSearch('test query');
     event_methods = [
         call
         for call in method_calls
-        if "callbacks_events" in call[0][1]["qualified_name"]
+        if "callbacks_events" in call.properties["qualified_name"]
         and any(
-            pattern in call[0][1]["qualified_name"]
+            pattern in call.properties["qualified_name"]
             for pattern in ["handle", "attach", "emit"]
         )
     ]
@@ -1134,15 +1133,13 @@ outer.call({ context: 'custom' });
 
     run_updater(javascript_this_project, mock_ingestor)
 
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    all_relationships = get_relationships(mock_ingestor)
 
     calls_relationships = get_relationships(mock_ingestor, "CALLS")
-    [c for c in all_relationships if c.args[1] == "DEFINES"]
+    [c for c in all_relationships if c.rel_type == "DEFINES"]
 
     comprehensive_calls = [
-        call for call in calls_relationships if "comprehensive_this" in call.args[0][2]
+        call for call in calls_relationships if "comprehensive_this" in call.source
     ]
 
     assert len(comprehensive_calls) >= 5, (
@@ -1155,6 +1152,6 @@ outer.call({ context: 'custom' });
     builtin_targets = [
         call
         for call in comprehensive_calls
-        if str(call.args[2][2]).startswith(f"{cs.BUILTIN_PREFIX}{cs.SEPARATOR_DOT}")
+        if str(call.target).startswith(f"{cs.BUILTIN_PREFIX}{cs.SEPARATOR_DOT}")
     ]
     assert not builtin_targets, builtin_targets

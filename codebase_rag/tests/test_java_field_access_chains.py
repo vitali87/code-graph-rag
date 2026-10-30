@@ -17,7 +17,7 @@ tsjava = pytest.importorskip("tree_sitter_java")
 
 
 def _call_targets(mock_ingestor: MagicMock) -> set[str]:
-    return {c.args[2][2] for c in get_relationships(mock_ingestor, "CALLS")}
+    return {c.target for c in get_relationships(mock_ingestor, "CALLS")}
 
 
 def _class_node(java_source: str) -> Node:

@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -185,7 +184,9 @@ console.log(max);           // 10
     class_calls = get_nodes(mock_ingestor, "Class")
 
     array_processor_class = [
-        call for call in class_calls if "ArrayProcessor" in call[0][1]["qualified_name"]
+        call
+        for call in class_calls
+        if "ArrayProcessor" in call.properties["qualified_name"]
     ]
 
     assert len(array_processor_class) >= 1, (
@@ -407,7 +408,9 @@ console.log(apiConfig);    // Environment-specific config
     class_calls = get_nodes(mock_ingestor, "Class")
 
     config_manager_class = [
-        call for call in class_calls if "ConfigManager" in call[0][1]["qualified_name"]
+        call
+        for call in class_calls
+        if "ConfigManager" in call.properties["qualified_name"]
     ]
 
     assert len(config_manager_class) >= 1, (
@@ -651,7 +654,9 @@ for (const value of combined) {
     class_calls = get_nodes(mock_ingestor, "Class")
 
     calculator_class = [
-        call for call in class_calls if "Calculator" in call[0][1]["qualified_name"]
+        call
+        for call in class_calls
+        if "Calculator" in call.properties["qualified_name"]
     ]
 
     assert len(calculator_class) >= 1, (
@@ -928,7 +933,9 @@ console.log(coordinates);   // { coordinates: {x:10, y:20, z:30}, extra: [40,50]
     class_calls = get_nodes(mock_ingestor, "Class")
 
     data_processor_class = [
-        call for call in class_calls if "DataProcessor" in call[0][1]["qualified_name"]
+        call
+        for call in class_calls
+        if "DataProcessor" in call.properties["qualified_name"]
     ]
 
     assert len(data_processor_class) >= 1, (
@@ -1051,17 +1058,15 @@ console.log(complex);
 
     run_updater(javascript_spread_rest_project, mock_ingestor)
 
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    all_relationships = get_relationships(mock_ingestor)
 
     calls_relationships = get_relationships(mock_ingestor, "CALLS")
-    [c for c in all_relationships if c.args[1] == "DEFINES"]
+    [c for c in all_relationships if c.rel_type == "DEFINES"]
 
     comprehensive_calls = [
         call
         for call in calls_relationships
-        if "comprehensive_spread_rest" in call.args[0][2]
+        if "comprehensive_spread_rest" in call.source
     ]
 
     assert len(comprehensive_calls) >= 5, (
@@ -1073,7 +1078,7 @@ console.log(complex);
     comprehensive_functions = [
         call
         for call in function_calls
-        if "comprehensive_spread_rest" in call[0][1]["qualified_name"]
+        if "comprehensive_spread_rest" in call.properties["qualified_name"]
     ]
 
     assert len(comprehensive_functions) >= 6, (

@@ -458,7 +458,9 @@ impl User {
 
         method_calls = get_nodes(mock_ingestor, "Method")
 
-        method_names = {call[0][1].get("qualified_name", "") for call in method_calls}
+        method_names = {
+            call.properties.get("qualified_name", "") for call in method_calls
+        }
 
         project_name = temp_repo.name
         expected_methods = [

@@ -69,7 +69,7 @@ def _docstrings(ingestor: MagicMock, label: str) -> dict[str, str | None]:
     `name`.
     """
     return {
-        call[0][1]["name"]: call[0][1].get("docstring")
+        call.properties["name"]: call.properties.get("docstring")
         for call in get_nodes(ingestor, label)
     }
 

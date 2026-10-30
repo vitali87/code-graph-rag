@@ -427,9 +427,9 @@ void demonstrateTemplateUsing() {
     namespace_calls = [
         call
         for call in call_relationships
-        if "using_directives" in call.args[0][2]
+        if "using_directives" in call.source
         and any(
-            name in call.args[2][2]
+            name in call.target
             for name in ["helper", "process", "utility_function", "uppercase"]
         )
     ]
@@ -798,9 +798,7 @@ void testNamespaceFeatures() {
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
     comprehensive_calls = [
-        call
-        for call in call_relationships
-        if "comprehensive_namespaces" in call.args[0][2]
+        call for call in call_relationships if "comprehensive_namespaces" in call.source
     ]
 
     assert len(comprehensive_calls) >= 12, (
@@ -811,7 +809,7 @@ void testNamespaceFeatures() {
         call
         for call in comprehensive_calls
         if any(
-            namespace_func in call.args[2][2]
+            namespace_func in call.target
             for namespace_func in [
                 "basic.func",
                 "inner.nested_func",

@@ -46,7 +46,7 @@ def _get_method_props(
     method_calls = get_nodes(mock_ingestor, "Method")
     candidates: list[PropertyDict] = []
     for call in method_calls:
-        props = call[0][1]
+        props = call.properties
         qn = props.get("qualified_name", "")
         if not isinstance(qn, str):
             continue
@@ -60,7 +60,7 @@ def _get_all_methods(mock_ingestor: MagicMock) -> list[PropertyDict]:
     method_calls = get_nodes(mock_ingestor, "Method")
     methods_by_qn: dict[str, list[PropertyDict]] = {}
     for call in method_calls:
-        props = call[0][1]
+        props = call.properties
         qn = props.get("qualified_name", "")
         if not isinstance(qn, str):
             continue

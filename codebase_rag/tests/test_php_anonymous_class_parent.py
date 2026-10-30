@@ -164,9 +164,9 @@ def _index(temp_repo: Path, mock_ingestor: MagicMock, source: str) -> None:
 def _parents(mock_ingestor: MagicMock, label: NodeLabel) -> dict[str, tuple[str, str]]:
     # Every node of `label`, keyed by qn, to its DEFINES parent (label, qn).
     return {
-        c.args[2][2]: (str(c.args[0][0]), c.args[0][2])
+        c.target: (str(c.source_label), c.source)
         for c in get_relationships(mock_ingestor, RelationshipType.DEFINES)
-        if str(c.args[2][0]) == label
+        if str(c.target_label) == label
     }
 
 
@@ -255,7 +255,7 @@ def test_members_of_the_moved_class_follow_it(
         f"{anon}.go",
     )
     calls = {
-        (c.args[0][2], c.args[2][2])
+        (c.source, c.target)
         for c in get_relationships(mock_ingestor, RelationshipType.CALLS)
     }
     assert (f"{anon}.go", f"{anon}.ping") in calls

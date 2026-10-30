@@ -27,7 +27,12 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.document_tier import DocumentTier, parse_front_matter
 from codebase_rag.sync.checkout_state import state_file
-from codebase_rag.tests.conftest import recorded_nodes, recorded_relationships
+from codebase_rag.tests.conftest import (
+    get_nodes,
+    get_relationships,
+    recorded_nodes,
+    recorded_relationships,
+)
 from codebase_rag.types_defs import GraphRelRecord, PropertyDict
 from evals.cgr_graph import StatefulIngestor
 
@@ -93,30 +98,23 @@ def _run(tmp_path: Path, files: dict[str, str]) -> MagicMock:
     return mock
 
 
-def _props_of(call) -> PropertyDict:
-    if len(call.args) > 3 and call.args[3]:
-        return dict(call.args[3])
-    return dict(call.kwargs.get("properties") or {})
-
-
 def _links(mock: MagicMock) -> list[Link]:
     """Every LINKS_TO the run emitted, endpoints as (label, key value)."""
     return [
         (
-            (str(c.args[0][0]), str(c.args[0][2])),
-            (str(c.args[2][0]), str(c.args[2][2])),
-            _props_of(c),
+            (r.source_label, str(r.source)),
+            (r.target_label, str(r.target)),
+            dict(r.properties),
         )
-        for c in mock.ensure_relationship_batch.call_args_list
-        if str(c.args[1]) == LINKS_TO
+        for r in get_relationships(mock, LINKS_TO)
     ]
 
 
 def _modules(mock: MagicMock) -> dict[str, PropertyDict]:
     return {
-        str(c.args[1][cs.KEY_PATH]): c.args[1]
-        for c in mock.ensure_node_batch.call_args_list
-        if str(c.args[0]) == MODULE
+        str(c.properties[cs.KEY_PATH]): c.properties
+        for c in get_nodes(mock)
+        if str(c.label) == MODULE
     }
 
 
@@ -213,9 +211,9 @@ class TestAnchorsResolveToSections:
 def _section_qn(mock: MagicMock, name: str) -> str:
     """The qn of the one Section emitted under this heading text."""
     found = [
-        str(c.args[1][cs.KEY_QUALIFIED_NAME])
-        for c in mock.ensure_node_batch.call_args_list
-        if str(c.args[0]) == SECTION and c.args[1].get(cs.KEY_NAME) == name
+        str(c.properties[cs.KEY_QUALIFIED_NAME])
+        for c in get_nodes(mock)
+        if str(c.label) == SECTION and c.properties.get(cs.KEY_NAME) == name
     ]
     assert len(found) == 1, (name, found)
     return found[0]

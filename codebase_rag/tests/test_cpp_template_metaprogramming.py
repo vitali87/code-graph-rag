@@ -790,7 +790,7 @@ void demonstrateComprehensiveMetaprogramming() {
     comprehensive_calls = [
         call
         for call in call_relationships
-        if "comprehensive_metaprogramming" in call.args[0][2]
+        if "comprehensive_metaprogramming" in call.source
     ]
 
     # builtin operator edges no longer emitted (#652)

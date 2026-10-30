@@ -13,6 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from codebase_rag.tests.conftest import get_nodes
 from codebase_rag.tests.test_rust_crate_path_trait_linking import (
     _calls,
     _write,
@@ -38,9 +39,9 @@ _IMPL = (
 
 def _qns(mock_ingestor: MagicMock, label: str) -> set[str]:
     return {
-        str(c.args[1]["qualified_name"])
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c.args[0] == label
+        str(c.properties["qualified_name"])
+        for c in get_nodes(mock_ingestor)
+        if c.label == label
     }
 
 

@@ -94,10 +94,8 @@ def _index(
 def _calls(mock_ingestor: MagicMock) -> dict[tuple[str, str], str]:
     edges: dict[tuple[str, str], str] = {}
     for call in get_relationships(mock_ingestor, cs.RelationshipType.CALLS.value):
-        props = call.kwargs.get("properties") or (
-            call.args[3] if len(call.args) > 3 else {}
-        )
-        edges[(str(call.args[0][2]), str(call.args[2][2]))] = str(
+        props = call.properties
+        edges[(str(call.source), str(call.target))] = str(
             (props or {}).get(cs.KEY_RESOLUTION)
         )
     return edges
@@ -105,7 +103,7 @@ def _calls(mock_ingestor: MagicMock) -> dict[tuple[str, str], str]:
 
 def _imports(mock_ingestor: MagicMock) -> set[tuple[str, str, str]]:
     return {
-        (str(call.args[0][2]), str(call.args[2][0]), str(call.args[2][2]))
+        (str(call.source), str(call.target_label), str(call.target))
         for call in get_relationships(mock_ingestor, cs.RelationshipType.IMPORTS.value)
     }
 

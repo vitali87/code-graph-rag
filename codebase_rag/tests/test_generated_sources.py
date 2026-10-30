@@ -17,7 +17,7 @@ from codebase_rag.parsers.java.generated import (
     generated_prefixes_for,
     generator_hint,
 )
-from codebase_rag.tests.conftest import recorded_edges
+from codebase_rag.tests.conftest import get_nodes, recorded_edges
 
 _CALLER = (
     "package com.app;\n\nimport com.example.gen.Widget;\n\n"
@@ -46,9 +46,9 @@ def _run(repo: Path) -> MagicMock:
 
 def _modules(mock: MagicMock) -> dict[str, dict]:
     return {
-        c.args[1]["qualified_name"]: c.args[1]
-        for c in mock.ensure_node_batch.call_args_list
-        if str(c.args[0]) == "Module"
+        c.properties["qualified_name"]: c.properties
+        for c in get_nodes(mock)
+        if str(c.label) == "Module"
     }
 
 

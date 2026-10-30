@@ -61,17 +61,19 @@ def _index(repo: Path, source: str, mock_ingestor: MagicMock) -> str:
 
 def _class_names(mock_ingestor: MagicMock) -> dict[str, str]:
     return {
-        c.args[1][cs.KEY_QUALIFIED_NAME]: c.args[1][cs.KEY_NAME]
+        c.properties[cs.KEY_QUALIFIED_NAME]: c.properties[cs.KEY_NAME]
         for c in get_nodes(mock_ingestor, cs.NodeLabel.CLASS)
     }
 
 
 def _qns(mock_ingestor: MagicMock, label: cs.NodeLabel) -> list[str]:
-    return [c.args[1][cs.KEY_QUALIFIED_NAME] for c in get_nodes(mock_ingestor, label)]
+    return [
+        c.properties[cs.KEY_QUALIFIED_NAME] for c in get_nodes(mock_ingestor, label)
+    ]
 
 
 def _edges(mock_ingestor: MagicMock, rel: cs.RelationshipType) -> set[tuple[str, str]]:
-    return {(c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, rel)}
+    return {(c.source, c.target) for c in get_relationships(mock_ingestor, rel)}
 
 
 _HELPER = "int helper() { return 1; }\n"

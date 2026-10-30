@@ -1,10 +1,9 @@
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.conftest import get_nodes, run_updater
+from codebase_rag.tests.conftest import get_nodes, get_relationships, run_updater
 
 
 @pytest.fixture
@@ -234,9 +233,9 @@ movePlayer(Direction.Right);
     enum_using_functions = [
         call
         for call in function_calls
-        if "numeric_enums" in call[0][1]["qualified_name"]
+        if "numeric_enums" in call.properties["qualified_name"]
         and any(
-            pattern in call[0][1]["qualified_name"]
+            pattern in call.properties["qualified_name"]
             for pattern in [
                 "processDirection",
                 "getHttpStatusMessage",
@@ -252,7 +251,7 @@ movePlayer(Direction.Right);
     class_calls = get_nodes(mock_ingestor, "Class")
 
     task_class = [
-        call for call in class_calls if "Task" in call[0][1]["qualified_name"]
+        call for call in class_calls if "Task" in call.properties["qualified_name"]
     ]
 
     assert len(task_class) >= 1, (
@@ -500,9 +499,9 @@ function createMessage(level: LogLevel, text: string): string {
     string_enum_classes = [
         call
         for call in class_calls
-        if "string_enums" in call[0][1]["qualified_name"]
+        if "string_enums" in call.properties["qualified_name"]
         and any(
-            class_name in call[0][1]["qualified_name"]
+            class_name in call.properties["qualified_name"]
             for class_name in ["Logger", "ApiService"]
         )
     ]
@@ -516,9 +515,9 @@ function createMessage(level: LogLevel, text: string): string {
     string_enum_functions = [
         call
         for call in function_calls
-        if "string_enums" in call[0][1]["qualified_name"]
+        if "string_enums" in call.properties["qualified_name"]
         and any(
-            pattern in call[0][1]["qualified_name"]
+            pattern in call.properties["qualified_name"]
             for pattern in ["setElementColor", "log", "makeApiCall", "getColorHex"]
         )
     ]
@@ -773,7 +772,7 @@ methodHandlers[HttpMethod.GET]('/api/data');
     class_calls = get_nodes(mock_ingestor, "Class")
 
     api_client_class = [
-        call for call in class_calls if "ApiClient" in call[0][1]["qualified_name"]
+        call for call in class_calls if "ApiClient" in call.properties["qualified_name"]
     ]
 
     assert len(api_client_class) >= 1, (
@@ -785,9 +784,9 @@ methodHandlers[HttpMethod.GET]('/api/data');
     const_enum_functions = [
         call
         for call in function_calls
-        if "const_enums" in call[0][1]["qualified_name"]
+        if "const_enums" in call.properties["qualified_name"]
         and any(
-            pattern in call[0][1]["qualified_name"]
+            pattern in call.properties["qualified_name"]
             for pattern in ["makeRequest", "getSizeClass", "hasPermission"]
         )
     ]
@@ -925,17 +924,15 @@ console.log(demo.getColor());
 
     run_updater(typescript_enums_project, mock_ingestor)
 
-    all_relationships = cast(
-        MagicMock, mock_ingestor.ensure_relationship_batch
-    ).call_args_list
+    all_relationships = get_relationships(mock_ingestor)
 
-    [c for c in all_relationships if c.args[1] == "CALLS"]
-    [c for c in all_relationships if c.args[1] == "DEFINES"]
+    [c for c in all_relationships if c.rel_type == "CALLS"]
+    [c for c in all_relationships if c.rel_type == "DEFINES"]
 
     class_calls = get_nodes(mock_ingestor, "Class")
 
     enum_demo_class = [
-        call for call in class_calls if "EnumDemo" in call[0][1]["qualified_name"]
+        call for call in class_calls if "EnumDemo" in call.properties["qualified_name"]
     ]
 
     assert len(enum_demo_class) >= 1, (

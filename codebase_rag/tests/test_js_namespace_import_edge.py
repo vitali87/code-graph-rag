@@ -15,7 +15,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.tests.conftest import create_and_run_updater
+from codebase_rag.tests.conftest import create_and_run_updater, get_relationships
 
 _FILES = {
     "src/utils/strings.ts": "export function slug(s: string) {\n\treturn s;\n}\n",
@@ -52,16 +52,14 @@ def _imports(repo: Path, mock: MagicMock) -> set[tuple[str, str, int, str | None
     # (importer, target, line, imported_name) of every IMPORTS edge.
     prefix = f"{repo.name}."
     out: set[tuple[str, str, int, str | None]] = set()
-    for c in mock.ensure_relationship_batch.call_args_list:
-        if c.args[1] != cs.RelationshipType.IMPORTS.value:
+    for c in get_relationships(mock):
+        if c.rel_type != cs.RelationshipType.IMPORTS.value:
             continue
-        props = (
-            c.kwargs.get("properties") or (c.args[3] if len(c.args) > 3 else {}) or {}
-        )
+        props = c.properties
         out.add(
             (
-                str(c.args[0][2]).removeprefix(prefix),
-                str(c.args[2][2]).removeprefix(prefix),
+                str(c.source).removeprefix(prefix),
+                str(c.target).removeprefix(prefix),
                 int(props.get(cs.KEY_LINE, 0)),
                 props.get(cs.KEY_IMPORTED_NAME),
             )
@@ -153,9 +151,9 @@ def test_calls_through_the_namespace_still_bind_exactly(
 
     prefix = f"{temp_repo.name}."
     calls = {
-        str(c.args[2][2]).removeprefix(prefix)
-        for c in mock_ingestor.ensure_relationship_batch.call_args_list
-        if c.args[1] == cs.RelationshipType.CALLS.value
-        and str(c.args[0][2]).removeprefix(prefix) == "src.app.run"
+        str(c.target).removeprefix(prefix)
+        for c in get_relationships(mock_ingestor)
+        if c.rel_type == cs.RelationshipType.CALLS.value
+        and str(c.source).removeprefix(prefix) == "src.app.run"
     }
     assert "src.utils.strings.slug" in calls, calls

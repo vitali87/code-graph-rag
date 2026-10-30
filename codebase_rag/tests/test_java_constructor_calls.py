@@ -21,7 +21,7 @@ def _project(temp_repo: Path, body: str) -> Path:
 
 
 def _edges(mock_ingestor: MagicMock, rel: str) -> set[tuple[str, str]]:
-    return {(c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, rel)}
+    return {(c.source, c.target) for c in get_relationships(mock_ingestor, rel)}
 
 
 def test_new_expression_calls_constructor_and_instantiates(

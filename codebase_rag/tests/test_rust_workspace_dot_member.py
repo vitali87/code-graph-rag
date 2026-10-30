@@ -62,8 +62,8 @@ def _calls(root: Path, members: str, deps: str = _MEMBER_DEPS) -> set[tuple[str,
     create_and_run_updater(root, mock, skip_if_missing="rust")
     return {
         (
-            str(c.args[0][2]).split(".", 1)[1],
-            str(c.args[2][2]).split(".", 1)[1],
+            str(c.source).split(".", 1)[1],
+            str(c.target).split(".", 1)[1],
         )
         for c in get_relationships(mock, cs.RelationshipType.CALLS)
     }

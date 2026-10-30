@@ -42,6 +42,7 @@ from codebase_rag.parsers.go.builds import Expr
 from codebase_rag.sync.checkout_state import state_file
 from codebase_rag.tests.conftest import (
     create_and_run_updater,
+    get_nodes,
     get_relationships,
     shared_session_dir,
 )
@@ -122,16 +123,16 @@ def _edges(
 ) -> dict[tuple[str, str], dict]:
     edges: dict[tuple[str, str], dict] = {}
     for c in get_relationships(mock_ingestor, rel.value):
-        props = c.kwargs.get("properties") or (c.args[3] if len(c.args) > 3 else {})
-        edges[(c.args[0][2], c.args[2][2])] = dict(props or {})
+        props = c.properties
+        edges[(c.source, c.target)] = dict(props or {})
     return edges
 
 
 def _node_labels(mock_ingestor: MagicMock) -> dict[str, str]:
     return {
-        str(c.args[1][cs.KEY_QUALIFIED_NAME]): str(c.args[0])
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if cs.KEY_QUALIFIED_NAME in c.args[1]
+        str(c.properties[cs.KEY_QUALIFIED_NAME]): str(c.label)
+        for c in get_nodes(mock_ingestor)
+        if cs.KEY_QUALIFIED_NAME in c.properties
     }
 
 
@@ -1682,9 +1683,9 @@ func Assigned(squares []Square) float64 {
 def _calls_by_line(mock_ingestor: MagicMock, caller: str) -> dict[int, dict[str, str]]:
     by_line: dict[int, dict[str, str]] = {}
     for c in get_relationships(mock_ingestor, cs.RelationshipType.CALLS.value):
-        props = c.kwargs.get("properties") or (c.args[3] if len(c.args) > 3 else {})
-        if c.args[0][2] == caller and str(c.args[2][2]).endswith(".Area"):
-            by_line.setdefault(props[cs.KEY_LINE], {})[c.args[2][2]] = props[
+        props = c.properties
+        if c.source == caller and str(c.target).endswith(".Area"):
+            by_line.setdefault(props[cs.KEY_LINE], {})[c.target] = props[
                 cs.KEY_RESOLUTION
             ]
     return by_line
@@ -2522,9 +2523,9 @@ def _method_files(mock_ingestor: MagicMock) -> dict[str, str]:
     # Method qn -> the file declaring it, which names a variant (`T.Area` or
     # `T.Area@3`) whichever file the index happened to read first.
     return {
-        str(c.args[1][cs.KEY_QUALIFIED_NAME]): str(c.args[1].get(cs.KEY_PATH))
-        for c in mock_ingestor.ensure_node_batch.call_args_list
-        if c.args[0] == cs.NodeLabel.METHOD and cs.KEY_QUALIFIED_NAME in c.args[1]
+        str(c.properties[cs.KEY_QUALIFIED_NAME]): str(c.properties.get(cs.KEY_PATH))
+        for c in get_nodes(mock_ingestor)
+        if c.label == cs.NodeLabel.METHOD and cs.KEY_QUALIFIED_NAME in c.properties
     }
 
 

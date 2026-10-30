@@ -128,8 +128,8 @@ const total = sum(1, 2, 3, 4, 5);
     function_to_function_calls = [
         call
         for call in call_relationships
-        if "function_declarations" in call.args[0][2]
-        and "function_declarations" in call.args[2][2]
+        if "function_declarations" in call.source
+        and "function_declarations" in call.target
     ]
 
     assert len(function_to_function_calls) >= 2, (
@@ -216,7 +216,7 @@ const quadrupled = doubler(8);
     arrow_functions = [
         call
         for call in function_calls
-        if "arrow_functions" in call[0][1]["qualified_name"]
+        if "arrow_functions" in call.properties["qualified_name"]
     ]
 
     assert len(arrow_functions) >= 10, (
@@ -371,8 +371,8 @@ async function orchestrate() {
     async_to_async_calls = [
         call
         for call in call_relationships
-        if "async_functions.orchestrate" in call.args[0][2]
-        and "async_functions" in call.args[2][2]
+        if "async_functions.orchestrate" in call.source
+        and "async_functions" in call.target
     ]
 
     assert len(async_to_async_calls) >= 2, (
@@ -488,7 +488,7 @@ const configValue = Config.get('apiUrl');
     iife_functions = [
         call
         for call in function_calls
-        if "iife_patterns" in call[0][1]["qualified_name"]
+        if "iife_patterns" in call.properties["qualified_name"]
     ]
 
     assert len(iife_functions) >= 5, (
@@ -497,9 +497,7 @@ const configValue = Config.get('apiUrl');
 
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
-    iife_calls = [
-        call for call in call_relationships if "iife_patterns" in call.args[0][2]
-    ]
+    iife_calls = [call for call in call_relationships if "iife_patterns" in call.source]
 
     assert len(iife_calls) >= 3, (
         f"Expected at least 3 IIFE calls, found {len(iife_calls)}"
@@ -651,8 +649,8 @@ const memoizedAdd = memoize(add5);
     nested_functions = [
         call
         for call in function_calls
-        if "higher_order_functions" in call[0][1]["qualified_name"]
-        and len(call[0][1]["qualified_name"].split(SEPARATOR_DOT)) > 3
+        if "higher_order_functions" in call.properties["qualified_name"]
+        and len(call.properties["qualified_name"].split(SEPARATOR_DOT)) > 3
     ]
 
     assert len(nested_functions) >= 5, (
@@ -817,7 +815,7 @@ const isValid = Person.isValidAge(30);
     method_definitions = [
         call
         for call in all_methods
-        if "method_definitions" in call[0][1]["qualified_name"]
+        if "method_definitions" in call.properties["qualified_name"]
     ]
 
     assert len(method_definitions) >= 10, (
@@ -827,7 +825,7 @@ const isValid = Person.isValidAge(30);
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
     method_calls = [
-        call for call in call_relationships if "method_definitions" in call.args[0][2]
+        call for call in call_relationships if "method_definitions" in call.source
     ]
 
     assert len(method_calls) >= 5, (
@@ -930,9 +928,7 @@ const orchestrated = orchestrator();
     defines_relationships = get_relationships(mock_ingestor, "DEFINES")
 
     comprehensive_calls = [
-        call
-        for call in call_relationships
-        if "comprehensive_functions" in call.args[0][2]
+        call for call in call_relationships if "comprehensive_functions" in call.source
     ]
 
     assert len(comprehensive_calls) >= 8, (
@@ -940,11 +936,10 @@ const orchestrated = orchestrator();
     )
 
     for relationship in comprehensive_calls:
-        assert len(relationship.args) == 3, "Call relationship should have 3 args"
-        assert relationship.args[1] == "CALLS", "Second arg should be 'CALLS'"
+        assert relationship.rel_type == "CALLS", "Expected a CALLS relationship"
 
-        source_module = relationship.args[0][2]
-        target_module = relationship.args[2][2]
+        source_module = relationship.source
+        target_module = relationship.target
 
         assert "comprehensive_functions" in source_module, (
             f"Source module should contain test file name: {source_module}"

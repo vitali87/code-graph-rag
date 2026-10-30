@@ -10,9 +10,7 @@ SKIP = "julia"
 
 
 def _calls(mock_ingestor: MagicMock) -> set[tuple[str, str]]:
-    return {
-        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
-    }
+    return {(c.source, c.target) for c in get_relationships(mock_ingestor, "CALLS")}
 
 
 def _calls_to(mock_ingestor: MagicMock, suffix: str) -> list[tuple[str, str]]:
@@ -24,8 +22,8 @@ def _calls_with_resolution(
 ) -> set[tuple[str, str, str]]:
     out = set()
     for c in get_relationships(mock_ingestor, "CALLS"):
-        props = c.kwargs.get("properties") or {}
-        out.add((c.args[0][2], c.args[2][2], props.get("resolution", "")))
+        props = c.properties
+        out.add((c.source, c.target, props.get("resolution", "")))
     return out
 
 
@@ -152,8 +150,7 @@ end
     run_updater(project, mock_ingestor, skip_if_missing=SKIP)
 
     inst = {
-        (c.args[0][2], c.args[2][2])
-        for c in get_relationships(mock_ingestor, "INSTANTIATES")
+        (c.source, c.target) for c in get_relationships(mock_ingestor, "INSTANTIATES")
     }
     assert any(src.endswith(".make") and dst.endswith(".Box") for src, dst in inst), (
         inst
@@ -583,8 +580,7 @@ end
     module_qn = f"{project.name}.main"
     assert (f"{module_qn}.make", f"{module_qn}.Point.Point") in calls, calls
     inst = {
-        (c.args[0][2], c.args[2][2])
-        for c in get_relationships(mock_ingestor, "INSTANTIATES")
+        (c.source, c.target) for c in get_relationships(mock_ingestor, "INSTANTIATES")
     }
     assert (f"{module_qn}.make", f"{module_qn}.Point") in inst, inst
 
@@ -691,8 +687,7 @@ end
     calls = _calls(mock_ingestor)
     assert any(s == src and ".Point@" in dst for s, dst in calls), calls
     inst = {
-        (c.args[0][2], c.args[2][2])
-        for c in get_relationships(mock_ingestor, "INSTANTIATES")
+        (c.source, c.target) for c in get_relationships(mock_ingestor, "INSTANTIATES")
     }
     assert (src, f"{module_qn}.Point") not in inst, inst
 

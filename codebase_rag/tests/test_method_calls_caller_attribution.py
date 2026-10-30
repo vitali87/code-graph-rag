@@ -15,7 +15,7 @@ def _get_method_caller_calls(mock_ingestor: MagicMock) -> list:
     return [
         c
         for c in get_relationships(mock_ingestor, cs.RelationshipType.CALLS)
-        if c.args[0][0] == cs.NodeLabel.METHOD
+        if c.source_label == cs.NodeLabel.METHOD
     ]
 
 
@@ -23,7 +23,7 @@ def _get_function_caller_calls(mock_ingestor: MagicMock) -> list:
     return [
         c
         for c in get_relationships(mock_ingestor, cs.RelationshipType.CALLS)
-        if c.args[0][0] == cs.NodeLabel.FUNCTION
+        if c.source_label == cs.NodeLabel.FUNCTION
     ]
 
 
@@ -31,16 +31,16 @@ def _get_module_caller_calls(mock_ingestor: MagicMock) -> list:
     return [
         c
         for c in get_relationships(mock_ingestor, cs.RelationshipType.CALLS)
-        if c.args[0][0] == cs.NodeLabel.MODULE
+        if c.source_label == cs.NodeLabel.MODULE
     ]
 
 
 def _caller_qn(call: MagicMock) -> str:
-    return call.args[0][2]
+    return call.source
 
 
 def _callee_qn(call: MagicMock) -> str:
-    return call.args[2][2]
+    return call.target
 
 
 class TestCppMethodCallerAttribution:

@@ -20,6 +20,7 @@ import pytest
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import get_relationships
 
 SOURCE = (
     "class Widget:\n"
@@ -62,9 +63,9 @@ def _call_edges(tmp_path: Path) -> Counter[tuple[str, str]]:
     mock = MagicMock()
     GraphUpdater(ingestor=mock, repo_path=root, parsers=parsers, queries=queries).run()
     return Counter(
-        (c.args[0][2], c.args[2][2])
-        for c in mock.ensure_relationship_batch.call_args_list
-        if str(c.args[1]) == "CALLS"
+        (c.source, c.target)
+        for c in get_relationships(mock)
+        if str(c.rel_type) == "CALLS"
     )
 
 
@@ -106,9 +107,9 @@ def _js_call_edges(tmp_path: Path, source: str) -> Counter[tuple[str, str]]:
     mock = MagicMock()
     GraphUpdater(ingestor=mock, repo_path=root, parsers=parsers, queries=queries).run()
     return Counter(
-        (c.args[0][2], c.args[2][2])
-        for c in mock.ensure_relationship_batch.call_args_list
-        if str(c.args[1]) == "CALLS"
+        (c.source, c.target)
+        for c in get_relationships(mock)
+        if str(c.rel_type) == "CALLS"
     )
 
 

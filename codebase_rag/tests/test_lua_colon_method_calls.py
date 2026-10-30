@@ -219,13 +219,13 @@ def _calls(project: Path, mock_ingestor: MagicMock) -> set[tuple[str, str, int, 
     prefix = f"{project.name}."
     found: set[tuple[str, str, int, str]] = set()
     for rel in get_relationships(mock_ingestor, cs.RelationshipType.CALLS):
-        props = rel.args[3] if len(rel.args) > 3 else rel.kwargs.get("properties")
+        props = rel.properties
         if not props:
             continue
         found.add(
             (
-                rel.args[0][2].removeprefix(prefix),
-                rel.args[2][2].removeprefix(prefix),
+                rel.source.removeprefix(prefix),
+                rel.target.removeprefix(prefix),
                 props[cs.KEY_LINE],
                 str(props[cs.KEY_RESOLUTION]),
             )
