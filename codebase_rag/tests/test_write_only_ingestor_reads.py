@@ -76,7 +76,7 @@ def test_file_ownership_is_never_confirmed(tmp_path: Path) -> None:
     # sweep must never be allowed to delete the key.
     updater = _updater(_WriteOnlyIngestor(), tmp_path)
     key = str(tmp_path / "m.py")
-    assert not updater.graph_pruner._file_keys_owned_only_by_this_project(
+    assert not updater.legacy_retirement._file_keys_owned_only_by_this_project(
         [key], str(tmp_path)
     )
 

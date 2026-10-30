@@ -63,6 +63,7 @@ from .updater.frontends import FrontendRunner
 from .updater.generated_sources import GeneratedSources
 from .updater.gloss_reanchor import GlossReanchor
 from .updater.import_closure import ImportClosure
+from .updater.legacy_retirement import LegacyRetirement
 from .updater.module_seeding import ModuleQnSeeding
 from .updater.rehydration import GraphRehydrator
 from .updater.reingest_planner import ReingestPlanner
@@ -570,18 +571,26 @@ class GraphUpdater:
             repo_path=self.repo_path,
             project_name=self.project_name,
         )
-        # The orphan prune that closes a sync, the prune it owes the next run
-        # when cut short, and the retirement of what an older cgr wrote.
-        self.graph_pruner = GraphPruner(
+        # The retirement of what an older cgr wrote for this checkout.
+        self.legacy_retirement = LegacyRetirement(
             graph=self._graph,
             graph_rows=self._graph_rows,
-            factory=self.factory,
             repo_path=self.repo_path,
             project_name=self.project_name,
             project_named=self.project_named,
             single_file=self._single_file,
+        )
+        # The orphan prune that closes a sync, and the prune it owes the next
+        # run when cut short.
+        self.graph_pruner = GraphPruner(
+            graph=self._graph,
+            factory=self.factory,
+            repo_path=self.repo_path,
+            project_name=self.project_name,
+            single_file=self._single_file,
             owns=self._owns,
             delete_module_entities=self._delete_module_entities,
+            legacy_retirement=self.legacy_retirement,
         )
 
     @property
@@ -653,7 +662,7 @@ class GraphUpdater:
         """
         if self._start_run(force):
             self._finish_in_sync_run()
-            self.graph_pruner.retire_legacy_dotted_project()
+            self.legacy_retirement.retire_dotted_project()
             return
         self._prepare_pass_2(force)
         known_module_paths = self._run_definition_passes(force)
@@ -932,7 +941,7 @@ class GraphUpdater:
         self._commit_run_state()
         if self._run.embeddings_interrupted:
             raise ex.EmbeddingsInterrupted
-        self.graph_pruner.retire_legacy_dotted_project()
+        self.legacy_retirement.retire_dotted_project()
 
     def _finish_in_sync_run(self) -> None:
         logger.info(ls.GRAPH_ALREADY_IN_SYNC)
