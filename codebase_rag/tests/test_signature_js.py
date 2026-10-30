@@ -8,6 +8,7 @@ from tree_sitter import Node
 
 from codebase_rag import constants as cs
 from codebase_rag.editing.signature_js import (
+    _check_literal,
     _find_definition,
     _params_of,
     _parser,
@@ -209,3 +210,19 @@ def test_a_default_reading_only_earlier_names_passes(params: str) -> None:
     node, source = _param_list(params)
 
     _refuse_forward_defaults(QN, node, source)
+
+
+@pytest.mark.parametrize(
+    "literal", ["1", " 'x' ", "LIMIT", "f(1, 2)", "[1, 2]", "{ a: 1 }", "a => a"]
+)
+def test_a_mapped_value_that_is_one_expression_passes(literal: str) -> None:
+    _check_literal(ParamSpec("n", "n", None, False), literal)
+
+
+@pytest.mark.parametrize(
+    "literal", ["1, 2", "...xs", "1)(2", "1); g(", "", "1 /* note */"]
+)
+def test_a_mapped_value_that_is_not_one_argument_refuses(literal: str) -> None:
+    # `1)(2` would turn `helper(3, <n>, 'z')` into `helper(3, 1)(2, 'z')`.
+    with pytest.raises(SignatureRefused, match="not one JavaScript expression"):
+        _check_literal(ParamSpec("n", "n", None, False), literal)

@@ -1122,6 +1122,11 @@ SIGNATURE_SITE_REORDERS_EFFECTS = (
     "order: `{text}`"
 )
 SIGNATURE_JS_HEADER_PROBE = "function _{params} {{}}"
+SIGNATURE_JS_CALL_PROBE = "_({args});"
+SIGNATURE_JS_BAD_LITERAL = (
+    "The value `{literal}` mapped to {name} is not one JavaScript expression; "
+    "written into a call it would not be exactly one argument"
+)
 SIGNATURE_JS_UNSUPPORTED_PARAMS = (
     "Cannot change the signature of {qn}: `{text}` is not a plain parameter "
     "(a name, with or without a default), and only those can be remapped"
