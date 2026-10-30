@@ -306,7 +306,7 @@ class TestDetermineFunctionParent:
 
         lang_config = queries[cs.SupportedLanguage.PYTHON]["config"]
         parent_type, parent_qn, _ = (
-            definition_processor.function_ingest.determine_function_parent(
+            definition_processor.function_ingest.containment.determine_function_parent(
                 func_node, "proj.module.my_function", "proj.module", lang_config
             )
         )
@@ -333,7 +333,7 @@ def outer():
 
         lang_config = queries[cs.SupportedLanguage.PYTHON]["config"]
         parent_type, parent_qn, _ = (
-            definition_processor.function_ingest.determine_function_parent(
+            definition_processor.function_ingest.containment.determine_function_parent(
                 inner_func, "proj.module.outer.inner", "proj.module", lang_config
             )
         )

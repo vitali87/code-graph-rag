@@ -371,11 +371,11 @@ class ClassIngest:
         parent_label, parent_qn, parent_span = (
             self.cpp.local_type_parent(class_node, local_qn, module_qn)
             if local_qn is not None
-            else self._function_ingest.determine_function_parent(
+            else self._function_ingest.containment.determine_function_parent(
                 class_node, written.qn, module_qn, lang_config, language
             )
         )
-        self._function_ingest.emit_or_defer_defines(
+        self._function_ingest.containment.emit_or_defer_defines(
             parent_label,
             parent_qn,
             written.label,

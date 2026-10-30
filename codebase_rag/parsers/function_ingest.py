@@ -13,7 +13,6 @@ from ..language_spec import LanguageSpec
 from ..types_defs import (
     DeferredParentLink,
     FunctionLocation,
-    FunctionSpanKey,
     PendingTypeFact,
     PropertyDict,
 )
@@ -88,7 +87,7 @@ class FunctionIngest:
         "pending_type_facts",
         "pending_parameter_types",
         "_naming",
-        "_containment",
+        "containment",
         "cpp",
         "rust",
         "csharp",
@@ -129,7 +128,10 @@ class FunctionIngest:
         self.pending_type_facts = pending_type_facts
         self.pending_parameter_types = pending_parameter_types
         self._naming = FunctionNaming(self)
-        self._containment = FunctionContainment(self, context, deferred_parent_links)
+        # The class pass and the JS/TS pass find a definition's parent and
+        # write its DEFINES through this one too, so a held-back edge waits
+        # in the same queue whichever pass wrote it.
+        self.containment = FunctionContainment(self, context, deferred_parent_links)
         self.cpp = cpp_function_ingest.CppFunctionIngest(
             self, context, states.cpp, method_host=method_host
         )
@@ -494,11 +496,11 @@ class FunctionIngest:
             return
 
         parent_type, parent_qn, parent_span = (
-            self._containment.determine_function_parent(
+            self.containment.determine_function_parent(
                 func_node, resolution.qualified_name, module_qn, lang_config, language
             )
         )
-        self._containment.emit_or_defer_defines(
+        self.containment.emit_or_defer_defines(
             parent_type,
             parent_qn,
             cs.NodeLabel.FUNCTION,
@@ -515,44 +517,6 @@ class FunctionIngest:
             return False
         return is_method_node(func_node, lang_config)
 
-    def emit_or_defer_defines(
-        self,
-        parent_label: str,
-        parent_qn: str,
-        child_label: str,
-        child_qn: str,
-        module_qn: str,
-        fallback_label: str | None = None,
-        fallback_qn: str | None = None,
-        parent_span: FunctionSpanKey | None = None,
-    ) -> None:
-        """Write a DEFINES edge from a module now, or hold one from any other
-        parent until `resolve_deferred_parent_links`."""
-        self._containment.emit_or_defer_defines(
-            parent_label,
-            parent_qn,
-            child_label,
-            child_qn,
-            module_qn,
-            fallback_label,
-            fallback_qn,
-            parent_span,
-        )
-
     def resolve_deferred_parent_links(self) -> int:
         """Emit deferred non-module DEFINES once every pass has registered."""
-        return self._containment.resolve_deferred_parent_links()
-
-    def determine_function_parent(
-        self,
-        func_node: Node,
-        func_qn: str,
-        module_qn: str,
-        lang_config: LanguageSpec,
-        language: cs.SupportedLanguage | None = None,
-    ) -> tuple[str, str, FunctionSpanKey | None]:
-        """The label, qn and pinned span of the parent `func_node` is
-        defined in."""
-        return self._containment.determine_function_parent(
-            func_node, func_qn, module_qn, lang_config, language
-        )
+        return self.containment.resolve_deferred_parent_links()

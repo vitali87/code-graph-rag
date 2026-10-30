@@ -187,8 +187,10 @@ class JsTsIngest:
         # nested, None at top level where module parenting is already correct.
         if lang_config is None:
             return None, None
-        parent_label, parent_qn, _ = self._function_ingest.determine_function_parent(
-            func_node, child_qn, module_qn, lang_config, language
+        parent_label, parent_qn, _ = (
+            self._function_ingest.containment.determine_function_parent(
+                func_node, child_qn, module_qn, lang_config, language
+            )
         )
         if str(parent_label) == cs.NodeLabel.MODULE.value:
             return None, None
@@ -256,7 +258,7 @@ class JsTsIngest:
                 fallback_label, fallback_qn = self._lexical_defines_fallback(
                     func_node, method_qn, module_qn, lang_config, language
                 )
-                self._function_ingest.emit_or_defer_defines(
+                self._function_ingest.containment.emit_or_defer_defines(
                     cs.NodeLabel.FUNCTION,
                     constructor_qn,
                     cs.NodeLabel.FUNCTION,
@@ -429,7 +431,7 @@ class JsTsIngest:
             method_func_node, method_qn, module_qn, lang_config, language
         )
         if fallback_label is not None and fallback_qn is not None:
-            self._function_ingest.emit_or_defer_defines(
+            self._function_ingest.containment.emit_or_defer_defines(
                 fallback_label,
                 fallback_qn,
                 cs.NodeLabel.FUNCTION,
@@ -683,7 +685,7 @@ class JsTsIngest:
             function_node, function_qn, module_qn, lang_config, language
         )
         if fallback_label is not None and fallback_qn is not None:
-            self._function_ingest.emit_or_defer_defines(
+            self._function_ingest.containment.emit_or_defer_defines(
                 fallback_label,
                 fallback_qn,
                 cs.NodeLabel.FUNCTION,
