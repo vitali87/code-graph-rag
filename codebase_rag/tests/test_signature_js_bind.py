@@ -169,3 +169,41 @@ def test_a_reorder_that_moves_a_default_before_what_it_reads_refuses() -> None:
 
     with pytest.raises(SignatureRefused, match="the default of b reads `a`"):
         _definition_edits(header, swapped, {"a", "b"}, [])
+
+
+@pytest.mark.parametrize(
+    ("params", "new"),
+    [
+        ("(a = f(), b = g())", ["b", "a"]),
+        ("(a = f(), n, b = cfg.size)", ["b", "n", "a"]),
+    ],
+    ids=["calls", "getter"],
+)
+def test_a_reorder_that_runs_defaults_in_another_order_refuses(
+    params: str, new: list[str]
+) -> None:
+    header = _header(f"function helper{params} {{\n  return 0;\n}}\n")
+    own = {p.name: p for p in header.params}
+    reordered = [own[name] for name in new]
+
+    with pytest.raises(SignatureRefused, match="run code"):
+        _definition_edits(header, reordered, set(new), [])
+
+
+@pytest.mark.parametrize(
+    ("params", "new"),
+    [
+        ("(a = 1, b = g())", ["b", "a"]),
+        ("(a = f(), b = g())", ["b"]),
+        ("(a = f(), b = g())", ["a", "c", "b"]),
+    ],
+    ids=["one-runs-code", "one-dropped", "kept-in-order"],
+)
+def test_defaults_that_still_run_in_written_order_pass(
+    params: str, new: list[str]
+) -> None:
+    header = _header(f"function helper{params} {{\n  return 0;\n}}\n")
+    own = {p.name: p for p in header.params}
+    specs = [own.get(name) or ParamSpec(name, name, None, False) for name in new]
+
+    assert _definition_edits(header, specs, set(own) & set(new), [])

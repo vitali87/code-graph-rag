@@ -1157,6 +1157,11 @@ SIGNATURE_JS_DUPLICATE_PARAM = (
     "Cannot change the signature of {qn}: it declares parameter {name} more "
     "than once, and the body sees only the last of them"
 )
+SIGNATURE_JS_REORDERS_DEFAULTS = (
+    "Cannot change the signature of {qn}: the defaults of {names} run code, "
+    "and the new order would run them in another order when a call leaves "
+    "them out"
+)
 SIGNATURE_JS_DEFAULT_READS_LATER = (
     "Cannot change the signature of {qn}: the default of {name} reads `{later}`, "
     "which is not bound yet when that default runs, so a call leaving {name} "
