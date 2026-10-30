@@ -1,16 +1,13 @@
 import hashlib
 import json
 import statistics
-import sys
 import time
-from collections import defaultdict
+from collections.abc import Callable
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from typing import TypedDict
 
 from codebase_rag import constants as cs
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.node_text import safe_decode_with_fallback
 from codebase_rag.services.protobuf_service import ProtobufFileIngestor
 from codebase_rag.sync.state import hash_file, load_hash_cache, publish_hash_cache
 from codebase_rag.utils.path_utils import should_skip_path
@@ -19,9 +16,25 @@ REPO_PATH = Path(__file__).resolve().parent.parent
 RUNS = 5
 
 
-def benchmark(func, *args, runs=RUNS, label=""):
+class Timing(TypedDict):
+    label: str
+    avg_ms: float
+    median_ms: float
+    std_ms: float
+    min_ms: float
+    max_ms: float
+    runs: int
+
+
+class Measured[T](Timing):
+    # What the last run returned, for the profiles that report on it.
+    result: T
+
+
+def benchmark[*Ts, T](
+    func: Callable[[*Ts], T], *args: *Ts, runs: int = RUNS, label: str = ""
+) -> Measured[T]:
     times = []
-    result = None
     for _ in range(runs):
         start = time.perf_counter()
         result = func(*args)
@@ -42,7 +55,7 @@ def benchmark(func, *args, runs=RUNS, label=""):
     }
 
 
-def collect_py_files():
+def collect_py_files() -> list[Path]:
     files = []
     for f in REPO_PATH.rglob("*.py"):
         if not should_skip_path(f, REPO_PATH):
@@ -50,7 +63,7 @@ def collect_py_files():
     return files
 
 
-def profile_file_hashing(files):
+def profile_file_hashing(files: list[Path]) -> list[Timing]:
     print("\n=== FILE HASHING (SHA-256) ===")
     results = []
     total_bytes = 0
@@ -79,7 +92,7 @@ def profile_file_hashing(files):
     return results
 
 
-def profile_file_reading(files):
+def profile_file_reading(files: list[Path]) -> list[Timing]:
     print("\n=== FILE READING (read_bytes + parse) ===")
     results = []
 
@@ -104,7 +117,7 @@ def profile_file_reading(files):
     return results
 
 
-def profile_tree_sitter_parsing(files):
+def profile_tree_sitter_parsing(files: list[Path]) -> list[Timing]:
     print("\n=== TREE-SITTER PARSING ===")
     results = []
     parsers, queries = load_parsers()
@@ -136,7 +149,7 @@ def profile_tree_sitter_parsing(files):
     return results
 
 
-def profile_json_serialization():
+def profile_json_serialization() -> list[Timing]:
     print("\n=== JSON SERIALIZATION ===")
     results = []
 
@@ -184,7 +197,7 @@ def profile_json_serialization():
     return results
 
 
-def profile_protobuf_serialization():
+def profile_protobuf_serialization() -> list[Timing]:
     print("\n=== PROTOBUF SERIALIZATION ===")
     results = []
     try:
@@ -246,7 +259,7 @@ def profile_protobuf_serialization():
     return results
 
 
-def profile_hash_cache_io():
+def profile_hash_cache_io() -> list[Timing]:
     print("\n=== HASH CACHE I/O ===")
     results = []
 
@@ -270,7 +283,7 @@ def profile_hash_cache_io():
     return results
 
 
-def profile_file_traversal():
+def profile_file_traversal() -> list[Timing]:
     print("\n=== FILESYSTEM TRAVERSAL ===")
     results = []
 
@@ -300,7 +313,7 @@ def profile_file_traversal():
     return results
 
 
-def profile_source_extraction():
+def profile_source_extraction() -> list[Timing]:
     print("\n=== SOURCE EXTRACTION ===")
     results = []
     from codebase_rag.utils.source_extraction import extract_source_lines
@@ -332,7 +345,7 @@ def profile_source_extraction():
     return results
 
 
-def profile_embedding_cache_io():
+def profile_embedding_cache_io() -> list[Timing]:
     print("\n=== EMBEDDING CACHE I/O ===")
     results = []
     import tempfile
@@ -369,7 +382,7 @@ def profile_embedding_cache_io():
     return results
 
 
-def profile_directory_structure():
+def profile_directory_structure() -> list[Timing]:
     print("\n=== DIRECTORY STRUCTURE IDENTIFICATION ===")
     results = []
     from codebase_rag.language_spec import LANGUAGE_SPECS
@@ -398,13 +411,13 @@ def profile_directory_structure():
     return results
 
 
-def main():
+def main() -> None:
     print("=" * 70)
     print("I/O AND SERIALIZATION LATENCY PROFILE")
     print(f"Repo: {REPO_PATH}")
     print("=" * 70)
 
-    all_results = []
+    all_results: list[Timing] = []
     files = collect_py_files()
     print(f"\nPython files for profiling: {len(files)}")
 
