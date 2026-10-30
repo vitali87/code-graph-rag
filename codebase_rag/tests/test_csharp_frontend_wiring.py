@@ -199,7 +199,7 @@ def test_frontend_off_clears_stale_base_kinds(
     facts[cs.SupportedLanguage.CSHARP].base_kinds = {("Stale.cs", 1): {"Old": "class"}}
     monkeypatch.setattr(gu.settings, "CSHARP_FRONTEND", cs.CSharpFrontend.TREESITTER)
 
-    updater._run_csharp_frontend()
+    updater.frontend_runner.run_csharp_frontend()
 
     assert facts[cs.SupportedLanguage.CSHARP].base_kinds == {}
 

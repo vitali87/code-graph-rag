@@ -14,6 +14,7 @@ from loguru import logger
 from codebase_rag import constants as cs
 from codebase_rag import graph_updater as gu
 from codebase_rag.tests.conftest import run_updater
+from codebase_rag.updater import frontends
 
 
 @pytest.fixture
@@ -38,7 +39,7 @@ def test_missing_libclang_hint_names_the_cpp_extra(
     cpp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(gu.settings, "CPP_FRONTEND", cs.CppFrontend.HYBRID)
-    monkeypatch.setattr(gu, "cpp_frontend_available", lambda: False)
+    monkeypatch.setattr(frontends, "cpp_frontend_available", lambda: False)
     messages = _captured_warnings(cpp_repo, mock_ingestor)
     assert any("code-graph-rag[cpp]" in m for m in messages), messages
 
@@ -47,7 +48,7 @@ def test_missing_compdb_hint_names_cmake_and_bear(
     cpp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(gu.settings, "CPP_FRONTEND", cs.CppFrontend.HYBRID)
-    monkeypatch.setattr(gu, "cpp_frontend_available", lambda: True)
+    monkeypatch.setattr(frontends, "cpp_frontend_available", lambda: True)
     messages = _captured_warnings(cpp_repo, mock_ingestor)
     assert any("CMAKE_EXPORT_COMPILE_COMMANDS" in m for m in messages), messages
     assert any("bear" in m for m in messages), messages

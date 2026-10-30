@@ -45,28 +45,18 @@ from .node_text import sorted_captures
 from .parser_fingerprint import compute_parser_fingerprint
 from .parsers import utils as parser_utils
 from .parsers.ast_grep_tier import AstGrepTier
-from .parsers.cpp.frontend import (
-    cpp_frontend_available,
-    find_compile_commands,
-    run_cpp_frontend,
-    run_cpp_frontend_hybrid,
-)
 from .parsers.cpp.preproc_recovery import parse_with_preproc_recovery
 from .parsers.csharp import graph_joins as csharp_joins
 from .parsers.csharp import utils as csharp_utils
-from .parsers.csharp.frontend import find_csharp_project
 from .parsers.definition_prune import RemovedFile
 from .parsers.document_tier import DocumentTier, broken_link_keys
 from .parsers.endpoint_linker import EndpointLinker
 from .parsers.factory import ProcessorFactory
 from .parsers.field_nodes import PendingFieldType
-from .parsers.frontends import SemanticFacts
-from .parsers.frontends.builtin import FRONTENDS
 from .parsers.go import graph_joins as go_joins
 from .parsers.go import interfaces as go_ifaces
 from .parsers.go import read_package_clause
 from .parsers.go import utils as go_utils
-from .parsers.go.frontend import find_go_module
 from .parsers.go.interfaces import GoInterfaceDecl, GoMethodSpec, GoSignature
 from .parsers.interface_fingerprint import INTERFACE_LANGUAGES, interface_fingerprint
 from .parsers.java.generated import (
@@ -124,8 +114,6 @@ from .types_defs import (
     FunctionLocation,
     FunctionLocations,
     LanguageQueries,
-    PendingExpansionCall,
-    PendingMacroCall,
     PendingTypeFact,
     PropertyDict,
     PropertyParams,
@@ -133,6 +121,7 @@ from .types_defs import (
     ResultRow,
     SimpleNameLookup,
 )
+from .updater.frontends import FrontendRunner
 from .utils import path_utils, qn_markers
 from .utils.json_io import load_json
 from .utils.path_utils import (
@@ -143,7 +132,6 @@ from .utils.path_utils import (
     is_inline_module_path,
     normalize_project_name,
     python_stub_has_implementation,
-    rescued_files,
     should_keep_dir,
     should_skip_path,
     should_skip_rel_file,
@@ -824,16 +812,9 @@ class GraphUpdater:
         # from a whole one (issue #2442).
         self.committed = False
         self._collected_dir_mtimes: DirMtimesCache = {}
-        self._cpp_frontend_covered: frozenset[str] = frozenset()
         # Module-qn claims `_forget_flux_stem_qns` dropped this run, by file
         # key, so a survivor that turns out unreadable gets its claim back.
         self._forgotten_flux_claims: dict[str, tuple[str, Path]] = {}
-        # Hybrid-mode macro uses awaiting a caller: attribution needs the
-        # tree-sitter definition spans, which exist only after Pass 2.
-        self._pending_cpp_macro_calls: list[PendingMacroCall] = []
-        # Hybrid-mode expansion-produced calls (call text lives inside a
-        # macro body): BOTH ends join to tree-sitter spans after Pass 2.
-        self._pending_cpp_expansion_calls: list[PendingExpansionCall] = []
         # Definition spans read back from the graph on incremental runs:
         # an expansion call's CALLEE may live in an UNCHANGED file whose
         # spans Pass 2 never recorded this run.
@@ -871,6 +852,19 @@ class GraphUpdater:
             unignore_paths=self.unignore_paths,
             exclude_paths=self.exclude_paths,
             capture=self.capture,
+        )
+        # The compiler frontends layered over Tree-sitter, and the hybrid
+        # C/C++ macro uses they leave for after the definition pass.
+        self.frontend_runner = FrontendRunner(
+            sink=self._sink,
+            factory=self.factory,
+            function_registry=self.function_registry,
+            simple_name_lookup=self.simple_name_lookup,
+            repo_path=self.repo_path,
+            project_name=self.project_name,
+            scope=self,
+            owned_qns=self._frontend_owned_qns,
+            rehydrated_spans=self._rehydrated_cpp_spans,
         )
         # Fallback structural tier for languages with no tree-sitter
         # LanguageSpec (e.g. Ruby), driven by ast-grep pattern configs.
@@ -919,328 +913,6 @@ class GraphUpdater:
             single_file=self._single_file,
             owns=self._owns,
             delete_module_entities=self._delete_module_entities,
-        )
-
-    def _run_cpp_frontend(self) -> None:
-        # Optional libclang C++ pre-pass when a compile_commands.json is
-        # discoverable. LIBCLANG: emit macro-accurate C/C++ nodes/edges
-        # directly (tree-sitter cannot expand macros) and skip covered files
-        # in the definition pass. HYBRID: tree-sitter stays the backbone
-        # (nothing skipped); libclang layers on only macro Function nodes and
-        # #include IMPORTS, whose qns are scheme-identical, and hands back
-        # macro uses for span attribution after Pass 2. Missing either
-        # condition falls back to tree-sitter.
-        # Both pending lists, not just the macro one: an early return below
-        # (mode off, libclang absent, no compile_commands.json) would otherwise
-        # leave a previous run's expansion calls in place, and the Pass-3
-        # consumer would emit CALLS edges for expansions that no longer apply.
-        self._cpp_frontend_covered = frozenset()
-        self._pending_cpp_macro_calls = []
-        self._pending_cpp_expansion_calls = []
-        if settings.CPP_FRONTEND not in (
-            cs.CppFrontend.LIBCLANG,
-            cs.CppFrontend.HYBRID,
-        ):
-            return
-        if not self._repo_has_c_or_cpp_files():
-            # HYBRID is the default, so a repo with no C/C++ sources must
-            # skip silently instead of warning about libclang or a missing
-            # compile_commands.json on every index of a Python/Go project.
-            return
-        if not cpp_frontend_available():
-            logger.warning(ls.CPP_FRONTEND_UNAVAILABLE)
-            return
-        compdb_dir = find_compile_commands(self.repo_path)
-        if compdb_dir is None:
-            logger.warning(ls.CPP_FRONTEND_NO_COMPDB)
-            return
-        logger.info(ls.CPP_FRONTEND_RUNNING.format(path=compdb_dir))
-        if settings.CPP_FRONTEND == cs.CppFrontend.HYBRID:
-            pending_macro_calls, pending_expansion_calls = run_cpp_frontend_hybrid(
-                self._sink,
-                self.repo_path,
-                self.project_name,
-                compdb_dir,
-                function_registry=self.function_registry,
-                simple_name_lookup=self.simple_name_lookup,
-                structural_elements=(
-                    self.factory.structure_processor.structural_elements
-                ),
-                owned_qns=self._frontend_owned_qns,
-                exclude_paths=self.exclude_paths,
-                unignore_paths=self.unignore_paths,
-            )
-            self._pending_cpp_macro_calls = list(pending_macro_calls)
-            self._pending_cpp_expansion_calls = list(pending_expansion_calls)
-            logger.info(
-                ls.CPP_FRONTEND_HYBRID_PENDING.format(
-                    count=len(self._pending_cpp_macro_calls)
-                    + len(self._pending_cpp_expansion_calls)
-                )
-            )
-            return
-        self._cpp_frontend_covered = frozenset(
-            run_cpp_frontend(
-                self._sink,
-                self.repo_path,
-                self.project_name,
-                compdb_dir,
-                function_registry=self.function_registry,
-                simple_name_lookup=self.simple_name_lookup,
-                structural_elements=(
-                    self.factory.structure_processor.structural_elements
-                ),
-                exclude_paths=self.exclude_paths,
-                unignore_paths=self.unignore_paths,
-                owned_qns=self._frontend_owned_qns,
-            )
-        )
-        logger.info(
-            ls.CPP_FRONTEND_COVERED.format(count=len(self._cpp_frontend_covered))
-        )
-
-    def _run_csharp_frontend(self) -> None:
-        # Roslyn before Pass 2: its exact base kinds (INHERITS vs IMPLEMENTS)
-        # are read while each type's bases are ingested; its call targets in
-        # Pass 3; its partial groups and LINQ query calls join after Pass 2
-        # and Pass 3. No dotnet, no project, or a failed build or restore
-        # leaves the tree-sitter graph.
-        mode = settings.CSHARP_FRONTEND
-        facts = self._run_frontend(
-            cs.SupportedLanguage.CSHARP,
-            off=mode == cs.CSharpFrontend.TREESITTER,
-            auto=mode == cs.CSharpFrontend.AUTO,
-            find_root=find_csharp_project,
-            auto_fallback_log=ls.CSHARP_FRONTEND_AUTO_FALLBACK,
-            unavailable_log=ls.CSHARP_FRONTEND_UNAVAILABLE,
-            running_log=ls.CSHARP_FRONTEND_RUNNING,
-        )
-        if facts is None:
-            return
-        logger.info(ls.CSHARP_FRONTEND_TYPES.format(count=len(facts.base_kinds)))
-        logger.info(
-            ls.CSHARP_FRONTEND_FACTS.format(
-                calls=len(facts.resolved_call_sites),
-                partials=len(facts.partial_groups),
-                queries=len(facts.query_calls),
-                externals=len(facts.external_sites),
-            )
-        )
-
-    def _run_go_frontend(self) -> None:
-        # go/types before Pass 2 (issue #1179): exact first-party call targets
-        # for Pass 3, the sites that leave the module, and the implements
-        # pairs the interface link joins once Pass 2 located every type.
-        mode = settings.GO_FRONTEND
-        facts = self._run_frontend(
-            cs.SupportedLanguage.GO,
-            off=mode == cs.GoFrontend.TREESITTER,
-            auto=mode == cs.GoFrontend.AUTO,
-            find_root=find_go_module,
-            auto_fallback_log=ls.GO_FRONTEND_AUTO_FALLBACK,
-            unavailable_log=ls.GO_FRONTEND_UNAVAILABLE,
-            running_log=ls.GO_FRONTEND_RUNNING,
-        )
-        if facts is not None:
-            logger.info(
-                ls.GO_FRONTEND_FACTS.format(
-                    calls=len(facts.resolved_call_sites),
-                    externals=len(facts.external_sites),
-                )
-            )
-
-    def _run_java_frontend(self) -> None:
-        # javac AFTER Pass 2 (issue #1181), like Jedi: its call facts join
-        # against the function_locations Pass 2 just filled, including the
-        # name-token alias the Java method registration adds.
-        facts = self._run_frontend(
-            cs.SupportedLanguage.JAVA,
-            off=settings.JAVA_FRONTEND == cs.JavaFrontend.HEURISTIC,
-            unavailable_log=ls.JAVA_FRONTEND_UNAVAILABLE,
-        )
-        if facts is not None:
-            logger.info(
-                ls.JAVA_FRONTEND_FACTS.format(
-                    calls=len(facts.resolved_call_sites),
-                    externals=len(facts.external_sites),
-                )
-            )
-
-    def _run_python_frontend(self) -> None:
-        # In-process Jedi facts after Pass 2 (issue #1183), over the Python
-        # files this run parsed: exact first-party callees through
-        # re-exports and decorators, and proofs that a call leaves the repo.
-        files = tuple(
-            fp for fp, lang in self._parsed_files if lang == cs.SupportedLanguage.PYTHON
-        )
-        facts = self._run_frontend(
-            cs.SupportedLanguage.PYTHON,
-            off=settings.PYTHON_FRONTEND == cs.PythonFrontend.HEURISTIC or not files,
-            unavailable_log=ls.PY_FRONTEND_UNAVAILABLE,
-            running_log=ls.PY_FRONTEND_RUNNING,
-            files=files,
-        )
-        if facts is not None:
-            logger.info(
-                ls.PY_FRONTEND_FACTS.format(
-                    calls=len(facts.resolved_call_sites),
-                    externals=len(facts.external_sites),
-                )
-            )
-
-    def _run_frontend(
-        self,
-        language: cs.SupportedLanguage,
-        *,
-        off: bool,
-        unavailable_log: str,
-        auto: bool = False,
-        find_root: Callable[[Path], Path | None] | None = None,
-        auto_fallback_log: str | None = None,
-        running_log: str | None = None,
-        files: tuple[Path, ...] = (),
-    ) -> SemanticFacts | None:
-        """Run a registered `LanguageFrontend` and store what it supplied.
-
-        The language's bundle is replaced first, so a reused updater (watch
-        mode) whose frontend ran before never applies a previous run's facts
-        once it is off. Returns the facts, or None when the frontend is off,
-        has nothing to augment, or cannot run; the processors then fall back
-        to the tree-sitter heuristics.
-        """
-        store = self.factory.facts.frontend_facts
-        store[language] = SemanticFacts()
-        if off:
-            return None
-        frontend = FRONTENDS.get(language)
-        if frontend is None or not frontend.applies(self.repo_path):
-            # Skip silently when the frontend has nothing to augment (no C#
-            # project, no go.mod): applicability is the frontend's own rule
-            # (issue #1178), so a registered replacement can define its own.
-            return None
-        if not frontend.available():
-            # AUTO promises the compiler only where the toolchain exists, so a
-            # missing toolchain is the expected fallback (info); an EXPLICIT
-            # request that cannot run stays a warning.
-            if auto and auto_fallback_log is not None:
-                logger.info(auto_fallback_log)
-            else:
-                logger.warning(unavailable_log)
-            return None
-        if running_log is not None:
-            root = find_root(self.repo_path) if find_root is not None else None
-            logger.info(running_log.format(path=root))
-        facts = frontend.run(self.repo_path, files, rescued_files=self._rescued_files())
-        store[language] = facts
-        return facts
-
-    def _rescued_files(self) -> frozenset[str]:
-        # The compiler tools skip the default-excluded names on their own; the
-        # files this walk keeps under one (a tracked `pkg/out/out.go`, a `!`
-        # line) must reach them, or they are parsed without their facts.
-        return rescued_files(self.repo_path, self.exclude_paths, self.unignore_paths)
-
-    def _tightest_containing_span(
-        self, rel_path: str, line: int
-    ) -> CppDefinitionSpan | None:
-        spans = self.factory.definition_processor.cpp_definition_spans
-        candidates = spans.get(rel_path)
-        if candidates is None and rel_path not in self._reparsed_file_keys:
-            # An unchanged file on an incremental run has no fresh spans;
-            # its definitions (and their lines) are unchanged too, so the
-            # graph-rehydrated spans are exact.
-            candidates = self._rehydrated_cpp_spans.get(rel_path)
-        containing = [s for s in candidates or () if s.start_line <= line <= s.end_line]
-        if not containing:
-            return None
-        return min(containing, key=lambda s: s.end_line - s.start_line)
-
-    def _resolve_hybrid_macro_calls(self) -> None:
-        # Attribute each hybrid macro use to the tightest enclosing
-        # TREE-SITTER definition span (recorded during Pass 2), falling back
-        # to the use site's Module: the mirror of the libclang frontend's own
-        # span resolution, but against the qn scheme the rest of the graph
-        # actually uses.
-        if not self._pending_cpp_macro_calls:
-            return
-        spans = self.factory.definition_processor.cpp_definition_spans
-        emitted = 0
-        for call in self._pending_cpp_macro_calls:
-            # The frontend parses every TU each run, but an incremental run
-            # records spans only for re-parsed files. An unchanged file has no
-            # spans here AND already carries its caller->macro edges, so
-            # resolving it would re-attribute in-function uses to the Module.
-            if call.rel_path not in self._reparsed_file_keys:
-                continue
-            containing = [
-                s
-                for s in spans.get(call.rel_path, ())
-                if s.start_line <= call.line <= s.end_line
-                and s.qualified_name != call.callee_qn
-            ]
-            if containing:
-                tightest = min(containing, key=lambda s: s.end_line - s.start_line)
-                caller_label, caller_qn = tightest.label, tightest.qualified_name
-            else:
-                caller_label = cs.NodeLabel.MODULE.value
-                caller_qn = call.fallback_module_qn
-            self._sink.ensure_relationship_batch(
-                (caller_label, cs.KEY_QUALIFIED_NAME, caller_qn),
-                cs.RelationshipType.CALLS,
-                (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, call.callee_qn),
-            )
-            emitted += 1
-        logger.info(ls.CPP_FRONTEND_MACRO_CALLS.format(count=emitted))
-
-    def _resolve_hybrid_expansion_calls(self) -> None:
-        # A call whose text lives inside a macro body exists only after
-        # expansion, so tree-sitter never emits it. Join BOTH ends to
-        # tree-sitter definition spans: the caller by expansion site (Module
-        # fallback, like macro uses), the callee by its referenced
-        # definition's location (dropped when no span contains it, since an
-        # unindexed or template-only definition has no tree-sitter node to
-        # target).
-        if not self._pending_cpp_expansion_calls:
-            return
-        emitted = 0
-        for call in self._pending_cpp_expansion_calls:
-            if call.caller_rel_path not in self._reparsed_file_keys:
-                continue
-            callee = self._tightest_containing_span(
-                call.callee_rel_path, call.callee_line
-            )
-            if callee is None:
-                continue
-            caller = self._tightest_containing_span(
-                call.caller_rel_path, call.caller_line
-            )
-            if caller is not None:
-                caller_label: str = caller.label
-                caller_qn = caller.qualified_name
-            else:
-                caller_label = cs.NodeLabel.MODULE.value
-                caller_qn = call.fallback_module_qn
-            self._sink.ensure_relationship_batch(
-                (caller_label, cs.KEY_QUALIFIED_NAME, caller_qn),
-                cs.RelationshipType.CALLS,
-                (callee.label, cs.KEY_QUALIFIED_NAME, callee.qualified_name),
-            )
-            emitted += 1
-        logger.info(ls.CPP_FRONTEND_EXPANSION_CALLS.format(count=emitted))
-
-    def _repo_has_c_or_cpp_files(self) -> bool:
-        # Early-exit scan: the frontend (and its warnings) only make sense
-        # when there is C/C++ to index. The indexer's own walk, not the raw
-        # tree: a `.c` under an excluded `vendor/` or a default-ignored
-        # `node_modules/` is never parsed, so there is no fidelity to lose
-        # and nothing to warn about (issue #2883).
-        extensions = set(cs.CPP_EXTENSIONS) | set(cs.C_EXTENSIONS)
-        # splitext, not Path(): no object allocation per repo file.
-        return any(
-            os.path.splitext(fname)[1].lower() in extensions
-            for _dirpath, fname, _rel in walk_eligible_files(
-                self.repo_path, self.exclude_paths, self.unignore_paths
-            )
         )
 
     def _is_dependency_file(self, file_name: str, filepath: Path) -> bool:
@@ -1318,7 +990,7 @@ class GraphUpdater:
         # nodes and include IMPORTS emitted earlier would be deleted with
         # it and vanish until a forced rebuild.
         if settings.CPP_FRONTEND == cs.CppFrontend.HYBRID:
-            self._run_cpp_frontend()
+            self.frontend_runner.run_cpp_frontend()
 
         go_methods = self.factory.definition_processor.resolve_deferred_go_methods()
         if go_methods:
@@ -1348,11 +1020,11 @@ class GraphUpdater:
         # After resolve_deferred_cpp_methods: an out-of-class method's span
         # is recorded only once its class binding resolves, and a macro use
         # inside such a method must attribute to it, not the Module.
-        self._resolve_hybrid_macro_calls()
+        self.frontend_runner.resolve_hybrid_macro_calls(self._reparsed_file_keys)
 
         # After rehydration: an expansion call's callee join needs spans
         # for unchanged files too.
-        self._resolve_hybrid_expansion_calls()
+        self.frontend_runner.resolve_hybrid_expansion_calls(self._reparsed_file_keys)
 
         # After rehydration so the "does a real definition exist?" check sees
         # definitions in files an incremental run did not re-parse; otherwise a
@@ -1528,7 +1200,7 @@ class GraphUpdater:
             rel = path.relative_to(self.repo_path).as_posix()
         except ValueError:
             return False
-        if rel in self._cpp_frontend_covered:
+        if rel in self.frontend_runner.cpp_covered:
             # The libclang frontend emitted this file, so Pass 2 parses none
             # of its imports either.
             return False
@@ -1687,27 +1359,27 @@ class GraphUpdater:
             )
         )
 
-        # Cleared here, not only in _run_cpp_frontend: in HYBRID that method
+        # Cleared here, not only in run_cpp_frontend: in HYBRID that method
         # runs AFTER Pass 2, so its reset is too late for a REUSED updater
         # whose previous run was LIBCLANG. _process_files consumes this set to
         # skip files, and a stale entry makes it skip a file whose Module
         # subtree was just deleted -- leaving only a generic File node that the
         # later hybrid pass cannot repair, because it never produced the
         # tree-sitter definitions to restore.
-        self._cpp_frontend_covered = frozenset()
+        self.frontend_runner.cpp_covered = frozenset()
 
         # LIBCLANG must run before Pass 2: _process_files consumes the
         # covered-file set to skip those files.
         if settings.CPP_FRONTEND != cs.CppFrontend.HYBRID:
-            self._run_cpp_frontend()
+            self.frontend_runner.run_cpp_frontend()
 
         # The C# Roslyn frontend must run before Pass 2: it produces a
         # base-classification oracle that split_csharp_bases consults while
         # ingesting each type's INHERITS/IMPLEMENTS edges during Pass 2.
-        self._run_csharp_frontend()
+        self.frontend_runner.run_csharp_frontend()
         # Go facts are read at Pass 3 and the name-alias target index is filled
         # during Pass 2, so loading them here (before Pass 2) is correct.
-        self._run_go_frontend()
+        self.frontend_runner.run_go_frontend()
 
         logger.info(ls.PASS_2_FILES)
         try:
@@ -1737,11 +1409,11 @@ class GraphUpdater:
             # The Jedi Python frontend runs AFTER Pass 2 (its facts join Pass 3
             # calls against the function_locations Pass 2 just filled) and needs
             # the parsed-file list, which Pass 2 produced (issue #1183).
-            self._run_python_frontend()
+            self.frontend_runner.run_python_frontend(self._parsed_files)
 
             # Same posture for Java (issue #1181): the facts resolve against the
             # method name-token locations Pass 2 registered.
-            self._run_java_frontend()
+            self.frontend_runner.run_java_frontend()
 
             # Before known_module_paths is built from the map: the seed pass only
             # ever adds, so a reused updater carries qns whose Module another
@@ -2858,7 +2530,7 @@ class GraphUpdater:
                 self._forgotten_flux_claims[on_stem[path]] = (qn, path)
         for path in sorted(on_stem):
             self.remove_file_from_state(
-                path, frontend_current=on_stem[path] in self._cpp_frontend_covered
+                path, frontend_current=on_stem[path] in self.frontend_runner.cpp_covered
             )
         for qn in [qn for qn, path in module_map.items() if path in on_stem]:
             del module_map[qn]
@@ -5796,7 +5468,7 @@ class GraphUpdater:
         # directly: flushed, they see what the frontend wrote whenever the
         # buffer happened to fill, rather than sometimes the old subtree and
         # sometimes the new one (PR #2247).
-        if self._cpp_frontend_covered:
+        if self.frontend_runner.cpp_covered:
             self.ingestor.flush_all()
 
     def _drop_deleted_file_state(self, deleted_before_parse: list[str]) -> None:
@@ -5820,12 +5492,12 @@ class GraphUpdater:
         first_failure: Exception | None = None
         # Any covered file in flux re-runs it, an added one included.
         if settings.CPP_FRONTEND != cs.CppFrontend.HYBRID and any(
-            key in self._cpp_frontend_covered for key in flux_keys
+            key in self.frontend_runner.cpp_covered for key in flux_keys
         ):
             for _fp, file_key, is_new, _b in changed_entries:
-                if is_new and file_key in self._cpp_frontend_covered:
+                if is_new and file_key in self.frontend_runner.cpp_covered:
                     self._delete_module_entities(file_key)
-            self._cpp_frontend_covered = frozenset()
+            self.frontend_runner.cpp_covered = frozenset()
             # The stale subtrees are already gone, so a failing re-run must
             # not end the run here: with nothing covered the file pass below
             # rebuilds those files with tree-sitter, and the error is raised
@@ -5833,10 +5505,10 @@ class GraphUpdater:
             # file is (PR #2247). A failed run leaves nothing it
             # can vouch for.
             try:
-                self._run_cpp_frontend()
+                self.frontend_runner.run_cpp_frontend()
             except Exception as exc:  # noqa: BLE001 -- a frontend failing in any way costs only its facts
                 logger.error(ls.INCREMENTAL_FRONTEND_RERUN_FAILED, error=exc)
-                self._cpp_frontend_covered = frozenset()
+                self.frontend_runner.cpp_covered = frozenset()
                 first_failure = exc
         return first_failure
 
@@ -5845,9 +5517,9 @@ class GraphUpdater:
         if not is_new:
             self.remove_file_from_state(
                 filepath,
-                frontend_current=bool(self._cpp_frontend_covered)
+                frontend_current=bool(self.frontend_runner.cpp_covered)
                 and cached_relative_path(filepath, self.repo_path).as_posix()
-                in self._cpp_frontend_covered,
+                in self.frontend_runner.cpp_covered,
             )
 
     def _flush_if_due(self, processed_since_flush: int) -> int:
@@ -6093,9 +5765,9 @@ class GraphUpdater:
         tiers; every file gets a File node regardless, so an unclaimed
         extension is still represented in the graph.
         """
-        if self._cpp_frontend_covered:
+        if self.frontend_runner.cpp_covered:
             rel = cached_relative_path(filepath, self.repo_path).as_posix()
-            if rel in self._cpp_frontend_covered:
+            if rel in self.frontend_runner.cpp_covered:
                 # The libclang frontend already emitted this file's
                 # definitions; keep only the generic File node.
                 self.factory.structure_processor.process_generic_file(
@@ -6400,20 +6072,20 @@ class GraphUpdater:
         # unchanged files (issue #1229 phase 3): the applicable frontend
         # re-runs and its joins re-emit before the scoped call pass.
         if cs.SupportedLanguage.GO in languages:
-            self._run_go_frontend()
+            self.frontend_runner.run_go_frontend()
             self._rehydrate_go_type_locations()
             self._rehydrate_function_locations()
             go_joins.join_implements(self.factory.definition_processor, self._sink)
         if cs.SupportedLanguage.CSHARP in languages:
-            self._run_csharp_frontend()
+            self.frontend_runner.run_csharp_frontend()
             self._rehydrate_csharp_type_locations()
             self._rehydrate_function_locations()
             csharp_joins.join_partials(self.factory.definition_processor)
         if cs.SupportedLanguage.JAVA in languages:
-            self._run_java_frontend()
+            self.frontend_runner.run_java_frontend()
             self._rehydrate_function_locations()
         if cs.SupportedLanguage.PYTHON in languages:
-            self._run_python_frontend()
+            self.frontend_runner.run_python_frontend(self._parsed_files)
             self._rehydrate_function_locations()
 
     def _reingest_split(
@@ -7122,8 +6794,8 @@ class GraphUpdater:
             # covered so the tree-sitter pass skips them; the deleted subtrees
             # need it to run again BEFORE the re-parse, as run() does. (HYBRID
             # runs after Pass 2, inside the deferred stages.)
-            self._cpp_frontend_covered = frozenset()
-            self._run_cpp_frontend()
+            self.frontend_runner.cpp_covered = frozenset()
+            self.frontend_runner.run_cpp_frontend()
         parsed: dict[str, bytes] = {}
         for key, path in reparse.items():
             # Read once and hash those same bytes later: an edit landing

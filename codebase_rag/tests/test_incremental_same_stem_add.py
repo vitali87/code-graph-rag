@@ -21,12 +21,12 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag.config import settings
-from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parsers.cpp.frontend import cpp_frontend_available
 from codebase_rag.tests.test_graph_updater_incremental_rename import (
     InMemoryGraph,
     _make_updater,
 )
+from codebase_rag.updater.frontends import FrontendRunner
 
 _C = {
     "util.h": "int util(void);\n",
@@ -119,7 +119,7 @@ def test_an_added_same_stem_sibling_keeps_the_libclang_registrations(
     updater.run(force=False)
 
     owned = updater._frontend_owned_qns.get("shape.h", set())
-    assert "shape.h" in updater._cpp_frontend_covered, "the header is not covered"
+    assert "shape.h" in updater.frontend_runner.cpp_covered, "the header is not covered"
     assert owned, "the frontend registered nothing for the header"
     registry = updater.factory.function_registry
     assert {qn for qn in owned if qn not in registry} == set(), owned
@@ -414,16 +414,16 @@ def test_a_failed_rerun_still_rebuilds_the_deleted_files_and_raises(
     (root / _CPP_ADDED[0]).write_text(_CPP_ADDED[1])
     _compile_commands(root, ["use.cpp", _CPP_ADDED[0]])
 
-    real_run = GraphUpdater._run_cpp_frontend
+    real_run = FrontendRunner.run_cpp_frontend
     calls: list[int] = []
 
-    def fail_on_rerun(self: GraphUpdater) -> None:
+    def fail_on_rerun(self: FrontendRunner) -> None:
         calls.append(1)
         if len(calls) > 1:
             raise RuntimeError("frontend re-run failed")
         real_run(self)
 
-    monkeypatch.setattr(GraphUpdater, "_run_cpp_frontend", fail_on_rerun)
+    monkeypatch.setattr(FrontendRunner, "run_cpp_frontend", fail_on_rerun)
     with pytest.raises(RuntimeError, match="frontend re-run failed"):
         updater.run(force=False)
 

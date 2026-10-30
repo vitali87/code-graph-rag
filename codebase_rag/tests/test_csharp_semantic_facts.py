@@ -805,6 +805,6 @@ def test_frontend_off_clears_stale_semantic_facts(
     )
     monkeypatch.setattr(gu.settings, "CSHARP_FRONTEND", cs.CSharpFrontend.TREESITTER)
 
-    updater._run_csharp_frontend()
+    updater.frontend_runner.run_csharp_frontend()
 
     assert store[cs.SupportedLanguage.CSHARP].is_empty()

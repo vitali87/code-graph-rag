@@ -15,6 +15,7 @@ from codebase_rag import constants as cs
 from codebase_rag import graph_updater as gu
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.updater import frontends
 from evals.cgr_graph import StatefulIngestor
 
 SOURCE = "int area(int w, int h) { return w * h; }\n"
@@ -25,8 +26,8 @@ def _definitions_seen_by_the_frontend(
 ) -> bool:
     (root / "shapes.cpp").write_text(SOURCE, encoding="utf-8")
     monkeypatch.setattr(gu.settings, "CPP_FRONTEND", mode)
-    monkeypatch.setattr(gu, "cpp_frontend_available", lambda: True)
-    monkeypatch.setattr(gu, "find_compile_commands", lambda _repo: root)
+    monkeypatch.setattr(frontends, "cpp_frontend_available", lambda: True)
+    monkeypatch.setattr(frontends, "find_compile_commands", lambda _repo: root)
     seen: list[bool] = []
 
     def libclang(*_args: object, function_registry: object, **_kw: object) -> set:
@@ -39,8 +40,8 @@ def _definitions_seen_by_the_frontend(
         seen.append(any(qn.endswith(".area") for qn, _ in function_registry.items()))
         return [], []
 
-    monkeypatch.setattr(gu, "run_cpp_frontend", libclang)
-    monkeypatch.setattr(gu, "run_cpp_frontend_hybrid", hybrid)
+    monkeypatch.setattr(frontends, "run_cpp_frontend", libclang)
+    monkeypatch.setattr(frontends, "run_cpp_frontend_hybrid", hybrid)
     parsers, queries = load_parsers()
     if cs.SupportedLanguage.CPP not in parsers:
         pytest.skip("cpp parser not available")

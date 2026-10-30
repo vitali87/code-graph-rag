@@ -19,6 +19,7 @@ from loguru import logger
 
 from codebase_rag import constants as cs
 from codebase_rag import graph_updater as gu
+from codebase_rag.updater import frontends
 
 
 @pytest.fixture
@@ -34,8 +35,8 @@ def no_compile_database(monkeypatch: pytest.MonkeyPatch) -> None:
     # The issue's setup: libclang present, default HYBRID, no compdb. Either
     # downstream hint would fire if the presence check let the run through.
     monkeypatch.setattr(gu.settings, "CPP_FRONTEND", cs.CppFrontend.HYBRID)
-    monkeypatch.setattr(gu, "cpp_frontend_available", lambda: True)
-    monkeypatch.setattr(gu, "find_compile_commands", lambda _path: None)
+    monkeypatch.setattr(frontends, "cpp_frontend_available", lambda: True)
+    monkeypatch.setattr(frontends, "find_compile_commands", lambda _path: None)
 
 
 def _repo(tmp_path: Path, c_file: str) -> Path:
@@ -49,7 +50,7 @@ def _repo(tmp_path: Path, c_file: str) -> Path:
 def _run(repo: Path, exclude: frozenset[str] = frozenset()) -> None:
     gu.GraphUpdater(
         MagicMock(), repo, {}, {}, exclude_paths=exclude
-    )._run_cpp_frontend()
+    ).frontend_runner.run_cpp_frontend()
 
 
 @pytest.mark.usefixtures("no_compile_database")

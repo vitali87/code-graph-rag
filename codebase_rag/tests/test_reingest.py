@@ -815,31 +815,31 @@ def test_reingest_keeps_the_hash_cache_current(fixture_root: Path) -> None:
         (
             "svc.go",
             [
-                "_run_go_frontend",
+                "run_go_frontend",
                 "_rehydrate_go_type_locations",
                 "_rehydrate_function_locations",
                 "join_implements",
             ],
-            ["_run_csharp_frontend", "_run_java_frontend"],
+            ["run_csharp_frontend", "run_java_frontend"],
         ),
         (
             "Svc.cs",
             [
-                "_run_csharp_frontend",
+                "run_csharp_frontend",
                 "_rehydrate_csharp_type_locations",
                 "join_partials",
             ],
-            ["_run_go_frontend"],
+            ["run_go_frontend"],
         ),
         (
             "Svc.java",
-            ["_run_java_frontend", "_rehydrate_function_locations"],
-            ["_run_go_frontend"],
+            ["run_java_frontend", "_rehydrate_function_locations"],
+            ["run_go_frontend"],
         ),
         (
             "app.py",
-            ["_run_python_frontend"],
-            ["_run_go_frontend", "_run_csharp_frontend", "_run_java_frontend"],
+            ["run_python_frontend"],
+            ["run_go_frontend", "run_csharp_frontend", "run_java_frontend"],
         ),
     ],
 )
@@ -857,18 +857,18 @@ def test_reingest_reruns_the_language_frontend(
     as it did on the watcher's own path before the two were unified.
     """
     updater = create_and_run_updater(temp_repo, mock_ingestor)
-    names = [
-        "_run_go_frontend",
-        "_rehydrate_go_type_locations",
-        "_rehydrate_function_locations",
-        "_run_csharp_frontend",
-        "_rehydrate_csharp_type_locations",
-        "_run_java_frontend",
-        "_run_python_frontend",
-    ]
-    mocks = {name: MagicMock() for name in names}
+    owners = {
+        "run_go_frontend": updater.frontend_runner,
+        "_rehydrate_go_type_locations": updater,
+        "_rehydrate_function_locations": updater,
+        "run_csharp_frontend": updater.frontend_runner,
+        "_rehydrate_csharp_type_locations": updater,
+        "run_java_frontend": updater.frontend_runner,
+        "run_python_frontend": updater.frontend_runner,
+    }
+    mocks = {name: MagicMock() for name in owners}
     for name, mock in mocks.items():
-        setattr(updater, name, mock)
+        setattr(owners[name], name, mock)
     path = temp_repo / filename
     path.write_text("// change\n", encoding="utf-8")
 
@@ -895,7 +895,7 @@ def test_reingest_deletion_also_reruns_the_frontend(
     updater = create_and_run_updater(temp_repo, mock_ingestor)
     gone.unlink()
     run_go = MagicMock()
-    updater._run_go_frontend = run_go  # type: ignore[method-assign]
+    updater.frontend_runner.run_go_frontend = run_go  # type: ignore[method-assign]
 
     updater.reingest([], deleted=[gone])
 
@@ -1110,7 +1110,9 @@ def test_reingest_reruns_the_libclang_frontend_for_c_family_files(
     updater = create_and_run_updater(temp_repo, mock_ingestor)
     monkeypatch.setattr(settings, "CPP_FRONTEND", cs.CppFrontend.LIBCLANG)
     order: list[str] = []
-    updater._run_cpp_frontend = MagicMock(side_effect=lambda: order.append("frontend"))  # type: ignore[method-assign]
+    updater.frontend_runner.run_cpp_frontend = MagicMock(  # type: ignore[method-assign]
+        side_effect=lambda: order.append("frontend")
+    )
     original = updater._process_single_file
 
     def spy(*args: object, **kwargs: object) -> None:
@@ -1134,7 +1136,7 @@ def test_reingest_of_a_python_file_does_not_run_the_cpp_frontend(
     updater = create_and_run_updater(temp_repo, mock_ingestor)
     monkeypatch.setattr(settings, "CPP_FRONTEND", cs.CppFrontend.LIBCLANG)
     run_cpp = MagicMock()
-    updater._run_cpp_frontend = run_cpp  # type: ignore[method-assign]
+    updater.frontend_runner.run_cpp_frontend = run_cpp  # type: ignore[method-assign]
     updater.reingest([path])
     run_cpp.assert_not_called()
 

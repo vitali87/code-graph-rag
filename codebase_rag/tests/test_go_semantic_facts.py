@@ -182,7 +182,7 @@ def test_frontend_off_clears_stale_go_facts(
     )
     monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
 
-    updater._run_go_frontend()
+    updater.frontend_runner.run_go_frontend()
 
     facts = store[cs.SupportedLanguage.GO]
     assert facts.is_empty()

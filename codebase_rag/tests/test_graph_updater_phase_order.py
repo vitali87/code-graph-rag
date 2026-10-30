@@ -61,7 +61,7 @@ _SOURCE = Path(__file__).resolve().parents[1] / "graph_updater.py"
 # pair is worth.
 #
 # * "LIBCLANG must run before Pass 2" / "HYBRID must run after Pass 2" --
-#   both are `_run_cpp_frontend`, called at two sites under opposite mode
+#   both are `run_cpp_frontend`, called at two sites under opposite mode
 #   gates, so neither ordering holds of the NAME, which is all a
 #   line-number comparison can see.
 # * "The delombok state commits ONLY here, after every pass and the graph
@@ -84,7 +84,7 @@ _SOURCE = Path(__file__).resolve().parents[1] / "graph_updater.py"
 _ORDER: tuple[tuple[str, str, str, str], ...] = (
     # -- around Pass 2 (`_process_files`) --
     (
-        "_run_csharp_frontend",
+        "run_csharp_frontend",
         "_process_files",
         "earlier:must run before pass 2",
         "the Roslyn frontend produces a base-classification oracle that "
@@ -92,7 +92,7 @@ _ORDER: tuple[tuple[str, str, str, str], ...] = (
         "INHERITS/IMPLEMENTS edges during Pass 2",
     ),
     (
-        "_run_go_frontend",
+        "run_go_frontend",
         "_process_files",
         "earlier:before pass 2",
         "Go facts are read at Pass 3 and the name-alias target index is "
@@ -122,7 +122,7 @@ _ORDER: tuple[tuple[str, str, str, str], ...] = (
     ),
     (
         "_process_files",
-        "_run_python_frontend",
+        "run_python_frontend",
         "after pass 2",
         "the Jedi facts join Pass 3 calls against the function_locations "
         "Pass 2 filled, and it needs the parsed-file list Pass 2 produced "
@@ -130,7 +130,7 @@ _ORDER: tuple[tuple[str, str, str, str], ...] = (
     ),
     (
         "_process_files",
-        "_run_java_frontend",
+        "run_java_frontend",
         "pass 2 registered",
         "the Java facts resolve against the method name-token locations "
         "Pass 2 registered (issue #1181)",
@@ -155,7 +155,7 @@ _ORDER: tuple[tuple[str, str, str, str], ...] = (
     ),
     (
         "resolve_deferred_cpp_methods",
-        "_resolve_hybrid_macro_calls",
+        "resolve_hybrid_macro_calls",
         "after resolve_deferred_cpp_methods",
         "an out-of-class method's span is recorded only once its class "
         "binding resolves, and a macro use inside such a method must "
@@ -163,7 +163,7 @@ _ORDER: tuple[tuple[str, str, str, str], ...] = (
     ),
     (
         "_rehydrate_registry_from_graph",
-        "_resolve_hybrid_expansion_calls",
+        "resolve_hybrid_expansion_calls",
         "after rehydration",
         "an expansion call's callee join needs spans for unchanged files too",
     ),
@@ -422,7 +422,7 @@ def test_every_pinned_dependency_is_still_explained_at_its_call_site() -> None:
     guard failing on every copy-edit gets deleted rather than obeyed.
 
     Moving a pinned call is fine as long as its comment travels with it:
-    relocating `_resolve_hybrid_expansion_calls` together with its two
+    relocating `resolve_hybrid_expansion_calls` together with its two
     comment lines passes, while moving the call alone fails here naming that
     call. That is deliberate, not a false alarm -- an ordering constraint
     stranded from its explanation is the state this test exists to prevent,

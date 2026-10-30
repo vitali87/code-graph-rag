@@ -38,15 +38,15 @@ def test_expansion_calls_reset_when_the_frontend_does_not_run(
     future reset of one without the other is caught.
     """
     updater = _updater(tmp_path)
-    updater._pending_cpp_macro_calls = ["stale-macro"]  # type: ignore[list-item]
-    updater._pending_cpp_expansion_calls = ["stale-expansion"]  # type: ignore[list-item]
+    updater.frontend_runner.pending_macro_calls = ["stale-macro"]  # type: ignore[list-item]
+    updater.frontend_runner.pending_expansion_calls = ["stale-expansion"]  # type: ignore[list-item]
 
     # TREESITTER takes the earliest return, before any libclang probing.
     monkeypatch.setattr(settings, "CPP_FRONTEND", cs.CppFrontend.TREESITTER)
-    updater._run_cpp_frontend()
+    updater.frontend_runner.run_cpp_frontend()
 
-    assert updater._pending_cpp_macro_calls == []
-    assert updater._pending_cpp_expansion_calls == []
+    assert updater.frontend_runner.pending_macro_calls == []
+    assert updater.frontend_runner.pending_expansion_calls == []
 
 
 def test_covered_files_also_reset(tmp_path: Path, monkeypatch) -> None:
@@ -57,12 +57,12 @@ def test_covered_files_also_reset(tmp_path: Path, monkeypatch) -> None:
     state.
     """
     updater = _updater(tmp_path)
-    updater._cpp_frontend_covered = frozenset({"stale.cpp"})
+    updater.frontend_runner.cpp_covered = frozenset({"stale.cpp"})
 
     monkeypatch.setattr(settings, "CPP_FRONTEND", cs.CppFrontend.TREESITTER)
-    updater._run_cpp_frontend()
+    updater.frontend_runner.run_cpp_frontend()
 
-    assert updater._cpp_frontend_covered == frozenset()
+    assert updater.frontend_runner.cpp_covered == frozenset()
 
 
 def test_covered_set_resets_before_pass_two_on_a_hybrid_rerun(
@@ -70,7 +70,7 @@ def test_covered_set_resets_before_pass_two_on_a_hybrid_rerun(
 ) -> None:
     """A reused updater must not carry a LIBCLANG covered-set into HYBRID.
 
-    In HYBRID mode `_run_cpp_frontend` runs AFTER Pass 2, so its reset is too
+    In HYBRID mode `run_cpp_frontend` runs AFTER Pass 2, so its reset is too
     late: `_process_files` consumes the covered set to skip files, and a stale
     entry makes it skip a file whose Module subtree was just deleted. The file
     then gets only a generic `File` node, and the later hybrid pass cannot
@@ -85,18 +85,18 @@ def test_covered_set_resets_before_pass_two_on_a_hybrid_rerun(
         ingestor=MagicMock(), repo_path=tmp_path, parsers=parsers, queries=queries
     )
     # Simulate a previous LIBCLANG run on the same instance.
-    updater._cpp_frontend_covered = frozenset({"stale.cpp"})
+    updater.frontend_runner.cpp_covered = frozenset({"stale.cpp"})
 
     monkeypatch.setattr(settings, "CPP_FRONTEND", cs.CppFrontend.HYBRID)
 
-    # The value AT PASS 2 is what matters: _run_cpp_frontend runs after it in
+    # The value AT PASS 2 is what matters: run_cpp_frontend runs after it in
     # HYBRID and resets the set on the way out, so asserting after run()
     # returns would pass against the bug.
     seen: list[frozenset[str]] = []
     original = updater._process_files
 
     def _record(*args, **kwargs):
-        seen.append(updater._cpp_frontend_covered)
+        seen.append(updater.frontend_runner.cpp_covered)
         return original(*args, **kwargs)
 
     monkeypatch.setattr(updater, "_process_files", _record)

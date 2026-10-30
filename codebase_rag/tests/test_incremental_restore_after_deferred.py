@@ -31,6 +31,7 @@ from codebase_rag.tests.test_incremental_inbound_deferred_targets import (
     _calls,
     _snapshot,
 )
+from codebase_rag.updater.frontends import FrontendRunner
 from evals.cgr_graph import StatefulIngestor
 
 # The caller sits in another package: a sync re-parses every Go file of an
@@ -156,10 +157,10 @@ def test_a_run_stopped_after_pass_2_still_restores_the_inbound_edges(
     # only the restore can bring its edge into Box.size back.
     _edit_after_cache(root / "box.py", root, "#")
 
-    def fail(_self: GraphUpdater) -> None:
+    def fail(_self: FrontendRunner) -> None:
         raise RuntimeError("frontend failed")
 
-    monkeypatch.setattr(GraphUpdater, "_run_java_frontend", fail)
+    monkeypatch.setattr(FrontendRunner, "run_java_frontend", fail)
     with pytest.raises(RuntimeError, match="frontend failed"):
         _index(store, root, force=False)
 
@@ -234,10 +235,10 @@ def _break_a_deferred_stage(patch: pytest.MonkeyPatch) -> None:
 
 def _break_the_java_frontend(patch: pytest.MonkeyPatch) -> None:
     # Between Pass 2 and the deferred stages.
-    def fail(_self: GraphUpdater) -> None:
+    def fail(_self: FrontendRunner) -> None:
         raise RuntimeError("stage failed")
 
-    patch.setattr(GraphUpdater, "_run_java_frontend", fail)
+    patch.setattr(FrontendRunner, "run_java_frontend", fail)
 
 
 @pytest.mark.parametrize(

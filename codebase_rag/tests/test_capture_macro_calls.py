@@ -28,8 +28,7 @@ def _updater(tmp_path: Path, mock: MagicMock, tokens: list[str]) -> GraphUpdater
         queries=queries,
         capture=resolve_capture(tokens),
     )
-    updater._pending_cpp_macro_calls = [_CALL]
-    updater._reparsed_file_keys = {_CALL.rel_path}
+    updater.frontend_runner.pending_macro_calls = [_CALL]
     return updater
 
 
@@ -41,11 +40,15 @@ def _emitted_calls(mock: MagicMock) -> int:
 
 def test_macro_call_emitted_by_default(tmp_path: Path) -> None:
     mock = MagicMock()
-    _updater(tmp_path, mock, [])._resolve_hybrid_macro_calls()
+    _updater(tmp_path, mock, []).frontend_runner.resolve_hybrid_macro_calls(
+        {_CALL.rel_path}
+    )
     assert _emitted_calls(mock) == 1
 
 
 def test_macro_call_dropped_when_calls_disabled(tmp_path: Path) -> None:
     mock = MagicMock()
-    _updater(tmp_path, mock, ["none"])._resolve_hybrid_macro_calls()
+    _updater(tmp_path, mock, ["none"]).frontend_runner.resolve_hybrid_macro_calls(
+        {_CALL.rel_path}
+    )
     assert _emitted_calls(mock) == 0

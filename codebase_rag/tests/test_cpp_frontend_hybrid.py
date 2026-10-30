@@ -19,6 +19,7 @@ from codebase_rag.tests.conftest import (
     recorded_edges,
     run_updater,
 )
+from codebase_rag.updater import frontends
 from evals.cgr_graph import StatefulIngestor
 
 pytestmark = pytest.mark.skipif(
@@ -531,7 +532,7 @@ def test_frontend_skips_repo_without_c_or_cpp_files(
     def _spy(start: Path) -> None:
         probed.append(start)
 
-    monkeypatch.setattr(gu, "find_compile_commands", _spy)
+    monkeypatch.setattr(frontends, "find_compile_commands", _spy)
     ingestor = MagicMock()
     run_updater(root, ingestor)
     assert probed == [], probed

@@ -40,8 +40,9 @@ answers in `SemanticFacts` directly rather than through a private bundle.
     node or edge in its own right: expanded macros and `#include` edges. It
     writes through the ingestor, needs the discovered `compile_commands.json`
     directory, and in HYBRID mode hands back macro uses to be attributed after
-    Pass 2. The graph builder calls it directly (`_run_cpp_frontend`); no other
-    language needs that shape, so there is no second protocol for it.
+    Pass 2. The graph builder calls it directly
+    (`FrontendRunner.run_cpp_frontend`); no other language needs that shape,
+    so there is no second protocol for it.
 
 ## The fact families
 
@@ -180,10 +181,11 @@ fails the build if you forget, so this is enforced rather than advisory.
 4. Build keys with byte columns, re-measuring if your tool reports otherwise.
 5. Omit rather than guess whenever resolution is ambiguous.
 6. Register at module scope with `register_frontend(...)` and import the
-   module in `frontends/builtin.py`. Then add a `_run_<lang>_frontend` step to
-   `GraphUpdater`, before or after the definition pass as your facts need,
-   that calls `_run_frontend`. That is the one policy every frontend shares:
-   it skips a frontend that is off or does not apply, says why when the
+   module in `frontends/builtin.py`. Then add a `run_<lang>_frontend` step to
+   `FrontendRunner` (`codebase_rag/updater/frontends.py`) that calls
+   `_run_frontend`, and call it from `GraphUpdater.run` before or after the
+   definition pass as your facts need. That is the one policy every frontend
+   shares: it skips a frontend that is off or does not apply, says why when the
    toolchain is missing, and stores the bundle in
    `DefinitionProcessor.frontend_facts[language]`, where that language's
    resolver reads it. Nothing else needs a new field or a reset.
