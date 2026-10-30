@@ -39,9 +39,10 @@ that way after a review showed the note's reason for excluding them no
 longer held.
 
 Each pair below is a dependency stated in the comments of `graph_updater.py`
-or of the `FilePass` it hands Pass 2 to, quoted in the `reason`. This
-deliberately pins PAIRS rather than
-freezing the whole sequence: inserting a new phase, or reordering two steps
+or of the collaborators it hands Pass 2 (`FilePass`) and the deferred stages
+(`DeferredResolution`) to, quoted in the `reason`. This deliberately pins
+PAIRS rather than freezing the whole sequence: inserting a new phase, or
+reordering two steps
 with no dependency between them, is legitimate and must stay easy. Only the
 documented dependencies are load-bearing, so only those are enforced -- a
 guard that failed on every legitimate edit would be deleted rather than
@@ -57,6 +58,7 @@ from typing import NamedTuple
 _PACKAGE = Path(__file__).resolve().parents[1]
 _SOURCE = _PACKAGE / "graph_updater.py"
 _FILE_PASS = _PACKAGE / "updater" / "file_pass.py"
+_DEFERRED = _PACKAGE / "updater" / "deferred.py"
 
 # Real constraints in `run` that are deliberately NOT pinned. Recorded
 # rather than silently omitted: a reader who finds these comments and no
@@ -263,8 +265,8 @@ _ORDER: tuple[tuple[str, str, str, str], ...] = (
 )
 
 
-# `run` may delegate its deferred-resolution stages to a helper so that the
-# scoped re-ingest path (#1524) can reuse the same sequence. The ordering
+# `run` delegates its deferred-resolution stages to `DeferredResolution` so
+# that the scoped re-ingest path (#1524) can reuse the same sequence. The ordering
 # constraints hold wherever those stages LIVE, not only in `run`, so the
 # guard scans `run` plus the helpers it delegates to. Without this, extracting
 # the block would make every pinned pair vacuous -- the anti-vacuity test
@@ -285,11 +287,15 @@ _ORDER: tuple[tuple[str, str, str, str], ...] = (
 #
 # `_process_files` is Pass 2 itself. Its own ordering (the stale subtrees go
 # before any file re-parses) is pinned below, so its body is scanned too, and
-# so are the `FilePass` methods it hands the pass to: a delegate's own
+# so are the `FilePass` methods it hands the pass to. A delegate's own
 # delegates are spliced in at the line it calls them, as its body is in
-# `run`. Each name maps to the file and class that define it.
+# `run`, which is how the stages `DeferredResolution` splits its sequence
+# into are reached as well. Each name maps to the file and class that define
+# it.
 _DELEGATES: dict[str, tuple[Path, str]] = {
-    "_resolve_deferred_definitions": (_SOURCE, "GraphUpdater"),
+    "resolve_deferred_definitions": (_DEFERRED, "DeferredResolution"),
+    "_resolve_cpp_definitions": (_DEFERRED, "DeferredResolution"),
+    "_resolve_parents": (_DEFERRED, "DeferredResolution"),
     "_process_files": (_SOURCE, "GraphUpdater"),
     "process_files": (_FILE_PASS, "FilePass"),
     "_clear_stale_subtrees": (_FILE_PASS, "FilePass"),

@@ -56,6 +56,7 @@ from .types_defs import (
     SimpleNameLookup,
 )
 from .updater.container_flips import ContainerFlips
+from .updater.deferred import DeferredResolution
 from .updater.dependents import DependentLookup
 from .updater.edge_carry import EdgeCarry
 from .updater.file_parse import FileParser
@@ -380,6 +381,15 @@ class GraphUpdater:
             repo_path=self.repo_path,
             frontend_runner=self.frontend_runner,
         )
+        # The definition-level stages a sync defers until Pass 2 is done.
+        self.deferred_resolution = DeferredResolution(
+            factory=self.factory,
+            document_tier=self.document_tier,
+            frontend_runner=self.frontend_runner,
+            graph_rehydrator=self.graph_rehydrator,
+            import_closure=self.import_closure,
+            known_module_paths=self.known_module_paths,
+        )
         # The files a change sends back for a re-parse beside the changed ones.
         self.dependent_lookup = DependentLookup(
             graph=self._graph,
@@ -527,150 +537,6 @@ class GraphUpdater:
             owns=self._owns,
             delete_module_entities=self._delete_module_entities,
         )
-
-    def _resolve_deferred_definitions(self, rehydrate: bool) -> dict[str, str]:
-        """Every deferred definition-level resolution that must follow Pass 2.
-
-        Shared by run() and reingest() (issue #1524): a scoped re-ingest
-        deletes a file's Module subtree like an incremental run does, so the
-        C/C++ macro, containment, forward-declaration, inheritance and
-        module-implementation relationships it held have to be rebuilt by
-        the same stages, or they vanish until a full update. Returns the
-        module qn -> path map the IMPORTS flush verifies against.
-        """
-        # First: every module of the run is named now, and everything below
-        # (inheritance, Pass 3) resolves through the import map.
-        self.factory.import_processor.point_imports_at_own_language_siblings(
-            self.factory.definition_processor.module_qn_to_file_path
-        )
-        # Every File node of the pass is buffered by now, so a Markdown link
-        # to a file parsed after its document finds its target (issue #2400).
-        self.document_tier.emit_pending_links()
-        # HYBRID must run after Pass 2: an incremental run deletes each
-        # changed file's Module subtree before re-parsing it, so macro
-        # nodes and include IMPORTS emitted earlier would be deleted with
-        # it and vanish until a forced rebuild.
-        if settings.CPP_FRONTEND == cs.CppFrontend.HYBRID:
-            self.frontend_runner.run_cpp_frontend()
-
-        go_methods = self.factory.definition_processor.resolve_deferred_go_methods()
-        if go_methods:
-            logger.info(ls.GO_RECEIVER_METHODS_RESOLVED.format(count=go_methods))
-
-        if rehydrate:
-            self.graph_rehydrator.rehydrate_registry_from_graph(
-                self._run, self._reparsed_file_keys
-            )
-
-        # After rehydration, which tells a re-export from a definition, and
-        # before every stage below that resolves through the import maps.
-        self.import_closure.restore_reached()
-
-        # After rehydration: an incremental run re-parses the `.cpp` holding
-        # an out-of-class method while its class stays in an unchanged
-        # header, and the class is only known once the registry is read back
-        # from the graph. Resolving earlier bound such a method to a
-        # module-anchored fallback qn beside its class-anchored node, in a
-        # parse-order-dependent way (issue #1552).
-        corrected = self.factory.definition_processor.resolve_deferred_cpp_methods()
-        if corrected:
-            logger.info(ls.CPP_OUT_OF_CLASS_METHODS_RESOLVED.format(count=corrected))
-
-        contained = self.factory.definition_processor.resolve_deferred_cpp_containment()
-        if contained:
-            logger.info(ls.CPP_NESTED_CONTAINMENTS_RESOLVED.format(count=contained))
-
-        # After resolve_deferred_cpp_methods: an out-of-class method's span
-        # is recorded only once its class binding resolves, and a macro use
-        # inside such a method must attribute to it, not the Module.
-        self.frontend_runner.resolve_hybrid_macro_calls(self._reparsed_file_keys)
-
-        # After rehydration: an expansion call's callee join needs spans
-        # for unchanged files too.
-        self.frontend_runner.resolve_hybrid_expansion_calls(self._reparsed_file_keys)
-
-        # After rehydration so the "does a real definition exist?" check sees
-        # definitions in files an incremental run did not re-parse; otherwise a
-        # forward declaration whose definition lives in an unchanged file is
-        # kept as a phantom and re-fragments the class.
-        kept_forwards = (
-            self.factory.definition_processor.resolve_deferred_forward_declarations()
-        )
-        if kept_forwards:
-            logger.info(ls.CPP_FORWARD_TYPES_REGISTERED.format(count=kept_forwards))
-
-        # After rehydration (an incremental run's class may live in an
-        # unchanged header) and after forward declarations (a kept
-        # forward-declared TYPE also proves the name is a class, not a
-        # macro).
-        orphan_ctors = (
-            self.factory.definition_processor.resolve_deferred_cpp_artifacts()
-        )
-        if orphan_ctors:
-            logger.info(ls.CPP_ORPHAN_CTORS_REGISTERED.format(count=orphan_ctors))
-
-        # After artifact resolution so a recovery-registered definition also
-        # counts; a prototype duplicating any bodied definition is dropped.
-        kept_prototypes = (
-            self.factory.definition_processor.resolve_deferred_cpp_prototypes()
-        )
-        if kept_prototypes:
-            logger.info(ls.CPP_PROTOTYPES_REGISTERED.format(count=kept_prototypes))
-
-        # After forward declarations so a base whose only representation is
-        # a kept forward declaration still resolves to a real node.
-        inherits = self.factory.definition_processor.resolve_deferred_cpp_inherits()
-        if inherits:
-            logger.info(ls.CPP_INHERITANCE_BASES_RESOLVED.format(count=inherits))
-
-        # IMPORTS edges and the Rust sub-scope arbitration verify against
-        # every module qn this run produced (files, inline modules,
-        # rehydrated unchanged files); an internal target that resolves
-        # nowhere emits no edge.
-        known_module_paths = self.known_module_paths()
-
-        # Inline-mod import maps commit BEFORE the deferred inheritance
-        # pass below: it re-resolves module-anchored trait guesses through
-        # them.
-        self.factory.import_processor.rust.finalise_rust_mod_scope_uses(
-            known_module_paths
-        )
-        # Same for Scala: a package import resolves only once every module
-        # declaring a package is known, rehydrated ones included (#2450).
-        self.factory.import_processor.scala.resolve_scala_project_imports(
-            known_module_paths
-        )
-
-        # Same reasoning for every other language: parents resolve against
-        # the full registry (including rehydrated definitions), and an
-        # unresolvable parent emits no edge instead of a phantom.
-        generic_inherits = self.factory.definition_processor.resolve_deferred_inherits()
-        if generic_inherits:
-            logger.info(ls.INHERITANCE_PARENTS_RESOLVED.format(count=generic_inherits))
-
-        # Every Go type and method is registered by now, rehydrated ones
-        # included, so method sets are complete (issue #2483).
-        go_joins.link_interfaces(self.factory.definition_processor)
-
-        module_impls = (
-            self.factory.definition_processor.resolve_deferred_cpp_module_impls()
-        )
-        if module_impls:
-            logger.info(ls.CPP_MODULE_IMPLS_RESOLVED.format(count=module_impls))
-
-        # Last containment step: every node-registering pass above (deferred
-        # C++ methods, Go receivers, kept forward declarations) must finish
-        # before parent qns are verified against the registry.
-        linked = self.factory.definition_processor.resolve_deferred_parent_links()
-        if linked:
-            logger.info(ls.CONTAINMENT_PARENTS_RESOLVED.format(count=linked))
-        self.graph_rehydrator.ungroup_rehydrated_non_partials()
-        # Return/parameter annotations resolve against the complete registry
-        # (issue #1527), so a type defined in a later file still gets its edge.
-        typed = self.factory.definition_processor.emit_type_edges()
-        if typed:
-            logger.info(ls.TYPE_EDGES_EMITTED, count=typed)
-        return known_module_paths
 
     @property
     def prepared_state_dir(self) -> Path:
@@ -888,7 +754,9 @@ class GraphUpdater:
             # unaffected.
             self.module_seeding.prune_stale_seeded_module_qns()
 
-            known_module_paths = self._resolve_deferred_definitions(rehydrate=not force)
+            known_module_paths = self.deferred_resolution.resolve_deferred_definitions(
+                self._run, rehydrate=not force, reparsed_keys=self._reparsed_file_keys
+            )
         finally:
             # After the deferred stages, as `_reingest_resolve` does, so an
             # edge into a re-parsed Go receiver method finds it registered
@@ -1604,7 +1472,9 @@ class GraphUpdater:
         # inheritance, Rust inline-mod arbitration): the deleted subtrees
         # held those relationships too. The registry is already live or was
         # hydrated above, so no registry read-back here.
-        known_module_paths = self._resolve_deferred_definitions(rehydrate=False)
+        known_module_paths = self.deferred_resolution.resolve_deferred_definitions(
+            self._run, rehydrate=False, reparsed_keys=self._reparsed_file_keys
+        )
         # A fresh updater read the implementer pairs back BEFORE the delete,
         # so a class the edit stopped implementing still counted as the sole
         # implementer and the re-parsed caller kept its edge (#2403).
