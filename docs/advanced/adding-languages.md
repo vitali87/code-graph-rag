@@ -171,22 +171,42 @@ holds the `CallSite` request its stages read. A new language's resolution
 goes in a resolver in its own package, built by `CallResolver` beside the
 others.
 
-The definition pass has moved its per-language method groups as well.
-`ClassIngest` (`class_ingest/ingest.py`) builds a `CppClassIngest`,
+The definition pass has moved its per-language method groups as well, and
+reaches each language through one lookup per pass. `ClassIngest`
+(`class_ingest/ingest.py`) builds a `CppClassIngest`, `CClassIngest`,
 `RustClassIngest`, `CSharpClassIngest`, `GoClassIngest`, `DartClassIngest`,
-`JsTsClassIngest`, `JavaClassIngest` and `PythonClassIngest` (each in
-`parsers/<language>/class_ingest.py`), and `FunctionIngest`
-(`function_ingest.py`) a `CppFunctionIngest`, `RustFunctionIngest`,
-`CSharpFunctionIngest`, `GoFunctionIngest`, `JsTsFunctionIngest` and
-`JavaFunctionIngest` (each in `parsers/<language>/function_ingest.py`);
-PHP's class namespace and Lua's function naming are plain functions in the
-same modules. Each collaborator holds what its language defers, such as
-C++'s forward declarations and out-of-class methods or Go's receiver
-methods, and the `resolve_deferred_*` pass that settles it. The passes keep
-the scan of a file's captures, a definition's node, identity, members and
-DEFINES edge, the non-C++ INHERITS/IMPLEMENTS resolution and the override
-walk. A new language's class or function ingestion goes in a collaborator
-in its own package, built by the pass beside the others.
+`JsTsClassIngest`, `JavaClassIngest`, `PythonClassIngest`, `PhpClassIngest`
+and `ScalaClassIngest` (each in `parsers/<language>/class_ingest.py`, C's
+beside C++'s); `FunctionIngest` (`function_ingest.py`) a
+`CppFunctionIngest`, `RustFunctionIngest`, `CSharpFunctionIngest`,
+`GoFunctionIngest`, `JsTsFunctionIngest`, `JavaFunctionIngest`,
+`PythonFunctionIngest`, `DartFunctionIngest`, `PhpFunctionIngest` and
+`LuaFunctionIngest` (each in `parsers/<language>/function_ingest.py`); and
+`DefinitionProcessor` (`definition_processor.py`) a `SqlFileIngest`,
+`GoFileIngest`, `PhpFileIngest`, `PythonFileIngest`, `JsTsFileIngest`,
+`CppFileIngest`, `JuliaFileIngest` and `RustFileIngest` (each in
+`parsers/<language>/file_ingest.py`). Each subclasses
+`LanguageClassIngest`, `LanguageFunctionIngest` or `LanguageFileIngest`
+(`parsers/language_definitions.py`), whose hooks are named for what they
+answer (`skips_class`, `class_start_point`, `externalized_base`,
+`skips_function`, `extra_relationships`, `folded_overloads`, `finalise` and
+the rest) and give the neutral answer a language with nothing of its own
+takes; a rule every language shares with a small twist is a capability
+attribute instead (`separate_declaration_spaces`,
+`keeps_claimed_method_spans`, `pins_parent_span`, `types_before_functions`).
+Each pass maps a language to its collaborator, JS and TS sharing one, and
+calls `self._for(language).<hook>(...)`. Python's docstring
+(`parsers/python/docstring.py`) and the one a TypeScript overload
+signature lends its implementation (`parsers/js_ts/overloads.py`) are plain
+functions the pass's docstring reader calls. A collaborator also holds what
+its language defers, such as C++'s forward declarations and out-of-class
+methods or Go's receiver methods, and the `resolve_deferred_*` pass that
+settles it. The passes keep the scan of a file's captures, a definition's
+node, identity, members and DEFINES edge, the non-C++ INHERITS/IMPLEMENTS
+resolution and the override walk. A new language's class, function or file
+handling goes in a collaborator in its own package that overrides the hooks
+it needs and is entered in the pass's lookup, rather than in a new
+`if language == ...` branch.
 
 ## Example: Adding C# Support
 
