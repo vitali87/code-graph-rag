@@ -102,10 +102,7 @@ class DartResolver:
         return False, None
 
     def resolve_dart_external_base_arg_member(
-        self,
-        call_name: str,
-        class_context: str | None,
-        local_var_types: dict[str, str] | None,
+        self, call: CallSite
     ) -> tuple[str, str] | None:
         # `recv.member(...)` on a receiver undeclared in first-party scope,
         # inside a class extending an EXTERNAL generic base: the only
@@ -116,7 +113,12 @@ class DartResolver:
         # the class or ANY registered ancestor (a first-party mixin's getter
         # is inherited, not handed back by the external base) all fall
         # through to the unique-member gate instead.
-        if not class_context:
+        call_name, class_context, local_var_types = (
+            call.call_name,
+            call.class_context,
+            call.local_var_types,
+        )
+        if call.language != cs.SupportedLanguage.DART or not class_context:
             return None
         type_args = self.type_inference.facts.dart_extends_type_args.get(class_context)
         if not type_args:

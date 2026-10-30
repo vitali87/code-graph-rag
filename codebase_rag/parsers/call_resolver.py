@@ -1257,11 +1257,7 @@ class CallResolver:
         if (
             language in cs.JS_TS_LANGUAGES or language == cs.SupportedLanguage.DART
         ) and cs.SEPARATOR_DOT in call_name:
-            if language == cs.SupportedLanguage.DART and (
-                result := self.dart.resolve_dart_external_base_arg_member(
-                    call_name, call.class_context, call.local_var_types
-                )
-            ):
+            if result := self.dart.resolve_dart_external_base_arg_member(call):
                 return True, result
             result = self.js_ts.resolve_js_member_call_unique(call_name, module_qn)
             if result is not None and language in cs.JS_TS_LANGUAGES:
