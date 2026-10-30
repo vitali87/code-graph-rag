@@ -41,16 +41,6 @@ from .parsers.document_tier import DocumentTier
 from .parsers.endpoint_linker import EndpointLinker
 from .parsers.factory import ProcessorFactory
 from .parsers.go import graph_joins as go_joins
-from .parsers.java.generated import (
-    discover_generated_source_roots,
-    generated_prefixes_for,
-    unignore_patterns_for,
-)
-from .parsers.java.lombok import (
-    build_delombok_overlay,
-    current_lombok_identity,
-    overlay_identity,
-)
 from .parsers.notebook import NotebookSkipped, is_notebook_path, read_notebook
 from .parsers.stdlib_extractor import flush_stdlib_cache
 from .parsers.structure_processor import StructureProcessor
@@ -66,20 +56,17 @@ from .sync.state import (
     DirMtimesCache,
     FileHashCache,
     content_digest,
-    empty_delombok_state,
     exclusion_scope,
     exclusion_state,
     hash_file,
     hash_file_with_bytes,
     is_placeholder_hash_cache,
-    load_delombok_state,
     load_dir_mtimes,
     load_exclusion_state,
     load_hash_cache,
     load_parser_fingerprint,
     load_project_stamps,
     publish_hash_cache,
-    save_delombok_state,
     save_dir_mtimes,
     save_exclusion_state,
     save_parser_fingerprint,
@@ -98,6 +85,7 @@ from .updater.dependents import DependentLookup
 from .updater.edge_carry import EdgeCarry
 from .updater.file_state import FileStateSweep
 from .updater.frontends import FrontendRunner
+from .updater.generated_sources import GeneratedSources
 from .updater.rehydration import GraphRehydrator
 from .utils import path_utils
 from .utils.json_io import load_json
@@ -577,16 +565,11 @@ class GraphUpdater:
         # spare foreign files' entries (issue #1025).
         self._frontend_owned_qns: dict[str, set[str]] = {}
         self.unignore_paths = unignore_paths
-        self._configured_unignore_paths = unignore_paths
-        self._delombok_overlay: dict[str, bytes] = {}
-        self._delombok_state_changed = False
         # Whether the LAST `reingest` call got past its read-only prologue
         # into deletes and writes. Callers persisting recovery state use it to
         # tell "nothing changed, retry freely" from "partial, needs recovery"
         # (#1705).
         self.reingest_mutated = False
-        self._delombok_stale_keys: set[str] = set()
-        self._delombok_state_candidate: dict = empty_delombok_state()
         self.exclude_paths = exclude_paths
         # None defers to the CGR_SKIP_EMBEDDINGS setting so env-configured
         # callers (MCP, workspace sync) opt out without a CLI flag.
@@ -630,6 +613,13 @@ class GraphUpdater:
             unignore_paths=self.unignore_paths,
             exclude_paths=self.exclude_paths,
             capture=self.capture,
+        )
+        # Annotation-processor output and the delombok overlay, recomputed
+        # per run.
+        self.generated_sources = GeneratedSources(
+            factory=self.factory,
+            repo_path=self.repo_path,
+            configured_unignore_paths=unignore_paths,
         )
         # What an incremental sync reads back from the graph for the files it
         # did not re-parse.
@@ -1411,11 +1401,8 @@ class GraphUpdater:
         # graph flush succeeded: a run that dies mid-way must not convince
         # its successor that the overlay-affected files were reprocessed.
         # Single-file runs never commit it.
-        if self._delombok_state_changed and self._single_file is None:
-            save_delombok_state(
-                self.prepared_state_dir / cs.DELOMBOK_STATE_FILENAME,
-                self._delombok_state_candidate,
-            )
+        if self._single_file is None:
+            self.generated_sources.commit(self.prepared_state_dir)
 
         # The parser fingerprint commits here too, for the same reason
         # (issue #1634). `_reparse_all_if_parser_changed` compares the stored stamp
@@ -2451,7 +2438,7 @@ class GraphUpdater:
         ) and _cached_files_unchanged(str(self.repo_path), old_hashes, cache_mtime)
 
     def _sync_state_forces_reparse(self) -> bool:
-        if self._delombok_state_changed:
+        if self.generated_sources.state_changed:
             # The overlay's effect changed while the checked-in bytes did
             # not; the affected files must reparse.
             return True
@@ -2497,63 +2484,9 @@ class GraphUpdater:
         return True
 
     def _register_generated_sources(self) -> None:
-        # Annotation-processor output next to a build file (issue #1140):
-        # carve those exact subtrees out of the target/build prune, register
-        # them as Java import-probe roots, and stamp their modules generated.
-        # Recomputed per run so a build that appears between watch runs is
-        # picked up; no roots leaves everything exactly as before.
-        roots = discover_generated_source_roots(self.repo_path)
-        dp = self.factory.definition_processor
-        dp.generated_source_prefixes = generated_prefixes_for(roots)
-        self.factory.import_processor.java.set_java_generated_roots(roots)
-        # Rebuilt from the CONFIGURED base every run, never accumulated: a
-        # root that vanished (target/ cleaned) must stop rescuing its subtree.
-        patterns = unignore_patterns_for(roots)
-        base = (
-            frozenset(self._configured_unignore_paths)
-            if self._configured_unignore_paths
-            else frozenset()
-        )
-        combined = base | patterns
-        resolved = combined if combined else None
-        self.unignore_paths = resolved
-        # The factory-owned processors hold their own copies for structure
-        # traversal, import-time walks and the declaration tie-break; they must
-        # prune identically or a sweep could read files the indexer skipped
-        # (issue #1088 invariant). The factory derives that set from its own
-        # slots rather than taking a list from here, because a list here failed
-        # open when a third consumer was added (#1720).
-        self.factory.propagate_unignore_paths(resolved)
-        if roots:
-            logger.info(ls.GENERATED_SOURCES_REGISTERED, count=len(roots))
-        # Delombok overlay (issue #1140 tier 1): rebuilt per run so a jar or
-        # annotation appearing between watch runs is picked up; empty means
-        # raw parsing everywhere, exactly as before. The persisted identity
-        # detects overlay CHANGES (jar appears/vanishes, version bump): the
-        # affected files' cached hashes still match the checked-in source,
-        # so without forcing them through a reparse the graph would keep
-        # stale (or never gain) generated members.
-        self._delombok_overlay = build_delombok_overlay(self.repo_path)
-        previous = load_delombok_state(
-            self.prepared_state_dir / cs.DELOMBOK_STATE_FILENAME
-        )
-        current = {
-            "identity": overlay_identity(self._delombok_overlay),
-            "keys": sorted(self._delombok_overlay),
-            # Two Lombok versions can expand identically today and diverge on
-            # the next annotation edit; the version keeps the state honest.
-            "lombok": current_lombok_identity(),
-        }
-        self._delombok_state_changed = previous != current
-        self._delombok_stale_keys = (
-            set(previous.get("keys", ())) | set(current["keys"])
-            if self._delombok_state_changed
-            else set()
-        )
-        # Held in memory until the run SUCCEEDS: persisting now would let a
-        # crashed run convince its successor that the stale files were
-        # already reprocessed. Single-file runs never commit it either.
-        self._delombok_state_candidate = current
+        # The walk keeps what this run's generated sources rescue, and so
+        # does every reader of the walk's scope (issue #1088).
+        self.unignore_paths = self.generated_sources.refresh(self.prepared_state_dir)
 
     def _single_target_vanished(self, filepath: Path) -> bool:
         """Whether `filepath` is this run's single target and its entry is gone.
@@ -2957,9 +2890,9 @@ class GraphUpdater:
         # subtree stayed in the graph beside the fresh parse whenever the
         # graph-backed `preexisting_paths` had nothing to say (issue #1657).
         forced_reparse_keys = {
-            key for key in self._delombok_stale_keys if key in old_hashes
+            key for key in self.generated_sources.stale_keys if key in old_hashes
         }
-        for stale_key in self._delombok_stale_keys:
+        for stale_key in self.generated_sources.stale_keys:
             old_hashes.pop(stale_key, None)
         # `_parser_changed`: the cache names files the old inputs parsed, so
         # every one of them is forced through a re-parse the same way an
@@ -3196,7 +3129,7 @@ class GraphUpdater:
         # The hash keys the CHECKED-IN source (cache invalidation follows
         # edits); the PARSE may consume the delomboked expansion instead,
         # so Lombok-generated members become real graph nodes (#1140).
-        file_bytes = self._delombok_overlay.get(file_key, file_bytes)
+        file_bytes = self.generated_sources.overlay.get(file_key, file_bytes)
 
         scan.current_file_keys.add(file_key)
         scan.new_hashes[file_key] = current_hash
@@ -3268,7 +3201,7 @@ class GraphUpdater:
             sorted(
                 (
                     set(old_hashes)
-                    | self._delombok_stale_keys
+                    | self.generated_sources.stale_keys
                     | forced_reparse_keys
                     | graph_only_gone
                 )
@@ -3337,7 +3270,7 @@ class GraphUpdater:
                 if not vanished(caller_path):
                     scan.new_hashes[caller_key] = cs.HASH_CACHE_UNREADABLE
                 continue
-            caller_bytes = self._delombok_overlay.get(caller_key, caller_bytes)
+            caller_bytes = self.generated_sources.overlay.get(caller_key, caller_bytes)
             scan.changed_entries.append((caller_path, caller_key, False, caller_bytes))
             present.add(caller_key)
             affected += 1
@@ -3796,7 +3729,7 @@ class GraphUpdater:
         try:
             file_bytes = file_path.read_bytes()
             overlay_key = cached_relative_path(file_path, self.repo_path).as_posix()
-            file_bytes = self._delombok_overlay.get(overlay_key, file_bytes)
+            file_bytes = self.generated_sources.overlay.get(overlay_key, file_bytes)
         except OSError as e:
             logger.error(ls.AST_RELOAD_FAILED, path=file_path, error=e)
             return None
@@ -4530,12 +4463,12 @@ class GraphUpdater:
             # definitions they gained (PR #1979).
             *self.dependent_lookup.unresolved_reference_waiters(
                 [
-                    (key, self._delombok_overlay.get(key, _read_bytes(path)))
+                    (key, self.generated_sources.overlay.get(key, _read_bytes(path)))
                     for key, path in sorted(present.items())
                     if created is not None and key in created
                 ],
                 [
-                    (key, self._delombok_overlay.get(key, _read_bytes(path)))
+                    (key, self.generated_sources.overlay.get(key, _read_bytes(path)))
                     for key, path in sorted(present.items())
                     if created is None or key not in created
                 ],
@@ -4553,7 +4486,7 @@ class GraphUpdater:
                 and caller_path.is_file()
             ):
                 affected[caller_key] = caller_path
-        for key in self._delombok_stale_keys:
+        for key in self.generated_sources.stale_keys:
             if (
                 key not in present
                 and key not in gone
@@ -4589,7 +4522,7 @@ class GraphUpdater:
         stable = self.dependent_lookup.interface_stable_modules(
             self._run,
             (
-                (present[key], key, self._delombok_overlay.get(key, data))
+                (present[key], key, self.generated_sources.overlay.get(key, data))
                 for key, data in judged.items()
             ),
         )
@@ -4717,7 +4650,7 @@ class GraphUpdater:
             # The delombok overlay stands in for the checked-in bytes exactly
             # as the batch path does (issue #1140).
             self._process_single_file(
-                path, file_bytes=self._delombok_overlay.get(key, parsed[key])
+                path, file_bytes=self.generated_sources.overlay.get(key, parsed[key])
             )
         self._rerun_frontends_for(touched_languages)
         return parsed
@@ -4937,7 +4870,8 @@ class GraphUpdater:
             self._hydrate_for_reingest()
             # Generated-source roots and the delombok overlay are per-run inputs;
             # a watcher's updater lives across many events, so refresh them per
-            # call (the batch path does the same through _delombok_stale_keys).
+            # call (the batch path does the same through
+            # `GeneratedSources.stale_keys`).
             self._register_generated_sources()
             cache_path = self.prepared_state_dir / cs.HASH_CACHE_FILENAME
             hashes = load_hash_cache(cache_path)

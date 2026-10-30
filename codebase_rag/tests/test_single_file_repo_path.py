@@ -335,7 +335,7 @@ class TestSingleFileRunScope:
     ) -> None:
         """The merge must read the cache as found, not after the stale pop.
 
-        `_process_files` pops `_delombok_stale_keys` from `old_hashes` before
+        `_process_files` pops `GeneratedSources.stale_keys` from `old_hashes` before
         the merge sees it. A single-file run does not commit the delombok
         state, so it must not act on that pop either: merging over the popped
         dict DROPS those siblings from the cache, and a dropped key takes the
@@ -346,8 +346,8 @@ class TestSingleFileRunScope:
         `run`, so setting the attributes on the updater beforehand is
         overwritten and the test would pass on broken code too. Planting a
         state file that names a key the current (empty) overlay lacks is what
-        genuinely makes `_delombok_state_changed` true and puts that key in
-        `_delombok_stale_keys`.
+        genuinely makes `GeneratedSources.state_changed` true and puts that key
+        in `GeneratedSources.stale_keys`.
         """
         repo = self._three_module_project(tmp_path)
         parsers, queries = load_parsers()
@@ -370,7 +370,7 @@ class TestSingleFileRunScope:
             queries=queries,
         )
         second.run()
-        assert second._delombok_stale_keys == {"module_b.py"}, (
+        assert second.generated_sources.stale_keys == {"module_b.py"}, (
             "fixture guard: the planted state file must make module_b.py "
             "stale, or this test cannot see the defect it exists for"
         )

@@ -145,7 +145,7 @@ def test_a_deleted_file_that_was_delombok_stale_still_joins_the_dependents_query
     def spy(self: GraphUpdater, force: bool = False) -> None:
         # Stand in for "src/Base.java was in the previous overlay": the pop at
         # the top of _process_files then removes it from old_hashes.
-        self._delombok_stale_keys = {"src/Base.java"}
+        self.generated_sources.stale_keys = {"src/Base.java"}
         real_keys = self.dependent_lookup.affected_caller_keys
 
         def record(keys: list[str]) -> list[str]:

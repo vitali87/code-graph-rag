@@ -336,7 +336,7 @@ def test_jar_version_change_alone_marks_the_state_changed(
     assert java_lombok.current_lombok_version() == "1.18.30"
     _use_jar(monkeypatch, _jar(tmp_path, "lombok-1.18.42.jar"))
     updater.run()
-    assert updater._delombok_state_changed
+    assert updater.generated_sources.state_changed
 
 
 def test_corrupt_state_file_degrades_to_the_empty_state(tmp_path: Path) -> None:
