@@ -30,9 +30,8 @@ reads as covering a rule it does not enforce.
 from __future__ import annotations
 
 import ast
-from pathlib import Path
-
-_TOOLS = Path(__file__).resolve().parents[1] / "mcp" / "tools.py"
+import inspect
+import sys
 
 # Handlers that read the graph and must therefore serialise against the
 # rebuild. Kept as a named inventory so the failure message can say which
@@ -62,7 +61,7 @@ _GRAPH_READERS = frozenset(
 
 # Handlers that touch NO graph state and therefore need no lock. This list is
 # the load-bearing one, because the guard is default-deny: every async handler
-# in tools.py must either hold the lock or be named here.
+# on the registry must either hold the lock or be named here.
 #
 # That inversion is the whole point. An earlier version checked only
 # `_GRAPH_READERS`, so a graph reader added tomorrow and forgotten from that
@@ -91,11 +90,20 @@ _NON_GRAPH_HANDLERS = frozenset(
 )
 
 # `find_duplicate_code` and `get_function_source` were absent from the list
-# above while #1443 was unmerged: the names appeared in tools.py without being
+# above while #1443 was unmerged: the names appeared in the registry without being
 # async handlers, so naming them would have failed
 # `test_every_named_handler_actually_exists` on a premise that had not landed.
 # This branch IS #1443, so they are async handlers here and are now listed.
 # The control is what said when to add them.
+
+# Async helpers that read the graph only for a caller that already holds the
+# lock, in the same scope as the read the helper's answer decides. They are not
+# handlers, so default-deny does not judge them on their own body; instead
+# every call to one must sit inside `async with self._ingestor_lock` in the
+# calling method's own body (`test_the_lock_held_helpers_run_under_the_lock`).
+# `_indexed_project` resolves the project a `_graph_query` read means: the
+# project list it reads and the read it gates must see one generation.
+_LOCK_HELD_HELPERS = frozenset({"_indexed_project"})
 
 # Handlers that mutate and already hold the lock; included so the test fails
 # if one ever loses it.
@@ -291,8 +299,24 @@ def _holds_ingestor_lock(
     return target is not None and _every_return_is_locked(target)
 
 
-def _handlers() -> dict[str, ast.AsyncFunctionDef]:
-    """Every async METHOD defined directly on a class in tools.py.
+def _registry_trees() -> list[ast.Module]:
+    """The parsed source of the registry's module and of every handler module
+    it composes, read off the class's MRO so a handler module joined to the
+    registry tomorrow is examined without editing this file."""
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    names = sorted(
+        {
+            cls.__module__
+            for cls in MCPToolsRegistry.__mro__
+            if cls.__module__.startswith("codebase_rag.mcp.")
+        }
+    )
+    return [ast.parse(inspect.getsource(sys.modules[name])) for name in names]
+
+
+def _methods() -> dict[str, ast.AsyncFunctionDef]:
+    """Every async METHOD defined directly on a class the registry is built from.
 
     Scoped to class bodies rather than `ast.walk` over the module, because the
     default-deny check treats an unrecognised async function as a failure: a
@@ -302,15 +326,62 @@ def _handlers() -> dict[str, ast.AsyncFunctionDef]:
     Direct children only, so a nested closure inside a handler is not mistaken
     for a handler of its own.
     """
-    tree = ast.parse(_TOOLS.read_text(encoding="utf-8"))
     found: dict[str, ast.AsyncFunctionDef] = {}
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.ClassDef):
-            continue
-        for item in node.body:
-            if isinstance(item, ast.AsyncFunctionDef):
-                found[item.name] = item
+    for tree in _registry_trees():
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            for item in node.body:
+                if isinstance(item, ast.AsyncFunctionDef):
+                    found[item.name] = item
     return found
+
+
+def _handlers() -> dict[str, ast.AsyncFunctionDef]:
+    """The async methods default-deny judges: all of them but the declared
+    lock-held helpers, whose call sites are checked instead."""
+    return {
+        name: node
+        for name, node in _methods().items()
+        if name not in _LOCK_HELD_HELPERS
+    }
+
+
+def _is_ingestor_lock(item: ast.withitem) -> bool:
+    expr = item.context_expr
+    return (
+        isinstance(expr, ast.Attribute)
+        and expr.attr == "_ingestor_lock"
+        and isinstance(expr.value, ast.Name)
+        and expr.value.id == "self"
+    )
+
+
+def _helper_calls_outside_the_lock(
+    caller: ast.AsyncFunctionDef | ast.FunctionDef, helpers: frozenset[str]
+) -> list[str]:
+    """The helpers this method calls as `self.<helper>(...)` outside an
+    `async with self._ingestor_lock` of its OWN body. A call in a nested scope
+    counts as outside: a closure runs whenever it is called, not where it was
+    written."""
+    locked: set[int] = set()
+    for inner in _own_scope_nodes(caller):
+        if isinstance(inner, ast.AsyncWith) and any(
+            _is_ingestor_lock(item) for item in inner.items
+        ):
+            locked.update(id(n) for n in _own_scope_nodes(inner))
+    unlocked: list[str] = []
+    for inner in ast.walk(caller):
+        if (
+            isinstance(inner, ast.Call)
+            and isinstance(inner.func, ast.Attribute)
+            and isinstance(inner.func.value, ast.Name)
+            and inner.func.value.id == "self"
+            and inner.func.attr in helpers
+            and id(inner) not in locked
+        ):
+            unlocked.append(inner.func.attr)
+    return unlocked
 
 
 def test_every_graph_reader_holds_the_ingestor_lock() -> None:
@@ -377,8 +448,9 @@ def test_the_graph_free_declarations_are_not_stale() -> None:
     unknown = sorted(_NON_GRAPH_HANDLERS - handlers.keys())
 
     assert not unknown, (
-        f"{len(unknown)} name(s) in _NON_GRAPH_HANDLERS are not handlers in "
-        "tools.py; the exemption is stale and should be removed:\n" + "\n".join(unknown)
+        f"{len(unknown)} name(s) in _NON_GRAPH_HANDLERS are not handlers on "
+        "the registry; the exemption is stale and should be removed:\n"
+        + "\n".join(unknown)
     )
 
 
@@ -564,8 +636,8 @@ def test_every_named_handler_actually_exists() -> None:
     unknown = sorted(_GRAPH_READERS - handlers.keys())
 
     assert not unknown, (
-        f"{len(unknown)} name(s) in _GRAPH_READERS are not handlers in "
-        "tools.py; the guard is checking nothing for them:\n" + "\n".join(unknown)
+        f"{len(unknown)} name(s) in _GRAPH_READERS are not handlers on the "
+        "registry; the guard is checking nothing for them:\n" + "\n".join(unknown)
     )
 
 
@@ -594,3 +666,69 @@ def test_the_mutating_handlers_still_hold_the_lock() -> None:
         f"{len(missing)} rebuild/mutate handler(s) lost _ingestor_lock, which "
         "makes every reader's lock decorative:\n" + "\n".join(missing)
     )
+
+
+def test_the_lock_held_helpers_run_under_the_lock() -> None:
+    """The check that replaces default-deny for `_LOCK_HELD_HELPERS`.
+
+    A lock-held helper reads the graph without taking the lock, so exempting
+    it from default-deny is only sound if nothing can call it unlocked. Every
+    call, from any method on the registry, must sit inside `async with
+    self._ingestor_lock` in the caller's own body; an unlocked call would read
+    the project list from one generation and gate a read of another.
+    """
+    methods = _methods()
+
+    unknown = sorted(_LOCK_HELD_HELPERS - methods.keys())
+    assert not unknown, (
+        f"{len(unknown)} name(s) in _LOCK_HELD_HELPERS are not async methods on "
+        "the registry; the declaration is stale:\n" + "\n".join(unknown)
+    )
+
+    unlocked = sorted(
+        f"{name} calls {helper}"
+        for tree in _registry_trees()
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ClassDef)
+        for item in node.body
+        if isinstance(item, ast.AsyncFunctionDef | ast.FunctionDef)
+        for name in [item.name]
+        for helper in _helper_calls_outside_the_lock(item, _LOCK_HELD_HELPERS)
+    )
+    assert not unlocked, (
+        f"{len(unlocked)} call(s) to a lock-held helper run outside "
+        "`async with self._ingestor_lock`:\n" + "\n".join(unlocked)
+    )
+
+
+def test_the_lock_held_helper_check_sees_an_unlocked_call() -> None:
+    """A self-check on `_helper_calls_outside_the_lock`, by mutation on
+    synthetic sources: a call inside the lock passes, the same call outside it
+    or in a closure inside the lock is reported."""
+    source = """
+class R:
+    async def locked(self):
+        async with self._ingestor_lock:
+            return await self._indexed_project(None)
+
+    async def unlocked(self):
+        await self._indexed_project(None)
+
+    async def closure(self):
+        async with self._ingestor_lock:
+            async def later():
+                return await self._indexed_project(None)
+            return later
+"""
+    cls = ast.parse(source).body[0]
+    assert isinstance(cls, ast.ClassDef)
+    found = {
+        item.name: _helper_calls_outside_the_lock(item, _LOCK_HELD_HELPERS)
+        for item in cls.body
+        if isinstance(item, ast.AsyncFunctionDef)
+    }
+    assert found == {
+        "locked": [],
+        "unlocked": ["_indexed_project"],
+        "closure": ["_indexed_project"],
+    }
