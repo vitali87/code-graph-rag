@@ -43,6 +43,8 @@ def discover_js_workspace_packages(repo_path: Path) -> list[tuple[str, Path]]:
                 manifest.read_text(encoding=cs.ENCODING_UTF8_SIG)
             )
         except (OSError, ValueError):
+            # An unreadable or malformed manifest names no package; an
+            # import by that name stays unresolved.
             continue
         if not isinstance(manifest_data, dict):
             continue

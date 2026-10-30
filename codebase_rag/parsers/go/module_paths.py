@@ -62,6 +62,8 @@ def _has_importable_root_package(anchor: Path) -> bool:
         try:
             text = path.read_text(encoding=cs.ENCODING_UTF8)
         except (OSError, ValueError):
+            # An unreadable file declares no package; the other files in
+            # the directory still decide.
             continue
         clause = _root_package_clause(text)
         if clause is not None and clause != cs.GO_PACKAGE_MAIN:

@@ -292,6 +292,8 @@ def _compile_and_remember(
         elif built is False:
             _remember_failure(marker, version)
     except OSError:
+        # The marker only spares a retry: without it the next sync builds
+        # again, which is what a missing marker means.
         pass
     return bool(built)
 

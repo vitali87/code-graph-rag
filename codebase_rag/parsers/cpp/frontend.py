@@ -930,6 +930,9 @@ def _parse_and_collect(collector: _Collector, compdb_dir: Path) -> None:
                 options=ci.TranslationUnit.PARSE_DETAILED_PROCESSING_RECORD,
             )
         except ci.TranslationUnitLoadError:
+            # A translation unit libclang cannot load (a missing header, a
+            # flag it rejects) adds no facts; tree-sitter still covers its
+            # file.
             continue
         _walk(tu.cursor, collector)
         collector.process_includes(tu)

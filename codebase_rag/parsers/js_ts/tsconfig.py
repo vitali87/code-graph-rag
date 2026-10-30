@@ -41,6 +41,9 @@ def load_jsonc(path: Path) -> dict | None:
         try:
             parsed = loads_json(source)
         except ValueError:
+            # Strict JSON failed: the comment-stripped text is tried next,
+            # and after it the file is given up on, as the comment above
+            # says.
             continue
         return parsed if isinstance(parsed, dict) else None
     return None

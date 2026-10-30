@@ -6,7 +6,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 from loguru import logger
-from tree_sitter import Node, QueryCursor
+from tree_sitter import Node, QueryCursor, QueryError
 
 from ... import constants as cs
 from ... import logs as ls
@@ -317,7 +317,9 @@ class JsTypeInferenceEngine:
                     cursor = QueryCursor(q)
                     captures = cursor.captures(caller_node)
                     return captures.get("declarator", [])
-                except Exception:  # noqa: BLE001, S112 - a failed query falls through to the next language
+                except QueryError:
+                    # A grammar that cannot compile the query (one without
+                    # the node type) falls through to the next language.
                     continue
         return None
 

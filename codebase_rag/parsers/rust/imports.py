@@ -393,6 +393,8 @@ class RustImporter:
                     encoding=cs.RS_ENCODING_UTF8, errors="ignore"
                 )
             except OSError:
+                # A failed read keeps the stem's cached declarations, for
+                # the storm reason above.
                 pass
             else:
                 top_level = rs_scan.top_level_only(
@@ -1160,6 +1162,8 @@ class RustImporter:
             try:
                 pkg = member.relative_to(self.repo_path).parts
             except ValueError:
+                # A member outside the repo (`members = ["../shared"]`) has
+                # no project qn to rewrite its crate name to.
                 continue
             if (root := self._rust_member_lib_root(member, manifest)) is not None:
                 key = name.replace(cs.CHAR_HYPHEN, cs.CHAR_UNDERSCORE)

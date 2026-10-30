@@ -45,6 +45,7 @@ def anchor_hash(definition: Node, decorators: Sequence[str] = ()) -> str:
         try:
             return bridge.anchor_hash(definition, decorators)
         except NotBorrowed:
+            # A node the bridge cannot read exactly runs the Python twin.
             pass
     return python_anchor_hash(definition, decorators)
 

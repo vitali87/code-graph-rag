@@ -67,6 +67,8 @@ def _lombok_used(build_dir: Path) -> bool:
             ):
                 return True
         except OSError:
+            # An unreadable build file is no evidence of Lombok; the next
+            # one is still read.
             continue
     return False
 
@@ -115,6 +117,8 @@ def _overlay_from_root(
                 # would only waste overlay memory.
                 continue
         except OSError:
+            # Either copy unreadable: the file is parsed raw, as every file
+            # outside the overlay is.
             continue
         overlay[original.relative_to(repo_path).as_posix()] = expanded_bytes
     return overlay

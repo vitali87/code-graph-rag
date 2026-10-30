@@ -46,6 +46,8 @@ def discover_dart_packages(
                 encoding=cs.ENCODING_UTF8_SIG
             )
         except (OSError, ValueError):
+            # An unreadable or non-UTF-8 pubspec names no package; its
+            # imports stay unresolved, as an undeclared package's do.
             continue
         if (match := _PUBSPEC_NAME.search(text)) is None:
             continue

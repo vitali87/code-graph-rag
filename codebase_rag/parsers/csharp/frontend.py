@@ -289,9 +289,7 @@ def _parse_payload(stdout: str, stderr: str = "") -> SemanticFacts:
 
 def _arg_flows(rows: list) -> dict[CallSiteKey, dict[int, frozenset[str]]]:
     # Keyed exactly like the call facts, so the resolver's existing
-    # location join applies unchanged. A malformed row is dropped rather
-    # than failing the whole payload: worst case those arguments fall back
-    # to the lexical evaluation.
+    # location join applies unchanged.
     flows: dict[CallSiteKey, dict[int, frozenset[str]]] = {}
     for row in rows:
         try:
@@ -306,6 +304,9 @@ def _arg_flows(rows: list) -> dict[CallSiteKey, dict[int, frozenset[str]]]:
                 symbol for symbol in row["symbols"] if isinstance(symbol, str)
             )
         except (KeyError, TypeError, ValueError):
+            # A malformed row is dropped rather than failing the whole
+            # payload: worst case those arguments fall back to the lexical
+            # evaluation.
             continue
         if symbols:
             flows.setdefault(key, {})[index] = symbols
@@ -314,7 +315,7 @@ def _arg_flows(rows: list) -> dict[CallSiteKey, dict[int, frozenset[str]]]:
 
 def _bind_flows(rows: list) -> dict[CallSiteKey, frozenset[str]]:
     # Keyed at the declarator's NAME token, the same (file, line, byte col,
-    # name) shape as every other family. Malformed rows drop.
+    # name) shape as every other family.
     flows: dict[CallSiteKey, frozenset[str]] = {}
     for row in rows:
         try:
@@ -328,6 +329,8 @@ def _bind_flows(rows: list) -> dict[CallSiteKey, frozenset[str]]:
                 symbol for symbol in row["symbols"] if isinstance(symbol, str)
             )
         except (KeyError, TypeError, ValueError):
+            # A malformed row drops: that declarator falls back to the
+            # heuristics, as every join key that misses does.
             continue
         if symbols:
             flows[key] = symbols
@@ -335,8 +338,7 @@ def _bind_flows(rows: list) -> dict[CallSiteKey, frozenset[str]]:
 
 
 def _out_writes(rows: list) -> dict[CallSiteKey, dict[int, str]]:
-    # Keyed exactly like the call facts. Malformed rows drop: worst case that
-    # argument keeps today's lexical behaviour.
+    # Keyed exactly like the call facts.
     writes: dict[CallSiteKey, dict[int, str]] = {}
     for row in rows:
         try:
@@ -349,6 +351,8 @@ def _out_writes(rows: list) -> dict[CallSiteKey, dict[int, str]]:
             index = int(row["index"])
             symbol = row["symbol"]
         except (KeyError, TypeError, ValueError):
+            # A malformed row drops: worst case that argument keeps today's
+            # lexical behaviour.
             continue
         if isinstance(symbol, str) and symbol:
             writes.setdefault(key, {})[index] = symbol

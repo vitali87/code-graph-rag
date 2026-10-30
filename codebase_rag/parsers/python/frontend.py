@@ -204,6 +204,8 @@ def run_python_frontend(repo_path: Path, files: list[Path]) -> SemanticFacts:
             source = file_path.read_text(encoding=cs.ENCODING_UTF8)
             tree = ast.parse(source)
         except (OSError, SyntaxError, ValueError):
+            # A file Jedi could not read either: its calls keep the
+            # tree-sitter resolution, as every site without a fact does.
             continue
         collector = _CallSite()
         collector.visit(tree)
@@ -212,6 +214,8 @@ def run_python_frontend(repo_path: Path, files: list[Path]) -> SemanticFacts:
         try:
             rel_file = file_path.resolve().relative_to(repo_path).as_posix()
         except ValueError:
+            # A file that resolves outside the repo (a symlink out of it)
+            # has no repo-relative key for a fact to join on.
             continue
         script = jedi.Script(path=str(file_path), project=project)
         deadline = time.monotonic() + _FILE_BUDGET_SECONDS

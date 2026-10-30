@@ -1,6 +1,8 @@
 from unittest.mock import MagicMock
 
 import pytest
+import tree_sitter_python
+from tree_sitter import Language
 
 from codebase_rag import constants as cs
 from codebase_rag.parsers.import_processor import ImportProcessor
@@ -455,12 +457,13 @@ class TestGetDeclaratorsViaQueryException:
         mock_function_registry: MagicMock,
         mock_find_method_ast_node: MagicMock,
     ) -> None:
-        bad_language_obj = MagicMock()
-        bad_language_obj.side_effect = Exception("bad query")
+        # Python's grammar has no `variable_declarator`, so the query does
+        # not compile against it: the real failure the handler absorbs.
+        no_declarator_language = Language(tree_sitter_python.language())
 
         queries = {
-            cs.SupportedLanguage.JS: {"language": bad_language_obj},
-            cs.SupportedLanguage.TS: {"language": bad_language_obj},
+            cs.SupportedLanguage.JS: {"language": no_declarator_language},
+            cs.SupportedLanguage.TS: {"language": no_declarator_language},
         }
 
         engine = JsTypeInferenceEngine(

@@ -475,6 +475,7 @@ def _walk_scope_facts(scope: Node) -> ScopeFacts:
         try:
             return scope_facts_from_native(bridge.scope_facts(scope))
         except native_trees.NotBorrowed:
+            # A node the bridge cannot read exactly runs the Python twin.
             pass
     return python_scope_facts(scope)
 
@@ -580,6 +581,7 @@ def _walk_inner_scope_only_names(caller: Node) -> frozenset[str]:
         try:
             return frozenset(bridge.inner_scope_only_names(caller))
         except native_trees.NotBorrowed:
+            # A node the bridge cannot read exactly runs the Python twin.
             pass
     return python_inner_scope_only_names(caller)
 

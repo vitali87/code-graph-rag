@@ -816,6 +816,8 @@ def _collect_link_sites(
         try:
             inline_root = inline_parser.parse(text).root_node
         except (RuntimeError, ValueError):
+            # One span the inline grammar cannot read costs only its own
+            # links, never the rest of the document's.
             continue
         sites.extend(_link_sites_in(inline_root, text, span.start_byte, definitions))
     sites.sort()
@@ -1283,6 +1285,9 @@ class DocumentTier:
                 root = self._parser.parse(source).root_node
                 relative = path.relative_to(self._repo_root)
             except (OSError, RuntimeError, ValueError):
+                # A document that cannot be read or parsed, or lies outside
+                # the repo, offers no anchors: a link into it lands on its
+                # File node, as a link without a fragment does.
                 pass
             else:
                 module_qn = flat_module_qn(

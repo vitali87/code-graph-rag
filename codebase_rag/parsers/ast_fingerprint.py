@@ -46,6 +46,7 @@ def compute_ast_fingerprint(func_node: Node) -> AstFingerprintResult | None:
         try:
             native = bridge.ast_fingerprint(func_node)
         except NotBorrowed:
+            # A node the bridge cannot read exactly runs the Python twin.
             pass
         else:
             return None if native is None else AstFingerprintResult(*native)

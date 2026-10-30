@@ -186,6 +186,9 @@ class LuaImporter:
             if (self.repo_path / f"{dotted}{cs.EXT_LUA}").is_file():
                 return f"{self.project_name}{cs.SEPARATOR_DOT}{dotted}"
         except OSError:
+            # A path the filesystem refuses to stat (too long, unreadable)
+            # names no file of the repo: the bare module name stands, as
+            # for a missing file.
             pass
 
         return dotted

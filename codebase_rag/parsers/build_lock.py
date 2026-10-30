@@ -151,6 +151,7 @@ def release_build_lock(handle: BuildLock | None) -> None:
             os.lseek(handle.fd, 0, os.SEEK_SET)
             msvcrt.locking(handle.fd, msvcrt.LK_UNLCK, 1)
     except OSError:
+        # Closing the descriptor below releases the lock all the same.
         pass
     finally:
         os.close(handle.fd)

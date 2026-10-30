@@ -182,6 +182,8 @@ def _parse_payload(stdout: str, stderr: str = "") -> SemanticFacts:
                 (site["file"], int(site["line"]), int(site["col"]), site["name"])
             )
         except (KeyError, TypeError, ValueError):
+            # As for a call row: a malformed external row drops, and that
+            # site is left to the heuristics.
             continue
     return facts
 

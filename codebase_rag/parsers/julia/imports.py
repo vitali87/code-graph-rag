@@ -329,6 +329,8 @@ class JuliaImporter:
                 try:
                     tree = parser.parse(path.read_bytes())
                 except OSError:
+                    # A file that vanished or cannot be read declares no
+                    # module this index could point an import at.
                     continue
                 stack: list[tuple[Node, list[str]]] = [(tree.root_node, [])]
                 while stack:
@@ -343,6 +345,9 @@ class JuliaImporter:
                         chain = [*chain, name]
                     stack.extend((child, chain) for child in node.children)
         except OSError:
+            # The walk itself failed (a directory went away under it): what
+            # it indexed so far stands, and an import it never reached stays
+            # unresolved, as one into a file outside the repo does.
             pass
         return index
 
@@ -487,6 +492,8 @@ class JuliaImporter:
                 for key in dict.fromkeys((stem, stem.lower(), _julia_snake_case(stem))):
                     index.setdefault(key, set()).add(rel)
         except OSError:
+            # As in `_scan_julia_modules`: the stems seen before the walk
+            # failed stand, and a file it never reached matches no import.
             pass
         self._julia_file_stems = index
         return index
