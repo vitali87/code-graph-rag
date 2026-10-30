@@ -8,8 +8,6 @@ import sites, the deferred IMPORTS edges and their flush) and hands a Python
 file's imports to the `PythonImporter` it builds."""
 
 from functools import lru_cache
-from pathlib import Path
-from typing import Protocol
 
 from loguru import logger
 from tree_sitter import Node
@@ -17,7 +15,7 @@ from tree_sitter import Node
 from ... import constants as cs
 from ... import logs as ls
 from ...node_text import safe_decode_text
-from ...types_defs import PropertyDict
+from ..import_host import ImporterContext, ImportSiteHost
 from .source_roots import discover_python_source_roots, resolve_via_source_roots
 
 
@@ -32,21 +30,6 @@ def _is_conditional_import_node(import_node: Node) -> bool:
             return True
         current = current.parent
     return False
-
-
-class PythonImportHost(Protocol):
-    """What the Python importer calls on the import processor that builds it:
-    the import-site record every language's bindings go through, whose sites
-    ride on the IMPORTS edges the processor's flush emits."""
-
-    def _record_import_site(
-        self,
-        scope_qn: str,
-        local_name: str,
-        node: Node | None,
-        imported_name: str | None = None,
-        owner_qn: str | None = None,
-    ) -> PropertyDict | None: ...
 
 
 class PythonImporter:
@@ -64,17 +47,13 @@ class PythonImporter:
 
     def __init__(
         self,
-        host: PythonImportHost,
-        repo_path: Path,
-        project_name: str,
-        import_mapping: dict[str, dict[str, str]],
+        host: ImportSiteHost,
+        context: ImporterContext,
     ) -> None:
         self._host = host
-        self.repo_path = repo_path
-        self.project_name = project_name
-        # The processor's own map, shared rather than copied: an import binds
-        # its names in the map every later pass reads.
-        self.import_mapping = import_mapping
+        self.repo_path = context.repo_path
+        self.project_name = context.project_name
+        self.import_mapping = context.import_mapping
         # Names bound by a CONDITIONAL Python import (nested under if/try --
         # click's `if WIN: from ._winconsole import X`): the dead-code fan-out
         # treats a same-named local def as the mutually-exclusive fallback
@@ -89,7 +68,7 @@ class PythonImporter:
         # first-party code (issue #2360).
         self.python_import_rebinds: dict[str, dict[str, set[str]]] = {}
 
-        repo_is_package = (repo_path / cs.INIT_PY).is_file()
+        repo_is_package = (context.repo_path / cs.INIT_PY).is_file()
 
         # A repo whose top-level package shares the repo's name (a django
         # clone is django/django, celery is celery/celery) makes written
@@ -98,7 +77,7 @@ class PythonImporter:
         # (django.django.http), while in a flat layout (repo root doubles
         # as the installed package) the written path already IS the qn.
         self._project_named_package = (
-            not repo_is_package and (repo_path / project_name).is_dir()
+            not repo_is_package and (context.repo_path / context.project_name).is_dir()
         )
 
         # Python packages under nested source roots (src-layout, monorepo packages,
@@ -106,11 +85,13 @@ class PythonImporter:
         # their repo-relative path, so absolute imports of them cannot resolve by the
         # import-name == path assumption. Discover the name -> dotted-path map once
         # so those imports resolve first-party.
-        py_source_roots = discover_python_source_roots(repo_path)
+        py_source_roots = discover_python_source_roots(context.repo_path)
 
         @lru_cache(maxsize=4096)
         def _map_py_source_root_cached(module_name: str) -> str | None:
-            return resolve_via_source_roots(repo_path, py_source_roots, module_name)
+            return resolve_via_source_roots(
+                context.repo_path, py_source_roots, module_name
+            )
 
         self._map_py_source_root = _map_py_source_root_cached
 
@@ -120,11 +101,11 @@ class PythonImporter:
             # only under the package name (project_name.child), never as bare
             # top-level names, so a bare top-level import resolves externally.
             if repo_is_package:
-                return module_name == project_name
+                return module_name == context.project_name
             # A top-level stub with no `.py` is a local module too: it is what
             # a compiled extension's definitions are indexed from (#2445).
-            return (repo_path / module_name).is_dir() or any(
-                (repo_path / f"{module_name}{ext}").is_file()
+            return (context.repo_path / module_name).is_dir() or any(
+                (context.repo_path / f"{module_name}{ext}").is_file()
                 for ext in cs.PY_EXTENSIONS
             )
 
@@ -177,7 +158,7 @@ class PythonImporter:
         local_name = module_name.split(cs.SEPARATOR_DOT)[0]
         full_name = self._resolve_import_full_name(module_name, local_name)
         self.import_mapping[module_qn][local_name] = full_name
-        self._host._record_import_site(module_qn, local_name, child.parent)
+        self._host.record_import_site(module_qn, local_name, child.parent)
         logger.debug(ls.IMP_IMPORT, local=local_name, full=full_name)
 
     def _handle_aliased_import(self, child: Node, module_qn: str) -> None:
@@ -194,7 +175,7 @@ class PythonImporter:
         top_level = module_name.split(cs.SEPARATOR_DOT)[0]
         full_name = self._resolve_import_full_name(module_name, top_level)
         self.import_mapping[module_qn][alias] = full_name
-        self._host._record_import_site(module_qn, alias, child.parent)
+        self._host.record_import_site(module_qn, alias, child.parent)
         logger.debug(ls.IMP_ALIASED_IMPORT, alias=alias, full=full_name)
 
     def _resolve_import_full_name(self, module_name: str, top_level: str) -> str:
@@ -294,7 +275,7 @@ class PythonImporter:
         if is_wildcard:
             wildcard_key = f"*{base_module}"
             self.import_mapping[module_qn][wildcard_key] = base_module
-            self._host._record_import_site(
+            self._host.record_import_site(
                 module_qn, wildcard_key, import_node, cs.IMPORTED_NAME_WILDCARD
             )
             logger.debug(ls.IMP_WILDCARD_IMPORT, module=base_module)
@@ -303,7 +284,7 @@ class PythonImporter:
         for local_name, original_name in imported_items:
             full_name = f"{base_module}{cs.SEPARATOR_DOT}{original_name}"
             self.import_mapping[module_qn][local_name] = full_name
-            self._host._record_import_site(
+            self._host.record_import_site(
                 module_qn, local_name, import_node, original_name
             )
             logger.debug(ls.IMP_FROM_IMPORT, local=local_name, full=full_name)

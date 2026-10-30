@@ -11,7 +11,7 @@ import re
 from collections.abc import Iterator, Mapping
 from functools import lru_cache
 from pathlib import Path
-from typing import NamedTuple, Protocol
+from typing import NamedTuple
 
 from loguru import logger
 from tree_sitter import Node
@@ -21,6 +21,7 @@ from ... import logs as ls
 from ...node_text import safe_decode_text, safe_decode_with_fallback
 from ...types_defs import FunctionRegistryTrieProtocol, PropertyDict
 from ...utils.path_utils import cached_relative_path
+from ..import_host import ImporterContext, ImportSiteHost
 from .commonjs_exports import commonjs_export_bindings, is_commonjs_module
 from .module_paths import discover_js_workspace_packages, resolve_js_workspace_import
 from .reexports import JsExport, follow_js_reexports
@@ -131,21 +132,6 @@ def _is_known_js_module(qn: str, known_module_paths: Mapping[str, str]) -> bool:
     return path is not None and path.endswith(cs.JS_TS_MODULE_EXTENSIONS)
 
 
-class JsTsImportHost(Protocol):
-    """What the JS/TS importer calls on the import processor that builds it:
-    the import-site record every language's bindings go through, whose sites
-    ride on the IMPORTS edges the processor's flush emits."""
-
-    def _record_import_site(
-        self,
-        scope_qn: str,
-        local_name: str,
-        node: Node | None,
-        imported_name: str | None = None,
-        owner_qn: str | None = None,
-    ) -> PropertyDict | None: ...
-
-
 class JsTsImporter:
     __slots__ = (
         "_host",
@@ -164,18 +150,14 @@ class JsTsImporter:
 
     def __init__(
         self,
-        host: JsTsImportHost,
-        repo_path: Path,
-        project_name: str,
-        import_mapping: dict[str, dict[str, str]],
+        host: ImportSiteHost,
+        context: ImporterContext,
         module_qn_to_file_path: dict[str, Path],
     ) -> None:
         self._host = host
-        self.repo_path = repo_path
-        self.project_name = project_name
-        # The processor's own map, shared rather than copied: an import binds
-        # its names in the map every later pass reads.
-        self.import_mapping = import_mapping
+        self.repo_path = context.repo_path
+        self.project_name = context.project_name
+        self.import_mapping = context.import_mapping
         # The factory's shared module -> file map, filled before a file's
         # imports are parsed. A JS/TS relative specifier resolves against the
         # importer's DIRECTORY, which only the file path spells reliably: a
@@ -213,10 +195,10 @@ class JsTsImporter:
         # once from the repo-root tsconfig so `@/util` imports resolve to the real
         # first-party module instead of being dropped as external.
         self.js_path_aliases: list[tuple[str, str, bool]] = load_ts_path_aliases(
-            repo_path
+            context.repo_path
         )
         self.js_base_urls: tuple[tuple[str, str | None], ...] = load_ts_base_urls(
-            repo_path
+            context.repo_path
         )
 
         # A JS/TS monorepo imports its own packages by manifest NAME
@@ -224,14 +206,14 @@ class JsTsImporter:
         # map every first-party package.json name to its directory once, the
         # same way the import processor maps go.mod module directives
         # (issue #945).
-        js_workspace_packages = discover_js_workspace_packages(repo_path)
+        js_workspace_packages = discover_js_workspace_packages(context.repo_path)
 
         @lru_cache(maxsize=4096)
         def _map_js_workspace_import_cached(
             import_path: str, require: bool = False
         ) -> str | None:
             return resolve_js_workspace_import(
-                js_workspace_packages, import_path, repo_path, require
+                js_workspace_packages, import_path, context.repo_path, require
             )
 
         self._map_js_workspace_import = _map_js_workspace_import_cached
@@ -475,7 +457,7 @@ class JsTsImporter:
                 self.import_mapping[current_module][imported_name] = (
                     f"{source_module}{cs.IMPORT_DEFAULT_SUFFIX}"
                 )
-                self._host._record_import_site(
+                self._host.record_import_site(
                     current_module, imported_name, statement, cs.TS_EXPORT_DEFAULT
                 )
                 self._note_js_bare_import(
@@ -539,7 +521,7 @@ class JsTsImporter:
         self.import_mapping[current_module][local_name] = (
             f"{source_module}{cs.SEPARATOR_DOT}{imported_name}"
         )
-        self._host._record_import_site(
+        self._host.record_import_site(
             current_module, local_name, statement, imported_name
         )
         self._note_js_bare_import(current_module, local_name, is_aliased_scheme)
@@ -566,7 +548,7 @@ class JsTsImporter:
             return
         namespace_name = safe_decode_with_fallback(identifier)
         self.import_mapping[current_module][namespace_name] = source_module
-        self._host._record_import_site(
+        self._host.record_import_site(
             current_module,
             namespace_name,
             statement,
@@ -617,7 +599,7 @@ class JsTsImporter:
             # `const fs = require('fs')`: bind the whole module.
             var_name = safe_decode_with_fallback(name_node)
             self.import_mapping[current_module][var_name] = resolved_module
-            self._host._record_import_site(current_module, var_name, decl_node)
+            self._host.record_import_site(current_module, var_name, decl_node)
             self._note_js_package_import(current_module, var_name, target.is_package)
             logger.debug(ls.IMP_JS_REQUIRE, var=var_name, module=resolved_module)
         elif name_node.type == cs.TS_OBJECT_PATTERN:
@@ -626,7 +608,7 @@ class JsTsImporter:
             for local, imported in _js_destructured_names(name_node):
                 full = f"{resolved_module}{cs.SEPARATOR_DOT}{imported}"
                 self.import_mapping[current_module][local] = full
-                self._host._record_import_site(
+                self._host.record_import_site(
                     current_module, local, decl_node, imported
                 )
                 self._note_js_package_import(current_module, local, target.is_package)
@@ -673,7 +655,7 @@ class JsTsImporter:
             if child.type == cs.TS_JS_STAR:
                 wildcard_key = f"*{source_module}"
                 self.import_mapping[current_module][wildcard_key] = source_module
-                self._host._record_import_site(
+                self._host.record_import_site(
                     current_module, wildcard_key, export_node, cs.IMPORTED_NAME_WILDCARD
                 )
                 logger.debug(ls.IMP_JS_NAMESPACE_REEXPORT, module=source_module)
@@ -702,7 +684,7 @@ class JsTsImporter:
         self.import_mapping[current_module][exported_name] = (
             f"{source_module}{cs.SEPARATOR_DOT}{original_name}"
         )
-        self._host._record_import_site(
+        self._host.record_import_site(
             current_module,
             exported_name,
             export_node,

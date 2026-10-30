@@ -6,38 +6,21 @@ and the repo's own pubspec packages a `package:` URI can name.
 import sites, the deferred IMPORTS edges and their flush) and hands a Dart
 file's imports to the `DartImporter` it builds."""
 
-from pathlib import Path
 from typing import Protocol
 
 from tree_sitter import Node
 
 from ... import constants as cs
-from ...types_defs import PropertyDict
+from ..import_host import ImporterContext, ImportSiteHost, WalkPolicyHost
 from . import utils as dart_utils
 from .package_paths import discover_dart_packages
 
 
-class DartImportHost(Protocol):
+class DartImportHost(ImportSiteHost, WalkPolicyHost, Protocol):
     """What the Dart importer reads and calls on the import processor that
-    builds it: the indexer's walk policy, and the import-site record every
-    language's bindings go through.
-
-    The policy is read here rather than copied in: the factory re-resolves
-    `unignore_paths` on processors it has already built
-    (`propagate_unignore_paths`), and a stale copy would miss a pubspec in a
-    tree the indexer walks, or find one in a tree it skips (issue #1088)."""
-
-    exclude_paths: frozenset[str] | None
-    unignore_paths: frozenset[str] | None
-
-    def _record_import_site(
-        self,
-        scope_qn: str,
-        local_name: str,
-        node: Node | None,
-        imported_name: str | None = None,
-        owner_qn: str | None = None,
-    ) -> PropertyDict | None: ...
+    builds it: the import-site record, and the indexer's walk policy, read
+    live so a pubspec in a tree the indexer walks is never missed, nor one
+    in a tree it skips found."""
 
 
 class DartImporter:
@@ -55,16 +38,12 @@ class DartImporter:
     def __init__(
         self,
         host: DartImportHost,
-        repo_path: Path,
-        project_name: str,
-        import_mapping: dict[str, dict[str, str]],
+        context: ImporterContext,
     ) -> None:
         self._host = host
-        self.repo_path = repo_path
-        self.project_name = project_name
-        # The processor's own map, shared rather than copied: a directive
-        # binds its name in the map every later pass reads.
-        self.import_mapping = import_mapping
+        self.repo_path = context.repo_path
+        self.project_name = context.project_name
+        self.import_mapping = context.import_mapping
         # Dart: {module qn: {import prefix: [byte spans where a local or
         # parameter of that name shadows it]}} (issue #2033).
         self.dart_prefix_shadows: dict[str, dict[str, list[tuple[int, int]]]] = {}
@@ -104,7 +83,7 @@ class DartImporter:
             if full_name := self.dart_import_target(uri, module_qn):
                 local_name = dart_utils.local_name(uri)
                 self.import_mapping[module_qn][local_name] = full_name
-                self._host._record_import_site(module_qn, local_name, import_node, uri)
+                self._host.record_import_site(module_qn, local_name, import_node, uri)
                 if dart_utils.exposes_library(import_node):
                     self.dart_exposed_libraries.setdefault(module_qn, []).append(
                         full_name
@@ -183,7 +162,7 @@ class DartImporter:
             self.import_mapping[module_qn][prefix] = full_name
             # Its IMPORTS edge carries a span and alias like every
             # other binding (PR #2040).
-            self._host._record_import_site(module_qn, prefix, import_node, uri)
+            self._host.record_import_site(module_qn, prefix, import_node, uri)
 
     def reset_dart_path_caches(self) -> None:
         # Same contract as reset_rust_path_caches: a pubspec added, removed

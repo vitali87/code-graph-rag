@@ -94,7 +94,7 @@ _RESOLVED_RELS = frozenset(
 class CallProcessor:
     __slots__ = (
         "ingestor",
-        "_note_unresolved",
+        "note_unresolved",
         "_site_node",
         "_resolution",
         "verdict",
@@ -174,7 +174,7 @@ class CallProcessor:
 
         # The import processor owns the record (#1568); every pass notes
         # through it so the empty-name guard lives in one place.
-        self._note_unresolved = import_processor.note_unresolved
+        self.note_unresolved = import_processor.note_unresolved
         self._resolver = CallResolver(
             function_registry=function_registry,
             import_processor=import_processor,
@@ -571,7 +571,7 @@ class CallProcessor:
         # that file to this caller, so only the waiter list (issue #1568) can
         # send it back for a re-parse. The whole normalized name is recorded:
         # `billing.fee` waits on that routine only, never on `audit.fee`.
-        self._note_unresolved(module_qn, call_name)
+        self.note_unresolved(module_qn, call_name)
         targets = self._resolver.sql_routine_targets(call_name)
         if not targets:
             # A builtin (`count`, `now`) or a routine no indexed file defines.

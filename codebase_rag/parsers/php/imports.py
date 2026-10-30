@@ -7,14 +7,11 @@ namespaces need not mirror directories (issue #1185).
 import sites, the deferred IMPORTS edges and their flush) and hands a PHP
 file's imports to the `PhpImporter` it builds."""
 
-from pathlib import Path
-from typing import Protocol
-
 from tree_sitter import Node
 
 from ... import constants as cs
 from ...node_text import safe_decode_with_fallback
-from ...types_defs import PropertyDict
+from ..import_host import ImporterContext, ImportSiteHost
 from .namespaces import declared_namespace
 
 
@@ -37,21 +34,6 @@ def _php_use_clause_binding(clause: Node) -> tuple[str, str] | None:
     return imported_path, parts[-1] if parts else imported_path
 
 
-class PhpImportHost(Protocol):
-    """What the PHP importer calls on the import processor that builds it:
-    the import-site record every language's bindings go through, whose sites
-    ride on the IMPORTS edges the processor's flush emits."""
-
-    def _record_import_site(
-        self,
-        scope_qn: str,
-        local_name: str,
-        node: Node | None,
-        imported_name: str | None = None,
-        owner_qn: str | None = None,
-    ) -> PropertyDict | None: ...
-
-
 class PhpImporter:
     __slots__ = (
         "_host",
@@ -64,17 +46,13 @@ class PhpImporter:
 
     def __init__(
         self,
-        host: PhpImportHost,
-        repo_path: Path,
-        project_name: str,
-        import_mapping: dict[str, dict[str, str]],
+        host: ImportSiteHost,
+        context: ImporterContext,
     ) -> None:
         self._host = host
-        self.repo_path = repo_path
-        self.project_name = project_name
-        # The processor's own map, shared rather than copied: a `use` binds
-        # its name in the map every later pass reads.
-        self.import_mapping = import_mapping
+        self.repo_path = context.repo_path
+        self.project_name = context.project_name
+        self.import_mapping = context.import_mapping
         # Local names brought in by a PHP `use function A\B\c` import, keyed by
         # module. A PHP namespace path never matches cgr's file-path qn (a global
         # helper declares `namespace Illuminate\Support` from
@@ -160,7 +138,7 @@ class PhpImporter:
                 continue
             imported_path, local_name = binding
             self.import_mapping[module_qn][local_name] = imported_path
-            self._host._record_import_site(
+            self._host.record_import_site(
                 module_qn,
                 local_name,
                 use_node,
@@ -186,5 +164,5 @@ class PhpImporter:
                 parts = path_str.split(cs.SEPARATOR_DOT)
                 local_name = parts[-1] if parts else path_str
                 self.import_mapping[module_qn][local_name] = path_str
-                self._host._record_import_site(module_qn, local_name, node, path_str)
+                self._host.record_import_site(module_qn, local_name, node, path_str)
                 return

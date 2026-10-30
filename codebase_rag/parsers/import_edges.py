@@ -26,6 +26,7 @@ from .. import logs as ls
 from ..services import IngestorProtocol
 from ..types_defs import DeferredImportEdge, PropertyDict, StemSiblingModules
 from .csharp.imports import CSharpImporter
+from .import_host import UnresolvedNameHost
 from .import_targets import (
     module_alias_map,
     stem_sibling_modules,
@@ -109,19 +110,17 @@ class _KnownModules(NamedTuple):
     csharp_namespace_modules: dict[str, dict[str, set[str]]]
 
 
-class ImportEdgeHost(Protocol):
+class ImportEdgeHost(UnresolvedNameHost, Protocol):
     """What the import edges read and call on the import processor that
     owns them: the graph they are written to (None: parse only), the
     repository and project the module qns derive from, the stdlib layout an
     external target's module path is read from, and the record of a name a
-    module could not resolve (issue #1568)."""
+    module could not resolve."""
 
     ingestor: IngestorProtocol | None
     repo_path: Path
     project_name: str
     stdlib_extractor: StdlibExtractor
-
-    def note_unresolved(self, module_qn: str, name: str) -> None: ...
 
 
 class ImportEdges:

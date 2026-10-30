@@ -8,8 +8,6 @@ import sites, the deferred IMPORTS edges and their flush) and hands a Java
 file's imports to the `JavaImporter` it builds."""
 
 from functools import lru_cache
-from pathlib import Path
-from typing import Protocol
 
 from loguru import logger
 from tree_sitter import Node
@@ -17,7 +15,8 @@ from tree_sitter import Node
 from ... import constants as cs
 from ... import logs as ls
 from ...node_text import safe_decode_with_fallback
-from ...types_defs import JavaStaticImport, PropertyDict
+from ...types_defs import JavaStaticImport
+from ..import_host import ImporterContext, ImportSiteHost
 
 
 def _java_import_shape(import_node: Node) -> tuple[str | None, bool, bool]:
@@ -35,21 +34,6 @@ def _java_import_shape(import_node: Node) -> tuple[str | None, bool, bool]:
     return imported_path, is_static, is_wildcard
 
 
-class JavaImportHost(Protocol):
-    """What the Java importer calls on the import processor that builds it:
-    the import-site record every language's bindings go through, whose sites
-    ride on the IMPORTS edges the processor's flush emits."""
-
-    def _record_import_site(
-        self,
-        scope_qn: str,
-        local_name: str,
-        node: Node | None,
-        imported_name: str | None = None,
-        owner_qn: str | None = None,
-    ) -> PropertyDict | None: ...
-
-
 class JavaImporter:
     __slots__ = (
         "_host",
@@ -64,17 +48,13 @@ class JavaImporter:
 
     def __init__(
         self,
-        host: JavaImportHost,
-        repo_path: Path,
-        project_name: str,
-        import_mapping: dict[str, dict[str, str]],
+        host: ImportSiteHost,
+        context: ImporterContext,
     ) -> None:
         self._host = host
-        self.repo_path = repo_path
-        self.project_name = project_name
-        # The processor's own map, shared rather than copied: an import binds
-        # its names in the map every later pass reads.
-        self.import_mapping = import_mapping
+        self.repo_path = context.repo_path
+        self.project_name = context.project_name
+        self.import_mapping = context.import_mapping
         # Java `import static` brings a class's static MEMBERS into bare-call
         # scope. import_mapping keys `import static C.m;` like a type import,
         # and files `import static C.*;` (members of CLASS C) under the same
@@ -106,7 +86,7 @@ class JavaImporter:
                 *cs.JAVA_MAVEN_SOURCE_ROOTS,
                 *self.java_generated_roots,
             ):
-                base = repo_path.joinpath(*root)
+                base = context.repo_path.joinpath(*root)
                 if base.joinpath(*parts).is_dir() or any(
                     base.joinpath(
                         *parts[: end - 1], f"{parts[end - 1]}{cs.EXT_JAVA}"
@@ -156,7 +136,7 @@ class JavaImporter:
         if is_wildcard:
             logger.debug(ls.IMP_JAVA_WILDCARD, path=resolved_path)
             self.import_mapping[module_qn][f"*{resolved_path}"] = resolved_path
-            self._host._record_import_site(
+            self._host.record_import_site(
                 module_qn,
                 f"*{resolved_path}",
                 import_node,
@@ -165,7 +145,7 @@ class JavaImporter:
             return
         imported_name = resolved_path.rsplit(cs.SEPARATOR_DOT, maxsplit=1)[-1]
         self.import_mapping[module_qn][imported_name] = resolved_path
-        self._host._record_import_site(
+        self._host.record_import_site(
             module_qn, imported_name, import_node, imported_name
         )
         logger.debug(

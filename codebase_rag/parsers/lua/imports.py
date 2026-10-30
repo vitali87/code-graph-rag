@@ -6,14 +6,11 @@ resolving to its module qn and anything else staying the written path.
 import sites, the deferred IMPORTS edges and their flush) and hands a Lua
 file's imports to the `LuaImporter` it builds."""
 
-from pathlib import Path
-from typing import Protocol
-
 from tree_sitter import Node
 
 from ... import constants as cs
 from ...node_text import safe_decode_text
-from ...types_defs import PropertyDict
+from ..import_host import ImporterContext, ImportSiteHost
 from . import utils as lua_utils
 
 
@@ -29,37 +26,18 @@ def _lua_relative_module(import_path: str, current_module: str) -> str:
     return cs.SEPARATOR_DOT.join(parts)
 
 
-class LuaImportHost(Protocol):
-    """What the Lua importer calls on the import processor that builds it:
-    the import-site record every language's bindings go through, whose sites
-    ride on the IMPORTS edges the processor's flush emits."""
-
-    def _record_import_site(
-        self,
-        scope_qn: str,
-        local_name: str,
-        node: Node | None,
-        imported_name: str | None = None,
-        owner_qn: str | None = None,
-    ) -> PropertyDict | None: ...
-
-
 class LuaImporter:
     __slots__ = ("_host", "repo_path", "project_name", "import_mapping")
 
     def __init__(
         self,
-        host: LuaImportHost,
-        repo_path: Path,
-        project_name: str,
-        import_mapping: dict[str, dict[str, str]],
+        host: ImportSiteHost,
+        context: ImporterContext,
     ) -> None:
         self._host = host
-        self.repo_path = repo_path
-        self.project_name = project_name
-        # The processor's own map, shared rather than copied: a `require`
-        # binds its name in the map every later pass reads.
-        self.import_mapping = import_mapping
+        self.repo_path = context.repo_path
+        self.project_name = context.project_name
+        self.import_mapping = context.import_mapping
 
     def _record_lua_require(
         self,
@@ -73,7 +51,7 @@ class LuaImporter:
         )
         resolved = self._resolve_lua_module_path(module_path, module_qn)
         self.import_mapping[module_qn][local_name] = resolved
-        self._host._record_import_site(module_qn, local_name, call_node, module_path)
+        self._host.record_import_site(module_qn, local_name, call_node, module_path)
 
     def parse_imports(
         self,
@@ -102,7 +80,7 @@ class LuaImporter:
             elif self._lua_is_stdlib_call(call_node):
                 if stdlib_module := self._lua_extract_stdlib_module(call_node):
                     self.import_mapping[module_qn][stdlib_module] = stdlib_module
-                    self._host._record_import_site(
+                    self._host.record_import_site(
                         module_qn, stdlib_module, call_node, stdlib_module
                     )
 

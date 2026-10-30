@@ -19,41 +19,18 @@ from ... import constants as cs
 from ... import logs as ls
 from ...types_defs import FunctionLocation, FunctionSpanKey, PropertyDict
 from ...utils.path_utils import should_keep_dir, should_skip_rel_file
+from ..import_host import ImporterContext, ImportQueueHost, WalkPolicyHost
 from ..utils import import_site_props, is_project_qn
 from . import cargo, cargo_semver
 from . import source_scan as rs_scan
 from . import utils as rs_utils
 
 
-class RustImportHost(Protocol):
+class RustImportHost(ImportQueueHost, WalkPolicyHost, Protocol):
     """What the Rust importer reads and calls on the import processor that
-    builds it: the indexer's walk policy, and the import-site record and
-    deferred-edge queue every language's imports go through.
-
-    The policy is read here rather than copied in: the factory re-resolves
-    `unignore_paths` on processors it has already built
-    (`propagate_unignore_paths`), and a stale copy would sweep and read
-    declarations in files the indexer skips (issues #1088, #1100)."""
-
-    exclude_paths: frozenset[str] | None
-    unignore_paths: frozenset[str] | None
-
-    def defer_import_edge(
-        self,
-        module_qn: str,
-        full_name: str,
-        language: cs.SupportedLanguage,
-        site: PropertyDict | None = None,
-    ) -> None: ...
-
-    def _record_import_site(
-        self,
-        scope_qn: str,
-        local_name: str,
-        node: Node | None,
-        imported_name: str | None = None,
-        owner_qn: str | None = None,
-    ) -> PropertyDict | None: ...
+    builds it: the import-site record and deferred-edge queue, and the
+    indexer's walk policy, read live so the sweep never reads declarations
+    in files the indexer skips (issue #1100)."""
 
 
 def _kept_mod_scope_writers(
@@ -113,18 +90,16 @@ class RustImporter:
     def __init__(
         self,
         host: RustImportHost,
-        repo_path: Path,
-        project_name: str,
-        import_mapping: dict[str, dict[str, str]],
+        context: ImporterContext,
         import_sites: dict[str, dict[str, PropertyDict]],
     ) -> None:
         self._host = host
-        self.repo_path = repo_path
-        self.project_name = project_name
-        # The processor's own maps, shared rather than copied: a `use` binds
-        # its names in the map every later pass reads, and its site rides on
-        # the IMPORTS edge the processor's flush emits.
-        self.import_mapping = import_mapping
+        self.repo_path = context.repo_path
+        self.project_name = context.project_name
+        self.import_mapping = context.import_mapping
+        # The processor's own site record, shared rather than copied: a
+        # binding's site rides on the IMPORTS edge the processor's flush
+        # emits.
         self._import_sites = import_sites
         self._init_rust_path_caches()
         self._init_rust_scope_maps()
@@ -539,7 +514,7 @@ class RustImporter:
             ):
                 continue
             resolved_imports[imported_name] = resolved
-            site = self._host._record_import_site(
+            site = self._host.record_import_site(
                 effective_qn,
                 imported_name,
                 use_node,

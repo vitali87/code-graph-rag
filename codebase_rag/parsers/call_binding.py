@@ -26,6 +26,7 @@ from .call_resolver import CallResolver
 from .callable_flow import CallableFlow
 from .definition_facts import DefinitionFacts
 from .edge_site import EdgeSiteHost
+from .import_host import UnresolvedNameHost
 from .language_calls import CallScan
 from .scope_boundaries import flow_scope_boundaries
 from .string_call import StringCallSpec, string_call_target
@@ -77,13 +78,11 @@ def _exceeds_receiver_chain_cap(call_node: Node) -> bool:
     return False
 
 
-class BindingHost(EdgeSiteHost, VerdictHost, Protocol):
+class BindingHost(EdgeSiteHost, VerdictHost, UnresolvedNameHost, Protocol):
     """What a call node's binding calls on the call pass that builds it: the
-    record of a name a module could not resolve (issue #1568). Beside the
-    edge site, which the binding sets to the node it scans, and the verdict,
-    reset per node and read when its edges are emitted."""
-
-    def _note_unresolved(self, module_qn: str, name: str) -> None: ...
+    record of a name a module could not resolve. Beside the edge site, which
+    the binding sets to the node it scans, and the verdict, reset per node
+    and read when its edges are emitted."""
 
 
 class CallBinding:
@@ -400,7 +399,7 @@ class CallBinding:
             # its simple name so that file's arrival re-parses this
             # one (issue #1568). Not where an import would be needed
             # anyway: the importer lookup finds those waiters.
-            self._host._note_unresolved(ctx.module_qn, written_simple_name(call_name))
+            self._host.note_unresolved(ctx.module_qn, written_simple_name(call_name))
         ctx.calls.ingest_unresolved_call(ctx, call_node, call_name)
         if ctx.calls.references_arguments:
             # The callee is not first-party (a framework/stdlib call such as

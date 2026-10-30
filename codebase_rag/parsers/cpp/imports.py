@@ -20,7 +20,12 @@ from tree_sitter import Node
 from ... import constants as cs
 from ... import logs as ls
 from ...node_text import safe_decode_text, safe_decode_with_fallback
-from ...types_defs import PropertyDict
+from ..import_host import (
+    ImporterContext,
+    ImportSiteHost,
+    UnresolvedNameHost,
+    WalkPolicyHost,
+)
 from .qn import build_module_qn_map
 
 
@@ -86,29 +91,11 @@ def _cpp_import_module_name(template_args: Node) -> str | None:
     return module_name
 
 
-class CppImportHost(Protocol):
+class CppImportHost(ImportSiteHost, WalkPolicyHost, UnresolvedNameHost, Protocol):
     """What the C/C++ importer reads and calls on the import processor that
-    builds it: the indexer's walk policy, the unresolved-reference record, and
-    the import-site record every language's bindings go through.
-
-    The policy is read here rather than copied in: the factory re-resolves
-    `unignore_paths` on processors it has already built
-    (`propagate_unignore_paths`), and a stale copy would resolve an include
-    against files the indexer skips, or miss a rescued tree (issue #1088)."""
-
-    exclude_paths: frozenset[str] | None
-    unignore_paths: frozenset[str] | None
-
-    def note_unresolved(self, module_qn: str, name: str) -> None: ...
-
-    def _record_import_site(
-        self,
-        scope_qn: str,
-        local_name: str,
-        node: Node | None,
-        imported_name: str | None = None,
-        owner_qn: str | None = None,
-    ) -> PropertyDict | None: ...
+    builds it: the import-site record, the unresolved-reference record, and
+    the indexer's walk policy, read live so an include never resolves
+    against files the indexer skips, nor misses a tree it rescues."""
 
 
 class CppImporter:
@@ -126,16 +113,12 @@ class CppImporter:
     def __init__(
         self,
         host: CppImportHost,
-        repo_path: Path,
-        project_name: str,
-        import_mapping: dict[str, dict[str, str]],
+        context: ImporterContext,
     ) -> None:
         self._host = host
-        self.repo_path = repo_path
-        self.project_name = project_name
-        # The processor's own map, shared rather than copied: an include
-        # binds its name in the map every later pass reads.
-        self.import_mapping = import_mapping
+        self.repo_path = context.repo_path
+        self.project_name = context.project_name
+        self.import_mapping = context.import_mapping
         # Lazy: replayed walk of every eligible repo file, built on the first C++
         # include so non-C++ projects never pay for it.
         self._cpp_module_qn_map: dict[str, str] | None = None
@@ -231,9 +214,7 @@ class CppImporter:
         if displaced is not None and displaced != full_name:
             self._cpp_shadowed_include_targets.add((module_qn, displaced))
         self.import_mapping[module_qn][local_name] = full_name
-        self._host._record_import_site(
-            module_qn, local_name, include_node, include_path
-        )
+        self._host.record_import_site(module_qn, local_name, include_node, include_path)
         logger.debug(
             ls.IMP_CPP_INCLUDE,
             local=local_name,
@@ -311,7 +292,7 @@ class CppImporter:
             local_name = module_name
             full_name = f"{cs.IMPORT_STD_PREFIX}{module_name}"
             self.import_mapping[module_qn][local_name] = full_name
-            self._host._record_import_site(
+            self._host.record_import_site(
                 module_qn, local_name, import_node, module_name
             )
             logger.debug(ls.IMP_CPP_MODULE, local=local_name, full=full_name)

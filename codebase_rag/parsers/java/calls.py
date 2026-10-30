@@ -21,6 +21,7 @@ from ...types_defs import LanguageQueries
 from ..call_host import RecordedCallerHost, VerdictHost
 from ..class_ingest.identity import build_nested_qualified_name_for_class
 from ..edge_site import EdgeWriterHost, host_site_scoped
+from ..import_host import UnresolvedNameHost
 from ..language_calls import UNDECIDED_CALLEE, Callee, CallScan, LanguageCalls
 from ..utils import written_simple_name
 from . import utils as java_utils
@@ -32,7 +33,9 @@ if TYPE_CHECKING:
     from ..call_resolver import CallResolver
 
 
-class JavaCallHost(EdgeWriterHost, VerdictHost, RecordedCallerHost, Protocol):
+class JavaCallHost(
+    EdgeWriterHost, VerdictHost, RecordedCallerHost, UnresolvedNameHost, Protocol
+):
     """What Java call resolution sets and calls on the call pass that builds
     it. Beside the edge site, the verdict, which a tie between overloads
     lowers to `overload`; the record of a name no definition answers yet,
@@ -41,8 +44,6 @@ class JavaCallHost(EdgeWriterHost, VerdictHost, RecordedCallerHost, Protocol):
     enum constant runs, the edge emitter, a definition's recorded location
     and own name, and the caller scan, which gives a class's member the
     qualified name the class pass does."""
-
-    def _note_unresolved(self, module_qn: str, name: str) -> None: ...
 
     def _get_node_name(self, node: Node, field: str = cs.FIELD_NAME) -> str | None: ...
 
@@ -251,7 +252,7 @@ class JavaCallResolution(LanguageCalls):
             constructing=True,
         )
         if callee is None:
-            self._host._note_unresolved(ctx.module_qn, written_simple_name(type_name))
+            self._host.note_unresolved(ctx.module_qn, written_simple_name(type_name))
             return
         if self._resolver.function_registry.get(callee[1]) == cs.NodeLabel.CLASS:
             self._host.construction.redirect_construction(
@@ -354,7 +355,7 @@ class JavaCallResolution(LanguageCalls):
         if not edges:
             # Java sees same-package definitions without an import, so the
             # name is the only link to a file that may define it later.
-            self._host._note_unresolved(ctx.module_qn, parts.method_name)
+            self._host.note_unresolved(ctx.module_qn, parts.method_name)
             return None
         self._host._resolution = (
             cs.EdgeResolution.OVERLOAD if len(edges) > 1 else self._host.verdict

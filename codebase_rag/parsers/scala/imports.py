@@ -28,6 +28,7 @@ from ...types_defs import (
     ScalaPackageScan,
 )
 from ...utils.path_utils import base_module_qn, walk_eligible_files
+from ..import_host import ImporterContext, ImportQueueHost, WalkPolicyHost
 from . import utils as scala_utils
 
 # A module known to declare no Scala package: not a Scala file, or unreadable.
@@ -36,42 +37,19 @@ _EMPTY_SCALA_SCAN = ScalaPackageScan(
 )
 
 
-class ScalaImportHost(Protocol):
+class ScalaImportHost(ImportQueueHost, WalkPolicyHost, Protocol):
     """What the Scala importer reads and calls on the import processor that
-    builds it: the indexer's walk policy, the ingestor and registry, and the
-    import-site record and deferred-edge queue every language's imports go
-    through.
-
-    The policy is read here rather than copied in: the factory re-resolves
-    `unignore_paths` on processors it has already built
-    (`propagate_unignore_paths`), and a stale copy would look for an unscanned
-    module's file where the indexer does not (issue #1088)."""
+    builds it: the ingestor and registry, the import-site record and the
+    deferred-edge queue, with the drop of a module's queued edges its
+    requeue needs, and the indexer's walk policy, read live so an unscanned
+    module's file is looked for where the indexer looks."""
 
     ingestor: IngestorProtocol | None
     function_registry: FunctionRegistryTrieProtocol | None
-    exclude_paths: frozenset[str] | None
-    unignore_paths: frozenset[str] | None
-
-    def defer_import_edge(
-        self,
-        module_qn: str,
-        full_name: str,
-        language: cs.SupportedLanguage,
-        site: PropertyDict | None = None,
-    ) -> None: ...
 
     def drop_deferred_import_edges(
         self, module_qns: set[str], language: cs.SupportedLanguage
     ) -> None: ...
-
-    def _record_import_site(
-        self,
-        scope_qn: str,
-        local_name: str,
-        node: Node | None,
-        imported_name: str | None = None,
-        owner_qn: str | None = None,
-    ) -> PropertyDict | None: ...
 
 
 class ScalaImporter:
@@ -93,18 +71,16 @@ class ScalaImporter:
     def __init__(
         self,
         host: ScalaImportHost,
-        repo_path: Path,
-        project_name: str,
-        import_mapping: dict[str, dict[str, str]],
+        context: ImporterContext,
         import_sites: dict[str, dict[str, PropertyDict]],
     ) -> None:
         self._host = host
-        self.repo_path = repo_path
-        self.project_name = project_name
-        # The processor's own maps, shared rather than copied: an import binds
-        # its names in the map every later pass reads, and its site rides on
-        # the IMPORTS edge the processor's flush emits.
-        self.import_mapping = import_mapping
+        self.repo_path = context.repo_path
+        self.project_name = context.project_name
+        self.import_mapping = context.import_mapping
+        # The processor's own site record, shared rather than copied: a
+        # binding's site rides on the IMPORTS edge the processor's flush
+        # emits.
         self._import_sites = import_sites
         # Scala packages need not mirror directories (issue #2450): each
         # file's package clauses, scanned when it is parsed, say which
@@ -244,7 +220,7 @@ class ScalaImporter:
             package = cs.SEPARATOR_DOT.join(prefix_parts)
             key = f"{cs.SCALA_WILDCARD_PREFIX}{package}"
             self.import_mapping[module_qn][key] = package
-            self._host._record_import_site(module_qn, key, import_node)
+            self._host.record_import_site(module_qn, key, import_node)
             return
 
         if selectors is not None:
@@ -256,7 +232,7 @@ class ScalaImporter:
         # everything is also the full path.
         full_path = cs.SEPARATOR_DOT.join(prefix_parts)
         self.import_mapping[module_qn][prefix_parts[-1]] = full_path
-        self._host._record_import_site(
+        self._host.record_import_site(
             module_qn, prefix_parts[-1], import_node, prefix_parts[-1]
         )
 
@@ -284,7 +260,7 @@ class ScalaImporter:
         original, alias = names
         full = f"{package}{cs.SEPARATOR_DOT}{original}" if package else original
         self.import_mapping[module_qn][alias] = full
-        self._host._record_import_site(module_qn, alias, import_node, original)
+        self._host.record_import_site(module_qn, alias, import_node, original)
 
     def _parse_scala_selectors(
         self, selectors: Node, package: str, module_qn: str, import_node: Node
@@ -301,13 +277,13 @@ class ScalaImporter:
                 # `import a.{b, _}` -- a wildcard alongside explicit names.
                 key = f"{cs.SCALA_WILDCARD_PREFIX}{package}"
                 self.import_mapping[module_qn][key] = package
-                self._host._record_import_site(module_qn, key, import_node)
+                self._host.record_import_site(module_qn, key, import_node)
             elif child.type == cs.TS_IDENTIFIER:
                 if name := safe_decode_with_fallback(child):
                     self.import_mapping[module_qn][name] = (
                         f"{package}{cs.SEPARATOR_DOT}{name}"
                     )
-                    self._host._record_import_site(module_qn, name, import_node, name)
+                    self._host.record_import_site(module_qn, name, import_node, name)
 
     def resolve_scala_project_imports(self, known_module_paths: dict[str, str]) -> None:
         """Point Scala imports of the project's own packages at its modules.

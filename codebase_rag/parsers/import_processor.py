@@ -38,6 +38,7 @@ from .csharp.imports import CSharpImporter
 from .dart.imports import DartImporter
 from .go.imports import GoImporter
 from .import_edges import ImportEdges
+from .import_host import ImporterContext
 from .java.imports import JavaImporter
 from .js_ts.imports import JsTsImporter
 from .js_ts.reexports import js_ts_module_qn
@@ -165,133 +166,27 @@ class ImportProcessor:
         )
 
     def _build_importers(self, module_qn_to_file_path: dict[str, Path]) -> None:
-        # Each language's importer. Python's, Go's and JS/TS's layouts are
-        # discovered as they are built, in that order.
-        repo_path, project_name = self.repo_path, self.project_name
-        # Julia's using/import parsing and the file, stem and declared-module
-        # indices its targets resolve through: the importer writes the import
-        # map above, under a nested module's own key where one encloses the
-        # statement, and records its sites through this processor.
-        self.julia = JuliaImporter(
-            self,
-            repo_path=repo_path,
-            project_name=project_name,
-            import_mapping=self.import_mapping,
+        # Each language's importer, which writes the import map above and
+        # records its sites through this processor (each module's docstring
+        # says what else its importer keeps). Python's, Go's and JS/TS's
+        # layouts are discovered as they are built, so they are built in that
+        # order and their discoveries log in it.
+        context = ImporterContext(
+            self.repo_path, self.project_name, self.import_mapping
         )
-        # C and C++ `#include` and C++20 module parsing, the repo walk an
-        # include resolves against, and the includes and declarations the
-        # deferral below treats apart: the importer writes the import map
-        # above and records its sites and unresolved includes through this
-        # processor.
-        self.cpp = CppImporter(
-            self,
-            repo_path=repo_path,
-            project_name=project_name,
-            import_mapping=self.import_mapping,
-        )
-        # Rust's `use` parsing, its Cargo crate, workspace and target layout,
-        # and the per-scope maps the call resolver reads: the importer writes
-        # the import map and sites above and queues its edges through this
-        # processor, whose flush verifies them like every language's.
-        self.rust = RustImporter(
-            self,
-            repo_path=repo_path,
-            project_name=project_name,
-            import_mapping=self.import_mapping,
-            import_sites=self._import_sites,
-        )
-        # Java's import and `import static` parsing and the source-root
-        # layout a local import's qn carries: the importer writes the import
-        # map above and records its sites through this processor.
-        self.java = JavaImporter(
-            self,
-            repo_path=repo_path,
-            project_name=project_name,
-            import_mapping=self.import_mapping,
-        )
-        # C#'s `using` parsing, each file's declared namespaces and the
-        # evidence that pins a namespace `using` to the modules it uses: the
-        # importer writes the import map above and records its sites and
-        # requeued edges through this processor, whose flush emits them.
-        self.csharp = CSharpImporter(
-            self,
-            repo_path=repo_path,
-            project_name=project_name,
-            import_mapping=self.import_mapping,
-        )
-        # Scala's import parsing and the package index its imports resolve
-        # through once every module is known: the importer writes the import
-        # map and reads the sites above, and queues its edges through this
-        # processor, whose flush lands the project's own on their modules.
-        self.scala = ScalaImporter(
-            self,
-            repo_path=repo_path,
-            project_name=project_name,
-            import_mapping=self.import_mapping,
-            import_sites=self._import_sites,
-        )
-        # Lua's `require` and `pcall(require, ...)` parsing: the importer
-        # writes the import map above and records its sites through this
-        # processor.
-        self.lua = LuaImporter(
-            self,
-            repo_path=repo_path,
-            project_name=project_name,
-            import_mapping=self.import_mapping,
-        )
-        # Dart's directive parsing, its `as` prefixes and barrel exports, and
-        # the repo's own pubspec packages: the importer writes the import map
-        # above and records its sites through this processor.
-        self.dart = DartImporter(
-            self,
-            repo_path=repo_path,
-            project_name=project_name,
-            import_mapping=self.import_mapping,
-        )
-        # PHP's `use` and include/require parsing and each module's declared
-        # namespace: the importer writes the import map above and records its
-        # sites through this processor.
-        self.php = PhpImporter(
-            self,
-            repo_path=repo_path,
-            project_name=project_name,
-            import_mapping=self.import_mapping,
-        )
-
-        # Python's import and from-import parsing and the package layout a
-        # written module name resolves against: the importer writes the import
-        # map above and records its sites through this processor. Built
-        # first of the layouts, so its source-root discovery logs first.
-        self.python = PythonImporter(
-            self,
-            repo_path=repo_path,
-            project_name=project_name,
-            import_mapping=self.import_mapping,
-        )
-
-        # Go's import parsing and the go.mod layout that rewrites a local
-        # import path to its package's qn: the importer writes the import map
-        # above and records its sites through this processor. Built after
-        # the Python layout above, whose discovery logs first.
-        self.go = GoImporter(
-            self,
-            repo_path=repo_path,
-            project_name=project_name,
-            import_mapping=self.import_mapping,
-        )
-
-        # JS/TS's import and `require` parsing, its tsconfig and workspace
-        # layout, and the per-module export tables and package names the call
-        # resolver reads: the importer writes the import map above and records
-        # its sites through this processor, whose flush verifies its edges
-        # like every language's. Built after the Python and Go layouts above,
-        # so their discoveries log before its workspace discovery does.
+        self.julia = JuliaImporter(self, context)
+        self.cpp = CppImporter(self, context)
+        self.rust = RustImporter(self, context, import_sites=self._import_sites)
+        self.java = JavaImporter(self, context)
+        self.csharp = CSharpImporter(self, context)
+        self.scala = ScalaImporter(self, context, import_sites=self._import_sites)
+        self.lua = LuaImporter(self, context)
+        self.dart = DartImporter(self, context)
+        self.php = PhpImporter(self, context)
+        self.python = PythonImporter(self, context)
+        self.go = GoImporter(self, context)
         self.js_ts = JsTsImporter(
-            self,
-            repo_path=repo_path,
-            project_name=project_name,
-            import_mapping=self.import_mapping,
-            module_qn_to_file_path=module_qn_to_file_path,
+            self, context, module_qn_to_file_path=module_qn_to_file_path
         )
 
     def _language_importers(self) -> dict[cs.SupportedLanguage, LanguageImporter]:
@@ -509,7 +404,7 @@ class ImportProcessor:
             self._import_site_writers.pop((module_qn, name), None)
         self._import_sites[module_qn] = own
 
-    def _record_import_site(
+    def record_import_site(
         self,
         scope_qn: str,
         local_name: str,

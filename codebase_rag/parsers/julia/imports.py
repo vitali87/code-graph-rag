@@ -16,8 +16,8 @@ from tree_sitter import Language, Node, Parser
 
 from ... import constants as cs
 from ...node_text import safe_decode_text
-from ...types_defs import PropertyDict
 from ...utils.path_utils import should_skip_rel_file
+from ..import_host import ImporterContext, ImportSiteHost, WalkPolicyHost
 
 _JULIA_SNAKE_RE_ACRONYM = re.compile(r"([A-Z]+)([A-Z][a-z])")
 _JULIA_SNAKE_RE_WORD = re.compile(r"([a-z0-9])([A-Z])")
@@ -70,27 +70,11 @@ def _julia_snake_case(name: str) -> str:
     return _JULIA_SNAKE_RE_WORD.sub(r"\1_\2", s).lower()
 
 
-class JuliaImportHost(Protocol):
+class JuliaImportHost(ImportSiteHost, WalkPolicyHost, Protocol):
     """What the Julia importer reads and calls on the import processor that
-    builds it: the indexer's walk policy, and the import-site record every
-    language's bindings go through.
-
-    The policy is read here rather than copied in: the factory re-resolves
-    `unignore_paths` on processors it has already built
-    (`propagate_unignore_paths`), and a stale copy would let an excluded file
-    win import resolution, or keep a rescued one from it (issue #1088)."""
-
-    exclude_paths: frozenset[str] | None
-    unignore_paths: frozenset[str] | None
-
-    def _record_import_site(
-        self,
-        scope_qn: str,
-        local_name: str,
-        node: Node | None,
-        imported_name: str | None = None,
-        owner_qn: str | None = None,
-    ) -> PropertyDict | None: ...
+    builds it: the import-site record, and the indexer's walk policy, read
+    live so an excluded file never wins import resolution, nor a rescued
+    one loses it."""
 
 
 class JuliaImporter:
@@ -107,16 +91,12 @@ class JuliaImporter:
     def __init__(
         self,
         host: JuliaImportHost,
-        repo_path: Path,
-        project_name: str,
-        import_mapping: dict[str, dict[str, str]],
+        context: ImporterContext,
     ) -> None:
         self._host = host
-        self.repo_path = repo_path
-        self.project_name = project_name
-        # The processor's own map, shared rather than copied: a `using` binds
-        # its names in the map every later pass reads.
-        self.import_mapping = import_mapping
+        self.repo_path = context.repo_path
+        self.project_name = context.project_name
+        self.import_mapping = context.import_mapping
         # File module -> its nested-scope map keys; read unguarded on the
         # re-ingest path, which never runs the per-run cache resets.
         self._julia_scope_map_keys: dict[str, set[str]] = {}
@@ -183,7 +163,7 @@ class JuliaImporter:
                     dotted, depth, module_qn, scope
                 )
                 self.import_mapping.setdefault(map_qn, {})[local_name] = target
-                self._host._record_import_site(module_qn, local_name, stmt_node, dotted)
+                self._host.record_import_site(module_qn, local_name, stmt_node, dotted)
 
     def _julia_import_pairs(self, stmt_node: Node):
         # Yields (local_name, dotted_target, depth) for every binding a

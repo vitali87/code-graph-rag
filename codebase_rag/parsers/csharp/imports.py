@@ -9,7 +9,6 @@ import sites, the deferred IMPORTS edges and their flush) and hands a C#
 file's imports to the `CSharpImporter` it builds."""
 
 from pathlib import Path
-from typing import Protocol
 
 from loguru import logger
 from tree_sitter import Node
@@ -17,31 +16,8 @@ from tree_sitter import Node
 from ... import constants as cs
 from ... import logs as ls
 from ...node_text import safe_decode_text, safe_decode_with_fallback
-from ...types_defs import PropertyDict
 from ...utils.source_encoding import grammar_bytes
-
-
-class CSharpImportHost(Protocol):
-    """What the C# importer calls on the import processor that builds it: the
-    import-site record and deferred-edge queue every language's imports go
-    through."""
-
-    def defer_import_edge(
-        self,
-        module_qn: str,
-        full_name: str,
-        language: cs.SupportedLanguage,
-        site: PropertyDict | None = None,
-    ) -> None: ...
-
-    def _record_import_site(
-        self,
-        scope_qn: str,
-        local_name: str,
-        node: Node | None,
-        imported_name: str | None = None,
-        owner_qn: str | None = None,
-    ) -> PropertyDict | None: ...
+from ..import_host import ImporterContext, ImportQueueHost
 
 
 class CSharpImporter:
@@ -59,17 +35,13 @@ class CSharpImporter:
 
     def __init__(
         self,
-        host: CSharpImportHost,
-        repo_path: Path,
-        project_name: str,
-        import_mapping: dict[str, dict[str, str]],
+        host: ImportQueueHost,
+        context: ImporterContext,
     ) -> None:
         self._host = host
-        self.repo_path = repo_path
-        self.project_name = project_name
-        # The processor's own map, shared rather than copied: a `using` binds
-        # its name in the map every later pass reads.
-        self.import_mapping = import_mapping
+        self.repo_path = context.repo_path
+        self.project_name = context.project_name
+        self.import_mapping = context.import_mapping
         # `using static N.T;` brings T's MEMBERS into bare-call scope, which
         # import_mapping cannot express: it maps the TYPE name (T -> N.T), so a
         # bare `Member()` has no entry to resolve through. Module qn -> the set
@@ -178,7 +150,7 @@ class CSharpImporter:
             self._record_csharp_static_import(
                 import_node, module_qn, imported_path, alias_node
             )
-            self._host._record_import_site(
+            self._host.record_import_site(
                 module_qn,
                 local_name,
                 import_node,
