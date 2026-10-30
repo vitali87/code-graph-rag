@@ -37,7 +37,10 @@ positionally:
   destructured one (`{ a }`) refuses, and so does a name declared twice. A
   constructor refuses, since its call sites are `new` expressions, and so
   does a getter or setter.
-- A new parameter is written `n` or `n = 0`.
+- A new parameter is written `n` or `n = 0`. A required parameter may
+  follow a defaulted one, as JavaScript allows; a site that leaves it out
+  stays unmapped. A mapped value must be exactly one expression, so
+  `--map n==1, 2` refuses rather than writing two arguments.
 - A default the site skips is passed as `void 0`, which selects the
   default as leaving the argument out does: `helper(2)` with a new `c`
   mapped after the defaulted `b` becomes `helper(2, void 0, 5)`. The name

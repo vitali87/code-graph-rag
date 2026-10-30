@@ -119,6 +119,29 @@ def test_a_skipped_default_is_passed_as_void_0(temp_repo: Path) -> None:
     assert "return helper(2, void 0, 5);" in _read(root, APP)
 
 
+def test_a_required_parameter_may_follow_a_defaulted_one(temp_repo: Path) -> None:
+    # Valid JavaScript, unlike Python; a site that leaves `b` out would stay
+    # unmapped, since there is no value to carry.
+    util = "function helper(a = 1, b) {\n  return a + b;\n}\nmodule.exports = { helper };\n"
+    app = "const { helper } = require('./util');\nfunction run() {\n  return helper(2, 3);\n}\n"
+    root = _indexed(temp_repo, util=util, app=app)
+
+    report = _change(root, HELPER, ["a = 1", "b", "c"], {"c": "=4"})
+
+    assert report.applied, report.message
+    assert "function helper(a = 1, b, c) {" in _read(root, UTIL)
+    assert "return helper(2, 3, 4);" in _read(root, APP)
+
+
+def test_a_mapped_value_that_is_not_one_argument_refuses(temp_repo: Path) -> None:
+    root = _indexed(temp_repo)
+
+    with pytest.raises(SignatureRefused, match="not one JavaScript expression"):
+        _change(root, HELPER, ["a", "n", "b"], {"n": "=1, 2"})
+    assert _read(root, UTIL) == UTIL_SOURCE
+    assert _read(root, APP) == APP_SOURCE
+
+
 def test_a_dropped_parameter_the_body_still_reads_refuses(temp_repo: Path) -> None:
     root = _indexed(temp_repo)
 

@@ -133,7 +133,9 @@ class SignatureChanger:
         old = headers[0].params
         old_names = [p.name for p in old]
         _check_hierarchy(qn, headers, old_names)
-        new = _new_specs(new_params, old, dialect.parse_new_param)
+        new = _new_specs(
+            new_params, old, dialect.parse_new_param, dialect.defaults_last
+        )
         sources = _resolve_sources(new, old, mapping or {})
         for spec, source in zip(new, sources, strict=True):
             if source is not None and source.literal is not None:
