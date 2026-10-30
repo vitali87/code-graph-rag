@@ -151,10 +151,12 @@ class TestSmokeScript:
 
 class _HandlerlessServer:
     """A ``Server`` whose constructor takes no ``on_*`` handlers, as mcp 1.x's
-    did: the server registers its handlers through them since 2.x."""
+    did: the server registers its handlers through them since 2.x. It takes
+    ``instructions``, which 1.x did, so the handlers are what it refuses."""
 
-    def __init__(self, name: str) -> None:
+    def __init__(self, name: str, instructions: str | None = None) -> None:
         self.name = name
+        self.instructions = instructions
 
 
 class TestMcpServerSmokeCheck:

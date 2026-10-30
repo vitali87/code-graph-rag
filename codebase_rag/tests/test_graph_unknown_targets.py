@@ -583,6 +583,7 @@ def _server_with(
     monkeypatch.delenv(cs.MCPEnvVar.MCP_WORKSPACE, raising=False)
     tools = MagicMock()
     tools.get_tool_schemas.return_value = []
+    tools.server_instructions.return_value = ""
     tools.get_tool_handler.return_value = None if handler is None else (handler, True)
     with (
         patch.object(mcp_server, "setup_logging"),
