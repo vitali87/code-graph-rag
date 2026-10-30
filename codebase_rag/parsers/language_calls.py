@@ -7,8 +7,9 @@ and what languages share) and looks a file's language up to the
 `<Language>CallResolution` in `parsers/<language>/calls.py`, or this base
 class for a language that adds nothing. A hook is a point where the pass asks
 the language, named for what it asks, and by default answers as if the
-language added nothing there; a capability is a rule several languages
-share, read off the class."""
+language added nothing there. A capability is a flag read off the class for
+a rule the pass applies in its own code, whether several languages share it
+or only one turns it on: the language opts in rather than re-stating it."""
 
 from __future__ import annotations
 
