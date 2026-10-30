@@ -1088,7 +1088,12 @@ def temp_repo() -> Generator[Path, None, None]:
 
 @pytest.fixture
 def mock_ingestor() -> RecordingIngestor:
-    return RecordingIngestor()
+    """The recording double indexing tests write through. Its graph starts
+    empty: a read answers no rows, not MagicMock's truthy stand-in that
+    iterates nothing and indexes to more mocks."""
+    ingestor = RecordingIngestor()
+    ingestor.fetch_all.return_value = []
+    return ingestor
 
 
 def run_updater(
