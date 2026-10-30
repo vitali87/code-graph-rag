@@ -66,7 +66,9 @@ def test_registered_projects_fall_back_to_this_project(tmp_path: Path) -> None:
 
 def test_known_names_mark_every_file_fully_known(tmp_path: Path) -> None:
     updater = _updater(_WriteOnlyIngestor(), tmp_path)
-    assert updater._known_simple_names_by_path(["m.py"]) == {"m.py": {"*"}}
+    assert updater.dependent_lookup.known_simple_names_by_path(["m.py"]) == {
+        "m.py": {"*"}
+    }
 
 
 def test_file_ownership_is_never_confirmed(tmp_path: Path) -> None:

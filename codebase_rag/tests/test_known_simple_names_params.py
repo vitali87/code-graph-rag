@@ -63,7 +63,9 @@ def test_known_names_come_from_the_graph_not_the_failure_fallback(
     store = StatefulIngestor()
     repo = _indexed(tmp_path, store, "proj")
 
-    known = _updater(store, repo, "proj")._known_simple_names_by_path(["mod.py"])
+    known = _updater(store, repo, "proj").dependent_lookup.known_simple_names_by_path(
+        ["mod.py"]
+    )
 
     assert known == {"mod.py": {"a", "Box"}}
 
@@ -73,7 +75,9 @@ def test_the_read_binds_every_parameter_its_query_names(tmp_path: Path) -> None:
     repo = _indexed(tmp_path, store, "proj")
     store.reads.clear()
 
-    _updater(store, repo, "proj")._known_simple_names_by_path(["mod.py"])
+    _updater(store, repo, "proj").dependent_lookup.known_simple_names_by_path(
+        ["mod.py"]
+    )
 
     [params] = [p for q, p in store.reads if q == cq.CYPHER_DELTA_DEFINITIONS]
     assert set(PARAM.findall(cq.CYPHER_DELTA_DEFINITIONS)) <= set(params or {})
@@ -87,7 +91,9 @@ def test_a_longer_projects_definitions_are_not_claimed(tmp_path: Path) -> None:
     (nested / "mod.py").write_text("def only_in_sub():\n    return 2\n")
     _updater(store, nested, "proj.sub").run(force=True)
 
-    known = _updater(store, repo, "proj")._known_simple_names_by_path(["mod.py"])
+    known = _updater(store, repo, "proj").dependent_lookup.known_simple_names_by_path(
+        ["mod.py"]
+    )
 
     assert "only_in_sub" not in known.get("mod.py", set())
     assert known == {"mod.py": {"a", "Box"}}

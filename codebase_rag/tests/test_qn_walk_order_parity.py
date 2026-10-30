@@ -26,9 +26,10 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.graph_updater import GraphUpdater, _module_key
+from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parsers.cpp.qn import build_module_qn_map
 from codebase_rag.parsers.definition_processor import DefinitionProcessor
+from codebase_rag.updater.dependents import _module_key
 from codebase_rag.utils.path_utils import (
     _walk_dir_keys,
     base_module_qn,
@@ -251,7 +252,7 @@ class TestTheBaseModuleQnIsSharedNotMirrored:
         assert all(qn == f"{PROJECT}.pkg.m" for qn in leftovers.values()), leftovers
 
     def test_the_two_extension_strippers_agree(self) -> None:
-        """``graph_updater._module_key`` strips the same set, separately.
+        """``updater.dependents._module_key`` strips the same set, separately.
 
         It was written for the specifier-waiter lookup (#1714) before this
         helper existed, so the rule now has two implementations. They must

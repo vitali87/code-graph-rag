@@ -24,6 +24,7 @@ from codebase_rag.tests.test_incremental_deleted_dependents import (
     _materialise,
     _snapshot,
 )
+from codebase_rag.updater.dependents import DependentLookup
 from evals.cgr_graph import StatefulIngestor
 
 GO: dict[str, str] = {
@@ -233,23 +234,23 @@ def test_the_batch_path_asks_both_added_file_lookups(
     )
     store = StatefulIngestor()
     asked: dict[str, list[str]] = {}
-    importers = GraphUpdater._unresolved_importer_keys
-    waiters = GraphUpdater._unresolved_reference_waiters
+    importers = DependentLookup.unresolved_importer_keys
+    waiters = DependentLookup.unresolved_reference_waiters
 
-    def spy_importers(self: GraphUpdater, keys: list[str]) -> list[str]:
+    def spy_importers(self: DependentLookup, keys: list[str]) -> list[str]:
         asked["importers"] = list(keys)
         return importers(self, keys)
 
     def spy_waiters(
-        self: GraphUpdater,
+        self: DependentLookup,
         added: list[tuple[str, bytes]],
         modified: list[tuple[str, bytes]] | None = None,
     ) -> list[str]:
         asked["waiters"] = [key for key, _b in added]
         return waiters(self, added, modified)
 
-    monkeypatch.setattr(GraphUpdater, "_unresolved_importer_keys", spy_importers)
-    monkeypatch.setattr(GraphUpdater, "_unresolved_reference_waiters", spy_waiters)
+    monkeypatch.setattr(DependentLookup, "unresolved_importer_keys", spy_importers)
+    monkeypatch.setattr(DependentLookup, "unresolved_reference_waiters", spy_waiters)
     # A fresh index is a full build in which every file is new and no
     # waiter exists yet: nothing is offered, so the files are not parsed a
     # second time for their names.
@@ -285,17 +286,17 @@ def test_the_scoped_path_offers_created_files_only(
     )
     updater.run(force=True)
     asked: list[list[str]] = []
-    waiters = GraphUpdater._unresolved_reference_waiters
+    waiters = DependentLookup.unresolved_reference_waiters
 
     def spy(
-        self: GraphUpdater,
+        self: DependentLookup,
         added: list[tuple[str, bytes]],
         modified: list[tuple[str, bytes]] | None = None,
     ) -> list[str]:
         asked.append([key for key, _b in added])
         return waiters(self, added, modified)
 
-    monkeypatch.setattr(GraphUpdater, "_unresolved_reference_waiters", spy)
+    monkeypatch.setattr(DependentLookup, "unresolved_reference_waiters", spy)
     (root / "pkg/derived.py").write_text(
         PYTHON["pkg/derived.py"] + "\n\ndef get():\n    return 1\n"
     )
@@ -326,4 +327,6 @@ def test_a_duplicate_marker_is_not_part_of_a_known_simple_name(
     ]
     updater.ingestor.fetch_all = lambda *_a, **_k: rows  # type: ignore[method-assign]
 
-    assert updater._known_simple_names_by_path(["m.py"]) == {"m.py": {"Foo", "Bar"}}
+    assert updater.dependent_lookup.known_simple_names_by_path(["m.py"]) == {
+        "m.py": {"Foo", "Bar"}
+    }

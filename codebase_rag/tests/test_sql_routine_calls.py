@@ -17,7 +17,6 @@ import pytest
 from tree_sitter import Language, Node, Parser
 
 from codebase_rag import constants as cs
-from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.tests.conftest import (
     create_and_run_updater,
     get_relationships,
@@ -28,6 +27,7 @@ from codebase_rag.tests.test_incremental_deleted_dependents import (
     _index as _index_into,
 )
 from codebase_rag.tests.test_incremental_deleted_dependents import _materialise
+from codebase_rag.updater.dependents import DependentLookup
 from evals.cgr_graph import StatefulIngestor
 
 tree_sitter_sql = pytest.importorskip("tree_sitter_sql")
@@ -446,18 +446,18 @@ class _WaiterSpy:
 
     def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self.returned: list[str] = []
-        original = GraphUpdater._unresolved_reference_waiters
+        original = DependentLookup.unresolved_reference_waiters
 
         def spy(
-            updater: GraphUpdater,
+            lookup: DependentLookup,
             added: list[tuple[str, bytes]],
             modified: list[tuple[str, bytes]] | None = None,
         ) -> list[str]:
-            keys = original(updater, added, modified)
+            keys = original(lookup, added, modified)
             self.returned.extend(keys)
             return keys
 
-        monkeypatch.setattr(GraphUpdater, "_unresolved_reference_waiters", spy)
+        monkeypatch.setattr(DependentLookup, "unresolved_reference_waiters", spy)
 
 
 class TestIncrementalMatchesCleanIndex:

@@ -1280,8 +1280,8 @@ CYPHER_ALL_MODULE_QNS = (
 # CYPHER_AFFECTED_CALLER_PATHS left 16 passed across `pytest
 # test_incremental_implements_edge.py test_graph_updater_incremental_rename.py
 # test_cacheless_lookup_failure.py`. Both queries do reach a real backend,
-# via `ingestor.fetch_all` in graph_updater.py (the affected-caller read and
-# `_capture_inbound_edges`), so such an edit ships a broken incremental
+# via `fetch_all` in `DependentLookup.affected_caller_keys` and
+# `EdgeCarry.capture_inbound_edges`, so such an edit ships a broken incremental
 # restore. Verify a change to the MATCH shape or the WHERE clauses against a
 # real graph (the Docker-backed integration tier), not against a green unit
 # run. Two edits the unit suite DOES catch: adding or removing a relation

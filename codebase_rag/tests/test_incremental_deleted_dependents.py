@@ -127,7 +127,7 @@ def test_a_deleted_file_that_was_delombok_stale_still_joins_the_dependents_query
     # `_process_files` pops every Delombok-stale key out of `old_hashes` before
     # `deleted_before_parse` is derived from it. A file that is BOTH stale and
     # deleted would therefore vanish from the cache set and never reach
-    # `_affected_caller_keys`, leaving its dependents with edges into a subtree
+    # `affected_caller_keys`, leaving its dependents with edges into a subtree
     # that no longer exists -- the defect this PR exists to prevent, reachable
     # only when a prior overlay covered the deleted file.
     #
@@ -146,13 +146,13 @@ def test_a_deleted_file_that_was_delombok_stale_still_joins_the_dependents_query
         # Stand in for "src/Base.java was in the previous overlay": the pop at
         # the top of _process_files then removes it from old_hashes.
         self._delombok_stale_keys = {"src/Base.java"}
-        real_keys = self._affected_caller_keys
+        real_keys = self.dependent_lookup.affected_caller_keys
 
         def record(keys: list[str]) -> list[str]:
             seen.extend(keys)
             return real_keys(keys)
 
-        self._affected_caller_keys = record  # type: ignore[method-assign]
+        self.dependent_lookup.affected_caller_keys = record  # type: ignore[method-assign]
         real_process(self, force)
 
     monkeypatch.setattr(GraphUpdater, "_process_files", spy)

@@ -19,6 +19,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.sync.checkout_state import state_file
 from codebase_rag.types_defs import PropertyValue, ResultRow
+from codebase_rag.updater.dependents import DependentLookup
 from codebase_rag.updater.edge_carry import EdgeCarryRun
 from evals.cgr_graph import StatefulIngestor
 
@@ -1051,8 +1052,10 @@ def test_a_scoped_reingest_that_moves_no_named_argument_reports_no_dependents(
 PY_RUNNER = "def run(callback):\n    callback()\n"
 
 
-def _none_stable(_updater: GraphUpdater, _sources: object) -> dict[str, str]:
-    """`_interface_stable_modules` judging no interface stable: every
+def _none_stable(
+    _lookup: DependentLookup, _run: object, _sources: object
+) -> dict[str, str]:
+    """`interface_stable_modules` judging no interface stable: every
     dependent re-parses, as before issue #2531."""
     return {}
 
@@ -1152,7 +1155,7 @@ def test_a_changed_forwarded_callable_reparses_the_function_that_calls_it(
     root = temp_repo / PROJECT
     edits = {target: edit(files[target])}
     with monkeypatch.context() as unskipped:
-        unskipped.setattr(GraphUpdater, "_interface_stable_modules", _none_stable)
+        unskipped.setattr(DependentLookup, "interface_stable_modules", _none_stable)
         _all_reparsed, every_dependent = _sync(root, files, edits)
 
     reparsed, synced = _sync(root, files, edits)

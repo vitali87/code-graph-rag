@@ -153,7 +153,7 @@ def test_emulator_inbound_rels_match_the_production_query() -> None:
 
 
 def test_the_affected_caller_query_projects_the_key_its_reader_unpacks() -> None:
-    # `_affected_caller_keys` reads each row as `row.get(cs.KEY_CALLER_PATH)`,
+    # `affected_caller_keys` reads each row as `row.get(cs.KEY_CALLER_PATH)`,
     # so the RETURN alias and that constant must agree. Interpolating the
     # constant asserts that AGREEMENT; a hardcoded `"AS caller_path"` would
     # instead pin a value, going red on a coordinated rename of both (a
@@ -179,7 +179,7 @@ def test_the_affected_caller_query_projects_the_key_its_reader_unpacks() -> None
     # instead of an IndexError, which reports a missing clause as a crash.
     _, sep, tail = cs.CYPHER_AFFECTED_CALLER_PATHS.partition("RETURN DISTINCT ")
     assert sep, "the affected-caller query no longer projects with RETURN DISTINCT"
-    # Compare the projection LIST only. `_affected_caller_keys` folds the rows
+    # Compare the projection LIST only. `affected_caller_keys` folds the rows
     # into a set and sorts it, so a trailing ORDER BY or LIMIT cannot change
     # what the consumer sees, and a guard that reddens on a semantics-
     # preserving edit gets deleted rather than obeyed.

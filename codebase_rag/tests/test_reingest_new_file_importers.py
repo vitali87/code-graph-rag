@@ -1,13 +1,13 @@
 """A file CREATED by a scoped re-ingest must re-parse its waiting importers (#1682).
 
-`_affected_caller_keys` finds dependents through the graph's INBOUND edges. A
+`affected_caller_keys` finds dependents through the graph's INBOUND edges. A
 file the call creates has none yet, so an importer that referenced its path
 before it existed -- `main.py` importing `./util` written before `util.ts` --
 is never re-parsed, and the resolved IMPORTS edge and the calls into the new
 module never appear. A clean index produces them, so the scoped path diverges
 for exactly the create-then-import order an agent commonly uses.
 
-`_unresolved_importer_keys` closes that by looking from the TARGET side: the
+`unresolved_importer_keys` closes that by looking from the TARGET side: the
 waiting importer's IMPORTS edge points at an unresolved target named after the
 new module, which is findable even with no inbound edge.
 
@@ -42,6 +42,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.updater.dependents import module_names_for
 from evals.cgr_graph import StatefulIngestor
 
 
@@ -128,13 +129,10 @@ class TestModuleNamesOffered:
             # per-language distinction stays visible at the root too.
         ],
     )
-    def test_both_spellings_are_offered(
-        self, tmp_path: Path, key: str, expected: set[str]
-    ) -> None:
+    def test_both_spellings_are_offered(self, key: str, expected: set[str]) -> None:
         # The unresolved edge records whichever spelling the source wrote, so
         # matching only one of them misses half the real cases.
-        updater = _updater(tmp_path, _QueryingIngestor([]))
-        assert set(updater._module_names_for([key])) == expected
+        assert set(module_names_for([key])) == expected
 
     def test_every_js_ts_module_extension_has_a_directory_stem(self) -> None:
         """The forcing function the parametrised cases cannot provide.
@@ -164,7 +162,9 @@ class TestUnresolvedImporterLookup:
         ingestor = _QueryingIngestor([{cs.KEY_CALLER_PATH: "main.py"}])
         updater = _updater(tmp_path, ingestor)
 
-        assert updater._unresolved_importer_keys(["util.py"]) == ["main.py"]
+        assert updater.dependent_lookup.unresolved_importer_keys(["util.py"]) == [
+            "main.py"
+        ]
 
         # Selected by identity rather than by position: the lookup now issues
         # a second query for specifier-recorded waiters (issue #1714), so
@@ -179,14 +179,14 @@ class TestUnresolvedImporterLookup:
         # The pre-existing dependents lookup degrades the same way: a scoped
         # re-ingest that cannot read the graph should do less, not die.
         updater = _updater(tmp_path, _QueryingIngestor(RuntimeError("no graph")))
-        assert updater._unresolved_importer_keys(["util.py"]) == []
+        assert updater.dependent_lookup.unresolved_importer_keys(["util.py"]) == []
 
     def test_no_present_keys_asks_nothing(self, tmp_path: Path) -> None:
         # A delete-only re-ingest creates no module, so there is no waiting
         # importer to look for and no query worth making.
         ingestor = _QueryingIngestor([{cs.KEY_CALLER_PATH: "main.py"}])
         updater = _updater(tmp_path, ingestor)
-        assert updater._unresolved_importer_keys([]) == []
+        assert updater.dependent_lookup.unresolved_importer_keys([]) == []
         assert ingestor.queries == []
 
 
@@ -318,7 +318,9 @@ class TestUnresolvedSpecifierWaiters:
             "export function go() { return 1; }\n", encoding="utf-8"
         )
 
-        keys = self._updater_on(root, store)._unresolved_importer_keys(["index.js"])
+        keys = self._updater_on(root, store).dependent_lookup.unresolved_importer_keys(
+            ["index.js"]
+        )
 
         assert keys == ["main.js"]
 
@@ -337,7 +339,9 @@ class TestUnresolvedSpecifierWaiters:
             "export function go() { return 1; }\n", encoding="utf-8"
         )
 
-        keys = self._updater_on(root, store)._unresolved_importer_keys(["pkg/index.js"])
+        keys = self._updater_on(root, store).dependent_lookup.unresolved_importer_keys(
+            ["pkg/index.js"]
+        )
 
         assert keys == ["main.js"]
 
@@ -356,7 +360,9 @@ class TestUnresolvedSpecifierWaiters:
         )
         (root / "other.js").write_text("export const x = 1;\n", encoding="utf-8")
 
-        keys = self._updater_on(root, store)._unresolved_importer_keys(["other.js"])
+        keys = self._updater_on(root, store).dependent_lookup.unresolved_importer_keys(
+            ["other.js"]
+        )
 
         assert keys == []
 
@@ -378,8 +384,10 @@ class TestUnresolvedSpecifierWaiters:
         (root / "index.js").write_text("export const x = 1;\n", encoding="utf-8")
         updater = self._updater_on(root, store)
 
-        assert updater._unresolved_importer_keys(["index.js"]) == []
-        assert updater._unresolved_importer_keys(["sub/index.js"]) == ["sub/main.js"]
+        assert updater.dependent_lookup.unresolved_importer_keys(["index.js"]) == []
+        assert updater.dependent_lookup.unresolved_importer_keys(["sub/index.js"]) == [
+            "sub/main.js"
+        ]
 
     def test_a_python_waiter_is_found_through_its_persisted_unresolved_edge(
         self, tmp_path: Path
@@ -404,7 +412,9 @@ class TestUnresolvedSpecifierWaiters:
 
         (root / "util.py").write_text("def helper():\n    return 1\n", encoding="utf-8")
 
-        keys = self._updater_on(root, store)._unresolved_importer_keys(["util.py"])
+        keys = self._updater_on(root, store).dependent_lookup.unresolved_importer_keys(
+            ["util.py"]
+        )
 
         assert keys == ["main.py"]
 
@@ -426,7 +436,9 @@ class TestUnresolvedSpecifierWaiters:
             },
         )
 
-        keys = self._updater_on(root, store)._unresolved_importer_keys(["util.py"])
+        keys = self._updater_on(root, store).dependent_lookup.unresolved_importer_keys(
+            ["util.py"]
+        )
 
         assert keys == []
 
@@ -449,7 +461,9 @@ class TestUnresolvedSpecifierWaiters:
             "export function go() { return 1; }\n", encoding="utf-8"
         )
 
-        keys = self._updater_on(root, store)._unresolved_importer_keys(["foo.js"])
+        keys = self._updater_on(root, store).dependent_lookup.unresolved_importer_keys(
+            ["foo.js"]
+        )
 
         assert keys == ["main.js"]
 
@@ -482,7 +496,7 @@ class TestUnresolvedSpecifierWaiters:
             "export declare function go(): number;\n", encoding="utf-8"
         )
 
-        keys = self._updater_on(root, store)._unresolved_importer_keys(
+        keys = self._updater_on(root, store).dependent_lookup.unresolved_importer_keys(
             ["pkg/index.d.ts"]
         )
 
@@ -507,7 +521,9 @@ class TestUnresolvedSpecifierWaiters:
             "export function go() { return 1; }\n", encoding="utf-8"
         )
 
-        keys = self._updater_on(root, store)._unresolved_importer_keys(["foo.test.ts"])
+        keys = self._updater_on(root, store).dependent_lookup.unresolved_importer_keys(
+            ["foo.test.ts"]
+        )
 
         assert keys == ["main.ts"]
 
@@ -537,7 +553,9 @@ class TestUnresolvedSpecifierWaiters:
             "function go() { return 1; }\nmodule.exports = { go };\n",
             encoding="utf-8",
         )
-        keys = self._updater_on(root, store)._unresolved_importer_keys(["util.js"])
+        keys = self._updater_on(root, store).dependent_lookup.unresolved_importer_keys(
+            ["util.js"]
+        )
 
         assert keys == ["main.js"]
 
@@ -556,7 +574,9 @@ class TestUnresolvedSpecifierWaiters:
         (root / "util.ts").write_text(
             "export function go(): number { return 1; }\n", encoding="utf-8"
         )
-        keys = self._updater_on(root, store)._unresolved_importer_keys(["util.ts"])
+        keys = self._updater_on(root, store).dependent_lookup.unresolved_importer_keys(
+            ["util.ts"]
+        )
 
         assert keys == ["main.ts"]
 
@@ -609,4 +629,4 @@ class TestUnresolvedSpecifierWaiters:
         updater.run(force=True)
 
         assert self._module(store, "main.js")[cs.KEY_UNRESOLVED_SPECIFIERS] == []
-        assert updater._unresolved_importer_keys(["index.js"]) == []
+        assert updater.dependent_lookup.unresolved_importer_keys(["index.js"]) == []
