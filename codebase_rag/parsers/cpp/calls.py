@@ -2,15 +2,18 @@
 the functor a call or a passed object reaches, the class a body-local alias
 or type names, and the constructions and lifecycle calls C++ writes without
 a call expression (a braced return, a member initializer, a declaration, a
-base class's implicit constructor and destructor).
+base class's implicit constructor and destructor). And C's: the functions a
+C file stores as values, bound by C's scoping and linkage.
 
 `CallProcessor` owns what every language shares (the scan of a caller's call
 nodes, the site and resolution each edge carries, the name-based resolver)
-and hands C++'s part to the `CppCallResolution` it builds."""
+and hands C++'s part to the `CppCallResolution` it builds, C's to the
+`CCallResolution`."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
 from tree_sitter import Node
@@ -23,6 +26,12 @@ from ..definition_facts import DefinitionFacts
 from ..edge_site import EdgeSiteHost, host_site_scoped
 from . import local_types as cpp_local_types
 from . import utils as cpp_utils
+from .function_values import (
+    CFileScope,
+    c_file_scope,
+    c_function_value_identifiers,
+    local_enumerator_names,
+)
 from .type_inference import CppTypeInferenceEngine
 
 if TYPE_CHECKING:
@@ -839,3 +848,173 @@ class CppCallResolution:
                         cs.RelationshipType.CALLS,
                         (target_type, cs.KEY_QUALIFIED_NAME, variant),
                     )
+
+
+class CCallHost(EdgeSiteHost, Protocol):
+    """What C's function-value references call on the call pass that builds
+    them: the edge emitter."""
+
+    def _emit_rel(
+        self,
+        from_spec: tuple[str, str, str],
+        rel_type: str,
+        to_spec: tuple[str, str, str],
+        properties: PropertyDict | None = None,
+    ) -> None: ...
+
+
+class CCallResolution:
+    """Writes the references a C function stored as a value makes, bound the
+    way C's scoping and linkage bind the name: the file's own definition, an
+    object the file or a header it includes declares, or a definition with
+    external linkage.
+
+    Built and owned by `CallProcessor`. The resolver and the module paths are
+    the pass's own, held by reference: the definition pass fills them as it
+    registers each file."""
+
+    __slots__ = (
+        "_host",
+        "_resolver",
+        "_module_qn_to_file_path",
+        "_file_scopes",
+        "_include_closures",
+    )
+
+    def __init__(
+        self,
+        host: CCallHost,
+        resolver: CallResolver,
+        module_qn_to_file_path: dict[str, Path],
+    ) -> None:
+        self._host = host
+        self._resolver = resolver
+        self._module_qn_to_file_path = module_qn_to_file_path
+        # What each C/C++ source declares at file scope, read when a bare
+        # function name in C resolves outside its own file (issue #2529).
+        self._file_scopes: dict[str, CFileScope] = {}
+        # The repo headers each C/C++ file includes, directly or through
+        # another header (#2593).
+        self._include_closures: dict[str, frozenset[str]] = {}
+
+    def reset_file_scopes(self) -> None:
+        self._file_scopes = {}
+        self._include_closures = {}
+
+    @host_site_scoped
+    def ingest_function_value_references(
+        self,
+        scope_node: Node,
+        caller_spec: tuple[str, str, str],
+        module_qn: str,
+        boundary_types: frozenset[str],
+    ) -> None:
+        # C's callbacks, vtables and ops tables store a function in a pointer
+        # and call it through the pointer, a call the graph never sees (issue
+        # #2529). The site that stores it references it instead, as Go's func
+        # maps and C#/Dart's passed method groups do, so the REFERENCES edge
+        # keeps it reachable for dead-code and the call graph.
+        for ident in c_function_value_identifiers(scope_node, boundary_types):
+            name = safe_decode_text(ident)
+            if not name:
+                continue
+            targets, resolution = self._function_value_targets(name, module_qn)
+            # A parameter, local or local enumeration constant of that name
+            # hides the function.
+            if (
+                not targets
+                or name in cpp_utils.cpp_enclosing_function_value_names(ident)
+                or name in local_enumerator_names(ident)
+            ):
+                continue
+            self._host._site_node = ident
+            self._host._resolution = resolution
+            for target_qn in targets:
+                self._host._emit_rel(
+                    caller_spec,
+                    cs.RelationshipType.REFERENCES,
+                    (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, target_qn),
+                )
+
+    def _function_value_targets(
+        self, name: str, module_qn: str
+    ) -> tuple[list[str], str]:
+        registry = self._resolver.function_registry
+        # The file's own definition is what the name denotes, static or not.
+        own_qn = f"{module_qn}{cs.SEPARATOR_DOT}{name}"
+        if registry.get(own_qn) == cs.NodeLabel.FUNCTION:
+            variants = registry.variants(own_qn)
+            return variants, (
+                cs.EdgeResolution.OVERLOAD
+                if len(variants) > 1
+                else cs.EdgeResolution.EXACT
+            )
+        # A variable or enumeration constant this file or a header it
+        # includes declares is what the name denotes (#2593).
+        if any(
+            name in self._file_scope(visible).objects
+            for visible in (module_qn, *self._include_closure(module_qn))
+        ):
+            return [], cs.EdgeResolution.EXACT
+        # Otherwise it is an extern declaration the linker binds by name to a
+        # definition with external linkage, which no file's `static` has.
+        targets = [
+            variant
+            for qn in registry.find_ending_with(name)
+            if registry.get(qn) == cs.NodeLabel.FUNCTION
+            and self._links_externally(qn, name, module_qn)
+            for variant in registry.variants(qn)
+        ]
+        return targets, cs.EdgeResolution.HEURISTIC
+
+    def _links_externally(self, qn: str, name: str, referrer_qn: str) -> bool:
+        module_qn = qn[: -len(name) - 1]
+        file_path = self._module_qn_to_file_path.get(module_qn)
+        # A namespace or class member, or a definition in another language.
+        if file_path is None or not file_path.name.endswith(
+            cs.C_EXTENSIONS + cs.CPP_EXTENSIONS
+        ):
+            return False
+        internal = name in self._file_scope(module_qn).tu_local_functions
+        if file_path.name.endswith(cs.C_CPP_SOURCE_EXTENSIONS):
+            return not internal
+        # A header's `static inline` is compiled into the files including it
+        # and no other (#2593); a plain definition there links
+        # externally like a source file's.
+        return not internal or module_qn in self._include_closure(referrer_qn)
+
+    def _include_closure(self, module_qn: str) -> frozenset[str]:
+        if (cached := self._include_closures.get(module_qn)) is not None:
+            return cached
+        imports = self._resolver.import_processor
+        import_mapping = imports.import_mapping
+        # A header a later include displaced from its local name is still
+        # included, so its `static inline`s compile into this file too.
+        displaced = imports.cpp.displaced_include_targets()
+        reached: set[str] = set()
+        pending = [module_qn]
+        while pending:
+            current = pending.pop()
+            for target in (
+                *(import_mapping.get(current) or {}).values(),
+                *displaced.get(current, ()),
+            ):
+                if target not in reached and target in self._module_qn_to_file_path:
+                    reached.add(target)
+                    pending.append(target)
+        reached.discard(module_qn)
+        closure = frozenset(reached)
+        self._include_closures[module_qn] = closure
+        return closure
+
+    def _file_scope(self, module_qn: str) -> CFileScope:
+        if (cached := self._file_scopes.get(module_qn)) is not None:
+            return cached
+        scope = CFileScope(frozenset(), frozenset())
+        file_path = self._module_qn_to_file_path.get(module_qn)
+        if file_path is not None and (
+            entry := self._resolver.type_inference.ast_cache.load(file_path)
+        ):
+            scope = c_file_scope(entry[0])
+        self._file_scopes[module_qn] = scope
+        return scope
