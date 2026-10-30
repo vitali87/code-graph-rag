@@ -16,7 +16,11 @@ from codebase_rag.cypher_queries import (
     build_merge_relationship_query,
     wrap_with_unwind,
 )
-from codebase_rag.services.graph_service import GraphIngestor
+from codebase_rag.services.graph_service import (
+    GraphConnection,
+    GraphIngestor,
+    WriteTuning,
+)
 
 
 class TestGraphIngestorInit:
@@ -32,17 +36,21 @@ class TestGraphIngestorInit:
         assert ingestor.batch_size == 1000
 
     def test_init_sets_custom_batch_size(self) -> None:
-        ingestor = GraphIngestor(host="localhost", port=7687, batch_size=500)
+        ingestor = GraphIngestor(
+            host="localhost", port=7687, tuning=WriteTuning(batch_size=500)
+        )
 
         assert ingestor.batch_size == 500
 
     def test_init_raises_for_zero_batch_size(self) -> None:
         with pytest.raises(ValueError, match="batch_size must be a positive integer"):
-            GraphIngestor(host="localhost", port=7687, batch_size=0)
+            GraphIngestor(host="localhost", port=7687, tuning=WriteTuning(batch_size=0))
 
     def test_init_raises_for_negative_batch_size(self) -> None:
         with pytest.raises(ValueError, match="batch_size must be a positive integer"):
-            GraphIngestor(host="localhost", port=7687, batch_size=-1)
+            GraphIngestor(
+                host="localhost", port=7687, tuning=WriteTuning(batch_size=-1)
+            )
 
     def test_init_creates_empty_buffers(self) -> None:
         ingestor = GraphIngestor(host="localhost", port=7687)
@@ -57,7 +65,9 @@ class TestGraphIngestorInit:
 
     def test_init_stores_auth_credentials(self) -> None:
         ingestor = GraphIngestor(
-            host="localhost", port=7687, username="user", password="pass"
+            host="localhost",
+            port=7687,
+            connection=GraphConnection(username="user", password="pass"),
         )
 
         assert ingestor._username == "user"
@@ -71,21 +81,31 @@ class TestGraphIngestorInit:
 
     def test_init_raises_for_username_without_password(self) -> None:
         with pytest.raises(ValueError, match="Both username and password"):
-            GraphIngestor(host="localhost", port=7687, username="user")
+            GraphIngestor(
+                host="localhost", port=7687, connection=GraphConnection(username="user")
+            )
 
     def test_init_raises_for_password_without_username(self) -> None:
         with pytest.raises(ValueError, match="Both username and password"):
-            GraphIngestor(host="localhost", port=7687, password="pass")
+            GraphIngestor(
+                host="localhost", port=7687, connection=GraphConnection(password="pass")
+            )
 
     def test_init_normalizes_empty_strings_to_none(self) -> None:
-        ingestor = GraphIngestor(host="localhost", port=7687, username="", password="")
+        ingestor = GraphIngestor(
+            host="localhost",
+            port=7687,
+            connection=GraphConnection(username="", password=""),
+        )
 
         assert ingestor._username is None
         assert ingestor._password is None
 
     def test_init_normalizes_whitespace_only_to_none(self) -> None:
         ingestor = GraphIngestor(
-            host="localhost", port=7687, username="  ", password="  "
+            host="localhost",
+            port=7687,
+            connection=GraphConnection(username="  ", password="  "),
         )
 
         assert ingestor._username is None
@@ -93,7 +113,9 @@ class TestGraphIngestorInit:
 
     def test_init_strips_whitespace_from_credentials(self) -> None:
         ingestor = GraphIngestor(
-            host="localhost", port=7687, username=" user ", password=" pass "
+            host="localhost",
+            port=7687,
+            connection=GraphConnection(username=" user ", password=" pass "),
         )
 
         assert ingestor._username == "user"
@@ -101,7 +123,11 @@ class TestGraphIngestorInit:
 
     def test_init_raises_for_empty_password_with_valid_username(self) -> None:
         with pytest.raises(ValueError, match="Both username and password"):
-            GraphIngestor(host="localhost", port=7687, username="user", password="")
+            GraphIngestor(
+                host="localhost",
+                port=7687,
+                connection=GraphConnection(username="user", password=""),
+            )
 
 
 class TestContextManager:
@@ -124,7 +150,9 @@ class TestContextManager:
             mock_mgclient.connect.return_value = mock_conn
 
             ingestor = GraphIngestor(
-                host="testhost", port=1234, username="user", password="pass"
+                host="testhost",
+                port=1234,
+                connection=GraphConnection(username="user", password="pass"),
             )
             ingestor.__enter__()
 
@@ -543,7 +571,9 @@ class TestLegacyPathKeyMigration:
 
 class TestFlushNodesEdgeCases:
     def test_skips_nodes_with_unknown_label(self) -> None:
-        ingestor = GraphIngestor(host="localhost", port=7687, batch_size=10)
+        ingestor = GraphIngestor(
+            host="localhost", port=7687, tuning=WriteTuning(batch_size=10)
+        )
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
         mock_conn.cursor.return_value = mock_cursor
@@ -557,7 +587,9 @@ class TestFlushNodesEdgeCases:
         assert ingestor.node_buffer == []
 
     def test_skips_nodes_missing_id_property(self) -> None:
-        ingestor = GraphIngestor(host="localhost", port=7687, batch_size=10)
+        ingestor = GraphIngestor(
+            host="localhost", port=7687, tuning=WriteTuning(batch_size=10)
+        )
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
         mock_conn.cursor.return_value = mock_cursor
@@ -571,7 +603,9 @@ class TestFlushNodesEdgeCases:
         assert ingestor.node_buffer == []
 
     def test_processes_valid_nodes_and_skips_invalid(self) -> None:
-        ingestor = GraphIngestor(host="localhost", port=7687, batch_size=10)
+        ingestor = GraphIngestor(
+            host="localhost", port=7687, tuning=WriteTuning(batch_size=10)
+        )
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
         mock_conn.cursor.return_value = mock_cursor
@@ -712,11 +746,15 @@ class TestCreateMode:
         assert ingestor._use_merge is True
 
     def test_use_merge_false(self) -> None:
-        ingestor = GraphIngestor(host="localhost", port=7687, use_merge=False)
+        ingestor = GraphIngestor(
+            host="localhost", port=7687, tuning=WriteTuning(use_merge=False)
+        )
         assert ingestor._use_merge is False
 
     def test_flush_nodes_uses_merge_query_by_default(self) -> None:
-        ingestor = GraphIngestor(host="localhost", port=7687, batch_size=10)
+        ingestor = GraphIngestor(
+            host="localhost", port=7687, tuning=WriteTuning(batch_size=10)
+        )
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
         mock_conn.cursor.return_value = mock_cursor
@@ -733,7 +771,9 @@ class TestCreateMode:
 
     def test_flush_nodes_uses_create_query_when_merge_disabled(self) -> None:
         ingestor = GraphIngestor(
-            host="localhost", port=7687, batch_size=10, use_merge=False
+            host="localhost",
+            port=7687,
+            tuning=WriteTuning(batch_size=10, use_merge=False),
         )
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
@@ -750,7 +790,9 @@ class TestCreateMode:
         assert "MERGE" not in call_args
 
     def test_flush_relationships_uses_merge_query_by_default(self) -> None:
-        ingestor = GraphIngestor(host="localhost", port=7687, batch_size=10)
+        ingestor = GraphIngestor(
+            host="localhost", port=7687, tuning=WriteTuning(batch_size=10)
+        )
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
         mock_conn.cursor.return_value = mock_cursor
@@ -769,7 +811,9 @@ class TestCreateMode:
 
     def test_flush_relationships_uses_create_query_when_merge_disabled(self) -> None:
         ingestor = GraphIngestor(
-            host="localhost", port=7687, batch_size=10, use_merge=False
+            host="localhost",
+            port=7687,
+            tuning=WriteTuning(batch_size=10, use_merge=False),
         )
         mock_conn = MagicMock()
         mock_cursor = MagicMock()

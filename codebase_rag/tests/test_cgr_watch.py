@@ -48,6 +48,7 @@ from codebase_rag import cypher_queries as cq
 from codebase_rag.cli import app
 from codebase_rag.config import settings
 from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.services.graph_service import WriteTuning
 from codebase_rag.sync.lock import SyncInProgressError, repo_sync_lock
 from codebase_rag.tests.cli_output import unstyle
 from codebase_rag.types_defs import (
@@ -1580,7 +1581,7 @@ class TestConnectionAndStack:
         # MEMGRAPH_* settings itself, and an address passed here would
         # select Memgraph whatever GRAPH_BACKEND says.
         assert ingestor_cls.call_args.kwargs == {
-            "batch_size": settings.resolve_batch_size(None)
+            "tuning": WriteTuning(batch_size=settings.resolve_batch_size(None))
         }
 
     def test_the_stack_is_started_unless_told_not_to(

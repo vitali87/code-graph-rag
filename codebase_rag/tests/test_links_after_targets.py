@@ -18,7 +18,7 @@ from loguru import logger
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.services.graph_service import GraphIngestor
+from codebase_rag.services.graph_service import GraphIngestor, WriteTuning
 from codebase_rag.types_defs import PropertyDict, PropertyValue
 from evals.cgr_graph import StatefulIngestor
 
@@ -132,7 +132,9 @@ class _Connection:
 
 
 def _flush_links(created: int, attempted: int) -> list[str]:
-    ingestor = GraphIngestor(host="localhost", port=7687, batch_size=10_000)
+    ingestor = GraphIngestor(
+        host="localhost", port=7687, tuning=WriteTuning(batch_size=10_000)
+    )
     ingestor.conn = _Connection(created)
     for i in range(attempted):
         ingestor.ensure_relationship_batch(

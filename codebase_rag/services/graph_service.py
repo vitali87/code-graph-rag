@@ -12,6 +12,7 @@ import threading
 import types
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from functools import cache
 
 import typer
@@ -31,7 +32,13 @@ from .graph_batching import GraphBatching
 from .graph_queries import GraphQueries
 from .graph_session import GraphUnavailableError, is_query_rejection
 
-__all__ = ["GraphIngestor", "GraphUnavailableError", "is_query_rejection"]
+__all__ = [
+    "GraphConnection",
+    "GraphIngestor",
+    "GraphUnavailableError",
+    "WriteTuning",
+    "is_query_rejection",
+]
 
 # Raised on purpose to end a command with its own exit code once it has told
 # the user why; logging them as a failed write buried that message under a
@@ -61,6 +68,27 @@ def _dialect_for_arguments(addressed: bool) -> GraphDialect:
     raise ValueError(ex.MEMGRAPH_ADDRESS_UNDER_BACKEND.format(backend=configured.name))
 
 
+@dataclass(frozen=True, slots=True)
+class GraphConnection:
+    """Which engine an ingestor opens, besides the Memgraph address: the
+    engine's `dialect`, the embedded engine's file (`sqlite_path`, None
+    reads SQLITE_GRAPH_PATH at connect) and the Memgraph login."""
+
+    dialect: GraphDialect | None = None
+    sqlite_path: str | None = None
+    username: str | None = None
+    password: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class WriteTuning:
+    """How an ingestor writes: `batch_size` buffered rows to a flush, and
+    nodes by MERGE, or by CREATE without `use_merge`."""
+
+    batch_size: int = 1000
+    use_merge: bool = True
+
+
 class GraphIngestor(GraphBatching, GraphQueries):
     # Its fields are the session's and the batching's, which declare them.
     __slots__ = ()
@@ -70,14 +98,11 @@ class GraphIngestor(GraphBatching, GraphQueries):
         *,
         host: str | None = None,
         port: int | None = None,
-        batch_size: int = 1000,
-        username: str | None = None,
-        password: str | None = None,
-        use_merge: bool = True,
-        dialect: GraphDialect | None = None,
-        sqlite_path: str | None = None,
+        connection: GraphConnection = GraphConnection(),
+        tuning: WriteTuning = WriteTuning(),
     ):
-        """A graph ingestor for the engine GRAPH_BACKEND selects, or `dialect`.
+        """A graph ingestor for the engine GRAPH_BACKEND selects, or the
+        connection's `dialect`.
 
         A Memgraph address or login passed here names a Memgraph server, so
         without a `dialect` it selects Memgraph even when GRAPH_BACKEND is the
@@ -85,6 +110,8 @@ class GraphIngestor(GraphBatching, GraphQueries):
         which connects through NEO4J_URI, it is refused. A field left out is
         read from its MEMGRAPH_* setting.
         """
+        dialect, sqlite_path = connection.dialect, connection.sqlite_path
+        username, password = connection.username, connection.password
         # The engine is resolved once here rather than read from settings at
         # each call site, so a single ingestor cannot straddle two dialects
         # mid-run if configuration changes underneath it.
@@ -125,10 +152,10 @@ class GraphIngestor(GraphBatching, GraphQueries):
             (self._username is None) != (self._password is None)
         ):
             raise ValueError(ex.AUTH_INCOMPLETE)
-        if batch_size < 1:
+        if tuning.batch_size < 1:
             raise ValueError(ex.BATCH_SIZE)
-        self.batch_size = batch_size
-        self._use_merge = use_merge
+        self.batch_size = tuning.batch_size
+        self._use_merge = tuning.use_merge
         self._conn_lock = threading.Lock()
         self._node_flush_lock = threading.Lock()
         self._executor = None

@@ -8,7 +8,7 @@ names, so `main.app_context` and `cli.app_context` are the same object.
 
 from . import constants as cs
 from .models import AppContext
-from .services.graph_service import GraphIngestor
+from .services.graph_service import GraphIngestor, WriteTuning
 
 
 def style(
@@ -27,4 +27,4 @@ app_context = AppContext()
 
 
 def connect_graph(batch_size: int) -> GraphIngestor:
-    return GraphIngestor(batch_size=batch_size)
+    return GraphIngestor(tuning=WriteTuning(batch_size=batch_size))

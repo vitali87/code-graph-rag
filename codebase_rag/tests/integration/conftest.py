@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from codebase_rag.services.graph_service import GraphIngestor
+from codebase_rag.services.graph_service import GraphConnection, GraphIngestor
 from codebase_rag.tests.container_reaper import (
     cgr_container_labels,
     reap_orphaned_containers,
@@ -148,7 +148,11 @@ def neo4j_ingestor(
 
     previous_uri = settings.NEO4J_URI
     settings.NEO4J_URI = f"bolt://{host}:{port}"
-    ingestor = GraphIngestor(host=host, port=port, dialect=get_dialect(DIALECT_NEO4J))
+    ingestor = GraphIngestor(
+        host=host,
+        port=port,
+        connection=GraphConnection(dialect=get_dialect(DIALECT_NEO4J)),
+    )
     ingestor.__enter__()
     try:
         ingestor._execute_query("MATCH (n) DETACH DELETE n")
@@ -238,7 +242,9 @@ def sqlite_ingestor(tmp_path: Path) -> Generator[GraphIngestor, None, None]:
     from codebase_rag.graph_dialects import DIALECT_SQLITE, get_dialect
 
     with GraphIngestor(
-        dialect=get_dialect(DIALECT_SQLITE),
-        sqlite_path=str(tmp_path / "graph.sqlite"),
+        connection=GraphConnection(
+            dialect=get_dialect(DIALECT_SQLITE),
+            sqlite_path=str(tmp_path / "graph.sqlite"),
+        ),
     ) as ingestor:
         yield ingestor

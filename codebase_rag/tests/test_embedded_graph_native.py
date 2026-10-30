@@ -45,7 +45,11 @@ from codebase_rag.embedded_graph.limits import (
 from codebase_rag.embedded_graph.procedures import Record
 from codebase_rag.embedded_graph.types import SqlValue
 from codebase_rag.graph_dialects import DIALECT_SQLITE, get_dialect
-from codebase_rag.services.graph_service import GraphIngestor
+from codebase_rag.services.graph_service import (
+    GraphConnection,
+    GraphIngestor,
+    WriteTuning,
+)
 from codebase_rag.tests.test_embedded_graph_memgraph_parity import MEMGRAPH_PROBES
 from codebase_rag.types_defs import (
     JsonValue,
@@ -742,9 +746,10 @@ def _replay(
     with GraphIngestor(
         host="unused",
         port=0,
-        batch_size=7,
-        dialect=get_dialect(DIALECT_SQLITE),
-        sqlite_path=str(path),
+        tuning=WriteTuning(batch_size=7),
+        connection=GraphConnection(
+            dialect=get_dialect(DIALECT_SQLITE), sqlite_path=str(path)
+        ),
     ) as ingestor:
         ingestor.ensure_constraints()
         for _ in range(160):

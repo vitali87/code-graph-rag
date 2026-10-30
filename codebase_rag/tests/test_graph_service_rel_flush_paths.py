@@ -8,12 +8,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from codebase_rag.services.graph_service import GraphIngestor
+from codebase_rag.services.graph_service import GraphIngestor, WriteTuning
 from codebase_rag.types_defs import RelBatchRow
 
 
 def _ingestor_with_two_groups() -> GraphIngestor:
-    ingestor = GraphIngestor(host="localhost", port=7687, batch_size=100)
+    ingestor = GraphIngestor(
+        host="localhost", port=7687, tuning=WriteTuning(batch_size=100)
+    )
     ingestor.conn = MagicMock()
     ingestor.ensure_relationship_batch(
         ("Function", "qualified_name", "p.a"),

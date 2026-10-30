@@ -20,7 +20,7 @@ from codebase_rag.graph_dialects import (
     get_dialect,
 )
 from codebase_rag.services.graph_queries import _apply_memory_limit
-from codebase_rag.services.graph_service import GraphIngestor
+from codebase_rag.services.graph_service import GraphConnection, GraphIngestor
 
 
 class RecordingCursor:
@@ -57,7 +57,9 @@ class RecordingConn:
 
 def _ingestor(dialect_name: str) -> tuple[GraphIngestor, RecordingConn]:
     ingestor = GraphIngestor(
-        host="localhost", port=7687, dialect=get_dialect(dialect_name)
+        host="localhost",
+        port=7687,
+        connection=GraphConnection(dialect=get_dialect(dialect_name)),
     )
     conn = RecordingConn()
     ingestor.conn = conn
@@ -156,7 +158,7 @@ class TestDialectResolution:
         for ingestor in (
             GraphIngestor(host="h", port=1),
             GraphIngestor(port=1),
-            GraphIngestor(username="u", password="p"),
+            GraphIngestor(connection=GraphConnection(username="u", password="p")),
         ):
             assert ingestor._dialect.name == DIALECT_MEMGRAPH
 
@@ -177,7 +179,11 @@ class TestDialectResolution:
         assert (partial._host, partial._port) == ("db.internal", 7801)
 
     def test_an_explicit_dialect_wins(self) -> None:
-        ingestor = GraphIngestor(host="h", port=1, dialect=get_dialect(DIALECT_NEO4J))
+        ingestor = GraphIngestor(
+            host="h",
+            port=1,
+            connection=GraphConnection(dialect=get_dialect(DIALECT_NEO4J)),
+        )
         assert ingestor._dialect.name == DIALECT_NEO4J
 
     def test_the_engine_is_fixed_at_construction(self, monkeypatch) -> None:
@@ -237,7 +243,11 @@ class TestNeo4jDriverLifecycle:
         monkeypatch.setattr(
             "codebase_rag.services.neo4j_driver.Neo4jDriver", FakeDriver
         )
-        ingestor = GraphIngestor(host="h", port=1, dialect=get_dialect(DIALECT_NEO4J))
+        ingestor = GraphIngestor(
+            host="h",
+            port=1,
+            connection=GraphConnection(dialect=get_dialect(DIALECT_NEO4J)),
+        )
 
         def race() -> None:
             barrier.wait()
@@ -269,7 +279,11 @@ class TestNeo4jDriverLifecycle:
         monkeypatch.setattr(
             "codebase_rag.services.neo4j_driver.Neo4jDriver", FakeDriver
         )
-        ingestor = GraphIngestor(host="h", port=1, dialect=get_dialect(DIALECT_NEO4J))
+        ingestor = GraphIngestor(
+            host="h",
+            port=1,
+            connection=GraphConnection(dialect=get_dialect(DIALECT_NEO4J)),
+        )
         ingestor.__enter__()
         ingestor._neo4j_driver()
         ingestor.__exit__(None, None, None)
@@ -316,7 +330,11 @@ class TestLegacyMigrationUsesTheDiscoveredName:
             return _Cursor()
 
     def test_neo4j_drops_the_name_the_server_reported(self) -> None:
-        ingestor = GraphIngestor(host="h", port=1, dialect=get_dialect(DIALECT_NEO4J))
+        ingestor = GraphIngestor(
+            host="h",
+            port=1,
+            connection=GraphConnection(dialect=get_dialect(DIALECT_NEO4J)),
+        )
         conn = self._RowsConn(
             rows=[("legacy_folder_path_uc", ["Folder"], ["path"])],
             columns=["name", "labelsOrTypes", "properties"],
@@ -329,7 +347,9 @@ class TestLegacyMigrationUsesTheDiscoveredName:
 
     def test_memgraph_still_drops_by_pattern(self) -> None:
         ingestor = GraphIngestor(
-            host="h", port=1, dialect=get_dialect(DIALECT_MEMGRAPH)
+            host="h",
+            port=1,
+            connection=GraphConnection(dialect=get_dialect(DIALECT_MEMGRAPH)),
         )
         conn = self._RowsConn(
             rows=[("Folder", ["path"])], columns=["label", "properties"]

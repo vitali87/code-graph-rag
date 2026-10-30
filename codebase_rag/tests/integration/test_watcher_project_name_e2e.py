@@ -20,7 +20,7 @@ from watchdog.events import FileModifiedEvent
 
 from codebase_rag import watch
 from codebase_rag.cli import app
-from codebase_rag.services.graph_service import GraphIngestor
+from codebase_rag.services.graph_service import GraphIngestor, WriteTuning
 from codebase_rag.utils.path_utils import derive_project_name
 
 pytestmark = [pytest.mark.integration]
@@ -41,7 +41,9 @@ def test_the_watchers_edit_reaches_the_project_cgr_start_synced(
     source.write_text("def a():\n    return 1\n", encoding="utf-8")
 
     def connect(batch_size: int) -> GraphIngestor:
-        return GraphIngestor(host=host, port=port, batch_size=batch_size)
+        return GraphIngestor(
+            host=host, port=port, tuning=WriteTuning(batch_size=batch_size)
+        )
 
     with (
         patch("codebase_rag.cli.connect_graph", connect),

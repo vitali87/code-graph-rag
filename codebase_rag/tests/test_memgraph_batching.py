@@ -2,14 +2,16 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from codebase_rag.services.graph_service import GraphIngestor
+from codebase_rag.services.graph_service import GraphIngestor, WriteTuning
 
 
 def _create_ingestor_with_mocked_connection(
     batch_size: int = 2,
 ) -> tuple[GraphIngestor, MagicMock]:
     """Create a GraphIngestor with a mocked mgclient connection."""
-    ingestor = GraphIngestor(host="localhost", port=7687, batch_size=batch_size)
+    ingestor = GraphIngestor(
+        host="localhost", port=7687, tuning=WriteTuning(batch_size=batch_size)
+    )
     conn_mock = MagicMock()
     cursor_mock = MagicMock()
     conn_mock.cursor.return_value = cursor_mock

@@ -19,7 +19,7 @@ from codebase_rag import logs as ls
 from codebase_rag import tool_errors as te
 from codebase_rag.config import settings
 from codebase_rag.mcp.tools import MCPToolsRegistry
-from codebase_rag.services.graph_service import GraphIngestor
+from codebase_rag.services.graph_service import GraphIngestor, WriteTuning
 from codebase_rag.services.llm import LazyCypherGenerator
 from codebase_rag.types_defs import MCPToolArguments
 from codebase_rag.utils.path_utils import derive_project_name
@@ -107,7 +107,9 @@ def create_server(workspace: str | None = None) -> tuple[Server, GraphIngestor]:
 
     logger.info(ls.MCP_SERVER_INIT_SERVICES)
 
-    ingestor = GraphIngestor(batch_size=settings.MEMGRAPH_BATCH_SIZE)
+    ingestor = GraphIngestor(
+        tuning=WriteTuning(batch_size=settings.MEMGRAPH_BATCH_SIZE)
+    )
 
     # Scope Cypher generation to this server's project (named exactly as
     # indexing names it) so queries don't bleed into other projects sharing

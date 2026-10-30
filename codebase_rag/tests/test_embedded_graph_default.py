@@ -30,7 +30,11 @@ from codebase_rag.doctor.checks import HealthChecker
 from codebase_rag.graph_dialects import DIALECT_MEMGRAPH, DIALECT_SQLITE, get_dialect
 from codebase_rag.mgclient_compat import _absent_driver
 from codebase_rag.services import graph_service, graph_session
-from codebase_rag.services.graph_service import GraphIngestor, GraphUnavailableError
+from codebase_rag.services.graph_service import (
+    GraphConnection,
+    GraphIngestor,
+    GraphUnavailableError,
+)
 from codebase_rag.stack import manager as manager_module
 from codebase_rag.stack.constants import SERVICE_MEMGRAPH, SERVICE_QDRANT
 from codebase_rag.stack.manager import StackError, StackManager
@@ -255,8 +259,10 @@ def test_an_unwritable_graph_path_is_one_clear_error(tmp_path: Path) -> None:
     blocker = tmp_path / "a-file"
     blocker.write_text("")
     ingestor = GraphIngestor(
-        dialect=get_dialect(DIALECT_SQLITE),
-        sqlite_path=str(blocker / "graph.sqlite"),
+        connection=GraphConnection(
+            dialect=get_dialect(DIALECT_SQLITE),
+            sqlite_path=str(blocker / "graph.sqlite"),
+        ),
     )
     with pytest.raises(GraphUnavailableError, match="SQLITE_GRAPH_PATH"):
         ingestor.__enter__()
@@ -265,7 +271,9 @@ def test_an_unwritable_graph_path_is_one_clear_error(tmp_path: Path) -> None:
 def test_memgraph_without_its_driver_says_what_to_install(monkeypatch) -> None:
     monkeypatch.setattr(graph_session, "MGCLIENT_AVAILABLE", False)
     ingestor = GraphIngestor(
-        host="localhost", port=7687, dialect=get_dialect(DIALECT_MEMGRAPH)
+        host="localhost",
+        port=7687,
+        connection=GraphConnection(dialect=get_dialect(DIALECT_MEMGRAPH)),
     )
     with pytest.raises(GraphUnavailableError) as raised:
         ingestor.__enter__()
@@ -303,7 +311,7 @@ class TestMemgraphSetWithoutBackend:
         monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sqlite_path: str | None = None
     ) -> None:
         monkeypatch.setattr(graph_service, "settings", AppConfig(CGR_HOME=tmp_path))
-        GraphIngestor(sqlite_path=sqlite_path)
+        GraphIngestor(connection=GraphConnection(sqlite_path=sqlite_path))
 
     def test_memgraph_settings_without_a_backend_are_noted_once(
         self, notes: list[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path

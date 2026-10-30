@@ -22,7 +22,11 @@ from codebase_rag.graph_dialects import (
     DIALECT_NEO4J,
     get_dialect,
 )
-from codebase_rag.services.graph_service import GraphIngestor, GraphUnavailableError
+from codebase_rag.services.graph_service import (
+    GraphConnection,
+    GraphIngestor,
+    GraphUnavailableError,
+)
 
 
 class FakeCursor:
@@ -134,16 +138,20 @@ class TestCredentialValidationIsPerEngine:
         GraphIngestor(
             host="h",
             port=7687,
-            username="legacy",
-            password=None,
-            dialect=get_dialect(DIALECT_NEO4J),
+            connection=GraphConnection(
+                username="legacy", password=None, dialect=get_dialect(DIALECT_NEO4J)
+            ),
         )
 
     def test_memgraph_still_rejects_a_half_set_credential(self) -> None:
         dialect = get_dialect(DIALECT_MEMGRAPH)
         with pytest.raises(ValueError, match="(?i)both"):
             GraphIngestor(
-                host="h", port=7687, username="u", password=None, dialect=dialect
+                host="h",
+                port=7687,
+                connection=GraphConnection(
+                    username="u", password=None, dialect=dialect
+                ),
             )
 
 

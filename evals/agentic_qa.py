@@ -677,7 +677,7 @@ def main(
         else [Condition.GRAPH, Condition.GREP]
     )
     from codebase_rag.config import settings
-    from codebase_rag.services.graph_service import GraphIngestor
+    from codebase_rag.services.graph_service import GraphIngestor, WriteTuning
 
     out_dir.mkdir(parents=True, exist_ok=True)
     suffix = "" if QType(qtype) is QType.CALLS else f"_{qtype}"
@@ -702,7 +702,9 @@ def main(
     results: dict[str, dict[str, float]] = {}
     all_records: list[QARecord] = []
     if needs_graph:
-        with GraphIngestor(batch_size=settings.MEMGRAPH_BATCH_SIZE) as ingestor:
+        with GraphIngestor(
+            tuning=WriteTuning(batch_size=settings.MEMGRAPH_BATCH_SIZE)
+        ) as ingestor:
             # The CLI path creates constraints and indexes before ingesting;
             # this harness must too, or every generated query runs against an
             # unindexed graph and the latency numbers measure Memgraph scans,

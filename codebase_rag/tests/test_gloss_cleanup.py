@@ -31,7 +31,7 @@ from codebase_rag.gloss.cleanup import (
     prune_orphaned_glosses,
 )
 from codebase_rag.mcp.tools import MCPToolsRegistry
-from codebase_rag.services.graph_service import GraphIngestor
+from codebase_rag.services.graph_service import GraphConnection, GraphIngestor
 
 
 class _FakeStore:
@@ -176,8 +176,10 @@ def _graph_with_a_gloss(tmp_path: Path) -> GraphIngestor:
     from codebase_rag.graph_dialects import DIALECT_SQLITE, get_dialect
 
     ingestor = GraphIngestor(
-        dialect=get_dialect(DIALECT_SQLITE),
-        sqlite_path=str(tmp_path / "graph.sqlite"),
+        connection=GraphConnection(
+            dialect=get_dialect(DIALECT_SQLITE),
+            sqlite_path=str(tmp_path / "graph.sqlite"),
+        ),
     )
     ingestor.__enter__()
     ingestor.execute_write(

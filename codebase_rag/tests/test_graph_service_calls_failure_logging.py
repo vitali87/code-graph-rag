@@ -7,13 +7,15 @@ from unittest.mock import MagicMock, patch
 import pytest
 from loguru import logger
 
-from codebase_rag.services.graph_service import GraphIngestor
+from codebase_rag.services.graph_service import GraphIngestor, WriteTuning
 
 
 @pytest.fixture
 def graph_service() -> GraphIngestor:
     """Create a GraphIngestor instance with mocked database."""
-    ingestor = GraphIngestor(host="localhost", port=7687, batch_size=100)
+    ingestor = GraphIngestor(
+        host="localhost", port=7687, tuning=WriteTuning(batch_size=100)
+    )
     ingestor.conn = MagicMock()
     return ingestor
 

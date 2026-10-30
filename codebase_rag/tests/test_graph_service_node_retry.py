@@ -8,7 +8,7 @@ import pytest
 
 from codebase_rag import cypher_queries as cq
 from codebase_rag.graph_dialects import DIALECT_MEMGRAPH, get_dialect
-from codebase_rag.services.graph_service import GraphIngestor
+from codebase_rag.services.graph_service import GraphConnection, GraphIngestor
 from codebase_rag.types_defs import BatchWrapper, PropertyValue
 
 
@@ -25,7 +25,9 @@ def graph_cursor(
 
     monkeypatch.setattr(GraphIngestor, "open_connection", connect)
     ingestor = GraphIngestor(
-        host="localhost", port=7687, dialect=get_dialect(DIALECT_MEMGRAPH)
+        host="localhost",
+        port=7687,
+        connection=GraphConnection(dialect=get_dialect(DIALECT_MEMGRAPH)),
     )
     ingestor.conn = connect(ingestor)
     with ThreadPoolExecutor(max_workers=2) as executor:

@@ -14,7 +14,7 @@ from codebase_rag.services.cypher_guard import (
     memgraph_plan_operators,
     neo4j_plan_operators,
 )
-from codebase_rag.services.graph_service import GraphIngestor
+from codebase_rag.services.graph_service import GraphConnection, GraphIngestor
 from codebase_rag.services.llm import (
     _validate_call_procedures,
     _validate_cypher_read_only,
@@ -214,7 +214,9 @@ class TestFetchReadOnlyOnMemgraph:
 
         monkeypatch.setattr(GraphIngestor, "_execute_query", fake_execute)
         ingestor = GraphIngestor(
-            host="localhost", port=7687, dialect=get_dialect(DIALECT_MEMGRAPH)
+            host="localhost",
+            port=7687,
+            connection=GraphConnection(dialect=get_dialect(DIALECT_MEMGRAPH)),
         )
         return ingestor, executed
 

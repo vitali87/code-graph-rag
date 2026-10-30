@@ -15,7 +15,7 @@ from codebase_rag.constants import (
     RelationshipType,
     UniqueKeyType,
 )
-from codebase_rag.services.graph_service import GraphIngestor
+from codebase_rag.services.graph_service import GraphIngestor, WriteTuning
 
 
 class TestNodeLabelCoverage:
@@ -69,7 +69,9 @@ class TestNodeLabelConstraintConsistency:
 class TestFlushNodesForAllNodeLabels:
     @pytest.mark.parametrize("label", list(NodeLabel))
     def test_each_node_label_can_be_flushed(self, label: NodeLabel) -> None:
-        ingestor = GraphIngestor(host="localhost", port=7687, batch_size=10)
+        ingestor = GraphIngestor(
+            host="localhost", port=7687, tuning=WriteTuning(batch_size=10)
+        )
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
         mock_conn.cursor.return_value = mock_cursor
@@ -90,7 +92,9 @@ class TestFlushRelationshipsForAllTypes:
     def test_each_relationship_type_can_be_flushed(
         self, rel_type: RelationshipType
     ) -> None:
-        ingestor = GraphIngestor(host="localhost", port=7687, batch_size=10)
+        ingestor = GraphIngestor(
+            host="localhost", port=7687, tuning=WriteTuning(batch_size=10)
+        )
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
         mock_conn.cursor.return_value = mock_cursor
@@ -163,7 +167,9 @@ class TestNodeBufferFlushWithMissingKey:
     def test_node_without_unique_key_is_skipped_not_crashed(
         self, label: NodeLabel
     ) -> None:
-        ingestor = GraphIngestor(host="localhost", port=7687, batch_size=10)
+        ingestor = GraphIngestor(
+            host="localhost", port=7687, tuning=WriteTuning(batch_size=10)
+        )
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
         mock_conn.cursor.return_value = mock_cursor

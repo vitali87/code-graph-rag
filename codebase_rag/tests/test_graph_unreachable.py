@@ -24,7 +24,11 @@ from typer.testing import CliRunner
 
 from codebase_rag.cli import app
 from codebase_rag.config import settings
-from codebase_rag.services.graph_service import GraphIngestor, GraphUnavailableError
+from codebase_rag.services.graph_service import (
+    GraphConnection,
+    GraphIngestor,
+    GraphUnavailableError,
+)
 from codebase_rag.tests.cli_output import unstyle
 
 runner = CliRunner()
@@ -63,7 +67,9 @@ def test_rejected_credentials_name_the_credential_variables() -> None:
     with patch.object(mgclient, "connect", side_effect=refused):
         with pytest.raises(GraphUnavailableError) as raised:
             with GraphIngestor(
-                host="127.0.0.1", port=7687, username="me", password="wrong"
+                host="127.0.0.1",
+                port=7687,
+                connection=GraphConnection(username="me", password="wrong"),
             ):
                 pass
 

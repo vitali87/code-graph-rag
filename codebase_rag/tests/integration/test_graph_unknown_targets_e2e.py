@@ -20,7 +20,7 @@ from codebase_rag import constants as cs
 from codebase_rag.graph_cli import cli as graph_cli
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.services.graph_service import GraphIngestor
+from codebase_rag.services.graph_service import GraphIngestor, WriteTuning
 from codebase_rag.utils.path_utils import derive_project_name
 
 pytestmark = [pytest.mark.integration]
@@ -66,7 +66,7 @@ def indexed(
         return GraphIngestor(
             host=str(memgraph_container["host"]),
             port=int(memgraph_container["port"]),
-            batch_size=batch_size,
+            tuning=WriteTuning(batch_size=batch_size),
         )
 
     with patch("codebase_rag.cli_runtime.connect_graph", side_effect=connect):

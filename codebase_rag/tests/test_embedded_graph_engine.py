@@ -40,7 +40,7 @@ from codebase_rag.graph_dialects import (
     Neo4jDialect,
     get_dialect,
 )
-from codebase_rag.services.graph_service import GraphIngestor
+from codebase_rag.services.graph_service import GraphConnection, GraphIngestor
 from codebase_rag.types_defs import CypherParamValue, ResultValue
 
 # Pieces the graph audit formats into a query, not queries themselves.
@@ -283,7 +283,11 @@ class TestLimits:
             "codebase_rag.services.graph_service.settings.QUERY_TIMEOUT_S", 0.05
         )
         ingestor = GraphIngestor(
-            host="", port=0, dialect=get_dialect(DIALECT_SQLITE), sqlite_path=path
+            host="",
+            port=0,
+            connection=GraphConnection(
+                dialect=get_dialect(DIALECT_SQLITE), sqlite_path=path
+            ),
         )
         with ingestor, pytest.raises(TimeoutError):
             ingestor.fetch_read_only(self._CROSS_JOIN)
@@ -566,8 +570,10 @@ class TestIngestor:
     @pytest.fixture
     def ingestor(self, tmp_path: Path) -> Iterator[GraphIngestor]:
         with GraphIngestor(
-            dialect=get_dialect(DIALECT_SQLITE),
-            sqlite_path=str(tmp_path / "graph.sqlite"),
+            connection=GraphConnection(
+                dialect=get_dialect(DIALECT_SQLITE),
+                sqlite_path=str(tmp_path / "graph.sqlite"),
+            ),
         ) as ingestor:
             ingestor.ensure_constraints()
             yield ingestor

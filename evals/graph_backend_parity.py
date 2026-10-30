@@ -38,7 +38,7 @@ from loguru import logger
 import codebase_rag
 from codebase_rag import constants as cs
 from codebase_rag.graph_dialects import get_dialect
-from codebase_rag.services.graph_service import GraphIngestor
+from codebase_rag.services.graph_service import GraphConnection, GraphIngestor
 from codebase_rag.types_defs import JsonValue, PropertyValue, ResultRow, ResultValue
 from codebase_rag.utils.atomic_write import write_text_atomic
 
@@ -85,7 +85,9 @@ def read_queries() -> dict[str, str]:
 
 
 def _ingestor(engine: ec.ParityEngine, sqlite_path: str | None) -> GraphIngestor:
-    return GraphIngestor(dialect=get_dialect(engine), sqlite_path=sqlite_path)
+    return GraphIngestor(
+        connection=GraphConnection(dialect=get_dialect(engine), sqlite_path=sqlite_path)
+    )
 
 
 def _text(row: ResultRow, column: str) -> str | None:
