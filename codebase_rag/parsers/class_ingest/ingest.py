@@ -28,6 +28,7 @@ from ..field_nodes import PendingFieldType, emit_declared_fields
 from ..go import class_ingest as go_class_ingest
 from ..go import interfaces as go_ifaces
 from ..java import utils as java_utils
+from ..js_ts import class_ingest as js_ts_class_ingest
 from ..js_ts import utils as js_ts_utils
 from ..js_ts.utils import mark_js_ts_module_private
 from ..method_ingest import MethodIngestHost, ingest_method
@@ -51,7 +52,6 @@ from . import cpp_modules
 from . import definition_label as nt
 from . import identity as id_
 from . import method_override as mo
-from . import parent_extraction as pe
 from . import relationships as rel
 from .utils import (
     body_method_nodes,
@@ -185,6 +185,7 @@ class ClassIngest:
         "csharp",
         "go",
         "dart",
+        "js_ts",
     )
 
     def __init__(
@@ -298,6 +299,11 @@ class ClassIngest:
             function_registry=function_registry,
             facts=facts,
             annotated_overrides=dart_annotated_overrides,
+        )
+        self.js_ts = js_ts_class_ingest.JsTsClassIngest(
+            function_registry=function_registry,
+            module_qn_to_file_path=module_qn_to_file_path,
+            import_processor=import_processor,
         )
 
     def _resolve_to_qn(
@@ -500,29 +506,6 @@ class ClassIngest:
             return entry.child_label
         return str(held)
 
-    def _js_reexport_target(self, entry: DeferredInherit) -> str | None:
-        """The class a JS/TS base reaches through its module's exports.
-
-        `export { Animal as AnimalBase }` publishes the class under a name
-        nothing is registered under, so `extends AnimalBase` imported from
-        that module names `base.AnimalBase` (issue #2894). The export table
-        says which binding the name stands for, through any barrels that
-        rename it again; only what a class can extend (a type, or in JS a
-        constructor function) is a base at the end.
-        """
-        if entry.language not in cs.JS_TS_LANGUAGES:
-            return None
-        followed = self.import_processor.js_ts.follow_js_reexports(
-            entry.parent_qn, self.module_qn_to_file_path, self.function_registry
-        )
-        # A subclass may take the base's declared name (hono's `Hono extends
-        # HonoBase`); a chain ending on the child itself names no base.
-        if followed != entry.child_qn and self.function_registry.get(
-            followed
-        ) in bt.base_target_kinds(entry.language):
-            return followed
-        return None
-
     def _resolve_deferred_parent_qn(
         self, entry: DeferredInherit
     ) -> tuple[str, bool] | None:
@@ -564,7 +547,7 @@ class ClassIngest:
             return entry.parent_qn, False
         if (followed := self.rust.reexport_target(entry)) is not None:
             return followed, False
-        if (followed := self._js_reexport_target(entry)) is not None:
+        if (followed := self.js_ts.reexport_target(entry)) is not None:
             return followed, False
         if entry.alt_parent_qn is not None:
             # The written path was exact and still landed on nothing, which a
@@ -586,7 +569,7 @@ class ClassIngest:
         # The module-anchored fallback shape carries the raw written name
         # as the remainder after the module qn.
         raw_name = entry.parent_qn[len(prefix) :]
-        if (bound := self._js_ts_namespace_member(raw_name, entry)) is not None:
+        if (bound := self.js_ts.namespace_member(raw_name, entry)) is not None:
             return bound, False
         resolved = self._resolve_class_name(raw_name, entry.module_qn, entry.language)
         if (
@@ -598,42 +581,6 @@ class ClassIngest:
         ):
             return resolved, False
         return self._externalize_written_base(raw_name, entry.language)
-
-    def _js_ts_namespace_member(
-        self, raw_name: str, entry: DeferredInherit
-    ) -> str | None:
-        # `implements r.Plain` or `extends r.Base` after `import * as r from
-        # './router'` (issue #2560): the head is an import binding, so the
-        # member is declared in the module it names, which outranks the name
-        # sweep below. Only a registered type answers. A head bound outside
-        # the project (`React` from a default import is `react.default`)
-        # registers nothing, so `React.Component` keeps the written name it is
-        # externalized under, which React dead-code rooting matches on.
-        if entry.language not in cs.JS_TS_LANGUAGES:
-            return None
-        candidate = pe.js_ts_namespace_member_qn(
-            raw_name, self.import_processor.import_mapping.get(entry.module_qn, {})
-        )
-        if candidate is None:
-            return None
-        # `r` is often a barrel (`export { Router } from './router'`): the
-        # member is what the barrel EXPORTS under that name, followed on to
-        # its declaring module. A name the barrel only imports for its own
-        # use is no member: tsc rejects `implements r.Router` then.
-        member = self.import_processor.js_ts.follow_js_reexports(
-            candidate, self.module_qn_to_file_path, self.function_registry
-        )
-        if (
-            member == entry.child_qn
-            or self.function_registry.get(member)
-            not in bt.base_target_kinds(entry.language)
-            # The module's own declaration is a member only when exported.
-            or (
-                member == candidate and self.function_registry.is_module_private(member)
-            )
-        ):
-            return None
-        return member
 
     def _resolve_self_edge_parent(
         self, entry: DeferredInherit

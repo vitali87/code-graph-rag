@@ -970,7 +970,7 @@ class DefinitionProcessor:
         # Named passes above have claimed their function nodes;
         # only genuinely anonymous spans (callbacks, IIFEs) still
         # need their held-back registration.
-        self.function_ingest.flush_deferred_js_anonymous()
+        self.function_ingest.js_ts.flush_deferred_anonymous()
         # Direct module.exports functions finalise by SPAN now that
         # every node's minted qn is recorded.
         module_system.finalise_direct_module_exports(module_qn)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, NamedTuple
+from typing import TYPE_CHECKING, Literal
 
 from loguru import logger
 from tree_sitter import Node
@@ -41,6 +41,7 @@ from .function_identity import FunctionResolution, name_start_point
 from .go import function_ingest as go_function_ingest
 from .go import interfaces as go_interfaces
 from .go.builds import GoBuilds
+from .js_ts import function_ingest as js_ts_function_ingest
 from .js_ts import utils as js_ts_utils
 from .js_ts.utils import mark_js_ts_module_private
 from .lua import utils as lua_utils
@@ -94,30 +95,14 @@ def _java_anon_base_for_function(
     return None
 
 
-class _DeferredRegistration(NamedTuple):
-    """A function held back from the generic pass until later passes claim.
-
-    An unnamed JS/TS function expression may be one a named pass registers
-    under its real name, and registering `anonymous_row_col` eagerly minted a
-    second node for every one of them (521 locations on thrift's JS corpora).
-    Registration happens at the per-file flush.
-    """
-
-    func_node: Node
-    resolution: FunctionResolution
-    module_qn: str
-    language: cs.SupportedLanguage
-    lang_config: LanguageSpec
-    lang_queries: LanguageQueries
-
-
 class FunctionIngest:
     """Writes every Function node a file's function captures yield, and the
     DEFINES edges held until every parent is registered. A language's own
     share is the collaborator it builds from that language's package, which
     holds what waits for every type until its `resolve_deferred_*` pass:
     C/C++'s out-of-class method definitions and held-back nodes, Go's
-    receiver methods, C#'s `#if`-orphaned members, Rust's body-local items."""
+    receiver methods, C#'s `#if`-orphaned members, Rust's body-local items
+    and JS/TS's anonymous function expressions."""
 
     __slots__ = (
         "_method_host",
@@ -134,11 +119,11 @@ class FunctionIngest:
         "pending_type_facts",
         "pending_parameter_types",
         "_deferred_parent_links",
-        "_deferred_js_anonymous",
         "cpp",
         "rust",
         "csharp",
         "go",
+        "js_ts",
     )
 
     def __init__(
@@ -181,10 +166,10 @@ class FunctionIngest:
         # Shared with the class pass, whose methods defer their containment
         # here too; emptied in place by resolve_deferred_parent_links.
         self._deferred_parent_links = deferred_parent_links
-        # Unnamed JS/TS function expressions held back until the named
-        # JS passes have claimed their spans (one node per source function).
-        self._deferred_js_anonymous: list[_DeferredRegistration] = []
         self.rust = rust_function_ingest.RustFunctionIngest(self, ingestor, facts)
+        self.js_ts = js_ts_function_ingest.JsTsFunctionIngest(
+            self, function_registry, facts
+        )
         self.cpp = cpp_function_ingest.CppFunctionIngest(
             self,
             method_host=method_host,
@@ -300,24 +285,10 @@ class FunctionIngest:
         lang_config: LanguageSpec,
         lang_queries: LanguageQueries,
     ) -> bool:
-        # A nameless JS/TS function expression may be one a NAMED pass
-        # (object literal, export, assignment, prototype) registers under its
-        # real name; those passes run after this one, so hold the anonymous
-        # registration back and flush only unclaimed spans (each eager
-        # registration was a duplicate node).
-        if language in cs.JS_TS_LANGUAGES and resolution.is_anonymous:
-            self._deferred_js_anonymous.append(
-                _DeferredRegistration(
-                    func_node,
-                    resolution,
-                    module_qn,
-                    language,
-                    lang_config,
-                    lang_queries,
-                )
+        if language in cs.JS_TS_LANGUAGES:
+            return self.js_ts.defers_anonymous(
+                func_node, resolution, module_qn, language, lang_config, lang_queries
             )
-            return True
-
         if language == cs.SupportedLanguage.RUST:
             return self.rust.defers_body_local(
                 func_node, resolution, module_qn, lang_config, lang_queries
@@ -376,21 +347,6 @@ class FunctionIngest:
                 label=label,
                 qualified_name=qualified_name,
                 container_qn=None,
-            )
-
-    def flush_deferred_js_anonymous(self) -> None:
-        deferred = self._deferred_js_anonymous
-        self._deferred_js_anonymous = []
-        for entry in deferred:
-            if self._function_span_claimed(entry.module_qn, entry.func_node):
-                continue
-            self._register_function(
-                entry.func_node,
-                entry.resolution,
-                entry.module_qn,
-                entry.language,
-                entry.lang_config,
-                entry.lang_queries,
             )
 
     def _resolve_function_identity(
@@ -541,9 +497,7 @@ class FunctionIngest:
             func_node, resolution, module_qn, lang_queries, language
         )
         if language in cs.JS_TS_LANGUAGES:
-            self._mark_js_ts_name_scope(
-                func_node, resolution.qualified_name, func_props
-            )
+            self.js_ts.mark_name_scope(func_node, resolution.qualified_name, func_props)
         is_macro = func_node.type in (
             cs.TS_RS_MACRO_DEFINITION,
             cs.TS_JULIA_MACRO_DEFINITION,
@@ -657,23 +611,6 @@ class FunctionIngest:
         self._create_function_relationships(
             func_node, resolution, module_qn, language, lang_config
         )
-
-    def _mark_js_ts_name_scope(
-        self, func_node: Node, qualified_name: str, func_props: PropertyDict
-    ) -> None:
-        if js_ts_utils.is_object_literal_method(func_node):
-            # `{delay () {...}}` registers here, under its key, before the
-            # object-literal pass would; only its object reaches it (issue
-            # #2435), and the persisted mark keeps that across incremental runs.
-            func_props[cs.KEY_IS_OBJECT_MEMBER] = True
-            self.function_registry.mark_object_member(qualified_name)
-        # A JS/TS function expression whose name only its own body can call:
-        # bare-name resolution skips it everywhere else (issue #2402), and the
-        # persisted property lets an incremental run's rehydrated registry
-        # skip it too (the is_macro pattern).
-        if js_ts_utils.name_is_body_scoped(func_node):
-            func_props[cs.KEY_IS_BODY_SCOPED_NAME] = True
-            self.function_registry.mark_body_scoped_name(qualified_name)
 
     def _record_java_anon_override(
         self,
@@ -1159,26 +1096,10 @@ class FunctionIngest:
             receiver_parent := self.go.receiver_method_parent(current, module_qn)
         ):
             return receiver_parent
-        # Reuse the enclosing function's REGISTERED identity when its span is
-        # claimed: structural re-derivation produces the pre-claim qn (an
-        # anonymous name whose node no longer exists for
-        # `exports.f = function`, or the FIRST `t` for the second same-name
-        # fn expr registered as `t@line`), hoisting the child to the module
-        # or the wrong function.
-        if language in cs.JS_TS_LANGUAGES:
-            recorded = self.facts.function_locations.get(
-                function_span_key(module_qn, current)
-            )
-            if (
-                recorded is not None
-                and recorded.qualified_name != func_qn
-                and recorded.qualified_name in self.function_registry
-            ):
-                return (
-                    cs.NodeLabel(recorded.label),
-                    recorded.qualified_name,
-                    None,
-                )
+        if language in cs.JS_TS_LANGUAGES and (
+            recorded_parent := self.js_ts.recorded_parent(current, func_qn, module_qn)
+        ):
+            return recorded_parent
         resolution = (
             self._resolve_function_identity(
                 current, module_qn, language, lang_config, file_path
