@@ -111,6 +111,39 @@ class TestReaching:
             BindingKind.ASSIGN,
         }
 
+    def test_an_irrefutable_case_leaves_no_path_on_which_none_ran(self) -> None:
+        source = "a = f1\nmatch v:\n    case _:\n        a = f2\na()\n"
+        assert _reaching(source)["a()@5"] == ["assign@4"]
+        guarded = "a = f1\nmatch v:\n    case _ if c:\n        a = f2\na()\n"
+        assert _reaching(guarded)["a()@5"] == ["assign@1", "assign@4"]
+
+    def test_a_case_guard_runs_before_its_body(self) -> None:
+        source = "a = f1\nmatch v:\n    case _ if (a := f2):\n        a()\n"
+        assert _reaching(source)["a()@4"] == ["assign@3"]
+
+    @pytest.mark.parametrize(
+        "expression",
+        ["flag and (a := f2)", "flag or (a := f2)", "(a := f2) if flag else 0"],
+    )
+    def test_an_operand_that_may_not_run_joins_the_path_that_skips_it(
+        self, expression: str
+    ) -> None:
+        got = _reaching(f"a = f1\n{expression}\na()\n")
+        assert got["a()@3"] == ["assign@1", "assign@2"]
+
+    def test_a_walrus_in_a_comprehension_binds_the_enclosing_name(self) -> None:
+        # The comprehension may iterate zero times, so the earlier binding
+        # still reaches; its own target does not outlive it.
+        got = _reaching("a = f1\n[(a := f2) for a2 in xs]\na()\n")
+        assert got["a()@3"] == ["assign@1", "assign@2"]
+
+    def test_finally_runs_on_the_way_out_of_a_loop(self) -> None:
+        source = (
+            "a = f1\nfor i in xs:\n    try:\n        break\n"
+            "    finally:\n        a = f2\na()\n"
+        )
+        assert _reaching(source)["a()@7"] == ["assign@1", "assign@6"]
+
     def test_a_global_name_is_never_decided_here(self) -> None:
         source = "def f():\n    global a\n    a = f1\n    a()\n"
         root = _parse(source)

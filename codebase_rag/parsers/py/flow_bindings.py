@@ -35,6 +35,7 @@ from tree_sitter import Node
 
 from ... import constants as cs
 from ..utils import safe_decode_text
+from .patterns import case_always_matches
 
 # Statements whose bodies are other scopes: a call inside them is not this
 # body's, and their names bind here only as the definition itself.
@@ -99,15 +100,20 @@ _EVAL = "eval"
 _RECORD = "record"
 _BIND = "bind"
 _RESTORE = "restore"
+_MAYBE = "maybe"
+_EITHER = "either"
 
 
 class _Step(NamedTuple):
     # One unit of the iterative expression walk: evaluate a node, record a
-    # call against the state at that point, apply a walrus binding, or put
-    # back the state a comprehension narrowed.
+    # call against the state at that point, apply a walrus binding, put back
+    # the state a comprehension narrowed (`own`: its targets), or evaluate an
+    # operand that may not run (`x and y`) or one of two that may (`a if c
+    # else b`) and join the paths.
     op: str
     node: Node | None
     saved: State | None = None
+    own: frozenset[str] = frozenset()
 
 
 @dataclass
@@ -418,6 +424,10 @@ class FlowBindings:
         return _merge([exit_state, *loop.breaks])
 
     def _try(self, node: Node, state: State) -> State | None:
+        loop = self._loops[-1] if self._loops else None
+        # The loop exits this try's body and handlers take; `finally` runs
+        # on each of them before it reaches the loop's head or its exit.
+        exits = (len(loop.breaks), len(loop.continues)) if loop is not None else None
         body = node.child_by_field_name(cs.FIELD_BODY)
         # A handler can start after any statement of the try body, so it
         # sees every state the body passes through, and the entry state.
@@ -452,8 +462,22 @@ class FlowBindings:
                 None,
             )
             ran = self._body(block, _merge([merged, handler_in]) or handler_in)
+            if loop is not None and exits is not None:
+                breaks, continues = exits
+                loop.breaks[breaks:] = self._through(block, loop.breaks[breaks:])
+                loop.continues[continues:] = self._through(
+                    block, loop.continues[continues:]
+                )
             return ran if merged is not None else None
         return merged
+
+    def _through(self, block: Node | None, states: list[State]) -> list[State]:
+        """Each loop exit as `finally` leaves it (it may rebind, or end it)."""
+        out: list[State] = []
+        for s in states:
+            if (ran := self._body(block, dict(s))) is not None:
+                out.append(ran)
+        return out
 
     def _bind_opaque_as(self, node: Node, state: State) -> State:
         if node.type == cs.TS_PY_AS_PATTERN:
@@ -479,11 +503,14 @@ class FlowBindings:
     def _match(self, node: Node, state: State) -> State | None:
         state = self._expression(node.child_by_field_name(cs.FIELD_SUBJECT), state)
         body = node.child_by_field_name(cs.FIELD_BODY)
-        outs: list[State | None] = [state]
+        outs: list[State | None] = []
+        # The state when no case ran: each case tried first may have bound
+        # its captures, and its guard (a walrus) evaluated, before failing.
+        missed = state
         for case in body.named_children if body is not None else []:
             if case.type != cs.TS_PY_CASE_CLAUSE:
                 continue
-            start = dict(state)
+            start = dict(missed)
             for part in case.named_children:
                 if part.type == cs.TS_PY_CASE_PATTERN:
                     start = self._bind_opaque(part, start)
@@ -491,10 +518,16 @@ class FlowBindings:
                         start = self._set(
                             start, name, Binding(BindingKind.OPAQUE, part.start_byte)
                         )
+            if (guard := case.child_by_field_name(cs.TS_PY_FIELD_GUARD)) is not None:
+                start = self._expression(guard, start)
             outs.append(
                 self._body(case.child_by_field_name(cs.FIELD_CONSEQUENCE), start)
             )
-        return _merge(outs)
+            if case_always_matches(case):
+                # No later case runs, and no path leaves with none run.
+                return _merge(outs)
+            missed = _merge([missed, start]) or missed
+        return _merge([*outs, missed])
 
     # Expressions ----------------------------------------------------------
 
@@ -516,14 +549,33 @@ class FlowBindings:
             step = work.pop()
             current = step.node
             if step.op == _RESTORE:
-                state = step.saved if step.saved is not None else state
+                if step.saved is not None:
+                    state = _leave_comprehension(step.saved, state, step.own)
                 continue
             if current is None:
+                continue
+            if step.op == _MAYBE:
+                # `x and y` / `x or y`: y may not run, so its bindings
+                # (a walrus) join the state x left.
+                state = _merge([state, self._expression(current, dict(state))]) or state
+                continue
+            if step.op == _EITHER:
+                # `a if c else b`, after c: exactly one of a and b runs.
+                yes, _condition, no = current.named_children
+                state = (
+                    _merge(
+                        [
+                            self._expression(yes, dict(state)),
+                            self._expression(no, dict(state)),
+                        ]
+                    )
+                    or state
+                )
                 continue
             if step.op == _RECORD:
                 base = call_base(current)
                 if base is not None and base in state:
-                    self._reaching[current.start_byte] = state[base]
+                    _add(self._reaching, current.start_byte, state[base])
                 continue
             if step.op == _BIND:
                 name_node = current.child_by_field_name(cs.FIELD_NAME)
@@ -536,23 +588,34 @@ class FlowBindings:
                 continue
             if t == cs.TS_PY_IDENTIFIER:
                 if (name := _text(current)) in state:
-                    self._names[current.start_byte] = state[name]
+                    _add(self._names, current.start_byte, state[name])
             elif t == cs.TS_PY_NAMED_EXPRESSION:
                 work.append(_Step(_BIND, current))
                 work.append(_Step(_EVAL, current.child_by_field_name(cs.FIELD_VALUE)))
             elif t in _COMPREHENSIONS:
                 # The comprehension's own targets are its locals; a call
-                # through one of them is not decided here, and nothing it
-                # binds outlives it.
-                own = {
+                # through one of them is not decided here, and they do not
+                # outlive it. A walrus inside binds the enclosing body's
+                # name (PEP 572), on a path that may never run.
+                own = frozenset(
                     n
                     for c in current.named_children
                     if c.type == cs.TS_PY_FOR_IN_CLAUSE
                     for n in _identifiers(c.child_by_field_name(cs.TS_FIELD_LEFT))
-                }
-                work.append(_Step(_RESTORE, None, state))
+                )
+                work.append(_Step(_RESTORE, None, state, own))
                 state = {k: v for k, v in state.items() if k not in own}
                 work.extend(_Step(_EVAL, c) for c in reversed(current.named_children))
+            elif t == cs.TS_PY_BOOLEAN_OPERATOR:
+                work.append(
+                    _Step(_MAYBE, current.child_by_field_name(cs.TS_FIELD_RIGHT))
+                )
+                work.append(_Step(_EVAL, current.child_by_field_name(cs.TS_FIELD_LEFT)))
+            elif (
+                t == cs.TS_PY_CONDITIONAL_EXPRESSION and current.named_child_count == 3
+            ):
+                work.append(_Step(_EITHER, current))
+                work.append(_Step(_EVAL, current.named_children[1]))
             elif t == cs.TS_PY_CALL:
                 # The callee expression first, then the call itself, then its
                 # arguments: the order the call evaluates in.
@@ -566,6 +629,23 @@ class FlowBindings:
             else:
                 work.extend(_Step(_EVAL, c) for c in reversed(current.named_children))
         return state
+
+
+def _add(
+    table: dict[int, frozenset[Binding]], key: int, found: frozenset[Binding]
+) -> None:
+    # A node is walked once per path into it (a loop round, a `finally` on
+    # each way out of its `try`): what reaches it is what reaches it on any.
+    table[key] = table.get(key, frozenset()) | found
+
+
+def _leave_comprehension(before: State, after: State, own: frozenset[str]) -> State:
+    """The state past a comprehension: its targets are what they were before
+    it, and what it bound in the enclosing body (a walrus) joins the state
+    before it, since it may iterate zero times."""
+    outer = {k: v for k, v in after.items() if k not in own}
+    joined = _merge([{k: v for k, v in before.items() if k not in own}, outer]) or {}
+    return {**joined, **{k: before[k] for k in own if k in before}}
 
 
 def _pair(targets: list[Node], values: list[Node]) -> list[Node | None]:
