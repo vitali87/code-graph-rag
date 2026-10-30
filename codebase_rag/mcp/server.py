@@ -134,9 +134,6 @@ def create_server(workspace: str | None = None) -> tuple[Server, GraphIngestor]:
 
     server = Server(mcs.MCP_SERVER_NAME)
 
-    def _create_error_content(message: str) -> CallToolResult:
-        return _failed_call(te.failure(message))
-
     @server.list_tools()
     async def list_tools() -> list[Tool]:
         schemas = tools.get_tool_schemas()
@@ -160,7 +157,7 @@ def create_server(workspace: str | None = None) -> tuple[Server, GraphIngestor]:
             if not handler_info:
                 error_msg = mcs.MCP_UNKNOWN_TOOL_ERROR.format(name=name)
                 logger.error(ls.MCP_SERVER_UNKNOWN_TOOL.format(name=name))
-                return _create_error_content(error_msg)
+                return _failed_call(te.failure(error_msg))
 
             handler, returns_json = handler_info
 
@@ -181,7 +178,7 @@ def create_server(workspace: str | None = None) -> tuple[Server, GraphIngestor]:
         except Exception as e:  # noqa: BLE001 -- tool boundary: any failure becomes the tool's error result
             error_msg = mcs.MCP_TOOL_EXEC_ERROR.format(name=name, error=e)
             logger.exception(ls.MCP_SERVER_TOOL_ERROR.format(name=name, error=e))
-            return _create_error_content(error_msg)
+            return _failed_call(te.failure(error_msg))
 
     return server, ingestor
 

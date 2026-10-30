@@ -1455,50 +1455,60 @@ def _thinking_with_status_bar(message: str):
             refresh_task.cancel()
 
 
+def _submit(event: KeyPressEvent) -> None:
+    event.app.exit(result=event.app.current_buffer.text)
+
+
+def _new_line(event: KeyPressEvent) -> None:
+    event.current_buffer.insert_text("\n")
+
+
+def _keyboard_interrupt(event: KeyPressEvent) -> None:
+    event.app.exit(exception=KeyboardInterrupt)
+
+
+def _toggle_permission_mode(event: KeyPressEvent) -> None:
+    app_context.session.cycle_permission_mode()
+    event.app.invalidate()
+
+
+# This prompt is multiline, so the arrow keys belong to the buffer while
+# there is somewhere to move. Only on the first (or last) row do they
+# fall through to history -- binding them unconditionally would make a
+# half-written multiline question uneditable (issue #1495).
+def _history_previous(event: KeyPressEvent) -> None:
+    buffer = event.current_buffer
+    if buffer.document.cursor_position_row == 0:
+        buffer.history_backward(count=event.arg)
+    else:
+        buffer.cursor_up(count=event.arg)
+
+
+def _history_next(event: KeyPressEvent) -> None:
+    buffer = event.current_buffer
+    if buffer.document.cursor_position_row == buffer.document.line_count - 1:
+        buffer.history_forward(count=event.arg)
+    else:
+        buffer.cursor_down(count=event.arg)
+
+
+_INPUT_KEY_HANDLERS: tuple[
+    tuple[cs.KeyBinding, Callable[[KeyPressEvent], None]], ...
+] = (
+    (cs.KeyBinding.CTRL_J, _submit),
+    (cs.KeyBinding.CTRL_E, _submit),
+    (cs.KeyBinding.ENTER, _new_line),
+    (cs.KeyBinding.CTRL_C, _keyboard_interrupt),
+    (cs.KeyBinding.SHIFT_TAB, _toggle_permission_mode),
+    (cs.KeyBinding.UP, _history_previous),
+    (cs.KeyBinding.DOWN, _history_next),
+)
+
+
 def _input_keybindings() -> KeyBindings:
     bindings = KeyBindings()
-
-    @bindings.add(cs.KeyBinding.CTRL_J)
-    def submit(event: KeyPressEvent) -> None:
-        event.app.exit(result=event.app.current_buffer.text)
-
-    @bindings.add(cs.KeyBinding.CTRL_E)
-    def submit_ctrl_e(event: KeyPressEvent) -> None:
-        event.app.exit(result=event.app.current_buffer.text)
-
-    @bindings.add(cs.KeyBinding.ENTER)
-    def new_line(event: KeyPressEvent) -> None:
-        event.current_buffer.insert_text("\n")
-
-    @bindings.add(cs.KeyBinding.CTRL_C)
-    def keyboard_interrupt(event: KeyPressEvent) -> None:
-        event.app.exit(exception=KeyboardInterrupt)
-
-    @bindings.add(cs.KeyBinding.SHIFT_TAB)
-    def toggle_permission_mode(event: KeyPressEvent) -> None:
-        app_context.session.cycle_permission_mode()
-        event.app.invalidate()
-
-    # This prompt is multiline, so the arrow keys belong to the buffer while
-    # there is somewhere to move. Only on the first (or last) row do they
-    # fall through to history -- binding them unconditionally would make a
-    # half-written multiline question uneditable (issue #1495).
-    @bindings.add(cs.KeyBinding.UP)
-    def history_previous(event: KeyPressEvent) -> None:
-        buffer = event.current_buffer
-        if buffer.document.cursor_position_row == 0:
-            buffer.history_backward(count=event.arg)
-        else:
-            buffer.cursor_up(count=event.arg)
-
-    @bindings.add(cs.KeyBinding.DOWN)
-    def history_next(event: KeyPressEvent) -> None:
-        buffer = event.current_buffer
-        if buffer.document.cursor_position_row == buffer.document.line_count - 1:
-            buffer.history_forward(count=event.arg)
-        else:
-            buffer.cursor_down(count=event.arg)
-
+    for key, handler in _INPUT_KEY_HANDLERS:
+        bindings.add(key)(handler)
     return bindings
 
 
