@@ -277,7 +277,7 @@ class TestMcp:
     ) -> None:
         with (
             _held_elsewhere(repo, "click__a4231746") as holder,
-            patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls,
+            patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as updater_cls,
         ):
             result = await registry.update_repository()
 
@@ -294,7 +294,7 @@ class TestMcp:
     ) -> None:
         with (
             _held_elsewhere(repo, "click__a4231746") as holder,
-            patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls,
+            patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as updater_cls,
         ):
             result = await registry.index_repository()
 

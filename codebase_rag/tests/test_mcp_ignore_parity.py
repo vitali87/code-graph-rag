@@ -52,7 +52,7 @@ def test_mcp_passes_the_cli_exclude_set(
     # rather than a real difference.
     assert {"vendor/", "generated/", "dist/", "build/"} <= expected
 
-    with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+    with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as updater_cls:
         getattr(registry, sync_method)()
 
     assert updater_cls.call_args.kwargs["exclude_paths"] == expected
@@ -71,7 +71,7 @@ def test_mcp_passes_the_cli_unignore_set(
     assert "generated/" in patterns.unignore
     assert "generated/" not in patterns.exclude
 
-    with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+    with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as updater_cls:
         getattr(registry, sync_method)()
 
     assert updater_cls.call_args.kwargs["unignore_paths"] == patterns.unignore
@@ -93,7 +93,7 @@ def test_mcp_passes_none_when_the_repo_has_no_ignore_files(
     )
     assert not load_ignore_patterns(bare).exclude
 
-    with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+    with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as updater_cls:
         getattr(registry, sync_method)()
 
     assert updater_cls.call_args.kwargs["exclude_paths"] is None

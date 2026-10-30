@@ -20,7 +20,7 @@ from codebase_rag import constants as cs
 from codebase_rag.cli import app
 from codebase_rag.config import settings
 from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.mcp.tools import _plain_function
+from codebase_rag.mcp.handler_base import plain_function
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.tools import tool_descriptions as td
 from codebase_rag.tools.file_editor import FileEditor, create_file_editor_tool
@@ -76,7 +76,7 @@ async def test_an_approved_replace_code_reaches_the_graph(
     refresher = GraphRefresher(store, root, PROJECT)
     tool = create_file_editor_tool(FileEditor(str(root)), refresher.after_write)
 
-    result = await _plain_function(tool)("plugins.py", TARGET, REPLACEMENT)
+    result = await plain_function(tool)("plugins.py", TARGET, REPLACEMENT)
 
     assert f"{PROJECT}.util.log" in _callees(store, f"{PROJECT}.plugins._on_start")
     assert "re-ingested 1 file(s)" in str(result)
@@ -92,7 +92,7 @@ async def test_a_created_file_reaches_the_graph(
     refresher = GraphRefresher(store, root, PROJECT)
     tool = create_file_writer_tool(FileWriter(str(root)), refresher.after_write)
 
-    result = await _plain_function(tool)(
+    result = await plain_function(tool)(
         "extra.py", 'from util import log\n\n\ndef helper():\n    log("x")\n'
     )
 
@@ -146,7 +146,7 @@ async def test_the_chat_session_reingests_an_approved_replace_code(
             for t in orchestrator.call_args.kwargs["tools"]
             if t.name == td.AgenticToolName.REPLACE_CODE
         )
-        await _plain_function(tool)("plugins.py", TARGET, REPLACEMENT)
+        await plain_function(tool)("plugins.py", TARGET, REPLACEMENT)
 
     with (
         patch.object(main_mod, "_validate_provider_config"),
@@ -216,7 +216,7 @@ async def test_a_tool_built_without_a_hook_returns_the_plain_message(
     # The MCP server builds the tools this way; it re-ingests on its own.
     root, _store = indexed
     tool = create_file_editor_tool(FileEditor(str(root)))
-    result = await _plain_function(tool)("plugins.py", TARGET, REPLACEMENT)
+    result = await plain_function(tool)("plugins.py", TARGET, REPLACEMENT)
     assert result == cs.MSG_SURGICAL_SUCCESS.format(path="plugins.py")
 
 
@@ -226,7 +226,7 @@ async def test_a_failed_replace_leaves_the_graph_alone(
     root, store = indexed
     before = set(store.keyed_edges)
     tool = create_file_editor_tool(FileEditor(str(root)))
-    result = await _plain_function(tool)(
+    result = await plain_function(tool)(
         "plugins.py", "    return 'nope'\n", REPLACEMENT
     )
     assert "nope" not in (root / "plugins.py").read_text()

@@ -306,8 +306,8 @@ async def test_the_agents_tools_are_held_to_the_workspace(tmp_path: Path) -> Non
 
     registry.ingestor.fetch_all.side_effect = graph
     with (
-        patch("codebase_rag.mcp.tools.create_rag_orchestrator") as build,
-        patch("codebase_rag.mcp.tools.create_query_tool") as query_tool,
+        patch("codebase_rag.mcp.retrieval_tools.create_rag_orchestrator") as build,
+        patch("codebase_rag.mcp.retrieval_tools.create_query_tool") as query_tool,
     ):
         build.return_value = (MagicMock(), None)
         registry.rag_agent

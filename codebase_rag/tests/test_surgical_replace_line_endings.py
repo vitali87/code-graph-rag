@@ -14,7 +14,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.mcp.tools import MCPToolsRegistry, _plain_function
+from codebase_rag.mcp.handler_base import plain_function
+from codebase_rag.mcp.tools import MCPToolsRegistry
 from codebase_rag.tools.file_editor import FileEditor, create_file_editor_tool
 
 pytestmark = [pytest.mark.anyio]
@@ -102,7 +103,7 @@ def test_overlapping_matches_are_ambiguous(tmp_path: Path) -> None:
 
 
 async def test_the_tool_names_the_match_count_and_lines(tmp_path: Path) -> None:
-    tool = _plain_function(create_file_editor_tool(_editor(tmp_path, {"dup.py": DUP})))
+    tool = plain_function(create_file_editor_tool(_editor(tmp_path, {"dup.py": DUP})))
 
     result = await tool(
         file_path="dup.py", target_code="    total = 0", replacement_code="    x = 1"
@@ -171,7 +172,7 @@ def test_a_missing_target_is_still_refused(tmp_path: Path) -> None:
 
 
 async def test_a_unique_edit_still_reports_success(tmp_path: Path) -> None:
-    tool = _plain_function(create_file_editor_tool(_editor(tmp_path, {"dup.py": DUP})))
+    tool = plain_function(create_file_editor_tool(_editor(tmp_path, {"dup.py": DUP})))
 
     result = await tool(
         file_path="dup.py", target_code="def x():", replacement_code="def z():"

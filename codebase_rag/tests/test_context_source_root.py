@@ -153,7 +153,7 @@ async def test_mcp_context_scopes_free_text_search_to_the_resolved_project(
     # derives to; the embedding search that resolves free text must be held
     # to that same project, or it can pick another project's symbol that the
     # project-scoped reads then cannot find.
-    from codebase_rag.mcp import tools as mcp_tools
+    from codebase_rag.mcp import graph_tools
     from codebase_rag.mcp.tools import MCPToolsRegistry
     from codebase_rag.utils.path_utils import derive_project_name
 
@@ -185,7 +185,7 @@ async def test_mcp_context_scopes_free_text_search_to_the_resolved_project(
             }
         ]
 
-    monkeypatch.setattr(mcp_tools, "semantic_code_search", fake_search)
+    monkeypatch.setattr(graph_tools, "semantic_code_search", fake_search)
 
     payload = await registry.context(target="return the checkout source")
     assert scopes == [derived]
@@ -229,7 +229,7 @@ async def test_mcp_context_reports_a_failing_free_text_search(
 ) -> None:
     # The embedding search used to swallow a store outage and answer [], so a
     # free-text target came back "unresolved" as if nothing matched.
-    from codebase_rag.mcp import tools as mcp_tools
+    from codebase_rag.mcp import graph_tools
     from codebase_rag.mcp.tools import MCPToolsRegistry
     from codebase_rag.utils.path_utils import derive_project_name
 
@@ -249,7 +249,7 @@ async def test_mcp_context_reports_a_failing_free_text_search(
     def failing_search(*_args: object, **_kwargs: object) -> list:
         raise ConnectionError("vector store unreachable")
 
-    monkeypatch.setattr(mcp_tools, "semantic_code_search", failing_search)
+    monkeypatch.setattr(graph_tools, "semantic_code_search", failing_search)
 
     payload = await registry.context(target="return the checkout source")
     assert isinstance(payload, dict)

@@ -753,7 +753,9 @@ async def test_mcp_stamps_the_commit_only_for_the_servers_own_checkout(
     tmp_path: Path,
 ) -> None:
     own = FakeGraph(root=str(tmp_path))
-    with patch("codebase_rag.mcp.tools.head_commit", return_value="deadbeef") as head:
+    with patch(
+        "codebase_rag.mcp.graph_tools.head_commit", return_value="deadbeef"
+    ) as head:
         row = await _registry(own, tmp_path).annotate(
             target=RUN, body=BODY, kind=cs.GlossKind.INVARIANT.value, project=P
         )
@@ -761,7 +763,9 @@ async def test_mcp_stamps_the_commit_only_for_the_servers_own_checkout(
     head.assert_called_once_with(tmp_path.resolve())
 
     foreign = FakeGraph()
-    with patch("codebase_rag.mcp.tools.head_commit", return_value="deadbeef") as head:
+    with patch(
+        "codebase_rag.mcp.graph_tools.head_commit", return_value="deadbeef"
+    ) as head:
         row = await _registry(foreign, tmp_path).annotate(
             target=RUN, body=BODY, kind=cs.GlossKind.INVARIANT.value, project=P
         )
@@ -1217,7 +1221,7 @@ def test_mcp_reads_the_subjects_source_only_from_its_own_checkout(
 @pytest.mark.anyio
 async def test_mcp_annotate_hands_the_reader_to_the_write(tmp_path: Path) -> None:
     registry = _registry(FakeGraph(root=str(tmp_path)), tmp_path)
-    with patch("codebase_rag.mcp.tools.gloss.write_gloss") as write:
+    with patch("codebase_rag.mcp.graph_tools.gloss.write_gloss") as write:
         write.return_value = {"qualified_name": "k"}
         await registry.annotate(
             target=RUN, body=BODY, kind=cs.GlossKind.INVARIANT.value, project=P

@@ -44,7 +44,7 @@ class TestUpdateRepository:
     async def test_update_repository_success(
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
-        with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_cls:
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as mock_updater_cls:
             mock_updater = MagicMock()
             mock_updater_cls.return_value = mock_updater
 
@@ -57,7 +57,7 @@ class TestUpdateRepository:
     async def test_update_repository_error(
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
-        with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_cls:
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as mock_updater_cls:
             mock_updater_cls.side_effect = RuntimeError("parse error")
 
             result = await mcp_registry.update_repository()
@@ -72,7 +72,7 @@ class TestUpdateRepository:
     async def test_update_repository_no_wipe(
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
-        with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_cls:
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as mock_updater_cls:
             mock_updater = MagicMock()
             mock_updater_cls.return_value = mock_updater
 
@@ -239,7 +239,9 @@ class TestRagAgentProperty:
 
         assert registry._rag_agent is None
 
-        with patch("codebase_rag.mcp.tools.create_rag_orchestrator") as mock_create:
+        with patch(
+            "codebase_rag.mcp.retrieval_tools.create_rag_orchestrator"
+        ) as mock_create:
             mock_agent = MagicMock()
             mock_create.return_value = (mock_agent, "system prompt")
 
@@ -271,7 +273,9 @@ class TestRagAgentProperty:
                 cypher_gen=mock_cypher_gen,
             )
 
-        with patch("codebase_rag.mcp.tools.create_rag_orchestrator") as mock_create:
+        with patch(
+            "codebase_rag.mcp.retrieval_tools.create_rag_orchestrator"
+        ) as mock_create:
             mock_create.return_value = (MagicMock(), "system prompt")
 
             registry.rag_agent
@@ -304,7 +308,9 @@ class TestRagAgentProperty:
             )
 
         with (
-            patch("codebase_rag.mcp.tools.create_rag_orchestrator") as mock_create,
+            patch(
+                "codebase_rag.mcp.retrieval_tools.create_rag_orchestrator"
+            ) as mock_create,
             patch("codebase_rag.tools.semantic_search.create_get_function_source_tool"),
         ):
             mock_create.return_value = (MagicMock(), "system prompt")
@@ -328,7 +334,9 @@ class TestRagAgentProperty:
             )
 
         with (
-            patch("codebase_rag.mcp.tools.create_rag_orchestrator") as mock_create,
+            patch(
+                "codebase_rag.mcp.retrieval_tools.create_rag_orchestrator"
+            ) as mock_create,
             patch("codebase_rag.tools.semantic_search.create_get_function_source_tool"),
         ):
             mock_create.return_value = (MagicMock(), "system prompt")
@@ -613,7 +621,7 @@ class TestReingest:
         # The registry must stay warm across calls: a fresh updater per call
         # would read every definition back from the graph each time.
         _mark_indexed(mcp_registry)
-        with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_cls:
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as mock_updater_cls:
             mock_updater = MagicMock()
             mock_updater.reingest.return_value = MagicMock(
                 reparsed=("a.py",),
@@ -654,7 +662,7 @@ class TestReingest:
             patch.object(
                 mcp_registry, "_ignore_sets", return_value=(exclude, unignore)
             ),
-            patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_cls,
+            patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as mock_updater_cls,
         ):
             mock_updater_cls.return_value.reingest.return_value = MagicMock(
                 reparsed=(), affected=(), removed=(), skipped=(), elapsed_ms=0.5
@@ -667,7 +675,7 @@ class TestReingest:
     async def test_reingest_reuses_the_updater_update_repository_built(
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
-        with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_cls:
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as mock_updater_cls:
             mock_updater = MagicMock()
             mock_updater.reingest.return_value = MagicMock(
                 reparsed=(), affected=(), removed=(), skipped=(), elapsed_ms=0.5
@@ -686,7 +694,7 @@ class TestReingest:
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
         _mark_indexed(mcp_registry)
-        with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_cls:
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as mock_updater_cls:
             mock_updater_cls.return_value.reingest.side_effect = ValueError(
                 "Path is outside the repository: ../x"
             )
@@ -705,7 +713,7 @@ class TestReingest:
         # reingest after the delete must refuse until the project is indexed
         # again (a scoped re-ingest cannot stand in for the first index).
         project = _mark_indexed(mcp_registry)
-        with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_cls:
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as mock_updater_cls:
             mock_updater_cls.return_value.reingest.return_value = MagicMock(
                 reparsed=(), affected=(), removed=(), elapsed_ms=0.1
             )
@@ -728,7 +736,7 @@ class TestReingest:
         # fails, the updater retained from the deleted graph must not serve
         # a later reingest, which would resolve against dead definitions.
         _mark_indexed(mcp_registry)
-        with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_cls:
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as mock_updater_cls:
             mock_updater_cls.return_value.reingest.return_value = MagicMock(
                 reparsed=(), affected=(), removed=(), skipped=(), elapsed_ms=0.1
             )
@@ -754,7 +762,7 @@ class TestReingest:
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
         _mark_indexed(mcp_registry)
-        with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_cls:
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as mock_updater_cls:
             mock_updater_cls.return_value.reingest.return_value = MagicMock(
                 reparsed=(), affected=(), removed=(), elapsed_ms=0.1
             )
@@ -772,7 +780,7 @@ class TestReingest:
         # updater retained from before describes the graph as it was, so a
         # later reingest must hydrate from the store rather than reuse it.
         _mark_indexed(mcp_registry)
-        with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_cls:
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as mock_updater_cls:
             first = MagicMock()
             first.reingest.return_value = MagicMock(
                 reparsed=(), affected=(), removed=(), skipped=(), elapsed_ms=0.1
@@ -804,7 +812,7 @@ class TestReingest:
         # calls; a failure there can already have written part of them.
         _mark_indexed(mcp_registry)
         mcp_registry.ingestor.flush_all.side_effect = [RuntimeError("flush died")]
-        with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_cls:
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as mock_updater_cls:
             result = await mcp_registry.update_repository()
             assert "flush died" in result
             mcp_registry.ingestor.flush_all.side_effect = None
@@ -819,7 +827,7 @@ class TestReingest:
         # rebuild; a failure there may have removed part of the project.
         _mark_indexed(mcp_registry)
         mcp_registry.ingestor.delete_project.side_effect = RuntimeError("delete died")
-        with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_cls:
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as mock_updater_cls:
             result = await mcp_registry.index_repository()
             assert "delete died" in result
             mcp_registry.ingestor.delete_project.side_effect = None
@@ -834,7 +842,7 @@ class TestReingest:
         # affected subtrees without rebuilding them: the retained updater
         # must not serve the next scoped call over that partial graph.
         _mark_indexed(mcp_registry)
-        with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_cls:
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as mock_updater_cls:
             updater = mock_updater_cls.return_value
             updater.reingest.side_effect = RuntimeError("died after the delete")
             result = await mcp_registry.reingest(["a.py"])
@@ -859,7 +867,7 @@ class TestReingest:
         # the graph are intact, so the next call must not be refused as
         # if the graph were partial.
         _mark_indexed(mcp_registry)
-        with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_cls:
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as mock_updater_cls:
             updater = mock_updater_cls.return_value
             updater.reingest.side_effect = ReingestAborted("graph read failed")
             updater.reingest_mutated = False
@@ -879,7 +887,7 @@ class TestReingest:
         # A refusal is raised while the paths are split, before any write:
         # the updater stays valid and the next call reuses it.
         _mark_indexed(mcp_registry)
-        with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_cls:
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as mock_updater_cls:
             updater = mock_updater_cls.return_value
             updater.reingest.side_effect = ValueError("Path is outside: ../x")
             updater.reingest_mutated = False
@@ -900,7 +908,7 @@ class TestReingest:
         # graph while the project is still listed; the next reingest must
         # refuse rather than reuse the retained updater over what is left.
         project = _mark_indexed(mcp_registry)
-        with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_cls:
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as mock_updater_cls:
             mock_updater_cls.return_value.reingest.return_value = MagicMock(
                 reparsed=(), affected=(), removed=(), skipped=(), elapsed_ms=0.1
             )
@@ -920,7 +928,7 @@ class TestReingest:
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
         _mark_indexed(mcp_registry)
-        with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_cls:
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as mock_updater_cls:
             mock_updater_cls.return_value.reingest.return_value = MagicMock(
                 reparsed=(), affected=(), removed=(), skipped=(), elapsed_ms=0.1
             )
@@ -938,9 +946,9 @@ class TestReingest:
     ) -> None:
         _mark_indexed(mcp_registry)
         with (
-            patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_cls,
+            patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as mock_updater_cls,
             patch(
-                "codebase_rag.mcp.tools.clear_all_embeddings",
+                "codebase_rag.mcp.lifecycle_tools.clear_all_embeddings",
                 side_effect=RuntimeError("x"),
             ),
         ):
@@ -990,7 +998,7 @@ class TestIncompleteMarkerSurvivesTheProcess:
         first = self._registry(temp_project_root, ingestor)
         project = _mark_indexed(first)
 
-        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as updater_cls:
             updater_cls.return_value.run.side_effect = RuntimeError("update died")
             assert "Error" in await first.update_repository()
 
@@ -1046,7 +1054,7 @@ class TestIncompleteMarkerSurvivesTheProcess:
         )
 
         # A run completes and clears its own marker.
-        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater"):
             assert "Error" not in await registry.index_repository()
         assert not ingestor._marker_store, (
             "fixture guard: the completed index must clear its own marker"
@@ -1202,7 +1210,7 @@ class TestIncompleteMarkerSurvivesTheProcess:
         )
 
         # A run completes for one project and clears its own marker.
-        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater"):
             assert "Error" not in await registry.update_repository()
 
         assert await _read_refused(registry), (
@@ -1225,7 +1233,7 @@ class TestIncompleteMarkerSurvivesTheProcess:
         registry = self._registry(temp_project_root, ingestor)
         _mark_indexed(registry)
 
-        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater"):
             assert "Error" not in await registry.update_repository()
 
         assert not await _read_refused(registry), (
@@ -1264,7 +1272,7 @@ class TestIncompleteMarkerSurvivesTheProcess:
         first = self._registry(temp_project_root, ingestor)
         project = _mark_indexed(first)
 
-        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater"):
             assert "Error" not in await first.update_repository()
 
         assert project not in ingestor._marker_store, (
@@ -1274,7 +1282,7 @@ class TestIncompleteMarkerSurvivesTheProcess:
 
         second = self._registry(temp_project_root, ingestor)
         _mark_indexed(second)
-        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as updater_cls:
             updater_cls.return_value.reingest.return_value = SimpleNamespace(
                 reparsed=[], affected=[], removed=[], skipped=[], elapsed_ms=1.0
             )
@@ -1299,7 +1307,7 @@ class TestIncompleteMarkerSurvivesTheProcess:
         # No list_projects entry: nothing has ever been indexed.
         ingestor.list_projects.return_value = []
 
-        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as updater_cls:
             updater_cls.return_value.run.side_effect = RuntimeError("first index died")
             assert "Error" in await first.index_repository()
 
@@ -1323,7 +1331,7 @@ class TestIncompleteMarkerSurvivesTheProcess:
         registry = self._registry(temp_project_root, ingestor)
         project = _mark_indexed(registry)
 
-        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as updater_cls:
             updater_cls.return_value.run.side_effect = RuntimeError("rebuild died")
             assert "Error" in await registry.index_repository()
 
@@ -1346,7 +1354,7 @@ class TestIncompleteMarkerSurvivesTheProcess:
         project = _mark_indexed(registry)
         ingestor._failing.add("clear")
 
-        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater"):
             result = await registry.update_repository()
 
         assert ingestor._marker_store.get(project) is True, (
@@ -1387,7 +1395,7 @@ class TestIncompleteMarkerSurvivesTheProcess:
         _mark_indexed(registry)
         ingestor._failing.add("mark")
 
-        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as updater_cls:
             result = await registry.index_repository()
 
         assert "Error" in result, "an unstorable marker must fail the run"
@@ -1449,7 +1457,7 @@ class TestIncompleteMarkerSurvivesTheProcess:
 
         ingestor.execute_write.side_effect = _tracking_write
 
-        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater"):
             await registry.update_repository()
 
         assert "mark" in order, f"fixture guard: the mark must run, saw {order}"
@@ -1509,7 +1517,7 @@ class TestIncompleteMarkerSurvivesTheProcess:
         first = self._registry(temp_project_root, ingestor)
         project = _mark_indexed(first)
 
-        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as updater_cls:
             updater_cls.return_value.run.side_effect = RuntimeError("update died")
             assert "Error" in await first.update_repository()
 
@@ -1528,7 +1536,7 @@ class TestIncompleteMarkerSurvivesTheProcess:
         # `_delta_after_write` never raises -- it reports in place of the
         # delta -- so the refusal shows up in the returned text.
         (temp_project_root / "a.py").write_text("x = 1\n", encoding="utf-8")
-        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as updater_cls:
             result = second._delta_after_write(["a.py"])
             hydrated = updater_cls.called
 
@@ -1553,14 +1561,14 @@ class TestIncompleteMarkerSurvivesTheProcess:
         first = self._registry(temp_project_root, ingestor)
         _mark_indexed(first)
 
-        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater"):
             assert "Error" not in await first.update_repository()
 
         second = self._registry(temp_project_root, ingestor)
         _mark_indexed(second)
 
         (temp_project_root / "a.py").write_text("x = 1\n", encoding="utf-8")
-        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as updater_cls:
             second._delta_after_write(["a.py"])
             assert updater_cls.called, (
                 "a clean store must still let the structural delta hydrate"
@@ -1598,12 +1606,12 @@ class TestIncompleteMarkerSurvivesTheProcess:
         project = _mark_indexed(registry)
 
         (temp_project_root / "a.py").write_text("x = 1\n", encoding="utf-8")
-        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as updater_cls:
             updater_cls.return_value.reingest.return_value = MagicMock(
                 reparsed=(), affected=(), removed=(), elapsed_ms=0.1
             )
             updater_cls.return_value.project_name = project
-            with patch("codebase_rag.mcp.tools.sd.observe", return_value=""):
+            with patch("codebase_rag.mcp.lifecycle_tools.sd.observe", return_value=""):
                 result = registry._delta_after_write(["a.py"])
 
         assert "unavailable" not in result, (
@@ -1618,7 +1626,7 @@ class TestIncompleteMarkerSurvivesTheProcess:
         # The consequence, end to end: a fresh process must not refuse.
         second = self._registry(temp_project_root, ingestor)
         _mark_indexed(second)
-        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as updater_cls:
             updater_cls.return_value.reingest.return_value = MagicMock(
                 reparsed=(), affected=(), removed=(), skipped=(), elapsed_ms=0.1
             )
@@ -1661,7 +1669,7 @@ class TestIncompleteMarkerSurvivesTheProcess:
             marked_during.append(ingestor._marker_store.get(project) is True)
             return ""
 
-        with patch("codebase_rag.mcp.tools.sd.observe", side_effect=_observe):
+        with patch("codebase_rag.mcp.lifecycle_tools.sd.observe", side_effect=_observe):
             result = registry._delta_after_write(["a.py"])
 
         assert "unavailable" not in result, (
@@ -1697,10 +1705,10 @@ class TestIncompleteMarkerSurvivesTheProcess:
         project = _mark_indexed(registry)
         (temp_project_root / "a.py").write_text("x = 1\n", encoding="utf-8")
 
-        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as updater_cls:
             updater_cls.return_value.project_name = project
             with patch(
-                "codebase_rag.mcp.tools.sd.observe",
+                "codebase_rag.mcp.lifecycle_tools.sd.observe",
                 side_effect=ReingestAborted("aborted in the prologue"),
             ):
                 result = registry._delta_after_write(["a.py"])
@@ -1714,7 +1722,7 @@ class TestIncompleteMarkerSurvivesTheProcess:
         # End to end: a fresh process must not inherit the refusal.
         fresh = self._registry(temp_project_root, ingestor)
         _mark_indexed(fresh)
-        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as updater_cls:
             updater_cls.return_value.reingest.return_value = MagicMock(
                 reparsed=(), affected=(), removed=(), skipped=(), elapsed_ms=0.1
             )
@@ -1758,11 +1766,11 @@ class TestIncompleteMarkerSurvivesTheProcess:
             phase_at_write.append(ingestor._writing_store.get(project) is True)
             return MagicMock(reparsed=(), affected=(), removed=(), elapsed_ms=0.1)
 
-        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as updater_cls:
             updater_cls.return_value.project_name = project
             updater_cls.return_value.reingest.side_effect = _reingest
             with patch(
-                "codebase_rag.mcp.tools.sd.observe",
+                "codebase_rag.mcp.lifecycle_tools.sd.observe",
                 side_effect=lambda *a, **k: (
                     (a[3]() if len(a) > 3 else k["run"]()) and ""
                 ),
@@ -1796,7 +1804,7 @@ class TestIncompleteMarkerSurvivesTheProcess:
         # A's update fails part way, leaving a durable marker.
         first = self._registry(temp_project_root, ingestor)
         project = _mark_indexed(first)
-        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as updater_cls:
             updater_cls.return_value.run.side_effect = RuntimeError("update died")
             assert "Error" in await first.update_repository()
         assert ingestor._marker_store.get(project) is True, (
@@ -1810,10 +1818,10 @@ class TestIncompleteMarkerSurvivesTheProcess:
             "fixture guard: distinct runs"
         )
         (temp_project_root / "a.py").write_text("x = 1\n", encoding="utf-8")
-        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as updater_cls:
             updater_cls.return_value.project_name = project
             with patch(
-                "codebase_rag.mcp.tools.sd.observe",
+                "codebase_rag.mcp.lifecycle_tools.sd.observe",
                 side_effect=ReingestAborted("aborted in the prologue"),
             ):
                 second._delta_after_write(["a.py"])
@@ -1848,10 +1856,10 @@ class TestIncompleteMarkerSurvivesTheProcess:
         project = _mark_indexed(registry)
 
         (temp_project_root / "a.py").write_text("x = 1\n", encoding="utf-8")
-        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as updater_cls:
             updater_cls.return_value.project_name = project
             with patch(
-                "codebase_rag.mcp.tools.sd.observe",
+                "codebase_rag.mcp.lifecycle_tools.sd.observe",
                 side_effect=RuntimeError("delta died mid-write"),
             ):
                 result = registry._delta_after_write(["a.py"])
@@ -1879,12 +1887,12 @@ class TestIncompleteMarkerSurvivesTheProcess:
         project = _mark_indexed(registry)
 
         (temp_project_root / "a.py").write_text("x = 1\n", encoding="utf-8")
-        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as updater_cls:
             updater_cls.return_value.reingest.return_value = MagicMock(
                 reparsed=(), affected=(), removed=(), elapsed_ms=0.1
             )
             updater_cls.return_value.project_name = project
-            with patch("codebase_rag.mcp.tools.sd.observe", return_value=""):
+            with patch("codebase_rag.mcp.lifecycle_tools.sd.observe", return_value=""):
                 ingestor._failing.add("clear")
                 result = registry._delta_after_write(["a.py"])
                 ingestor._failing.discard("clear")
@@ -1935,7 +1943,7 @@ class TestIncompleteMarkerInvariant:
         project = _mark_indexed(registry)
         ingestor._failing.add(failure)
 
-        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater"):
             if path == "index":
                 result = str(await registry.index_repository())
             elif path == "update":
@@ -2027,7 +2035,7 @@ class TestIncompleteMarkerInvariant:
 
         ingestor.execute_write.side_effect = _tracking
 
-        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as updater_cls:
             updater_cls.return_value.reingest.return_value = SimpleNamespace(
                 reparsed=[], affected=[], removed=[], skipped=[], elapsed_ms=1.0
             )
@@ -2249,8 +2257,10 @@ class TestIncompleteMarkerInvariant:
                 "_get_project_node_ids",
                 side_effect=RuntimeError("node id read failed"),
             ),
-            patch("codebase_rag.mcp.tools.delete_project_embeddings") as purge,
-            patch("codebase_rag.mcp.tools.GraphUpdater"),
+            patch(
+                "codebase_rag.mcp.lifecycle_tools.delete_project_embeddings"
+            ) as purge,
+            patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater"),
         ):
             if path == "index":
                 result = str(await registry.index_repository())
@@ -2273,7 +2283,7 @@ class TestIncompleteMarkerInvariant:
 
         fresh = self._registry(temp_project_root, ingestor)
         _mark_indexed(fresh)
-        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as updater_cls:
             updater_cls.return_value.reingest.return_value = SimpleNamespace(
                 reparsed=[], affected=[], removed=[], skipped=[], elapsed_ms=1.0
             )
@@ -2315,8 +2325,8 @@ class TestIncompleteMarkerInvariant:
                     "_get_project_node_ids",
                     side_effect=RuntimeError("node id read failed"),
                 ),
-                patch("codebase_rag.mcp.tools.delete_project_embeddings"),
-                patch("codebase_rag.mcp.tools.GraphUpdater"),
+                patch("codebase_rag.mcp.lifecycle_tools.delete_project_embeddings"),
+                patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater"),
             ):
                 if path == "index":
                     result = str(await registry.index_repository())
@@ -2337,7 +2347,7 @@ class TestIncompleteMarkerInvariant:
         ingestor._failing.discard("clear")
         fresh = self._registry(temp_project_root, ingestor)
         _mark_indexed(fresh)
-        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as updater_cls:
             updater_cls.return_value.reingest.return_value = SimpleNamespace(
                 reparsed=[], affected=[], removed=[], skipped=[], elapsed_ms=1.0
             )
@@ -2369,7 +2379,7 @@ class TestIncompleteMarkerInvariant:
             if phase is not None:
                 ingestor._writing_store[project] = phase
 
-            with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+            with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as updater_cls:
                 result = await registry.reingest(["a.py"])
             assert "error" in result, (
                 f"a marker with writing={phase} was not refused: {result}"
@@ -2540,9 +2550,10 @@ class TestIncompleteMarkerInvariant:
 
         with (
             patch(
-                "codebase_rag.mcp.tools.delete_project_embeddings", side_effect=_purge
+                "codebase_rag.mcp.lifecycle_tools.delete_project_embeddings",
+                side_effect=_purge,
             ),
-            patch("codebase_rag.mcp.tools.GraphUpdater"),
+            patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater"),
         ):
             if path == "index":
                 result = str(await registry.index_repository())
@@ -2562,7 +2573,7 @@ class TestIncompleteMarkerInvariant:
 
         fresh = self._registry(temp_project_root, ingestor)
         _mark_indexed(fresh)
-        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater"):
             assert "error" in await fresh.reingest(["a.py"]), (
                 "a fresh registry accepted scoped work over a half-purged store"
             )
@@ -2598,7 +2609,7 @@ class TestIncompleteMarkerInvariant:
         # recovery under test runs in the hydrating guard a retained updater skips.
         registry._live_updater = None
 
-        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater"):
             result = str(await registry.reingest(["a.py"]))
         assert "error" not in result, (
             "the same process still refused scoped reingest after the store "
@@ -2643,7 +2654,7 @@ class TestIncompleteMarkerInvariant:
         # A marker-less failure now raises the flag for a different reason;
         # it must drop the stale attribution as it does so.
         ingestor.clean_database.side_effect = RuntimeError("wipe died")
-        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater"):
             await registry.wipe_database(confirm=True)
         ingestor.clean_database.side_effect = None
         assert await _read_refused(registry), (
@@ -2653,7 +2664,7 @@ class TestIncompleteMarkerInvariant:
             "fixture guard: this interleaving needs a clean durable state"
         )
 
-        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater"):
             result = str(await registry.reingest(["a.py"]))
         assert "error" in result, (
             "a stale attribution from an earlier recovery cleared the flag a "
@@ -2673,7 +2684,7 @@ class TestIncompleteMarkerInvariant:
         """
         if path == "wipe":
             ingestor.clean_database.side_effect = RuntimeError("wipe died")
-            with patch("codebase_rag.mcp.tools.GraphUpdater"):
+            with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater"):
                 await registry.wipe_database(confirm=True)
             ingestor.clean_database.side_effect = None
         elif path == "delete":
@@ -2684,17 +2695,17 @@ class TestIncompleteMarkerInvariant:
             # what makes the failure marker-less for the project under test.
             ingestor.list_projects.return_value = ["other"]
             ingestor.delete_project.side_effect = RuntimeError("delete died")
-            with patch("codebase_rag.mcp.tools.GraphUpdater"):
+            with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater"):
                 await registry.delete_project("other")
             ingestor.delete_project.side_effect = None
         elif path == "index":
             ingestor.delete_project.side_effect = RuntimeError("delete died")
-            with patch("codebase_rag.mcp.tools.GraphUpdater"):
+            with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater"):
                 await registry.index_repository()
             ingestor.delete_project.side_effect = None
         elif path == "update":
             ingestor.flush_all.side_effect = [RuntimeError("flush died")]
-            with patch("codebase_rag.mcp.tools.GraphUpdater"):
+            with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater"):
                 await registry.update_repository()
             ingestor.flush_all.side_effect = None
         else:  # pragma: no cover - guards against a typo in the parametrise
@@ -2757,7 +2768,7 @@ class TestIncompleteMarkerInvariant:
         )
 
         _mark_indexed(registry)
-        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater"):
             result = str(await registry.reingest(["a.py"]))
         assert "error" in result, (
             "an unrelated marker recovery cleared the flag a failed "
@@ -2881,7 +2892,7 @@ class TestIncompleteMarkerInvariant:
         # registry's marker survives.
         other = self._registry(temp_project_root, ingestor)
         _mark_indexed(other)
-        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater"):
             assert "Error" not in await other.update_repository()
         assert registry.marker.run_id in ingestor._marker_runs.get(project, set()), (
             "the other process's clear removed this registry's marker; that "
@@ -2891,7 +2902,7 @@ class TestIncompleteMarkerInvariant:
         registry._live_updater = None
         _mark_indexed(registry)
         registry._hydrate_reingest_updater = _counting_hydrate  # type: ignore[method-assign]
-        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater"):
             result = str(await registry.reingest(["a.py"]))
         registry._hydrate_reingest_updater = real_hydrate  # type: ignore[method-assign]
         assert hydrations == 1, (
@@ -2955,7 +2966,7 @@ class TestIncompleteMarkerInvariant:
 
         # Marker-less damage: the wipe dies part way and no marker records it.
         ingestor.clean_database.side_effect = RuntimeError("wipe died")
-        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater"):
             await registry.wipe_database(confirm=True)
         ingestor.clean_database.side_effect = None
         assert await _read_refused(registry), (
@@ -2976,8 +2987,8 @@ class TestIncompleteMarkerInvariant:
                 "_get_project_node_ids",
                 side_effect=RuntimeError("node id read failed"),
             ),
-            patch("codebase_rag.mcp.tools.delete_project_embeddings"),
-            patch("codebase_rag.mcp.tools.GraphUpdater"),
+            patch("codebase_rag.mcp.lifecycle_tools.delete_project_embeddings"),
+            patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater"),
         ):
             await registry.delete_project(target)
         ingestor._failing.discard("clear")
@@ -2999,7 +3010,7 @@ class TestIncompleteMarkerInvariant:
 
         _mark_indexed(registry)
         registry._live_updater = None
-        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater"):
             result = str(await registry.reingest(["a.py"]))
         assert ("error" in result) is expect_refused, (
             "the wipe's refusal was discarded and a scoped reingest ran over "
@@ -3043,7 +3054,7 @@ class TestIncompleteMarkerInvariant:
 
         # Marker-less damage to ALPHA: the wipe dies and writes no marker.
         ingestor.clean_database.side_effect = RuntimeError("wipe died")
-        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater"):
             await registry.wipe_database(confirm=True)
         ingestor.clean_database.side_effect = None
         assert await _read_refused(registry), (
@@ -3063,7 +3074,7 @@ class TestIncompleteMarkerInvariant:
         )
 
         # ALPHA now completes a run and clears its own marker, successfully.
-        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater"):
             assert "Error" not in await registry.update_repository()
 
         # The consequence, stated as behaviour rather than as state: BETA's
@@ -3119,7 +3130,7 @@ class TestIncompleteMarkerInvariant:
         )
         # The consequence: the next reingest recovers the pending marker, and
         # the refusal the delta earned must still stand.
-        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater"):
             result = str(await registry.reingest(["a.py"]))
         assert "error" in result, (
             "a pending marker recovery lifted the refusal a failed delta "

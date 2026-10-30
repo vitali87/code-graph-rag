@@ -56,7 +56,7 @@ These matter most.
   `codebase_rag/decorators.py`, and `file_reader.py`, `file_writer.py`,
   `file_editor.py`, `directory_lister.py`, `structural_editor.py` and
   `code_retrieval.py` in `codebase_rag/tools/`, plus the MCP handlers that wrap
-  them in `codebase_rag/mcp/tools.py`. Reads and writes must stay inside the
+  them in `codebase_rag/mcp/file_tools.py`. Reads and writes must stay inside the
   project root, symlinks included (`codebase_rag/utils/path_utils.py`).
 - Indexing an untrusted repository must parse it, not run it. That covers the
   tree-sitter parsers in `codebase_rag/parsers/`, the repository walk and

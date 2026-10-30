@@ -15,6 +15,7 @@
 # survive the filter.
 from __future__ import annotations
 
+import ast
 import contextlib
 from collections.abc import Iterator
 from pathlib import Path
@@ -1519,7 +1520,8 @@ class TestScopedBudgetIsSpentOnInProjectRows:
             )
         )
         with patch(
-            "codebase_rag.mcp.tools.create_query_tool", return_value=scoped_tool
+            "codebase_rag.mcp.retrieval_tools.create_query_tool",
+            return_value=scoped_tool,
         ) as factory:
             result = await handler.query_code_graph("everything", project=ALPHA)
 
@@ -1538,7 +1540,7 @@ class TestScopedBudgetIsSpentOnInProjectRows:
         from unittest.mock import patch
 
         handler = _handler_returning(_ROWS)
-        with patch("codebase_rag.mcp.tools.create_query_tool") as factory:
+        with patch("codebase_rag.mcp.retrieval_tools.create_query_tool") as factory:
             result = await handler.query_code_graph("everything")
 
         factory.assert_not_called()
@@ -2827,7 +2829,7 @@ async def _wipe(handler: MCPToolsRegistry, *, dies: bool) -> None:
         RuntimeError("wipe died") if dies else None
     )
     try:
-        with patch("codebase_rag.mcp.tools.clear_all_embeddings"):
+        with patch("codebase_rag.mcp.lifecycle_tools.clear_all_embeddings"):
             result = await handler.wipe_database(confirm=True)
     finally:
         handler.ingestor.clean_database.side_effect = None
@@ -2847,7 +2849,7 @@ async def _left_partial_by_an_earlier_process(store: MagicMock, project: str) ->
     delete = store.delete_project.side_effect
     store.delete_project.side_effect = RuntimeError("delete died")
     try:
-        with patch("codebase_rag.mcp.tools.delete_project_embeddings"):
+        with patch("codebase_rag.mcp.lifecycle_tools.delete_project_embeddings"):
             result = await earlier.delete_project(project)
     finally:
         store.delete_project.side_effect = delete
@@ -3106,6 +3108,24 @@ async def test_a_clean_rename_marks_NOTHING() -> None:
     assert cs.DICT_KEY_ERROR not in payload
 
 
+def _handler_module_trees() -> list[ast.Module]:
+    """The parsed source of the registry's module and of every handler
+    module it composes: each handler sits beside the guard it takes."""
+    import inspect
+    import sys
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    names = sorted(
+        {
+            cls.__module__
+            for cls in MCPToolsRegistry.__mro__
+            if cls.__module__.startswith("codebase_rag.mcp.")
+        }
+    )
+    return [ast.parse(inspect.getsource(sys.modules[name])) for name in names]
+
+
 def test_every_graph_reader_is_guarded() -> None:
     """A tool that reads the graph must refuse while the graph is partial.
 
@@ -3116,18 +3136,14 @@ def test_every_graph_reader_is_guarded() -> None:
     it is either routed through `_graph_query`, calls `marker.partial_graph_refusal`
     itself, or is named a non-reader deliberately.
     """
-    import ast
-    import inspect
-
     from codebase_rag.mcp import tools as mcp_tools
 
     # AST, not a substring search. Every tool also names itself in its
     # `_tools[...]` registration, so `"cs.MCPToolName.X" in source` is true
     # for all of them and the check could never fail -- verified by removing
     # a guard and watching it still pass.
-    tree = ast.parse(inspect.getsource(mcp_tools))
     refused: set[str] = set()
-    for node in ast.walk(tree):
+    for node in (n for tree in _handler_module_trees() for n in ast.walk(tree)):
         if not isinstance(node, ast.Call):
             continue
         func = node.func
@@ -3208,12 +3224,6 @@ def test_every_guard_sits_inside_its_lock() -> None:
     three, and reported the race closed (Greptile, PR #1547) -- so this is
     structural rather than a test per reader.
     """
-    import ast
-    import inspect
-
-    from codebase_rag.mcp import tools as mcp_tools
-
-    tree = ast.parse(inspect.getsource(mcp_tools))
     offenders: list[str] = []
 
     def guard_lines(node: ast.AST) -> list[int]:
@@ -3227,7 +3237,7 @@ def test_every_guard_sits_inside_its_lock() -> None:
                     found.append(n.lineno)
         return found
 
-    for fn in ast.walk(tree):
+    for fn in (n for tree in _handler_module_trees() for n in ast.walk(tree)):
         if not isinstance(fn, ast.AsyncFunctionDef):
             continue
         guards = guard_lines(fn)
@@ -3279,7 +3289,7 @@ async def test_damage_under_an_unbounded_flag_stays_unbounded() -> None:
     # and then repaired by a delete that completes.
     real_delete = handler.ingestor.delete_project.side_effect
     handler.ingestor.delete_project.side_effect = RuntimeError("delete died")
-    with patch("codebase_rag.mcp.tools.delete_project_embeddings"):
+    with patch("codebase_rag.mcp.lifecycle_tools.delete_project_embeddings"):
         died = await handler.delete_project(ALPHA)
         handler.ingestor.delete_project.side_effect = real_delete
         repaired = await handler.delete_project(ALPHA)
@@ -3312,7 +3322,7 @@ async def test_a_failed_wipe_is_not_settled_by_repairing_named_projects() -> Non
     await _wipe(handler, dies=True)
 
     # A named project's delete completes, and clears its own marker.
-    with patch("codebase_rag.mcp.tools.delete_project_embeddings"):
+    with patch("codebase_rag.mcp.lifecycle_tools.delete_project_embeddings"):
         result = await handler.delete_project(ALPHA)
     assert result["success"] is True, f"fixture guard: {result}"
 
@@ -3501,7 +3511,9 @@ async def test_a_delta_failure_does_not_overwrite_another_projects_attribution()
     handler._live_updater = MagicMock()
     handler._live_updater.reingest = MagicMock(side_effect=RuntimeError("delta died"))
 
-    with patch("codebase_rag.mcp.tools.derive_project_name", return_value=BETA):
+    with patch(
+        "codebase_rag.mcp.lifecycle_tools.derive_project_name", return_value=BETA
+    ):
         handler._delta_after_write([Path("/repo/f.py")])
 
     assert await _read_refused(handler, ALPHA), (
@@ -3609,7 +3621,7 @@ async def test_the_cached_path_still_builds_on_a_clean_durable_state() -> None:
     handler.parsers = {}
     handler.queries = {}
 
-    with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+    with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as updater_cls:
         built = handler._hydrate_reingest_updater(ALPHA)
 
     assert built is updater_cls.return_value
@@ -3798,7 +3810,7 @@ def test_warm_and_cold_agree_on_a_RECOVERABLE_marker() -> None:
 
     cold = registry()
     cold._live_updater = None
-    with patch("codebase_rag.mcp.tools.GraphUpdater"):
+    with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater"):
         assert cold._guarded_rename_reingest(ALPHA) is not None, (
             "fixture guard: the cold path must recover and proceed, or the "
             "comparison below is vacuous"
@@ -3954,7 +3966,7 @@ async def test_the_rename_handler_uses_the_guarded_reingest(tmp_path: Path) -> N
         raise RuntimeError("stop here; the callback identity is the subject")
 
     # Patched at the SOURCE module: `_run_rename` imports `rename` locally, so
-    # there is no `codebase_rag.mcp.tools.rename` attribute to replace.
+    # there is no `codebase_rag.mcp.edit_tools.rename` attribute to replace.
     with (
         patch.object(handler, "_hydrate_reingest_updater", return_value=updater),
         patch("codebase_rag.editing.rename.rename", fake_rename),

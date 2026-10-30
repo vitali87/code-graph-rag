@@ -17,7 +17,7 @@ import requests
 import tiktoken
 from rich.console import Console
 
-from codebase_rag.mcp.tools import _plain_function
+from codebase_rag.mcp.handler_base import plain_function
 from codebase_rag.tools.codebase_query import create_query_tool
 from codebase_rag.types_defs import ResultRow
 from codebase_rag.utils import token_utils
@@ -100,7 +100,7 @@ async def test_a_graph_query_answers_offline(offline: MagicMock) -> None:
     console = Console(force_terminal=False, no_color=True, width=80)
 
     tool = create_query_tool(ingestor, cypher_gen, console=console)
-    result = await _plain_function(tool)(natural_language_query="Find all functions")
+    result = await plain_function(tool)(natural_language_query="Find all functions")
 
     assert [row["name"] for row in result.results] == ["func1", "func2"]
     assert "error querying the database" not in result.summary

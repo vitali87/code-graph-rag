@@ -27,7 +27,7 @@ def anyio_backend() -> str:
 @pytest.fixture(autouse=True)
 def no_vector_store() -> Iterator[None]:
     # No Qdrant in this test; the graph is what the guide describes.
-    with patch("codebase_rag.mcp.tools.delete_project_embeddings"):
+    with patch("codebase_rag.mcp.lifecycle_tools.delete_project_embeddings"):
         yield
 
 

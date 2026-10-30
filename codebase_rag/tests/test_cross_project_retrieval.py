@@ -227,7 +227,7 @@ class TestMcpProjectNaming:
         self, registry: MCPToolsRegistry
     ) -> None:
         derived = derive_project_name(Path(registry.project_root))
-        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as updater_cls:
             registry._index_repository_sync()
 
         ingestor = registry.ingestor
@@ -238,7 +238,7 @@ class TestMcpProjectNaming:
         self, registry: MCPToolsRegistry
     ) -> None:
         derived = derive_project_name(Path(registry.project_root))
-        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater") as updater_cls:
             registry._update_repository_sync()
 
         assert updater_cls.call_args.kwargs["project_name"] == derived

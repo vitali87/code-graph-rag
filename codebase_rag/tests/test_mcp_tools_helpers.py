@@ -2,7 +2,7 @@ from unittest.mock import MagicMock, patch
 
 from codebase_rag import constants as cs
 
-_PATCH_DELETE = "codebase_rag.mcp.tools.delete_project_embeddings"
+_PATCH_DELETE = "codebase_rag.mcp.lifecycle_tools.delete_project_embeddings"
 
 
 def _make_registry(mock_ingestor: MagicMock) -> MagicMock:

@@ -249,7 +249,7 @@ def test_the_index_path_keeps_the_gloss(tmp_path: Path) -> None:
     ingestor = _graph_with_a_gloss(tmp_path)
     try:
         registry = _registry(tmp_path, ingestor)
-        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+        with patch("codebase_rag.mcp.lifecycle_tools.GraphUpdater"):
             registry._index_repository_sync()
         assert _glosses(ingestor) == ["note"], (
             "the reindex path swept the gloss; the rebuild recreates symbols "

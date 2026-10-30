@@ -277,7 +277,9 @@ class TestDeliberateAbsencesAreUnchanged:
     ) -> None:
         """Direct exposure adds a route; it must not remove the existing one
         from the orchestrator's toolset."""
-        with patch("codebase_rag.mcp.tools.create_rag_orchestrator") as mock_create:
+        with patch(
+            "codebase_rag.mcp.retrieval_tools.create_rag_orchestrator"
+        ) as mock_create:
             mock_create.return_value = (MagicMock(), MagicMock())
             _ = mcp_registry.rag_agent
 
