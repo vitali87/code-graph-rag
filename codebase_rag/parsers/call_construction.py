@@ -67,7 +67,7 @@ class CallConstruction:
                 in (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD)
                 and variant not in self._facts.macro_qns
             ]
-        host._resolution = (
+        host.resolution = (
             cs.EdgeResolution.OVERLOAD if len(class_variants) > 1 else host.verdict
         )
         for class_variant in class_variants:
@@ -132,7 +132,7 @@ class CallConstruction:
         # constructor (like Java/C#). The resolution describes the
         # FILTERED target set (#1882).
         if fn_variants:
-            host._resolution = (
+            host.resolution = (
                 cs.EdgeResolution.OVERLOAD if len(fn_variants) > 1 else host.verdict
             )
             for node_type, variant in sorted(fn_variants):
@@ -149,7 +149,7 @@ class CallConstruction:
             )
             for variant in registry.variants(ctor_qn)
         ]
-        host._resolution = (
+        host.resolution = (
             cs.EdgeResolution.OVERLOAD if len(ctor_edges) > 1 else host.verdict
         )
         for ctor_type, variant in ctor_edges:
@@ -190,7 +190,7 @@ class CallConstruction:
             # argument-type selection is not attempted: one call,
             # several candidates, which is what `overload` means
             # (issue #1526).
-            self._host._resolution = cs.EdgeResolution.OVERLOAD
+            self._host.resolution = cs.EdgeResolution.OVERLOAD
         for ctor_type, variant in ctor_edges:
             ctx.ensure_rel(
                 ctx.caller_spec,

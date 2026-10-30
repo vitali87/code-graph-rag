@@ -95,8 +95,8 @@ class CallProcessor:
     __slots__ = (
         "ingestor",
         "note_unresolved",
-        "_site_node",
-        "_resolution",
+        "site_node",
+        "resolution",
         "verdict",
         "_site_cache",
         "repo_path",
@@ -154,10 +154,10 @@ class CallProcessor:
         # as its site (issue #1522); each pass sets it per visited node and
         # `host_site_scoped` restores it on exit. The cache keeps the variant
         # fan-out of one site from re-deriving the same property dict.
-        self._site_node: Node | None = None
+        self.site_node: Node | None = None
         # Confidence of the edges emitted next (issue #1526); the main call
         # loop sets it from the resolver, fan-outs mark overloads.
-        self._resolution: str = cs.EdgeResolution.EXACT
+        self.resolution: str = cs.EdgeResolution.EXACT
         # How surely the call node being scanned binds its callee (issue
         # #1526): noted where the scan resolves it, adjusted by the judgments
         # that follow, and read when its edges are emitted. The passes over
@@ -324,7 +324,7 @@ class CallProcessor:
         # was an edge type the schema does not have (issue #2394).
         if rel_type == cs.RelationshipType.CALLS and to_spec[0] == cs.NodeLabel.CLASS:
             rel_type = cs.RelationshipType.INSTANTIATES
-        site = self._site_node
+        site = self.site_node
         if site is not None:
             cached = self._site_cache
             if cached is None or cached[0] is not site:
@@ -332,7 +332,7 @@ class CallProcessor:
                 self._site_cache = cached
             properties = {**cached[1], **properties} if properties else dict(cached[1])
         if rel_type in _RESOLVED_RELS:
-            properties = {**(properties or {}), cs.KEY_RESOLUTION: self._resolution}
+            properties = {**(properties or {}), cs.KEY_RESOLUTION: self.resolution}
         if properties:
             self.ingestor.ensure_relationship_batch(
                 from_spec, rel_type, to_spec, properties=properties
@@ -340,7 +340,7 @@ class CallProcessor:
         else:
             self.ingestor.ensure_relationship_batch(from_spec, rel_type, to_spec)
 
-    def _get_node_name(self, node: Node, field: str = cs.FIELD_NAME) -> str | None:
+    def get_node_name(self, node: Node, field: str = cs.FIELD_NAME) -> str | None:
         name_node = node.child_by_field_name(field)
         if not name_node:
             return None
@@ -531,7 +531,7 @@ class CallProcessor:
             return None
         return loc
 
-    def _record_caller_failure(
+    def record_caller_failure(
         self, message: str, caller: str, error: Exception
     ) -> None:
         path = self._call_file
@@ -579,10 +579,10 @@ class CallProcessor:
         if len({qn_markers.natural_qn(qn) for qn in targets}) > 1:
             # Several routines answer to the name: other schemas for an
             # unqualified one, other files defining a qualified one.
-            self._resolution = cs.EdgeResolution.HEURISTIC
+            self.resolution = cs.EdgeResolution.HEURISTIC
         elif len(targets) > 1:
             # One routine with overloads the call site's types would choose.
-            self._resolution = cs.EdgeResolution.OVERLOAD
+            self.resolution = cs.EdgeResolution.OVERLOAD
         for target_qn in targets:
             self.emit_rel(
                 caller_spec,

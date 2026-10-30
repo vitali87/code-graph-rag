@@ -112,14 +112,14 @@ class TableReferences:
         opened: set[Node] = set()
         stack: list[Node] = list(caller_node.children)
         while stack:
-            node = self._host._site_node = stack.pop()
+            node = self._host.site_node = stack.pop()
             if node.type in boundary_types and not self._scopes.is_unowned_scope(
                 node, module_qn
             ):
                 continue
             if node.type in _DICT_LIKE_COLLECTION_TYPES:
                 for pair in node.named_children:
-                    self._host._site_node = pair
+                    self._host.site_node = pair
                     self._ingest_dict_entry_ref(node, pair, scope, language, opened)
             elif node.type in _SEQUENCE_LIKE_COLLECTION_TYPES and node not in opened:
                 for element in node.named_children:
@@ -210,7 +210,7 @@ class TableReferences:
         # transparent for reference resolution, and `fn.bind(ctx)` /
         # `fn.call(...)` / `fn.apply(...)` in value position (onError:
         # handleError.bind(toast)) hands off `fn`; peel both to a fixpoint.
-        self._host._site_node = node
+        self._host.site_node = node
         node = js_calls.peel_bound_callable(node)
         # An inline arrow/function-expression element (`handlers = [() => {}]`,
         # zod's `onattach = [(inst) => {...}]`) is registered anonymously in the
@@ -261,7 +261,7 @@ class TableReferences:
         # has no property name, so it registers as scope.anonymous_<row>_<col> from
         # the value's position. Reference every candidate actually registered
         # (variants cover same-name duplicates in one scope).
-        self._host._site_node = value
+        self._host.site_node = value
         names = [f"{cs.PREFIX_ANONYMOUS}{value.start_point[0]}_{value.start_point[1]}"]
         key_node = pair.child_by_field_name(cs.FIELD_KEY)
         if (
@@ -325,7 +325,7 @@ class TableReferences:
         # (persist's thenable `catch` -> `...middleware.persist.catch`), while
         # this scan runs per enclosing caller; try both scopes, plus the
         # position form used when the name is taken.
-        self._host._site_node = method_node
+        self._host.site_node = method_node
         name_node = method_node.child_by_field_name(cs.FIELD_NAME)
         names = [
             f"{cs.PREFIX_ANONYMOUS}"

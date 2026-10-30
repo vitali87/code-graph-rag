@@ -184,7 +184,7 @@ class ReferenceWalkers:
         )
         stack: list[Node] = list(caller_node.children)
         while stack:
-            node = self._host._site_node = stack.pop()
+            node = self._host.site_node = stack.pop()
             # Continue THROUGH an unowned anonymous arrow (zustand's curried
             # middleware body `(config) => (set, get, api) => { api.setState =
             # ... }`): it gets no caller pass, so its assignments would else be
@@ -367,7 +367,7 @@ class ReferenceWalkers:
         # setState, `listener` -> listener) to a def-pass registration in the
         # enclosing scope. Registry-guarded: emits only when such a node exists,
         # so a plain data assignment adds nothing.
-        self._host._site_node = assign_node
+        self._host.site_node = assign_node
         if assign_node.type != cs.TS_ASSIGNMENT_EXPRESSION:
             return
         left = assign_node.child_by_field_name(cs.FIELD_LEFT)
@@ -431,7 +431,7 @@ class ReferenceWalkers:
         )
         stack: list[Node] = list(caller_node.children)
         while stack:
-            node = self._host._site_node = stack.pop()
+            node = self._host.site_node = stack.pop()
             # Stop at a nested scope that gets its OWN caller pass (a named
             # function/arrow, a class), but continue THROUGH an anonymous arrow
             # (a `.map()`/`cell`/forwardRef callback): those are skipped as
@@ -547,7 +547,7 @@ class ReferenceWalkers:
         )
         stack: list[Node] = list(caller_node.children)
         while stack:
-            node = self._host._site_node = stack.pop()
+            node = self._host.site_node = stack.pop()
             if node.type in boundary_types:
                 if not self._scopes.is_unowned_scope(node, module_qn):
                     continue
@@ -667,7 +667,7 @@ class ReferenceWalkers:
         resolve_func = self._resolver.resolve_function_call
         ensure_rel = self._host.emit_rel
         for param in params.named_children:
-            self._host._site_node = param
+            self._host.site_node = param
             # TS carries a param default in required_parameter's `value` field;
             # plain JS wraps the param in an assignment_pattern whose default
             # sits under `right`. Scan both forms.

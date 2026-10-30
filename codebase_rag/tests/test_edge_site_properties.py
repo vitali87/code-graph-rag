@@ -607,21 +607,21 @@ def test_call_site_cache_is_not_keyed_by_recycled_node_ids() -> None:
     ingestor = MagicMock()
     cp = CallProcessor.__new__(CallProcessor)
     cp.ingestor = ingestor
-    cp._site_node = None
+    cp.site_node = None
     cp._site_cache = None
-    cp._resolution = cs.EdgeResolution.EXACT
+    cp.resolution = cs.EdgeResolution.EXACT
 
     src_a = "f(1)\n"
     src_b = "g(1, 2, k=3)\n"
     call_a = first_call(src_a)
     call_b = first_call(src_b)
-    cp._site_node = call_a
+    cp.site_node = call_a
     cp.emit_rel(
         ("Function", "qualified_name", "x"),
         "CALLS",
         ("Function", "qualified_name", "f"),
     )
-    cp._site_node = call_b
+    cp.site_node = call_b
     cp.emit_rel(
         ("Function", "qualified_name", "x"),
         "CALLS",

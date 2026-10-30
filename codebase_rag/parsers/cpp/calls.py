@@ -777,7 +777,7 @@ class CppCallResolution(LanguageCalls):
         registry = self._resolver.function_registry
         ensure_rel = self._host.emit_rel
         # The return statement is the construction site (issue #1522).
-        self._host._site_node = node
+        self._host.site_node = node
         for class_variant in registry.variants(class_qn):
             variant_type = registry.get(class_variant)
             if variant_type is not None and variant_type != cs.NodeLabel.CLASS:
@@ -820,7 +820,7 @@ class CppCallResolution(LanguageCalls):
                     else None
                 )
                 if class_qn is not None:
-                    self._host._site_node = initializer
+                    self._host.site_node = initializer
                     self.emit_ctor_calls(caller_spec, class_qn)
 
     def ingest_implicit_base_lifecycle_calls(
@@ -970,7 +970,7 @@ class CppCallResolution(LanguageCalls):
                 else None
             )
             if class_qn is not None:
-                self._host._site_node = node
+                self._host.site_node = node
                 self._emit_construction_edges(caller_spec, class_qn)
 
     def _emit_construction_edges(
@@ -1138,8 +1138,8 @@ class CCallResolution(LanguageCalls):
                 or name in local_enumerator_names(ident)
             ):
                 continue
-            self._host._site_node = ident
-            self._host._resolution = resolution
+            self._host.site_node = ident
+            self._host.resolution = resolution
             for target_qn in targets:
                 self._host.emit_rel(
                     caller_spec,

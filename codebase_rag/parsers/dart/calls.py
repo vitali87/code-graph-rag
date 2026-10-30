@@ -499,7 +499,7 @@ class DartCallResolution(LanguageCalls):
 
         stack = list(walk_root.children)
         while stack:
-            node = self._host._site_node = stack.pop()
+            node = self._host.site_node = stack.pop()
             if node.type in class_types:
                 # Class subtrees (field initializers) are scanned once at
                 # FILE level by _ingest_class_initializer_reads.
@@ -567,7 +567,7 @@ class DartCallResolution(LanguageCalls):
 
         stack = list(class_node.children)
         while stack:
-            node = self._host._site_node = stack.pop()
+            node = self._host.site_node = stack.pop()
             if node.type in class_types:
                 self._ingest_class_initializer_reads(
                     node,
@@ -678,8 +678,8 @@ class DartCallResolution(LanguageCalls):
                 or target_qn not in constructors
             ):
                 continue
-            self._host._site_node = delegation.site
-            self._host._resolution = cs.EdgeResolution.EXACT
+            self._host.site_node = delegation.site
+            self._host.resolution = cs.EdgeResolution.EXACT
             self._host.emit_rel(
                 caller_spec,
                 cs.RelationshipType.CALLS,
@@ -721,7 +721,7 @@ class DartCallResolution(LanguageCalls):
         ]
         # Twin classes take the same stamp the class branch gives a
         # two-candidate construction.
-        self._host._resolution = (
+        self._host.resolution = (
             cs.EdgeResolution.OVERLOAD
             if len(owner_variants) > 1
             else self._host.verdict

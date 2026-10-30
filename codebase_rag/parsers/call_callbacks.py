@@ -318,7 +318,7 @@ class CallbackEdges:
         # argument position (addEventListener("click", handler.bind(this)),
         # django admin's inlines.js) hands off `fn` while the call itself
         # resolves to the Function.prototype builtin; peel both to a fixpoint.
-        self._host._site_node = arg_node
+        self._host.site_node = arg_node
         arg_node = js_calls.peel_bound_callable(arg_node)
         # An arrow/function-expression passed DIRECTLY as a call argument
         # (useCallback(() => {}), setTimeout(() => {}), arr.map(x => ...)) is
@@ -466,7 +466,7 @@ class CallbackEdges:
         registry = self._registry
         host = self._host
         # The callback's OWN verdict, not the enclosing call's: `resolution`
-        # is how surely this reference resolved; the host's `_resolution` still
+        # is how surely this reference resolved; the host's `resolution` still
         # describes the call whose argument it is. Emitting through the stale value labelled a callback
         # found only by trie fallback as exact, so `dead-code --min-resolution
         # exact` kept a target it should have dropped (#1543). Scoped:
@@ -476,12 +476,10 @@ class CallbackEdges:
         # candidates is an `overload`: one reference, several targets, none
         # chosen (#1543). The resolver's single-target verdict would
         # otherwise let an exact floor keep every one of them.
-        prev_resolution = host._resolution
+        prev_resolution = host.resolution
         language_calls = host.calls_for(language)
         targets = registry.variants(res_qn)
-        host._resolution = (
-            cs.EdgeResolution.OVERLOAD if len(targets) > 1 else resolution
-        )
+        host.resolution = cs.EdgeResolution.OVERLOAD if len(targets) > 1 else resolution
         try:
             for variant in targets:
                 # A variant can be another kind than the resolved callback:
@@ -507,7 +505,7 @@ class CallbackEdges:
                 )
                 language_calls.record_cross_module_use(module_qn, target_qn)
         finally:
-            host._resolution = prev_resolution
+            host.resolution = prev_resolution
 
     @host_site_scoped
     def emit_inline_arg_function_ref(
@@ -533,7 +531,7 @@ class CallbackEdges:
         # module-flat name candidate and reference the WRONG top-level node. The
         # candidate fallback is kept for an incremental run where an unchanged
         # file's span was not re-recorded this pass.
-        self._host._site_node = arg_node
+        self._host.site_node = arg_node
         if (
             module_qn is not None
             and (loc := self._host.recorded_caller(arg_node, module_qn)) is not None

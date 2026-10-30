@@ -128,8 +128,8 @@ class CallBinding:
             # Left unresolved: resolving it would re-read the whole chain.
             return
         host = self._host
-        host._site_node = call_node
-        host._resolution = cs.EdgeResolution.EXACT
+        host.site_node = call_node
+        host.resolution = cs.EdgeResolution.EXACT
         # A callee bound by a language frontend (Jedi, the Java and C#
         # engines, the Go frontend, a typed C++ operator) never passes
         # through `noted`, which is where a resolver answer sets the
@@ -586,21 +586,21 @@ class CallBinding:
             targets = [callee_qn]
         # The resolver's verdict on this callee, then one edge per
         # same-named candidate when the callee fans out (issue #1526).
-        host._resolution = host.verdict
+        host.resolution = host.verdict
         targets, exact_in_every_build = ctx.calls.build_targets(
             ctx.module_qn, callee_type, callee_qn, targets
         )
         if len(targets) > 1:
-            host._resolution = cs.EdgeResolution.OVERLOAD
-        call_resolution = host._resolution
+            host.resolution = cs.EdgeResolution.OVERLOAD
+        call_resolution = host.resolution
         for target_qn in targets:
-            host._resolution = (
+            host.resolution = (
                 call_resolution
                 if exact_in_every_build.get(target_qn, True)
                 else cs.EdgeResolution.HEURISTIC
             )
             self._emit_callee_target(ctx, callee_type, target_qn)
-        host._resolution = call_resolution
+        host.resolution = call_resolution
         return True
 
     def _emit_callee_target(

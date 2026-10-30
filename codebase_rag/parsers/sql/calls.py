@@ -105,10 +105,10 @@ class SqlCallResolution(LanguageCalls):
         if not text:
             return
         host = self._host
-        host._site_node = None
+        host.site_node = None
         module_spec = (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn)
         for reference in ddl_routine_references(text, row, col):
-            host._resolution = cs.EdgeResolution.EXACT
+            host.resolution = cs.EdgeResolution.EXACT
             host._link_sql_routine(
                 module_qn, module_spec, reference.name, reference.site
             )

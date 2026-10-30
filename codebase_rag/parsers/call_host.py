@@ -3,18 +3,20 @@ builds them, declared once for their host Protocols to take.
 
 The processor looks a file's language up to its call strategy
 (`calls_for`), knows where the definition pass recorded each function node
-(`recorded_caller`), and notes how surely a resolver answer binds the call
-node being scanned (`noted`), the verdict that node's edges carry. It holds
-the collaborators every language shares as its own attributes, and a
-language's collaborator calls their methods directly: the reference
-walkers (`references`) and the dispatch-table walk (`tables`), which still
-give a function used as a value rather than called (stored by an
-assignment, handed back by a return, held in a collection literal or a
-parameter default) its edge; the callback edges (`callbacks`) a function
-handed over as a value writes; and the binding (`binding`) whose ingest of
-a bound call writes the edges every resolved call writes. A collaborator's
-host Protocol takes the members it uses from here, and the edge writer from
-`edge_site`, rather than spelling them out again."""
+(`recorded_caller`), reads a definition node's own name (`get_node_name`),
+records a caller whose pass failed (`record_caller_failure`), and notes how
+surely a resolver answer binds the call node being scanned (`noted`), the
+verdict that node's edges carry. It holds the collaborators every language
+shares as its own attributes, and a language's collaborator calls their
+methods directly: the reference walkers (`references`) and the
+dispatch-table walk (`tables`), which still give a function used as a value
+rather than called (stored by an assignment, handed back by a return, held
+in a collection literal or a parameter default) its edge; the callback
+edges (`callbacks`) a function handed over as a value writes; and the
+binding (`binding`) whose ingest of a bound call writes the edges every
+resolved call writes. A collaborator's host Protocol takes the members it
+uses from here, and the edge site and writer from `edge_site`, rather than
+spelling them out again."""
 
 from __future__ import annotations
 
@@ -22,6 +24,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from tree_sitter import Node
 
+from .. import constants as cs
 from ..types_defs import FunctionLocation
 from .language_calls import LanguageCalls
 
@@ -46,6 +49,21 @@ class RecordedCallerHost(Protocol):
     def recorded_caller(
         self, func_node: Node, module_qn: str
     ) -> FunctionLocation | None: ...
+
+
+class NodeNameHost(Protocol):
+    """A definition node's own name, read off its name field."""
+
+    def get_node_name(self, node: Node, field: str = cs.FIELD_NAME) -> str | None: ...
+
+
+class CallerFailureHost(Protocol):
+    """The record of a caller whose pass failed: its file counts as failed for
+    the run, and the error is logged with the caller it cost."""
+
+    def record_caller_failure(
+        self, message: str, caller: str, error: Exception
+    ) -> None: ...
 
 
 class VerdictHost(Protocol):

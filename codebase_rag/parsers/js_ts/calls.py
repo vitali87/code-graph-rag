@@ -26,6 +26,7 @@ from ...node_text import decode_node_text, safe_decode_text
 from ...types_defs import FunctionLocation, LanguageQueries
 from ..call_host import (
     CallbackEdgeHost,
+    NodeNameHost,
     RecordedCallerHost,
     ValueReferenceHost,
     VerdictHost,
@@ -48,6 +49,7 @@ class JsTsCallHost(
     EdgeWriterHost,
     VerdictHost,
     RecordedCallerHost,
+    NodeNameHost,
     ValueReferenceHost,
     CallbackEdgeHost,
     Protocol,
@@ -58,8 +60,6 @@ class JsTsCallHost(
     spells, the reference walkers and callback edges JS/TS shares with other
     languages, and the verdict, which a member pick its receiver's declared
     type confirms raises to exact."""
-
-    def _get_node_name(self, node: Node, field: str = cs.FIELD_NAME) -> str | None: ...
 
     def _function_field_call_name(
         self, func_child: Node, calls: LanguageCalls
@@ -836,7 +836,7 @@ class JsTsCallResolution(LanguageCalls):
         return [
             n
             for n in func_nodes
-            if self._host._get_node_name(n)
+            if self._host.get_node_name(n)
             or js_ts_utils.arrow_binding_name(n)
             or (
                 (recorded := self._host.recorded_caller(n, module_qn)) is not None
@@ -1628,7 +1628,7 @@ class JsTsCallResolution(LanguageCalls):
         seen: set[str] = set()
         stack = list(caller_node.children)
         while stack:
-            node = self._host._site_node = stack.pop()
+            node = self._host.site_node = stack.pop()
             node_type = node.type
             # A nested class or NON-arrow function owns its own reads (and
             # rebinds `this`), so it is processed as its own caller; do not
@@ -1703,7 +1703,7 @@ class JsTsCallResolution(LanguageCalls):
             cs.TS_GENERATOR_FUNCTION,
         ):
             return False
-        if self._host._get_node_name(node) or js_ts_utils.arrow_binding_name(node):
+        if self._host.get_node_name(node) or js_ts_utils.arrow_binding_name(node):
             return False
         # A nameless FUNCTION EXPRESSION the definition pass registered under
         # a name (`x: function () {}`) has neither, but IS a node with its own

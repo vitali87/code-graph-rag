@@ -1,4 +1,4 @@
-"""The edge site a language's call collaborator writes through its host.
+"""The edge site the call pass's collaborators write through their host.
 
 `CallProcessor` stamps every edge it emits with the node that produced it
 and the confidence of the binding (issues #1522, #1526). The pass's
@@ -21,8 +21,8 @@ class EdgeSiteHost(Protocol):
     """The node whose span the next edge records, and the resolution it
     carries."""
 
-    _site_node: Node | None
-    _resolution: str
+    site_node: Node | None
+    resolution: str
 
 
 class EdgeWriterHost(EdgeSiteHost, Protocol):
@@ -51,12 +51,12 @@ def host_site_scoped[O: EdgeSiteOwner, **P, R](
     @wraps(fn)
     def wrapper(owner: O, /, *args: P.args, **kwargs: P.kwargs) -> R:
         host = owner._host
-        prev = host._site_node
-        prev_resolution = host._resolution
+        prev = host.site_node
+        prev_resolution = host.resolution
         try:
             return fn(owner, *args, **kwargs)
         finally:
-            host._site_node = prev
-            host._resolution = prev_resolution
+            host.site_node = prev
+            host.resolution = prev_resolution
 
     return wrapper

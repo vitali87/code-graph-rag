@@ -654,7 +654,7 @@ class TestGetNodeName:
         func_node = find_first_node_of_type(root, "function_definition")
         assert func_node is not None
 
-        result = call_processor._get_node_name(func_node)
+        result = call_processor.get_node_name(func_node)
         assert result == "my_function"
 
     def test_gets_name_from_class_def(
@@ -671,7 +671,7 @@ class TestGetNodeName:
         class_node = find_first_node_of_type(root, "class_definition")
         assert class_node is not None
 
-        result = call_processor._get_node_name(class_node)
+        result = call_processor.get_node_name(class_node)
         assert result == "MyClass"
 
     def test_returns_none_for_no_name(
@@ -688,7 +688,7 @@ class TestGetNodeName:
         expr_node = find_first_node_of_type(root, "expression_statement")
         assert expr_node is not None
 
-        result = call_processor._get_node_name(expr_node)
+        result = call_processor.get_node_name(expr_node)
         assert result is None
 
     def test_gets_field_by_custom_field_name(
@@ -705,7 +705,7 @@ class TestGetNodeName:
         func_node = find_first_node_of_type(root, "function_definition")
         assert func_node is not None
 
-        result = call_processor._get_node_name(func_node, "name")
+        result = call_processor.get_node_name(func_node, "name")
         assert result == "my_func"
 
 

@@ -19,7 +19,7 @@ def _make(root: Path) -> None:
 def test_ts_arrow_const_caller_body_calls_resolve(tmp_path: Path) -> None:
     # A call inside a named arrow / const-arrow function body must be attributed
     # to that function (p.he.fmt). The call pass skipped arrows because they have
-    # no `name` field, so _get_node_name returned None and the arrow body went
+    # no `name` field, so get_node_name returned None and the arrow body went
     # unprocessed.
     _make(tmp_path)
     ingestor = capture(tmp_path, "p")

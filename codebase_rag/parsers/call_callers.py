@@ -21,7 +21,7 @@ from .. import logs as ls
 from ..language_spec import LanguageSpec
 from ..node_text import sorted_captures
 from ..types_defs import LanguageQueries
-from .call_host import CallStrategyHost, RecordedCallerHost
+from .call_host import CallerFailureHost, CallStrategyHost, RecordedCallerHost
 from .call_ownership import (
     RegisteredNames,
     body_function_nodes,
@@ -81,14 +81,10 @@ def _class_qn_for_calls(
     )
 
 
-class CallerHost(CallStrategyHost, RecordedCallerHost, Protocol):
+class CallerHost(CallStrategyHost, RecordedCallerHost, CallerFailureHost, Protocol):
     """What the caller scan calls on the call pass that builds it: where the
     definition pass recorded a function node, the record of a caller whose
     pass failed, and a language's call strategy."""
-
-    def _record_caller_failure(
-        self, message: str, caller: str, error: Exception
-    ) -> None: ...
 
 
 class CallerScan:
@@ -174,7 +170,7 @@ class CallerScan:
                     if loc is not None
                     else f"{module_qn}{cs.SEPARATOR_DOT}{func_name}"
                 )
-                self._host._record_caller_failure(ls.CALLER_CALLS_FAILED, caller, e)
+                self._host.record_caller_failure(ls.CALLER_CALLS_FAILED, caller, e)
 
     def _ingest_func_node_calls(
         self,
@@ -390,7 +386,7 @@ class CallerScan:
                 )
             except Exception as e:  # noqa: BLE001 -- isolation: one unit's failure must not end the run
                 # Contained to this method, as for a free function (#3173).
-                host._record_caller_failure(ls.CALLER_CALLS_FAILED, caller_qn, e)
+                host.record_caller_failure(ls.CALLER_CALLS_FAILED, caller_qn, e)
 
     def class_member_qn_and_label(
         self,

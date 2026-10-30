@@ -452,7 +452,7 @@ class PythonCallResolution(LanguageCalls):
         for child in parent.children:
             if child.type != cs.TS_PY_DECORATOR:
                 continue
-            self._host._site_node = child
+            self._host.site_node = child
             name = _bare_decorator_name(child)
             if not name:
                 continue
@@ -473,9 +473,9 @@ class PythonCallResolution(LanguageCalls):
         # (issue #2621).
         registry = self._resolver.function_registry
         variants = registry.variants(callee_qn)
-        prev_resolution = self._host._resolution
+        prev_resolution = self._host.resolution
         if len(variants) > 1:
-            self._host._resolution = cs.EdgeResolution.OVERLOAD
+            self._host.resolution = cs.EdgeResolution.OVERLOAD
         try:
             for variant in variants:
                 targets: list[tuple[str, str]] = []
@@ -497,7 +497,7 @@ class PythonCallResolution(LanguageCalls):
                         (label, cs.KEY_QUALIFIED_NAME, target_qn),
                     )
         finally:
-            self._host._resolution = prev_resolution
+            self._host.resolution = prev_resolution
 
     def _resolve_decorator_callee(
         self,
@@ -531,7 +531,7 @@ class PythonCallResolution(LanguageCalls):
         # already attributed; for a class inside a function, from that
         # function, so a dead factory keeps its class's implementation dead.
         module_spec = (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn)
-        self._host._resolution = cs.EdgeResolution.EXACT
+        self._host.resolution = cs.EdgeResolution.EXACT
         for class_node in class_nodes:
             body = class_node.child_by_field_name(cs.FIELD_BODY)
             if body is None:
@@ -545,7 +545,7 @@ class PythonCallResolution(LanguageCalls):
             for site, method in references:
                 if (target := self._host.recorded_caller(method, module_qn)) is None:
                     continue
-                self._host._site_node = site
+                self._host.site_node = site
                 self._host.emit_rel(
                     scope,
                     cs.RelationshipType.REFERENCES,
@@ -855,7 +855,7 @@ class PythonCallResolution(LanguageCalls):
         # The receiver is one of the conformers, so with several the call is
         # a fan-out like any other same-named candidate set (issue #1526):
         # renaming one conformer must not rewrite the shared call site.
-        self._host._resolution = (
+        self._host.resolution = (
             cs.EdgeResolution.OVERLOAD if len(edges) > 1 else self._host.verdict
         )
         for conformer_type, target_qn in edges:
@@ -998,7 +998,7 @@ class PythonCallResolution(LanguageCalls):
         boundary = (cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_CLASS_DEFINITION)
         stack: list[Node] = list(caller_node.children)
         while stack:
-            node = self._host._site_node = stack.pop()
+            node = self._host.site_node = stack.pop()
             if node.type in boundary:
                 continue
             if (dunder := _operator_dunder_target(node)) is not None:
@@ -1023,7 +1023,7 @@ class PythonCallResolution(LanguageCalls):
         # bare name/attribute operand names an object (a comparison/call is already
         # a bool and is handled elsewhere); try __bool__ first, then __len__.
         if operand is not None:
-            self._host._site_node = operand
+            self._host.site_node = operand
         if operand is None or operand.type not in (
             cs.TS_PY_IDENTIFIER,
             cs.TS_PY_ATTRIBUTE,
@@ -1050,7 +1050,7 @@ class PythonCallResolution(LanguageCalls):
         # Returns whether an edge was emitted.
         if operand is None or not (operand_text := safe_decode_text(operand)):
             return False
-        self._host._site_node = operand
+        self._host.site_node = operand
         if any(ch in operand_text for ch in cs.PY_OPERAND_REJECT_CHARS):
             return False
         targets = self._resolver.python.operator_dunder_targets(
@@ -1088,10 +1088,10 @@ class PythonCallResolution(LanguageCalls):
         targets = self._resolver.python.instance_call_targets(
             callee_text, is_call_result, module_qn, local_var_types
         )
-        self._host._site_node = call_node
+        self._host.site_node = call_node
         for callee_type, callee_qn in sorted(targets):
             methods = self._resolver.member_alias_fanout(callee_qn, cs.PY_DUNDER_CALL)
-            self._host._resolution = (
+            self._host.resolution = (
                 cs.EdgeResolution.OVERLOAD
                 if len(methods) > 1
                 else cs.EdgeResolution.EXACT
@@ -1300,7 +1300,7 @@ class PythonCallResolution(LanguageCalls):
 
         stack = list(caller_node.children)
         while stack:
-            node = self._host._site_node = stack.pop()
+            node = self._host.site_node = stack.pop()
             node_type = node.type
             if node_type in function_types or node_type in class_types:
                 continue

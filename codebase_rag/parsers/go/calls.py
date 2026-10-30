@@ -920,7 +920,7 @@ class GoCallResolution(LanguageCalls):
         # no build variant is reported dead. sorted(): the target label is a
         # hash-randomized StrEnum, so sort for deterministic output.
         host = self._host
-        call_resolution = host._resolution
+        call_resolution = host.resolution
         for sibling_type, sibling_qn in sorted(
             self._resolver.go.go_package_sibling_targets(callee_qn)
         ):
@@ -929,7 +929,7 @@ class GoCallResolution(LanguageCalls):
                 # where every build compiling the caller holds it.
                 if self._resolver.go.go_apart_from_caller(module_qn, variant):
                     continue
-                host._resolution = (
+                host.resolution = (
                     call_resolution
                     if self._resolver.go.go_reaches_everywhere(module_qn, (variant,))
                     else cs.EdgeResolution.HEURISTIC
@@ -939,7 +939,7 @@ class GoCallResolution(LanguageCalls):
                     cs.RelationshipType.CALLS,
                     (sibling_type, cs.KEY_QUALIFIED_NAME, variant),
                 )
-        host._resolution = call_resolution
+        host.resolution = call_resolution
 
     def _emit_interface_dispatch(
         self,
@@ -956,14 +956,14 @@ class GoCallResolution(LanguageCalls):
         # only some of the caller's builds hold (`guessed`) is still the
         # receiver's, in those builds: its implementations are candidates.
         host = self._host
-        if host._resolution == cs.EdgeResolution.HEURISTIC:
+        if host.resolution == cs.EdgeResolution.HEURISTIC:
             return
         edges = self._dispatch_edges(callee_qn, module_qn)
-        prev_resolution = host._resolution
+        prev_resolution = host.resolution
         proven = cs.EdgeResolution.OVERLOAD if len(edges) > 1 else prev_resolution
         try:
             for target_type, target_qn, target_guessed in edges:
-                host._resolution = (
+                host.resolution = (
                     cs.EdgeResolution.HEURISTIC if guessed or target_guessed else proven
                 )
                 ensure_rel(
@@ -972,7 +972,7 @@ class GoCallResolution(LanguageCalls):
                     (target_type, cs.KEY_QUALIFIED_NAME, target_qn),
                 )
         finally:
-            host._resolution = prev_resolution
+            host.resolution = prev_resolution
 
     def _dispatch_edges(
         self, callee_qn: str, module_qn: str
@@ -1062,7 +1062,7 @@ class GoCallResolution(LanguageCalls):
             class_qn = self._struct_class(type_name, module_qn)
             if class_qn is None:
                 continue
-            host._site_node = node
+            host.site_node = node
             for class_variant in self._visible_class_variants(
                 class_qn, module_qn, node
             ):
@@ -1234,12 +1234,12 @@ class GoCallResolution(LanguageCalls):
         ensure_rel = host.emit_rel
         stack: list[Node] = list(caller_node.children)
         while stack:
-            node = host._site_node = stack.pop()
+            node = host.site_node = stack.pop()
             if node.type in boundary_types:
                 continue
             if node.type == cs.TS_GO_LITERAL_VALUE:
                 for element in node.named_children:
-                    host._site_node = element
+                    host.site_node = element
                     if (inner := _literal_element_inner(element)) is None:
                         continue
                     host.tables.emit_value_function_ref(

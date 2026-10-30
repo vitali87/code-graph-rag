@@ -24,7 +24,7 @@ from .. import logs as ls
 from ..node_text import sorted_captures
 from ..types_defs import LanguageQueries
 from .call_binding import CallBinding
-from .call_host import CallStrategyHost
+from .call_host import CallerFailureHost, CallStrategyHost
 from .call_resolver import CallResolver, Resolved
 from .callable_flow import CallableFlow
 from .cpp import calls as cpp_calls
@@ -36,16 +36,12 @@ from .rpc_exposure import GoRpcExposureProcessor
 from .scope_boundaries import flow_scope_boundaries
 
 
-class CallScanHost(EdgeWriterHost, CallStrategyHost, Protocol):
+class CallScanHost(EdgeWriterHost, CallStrategyHost, CallerFailureHost, Protocol):
     """What a caller's scan calls on the call pass that owns it: a
     language's call strategy, the resolver call that notes its verdict, the
     edge writer and the record of a failed caller."""
 
     def _resolve_noting(self, *args: Any, **kwargs: Any) -> Resolved | None: ...
-
-    def _record_caller_failure(
-        self, message: str, caller: str, error: Exception
-    ) -> None: ...
 
 
 class CallerCalls:
@@ -168,7 +164,7 @@ class CallerCalls:
         # Edges the later passes emit (decorators, property reads, operator
         # dispatch) are exact bindings; they must not carry the verdict the
         # last call node of this loop left behind.
-        self._host._resolution = cs.EdgeResolution.EXACT
+        self._host.resolution = cs.EdgeResolution.EXACT
 
     def _run_side_passes(
         self,
@@ -248,9 +244,7 @@ class CallerCalls:
         except Exception as e:  # noqa: BLE001 -- isolation: one unit's failure must not end the run
             # A walk that still fails on some shape costs this caller its local
             # types, not the file its calls: they resolve untyped (#3173).
-            self._host._record_caller_failure(
-                ls.CALLER_LOCAL_TYPES_FAILED, caller_qn, e
-            )
+            self._host.record_caller_failure(ls.CALLER_LOCAL_TYPES_FAILED, caller_qn, e)
             return {}, [], []
         return local_var_types, span_bindings, cpp_spans
 

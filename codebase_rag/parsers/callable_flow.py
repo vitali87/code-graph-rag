@@ -410,7 +410,7 @@ class CallableFlow:
         ) -> None:
             passed.append(
                 _PassedCallback(
-                    source_spec, param_name, rel_type, target_spec, host._resolution
+                    source_spec, param_name, rel_type, target_spec, host.resolution
                 )
             )
 
@@ -495,7 +495,7 @@ class CallableFlow:
         # concrete function that can reach it (directly or via pass-through params).
         # No walk is running, so an edge with no recorded site carries none rather
         # than the last node a walk left behind (Go's 1:0-7, issue #2459).
-        self._host._site_node = None
+        self._host.site_node = None
         returned_callables = self._merged_returned_callables()
         seeds, edges = self._callable_flow_slots()
         self._emit_returned_closure_calls(returned_callables)
@@ -543,7 +543,7 @@ class CallableFlow:
                 or passed.target_spec[2] not in registry
             ):
                 continue
-            self._host._resolution = passed.resolution
+            self._host.resolution = passed.resolution
             for site in self._param_invocation_sites(
                 invocations, source_qn, passed.param_name
             ):

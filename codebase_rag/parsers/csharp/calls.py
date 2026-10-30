@@ -590,7 +590,7 @@ class CSharpCallResolution(LanguageCalls):
 
         stack = list(caller_node.children)
         while stack:
-            node = self._host._site_node = stack.pop()
+            node = self._host.site_node = stack.pop()
             node_type = node.type
             if node_type in function_types or node_type in class_types:
                 continue

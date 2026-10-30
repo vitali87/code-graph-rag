@@ -18,7 +18,7 @@ from tree_sitter import Node
 
 from ... import constants as cs
 from ...types_defs import LanguageQueries
-from ..call_host import RecordedCallerHost, VerdictHost
+from ..call_host import NodeNameHost, RecordedCallerHost, VerdictHost
 from ..class_ingest.identity import build_nested_qualified_name_for_class
 from ..edge_site import EdgeWriterHost, host_site_scoped
 from ..import_host import UnresolvedNameHost
@@ -34,7 +34,12 @@ if TYPE_CHECKING:
 
 
 class JavaCallHost(
-    EdgeWriterHost, VerdictHost, RecordedCallerHost, UnresolvedNameHost, Protocol
+    EdgeWriterHost,
+    VerdictHost,
+    RecordedCallerHost,
+    NodeNameHost,
+    UnresolvedNameHost,
+    Protocol,
 ):
     """What Java call resolution sets and calls on the call pass that builds
     it. Beside the edge site, the verdict, which a tie between overloads
@@ -44,8 +49,6 @@ class JavaCallHost(
     enum constant runs, the edge emitter, a definition's recorded location
     and own name, and the caller scan, which gives a class's member the
     qualified name the class pass does."""
-
-    def _get_node_name(self, node: Node, field: str = cs.FIELD_NAME) -> str | None: ...
 
     @property
     def construction(self) -> CallConstruction: ...
@@ -158,8 +161,8 @@ class JavaCallResolution(LanguageCalls):
                     for ctor, target in ctors
                     if java_utils.accepts_argument_count(ctor, arg_count)
                 ]
-                host._site_node = constant
-                host._resolution = (
+                host.site_node = constant
+                host.resolution = (
                     cs.EdgeResolution.EXACT
                     if len(targets) == 1
                     else cs.EdgeResolution.OVERLOAD
@@ -186,8 +189,8 @@ class JavaCallResolution(LanguageCalls):
             return loc.label, loc.qualified_name
         # The class pass's own derivation, for a run that did not re-record
         # this file's definitions.
-        enum_name = host._get_node_name(enum_node)
-        ctor_name = host._get_node_name(ctor_node)
+        enum_name = host.get_node_name(enum_node)
+        ctor_name = host.get_node_name(ctor_node)
         if not enum_name or not ctor_name:
             return None
         language = cs.SupportedLanguage.JAVA
@@ -308,8 +311,8 @@ class JavaCallResolution(LanguageCalls):
         if not ties:
             return
         self._host.verdict = cs.EdgeResolution.OVERLOAD
-        prev_resolution = self._host._resolution
-        self._host._resolution = cs.EdgeResolution.OVERLOAD
+        prev_resolution = self._host.resolution
+        self._host.resolution = cs.EdgeResolution.OVERLOAD
         registry = self._resolver.function_registry
         try:
             for target_type, target_qn in ties:
@@ -322,7 +325,7 @@ class JavaCallResolution(LanguageCalls):
                         (target_type, cs.KEY_QUALIFIED_NAME, variant),
                     )
         finally:
-            self._host._resolution = prev_resolution
+            self._host.resolution = prev_resolution
 
     def ingest_method_reference(
         self,
@@ -357,7 +360,7 @@ class JavaCallResolution(LanguageCalls):
             # name is the only link to a file that may define it later.
             self._host.note_unresolved(ctx.module_qn, parts.method_name)
             return None
-        self._host._resolution = (
+        self._host.resolution = (
             cs.EdgeResolution.OVERLOAD if len(edges) > 1 else self._host.verdict
         )
         for label, target_qn in edges:
