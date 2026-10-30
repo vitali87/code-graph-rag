@@ -76,8 +76,6 @@ class UrlSyntax(StrEnum):
     JS_TS = "js_ts"
 
 
-KEY_KIND = "kind"
-
 # Python open()-style mode characters that imply writing / read-write.
 MODE_WRITE_CHARS = ("w", "a", "x")
 MODE_READ_CHAR = "r"

@@ -22,7 +22,7 @@ from ..types_defs import PropertyDict
 from ..utils.path_utils import cached_file_identity_posix, cached_resolve_posix
 from .contracts import ContractOperation, discover_contract_operations
 from .endpoints import _has_literal_segment, url_matches_template
-from .io_access.constants import KEY_KIND, RESOURCE_QN_FORMAT, ResourceKind
+from .io_access.constants import RESOURCE_QN_FORMAT, ResourceKind
 
 # RPC resources are deliberately unscoped, so a client in one project meets a
 # server in another on one node. A contract, though, is declared by THIS
@@ -155,7 +155,7 @@ def _emit_contract(
     properties: PropertyDict = {
         cs.KEY_QUALIFIED_NAME: _contract_qn(operation, project_name),
         cs.KEY_NAME: _identity(operation),
-        KEY_KIND: ResourceKind.CONTRACT.value,
+        cs.KEY_KIND: ResourceKind.CONTRACT.value,
     }
     ingestor.ensure_node_batch(cs.NodeLabel.RESOURCE, properties)
     # The declaring file anchors the operation: a Resource whose only edges

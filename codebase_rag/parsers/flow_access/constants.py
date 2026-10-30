@@ -10,7 +10,6 @@ class FlowKind(StrEnum):
 
 
 KEY_VIA = "via"
-KEY_KIND = "kind"
 
 VIA_ARG_FORMAT = "arg:{index}"
 VIA_KW_FORMAT = "kw:{name}"

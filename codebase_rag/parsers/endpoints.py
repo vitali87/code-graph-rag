@@ -49,7 +49,6 @@ CYPHER_DELETE_RESOLVES_TO = (
     "MATCH (:Resource {kind: 'NETWORK'})-[r:RESOLVES_TO]->() DELETE r"
 )
 
-KEY_PROJECT = "project"
 _PROJECT_HASH_SEPARATOR = "__"
 
 _HTTP_METHOD_NAMES = frozenset(
@@ -354,7 +353,7 @@ def emit_endpoint(
     qualified_name: str,
     identity: str,
 ) -> None:
-    from .io_access.constants import KEY_KIND, RESOURCE_QN_FORMAT, ResourceKind
+    from .io_access.constants import RESOURCE_QN_FORMAT, ResourceKind
 
     # The qn is scoped by owning project (EXPOSES always comes from within
     # one), so same-template endpoints in different services stay distinct
@@ -368,8 +367,8 @@ def emit_endpoint(
         {
             cs.KEY_QUALIFIED_NAME: resource_qn,
             cs.KEY_NAME: identity,
-            KEY_KIND: ResourceKind.ENDPOINT.value,
-            KEY_PROJECT: project,
+            cs.KEY_KIND: ResourceKind.ENDPOINT.value,
+            cs.KEY_PROJECT: project,
         },
     )
     ingestor.ensure_relationship_batch(
@@ -398,13 +397,13 @@ def _collect_live_resource_row(
     networks: dict[str, tuple[str, frozenset[str], frozenset[str]]],
     endpoints: dict[str, tuple[str, str | None]],
 ) -> None:
-    from .io_access.constants import DYNAMIC_TARGET, KEY_KIND, ResourceKind
+    from .io_access.constants import DYNAMIC_TARGET, ResourceKind
 
     qn = row.get(cs.KEY_QUALIFIED_NAME)
     name = row.get(cs.KEY_NAME)
     if not isinstance(qn, str) or not isinstance(name, str):
         return
-    kind = row.get(KEY_KIND)
+    kind = row.get(cs.KEY_KIND)
     if kind == ResourceKind.NETWORK.value and name != DYNAMIC_TARGET:
         networks[qn] = (
             name,
@@ -412,7 +411,7 @@ def _collect_live_resource_row(
             _str_frozenset(row.get(_KEY_CALLER_PROJECTS)),
         )
     elif kind == ResourceKind.ENDPOINT.value:
-        project = row.get(KEY_PROJECT)
+        project = row.get(cs.KEY_PROJECT)
         endpoints[qn] = (name, project if isinstance(project, str) else None)
 
 

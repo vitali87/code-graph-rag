@@ -21,7 +21,7 @@ from ..types_defs import ASTCacheProtocol, FunctionRegistryTrieProtocol
 from .go import utils as go_utils
 from .go.type_inference import GoTypeInferenceEngine
 from .import_processor import ImportProcessor
-from .io_access.constants import KEY_KIND, RESOURCE_QN_FORMAT, ResourceKind
+from .io_access.constants import RESOURCE_QN_FORMAT, ResourceKind
 from .io_access.processor import RPC_PACKAGE_SUFFIX, rpc_qualifier_resolves
 
 # The connect-go handler constructor: `New<Stem>Handler`, qualified by a
@@ -588,7 +588,7 @@ class GoRpcExposureProcessor:
             {
                 cs.KEY_QUALIFIED_NAME: resource_qn,
                 cs.KEY_NAME: identity,
-                KEY_KIND: ResourceKind.RPC.value,
+                cs.KEY_KIND: ResourceKind.RPC.value,
             },
         )
         self._ingestor.ensure_relationship_batch(

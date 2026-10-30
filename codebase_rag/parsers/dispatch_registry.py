@@ -31,7 +31,6 @@ from .io_access.constants import (
     DISPATCH_NAME_KEYWORD,
     DISPATCH_PRODUCER_KEYWORDS,
     DISPATCH_REGISTRARS,
-    KEY_KIND,
     RESOURCE_QN_FORMAT,
     ResourceKind,
 )
@@ -309,7 +308,7 @@ class DispatchRegistryProcessor:
             {
                 cs.KEY_QUALIFIED_NAME: _resource_qn(key),
                 cs.KEY_NAME: key,
-                KEY_KIND: ResourceKind.DISPATCH.value,
+                cs.KEY_KIND: ResourceKind.DISPATCH.value,
             },
         )
 

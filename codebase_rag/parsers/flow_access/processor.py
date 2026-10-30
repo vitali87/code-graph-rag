@@ -84,7 +84,6 @@ from ..scala.utils import scala_positional_parameter_slots
 from ..semantic_call_join import call_site_key
 from ..utils import function_span_key, shared_or_new
 from .constants import (
-    KEY_KIND,
     KEY_VIA,
     VIA_ARG_FORMAT,
     VIA_KW_FORMAT,
@@ -4229,7 +4228,7 @@ class FlowProcessor:
                 ctx.caller_spec,
                 cs.RelationshipType.FLOWS_TO,
                 (callee_type, cs.KEY_QUALIFIED_NAME, callee_qn),
-                properties={KEY_VIA: via, KEY_KIND: FlowKind.ARG.value},
+                properties={KEY_VIA: via, cs.KEY_KIND: FlowKind.ARG.value},
             )
         elif taint.pending:
             # Tainted only via a pending callee: defer, so no arg edge is
@@ -4434,7 +4433,7 @@ class FlowProcessor:
             (callee_type, cs.KEY_QUALIFIED_NAME, callee_qn),
             cs.RelationshipType.FLOWS_TO,
             caller_spec,
-            properties={KEY_VIA: VIA_RETURN, KEY_KIND: FlowKind.RETURN.value},
+            properties={KEY_VIA: VIA_RETURN, cs.KEY_KIND: FlowKind.RETURN.value},
         )
 
     def finalize(self) -> None:
@@ -4515,7 +4514,7 @@ class FlowProcessor:
                     caller_spec,
                     cs.RelationshipType.FLOWS_TO,
                     (callee_type, cs.KEY_QUALIFIED_NAME, callee_qn),
-                    properties={KEY_VIA: via, KEY_KIND: FlowKind.ARG.value},
+                    properties={KEY_VIA: via, cs.KEY_KIND: FlowKind.ARG.value},
                 )
 
     def _emit_param_call_site_flows(
@@ -4800,7 +4799,7 @@ class FlowProcessor:
             (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, src_qn),
             cs.RelationshipType.FLOWS_TO,
             (cs.NodeLabel.RESOURCE, cs.KEY_QUALIFIED_NAME, dst_qn),
-            properties={KEY_KIND: FlowKind.RESOURCE.value},
+            properties={cs.KEY_KIND: FlowKind.RESOURCE.value},
         )
 
     def _ensure_resource(self, kind: ResourceKind, identity: str) -> str:
@@ -4810,7 +4809,7 @@ class FlowProcessor:
             {
                 cs.KEY_QUALIFIED_NAME: qn,
                 cs.KEY_NAME: identity,
-                KEY_KIND: kind.value,
+                cs.KEY_KIND: kind.value,
             },
         )
         return qn

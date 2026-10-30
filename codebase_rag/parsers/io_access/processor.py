@@ -21,7 +21,6 @@ from .constants import (
     HTTP_METHOD_OPTION_KEY_URL,
     HTTP_READ_VERBS,
     HTTP_WRITE_VERBS,
-    KEY_KIND,
     PY_SCOPE_BOUNDARIES,
     SQL_READ_KEYWORDS,
     SQL_WRITE_KEYWORDS,
@@ -2226,7 +2225,7 @@ class IOAccessProcessor:
             {
                 cs.KEY_QUALIFIED_NAME: qualified_name,
                 cs.KEY_NAME: identity,
-                KEY_KIND: kind.value,
+                cs.KEY_KIND: kind.value,
             },
         )
         for rel in rels:
