@@ -17,33 +17,29 @@ from codebase_rag.trace.resolution import (
 _P = "demo"
 
 
-def _node(label, qualified_name, path, start_line, end_line):
-    return CallableNode(
-        label=label,
-        qualified_name=qualified_name,
-        path=path,
-        start_line=start_line,
-        end_line=end_line,
-    )
-
-
 def _nodes():
     return [
-        _node(cs.NodeLabel.MODULE, f"{_P}.src.utils", "src/utils.js", None, None),
-        _node(cs.NodeLabel.FUNCTION, f"{_P}.src.utils.greet", "src/utils.js", 3, 5),
-        _node(
+        CallableNode(
+            cs.NodeLabel.MODULE, f"{_P}.src.utils", "src/utils.js", None, None
+        ),
+        CallableNode(
+            cs.NodeLabel.FUNCTION, f"{_P}.src.utils.greet", "src/utils.js", 3, 5
+        ),
+        CallableNode(
             cs.NodeLabel.METHOD, f"{_P}.src.utils.Person.greet", "src/utils.js", 10, 12
         ),
-        _node(
+        CallableNode(
             cs.NodeLabel.FUNCTION,
             f"{_P}.src.utils.outer.inner",
             "src/utils.js",
             18,
             20,
         ),
-        _node(cs.NodeLabel.FUNCTION, f"{_P}.src.utils.outer", "src/utils.js", 16, 24),
+        CallableNode(
+            cs.NodeLabel.FUNCTION, f"{_P}.src.utils.outer", "src/utils.js", 16, 24
+        ),
         # A truly anonymous callback, named from its 0-based start point.
-        _node(
+        CallableNode(
             cs.NodeLabel.FUNCTION,
             f"{_P}.src.utils.outer.anonymous_21_8",
             "src/utils.js",
@@ -51,7 +47,7 @@ def _nodes():
             23,
         ),
         # An overload implementation carrying the duplicate marker.
-        _node(
+        CallableNode(
             cs.NodeLabel.FUNCTION,
             f"{_P}.src.store.useStore@27",
             "src/store.ts",

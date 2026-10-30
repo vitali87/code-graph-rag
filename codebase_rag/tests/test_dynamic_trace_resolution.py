@@ -18,54 +18,40 @@ from codebase_rag.trace.resolution import (
 _PROJECT = "proj__deadbeef"
 
 
-def _node(
-    label: str,
-    qualified_name: str,
-    path: str,
-    start_line: int | None = None,
-    end_line: int | None = None,
-) -> CallableNode:
-    return CallableNode(
-        label=label,
-        qualified_name=qualified_name,
-        path=path,
-        start_line=start_line,
-        end_line=end_line,
-    )
-
-
 def _resolver(repo: Path) -> FrameResolver:
     nodes = [
-        _node(cs.NodeLabel.MODULE, f"{_PROJECT}.pkg.mod", "pkg/mod.py"),
-        _node(
+        CallableNode(
+            cs.NodeLabel.MODULE, f"{_PROJECT}.pkg.mod", "pkg/mod.py", None, None
+        ),
+        CallableNode(
             cs.NodeLabel.FUNCTION,
             f"{_PROJECT}.pkg.mod.outer",
             "pkg/mod.py",
             1,
             10,
         ),
-        _node(
+        CallableNode(
             cs.NodeLabel.FUNCTION,
             f"{_PROJECT}.pkg.mod.outer.inner",
             "pkg/mod.py",
             2,
             4,
         ),
-        _node(
+        CallableNode(
             cs.NodeLabel.METHOD,
             f"{_PROJECT}.pkg.mod.Klass.method",
             "pkg/mod.py",
             12,
             20,
         ),
-        _node(
+        CallableNode(
             cs.NodeLabel.FUNCTION,
             f"{_PROJECT}.pkg.dup.helper@5",
             "pkg/dup.py",
             5,
             7,
         ),
-        _node(
+        CallableNode(
             cs.NodeLabel.FUNCTION,
             f"{_PROJECT}.pkg.dup.helper@12",
             "pkg/dup.py",

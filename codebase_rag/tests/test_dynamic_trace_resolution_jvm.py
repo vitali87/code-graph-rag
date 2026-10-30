@@ -16,46 +16,36 @@ from codebase_rag.trace.resolution import (
 _P = "demo"
 
 
-def _node(label, qualified_name, path, start_line, end_line):
-    return CallableNode(
-        label=label,
-        qualified_name=qualified_name,
-        path=path,
-        start_line=start_line,
-        end_line=end_line,
-    )
-
-
 _NODES = [
-    _node(
+    CallableNode(
         cs.NodeLabel.METHOD,
         f"{_P}.src.main.java.com.example.Foo.Foo.bar()",
         "src/main/java/com/example/Foo.java",
         5,
         9,
     ),
-    _node(
+    CallableNode(
         cs.NodeLabel.METHOD,
         f"{_P}.src.main.java.com.example.Foo.Foo.bar(String)",
         "src/main/java/com/example/Foo.java",
         11,
         14,
     ),
-    _node(
+    CallableNode(
         cs.NodeLabel.METHOD,
         f"{_P}.src.main.java.com.example.Foo.Foo.Foo(String)",
         "src/main/java/com/example/Foo.java",
         2,
         4,
     ),
-    _node(
+    CallableNode(
         cs.NodeLabel.METHOD,
         f"{_P}.src.main.java.com.example.Outer.Outer.Inner.value()",
         "src/main/java/com/example/Outer.java",
         8,
         10,
     ),
-    _node(
+    CallableNode(
         cs.NodeLabel.METHOD,
         f"{_P}.src.main.java.com.example.Client.Client.start()",
         "src/main/java/com/example/Client.java",
@@ -64,7 +54,7 @@ _NODES = [
     ),
     # An anonymous class override is stored as a Function threaded through
     # the enclosing method, with no `$1` anywhere.
-    _node(
+    CallableNode(
         cs.NodeLabel.FUNCTION,
         f"{_P}.src.main.java.com.example.Client.Client.start.run",
         "src/main/java/com/example/Client.java",
@@ -72,7 +62,7 @@ _NODES = [
         14,
     ),
     # Scala: no parameter signature, object stored as a plain class scope.
-    _node(
+    CallableNode(
         cs.NodeLabel.METHOD,
         f"{_P}.Util.Util.free",
         "Util.scala",
@@ -196,14 +186,14 @@ def test_ambiguous_source_suffix_does_not_misattribute():
     # that suffix cannot be attributed to either without risking a cross-file
     # line-span match, so the resolver returns nothing rather than a wrong link.
     nodes = [
-        _node(
+        CallableNode(
             cs.NodeLabel.METHOD,
             f"{_P}.moduleA.com.example.Dup.Dup.run()",
             "moduleA/com/example/Dup.java",
             5,
             9,
         ),
-        _node(
+        CallableNode(
             cs.NodeLabel.METHOD,
             f"{_P}.moduleB.com.example.Dup.Dup.run()",
             "moduleB/com/example/Dup.java",
@@ -224,14 +214,14 @@ def test_exact_path_frame_resolves_despite_a_suffix_collision():
     # An exact graph path is unambiguous even when another root shares the
     # suffix: the exact match wins, so a fully-qualified frame still resolves.
     nodes = [
-        _node(
+        CallableNode(
             cs.NodeLabel.METHOD,
             f"{_P}.moduleA.com.example.Dup.Dup.run()",
             "moduleA/com/example/Dup.java",
             5,
             9,
         ),
-        _node(
+        CallableNode(
             cs.NodeLabel.METHOD,
             f"{_P}.moduleB.com.example.Dup.Dup.run()",
             "moduleB/com/example/Dup.java",

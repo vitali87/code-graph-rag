@@ -17,42 +17,38 @@ from codebase_rag.trace.resolution import (
 _P = "demo"
 
 
-def _node(label, qualified_name, path, start_line, end_line):
-    return CallableNode(
-        label=label,
-        qualified_name=qualified_name,
-        path=path,
-        start_line=start_line,
-        end_line=end_line,
-    )
-
-
 _NODES = [
-    _node(cs.NodeLabel.MODULE, f"{_P}.main", "main.php", None, None),
-    _node(cs.NodeLabel.FUNCTION, f"{_P}.main.describeAnimal", "main.php", 11, 14),
-    _node(
+    CallableNode(cs.NodeLabel.MODULE, f"{_P}.main", "main.php", None, None),
+    CallableNode(
+        cs.NodeLabel.FUNCTION, f"{_P}.main.describeAnimal", "main.php", 11, 14
+    ),
+    CallableNode(
         cs.NodeLabel.METHOD,
         f"{_P}.src.Registry.Registry.handle",
         "src/Registry.php",
         14,
         17,
     ),
-    _node(
+    CallableNode(
         cs.NodeLabel.METHOD,
         f"{_P}.src.Registry.Registry.greet",
         "src/Registry.php",
         19,
         22,
     ),
-    _node(cs.NodeLabel.METHOD, f"{_P}.src.Animal.Dog.sound", "src/Animal.php", 12, 15),
-    _node(
+    CallableNode(
+        cs.NodeLabel.METHOD, f"{_P}.src.Animal.Dog.sound", "src/Animal.php", 12, 15
+    ),
+    CallableNode(
         cs.NodeLabel.FUNCTION,
         f"{_P}.src.Shapes.outer.anonymous_9_10",
         "src/Shapes.php",
         10,
         12,
     ),
-    _node(cs.NodeLabel.FUNCTION, f"{_P}.src.Shapes.outer", "src/Shapes.php", 5, 20),
+    CallableNode(
+        cs.NodeLabel.FUNCTION, f"{_P}.src.Shapes.outer", "src/Shapes.php", 5, 20
+    ),
 ]
 
 
@@ -121,7 +117,7 @@ def test_ambiguous_name_tails_are_unresolved_not_guessed(tmp_path):
     # must not attach the edge to whichever sorts first.
     nodes = [
         *_NODES,
-        _node(
+        CallableNode(
             cs.NodeLabel.METHOD,
             f"{_P}.src.Alpha.Dog.sound",
             "src/Alpha.php",
