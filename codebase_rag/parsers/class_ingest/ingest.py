@@ -10,16 +10,10 @@ from tree_sitter import Node, QueryCursor
 from ... import constants as cs
 from ...language_spec import LANGUAGE_SPECS, LanguageSpec
 from ...node_text import sorted_captures
-from ...types_defs import (
-    CppDefinitionSpan,
-    DeferredInherit,
-    FunctionLocation,
-    PropertyDict,
-)
+from ...types_defs import CppDefinitionSpan, DeferredInherit, PropertyDict
 from ...utils.path_utils import cached_relative_path, cached_resolve_posix
 from ..anchor_hash import anchor_hash_props
 from ..cpp import class_ingest as cpp_class_ingest
-from ..cpp.utils import record_cpp_definition_span
 from ..csharp import class_ingest as csharp_class_ingest
 from ..dart import class_ingest as dart_class_ingest
 from ..definition_facts import DefinitionFacts
@@ -31,25 +25,20 @@ from ..java import class_ingest as java_class_ingest
 from ..js_ts import class_ingest as js_ts_class_ingest
 from ..js_ts.utils import mark_js_ts_module_private
 from ..language_definitions import LanguageClassIngest
-from ..method_ingest import MethodIngestHost, ingest_method
+from ..method_ingest import MethodIngestHost
 from ..php import class_ingest as php_class_ingest
 from ..python import class_ingest as python_class_ingest
 from ..python import resolve_class_name
 from ..rust import class_ingest as rust_class_ingest
-from ..rust import utils as rs_utils
 from ..scala import class_ingest as scala_class_ingest
-from ..utils import (
-    decorated_start_props,
-    extract_modifiers_and_decorators,
-    function_span_key,
-    written_simple_name,
-)
+from ..utils import decorated_start_props, extract_modifiers_and_decorators
 from . import base_targets as bt
 from . import definition_label as nt
 from . import identity as id_
 from . import method_override as mo
 from . import relationships as rel
-from .utils import body_method_nodes, find_child_by_type, skip_method
+from .class_methods import ClassMethods, MethodScope
+from .deferred_inherits import DeferredInherits
 
 if TYPE_CHECKING:
     from ...services import IngestorProtocol
@@ -64,13 +53,16 @@ if TYPE_CHECKING:
     from ..import_processor import ImportProcessor
 
 
-class _MethodScope(NamedTuple):
-    # The per-class context every method of one class body is ingested under.
-    class_node: Node
-    class_qn: str
-    language: cs.SupportedLanguage
-    file_path: Path | None
-    module_qn: str | None
+class _WrittenClass(NamedTuple):
+    # A class node as written: the qn it registered under, its label and
+    # modifiers, and the properties its members inherit their path from.
+    qn: str
+    label: cs.NodeLabel
+    is_exported: bool
+    modifiers: list[str]
+    props: PropertyDict
+    start_line: int
+    start_col: int
 
 
 class ClassIngest:
@@ -78,7 +70,8 @@ class ClassIngest:
     interfaces, enums, traits, impl blocks, inline modules) with their methods,
     bases and members. The INHERITS/IMPLEMENTS edges that wait for every type
     to be registered are held here and resolved by `resolve_deferred_inherits`
-    and the override walk. A language's own share is the collaborator it
+    (`DeferredInherits`) and the override walk; a class body's methods are
+    written by `ClassMethods`. A language's own share is the collaborator it
     builds from that language's package (`CppClassIngest`, `RustClassIngest`,
     `CSharpClassIngest` and the rest), which holds what that language defers
     until its own `resolve_deferred_*` pass and answers the `LanguageClassIngest`
@@ -101,6 +94,8 @@ class ClassIngest:
         "folded_overloads",
         "_deferred_parent_links",
         "_deferred_inherits",
+        "_inherits",
+        "_methods",
         "cpp",
         "c",
         "rust",
@@ -166,15 +161,29 @@ class ClassIngest:
         self.import_processor = import_processor
         self.facts = facts
         self.class_owner_module = class_owner_module
-        self.cpp_definition_spans = cpp_definition_spans
         self.pending_field_types = pending_field_types
-        self.folded_overloads = folded_overloads
         # Shared with the function pass, which emits them once every parent
         # is registered.
         self._deferred_parent_links = deferred_parent_links
         # Non-C++ INHERITS/IMPLEMENTS held back until every class is
         # registered; resolve_deferred_inherits re-resolves the guesses.
         self._deferred_inherits: list[DeferredInherit] = []
+        self._inherits = DeferredInherits(
+            self,
+            ingestor=ingestor,
+            project_name=project_name,
+            function_registry=function_registry,
+            import_processor=import_processor,
+            facts=facts,
+        )
+        self._methods = ClassMethods(
+            self,
+            method_host=method_host,
+            repo_path=repo_path,
+            facts=facts,
+            cpp_definition_spans=cpp_definition_spans,
+            folded_overloads=folded_overloads,
+        )
         self.cpp = cpp_class_ingest.CppClassIngest(
             self,
             function_ingest.cpp,
@@ -244,9 +253,14 @@ class ClassIngest:
         self.python = python_class_ingest.PythonClassIngest(function_registry, facts)
         self.php = php_class_ingest.PhpClassIngest()
         self.scala = scala_class_ingest.ScalaClassIngest(import_processor)
+        self._languages = self._language_ingests()
+        self._neutral = LanguageClassIngest()
+        self._unwalked_read_back_suffixes = self._unwalked_suffixes()
+
+    def _language_ingests(self) -> dict[cs.SupportedLanguage, LanguageClassIngest]:
         # The collaborator each language's class nodes go to; a language with
         # none takes the neutral answers.
-        self._languages: dict[cs.SupportedLanguage, LanguageClassIngest] = {
+        return {
             cs.SupportedLanguage.PYTHON: self.python,
             cs.SupportedLanguage.JS: self.js_ts,
             cs.SupportedLanguage.TS: self.js_ts,
@@ -261,10 +275,11 @@ class ClassIngest:
             cs.SupportedLanguage.DART: self.dart,
             cs.SupportedLanguage.SCALA: self.scala,
         }
-        self._neutral = LanguageClassIngest()
+
+    def _unwalked_suffixes(self) -> tuple[str, ...]:
         # The files whose read-back implementer pairs the override walk
         # leaves out, by the suffixes of the languages that say so.
-        self._unwalked_read_back_suffixes = tuple(
+        return tuple(
             extension
             for language, language_ingest in self._languages.items()
             if not language_ingest.joins_read_back_implementers
@@ -383,221 +398,17 @@ class ClassIngest:
         """
         deferred = self._deferred_inherits
         self._deferred_inherits = []
-        emitted = 0
-        for entry in deferred:
-            child_type = self._deferred_child_label(entry)
-            if child_type is None:
-                continue
-            language_ingest = self._for(entry.language)
-            # Scope first (issue #2534); a base no scope reaches falls to the
-            # name search, whose `PB`/`PB<T>` pick the written arity settles
-            # (issue #2579).
-            scoped = language_ingest.scoped_base(entry)
-            resolved = (
-                (scoped, False)
-                if scoped is not None
-                else language_ingest.base_by_arity(
-                    entry, self._resolve_deferred_parent_qn(entry)
-                )
-            )
-            if resolved is None or resolved[1]:
-                # Resolved nowhere, or to a node outside the index: the file
-                # defining this base may be added later (issue #1568).
-                self.import_processor.note_unresolved(
-                    entry.module_qn, written_simple_name(entry.parent_qn)
-                )
-            if resolved is None:
-                continue
-            # A C# base no scope or `using` reaches, bound anyway by a
-            # project-wide name match, is a guess; say so on the edge.
-            heuristic = (
-                scoped is None and entry.written_ref is not None and not resolved[1]
-            )
-            self._emit_resolved_inherit(entry, child_type, resolved, heuristic)
-            emitted += 1
+        emitted = self._inherits.resolve(deferred)
         self.dart.flag_external_overrides()
         self.rust.flag_external_trait_overrides()
         return emitted
 
-    def _deferred_child_label(self, entry: DeferredInherit) -> str | None:
-        held = self.function_registry.get(entry.child_qn)
-        if held is None:
-            return None
-        # Where a TS type shares its name with a value (issue #2520) the
-        # registry holds the value's kind for both, so the label the child was
-        # declared with decides which of the two nodes the edge leaves.
-        if (
-            entry.child_label is not None
-            and self.function_registry.type_kind(entry.child_qn) != held
-        ):
-            return entry.child_label
-        return str(held)
-
     def _resolve_deferred_parent_qn(
         self, entry: DeferredInherit
     ) -> tuple[str, bool] | None:
-        """Resolve a deferred parent to (qn, is_external), or None for no edge.
-
-        First-party wins; a qn outside the project prefix is positive external
-        knowledge (import-mapped or ::-qualified) and keeps its edge onto an
-        ExternalModule node. A project-prefixed qn that is not a real class
-        may still name one through a src-root layout (setup.py maps src/ to
-        the distribution name), recovered by a unique whole-segment suffix
-        match. A module-anchored guess that re-resolves nowhere externalizes
-        its WRITTEN name (canonicalized for JS globals and java.lang): a base
-        name resolving to no indexed class is by construction defined outside
-        the indexed tree, and dropping it would lose a syntactic inheritance
-        fact the source declares.
-        """
-        if entry.parent_qn == entry.child_qn:
-            return self._resolve_self_edge_parent(entry)
-        # Only a type declaration is a base: a registered member of the same
-        # name (a C# property, a method) is not, however it was reached.
-        target_kinds = bt.base_target_kinds(entry.language)
-        language_ingest = self._for(entry.language)
-        if (
-            imported := language_ingest.imported_base(entry)
-        ) is not None and self.function_registry.get(imported) in target_kinds:
-            return imported, False
-        if self.function_registry.get(entry.parent_qn) in target_kinds:
-            return entry.parent_qn, False
-        if (followed := language_ingest.reexport_target(entry)) is not None:
-            return followed, False
-        if entry.alt_parent_qn is not None:
-            # The written path was exact and still landed on nothing, which a
-            # re-export does: `crate::Base` names the entry module while the
-            # trait registers where it is declared. The second spelling gets
-            # the whole chain, not just the registry probe above.
-            return self._resolve_deferred_parent_qn(
-                entry._replace(parent_qn=entry.alt_parent_qn, alt_parent_qn=None)
-            )
-        project_prefix = f"{self.project_name}{cs.SEPARATOR_DOT}"
-        if not entry.parent_qn.startswith(project_prefix):
-            external = entry.parent_qn.replace(
-                cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT
-            )
-            return external, True
-        prefix = f"{entry.module_qn}{cs.SEPARATOR_DOT}"
-        if not entry.parent_qn.startswith(prefix):
-            return self._resolve_unanchored_project_parent(entry, project_prefix)
-        # The module-anchored fallback shape carries the raw written name
-        # as the remainder after the module qn.
-        raw_name = entry.parent_qn[len(prefix) :]
-        if (bound := language_ingest.namespace_member(raw_name, entry)) is not None:
-            return bound, False
-        resolved = self._resolve_class_name(raw_name, entry.module_qn, entry.language)
-        if (
-            resolved is not None
-            # A simple-name sweep can land on the child itself; a
-            # self-INHERITS is never real.
-            and resolved != entry.child_qn
-            and self.function_registry.get(resolved) in target_kinds
-        ):
-            return resolved, False
-        return self._externalize_written_base(raw_name, entry.language)
-
-    def _resolve_self_edge_parent(
-        self, entry: DeferredInherit
-    ) -> tuple[str, bool] | None:
-        # Parse-time resolution can land on the child ITSELF. A
-        # self-edge is never real. In C# the written base can be an
-        # ARITY sibling (`class Foo : Foo<object>`, a different type
-        # sharing the simple name); recover it before falling back.
-        # Otherwise the written base must refer to a SHADOWED outer name
-        # (thrift's `pub enum Error` implementing the std `Error` trait):
-        # when the module-anchored remainder is a bare single segment it
-        # IS the written name and externalizes. A dotted remainder (a
-        # nested child like SimpleHashMap.Entry) was never written as
-        # such; derivation would be a lie, so no edge.
-        if (sibling := self._for(entry.language).arity_sibling(entry)) is not None:
-            return sibling, False
-        self_prefix = f"{entry.module_qn}{cs.SEPARATOR_DOT}"
-        if entry.parent_qn.startswith(self_prefix):
-            raw = entry.parent_qn[len(self_prefix) :]
-            if raw and cs.SEPARATOR_DOT not in raw:
-                return self._externalize_written_base(raw, entry.language)
-        return None
-
-    def _resolve_unanchored_project_parent(
-        self, entry: DeferredInherit, project_prefix: str
-    ) -> tuple[str, bool] | None:
-        # Project-prefixed but not module-anchored: an import-mapped
-        # qn whose written path skips real directories (thrift's
-        # setup.py maps lib/py/src -> package `thrift`, so the import
-        # says thrift.Thrift while the class qn says
-        # thrift.src.Thrift). A UNIQUE whole-segment suffix match
-        # recovers the real node; ambiguity means no edge.
-        tail = entry.parent_qn[len(project_prefix) :]
-        simple = tail.rsplit(cs.SEPARATOR_DOT, 1)[-1]
-        suffix = f"{cs.SEPARATOR_DOT}{tail}"
-        candidates = self.function_registry.find_ending_with(simple)
-        target_kinds = bt.base_target_kinds(entry.language)
-        matches = {
-            qn
-            for qn in candidates
-            if qn.endswith(suffix)
-            and qn != entry.child_qn
-            and self.function_registry.get(qn) in target_kinds
-        }
-        if len(matches) == 1:
-            return matches.pop(), False
-        # A base written as a PACKAGE attribute (`forms.ModelForm` via
-        # `from django import forms`) names the re-exporting package, not
-        # the defining module (django.forms.models.ModelForm behind the
-        # package __init__'s star import), so the suffix match cannot
-        # bridge the missing segment. A UNIQUE same-named class UNDER the
-        # written package path is that re-export; ambiguity means no edge.
-        package_prefix = (
-            entry.parent_qn.rsplit(cs.SEPARATOR_DOT, 1)[0] + cs.SEPARATOR_DOT
-        )
-        # The registry also holds functions/methods with the same simple
-        # name; only a TYPE declaration is a valid inheritance target, so
-        # filter before the uniqueness check (a same-named factory function
-        # under the package must not corrupt the class hierarchy). The
-        # package must also EXPOSE the name (its __init__ imports it
-        # explicitly or star-imports the defining module); a same-named
-        # internal class the package never re-exports is not the referent.
-        type_decls = (cs.NodeLabel.CLASS, cs.NodeLabel.INTERFACE, cs.NodeLabel.ENUM)
-        package_qn = package_prefix[: -len(cs.SEPARATOR_DOT)]
-        package_matches = {
-            qn
-            for qn in candidates
-            if qn.startswith(package_prefix)
-            and qn != entry.child_qn
-            and self.function_registry.get(qn) in type_decls
-            and self._package_exposes(package_qn, simple, qn)
-        }
-        if len(package_matches) == 1:
-            return package_matches.pop(), False
-        return None
-
-    def _package_exposes(self, package_qn: str, simple: str, class_qn: str) -> bool:
-        # True when the package __init__ makes `simple` an attribute of the
-        # package: an explicit import binding the name to this class (or its
-        # defining module member), or a star import of the module that
-        # defines it. Star-import keys carry a leading GLOB_ALL marker,
-        # matching the call resolver's wildcard convention.
-        imports = self.import_processor.import_mapping.get(package_qn)
-        if not imports:
-            return False
-        if imports.get(simple) == class_qn:
-            return True
-        star_member = f"{cs.SEPARATOR_DOT}{simple}"
-        return any(
-            key.startswith(cs.GLOB_ALL) and class_qn == f"{target}{star_member}"
-            for key, target in imports.items()
-        )
-
-    def _externalize_written_base(
-        self, raw_name: str, language: cs.SupportedLanguage
-    ) -> tuple[str, bool]:
-        if (canonical := self._for(language).externalized_base(raw_name)) is not None:
-            return canonical, True
-        # Language-agnostic fallback: the written base name resolves to no
-        # indexed class, so the base is external to the index by
-        # construction (Python `object`, Rust `Default`, a generated Java
-        # `Iface`); keep the fact under the written name.
-        return raw_name.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT), True
+        # Rust's impl blocks resolve their trait through the same chain
+        # (`DeferredInherits.resolve_parent_qn`).
+        return self._inherits.resolve_parent_qn(entry)
 
     def _process_class_node(
         self,
@@ -641,6 +452,58 @@ class ClassIngest:
         if not identity:
             return
 
+        written = self._write_class_node(
+            class_node, identity, module_qn, language, lang_queries, file_path
+        )
+        parent_label, parent_qn, parent_span = (
+            self.cpp.local_type_parent(class_node, local_qn, module_qn)
+            if local_qn is not None
+            else self._function_ingest.determine_function_parent(
+                class_node, written.qn, module_qn, lang_config, language
+            )
+        )
+        self._function_ingest.emit_or_defer_defines(
+            parent_label,
+            parent_qn,
+            written.label,
+            written.qn,
+            module_qn,
+            parent_span=parent_span,
+        )
+        # For a templated class the canonical node is the template_declaration
+        # wrapper, which has no `body` field. Its members (base clause, fields,
+        # methods) live on the inner class_specifier (type_spec). Extract them
+        # from there so they bind to the class's natural qn. For a plain class
+        # type_spec is class_node, so this is a no-op for non-templates and for
+        # Go/Rust (which never take the template_declaration branch).
+        member_node = type_spec if type_spec is not None else class_node
+        self._ingest_class_members(
+            class_node,
+            written,
+            MethodScope(
+                member_node,
+                written.qn,
+                written.label,
+                language,
+                file_path,
+                module_qn,
+            ),
+            lang_queries,
+            sorted_func_nodes,
+            func_node_starts,
+        )
+
+    def _write_class_node(
+        self,
+        class_node: Node,
+        identity: tuple[str, str, bool],
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        lang_queries: LanguageQueries,
+        file_path: Path | None,
+    ) -> _WrittenClass:
+        # Register the class's qn, write its node and index it.
+        language_ingest = self._for(language)
         class_qn, class_name, is_exported = identity
         class_start_line, class_start_col = language_ingest.class_start_point(
             class_node
@@ -703,29 +566,36 @@ class ClassIngest:
         # while those branches cover only five, and a class carries no span
         # record for the sweep to attribute it by.
         self.class_owner_module[class_qn] = module_qn
-
-        parent_label, parent_qn, parent_span = (
-            self.cpp.local_type_parent(class_node, local_qn, module_qn)
-            if local_qn is not None
-            else self._function_ingest.determine_function_parent(
-                class_node, class_qn, module_qn, lang_config, language
-            )
-        )
-        self._function_ingest.emit_or_defer_defines(
-            parent_label,
-            parent_qn,
-            label,
+        return _WrittenClass(
             class_qn,
-            module_qn,
-            parent_span=parent_span,
+            label,
+            is_exported,
+            modifiers,
+            class_props,
+            class_start_line,
+            class_start_col,
         )
-        # For a templated class the canonical node is the template_declaration
-        # wrapper, which has no `body` field. Its members (base clause, fields,
-        # methods) live on the inner class_specifier (type_spec). Extract them
-        # from there so they bind to the class's natural qn. For a plain class
-        # type_spec is class_node, so this is a no-op for non-templates and for
-        # Go/Rust (which never take the template_declaration branch).
-        member_node = type_spec if type_spec is not None else class_node
+
+    def _ingest_class_members(
+        self,
+        class_node: Node,
+        written: _WrittenClass,
+        scope: MethodScope,
+        lang_queries: LanguageQueries,
+        sorted_func_nodes: list[Node] | None,
+        func_node_starts: list[int] | None,
+    ) -> None:
+        # What a written class holds, read off its member node: its declared
+        # fields, its bases, the members its kind declares, its language's
+        # own and its methods.
+        member_node, language, file_path = (
+            scope.class_node,
+            scope.language,
+            scope.file_path,
+        )
+        module_qn = scope.module_qn
+        class_qn, label, class_props = written.qn, written.label, written.props
+        language_ingest = self._for(language)
         # Declared fields ride with their owner: same gate, same props source
         # for path/absolute_path, queued type for the deferred OF_TYPE pass.
         # Emitted AFTER the owner node so a batch flush never writes the edge
@@ -748,7 +618,7 @@ class ClassIngest:
         # for non-C# types or when the frontend is off -> heuristic stands.
         csharp_base_kinds = (
             language_ingest.record_type_location(
-                class_qn, label, file_path, class_start_line, class_start_col
+                class_qn, label, file_path, written.start_line, written.start_col
             )
             if file_path is not None
             else None
@@ -758,7 +628,7 @@ class ClassIngest:
             class_qn,
             module_qn,
             label,
-            is_exported,
+            written.is_exported,
             language,
             self.facts.class_inheritance,
             self.ingestor,
@@ -774,19 +644,15 @@ class ClassIngest:
             member_node, class_qn, module_qn, label, language, class_props
         )
         language_ingest.record_members(
-            class_node, member_node, class_qn, module_qn, label, modifiers, file_path
-        )
-        self._ingest_class_methods(
+            class_node,
             member_node,
             class_qn,
-            language,
-            lang_queries,
+            module_qn,
+            label,
+            written.modifiers,
             file_path,
-            sorted_func_nodes=sorted_func_nodes,
-            func_node_starts=func_node_starts,
-            module_qn=module_qn,
-            container_label=label,
         )
+        self._methods.ingest(scope, lang_queries, sorted_func_nodes, func_node_starts)
 
     def _record_declared_type_members(
         self,
@@ -823,187 +689,6 @@ class ClassIngest:
         if cs.SEPARATOR_DOUBLE_COLON in class_name:
             leaf = class_name.rsplit(cs.SEPARATOR_DOUBLE_COLON, 1)[-1]
             self.simple_name_lookup[leaf].add(class_qn)
-
-    def _emit_resolved_inherit(
-        self,
-        entry: DeferredInherit,
-        child_type: str,
-        resolved: tuple[str, bool],
-        heuristic: bool = False,
-    ) -> None:
-        parent_qn, is_external = resolved
-        resolution = cs.EdgeResolution.HEURISTIC if heuristic else None
-        if not is_external:
-            self._for(entry.language).record_resolved_base(entry, parent_qn)
-        external_label: str | None = None
-        if is_external:
-            # The import pass mints the same node for IMPORTS edges, so
-            # this MERGEs idempotently when the base was imported.
-            self.import_processor.ensure_external_module_node(parent_qn)
-            external_label = cs.NodeLabel.EXTERNAL_MODULE.value
-        if entry.rel_type != cs.RelationshipType.IMPLEMENTS:
-            bases = self.facts.class_inheritance.get(entry.child_qn)
-            if bases is not None and entry.base_index < len(bases):
-                bases[entry.base_index] = parent_qn
-            rel.create_inheritance_relationship(
-                child_type,
-                entry.child_qn,
-                parent_qn,
-                self.function_registry,
-                self.ingestor,
-                entry.base_index,
-                parent_label=external_label,
-                resolution=resolution,
-            )
-            return
-        # Dart has no `interface` keyword: `implements X` targets a
-        # concrete class, so a hardcoded Interface label would dangle.
-        # Resolve the target's real registered label (Interface for a
-        # true interface, Class/Enum for a Dart type); external stays
-        # EXTERNAL_MODULE.
-        interface_label = external_label or rel.get_node_type_for_inheritance(
-            parent_qn, self.function_registry, type_position=True
-        )
-        rel.create_implements_relationship(
-            child_type,
-            entry.child_qn,
-            parent_qn,
-            self.ingestor,
-            interface_label=interface_label,
-            resolution=resolution,
-        )
-        self.facts.interface_implementers.setdefault(parent_qn, set()).add(
-            entry.child_qn
-        )
-
-    def _ingest_class_methods(
-        self,
-        class_node: Node,
-        class_qn: str,
-        language: cs.SupportedLanguage,
-        lang_queries: LanguageQueries,
-        file_path: Path | None = None,
-        sorted_func_nodes: list[Node] | None = None,
-        func_node_starts: list[int] | None = None,
-        module_qn: str | None = None,
-        container_label: cs.NodeLabel = cs.NodeLabel.CLASS,
-    ) -> None:
-        body_node = class_node.child_by_field_name("body")
-        if body_node is None and class_node.type == cs.TS_DART_MIXIN_DECLARATION:
-            # mixin_declaration is the one Dart type declaration whose
-            # class_body is a positional child, not a `body` field; without
-            # this fallback a mixin's members silently vanish.
-            body_node = find_child_by_type(class_node, cs.TS_DART_CLASS_BODY)
-        if not body_node:
-            return
-
-        lang_config: LanguageSpec = lang_queries[cs.QUERY_CONFIG]
-        language_ingest = self._for(language)
-        member_aliases = language_ingest.member_aliases(body_node)
-
-        method_nodes = body_method_nodes(
-            body_node, lang_queries, sorted_func_nodes, func_node_starts
-        )
-        if method_nodes is None:
-            return
-        method_nodes = self._without_overload_stubs(method_nodes, module_qn)
-
-        external_override_names = language_ingest.external_override_names(class_qn)
-        annotated_override_sink = language_ingest.annotated_override_sink()
-        scope = _MethodScope(class_node, class_qn, language, file_path, module_qn)
-        seen_signatures: set[str] = set()
-
-        for method_node in method_nodes:
-            if skip_method(method_node, class_node, body_node, lang_config):
-                continue
-            if language_ingest.repeats_member_signature(method_node, seen_signatures):
-                continue
-
-            ingested_qn = ingest_method(
-                self._method_host,
-                method_node,
-                class_qn,
-                container_label,
-                language,
-                lang_queries=lang_queries,
-                method_qualified_name=language_ingest.method_qualified_name(
-                    method_node, class_qn
-                ),
-                file_path=file_path,
-                module_qn=module_qn,
-                external_override_names=external_override_names,
-                annotated_override_sink=annotated_override_sink,
-                member_aliases=member_aliases.get(method_node.id, ()),
-            )
-            if ingested_qn is not None:
-                self._record_ingested_method(scope, method_node, ingested_qn)
-            language_ingest.record_method_return_type(method_node, class_qn)
-
-    def _without_overload_stubs(
-        self, method_nodes: list[Node], module_qn: str | None
-    ) -> list[Node]:
-        # The implementation after an `@overload` stub owns the method's
-        # name; the stub is no method of its own (issue #2590), nor is a TS
-        # namespace member's overload signature (issue #2457).
-        stubs = self.folded_overloads.get(module_qn or "")
-        if not stubs:
-            return method_nodes
-        return [node for node in method_nodes if node.start_byte not in stubs]
-
-    def _record_ingested_method(
-        self, scope: _MethodScope, method_node: Node, ingested_qn: str
-    ) -> None:
-        language = scope.language
-        module_qn = scope.module_qn
-        self._for(language).record_method(
-            scope.class_node, scope.class_qn, module_qn, method_node, ingested_qn
-        )
-        # Rust trait bodies reach here rather than the impl path above;
-        # a trait is no module either (issue #1086).
-        rs_utils.record_effective_module(
-            self.facts.rust_function_modules,
-            ingested_qn,
-            method_node,
-            module_qn,
-            language,
-        )
-        record_cpp_definition_span(
-            self.cpp_definition_spans,
-            language,
-            scope.file_path,
-            self.repo_path,
-            method_node,
-            cs.NodeLabel.METHOD.value,
-            ingested_qn,
-        )
-        # Record where this method landed so Pass-3 call attribution
-        # reuses the registered qn/label instead of re-deriving them.
-        # The walks diverge on preprocessor-distorted C++ class bodies
-        # and on TS declaration merging, where the member registers
-        # under the namespace's duplicate-suffixed qn (issue #652).
-        if module_qn is not None:
-            self._record_method_location(scope, module_qn, method_node, ingested_qn)
-
-    def _record_method_location(
-        self,
-        scope: _MethodScope,
-        module_qn: str,
-        method_node: Node,
-        ingested_qn: str,
-    ) -> None:
-        span = function_span_key(module_qn, method_node)
-        location = FunctionLocation(
-            label=cs.NodeLabel.METHOD.value,
-            qualified_name=ingested_qn,
-            container_qn=scope.class_qn,
-        )
-        language_ingest = self._for(scope.language)
-        if (
-            not language_ingest.keeps_claimed_method_spans
-            or span not in self.facts.function_locations
-        ):
-            self.facts.function_locations[span] = location
-        language_ingest.register_name_alias(module_qn, method_node, location)
 
     def process_all_method_overrides(self, module_qns: Collection[str] = ()) -> None:
         # Every module the graph holds, read-back ones included: a C++ type
@@ -1058,17 +743,6 @@ class ClassIngest:
         # own.
         path = self.facts.rehydrated_definition_paths.get(implementer_qn)
         return path is not None and not path.endswith(self._unwalked_read_back_suffixes)
-
-    def _resolve_class_name(
-        self,
-        class_name: str,
-        module_qn: str,
-        language: cs.SupportedLanguage | None = None,
-    ) -> str | None:
-        resolved = self._resolve_base_name(class_name, module_qn, language)
-        if resolved is not None:
-            return resolved
-        return self._for(language).namespaced_class(class_name)
 
     def _get_node_type_for_inheritance(self, qualified_name: str) -> str:
         return rel.get_node_type_for_inheritance(qualified_name, self.function_registry)
