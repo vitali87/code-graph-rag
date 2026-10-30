@@ -38,8 +38,9 @@ that is not in the table, add it -- two of the entries below were added
 that way after a review showed the note's reason for excluding them no
 longer held.
 
-Each pair below is a dependency stated in `graph_updater.py`'s own
-comments, quoted in the `reason`. This deliberately pins PAIRS rather than
+Each pair below is a dependency stated in the comments of `graph_updater.py`
+or of the `FilePass` it hands Pass 2 to, quoted in the `reason`. This
+deliberately pins PAIRS rather than
 freezing the whole sequence: inserting a new phase, or reordering two steps
 with no dependency between them, is legitimate and must stay easy. Only the
 documented dependencies are load-bearing, so only those are enforced -- a
@@ -51,8 +52,11 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from typing import NamedTuple
 
-_SOURCE = Path(__file__).resolve().parents[1] / "graph_updater.py"
+_PACKAGE = Path(__file__).resolve().parents[1]
+_SOURCE = _PACKAGE / "graph_updater.py"
+_FILE_PASS = _PACKAGE / "updater" / "file_pass.py"
 
 # Real constraints in `run` that are deliberately NOT pinned. Recorded
 # rather than silently omitted: a reader who finds these comments and no
@@ -280,20 +284,42 @@ _ORDER: tuple[tuple[str, str, str, str], ...] = (
 # above `run` and invoked from the middle of it.
 #
 # `_process_files` is Pass 2 itself. Its own ordering (the stale subtrees go
-# before any file re-parses) is pinned below, so its body is scanned too.
-_DELEGATES = ("_resolve_deferred_definitions", "_process_files")
+# before any file re-parses) is pinned below, so its body is scanned too, and
+# so are the `FilePass` methods it hands the pass to: a delegate's own
+# delegates are spliced in at the line it calls them, as its body is in
+# `run`. Each name maps to the file and class that define it.
+_DELEGATES: dict[str, tuple[Path, str]] = {
+    "_resolve_deferred_definitions": (_SOURCE, "GraphUpdater"),
+    "_process_files": (_SOURCE, "GraphUpdater"),
+    "process_files": (_FILE_PASS, "FilePass"),
+    "_clear_stale_subtrees": (_FILE_PASS, "FilePass"),
+    "_parse_changed_files": (_FILE_PASS, "FilePass"),
+}
 
 
-def _class_body() -> list[ast.FunctionDef]:
-    """Every method of `GraphUpdater`, so callers can locate `run` and delegates."""
-    tree = ast.parse(_SOURCE.read_text(encoding="utf-8"))
+class _Site(NamedTuple):
+    """One call reachable from `run`: where it EXECUTES, and where it is written.
+
+    `position` is the chain of call lines that reaches it from `run`, ending
+    in its own line in the function that makes it, so sorting positions
+    sorts calls by execution order.
+    """
+
+    position: tuple[int, ...]
+    source: Path
+    line: int
+
+
+def _class_body(source: Path, class_name: str) -> list[ast.FunctionDef]:
+    """Every method of `class_name`, so callers can locate `run` and delegates."""
+    tree = ast.parse(source.read_text(encoding="utf-8"))
     for node in ast.walk(tree):
-        if isinstance(node, ast.ClassDef) and node.name == "GraphUpdater":
+        if isinstance(node, ast.ClassDef) and node.name == class_name:
             return [f for f in node.body if isinstance(f, ast.FunctionDef)]
-    raise AssertionError("class GraphUpdater not found in graph_updater.py")
+    raise AssertionError(f"class {class_name} not found in {source.name}")
 
 
-def _execution_positions() -> list[tuple[ast.FunctionDef, int]]:
+def _execution_positions() -> list[tuple[ast.FunctionDef, Path, tuple[int, ...]]]:
     """`run` and its delegates, each tagged with where it EXECUTES in `run`.
 
     A delegate is defined wherever it happens to sit in the file -- in the
@@ -305,27 +331,53 @@ def _execution_positions() -> list[tuple[ast.FunctionDef, int]]:
 
     So each function is tagged with its execution position instead: `run`'s
     own statements keep their line, and a delegate's body is spliced in at
-    the line where `run` invokes it. `_position_key` turns that into a
-    sortable pair.
+    the line where `run` invokes it -- and a delegate's delegate at the line
+    where that delegate invokes it, and so on. The prefix returned per
+    function is the chain of those call lines, which `_call_lines` extends
+    with each call's own line into a sortable position.
     """
-    methods = _class_body()
-    run = next((f for f in methods if f.name == "run"), None)
+    methods = {f.name: f for f in _class_body(_SOURCE, "GraphUpdater")}
+    run = methods.get("run")
     if run is None:
         raise AssertionError("GraphUpdater.run not found in graph_updater.py")
-    out: list[tuple[ast.FunctionDef, int]] = [(run, 0)]
-    by_name = {f.name: f for f in methods}
-    for node in ast.walk(run):
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr in _DELEGATES
-            and node.func.attr in by_name
-        ):
-            out.append((by_name[node.func.attr], node.func.lineno))
+    out: list[tuple[ast.FunctionDef, Path, tuple[int, ...]]] = []
+
+    def visit(
+        fn: ast.FunctionDef,
+        source: Path,
+        prefix: tuple[int, ...],
+        seen: frozenset[str],
+    ) -> None:
+        out.append((fn, source, prefix))
+        for node in ast.walk(fn):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in _DELEGATES
+                and node.func.attr not in seen
+            ):
+                path, class_name = _DELEGATES[node.func.attr]
+                delegate = next(
+                    (
+                        f
+                        for f in _class_body(path, class_name)
+                        if f.name == node.func.attr
+                    ),
+                    None,
+                )
+                if delegate is not None:
+                    visit(
+                        delegate,
+                        path,
+                        (*prefix, node.func.lineno),
+                        seen | {node.func.attr},
+                    )
+
+    visit(run, _SOURCE, (), frozenset())
     return out
 
 
-def _call_lines() -> dict[str, list[tuple[int, int]]]:
+def _call_lines() -> dict[str, list[_Site]]:
     """Every attribute call reachable from `run`, mapped to EXECUTION positions.
 
     Keyed by attribute name only: these phases are reached through several
@@ -333,44 +385,31 @@ def _call_lines() -> dict[str, list[tuple[int, int]]]:
     `self.factory.import_processor`) and the receiver is not what the order
     depends on.
     """
-    lines: dict[str, list[tuple[int, int]]] = {}
-    for fn, callsite in _execution_positions():
+    lines: dict[str, list[_Site]] = {}
+    for fn, source, prefix in _execution_positions():
         for node in ast.walk(fn):
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-                # `run`'s own statements sort by their own line (callsite 0);
-                # a delegate's statements sort at the line `run` calls it,
-                # then by position within the delegate. So a pair spanning
-                # the boundary compares by EXECUTION order, not by where the
-                # helper happens to be defined.
-                key = (
-                    (node.func.lineno, 0)
-                    if callsite == 0
-                    else (callsite, node.func.lineno)
+                # `run`'s own statements sort by their own line; a delegate's
+                # statements sort at the line `run` calls it, then by
+                # position within the delegate. So a pair spanning the
+                # boundary compares by EXECUTION order, not by where the
+                # helper happens to be defined. The site keeps the line it
+                # is WRITTEN on too, which is what `_comment_above` needs: a
+                # comment sits above the statement in its own file.
+                lines.setdefault(node.func.attr, []).append(
+                    _Site((*prefix, node.func.lineno), source, node.func.lineno)
                 )
-                lines.setdefault(node.func.attr, []).append(key)
     return {name: sorted(found) for name, found in lines.items()}
 
 
-def _source_line(position: tuple[int, int]) -> int:
-    """The real source line of an execution position.
-
-    `run`'s own statements carry `(line, 0)`; a delegate's carry
-    `(callsite, line)`. Either way the source line is the last non-zero
-    component -- which is what `_comment_above` needs, since a comment sits
-    above the statement where it is WRITTEN, not where it executes.
-    """
-    callsite, inner = position
-    return inner or callsite
-
-
-def _comment_above(line: int) -> str:
+def _comment_above(source_path: Path, line: int) -> str:
     """The contiguous `#` comment block immediately above `line`.
 
     The call may be an assignment wrapped over several lines
     (`x = (\\n    self.factory...`), so skip back over any continuation
     lines before looking for the comment block.
     """
-    source = _SOURCE.read_text(encoding="utf-8").splitlines()
+    source = source_path.read_text(encoding="utf-8").splitlines()
     index = line - 1  # `line` is 1-based
     while index > 0:
         stripped = source[index - 1].strip()
@@ -432,11 +471,12 @@ def test_every_pinned_dependency_is_still_explained_at_its_call_site() -> None:
     the receiver, because these phases are reached through several
     (`self`, `self.factory.definition_processor`,
     `self.factory.import_processor`, `self.finding_analyzer`) and the
-    receiver is not what the order depends on. Eleven of the pinned names
-    are not `GraphUpdater` methods at all, so this file never checks they
-    exist on the object that owns them -- a rename on a processor class
-    would leave these tests green while `run` calls something absent. That
-    is caught by running the code, not here.
+    receiver is not what the order depends on. All but two of the pinned
+    names (`_process_files`, `_process_function_calls`) are not
+    `GraphUpdater` methods at all, so this file never checks they exist on
+    the object that owns them -- a rename on a processor or collaborator
+    class would leave these tests green while `run` calls something absent.
+    That is caught by running the code, not here.
     The collision direction is fail-SAFE, verified rather than assumed: an
     unrelated receiver gaining a same-named call inside `run` (e.g. a second
     `analyze()`) makes both the ordering and drift tests FAIL loudly. A
@@ -463,16 +503,16 @@ def test_every_pinned_dependency_is_still_explained_at_its_call_site() -> None:
     for earlier, later, marker, _reason in _ORDER:
         if marker.startswith("earlier:"):
             marker, site = marker[len("earlier:") :], earlier
-            line = _source_line(called[earlier][-1])
+            found = called[earlier][-1]
         else:
             site = later
-            line = _source_line(called[later][0])
-        comment = _comment_above(line).lower()
+            found = called[later][0]
+        comment = _comment_above(found.source, found.line).lower()
         if marker not in comment:
             unexplained.append(
                 f"the {earlier} -> {later} dependency is stated above "
-                f"{site} (line {line}), but that comment no longer says "
-                f"{marker!r}: {comment[:110]!r}"
+                f"{site} ({found.source.name}:{found.line}), but that comment "
+                f"no longer says {marker!r}: {comment[:110]!r}"
             )
     assert not unexplained, (
         "A pinned ordering dependency lost the comment that justifies it:\n"
@@ -506,14 +546,13 @@ def test_resolution_phases_keep_their_documented_order() -> None:
         # Compare the LAST call of `earlier` against the FIRST of `later`:
         # the dependency is that every `earlier` has completed, so a second
         # `earlier` after `later` breaks it just as a swap does.
-        earlier_pos = called[earlier][-1]
-        later_pos = called[later][0]
-        earlier_line = _source_line(earlier_pos)
-        later_line = _source_line(later_pos)
-        if earlier_pos > later_pos:
+        earlier_site = called[earlier][-1]
+        later_site = called[later][0]
+        if earlier_site.position > later_site.position:
             violations.append(
-                f"{earlier} (line {earlier_line}) must run BEFORE {later} "
-                f"(line {later_line}): {reason}"
+                f"{earlier} ({earlier_site.source.name}:{earlier_site.line}) "
+                f"must run BEFORE {later} "
+                f"({later_site.source.name}:{later_site.line}): {reason}"
             )
     assert not violations, "GraphUpdater.run phase order violated:\n" + "\n".join(
         violations

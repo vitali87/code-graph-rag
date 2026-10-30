@@ -17,7 +17,7 @@ import pytest
 from loguru import logger
 
 from codebase_rag import constants as cs
-from codebase_rag import graph_pruning, graph_updater
+from codebase_rag import graph_pruning
 from codebase_rag import logs as ls
 from codebase_rag.capture import CaptureSelection, resolve_capture
 from codebase_rag.cli import _delete_hash_cache
@@ -26,7 +26,7 @@ from codebase_rag.parser_fingerprint import compute_parser_fingerprint
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.sync.checkout_state import state_file
 from codebase_rag.types_defs import PropertyDict
-from codebase_rag.updater import tree_scan
+from codebase_rag.updater import file_pass, tree_scan
 from codebase_rag.utils.path_utils import base_module_qn
 
 STALE_FINGERPRINT = "0" * 32
@@ -442,7 +442,7 @@ class TestFingerprintStamping:
 
         updater = _make_updater(py_project, mock_ingestor)
         monkeypatch.setattr(tree_scan, "hash_file_with_bytes", refuse_module_b)
-        monkeypatch.setattr(graph_updater, "vanished", module_b_gone)
+        monkeypatch.setattr(file_pass, "vanished", module_b_gone)
         monkeypatch.setattr(tree_scan, "vanished", module_b_gone)
         monkeypatch.setattr(graph_pruning, "vanished", module_b_gone)
         updater.run()
