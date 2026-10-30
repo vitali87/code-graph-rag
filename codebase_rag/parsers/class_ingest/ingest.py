@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, NamedTuple
 from tree_sitter import Node, QueryCursor
 
 from ... import constants as cs
-from ...language_spec import LanguageSpec, module_directory_qn
+from ...language_spec import LanguageSpec
 from ...node_text import safe_decode_text, sorted_captures
 from ...types_defs import (
     CppDefinitionSpan,
@@ -16,13 +16,11 @@ from ...types_defs import (
     FunctionLocation,
     PropertyDict,
 )
-from ...utils import qn_markers
 from ...utils.path_utils import cached_relative_path, cached_resolve_posix
 from ..anchor_hash import anchor_hash_props
 from ..cpp import class_ingest as cpp_class_ingest
 from ..cpp.utils import record_cpp_definition_span
-from ..csharp import utils as csharp_utils
-from ..csharp.arity import CSharpArityIndex
+from ..csharp import class_ingest as csharp_class_ingest
 from ..dart import utils as dart_utils
 from ..dart.type_inference import DartTypeInferenceEngine
 from ..definition_facts import DefinitionFacts
@@ -34,7 +32,6 @@ from ..java import utils as java_utils
 from ..js_ts import utils as js_ts_utils
 from ..js_ts.utils import mark_js_ts_module_private
 from ..method_ingest import MethodIngestHost, ingest_method
-from ..parameter_nodes import csharp_call_shape
 from ..php import namespaces as php_namespaces
 from ..python import (
     external_stdlib_base_method_names,
@@ -48,7 +45,6 @@ from ..utils import (
     decorated_start_props,
     extract_modifiers_and_decorators,
     function_span_key,
-    module_qn_for_entity,
     written_simple_name,
 )
 from . import base_targets as bt
@@ -60,7 +56,6 @@ from . import parent_extraction as pe
 from . import relationships as rel
 from .utils import (
     body_method_nodes,
-    csharp_has_override_modifier,
     find_child_by_type,
     skip_method,
 )
@@ -110,25 +105,6 @@ def _class_start_point(
     return class_node.start_point[0] + 1, class_node.start_point[1]
 
 
-def _csharp_record_parameter_types(
-    member_node: Node, field_types: dict[str, str]
-) -> None:
-    # A record's positional parameters ARE public properties of
-    # the record type; record them as members so receiver typing
-    # and the delegate-invoke gate see them (`Callback();` on a
-    # record param is Action.Invoke, not a first-party call).
-    for pl in member_node.children:
-        if pl.type != cs.TS_CSHARP_PARAMETER_LIST:
-            continue
-        for prm in pl.children:
-            if prm.type != cs.TS_CSHARP_PARAMETER:
-                continue
-            pname = safe_decode_text(prm.child_by_field_name(cs.FIELD_NAME))
-            ptype = safe_decode_text(prm.child_by_field_name(cs.FIELD_TYPE))
-            if pname and ptype:
-                field_types.setdefault(pname, csharp_utils.annotate_type_ref(ptype))
-
-
 def _signatured_method_qn(
     method_node: Node, class_qn: str, language: cs.SupportedLanguage
 ) -> str | None:
@@ -139,15 +115,7 @@ def _signatured_method_qn(
             param_sig = f"({','.join(parameters)})" if parameters else cs.EMPTY_PARENS
             return f"{class_qn}.{method_name}{param_sig}"
     elif language == cs.SupportedLanguage.CSHARP:
-        # Give C# methods/constructors a parameter signature so
-        # overloads and overloaded constructors stay distinct nodes
-        # (without it two `Widget(...)` ctors collide and the second
-        # gets an `@line` suffix). Zero-arg members stay bare so their
-        # qn is stable and matches an unsignatured call site.
-        cs_name, cs_params = csharp_utils.extract_method_signature(method_node)
-        if cs_name and cs_params:
-            param_sig = cs.SEPARATOR_COMMA_SPACE.join(cs_params)
-            return f"{class_qn}.{cs_name}({param_sig})"
+        return csharp_class_ingest.signatured_method_qn(method_node, class_qn)
     return None
 
 
@@ -208,10 +176,6 @@ class ClassIngest:
         "class_owner_module",
         "dart_annotated_overrides",
         "java_anon_overrides",
-        "csharp_methods",
-        "csharp_override_methods",
-        "_csharp_partial_index",
-        "csharp_type_locations",
         "go_type_locations",
         "go_interfaces",
         "cpp_definition_spans",
@@ -221,6 +185,7 @@ class ClassIngest:
         "_deferred_inherits",
         "cpp",
         "rust",
+        "csharp",
     )
 
     def __init__(
@@ -276,10 +241,6 @@ class ClassIngest:
         self.class_owner_module = class_owner_module
         self.dart_annotated_overrides = dart_annotated_overrides
         self.java_anon_overrides = java_anon_overrides
-        self.csharp_methods = csharp_methods
-        self.csharp_override_methods = csharp_override_methods
-        self._csharp_partial_index = csharp_partial_index
-        self.csharp_type_locations = csharp_type_locations
         self.go_type_locations = go_type_locations
         self.go_interfaces = go_interfaces
         self.cpp_definition_spans = cpp_definition_spans
@@ -319,6 +280,17 @@ class ClassIngest:
             impl_method_traits=rust_impl_method_traits,
             inherent_impl_methods=rust_inherent_impl_methods,
             deferred_parent_links=deferred_parent_links,
+        )
+        self.csharp = csharp_class_ingest.CSharpClassIngest(
+            repo_path=repo_path,
+            function_registry=function_registry,
+            module_qn_to_file_path=module_qn_to_file_path,
+            import_processor=import_processor,
+            facts=facts,
+            methods=csharp_methods,
+            override_methods=csharp_override_methods,
+            partial_index=csharp_partial_index,
+            type_locations=csharp_type_locations,
         )
 
     def _resolve_to_qn(
@@ -477,11 +449,11 @@ class ClassIngest:
             # Scope first (issue #2534); a base no scope reaches falls to the
             # name search, whose `PB`/`PB<T>` pick the written arity settles
             # (issue #2579).
-            scoped = self._resolve_csharp_scoped_base(entry)
+            scoped = self.csharp.scoped_base(entry)
             resolved = (
                 (scoped, False)
                 if scoped is not None
-                else self._csharp_base_by_arity(
+                else self.csharp.base_by_arity(
                     entry, self._resolve_deferred_parent_qn(entry)
                 )
             )
@@ -573,22 +545,6 @@ class ClassIngest:
             stack.extend(self.facts.class_inheritance.get(ancestor, []))
             stack.extend(implements_map.get(ancestor, []))
         return False
-
-    def _resolve_csharp_scoped_base(self, entry: DeferredInherit) -> str | None:
-        if entry.written_ref is None:
-            return None
-        return bt.resolve_csharp_scoped_base(
-            entry.written_ref,
-            entry.child_qn,
-            self.facts.csharp_class_namespaced.get(entry.child_qn),
-            self.import_processor.import_mapping.get(entry.module_qn, {}),
-            bt.CSharpTypeIndex(
-                self.function_registry,
-                self.facts.csharp_namespaced_qns,
-                self.facts.csharp_class_generic_arity,
-                self.facts.csharp_partial_groups,
-            ),
-        )
 
     def _js_reexport_target(self, entry: DeferredInherit) -> str | None:
         """The class a JS/TS base reaches through its module's exports.
@@ -738,7 +694,7 @@ class ClassIngest:
         # IS the written name and externalizes. A dotted remainder (a
         # nested child like SimpleHashMap.Entry) was never written as
         # such; derivation would be a lie, so no edge.
-        if (sibling := self._csharp_arity_sibling(entry)) is not None:
+        if (sibling := self.csharp.arity_sibling(entry)) is not None:
             return sibling, False
         self_prefix = f"{entry.module_qn}{cs.SEPARATOR_DOT}"
         if entry.parent_qn.startswith(self_prefix):
@@ -798,82 +754,6 @@ class ClassIngest:
         }
         if len(package_matches) == 1:
             return package_matches.pop(), False
-        return None
-
-    def _csharp_arity_index(self) -> CSharpArityIndex:
-        return CSharpArityIndex(
-            self.function_registry,
-            self.facts.csharp_class_generic_arity,
-            self.facts.csharp_class_namespaced,
-            self.facts.csharp_namespaced_qns,
-            self.facts.csharp_partial_groups,
-        )
-
-    def _csharp_base_by_arity(
-        self, entry: DeferredInherit, resolved: tuple[str, bool] | None
-    ) -> tuple[str, bool] | None:
-        # The name lookup finds `PB` or `PB<T>`, whichever it meets first; the
-        # base's written arity picks the one C# binds (issue #2579). Only a C#
-        # base carries a written ref.
-        if resolved is None or resolved[1] or entry.written_ref is None:
-            return resolved
-        arity = csharp_utils.split_type_ref(entry.written_ref)[1]
-        twin = self._csharp_arity_index().twin(resolved[0], arity)
-        # The child is never its own base, whichever twin the name found.
-        return (twin, False) if twin != entry.child_qn else resolved
-
-    def _csharp_arity_sibling(self, entry: DeferredInherit) -> str | None:
-        # Only C# overloads type names by generic arity, so only there can a
-        # base that resolves to the declaring type itself legally name a
-        # DIFFERENT type. The sibling conventionally lives beside the child
-        # (Polly's Foo.cs + Foo.TResult.cs), so only a UNIQUE same-simple-name
-        # type declaration under the module's parent package qualifies;
-        # ambiguity keeps the no-edge answer rather than guessing.
-        if entry.language != cs.SupportedLanguage.CSHARP:
-            return None
-        type_decls = (cs.NodeLabel.CLASS, cs.NodeLabel.INTERFACE, cs.NodeLabel.ENUM)
-        # The written arity names the sibling (issue #764): a twin in the
-        # same file carries it in its qn (`Foo`1`, issue #2579), one in
-        # another file shares the child's declared form.
-        if entry.written_ref is not None:
-            arity = csharp_utils.split_type_ref(entry.written_ref)[1]
-            twin = self._csharp_arity_index().twin(entry.child_qn, arity)
-            if twin != entry.child_qn:
-                return twin
-        natural = qn_markers.strip_arity_marker(qn_markers.natural_qn(entry.child_qn))
-        simple = natural.rsplit(cs.SEPARATOR_DOT, 1)[-1]
-        candidates = {
-            qn
-            for qn in self.function_registry.find_ending_with(simple)
-            if qn != entry.child_qn
-            and simple in qn.split(cs.SEPARATOR_DOT)
-            and self.function_registry.get(qn) in type_decls
-        }
-        package_prefix = (
-            entry.module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0] + cs.SEPARATOR_DOT
-        )
-        in_package = {qn for qn in candidates if qn.startswith(package_prefix)}
-        if len(in_package) == 1:
-            return in_package.pop()
-        if in_package:
-            return self._csharp_single_partial_representative(in_package)
-        # No same-package sibling: the pair can span projects (Polly's
-        # legacy BrokenCircuitException<TResult> : the Polly.Core
-        # non-generic), so fall back to a project-wide unique declaration.
-        return candidates.pop() if len(candidates) == 1 else None
-
-    def _csharp_single_partial_representative(self, in_package: set[str]) -> str | None:
-        # Multiple same-package candidates can still be ONE type: a
-        # `partial` sibling split across files (Polly's PredicateBuilder,
-        # issue #764 shape 3). When every candidate sits in a single
-        # partial group, pick the deterministic representative; genuine
-        # distinct types keep the no-edge answer.
-        groups = {
-            frozenset(self.facts.csharp_partial_groups.get(qn, (qn,)))
-            for qn in in_package
-        }
-        if len(groups) == 1:
-            return min(in_package)
         return None
 
     def _package_exposes(self, package_qn: str, simple: str, class_qn: str) -> bool:
@@ -1134,8 +1014,7 @@ class ClassIngest:
         if language == cs.SupportedLanguage.PHP:
             self._record_php_namespace(class_node, class_props)
         elif language == cs.SupportedLanguage.CSHARP:
-            self._record_csharp_namespace(class_node, class_qn, class_props)
-            self._record_csharp_arity(class_node, class_name, class_props)
+            self.csharp.record_type_props(class_node, class_qn, class_name, class_props)
         elif language == cs.SupportedLanguage.GO and label == cs.NodeLabel.INTERFACE:
             # Stored so an incremental run that does not re-parse the
             # interface still knows what its method set is built from.
@@ -1198,31 +1077,6 @@ class ClassIngest:
         if namespace := php_namespaces.enclosing_namespace(class_node):
             class_props[cs.KEY_NAMESPACE] = namespace
 
-    def _record_csharp_namespace(
-        self, class_node: Node, class_qn: str, class_props: PropertyDict
-    ) -> None:
-        # The declared namespace is the type's own property, whether or
-        # not the qn repeats it (issue #1629).
-        if namespace := csharp_utils.declared_namespace(class_node):
-            class_props[cs.KEY_NAMESPACE] = namespace
-        if namespaced := csharp_utils.namespace_qualified_name(class_node):
-            self.facts.csharp_class_namespaced[class_qn] = namespaced
-            self.facts.csharp_namespaced_qns.setdefault(namespaced, set()).add(class_qn)
-
-    def _record_csharp_arity(
-        self, class_node: Node, class_name: str, class_props: PropertyDict
-    ) -> None:
-        # A generic twin's qn spells its CLR arity (`PB`1`, issue #2579), but
-        # its name is still the one written. The simple-name index keeps the
-        # qn's spelling, as the registry does for a type read back from the
-        # graph, so a plain `PB` meets the non-generic twin only and a
-        # written arity reaches the other. The arity is stored as well: an
-        # incremental run knows a type in an unchanged file only from its
-        # node, and `new PB<int>()` must find the same twin either way.
-        class_props[cs.KEY_NAME] = qn_markers.strip_arity_marker(class_name)
-        if arity := csharp_utils.type_parameter_count(class_node):
-            class_props[cs.KEY_GENERIC_ARITY] = arity
-
     def _index_class_simple_name(self, class_name: str, class_qn: str) -> None:
         self.simple_name_lookup[class_name].add(class_qn)
         # An out-of-class nested definition (`class Outer::Inner {}`)
@@ -1243,17 +1097,11 @@ class ClassIngest:
         class_start_line: int,
         class_start_col: int,
     ) -> dict[str, str] | None:
-        csharp_base_kinds: dict[str, str] | None = None
         if language == cs.SupportedLanguage.CSHARP and file_path is not None:
-            rel_path = cached_relative_path(file_path, self.repo_path).as_posix()
-            # Reverse index for the Roslyn frontend's location-keyed facts:
-            # partial declaration groups join back to these Class qns after
-            # Pass 2.
-            self.csharp_type_locations[(rel_path, class_start_line)] = class_qn
-            csharp_base_kinds = self.facts.frontend_facts[
-                cs.SupportedLanguage.CSHARP
-            ].base_kinds.get((rel_path, class_start_line))
-        elif language == cs.SupportedLanguage.GO and file_path is not None:
+            return self.csharp.record_type_location(
+                class_qn, file_path, class_start_line
+            )
+        if language == cs.SupportedLanguage.GO and file_path is not None:
             # Reverse index for the go/types frontend's implements facts: each
             # ImplementsPair end (a declaring identifier position) joins back to
             # this type's qn + node label after Pass 2. A Go type_spec's
@@ -1264,7 +1112,7 @@ class ClassIngest:
                 class_qn,
                 str(label),
             )
-        return csharp_base_kinds
+        return None
 
     def _record_class_field_types(
         self,
@@ -1295,73 +1143,9 @@ class ClassIngest:
             ):
                 self.facts.class_field_types[class_qn] = field_types
         elif language == cs.SupportedLanguage.CSHARP:
-            self._record_csharp_class_members(
+            self.csharp.record_class_members(
                 member_node, class_qn, module_qn, modifiers, file_path
             )
-
-    def _record_csharp_class_members(
-        self,
-        member_node: Node,
-        class_qn: str,
-        module_qn: str,
-        modifiers: list[str],
-        file_path: Path | None,
-    ) -> None:
-        # Record C# field/property types so a field-typed receiver
-        # (`_w.M()`, `this._w.M()`) resolves, including a field inherited
-        # from a base class in another file (the resolver walks
-        # class_inheritance over these per-class maps).
-        field_types = csharp_utils.build_field_type_map(member_node) or {}
-        if member_node.type == cs.TS_CSHARP_RECORD_DECLARATION:
-            _csharp_record_parameter_types(member_node, field_types)
-        if field_types:
-            self.facts.class_field_types[class_qn] = field_types
-        # Declared type-parameter count: `Builder<TResult>` -> 1;
-        # unrecorded means 0, so only generics are stored.
-        arity = csharp_utils.type_parameter_count(member_node)
-        if arity:
-            self.facts.csharp_class_generic_arity[class_qn] = arity
-            # The declaring module, recorded because the class qn
-            # cannot yield it: a namespace pushes the qn under a
-            # sibling module's qn (#1769).
-            self.facts.csharp_class_owner_module[class_qn] = module_qn
-        # A `partial` type is split across files into N path-distinct
-        # nodes; group the parts into one shared list so a typed receiver
-        # resolves members and bases from any part. The key is the
-        # declaring DIRECTORY (module_qn minus the file stem) plus the
-        # namespace-qualified name, NOT the bare namespace name: two
-        # independent projects that both declare `N.Widget` live in
-        # different directories and must not be merged across assembly
-        # boundaries. Parts in different directories of one project fall
-        # back to generic resolution (safe under-merge) rather than risk a
-        # cross-project wrong edge.
-        # The directory comes from the file's own segment by name: a part
-        # with a dotted stem (`Widget.Designer.cs`) split from its sibling
-        # under a last-dot rule, and once base resolution refused any
-        # ambiguity that is not one partial group, the split lost the
-        # `: N.Widget` edge (#1999).
-        if cs.TS_CSHARP_MODIFIER_PARTIAL in modifiers:
-            self._group_csharp_partial(class_qn, module_qn, file_path, arity)
-
-    def _group_csharp_partial(
-        self, class_qn: str, module_qn: str, file_path: Path | None, arity: int
-    ) -> None:
-        directory = module_directory_qn(module_qn, file_path) or module_qn
-        # A second same-name part in ONE file registers under a
-        # duplicate-suffixed qn (`Bench@24`); the marker is a
-        # registration artefact, not part of the declared name, so
-        # strip it or the two parts never share a group (issue #2014).
-        # The tail below the module, so only its END can carry the
-        # marker a registration appended; a verbatim identifier
-        # (`@event`) opens with the same character and is kept.
-        # The arity is always spelled: `Box<T>` beside a `Box` is `Box`1`
-        # while its part in another file is plain `Box`, and each must join
-        # the other, never the non-generic twin (issue #2579).
-        declared = qn_markers.with_leaf_arity(class_qn[len(module_qn) + 1 :], arity)
-        key = f"{directory}{cs.SEPARATOR_DOT}{declared}"
-        group = self._csharp_partial_index.setdefault(key, [])
-        group.append(class_qn)
-        self.facts.csharp_partial_groups[class_qn] = group
 
     def _emit_resolved_inherit(
         self,
@@ -1375,7 +1159,7 @@ class ClassIngest:
         parent_qn, is_external = resolved
         resolution = cs.EdgeResolution.HEURISTIC if heuristic else None
         if not is_external and entry.language == cs.SupportedLanguage.CSHARP:
-            self._pin_csharp_base_module(entry, parent_qn)
+            self.csharp.pin_base_module(entry, parent_qn)
         external_label: str | None = None
         if is_external:
             # The import pass mints the same node for IMPORTS edges, so
@@ -1418,15 +1202,6 @@ class ClassIngest:
         )
         if is_dart and not is_external:
             dart_implements.setdefault(entry.child_qn, []).append(parent_qn)
-
-    def _pin_csharp_base_module(self, entry: DeferredInherit, parent_qn: str) -> None:
-        # A resolved first-party base pins the C# namespace import to the
-        # module defining it (issue #1347).
-        target_module = module_qn_for_entity(parent_qn, self.module_qn_to_file_path)
-        if target_module is not None and target_module != entry.module_qn:
-            self.import_processor.csharp.record_resolved_cross_module_use(
-                entry.module_qn, target_module
-            )
 
     def _ingest_class_methods(
         self,
@@ -1546,12 +1321,9 @@ class ClassIngest:
         language = scope.language
         module_qn = scope.module_qn
         if language == cs.SupportedLanguage.CSHARP:
-            self.facts.csharp_call_shapes[ingested_qn] = csharp_call_shape(method_node)
-            if (
-                method_node.child_by_field_name(cs.TS_CSHARP_FIELD_TYPE_PARAMETERS)
-                is not None
-            ):
-                self.facts.csharp_generic_methods.add(ingested_qn)
+            self.csharp.record_method(
+                scope.class_qn, module_qn, method_node, ingested_qn
+            )
         # Record Dart return types (a constructor "returns" its class)
         # so a local bound from a static factory or named constructor
         # (`var s = Greeter.create()`) types from the RECORDED return
@@ -1580,11 +1352,6 @@ class ClassIngest:
             cs.NodeLabel.METHOD.value,
             ingested_qn,
         )
-        # Track C# methods (and the `override`-modified subset) so the
-        # override walk gates class-parent matches: an implicit hide or a
-        # `new` shadow is not an override, unlike an interface impl.
-        if language == cs.SupportedLanguage.CSHARP:
-            self._track_csharp_method(scope, method_node, ingested_qn)
         # A Java method declared inside an anonymous class body
         # (`new Base(){ @Override m(){} }`) is ingested here under the enclosing
         # class but really overrides the anon class's base type. Record it so a
@@ -1610,32 +1377,6 @@ class ClassIngest:
         # this pass's twin.
         if module_qn is not None:
             self._record_method_location(scope, module_qn, method_node, ingested_qn)
-        if language == cs.SupportedLanguage.CSHARP:
-            self._record_csharp_method_return_type(method_node, ingested_qn)
-
-    def _track_csharp_method(
-        self, scope: _MethodScope, method_node: Node, ingested_qn: str
-    ) -> None:
-        if scope.module_qn is not None:
-            # Record where this member landed so the Roslyn frontend's
-            # declaration-location facts (call targets, query callers)
-            # resolve to the exact registered qn and label.
-            self.facts.function_locations[
-                function_span_key(scope.module_qn, method_node)
-            ] = FunctionLocation(
-                label=cs.NodeLabel.METHOD.value,
-                qualified_name=ingested_qn,
-                container_qn=scope.class_qn,
-            )
-        self.csharp_methods.add(ingested_qn)
-        if csharp_has_override_modifier(method_node):
-            self.csharp_override_methods.add(ingested_qn)
-        # Index extension methods by simple name + receiver type so a
-        # `recv.Ext()` call binds to the static method even though it
-        # lives on an unrelated static class (not in recv's hierarchy).
-        csharp_utils.index_extension_method(
-            self.facts.csharp_extension_methods, ingested_qn, method_node
-        )
 
     def _record_method_location(
         self,
@@ -1657,27 +1398,6 @@ class ClassIngest:
             self.facts.function_locations[span] = location
         if scope.language == cs.SupportedLanguage.JAVA:
             self._register_java_name_alias(module_qn, method_node, location)
-
-    def _record_csharp_method_return_type(
-        self, method_node: Node, ingested_qn: str
-    ) -> None:
-        if (
-            rt_node := method_node.child_by_field_name(cs.TS_CSHARP_FIELD_RETURNS)
-            # property_declaration exposes its type via `type`,
-            # not `returns`; recording it lets chained typing and
-            # the external-member gate see through properties.
-            or method_node.child_by_field_name(cs.FIELD_TYPE)
-        ) is None:
-            return
-        # Record a C# method's return type so a chained call
-        # (`Policy.Handle<T>().CircuitBreaker(...)`, Polly's whole
-        # fluent surface) can type the receiver for the next hop.
-        if rt_text := csharp_utils.normalize_csharp_type_name(rt_node):
-            raw = safe_decode_text(rt_node) or rt_text
-            self.facts.csharp_method_return_types[ingested_qn] = (
-                rt_text,
-                csharp_utils.generic_arity_of_type_text(raw),
-            )
 
     def _register_java_name_alias(
         self, module_qn: str, method_node: Node, location: FunctionLocation
@@ -1706,8 +1426,8 @@ class ClassIngest:
             self.facts.class_inheritance,
             self.ingestor,
             self._override_walk_implementers(),
-            self.csharp_methods,
-            self.csharp_override_methods,
+            self.csharp.methods,
+            self.csharp.override_methods,
             self.rust.impl_method_traits,
             self.rust.inherent_impl_methods,
             module_qns={*self.module_qn_to_file_path, *module_qns},
@@ -1803,15 +1523,7 @@ class ClassIngest:
         resolved = self._resolve_base_name(class_name, module_qn, language)
         if resolved is not None or language != cs.SupportedLanguage.CSHARP:
             return resolved
-        # A namespace-qualified C# name (`Zeta.BaseC` in a base list) used to
-        # match the tail of the class qn; a namespace the directory spells is
-        # no longer in it, so the declared form is looked up instead, for a
-        # C# reference only: a Python `Zeta.BaseC` is not this index's
-        # business (issue #1629).
-        return csharp_utils.unique_carrier(
-            self.facts.csharp_namespaced_qns.get(class_name),
-            self.facts.csharp_partial_groups,
-        )
+        return self.csharp.namespaced_class(class_name)
 
     def _get_node_type_for_inheritance(self, qualified_name: str) -> str:
         return rel.get_node_type_for_inheritance(qualified_name, self.function_registry)

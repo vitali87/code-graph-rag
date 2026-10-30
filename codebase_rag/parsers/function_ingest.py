@@ -33,6 +33,7 @@ from .callable_params import (
 )
 from .cpp import function_ingest as cpp_function_ingest
 from .cpp.utils import record_cpp_definition_span
+from .csharp import function_ingest as csharp_function_ingest
 from .dart import utils as dart_utils
 from .definition_facts import DefinitionFacts
 from .endpoints import queue_endpoints
@@ -46,7 +47,6 @@ from .lua import utils as lua_utils
 from .method_ingest import MethodIngestHost, ingest_method
 from .parameter_nodes import (
     PendingParameterType,
-    csharp_call_shape,
     emit_declared_parameters,
 )
 from .php import utils as php_utils
@@ -66,25 +66,6 @@ from .utils import (
 if TYPE_CHECKING:
     from ..services import IngestorProtocol
     from ..types_defs import LanguageQueries
-
-
-def _nearest_preceding_csharp_type(
-    func_node: Node, class_node_types: frozenset[str]
-) -> Node | None:
-    # Find the class a `#if`-detached member belongs to: scan preceding siblings
-    # at each ancestor level up to the root (a `#if`-guarded member wraps in a
-    # preproc_if, so its OWN siblings never include the truncated class) and
-    # return the nearest class-like node, whose body ended early and spilled this
-    # member after it.
-    node: Node | None = func_node
-    while node is not None:
-        sib = node.prev_sibling
-        while sib is not None:
-            if sib.type in class_node_types:
-                return sib
-            sib = sib.prev_sibling
-        node = node.parent
-    return None
 
 
 def _java_anon_base_for_function(
@@ -150,10 +131,11 @@ _GO_TYPE_NODE_TYPES = frozenset(
 
 class FunctionIngest:
     """Writes every Function node a file's function captures yield, and the
-    methods the function pass finds first (Go receiver methods, `#if`-orphaned
-    C# members). What waits for every type to be registered is held here and
-    resolved by the `resolve_deferred_*` passes. C/C++'s share, out-of-class
-    method definitions included, is the `CppFunctionIngest` it builds."""
+    Go receiver methods the function pass finds first. What waits for every
+    type to be registered is held here and resolved by the `resolve_deferred_*`
+    passes. A language's own share is the collaborator it builds from that
+    language's package: C/C++'s out-of-class method definitions and held-back
+    nodes, C#'s `#if`-orphaned members, Rust's body-local items."""
 
     __slots__ = (
         "_method_host",
@@ -167,8 +149,6 @@ class FunctionIngest:
         "go_methods",
         "java_anon_overrides",
         "cpp_definition_spans",
-        "csharp_methods",
-        "csharp_override_methods",
         "folded_overloads",
         "pending_endpoints",
         "pending_type_facts",
@@ -178,6 +158,7 @@ class FunctionIngest:
         "_deferred_js_anonymous",
         "cpp",
         "rust",
+        "csharp",
     )
 
     def __init__(
@@ -215,8 +196,6 @@ class FunctionIngest:
         self.go_methods = go_methods
         self.java_anon_overrides = java_anon_overrides
         self.cpp_definition_spans = cpp_definition_spans
-        self.csharp_methods = csharp_methods
-        self.csharp_override_methods = csharp_override_methods
         self.folded_overloads = folded_overloads
         self.pending_endpoints = pending_endpoints
         self.pending_type_facts = pending_type_facts
@@ -239,6 +218,13 @@ class FunctionIngest:
             module_qn_to_file_path=module_qn_to_file_path,
             facts=facts,
             cpp_definition_spans=cpp_definition_spans,
+        )
+        self.csharp = csharp_function_ingest.CSharpFunctionIngest(
+            method_host=method_host,
+            facts=facts,
+            methods=csharp_methods,
+            override_methods=csharp_override_methods,
+            deferred_parent_links=deferred_parent_links,
         )
 
     def ingest_all_functions(
@@ -296,7 +282,7 @@ class FunctionIngest:
     ) -> bool:
         match language:
             case cs.SupportedLanguage.CSHARP:
-                return self._skip_csharp_function(
+                return self.csharp.skips_function(
                     func_node, module_qn, lang_config, lang_queries, file_path
                 )
             case cs.SupportedLanguage.CPP:
@@ -315,37 +301,6 @@ class FunctionIngest:
                 )
             case _:
                 return False
-
-    def _skip_csharp_function(
-        self,
-        func_node: Node,
-        module_qn: str,
-        lang_config: LanguageSpec,
-        lang_queries: LanguageQueries,
-        file_path: Path | None,
-    ) -> bool:
-        # A C# local function whose name is a reserved keyword is a
-        # parse-recovery artifact: a `#if` splitting an if/else chain
-        # mid-method makes tree-sitter parse the trailing `else if` as a
-        # local_function_statement named `if`. Drop it rather than emit a
-        # bogus (or anonymised) Function node.
-        if func_node.type == cs.TS_CSHARP_LOCAL_FUNCTION_STATEMENT:
-            name_node = func_node.child_by_field_name(cs.FIELD_NAME)
-            if (
-                name_node
-                and name_node.text
-                and safe_decode_text(name_node) in cs.CSHARP_RESERVED_KEYWORDS
-            ):
-                return True
-
-        # A C# member declaration (method/property/operator/ctor) that a
-        # `#if`-truncated class node detached into the namespace's
-        # declaration_list reaches here with no class ancestor. It is a real
-        # class member by grammar invariant, so recover its class and emit a
-        # Method rather than mislabelling it a module Function.
-        return self._recover_csharp_orphan_method(
-            func_node, module_qn, lang_config, lang_queries, file_path
-        )
 
     def _defer_function_registration(
         self,
@@ -868,15 +823,8 @@ class FunctionIngest:
         )
         if language == cs.SupportedLanguage.GO:
             self._register_go_name_alias(module_qn, func_node, location)
-        # Pin a C# local function to its HOST scope (method/ctor/enclosing local
-        # fn) by span, plus its declared parameter count, so bare-name call
-        # resolution honours C# scoping and arity (the host's signatured identity
-        # is not registered yet at this point).
-        if (
-            language == cs.SupportedLanguage.CSHARP
-            and func_node.type == cs.TS_CSHARP_LOCAL_FUNCTION_STATEMENT
-        ):
-            self._record_csharp_local_function(
+        if language == cs.SupportedLanguage.CSHARP:
+            self.csharp.record_local_function(
                 func_node, resolution.qualified_name, module_qn
             )
         record_cpp_definition_span(
@@ -921,21 +869,6 @@ class FunctionIngest:
         if js_ts_utils.name_is_body_scoped(func_node):
             func_props[cs.KEY_IS_BODY_SCOPED_NAME] = True
             self.function_registry.mark_body_scoped_name(qualified_name)
-
-    def _record_csharp_local_function(
-        self, func_node: Node, qualified_name: str, module_qn: str
-    ) -> None:
-        host = func_node.parent
-        while host is not None and host.type not in cs.CSHARP_LOCAL_FN_HOST_TYPES:
-            host = host.parent
-        if host is None:
-            return
-        from .csharp import utils as csharp_utils
-
-        self.facts.csharp_local_functions[qualified_name] = (
-            function_span_key(module_qn, host),
-            len(csharp_utils.extract_parameter_type_names(func_node)),
-        )
 
     def _record_java_anon_override(
         self,
@@ -1252,112 +1185,6 @@ class FunctionIngest:
         ):
             return False
         return is_method_node(func_node, lang_config)
-
-    def _csharp_scope_qn(
-        self, node: Node, module_qn: str, file_path: Path | None
-    ) -> str:
-        # Qualified name of a C# scope node (class/namespace) via the same walk the
-        # definition FQN pass uses, so a recovered class qn matches the one the
-        # class-ingest pass registered. `node` is itself a scope type, so start the
-        # walk at it (its own name is the innermost segment).
-        fqn_config = LANGUAGE_FQN_SPECS[cs.SupportedLanguage.CSHARP]
-        parts = scoped_name_parts(node, fqn_config, module_qn, file_path)
-        if not parts:
-            return module_qn
-        return module_qn + cs.SEPARATOR_DOT + cs.SEPARATOR_DOT.join(parts)
-
-    def _recover_csharp_orphan_method(
-        self,
-        func_node: Node,
-        module_qn: str,
-        lang_config: LanguageSpec,
-        lang_queries: LanguageQueries,
-        file_path: Path | None,
-    ) -> bool:
-        # A C# method/property/operator/ctor is grammatically only ever a type
-        # member; a `local_function_statement` is the real top-level function, so it
-        # is deliberately excluded and left to the Function path.
-        if func_node.type not in cs.CSHARP_MEMBER_ONLY_TYPES:
-            return False
-        class_node = _nearest_preceding_csharp_type(
-            func_node, frozenset(lang_config.class_node_types)
-        )
-        if class_node is None:
-            return False
-
-        from .class_ingest.utils import csharp_has_override_modifier
-        from .csharp import utils as csharp_utils
-
-        class_qn = self._csharp_scope_qn(class_node, module_qn, file_path)
-        cs_name, cs_params = csharp_utils.extract_method_signature(func_node)
-        method_qualified_name = None
-        if cs_name and cs_params:
-            param_sig = cs.SEPARATOR_COMMA_SPACE.join(cs_params)
-            method_qualified_name = f"{class_qn}.{cs_name}({param_sig})"
-
-        ingested_qn = ingest_method(
-            self._method_host,
-            func_node,
-            class_qn,
-            cs.NodeLabel.CLASS,
-            cs.SupportedLanguage.CSHARP,
-            lang_queries=lang_queries,
-            method_qualified_name=method_qualified_name,
-            file_path=file_path,
-            # The class node was parse-truncated; defer the containment so it
-            # resolves to DEFINES_METHOD if the class registered, else an audit-safe
-            # module DEFINES (never a dangling edge).
-            defer_containment=self._deferred_parent_links,
-            module_qn=module_qn,
-        )
-        if ingested_qn is None:
-            return False
-        self.facts.csharp_call_shapes[ingested_qn] = csharp_call_shape(func_node)
-        if (
-            func_node.child_by_field_name(cs.TS_CSHARP_FIELD_TYPE_PARAMETERS)
-            is not None
-        ):
-            self.facts.csharp_generic_methods.add(ingested_qn)
-        if (
-            rt_node := func_node.child_by_field_name(cs.TS_CSHARP_FIELD_RETURNS)
-        ) is not None:
-            if rt_text := csharp_utils.normalize_csharp_type_name(rt_node):
-                raw = safe_decode_text(rt_node) or rt_text
-                self.facts.csharp_method_return_types[ingested_qn] = (
-                    rt_text,
-                    csharp_utils.generic_arity_of_type_text(raw),
-                )
-        record_cpp_definition_span(
-            self.cpp_definition_spans,
-            cs.SupportedLanguage.CSHARP,
-            file_path,
-            self.repo_path,
-            func_node,
-            cs.NodeLabel.METHOD.value,
-            ingested_qn,
-        )
-        # Record where this method landed so Pass-3 call attribution reuses this
-        # Method identity instead of re-deriving a module-Function qn from the node
-        # (the FQN walk sees no class ancestor, so a call inside the recovered
-        # member would otherwise source a phantom, dropped edge).
-        self.facts.function_locations[function_span_key(module_qn, func_node)] = (
-            FunctionLocation(
-                label=cs.NodeLabel.METHOD.value,
-                qualified_name=ingested_qn,
-                container_qn=class_qn,
-            )
-        )
-        # Track it like an in-class C# method so the override walk can gate a
-        # class-parent OVERRIDES on the `override` modifier, and index it as an
-        # extension method if it is one, so `recv.Ext()` binds to a recovered
-        # extension just as the normal class-member pass would.
-        self.csharp_methods.add(ingested_qn)
-        if csharp_has_override_modifier(func_node):
-            self.csharp_override_methods.add(ingested_qn)
-        csharp_utils.index_extension_method(
-            self.facts.csharp_extension_methods, ingested_qn, func_node
-        )
-        return True
 
     def emit_or_defer_defines(
         self,
