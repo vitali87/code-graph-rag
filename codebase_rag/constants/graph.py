@@ -792,11 +792,15 @@ class AuditCheck(StrEnum):
     DANGLING_RELATIONSHIP = "dangling_relationship"
 
 
+# The node that records a one-time graph migration has run; `name` says which.
+GRAPH_MIGRATION_LABEL = "GraphMigration"
+PATH_KEYS_MIGRATION = "path_keys_897"
+
 # Labels cgr writes for its own bookkeeping rather than as part of the code
 # graph: not in NODE_SCHEMAS (the Cypher prompt is built from it), and not
 # graded by the structural audit. `IncompleteRun` is the sync marker, which
 # doctor reports as an interrupted sync instead (issue #2394).
-AUDIT_BOOKKEEPING_LABELS = frozenset({"IncompleteRun"})
+AUDIT_BOOKKEEPING_LABELS = frozenset({"IncompleteRun", GRAPH_MIGRATION_LABEL})
 
 # Graph audit violation details (issue #646)
 AUDIT_DETAIL_ORPHAN = "{label} '{key}' has no relationships"

@@ -30,12 +30,14 @@ from .constants import (
     ANCHOR_HASH_VERSION,
     CYPHER_DEFAULT_LIMIT,
     DEFINITION_NODE_LABELS,
+    GRAPH_MIGRATION_LABEL,
     KEY_FROM_MISSING,
     KEY_FROM_VAL,
     KEY_ROW_INDEX,
     KEY_TO_MISSING,
     KEY_TO_VAL,
     NODE_UNIQUE_CONSTRAINTS,
+    PATH_KEYS_MIGRATION,
     SNIPPET_NODE_LABELS,
     SYMBOL_DEFINITION_LABELS,
     GlossAnchorState,
@@ -458,8 +460,9 @@ _ACROSS_ROOTS = (
 
 # Sharing always leaves a single-hop signature: the topmost merged node has
 # containment parents in two projects (Project roots are never merged, so the
-# parents are distinct nodes). That cheap test runs on every sync and picks
-# the candidates; only they are walked up to their Projects and judged as the
+# parents are distinct nodes). That cheap test picks the candidates, until a
+# clean pass retires it (CYPHER_PATH_KEYS_CHECKED); only they are walked up
+# to their Projects and judged as the
 # purge judges them. A parent's own path cannot stand in for its Project's
 # root: a Package records its directory, so a File two projects reach through
 # their Packages read as inside both, hiding a rootless owner the purge counts
@@ -506,6 +509,22 @@ CYPHER_PURGE_KEYLESS_STRUCTURE = (
     "MATCH (n) WHERE (n:Folder OR n:File) AND n.absolute_path IS NULL "
     "DETACH DELETE n RETURN count(n) AS purged"
 )
+
+# The two damage scans read every Folder/File in the shared graph, so they
+# run until one pass leaves the graph clean, which this marker records. The
+# old key's damage cannot return after that unless a legacy constraint does:
+# only a pre-#897 cgr wrote merged or keyless rows, and it creates those
+# constraints whenever it starts, which the SHOW CONSTRAINTS check still sees
+# on every run. Like `:IncompleteRun` it is an unconnected node, so deleting
+# a project keeps it, while a `--clean` wipe takes it and the empty graph's
+# scans run once more for free.
+_PATH_KEYS_MARKER = (
+    "(m:" + GRAPH_MIGRATION_LABEL + " {name: '" + PATH_KEYS_MIGRATION + "'})"
+)
+CYPHER_PATH_KEYS_CHECKED = (
+    "MATCH " + _PATH_KEYS_MARKER + " RETURN m.name AS name LIMIT 1"
+)
+CYPHER_MARK_PATH_KEYS_CHECKED = "MERGE " + _PATH_KEYS_MARKER
 
 CYPHER_EXAMPLE_DECORATED_FUNCTIONS = f"""MATCH (n:Function|Method)
 WHERE ANY(d IN n.decorators WHERE toLower(d) IN ['flow', 'task'])
@@ -580,10 +599,11 @@ CYPHER_EXAMPLE_CODE_SMELLS = f"""MATCH (m:Module)-[:HAS_SMELL]->(c:CodeSmell)
 RETURN m.path AS path, c.name AS smell, c.start_line AS line, c.message AS message
 LIMIT {CYPHER_DEFAULT_LIMIT}"""
 
-CYPHER_EXPORT_NODES = """
-MATCH (n)
-RETURN id(n) as node_id, labels(n) as labels, properties(n) as properties
-"""
+# The migration marker is cgr's own bookkeeping, not part of the code graph.
+CYPHER_EXPORT_NODES = (
+    "MATCH (n) WHERE NOT n:" + GRAPH_MIGRATION_LABEL + " "
+    "RETURN id(n) as node_id, labels(n) as labels, properties(n) as properties"
+)
 
 CYPHER_EXPORT_RELATIONSHIPS = """
 MATCH (a)-[r]->(b)

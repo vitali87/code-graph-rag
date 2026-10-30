@@ -594,6 +594,27 @@ class TestIngestor:
         assert graph["metadata"]["total_nodes"] == 2
         assert graph["metadata"]["total_relationships"] == 1
 
+    def test_a_second_sync_runs_no_path_key_damage_scan(
+        self, ingestor, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The fixture's ensure_constraints found the empty graph clean and
+        # marked it; the next sync must answer from the marker, and the
+        # marker must stay out of what the graph exports as code.
+        seen: list[str] = []
+        run = GraphIngestor._execute_query
+
+        def record(self: GraphIngestor, query: str, *args: object, **kwargs: object):
+            seen.append(query)
+            return run(self, query, *args, **kwargs)
+
+        monkeypatch.setattr(GraphIngestor, "_execute_query", record)
+        ingestor.ensure_constraints()
+
+        assert cq.CYPHER_PATH_KEYS_CHECKED in seen
+        assert cq.CYPHER_ANY_SHARED_STRUCTURE not in seen
+        assert cq.CYPHER_ANY_KEYLESS_STRUCTURE not in seen
+        assert ingestor.export_graph_to_dict()["metadata"]["total_nodes"] == 0
+
     def test_generated_queries_run_but_cannot_write(self, ingestor) -> None:
         ingestor.ensure_node_batch("Project", {"name": "p"})
         ingestor.flush_all()

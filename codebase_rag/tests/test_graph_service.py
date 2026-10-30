@@ -10,6 +10,8 @@ from loguru import logger
 from codebase_rag import logs as ls
 from codebase_rag.constants import NODE_NAME_INDEXES, NODE_UNIQUE_CONSTRAINTS
 from codebase_rag.cypher_queries import (
+    CYPHER_MARK_PATH_KEYS_CHECKED,
+    CYPHER_PATH_KEYS_CHECKED,
     build_create_node_query,
     build_create_relationship_query,
     build_merge_node_query,
@@ -419,11 +421,13 @@ class TestEnsureConstraints:
     def test_continues_on_constraint_error(self) -> None:
         ingestor = GraphIngestor(host="localhost", port=7687)
         call_count = 0
+        failed = False
 
         def fail_first_create(query: str) -> list[dict]:
-            nonlocal call_count
+            nonlocal call_count, failed
             call_count += 1
-            if query.startswith("CREATE CONSTRAINT") and call_count == 4:
+            if query.startswith("CREATE CONSTRAINT") and not failed:
+                failed = True
                 raise RuntimeError("Constraint already exists")
             return []
 
@@ -432,9 +436,11 @@ class TestEnsureConstraints:
         ):
             ingestor.ensure_constraints()
 
-        # One SHOW, two damage probes, a create-constraint and a
-        # create-index per label, plus a name index per non-name-keyed label.
-        expected_queries = 3 + len(NODE_UNIQUE_CONSTRAINTS) * 2 + len(NODE_NAME_INDEXES)
+        # One SHOW, the migration-marker read, two damage probes and the
+        # marker write, then a create-constraint and a create-index per label,
+        # plus a name index per non-name-keyed label.
+        expected_queries = 5 + len(NODE_UNIQUE_CONSTRAINTS) * 2 + len(NODE_NAME_INDEXES)
+        assert failed
         assert call_count == expected_queries
 
     def test_continues_on_name_index_error(self) -> None:
@@ -495,7 +501,9 @@ class TestLegacyPathKeyMigration:
         {"constraint type": "unique", "label": "File", "properties": ["absolute_path"]},
     ]
 
-    def _run_capture(self, show_rows: list[dict], damaged: bool = False) -> list[str]:
+    def _run_capture(
+        self, show_rows: list[dict], damaged: bool = False, checked: bool = False
+    ) -> list[str]:
         ingestor = GraphIngestor(host="localhost", port=7687)
         executed: list[str] = []
 
@@ -503,6 +511,8 @@ class TestLegacyPathKeyMigration:
             executed.append(query)
             if query.startswith("SHOW CONSTRAINT"):
                 return show_rows
+            if query == CYPHER_PATH_KEYS_CHECKED:
+                return [{"name": "path_keys_897"}] if checked else []
             if "damaged" in query:
                 return [{"damaged": 1}] if damaged else []
             if "purged" in query:
@@ -553,6 +563,52 @@ class TestLegacyPathKeyMigration:
 
         assert not any(q.startswith("DROP CONSTRAINT") for q in executed)
         assert not any("DETACH DELETE" in q for q in executed)
+
+    def test_a_clean_pass_marks_the_graph_checked(self) -> None:
+        executed = self._run_capture(self.CLEAN_ROWS)
+
+        probes = [i for i, q in enumerate(executed) if "damaged" in q]
+        assert len(probes) == 2
+        assert executed.index(CYPHER_MARK_PATH_KEYS_CHECKED) > max(probes)
+
+    def test_a_checked_graph_runs_no_damage_scan(self) -> None:
+        # The two probes read every Folder/File in the shared graph; once a
+        # pass found it clean they must not run on every later sync.
+        executed = self._run_capture(self.CLEAN_ROWS, checked=True)
+
+        assert not any("damaged" in q for q in executed)
+        assert not any("DETACH DELETE" in q for q in executed)
+        assert CYPHER_MARK_PATH_KEYS_CHECKED not in executed
+
+    def test_a_legacy_constraint_still_purges_a_checked_graph(self) -> None:
+        # A pre-#897 cgr writing again recreates its constraints, which the
+        # every-run SHOW CONSTRAINTS check sees despite the marker.
+        executed = self._run_capture(self.LEGACY_ROWS, checked=True)
+
+        assert "DROP CONSTRAINT ON (n:Folder) ASSERT n.path IS UNIQUE;" in executed
+        assert any("count(DISTINCT p)" in q for q in executed if "DETACH DELETE" in q)
+
+    def test_a_failed_purge_leaves_the_scans_armed(self) -> None:
+        ingestor = GraphIngestor(host="localhost", port=7687)
+        executed: list[str] = []
+
+        def refuse_purge(query: str, params: dict | None = None) -> list[dict]:
+            executed.append(query)
+            if query.startswith("SHOW CONSTRAINT"):
+                return self.CLEAN_ROWS
+            if "damaged" in query:
+                return [{"damaged": 1}]
+            if "DETACH DELETE" in query:
+                raise ConnectionError("connection lost")
+            return []
+
+        with (
+            patch.object(GraphIngestor, "_execute_query", side_effect=refuse_purge),
+            pytest.raises(ConnectionError),
+        ):
+            ingestor.ensure_constraints()
+
+        assert CYPHER_MARK_PATH_KEYS_CHECKED not in executed
 
     def test_show_constraint_failure_propagates(self) -> None:
         ingestor = GraphIngestor(host="localhost", port=7687)

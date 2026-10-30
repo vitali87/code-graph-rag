@@ -27,6 +27,8 @@ from ..cypher_queries import (
     CYPHER_EXPORT_PROJECT_RELATIONSHIPS,
     CYPHER_EXPORT_RELATIONSHIPS,
     CYPHER_LIST_PROJECTS,
+    CYPHER_MARK_PATH_KEYS_CHECKED,
+    CYPHER_PATH_KEYS_CHECKED,
     CYPHER_PURGE_CROSS_PROJECT_STRUCTURE,
     CYPHER_PURGE_CROSS_ROOT_STRUCTURE,
     CYPHER_PURGE_KEYLESS_STRUCTURE,
@@ -128,6 +130,12 @@ class GraphQueries(GraphSession):
         in Memgraph, so any failure here is real and propagates. The purge
         keys off the data, not the constraints: damage outlives the schema
         when an earlier partial upgrade already dropped them.
+
+        The constraint check is cheap and runs every time; the two data
+        scans read the whole shared graph, so they run only until a pass
+        leaves it clean (CYPHER_PATH_KEYS_CHECKED). This whole step can go,
+        marker included, once upgrading a graph written before #897 is no
+        longer supported.
         """
         existing_rows = self._execute_query(self._dialect.show_constraints())
         # Carry the server's own name for each match: engines that drop by
@@ -153,20 +161,23 @@ class GraphQueries(GraphSession):
         if legacy_present:
             cross_project_purge = CYPHER_PURGE_CROSS_PROJECT_STRUCTURE
             damaged = True
+        elif self._execute_query(CYPHER_PATH_KEYS_CHECKED):
+            return
         else:
             cross_project_purge = CYPHER_PURGE_CROSS_ROOT_STRUCTURE
             damaged = bool(self._execute_query(CYPHER_ANY_SHARED_STRUCTURE)) or bool(
                 self._execute_query(CYPHER_ANY_KEYLESS_STRUCTURE)
             )
-        if not damaged:
-            return
-        purged = 0
-        for purge_query in (cross_project_purge, CYPHER_PURGE_KEYLESS_STRUCTURE):
-            rows = self._execute_query(purge_query)
-            if rows:
-                purged += int(str(rows[0][cs.KEY_PURGED]))
-        if purged:
-            logger.warning(ls.MG_LEGACY_PURGE.format(count=purged))
+        if damaged:
+            purged = 0
+            for purge_query in (cross_project_purge, CYPHER_PURGE_KEYLESS_STRUCTURE):
+                rows = self._execute_query(purge_query)
+                if rows:
+                    purged += int(str(rows[0][cs.KEY_PURGED]))
+            if purged:
+                logger.warning(ls.MG_LEGACY_PURGE.format(count=purged))
+        # Only after the purges: one that fails leaves the scans armed.
+        self._execute_query(CYPHER_MARK_PATH_KEYS_CHECKED)
 
     def _ensure_indexes(self) -> None:
         logger.info(ls.MG_ENSURING_INDEXES)
