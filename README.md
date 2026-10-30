@@ -61,9 +61,7 @@ Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by c
 ## Latest News 🔥
 
 <!-- SECTION:latest_news -->
-- **Dependencies Updated**: Several dependencies have been updated to the latest versions, including neo4j, qdrant-client, and transformers, bringing in bug fixes and new features.
-- **CLI Improvements**: The `change_signature` operation is now accessible through the CLI and MCP, with updated documentation.
-- **Graph-RS Fuzzing**: Expanded fuzz testing for the graph-rs component with new targets for procedures, bulk writing, and input decoding.
+- **MiniMax Models**: Current MiniMax text models have been added.
 <!-- /SECTION:latest_news -->
 
 See [NEWS.md](NEWS.md) for the full history.
