@@ -135,20 +135,35 @@ and the deferred IMPORTS edges and their flush for itself. A new language's
 import parsing goes in an importer in its own package, registered in that
 lookup.
 
-The call pass has moved most languages the same way: `CallProcessor` builds
-a `GoCallResolution`, `CppCallResolution`, `DartCallResolution`,
-`CSharpCallResolution`, `JsTsCallResolution`, `PythonCallResolution`,
-`JavaCallResolution`, `ScalaCallResolution` and `PhpCallResolution` (each in
-`parsers/<language>/calls.py`, with C's `CCallResolution` beside C++'s) and
-hands each its language's callee binding, fan-outs and the edges the
-language writes without a call node. What reads nothing of the pass is
-module functions in the same files: Rust's macro-token call names, Lua's
-caller names, and the JS/TS value peels and call-name shapes the shared
-walkers apply. `CallProcessor` keeps for itself the scan of a caller's
-calls, the site and resolution every edge carries (`parsers/edge_site.py`
-holds the part a collaborator writes through), the name-based resolver, and
-what languages share: the reference walkers, callable-parameter flow, the
-class pass's qualified names and the construction a `new` runs.
+The call pass has moved every language the same way: `CallProcessor` builds
+a `<Language>CallResolution` per language package (each in
+`parsers/<language>/calls.py`, with C's `CCallResolution` beside C++'s and
+one `JsTsCallResolution` for JavaScript, TypeScript and TSX), looks a file's
+language up to it in `_calls_for`, and falls back to a plain `LanguageCalls`
+for a language that adds nothing. `LanguageCalls`
+(`parsers/language_calls.py`) is the base each one subclasses. It declares
+every point where the pass asks a language something as a hook named for the
+question (`caller_name`, `call_name`, `resolve_callee`,
+`emit_constructor_calls`, `ingest_caller_references` and the rest), whose
+default answers as if the language added nothing there, and every rule the
+pass applies in its own code as a capability flag a class turns on
+(`types_locals`, `new_constructs_type`, `imports_bind_calls`). The
+`CallScan` a caller's scan hands each of its call nodes carries that
+language's strategy beside the bound resolvers and alias maps, so the steps
+a call node goes through ask the strategy rather than test the language. A
+collaborator holds its language's callee binding, fan-outs and the edges the
+language writes without a call node, and calls back through a narrow host
+protocol for what the pass shares. What reads nothing of the pass is module
+functions in the same files: Rust's macro-token call names, Lua's caller
+names, and the JS/TS value peels and call-name shapes the shared walkers
+apply. `CallProcessor` keeps for itself the order the steps run in, the scan
+of a caller's calls, the site and resolution every edge carries
+(`parsers/edge_site.py` holds the part a collaborator writes through), the
+name-based resolver, and what languages share: the reference walkers,
+callable-parameter flow, the class pass's qualified names and the
+construction a `new` runs. A new language's call behaviour goes in an
+override of the hook that asks for it, or a capability it turns on, in a
+collaborator in its own package, registered in that lookup.
 
 That resolver has moved every language the same way: `CallResolver` builds a
 `RustResolver`, `JsTsResolver`, `GoResolver`, `CppResolver`,
