@@ -85,6 +85,65 @@ def test_rejection_carries_www_authenticate() -> None:
     ]
 
 
+def _drive_websocket(app: Any, headers: list[tuple[bytes, bytes]]) -> list[dict]:
+    scope = {"type": "websocket", "headers": headers, "path": "/mcp"}
+    sent: list[dict] = []
+
+    async def receive() -> dict:
+        return {"type": "websocket.connect"}
+
+    async def send(message: dict) -> None:
+        sent.append(message)
+
+    asyncio.run(app(scope, receive, send))
+    return sent
+
+
+async def _inner_websocket(scope: dict, receive: Any, send: Any) -> None:
+    await send({"type": "websocket.accept"})
+
+
+def test_a_websocket_without_the_token_is_refused() -> None:
+    # Every non-HTTP scope used to pass the check untouched; only the SDK's
+    # own refusal of websocket scopes stood behind it.
+    app = _require_bearer_auth(_inner_websocket, "sekrit")
+    assert _drive_websocket(app, []) == [{"type": "websocket.close", "code": 1008}]
+
+
+def test_a_websocket_with_the_token_passes_through() -> None:
+    app = _require_bearer_auth(_inner_websocket, "sekrit")
+    sent = _drive_websocket(app, [(b"authorization", b"Bearer sekrit")])
+    assert sent == [{"type": "websocket.accept"}]
+
+
+def test_the_lifespan_protocol_needs_no_token() -> None:
+    reached: list[str] = []
+
+    async def inner(scope: dict, receive: Any, send: Any) -> None:
+        reached.append(scope["type"])
+
+    asyncio.run(_require_bearer_auth(inner, "sekrit")({"type": "lifespan"}, None, None))
+    assert reached == ["lifespan"]
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"), [("   ", None), ("", None), ("sekrit\n", "sekrit")]
+)
+def test_the_token_setting_is_trimmed_and_blank_is_unset(
+    monkeypatch: pytest.MonkeyPatch, raw: str, expected: str | None
+) -> None:
+    # A blank token passed the exposure guard and became the bearer secret;
+    # a secrets file's trailing newline locked every right client out.
+    from codebase_rag.config import AppConfig
+
+    monkeypatch.setenv("MCP_HTTP_AUTH_TOKEN", raw)
+    token = AppConfig(_env_file=None).MCP_HTTP_AUTH_TOKEN
+    assert token == expected
+    if expected is None:
+        with pytest.raises(ValueError):
+            _validate_http_exposure("0.0.0.0", token)
+
+
 def test_non_loopback_bind_without_token_refuses() -> None:
     with pytest.raises(ValueError):
         _validate_http_exposure("0.0.0.0", None)

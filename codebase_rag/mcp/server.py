@@ -243,22 +243,14 @@ async def serve_stdio(workspace: str | None = None) -> None:
             logger.info(ls.MCP_SERVER_SHUTDOWN)
 
 
-_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
-
-
 def _validate_http_exposure(host: str, auth_token: str | None) -> None:
     # The StreamableHTTP endpoint's only protection is the bearer token;
     # refusing a non-loopback bind without one makes accidental network
     # exposure of the unauthenticated transport impossible (follow-up to
     # #808: the loopback default protects default deployments, this
     # protects intentional remote ones).
-    if host not in _LOOPBACK_HOSTS and not auth_token:
+    if host not in mcs.LOOPBACK_HOSTS and not auth_token:
         raise ValueError(ls.MCP_HTTP_EXPOSURE_REFUSED.format(host=host))
-
-
-# Host and Origin values a loopback server answers, on any port.
-_LOOPBACK_HOST_HEADERS = ("127.0.0.1:*", "localhost:*", "[::1]:*")
-_LOOPBACK_ORIGINS = ("http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*")
 
 
 def _transport_security(host: str) -> TransportSecuritySettings | None:
@@ -272,14 +264,14 @@ def _transport_security(host: str) -> TransportSecuritySettings | None:
     rebinding page cannot present, and may sit behind a proxy that rewrites
     Host, so it is left to the token.
     """
-    if host not in _LOOPBACK_HOSTS:
+    if host not in mcs.LOOPBACK_HOSTS:
         return None
     from mcp.server.transport_security import TransportSecuritySettings
 
     return TransportSecuritySettings(
         enable_dns_rebinding_protection=True,
-        allowed_hosts=list(_LOOPBACK_HOST_HEADERS),
-        allowed_origins=list(_LOOPBACK_ORIGINS),
+        allowed_hosts=list(mcs.LOOPBACK_HOST_HEADERS),
+        allowed_origins=list(mcs.LOOPBACK_ORIGINS),
     )
 
 
@@ -288,35 +280,50 @@ def _require_bearer_auth(app: ASGIApp, auth_token: str) -> ASGIApp:
 
     token_bytes = auth_token.encode(cs.ENCODING_UTF8)
 
-    async def guarded(scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http":
-            await app(scope, receive, send)
-            return
+    def authorized(scope: Scope) -> bool:
         provided: bytes | None = None
         for key, value in scope.get("headers", []):
-            if key.lower() == b"authorization":
+            if key.lower() == mcs.HTTP_HEADER_AUTHORIZATION:
                 provided = value
                 break
-        # RFC 7235: the SCHEME compares case-insensitively (not secret, so
-        # an ordinary compare is fine); only the token value needs
-        # constant-time compare_digest
-        authorized = False
-        if provided is not None:
-            scheme, _, credential = provided.partition(b" ")
-            authorized = scheme.lower() == b"bearer" and secrets.compare_digest(
-                credential, token_bytes
-            )
-        if not authorized:
+        if provided is None:
+            return False
+        # The scheme is not secret, so an ordinary compare is fine; only the
+        # token value needs the constant-time compare_digest.
+        scheme, _, credential = provided.partition(b" ")
+        return scheme.lower() == mcs.HTTP_AUTH_SCHEME_BEARER and secrets.compare_digest(
+            credential, token_bytes
+        )
+
+    async def guarded(scope: Scope, receive: Receive, send: Send) -> None:
+        # Fail closed: only the lifespan protocol, which carries no request,
+        # skips the check. Every other scope used to pass unchecked, so a
+        # websocket reached the session manager without the token and was
+        # stopped only by the SDK's own refusal of non-HTTP scopes.
+        if scope["type"] == mcs.AsgiScope.LIFESPAN or authorized(scope):
+            await app(scope, receive, send)
+            return
+        if scope["type"] == mcs.AsgiScope.HTTP:
             await send(
                 {
-                    "type": "http.response.start",
-                    "status": 401,
-                    "headers": [(b"www-authenticate", b"Bearer")],
+                    "type": mcs.AsgiMessage.HTTP_RESPONSE_START,
+                    "status": mcs.HTTP_STATUS_UNAUTHORIZED,
+                    "headers": [
+                        (
+                            mcs.HTTP_HEADER_WWW_AUTHENTICATE,
+                            mcs.HTTP_AUTH_CHALLENGE_BEARER,
+                        )
+                    ],
                 }
             )
-            await send({"type": "http.response.body", "body": b""})
-            return
-        await app(scope, receive, send)
+            await send({"type": mcs.AsgiMessage.HTTP_RESPONSE_BODY, "body": b""})
+        elif scope["type"] == mcs.AsgiScope.WEBSOCKET:
+            await send(
+                {
+                    "type": mcs.AsgiMessage.WEBSOCKET_CLOSE,
+                    "code": mcs.WS_CLOSE_POLICY_VIOLATION,
+                }
+            )
 
     return guarded
 

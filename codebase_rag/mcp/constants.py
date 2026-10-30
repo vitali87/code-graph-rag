@@ -178,3 +178,31 @@ MCP_WIPE_ERROR = "Error wiping database: {error}"
 MCP_KEY_ERROR = "error"
 MCP_KEY_FOUND = "found"
 MCP_KEY_ERROR_MESSAGE = "error_message"
+
+
+# The StreamableHTTP transport's bearer check (issue #808) and loopback binds.
+class AsgiScope(StrEnum):
+    HTTP = "http"
+    WEBSOCKET = "websocket"
+    LIFESPAN = "lifespan"
+
+
+class AsgiMessage(StrEnum):
+    HTTP_RESPONSE_START = "http.response.start"
+    HTTP_RESPONSE_BODY = "http.response.body"
+    WEBSOCKET_CLOSE = "websocket.close"
+
+
+HTTP_HEADER_AUTHORIZATION = b"authorization"
+HTTP_HEADER_WWW_AUTHENTICATE = b"www-authenticate"
+# RFC 7235: the scheme compares case-insensitively, so it is matched lowered.
+HTTP_AUTH_SCHEME_BEARER = b"bearer"
+HTTP_AUTH_CHALLENGE_BEARER = b"Bearer"
+HTTP_STATUS_UNAUTHORIZED = 401
+# RFC 6455's policy-violation code; closing before accepting refuses the
+# handshake.
+WS_CLOSE_POLICY_VIOLATION = 1008
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+# Host and Origin values a loopback server answers, on any port.
+LOOPBACK_HOST_HEADERS = ("127.0.0.1:*", "localhost:*", "[::1]:*")
+LOOPBACK_ORIGINS = ("http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*")

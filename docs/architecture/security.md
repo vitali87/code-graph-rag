@@ -194,8 +194,9 @@ instead, with one warning; a copy of the encoding in the directory
 
 The [HTTP MCP server](https://github.com/vitali87/code-graph-rag/blob/main/codebase_rag/mcp/server.py)
 binds `127.0.0.1` by default and refuses a non-loopback bind without
-`MCP_HTTP_AUTH_TOKEN`. When configured, the token is checked even on loopback.
-This is a shared bearer credential, not per-user authorization. Authorized
+`MCP_HTTP_AUTH_TOKEN`. When configured, the token is checked even on loopback,
+on every connection, HTTP request or WebSocket alike. Surrounding whitespace is
+removed, and a blank value counts as unset. This is a shared bearer credential, not per-user authorization. Authorized
 clients can use privileged tools, including file modification and project
 deletion; treat client access accordingly.
 

@@ -629,6 +629,20 @@ class AppConfig(BaseSettings):
     # (serve_http refuses a non-loopback bind without it).
     MCP_HTTP_AUTH_TOKEN: str | None = None
 
+    @field_validator("MCP_HTTP_AUTH_TOKEN")
+    @classmethod
+    def _trimmed_token(cls, value: str | None) -> str | None:
+        """The token without surrounding whitespace, None when blank.
+
+        Read raw, `"  "` passed the exposure guard as a token and became the
+        bearer secret, and the trailing newline of a mounted secrets file
+        made every correctly configured client get 401; the provider keys
+        follow the same rule (`normalised_credential`).
+        """
+        if value is None:
+            return None
+        return value.strip() or None
+
     def _get_default_config(self, role: str) -> ModelConfig:
         role_upper = role.upper()
 
