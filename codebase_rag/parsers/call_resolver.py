@@ -15,6 +15,7 @@ from ..types_defs import FunctionRegistryTrieProtocol
 from ..utils import qn_markers
 from .call_site import CallSite, split_receiver_chain, trie_search_name
 from .cpp.resolution import CppResolver
+from .csharp.resolution import CSharpResolver
 from .dart.resolution import DartResolver
 from .definition_facts import DefinitionFacts
 from .go import utils as go_utils
@@ -69,24 +70,6 @@ def _qn_parts(qualified_name: str) -> tuple[str, ...]:
     return tuple(qualified_name.split(cs.SEPARATOR_DOT))
 
 
-def _split_csharp_qualified_path(path: str) -> list[str]:
-    parts: list[str] = []
-    current: list[str] = []
-    generic_depth = 0
-    for char in path:
-        if char == cs.CHAR_ANGLE_OPEN:
-            generic_depth += 1
-        elif char == cs.CHAR_ANGLE_CLOSE and generic_depth:
-            generic_depth -= 1
-        if char == cs.SEPARATOR_DOT and generic_depth == 0:
-            parts.append("".join(current))
-            current = []
-        else:
-            current.append(char)
-    parts.append("".join(current))
-    return parts
-
-
 def _file_language(suffix: str) -> cs.SupportedLanguage | None:
     # `.ipynb` maps to no grammar, but the only notebooks that become modules
     # are Python ones, whose cells are parsed as Python (issue #2480).
@@ -125,6 +108,7 @@ class CallResolver:
         "php",
         "dart",
         "java",
+        "csharp",
     )
 
     def __init__(
@@ -216,6 +200,9 @@ class CallResolver:
         )
         self.java = java_resolution.JavaResolver(
             self, function_registry, type_inference
+        )
+        self.csharp = CSharpResolver(
+            self, function_registry, import_processor, type_inference
         )
 
     def record_ctor_params(self, class_qn: str, params: tuple[str, ...]) -> None:
@@ -395,13 +382,7 @@ class CallResolver:
         self._module_language_cache.clear()
         self.php.reset_resolution_memos()
         self.js_ts.reset_resolution_memos()
-        # The C# chained-receiver memo (issue #1800) is a resolution cache
-        # like the rest and expires with them: it is keyed by byte span, and a
-        # re-parsed file's spans name different code. Reached through the
-        # PRIVATE attribute so a project with no C# does not build an engine
-        # just to clear an empty dict.
-        if (csharp := self.type_inference._csharp_type_inference) is not None:
-            csharp._call_memo.clear()
+        self.csharp.reset_resolution_memos()
         self.java.reset_resolution_memos()
 
     def resolve_function_call(
@@ -494,11 +475,8 @@ class CallResolver:
         # on it let the defect straight through.
         if cs.SEPARATOR_DOUBLE_COLON in receiver:
             return result
-        if (
-            language == cs.SupportedLanguage.CSHARP
-            and self._try_resolve_csharp_qualified_call(
-                call_name, module_qn, local_var_types
-            )
+        if self.csharp.csharp_qualified_path_binds(
+            call_name, module_qn, local_var_types, language
         ):
             return result
         if self._receiver_names_a_type_or_module(
@@ -1187,30 +1165,7 @@ class CallResolver:
         ):
             return True, None
 
-        if call.language == cs.SupportedLanguage.CSHARP and (
-            cs.SEPARATOR_DOUBLE_COLON in call_name or cs.SEPARATOR_DOT in call_name
-        ):
-            result, decided = self._resolve_csharp_qualified_call(
-                call_name, module_qn, call.local_var_types
-            )
-            if result is not None:
-                return True, result
-            if decided or cs.SEPARATOR_DOUBLE_COLON in call_name:
-                return True, None
-        # `new W(1)` under `using W = Zeta.Widget;` names no registered type
-        # by its written name, so the trie has no `W` to offer; the type
-        # lookup expands the alias to its target (issue #2002).
-        if (
-            call.language == cs.SupportedLanguage.CSHARP
-            and call.constructing
-            and (
-                type_qn := self.type_inference.csharp_type_inference._type_name_to_qn(
-                    call_name, module_qn
-                )
-            )
-        ):
-            return True, (self.function_registry[type_qn], type_qn)
-        return False, None
+        return self.csharp.resolve_csharp_qualified_path(call)
 
     def _resolve_imported_or_module_member(
         self, call: CallSite, cache_key: tuple[str, str, bool] | None
@@ -1665,14 +1620,11 @@ class CallResolver:
         local_var_types: dict[str, str] | None,
         language: cs.SupportedLanguage | None = None,
     ) -> tuple[str, str] | None:
-        if language == cs.SupportedLanguage.CSHARP:
-            result, decided = self._resolve_csharp_qualified_call(
-                call_name, module_qn, local_var_types
-            )
-            if result is not None:
-                return result
-            if decided:
-                return None
+        handled, result = self.csharp.resolve_csharp_qualified_call(
+            call_name, module_qn, local_var_types, language
+        )
+        if handled:
+            return result
         if cs.SEPARATOR_DOUBLE_COLON in call_name:
             separator = cs.SEPARATOR_DOUBLE_COLON
         elif cs.CHAR_COLON in call_name:
@@ -1704,101 +1656,6 @@ class CallResolver:
         return self._resolve_multi_part_call(
             parts, call_name, import_map, module_qn, local_var_types
         )
-
-    def _try_resolve_csharp_qualified_call(
-        self,
-        call_name: str,
-        module_qn: str,
-        local_var_types: dict[str, str] | None = None,
-    ) -> tuple[str, str] | None:
-        result, _ = self._resolve_csharp_qualified_call(
-            call_name, module_qn, local_var_types
-        )
-        return result
-
-    def _csharp_dotted_path_shadowed(
-        self, call_name: str, local_var_types: dict[str, str] | None
-    ) -> bool:
-        return bool(
-            local_var_types
-            and cs.SEPARATOR_DOT in call_name
-            and cs.SEPARATOR_DOUBLE_COLON not in call_name
-            and not call_name.startswith(f"global{cs.SEPARATOR_DOT}")
-            and call_name.split(cs.SEPARATOR_DOT, 1)[0] in local_var_types
-        )
-
-    def _resolve_csharp_qualified_call(
-        self,
-        call_name: str,
-        module_qn: str,
-        local_var_types: dict[str, str] | None = None,
-    ) -> tuple[tuple[str, str] | None, bool]:
-        if self._csharp_dotted_path_shadowed(call_name, local_var_types):
-            return None, False
-        path = call_name.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT)
-        global_prefix = f"global{cs.SEPARATOR_DOT}"
-        is_global = path.startswith(global_prefix)
-        if path.startswith(global_prefix):
-            path = path[len(global_prefix) :]
-        parts = _split_csharp_qualified_path(path)
-        if len(parts) < 2 or any(not part for part in parts):
-            return None, False
-
-        type_inference = self.type_inference.csharp_type_inference
-        for cut in range(len(parts), 0, -1):
-            type_path = cs.SEPARATOR_DOT.join(parts[:cut])
-            if is_global:
-                type_path = f"global{cs.SEPARATOR_DOUBLE_COLON}{type_path}"
-            class_qn = type_inference._qualified_type_name_to_qn(type_path, module_qn)
-            if class_qn is None:
-                continue
-            if cut == len(parts):
-                return (cs.NodeLabel.CLASS, class_qn), True
-            # A namespace-qualified type owns the path even when the member is
-            # missing; an unqualified value receiver may still be a field chain.
-            return self._csharp_type_member(class_qn, parts[cut:]), True
-        if (
-            not is_global
-            and cs.SEPARATOR_DOUBLE_COLON not in call_name
-            and self._csharp_path_starts_with_imported_namespace(parts, module_qn)
-        ):
-            return None, True
-        return None, False
-
-    def _csharp_type_member(
-        self, class_qn: str, member_parts: list[str]
-    ) -> tuple[str, str] | None:
-        # The member a qualified path names on a resolved type: a registered
-        # method directly, else a single-segment name inherited from a base.
-        member_name = cs.SEPARATOR_DOT.join(member_parts).split(cs.CHAR_ANGLE_OPEN, 1)[
-            0
-        ]
-        method_qn = f"{class_qn}{cs.SEPARATOR_DOT}{member_name}"
-        if method_qn in self.function_registry:
-            return self.function_registry[method_qn], method_qn
-        if cs.SEPARATOR_DOT not in member_name:
-            return self._resolve_inherited_method(class_qn, member_name)
-        return None
-
-    def _csharp_path_starts_with_imported_namespace(
-        self, parts: list[str], module_qn: str
-    ) -> bool:
-        import_map = self.import_processor.import_mapping.get(module_qn, {})
-        namespaces = {
-            namespace
-            for module_namespaces in self.import_processor.csharp.csharp_module_namespaces.values()
-            for namespace in module_namespaces
-        }
-        for cut in range(len(parts), 0, -1):
-            prefix = cs.SEPARATOR_DOT.join(parts[:cut])
-            local_name, separator, remainder = prefix.partition(cs.SEPARATOR_DOT)
-            imported = import_map.get(local_name)
-            if imported is None:
-                continue
-            expanded = f"{imported}{separator}{remainder}" if separator else imported
-            if expanded in namespaces:
-                return True
-        return False
 
     def _has_separator(self, call_name: str) -> bool:
         return (
@@ -2070,10 +1927,9 @@ class CallResolver:
         if not possible_matches:
             logger.debug(ls.CALL_UNRESOLVED, call_name=call_name)
             return None
-        if language == cs.SupportedLanguage.CSHARP and len(possible_matches) > 1:
-            possible_matches = self._csharp_prefer_imported(
-                possible_matches, module_qn, call_name
-            )
+        possible_matches = self.csharp.csharp_prefer_imported(
+            possible_matches, module_qn, call_name, language
+        )
 
         best_candidate_qn = self._best_trie_candidate(possible_matches, module_qn)
         logger.debug(ls.CALL_TRIE_FALLBACK, call_name=call_name, qn=best_candidate_qn)
@@ -2103,94 +1959,6 @@ class CallResolver:
                 qn,
             ),
         )
-
-    def _csharp_prefer_imported(
-        self, candidates: list[str], module_qn: str, call_name: str
-    ) -> list[str]:
-        # Same-named C# types in two namespaces tied on import distance and
-        # broke on qn order, so `using Zeta;` + `new Widget()` bound
-        # `Other.Widget` (issue #2001). C# name lookup searches the caller's
-        # own namespace, innermost first, before any `using`, so a candidate
-        # there wins outright; otherwise the candidates whose
-        # owning type sits DIRECTLY in a namespace (or, for `using static`,
-        # a type) the file imports: C# does not import nested namespaces.
-        containers, import_keys, bare_members = self._csharp_import_keys(
-            candidates, call_name
-        )
-        enclosing = self._csharp_enclosing_namespaces(module_qn)
-        # A namespace holds types, not members: the caller's namespace makes
-        # `App.Widget` nameable, never `App.Widget.S` callable bare. Only a
-        # `using static` does that, which the import preference below checks
-        # .
-        local = [
-            qn
-            for qn in candidates
-            if containers.get(qn) in enclosing and qn not in bare_members
-        ]
-        if local:
-            innermost = max(len(containers[qn]) for qn in local)
-            return [qn for qn in local if len(containers[qn]) == innermost]
-        # Only a directive whose local name is its target's own last segment
-        # makes names available unqualified (`using Zeta;`, `using static
-        # Zeta.Widget;`); an alias (`using Alias = Other;`) does not.
-        imported = {
-            target
-            for local_name, target in self.import_processor.import_mapping.get(
-                module_qn, {}
-            ).items()
-            if local_name == target.rpartition(cs.SEPARATOR_DOT)[2]
-        }
-        preferred = [qn for qn in candidates if import_keys.get(qn) in imported]
-        return preferred or candidates
-
-    def _csharp_import_keys(
-        self, candidates: list[str], call_name: str
-    ) -> tuple[dict[str, str], dict[str, str], set[str]]:
-        """(candidate -> namespace holding its type, candidate -> what an
-         import must name to make it available, the bare-called members).
-
-         A type, or a member reached through its type (`Widget.S()`), is
-         imported by a namespace directive naming the type's namespace; a BARE
-         member (`S()`) only by a `using static` naming its declaring type
-        .
-        """
-        declared = self.type_inference.facts.csharp_class_namespaced
-        bare = cs.SEPARATOR_DOT not in call_name
-        containers: dict[str, str] = {}
-        import_keys: dict[str, str] = {}
-        bare_members: set[str] = set()
-        for qn in candidates:
-            owner = qn
-            while owner and owner not in declared:
-                owner = owner.rpartition(cs.SEPARATOR_DOT)[0]
-            if not owner:
-                continue
-            containers[qn] = declared[owner].rpartition(cs.SEPARATOR_DOT)[0]
-            if bare and owner != qn:
-                bare_members.add(qn)
-            import_keys[qn] = declared[owner] if qn in bare_members else containers[qn]
-        return containers, import_keys, bare_members
-
-    def _csharp_enclosing_namespaces(self, module_qn: str) -> set[str]:
-        """Every namespace enclosing the file's call sites, innermost included.
-
-         Only known when the file declares ONE nested chain; with sibling
-         namespaces (`App` and `Other` in one file) neither is local to every
-         call site, so no local precedence applies rather than a guessed one
-        .
-        """
-        declared_here = sorted(
-            self.import_processor.csharp.csharp_module_namespaces.get(module_qn, {}),
-            key=len,
-        )
-        if not declared_here or not all(
-            declared_here[-1] == ns
-            or declared_here[-1].startswith(f"{ns}{cs.SEPARATOR_DOT}")
-            for ns in declared_here
-        ):
-            return set()
-        parts = declared_here[-1].split(cs.SEPARATOR_DOT)
-        return {cs.SEPARATOR_DOT.join(parts[:cut]) for cut in range(1, len(parts) + 1)}
 
     def _resolve_two_part_call(
         self,
@@ -3662,14 +3430,3 @@ class CallResolver:
         # Only the last step, the search by simple name, can land in a crate
         # the caller cannot depend on; search again among those it can.
         return self.rust.rust_reachable_type(class_name, module_qn)
-
-    def resolve_csharp_method_call(
-        self,
-        call_node: Node,
-        module_qn: str,
-        local_var_types: dict[str, str] | None,
-        caller_qn: str | None = None,
-    ) -> tuple[str, str] | None:
-        return self.type_inference.csharp_type_inference.resolve_csharp_method_call(
-            call_node, local_var_types, module_qn, caller_qn
-        )

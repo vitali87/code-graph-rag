@@ -304,7 +304,7 @@ class CSharpCallResolution:
     ) -> tuple[str, str] | None:
         # `constructing`: the call node is an object creation, whose name the
         # name-based fallback reads as a TYPE (the call pass's own rule).
-        callee_info = self._resolver.resolve_csharp_method_call(
+        callee_info = self._resolver.csharp.resolve_csharp_method_call(
             call_node, ctx.module_qn, call_var_types, ctx.caller_qn
         )
         if (
