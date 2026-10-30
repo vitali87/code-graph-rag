@@ -50,6 +50,7 @@ from .builds import (
 
 if TYPE_CHECKING:
     from ..definition_context import DefinitionContext
+    from .definition_state import GoDefinitionState
 
 # The labels a Go type that can carry methods is registered under: a struct
 # (Class) or any other defined type (Type, as `type HandlerFunc func()`).
@@ -301,15 +302,7 @@ class GoInterfaceIngest:
         *,
         method_host: MethodIngestHost,
         context: DefinitionContext,
-        go_methods: dict[str, go_ifaces.GoMethodSpec],
-        go_interfaces: dict[str, go_ifaces.GoInterfaceDecl],
-        go_interfaces_parsed: dict[str, str],
-        go_proven_pairs: set[tuple[str, str]],
-        go_guessed_pairs: set[tuple[str, str]],
-        go_builtin_shadows: dict[str, frozenset[str]],
-        go_variant_methods: dict[str, dict[str, list[str]]],
-        go_pair_builds: dict[tuple[str, str], Expr],
-        go_builds: GoBuilds,
+        state: GoDefinitionState,
     ) -> None:
         # What an interface's method specs are written through: the
         # definition pass's graph, registries and pending fact queues.
@@ -323,28 +316,28 @@ class GoInterfaceIngest:
         self.facts = context.facts
         # Go method qn (receiver methods and interface method specs) -> its
         # parameter count and package, from the parse or read back.
-        self.go_methods = go_methods
+        self.go_methods = state.methods
         # Go interface qn -> the types it embeds, as written, and its package.
-        self.go_interfaces = go_interfaces
+        self.go_interfaces = state.interfaces
         # The interfaces this run parsed -> their module: only those resolve
         # their embedded names and write the INHERITS edges, since an unchanged
         # interface's edges are still in the graph and were read back.
-        self.go_interfaces_parsed = go_interfaces_parsed
+        self.go_interfaces_parsed = state.interfaces_parsed
         # The (interface, implementer) pairs in `interface_implementers` that
         # go/types proved, and those matched here by name and arity only.
-        self.go_proven_pairs = go_proven_pairs
-        self.go_guessed_pairs = go_guessed_pairs
-        self.go_builtin_shadows = go_builtin_shadows
+        self.go_proven_pairs = state.proven_pairs
+        self.go_guessed_pairs = state.guessed_pairs
+        self.go_builtin_shadows = state.builtin_shadows
         # Go type -> method name -> the declarations a variant of the type that
         # another build declares (`t_linux.go`'s `T` beside `t_windows.go`'s)
         # holds for it in a file both builds compile, refilled by each link
         # (shared with the call resolver).
-        self.go_variant_methods = go_variant_methods
+        self.go_variant_methods = state.variant_methods
         # (Go interface, implementer) -> the builds in which the pair holds,
         # refilled by each link (shared with the call resolver, which reaches an
         # implementation only from a caller one of those builds compiles).
-        self.go_pair_builds = go_pair_builds
-        self.go_builds = go_builds
+        self.go_pair_builds = state.pair_builds
+        self.go_builds = state.builds
 
     def ingest_interface_methods(
         self,

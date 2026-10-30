@@ -25,12 +25,12 @@ from ..language_definitions import LanguageFunctionIngest
 from ..method_ingest import MethodIngestHost, ingest_method
 from . import interfaces as go_interfaces
 from . import utils as go_utils
-from .builds import GoBuilds
 
 if TYPE_CHECKING:
     from ...language_spec import LanguageSpec
     from ...types_defs import FunctionSpanKey, LanguageQueries
     from ..definition_context import DefinitionContext
+    from .definition_state import GoDefinitionState
 
 
 class GoFunctionHost(Protocol):
@@ -87,10 +87,9 @@ class GoFunctionIngest(LanguageFunctionIngest):
         self,
         host: GoFunctionHost,
         context: DefinitionContext,
+        state: GoDefinitionState,
         *,
         method_host: MethodIngestHost,
-        builds: GoBuilds,
-        methods: dict[str, go_interfaces.GoMethodSpec],
         deferred_parent_links: list[DeferredParentLink],
     ) -> None:
         self._host = host
@@ -101,8 +100,8 @@ class GoFunctionIngest(LanguageFunctionIngest):
         self.simple_name_lookup = context.simple_name_lookup
         self.module_qn_to_file_path = context.module_qn_to_file_path
         self.facts = context.facts
-        self.builds = builds
-        self.methods = methods
+        self.builds = state.builds
+        self.methods = state.methods
         # Shared with the class pass, which emits them once every parent
         # is registered.
         self._deferred_parent_links = deferred_parent_links

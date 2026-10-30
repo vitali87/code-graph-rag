@@ -10,7 +10,8 @@ from .interfaces import GoMethodSpec
 
 @dataclass
 class GoLinkState:
-    """Each container is the definition processor's own, held by reference:
+    """A view of the definition pass's `GoDefinitionState`, built by its
+    `link_state`: each container is that state's own, held by reference, and
     the link refills them in place before any call is resolved.
 
     `guessed_implementations` are the (interface, implementer) pairs matched

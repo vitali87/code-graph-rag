@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from ...language_spec import LanguageSpec
     from ...types_defs import LanguageQueries
     from ..function_identity import FunctionResolution
+    from .definition_state import CSharpDefinitionState
 
 
 def _nearest_preceding_type(
@@ -76,18 +77,17 @@ class CSharpFunctionIngest(LanguageFunctionIngest):
 
     def __init__(
         self,
+        state: CSharpDefinitionState,
         *,
         method_host: MethodIngestHost,
         facts: DefinitionFacts,
-        methods: set[str],
-        override_methods: set[str],
         deferred_parent_links: list[DeferredParentLink],
     ) -> None:
         # What a recovered member is written through.
         self._method_host = method_host
         self.facts = facts
-        self.methods = methods
-        self.override_methods = override_methods
+        self.methods = state.methods
+        self.override_methods = state.override_methods
         # Shared with the class pass, which emits them once every parent
         # is registered.
         self._deferred_parent_links = deferred_parent_links

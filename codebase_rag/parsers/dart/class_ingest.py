@@ -25,6 +25,7 @@ from .type_inference import DartTypeInferenceEngine
 if TYPE_CHECKING:
     from ...types_defs import DeferredInherit
     from ..definition_context import DefinitionContext
+    from .definition_state import DartDefinitionState
 
 
 class DartClassHost(Protocol):
@@ -61,8 +62,7 @@ class DartClassIngest(LanguageClassIngest):
         self,
         host: DartClassHost,
         context: DefinitionContext,
-        *,
-        annotated_overrides: dict[str, list[tuple[str, str]]],
+        state: DartDefinitionState,
     ) -> None:
         self._host = host
         self.ingestor = context.ingestor
@@ -70,7 +70,7 @@ class DartClassIngest(LanguageClassIngest):
         self.facts = context.facts
         # The `@override` methods of each class, recorded as it is ingested
         # and judged by flag_external_overrides once every class is.
-        self.annotated_overrides = annotated_overrides
+        self.annotated_overrides = state.annotated_overrides
         # The first-party IMPLEMENTS parents of each class, collected as the
         # deferred inherits resolve and read by flag_external_overrides.
         self._implements: dict[str, list[str]] = {}

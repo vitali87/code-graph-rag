@@ -20,6 +20,7 @@ from . import utils as java_utils
 
 if TYPE_CHECKING:
     from ..definition_context import DefinitionContext
+    from .definition_state import JavaDefinitionState
 
 
 def _anonymous_base_type(method_node: Node, class_node: Node) -> str | None:
@@ -61,16 +62,11 @@ class JavaClassIngest(LanguageClassIngest):
 
     __slots__ = ("ingestor", "function_registry", "facts", "anon_overrides")
 
-    def __init__(
-        self,
-        context: DefinitionContext,
-        *,
-        anon_overrides: list[tuple[str, str, str, str]],
-    ) -> None:
+    def __init__(self, context: DefinitionContext, state: JavaDefinitionState) -> None:
         self.ingestor = context.ingestor
         self.function_registry = context.function_registry
         self.facts = context.facts
-        self.anon_overrides = anon_overrides
+        self.anon_overrides = state.anon_overrides
 
     def method_qualified_name(self, method_node: Node, class_qn: str) -> str | None:
         return signatured_method_qn(method_node, class_qn)

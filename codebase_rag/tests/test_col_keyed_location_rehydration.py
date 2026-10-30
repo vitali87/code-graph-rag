@@ -1,5 +1,5 @@
 # Issue #1240 (Phase 2 of #1229): the Go IMPLEMENTS and semantic-call joins
-# resolve positions against col-keyed indexes (go_type_locations,
+# resolve positions against col-keyed indexes (go.type_locations,
 # function_locations) that Pass 2 fills only for RE-PARSED files. These tests
 # drive the rehydration + joins directly (no Go toolchain, no real DB) via a
 # QueryProtocol fake answering the location queries from seeded rows, exactly
@@ -84,7 +84,7 @@ def test_go_implements_joins_across_an_unchanged_file(tmp_path: Path) -> None:
     )
     updater = _updater(repo, graph)
     dp = updater.factory.definition_processor
-    dp.go_type_locations[("pkg/impl.go", 8, 5)] = ("proj.pkg.impl.DiskStore", "Class")
+    dp.go.type_locations[("pkg/impl.go", 8, 5)] = ("proj.pkg.impl.DiskStore", "Class")
     dp.facts.frontend_facts[cs.SupportedLanguage.GO].implements_pairs = [
         ImplementsPair(
             impl_file="pkg/impl.go",
@@ -131,17 +131,17 @@ def test_go_type_rehydration_guards_old_graphs_and_fresh_entries(
     )
     updater = _updater(repo, graph)
     dp = updater.factory.definition_processor
-    dp.go_type_locations[("pkg/dup.go", 5, 0)] = ("proj.pkg.fresh.Dup", "Class")
+    dp.go.type_locations[("pkg/dup.go", 5, 0)] = ("proj.pkg.fresh.Dup", "Class")
 
     updater.location_rehydrator.rehydrate_go_type_locations(updater._run)
 
-    assert dp.go_type_locations[("pkg/dup.go", 5, 0)] == (
+    assert dp.go.type_locations[("pkg/dup.go", 5, 0)] == (
         "proj.pkg.fresh.Dup",
         "Class",
     )
-    assert ("old/t.go", 2, None) not in dp.go_type_locations
-    assert all("cs/t.cs" != key[0] for key in dp.go_type_locations)
-    assert len(dp.go_type_locations) == 1
+    assert ("old/t.go", 2, None) not in dp.go.type_locations
+    assert all("cs/t.cs" != key[0] for key in dp.go.type_locations)
+    assert len(dp.go.type_locations) == 1
 
 
 def test_function_rehydration_keys_span_and_name_alias(tmp_path: Path) -> None:

@@ -1,5 +1,5 @@
 # Issue #1229 (Phase 1): on an incremental run, the partial join resolves
-# each Roslyn partial-declaration location against csharp_type_locations, which
+# each Roslyn partial-declaration location against csharp.type_locations, which
 # Pass 2 fills only for RE-PARSED files. Without rehydration, a partial part in
 # an UNCHANGED .cs file has no entry, so its group silently drops below the
 # 2-member threshold and the parts stop spanning to each other. These tests
@@ -79,7 +79,7 @@ def test_rehydration_lets_partial_group_span_an_unchanged_file(tmp_path: Path) -
     dp = updater.factory.definition_processor
 
     # Pass-2 result for the re-parsed file only.
-    dp.csharp_type_locations[("dirA/W.cs", 5)] = "proj.dirA.W"
+    dp.csharp.type_locations[("dirA/W.cs", 5)] = "proj.dirA.W"
     # Roslyn says these two locations are the same partial symbol.
     dp.facts.frontend_facts[cs.SupportedLanguage.CSHARP].partial_groups = [
         [("dirA/W.cs", 5), ("dirB/W.cs", 3)]
@@ -102,7 +102,7 @@ def test_without_rehydration_the_unchanged_part_is_dropped(tmp_path: Path) -> No
     updater = _updater(repo, [])
     dp = updater.factory.definition_processor
 
-    dp.csharp_type_locations[("dirA/W.cs", 5)] = "proj.dirA.W"
+    dp.csharp.type_locations[("dirA/W.cs", 5)] = "proj.dirA.W"
     dp.facts.frontend_facts[cs.SupportedLanguage.CSHARP].partial_groups = [
         [("dirA/W.cs", 5), ("dirB/W.cs", 3)]
     ]
@@ -123,13 +123,13 @@ def test_rehydration_keeps_the_fresh_pass2_entry(tmp_path: Path) -> None:
         [_persisted_type("proj.", "dirA/W.cs", 5, "dirA.W")],  # stale line
     )
     dp = updater.factory.definition_processor
-    dp.csharp_type_locations[("dirA/W.cs", 9)] = "proj.dirA.W"  # fresh Pass-2 line
+    dp.csharp.type_locations[("dirA/W.cs", 9)] = "proj.dirA.W"  # fresh Pass-2 line
 
     updater.location_rehydrator.rehydrate_csharp_type_locations(updater._run)
 
     # The fresh Pass-2 line survives; the join keys off the current fact
     # position, so the stale rehydrated (path, 5) entry is simply never queried.
-    assert dp.csharp_type_locations[("dirA/W.cs", 9)] == "proj.dirA.W"
+    assert dp.csharp.type_locations[("dirA/W.cs", 9)] == "proj.dirA.W"
 
 
 class _NonQueryGraph:
@@ -169,7 +169,7 @@ def test_rehydration_noops_without_query_protocol(tmp_path: Path) -> None:
         updater._run
     )  # must not raise
 
-    assert dp.csharp_type_locations == {}
+    assert dp.csharp.type_locations == {}
 
 
 def test_rehydration_reraises_query_error_on_incremental(tmp_path: Path) -> None:
@@ -202,7 +202,7 @@ def test_rehydration_tolerates_query_error_on_full_build(tmp_path: Path) -> None
         updater._run
     )  # must not raise
 
-    assert updater.factory.definition_processor.csharp_type_locations == {}
+    assert updater.factory.definition_processor.csharp.type_locations == {}
 
 
 def test_rehydration_skips_malformed_rows(tmp_path: Path) -> None:
@@ -229,4 +229,4 @@ def test_rehydration_skips_malformed_rows(tmp_path: Path) -> None:
 
     updater.location_rehydrator.rehydrate_csharp_type_locations(updater._run)
 
-    assert dp.csharp_type_locations == {("good.cs", 4): "proj.Good"}
+    assert dp.csharp.type_locations == {("good.cs", 4): "proj.Good"}

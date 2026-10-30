@@ -320,7 +320,7 @@ class FrontendRunner:
     def _tightest_containing_span(
         self, rel_path: str, line: int, reparsed_keys: Collection[str]
     ) -> CppDefinitionSpan | None:
-        spans = self._factory.definition_processor.cpp_definition_spans
+        spans = self._factory.definition_processor.cpp.definition_spans
         candidates = spans.get(rel_path)
         if candidates is None and rel_path not in reparsed_keys:
             # An unchanged file on an incremental run has no fresh spans;
@@ -340,7 +340,7 @@ class FrontendRunner:
         # actually uses.
         if not self.pending_macro_calls:
             return
-        spans = self._factory.definition_processor.cpp_definition_spans
+        spans = self._factory.definition_processor.cpp.definition_spans
         emitted = 0
         for call in self.pending_macro_calls:
             # The frontend parses every TU each run, but an incremental run

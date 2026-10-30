@@ -230,9 +230,18 @@ def test_container_resolution_uses_directory_for_disambiguated_modules() -> None
     # qn-prefix package comparison places it in a phantom package. Directory
     # grouping must still bind the method to the real type node.
     from codebase_rag.constants import NodeLabel
-    from codebase_rag.parsers.definition_context import DefinitionContext
+    from codebase_rag.parsers.cpp.definition_state import CppDefinitionState
+    from codebase_rag.parsers.csharp.definition_state import CSharpDefinitionState
+    from codebase_rag.parsers.dart.definition_state import DartDefinitionState
+    from codebase_rag.parsers.definition_context import (
+        DefinitionContext,
+        LanguageStates,
+    )
     from codebase_rag.parsers.function_ingest import FunctionIngest
     from codebase_rag.parsers.go.builds import GoBuilds
+    from codebase_rag.parsers.go.definition_state import GoDefinitionState
+    from codebase_rag.parsers.java.definition_state import JavaDefinitionState
+    from codebase_rag.parsers.rust.definition_state import RustDefinitionState
 
     functions = FunctionIngest(
         method_host=MagicMock(),
@@ -254,12 +263,14 @@ def test_container_resolution_uses_directory_for_disambiguated_modules() -> None
                 }
             ),
         ),
-        go_builds=GoBuilds(Path("/repo")),
-        go_methods={},
-        java_anon_overrides=[],
-        cpp_definition_spans={},
-        csharp_methods=set(),
-        csharp_override_methods=set(),
+        states=LanguageStates(
+            cpp=CppDefinitionState(),
+            csharp=CSharpDefinitionState(),
+            dart=DartDefinitionState(),
+            go=GoDefinitionState(GoBuilds(Path("/repo"))),
+            java=JavaDefinitionState(),
+            rust=RustDefinitionState(),
+        ),
         folded_overloads={},
         pending_endpoints=[],
         pending_type_facts=[],

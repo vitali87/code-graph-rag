@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from ...language_spec import LanguageSpec
     from ...types_defs import LanguageQueries
     from ..definition_context import DefinitionContext
+    from .definition_state import CppDefinitionState
 
 
 class CppFunctionHost(Protocol):
@@ -186,9 +187,9 @@ class CppFunctionIngest(LanguageFunctionIngest):
         self,
         host: CppFunctionHost,
         context: DefinitionContext,
+        state: CppDefinitionState,
         *,
         method_host: MethodIngestHost,
-        cpp_definition_spans: dict[str, list[CppDefinitionSpan]],
     ) -> None:
         self._host = host
         # What an out-of-class method is written through, and where its
@@ -200,7 +201,7 @@ class CppFunctionIngest(LanguageFunctionIngest):
         self.simple_name_lookup = context.simple_name_lookup
         self.module_qn_to_file_path = context.module_qn_to_file_path
         self.facts = context.facts
-        self.cpp_definition_spans = cpp_definition_spans
+        self.cpp_definition_spans = state.definition_spans
         self._deferred_methods: list[_DeferredMethod] = []
         self._deferred_containment: list[_DeferredContainment] = []
         # Macro-invocation-shaped C++ nodes held until every class (incl.

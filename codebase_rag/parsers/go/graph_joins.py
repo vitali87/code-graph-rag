@@ -13,7 +13,7 @@ from ..definition_processor import DefinitionProcessor
 def join_implements(dp: DefinitionProcessor, sink: IngestorProtocol) -> None:
     # go/types proved each implementer->interface pair structurally; both
     # ends carry a declaring-identifier position that resolves to the Pass-2
-    # type node through go_type_locations. On a two-sided hit, emit the
+    # type node through go.type_locations. On a two-sided hit, emit the
     # IMPLEMENTS edge and record the implementer so a call through the
     # interface with a SOLE implementer also edges to the concrete method
     # (resolver.interface_sole_impl_targets, no extra wiring). A miss on
@@ -22,8 +22,8 @@ def join_implements(dp: DefinitionProcessor, sink: IngestorProtocol) -> None:
     # the compiler no longer proves.
     proven: list[tuple[str, str]] = []
     for pair in dp.facts.frontend_facts[cs.SupportedLanguage.GO].implements_pairs:
-        impl = dp.go_type_locations.get((pair.impl_file, pair.impl_line, pair.impl_col))
-        iface = dp.go_type_locations.get(
+        impl = dp.go.type_locations.get((pair.impl_file, pair.impl_line, pair.impl_col))
+        iface = dp.go.type_locations.get(
             (pair.iface_file, pair.iface_line, pair.iface_col)
         )
         if impl is None or iface is None:
@@ -39,7 +39,7 @@ def join_implements(dp: DefinitionProcessor, sink: IngestorProtocol) -> None:
             (iface_label, cs.KEY_QUALIFIED_NAME, iface_qn),
         )
         proven.append((iface_qn, impl_qn))
-    dp.replace_go_implementers(dp.go_proven_pairs, proven, keep=dp.go_guessed_pairs)
+    dp.replace_go_implementers(dp.go.proven_pairs, proven, keep=dp.go.guessed_pairs)
     if proven:
         logger.info(ls.GO_FRONTEND_IMPLEMENTS_JOINED.format(count=len(proven)))
 
@@ -56,6 +56,6 @@ def link_interfaces(dp: DefinitionProcessor) -> None:
         frozenset(
             located[0]
             for position in facts.compared_types
-            if (located := dp.go_type_locations.get(position)) is not None
+            if (located := dp.go.type_locations.get(position)) is not None
         ),
     )

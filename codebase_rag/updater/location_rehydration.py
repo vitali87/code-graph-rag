@@ -65,7 +65,7 @@ class LocationRehydrator:
         self._recorded_module_qn = recorded_module_qn
 
     def rehydrate_csharp_type_locations(self, run: RehydrationRun) -> None:
-        # Incremental runs fill csharp_type_locations only from re-parsed files,
+        # Incremental runs fill csharp.type_locations only from re-parsed files,
         # but csharp_joins.join_partials resolves every partial-declaration
         # location against it. Restore the (path, start_line) -> qn entries for
         # types in UNCHANGED .cs files from the persisted graph so a partial
@@ -76,7 +76,7 @@ class LocationRehydrator:
         graph = self._graph
         if graph is None:
             return
-        locations = self._factory.definition_processor.csharp_type_locations
+        locations = self._factory.definition_processor.csharp.type_locations
         try:
             rows = self._owned_rows(
                 graph.fetch_all(
@@ -112,7 +112,7 @@ class LocationRehydrator:
             logger.info(ls.CSHARP_TYPE_LOCATIONS_REHYDRATED.format(count=restored))
 
     def rehydrate_go_type_locations(self, run: RehydrationRun) -> None:
-        # Incremental runs fill go_type_locations only from re-parsed files,
+        # Incremental runs fill go.type_locations only from re-parsed files,
         # but go_joins.join_implements resolves BOTH ends of each pair against
         # it. Restore (path, line, col) -> (qn, label) for types in unchanged
         # .go files from the persisted graph (issue #1240). A pre-#1240 graph
@@ -121,7 +121,7 @@ class LocationRehydrator:
         graph = self._graph
         if graph is None:
             return
-        locations = self._factory.definition_processor.go_type_locations
+        locations = self._factory.definition_processor.go.type_locations
         try:
             rows = self._owned_rows(
                 graph.fetch_all(

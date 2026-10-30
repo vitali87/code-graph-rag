@@ -11,7 +11,6 @@ from .. import constants as cs
 from .. import logs as ls
 from ..language_spec import LanguageSpec
 from ..types_defs import (
-    CppDefinitionSpan,
     DeferredParentLink,
     FunctionLocation,
     FunctionSpanKey,
@@ -33,8 +32,6 @@ from .function_containment import FunctionContainment
 from .function_identity import FunctionResolution, name_start_point
 from .function_naming import FunctionNaming, extract_function_name
 from .go import function_ingest as go_function_ingest
-from .go import interfaces as go_interfaces
-from .go.builds import GoBuilds
 from .java import function_ingest as java_function_ingest
 from .js_ts import function_ingest as js_ts_function_ingest
 from .js_ts.utils import mark_js_ts_module_private
@@ -57,7 +54,7 @@ from .utils import (
 
 if TYPE_CHECKING:
     from ..types_defs import LanguageQueries
-    from .definition_context import DefinitionContext
+    from .definition_context import DefinitionContext, LanguageStates
 
 # Rust and Julia macros live in a separate namespace from functions (Julia's
 # `@name` vs `name`).
@@ -110,12 +107,7 @@ class FunctionIngest:
         *,
         method_host: MethodIngestHost,
         context: DefinitionContext,
-        go_builds: GoBuilds,
-        go_methods: dict[str, go_interfaces.GoMethodSpec],
-        java_anon_overrides: list[tuple[str, str, str, str]],
-        cpp_definition_spans: dict[str, list[CppDefinitionSpan]],
-        csharp_methods: set[str],
-        csharp_override_methods: set[str],
+        states: LanguageStates,
         folded_overloads: dict[str, frozenset[int]],
         pending_endpoints: list[tuple[cs.NodeLabel, str, list[str], str | None]],
         pending_type_facts: list[PendingTypeFact],
@@ -131,40 +123,35 @@ class FunctionIngest:
         self.simple_name_lookup = context.simple_name_lookup
         self.module_qn_to_file_path = context.module_qn_to_file_path
         self.facts = context.facts
-        self.cpp_definition_spans = cpp_definition_spans
+        self.cpp_definition_spans = states.cpp.definition_spans
         self.pending_endpoints = pending_endpoints
         self.pending_type_facts = pending_type_facts
         self.pending_parameter_types = pending_parameter_types
         self._naming = FunctionNaming(self)
         self._containment = FunctionContainment(self, context, deferred_parent_links)
         self.cpp = cpp_function_ingest.CppFunctionIngest(
-            self,
-            context,
-            method_host=method_host,
-            cpp_definition_spans=cpp_definition_spans,
+            self, context, states.cpp, method_host=method_host
         )
         self.rust = rust_function_ingest.RustFunctionIngest(
             self, context.ingestor, context.facts
         )
         self.csharp = csharp_function_ingest.CSharpFunctionIngest(
+            states.csharp,
             method_host=method_host,
             facts=context.facts,
-            methods=csharp_methods,
-            override_methods=csharp_override_methods,
             deferred_parent_links=deferred_parent_links,
         )
         self.go = go_function_ingest.GoFunctionIngest(
             self,
             context,
+            states.go,
             method_host=method_host,
-            builds=go_builds,
-            methods=go_methods,
             deferred_parent_links=deferred_parent_links,
         )
         self.js_ts = js_ts_function_ingest.JsTsFunctionIngest(
             self, context.function_registry, context.facts, folded_overloads
         )
-        self.java = java_function_ingest.JavaFunctionIngest(java_anon_overrides)
+        self.java = java_function_ingest.JavaFunctionIngest(states.java)
         self.python = python_function_ingest.PythonFunctionIngest(folded_overloads)
         self.dart = dart_function_ingest.DartFunctionIngest(context.facts)
         self.php = php_function_ingest.PhpFunctionIngest()

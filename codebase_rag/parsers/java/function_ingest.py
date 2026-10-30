@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from ...language_spec import LanguageSpec
     from ...types_defs import FunctionLocation
     from ..function_identity import FunctionResolution
+    from .definition_state import JavaDefinitionState
 
 
 def _anonymous_base_type(
@@ -56,8 +57,8 @@ class JavaFunctionIngest(LanguageFunctionIngest):
 
     __slots__ = ("anon_overrides",)
 
-    def __init__(self, anon_overrides: list[tuple[str, str, str, str]]) -> None:
-        self.anon_overrides = anon_overrides
+    def __init__(self, state: JavaDefinitionState) -> None:
+        self.anon_overrides = state.anon_overrides
 
     def record_function(
         self,

@@ -10,7 +10,7 @@ from tree_sitter import Node, QueryCursor
 from ... import constants as cs
 from ...language_spec import LANGUAGE_SPECS, LanguageSpec
 from ...node_text import sorted_captures
-from ...types_defs import CppDefinitionSpan, DeferredInherit, PropertyDict
+from ...types_defs import DeferredInherit, PropertyDict
 from ...utils.path_utils import cached_relative_path, cached_resolve_posix
 from ..anchor_hash import anchor_hash_props
 from ..cpp import class_ingest as cpp_class_ingest
@@ -19,7 +19,6 @@ from ..dart import class_ingest as dart_class_ingest
 from ..enum_variants import emit_declared_variants
 from ..field_nodes import PendingFieldType, emit_declared_fields
 from ..go import class_ingest as go_class_ingest
-from ..go import interfaces as go_ifaces
 from ..java import class_ingest as java_class_ingest
 from ..js_ts import class_ingest as js_ts_class_ingest
 from ..js_ts.utils import mark_js_ts_module_private
@@ -41,9 +40,8 @@ from .deferred_inherits import DeferredInherits
 
 if TYPE_CHECKING:
     from ...types_defs import DeferredParentLink, LanguageQueries
-    from ..definition_context import DefinitionContext
+    from ..definition_context import DefinitionContext, LanguageStates
     from ..function_ingest import FunctionIngest
-    from ..go.interface_ingest import GoInterfaceIngest
 
 
 class _WrittenClass(NamedTuple):
@@ -81,9 +79,7 @@ class ClassIngest:
         "import_processor",
         "facts",
         "class_owner_module",
-        "cpp_definition_spans",
         "pending_field_types",
-        "folded_overloads",
         "_deferred_parent_links",
         "_deferred_inherits",
         "_inherits",
@@ -109,24 +105,10 @@ class ClassIngest:
         *,
         method_host: MethodIngestHost,
         function_ingest: FunctionIngest,
-        go_interface_ingest: GoInterfaceIngest,
         context: DefinitionContext,
+        states: LanguageStates,
         flow_capture_enabled: bool,
         class_owner_module: dict[str, str],
-        dart_annotated_overrides: dict[str, list[tuple[str, str]]],
-        java_anon_overrides: list[tuple[str, str, str, str]],
-        csharp_methods: set[str],
-        csharp_override_methods: set[str],
-        csharp_partial_index: dict[str, list[str]],
-        csharp_type_locations: dict[tuple[str, int], str],
-        go_type_locations: dict[tuple[str, int, int], tuple[str, str]],
-        rust_impl_owner_module: dict[str, str],
-        go_interfaces: dict[str, go_ifaces.GoInterfaceDecl],
-        cpp_definition_spans: dict[str, list[CppDefinitionSpan]],
-        rust_impl_method_traits: dict[str, str],
-        rust_inherent_impl_methods: set[str],
-        cpp_module_interfaces: set[str],
-        cpp_interfaces_parsed_this_run: set[str],
         pending_field_types: list[PendingFieldType],
         folded_overloads: dict[str, frozenset[int]],
         deferred_parent_links: list[DeferredParentLink],
@@ -158,48 +140,26 @@ class ClassIngest:
             method_host=method_host,
             repo_path=context.repo_path,
             facts=context.facts,
-            cpp_definition_spans=cpp_definition_spans,
+            cpp_definition_spans=states.cpp.definition_spans,
             folded_overloads=folded_overloads,
         )
         self.cpp = cpp_class_ingest.CppClassIngest(
-            self,
-            function_ingest.cpp,
-            context,
-            module_interfaces=cpp_module_interfaces,
-            interfaces_parsed_this_run=cpp_interfaces_parsed_this_run,
+            self, function_ingest.cpp, context, states.cpp
         )
         self.c = cpp_class_ingest.CClassIngest(self.cpp)
         self.rust = rust_class_ingest.RustClassIngest(
             self,
             context,
+            states.rust,
             method_host=method_host,
             flow_capture_enabled=flow_capture_enabled,
-            impl_owner_module=rust_impl_owner_module,
-            impl_method_traits=rust_impl_method_traits,
-            inherent_impl_methods=rust_inherent_impl_methods,
             deferred_parent_links=deferred_parent_links,
         )
-        self.csharp = csharp_class_ingest.CSharpClassIngest(
-            context,
-            methods=csharp_methods,
-            override_methods=csharp_override_methods,
-            partial_index=csharp_partial_index,
-            type_locations=csharp_type_locations,
-        )
-        self.go = go_class_ingest.GoClassIngest(
-            repo_path=context.repo_path,
-            facts=context.facts,
-            type_locations=go_type_locations,
-            interfaces=go_interfaces,
-            interface_ingest=go_interface_ingest,
-        )
-        self.dart = dart_class_ingest.DartClassIngest(
-            self, context, annotated_overrides=dart_annotated_overrides
-        )
+        self.csharp = csharp_class_ingest.CSharpClassIngest(context, states.csharp)
+        self.go = go_class_ingest.GoClassIngest(method_host, context, states.go)
+        self.dart = dart_class_ingest.DartClassIngest(self, context, states.dart)
         self.js_ts = js_ts_class_ingest.JsTsClassIngest(context)
-        self.java = java_class_ingest.JavaClassIngest(
-            context, anon_overrides=java_anon_overrides
-        )
+        self.java = java_class_ingest.JavaClassIngest(context, states.java)
         self.python = python_class_ingest.PythonClassIngest(
             context.function_registry, context.facts
         )

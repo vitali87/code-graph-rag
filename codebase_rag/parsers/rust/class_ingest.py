@@ -41,6 +41,7 @@ if TYPE_CHECKING:
     from ...language_spec import LanguageSpec
     from ...types_defs import LanguageQueries
     from ..definition_context import DefinitionContext
+    from .definition_state import RustDefinitionState
 
 
 class RustClassHost(Protocol):
@@ -120,12 +121,10 @@ class RustClassIngest(LanguageClassIngest):
         self,
         host: RustClassHost,
         context: DefinitionContext,
+        state: RustDefinitionState,
         *,
         method_host: MethodIngestHost,
         flow_capture_enabled: bool,
-        impl_owner_module: dict[str, str],
-        impl_method_traits: dict[str, str],
-        inherent_impl_methods: set[str],
         deferred_parent_links: list[DeferredParentLink],
     ) -> None:
         self._host = host
@@ -139,9 +138,9 @@ class RustClassIngest(LanguageClassIngest):
         self.flow_capture_enabled = flow_capture_enabled
         self.import_processor = context.import_processor
         self.facts = context.facts
-        self.impl_owner_module = impl_owner_module
-        self.impl_method_traits = impl_method_traits
-        self.inherent_impl_methods = inherent_impl_methods
+        self.impl_owner_module = state.impl_owner_module
+        self.impl_method_traits = state.impl_method_traits
+        self.inherent_impl_methods = state.inherent_impl_methods
         # Shared with the function pass, which emits them once every parent
         # is registered.
         self._deferred_parent_links = deferred_parent_links

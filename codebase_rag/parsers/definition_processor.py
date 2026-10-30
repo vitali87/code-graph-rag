@@ -11,7 +11,6 @@ from .. import logs as ls
 from ..language_spec import has_other_language_sibling, own_extension_module_qn
 from ..types_defs import (
     ASTNode,
-    CppDefinitionSpan,
     DeferredParentLink,
     FunctionRegistryTrieProtocol,
     PendingTypeFact,
@@ -24,8 +23,11 @@ from ..utils.path_utils import (
     has_implementation_sibling,
 )
 from .class_ingest import ClassIngest
+from .cpp.definition_state import CppDefinitionState
 from .cpp.file_ingest import CppFileIngest
-from .definition_context import DefinitionContext
+from .csharp.definition_state import CSharpDefinitionState
+from .dart.definition_state import DartDefinitionState
+from .definition_context import DefinitionContext, LanguageStates
 from .definition_docstring import extract_definition_docstring
 from .definition_facts import DefinitionFacts
 from .definition_prune import RemovedFile, forget_file
@@ -33,11 +35,11 @@ from .dependency_parser import read_manifest
 from .field_nodes import PendingFieldType
 from .file_parse import file_combined_captures, parse_file_root
 from .function_ingest import FunctionIngest
-from .go.builds import Expr, GoBuilds
+from .go.builds import GoBuilds
+from .go.definition_state import GoDefinitionState
 from .go.file_ingest import GoFileIngest
-from .go.interface_ingest import GoInterfaceIngest
-from .go.interfaces import GoInterfaceDecl, GoMethodSpec
 from .go.link_state import GoLinkState
+from .java.definition_state import JavaDefinitionState
 from .js_ts.file_ingest import JsTsFileIngest
 from .js_ts.ingest import JsTsIngest
 from .js_ts.module_system import JsTsModuleSystem
@@ -50,6 +52,7 @@ from .parameter_nodes import PendingParameterType
 from .php.file_ingest import PhpFileIngest
 from .python.docstring import python_docstring
 from .python.file_ingest import PythonFileIngest
+from .rust.definition_state import RustDefinitionState
 from .rust.file_ingest import RustFileIngest
 from .sql.file_ingest import SqlFileIngest
 
@@ -141,7 +144,15 @@ class DefinitionProcessor:
         self.pending_parameter_types: list[PendingParameterType] = []
         self.pending_field_types: list[PendingFieldType] = []
         self.func_class_captures_cache = func_class_captures_cache
-        self._init_language_maps()
+        # Each language's own containers, which that language's
+        # collaborators fill for a later pass of the language, the call pass
+        # or the graph updater to read.
+        self.cpp = CppDefinitionState()
+        self.csharp = CSharpDefinitionState()
+        self.dart = DartDefinitionState()
+        self.go = GoDefinitionState(GoBuilds(repo_path))
+        self.java = JavaDefinitionState()
+        self.rust = RustDefinitionState()
         context = DefinitionContext(
             ingestor=ingestor,
             repo_path=repo_path,
@@ -152,9 +163,35 @@ class DefinitionProcessor:
             import_processor=import_processor,
             facts=self.facts,
         )
-        self.function_ingest = self._new_function_ingest(context)
-        self.go_interface_ingest = self._new_go_interface_ingest(context)
-        self.class_ingest = self._new_class_ingest(context)
+        states = LanguageStates(
+            cpp=self.cpp,
+            csharp=self.csharp,
+            dart=self.dart,
+            go=self.go,
+            java=self.java,
+            rust=self.rust,
+        )
+        self.function_ingest = FunctionIngest(
+            method_host=self,
+            context=context,
+            states=states,
+            folded_overloads=self.folded_overloads,
+            pending_endpoints=self.pending_endpoints,
+            pending_type_facts=self.pending_type_facts,
+            pending_parameter_types=self.pending_parameter_types,
+            deferred_parent_links=self._deferred_parent_links,
+        )
+        self.class_ingest = ClassIngest(
+            method_host=self,
+            function_ingest=self.function_ingest,
+            context=context,
+            states=states,
+            flow_capture_enabled=flow_capture_enabled,
+            class_owner_module=self.class_owner_module,
+            pending_field_types=self.pending_field_types,
+            folded_overloads=self.folded_overloads,
+            deferred_parent_links=self._deferred_parent_links,
+        )
         self.js_ts_module_system = JsTsModuleSystem(
             host=self, function_ingest=self.function_ingest, context=context
         )
@@ -176,151 +213,6 @@ class DefinitionProcessor:
         self._sql = SqlFileIngest(self.facts)
         self._languages = self._file_ingests()
         self._neutral = LanguageFileIngest()
-
-    def _init_language_maps(self) -> None:
-        # The containers one language's collaborators fill, for a later pass
-        # of that language, the call pass or the graph updater to read.
-        # Each Go file's build constraint, for telling a name each build
-        # declares again (`i_linux.go`, `i_windows.go`) from a redeclaration
-        # (shared with the call resolver and type inference).
-        self.go_builds = GoBuilds(self.repo_path)
-        # {class_qn: [(method_qn, method_name)]} for Dart @override methods;
-        # whether they override an EXTERNAL base is only decidable once every
-        # class is registered, so resolve_deferred_inherits consumes this.
-        self.dart_annotated_overrides: dict[str, list[tuple[str, str]]] = {}
-        # {Rust impl target qn: module of the file whose `impl Trait for T`
-        # recorded its pair}. A primitive or foreign target (`u64`) has no
-        # class node, so `class_owner_module` never names that file, and the
-        # pair outlived the impl on a reused updater (#2403).
-        self.rust_impl_owner_module: dict[str, str] = {}
-        # Java anonymous-class override methods: (anon_method_qn, method_name,
-        # base_type_name, module_qn). An anon class `new Base(){ @Override m(){} }`
-        # is not modelled as a subclass, so its overrides register under the
-        # enclosing class with no OVERRIDES edge and look dead. Recorded at method
-        # ingestion, resolved to OVERRIDES edges once every base type is registered.
-        self.java_anon_overrides: list[tuple[str, str, str, str]] = []
-        # C# override tracking. `csharp_methods` is every C# method qn;
-        # `csharp_override_methods` the subset carrying the `override` modifier.
-        # C# base-CLASS overrides require `override` (a `new`/implicit-hide
-        # member is not an override), so the shared override walk emits a
-        # class-parent match only for C# methods in the override subset;
-        # interface implementations need no modifier and are unaffected.
-        self.csharp_methods: set[str] = set()
-        self.csharp_override_methods: set[str] = set()
-        # C# partial parts grouped by their namespace-qualified key, the
-        # index behind `facts.csharp_partial_groups`.
-        self._csharp_partial_index: dict[str, list[str]] = {}
-        # (rel_file, type_start_line, type_start_col) -> (class qn, node label)
-        # for every ingested Go type. Go's type_spec start_point IS the name
-        # token, so the frontend's pair positions join here directly (no alias).
-        self.go_type_locations: dict[tuple[str, int, int], tuple[str, str]] = {}
-        # Go interfaces as method sets (issue #2483): each Go method's
-        # parameter count and package, each interface's embedded types as
-        # written, and the interfaces this run parsed, from which implicit
-        # satisfaction is computed once every type is registered.
-        self.go_methods: dict[str, GoMethodSpec] = {}
-        self.go_interfaces: dict[str, GoInterfaceDecl] = {}
-        self.go_interfaces_parsed: dict[str, str] = {}
-        # The Go pairs in interface_implementers by source, replaced each
-        # pass: go/types proofs, and name-and-arity matches (whose edges are
-        # labelled heuristic, and which the resolver reads to say so).
-        self.go_proven_pairs: set[tuple[str, str]] = set()
-        self.go_guessed_pairs: set[tuple[str, str]] = set()
-        # Go package (`dir:clause`, or its test files' scope) -> the
-        # predeclared type names (`int`, `error`) it declares itself, refilled
-        # by each link (shared with the call resolver): there the name is the
-        # package's own type.
-        self.go_builtin_shadows: dict[str, frozenset[str]] = {}
-        # Go type -> method name -> the declarations its build variants hold
-        # in files its build compiles too, refilled by each link (shared with
-        # the call resolver).
-        self.go_variant_methods: dict[str, dict[str, list[str]]] = {}
-        # (Go interface, implementer) -> the builds holding the pair (shared
-        # with the call resolver).
-        self.go_pair_builds: dict[tuple[str, str], Expr] = {}
-        # (rel_file, type_start_line) -> class qn for every ingested C# type,
-        # the reverse of the Roslyn fact keys, so partial declaration groups
-        # join back to the Pass-2 Class nodes.
-        self.csharp_type_locations: dict[tuple[str, int], str] = {}
-        # {rel path: [full line spans]} of every C/C++ function/method the
-        # tree-sitter pass ingested; the hybrid C++ frontend's macro-use
-        # CALLS resolve against these after Pass 2 (see CppDefinitionSpan).
-        self.cpp_definition_spans: dict[str, list[CppDefinitionSpan]] = {}
-        # method qn -> the first-party trait qn its own impl block names. The
-        # override pass cannot re-derive this: two traits declaring one method
-        # name leave the method qns indistinguishable (issue #1076).
-        self.rust_impl_method_traits: dict[str, str] = {}
-        # Methods of an inherent `impl Type` block. Rust has no
-        # inheritance, so these override nothing and must never reach the
-        # ancestry walk (issue #1078).
-        self.rust_inherent_impl_methods: set[str] = set()
-        # C++20 module interfaces declared this run (export module X).
-        self.cpp_module_interfaces: set[str] = set()
-        # The subset of the above that THIS run's parsing registered, as
-        # opposed to entries read back from the graph. Rehydration rebuilds
-        # the graph-derived part and must not drop these: a just-parsed
-        # interface's node write is still in the ingestor's buffer, so it is
-        # absent from the rows rehydration fetches.
-        self.cpp_interfaces_parsed_this_run: set[str] = set()
-
-    def _new_function_ingest(self, context: DefinitionContext) -> FunctionIngest:
-        return FunctionIngest(
-            method_host=self,
-            context=context,
-            go_builds=self.go_builds,
-            go_methods=self.go_methods,
-            java_anon_overrides=self.java_anon_overrides,
-            cpp_definition_spans=self.cpp_definition_spans,
-            csharp_methods=self.csharp_methods,
-            csharp_override_methods=self.csharp_override_methods,
-            folded_overloads=self.folded_overloads,
-            pending_endpoints=self.pending_endpoints,
-            pending_type_facts=self.pending_type_facts,
-            pending_parameter_types=self.pending_parameter_types,
-            deferred_parent_links=self._deferred_parent_links,
-        )
-
-    def _new_go_interface_ingest(self, context: DefinitionContext) -> GoInterfaceIngest:
-        return GoInterfaceIngest(
-            method_host=self,
-            context=context,
-            go_methods=self.go_methods,
-            go_interfaces=self.go_interfaces,
-            go_interfaces_parsed=self.go_interfaces_parsed,
-            go_proven_pairs=self.go_proven_pairs,
-            go_guessed_pairs=self.go_guessed_pairs,
-            go_builtin_shadows=self.go_builtin_shadows,
-            go_variant_methods=self.go_variant_methods,
-            go_pair_builds=self.go_pair_builds,
-            go_builds=self.go_builds,
-        )
-
-    def _new_class_ingest(self, context: DefinitionContext) -> ClassIngest:
-        return ClassIngest(
-            method_host=self,
-            function_ingest=self.function_ingest,
-            go_interface_ingest=self.go_interface_ingest,
-            context=context,
-            flow_capture_enabled=self.flow_capture_enabled,
-            class_owner_module=self.class_owner_module,
-            dart_annotated_overrides=self.dart_annotated_overrides,
-            java_anon_overrides=self.java_anon_overrides,
-            csharp_methods=self.csharp_methods,
-            csharp_override_methods=self.csharp_override_methods,
-            csharp_partial_index=self._csharp_partial_index,
-            csharp_type_locations=self.csharp_type_locations,
-            go_type_locations=self.go_type_locations,
-            rust_impl_owner_module=self.rust_impl_owner_module,
-            go_interfaces=self.go_interfaces,
-            cpp_definition_spans=self.cpp_definition_spans,
-            rust_impl_method_traits=self.rust_impl_method_traits,
-            rust_inherent_impl_methods=self.rust_inherent_impl_methods,
-            cpp_module_interfaces=self.cpp_module_interfaces,
-            cpp_interfaces_parsed_this_run=self.cpp_interfaces_parsed_this_run,
-            pending_field_types=self.pending_field_types,
-            folded_overloads=self.folded_overloads,
-            deferred_parent_links=self._deferred_parent_links,
-        )
 
     def _file_ingests(self) -> dict[cs.SupportedLanguage, LanguageFileIngest]:
         js_ts = JsTsFileIngest(
@@ -354,26 +246,18 @@ class DefinitionProcessor:
         # What a run records about itself: a reused updater must not treat
         # a previous run's interfaces as unflushed writes rehydration has to
         # keep, nor report its unreadable manifests again.
-        self.cpp_interfaces_parsed_this_run.clear()
+        self.cpp.interfaces_parsed_this_run.clear()
         self.unparsable_manifests.clear()
 
     def go_link_state(self) -> GoLinkState:
         """The Go interface link's containers call resolution reads, by
         reference: the link refills them in place."""
-        return GoLinkState(
-            guessed_implementations=self.go_guessed_pairs,
-            methods=self.go_methods,
-            builtin_shadows=self.go_builtin_shadows,
-            variant_methods=self.go_variant_methods,
-            declaration_variants=self.facts.go_declaration_variants,
-            pair_builds=self.go_pair_builds,
-            builds=self.go_builds,
-        )
+        return self.go.link_state(self.facts.go_declaration_variants)
 
     def forget_file(self, removed: RemovedFile) -> None:
         """Drop what a removed or re-parsed file recorded in this pass's maps."""
         forget_file(
-            self.facts, self.class_owner_module, self.rust_impl_owner_module, removed
+            self.facts, self.class_owner_module, self.rust.impl_owner_module, removed
         )
 
     def link_go_interfaces(
@@ -385,7 +269,7 @@ class DefinitionProcessor:
         """Link Go embedding, implicit satisfaction and the overrides it
         implies (`GoInterfaceIngest.link_go_interfaces`); returns the number of
         IMPLEMENTS edges written."""
-        return self.go_interface_ingest.link_go_interfaces(
+        return self.class_ingest.go.interface_ingest.link_go_interfaces(
             analysed_roots, checked_files, compared
         )
 
@@ -397,7 +281,9 @@ class DefinitionProcessor:
     ) -> None:
         """Swap one source's Go (interface, implementer) pairs for this
         pass's (`GoInterfaceIngest.replace_go_implementers`)."""
-        self.go_interface_ingest.replace_go_implementers(previous, current, keep)
+        self.class_ingest.go.interface_ingest.replace_go_implementers(
+            previous, current, keep
+        )
 
     def resolve_deferred_cpp_methods(self) -> int:
         """Ingest the out-of-class C++ methods held until every class is
@@ -467,9 +353,9 @@ class DefinitionProcessor:
         # link state.
         self.facts.interface_implementers.clear()
         self.facts.rehydrated_interface_implementers.clear()
-        self.rust_impl_owner_module.clear()
-        self.go_proven_pairs.clear()
-        self.go_guessed_pairs.clear()
+        self.rust.impl_owner_module.clear()
+        self.go.proven_pairs.clear()
+        self.go.guessed_pairs.clear()
 
     def _disambiguate_module_qn(self, module_qn: str, file_path: Path) -> str:
         # A notebook always carries its extension (`proj.analysis.ipynb`). No

@@ -32,6 +32,7 @@ from .arity import CSharpArityIndex
 
 if TYPE_CHECKING:
     from ..definition_context import DefinitionContext
+    from .definition_state import CSharpDefinitionState
 
 
 def _record_parameter_types(member_node: Node, field_types: dict[str, str]) -> None:
@@ -88,21 +89,17 @@ class CSharpClassIngest(LanguageClassIngest):
     def __init__(
         self,
         context: DefinitionContext,
-        *,
-        methods: set[str],
-        override_methods: set[str],
-        partial_index: dict[str, list[str]],
-        type_locations: dict[tuple[str, int], str],
+        state: CSharpDefinitionState,
     ) -> None:
         self.repo_path = context.repo_path
         self.function_registry = context.function_registry
         self.module_qn_to_file_path = context.module_qn_to_file_path
         self.import_processor = context.import_processor
         self.facts = context.facts
-        self.methods = methods
-        self.override_methods = override_methods
-        self._partial_index = partial_index
-        self.type_locations = type_locations
+        self.methods = state.methods
+        self.override_methods = state.override_methods
+        self._partial_index = state.partial_index
+        self.type_locations = state.type_locations
 
     def class_start_point(self, class_node: Node) -> tuple[int, int]:
         # Skip a leading `#if [Attr] #endif` directive so the start line is

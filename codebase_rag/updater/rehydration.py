@@ -512,15 +512,15 @@ class GraphRehydrator:
         # earlier attempt at this cleared the set outright and did exactly
         # that.
         dp = self._factory.definition_processor
-        dp.cpp_module_interfaces.clear()
-        dp.cpp_module_interfaces |= dp.cpp_interfaces_parsed_this_run
+        dp.cpp.module_interfaces.clear()
+        dp.cpp.module_interfaces.update(dp.cpp.interfaces_parsed_this_run)
         for row in module_rows:
             qn = row.get(cs.KEY_QUALIFIED_NAME)
             label = row.get(cs.KEY_LABEL)
             if not isinstance(qn, str) or not isinstance(label, str):
                 continue
             if label == cs.NodeLabel.MODULE_INTERFACE.value:
-                self._factory.definition_processor.cpp_module_interfaces.add(qn)
+                dp.cpp.module_interfaces.add(qn)
             else:
                 self.module_qns.add(qn)
             # An unchanged PHP file's declared namespace, which a
@@ -675,7 +675,7 @@ class GraphRehydrator:
                 param_types := row.get(cs.KEY_PARAM_TYPES), list
             ):
                 result = row.get(cs.KEY_RETURN_TYPE)
-                dp.go_methods[qn] = GoMethodSpec(
+                dp.go.methods[qn] = GoMethodSpec(
                     GoSignature(
                         tuple(_stored_strings(param_types)),
                         go_ifaces.stored_result_types(
@@ -689,7 +689,7 @@ class GraphRehydrator:
             elif label == cs.NodeLabel.INTERFACE and isinstance(
                 embeds := row.get(cs.KEY_EMBEDS), list
             ):
-                dp.go_interfaces[qn] = GoInterfaceDecl(
+                dp.go.interfaces[qn] = GoInterfaceDecl(
                     tuple(_stored_strings(embeds)), package, path
                 )
 
@@ -786,7 +786,7 @@ class GraphRehydrator:
         # unchanged parts stays one type; a lone type's group of
         # one reads exactly as no group.
         if key := csharp_partial_key_from_graph(qn, path, self._project_name, arity):
-            group = processor._csharp_partial_index.setdefault(key, [])
+            group = processor.csharp.partial_index.setdefault(key, [])
             group.append(qn)
             processor.facts.csharp_partial_groups[qn] = group
         if namespaced:
@@ -857,5 +857,5 @@ class GraphRehydrator:
                 and cs.TS_CSHARP_MODIFIER_PARTIAL not in modifiers
                 and (group := dp.facts.csharp_partial_groups.pop(qn, None)) is not None
             ):
-                # In place: the list is the one `_csharp_partial_index` holds.
+                # In place: the list is the one `csharp.partial_index` holds.
                 group[:] = [part for part in group if part != qn]

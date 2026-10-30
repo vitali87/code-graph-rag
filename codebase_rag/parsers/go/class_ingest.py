@@ -5,7 +5,8 @@ types, and the interfaces whose overrides the Go interface link writes.
 `ClassIngest` owns what every language shares (the scan of a file's class
 captures, a class's node, members and relationships) and hands Go's part to
 the `GoClassIngest` it builds; a Go interface's method specs are written by
-the Go interface pass."""
+the Go interface pass (`GoInterfaceIngest`), which `GoClassIngest` builds
+and the definition processor runs the interface link through."""
 
 from __future__ import annotations
 
@@ -19,12 +20,14 @@ from ... import constants as cs
 from ...types_defs import PropertyDict
 from ...utils.path_utils import cached_relative_path
 from ..language_definitions import LanguageClassIngest
+from ..method_ingest import MethodIngestHost
 from . import interfaces as go_ifaces
+from .interface_ingest import GoInterfaceIngest
 from .type_inference import GoTypeInferenceEngine
 
 if TYPE_CHECKING:
-    from ..definition_facts import DefinitionFacts
-    from .interface_ingest import GoInterfaceIngest
+    from ..definition_context import DefinitionContext
+    from .definition_state import GoDefinitionState
 
 
 class GoClassIngest(LanguageClassIngest):
@@ -42,7 +45,7 @@ class GoClassIngest(LanguageClassIngest):
         "facts",
         "type_locations",
         "interfaces",
-        "_interface_ingest",
+        "interface_ingest",
     )
 
     # link_go_interfaces gives each implementer its OVERRIDES, one per
@@ -54,18 +57,17 @@ class GoClassIngest(LanguageClassIngest):
 
     def __init__(
         self,
-        *,
-        repo_path: Path,
-        facts: DefinitionFacts,
-        type_locations: dict[tuple[str, int, int], tuple[str, str]],
-        interfaces: dict[str, go_ifaces.GoInterfaceDecl],
-        interface_ingest: GoInterfaceIngest,
+        method_host: MethodIngestHost,
+        context: DefinitionContext,
+        state: GoDefinitionState,
     ) -> None:
-        self.repo_path = repo_path
-        self.facts = facts
-        self.type_locations = type_locations
-        self.interfaces = interfaces
-        self._interface_ingest = interface_ingest
+        self.repo_path = context.repo_path
+        self.facts = context.facts
+        self.type_locations = state.type_locations
+        self.interfaces = state.interfaces
+        self.interface_ingest = GoInterfaceIngest(
+            method_host=method_host, context=context, state=state
+        )
 
     def record_type_props(
         self,
@@ -110,7 +112,7 @@ class GoClassIngest(LanguageClassIngest):
         file_path: Path | None,
     ) -> None:
         if label == cs.NodeLabel.INTERFACE:
-            self._interface_ingest.ingest_interface_methods(
+            self.interface_ingest.ingest_interface_methods(
                 class_node, class_qn, module_qn, file_path
             )
         # Record Go struct field types so a field-hop receiver

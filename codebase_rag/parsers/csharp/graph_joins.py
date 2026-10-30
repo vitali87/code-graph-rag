@@ -28,7 +28,7 @@ def join_partials(dp: DefinitionProcessor) -> None:
     groups: list[list[str]] = []
     covered: set[str] = set()
     for decls in partial_decls:
-        qns = sorted({qn for d in decls if (qn := dp.csharp_type_locations.get(d))})
+        qns = sorted({qn for d in decls if (qn := dp.csharp.type_locations.get(d))})
         covered.update(qns)
         if len(qns) > 1:
             groups.append(qns)

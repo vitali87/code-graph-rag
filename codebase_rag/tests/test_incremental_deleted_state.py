@@ -388,7 +388,7 @@ class _BufferingIngestor(StatefulIngestor):
 def test_a_cpp_interface_parsed_this_run_survives_rehydration(
     temp_repo: Path,
 ) -> None:
-    # cpp_module_interfaces is rebuilt from the graph, but an interface this
+    # cpp.module_interfaces is rebuilt from the graph, but an interface this
     # run parsed is still unflushed when rehydration reads, so rebuilding
     # without it drops the IMPLEMENTS edge for an interface and an
     # implementation added together. An earlier attempt at this fix did
@@ -419,13 +419,13 @@ def test_a_cpp_interface_parsed_this_run_survives_rehydration(
     # A planted entry the graph does not hold separates the two: a real
     # rebuild drops it and keeps `proj.M`; a neutered pass keeps both; the
     # bare `clear()` this test was written against drops both.
-    dp.cpp_module_interfaces.add("proj.STALE")
+    dp.cpp.module_interfaces.add("proj.STALE")
     rebuilt: list[frozenset[str]] = []
     real_rehydrate = second.graph_rehydrator.rehydrate_registry_from_graph
 
     def _observe(*args: object) -> None:
         real_rehydrate(*args)
-        rebuilt.append(frozenset(dp.cpp_module_interfaces))
+        rebuilt.append(frozenset(dp.cpp.module_interfaces))
 
     with patch.object(
         second.graph_rehydrator,
@@ -456,14 +456,14 @@ def test_rehydration_readds_an_interface_held_only_by_the_graph(
 ) -> None:
     # The positive direction of the rebuild (issue #1736): an interface parsed
     # in an EARLIER run and untouched now is absent from
-    # cpp_interfaces_parsed_this_run, so only the graph rows can put it back.
+    # cpp.interfaces_parsed_this_run, so only the graph rows can put it back.
     # resolve_deferred_cpp_module_impls checks membership in
-    # cpp_module_interfaces, so with the re-add gone an implementation unit
+    # cpp.module_interfaces, so with the re-add gone an implementation unit
     # edited on its own loses its IMPLEMENTS edge. A sibling's fixture guard
     # ("the shape did not rehydrate") does catch the missing membership, but
     # nothing asserted the IMPLEMENTS edge on the incremental run or covered
     # a reused updater (measured: a resolver reading
-    # cpp_interfaces_parsed_this_run instead of cpp_module_interfaces leaves
+    # cpp.interfaces_parsed_this_run instead of cpp.module_interfaces leaves
     # every other test in this file green and fails only this one). A fresh
     # updater has never parsed the interface at all; a reused one parsed it
     # last run, and the per-run reset of the companion set is what makes the
@@ -505,13 +505,13 @@ def test_rehydration_readds_an_interface_held_only_by_the_graph(
     ) as spy:
         second.run(force=False)
 
-    assert "proj.M" not in dp.cpp_interfaces_parsed_this_run, (
+    assert "proj.M" not in dp.cpp.interfaces_parsed_this_run, (
         "fixture guard: the interface was re-parsed, so the companion set and "
         "not the graph rows would have kept it"
     )
-    assert "proj.M" in dp.cpp_module_interfaces, (
+    assert "proj.M" in dp.cpp.module_interfaces, (
         "rehydration did not re-add the interface the graph holds: "
-        f"{sorted(dp.cpp_module_interfaces)}"
+        f"{sorted(dp.cpp.module_interfaces)}"
     )
     # The same endpoints the clean index produced, not just any IMPLEMENTS
     # (CodeRabbit, #1754): the implementation unit as source, `proj.M` as the
@@ -556,7 +556,7 @@ def test_a_cpp_interface_the_graph_lost_is_forgotten(temp_repo: Path) -> None:
     (root / "other.cpp").write_text("int x() { return 2; }\n", encoding="utf-8")
     _bump(root, "other.cpp")
     updater.run(force=False)
-    interfaces = updater.factory.definition_processor.cpp_module_interfaces
+    interfaces = updater.factory.definition_processor.cpp.module_interfaces
     assert "proj.M" in interfaces, "the shape did not rehydrate"
 
     removed = [key for key in store.nodes if key[0] == "ModuleInterface"]
@@ -568,11 +568,11 @@ def test_a_cpp_interface_the_graph_lost_is_forgotten(temp_repo: Path) -> None:
     _bump(root, "other.cpp")
     updater.run(force=False)
 
-    assert "proj.M" not in updater.factory.definition_processor.cpp_module_interfaces
+    assert "proj.M" not in updater.factory.definition_processor.cpp.module_interfaces
 
 
 def test_a_parsed_interface_is_not_revived_on_a_later_run(temp_repo: Path) -> None:
-    # cpp_interfaces_parsed_this_run exempts an interface from the rebuild
+    # cpp.interfaces_parsed_this_run exempts an interface from the rebuild
     # because its write may be unflushed. That exemption is scoped to ONE
     # run: without the per-run reset the qn stays in the companion set
     # forever and every later rebuild puts it back, which is the stale entry
@@ -594,7 +594,7 @@ def test_a_parsed_interface_is_not_revived_on_a_later_run(temp_repo: Path) -> No
     if cs.SupportedLanguage.CPP not in updater.parsers:
         pytest.skip("cpp parser not available")
     updater.run(force=True)
-    assert "proj.M" in updater.factory.definition_processor.cpp_module_interfaces
+    assert "proj.M" in updater.factory.definition_processor.cpp.module_interfaces
 
     removed = [key for key in store.nodes if key[0] == "ModuleInterface"]
     assert removed, "expected a ModuleInterface node to delete"
@@ -605,7 +605,7 @@ def test_a_parsed_interface_is_not_revived_on_a_later_run(temp_repo: Path) -> No
     _bump(root, "other.cpp")
     updater.run(force=False)
 
-    assert "proj.M" not in updater.factory.definition_processor.cpp_module_interfaces
+    assert "proj.M" not in updater.factory.definition_processor.cpp.module_interfaces
 
 
 def test_seeded_module_qns_are_pruned_when_the_graph_loses_them(
