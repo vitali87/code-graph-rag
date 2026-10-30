@@ -382,6 +382,8 @@ class DartCallResolution(LanguageCalls):
     scans_callers_without_calls = True
     types_locals = True
     runs_declared_constructors = True
+    # A getter in argument position is read, not torn off (issue #869).
+    property_args_are_reads = True
 
     def __init__(self, host: DartCallHost, resolver: CallResolver) -> None:
         self._host = host

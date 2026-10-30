@@ -113,6 +113,12 @@ class LanguageCalls:
     # A `.member` call bound through a class-body alias may run every method
     # the alias names.
     fans_out_member_aliases: ClassVar[bool] = False
+    # A short-circuit operator (`||`, `??`, `&&`) evaluates to one of its
+    # OPERANDS, so a function operand flows on as the value.
+    short_circuit_values: ClassVar[bool] = False
+    # A property in argument position is a VALUE READ, whose edge the
+    # property-read pass owns, never a callback handed over.
+    property_args_are_reads: ClassVar[bool] = False
 
     def collect_callable_field_bindings(
         self, root_node: Node, module_qn: str, call_nodes: list[Node]
@@ -436,6 +442,33 @@ class LanguageCalls:
     ) -> None:
         """Write the edges to the twins of a bound callee the call may run
         instead."""
+
+    def emit_functor_callback(
+        self,
+        arg_node: Node,
+        source_spec: tuple[str, str, str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        ensure_rel: Callable[..., None],
+    ) -> bool:
+        """Write the reference an object handed over as a callback makes to
+        its type's call operator; True when the value was one."""
+        return False
+
+    def callback_name(
+        self,
+        arg_node: Node,
+        arg_text: str,
+        source_spec: tuple[str, str, str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        caller_qn: str | None,
+        ensure_rel: Callable[..., None],
+        rel_type: cs.RelationshipType,
+    ) -> str | None:
+        """The name a callback value is resolved by, or None where the
+        language wrote its edges itself."""
+        return arg_text
 
 
 @dataclass(slots=True)

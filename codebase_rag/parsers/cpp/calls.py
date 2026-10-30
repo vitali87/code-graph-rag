@@ -700,7 +700,6 @@ class CppCallResolution(LanguageCalls):
         module_qn: str,
         local_var_types: dict[str, str] | None,
         ensure_rel: Callable[..., None],
-        language: cs.SupportedLanguage | None,
     ) -> bool:
         # A functor handed over (`std::sort(b, e, Cmp{})`) keeps its
         # operator() reachable (issue #2555). The object is passed as a
@@ -708,8 +707,6 @@ class CppCallResolution(LanguageCalls):
         # (`values.push_back(f)`) is not visible here, so the pass is a
         # REFERENCES edge, never an invocation (#2631). True when the
         # argument was one and its edge is out.
-        if language != cs.SupportedLanguage.CPP:
-            return False
         functor = self.functor_operator(arg_node, module_qn, local_var_types)
         if functor is None:
             return False
@@ -720,7 +717,7 @@ class CppCallResolution(LanguageCalls):
             cs.RelationshipType.REFERENCES,
             ensure_rel,
             module_qn,
-            language,
+            cs.SupportedLanguage.CPP,
             cs.EdgeResolution.EXACT,
         )
         return True

@@ -465,6 +465,33 @@ class CSharpCallResolution(LanguageCalls):
             argument, ctx.local_var_types, ctx.module_qn, ctx.caller_qn
         )
 
+    def callback_name(
+        self,
+        arg_node: Node,
+        arg_text: str,
+        source_spec: tuple[str, str, str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        caller_qn: str | None,
+        ensure_rel: Callable[..., None],
+        rel_type: cs.RelationshipType,
+    ) -> str | None:
+        # `Callback<int>` passes the method group with explicit type
+        # arguments; methods register generic-free, so strip them.
+        arg_text = arg_text.split(cs.CHAR_ANGLE_OPEN, 1)[0]
+        if self.emit_method_group(
+            arg_node,
+            arg_text,
+            source_spec,
+            module_qn,
+            local_var_types,
+            caller_qn,
+            ensure_rel,
+            rel_type,
+        ):
+            return None
+        return arg_text
+
     def emit_method_group(
         self,
         arg_node: Node,

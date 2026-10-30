@@ -332,7 +332,7 @@ def _names_a_callable(node: Node) -> bool:
 
 
 def _first_class_value_children(
-    node: Node, is_dart: bool, is_js_ts: bool = False
+    node: Node, is_dart: bool, short_circuits: bool = False
 ) -> list[Node] | None:
     # The wrapped value nodes a container/branch node hands onward, or None
     # for a leaf that IS the first-class value.
@@ -350,11 +350,12 @@ def _first_class_value_children(
         return [node.named_children[0]]
     # A JS/TS short-circuit operator (`fn ?? (() => {})`, `a || cb`) binds one of
     # its OPERANDS as the value, exactly like Python's boolean_operator; JS/TS
-    # spells it `binary_expression`. Gated to JS/TS: Go and C also use
-    # `binary_expression` with `||`/`&&`, where a bare-name operand resolves to a
-    # boolean, not a callable, and expanding it would fabricate a phantom edge.
+    # spells it `binary_expression`. Gated to the languages whose operator does
+    # so: Go and C also use `binary_expression` with `||`/`&&`, where a bare-name
+    # operand resolves to a boolean, not a callable, and expanding it would
+    # fabricate a phantom edge.
     if (
-        is_js_ts
+        short_circuits
         and node.type == cs.TS_BINARY_EXPRESSION
         and (operator := node.child_by_field_name(cs.FIELD_OPERATOR)) is not None
         and safe_decode_text(operator) in cs.JS_SHORT_CIRCUIT_OPERATORS
@@ -3094,9 +3095,8 @@ class CallProcessor:
         # this walk too, and its boolean `||`/`&&` operands
         # would fabricate phantom edges (a bool named like a
         # method falsely revives it).
-        is_logical = language in cs.JS_TS_LANGUAGES and js_calls.is_logical_binary(
-            value
-        )
+        short_circuits = self._calls_for(language).short_circuit_values
+        is_logical = short_circuits and js_calls.is_logical_binary(value)
         # Position matters for `&&` only: a function value
         # is always truthy, so the LEFT operand of `&&` can
         # never be the expression's result; `||`/`??` flow
@@ -3410,12 +3410,12 @@ class CallProcessor:
         # every container peeled, so a walk that meets one again later knows
         # its values are already out.
         is_dart = language == cs.SupportedLanguage.DART
-        is_js_ts = language in cs.JS_TS_LANGUAGES
+        short_circuits = self._calls_for(language).short_circuit_values
         out: list[Node] = []
         stack = [value]
         while stack:
             node = stack.pop()
-            children = _first_class_value_children(node, is_dart, is_js_ts)
+            children = _first_class_value_children(node, is_dart, short_circuits)
             if children is None:
                 out.append(node)
             else:
@@ -4132,8 +4132,9 @@ class CallProcessor:
                 arg_node, source_spec, ensure_rel, caller_qn, rel_type, module_qn
             )
             return
-        if self._cpp.emit_functor_callback(
-            arg_node, source_spec, module_qn, local_var_types, ensure_rel, language
+        language_calls = self._calls_for(language)
+        if language_calls.emit_functor_callback(
+            arg_node, source_spec, module_qn, local_var_types, ensure_rel
         ):
             return
         # Only a name can hand a callable over. The whole source text of any
@@ -4143,11 +4144,8 @@ class CallProcessor:
             return
         if not (arg_text := safe_decode_text(arg_node)):
             return
-        if language == cs.SupportedLanguage.CSHARP:
-            # `Callback<int>` passes the method group with explicit type
-            # arguments; methods register generic-free, so strip them.
-            arg_text = arg_text.split(cs.CHAR_ANGLE_OPEN, 1)[0]
-            if self._csharp.emit_method_group(
+        if (
+            arg_text := language_calls.callback_name(
                 arg_node,
                 arg_text,
                 source_spec,
@@ -4156,8 +4154,9 @@ class CallProcessor:
                 caller_qn,
                 ensure_rel,
                 rel_type,
-            ):
-                return
+            )
+        ) is None:
+            return
         if not (
             resolved := resolve_func(
                 arg_text, module_qn, local_var_types, class_context, caller_qn
@@ -4198,7 +4197,7 @@ class CallProcessor:
         # the getter-read pass owns those edges (with shadow handling), so
         # emitting here would fabricate liveness for a local that hides the
         # getter (issue #869).
-        if language == cs.SupportedLanguage.DART and registry.is_property(res_qn):
+        if language_calls.property_args_are_reads and registry.is_property(res_qn):
             return
         self._emit_callback_targets(
             source_spec,
@@ -4271,6 +4270,7 @@ class CallProcessor:
         # chosen (#1543). The resolver's single-target verdict would
         # otherwise let an exact floor keep every one of them.
         prev_resolution = self._resolution
+        language_calls = self._calls_for(language)
         targets = registry.variants(res_qn)
         self._resolution = (
             cs.EdgeResolution.OVERLOAD if len(targets) > 1 else resolution
@@ -4298,8 +4298,7 @@ class CallProcessor:
                     rel_type,
                     (target_type, cs.KEY_QUALIFIED_NAME, target_qn),
                 )
-                if language == cs.SupportedLanguage.CSHARP:
-                    self._csharp.record_cross_module_use(module_qn, target_qn)
+                language_calls.record_cross_module_use(module_qn, target_qn)
         finally:
             self._resolution = prev_resolution
 

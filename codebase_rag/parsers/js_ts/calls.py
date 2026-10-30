@@ -841,6 +841,7 @@ class JsTsCallResolution(LanguageCalls):
     keys_members_by_symbol = True
     types_locals = True
     binds_builtin_calls = True
+    short_circuit_values = True
     # A `new X(...)` runs X's `constructor` method (leaf name `constructor`,
     # not Python's `__init__`).
     constructor_member = cs.KEYWORD_CONSTRUCTOR
