@@ -395,29 +395,9 @@ class MCPToolsRegistry(
         # not returned as "nothing calls it" (issue #2461).
         try:
             async with self._ingestor_lock:
-                # The workspace allow-list is checked FIRST and narrows only:
-                # a name outside it is refused with the workspace's names,
-                # and a name inside it is still held to the graph's own
-                # check below, so an unindexed workspace repo reads as
-                # unknown rather than as a second, weaker path (issue #1494).
-                project, scope_error = self._workspace_scope(project)
-                if scope_error is not None:
-                    return GraphRefusal(error=scope_error)
-                known = await run_in_thread(self.ingestor.list_projects)
-                if project is not None and project not in known:
-                    return GraphRefusal(
-                        error=self._unknown_project_error(project, known)
-                    )
-                project_name = project or derive_project_name(Path(self.project_root))
-                # The derived default is held to the same check: a server
-                # rooted in a directory that was never indexed answered every
-                # read with nothing (issue #2461).
-                if project_name not in known:
-                    return GraphRefusal(
-                        error=await run_in_thread(
-                            self._root_not_indexed_error, project_name, known
-                        )
-                    )
+                project_name = await self._indexed_project(project)
+                if not isinstance(project_name, str):
+                    return project_name
                 # A read is as wrong as a reingest when the graph is known
                 # partial: a failed run (or a rollback whose re-ingest
                 # failed) leaves definitions and edges missing, and every
@@ -464,6 +444,35 @@ class MCPToolsRegistry(
             return GraphRefusal(
                 error=mcs.MCP_GRAPH_QUERY_ERROR.format(tool=tool, error=e)
             )
+
+    async def _indexed_project(self, project: str | None) -> str | GraphRefusal:
+        """The indexed project a graph read means, or why there is none.
+
+        Asked under the ingestor lock, in the same scope as the read it
+        decides, so a rebuild cannot land between the two.
+        """
+        # The workspace allow-list is checked FIRST and narrows only: a name
+        # outside it is refused with the workspace's names, and a name inside
+        # it is still held to the graph's own check below, so an unindexed
+        # workspace repo reads as unknown rather than as a second, weaker
+        # path (issue #1494).
+        project, scope_error = self._workspace_scope(project)
+        if scope_error is not None:
+            return GraphRefusal(error=scope_error)
+        known = await run_in_thread(self.ingestor.list_projects)
+        if project is not None and project not in known:
+            return GraphRefusal(error=self._unknown_project_error(project, known))
+        project_name = project or derive_project_name(Path(self.project_root))
+        # The derived default is held to the same check: a server rooted in a
+        # directory that was never indexed answered every read with nothing
+        # (issue #2461).
+        if project_name not in known:
+            return GraphRefusal(
+                error=await run_in_thread(
+                    self._root_not_indexed_error, project_name, known
+                )
+            )
+        return project_name
 
     def get_tool_schemas(self) -> list[MCPToolSchema]:
         return [
