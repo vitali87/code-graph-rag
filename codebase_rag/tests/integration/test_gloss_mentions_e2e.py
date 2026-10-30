@@ -48,7 +48,9 @@ class _Repo:
         )
         self.updater.run(force=True)
 
-    def annotate(self, readable: bool = True) -> None:
+    def annotate(
+        self, readable: bool = True, mentions: tuple[str, ...] = (f"{P}.b.run",)
+    ) -> None:
         row = gloss.write_gloss(
             self.ingestor.fetch_all,
             self.ingestor.execute_write,
@@ -56,10 +58,10 @@ class _Repo:
             HELPER,
             "run() relies on the +1",
             cs.GlossKind.INVARIANT,
-            mentions=f"{P}.b.run",
+            mentions=",".join(mentions),
             read_source=self.updater._read_project_source if readable else None,
         )
-        assert row.get("mentions") == [f"{P}.b.run"], row
+        assert row.get("mentions") == sorted(mentions), row
 
     def edit(self, files: dict[str, str]) -> None:
         for rel, text in files.items():
@@ -209,6 +211,52 @@ def test_a_note_from_before_mention_anchors_gains_them(repo: _Repo) -> None:
     repo.edit({"b.py": B_EMPTY, "c.py": B})
 
     assert repo.note()["mentions"] == [f"{P}.c.run"]
+
+
+STOP = "\n\ndef stop():\n    return helper(9)\n"
+
+
+@pytest.fixture
+def two(memgraph_ingestor: MemgraphIngestor, tmp_path: Path) -> _Repo:
+    # A note that mentions `run` and `stop`.
+    repo = _Repo(memgraph_ingestor, tmp_path)
+    repo.edit({"b.py": B + STOP})
+    repo.annotate(mentions=(f"{P}.b.run", f"{P}.b.stop"))
+    return repo
+
+
+def test_a_lost_mention_survives_another_mention_taking_its_name(two: _Repo) -> None:
+    two.edit({"b.py": B_EMPTY + STOP})
+
+    assert two.note()["mentions_lost"] == [f"{P}.b.run"]
+    # `stop` is renamed to the lost mention's name and followed there by its
+    # quote; the lost `run` is still reported, under the same name.
+    two.edit({"b.py": B_EMPTY + STOP.replace("def stop", "def run")})
+
+    assert two.note() == {
+        "anchor_state": "EXACT",
+        "mentions": [f"{P}.b.run"],
+        "mentions_lost": [f"{P}.b.run"],
+    }
+    # `run`'s own code comes back in another file: its record was kept, so
+    # it is followed there, and `stop`'s code keeps the name it took.
+    two.edit({"c.py": B})
+
+    assert two.note()["mentions"] == [f"{P}.b.run", f"{P}.c.run"]
+    assert two.note()["mentions_lost"] == []
+
+
+def test_a_mention_replaced_in_the_same_sync_is_lost_not_renewed(two: _Repo) -> None:
+    # Delete `run` and rename `stop` to `run` in one edit: `run`'s name holds
+    # `stop`'s code, which is no edit of `run`, so `run` is lost as above.
+    two.edit({"b.py": B_EMPTY + STOP.replace("def stop", "def run")})
+
+    assert two.note()["mentions"] == [f"{P}.b.run"]
+    assert two.note()["mentions_lost"] == [f"{P}.b.run"]
+    two.edit({"c.py": B})
+
+    assert two.note()["mentions"] == [f"{P}.b.run", f"{P}.c.run"]
+    assert two.note()["mentions_lost"] == []
 
 
 @pytest.fixture

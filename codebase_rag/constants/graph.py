@@ -1652,7 +1652,11 @@ KEY_MENTION_QNS = "mention_qns"
 # its order, so a renamed or moved mention is followed the way the subject is
 # (issue #3230). An empty string stands for "none": the wire carries string
 # lists, not lists with nulls. `mentions_lost` names the mentions the repair
-# could not place; they stay in `mention_qns` with no edge.
+# could not place; they stay in `mention_qns` with no edge. One name can hold a
+# live entry and lost ones (`a` deleted, then `b` renamed to `a`): each keeps
+# its own slot and anchors, the live one first, and `mentions_lost` repeats
+# the name once per lost entry. Before that, names were unique and read the
+# same way.
 KEY_MENTION_HASHES = "mention_hashes"
 KEY_MENTION_QUOTES = "mention_quotes"
 KEY_MENTIONS_LOST = "mentions_lost"

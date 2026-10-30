@@ -19,6 +19,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag import gloss
+from codebase_rag.gloss_repair import repair_mentions
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.mcp.tools import MCPToolsRegistry
 from codebase_rag.tools import tool_descriptions as td
@@ -159,6 +160,31 @@ class FakeGraph:
                 for g, props in self.glosses.items()
                 if in_project(props) and names_target(props) and g not in attached
             ]
+        elif query == cq.CYPHER_GLOSS_MENTION_ANCHORS:
+            # The mention pass (issue #3230): attached notes that mention
+            # anything, with the edges they have now.
+            attached = {g for g, _qn in self.annotates}
+            out = [
+                {**row, cs.KEY_ATTACHED: row[cs.KEY_MENTIONS]}
+                for g, props in self.glosses.items()
+                if g in attached and props.get(cs.KEY_MENTION_QNS)
+                for row in [self._gloss_row(g)]
+            ]
+        elif query in (
+            cq.CYPHER_DEFINITIONS_BY_QNS,
+            cq.CYPHER_DEFINITIONS_BY_ANCHOR_HASH,
+        ):
+            by_qn = query == cq.CYPHER_DEFINITIONS_BY_QNS
+            wanted = {str(v) for v in p[cs.KEY_QNS if by_qn else cs.KEY_HASHES]}  # type: ignore[union-attr]
+            out = [
+                {
+                    cs.KEY_QUALIFIED_NAME: qn,
+                    cs.KEY_ANCHOR_HASH: n.get(cs.KEY_ANCHOR_HASH),
+                }
+                for qn, n in self.nodes.items()
+                if (qn if by_qn else n.get(cs.KEY_ANCHOR_HASH)) in wanted
+                and (by_qn or qn.startswith(str(p[cs.KEY_PROJECT_PREFIX])))
+            ]
         else:
             raise AssertionError(f"unexpected query: {query[:60]}")
         # Deliberately unsorted: the tools must sort.
@@ -174,6 +200,9 @@ class FakeGraph:
         """
         p = params or {}
         self.writes.append((query, p))
+        if query == cq.CYPHER_GLOSS_SET_MENTIONS:
+            self._set_mentions(p)
+            return
         if query != cq.CYPHER_GLOSS_WRITE:
             raise AssertionError(f"unexpected write: {query[:60]}")
         key = str(p[cs.KEY_QN])
@@ -221,6 +250,34 @@ class FakeGraph:
         self.mentions = {(g, qn) for g, qn in self.mentions if g != key}
         for qn in wanted:
             self.mentions.add((key, qn))
+
+    def _set_mentions(self, p: PropertyDict) -> None:
+        """The mention pass's write, with the real statement's two gates: the
+        note still carries the nonce the pass read, and every followed key
+        still names a definition carrying that hash. Else nothing changes."""
+        key = str(p[cs.KEY_QN])
+        props = self.glosses[key]
+        if props.get(cs.KEY_WRITE_ID, "") != p[cs.KEY_WRITE_ID]:
+            return
+        separator = str(p[cs.KEY_KEY_SEPARATOR])
+        targets = [str(q) for q in p[cs.KEY_ATTACH_QNS] if str(q) in self.nodes]  # type: ignore[union-attr]
+        for attach_key in p[cs.KEY_ATTACH_KEYS]:  # type: ignore[union-attr]
+            qn, _sep, anchor_hash = str(attach_key).partition(separator)
+            if self.nodes.get(qn, {}).get(cs.KEY_ANCHOR_HASH) != anchor_hash:
+                return
+            targets.append(qn)
+        for name in (
+            cs.KEY_MENTION_QNS,
+            cs.KEY_MENTION_HASHES,
+            cs.KEY_MENTION_QUOTES,
+            cs.KEY_MENTIONS_LOST,
+        ):
+            if p[name] is None:
+                props.pop(name, None)
+            else:
+                props[name] = p[name]
+        self.mentions = {(g, qn) for g, qn in self.mentions if g != key}
+        self.mentions |= {(key, qn) for qn in targets}
 
 
 def _write(graph: FakeGraph, target: str, **kw: Any) -> Any:
@@ -745,6 +802,50 @@ async def test_mcp_annotate_writes_and_glosses_reads_it_back(tmp_path: Path) -> 
     assert graph.annotates == {(row["qualified_name"], RUN)}
     read = await registry.glosses(target=VALIDATE, project=P)
     assert [g["qualified_name"] for g in read["mentioning"]] == [row["qualified_name"]]
+
+
+@pytest.mark.anyio
+async def test_mcp_glosses_keeps_a_lost_mention_beside_one_that_took_its_name(
+    tmp_path: Path,
+) -> None:
+    # The note mentions Store.get and validate. One sync deletes Store.get; a
+    # later one moves validate's code under Store.get's name. `glosses` shows
+    # the live mention and still lists the lost one, whose own anchors are
+    # kept, so its code is followed when it comes back (bot review, #3329).
+    graph = FakeGraph()
+    registry = _registry(graph, tmp_path)
+    row = await registry.annotate(
+        target=RUN,
+        body=BODY,
+        kind=cs.GlossKind.INVARIANT.value,
+        mentions=f"{STORE_GET},{VALIDATE}",
+        project=P,
+    )
+    assert not _is_refusal(row)
+
+    async def synced() -> tuple[list[str], list[str]]:
+        repair_mentions(graph.fetch_all, graph.execute_write, project_name=P)
+        read = await registry.glosses(target=RUN, project=P)
+        (note,) = read["annotating"]
+        return note["mentions"], note["mentions_lost"]
+
+    del graph.nodes[STORE_GET]
+    assert await synced() == ([VALIDATE], [STORE_GET])
+
+    graph.nodes[STORE_GET] = {
+        **graph.nodes.pop(VALIDATE),
+        cs.KEY_QUALIFIED_NAME: STORE_GET,
+    }
+    assert await synced() == ([STORE_GET], [STORE_GET])
+    stored = graph.glosses[row["qualified_name"]]
+    assert stored[cs.KEY_MENTION_QNS] == [STORE_GET, STORE_GET]
+    assert stored[cs.KEY_MENTION_HASHES] == ["fp-validate", "fp-store-get"]
+
+    cache_get = f"{P}.app.Cache.get"
+    graph.nodes[cache_get] = _node(
+        "Method", cache_get, "app.py", 21, 23, anchor_hash="fp-store-get"
+    )
+    assert await synced() == ([cache_get, STORE_GET], [])
 
 
 @pytest.mark.anyio

@@ -198,7 +198,13 @@ def test_a_name_among_several_quote_homes_keeps_its_mention() -> None:
 
     placed = placer.place(_Mention(RUN, RUN_HASH, "q-run", lost=False), P)
 
-    assert placed == _Placed(RUN, decorated, "q-run", lost=False)
+    assert placed == _Placed(
+        RUN,
+        decorated,
+        "q-run",
+        lost=False,
+        fallback=_Placed(RUN, RUN_HASH, "q-run", lost=True),
+    )
 
 
 def test_the_set_statement_re_validates_a_moved_binding() -> None:
@@ -346,29 +352,128 @@ def test_a_followed_target_still_carrying_the_hash_is_bound() -> None:
         assert conn.run(_NOTE_EDGES).rows == [([_MOVED], None, [_MOVED])]
 
 
-def test_a_mention_followed_onto_a_lost_mentions_name_keeps_its_edge() -> None:
-    # The note mentions `a` and `run`; `a` was deleted and is lost, then
-    # `run` was renamed to `a`. Both now place under `a`: the one followed
-    # there by its hash is live, and the lost one must not displace it.
-    gone = f"{P}.b.a"
-    note = {
+# The note mentions `a` and `run`; `a` is deleted, then `run` is renamed to
+# `a`. Both now place under `a`: `run`, followed there by its code, is live,
+# and `a` is still lost. Neither may displace the other (bot review on PR
+# #3329): the lost record keeps its own hash and quote, so `a`'s code is
+# followed if it comes back.
+_A = f"{P}.b.a"
+_A_HASH = f"{cs.ANCHOR_HASH_VERSION}a"
+_A_BACK = f"{P}.c.a"
+
+
+def _two_mentions(**stored: object) -> ResultRow:
+    return {
         **_note([]),
-        cs.KEY_MENTION_QNS: [gone, RUN],
-        cs.KEY_MENTION_HASHES: [f"{cs.ANCHOR_HASH_VERSION}a", RUN_HASH],
-        cs.KEY_MENTION_QUOTES: ["", ""],
-        cs.KEY_MENTIONS_LOST: [gone],
+        cs.KEY_MENTION_QNS: [_A, RUN],
+        cs.KEY_MENTION_HASHES: [_A_HASH, RUN_HASH],
+        cs.KEY_MENTION_QUOTES: ["q-a", ""],
+        **stored,
     }
-    store = _Store(note, [_definition(gone, RUN_HASH)], [_definition(gone, RUN_HASH)])
+
+
+def _as_stored(note: ResultRow, params: PropertyDict) -> ResultRow:
+    """The note as the set statement leaves it, for the next pass to read."""
+    keys = [str(k) for k in params[cs.KEY_ATTACH_KEYS]]  # type: ignore[union-attr]
+    attached = [str(q) for q in params[cs.KEY_ATTACH_QNS]]  # type: ignore[union-attr]
+    return {
+        **note,
+        cs.KEY_MENTION_QNS: params[cs.KEY_MENTION_QNS],
+        cs.KEY_MENTION_HASHES: params[cs.KEY_MENTION_HASHES],
+        cs.KEY_MENTION_QUOTES: params[cs.KEY_MENTION_QUOTES],
+        cs.KEY_MENTIONS_LOST: params[cs.KEY_MENTIONS_LOST],
+        cs.KEY_ATTACHED: attached
+        + [k.split(cs.GLOSS_MENTION_KEY_SEPARATOR)[0] for k in keys],
+    }
+
+
+def _assert_both_kept_under_a(params: PropertyDict | None) -> None:
+    assert params is not None
+    # The live entry first, then the lost one, each with its own anchors.
+    assert params[cs.KEY_MENTION_QNS] == [_A, _A]
+    assert params[cs.KEY_MENTION_HASHES] == [RUN_HASH, _A_HASH]
+    assert params[cs.KEY_MENTION_QUOTES] == ["", "q-a"]
+    assert params[cs.KEY_MENTIONS_LOST] == [_A]
+    assert params[cs.KEY_ATTACH_QNS] == []
+    assert params[cs.KEY_ATTACH_KEYS] == [
+        f"{_A}{cs.GLOSS_MENTION_KEY_SEPARATOR}{RUN_HASH}"
+    ]
+
+
+def test_a_lost_mention_keeps_its_record_when_another_takes_its_name() -> None:
+    note = _two_mentions(**{cs.KEY_MENTIONS_LOST: [_A]})
+    store = _Store(note, [_definition(_A, RUN_HASH)], [_definition(_A, RUN_HASH)])
 
     report = repair_mentions(store.fetch_all, store.execute_write)
 
     ((_query, params),) = store.writes
+    _assert_both_kept_under_a(params)
+    assert report.moved == ["gloss:n"]
+    assert report.lost == ["gloss:n"]
+
+    # Read back as stored, the pair is stable: the next sync writes nothing.
     assert params is not None
-    assert params[cs.KEY_MENTION_QNS] == [gone]
-    assert params[cs.KEY_MENTION_HASHES] == [RUN_HASH]
+    stored = _as_stored(note, params)
+    again = _Store(stored, [_definition(_A, RUN_HASH)], [_definition(_A, RUN_HASH)])
+    repair_mentions(again.fetch_all, again.execute_write)
+    assert again.writes == []
+
+    # `a`'s code comes back in another module: the lost record follows it,
+    # and `run`'s code stays on `a`'s name.
+    back = _Store(
+        stored,
+        [_definition(_A, RUN_HASH)],
+        [_definition(_A, RUN_HASH), _definition(_A_BACK, _A_HASH)],
+    )
+    report = repair_mentions(back.fetch_all, back.execute_write)
+
+    ((_query, params),) = back.writes
+    assert params is not None
+    assert params[cs.KEY_MENTION_QNS] == [_A, _A_BACK]
+    assert params[cs.KEY_MENTION_HASHES] == [RUN_HASH, _A_HASH]
+    assert params[cs.KEY_MENTION_QUOTES] == ["", "q-a"]
     assert params[cs.KEY_MENTIONS_LOST] is None
+    assert params[cs.KEY_ATTACH_QNS] == [_A]
     assert params[cs.KEY_ATTACH_KEYS] == [
-        f"{gone}{cs.GLOSS_MENTION_KEY_SEPARATOR}{RUN_HASH}"
+        f"{_A_BACK}{cs.GLOSS_MENTION_KEY_SEPARATOR}{_A_HASH}"
     ]
     assert report.moved == ["gloss:n"]
     assert report.lost == []
+
+
+def test_a_mention_does_not_renew_onto_code_another_mention_was_followed_to() -> None:
+    # The same two changes in ONE sync: `a` is not yet lost, so its name,
+    # holding other code, would read as an edit in place. But that code is
+    # `run`'s, found by `run`'s own hash: `a` was replaced, not edited, and
+    # is lost with its own anchors, as if the changes came one sync apart.
+    store = _Store(
+        _two_mentions(),
+        [_definition(_A, RUN_HASH)],
+        [_definition(_A, RUN_HASH)],
+    )
+
+    report = repair_mentions(store.fetch_all, store.execute_write)
+
+    ((_query, params),) = store.writes
+    _assert_both_kept_under_a(params)
+    assert report.lost == ["gloss:n"]
+
+
+def test_a_note_from_before_repeated_names_reads_its_lost_mention_by_name() -> None:
+    # Before a name could hold a live and a lost entry, `mentions_lost` named
+    # each lost mention once, beside a unique `mention_qns`. Read that way it
+    # is unchanged: nothing moved, so nothing is written.
+    note = {
+        **_note([]),
+        cs.KEY_MENTION_QNS: [_A, RUN],
+        cs.KEY_MENTION_HASHES: [_A_HASH, RUN_HASH],
+        cs.KEY_MENTION_QUOTES: ["", ""],
+        cs.KEY_MENTIONS_LOST: [_A],
+        cs.KEY_ATTACHED: [RUN],
+    }
+    store = _Store(note, [_definition(RUN, RUN_HASH)], [])
+
+    report = repair_mentions(store.fetch_all, store.execute_write)
+
+    assert store.writes == []
+    assert report.lost == ["gloss:n"]

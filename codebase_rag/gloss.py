@@ -70,7 +70,9 @@ class GlossRow(TypedDict):
     candidate_qns: list[str]
     mentions: list[str]
     # Mentions whose definition the repair could not place after a rename,
-    # move or delete: still named, with no MENTIONS edge (issue #3230).
+    # move or delete: still named, with no MENTIONS edge (issue #3230). A
+    # name `mentions` also lists is a lost mention whose name another one
+    # has since taken.
     mentions_lost: list[str]
 
 

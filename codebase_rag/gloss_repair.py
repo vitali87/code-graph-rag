@@ -34,7 +34,7 @@ exists; if no project prefixes it, the note is LOST.
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Callable, Sequence
 from typing import NamedTuple, Protocol
 
@@ -537,6 +537,20 @@ def _strings(value: ResultValue | None) -> list[str]:
     return [str(item) for item in value if item is not None]
 
 
+def _lost_flags(qns: list[str], lost: list[str]) -> list[bool]:
+    # A name holds at most one live entry, written before its lost ones, and
+    # `mentions_lost` repeats a name once per lost entry: so a name's lost
+    # entries are its last that-many. A note from before a name could hold
+    # both has unique names and reads as it always did.
+    lost_left = Counter(lost)
+    remaining = Counter(qns)
+    flags = []
+    for qn in qns:
+        remaining[qn] -= 1
+        flags.append(remaining[qn] < lost_left[qn])
+    return flags
+
+
 def _mention_note(row: ResultRow) -> _MentionNote:
     qns = _strings(row.get(cs.KEY_MENTION_QNS))
     hashes = _strings(row.get(cs.KEY_MENTION_HASHES))
@@ -559,9 +573,11 @@ def _mention_note(row: ResultRow) -> _MentionNote:
                 qualified_name=qn,
                 anchor_hash=h or None,
                 quote=q or None,
-                lost=qn in lost,
+                lost=is_lost,
             )
-            for qn, h, q in zip(qns, hashes, quotes, strict=True)
+            for qn, h, q, is_lost in zip(
+                qns, hashes, quotes, _lost_flags(qns, lost), strict=True
+            )
         ],
         stored=(qns, hashes, quotes, sorted(lost)),
         attached=frozenset(_strings(row.get(cs.KEY_ATTACHED))),
@@ -579,6 +595,9 @@ class _Placed(NamedTuple):
     # The hash the write re-validates a followed binding by; "" binds by name.
     expect_hash: str = ""
     moved: bool = False
+    # For a mention renewed on its name: the lost record it becomes when
+    # another mention's code is found under that name instead.
+    fallback: _Placed | None = None
 
 
 class _MentionPlacer:
@@ -650,6 +669,12 @@ class _MentionPlacer:
             anchor_hash or mention.anchor_hash or "",
             anchor.quote if anchor is not None else mention.quote or "",
             lost=False,
+            fallback=_Placed(
+                mention.qualified_name,
+                mention.anchor_hash or "",
+                mention.quote or "",
+                lost=True,
+            ),
         )
 
     def _elsewhere(self, mention: _Mention, project: str) -> list[tuple[str, str]]:
@@ -701,7 +726,8 @@ def repair_mentions(
     that, a name that is still there, with the recorded code in no other
     place, was edited in place and keeps the mention, with its anchors
     renewed; otherwise the mention goes to `mentions_lost`, with no edge,
-    until its code has one home again. A
+    until its code has one home again, even if another mention takes its
+    name meanwhile. A
     name reused by unrelated code therefore never takes a mention by name
     alone: not while the recorded code is elsewhere, and not once the
     mention is lost.
@@ -737,39 +763,52 @@ def repair_mentions(
     placer = _MentionPlacer(fetch_all, current, quotes)
     for note in notes:
         project = projects.get(note.qualified_name)
-        placed: dict[str, _Placed] = {}
-        for mention in note.mentions:
-            _keep_placement(placed, placer.place(mention, project))
+        placed = _settled([placer.place(m, project) for m in note.mentions])
         _write_mentions(execute_write, note, project, placed)
-        if any(p.moved for p in placed.values()):
+        if any(p.moved for p in placed):
             report.moved.append(note.qualified_name)
-        if any(p.lost for p in placed.values()):
+        if any(p.lost for p in placed):
             report.lost.append(note.qualified_name)
     return report
 
 
-def _keep_placement(placed: dict[str, _Placed], found: _Placed) -> None:
-    # Two mentions can land on one name: one lost there, another followed
-    # there by its code (`a` deleted, then `b` renamed to `a`). The live one
-    # keeps the name and its edge; first come wins otherwise.
-    prior = placed.get(found.qualified_name)
-    if prior is None or (prior.lost and not found.lost):
-        placed[found.qualified_name] = found
+def _settled(placements: list[_Placed]) -> list[_Placed]:
+    """One live entry per name, every lost entry kept, live before lost.
+
+    Two mentions can land on one name: `a` deleted, then `b` renamed to `a`.
+    The one followed there by its code is live, and a mention renewed there
+    by name alone was replaced, not edited, so it goes back to its recorded
+    anchors, lost. A lost entry keeps its own anchors beside the live one
+    under the same name, so its code is followed if it comes back (bot review
+    on PR #3329). Two live entries under one name share one edge; first come
+    wins.
+    """
+    found = {p.qualified_name for p in placements if not p.lost and p.fallback is None}
+    kept: list[_Placed] = []
+    live: set[str] = set()
+    for placed in placements:
+        if placed.fallback is not None and placed.qualified_name in found:
+            placed = placed.fallback
+        if not placed.lost:
+            if placed.qualified_name in live:
+                continue
+            live.add(placed.qualified_name)
+        kept.append(placed)
+    return sorted(kept, key=lambda p: (p.qualified_name, p.lost))
 
 
 def _write_mentions(
     execute_write: WriteFn,
     note: _MentionNote,
     project: str | None,
-    placed: dict[str, _Placed],
+    ordered: list[_Placed],
 ) -> None:
-    ordered = [placed[qn] for qn in sorted(placed)]
     bound = [p for p in ordered if not p.lost]
     lists = (
         [p.qualified_name for p in ordered],
         [p.anchor_hash for p in ordered],
         [p.quote for p in ordered],
-        sorted(p.qualified_name for p in ordered if p.lost),
+        [p.qualified_name for p in ordered if p.lost],
     )
     if lists == note.stored and note.attached == {p.qualified_name for p in bound}:
         return
