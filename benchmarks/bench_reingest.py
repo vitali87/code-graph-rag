@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import statistics
 import sys
 import time
@@ -65,9 +66,24 @@ def _count_lines(root: Path, ingestor_paths: list[str]) -> int:
         try:
             with (root / rel).open("rb") as fh:
                 total += sum(1 for _ in fh)
-        except OSError:
-            continue
+        except OSError as error:
+            logger.warning(f"line count skips {rel}: {error}")
     return total
+
+
+def _replace_contents(path: Path, contents: str | bytes) -> None:
+    # The target is a real file in the user's corpus: a run killed mid-write
+    # must leave it whole, so the contents go to a sibling and are swapped in.
+    temp = path.with_name(f".{path.name}.{os.getpid()}{cs.TMP_EXTENSION}")
+    try:
+        if isinstance(contents, str):
+            temp.write_text(contents, encoding=cs.ENCODING_UTF8)
+        else:
+            temp.write_bytes(contents)
+        shutil.copymode(path, temp)
+        os.replace(temp, path)
+    finally:
+        temp.unlink(missing_ok=True)
 
 
 def _toggle_edit(path: Path, iteration: int) -> None:
@@ -75,9 +91,9 @@ def _toggle_edit(path: Path, iteration: int) -> None:
     # changes the file's bytes (and hash) without changing its AST.
     text = path.read_text(encoding=cs.ENCODING_UTF8)
     if iteration % 2 == 0:
-        path.write_text(text + NEUTRAL_EDIT, encoding=cs.ENCODING_UTF8)
+        _replace_contents(path, text + NEUTRAL_EDIT)
     else:
-        path.write_text(text.removesuffix(NEUTRAL_EDIT), encoding=cs.ENCODING_UTF8)
+        _replace_contents(path, text.removesuffix(NEUTRAL_EDIT))
 
 
 def _bump_mtime(root: Path, path: Path) -> None:
@@ -170,7 +186,7 @@ def measure_reingest(
             updater.run()
             full_samples.append((time.perf_counter() - started) * 1000.0)
     finally:
-        target.write_bytes(original)
+        _replace_contents(target, original)
         # Bytes AND timestamps: a changed mtime would wake a watcher or skew
         # the next mtime-gated update.
         os.utime(target, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
