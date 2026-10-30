@@ -17,7 +17,7 @@ BENCHMARKS = [
 
 
 def main() -> None:
-    bench_dir = Path(__file__).parent
+    bench_dir = Path(__file__).resolve().parent
     results_dir = bench_dir / "results"
     results_dir.mkdir(exist_ok=True)
 
@@ -39,11 +39,14 @@ def main() -> None:
         print(f"\nRunning: {bench_file}")
 
         start = time.perf_counter()
+        # Each suite imports `benchmarks.harness`, so it runs as a module of
+        # the `benchmarks` package from the repository root.
         result = subprocess.run(
-            [sys.executable, str(bench_path)],
+            [sys.executable, "-m", f"benchmarks.{bench_path.stem}"],
             capture_output=True,
             text=True,
             timeout=600,
+            cwd=bench_dir.parent,
         )
         elapsed = time.perf_counter() - start
 

@@ -3,8 +3,7 @@ import time
 from collections import OrderedDict
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import harness  # noqa: E402
+from benchmarks import harness
 
 WARMUP_RUNS = 3
 BENCH_RUNS = 50

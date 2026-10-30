@@ -1,14 +1,10 @@
-import sys
 import time
 from collections import defaultdict
-from pathlib import Path
 
+from benchmarks import harness
 from codebase_rag.constants import NodeLabel
 from codebase_rag.function_registry import FunctionRegistryTrie
 from codebase_rag.types_defs import SimpleNameLookup
-
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import harness  # noqa: E402
 
 WARMUP_RUNS = 3
 BENCH_RUNS = 30

@@ -1,13 +1,10 @@
 import json
-import sys
 import tempfile
 import time
 from pathlib import Path
 
+from benchmarks import harness
 from codebase_rag.graph_loader import GraphLoader
-
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import harness  # noqa: E402
 
 WARMUP_RUNS = 2
 BENCH_RUNS = 20
