@@ -49,11 +49,7 @@ from . import definition_label as nt
 from . import identity as id_
 from . import method_override as mo
 from . import relationships as rel
-from .utils import (
-    body_method_nodes,
-    find_child_by_type,
-    skip_method,
-)
+from .utils import body_method_nodes, find_child_by_type, skip_method
 
 if TYPE_CHECKING:
     from ...services import IngestorProtocol
@@ -102,9 +98,12 @@ class _MethodScope(NamedTuple):
 class ClassIngest:
     """Writes every class-like node a file's class captures yield (classes,
     interfaces, enums, traits, impl blocks, inline modules) with their methods,
-    bases and members. What waits for every type to be registered is held
-    here and resolved by the `resolve_deferred_*` passes and the override
-    walk."""
+    bases and members. The INHERITS/IMPLEMENTS edges that wait for every type
+    to be registered are held here and resolved by `resolve_deferred_inherits`
+    and the override walk. A language's own share is the collaborator it
+    builds from that language's package (`CppClassIngest`, `RustClassIngest`,
+    `CSharpClassIngest` and the rest), which holds what that language defers
+    until its own `resolve_deferred_*` pass."""
 
     __slots__ = (
         "_method_host",

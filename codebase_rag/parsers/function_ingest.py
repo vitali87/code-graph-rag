@@ -47,10 +47,7 @@ from .js_ts import utils as js_ts_utils
 from .js_ts.utils import mark_js_ts_module_private
 from .lua import function_ingest as lua_function_ingest
 from .method_ingest import MethodIngestHost
-from .parameter_nodes import (
-    PendingParameterType,
-    emit_declared_parameters,
-)
+from .parameter_nodes import PendingParameterType, emit_declared_parameters
 from .php import utils as php_utils
 from .positional_params import declared_positional_params
 from .rust import function_ingest as rust_function_ingest
@@ -140,11 +137,6 @@ class FunctionIngest:
         # Shared with the class pass, whose methods defer their containment
         # here too; emptied in place by resolve_deferred_parent_links.
         self._deferred_parent_links = deferred_parent_links
-        self.rust = rust_function_ingest.RustFunctionIngest(self, ingestor, facts)
-        self.js_ts = js_ts_function_ingest.JsTsFunctionIngest(
-            self, function_registry, facts
-        )
-        self.java = java_function_ingest.JavaFunctionIngest(java_anon_overrides)
         self.cpp = cpp_function_ingest.CppFunctionIngest(
             self,
             method_host=method_host,
@@ -156,6 +148,7 @@ class FunctionIngest:
             facts=facts,
             cpp_definition_spans=cpp_definition_spans,
         )
+        self.rust = rust_function_ingest.RustFunctionIngest(self, ingestor, facts)
         self.csharp = csharp_function_ingest.CSharpFunctionIngest(
             method_host=method_host,
             facts=facts,
@@ -175,6 +168,10 @@ class FunctionIngest:
             methods=go_methods,
             deferred_parent_links=deferred_parent_links,
         )
+        self.js_ts = js_ts_function_ingest.JsTsFunctionIngest(
+            self, function_registry, facts
+        )
+        self.java = java_function_ingest.JavaFunctionIngest(java_anon_overrides)
 
     def ingest_all_functions(
         self,
