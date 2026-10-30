@@ -200,7 +200,8 @@ def _body_references(
     as taken: swapping two parameters is a rename in each direction.
     """
     body = header.function.child_by_field_name(cs.FIELD_BODY)
-    assert body is not None
+    if body is None:
+        return []
     wanted = old.encode(cs.ENCODING_UTF8)
     taken = None if new in renamed_away else new.encode(cs.ENCODING_UTF8)
     rebinds = cs.SIGNATURE_BODY_REBINDS.format(old=old, qn=header.qn, new=new)
@@ -299,7 +300,8 @@ def _bind_arguments(
         if child.type == cs.TS_PY_KEYWORD_ARGUMENT:
             key = child.child_by_field_name(cs.FIELD_NAME)
             value = child.child_by_field_name(cs.FIELD_VALUE)
-            assert key is not None and value is not None
+            if key is None or value is None:
+                raise _Unmapped(cs.SIGNATURE_SITE_UNREADABLE.format(text=text))
             name = _text(key, source)
             if name not in names:
                 raise _Unmapped(cs.SIGNATURE_SITE_UNKNOWN_KEYWORD.format(name=name))
