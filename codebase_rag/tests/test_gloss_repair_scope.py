@@ -14,12 +14,12 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag import graph_updater
 from codebase_rag.gloss.repair import RepairReport
 from codebase_rag.graph_dialects import DIALECT_SQLITE, get_dialect
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services.graph_service import GraphIngestor
+from codebase_rag.updater import gloss_reanchor
 from evals.cgr_graph import StatefulIngestor
 
 
@@ -32,7 +32,7 @@ def test_every_sync_path_scopes_the_repair_to_its_project(
         scopes.append(project_name)
         return RepairReport(moved=[], ambiguous=[], lost=[])
 
-    monkeypatch.setattr(graph_updater, "repair_unanchored", recording)
+    monkeypatch.setattr(gloss_reanchor, "repair_unanchored", recording)
     (temp_repo / "a.py").write_text("def f(x):\n    return x + 1\n", encoding="utf-8")
     parsers, queries = load_parsers()
     updater = GraphUpdater(
@@ -110,7 +110,7 @@ def test_the_name_tier_mentions_and_grade_touch_only_the_syncing_project(
             project_name="app",
         )
 
-        updater._reanchor_glosses()
+        updater.gloss_reanchor.reanchor()
 
         notes = {
             row["qn"]: (row["state"], row["subjects"], row["mentions"])

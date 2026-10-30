@@ -322,7 +322,7 @@ def repair_unanchored(
     Deterministic: notes are visited in key order and candidates are sorted,
     so the same graph yields the same writes. Raises nothing of its own; a
     store error propagates to the caller, which logs it and lets the next
-    run retry (`GraphUpdater._reanchor_glosses`).
+    run retry (`GlossReanchor.reanchor`).
 
     `project_name` scopes the pass to one project's notes: a sync changed
     that project's definitions only, so another project's note can change

@@ -24,6 +24,7 @@ from codebase_rag.mcp.tools import MCPToolsRegistry
 from codebase_rag.tests.conftest import get_relationships
 from codebase_rag.tools import tool_descriptions as td
 from codebase_rag.types_defs import PropertyDict, ResultRow
+from codebase_rag.updater.gloss_reanchor import GlossReanchor
 
 P = "proj"
 RUN = f"{P}.app.run"
@@ -989,7 +990,7 @@ def test_reanchoring_rebuilds_edges_from_the_notes_own_record(tmp_path: Path) ->
         queries={},
         project_name=P,
     )
-    updater._reanchor_glosses()
+    updater.gloss_reanchor.reanchor()
     # Name tier first; then the repair tier places or marks what the name
     # tier left unattached (here: one note with no comparable hash, marked
     # LOST); then the mentions restore, so a note that has just MOVED gets
@@ -1061,8 +1062,8 @@ def test_reanchoring_failure_is_logged_not_raised(tmp_path: Path) -> None:
         parsers={},
         queries={},
     )
-    with patch("codebase_rag.graph_updater.logger") as log:
-        updater._reanchor_glosses()
+    with patch("codebase_rag.updater.gloss_reanchor.logger") as log:
+        updater.gloss_reanchor.reanchor()
     log.warning.assert_called_once_with(
         lg.GLOSS_REANCHOR_FAILED.format(error="store down")
     )
@@ -1087,7 +1088,7 @@ def test_a_full_rebuild_ends_by_reanchoring_the_notes(tmp_path: Path) -> None:
         queries=queries,
         project_name=P,
     )
-    with patch.object(GraphUpdater, "_reanchor_glosses", autospec=True) as reanchor:
+    with patch.object(GlossReanchor, "reanchor", autospec=True) as reanchor:
         updater.run(force=True)
     reanchor.assert_called_once()
 
@@ -1105,7 +1106,7 @@ def test_an_unchanged_run_still_reanchors_the_notes(tmp_path: Path) -> None:
     )
     with (
         patch.object(GraphUpdater, "_is_already_in_sync", return_value=True),
-        patch.object(GraphUpdater, "_reanchor_glosses", autospec=True) as reanchor,
+        patch.object(GlossReanchor, "reanchor", autospec=True) as reanchor,
     ):
         updater.run()
     assert updater.skipped_because_in_sync
@@ -1246,17 +1247,25 @@ def test_the_updater_reads_only_its_own_projects_files(tmp_path: Path) -> None:
         queries=queries,
     )
     (repo / "notes.txt").write_text("plain\n")
-    parsed = updater._read_project_source(updater.project_name, "app.py")
+    parsed = updater.gloss_reanchor.read_project_source(updater.project_name, "app.py")
     assert parsed is not None
     assert parsed.text == "x = 1\n"
     assert parsed.tree is not None
-    plain = updater._read_project_source(updater.project_name, "notes.txt")
+    plain = updater.gloss_reanchor.read_project_source(
+        updater.project_name, "notes.txt"
+    )
     assert plain is not None
     assert plain.tree is None
-    assert updater._read_project_source("other", "app.py") is None
+    assert updater.gloss_reanchor.read_project_source("other", "app.py") is None
     # The planted file above the root exists: None here is the guard.
-    assert updater._read_project_source(updater.project_name, "../app.py") is None
-    assert updater._read_project_source(updater.project_name, "missing.py") is None
+    assert (
+        updater.gloss_reanchor.read_project_source(updater.project_name, "../app.py")
+        is None
+    )
+    assert (
+        updater.gloss_reanchor.read_project_source(updater.project_name, "missing.py")
+        is None
+    )
 
 
 def test_the_reanchor_pass_hands_the_updater_reader_to_the_repair(
@@ -1269,12 +1278,12 @@ def test_the_reanchor_pass_hands_the_updater_reader_to_the_repair(
         parsers={},
         queries={},
     )
-    with patch("codebase_rag.graph_updater.repair_unanchored") as repair:
-        updater._reanchor_glosses()
+    with patch("codebase_rag.updater.gloss_reanchor.repair_unanchored") as repair:
+        updater.gloss_reanchor.reanchor()
     repair.assert_called_once_with(
         store.fetch_all,
         store.execute_write,
-        updater._read_project_source,
+        updater.gloss_reanchor.read_project_source,
         project_name=updater.project_name,
     )
 

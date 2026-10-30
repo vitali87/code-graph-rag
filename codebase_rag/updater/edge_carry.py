@@ -101,7 +101,7 @@ class EdgeCarry:
             # pins this). The captured set also holds the ANNOTATES / MENTIONS
             # edges of glosses (issue #1808), which have no source to come
             # back from; those are rebuilt from the notes' own recorded names
-            # by `_reanchor_glosses` at the end of the run. An incremental run
+            # by `GlossReanchor.reanchor` at the end of the run. An incremental run
             # cannot re-resolve edges from files it will not parse, so there
             # the outage aborts the run.
             if not run.is_full_build:
@@ -137,7 +137,7 @@ class EdgeCarry:
     ) -> None:
         """Re-apply the captured trace edges to the re-parsed graph.
 
-        Never raises, like `_reanchor_glosses`: the sync itself has landed,
+        Never raises, like `GlossReanchor.reanchor`: the sync itself has landed,
         and the observations come back by re-ingesting the trace, which the
         warning tells the user to do.
         """
