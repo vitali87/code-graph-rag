@@ -33,6 +33,7 @@ def _variant_position(qualified_name: QualifiedName) -> tuple[int, int]:
 TYPE_SPACE_KINDS = frozenset({cs.NodeLabel.TYPE, cs.NodeLabel.INTERFACE})
 
 # The keys a trie node keeps its own qn and label under, beside its segments.
+# Only these: a dunder segment (`__init__`) shares their `__` but is a child.
 _TRIE_NODE_KEYS = frozenset({cs.TRIE_QN_KEY, cs.TRIE_TYPE_KEY})
 
 
@@ -414,9 +415,8 @@ class FunctionRegistryTrie:
 
         parts = qualified_name.split(cs.SEPARATOR_DOT)
         # A segment spelled like a node's own key (`__qn__`) would overwrite
-        # that node's qn, or be overwritten by it. Prefix lookups skip `__`
-        # segments anyway, so such a qn keeps its entry and goes without a
-        # trie path.
+        # that node's qn, or be overwritten by it, so such a qn keeps its
+        # entry and goes without a trie path.
         if not _TRIE_NODE_KEYS.isdisjoint(parts):
             return
         current: TrieNode = self.root
@@ -537,7 +537,7 @@ class FunctionRegistryTrie:
             del node[part]
 
         is_endpoint = cs.TRIE_QN_KEY in node
-        has_children = any(not key.startswith(cs.TRIE_INTERNAL_PREFIX) for key in node)
+        has_children = any(key not in _TRIE_NODE_KEYS for key in node)
         return not has_children and not is_endpoint
 
     def _navigate_to_prefix(self, prefix: str) -> TrieNode | None:
@@ -573,9 +573,7 @@ class FunctionRegistryTrie:
                 results.append((qn, func_type))
 
             for key, child in n.items():
-                if not key.startswith(cs.TRIE_INTERNAL_PREFIX) and isinstance(
-                    child, dict
-                ):
+                if key not in _TRIE_NODE_KEYS and isinstance(child, dict):
                     dfs(child)
 
         dfs(node)

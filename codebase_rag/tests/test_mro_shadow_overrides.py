@@ -191,3 +191,44 @@ def test_shadow_edge_emitted_once_across_combining_classes(tmp_path: Path) -> No
         == ("proj.s.SearchVectorCombinable._combine", "proj.s.Combinable._combine")
     ]
     assert len(shadow_edges) == 1
+
+
+DUNDER_PY = """\
+class Base:
+    def __init__(self):
+        self.x = 1
+
+    def __eq__(self, other):
+        return True
+
+
+class Child(Base):
+    def __init__(self):
+        self.x = 2
+
+    def __eq__(self, other):
+        return False
+
+
+class EqMixin:
+    def __eq__(self, other):
+        return False
+
+
+class Mixed(EqMixin, Base):
+    pass
+"""
+
+
+def test_a_dunder_overrides_like_any_method(tmp_path: Path) -> None:
+    # A dunder segment (`__init__`) starts like the trie's own node keys
+    # (`__qn__`), but it is a method name: the shadow pass reads a class's
+    # methods off the trie and must see it too.
+    root = tmp_path / "dunder"
+    root.mkdir()
+    (root / "d.py").write_text(DUNDER_PY, encoding="utf-8")
+
+    overrides = _overrides(root)
+    assert ("proj.d.Child.__init__", "proj.d.Base.__init__") in overrides
+    assert ("proj.d.Child.__eq__", "proj.d.Base.__eq__") in overrides
+    assert ("proj.d.EqMixin.__eq__", "proj.d.Base.__eq__") in overrides

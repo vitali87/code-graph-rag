@@ -100,7 +100,6 @@ GLOB_ALL = "*"
 
 TRIE_TYPE_KEY = "__type__"
 TRIE_QN_KEY = "__qn__"
-TRIE_INTERNAL_PREFIX = "__"
 
 BYTES_PER_MB = 1024 * 1024
 
