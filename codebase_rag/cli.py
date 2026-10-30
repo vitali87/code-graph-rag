@@ -436,7 +436,7 @@ def _exit_with_error(message: str) -> NoReturn:
     raise typer.Exit(1)
 
 
-def _refuse_options_update_graph_drops(
+def _refuse_dropped_options(
     update_graph: bool,
     ask_agent: str | None,
     output_format: cs.QueryFormat,
@@ -451,26 +451,37 @@ def _refuse_options_update_graph_drops(
     # the assistant, which reads `-a`, `--output-format` and `--projects`, so
     # only `--no-sync` is refused there, by its own message: a sync asked for
     # with `--no-sync` contradicts itself (#2418).
-    if not update_graph:
-        return
-    if workspace_given:
+    if update_graph and workspace_given:
         if no_sync:
             _exit_with_error(cs.CLI_ERR_WORKSPACE_UPDATE_NO_SYNC)
-        return
-    for option, given, remedy in (
-        (cs.CLI_OPT_ASK_AGENT, ask_agent is not None, cs.CLI_REMEDY_DROP_UPDATE_GRAPH),
-        (
-            cs.CLI_OPT_OUTPUT_FORMAT_JSON,
-            output_format == cs.QueryFormat.JSON,
-            cs.CLI_REMEDY_DROP_UPDATE_GRAPH,
-        ),
-        (cs.CLI_OPT_NO_SYNC, no_sync, cs.CLI_REMEDY_SYNC_OR_NO_SYNC),
-        (cs.CLI_OPT_PROJECTS, projects is not None, cs.CLI_REMEDY_DROP_UPDATE_GRAPH),
-    ):
-        if given:
-            _exit_with_error(
-                cs.CLI_ERR_UPDATE_GRAPH_CONFLICT.format(option=option, remedy=remedy)
-            )
+    elif update_graph:
+        for option, given, remedy in (
+            (
+                cs.CLI_OPT_ASK_AGENT,
+                ask_agent is not None,
+                cs.CLI_REMEDY_DROP_UPDATE_GRAPH,
+            ),
+            (
+                cs.CLI_OPT_OUTPUT_FORMAT_JSON,
+                output_format == cs.QueryFormat.JSON,
+                cs.CLI_REMEDY_DROP_UPDATE_GRAPH,
+            ),
+            (cs.CLI_OPT_NO_SYNC, no_sync, cs.CLI_REMEDY_SYNC_OR_NO_SYNC),
+            (
+                cs.CLI_OPT_PROJECTS,
+                projects is not None,
+                cs.CLI_REMEDY_DROP_UPDATE_GRAPH,
+            ),
+        ):
+            if given:
+                _exit_with_error(
+                    cs.CLI_ERR_UPDATE_GRAPH_CONFLICT.format(
+                        option=option, remedy=remedy
+                    )
+                )
+    # The format shapes the single answer `-a` prints; the chat has none.
+    if output_format == cs.QueryFormat.JSON and not ask_agent:
+        _exit_with_error(cs.CLI_ERR_JSON_REQUIRES_ASK_AGENT)
 
 
 def _start_update_graph(
@@ -1488,7 +1499,7 @@ def start(
     app_context.session.confirm_edits = not no_confirm
     app_context.session.load_cgr_instructions = not no_instructions
 
-    _refuse_options_update_graph_drops(
+    _refuse_dropped_options(
         update_graph,
         ask_agent,
         output_format,
@@ -1496,8 +1507,6 @@ def start(
         projects,
         workspace_given=workspace is not None,
     )
-    if output_format == cs.QueryFormat.JSON and not ask_agent:
-        _exit_with_error(cs.CLI_ERR_JSON_REQUIRES_ASK_AGENT)
 
     resolved_repo = _resolve_and_validate_repo(repo_path)
     target_repo_path = str(resolved_repo)
