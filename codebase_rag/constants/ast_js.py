@@ -7,6 +7,7 @@ from .ast_nodes import (
     TS_MEMBER_EXPRESSION,
     TS_NEW_EXPRESSION,
     TS_TYPE_ALIAS_DECLARATION,
+    TS_TYPE_IDENTIFIER,
 )
 
 # Locals query patterns for JS/TS
@@ -332,11 +333,11 @@ FIELD_INCREMENT = "increment"
 TS_TYPE_ANNOTATION = "type_annotation"
 # TypeScript type-annotation shapes (issue #1303). Arrays and array-shaped
 # generics carry their element in the canonical `list[<element>]` marker,
-# which only for-of loop-variable inference unwraps.
+# which only for-of loop-variable inference unwraps. `generic_type` and
+# `type_identifier` are shared with other grammars (`constants/ast_java.py`,
+# `constants/ast_nodes.py`).
 TS_ARRAY_TYPE = "array_type"
-TS_GENERIC_TYPE = "generic_type"
 TS_UNION_TYPE = "union_type"
-TS_TYPE_IDENTIFIER = "type_identifier"
 TS_NESTED_TYPE_IDENTIFIER = "nested_type_identifier"
 # What a TS `implements` or interface `extends` entry may name (issue #2560):
 # a bare type, or a namespace member (`r.Plain`). A generic_type (`Router<T>`)
@@ -364,8 +365,6 @@ JS_CLASS_VALUE_PREFIX = "typeof "
 JS_RECEIVER_CLASS = f"{JS_CLASS_VALUE_PREFIX}{JS_RECEIVER_INSTANCE}"
 TS_CHAIN_OPAQUE_CALLABLE_KEYWORDS = frozenset({"async", "*", "get", "set"})
 TS_ACCESSOR_KEYWORDS = frozenset({"get", "set"})
-# `declare class C {}` / `declare module "x" {}`.
-TS_AMBIENT_DECLARATION = "ambient_declaration"
 # A member call's receiver declaration, read to confirm or rule out a method
 # bound only by name (issue #2609).
 TS_PREDEFINED_TYPE = "predefined_type"
@@ -421,10 +420,6 @@ TS_ARRAY_PATTERN = "array_pattern"
 TS_REST_PATTERN = "rest_pattern"
 # `f(...xs)`: an argument passing as many values as `xs` holds.
 TS_SPREAD_ELEMENT = "spread_element"
-# Bodiless TS declarations: an overload, an interface member, an abstract or
-# ambient one. A call matches one of possibly several such signatures.
-TS_METHOD_SIGNATURE = "method_signature"
-TS_ABSTRACT_METHOD_SIGNATURE = "abstract_method_signature"
 TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN = "shorthand_property_identifier_pattern"
 TS_SHORTHAND_PROPERTY_IDENTIFIER = "shorthand_property_identifier"
 TS_PAIR_PATTERN = "pair_pattern"

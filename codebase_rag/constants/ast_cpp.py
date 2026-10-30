@@ -115,7 +115,6 @@ CPP_STD_STRING_ALIAS_TEMPLATES: dict[str, tuple[str, str]] = {
     "u16string_view": ("basic_string_view", "char16_t"),
     "u32string_view": ("basic_string_view", "char32_t"),
 }
-CPP_STD_NAMESPACE = "std"
 # The cv-qualifiers: on a by-value parameter they are no part of the
 # function's type; on what a pointer or reference refers to they are.
 CPP_CV_QUALIFIER_WORDS = frozenset({"const", "volatile"})
