@@ -57,6 +57,7 @@ from codebase_rag.types_defs import (
     ResultRow,
 )
 from codebase_rag.updater.edge_carry import EdgeCarry
+from codebase_rag.updater.reingest_planner import ReingestPlanner
 from codebase_rag.utils.path_utils import derive_project_name
 from evals.cgr_graph import StatefulIngestor
 
@@ -1716,10 +1717,10 @@ class TestOneWriterPerCheckout:
     ) -> None:
         manual: list[Result] = []
         connected: list[int] = []
-        original = GraphUpdater._reingest_split
+        original = ReingestPlanner.split
 
         def during_the_reingest(
-            self: GraphUpdater,
+            self: ReingestPlanner,
             paths: Sequence[Path | str],
             deleted: Sequence[Path | str],
         ) -> tuple[dict[str, Path], dict[str, Path], set[str]]:
@@ -1735,7 +1736,7 @@ class TestOneWriterPerCheckout:
             worker.join(120)
             return original(self, paths, deleted)
 
-        monkeypatch.setattr(GraphUpdater, "_reingest_split", during_the_reingest)
+        monkeypatch.setattr(ReingestPlanner, "split", during_the_reingest)
         watching.while_watching = lambda handler: _edit(handler, shop / "m.py")
 
         result = _watch("--repo-path", str(shop), "--no-start-stack", "-d", "0")

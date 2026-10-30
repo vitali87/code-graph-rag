@@ -199,8 +199,8 @@ class TestWiredIntoTheDependentSet:
         ingestor = _QueryingIngestor([{cs.KEY_CALLER_PATH: "main.py"}])
         updater = _updater(tmp_path, ingestor)
 
-        dependents = updater._reingest_dependents(
-            present={"util.py": tmp_path / "util.py"}, gone={}
+        dependents = updater.reingest_planner.dependents(
+            updater._run, present={"util.py": tmp_path / "util.py"}, gone={}
         )
         assert "main.py" in dependents
 
@@ -211,8 +211,8 @@ class TestWiredIntoTheDependentSet:
         ingestor = _QueryingIngestor([{cs.KEY_CALLER_PATH: "util.py"}])
         updater = _updater(tmp_path, ingestor)
 
-        dependents = updater._reingest_dependents(
-            present={"util.py": tmp_path / "util.py"}, gone={}
+        dependents = updater.reingest_planner.dependents(
+            updater._run, present={"util.py": tmp_path / "util.py"}, gone={}
         )
         assert dependents == {}
 

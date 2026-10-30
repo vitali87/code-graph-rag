@@ -48,6 +48,7 @@ from codebase_rag.sync.lock import (
 )
 from codebase_rag.tests.cli_output import unstyle
 from codebase_rag.tests.conftest import get_nodes
+from codebase_rag.updater.reingest_planner import ReingestPlanner
 
 runner = CliRunner()
 
@@ -315,7 +316,7 @@ def test_a_scoped_reingest_waits_for_the_running_sync(
         started_at.append(time.monotonic())
         return set(), set(), set()
 
-    with patch.object(GraphUpdater, "_reingest_split", side_effect=record):
+    with patch.object(ReingestPlanner, "split", side_effect=record):
         with _held_elsewhere(repo, "click") as holder:
             worker = threading.Thread(
                 target=updater.reingest, args=([repo / "core.py"],), daemon=True

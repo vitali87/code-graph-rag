@@ -34,6 +34,7 @@ from codebase_rag.tests.conftest import (
     get_nodes,
     get_relationships,
 )
+from codebase_rag.updater.reingest_planner import ReingestPlanner
 from evals.cgr_graph import StatefulIngestor
 
 PROJECT = "reingest_fixture"
@@ -738,10 +739,10 @@ def test_reingest_does_not_report_an_unreadable_file_as_reparsed(
     updater.run(force=True)
     assert (cs.NodeLabel.FUNCTION.value, f"{PROJECT}.pkg.util.helper") in store.nodes
 
-    real_split = GraphUpdater._reingest_split
+    real_split = ReingestPlanner.split
 
     def racing_split(
-        self: GraphUpdater, paths: object, deleted: object
+        self: ReingestPlanner, paths: object, deleted: object
     ) -> tuple[dict[str, Path], dict[str, Path], set[str]]:
         present, gone, skipped = real_split(self, paths, deleted)
         for key, path in present.items():
@@ -752,7 +753,7 @@ def test_reingest_does_not_report_an_unreadable_file_as_reparsed(
         return present, gone, skipped
 
     monkey = pytest.MonkeyPatch()
-    monkey.setattr(GraphUpdater, "_reingest_split", racing_split)
+    monkey.setattr(ReingestPlanner, "split", racing_split)
     try:
         report = updater.reingest([], deleted=["pkg/util.py"])
     finally:
