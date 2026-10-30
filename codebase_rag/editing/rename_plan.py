@@ -8,9 +8,12 @@ import re
 from pathlib import Path, PurePosixPath
 from typing import NamedTuple
 
+from loguru import logger
+
 from .. import constants as cs
 from .. import cypher_queries as cq
 from .. import graph_query
+from .. import logs as ls
 from ..language_spec import get_language_for_extension
 from ..types_defs import QueryFn
 from ..utils.path_utils import base_module_qn, declaration_implementations
@@ -156,7 +159,14 @@ class RenamePlanner:
                 lines = path.read_text(
                     encoding=cs.ENCODING_UTF8, errors="replace"
                 ).splitlines()
-            except OSError:
+            except OSError as error:
+                # Mentions are reported, not rewritten, so an unreadable
+                # document only leaves the report short, and says so.
+                logger.warning(
+                    ls.RENAME_DOC_UNREADABLE.format(
+                        path=path, name=old_name, error=error
+                    )
+                )
                 continue
             for number, text in enumerate(lines, 1):
                 if pattern.search(text):
@@ -457,11 +467,12 @@ class RenamePlanner:
             try:
                 other_sites, _unlocatable, _name, _label = self.sites.collect(other)
                 other_imports = self.sites.import_sites(other, old_name)
-            except (RenameRefused, PatcherError):
+            except (RenameRefused, PatcherError) as error:
                 # Its definition or one of its sites cannot be located in the
                 # tree: what it would cover stays unplanned, since refusing
                 # over a namesake's stale graph is safer than crediting it
                 # with an occurrence that may be ours.
+                logger.debug(ls.RENAME_NAMESAKE_UNLOCATED.format(qn=other, error=error))
                 continue
             declared = next(
                 (s for s in other_sites if s.kind == cs.RenameSiteKind.DEFINITION), None

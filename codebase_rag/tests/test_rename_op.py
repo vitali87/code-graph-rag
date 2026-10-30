@@ -137,6 +137,30 @@ def test_markdown_mentions_of_the_old_name_are_reported(
     assert report.doc_mentions == ("docs/guide.md:3",)
 
 
+def test_an_unreadable_markdown_file_is_skipped_and_said(tmp_path: Path) -> None:
+    """A document the scan cannot read leaves the mentions report short, so
+    the skip is logged, and the documents it can read are still reported."""
+    from loguru import logger
+
+    from codebase_rag.editing.rename_plan import RenamePlanner
+
+    (tmp_path / "guide.md").write_text("Call helper.\n", encoding="utf-8")
+    # A directory the `*.md` glob matches: reading it raises an OSError.
+    (tmp_path / "notes.md").mkdir()
+    warnings: list[str] = []
+    sink = logger.add(
+        lambda message: warnings.append(message.record["message"]), level="WARNING"
+    )
+    try:
+        found = RenamePlanner(MagicMock(), "p", tmp_path)._doc_mentions("helper")
+    finally:
+        logger.remove(sink)
+
+    assert found == ["guide.md:1"]
+    assert len(warnings) == 1
+    assert "notes.md" in warnings[0]
+
+
 def test_python_function_rename_rewrites_every_site_and_import(
     py_repo: tuple[Path, RecordedGraph],
 ) -> None:

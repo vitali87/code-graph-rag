@@ -424,6 +424,10 @@ DELETION_QUERY = "Ran deletion query for path: {path}"
 EDIT_TX_REJECTED = "Edit transaction {tx} rejected by verification: {why}"
 EDIT_TX_APPLIED = "Edit transaction {tx} applied {count} file(s)"
 EDIT_TX_RESTORE_FAILED = "Edit transaction could not restore {path}: {error}"
+RENAME_DOC_UNREADABLE = "Rename could not read {path} for mentions of {name}: {error}"
+RENAME_NAMESAKE_UNLOCATED = (
+    "Rename left the occurrences {qn} would cover unclaimed: {error}"
+)
 REINGEST_DONE = "Re-ingested {reparsed} file(s) (+{affected} dependent, -{removed} removed) in {ms} ms"
 REINGEST_SKIPPED_IGNORED = "Re-ingest skipped path(s) the ignore rules exclude: {paths}"
 CHAT_REINGEST_FAILED = (
