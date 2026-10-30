@@ -126,6 +126,12 @@ class RustImporter:
         # the IMPORTS edge the processor's flush emits.
         self.import_mapping = import_mapping
         self._import_sites = import_sites
+        self._init_rust_path_caches()
+        self._init_rust_scope_maps()
+
+    def _init_rust_path_caches(self) -> None:
+        """What the filesystem and the Cargo manifests say, read lazily;
+        `reset_rust_path_caches` clears each when either may have changed."""
         # Exact-case directory listings and entry-file `mod` declarations for
         # Rust path rewriting (issue #1007); cleared per run by
         # reset_rust_path_caches so watch re-runs re-observe the filesystem.
@@ -183,6 +189,11 @@ class RustImporter:
         # members' package names -> package dir. Manifest-derived as well.
         self._rust_dep_members: dict[tuple[str, ...], dict[str, tuple[str, ...]]] = {}
         self._rust_member_packages: dict[str, tuple[str, ...]] | None = None
+
+    def _init_rust_scope_maps(self) -> None:
+        """The bindings a `use`, an inline mod or a block gives the names of
+        one scope, filled as each file is parsed and read where a call is
+        resolved."""
         # Inline-mod import scopes minted per file (file qn -> effective qns),
         # so a watch-mode re-parse of the file drops its stale sub-scopes.
         self._rust_inline_scope_keys: dict[str, set[str]] = {}

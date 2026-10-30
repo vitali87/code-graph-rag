@@ -40,7 +40,12 @@ from .endpoints import emit_endpoints, queue_endpoints
 from .java import utils as java_utils
 from .parameter_nodes import emit_declared_parameters
 from .positional_params import declared_positional_params
-from .type_facts import extract_type_facts, queue_type_facts, type_facts_props
+from .type_facts import (
+    TypeFacts,
+    extract_type_facts,
+    queue_type_facts,
+    type_facts_props,
+)
 from .utils import (
     _decorator_tail_names,
     _is_abstract_member,
@@ -349,6 +354,17 @@ def _language_method_props(
     return {}
 
 
+class _MethodSite(NamedTuple):
+    # The method being written: its node, registered qn and name, the
+    # language it is read in, and the module and file it is declared in.
+    node: ASTNode
+    qualified_name: str
+    name: str
+    language: cs.SupportedLanguage
+    module_qn: str | None
+    file_path: Path | None
+
+
 def ingest_method(
     host: MethodIngestHost,
     method_node: ASTNode,
@@ -366,14 +382,6 @@ def ingest_method(
     skip_cpp_artifact_check: bool = False,
     member_aliases: tuple[str, ...] = (),
 ) -> str | None:
-    ingestor = host.ingestor
-    function_registry = host.function_registry
-    simple_name_lookup = host.simple_name_lookup
-    get_docstring_func = host._get_docstring
-    repo_path = host.repo_path
-    pending_endpoints = host.pending_endpoints
-    type_fact_sink = host.pending_type_facts
-    parameter_type_sink = host.pending_parameter_types
     # Returns the registered method qn (post register_unique_qn, so with any
     # @line dedup suffix) so a caller can wire further edges to the exact node,
     # e.g. an anonymous-class override method's OVERRIDES edge to its base. Returns
@@ -381,22 +389,24 @@ def ingest_method(
     method_name = _resolve_method_name(method_node, language, skip_cpp_artifact_check)
     if method_name is None:
         return None
-    method_start_line, method_start_col = _method_start_point(method_node, language)
+    start = _method_start_point(method_node, language)
 
     # Every language's method branch converges here, so this is the one place
     # that sees a method name whatever route produced it (issue #1810). The
     # function and class sites are guarded at their own extraction points.
     warn_if_name_truncated(method_node, method_name, file_path)
 
-    method_qn = method_qualified_name or f"{container_qn}.{method_name}"
     method_qn, cpp_member = _register_method_qn(
         method_node,
-        method_qn,
+        method_qualified_name or f"{container_qn}.{method_name}",
         language,
-        function_registry,
-        method_start_line,
-        method_start_col,
+        host.function_registry,
+        start[0],
+        start[1],
         file_path,
+    )
+    method = _MethodSite(
+        method_node, method_qn, method_name, language, module_qn, file_path
     )
 
     decorators = []
@@ -406,52 +416,25 @@ def ingest_method(
             method_node, lang_queries
         )
 
-    method_props: PropertyDict = {
-        cs.KEY_QUALIFIED_NAME: method_qn,
-        cs.KEY_NAME: method_name,
-        cs.KEY_MODIFIERS: modifiers,
-        cs.KEY_DECORATORS: decorators,
-        cs.KEY_START_LINE: method_start_line,
-        cs.KEY_START_COL: method_start_col,
-        cs.KEY_NAME_START_LINE: _member_name_start_point(method_node)[0],
-        cs.KEY_NAME_START_COL: _member_name_start_point(method_node)[1],
-        # Dart method signatures end before their sibling function_body;
-        # extend the span over the body (no-op for other languages).
-        cs.KEY_END_LINE: _method_end_line(method_node, language),
-        cs.KEY_DOCSTRING: get_docstring_func(method_node, language),
-        cs.KEY_IS_EXPORTED: export_detection.is_exported(
-            method_node, method_name, language
-        ),
-    }
-    if file_path is not None and repo_path is not None:
-        method_props[cs.KEY_PATH] = cached_relative_path(
-            file_path, repo_path
-        ).as_posix()
-        method_props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
-    method_props.update(_cpp_member_props(cpp_member))
-    method_props.update(_method_positional_params_props(method_node, language))
-
     type_facts = extract_type_facts(method_node, language)
-    method_props.update(type_facts_props(type_facts))
-    method_props.update(_language_method_props(method_node, language))
+    method_props = _method_props(
+        host, method, start, modifiers, decorators, cpp_member, type_facts
+    )
     method_path = method_props.get(cs.KEY_PATH)
     queue_type_facts(
-        type_fact_sink,
+        host.pending_type_facts,
         cs.NodeLabel.METHOD,
         method_qn,
         module_qn,
         type_facts,
         method_path if isinstance(method_path, str) else None,
     )
-    method_props.update(fingerprint_props(method_node))
-    method_props.update(anchor_hash_props(method_node, decorators))
-    method_props.update(decorated_start_props(method_node))
 
     is_property = _method_is_property(method_node, language, decorators)
     if is_property:
         method_props[cs.KEY_IS_PROPERTY] = True
     _record_member_aliases(
-        method_props, function_registry, container_qn, method_qn, member_aliases
+        method_props, host.function_registry, container_qn, method_qn, member_aliases
     )
 
     _record_method_overrides(
@@ -464,66 +447,134 @@ def ingest_method(
         annotated_override_sink,
     )
 
-    logger.debug(ls.METHOD_FOUND.format(name=method_name, qn=method_qn))
-    ingestor.ensure_node_batch(cs.NodeLabel.METHOD, method_props)
+    _write_method(host, method, method_props, decorators, is_property)
+    _link_method_container(
+        host, method, container_qn, container_type, defer_containment
+    )
+    return method_qn
+
+
+def _method_props(
+    host: MethodIngestHost,
+    method: _MethodSite,
+    start: tuple[int, int],
+    modifiers: list[str],
+    decorators: list[str],
+    cpp_member: _CppMember | None,
+    type_facts: TypeFacts,
+) -> PropertyDict:
+    """The Method node's properties, every language's and its own."""
+    method_node, language = method.node, method.language
+    method_props: PropertyDict = {
+        cs.KEY_QUALIFIED_NAME: method.qualified_name,
+        cs.KEY_NAME: method.name,
+        cs.KEY_MODIFIERS: modifiers,
+        cs.KEY_DECORATORS: decorators,
+        cs.KEY_START_LINE: start[0],
+        cs.KEY_START_COL: start[1],
+        cs.KEY_NAME_START_LINE: _member_name_start_point(method_node)[0],
+        cs.KEY_NAME_START_COL: _member_name_start_point(method_node)[1],
+        # Dart method signatures end before their sibling function_body;
+        # extend the span over the body (no-op for other languages).
+        cs.KEY_END_LINE: _method_end_line(method_node, language),
+        cs.KEY_DOCSTRING: host._get_docstring(method_node, language),
+        cs.KEY_IS_EXPORTED: export_detection.is_exported(
+            method_node, method.name, language
+        ),
+    }
+    if method.file_path is not None and host.repo_path is not None:
+        method_props[cs.KEY_PATH] = cached_relative_path(
+            method.file_path, host.repo_path
+        ).as_posix()
+        method_props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(method.file_path)
+    method_props.update(_cpp_member_props(cpp_member))
+    method_props.update(_method_positional_params_props(method_node, language))
+    method_props.update(type_facts_props(type_facts))
+    method_props.update(_language_method_props(method_node, language))
+    method_props.update(fingerprint_props(method_node))
+    method_props.update(anchor_hash_props(method_node, decorators))
+    method_props.update(decorated_start_props(method_node))
+    return method_props
+
+
+def _write_method(
+    host: MethodIngestHost,
+    method: _MethodSite,
+    method_props: PropertyDict,
+    decorators: list[str],
+    is_property: bool,
+) -> None:
+    """Queue the Method node and its parameters and endpoints, and register
+    it under its qn and name."""
+    method_qn, method_node = method.qualified_name, method.node
+    logger.debug(ls.METHOD_FOUND.format(name=method.name, qn=method_qn))
+    host.ingestor.ensure_node_batch(cs.NodeLabel.METHOD, method_props)
     # AFTER the Method node is queued: a batch flush writes nodes before
     # relationships, and a HAS_PARAMETER whose owner is still pending would
     # match nothing and be dropped.
     emit_declared_parameters(
-        ingestor,
-        parameter_type_sink,
+        host.ingestor,
+        host.pending_parameter_types,
         cs.NodeLabel.METHOD,
         method_qn,
-        module_qn,
+        method.module_qn,
         method_node,
-        language,
+        method.language,
         method_props,
         has_receiver=not is_static_decorator(decorators),
     )
     # Deferred so router mount prefixes can resolve after Pass 2 (#877).
     queue_endpoints(
-        pending_endpoints,
+        host.pending_endpoints,
         cs.NodeLabel.METHOD,
         method_qn,
         method_props.get(cs.KEY_DECORATORS),
-        module_qn,
+        method.module_qn,
     )
+    function_registry = host.function_registry
     function_registry[method_qn] = cs.NodeLabel.METHOD
     if is_property:
         function_registry.mark_property(method_qn)
-    if _is_abstract_member(decorators, method_node, language):
+    if _is_abstract_member(decorators, method_node, method.language):
         function_registry.mark_abstract(method_qn)
     function_registry.mark_callable_params(
-        method_qn, callable_parameter_indices(method_node, language)
+        method_qn, callable_parameter_indices(method_node, method.language)
     )
-    simple_name_lookup[method_name].add(method_qn)
+    host.simple_name_lookup[method.name].add(method_qn)
 
+
+def _link_method_container(
+    host: MethodIngestHost,
+    method: _MethodSite,
+    container_qn: str,
+    container_type: cs.NodeLabel,
+    defer_containment: list[DeferredParentLink] | None,
+) -> None:
     # A container that may never register (a Rust impl on a primitive type)
     # defers so the edge is verified once every pass has run, falling back
     # to the module rather than a phantom the database would drop.
-    if defer_containment is not None and module_qn is not None:
+    if defer_containment is not None and method.module_qn is not None:
         defer_containment.append(
             DeferredParentLink(
                 parent_label_guess=container_type,
                 parent_qn=container_qn,
                 child_label=cs.NodeLabel.METHOD,
-                child_qn=method_qn,
-                module_qn=module_qn,
+                child_qn=method.qualified_name,
+                module_qn=method.module_qn,
                 rel_type=cs.RelationshipType.DEFINES_METHOD.value,
             )
         )
-        return method_qn
+        return
 
     container_label = _method_container_label(
-        function_registry, container_qn, container_type
+        host.function_registry, container_qn, container_type
     )
 
-    ingestor.ensure_relationship_batch(
+    host.ingestor.ensure_relationship_batch(
         (container_label, cs.KEY_QUALIFIED_NAME, container_qn),
         cs.RelationshipType.DEFINES_METHOD,
-        (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, method_qn),
+        (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, method.qualified_name),
     )
-    return method_qn
 
 
 def module_function_props(
