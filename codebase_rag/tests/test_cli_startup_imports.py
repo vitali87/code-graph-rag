@@ -23,7 +23,12 @@ _VECTOR_PACKAGES = ("qdrant_client", "pymilvus", "sqlite_vec")
 # prompt_toolkit through a chat-UI style constant, and the parser stack
 # through subcommand modules that do not parse anything at import.
 _DEFERRED_MODULES = ("logfire", "prompt_toolkit", "codebase_rag.parsers")
-_HEAVY_PACKAGES = _LLM_PACKAGES + _VECTOR_PACKAGES + _DEFERRED_MODULES
+# The local embedding model's stack, needed only to compute a UniXcoder
+# embedding; together they take seconds to import.
+_EMBEDDING_PACKAGES = ("torch", "transformers")
+_HEAVY_PACKAGES = (
+    _LLM_PACKAGES + _VECTOR_PACKAGES + _EMBEDDING_PACKAGES + _DEFERRED_MODULES
+)
 
 # Deadline for the child interpreter, not a performance assertion.
 _TIMEOUT_SECONDS = 120
@@ -141,6 +146,23 @@ def test_importing_the_library_leaves_the_banner_setting_alone() -> None:
 def test_the_probe_sees_a_vector_client_when_one_is_imported() -> None:
     pytest.importorskip("qdrant_client")
     assert "qdrant_client" in _modules_loaded_by("import codebase_rag.vectors.store")
+
+
+def test_the_probe_sees_the_embedding_stack_when_the_local_backend_loads() -> None:
+    pytest.importorskip("torch")
+    pytest.importorskip("transformers")
+    loaded = _modules_loaded_by("import codebase_rag.vectors.unixcoder_embed")
+    assert [m for m in loaded if m in _EMBEDDING_PACKAGES] == list(_EMBEDDING_PACKAGES)
+
+
+def test_importing_the_sdk_loads_no_model_stack() -> None:
+    # `from cgr import load_graph` reads an exported JSON graph. It used to
+    # take seconds because the package imported the embedder, which imported
+    # torch at module level, and the LLM client. The settings class may still
+    # load the logfire plugin, as any library's would.
+    model_stack = _LLM_PACKAGES + _VECTOR_PACKAGES + _EMBEDDING_PACKAGES
+    loaded = _modules_loaded_by("from cgr import load_graph")
+    assert [m for m in loaded if m in model_stack] == []
 
 
 def test_importing_the_cli_loads_no_heavy_package() -> None:

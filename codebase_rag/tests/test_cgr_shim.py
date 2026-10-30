@@ -10,8 +10,10 @@ class TestCgrShimExports:
         # Identifier names only: pytest's assertion rewriting injects
         # "@py_builtins" and "@pytest_ar" into a module the first time it is
         # imported under rewriting, which depends on import order (#1410).
+        # dir(), not vars(): the heavy exports load on first access, so
+        # vars() holds them only once some earlier test has touched them.
         public_attrs = {
-            k for k in vars(cgr) if not k.startswith("_") and k.isidentifier()
+            k for k in dir(cgr) if not k.startswith("_") and k.isidentifier()
         }
         assert set(cgr.__all__) == public_attrs
 
