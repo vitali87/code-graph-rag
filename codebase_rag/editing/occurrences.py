@@ -1064,21 +1064,35 @@ def _field(parent: Node, child: Node) -> str | None:
 
 def _binds(token: Node) -> bool:
     """Whether the token introduces the name rather than uses it."""
+    held = _group_holder(token)
+    if held is None:
+        return False
+    parent, child = held
+    field = _field(parent, child)
+    return field not in cs.RENAME_VALUE_FIELDS and _binding_position(
+        parent, child, field
+    )
+
+
+def _group_holder(token: Node) -> tuple[Node, Node] | None:
+    """The node holding the token, and what of it that node holds.
+
+    `a, helper = ...` and `(helper, b)` in a parameter list: the name sits in
+    a group, and the group is what the binding holds.
+    """
     child, parent = token, token.parent
-    # `a, helper = ...` and `(helper, b)` in a parameter list: the name sits
-    # in a group, and the group is what the binding holds.
     while (
         parent is not None
         and parent.type.endswith(cs.RENAME_WRAPPER_SUFFIXES)
         and _field(parent, child) not in cs.RENAME_VALUE_FIELDS
     ):
         child, parent = parent, parent.parent
-    if parent is None:
-        return False
-    field = _field(parent, child)
+    return None if parent is None else (parent, child)
+
+
+def _binding_position(parent: Node, child: Node, field: str | None) -> bool:
+    """Whether `child`, under `parent` as its `field`, is where a name is bound."""
     kind = parent.type
-    if field in cs.RENAME_VALUE_FIELDS:
-        return False
     if (
         field in (cs.FIELD_ALIAS, cs.FIELD_PARAMETER)
         or kind == cs.RENAME_AS_TARGET

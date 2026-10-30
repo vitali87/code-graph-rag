@@ -409,32 +409,36 @@ def _julia_get_name(node: Node) -> str | None:
     if node.type == cs.TS_JULIA_ARROW_FUNCTION_EXPRESSION:
         return julia_utils.arrow_assigned_name(node)
     if node.type in cs.JULIA_TYPE_DEFINITION_TYPES:
-        # The name sits in a positional `type_head` child; with a `<:` base
-        # the head's first named child is a binary_expression whose own
-        # first named child is the type name (`struct Point <: Shape`).
-        type_head = next(
-            (c for c in node.children if c.type == cs.TS_JULIA_TYPE_HEAD), None
-        )
-        head = next(iter(type_head.named_children), None) if type_head else None
-        if head is not None and head.type == cs.TS_BINARY_EXPRESSION:
-            head = next(iter(head.named_children), None)
-        if head is not None and head.type == cs.TS_JULIA_PARAMETRIZED_TYPE_EXPRESSION:
-            # `struct Point{T}` wraps the name in a parametrized expression;
-            # the base name is its first named child (drop `{T}` from the qn).
-            head = next(iter(head.named_children), None)
-        if head is None or not head.text:
-            return None
-        name = decode_node_text(head.text)
-        # The same recovered-span refusal as the function path: a multi-line
-        # type head is a grammar error-recovery span, not a name.
-        if "\n" in name:
-            return None
-        return name
+        return _julia_type_name(node)
     if node.type == cs.TS_JULIA_SOURCE_FILE:
         # The file's own name comes from file_to_module_parts, not here.
         return None
     # module_definition (and anything else) names through a `name` field.
     return _generic_get_name(node)
+
+
+def _julia_type_name(node: Node) -> str | None:
+    # The name sits in a positional `type_head` child; with a `<:` base
+    # the head's first named child is a binary_expression whose own
+    # first named child is the type name (`struct Point <: Shape`).
+    type_head = next(
+        (c for c in node.children if c.type == cs.TS_JULIA_TYPE_HEAD), None
+    )
+    head = next(iter(type_head.named_children), None) if type_head else None
+    if head is not None and head.type == cs.TS_BINARY_EXPRESSION:
+        head = next(iter(head.named_children), None)
+    if head is not None and head.type == cs.TS_JULIA_PARAMETRIZED_TYPE_EXPRESSION:
+        # `struct Point{T}` wraps the name in a parametrized expression;
+        # the base name is its first named child (drop `{T}` from the qn).
+        head = next(iter(head.named_children), None)
+    if head is None or not head.text:
+        return None
+    name = decode_node_text(head.text)
+    # The same recovered-span refusal as the function path: a multi-line
+    # type head is a grammar error-recovery span, not a name.
+    if "\n" in name:
+        return None
+    return name
 
 
 PYTHON_FQN_SPEC = FQNSpec(

@@ -116,22 +116,7 @@ def resolve_one(
     """
     base, descriptor = _split_descriptor(target)
     if descriptor is not None:
-        if descriptor not in gcs.GLOSS_DESCRIPTORS:
-            return GlossRefusal(
-                error=gcs.MCP_GLOSS_DESCRIPTOR_UNKNOWN.format(
-                    descriptor=descriptor,
-                    known=cs.SEPARATOR_COMMA_SPACE.join(sorted(gcs.GLOSS_DESCRIPTORS)),
-                )
-            )
-        # The base is resolved once, here; its refusal (not found, ambiguous)
-        # is the descriptor target's refusal too.
-        natural = resolve_one(fetch_all, project_name, base)
-        if _is_refusal(natural):
-            return natural
-        natural_row: SymbolRow = natural
-        return _resolve_descriptor(
-            fetch_all, project_name, target, natural_row, descriptor
-        )
+        return _resolve_described(fetch_all, project_name, target, base, descriptor)
     try:
         rows = graph_query.resolve_or_refuse(fetch_all, project_name, target)
     except graph_query.UnknownTargetError as refused:
@@ -147,6 +132,32 @@ def resolve_one(
         )
     if graph_query.parse_location(target) is not None:
         return rows[0]
+    return _single_match(rows, target)
+
+
+def _resolve_described(
+    fetch_all: QueryFn, project_name: str, target: str, base: str, descriptor: str
+) -> SymbolRow | GlossRefusal:
+    """`target`, which is `base` with a `#descriptor` naming one of its parts."""
+    if descriptor not in gcs.GLOSS_DESCRIPTORS:
+        return GlossRefusal(
+            error=gcs.MCP_GLOSS_DESCRIPTOR_UNKNOWN.format(
+                descriptor=descriptor,
+                known=cs.SEPARATOR_COMMA_SPACE.join(sorted(gcs.GLOSS_DESCRIPTORS)),
+            )
+        )
+    # The base is resolved once, here; its refusal (not found, ambiguous)
+    # is the descriptor target's refusal too.
+    natural = resolve_one(fetch_all, project_name, base)
+    if _is_refusal(natural):
+        return natural
+    natural_row: SymbolRow = natural
+    return _resolve_descriptor(fetch_all, project_name, target, natural_row, descriptor)
+
+
+def _single_match(rows: list[SymbolRow], target: str) -> SymbolRow | GlossRefusal:
+    """The one row `target` names: its exact qualified name, else a unique
+    dotted suffix, else the only row there is."""
     exact = [row for row in rows if row["qualified_name"] == target]
     if len(exact) == 1:
         return exact[0]
@@ -382,33 +393,20 @@ def write_gloss(
     the file cannot be read, the note simply carries no quote.
     """
     text = body.strip()
-    if not text:
-        return GlossRefusal(error=gcs.MCP_GLOSS_BODY_EMPTY)
-    kinds = [k.value for k in cs.GlossKind]
-    if kind not in kinds:
-        return GlossRefusal(
-            error=gcs.MCP_GLOSS_KIND_UNKNOWN.format(
-                kind=kind, kinds=cs.SEPARATOR_COMMA_SPACE.join(kinds)
-            )
-        )
+    if (invalid := _invalid_note(text, kind)) is not None:
+        return invalid
     subject = resolve_one(fetch_all, project_name, target)
     if _is_refusal(subject):
         return subject
     subject_row: SymbolRow = subject
-    mentioned: list[SymbolRow] = []
-    for name in _split_mentions(mentions):
-        found = resolve_one(fetch_all, project_name, name)
-        if _is_refusal(found):
-            refusal: GlossRefusal = found
-            refusal[cs.DICT_KEY_ERROR] = gcs.MCP_GLOSS_MENTION_REFUSED.format(
-                name=name, error=refusal[cs.DICT_KEY_ERROR]
-            )
-            return refusal
-        mentioned.append(found)
+    mentioned = _resolve_mentions(fetch_all, project_name, mentions)
+    if not isinstance(mentioned, list):
+        return mentioned
 
     target_qn = subject_row["qualified_name"]
     key = gloss_id(target_qn, kind, text)
     facts = _target_facts(fetch_all, project_name, target_qn, read_source)
+    anchor = facts.anchor
     # A None here unsets the property (Cypher SET with null), so a gloss on a
     # target without a fingerprint, or written outside a checkout, simply
     # lacks that property rather than carrying a placeholder.
@@ -424,9 +422,9 @@ def write_gloss(
         cs.KEY_CREATED_AT: datetime.now(UTC).isoformat(timespec="seconds"),
         cs.KEY_COMMIT_SHA: commit_sha or None,
         cs.KEY_TARGET_HASH: facts.target_hash,
-        cs.KEY_ANCHOR_QUOTE: facts.anchor.quote if facts.anchor else None,
-        cs.KEY_ANCHOR_PREFIX: facts.anchor.prefix if facts.anchor else None,
-        cs.KEY_ANCHOR_SUFFIX: facts.anchor.suffix if facts.anchor else None,
+        cs.KEY_ANCHOR_QUOTE: anchor.quote if anchor else None,
+        cs.KEY_ANCHOR_PREFIX: anchor.prefix if anchor else None,
+        cs.KEY_ANCHOR_SUFFIX: anchor.suffix if anchor else None,
         # Recorded, not derived: a project name may contain dots, so the
         # repair pass cannot read it back off `target_qn`.
         cs.KEY_PROJECT_NAME: project_name,
@@ -445,6 +443,38 @@ def write_gloss(
     if not stored or stored[0].get(cs.KEY_WRITE_ID) != params[cs.KEY_WRITE_ID]:
         return GlossRefusal(error=gcs.MCP_GLOSS_NOT_WRITTEN.format(target=target))
     return _gloss_row(stored[0])
+
+
+def _invalid_note(text: str, kind: str) -> GlossRefusal | None:
+    """Why a note with this (stripped) body and kind cannot be filed, if so."""
+    if not text:
+        return GlossRefusal(error=gcs.MCP_GLOSS_BODY_EMPTY)
+    kinds = [k.value for k in cs.GlossKind]
+    if kind not in kinds:
+        return GlossRefusal(
+            error=gcs.MCP_GLOSS_KIND_UNKNOWN.format(
+                kind=kind, kinds=cs.SEPARATOR_COMMA_SPACE.join(kinds)
+            )
+        )
+    return None
+
+
+def _resolve_mentions(
+    fetch_all: QueryFn, project_name: str, mentions: str | None
+) -> list[SymbolRow] | GlossRefusal:
+    """The definitions `mentions` names, each held to the subject's
+    resolution rule; the first refusal, naming its mention, otherwise."""
+    mentioned: list[SymbolRow] = []
+    for name in _split_mentions(mentions):
+        found = resolve_one(fetch_all, project_name, name)
+        if _is_refusal(found):
+            refusal: GlossRefusal = found
+            refusal[cs.DICT_KEY_ERROR] = gcs.MCP_GLOSS_MENTION_REFUSED.format(
+                name=name, error=refusal[cs.DICT_KEY_ERROR]
+            )
+            return refusal
+        mentioned.append(found)
+    return mentioned
 
 
 def glosses_for(

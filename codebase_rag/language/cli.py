@@ -735,25 +735,46 @@ def add_grammar(
     ),
 ) -> None:
     root = _require_source_checkout(ctx.info_name)
+    language_name, grammar_url = _grammar_source(language_name, grammar_url)
+    if not _confirm_custom_url(grammar_url):
+        return
+    if not _install_grammar(root, grammar_url, language_name):
+        sys.exit(1)
 
+
+def _grammar_source(
+    language_name: str | None, grammar_url: str | None
+) -> tuple[str | None, str]:
+    """The language name and the grammar repository URL to add, asking for
+    the name when neither was given and defaulting the URL from it."""
     if not language_name and not grammar_url:
         language_name = typer.prompt(cs.LANG_PROMPT_LANGUAGE_NAME)
+    if grammar_url:
+        return language_name, grammar_url
+    if not language_name:
+        _fail(cs.LANG_ERR_MISSING_ARGS)
+    grammar_url = cs.LANG_DEFAULT_GRAMMAR_URL.format(name=language_name)
+    typer.echo(f"Search: {cs.LANG_MSG_USING_DEFAULT_URL.format(url=grammar_url)}")
+    return language_name, grammar_url
 
-    if not grammar_url:
-        if not language_name:
-            _fail(cs.LANG_ERR_MISSING_ARGS)
-        grammar_url = cs.LANG_DEFAULT_GRAMMAR_URL.format(name=language_name)
-        typer.echo(f"Search: {cs.LANG_MSG_USING_DEFAULT_URL.format(url=grammar_url)}")
 
-    if grammar_url and cs.LANG_TREE_SITTER_URL_MARKER not in grammar_url:
-        typer.secho(
-            f"Warning: {cs.LANG_MSG_CUSTOM_URL_WARNING}",
-            fg=cs.Color.YELLOW,
-            bold=True,
-        )
-        if not typer.confirm(cs.LANG_PROMPT_CONTINUE):
-            return
+def _confirm_custom_url(grammar_url: str) -> bool:
+    """Whether to go on with a grammar from outside the tree-sitter project:
+    asked, after a warning, of a URL that does not name it."""
+    if cs.LANG_TREE_SITTER_URL_MARKER in grammar_url:
+        return True
+    typer.secho(
+        f"Warning: {cs.LANG_MSG_CUSTOM_URL_WARNING}",
+        fg=cs.Color.YELLOW,
+        bold=True,
+    )
+    return typer.confirm(cs.LANG_PROMPT_CONTINUE)
 
+
+def _install_grammar(root: Path, grammar_url: str, language_name: str | None) -> bool:
+    """Add the grammar as a submodule and register its language; whether
+    that went through. A submodule this added for a language it could not
+    register is taken out again."""
     grammars_dir = root / cs.LANG_GRAMMARS_DIR
     grammars_dir_existed = grammars_dir.exists()
     gitmodules_existed = (root / cs.LANG_GITMODULES_FILE).exists()
@@ -781,8 +802,7 @@ def add_grammar(
             )
         if not grammars_dir_existed:
             _remove_if_empty(grammars_dir)
-    if not registered:
-        sys.exit(1)
+    return registered
 
 
 def _register_language(

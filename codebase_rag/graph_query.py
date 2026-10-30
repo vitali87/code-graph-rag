@@ -1114,6 +1114,35 @@ def importers_through_reexports(
 # --- tests_reaching ------------------------------------------------------------
 
 
+def _owned_nodes(
+    rows: list[ResultRow], owns: Callable[[str], bool]
+) -> dict[NodeId, PropertyDict]:
+    """The project's own definitions, keyed by label and qualified name."""
+    nodes: dict[NodeId, PropertyDict] = {}
+    for row in rows:
+        qn = str(row.get(cs.KEY_QUALIFIED_NAME) or "")
+        if qn and owns(qn):
+            nodes[(str(row.get(cs.KEY_LABEL, "")), qn)] = node_props(row)
+    return nodes
+
+
+def _owned_callers(
+    rows: list[ResultRow], owns: Callable[[str], bool]
+) -> dict[str, set[str]]:
+    """Each owned definition's callers along the reach relationships."""
+    reverse: dict[str, set[str]] = {}
+    for row in rows:
+        if str(row.get(cs.KEY_REL_TYPE, "")) not in _REACH_RELS:
+            continue
+        src = str(row.get(cs.KEY_FROM_QN) or "")
+        dst = str(row.get(cs.KEY_TO_QN) or "")
+        # Both ends owned: a foreign caller must neither be reported
+        # nor be a hop the walk continues through (issue #1982).
+        if src and dst and owns(src) and owns(dst):
+            reverse.setdefault(dst, set()).add(src)
+    return reverse
+
+
 class ReachIndex:
     """The project's reverse call graph plus the test classifier's inputs.
 
@@ -1137,25 +1166,11 @@ class ReachIndex:
     @classmethod
     def build(cls, fetch_all: QueryFn, project_name: str) -> ReachIndex:
         params = {cs.KEY_PROJECT_PREFIX: project_qn_prefix(project_name)}
-        nodes: dict[NodeId, PropertyDict] = {}
         owns = owner_check(fetch_all, project_name)
-        for row in fetch_all(cq.CYPHER_DEAD_CODE_NODES, params):
-            qn = str(row.get(cs.KEY_QUALIFIED_NAME) or "")
-            if not owns(qn):
-                continue
-            if qn:
-                nodes[(str(row.get(cs.KEY_LABEL, "")), qn)] = node_props(row)
-        reverse: dict[str, set[str]] = {}
-        for row in fetch_all(cq.CYPHER_DEAD_CODE_RELS, params):
-            if str(row.get(cs.KEY_REL_TYPE, "")) not in _REACH_RELS:
-                continue
-            src = str(row.get(cs.KEY_FROM_QN) or "")
-            dst = str(row.get(cs.KEY_TO_QN) or "")
-            # Both ends owned: a foreign caller must neither be reported
-            # nor be a hop the walk continues through (issue #1982).
-            if src and dst and owns(src) and owns(dst):
-                reverse.setdefault(dst, set()).add(src)
-        return cls(nodes, reverse)
+        return cls(
+            _owned_nodes(fetch_all(cq.CYPHER_DEAD_CODE_NODES, params), owns),
+            _owned_callers(fetch_all(cq.CYPHER_DEAD_CODE_RELS, params), owns),
+        )
 
     def _walk(self, qualified_name: str) -> tuple[dict[str, int], dict[str, str]]:
         depth_of: dict[str, int] = {qualified_name: 0}

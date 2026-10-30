@@ -12,6 +12,7 @@ from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from fnmatch import fnmatch
+from typing import NamedTuple
 
 from . import constants as cs
 from . import cypher_queries as cq
@@ -698,22 +699,11 @@ def _is_root(
 ) -> bool:
     """Whether any name-, path- or decorator-scoped rule makes `qn` a root.
 
-    The rules are a tuple of thunks evaluated lazily in order by `any`: the
-    same first-match semantics as the `elif` chain this replaced, without
-    the branch per rule that put the chain over Sonar's complexity limit.
+    The rules are thunks evaluated lazily in order by `any`: the same
+    first-match semantics as an `elif` chain, without a branch per rule.
     """
-    # The duplicate-qn marker (`init@51`, a SECOND Go init() in one file)
-    # is a registration artifact, never part of the written name; strip it
-    # so every name-scoped root rule sees the real leaf (kubernetes
-    # pkg.apis.abac register.init@51 reported dead). The parameter list goes
-    # before the last dot is found: it spells types as written, so the last
-    # dot of `Main(System.String[])` left the leaf `String[])` (#2471).
-    leaf = _strip_param_list(qn_markers.strip_dup_marker(qn)).rsplit(
-        cs.SEPARATOR_DOT, 1
-    )[-1]
-    path = str(props.get(cs.KEY_PATH, ""))
-    is_method = qn in method_qns
-    bare_leaf = leaf.split(cs.CHAR_PAREN_OPEN, 1)[0]
+    subject = _root_subject(qn, props, method_qns)
+    path = subject.path
     # With endpoint roots off, a handler that EXPOSES an endpoint is live only
     # if an indexed call site reaches the endpoint (issue #1603). That verdict
     # must come before the rules below: every framework registers a handler
@@ -735,6 +725,63 @@ def _is_root(
             )
         )
     rules: tuple[Callable[[], bool], ...] = (
+        *_declared_root_rules(subject, config, declaration_roots),
+        *_convention_root_rules(
+            subject,
+            config,
+            method_to_class,
+            class_decorators_norm,
+            structural,
+            project_prefix,
+        ),
+        lambda: _is_named_entry_point(qn, config),
+        lambda: _is_rooted_test_symbol(
+            props, qn, path, config, rust_test_modules, rust_test_spans
+        ),
+    )
+    return any(rule() for rule in rules)
+
+
+class _RootSubject(NamedTuple):
+    """A definition as the root rules read it."""
+
+    qn: str
+    props: PropertyDict
+    path: str
+    # The name's last segment, with any duplicate marker and parameter list
+    # stripped, and that segment without its own parameter list.
+    leaf: str
+    bare_leaf: str
+    is_method: bool
+
+
+def _root_subject(qn: str, props: PropertyDict, method_qns: set[str]) -> _RootSubject:
+    # The duplicate-qn marker (`init@51`, a SECOND Go init() in one file)
+    # is a registration artifact, never part of the written name; strip it
+    # so every name-scoped root rule sees the real leaf (kubernetes
+    # pkg.apis.abac register.init@51 reported dead). The parameter list goes
+    # before the last dot is found: it spells types as written, so the last
+    # dot of `Main(System.String[])` left the leaf `String[])` (#2471).
+    leaf = _strip_param_list(qn_markers.strip_dup_marker(qn)).rsplit(
+        cs.SEPARATOR_DOT, 1
+    )[-1]
+    return _RootSubject(
+        qn=qn,
+        props=props,
+        path=str(props.get(cs.KEY_PATH, "")),
+        leaf=leaf,
+        bare_leaf=leaf.split(cs.CHAR_PAREN_OPEN, 1)[0],
+        is_method=qn in method_qns,
+    )
+
+
+def _declared_root_rules(
+    subject: _RootSubject, config: DeadCodeConfig, declaration_roots: set[str]
+) -> tuple[Callable[[], bool], ...]:
+    """The rules reading what the definition declares: a root decorator, an
+    export, an external override, a declaration, a stub."""
+    props, path = subject.props, subject.path
+    return (
         lambda: _has_root_decorator(props, config.root_decorators),
         lambda: (
             props.get(cs.KEY_IS_EXPORTED) is True
@@ -744,12 +791,28 @@ def _is_root(
         # textwrap.TextWrapper subclass) is invoked by the base's machinery,
         # never by a first-party call, so it is a root.
         lambda: props.get(cs.KEY_OVERRIDES_EXTERNAL) is True,
-        lambda: qn in declaration_roots,
+        lambda: subject.qn in declaration_roots,
         # A `.pyi` definition declares an API whose body lives elsewhere,
         # usually in a compiled extension that is not source; no first-party
         # call is needed for it to be used, and deleting it from the stub
         # would not delete the code (issue #2445).
         lambda: path.endswith(cs.EXT_PYI),
+    )
+
+
+def _convention_root_rules(
+    subject: _RootSubject,
+    config: DeadCodeConfig,
+    method_to_class: dict[str, str],
+    class_decorators_norm: dict[str, frozenset[str]],
+    structural: _StructuralRels,
+    project_prefix: str,
+) -> tuple[Callable[[], bool], ...]:
+    """The rules for names a language runtime or framework calls by
+    convention, never through a call the graph sees."""
+    qn, props, path = subject.qn, subject.props, subject.path
+    leaf, bare_leaf, is_method = subject.leaf, subject.bare_leaf, subject.is_method
+    return (
         lambda: is_method and _is_dunder(leaf) and path.endswith(cs.EXT_PY),
         # Python Enum protocol hooks (_generate_next_value_, _missing_) are
         # invoked by the enum machinery by NAME, like dunders: roots, not
@@ -808,12 +871,7 @@ def _is_root(
         lambda: _is_program_main_root(
             bare_leaf, is_method, path, props, config.public_roots
         ),
-        lambda: _is_named_entry_point(qn, config),
-        lambda: _is_rooted_test_symbol(
-            props, qn, path, config, rust_test_modules, rust_test_spans
-        ),
     )
-    return any(rule() for rule in rules)
 
 
 def _is_named_entry_point(qn: str, config: DeadCodeConfig) -> bool:
