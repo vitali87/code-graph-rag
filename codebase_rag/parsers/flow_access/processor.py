@@ -41,6 +41,7 @@ from ..io_access import (
     IODirection,
     IOSink,
     LanguageDescriptor,
+    LiteralNodeTypes,
     ResourceKind,
     binding_targets_values,
     call_name,
@@ -51,6 +52,7 @@ from ..io_access import (
     iter_token_tree_calls,
     lean_binding_targets,
     lean_definition_header_nodes,
+    literal_node_types,
     literal_target,
     match_normalised,
     normalise,
@@ -2064,12 +2066,7 @@ class FlowProcessor:
             node,
             sink.target_arg,
             sink.target_kw,
-            string_type=lean.descriptor.string_type,
-            content_type=lean.descriptor.string_content_type,
-            keyword_arg_type=lean.descriptor.keyword_arg_type,
-            wrapper_type=lean.descriptor.argument_wrapper_type,
-            template_type=lean.descriptor.template_string_type,
-            substitution_type=lean.descriptor.template_substitution_type,
+            node_types=literal_node_types(lean.descriptor),
         )
         for _via, taint in args:
             if taint is None:
@@ -2189,12 +2186,7 @@ class FlowProcessor:
             node,
             ctor.target_arg,
             ctor.target_kw,
-            string_type=d.string_type,
-            content_type=d.string_content_type,
-            keyword_arg_type=d.keyword_arg_type,
-            wrapper_type=d.argument_wrapper_type,
-            template_type=d.template_string_type,
-            substitution_type=d.template_substitution_type,
+            node_types=literal_node_types(d),
         )
         if identity != DYNAMIC_TARGET or ctor.target_arg != 0:
             return identity
@@ -2212,12 +2204,7 @@ class FlowProcessor:
             node,
             0,
             None,
-            string_type=d.string_type,
-            content_type=d.string_content_type,
-            keyword_arg_type=d.keyword_arg_type,
-            wrapper_type=d.argument_wrapper_type,
-            template_type=d.template_string_type,
-            substitution_type=d.template_substitution_type,
+            node_types=literal_node_types(d),
         )
 
     def _emit_handle_write(
@@ -2352,7 +2339,9 @@ class FlowProcessor:
         d = lean.descriptor
         for child in args.named_children:
             if child.type == d.string_type:
-                return string_literal(child, d.string_type, d.string_content_type)
+                return string_literal(
+                    child, LiteralNodeTypes(d.string_type, d.string_content_type)
+                )
         return DYNAMIC_TARGET
 
     # --- Dart lean walk (issue #1173). Dart has no call-expression node: calls,
@@ -3012,8 +3001,10 @@ class FlowProcessor:
             if child.type == lean.descriptor.string_type:
                 content = string_literal(
                     child,
-                    lean.descriptor.string_type,
-                    lean.descriptor.string_content_type,
+                    LiteralNodeTypes(
+                        lean.descriptor.string_type,
+                        lean.descriptor.string_content_type,
+                    ),
                 )
                 if content == DYNAMIC_TARGET:
                     return set()
@@ -3484,7 +3475,9 @@ class FlowProcessor:
                 (c for c in node.named_children if c.type == d.string_type), None
             )
         if index is not None and index.type == d.string_type:
-            return string_literal(index, d.string_type, d.string_content_type)
+            return string_literal(
+                index, LiteralNodeTypes(d.string_type, d.string_content_type)
+            )
         return DYNAMIC_TARGET
 
     def _lean_read_source(
@@ -3497,12 +3490,7 @@ class FlowProcessor:
             node,
             sink.target_arg,
             sink.target_kw,
-            string_type=lean.descriptor.string_type,
-            content_type=lean.descriptor.string_content_type,
-            keyword_arg_type=lean.descriptor.keyword_arg_type,
-            wrapper_type=lean.descriptor.argument_wrapper_type,
-            template_type=lean.descriptor.template_string_type,
-            substitution_type=lean.descriptor.template_substitution_type,
+            node_types=literal_node_types(lean.descriptor),
         )
         return HandleBinding(kind=sink.kind, identity=identity)
 
@@ -4177,7 +4165,7 @@ class FlowProcessor:
                 continue
             index = node.child_by_field_name(cs.TS_PY_FIELD_SUBSCRIPT)
             identity = (
-                string_literal(index, cs.TS_PY_STRING, cs.TS_PY_STRING_CONTENT)
+                string_literal(index)
                 if index is not None and index.type == cs.TS_PY_STRING
                 else DYNAMIC_TARGET
             )

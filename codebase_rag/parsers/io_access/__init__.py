@@ -9,6 +9,7 @@ from .constants import (
 )
 from .descriptor import LANGUAGE_DESCRIPTORS, LanguageDescriptor
 from .extract import (
+    LiteralNodeTypes,
     binding_targets_values,
     call_name,
     definition_header_nodes,
@@ -18,6 +19,7 @@ from .extract import (
     iter_token_tree_calls,
     lean_binding_targets,
     lean_definition_header_nodes,
+    literal_node_types,
     literal_target,
     match_normalised,
     normalise,
@@ -62,6 +64,7 @@ __all__ = [
     "IODirection",
     "IOSink",
     "LanguageDescriptor",
+    "LiteralNodeTypes",
     "ResourceKind",
     "binding_targets_values",
     "call_name",
@@ -72,6 +75,7 @@ __all__ = [
     "is_require_alias",
     "iter_token_tree_calls",
     "lean_binding_targets",
+    "literal_node_types",
     "literal_target",
     "match_normalised",
     "normalise",

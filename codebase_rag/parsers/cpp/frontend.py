@@ -145,6 +145,7 @@ class _Collector:
     def __init__(
         self,
         resolver: CppQnResolver,
+        *,
         function_registry: FunctionRegistryTrieProtocol | None = None,
         simple_name_lookup: SimpleNameLookup | None = None,
         structural_elements: dict[Path, str | None] | None = None,
@@ -849,6 +850,7 @@ def run_cpp_frontend(
     repo_path: Path,
     project_name: str,
     compdb_dir: Path,
+    *,
     function_registry: FunctionRegistryTrieProtocol | None = None,
     simple_name_lookup: SimpleNameLookup | None = None,
     structural_elements: dict[Path, str | None] | None = None,
@@ -874,9 +876,9 @@ def run_cpp_frontend(
     """
     collector = _Collector(
         CppQnResolver(repo_path, project_name, exclude_paths, unignore_paths),
-        function_registry,
-        simple_name_lookup,
-        structural_elements,
+        function_registry=function_registry,
+        simple_name_lookup=simple_name_lookup,
+        structural_elements=structural_elements,
         owned_qns=owned_qns,
     )
     _parse_and_collect(collector, compdb_dir)
@@ -889,6 +891,7 @@ def run_cpp_frontend_hybrid(
     repo_path: Path,
     project_name: str,
     compdb_dir: Path,
+    *,
     function_registry: FunctionRegistryTrieProtocol | None = None,
     simple_name_lookup: SimpleNameLookup | None = None,
     structural_elements: dict[Path, str | None] | None = None,
@@ -909,9 +912,9 @@ def run_cpp_frontend_hybrid(
     """
     collector = _Collector(
         CppQnResolver(repo_path, project_name, exclude_paths, unignore_paths),
-        function_registry,
-        simple_name_lookup,
-        structural_elements,
+        function_registry=function_registry,
+        simple_name_lookup=simple_name_lookup,
+        structural_elements=structural_elements,
         hybrid=True,
         owned_qns=owned_qns,
     )

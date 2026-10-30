@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterator, Mapping
 from enum import Enum, auto
+from typing import NamedTuple
 
 from tree_sitter import Node
 
@@ -768,18 +769,22 @@ def format_call_target(
     format_string = literal_target(
         arg,
         0,
-        string_type=descriptor.string_type,
-        content_type=descriptor.string_content_type,
-        keyword_arg_type=descriptor.keyword_arg_type,
+        node_types=LiteralNodeTypes(
+            descriptor.string_type,
+            descriptor.string_content_type,
+            keyword_arg_type=descriptor.keyword_arg_type,
+        ),
     )
     if format_string == DYNAMIC_TARGET and descriptor.raw_string_type is not None:
         # Go backtick strings are format strings too, in a distinct node type.
         format_string = literal_target(
             arg,
             0,
-            string_type=descriptor.raw_string_type,
-            content_type=descriptor.raw_string_content_type or "",
-            keyword_arg_type=descriptor.keyword_arg_type,
+            node_types=LiteralNodeTypes(
+                descriptor.raw_string_type,
+                descriptor.raw_string_content_type or "",
+                keyword_arg_type=descriptor.keyword_arg_type,
+            ),
         )
     if format_string == DYNAMIC_TARGET:
         return DYNAMIC_TARGET
@@ -924,22 +929,46 @@ def string_parts(
     return _joined_string_parts(arg, content_type, constants)
 
 
+class LiteralNodeTypes(NamedTuple):
+    """The node types a grammar spells a string literal and a call's
+    arguments with, which `string_literal` and `literal_target` read a
+    resource's identity through. The defaults are Python's; a field left
+    None is a shape the grammar does not have, or one the reader ignores."""
+
+    string_type: str = cs.TS_PY_STRING
+    content_type: str = cs.TS_PY_STRING_CONTENT
+    template_type: str | None = None
+    substitution_type: str | None = None
+    keyword_arg_type: str | None = cs.TS_PY_KEYWORD_ARGUMENT
+    wrapper_type: str | None = None
+
+
+PY_LITERAL_NODE_TYPES = LiteralNodeTypes()
+
+
+def literal_node_types(descriptor: LanguageDescriptor) -> LiteralNodeTypes:
+    """Every literal and argument shape the descriptor's grammar has."""
+    return LiteralNodeTypes(
+        descriptor.string_type,
+        descriptor.string_content_type,
+        descriptor.template_string_type,
+        descriptor.template_substitution_type,
+        descriptor.keyword_arg_type,
+        descriptor.argument_wrapper_type,
+    )
+
+
 def string_literal(
-    arg: Node | None,
-    string_type: str = cs.TS_PY_STRING,
-    content_type: str = cs.TS_PY_STRING_CONTENT,
-    *,
-    template_type: str | None = None,
-    substitution_type: str | None = None,
+    arg: Node | None, node_types: LiteralNodeTypes = PY_LITERAL_NODE_TYPES
 ) -> str:
     if arg is None:
         return DYNAMIC_TARGET
     rendered = string_parts(
         arg,
-        string_type,
-        content_type,
-        template_type=template_type,
-        substitution_type=substitution_type,
+        node_types.string_type,
+        node_types.content_type,
+        template_type=node_types.template_type,
+        substitution_type=node_types.substitution_type,
     )
     if rendered is None or not rendered.literal:
         return DYNAMIC_TARGET
@@ -989,7 +1018,7 @@ def first_token_arg_string(args: Node, string_type: str, content_type: str) -> s
             break
         arg0.append(child)
     if len(arg0) == 1 and arg0[0].type == string_type:
-        return string_literal(arg0[0], string_type, content_type)
+        return string_literal(arg0[0], LiteralNodeTypes(string_type, content_type))
     return DYNAMIC_TARGET
 
 
@@ -1305,23 +1334,15 @@ def literal_target(
     arg_index: int | None,
     arg_keyword: str | None = None,
     *,
-    string_type: str = cs.TS_PY_STRING,
-    content_type: str = cs.TS_PY_STRING_CONTENT,
-    keyword_arg_type: str | None = cs.TS_PY_KEYWORD_ARGUMENT,
-    wrapper_type: str | None = None,
-    template_type: str | None = None,
-    substitution_type: str | None = None,
+    node_types: LiteralNodeTypes = PY_LITERAL_NODE_TYPES,
 ) -> str:
     return string_literal(
         target_arg_node(
             call_node,
             arg_index,
             arg_keyword,
-            keyword_arg_type=keyword_arg_type,
-            wrapper_type=wrapper_type,
+            keyword_arg_type=node_types.keyword_arg_type,
+            wrapper_type=node_types.wrapper_type,
         ),
-        string_type,
-        content_type,
-        template_type=template_type,
-        substitution_type=substitution_type,
+        node_types,
     )

@@ -29,6 +29,7 @@ from .constants import (
 )
 from .descriptor import LANGUAGE_DESCRIPTORS, LanguageDescriptor
 from .extract import (
+    LiteralNodeTypes,
     binding_targets_values,
     call_name,
     definition_header_nodes,
@@ -37,6 +38,7 @@ from .extract import (
     head_is_genuine_module,
     is_require_alias,
     iter_token_tree_calls,
+    literal_node_types,
     literal_target,
     match_normalised,
     normalise,
@@ -333,6 +335,7 @@ class IOAccessProcessor:
         self,
         ingestor: IngestorProtocol,
         import_processor: ImportProcessor,
+        *,
         selection: CaptureSelection,
         module_paths: Mapping[str, Path] | None = None,
         ast_cache: ASTCacheProtocol | None = None,
@@ -1089,7 +1092,10 @@ class IOAccessProcessor:
         index = node.child_by_field_name(descriptor.subscript_index_field)
         if index is not None and index.type == descriptor.string_type:
             return string_literal(
-                index, descriptor.string_type, descriptor.string_content_type
+                index,
+                LiteralNodeTypes(
+                    descriptor.string_type, descriptor.string_content_type
+                ),
             )
         return DYNAMIC_TARGET
 
@@ -1246,12 +1252,7 @@ class IOAccessProcessor:
                 node,
                 sink.target_arg,
                 sink.target_kw,
-                string_type=descriptor.string_type,
-                content_type=descriptor.string_content_type,
-                keyword_arg_type=descriptor.keyword_arg_type,
-                wrapper_type=descriptor.argument_wrapper_type,
-                template_type=descriptor.template_string_type,
-                substitution_type=descriptor.template_substitution_type,
+                node_types=literal_node_types(descriptor),
             )
         if (
             identity == DYNAMIC_TARGET
@@ -1352,10 +1353,12 @@ class IOAccessProcessor:
                 continue
             return string_literal(
                 pair.child_by_field_name(cs.FIELD_VALUE),
-                descriptor.string_type,
-                descriptor.string_content_type,
-                template_type=descriptor.template_string_type,
-                substitution_type=descriptor.template_substitution_type,
+                LiteralNodeTypes(
+                    descriptor.string_type,
+                    descriptor.string_content_type,
+                    descriptor.template_string_type,
+                    descriptor.template_substitution_type,
+                ),
             )
         return None
 
@@ -1388,8 +1391,7 @@ class IOAccessProcessor:
             return IODirection.READ_WRITE if saw_non_pair else sink.direction
         verb = string_literal(
             method_pair.child_by_field_name(cs.FIELD_VALUE),
-            descriptor.string_type,
-            descriptor.string_content_type,
+            LiteralNodeTypes(descriptor.string_type, descriptor.string_content_type),
         ).upper()
         if verb in HTTP_WRITE_VERBS:
             return IODirection.WRITE
@@ -1883,7 +1885,10 @@ class IOAccessProcessor:
         for child in args.named_children:
             if child.type == descriptor.string_type:
                 return string_literal(
-                    child, descriptor.string_type, descriptor.string_content_type
+                    child,
+                    LiteralNodeTypes(
+                        descriptor.string_type, descriptor.string_content_type
+                    ),
                 )
         return DYNAMIC_TARGET
 
@@ -1903,12 +1908,7 @@ class IOAccessProcessor:
             call_node,
             ctor.target_arg,
             ctor.target_kw,
-            string_type=descriptor.string_type,
-            content_type=descriptor.string_content_type,
-            keyword_arg_type=descriptor.keyword_arg_type,
-            wrapper_type=descriptor.argument_wrapper_type,
-            template_type=descriptor.template_string_type,
-            substitution_type=descriptor.template_substitution_type,
+            node_types=literal_node_types(descriptor),
         )
         if identity != DYNAMIC_TARGET or ctor.target_arg != 0:
             return identity
@@ -1956,12 +1956,7 @@ class IOAccessProcessor:
             node,
             0,
             None,
-            string_type=descriptor.string_type,
-            content_type=descriptor.string_content_type,
-            keyword_arg_type=descriptor.keyword_arg_type,
-            wrapper_type=descriptor.argument_wrapper_type,
-            template_type=descriptor.template_string_type,
-            substitution_type=descriptor.template_substitution_type,
+            node_types=literal_node_types(descriptor),
         )
 
     @staticmethod
@@ -2130,7 +2125,7 @@ class IOAccessProcessor:
                 continue
             index = node.child_by_field_name(cs.TS_PY_FIELD_SUBSCRIPT)
             identity = (
-                string_literal(index, cs.TS_PY_STRING, cs.TS_PY_STRING_CONTENT)
+                string_literal(index)
                 if index is not None and index.type == cs.TS_PY_STRING
                 else DYNAMIC_TARGET
             )
@@ -2192,9 +2187,11 @@ class IOAccessProcessor:
             sql = literal_target(
                 call_node,
                 0,
-                string_type=descriptor.string_type,
-                content_type=descriptor.string_content_type,
-                keyword_arg_type=descriptor.keyword_arg_type,
+                node_types=LiteralNodeTypes(
+                    descriptor.string_type,
+                    descriptor.string_content_type,
+                    keyword_arg_type=descriptor.keyword_arg_type,
+                ),
             )
         else:
             sql = literal_target(call_node, 0)
