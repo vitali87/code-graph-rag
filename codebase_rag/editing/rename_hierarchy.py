@@ -5,6 +5,7 @@ interface whose implementers cgr cannot tell, which refuses the rename.
 Split from `rename.py`.
 """
 
+from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 
 from .. import constants as cs
@@ -180,20 +181,39 @@ def _csharp_partial_parts(fetch_all: QueryFn, project: str, qn: str) -> list[str
     parts = {
         part
         for row in rows
-        if isinstance(part := row.get(cs.KEY_QUALIFIED_NAME), str)
-        and isinstance(part_path := row.get(cs.KEY_PATH), str)
-        and isinstance(modifiers := row.get(cs.KEY_MODIFIERS), list)
-        and cs.TS_CSHARP_MODIFIER_PARTIAL in modifiers
-        and row.get(cs.KEY_LABEL) == label
-        and owns(part)
-        and csharp_partial_key_from_graph(part, part_path, project, _generic_arity(row))
-        == key
+        if (part := _partial_part(row, label, project, key, owns)) is not None
     }
     # `qn` is among them only when it is declared `partial` itself; a type
     # that is not has no other parts, whatever shares its name.
     if key is None or qn not in parts:
         return []
     return sorted(parts - {qn})
+
+
+def _partial_part(
+    row: ResultRow,
+    label: str,
+    project: str,
+    key: str | None,
+    owns: Callable[[str], bool],
+) -> str | None:
+    """A same-named type row's qualified name, when it is this project's own
+    `partial` declaration of the kind `label` in the partial group `key`."""
+    part, part_path = row.get(cs.KEY_QUALIFIED_NAME), row.get(cs.KEY_PATH)
+    modifiers = row.get(cs.KEY_MODIFIERS)
+    if (
+        not isinstance(part, str)
+        or not isinstance(part_path, str)
+        or not isinstance(modifiers, list)
+        or cs.TS_CSHARP_MODIFIER_PARTIAL not in modifiers
+        or row.get(cs.KEY_LABEL) != label
+        or not owns(part)
+    ):
+        return None
+    part_key = csharp_partial_key_from_graph(
+        part, part_path, project, _generic_arity(row)
+    )
+    return part if part_key == key else None
 
 
 def _generic_arity(row: ResultRow) -> int:

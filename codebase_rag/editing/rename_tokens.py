@@ -188,8 +188,25 @@ def jsx_closing_token(
     parser = parsers.get(language)
     if parser is None:
         return None
+    tags = _jsx_tag_names(parser.parse(source).root_node, token)
+    if tags is None:
+        return None
+    opening, closing = tags
+    offset = line_col_to_byte(source, *token)
+    if (
+        closing.text != opening.text
+        or not opening.start_byte <= offset < opening.end_byte
+    ):
+        return None
+    return byte_to_line_col(source, closing.start_byte + offset - opening.start_byte)
+
+
+def _jsx_tag_names(root: Node, token: tuple[int, int]) -> tuple[Node, Node] | None:
+    """The name nodes of the opening and the closing tag of the JSX element
+    whose opening tag holds `token`; None outside one, and for a
+    self-closing element, which has no closing tag."""
     point = (token[0] - 1, token[1])
-    node = parser.parse(source).root_node.descendant_for_point_range(point, point)
+    node = root.descendant_for_point_range(point, point)
     while node is not None and node.type != cs.TS_JSX_OPENING_ELEMENT:
         node = node.parent
     if node is None or node.parent is None or node.parent.type != cs.TS_JSX_ELEMENT:
@@ -201,15 +218,9 @@ def jsx_closing_token(
         if closing_tag is not None
         else None
     )
-    offset = line_col_to_byte(source, *token)
-    if (
-        opening is None
-        or closing is None
-        or closing.text != opening.text
-        or not opening.start_byte <= offset < opening.end_byte
-    ):
+    if opening is None or closing is None:
         return None
-    return byte_to_line_col(source, closing.start_byte + offset - opening.start_byte)
+    return opening, closing
 
 
 def last_identifier(

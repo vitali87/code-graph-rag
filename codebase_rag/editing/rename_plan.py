@@ -173,56 +173,11 @@ class RenamePlanner:
             raise RenameRefused(cs.RENAME_BAD_NAME.format(name=new_name), [], [])
         found = rename_hierarchy(self.fetch_all, self.project_name, qn, self.repo_root)
         members = found.members
-        unknown = go_implementers_unknown(self.fetch_all, self.project_name, members)
-        if unknown is not None:
-            interface, why, name = unknown
-            raise RenameRefused(
-                cs.RENAME_GO_IMPLEMENTERS_UNKNOWN.format(
-                    qn=qn,
-                    interface=interface,
-                    name=name,
-                    why=cs.RENAME_GO_IMPLEMENTERS_UNKNOWN_WHY.get(
-                        why, cs.RENAME_GO_IMPLEMENTERS_UNKNOWN_WHY_OTHER
-                    ),
-                ),
-                [],
-                [],
-            )
-        # `rename_hierarchy` lists `qn` first, so the first member names the
-        # symbol; a later one stands in only where the ones before had none.
-        first, *others = members
-        sites, unlocatable, old_name, label = self.sites.collect(first, found.guessed)
-        for member in others:
-            member_sites, member_unlocatable, member_name, member_label = (
-                self.sites.collect(member, found.guessed)
-            )
-            old_name = old_name or member_name
-            label = label or member_label
-            sites.extend(member_sites)
-            unlocatable.extend(member_unlocatable)
-        covered = {(s.path, s.line, s.col) for s in sites if s.resolution != CHAIN}
-        sites = [
-            s
-            for s in sites
-            if s.resolution != CHAIN or (s.path, s.line, s.col) not in covered
-        ]
-        structural = [s for s in sites if s.resolution == STRUCTURAL]
-        if structural:
-            raise RenameRefused(
-                cs.RENAME_STRUCTURAL_UNLOCATABLE.format(qn=qn, count=len(structural)),
-                structural,
-                unlocatable,
-            )
-        # Every graph-known occurrence without a rewrite location blocks,
-        # whatever bound it: `allow_heuristic` accepts rewriting through a
-        # guessed site, not leaving a known one under the old name.
-        siteless = [s for s in sites if s.kind == cs.RenameSiteKind.UNLOCATABLE]
-        if siteless:
-            raise RenameRefused(
-                cs.RENAME_SITELESS.format(qn=qn, count=len(siteless)),
-                siteless,
-                unlocatable,
-            )
+        self._refuse_go_implementers_unknown(qn, members)
+        sites, unlocatable, old_name, label = self._collect_members(
+            members, found.guessed
+        )
+        _refuse_unrewritable(qn, sites, unlocatable)
         ambiguous = [
             s for s in sites if s.resolution in AMBIGUOUS or s.resolution == CHAIN
         ]
@@ -296,6 +251,53 @@ class RenamePlanner:
             companions=companions,
         )
 
+    def _refuse_go_implementers_unknown(self, qn: str, members: list[str]) -> None:
+        """Refuse when a Go interface whose implementers cgr cannot tell
+        declares the members' name (#3360): the hierarchy cannot show what
+        the rename must take along."""
+        unknown = go_implementers_unknown(self.fetch_all, self.project_name, members)
+        if unknown is None:
+            return
+        interface, why, name = unknown
+        raise RenameRefused(
+            cs.RENAME_GO_IMPLEMENTERS_UNKNOWN.format(
+                qn=qn,
+                interface=interface,
+                name=name,
+                why=cs.RENAME_GO_IMPLEMENTERS_UNKNOWN_WHY.get(
+                    why, cs.RENAME_GO_IMPLEMENTERS_UNKNOWN_WHY_OTHER
+                ),
+            ),
+            [],
+            [],
+        )
+
+    def _collect_members(
+        self, members: list[str], guessed: frozenset[str]
+    ) -> tuple[list[RenameSite], list[str], str, str | None]:
+        """Every member's sites and unlocatable reasons, with the name and
+        label the members share; a chain link another member's row covers
+        is that row's, not a guess."""
+        # `rename_hierarchy` lists `qn` first, so the first member names the
+        # symbol; a later one stands in only where the ones before had none.
+        first, *others = members
+        sites, unlocatable, old_name, label = self.sites.collect(first, guessed)
+        for member in others:
+            member_sites, member_unlocatable, member_name, member_label = (
+                self.sites.collect(member, guessed)
+            )
+            old_name = old_name or member_name
+            label = label or member_label
+            sites.extend(member_sites)
+            unlocatable.extend(member_unlocatable)
+        covered = {(s.path, s.line, s.col) for s in sites if s.resolution != CHAIN}
+        sites = [
+            s
+            for s in sites
+            if s.resolution != CHAIN or (s.path, s.line, s.col) not in covered
+        ]
+        return sites, unlocatable, old_name, label
+
     def _unplanned(
         self,
         sites: list[RenameSite],
@@ -315,25 +317,10 @@ class RenamePlanner:
         same name is not one: that symbol keeps its name.
         """
         definitions = [s for s in sites if s.kind == cs.RenameSiteKind.DEFINITION]
-        definition = definitions[0].path
-        language = get_language_for_extension(Path(definition).suffix)
+        language = get_language_for_extension(Path(definitions[0].path).suffix)
         if language is None:
             return [], ()
-        kind = _target_kind(label)
-        owners = _owners(hierarchy)
-        owner_paths = frozenset(s.path for s in definitions)
-        target = Target(
-            old_name,
-            language,
-            kind,
-            definition,
-            owners,
-            owner_paths,
-            self._rivals(hierarchy, owner_paths)
-            if kind is cs.RenameTargetKind.METHOD
-            else frozenset(),
-            frozenset((s.path, s.line, s.col) for s in definitions),
-        )
+        target = self._target(definitions, hierarchy, old_name, label, language)
         planned = {(s.path, s.line, s.col) for s in sites}
         statements = [_statement(site) for site in imports]
         leftover = [
@@ -347,28 +334,15 @@ class RenamePlanner:
         foreign = self._foreign_paths(hierarchy, label)
         chosen = (
             self._chosen_paths(hierarchy, old_name)
-            if language in cs.JS_TS_LANGUAGES and kind is not cs.RenameTargetKind.METHOD
+            if language in cs.JS_TS_LANGUAGES
+            and target.kind is not cs.RenameTargetKind.METHOD
             else set()
         )
         namesakes = self._namesakes(old_name, hierarchy, target)
         unplanned = [
-            RenameSite(
-                cs.RenameSiteKind.CALL
-                if occurrence.called
-                else cs.RenameSiteKind.REFERENCE,
-                occurrence.path,
-                occurrence.line,
-                occurrence.col,
-                base_module_qn(Path(occurrence.path), self.project_name),
-                UNPLANNED if occurrence.certain else RECEIVER_UNKNOWN,
-            )
+            _unplanned_site(occurrence, self.project_name)
             for occurrence in leftover
-            if occurrence.path not in foreign
-            and (occurrence.path, occurrence.line, occurrence.col)
-            not in namesakes.positions
-            and not _inside(occurrence, namesakes.statements)
-            and not (occurrence.bare and _inside(occurrence, namesakes.bound))
-            and not (occurrence.bare and occurrence.path in chosen)
+            if _unclaimed(occurrence, foreign, namesakes, chosen)
         ]
         positions = {(s.path, s.line, s.col) for s in unplanned}
         companions = tuple(
@@ -377,6 +351,33 @@ class RenamePlanner:
             if position in positions
         )
         return unplanned, companions
+
+    def _target(
+        self,
+        definitions: list[RenameSite],
+        hierarchy: list[str],
+        old_name: str,
+        label: str | None,
+        language: cs.SupportedLanguage,
+    ) -> Target:
+        """What the cross-check looks for: `old_name` in `language` as the
+        target's kind uses it, declared where the hierarchy's definitions
+        are and, for a method, in classes other symbols may be named like."""
+        kind = _target_kind(label)
+        owners = _owners(hierarchy)
+        owner_paths = frozenset(s.path for s in definitions)
+        return Target(
+            old_name,
+            language,
+            kind,
+            definitions[0].path,
+            owners,
+            owner_paths,
+            self._rivals(hierarchy, owner_paths)
+            if kind is cs.RenameTargetKind.METHOD
+            else frozenset(),
+            frozenset((s.path, s.line, s.col) for s in definitions),
+        )
 
     def _rivals(
         self, hierarchy: list[str], owner_paths: frozenset[str]
@@ -521,6 +522,62 @@ def _owners(hierarchy: list[str]) -> frozenset[str]:
 
 def _owner_class(member: str) -> str:
     return member.partition(cs.CHAR_PAREN_OPEN)[0].rpartition(cs.SEPARATOR_DOT)[0]
+
+
+def _unclaimed(
+    occurrence: Occurrence,
+    foreign: set[str],
+    namesakes: _Namesakes,
+    chosen: set[str],
+) -> bool:
+    """Whether nothing else claims an occurrence the plan does not cover: a
+    project whose name extends this one, a same-named symbol's site,
+    statement or binding, or a JS/TS file's own name for the target."""
+    return (
+        occurrence.path not in foreign
+        and (occurrence.path, occurrence.line, occurrence.col)
+        not in namesakes.positions
+        and not _inside(occurrence, namesakes.statements)
+        and not (occurrence.bare and _inside(occurrence, namesakes.bound))
+        and not (occurrence.bare and occurrence.path in chosen)
+    )
+
+
+def _unplanned_site(occurrence: Occurrence, project_name: str) -> RenameSite:
+    """An occurrence no graph site covers, as the guessed site it is
+    rewritten as under `allow_heuristic`."""
+    return RenameSite(
+        cs.RenameSiteKind.CALL if occurrence.called else cs.RenameSiteKind.REFERENCE,
+        occurrence.path,
+        occurrence.line,
+        occurrence.col,
+        base_module_qn(Path(occurrence.path), project_name),
+        UNPLANNED if occurrence.certain else RECEIVER_UNKNOWN,
+    )
+
+
+def _refuse_unrewritable(
+    qn: str, sites: list[RenameSite], unlocatable: list[str]
+) -> None:
+    """Refuse a plan holding a site no rewrite can reach: a structural edge
+    with no position, or any other graph-known site without one."""
+    structural = [s for s in sites if s.resolution == STRUCTURAL]
+    if structural:
+        raise RenameRefused(
+            cs.RENAME_STRUCTURAL_UNLOCATABLE.format(qn=qn, count=len(structural)),
+            structural,
+            unlocatable,
+        )
+    # Every graph-known occurrence without a rewrite location blocks,
+    # whatever bound it: `allow_heuristic` accepts rewriting through a
+    # guessed site, not leaving a known one under the old name.
+    siteless = [s for s in sites if s.kind == cs.RenameSiteKind.UNLOCATABLE]
+    if siteless:
+        raise RenameRefused(
+            cs.RENAME_SITELESS.format(qn=qn, count=len(siteless)),
+            siteless,
+            unlocatable,
+        )
 
 
 def _statement(site: ImportSite) -> _Span:

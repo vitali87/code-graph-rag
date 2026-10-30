@@ -38,8 +38,8 @@ def _add_jsx_closing_site(
 ) -> None:
     """Append the closing-tag twin of a JSX opening-tag site, once (#2811).
 
-    Kept out of `SiteCollector._add_site` so that method stays under the
-    cognitive complexity limit (S3776).
+    Kept out of `SiteCollector._add_positioned_site` so that method stays
+    under the cognitive complexity limit (S3776).
     """
     closing = jsx_closing_token(
         source, get_language_for_extension(Path(path).suffix), token
@@ -71,6 +71,17 @@ def _chain_link_sites(
         for link in chain_links(source, language, line, col, old_name)
         if link != token
     ]
+
+
+def _owner_of(row: ResultRow | graph_query.CallSiteRow) -> str:
+    """The qualified name a site row belongs to."""
+    return str(row.get("qualified_name") or "")
+
+
+def _resolution_text(row: ResultRow | graph_query.CallSiteRow) -> str | None:
+    """How the graph bound a site row, when it says."""
+    resolution = row.get("resolution")
+    return str(resolution) if isinstance(resolution, str) else None
 
 
 class SiteCollector:
@@ -381,7 +392,7 @@ class SiteCollector:
         Every refusal path of a site -- a row with no usable position, a
         file the patcher cannot read, a position that file does not have, a
         class run through a parameter -- appends the same pair. Sharing
-        them keeps `_add_site` under the cognitive complexity limit (S3776)
+        them keeps the site methods under the cognitive complexity limit (S3776)
         by removing a whole branch body rather than straight-line setup,
         which is the part that actually counts.
         """
@@ -535,30 +546,43 @@ class SiteCollector:
         if via_param := self._via_param(row):
             self._add_callback_site(sites, unlocatable, row, via_param)
             return
-        owner = str(row.get("qualified_name") or "")
-        path = row.get("path")
-        line, col = row.get("line"), row.get("col")
-        resolution = row.get("resolution")
-        resolution_text = str(resolution) if isinstance(resolution, str) else None
-        if (
-            not isinstance(path, str)
-            or not isinstance(line, int)
-            or not isinstance(col, int)
-        ):
-            # A graph-known edge with no site cannot be rewritten, whatever
-            # bound it: applying anyway would leave that caller under the
-            # old name, so it blocks like a guess does.
-            self._record_unlocatable(
-                sites,
-                unlocatable,
-                owner=owner,
-                path=path if isinstance(path, str) else "",
-                line=0,
-                col=0,
-                resolution=resolution_text or "unknown",
-                site_resolution=resolution_text or SITELESS,
+        path, line, col = row.get("path"), row.get("line"), row.get("col")
+        if isinstance(path, str) and isinstance(line, int) and isinstance(col, int):
+            self._add_positioned_site(
+                sites, unlocatable, kind, row, old_name, patcher, (path, line, col)
             )
             return
+        # A graph-known edge with no site cannot be rewritten, whatever
+        # bound it: applying anyway would leave that caller under the
+        # old name, so it blocks like a guess does.
+        resolution_text = _resolution_text(row)
+        self._record_unlocatable(
+            sites,
+            unlocatable,
+            owner=_owner_of(row),
+            path=path if isinstance(path, str) else "",
+            line=0,
+            col=0,
+            resolution=resolution_text or "unknown",
+            site_resolution=resolution_text or SITELESS,
+        )
+
+    def _add_positioned_site(
+        self,
+        sites: list[RenameSite],
+        unlocatable: list[str],
+        kind: cs.RenameSiteKind,
+        row: ResultRow | graph_query.CallSiteRow,
+        old_name: str,
+        patcher: Patcher,
+        at: tuple[str, int, int],
+    ) -> None:
+        """The name token of a site the graph recorded a position for, with
+        the closing tag of its JSX element and the other links of its fluent
+        chain; recorded unlocatable when its file cannot be read there or
+        its call has gone stale."""
+        path, line, col = at
+        owner = _owner_of(row)
         span = (line, col, *self._site_end(row, line, col, old_name))
         source = self._site_source(
             sites, unlocatable, patcher, owner=owner, path=path, span=span
@@ -593,6 +617,7 @@ class SiteCollector:
             # `import helper as h`); the alias keeps binding, so nothing to
             # rewrite here.
             return
+        resolution_text = _resolution_text(row)
         sites.append(RenameSite(kind, path, token[0], token[1], owner, resolution_text))
         _add_jsx_closing_site(sites, kind, path, source, token, owner, resolution_text)
         if kind == cs.RenameSiteKind.CALL:
