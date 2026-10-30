@@ -240,7 +240,9 @@ class TestIncrementalUpdates:
         )
 
         with patch.object(
-            updater2, "_process_single_file", wraps=updater2._process_single_file
+            updater2.file_parser,
+            "process_single_file",
+            wraps=updater2.file_parser.process_single_file,
         ) as spy:
             updater2.run()
             assert spy.call_count == 0
@@ -270,7 +272,9 @@ class TestIncrementalUpdates:
             queries=queries,
         )
         with patch.object(
-            updater2, "_process_single_file", wraps=updater2._process_single_file
+            updater2.file_parser,
+            "process_single_file",
+            wraps=updater2.file_parser.process_single_file,
         ) as spy:
             updater2.run()
             processed_paths = [call.args[0] for call in spy.call_args_list]
@@ -322,7 +326,9 @@ class TestIncrementalUpdates:
             queries=queries,
         )
         with patch.object(
-            updater2, "_process_single_file", wraps=updater2._process_single_file
+            updater2.file_parser,
+            "process_single_file",
+            wraps=updater2.file_parser.process_single_file,
         ) as spy:
             updater2.run(force=True)
             assert spy.call_count > 0
@@ -348,7 +354,9 @@ class TestIncrementalUpdates:
             queries=queries,
         )
         with patch.object(
-            updater2, "_process_single_file", wraps=updater2._process_single_file
+            updater2.file_parser,
+            "process_single_file",
+            wraps=updater2.file_parser.process_single_file,
         ) as spy:
             updater2.run()
             processed_paths = [call.args[0] for call in spy.call_args_list]
@@ -1112,7 +1120,9 @@ class TestFastPathInSync:
         assert updater2._is_already_in_sync() is True
         with (
             patch.object(
-                updater2, "_process_single_file", wraps=updater2._process_single_file
+                updater2.file_parser,
+                "process_single_file",
+                wraps=updater2.file_parser.process_single_file,
             ) as spy_files,
             patch.object(updater2, "_process_function_calls") as spy_calls,
         ):
@@ -2062,14 +2072,14 @@ def test_a_graph_only_module_is_deleted_before_the_first_parse(
         ingestor=mock_ingestor, repo_path=py_project, parsers=parsers, queries=queries
     )
     deleted_at_first_parse: list[set[str]] = []
-    real_parse = updater._process_single_file
+    real_parse = updater.file_parser.process_single_file
 
     def spy(*args: object, **kwargs: object) -> None:
         if not deleted_at_first_parse:
             deleted_at_first_parse.append(_deleted_module_paths(mock_ingestor))
         real_parse(*args, **kwargs)
 
-    updater._process_single_file = spy  # type: ignore[method-assign]
+    updater.file_parser.process_single_file = spy  # type: ignore[method-assign]
     updater.run()
 
     assert deleted_at_first_parse, "no file was parsed"
@@ -2098,7 +2108,7 @@ def test_a_parse_failure_still_rebuilds_the_other_changed_modules(
     updater = GraphUpdater(
         ingestor=mock_ingestor, repo_path=py_project, parsers=parsers, queries=queries
     )
-    real_parse = updater._process_single_file
+    real_parse = updater.file_parser.process_single_file
     parsed: list[str] = []
 
     def flaky(filepath: Path, *args: object, **kwargs: object) -> None:
@@ -2107,7 +2117,7 @@ def test_a_parse_failure_still_rebuilds_the_other_changed_modules(
         parsed.append(filepath.name)
         real_parse(filepath, *args, **kwargs)
 
-    updater._process_single_file = flaky  # type: ignore[method-assign]
+    updater.file_parser.process_single_file = flaky  # type: ignore[method-assign]
     errors: list[str] = []
     sink_id = logger.add(lambda message: errors.append(str(message)), level="ERROR")
     try:
@@ -2144,7 +2154,9 @@ def test_a_pre_parse_failure_leaves_the_old_subtrees_in_place(
     )
     with (
         patch.object(
-            updater, "_pre_parse_changed_files", side_effect=RuntimeError("parse died")
+            updater.file_parser,
+            "pre_parse_changed_files",
+            side_effect=RuntimeError("parse died"),
         ),
         pytest.raises(RuntimeError, match="parse died"),
     ):

@@ -8,7 +8,7 @@ and left callerless by #1524, which moved the watcher onto `reingest`.
 Investigating it turned up that both properties still hold, but not for the
 reason the dead function implied:
 
-* the live appender (`_process_single_file`) appends UNCONDITIONALLY, so it
+* the live appender (`FileParser.process_single_file`) appends UNCONDITIONALLY, so it
   can duplicate — verified by calling it directly, which does produce a
   second entry;
 * no production path does that, because every re-parse route strips the old
@@ -130,7 +130,7 @@ def test_removal_then_reparse_restores_exactly_one_entry(tmp_path: Path) -> None
     updater.remove_file_from_state(target)
     assert _counts(updater)[target] == 0
 
-    updater._process_single_file(target)
+    updater.file_parser.process_single_file(target)
     assert _counts(updater)[target] == 1
 
 

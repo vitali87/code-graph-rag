@@ -989,7 +989,7 @@ def test_reingest_reparses_secondary_tier_files(
     path.write_text("# Heading\n", encoding="utf-8")
     updater = create_and_run_updater(temp_repo, mock_ingestor)
     secondary = MagicMock(return_value=True)
-    updater.process_with_secondary_tier = secondary  # type: ignore[method-assign]
+    updater.file_parser.process_with_secondary_tier = secondary  # type: ignore[method-assign]
 
     updater.reingest([path])
 
@@ -1003,7 +1003,7 @@ def test_reingest_parses_a_tree_sitter_file_once(
     path.write_text("def f():\n    return 1\n", encoding="utf-8")
     updater = create_and_run_updater(temp_repo, mock_ingestor)
     secondary = MagicMock(return_value=True)
-    updater.process_with_secondary_tier = secondary  # type: ignore[method-assign]
+    updater.file_parser.process_with_secondary_tier = secondary  # type: ignore[method-assign]
     mock_ingestor.reset_mock()
 
     updater.reingest([path])
@@ -1113,13 +1113,13 @@ def test_reingest_reruns_the_libclang_frontend_for_c_family_files(
     updater.frontend_runner.run_cpp_frontend = MagicMock(  # type: ignore[method-assign]
         side_effect=lambda: order.append("frontend")
     )
-    original = updater._process_single_file
+    original = updater.file_parser.process_single_file
 
     def spy(*args: object, **kwargs: object) -> None:
         order.append("parse")
         original(*args, **kwargs)  # type: ignore[arg-type]
 
-    updater._process_single_file = spy  # type: ignore[method-assign]
+    updater.file_parser.process_single_file = spy  # type: ignore[method-assign]
 
     updater.reingest([path])
 
@@ -1181,13 +1181,13 @@ def test_reingest_does_not_hide_an_edit_it_was_not_told_about(
     # clean index.
     later_updater = _updater(store, fixture_root)
     parsed: list[str] = []
-    real_parse = later_updater._process_single_file
+    real_parse = later_updater.file_parser.process_single_file
 
     def spy(path: Path, *args: object, **kwargs: object) -> None:
         parsed.append(path.relative_to(fixture_root).as_posix())
         real_parse(path, *args, **kwargs)
 
-    later_updater._process_single_file = spy  # type: ignore[method-assign]
+    later_updater.file_parser.process_single_file = spy  # type: ignore[method-assign]
     later_updater.run(force=False)
     assert parsed == ["pkg/unrelated.py"]
     assert _diff(_snapshot(store), _clean_index(fixture_root)) == ""

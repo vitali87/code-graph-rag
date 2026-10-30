@@ -261,7 +261,7 @@ class TestNotebookCellsAreIndexed:
         updater = _updater(root, InMemoryGraph())
         updater.run(force=True)
 
-        reloaded = updater._load_ast_from_disk(root / NOTEBOOK)
+        reloaded = updater.file_parser.load_ast_from_disk(root / NOTEBOOK)
 
         assert reloaded is not None
         node, language = reloaded

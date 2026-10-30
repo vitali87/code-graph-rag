@@ -11,7 +11,7 @@ from typing import NamedTuple
 
 from loguru import logger
 from rich.progress import Progress, SpinnerColumn, TaskID, TextColumn
-from tree_sitter import Node, Parser, QueryCursor
+from tree_sitter import Parser
 
 from . import constants as cs
 from . import cypher_queries as cq
@@ -27,18 +27,14 @@ from .gloss.repair import repair_unanchored
 from .graph_pruning import GraphPruner
 from .graph_query import projects_nested_under
 from .language_spec import (
-    get_language_for_extension,
     get_language_spec,
 )
-from .node_text import sorted_captures
 from .parsers.ast_grep_tier import AstGrepTier
-from .parsers.cpp.preproc_recovery import parse_with_preproc_recovery
 from .parsers.csharp import graph_joins as csharp_joins
 from .parsers.document_tier import DocumentTier
 from .parsers.endpoint_linker import EndpointLinker
 from .parsers.factory import ProcessorFactory
 from .parsers.go import graph_joins as go_joins
-from .parsers.notebook import NotebookSkipped, is_notebook_path, read_notebook
 from .parsers.stdlib_extractor import flush_stdlib_cache
 from .parsers.structure_processor import StructureProcessor
 from .services import (
@@ -69,6 +65,7 @@ from .types_defs import (
 )
 from .updater.dependents import DependentLookup
 from .updater.edge_carry import EdgeCarry
+from .updater.file_parse import FileParser, read_or_empty
 from .updater.file_state import FileStateSweep
 from .updater.frontends import FrontendRunner
 from .updater.generated_sources import GeneratedSources
@@ -84,13 +81,11 @@ from .utils.path_utils import (
     cached_resolve_posix,
     is_inline_module_path,
     normalize_project_name,
-    python_stub_has_implementation,
     should_skip_path,
     vanished,
     walk_eligible_files,
     walk_position,
 )
-from .utils.source_encoding import grammar_bytes
 from .vectors.embedding_sync import EmbeddingSync
 
 
@@ -179,13 +174,6 @@ def _cache_lists_under(cache: Path, root: Path, checkout: Path) -> bool:
     except (OSError, ValueError):
         return False
     return isinstance(entries, dict) and any(key.startswith(prefix) for key in entries)
-
-
-def _read_bytes(path: Path) -> bytes:
-    try:
-        return path.read_bytes()
-    except OSError:
-        return b""
 
 
 def _read_source(path: Path) -> bytes | None:
@@ -440,7 +428,7 @@ class GraphUpdater:
         self.function_registry = FunctionRegistryTrie(
             simple_name_lookup=self.simple_name_lookup
         )
-        self.ast_cache = BoundedASTCache(loader=self._load_ast_from_disk)
+        self.ast_cache = BoundedASTCache()
         # Every file parsed this run, in parse order. The AST cache is bounded
         # and evicts on large repos, so Pass 3 must iterate this full list (not
         # the cache) and re-parse evicted files, or their calls are dropped.
@@ -516,19 +504,6 @@ class GraphUpdater:
             owns=self._owns,
             owned_rows=self._owned_rows,
         )
-        # The files a change sends back for a re-parse beside the changed ones.
-        self.dependent_lookup = DependentLookup(
-            graph=self._graph,
-            graph_rows=self._graph_rows,
-            factory=self.factory,
-            parsers=self.parsers,
-            queries=self.queries,
-            repo_path=self.repo_path,
-            project_name=self.project_name,
-            capture=self.capture,
-            registered_project_names=self._registered_project_names,
-            tree_sitter_language=self._tree_sitter_language,
-        )
         # The compiler frontends layered over Tree-sitter, and the hybrid
         # C/C++ macro uses they leave for after the definition pass.
         self.frontend_runner = FrontendRunner(
@@ -549,6 +524,38 @@ class GraphUpdater:
         # by heading level. Documents have no calls, so they get neither of
         # the code tiers above.
         self.document_tier = DocumentTier(self._sink, self.repo_path, self.project_name)
+        # Each file of a pass parsed through the first tier that claims it.
+        self.file_parser = FileParser(
+            graph=self._graph,
+            factory=self.factory,
+            ast_cache=self.ast_cache,
+            parsers=self.parsers,
+            queries=self.queries,
+            repo_path=self.repo_path,
+            project_name=self.project_name,
+            scope=self,
+            parsed_files=self._parsed_files,
+            frontend_runner=self.frontend_runner,
+            generated_sources=self.generated_sources,
+            ast_grep_tier=self.ast_grep_tier,
+            document_tier=self.document_tier,
+        )
+        # The parser re-reads what the bounded cache evicts; it needs the
+        # factory, which needs the cache, so it is attached once both exist.
+        self.ast_cache.loader = self.file_parser.load_ast_from_disk
+        # The files a change sends back for a re-parse beside the changed ones.
+        self.dependent_lookup = DependentLookup(
+            graph=self._graph,
+            graph_rows=self._graph_rows,
+            factory=self.factory,
+            parsers=self.parsers,
+            queries=self.queries,
+            repo_path=self.repo_path,
+            project_name=self.project_name,
+            capture=self.capture,
+            registered_project_names=self._registered_project_names,
+            tree_sitter_language=self.file_parser.tree_sitter_language,
+        )
         # The module-qn claims an incremental run starts from, and the stems
         # in flux whose bare qn goes to the file a clean index gives it.
         self.module_seeding = ModuleQnSeeding(
@@ -641,58 +648,6 @@ class GraphUpdater:
             owns=self._owns,
             delete_module_entities=self._delete_module_entities,
         )
-
-    def _is_dependency_file(self, file_name: str, filepath: Path) -> bool:
-        return (
-            file_name.lower() in cs.DEPENDENCY_FILES
-            or filepath.suffix.lower() == cs.CSPROJ_SUFFIX
-        )
-
-    def _resync_dependencies(
-        self,
-        touched_keys: Iterable[str],
-        reparsed_keys: Collection[str],
-        manifests: Iterable[tuple[Path, str]] | None = None,
-    ) -> None:
-        """Rebuild the project's DEPENDS_ON_EXTERNAL edges when a manifest moved.
-
-        Re-parsing a manifest only MERGEs the dependencies it still names, so
-        a dependency removed from it, or a whole manifest deleted, kept its
-        edge through every later sync while a fresh index dropped it (issue
-        #2396). An edge does not record which manifest declared it (two
-        manifests can name one package), so the project's edges go and every
-        manifest is parsed again; manifests are few and cheap to parse. The
-        ones in `reparsed_keys` are skipped because the caller's re-parse
-        re-adds them. `manifests` is the caller's own walk when it has one;
-        a caller holding a partial file list walks the tree here instead.
-
-        Runs before anything this sync buffers, so the orphan sweep cannot
-        race a re-add: a package still declared is MERGEd back afterwards.
-        """
-        graph = self._graph
-        if graph is None:
-            return
-        if not any(
-            self._is_dependency_file(PurePosixPath(key).name, Path(key))
-            for key in touched_keys
-        ):
-            return
-        logger.info(ls.DEPENDENCIES_RESYNC, project=self.project_name)
-        graph.execute_write(
-            cs.CYPHER_DELETE_PROJECT_DEPENDENCIES,
-            {cs.KEY_PROJECT_NAME: self.project_name},
-        )
-        graph.execute_write(cs.CYPHER_DELETE_ORPHAN_EXTERNAL_PACKAGES)
-        if manifests is None:
-            manifests = (
-                (Path(f"{dirpath}/{fname}"), rel_path)
-                for dirpath, fname, rel_path in walk_eligible_files(
-                    self.repo_path, self.exclude_paths, self.unignore_paths
-                )
-            )
-        for path, key in manifests:
-            if key not in reparsed_keys and self._is_dependency_file(path.name, path):
-                self.factory.definition_processor.process_dependencies(path)
 
     def _resolve_deferred_definitions(self, rehydrate: bool) -> dict[str, str]:
         """Every deferred definition-level resolution that must follow Pass 2.
@@ -1575,7 +1530,7 @@ class GraphUpdater:
         # created files never do (issue #1028).
         #
         # This removal is ALSO what keeps the list free of duplicates. The
-        # appender in `_process_single_file` appends unconditionally, so
+        # appender in `FileParser.process_single_file` appends unconditionally, so
         # every re-parse route has to strip the old entry first -- the
         # incremental path calls this method, and `reingest` gets there via
         # `_reingest_delete`. A deduplicating appender is deliberately not
@@ -1896,7 +1851,7 @@ class GraphUpdater:
             file_key for _fp, file_key, _new, _b in scan.changed_entries
         }
 
-        pre_parsed = self._pre_parse_changed_files(scan.changed_entries)
+        pre_parsed = self.file_parser.pre_parse_changed_files(scan.changed_entries)
         self._flush_frontend_emission()
         # Every old subtree goes BEFORE any file of this run is parsed, not
         # one by one as each file is reached: a same-stem sibling parsed
@@ -1915,7 +1870,7 @@ class GraphUpdater:
         self._drop_deleted_file_state(deleted_before_parse)
         # A single-file run walked only its target, so it cannot supply the
         # other manifests; the helper walks for them.
-        self._resync_dependencies(
+        self.file_parser.resync_dependencies(
             (*self._reparsed_file_keys, *deleted_before_parse),
             self._reparsed_file_keys,
             eligible_files if self._single_file is None else None,
@@ -1958,7 +1913,7 @@ class GraphUpdater:
                 # restore below still run, and the first error is re-raised
                 # before the cache commit so the next run retries the lot.
                 try:
-                    self._process_single_file(
+                    self.file_parser.process_single_file(
                         filepath,
                         file_bytes=file_bytes,
                         pre_parsed=pre_parsed.get(filepath),
@@ -1986,7 +1941,7 @@ class GraphUpdater:
         self._run.pending_inbound_edges = captured_inbound
 
         self._log_process_counts(scan, changed_count)
-        self._log_unparsable_manifests()
+        self.file_parser.log_unparsable_manifests()
         if first_failure is not None:
             raise first_failure
 
@@ -2595,27 +2550,6 @@ class GraphUpdater:
         if scan.unreadable_count > 0:
             logger.info(ls.INCREMENTAL_UNREADABLE, count=scan.unreadable_count)
 
-    def _log_unparsable_manifests(self) -> None:
-        """Name the manifests this run could not parse in one WARNING (#2568).
-
-        Each is a DEBUG line already: fixture and mock manifests are broken on
-        purpose often enough that a line apiece buried the run's own output,
-        so they are counted like the unreadable files above. The shallowest is
-        the one named, so a broken root manifest, which is the project's own
-        dependency list, is never hidden behind a fixture that sorts first.
-        """
-        unparsable = self.factory.definition_processor.unparsable_manifests
-        if not unparsable:
-            return
-        first = min(unparsable, key=lambda path: (len(path.parts), path))
-        logger.warning(
-            ls.DEP_MANIFESTS_UNPARSABLE,
-            count=len(unparsable),
-            path=cached_relative_path(first, self.repo_path).as_posix(),
-            error=unparsable[first],
-        )
-        unparsable.clear()
-
     def _stash_pending_caches(
         self,
         cache_path: Path,
@@ -2711,220 +2645,13 @@ class GraphUpdater:
                 self.prepared_state_dir
             )
 
-    def _pre_parse_changed_files(
-        self,
-        changed_entries: list[tuple[Path, str, bool, bytes]],
-    ) -> dict[Path, tuple[Node, dict[str, list] | None]]:
-        result: dict[Path, tuple[Node, dict[str, list] | None]] = {}
-        for filepath, _file_key, _is_new, file_bytes in changed_entries:
-            language = self._tree_sitter_language(filepath)
-            if language is None:
-                continue
-            # `parsers` and `queries` arrive separately; a language one lacks
-            # is left to the per-file path rather than aborting the run.
-            language_queries = self.queries.get(language)
-            if language_queries is None:
-                continue
-            parser = language_queries.get(cs.KEY_PARSER)
-            if parser is None:
-                continue
-            tree = parse_with_preproc_recovery(
-                parser, grammar_bytes(file_bytes, language, filepath), language
-            )
-            root_node = tree.root_node
-            combined_query = language_queries[cs.QUERY_FUNC_CLASS_IMPORT]
-            combined_captures: dict[str, list] | None = None
-            if combined_query:
-                cursor = QueryCursor(combined_query)
-                combined_captures = sorted_captures(cursor, root_node)
-            result[filepath] = (root_node, combined_captures)
-        return result
-
-    def _process_single_file(
-        self,
-        filepath: Path,
-        file_bytes: bytes | None = None,
-        pre_parsed: tuple[Node, dict[str, list] | None] | None = None,
-    ) -> None:
-        """Ingest one file through the first tier that claims it.
-
-        Tries tree-sitter, then dependency manifests, then the secondary
-        tiers; every file gets a File node regardless, so an unclaimed
-        extension is still represented in the graph.
-        """
-        if self.frontend_runner.cpp_covered:
-            rel = cached_relative_path(filepath, self.repo_path).as_posix()
-            if rel in self.frontend_runner.cpp_covered:
-                # The libclang frontend already emitted this file's
-                # definitions; keep only the generic File node.
-                self.factory.structure_processor.process_generic_file(
-                    filepath, filepath.name
-                )
-                return
-
-        if (language := self._tree_sitter_language(filepath)) is not None:
-            result = self.factory.definition_processor.process_file(
-                filepath,
-                language,
-                self.queries,
-                self.factory.structure_processor.structural_elements,
-                source_bytes=file_bytes,
-                pre_parsed=pre_parsed,
-            )
-            if result:
-                root_node, language = result
-                self.ast_cache[filepath] = (root_node, language)
-                self._parsed_files.append((filepath, language))
-        elif self._is_dependency_file(filepath.name, filepath):
-            self.factory.definition_processor.process_dependencies(filepath)
-        elif is_notebook_path(filepath):
-            self._process_notebook(filepath, file_bytes)
-        else:
-            self.process_with_secondary_tier(filepath)
-
-        self.factory.structure_processor.process_generic_file(filepath, filepath.name)
-
-    def _tree_sitter_language(self, filepath: Path) -> cs.SupportedLanguage | None:
-        """The loaded grammar that defines `filepath`'s module, if any.
-
-        None for a `.pyi` stub whose implementation is indexed: it shares that
-        module's qn, and parsing it would claim or twin the Module. It still
-        falls through to the generic File node (issue #2445).
-        """
-        lang_config = get_language_spec(filepath.suffix)
-        if not (
-            lang_config
-            and isinstance(lang_config.language, cs.SupportedLanguage)
-            and lang_config.language in self.parsers
-        ):
-            return None
-        if python_stub_has_implementation(
-            filepath,
-            self.repo_path,
-            exclude_paths=self.exclude_paths,
-            unignore_paths=self.unignore_paths,
-        ):
-            return None
-        return lang_config.language
-
     def process_with_secondary_tier(self, filepath: Path) -> bool:
         """Parse a file with whichever non-tree-sitter tier claims it.
 
-        Shared with the file watcher, which re-parses one changed file and
-        would otherwise handle only tree-sitter languages: it deletes a
-        file's Module (and everything hanging off it) before re-parsing, so
-        a tier it does not know about loses its symbols entirely rather than
-        merely going stale (issue #1427).
-
-        Returns True when a tier took the file, so the batch path can keep
-        its if/elif chain.
+        The updater's own entry to `FileParser.process_with_secondary_tier`:
+        True when a tier took the file.
         """
-        structural_elements = self.factory.structure_processor.structural_elements
-        if self.ast_grep_tier.handles(filepath.suffix):
-            self.ast_grep_tier.process_file(filepath, structural_elements)
-            return True
-        if self.document_tier.handles(filepath.suffix):
-            self.document_tier.process_file(filepath, structural_elements)
-            return True
-        # A file no tier took still gets its File node; the ast-grep tier
-        # counts the ones it only skipped for lack of its extra.
-        self.ast_grep_tier.note_unparsed(filepath.suffix)
-        return False
-
-    def _process_notebook(self, filepath: Path, file_bytes: bytes | None) -> None:
-        """Parse a Python notebook's code cells as the module they make.
-
-        Registered with the call pass like any parsed file, so its imports and
-        calls become edges; a notebook in another language, or one that does
-        not read as nbformat 4, keeps only its `File` node (issue #2480).
-        """
-        if cs.SupportedLanguage.PYTHON not in self.parsers:
-            return
-        notebook = read_notebook(
-            _read_bytes(filepath) if file_bytes is None else file_bytes
-        )
-        rel = cached_relative_path(filepath, self.repo_path).as_posix()
-        if isinstance(notebook, NotebookSkipped):
-            if notebook.reason == cs.NotebookSkip.NOT_PYTHON:
-                logger.debug(
-                    ls.NOTEBOOK_NOT_PYTHON, path=rel, language=notebook.language
-                )
-            else:
-                logger.warning(ls.NOTEBOOK_UNREADABLE, path=rel, reason=notebook.reason)
-            return
-        result = self.factory.definition_processor.process_file(
-            filepath,
-            cs.SupportedLanguage.PYTHON,
-            self.queries,
-            self.factory.structure_processor.structural_elements,
-            source_bytes=notebook.source,
-        )
-        if result:
-            self.ast_cache[filepath] = result
-            self._parsed_files.append((filepath, cs.SupportedLanguage.PYTHON))
-            logger.debug(ls.NOTEBOOK_INDEXED, path=rel, cells=len(notebook.cells))
-
-    def _ast_for(self, file_path: Path) -> Node | None:
-        """The cached AST root for a file, or None when it is not cached."""
-        entry = self.ast_cache.load(file_path)
-        return entry[0] if entry else None
-
-    def _load_ast_from_disk(
-        self, file_path: Path
-    ) -> tuple[Node, cs.SupportedLanguage] | None:
-        """Re-parse a file the AST cache evicted, for BoundedASTCache.
-
-        Evicted files carry stale captures (nodes from the discarded tree),
-        so those are dropped: downstream recomputes them from the fresh tree.
-        """
-        if is_notebook_path(file_path):
-            return self._load_notebook_ast(file_path)
-        language = get_language_for_extension(file_path.suffix)
-        if language is None or language not in self.parsers:
-            return None
-        parser = self.queries[language].get(cs.KEY_PARSER)
-        if parser is None:
-            return None
-        try:
-            file_bytes = file_path.read_bytes()
-            overlay_key = cached_relative_path(file_path, self.repo_path).as_posix()
-            file_bytes = self.generated_sources.overlay.get(overlay_key, file_bytes)
-        except OSError as e:
-            logger.error(ls.AST_RELOAD_FAILED, path=file_path, error=e)
-            return None
-        # Transcoded exactly as the first parse was, or a declared-encoding
-        # file's call pass would see names its definitions do not carry.
-        parsed = grammar_bytes(file_bytes, language, file_path)
-        root_node = parse_with_preproc_recovery(parser, parsed, language).root_node
-        if language == cs.SupportedLanguage.SQL:
-            # The reload is the tree the call pass now walks, so its DDL must
-            # come from these bytes, not the first parse's (issue #3181).
-            self.factory.definition_processor.keep_sql_source(
-                file_path, root_node, parsed
-            )
-        self.factory.func_class_captures_cache.pop(file_path, None)
-        return (root_node, language)
-
-    def _load_notebook_ast(
-        self, file_path: Path
-    ) -> tuple[Node, cs.SupportedLanguage] | None:
-        """Re-parse an evicted notebook from the Python source it was parsed as."""
-        language_queries = self.queries.get(cs.SupportedLanguage.PYTHON)
-        parser = language_queries.get(cs.KEY_PARSER) if language_queries else None
-        if parser is None:
-            return None
-        try:
-            notebook = read_notebook(file_path.read_bytes())
-        except OSError as e:
-            logger.error(ls.AST_RELOAD_FAILED, path=file_path, error=e)
-            return None
-        if isinstance(notebook, NotebookSkipped):
-            return None
-        root_node = parse_with_preproc_recovery(
-            parser, notebook.source, cs.SupportedLanguage.PYTHON
-        ).root_node
-        self.factory.func_class_captures_cache.pop(file_path, None)
-        return (root_node, cs.SupportedLanguage.PYTHON)
+        return self.file_parser.process_with_secondary_tier(filepath)
 
     def _process_function_calls(self, only: Collection[Path] | None = None) -> None:
         # `only` scopes the pass to a re-ingested subset (issue #1524); every
@@ -2945,7 +2672,7 @@ class GraphUpdater:
             else [(fp, lang) for fp, lang in self._parsed_files if fp in only]
         )
         for file_path, language in files:
-            root_node = self._ast_for(file_path)
+            root_node = self.file_parser.ast_for(file_path)
             if root_node is None:
                 continue
             self.factory.call_processor.collect_callable_field_bindings(
@@ -2966,7 +2693,7 @@ class GraphUpdater:
         self.factory.call_processor.finalize_callable_field_bindings()
         self.factory.call_processor.finalize_js_symbol_bindings()
         for file_path, language in files:
-            root_node = self._ast_for(file_path)
+            root_node = self.file_parser.ast_for(file_path)
             if root_node is None:
                 continue
             # Issue #1837: there is deliberately no capture-based skip here.
@@ -3622,12 +3349,12 @@ class GraphUpdater:
             # definitions they gained (PR #1979).
             *self.dependent_lookup.unresolved_reference_waiters(
                 [
-                    (key, self.generated_sources.overlay.get(key, _read_bytes(path)))
+                    (key, self.generated_sources.overlay.get(key, read_or_empty(path)))
                     for key, path in sorted(present.items())
                     if created is not None and key in created
                 ],
                 [
-                    (key, self.generated_sources.overlay.get(key, _read_bytes(path)))
+                    (key, self.generated_sources.overlay.get(key, read_or_empty(path)))
                     for key, path in sorted(present.items())
                     if created is None or key not in created
                 ],
@@ -3808,7 +3535,7 @@ class GraphUpdater:
                 continue
             # The delombok overlay stands in for the checked-in bytes exactly
             # as the batch path does (issue #1140).
-            self._process_single_file(
+            self.file_parser.process_single_file(
                 path, file_bytes=self.generated_sources.overlay.get(key, parsed[key])
             )
         self._rerun_frontends_for(touched_languages)
@@ -4155,9 +3882,9 @@ class GraphUpdater:
             )
         )
         self._reingest_delete(reparse, gone, hashes)
-        self._resync_dependencies((*reparse, *gone), reparse)
+        self.file_parser.resync_dependencies((*reparse, *gone), reparse)
         parsed = self._reingest_reparse(reparse, gone)
-        self._log_unparsable_manifests()
+        self.file_parser.log_unparsable_manifests()
         # After BOTH seed calls and after the re-parse, so a re-parsed file's
         # own entry is exempt while its Module node is still unflushed
         # (issue #1712). The exemption is the paths THIS call re-parsed, not

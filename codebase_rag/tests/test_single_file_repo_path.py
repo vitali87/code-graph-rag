@@ -185,7 +185,7 @@ class TestSingleFileRunScope:
         query alone would flag correct behaviour. The reconciliation path
         issues it to sweep a file that is gone; the changed-file path issues
         it for a file that still exists, to clear the previous parse's
-        entities immediately before `_process_single_file` re-adds them
+        entities immediately before `FileParser.process_single_file` re-adds them
         (graph_updater.py:2731). Only the first is a deletion, and the
         difference is visible in whether a Module node is written afterwards.
         """

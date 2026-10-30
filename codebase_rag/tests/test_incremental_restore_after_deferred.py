@@ -31,6 +31,7 @@ from codebase_rag.tests.test_incremental_inbound_deferred_targets import (
     _calls,
     _snapshot,
 )
+from codebase_rag.updater.file_parse import FileParser
 from codebase_rag.updater.frontends import FrontendRunner
 from evals.cgr_graph import StatefulIngestor
 
@@ -182,10 +183,10 @@ def test_a_file_failing_in_pass_2_still_restores_the_inbound_edges(
     # edited too, is the one that fails.
     _edit_after_cache(root / "box.py", root, "#")
     _edit_after_cache(root / "util.py", root, "#")
-    original = GraphUpdater._process_single_file
+    original = FileParser.process_single_file
 
     def fail_util(
-        self: GraphUpdater,
+        self: FileParser,
         filepath: Path,
         file_bytes: bytes | None = None,
         pre_parsed: tuple[Node, dict[str, list] | None] | None = None,
@@ -194,7 +195,7 @@ def test_a_file_failing_in_pass_2_still_restores_the_inbound_edges(
             raise RuntimeError("util.py failed")
         original(self, filepath, file_bytes=file_bytes, pre_parsed=pre_parsed)
 
-    monkeypatch.setattr(GraphUpdater, "_process_single_file", fail_util)
+    monkeypatch.setattr(FileParser, "process_single_file", fail_util)
     with pytest.raises(RuntimeError, match="util.py failed"):
         _index(store, root, force=False)
 

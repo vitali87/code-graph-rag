@@ -92,7 +92,7 @@ def file_combined_captures(
         # tree, but `_process_function_calls` reads these captures, so
         # it walked the OLD call sites and re-emitted a CALLS edge out
         # of a function that no longer exists in the source (#1794).
-        # `_load_ast_from_disk` already pops this cache on eviction for
+        # `FileParser.load_ast_from_disk` already pops this cache on eviction for
         # the same reason; the re-parse path has to keep it true too.
         #
         # An absent entry and an empty one are not the same thing to

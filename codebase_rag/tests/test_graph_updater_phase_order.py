@@ -138,7 +138,7 @@ _ORDER: tuple[tuple[str, str, str, str], ...] = (
     # -- inside Pass 2 --
     (
         "_delete_stale_subtrees",
-        "_process_single_file",
+        "process_single_file",
         "earlier:before any file of this run is parsed",
         "a dependent re-parsed while a deleted or replaced file's module is "
         "still in the graph resolves into it instead of taking the fallback "

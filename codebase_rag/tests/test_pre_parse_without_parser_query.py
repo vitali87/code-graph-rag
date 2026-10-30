@@ -47,7 +47,7 @@ def test_a_language_without_queries_is_skipped(
 ) -> None:
     parsers, _queries = python_parsers
     updater = _updater(tmp_path, parsers, {})
-    assert updater._pre_parse_changed_files([_ENTRY]) == {}
+    assert updater.file_parser.pre_parse_changed_files([_ENTRY]) == {}
 
 
 def test_queries_without_a_parser_are_skipped(
@@ -59,7 +59,7 @@ def test_queries_without_a_parser_are_skipped(
         for lang, q in queries.items()
     }
     updater = _updater(tmp_path, parsers, partial)
-    assert updater._pre_parse_changed_files([_ENTRY]) == {}
+    assert updater.file_parser.pre_parse_changed_files([_ENTRY]) == {}
 
 
 def test_a_complete_language_is_still_pre_parsed(
@@ -68,7 +68,7 @@ def test_a_complete_language_is_still_pre_parsed(
     # Negative: the guard must not skip a language that has everything.
     parsers, queries = python_parsers
     updater = _updater(tmp_path, parsers, queries)
-    assert Path("m.py") in updater._pre_parse_changed_files([_ENTRY])
+    assert Path("m.py") in updater.file_parser.pre_parse_changed_files([_ENTRY])
 
 
 def test_the_definition_pass_skips_a_language_without_a_parser(

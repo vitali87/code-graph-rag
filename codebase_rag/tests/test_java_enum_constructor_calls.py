@@ -159,7 +159,7 @@ def test_constant_edges_do_not_depend_on_recorded_definition_locations(
     ]:
         del call_processor.facts.function_locations[key]
     mock_ingestor.reset_mock()
-    root = updater._ast_for(_source(temp_repo))
+    root = updater.file_parser.ast_for(_source(temp_repo))
     assert root is not None
 
     call_processor.process_calls_in_file(

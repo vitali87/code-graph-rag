@@ -23,6 +23,7 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.sync.checkout_state import state_file
 from codebase_rag.tests.test_incremental_inbound_deferred_targets import _snapshot
 from codebase_rag.types_defs import PropertyDict, ResultRow
+from codebase_rag.updater.file_parse import FileParser
 from evals.cgr_graph import StatefulIngestor
 
 _GO = {
@@ -160,10 +161,10 @@ def _parsed_on_sync(
     store = StatefulIngestor()
     _index(store, root, force=True)
     parsed: list[str] = []
-    original = GraphUpdater._process_single_file
+    original = FileParser.process_single_file
 
     def record(
-        self: GraphUpdater,
+        self: FileParser,
         filepath: Path,
         file_bytes: bytes | None = None,
         pre_parsed: tuple[Node, dict[str, list] | None] | None = None,
@@ -171,7 +172,7 @@ def _parsed_on_sync(
         parsed.append(filepath.name)
         original(self, filepath, file_bytes=file_bytes, pre_parsed=pre_parsed)
 
-    monkeypatch.setattr(GraphUpdater, "_process_single_file", record)
+    monkeypatch.setattr(FileParser, "process_single_file", record)
     _edit_after_cache(root / edited, root, "//")
     _index(store, root, force=False)
     return sorted(parsed)
