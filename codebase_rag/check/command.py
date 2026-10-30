@@ -282,7 +282,8 @@ class _FileSnapshot:
     The re-ingest records the files it re-parsed in the hash cache, which
     would make a later full run skip them and keep the base graph for files
     the working tree changed. The cache's mtime is also a judgement about
-    every file NOT in it (`_reingest_update_hashes`), so it goes back too.
+    every file NOT in it (`SyncStateKeeper.publish_reingest_hashes`), so it
+    goes back too.
     """
 
     def __init__(self, path: Path) -> None:

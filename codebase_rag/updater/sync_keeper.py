@@ -20,6 +20,7 @@ from ..services import IngestorProtocol, QueryProtocol
 from ..sync.state import (
     DirMtimesCache,
     FileHashCache,
+    content_digest,
     exclusion_scope,
     exclusion_state,
     hash_file,
@@ -308,6 +309,43 @@ class SyncStateKeeper:
             save_dir_mtimes(*run.pending_dir_mtimes)
         run.pending_dir_mtimes = None
         run.pending_cache_observed_at = None
+
+    def publish_reingest_hashes(
+        self,
+        cache_path: Path,
+        hashes: FileHashCache,
+        reparse: dict[str, Path],
+        parsed: dict[str, bytes],
+        gone: dict[str, Path],
+    ) -> None:
+        """Record a scoped re-ingest's files in the hash cache it read."""
+        # Keep the hash cache honest so the next update_repository does not
+        # re-parse what this call already applied.
+        if not cache_path.is_file():
+            return
+        try:
+            observed_at = cache_path.stat().st_mtime
+        except OSError:
+            return
+        for key in reparse:
+            data = parsed.get(key)
+            if data is None:
+                hashes.pop(key, None)
+            else:
+                hashes[key] = content_digest(data)
+        for key in gone:
+            hashes.pop(key, None)
+        # The cache's mtime is the instant every file NOT in it was last
+        # judged (`_is_already_in_sync` and the walk skip files no newer
+        # than it). Writing moves it to now, which would hide an edit made
+        # before this call to a file this call was not told about: the next
+        # update would read it as older than the cache and keep the stale
+        # hash. So the cache is published carrying the previous instant; the
+        # files re-ingested here are newer than it, so the next run re-hashes
+        # them and finds them already current. Published as `run()` publishes
+        # it, atomically and without following links (#1700): a failure leaves
+        # the previous cache, which costs only a rescan.
+        publish_hash_cache(cache_path, hashes, observed_at)
 
     def stamp_exclusion_state(
         self, state_dir: Path, *, only_if_changed: bool = False

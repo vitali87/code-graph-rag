@@ -158,7 +158,7 @@ def test_a_reingest_relinks_endpoint_resources(tmp_path: Path) -> None:
 def test_the_rebuild_runs_before_the_hash_commit(tmp_path: Path) -> None:
     """Ordering, not just presence (raised in review of #1852).
 
-    `_reingest_update_hashes` saves the hash cache to disk, which records
+    `publish_reingest_hashes` saves the hash cache to disk, which records
     these files as indexed. Queueing the rebuilt finding and link writes
     AFTER it meant an interruption in between left the caches claiming the
     files were done while those writes never landed -- and the next run would
@@ -173,7 +173,7 @@ def test_the_rebuild_runs_before_the_hash_commit(tmp_path: Path) -> None:
 
     real_findings = type(updater)._reingest_rebuild_findings
     real_link = type(updater.endpoint_linker).link_endpoint_resources
-    real_hashes = type(updater)._reingest_update_hashes
+    real_hashes = type(updater.sync_keeper).publish_reingest_hashes
     real_flush = updater.ingestor.flush_all
 
     def _findings(self: object, *a: object, **k: object) -> object:
@@ -199,7 +199,7 @@ def test_the_rebuild_runs_before_the_hash_commit(tmp_path: Path) -> None:
     with (
         patch.object(type(updater), "_reingest_rebuild_findings", _findings),
         patch.object(type(updater.endpoint_linker), "link_endpoint_resources", _link),
-        patch.object(type(updater), "_reingest_update_hashes", _hashes),
+        patch.object(type(updater.sync_keeper), "publish_reingest_hashes", _hashes),
     ):
         updater.reingest((target,))
 

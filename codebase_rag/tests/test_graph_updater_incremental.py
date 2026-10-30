@@ -2486,7 +2486,7 @@ class TestReingestHashCachePublish:
 
     @staticmethod
     def _reingest(cache_path: Path, data: bytes) -> None:
-        GraphUpdater._reingest_update_hashes(
+        sync_keeper.SyncStateKeeper.publish_reingest_hashes(
             MagicMock(),
             cache_path,
             {"a.py": "old"},

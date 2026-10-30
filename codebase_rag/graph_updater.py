@@ -40,9 +40,7 @@ from .sync.lock import holds_sync_lock
 from .sync.state import (
     DirMtimesCache,
     FileHashCache,
-    content_digest,
     load_hash_cache,
-    publish_hash_cache,
 )
 from .trace.carry import CapturedTraceEdge
 from .types_defs import (
@@ -1618,42 +1616,6 @@ class GraphUpdater:
         self.ingestor.flush_all()
         self.gloss_reanchor.reanchor()
 
-    def _reingest_update_hashes(
-        self,
-        cache_path: Path,
-        hashes: FileHashCache,
-        reparse: dict[str, Path],
-        parsed: dict[str, bytes],
-        gone: dict[str, Path],
-    ) -> None:
-        # Keep the hash cache honest so the next update_repository does not
-        # re-parse what this call already applied.
-        if not cache_path.is_file():
-            return
-        try:
-            observed_at = cache_path.stat().st_mtime
-        except OSError:
-            return
-        for key in reparse:
-            data = parsed.get(key)
-            if data is None:
-                hashes.pop(key, None)
-            else:
-                hashes[key] = content_digest(data)
-        for key in gone:
-            hashes.pop(key, None)
-        # The cache's mtime is the instant every file NOT in it was last
-        # judged (`_is_already_in_sync` and the walk skip files no newer
-        # than it). Writing moves it to now, which would hide an edit made
-        # before this call to a file this call was not told about: the next
-        # update would read it as older than the cache and keep the stale
-        # hash. So the cache is published carrying the previous instant; the
-        # files re-ingested here are newer than it, so the next run re-hashes
-        # them and finds them already current. Published as `run()` publishes
-        # it, atomically and without following links (#1700): a failure leaves
-        # the previous cache, which costs only a rescan.
-        publish_hash_cache(cache_path, hashes, observed_at)
-
     def has_indexed(self, path: Path) -> bool:
         """Whether the last run or re-ingest indexed the file at `path`.
 
@@ -1969,7 +1931,7 @@ class GraphUpdater:
         # still hung off it and leave the files unparented in between.
         self.container_flips.prune_flipped(plan.flipped_dirs)
         # BEFORE the hash commit, matching `run()`, which does both passes
-        # ahead of its cache write. `_reingest_update_hashes` saves the hash
+        # ahead of its cache write. `publish_reingest_hashes` saves the hash
         # cache to disk, which records these files as indexed; queueing the
         # rebuilt finding and link writes after it meant an interruption in
         # between left caches claiming the files were done while those writes
@@ -1988,7 +1950,7 @@ class GraphUpdater:
         # skip the post-passes entirely -- so an unflushed queue here is lost
         # for good rather than retried (#1852).
         self.ingestor.flush_all()
-        self._reingest_update_hashes(
+        self.sync_keeper.publish_reingest_hashes(
             plan.cache_path, plan.hashes, reparse, parsed, gone
         )
         flush_stdlib_cache()
