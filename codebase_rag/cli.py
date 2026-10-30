@@ -3172,7 +3172,8 @@ def _emit_dead_code(
 def _notice_single_project_endpoint_roots(show_progress: bool) -> None:
     """Endpoint roots off on a graph holding one project: every endpoint
     reads as uncalled. Stdout carries the JSON payload when that format is
-    chosen (local review P1), so the notice goes to stderr then."""
+    chosen (local review P1), and only the table under --quiet, so the
+    notice goes to stderr then."""
     if show_progress:
         app_context.console.print(
             style(cs.CLI_DEADCODE_SINGLE_PROJECT_ENDPOINTS, cs.Color.YELLOW)
@@ -3244,7 +3245,11 @@ def dead_code(
     from .dead_code import collect_dead_code_with_coverage
 
     chosen = _scan_project_option(project, project_name)
-    show_progress = output_format == cs.DeadCodeFormat.TABLE and output is None
+    show_progress = (
+        output_format == cs.DeadCodeFormat.TABLE
+        and output is None
+        and not settings.QUIET
+    )
     if show_progress:
         app_context.console.print(style(cs.CLI_DEADCODE_CONNECTING, cs.Color.CYAN))
 
@@ -3657,7 +3662,11 @@ def duplicates(
     from .duplicates import collect_duplicates_with_coverage
 
     chosen = _scan_project_option(project, project_name)
-    show_progress = output_format == cs.DuplicatesFormat.TABLE and output is None
+    show_progress = (
+        output_format == cs.DuplicatesFormat.TABLE
+        and output is None
+        and not settings.QUIET
+    )
     if show_progress:
         app_context.console.print(style(cs.CLI_DUPLICATES_CONNECTING, cs.Color.CYAN))
 
