@@ -793,12 +793,18 @@ class CppFunctionIngest(LanguageFunctionIngest):
     def _find_enclosing_function_node(
         self, func_node: Node, lang_config: LanguageSpec
     ) -> Node | None:
-        # Mirrors FunctionIngest.determine_function_parent's walk: first
-        # function-like ancestor, stopping at the module boundary.
+        # The first function-like ancestor, stopping at the module boundary.
+        # The C++ spec counts a `declaration` as both (a prototype, a
+        # file-scope variable), but one above a lambda is the variable its
+        # initializer binds (`auto inner = [] {...};`): the lambda belongs to
+        # whatever encloses that declaration, so the walk passes it.
         current = func_node.parent
-        while current is not None and current.type not in lang_config.module_node_types:
-            if current.type in lang_config.function_node_types:
-                return current
+        while current is not None:
+            if current.type != cs.TS_CPP_DECLARATION:
+                if current.type in lang_config.module_node_types:
+                    return None
+                if current.type in lang_config.function_node_types:
+                    return current
             current = current.parent
         return None
 

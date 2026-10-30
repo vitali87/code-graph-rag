@@ -74,20 +74,15 @@ def test_a_lambda_in_an_out_of_class_body_is_defined_by_that_method(
     ]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "CppFunctionIngest._find_enclosing_function_node stops at the first "
-        "`declaration` ancestor, which the C++ spec lists among its module "
-        "node types, so a lambda bound to a local (`auto inner = []{...};`) "
-        "in an out-of-class method is never deferred to that method and the "
-        "file's Module DEFINES it instead"
-    ),
-)
 def test_a_lambda_bound_to_a_local_is_defined_by_its_method(
     updater: GraphUpdater, mock_ingestor: RecordingIngestor
 ) -> None:
-    assert len(_lambdas_defined_by(mock_ingestor, f"{_H}.Base.paint")) == 1
+    # `auto inner = ...` puts a `declaration`, which the C++ spec also counts
+    # as a module node, between the lambda and the method.
+    assert _lambdas_defined_by(mock_ingestor, f"{_H}.Base.paint") == [
+        "cx.src.shapes.lambda_5_15"
+    ]
+    assert _lambdas_defined_by(mock_ingestor, "cx.src.shapes") == []
 
 
 def test_a_prototype_yields_to_its_definition(
