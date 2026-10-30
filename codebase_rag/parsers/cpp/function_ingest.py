@@ -177,6 +177,13 @@ class CppFunctionIngest(LanguageFunctionIngest):
     # A C++ definition is named through its declarator, a lambda by where it
     # is written, and either is qualified by the scopes around it.
     resolves_own_identity = True
+    # `auto f = [] {...};` puts a `declaration` between a lambda and the
+    # function it sits in. The spec counts one as a module node (a file-scope
+    # variable's initializer is the module's) and as a function node (a
+    # prototype), but above a lambda it is only the binding: the lambda
+    # belongs to whatever encloses it, the translation unit for a file-scope
+    # one.
+    transparent_parent_types = frozenset({cs.TS_CPP_DECLARATION})
 
     def __init__(
         self,

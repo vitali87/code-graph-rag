@@ -468,7 +468,8 @@ def test_enclosing_function_keeps_its_own_calls(
 ) -> None:
     # Its direct call stays, and so does the call inside its lambda, which
     # has always been credited to the enclosing function; the lambda keeps
-    # its module-anchored name.
+    # its module-anchored name but is defined by that function, since the
+    # `auto twice = ...` binding no longer stops the parent walk.
     _index(temp_repo, mock_ingestor, plain=_PLAIN)
 
     module = f"{_PROJECT}.plain"
@@ -478,7 +479,13 @@ def test_enclosing_function_keeps_its_own_calls(
     lambda_qn = f"{module}.lambda_7_15"
     assert lambda_qn in get_node_names(mock_ingestor, NodeLabel.FUNCTION)
     defines = _labelled_edges(mock_ingestor, RelationshipType.DEFINES)
-    assert (NodeLabel.MODULE, module, NodeLabel.FUNCTION, lambda_qn) in defines
+    assert (
+        NodeLabel.FUNCTION,
+        f"{module}.compute",
+        NodeLabel.FUNCTION,
+        lambda_qn,
+    ) in defines
+    assert (NodeLabel.MODULE, module, NodeLabel.FUNCTION, lambda_qn) not in defines
 
 
 _PLAIN_CALLS = """\

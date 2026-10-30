@@ -240,6 +240,10 @@ class LanguageFunctionIngest:
     # Whether a nested function's parent guess carries the parent node's span
     # for the deferred link to swap in the identity recorded there.
     pins_parent_span: ClassVar[bool] = False
+    # Node types the parent walk climbs through without treating them as a
+    # boundary or a parent: wrappers the language spec counts as module or
+    # function nodes elsewhere but that only bind the nested function here.
+    transparent_parent_types: ClassVar[frozenset[str]] = frozenset()
 
     def skips_function(
         self,

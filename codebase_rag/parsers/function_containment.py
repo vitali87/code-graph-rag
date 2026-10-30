@@ -286,8 +286,15 @@ class FunctionContainment:
             return cs.NodeLabel.MODULE, module_qn, None
 
         file_path = self.module_qn_to_file_path.get(module_qn)
-        while current and current.type not in lang_config.module_node_types:
-            if current.type in lang_config.function_node_types:
+        transparent = self._host._for(language).transparent_parent_types
+        while current and (
+            current.type in transparent
+            or current.type not in lang_config.module_node_types
+        ):
+            if (
+                current.type not in transparent
+                and current.type in lang_config.function_node_types
+            ):
                 parent = self._enclosing_function_parent(
                     current, func_qn, module_qn, lang_config, language, file_path
                 )
