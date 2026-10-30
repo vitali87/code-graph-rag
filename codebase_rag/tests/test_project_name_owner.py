@@ -25,6 +25,7 @@ from codebase_rag import cypher_queries as cq
 from codebase_rag.cli import (
     _exit_if_project_owned_elsewhere,
     _pre_chat_sync,
+    _RepoSync,
     _run_graph_sync,
     app,
 )
@@ -367,7 +368,17 @@ def _workspace_sync(repo: Path, project_name: str) -> None:
     workspace = WorkspaceConfig(
         name="ws", repos=[WorkspaceRepo(path=str(repo), project_name=project_name)]
     )
-    sync, _ = _pre_chat_sync(workspace, lambda: None, 10, None, None, False)
+    sync, _ = _pre_chat_sync(
+        workspace,
+        lambda: None,
+        _RepoSync(
+            batch_size=10,
+            exclude=None,
+            capture=None,
+            skip_embeddings=None,
+            assume_yes=False,
+        ),
+    )
     sync()
 
 

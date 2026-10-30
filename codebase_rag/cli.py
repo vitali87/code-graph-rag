@@ -10,6 +10,7 @@ import tempfile
 import time
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import ExitStack, contextmanager
+from dataclasses import dataclass
 from fnmatch import fnmatch
 from functools import partial, wraps
 from importlib.metadata import version as get_version
@@ -365,29 +366,53 @@ def _info(msg: str) -> None:
         app_context.console.print(msg)
 
 
+@dataclass(frozen=True, slots=True)
+class _RepoSync:
+    """The options every repository `start` syncs is synced with."""
+
+    batch_size: int
+    exclude: list[str] | None
+    capture: list[str] | None
+    skip_embeddings: bool | None
+    assume_yes: bool
+
+    def run(
+        self,
+        repo: Path,
+        project_name: str,
+        project_named: bool,
+        *,
+        interactive_setup: bool,
+        clean: bool = False,
+        output: str | None = None,
+    ) -> None:
+        """Sync `repo` into the graph as `project_name`."""
+        _run_graph_sync(
+            repo=repo,
+            project_name=project_name,
+            project_named=project_named,
+            batch_size=self.batch_size,
+            exclude=self.exclude,
+            interactive_setup=interactive_setup,
+            clean=clean,
+            output=output,
+            capture=self.capture,
+            skip_embeddings=self.skip_embeddings,
+            assume_yes=self.assume_yes,
+        )
+
+
 def _pre_chat_sync(
     workspace_config: WorkspaceConfig | None,
     repo_sync: Callable[[], None],
-    batch_size: int,
-    exclude: list[str] | None,
-    capture: list[str] | None,
-    no_embeddings: bool,
-    assume_yes: bool = False,
+    sync: _RepoSync,
 ) -> tuple[Callable[[], None], str]:
     # The sync to run before the chat opens: every workspace repo when a
     # workspace is active, else just the target repo.
     if workspace_config is None:
         return repo_sync, cs.MSG_SYNCING_KNOWLEDGE_GRAPH
     _exit_if_workspace_names_unstorable(workspace_config)
-    workspace_sync = partial(
-        _sync_workspace,
-        workspace_config,
-        batch_size,
-        exclude,
-        capture=capture,
-        skip_embeddings=no_embeddings or None,
-        assume_yes=assume_yes,
-    )
+    workspace_sync = partial(_sync_workspace, workspace_config, sync)
     return workspace_sync, cs.MSG_SYNCING_WORKSPACE.format(
         name=workspace_config.name, count=len(workspace_config.repos)
     )
@@ -453,14 +478,10 @@ def _start_update_graph(
     *,
     workspace_config: WorkspaceConfig | None = None,
     project_named: bool,
-    batch_size: int,
-    exclude: list[str] | None,
+    sync: _RepoSync,
     interactive_setup: bool,
     clean: bool,
     output: str | None,
-    capture: list[str] | None,
-    skip_embeddings: bool | None,
-    assume_yes: bool,
     defer_workspace_sync: bool = False,
 ) -> bool:
     """`start --update-graph`: sync, and say whether the assistant opens next.
@@ -477,32 +498,20 @@ def _start_update_graph(
         # The same check the chat's own workspace sync makes (#2412).
         _exit_if_workspace_names_unstorable(workspace_config)
         if not defer_workspace_sync:
-            _sync_workspace(
-                workspace_config,
-                batch_size,
-                exclude,
-                capture=capture,
-                skip_embeddings=skip_embeddings,
-                assume_yes=assume_yes,
-            )
+            _sync_workspace(workspace_config, sync)
             _info(style(cs.CLI_MSG_GRAPH_UPDATED, cs.Color.GREEN))
         return True
     _info(style(cs.CLI_MSG_UPDATING_GRAPH.format(path=repo), cs.Color.GREEN))
     if not interactive_setup:
         _info(style(cs.CLI_MSG_AUTO_EXCLUDE, cs.Color.YELLOW))
     try:
-        _run_graph_sync(
-            repo=repo,
-            project_name=project_name,
-            project_named=project_named,
-            batch_size=batch_size,
-            exclude=exclude,
+        sync.run(
+            repo,
+            project_name,
+            project_named,
             interactive_setup=interactive_setup,
             clean=clean,
             output=output,
-            capture=capture,
-            skip_embeddings=skip_embeddings,
-            assume_yes=assume_yes,
         )
     except KeyboardInterrupt as stop:
         # Ctrl+C is a request, not a crash (#2442): one line when it left the
@@ -726,14 +735,7 @@ def _load_workspace_or_exit(workspace: str | None) -> WorkspaceConfig | None:
         raise typer.Exit(1) from e
 
 
-def _sync_workspace(
-    config: WorkspaceConfig,
-    batch_size: int,
-    exclude: list[str] | None,
-    capture: list[str] | None = None,
-    skip_embeddings: bool | None = None,
-    assume_yes: bool = False,
-) -> None:
+def _sync_workspace(config: WorkspaceConfig, sync: _RepoSync) -> None:
     total = len(config.repos)
     if total == 0:
         _info(
@@ -759,16 +761,11 @@ def _sync_workspace(
                 cs.Color.CYAN,
             )
         )
-        _run_graph_sync(
-            repo=repo_path,
-            project_name=repo.project_name,
-            project_named=repo.project_named,
-            batch_size=batch_size,
-            exclude=exclude,
+        sync.run(
+            repo_path,
+            repo.project_name,
+            repo.project_named,
             interactive_setup=False,
-            capture=capture,
-            skip_embeddings=skip_embeddings,
-            assume_yes=assume_yes,
         )
 
 
@@ -1158,14 +1155,7 @@ def _run_graph_sync(
     if clean:
         _import_vector_store()
 
-    cgrignore = load_ignore_patterns(repo)
-    cli_excludes = frozenset(exclude) if exclude else frozenset()
-    exclude_paths = cli_excludes | cgrignore.exclude or None
-    unignore_paths: frozenset[str] | None
-    if interactive_setup:
-        unignore_paths = prompt_for_unignored_directories(repo, exclude)
-    else:
-        unignore_paths = cgrignore.unignore or None
+    exclude_paths, unignore_paths = _sync_ignore_paths(repo, exclude, interactive_setup)
 
     elapsed = time.monotonic()
     with (
@@ -1177,13 +1167,7 @@ def _run_graph_sync(
         _sync_owner() as owner,
     ):
         if clean:
-            _confirm_destructive_clean(ingestor, project_name, assume_yes)
-            _info(style(cs.CLI_MSG_CLEANING_DB, cs.Color.YELLOW))
-            ingestor.clean_database()
-            _delete_hash_cache(repo)
-            # Stale vectors keyed by recycled node ids would crowd out live
-            # hits and can map onto unrelated nodes in the rebuilt graph.
-            clear_all_embeddings()
+            _wipe_before_sync(ingestor, repo, project_name, assume_yes)
 
         # After the wipe, which would delete the marker with everything else,
         # and before `ensure_constraints`, whose migration can already purge.
@@ -1210,19 +1194,11 @@ def _run_graph_sync(
         # repo report the time to dump the whole shared graph (issue #2440).
         elapsed = time.monotonic() - elapsed
 
-        exported = True
-        if output and interrupted is None:
-            # The repo's own graph: `-o` wrote every project in the shared
-            # database (issue #2440), which `cgr export` without a scope still
-            # does. The updater's name is the one its Project node carries.
-            project = updater.project_name
-            _info(
-                style(
-                    cs.CLI_MSG_EXPORTING_TO.format(project=project, path=output),
-                    cs.Color.CYAN,
-                )
-            )
-            exported = export_graph_to_file(ingestor, output, [project])
+        exported = (
+            _export_synced_project(ingestor, updater.project_name, output)
+            if output and interrupted is None
+            else True
+        )
     # Raised outside the `with`: the ingestor logs any exception leaving it as
     # a traceback, typer.Exit included, and the failure is already reported.
     if not exported:
@@ -1246,6 +1222,50 @@ def _run_graph_sync(
         _report_call_pass_failures(repo, list(updater.call_pass_failures))
     if interrupted is not None:
         raise interrupted
+
+
+def _sync_ignore_paths(
+    repo: Path, exclude: list[str] | None, interactive_setup: bool
+) -> tuple[frozenset[str] | None, frozenset[str] | None]:
+    """The sync's exclude and unignore sets: `--exclude` with the
+    repository's `.cgrignore`, and the directories the user lets back in
+    (asked, with interactive setup)."""
+    cgrignore = load_ignore_patterns(repo)
+    cli_excludes = frozenset(exclude) if exclude else frozenset()
+    exclude_paths = cli_excludes | cgrignore.exclude or None
+    if interactive_setup:
+        return exclude_paths, prompt_for_unignored_directories(repo, exclude)
+    return exclude_paths, cgrignore.unignore or None
+
+
+def _wipe_before_sync(
+    ingestor: GraphIngestor, repo: Path, project_name: str, assume_yes: bool
+) -> None:
+    """`--clean`: confirmed, then the database, the checkout's sync state and
+    every stored vector go."""
+    _confirm_destructive_clean(ingestor, project_name, assume_yes)
+    _info(style(cs.CLI_MSG_CLEANING_DB, cs.Color.YELLOW))
+    ingestor.clean_database()
+    _delete_hash_cache(repo)
+    # Stale vectors keyed by recycled node ids would crowd out live
+    # hits and can map onto unrelated nodes in the rebuilt graph.
+    clear_all_embeddings()
+
+
+def _export_synced_project(ingestor: GraphIngestor, project: str, output: str) -> bool:
+    """`-o`: write the synced project's graph to `output`; whether it was.
+
+    The repo's own graph: `-o` wrote every project in the shared database
+    (issue #2440), which `cgr export` without a scope still does. `project`
+    is the updater's name, the one its Project node carries.
+    """
+    _info(
+        style(
+            cs.CLI_MSG_EXPORTING_TO.format(project=project, path=output),
+            cs.Color.CYAN,
+        )
+    )
+    return export_graph_to_file(ingestor, output, [project])
 
 
 def _report_call_pass_failures(repo: Path, failed: list[Path]) -> None:
@@ -1499,11 +1519,17 @@ def start(
     if not no_start_stack:
         _maybe_start_stack(skip_embeddings=no_embeddings)
 
-    effective_batch_size = settings.resolve_batch_size(batch_size)
+    sync = _RepoSync(
+        batch_size=settings.resolve_batch_size(batch_size),
+        exclude=exclude,
+        capture=capture,
+        skip_embeddings=no_embeddings or None,
+        assume_yes=yes,
+    )
 
     if clean and not update_graph:
         _clean_database_only(
-            Path(target_repo_path), effective_batch_size, resolved_project_name, yes
+            Path(target_repo_path), sync.batch_size, resolved_project_name, yes
         )
         return
 
@@ -1517,14 +1543,10 @@ def start(
         resolved_project_name,
         workspace_config=workspace_config,
         project_named=project_name is not None,
-        batch_size=effective_batch_size,
-        exclude=exclude,
+        sync=sync,
         interactive_setup=interactive_setup,
         clean=clean,
         output=output,
-        capture=capture,
-        skip_embeddings=no_embeddings or None,
-        assume_yes=yes,
         defer_workspace_sync=bool(ask_agent),
     ):
         return
@@ -1535,22 +1557,13 @@ def start(
         sync_task, sync_message = _pre_chat_sync(
             workspace_config,
             partial(
-                _run_graph_sync,
-                repo=resolved_repo,
-                project_name=resolved_project_name,
-                project_named=project_name is not None,
-                batch_size=effective_batch_size,
-                exclude=exclude,
+                sync.run,
+                resolved_repo,
+                resolved_project_name,
+                project_name is not None,
                 interactive_setup=interactive_setup,
-                capture=capture,
-                skip_embeddings=no_embeddings or None,
-                assume_yes=yes,
             ),
-            effective_batch_size,
-            exclude,
-            capture,
-            no_embeddings,
-            assume_yes=yes,
+            sync,
         )
 
     session_project, session_named = _session_project(
@@ -1558,7 +1571,7 @@ def start(
     )
     _launch_session(
         target_repo_path,
-        effective_batch_size,
+        sync.batch_size,
         ask_agent,
         active_projects,
         output_format,

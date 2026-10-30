@@ -30,7 +30,7 @@ from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag import exceptions as ex
 from codebase_rag import logs as ls
-from codebase_rag.cli import _run_graph_sync, _start_update_graph, app
+from codebase_rag.cli import _RepoSync, _run_graph_sync, _start_update_graph, app
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.sync.checkout_state import state_file
@@ -112,14 +112,16 @@ def _start_update_graph_directly(repo: Path) -> None:
         repo,
         PROJECT,
         project_named=True,
-        batch_size=10,
-        exclude=None,
+        sync=_RepoSync(
+            batch_size=10,
+            exclude=None,
+            capture=None,
+            skip_embeddings=True,
+            assume_yes=False,
+        ),
         interactive_setup=False,
         clean=False,
         output=None,
-        capture=None,
-        skip_embeddings=True,
-        assume_yes=False,
     )
 
 
