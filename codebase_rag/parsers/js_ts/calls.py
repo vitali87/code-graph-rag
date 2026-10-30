@@ -32,6 +32,7 @@ from ..field_nodes import declared_fields
 from ..language_calls import UNDECIDED_NAME, CallName, CallScan, LanguageCalls
 from . import bindings as js_bindings
 from . import utils as js_ts_utils
+from .resolution import function_prototype_builtin
 
 if TYPE_CHECKING:
     from ..call_resolver import CallResolver
@@ -1188,6 +1189,46 @@ class JsTsCallResolution(LanguageCalls):
         if callee_info is None:
             return None
         return self.judge_member_pick(ctx, call_node, callee_info)
+
+    def bound_callee(
+        self,
+        ctx: CallScan,
+        call_node: Node,
+        call_name: str,
+        callee_type: str,
+        callee_qn: str,
+    ) -> tuple[str, str]:
+        # The builtin pass names the method `X.prototype.m.call(...)` runs as
+        # written, `X.prototype.m`, which no node carries: bind it as `m` on
+        # what `X` names, or up X's chain. A name lookup of the whole path
+        # would take any visible `m`, the caller's own override included.
+        # When X has no such method the site is the builtin
+        # `Function.prototype.call` it also is, which writes no edge rather
+        # than one to a phantom.
+        method, _, invoker = call_name.rpartition(cs.SEPARATOR_DOT)
+        registry = self._resolver.function_registry
+        if (
+            callee_qn != method
+            or cs.SEPARATOR_PROTOTYPE not in method
+            or callee_qn in registry
+        ):
+            return callee_type, callee_qn
+        head, _, member = method.rpartition(cs.SEPARATOR_PROTOTYPE)
+        owner = ctx.resolve_func(
+            head,
+            ctx.module_qn,
+            ctx.local_var_types,
+            ctx.class_context,
+            ctx.caller_qn,
+            ctx.language,
+            call_point=call_node.start_byte,
+        )
+        if owner is not None:
+            if (own := f"{owner[1]}{cs.SEPARATOR_DOT}{member}") in registry:
+                return registry[own], own
+            if inherited := self._resolver._resolve_inherited_method(owner[1], member):
+                return inherited
+        return function_prototype_builtin(invoker)
 
     def ingest_unresolved_call(
         self, ctx: JsTsCallScan, call_node: Node, call_name: str

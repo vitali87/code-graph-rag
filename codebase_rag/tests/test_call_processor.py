@@ -365,13 +365,14 @@ class TestResolveBuiltinCall:
         assert result[1] == f"{cs.BUILTIN_PREFIX}.Function.prototype.apply"
 
     def test_prototype_call(self, call_processor: CallProcessor) -> None:
-        # .call suffix is matched first, returns Function.prototype.call
+        # `.call` runs the prototype method it is read off, here the
+        # runtime's own `Array.prototype.slice`.
         result = call_processor._resolver.resolve_builtin_call(
             "Array.prototype.slice.call"
         )
         assert result is not None
         assert result[0] == cs.NodeLabel.FUNCTION
-        assert result[1] == f"{cs.BUILTIN_PREFIX}.Function.prototype.call"
+        assert result[1] == f"{cs.BUILTIN_PREFIX}.Array.prototype.slice"
 
     def test_prototype_apply(self, call_processor: CallProcessor) -> None:
         result = call_processor._resolver.resolve_builtin_call(
@@ -379,7 +380,7 @@ class TestResolveBuiltinCall:
         )
         assert result is not None
         assert result[0] == cs.NodeLabel.FUNCTION
-        assert result[1] == f"{cs.BUILTIN_PREFIX}.Function.prototype.apply"
+        assert result[1] == f"{cs.BUILTIN_PREFIX}.String.prototype.split"
 
     def test_non_builtin_returns_none(self, call_processor: CallProcessor) -> None:
         result = call_processor._resolver.resolve_builtin_call("myCustomFunction")

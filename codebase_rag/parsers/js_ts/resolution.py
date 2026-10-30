@@ -48,22 +48,32 @@ def bind_receiver(returned: str | None, receiver: str | None) -> str | None:
     return returned
 
 
+def function_prototype_builtin(method: str) -> tuple[str, str]:
+    """The builtin `Function.prototype.<method>`: `bind`, `call` or `apply`."""
+    return (
+        cs.NodeLabel.FUNCTION,
+        f"{cs.BUILTIN_PREFIX}{cs.SEPARATOR_DOT}Function{cs.SEPARATOR_PROTOTYPE}{method}",
+    )
+
+
 def resolve_builtin_call(call_name: str) -> tuple[str, str] | None:
     if call_name in cs.JS_BUILTIN_PATTERNS:
         return (cs.NodeLabel.FUNCTION, f"{cs.BUILTIN_PREFIX}.{call_name}")
 
+    # `X.prototype.m.call(...)` runs `X.prototype.m`, so it is named before
+    # the `.call` it also ends in: the platform's own method when X is a
+    # platform type, else the name as written, which the call pass binds.
+    if cs.SEPARATOR_PROTOTYPE in call_name and call_name.endswith(
+        (cs.JS_SUFFIX_CALL, cs.JS_SUFFIX_APPLY)
+    ):
+        method = call_name.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        if method.split(cs.SEPARATOR_DOT, 1)[0] in cs.JS_TS_GLOBAL_RECEIVER_TYPES:
+            method = f"{cs.BUILTIN_PREFIX}{cs.SEPARATOR_DOT}{method}"
+        return (cs.NodeLabel.FUNCTION, method)
+
     for suffix, method in cs.JS_FUNCTION_PROTOTYPE_SUFFIXES.items():
         if call_name.endswith(suffix):
-            return (
-                cs.NodeLabel.FUNCTION,
-                f"{cs.BUILTIN_PREFIX}{cs.SEPARATOR_DOT}Function{cs.SEPARATOR_PROTOTYPE}{method}",
-            )
-
-    if cs.SEPARATOR_PROTOTYPE in call_name and (
-        call_name.endswith(cs.JS_SUFFIX_CALL) or call_name.endswith(cs.JS_SUFFIX_APPLY)
-    ):
-        base_call = call_name.rsplit(cs.SEPARATOR_DOT, 1)[0]
-        return (cs.NodeLabel.FUNCTION, base_call)
+            return function_prototype_builtin(method)
 
     return None
 

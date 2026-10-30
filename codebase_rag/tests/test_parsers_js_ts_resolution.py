@@ -16,7 +16,7 @@ from codebase_rag.parsers.js_ts.resolution import (
     class_value_of,
     resolve_builtin_call,
 )
-from codebase_rag.tests.collaborator_support import index
+from codebase_rag.tests.collaborator_support import edges, index
 from evals.recorded_graph import RecordingIngestor
 
 _JS = cs.SupportedLanguage.JS
@@ -78,20 +78,61 @@ def test_a_builtin_call_is_named_under_the_builtin_prefix(
     assert resolve_builtin_call(call_name) == expected
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "resolve_builtin_call's `.prototype.` branch, which names the method a "
-        "`Base.prototype.run.call(this)` runs, is unreachable: the loop over "
-        "JS_FUNCTION_PROTOTYPE_SUFFIXES before it matches every `.call` and "
-        "`.apply` name first and answers builtin Function.prototype.call"
-    ),
+@pytest.mark.parametrize(
+    ("call_name", "expected"),
+    [
+        ("Base.prototype.run.call", ("Function", "Base.prototype.run")),
+        ("Base.prototype.run.apply", ("Function", "Base.prototype.run")),
+        # A platform type's prototype method is the runtime's own.
+        ("Array.prototype.slice.call", ("Function", "builtin.Array.prototype.slice")),
+        # `bind` runs nothing, so it stays the builtin it names.
+        ("Base.prototype.run.bind", ("Function", "builtin.Function.prototype.bind")),
+    ],
 )
-def test_a_prototype_methods_call_names_the_method() -> None:
-    assert resolve_builtin_call("Base.prototype.run.call") == (
-        "Function",
-        "Base.prototype.run",
+def test_a_prototype_methods_call_names_the_method(
+    call_name: str, expected: tuple[str, str]
+) -> None:
+    assert resolve_builtin_call(call_name) == expected
+
+
+def test_a_prototype_methods_call_calls_the_method_it_names(
+    temp_repo: Path, mock_ingestor: RecordingIngestor
+) -> None:
+    index(
+        temp_repo / "cp",
+        mock_ingestor,
+        {
+            "src/proto.js": (
+                "function Base() {}\n"
+                "Base.prototype.run = function () { return 1; };\n"
+                "function Child() {}\n"
+                "Child.prototype = Object.create(Base.prototype);\n"
+                "Child.prototype.run = function () {\n"
+                "  return Base.prototype.run.call(this);\n};\n"
+                "function Grand() {}\n"
+                "Grand.prototype = Object.create(Child.prototype);\n"
+                "Grand.prototype.go = function () {\n"
+                "  return Grand.prototype.run.apply(this, []);\n};\n"
+                "function args() { return Array.prototype.slice.call(arguments); }\n"
+                "function other(x) { return Foo.prototype.bar.apply(x, []); }\n"
+            )
+        },
     )
+    calls = edges(mock_ingestor, cs.RelationshipType.CALLS)
+    # The override runs its base's method, not itself.
+    assert ("cp.src.proto.Child.run", "cp.src.proto.Base.run") in calls
+    assert ("cp.src.proto.Child.run", "cp.src.proto.Child.run") not in calls
+    # A method the named prototype inherits is the nearest base's.
+    assert {t for s, t in calls if s == "cp.src.proto.Grand.go"} == {
+        "cp.src.proto.Child.run"
+    }
+    # A method no first-party definition answers gets no edge to a node that
+    # does not exist.
+    assert not {
+        target
+        for source, target in calls
+        if source in ("cp.src.proto.args", "cp.src.proto.other")
+    }
 
 
 def test_this_in_a_prototype_method_reaches_its_sibling(resolver: JsTsResolver) -> None:
