@@ -440,6 +440,7 @@ dependencies = [
     { name = "cgr-graph-rs", marker = "(platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'AMD64' and platform_python_implementation == 'CPython' and sys_platform == 'win32') or (platform_python_implementation == 'CPython' and sys_platform == 'darwin')" },
     { name = "defusedxml" },
     { name = "genai-prices" },
+    { name = "google-auth" },
     { name = "httpx" },
     { name = "loguru" },
     { name = "mcp" },
@@ -464,7 +465,6 @@ dependencies = [
 [package.optional-dependencies]
 ast-grep = [
     { name = "ast-grep-py" },
-    { name = "pyyaml" },
 ]
 cpp = [
     { name = "libclang" },
@@ -503,7 +503,6 @@ test = [
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
     { name = "pytest-xdist" },
-    { name = "pyyaml" },
     { name = "sqlite-vec" },
     { name = "testcontainers" },
 ]
@@ -519,7 +518,6 @@ treesitter-full = [
     { name = "tree-sitter-lua" },
     { name = "tree-sitter-markdown" },
     { name = "tree-sitter-php" },
-    { name = "tree-sitter-python" },
     { name = "tree-sitter-rust" },
     { name = "tree-sitter-scala" },
     { name = "tree-sitter-sql" },
@@ -560,6 +558,7 @@ requires-dist = [
     { name = "defusedxml", specifier = ">=0.7.1" },
     { name = "filelock", marker = "extra == 'test'", specifier = ">=3.12" },
     { name = "genai-prices", specifier = ">=0.1.9,<0.2" },
+    { name = "google-auth", specifier = ">=2.0.0" },
     { name = "grpcio", marker = "extra == 'milvus'", specifier = ">=1.84.1" },
     { name = "grpcio", marker = "extra == 'semantic'", specifier = ">=1.84.1" },
     { name = "httpx", specifier = ">=0.28" },
@@ -586,8 +585,6 @@ requires-dist = [
     { name = "pytest-xdist", marker = "extra == 'test'", specifier = ">=3.8.0" },
     { name = "python-dotenv", specifier = ">=1.2.1,<1.3" },
     { name = "pyyaml", specifier = ">=6.0" },
-    { name = "pyyaml", marker = "extra == 'ast-grep'", specifier = ">=6.0" },
-    { name = "pyyaml", marker = "extra == 'test'", specifier = ">=6.0" },
     { name = "qdrant-client", marker = "extra == 'semantic'", specifier = ">=1.9.0" },
     { name = "regex", specifier = ">=2024.11.6" },
     { name = "rich", specifier = ">=14.2.0" },
@@ -612,7 +609,6 @@ requires-dist = [
     { name = "tree-sitter-markdown", marker = "extra == 'treesitter-full'", specifier = ">=0.5.1" },
     { name = "tree-sitter-php", marker = "extra == 'treesitter-full'", specifier = ">=0.24.1" },
     { name = "tree-sitter-python", specifier = ">=0.25.0" },
-    { name = "tree-sitter-python", marker = "extra == 'treesitter-full'", specifier = ">=0.23.6" },
     { name = "tree-sitter-rust", marker = "extra == 'treesitter-full'", specifier = ">=0.24.0" },
     { name = "tree-sitter-scala", marker = "extra == 'treesitter-full'", specifier = ">=0.24.0" },
     { name = "tree-sitter-sql", marker = "extra == 'treesitter-full'", specifier = ">=0.3.11" },

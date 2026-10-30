@@ -43,6 +43,10 @@ dependencies = [
     # Only the providers codebase_rag/providers imports. The `pydantic-ai`
     # meta-package also installs logfire, evals, a CLI and a web UI, none used.
     "pydantic-ai-slim[anthropic,google,openai]>=2.0.0",
+    # Imported directly for Vertex service-account credentials
+    # (providers/base.py); the google provider brings it only through
+    # google-genai.
+    "google-auth>=2.0.0",
     "pydantic-settings>=2.12.0",
     # Capped: config.py reads .env through dotenv.main.DotEnv, which the
     # package does not export, at import time of every command.
@@ -65,6 +69,9 @@ dependencies = [
     # Read by services/usage_cost.py; pre-1.0, so held to its minor.
     "genai-prices>=0.1.9,<0.2",
     "pathspec>=1.0.4",
+    # Not imported: rich highlights with it. 2.20.0 is the first release
+    # without the GUID-matching ReDoS (CVE-2026-4539), and rich's own floor
+    # allows older ones.
     "pygments>=2.20.0",
     # certifi is the CA bundle httpx and requests verify against; 2026.10.23
     # is the first without the distrusted eMudhra roots. Declared so an
@@ -156,7 +163,6 @@ test = [
     "libclang>=18.1.1",
     "filelock>=3.12",
     "ast-grep-py>=0.51.0",
-    "pyyaml>=6.0",
     # The suite exercises the Memgraph backend with a mocked server, but
     # imports the real driver's exception types to do it.
     "pymgclient>=1.6.0",
@@ -183,7 +189,6 @@ neo4j = [
 ]
 
 treesitter-full = [
-    "tree-sitter-python>=0.23.6",
     "tree-sitter-javascript>=0.23.1",
     "tree-sitter-typescript>=0.23.2",
     "tree-sitter-rust>=0.24.0",
@@ -235,7 +240,6 @@ sqlite-vec = [
 
 ast-grep = [
     "ast-grep-py>=0.51.0",
-    "pyyaml>=6.0",
 ]
 python-semantics = [
     "jedi>=0.19",

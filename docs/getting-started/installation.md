@@ -296,6 +296,7 @@ This checks that all required dependencies and services are available.
 - **loguru**: Python logging made (stupidly) simple
 - **mcp**: Model Context Protocol SDK
 - **pydantic-ai-slim**: AI Agent Framework, the Pydantic way, slim package
+- **google-auth**: Google Authentication Library
 - **pydantic-settings**: Settings management using Pydantic
 - **python-dotenv**: Read key-value pairs from a .env file and set them as environment variables
 - **tiktoken**: tiktoken is a fast BPE tokeniser for use with OpenAI's models
