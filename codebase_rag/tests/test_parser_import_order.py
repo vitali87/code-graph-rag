@@ -56,7 +56,8 @@ def test_a_leaf_parser_module_does_not_load_the_processors() -> None:
 
 def test_the_graph_builder_sees_every_bundled_frontend() -> None:
     result = _run(
-        "import codebase_rag.graph_updater as g; "
+        "import codebase_rag.graph_updater; "
+        "from codebase_rag.updater import frontends as g; "
         "print(','.join(sorted(map(str, g.FRONTENDS))))"
     )
     assert result.returncode == 0, result.stderr
