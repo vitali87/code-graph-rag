@@ -199,6 +199,27 @@ class _SyncRun:
     reingest_pinned_sources: dict[str, bytes] = field(default_factory=dict)
 
 
+@dataclass(slots=True)
+class _ReingestPlan:
+    """What a `reingest` call's read-only prologue found, for its writes.
+
+    `survivors` are the same-stem and package-flip siblings the call
+    re-parses unnamed, `affected` the dependents, and `flipped_dirs` the
+    directories whose container kind changes; `captured` and
+    `captured_trace` are the edges into every file in `all_keys`, read
+    before the delete.
+    """
+
+    cache_path: Path
+    hashes: FileHashCache
+    survivors: dict[str, Path]
+    affected: dict[str, Path]
+    flipped_dirs: set[str]
+    all_keys: list[str]
+    captured: list[ResultRow]
+    captured_trace: list[CapturedTraceEdge]
+
+
 class GraphUpdater:
     """Drive a full or incremental ingest of a repository into the graph.
 
@@ -1703,85 +1724,13 @@ class GraphUpdater:
         if not present and not gone:
             return ReingestReport((), (), (), tuple(sorted(skipped)), 0.0)
 
-        # Everything up to the inbound-edge capture issues no delete and no
-        # content write (a fresh updater's structure hydration
-        # derives the package map and emits nothing, #1872). A failure
-        # there leaves the graph as it was and says so with ex.ReingestAborted,
-        # so a caller holding the updater (the MCP tool, the watcher) keeps
-        # it rather than treating the graph as partially rewritten.
-        try:
-            self._hydrate_for_reingest()
-            # Generated-source roots and the delombok overlay are per-run inputs;
-            # a watcher's updater lives across many events, so refresh them per
-            # call (the batch path does the same through
-            # `GeneratedSources.stale_keys`).
-            self._register_generated_sources()
-            cache_path = self.prepared_state_dir / cs.HASH_CACHE_FILENAME
-            hashes = load_hash_cache(cache_path)
-
-            # Same-stem reconciliation, as the batch path does it (issue #1569):
-            # a stem with a sibling added or deleted by this call is in flux, its
-            # on-disk survivors re-parse unseeded, and the module-qn map is
-            # seeded from the graph for everything else so the disambiguator
-            # sees the taken qns on a fresh updater.
-            flux_stems, survivors = self.reingest_planner.flux_survivors(
-                present, gone, hashes
-            )
-            existing_paths = self._existing_module_paths()
-            if existing_paths is None:
-                # The sink claims a query surface but the read failed: the taken
-                # qns are unknown, and seeding nothing would let a re-parsed
-                # file claim a qn the graph already holds. Abort before any
-                # delete, as the inbound-edge capture does.
-                raise RuntimeError(ls.REINGEST_MODULE_PATHS_UNKNOWN)
-            graph_paths = set(existing_paths)
-            self.module_seeding.seed_module_qns_from_graph(
-                graph_paths - set(gone), flux_stems
-            )
-            # A gone file seeds regardless: its map entry is what the state drop
-            # below keys on to free its qn and forget its rehydrated form.
-            self.module_seeding.seed_module_qns_from_graph(
-                set(gone) & graph_paths, frozenset()
-            )
-
-            # A directory that gained or lost a package indicator changes the
-            # container every file under it hangs off, so those files re-parse
-            # too and the stale node of the other kind is pruned below.
-            flipped_dirs, flip_siblings = self.container_flips.package_flip(
-                present, gone
-            )
-            survivors.update(flip_siblings)
-
-            affected = self.reingest_planner.dependents(
-                self._run,
-                {**present, **survivors},
-                gone,
-                created={key for key in present if key not in hashes},
-                stable=self.reingest_planner.interface_stable(
-                    self._run, present, hashes, flux_stems, flipped_dirs
-                ),
-            )
-            affected.update(
-                self.reingest_planner.go_package_files(
-                    {*present, *gone, *survivors, *affected}
-                )
-            )
-            affected.update(
-                self.reingest_planner.foreign_members(
-                    self._run, {*present, *gone, *survivors, *affected}
-                )
-            )
-            all_keys = sorted({*present, *gone, *survivors, *affected})
-            captured = self.edge_carry.capture_inbound_edges(self._run, all_keys)
-            captured_trace = self.edge_carry.capture_trace_edges(self._run, all_keys)
-        except Exception as exc:
-            raise ex.ReingestAborted(str(exc)) from exc
+        plan = self._plan_reingest(present, gone)
         # The caller's last word before the first write. Still inside the
         # read-only prologue: a refusal here leaves the graph exactly as it
         # was, and `reingest_mutated` stays False so the caller classifies
         # it as "nothing changed". The scope is published first so the hook
         # can read what this call is about to replace (issue #1718).
-        self.reingest_scope = tuple(all_keys)
+        self.reingest_scope = tuple(plan.all_keys)
         try:
             if before_write is not None:
                 before_write()
@@ -1800,13 +1749,135 @@ class GraphUpdater:
         # changed" and clear a marker that is protecting a partial graph
         # (#1705). This flag records what actually happened.
         self.reingest_mutated = True
-        self._reparsed_file_keys = set(all_keys)
+        self._reparsed_file_keys = set(plan.all_keys)
 
+        self._rederive_containers(present, plan.flipped_dirs)
+        parsed = self._apply_reingest(plan, present, gone)
+
+        report = ReingestReport(
+            # `parsed`, not `present`: a file that became unreadable between
+            # the split and the read never re-entered the graph, and its old
+            # entities were already deleted. Reporting it as re-parsed would
+            # tell the caller the graph holds something it does not.
+            reparsed=tuple(sorted(present.keys() & parsed.keys())),
+            # Survivors of a stem in flux re-parsed with the dependents and
+            # are reported with them: the caller sees every file this call
+            # touched.
+            affected=tuple(sorted({*plan.affected, *plan.survivors})),
+            removed=tuple(sorted(gone)),
+            skipped=tuple(sorted(skipped)),
+            elapsed_ms=(time.perf_counter() - started) * 1000.0,
+        )
+        self.ast_grep_tier.warn_unparsed()
+        logger.info(
+            ls.REINGEST_DONE,
+            reparsed=len(report.reparsed),
+            affected=len(report.affected),
+            removed=len(report.removed),
+            ms=round(report.elapsed_ms, 1),
+        )
+        return report
+
+    def _plan_reingest(
+        self, present: dict[str, Path], gone: dict[str, Path]
+    ) -> _ReingestPlan:
+        """The read-only prologue: every file the call re-parses, and the
+        edges into them it must carry across the delete."""
+        # Everything up to the inbound-edge capture issues no delete and no
+        # content write (a fresh updater's structure hydration
+        # derives the package map and emits nothing, #1872). A failure
+        # there leaves the graph as it was and says so with ex.ReingestAborted,
+        # so a caller holding the updater (the MCP tool, the watcher) keeps
+        # it rather than treating the graph as partially rewritten.
+        try:
+            return self._read_reingest_plan(present, gone)
+        except Exception as exc:
+            raise ex.ReingestAborted(str(exc)) from exc
+
+    def _read_reingest_plan(
+        self, present: dict[str, Path], gone: dict[str, Path]
+    ) -> _ReingestPlan:
+        """`_plan_reingest`'s reads, from the hydration to the edge capture."""
+        self._hydrate_for_reingest()
+        # Generated-source roots and the delombok overlay are per-run inputs;
+        # a watcher's updater lives across many events, so refresh them per
+        # call (the batch path does the same through
+        # `GeneratedSources.stale_keys`).
+        self._register_generated_sources()
+        cache_path = self.prepared_state_dir / cs.HASH_CACHE_FILENAME
+        hashes = load_hash_cache(cache_path)
+
+        # Same-stem reconciliation, as the batch path does it (issue #1569):
+        # a stem with a sibling added or deleted by this call is in flux, its
+        # on-disk survivors re-parse unseeded, and the module-qn map is
+        # seeded from the graph for everything else so the disambiguator
+        # sees the taken qns on a fresh updater.
+        flux_stems, survivors = self.reingest_planner.flux_survivors(
+            present, gone, hashes
+        )
+        existing_paths = self._existing_module_paths()
+        if existing_paths is None:
+            # The sink claims a query surface but the read failed: the taken
+            # qns are unknown, and seeding nothing would let a re-parsed
+            # file claim a qn the graph already holds. Abort before any
+            # delete, as the inbound-edge capture does.
+            raise RuntimeError(ls.REINGEST_MODULE_PATHS_UNKNOWN)
+        graph_paths = set(existing_paths)
+        self.module_seeding.seed_module_qns_from_graph(
+            graph_paths - set(gone), flux_stems
+        )
+        # A gone file seeds regardless: its map entry is what the state drop
+        # below keys on to free its qn and forget its rehydrated form.
+        self.module_seeding.seed_module_qns_from_graph(
+            set(gone) & graph_paths, frozenset()
+        )
+
+        # A directory that gained or lost a package indicator changes the
+        # container every file under it hangs off, so those files re-parse
+        # too and the stale node of the other kind is pruned below.
+        flipped_dirs, flip_siblings = self.container_flips.package_flip(present, gone)
+        survivors.update(flip_siblings)
+
+        affected = self.reingest_planner.dependents(
+            self._run,
+            {**present, **survivors},
+            gone,
+            created={key for key in present if key not in hashes},
+            stable=self.reingest_planner.interface_stable(
+                self._run, present, hashes, flux_stems, flipped_dirs
+            ),
+        )
+        affected.update(
+            self.reingest_planner.go_package_files(
+                {*present, *gone, *survivors, *affected}
+            )
+        )
+        affected.update(
+            self.reingest_planner.foreign_members(
+                self._run, {*present, *gone, *survivors, *affected}
+            )
+        )
+        all_keys = sorted({*present, *gone, *survivors, *affected})
+        return _ReingestPlan(
+            cache_path=cache_path,
+            hashes=hashes,
+            survivors=survivors,
+            affected=affected,
+            flipped_dirs=flipped_dirs,
+            all_keys=all_keys,
+            captured=self.edge_carry.capture_inbound_edges(self._run, all_keys),
+            captured_trace=self.edge_carry.capture_trace_edges(self._run, all_keys),
+        )
+
+    def _rederive_containers(
+        self, present: dict[str, Path], flipped_dirs: set[str]
+    ) -> None:
+        """Derive the containers this call's directories now need."""
         # Past the caller's refusal point, so this may finally WRITE. Re-deriving
         # the structure updates `structural_elements` and emits the container
         # node of the new kind; the sibling re-parse below re-points the
-        # containment edges onto it, and `ContainerFlips.prune_flipped` removes
-        # the node of the old kind once both have happened.
+        # containment edges onto it, and `ContainerFlips.prune_flipped`
+        # removes the node of the old kind once both have happened.
         # New directories first: their container has to exist before the
         # re-parse writes containment edges out of it.
         # A directory with no container yet only needs deriving. One whose
@@ -1816,13 +1887,13 @@ class GraphUpdater:
         # `flipped_dirs` already means, so it joins that set rather than
         # getting a second, parallel mechanism to keep in step.
         new_dirs, diverged_dirs = self.container_flips.uncontained_dirs(present)
-        flipped_dirs |= diverged_dirs
+        flipped_dirs.update(diverged_dirs)
         if scope := (new_dirs | diverged_dirs):
             self.factory.structure_processor.identify_structure(only=scope)
         if flipped_dirs:
             # Scoped to the flipped directories and their CHILDREN, never
-            # their ancestors -- see `ContainerFlips.derivation_scope` for both halves
-            # of that rule.
+            # their ancestors -- see `ContainerFlips.derivation_scope` for both
+            # halves of that rule.
             #
             # Scoped at all because the unrestricted walk emits a node for
             # every directory that changed on disk since the last derivation,
@@ -1833,17 +1904,21 @@ class GraphUpdater:
                 only=self.container_flips.derivation_scope(flipped_dirs)
             )
 
+    def _apply_reingest(
+        self, plan: _ReingestPlan, present: dict[str, Path], gone: dict[str, Path]
+    ) -> dict[str, bytes]:
+        """Delete, re-parse and resolve the planned files; the bytes parsed."""
         # Walk order, as the batch path re-parses (issue #1569): the first
         # same-stem sibling parsed claims the bare module qn, so a header
         # found before its dependent source file would take the qn a clean
         # index gives the source.
         reparse = dict(
             sorted(
-                {**present, **survivors, **affected}.items(),
+                {**present, **plan.survivors, **plan.affected}.items(),
                 key=lambda item: walk_position(item[0]),
             )
         )
-        self._reingest_delete(reparse, gone, hashes)
+        self._reingest_delete(reparse, gone, plan.hashes)
         self.file_parser.resync_dependencies((*reparse, *gone), reparse)
         parsed = self._reingest_reparse(reparse, gone)
         self.file_parser.log_unparsable_manifests()
@@ -1855,15 +1930,15 @@ class GraphUpdater:
         # would exempt everything the process has ever parsed and the map
         # would never shrink on the retained updater this fix exists for.
         self.module_seeding.prune_stale_seeded_module_qns(set(reparse.values()))
-        self._reingest_resolve(reparse, captured)
+        self._reingest_resolve(reparse, plan.captured)
         # `_reingest_resolve` ends on a flush, so the static edges the carry
         # may confirm are in the store (issue #2429).
-        self.edge_carry.carry_trace_edges(captured_trace, gone.keys())
+        self.edge_carry.carry_trace_edges(plan.captured_trace, gone.keys())
         # AFTER the re-parse, never before: the surviving node of the correct
         # kind and its re-pointed containment edges are written by the parse
         # above, so pruning first would delete the old node while every edge
         # still hung off it and leave the files unparented in between.
-        self.container_flips.prune_flipped(flipped_dirs)
+        self.container_flips.prune_flipped(plan.flipped_dirs)
         # BEFORE the hash commit, matching `run()`, which does both passes
         # ahead of its cache write. `_reingest_update_hashes` saves the hash
         # cache to disk, which records these files as indexed; queueing the
@@ -1884,32 +1959,11 @@ class GraphUpdater:
         # skip the post-passes entirely -- so an unflushed queue here is lost
         # for good rather than retried (#1852).
         self.ingestor.flush_all()
-        self._reingest_update_hashes(cache_path, hashes, reparse, parsed, gone)
+        self._reingest_update_hashes(
+            plan.cache_path, plan.hashes, reparse, parsed, gone
+        )
         flush_stdlib_cache()
-
-        report = ReingestReport(
-            # `parsed`, not `present`: a file that became unreadable between
-            # the split and the read never re-entered the graph, and its old
-            # entities were already deleted. Reporting it as re-parsed would
-            # tell the caller the graph holds something it does not.
-            reparsed=tuple(sorted(present.keys() & parsed.keys())),
-            # Survivors of a stem in flux re-parsed with the dependents and
-            # are reported with them: the caller sees every file this call
-            # touched.
-            affected=tuple(sorted({*affected, *survivors})),
-            removed=tuple(sorted(gone)),
-            skipped=tuple(sorted(skipped)),
-            elapsed_ms=(time.perf_counter() - started) * 1000.0,
-        )
-        self.ast_grep_tier.warn_unparsed()
-        logger.info(
-            ls.REINGEST_DONE,
-            reparsed=len(report.reparsed),
-            affected=len(report.affected),
-            removed=len(report.removed),
-            ms=round(report.elapsed_ms, 1),
-        )
-        return report
+        return parsed
 
     def _reingest_rebuild_findings(self, reparse: dict[str, Path]) -> None:
         """Re-run the finding analysis for the RE-PARSED modules only.
