@@ -25,6 +25,7 @@ from .import_processor import ImportProcessor
 from .java import resolution as java_resolution
 from .js_ts.resolution import JsTsResolver, bind_receiver, class_value_of
 from .js_ts.resolution import resolve_builtin_call as resolve_js_builtin_call
+from .julia.resolution import JuliaResolver, julia_caller_dependent
 from .lua.resolution import LuaResolver, lua_member_spellings, lua_package_methods
 from .php import resolution as php_resolution
 from .php.class_names import ClassPath as PhpClassPath
@@ -112,6 +113,7 @@ class CallResolver:
         "csharp",
         "lua",
         "scala",
+        "julia",
     )
 
     def __init__(
@@ -209,6 +211,7 @@ class CallResolver:
         )
         self.lua = LuaResolver(self, function_registry)
         self.scala = ScalaResolver(self, function_registry, import_processor)
+        self.julia = JuliaResolver(self, function_registry, import_processor)
 
     def record_ctor_params(self, class_qn: str, params: tuple[str, ...]) -> None:
         self._ctor_params[class_qn] = params
@@ -1090,7 +1093,7 @@ class CallResolver:
         return self.go.resolve_go_local_value(call)
 
     def _resolution_cache_key(self, call: CallSite) -> tuple[str, str, bool] | None:
-        module_qn, caller_qn = call.module_qn, call.caller_qn
+        module_qn = call.module_qn
         use_cache = not call.local_var_types and not self.dart.dart_caller_dependent(
             call
         )
@@ -1099,14 +1102,7 @@ class CallResolver:
         # block's own `using` shadows the file-level bindings), resolve
         # caller-dependently: the file-keyed cache would serve them another
         # caller's answer.
-        nested_caller = (
-            caller_qn is not None
-            and caller_qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}")
-            and cs.SEPARATOR_DOT in caller_qn[len(module_qn) + 1 :]
-        )
-        if self.rust.rust_caller_dependent(call) or (
-            call.language == cs.SupportedLanguage.JULIA and nested_caller
-        ):
+        if self.rust.rust_caller_dependent(call) or julia_caller_dependent(call):
             use_cache = False
         if not use_cache:
             return None
@@ -1463,18 +1459,10 @@ class CallResolver:
         language: cs.SupportedLanguage | None = None,
         caller_qn: str | None = None,
     ) -> tuple[str, str] | None:
-        if language == cs.SupportedLanguage.JULIA and caller_qn:
-            # A `using` inside a Julia `module` block binds only that block,
-            # so a nested module's imports shadow the file-level ones: walk
-            # the caller's module scopes innermost first.
-            for scope in self._julia_caller_scopes(caller_qn, module_qn):
-                import_map = self.import_processor.import_mapping.get(scope)
-                if not import_map:
-                    continue
-                if result := self._try_resolve_direct_import(
-                    call_name, import_map, language, scope
-                ):
-                    return result
+        if result := self.julia.resolve_julia_scoped_import(
+            call_name, module_qn, language, caller_qn
+        ):
+            return result
         import_map = self.import_processor.import_mapping.get(module_qn)
         if import_map is None:
             # A module with no `use`/import statements can still resolve a member
@@ -1521,19 +1509,6 @@ class CallResolver:
             return None
         method = self.php.php_method(owner[1], method_name)
         return None if method is None else Resolved(*method, owner.resolution)
-
-    @staticmethod
-    def _julia_caller_scopes(caller_qn: str, module_qn: str) -> list[str]:
-        # The caller's module scopes innermost first (the file module last).
-        if not caller_qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}"):
-            return [module_qn]
-        parts = caller_qn[len(module_qn) + 1 :].split(cs.SEPARATOR_DOT)
-        scopes = [module_qn]
-        prefix = module_qn
-        for part in parts[:-1]:
-            prefix = f"{prefix}{cs.SEPARATOR_DOT}{part}"
-            scopes.insert(0, prefix)
-        return scopes
 
     def _try_resolve_direct_import(
         self,
@@ -1595,16 +1570,10 @@ class CallResolver:
         if imported_qn in self.function_registry:
             logger.debug(ls.CALL_DIRECT_IMPORT, call_name=call_name, qn=imported_qn)
             return self.function_registry[imported_qn], imported_qn
-        if language == cs.SupportedLanguage.JULIA:
-            # A Julia selected import (`using .api: alpha`) binds the local
-            # name to the source MODULE; resolve the member exactly before
-            # the name trie, or a same-named function soaks the edge.
-            for member in self.import_processor.julia.julia_member_qn_candidates(
-                imported_qn, call_name
-            ):
-                if member in self.function_registry:
-                    logger.debug(ls.CALL_DIRECT_IMPORT, call_name=call_name, qn=member)
-                    return self.function_registry[member], member
+        if language == cs.SupportedLanguage.JULIA and (
+            result := self.julia.julia_selected_import_member(imported_qn, call_name)
+        ):
+            return result
         # A whole-module require alias (`const f = require('./m'); f(x)`)
         # maps to the MODULE qn; when that module's entire export is one
         # function (`module.exports = function ... `), the call is a call to
