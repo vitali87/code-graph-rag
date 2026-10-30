@@ -128,13 +128,13 @@ class TestDirPruning:
 
     def test_excluded_dir_stays_pruned_despite_unignore(self) -> None:
         updater = self._updater(frozenset({"gen"}), frozenset({"gen/keep.py"}))
-        assert not updater._should_keep_dir("gen", "")
+        assert not updater.sync_keeper._should_keep_dir("gen", "")
 
     def test_builtin_pruned_dir_kept_when_unignore_targets_beneath(self) -> None:
         updater = self._updater(None, frozenset({"bin/keep.py"}))
-        assert updater._should_keep_dir("bin", "")
+        assert updater.sync_keeper._should_keep_dir("bin", "")
         updater_none = self._updater(None, None)
-        assert not updater_none._should_keep_dir("bin", "")
+        assert not updater_none.sync_keeper._should_keep_dir("bin", "")
 
 
 class TestDirectoryStructureRescue:

@@ -27,6 +27,7 @@ from codebase_rag.sync.state import (
     publish_hash_cache,
 )
 from codebase_rag.tests.conftest import force_mtime_after_cache, get_nodes
+from codebase_rag.updater import sync_keeper
 
 
 @pytest.fixture
@@ -475,7 +476,7 @@ class TestCrashBetweenCacheSaveAndFlush:
         )
 
         edited = "def b():\n    return 999\n"
-        real_save = graph_updater_module.publish_hash_cache
+        real_save = sync_keeper.publish_hash_cache
 
         reached_write_site = False
 
@@ -499,14 +500,14 @@ class TestCrashBetweenCacheSaveAndFlush:
             # advance past a cache that never landed.
             return bool(real_save(path, hashes, observed_at))
 
-        monkeypatch.setattr(graph_updater_module, "publish_hash_cache", _edit_then_save)
+        monkeypatch.setattr(sync_keeper, "publish_hash_cache", _edit_then_save)
         GraphUpdater(
             ingestor=mock_ingestor,
             repo_path=py_project,
             parsers=parsers,
             queries=queries,
         ).run()
-        monkeypatch.setattr(graph_updater_module, "publish_hash_cache", real_save)
+        monkeypatch.setattr(sync_keeper, "publish_hash_cache", real_save)
 
         # Three guards, each catching a different lie. The first two are what
         # caught two wrong versions of this test: an edit placed in `flush_all`
@@ -924,8 +925,8 @@ class TestCrashBetweenCacheSaveAndFlush:
             "def added():\n    return 1\n", encoding="utf-8"
         )
 
-        real_publish = graph_updater_module.publish_hash_cache
-        real_dir_mtimes = graph_updater_module.save_dir_mtimes
+        real_publish = sync_keeper.publish_hash_cache
+        real_dir_mtimes = sync_keeper.save_dir_mtimes
         order: list[str] = []
 
         def _publish_unless_second(
@@ -945,20 +946,16 @@ class TestCrashBetweenCacheSaveAndFlush:
             if len(order) == 1:
                 real_dir_mtimes(path, mtimes)
 
-        monkeypatch.setattr(
-            graph_updater_module, "publish_hash_cache", _publish_unless_second
-        )
-        monkeypatch.setattr(
-            graph_updater_module, "save_dir_mtimes", _dir_mtimes_unless_second
-        )
+        monkeypatch.setattr(sync_keeper, "publish_hash_cache", _publish_unless_second)
+        monkeypatch.setattr(sync_keeper, "save_dir_mtimes", _dir_mtimes_unless_second)
         GraphUpdater(
             ingestor=mock_ingestor,
             repo_path=py_project,
             parsers=parsers,
             queries=queries,
         ).run()
-        monkeypatch.setattr(graph_updater_module, "publish_hash_cache", real_publish)
-        monkeypatch.setattr(graph_updater_module, "save_dir_mtimes", real_dir_mtimes)
+        monkeypatch.setattr(sync_keeper, "publish_hash_cache", real_publish)
+        monkeypatch.setattr(sync_keeper, "save_dir_mtimes", real_dir_mtimes)
 
         assert order == ["hash_cache", "dir_mtimes"], (
             "the commit point did not publish the hash cache first, so the "
@@ -1063,13 +1060,13 @@ class TestCrashBetweenCacheSaveAndFlush:
         mock_ingestor.execute_write = MagicMock(side_effect=_record_write)
         mock_ingestor.flush_all = MagicMock(side_effect=_record_flush)
 
-        real_publish = graph_updater_module.publish_hash_cache
+        real_publish = sync_keeper.publish_hash_cache
 
         def _record_publish(*args: object, **kwargs: object) -> None:
             order.append("cache_commit")
             real_publish(*args, **kwargs)  # type: ignore[arg-type]
 
-        with patch.object(graph_updater_module, "publish_hash_cache", _record_publish):
+        with patch.object(sync_keeper, "publish_hash_cache", _record_publish):
             GraphUpdater(
                 ingestor=mock_ingestor,
                 repo_path=py_project,

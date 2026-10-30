@@ -13,12 +13,12 @@ from pathlib import Path
 
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
-from codebase_rag import graph_updater as gu
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.endpoint_prefixes import CYPHER_DELETE_HANDLER_EXPOSES
 from codebase_rag.parsers.endpoint_routes import CYPHER_DELETE_MODULE_EXPOSES
 from codebase_rag.sync.checkout_state import state_file
+from codebase_rag.sync.state import load_dir_mtimes, save_dir_mtimes
 from evals.cgr_graph import StatefulIngestor
 
 ROUTES = '@app.get("/items")\ndef items():\n    return 1\n'
@@ -53,15 +53,17 @@ def test_a_skipped_cleanup_refuses_the_in_sync_path_until_done(tmp_path: Path) -
     blind = _updater(root, down)
     blind._run.registry_unread = True
     blind.endpoint_linker._drop_stale_handler_exposes(blind._run, ["proj.api.items"])
-    blind._record_exposes_cleanup(cleared_by_this_run=True)
+    blind.sync_keeper.record_exposes_cleanup(
+        blind._run, blind.prepared_state_dir, cleared_by_this_run=True
+    )
     assert marker.exists()
     # Record the root's mtime AFTER the marker was written, as the run that
     # skipped the cleanup does: the marker alone must refuse the fast path,
     # not the root's mtime moving.
     mtimes_path = state_file(root, cs.DIR_MTIMES_FILENAME)
-    mtimes = gu.load_dir_mtimes(mtimes_path)
+    mtimes = load_dir_mtimes(mtimes_path)
     mtimes[cs.ROOT_DIR_KEY] = os.stat(root).st_mtime
-    gu.save_dir_mtimes(mtimes_path, mtimes)
+    save_dir_mtimes(mtimes_path, mtimes)
     assert _updater(root, store)._is_already_in_sync() is False
     marker.unlink()
     assert _updater(root, store)._is_already_in_sync() is True, (
@@ -69,7 +71,7 @@ def test_a_skipped_cleanup_refuses_the_in_sync_path_until_done(tmp_path: Path) -
     )
     marker.touch()
     mtimes[cs.ROOT_DIR_KEY] = os.stat(root).st_mtime
-    gu.save_dir_mtimes(mtimes_path, mtimes)
+    save_dir_mtimes(mtimes_path, mtimes)
 
     # A healthy batch run does the cleanups and settles what was owed. The
     # marker lives in the repository root, so removing it moves the root's
@@ -87,7 +89,9 @@ def test_a_scoped_pass_never_settles_an_owed_cleanup(tmp_path: Path) -> None:
     marker = state_file(root, cs.EXPOSES_CLEANUP_PENDING_FILENAME)
     marker.touch()
     updater = _updater(root, StatefulIngestor())
-    updater._record_exposes_cleanup(cleared_by_this_run=False)
+    updater.sync_keeper.record_exposes_cleanup(
+        updater._run, updater.prepared_state_dir, cleared_by_this_run=False
+    )
     assert marker.exists()
 
 
@@ -108,5 +112,7 @@ def test_a_failed_cleanup_delete_is_owed_like_a_skipped_one(tmp_path: Path) -> N
         marker.touch()
         updater = _updater(root, _DeletesFail())
         getattr(updater.endpoint_linker, cleanup)(updater._run, ["proj.api.items"])
-        updater._record_exposes_cleanup(cleared_by_this_run=True)
+        updater.sync_keeper.record_exposes_cleanup(
+            updater._run, updater.prepared_state_dir, cleared_by_this_run=True
+        )
         assert marker.exists(), cleanup

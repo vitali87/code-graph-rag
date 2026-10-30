@@ -16,6 +16,7 @@ from codebase_rag import graph_updater as gu
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.sync.checkout_state import state_file
+from codebase_rag.updater import sync_keeper
 from evals.cgr_graph import StatefulIngestor
 
 
@@ -46,9 +47,9 @@ def test_a_cached_file_that_became_unreadable_does_not_end_the_run(
     def unreadable(path: Path) -> str:
         if path.name == "b.py":
             raise PermissionError(13, "Permission denied", str(path))
-        return gu.hashlib.md5(path.read_bytes(), usedforsecurity=False).hexdigest()
+        return hashlib.md5(path.read_bytes(), usedforsecurity=False).hexdigest()
 
-    monkeypatch.setattr(gu, "hash_file", unreadable)
+    monkeypatch.setattr(sync_keeper, "hash_file", unreadable)
     real_with_bytes = gu.hash_file_with_bytes
     monkeypatch.setattr(
         gu,

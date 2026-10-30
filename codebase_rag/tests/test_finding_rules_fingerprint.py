@@ -13,7 +13,6 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag import graph_updater
 from codebase_rag.analyzers import ast_grep_analyzer
 from codebase_rag.capture import resolve_capture
 from codebase_rag.graph_updater import GraphUpdater
@@ -24,6 +23,7 @@ from codebase_rag.tests.test_graph_updater_incremental_rename import (
     InMemoryGraph,
 )
 from codebase_rag.types_defs import PropertyDict
+from codebase_rag.updater import sync_keeper
 
 _RULES_REL = Path("analyzers") / "ast_grep_rules"
 _SECURITY_JS = _RULES_REL / "security" / "javascript.yaml"
@@ -115,7 +115,7 @@ def rules_pkg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     _write(pkg / _SECURITY_JS, _OLD_SECURITY_JS)
     monkeypatch.setattr(ast_grep_analyzer, "_RULES_DIR", pkg / _RULES_REL)
     monkeypatch.setattr(
-        graph_updater,
+        sync_keeper,
         "compute_parser_fingerprint",
         functools.partial(compute_parser_fingerprint, pkg),
     )
