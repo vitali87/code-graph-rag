@@ -771,7 +771,7 @@ def test_incremental_update_restores_inbound_edges_with_their_sites(
     parsers, queries = load_parsers()
     updater = GraphUpdater(sink, temp_repo, parsers, queries)
     updater.function_registry["proj.pkg.util.helper"] = cs.NodeLabel.FUNCTION.value
-    updater._restore_inbound_edges(
+    updater.edge_carry.restore_inbound_edges(
         [
             {
                 cs.KEY_CALLER_LABEL: cs.NodeLabel.FUNCTION.value,

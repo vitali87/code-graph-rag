@@ -23,6 +23,7 @@ from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.types_defs import PendingTypeFact
+from codebase_rag.updater.edge_carry import EdgeCarry
 from evals.cgr_graph import StatefulIngestor
 
 GADGET = "proj.models.Gadget"
@@ -111,7 +112,7 @@ def test_the_unchanged_colliding_files_fact_survives_the_stale_filter(
     # the edge: with it on, both filters end with the edge present.
     with (
         patch.object(GraphUpdater, "_reingest_delete", spy_delete),
-        patch.object(GraphUpdater, "_restore_inbound_edges", return_value=None),
+        patch.object(EdgeCarry, "restore_inbound_edges", return_value=None),
     ):
         _touch_and_reingest(repo, store)
 

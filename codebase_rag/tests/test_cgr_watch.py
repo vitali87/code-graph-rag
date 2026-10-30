@@ -56,6 +56,7 @@ from codebase_rag.types_defs import (
     ReingestReport,
     ResultRow,
 )
+from codebase_rag.updater.edge_carry import EdgeCarry
 from codebase_rag.utils.path_utils import derive_project_name
 from evals.cgr_graph import StatefulIngestor
 
@@ -1210,12 +1211,14 @@ class TestIncompleteRunMarker:
     ) -> None:
         # Negative: a re-ingest whose read-only prologue fails changed
         # nothing, so it leaves no marker behind.
-        def capture_fails(self: GraphUpdater, keys: list[str]) -> list[ResultRow]:
+        def capture_fails(
+            self: EdgeCarry, run: object, keys: list[str]
+        ) -> list[ResultRow]:
             raise ConnectionError("graph read failed")
 
         def save_once_reads_fail(handler: CodeChangeEventHandler) -> None:
             # Only now: the scan reads the same edges.
-            monkeypatch.setattr(GraphUpdater, "_capture_inbound_edges", capture_fails)
+            monkeypatch.setattr(EdgeCarry, "capture_inbound_edges", capture_fails)
             _edit(handler, shop / "m.py")
 
         watching.while_watching = save_once_reads_fail

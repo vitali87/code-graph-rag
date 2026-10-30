@@ -10,7 +10,7 @@ from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
-from typing import NamedTuple, cast
+from typing import NamedTuple
 
 from loguru import logger
 from rich.progress import Progress, SpinnerColumn, TaskID, TextColumn
@@ -66,7 +66,6 @@ from .parsers.structure_processor import StructureProcessor
 from .services import (
     IngestorProtocol,
     NodeUpdateProtocol,
-    QueryingIngestorProtocol,
     QueryProtocol,
 )
 from .services.filtering import filtering_ingestor
@@ -96,15 +95,15 @@ from .sync.state import (
     touch_empty_json,
     trustworthy_cache_mtime,
 )
-from .trace.carry import CapturedTraceEdge, capture_trace_edges, carry_trace_edges
+from .trace.carry import CapturedTraceEdge
 from .types_defs import (
     LanguageQueries,
-    PropertyDict,
     PropertyParams,
     ReingestReport,
     ResultRow,
     SimpleNameLookup,
 )
+from .updater.edge_carry import EdgeCarry
 from .updater.frontends import FrontendRunner
 from .updater.rehydration import GraphRehydrator
 from .utils import path_utils, qn_markers
@@ -226,11 +225,6 @@ def _specifier_targets(caller: str, specifiers: Iterable[object]) -> set[str]:
         for specifier in specifiers
         if isinstance(specifier, str)
     }
-
-
-_GLOSS_RELS = frozenset(
-    {cs.RelationshipType.ANNOTATES.value, cs.RelationshipType.MENTIONS.value}
-)
 
 
 def _module_holding(name: str, module_paths: Mapping[str, Path]) -> str | None:
@@ -564,23 +558,6 @@ def _go_package_siblings(
     )
 
 
-def _relinked_go_edge(row: ResultRow) -> bool:
-    """A captured IMPLEMENTS or OVERRIDES edge out of a Go file."""
-    # Go's are recomputed every run from every method set, read-back ones
-    # included (issue #2483), so a pair that still holds comes back without
-    # this edge. Restored, one an edit took away stayed: a method in a file
-    # the sync never re-parsed kept its OVERRIDES into an interface that had
-    # gained a method its type lacks, and a pair that changed source kept
-    # the label it had before.
-    path = row.get(cs.KEY_CALLER_PATH)
-    return (
-        row.get(cs.KEY_REL)
-        in (cs.RelationshipType.IMPLEMENTS.value, cs.RelationshipType.OVERRIDES.value)
-        and isinstance(path, str)
-        and path.endswith(cs.EXT_GO)
-    )
-
-
 def _advance_past_settled(progress: Progress, task: TaskID, scan: _FileScan) -> None:
     """Advance the bar past the files the hash pass settled without a parse."""
     if scan.skipped_count or scan.unreadable_count:
@@ -800,6 +777,18 @@ class GraphUpdater:
         # by heading level. Documents have no calls, so they get neither of
         # the code tiers above.
         self.document_tier = DocumentTier(self._sink, self.repo_path, self.project_name)
+        # The inbound and trace edges into re-parsed files, read before their
+        # subtrees are deleted and written back after the re-parse.
+        self.edge_carry = EdgeCarry(
+            graph=self._graph,
+            ingestor=self.ingestor,
+            sink=self._sink,
+            factory=self.factory,
+            document_tier=self.document_tier,
+            function_registry=self.function_registry,
+            repo_path=self.repo_path,
+            project_name=self.project_name,
+        )
         # Opt-in ast-grep finding analyzer (issue #413): Pattern/CodeSmell/
         # SecurityIssue nodes from categorized YAML rules, run as a post-pass.
         self.finding_analyzer = FindingAnalyzer(
@@ -1366,7 +1355,7 @@ class GraphUpdater:
             # or by a later stage cannot capture these edges again, since
             # their targets' subtrees are already gone, so it restores them
             # on the way out, Go receiver methods included.
-            self._restore_pending_inbound_edges()
+            self.edge_carry.restore_pending_inbound_edges(self._run)
 
         logger.info(ls.FOUND_FUNCTIONS, count=len(self.function_registry))
         # The resolver memoises name -> qn answers and module languages
@@ -1430,7 +1419,7 @@ class GraphUpdater:
         self.ingestor.flush_all()
         # After that flush: the carry reads the static edges Pass 3 just
         # wrote to decide which observations confirm one (issue #2429).
-        self._carry_trace_edges(
+        self.edge_carry.carry_trace_edges(
             self._run.captured_trace_edges, self._run.trace_gone_paths
         )
         self._run.captured_trace_edges = []
@@ -2749,180 +2738,6 @@ class GraphUpdater:
         }
         return was ^ now
 
-    def _capture_inbound_edges(self, reindexed_keys: list[str]) -> list[ResultRow]:
-        # Record the reference edges unchanged files point at the re-indexed
-        # files, BEFORE those files' subtrees (and thus the inbound edges) are
-        # deleted. Restoring the exact edges avoids re-resolving the callers,
-        # whose resolution would diverge from a clean index (cgr resolution is
-        # context-sensitive).
-        graph = self._graph
-        if not reindexed_keys or graph is None:
-            return []
-        try:
-            return graph.fetch_all(
-                cs.CYPHER_INBOUND_EDGES, {cs.CYPHER_PARAM_PATHS: reindexed_keys}
-            )
-        except Exception:
-            # A FULL build re-parses every caller, so the source-derived edges
-            # are re-resolved and the sync may continue over an unreadable
-            # graph (test_fully_unreadable_graph_still_completes_the_rebuild
-            # pins this). The captured set also holds the ANNOTATES / MENTIONS
-            # edges of glosses (issue #1808), which have no source to come
-            # back from; those are rebuilt from the notes' own recorded names
-            # by `_reanchor_glosses` at the end of the run. An incremental run
-            # cannot re-resolve edges from files it will not parse, so there
-            # the outage aborts the run.
-            if not self._run.is_full_build:
-                raise
-            logger.warning(ls.INBOUND_CAPTURE_FAILED)
-            return []
-
-    def _capture_trace_edges(self, keys: Iterable[str]) -> list[CapturedTraceEdge]:
-        # Read before the subtrees go, as the inbound edges are: a runtime
-        # observation lives only in the graph, so the delete would otherwise
-        # take it for good (issue #2429).
-        paths = sorted(set(keys))
-        graph = self._graph
-        if not paths or graph is None:
-            return []
-        try:
-            return capture_trace_edges(
-                graph, paths, self.project_name + cs.SEPARATOR_DOT
-            )
-        except Exception:
-            # The inbound capture's posture: a full build may go on over an
-            # unreadable graph, saying what it lost; an incremental run
-            # aborts rather than drop the observations without a word.
-            if not self._run.is_full_build:
-                raise
-            logger.warning(ls.TRACE_CARRY_CAPTURE_FAILED)
-            return []
-
-    def _carry_trace_edges(
-        self, captured: list[CapturedTraceEdge], gone_paths: Collection[str]
-    ) -> None:
-        """Re-apply the captured trace edges to the re-parsed graph.
-
-        Never raises, like `_reanchor_glosses`: the sync itself has landed,
-        and the observations come back by re-ingesting the trace, which the
-        warning tells the user to do.
-        """
-        if not captured or not isinstance(self.ingestor, QueryingIngestorProtocol):
-            return
-        try:
-            carry_trace_edges(
-                self.ingestor, captured, self.repo_path.resolve(), gone_paths
-            )
-        except Exception as error:  # noqa: BLE001 -- see docstring
-            logger.warning(
-                ls.TRACE_CARRY_FAILED.format(count=len(captured), error=error)
-            )
-
-    def _restorable_edge(
-        self, row: ResultRow
-    ) -> tuple[tuple[str, str, str], str, tuple[str, str, str]] | None:
-        """The (caller_spec, rel, target_spec) a captured row restores, or None.
-
-        None for a malformed row, a target the re-index did not recreate (a
-        renamed or removed definition is correctly left without its stale
-        inbound edge, matching a clean re-index), a label without a key, or
-        a Go type's IMPLEMENTS or OVERRIDES edge, which
-        `go_joins.link_interfaces` writes again for every pair that still holds.
-        """
-        if _relinked_go_edge(row):
-            return None
-        caller_label = row.get(cs.KEY_CALLER_LABEL)
-        caller_qn = row.get(cs.KEY_CALLER_QN)
-        rel = row.get(cs.KEY_REL)
-        target_label = row.get(cs.KEY_TARGET_LABEL)
-        target_qn = row.get(cs.KEY_TARGET_QN)
-        if not (
-            isinstance(caller_label, str)
-            and isinstance(caller_qn, str)
-            and isinstance(rel, str)
-            and isinstance(target_label, str)
-            and isinstance(target_qn, str)
-        ):
-            return None
-        if not self._restore_target_exists(target_label, target_qn):
-            return None
-        caller_key = cs.NODE_UNIQUE_CONSTRAINTS.get(caller_label)
-        target_key = cs.NODE_UNIQUE_CONSTRAINTS.get(target_label)
-        if caller_key is None or target_key is None:
-            return None
-        return (
-            (caller_label, caller_key, caller_qn),
-            rel,
-            (target_label, target_key, target_qn),
-        )
-
-    def _restore_pending_inbound_edges(self) -> None:
-        captured, self._run.pending_inbound_edges = self._run.pending_inbound_edges, []
-        try:
-            if captured:
-                # A run stopped before the deferred stages reached the Go receiver
-                # methods registers them here, or every held edge into one is
-                # dropped for good: the next run re-parses the method's file but
-                # not the caller, and the edge is no longer in the graph to
-                # capture. A no-op once those stages ran; a stopped run never
-                # verifies parent links, so they still follow every registration.
-                self.factory.definition_processor.resolve_deferred_go_methods()
-        finally:
-            # Even when that registration raises (a run stopped BY it retries
-            # it here): the edges into every other target are placeable, and
-            # nothing captures them again either.
-            self._restore_inbound_edges(captured)
-
-    def _restore_target_exists(self, label: str, qualified_name: str) -> bool:
-        """Whether a captured edge's target is back after the re-parse.
-
-        A Section is not a definition, so the function registry never holds
-        one; the document tier answers for the headings it emitted. A File
-        target is never restored: its node outlives the re-parse, and so
-        does the edge (issue #2458).
-        """
-        match label:
-            case cs.NodeLabel.MODULE:
-                return True
-            case cs.NodeLabel.SECTION:
-                return self.document_tier.emitted_section(qualified_name)
-            case _:
-                return qualified_name in self.function_registry
-
-    def _restore_inbound_edges(self, captured: list[ResultRow]) -> None:
-        # Re-emit each captured inbound edge whose target still exists after the
-        # re-index (see `_restorable_edge` for what is dropped).
-        if not captured:
-            return
-        restored = 0
-        for row in captured:
-            edge = self._restorable_edge(row)
-            if edge is None:
-                continue
-            caller_spec, rel, target_spec = edge
-            # The edge's own properties (its site, issue #1522) come back with
-            # it: per-site edges are keyed by them, so a bare re-emission
-            # would land beside the original instead of restoring it.
-            props = row.get(cs.KEY_PROPS)
-            # A gloss edge goes to the RAW ingestor. The filtering sink admits
-            # what the capture selection lets a parser EMIT, and glosses are
-            # never emitted from source: their group is off by default so
-            # indexing cannot invent them. Restoring an edge that already
-            # existed is not emitting one, and through the sink it would be
-            # dropped, orphaning the note (issue #1808).
-            writer = self.ingestor if rel in _GLOSS_RELS else self._sink
-            writer.ensure_relationship_batch(
-                caller_spec,
-                rel,
-                target_spec,
-                properties=cast(PropertyDict, props)
-                if isinstance(props, dict) and props
-                else None,
-            )
-            restored += 1
-        if restored:
-            logger.info(ls.INCREMENTAL_REBUILD_INBOUND, count=restored)
-
     def known_module_paths(self) -> dict[str, str]:
         # Module qns this updater has produced, mapped to file paths;
         # declared and rehydrated qns carry no path and never win the
@@ -3947,8 +3762,8 @@ class GraphUpdater:
         # survivor (issue #1569).
         deleted_set = set(deleted_before_parse)
         captured_inbound = self._captured_inbound_edges(reindexed_keys, deleted_set)
-        self._run.captured_trace_edges = self._capture_trace_edges(
-            (*reindexed_keys, *deleted_before_parse)
+        self._run.captured_trace_edges = self.edge_carry.capture_trace_edges(
+            self._run, (*reindexed_keys, *deleted_before_parse)
         )
         self._run.trace_gone_paths = frozenset(deleted_set)
         self._reparsed_file_keys = {
@@ -4535,7 +4350,7 @@ class GraphUpdater:
         """The re-indexed files' inbound edges, minus those from deleted files."""
         return [
             row
-            for row in self._capture_inbound_edges(reindexed_keys)
+            for row in self.edge_carry.capture_inbound_edges(self._run, reindexed_keys)
             if row.get(cs.KEY_CALLER_PATH) not in deleted_set
         ]
 
@@ -5959,7 +5774,7 @@ class GraphUpdater:
         # A scoped pass covers only the touched modules, so it can owe a
         # cleanup but never settle one owed from elsewhere.
         self._record_exposes_cleanup(cleared_by_this_run=False)
-        self._restore_inbound_edges(captured)
+        self.edge_carry.restore_inbound_edges(captured)
         graph = self._graph
         if graph is not None:
             graph.execute_write(cs.CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES)
@@ -6164,8 +5979,8 @@ class GraphUpdater:
                 self._reingest_foreign_members({*present, *gone, *survivors, *affected})
             )
             all_keys = sorted({*present, *gone, *survivors, *affected})
-            captured = self._capture_inbound_edges(all_keys)
-            captured_trace = self._capture_trace_edges(all_keys)
+            captured = self.edge_carry.capture_inbound_edges(self._run, all_keys)
+            captured_trace = self.edge_carry.capture_trace_edges(self._run, all_keys)
         except Exception as exc:
             raise ex.ReingestAborted(str(exc)) from exc
         # The caller's last word before the first write. Still inside the
@@ -6250,7 +6065,7 @@ class GraphUpdater:
         self._reingest_resolve(reparse, captured)
         # `_reingest_resolve` ends on a flush, so the static edges the carry
         # may confirm are in the store (issue #2429).
-        self._carry_trace_edges(captured_trace, gone.keys())
+        self.edge_carry.carry_trace_edges(captured_trace, gone.keys())
         # AFTER the re-parse, never before: the surviving node of the correct
         # kind and its re-pointed containment edges are written by the parse
         # above, so pruning first would delete the old node while every edge

@@ -19,6 +19,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.sync.checkout_state import state_file
 from codebase_rag.types_defs import PropertyValue, ResultRow
+from codebase_rag.updater.edge_carry import EdgeCarryRun
 from evals.cgr_graph import StatefulIngestor
 
 PROJECT = "proj"
@@ -467,13 +468,13 @@ def test_a_save_during_a_reingest_is_judged_before_its_callers_keep_edges(
     updater.run(force=True)
     target = root / PY_TARGET
     target.write_text(PY_CORE + "# trailing note\n", encoding="utf-8")
-    capture = updater._capture_inbound_edges
+    capture = updater.edge_carry.capture_inbound_edges
 
-    def save_then_capture(keys: list[str]) -> list[ResultRow]:
+    def save_then_capture(run: EdgeCarryRun, keys: list[str]) -> list[ResultRow]:
         target.write_text(PY_MAKE_GADGET(PY_CORE), encoding="utf-8")
-        return capture(keys)
+        return capture(run, keys)
 
-    monkeypatch.setattr(updater, "_capture_inbound_edges", save_then_capture)
+    monkeypatch.setattr(updater.edge_carry, "capture_inbound_edges", save_then_capture)
     assert updater.reingest([PY_TARGET]).affected == ()
 
     # The next event, through a fresh updater (see issue #2927 above).

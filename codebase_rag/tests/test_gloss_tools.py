@@ -874,7 +874,7 @@ def test_restoring_a_gloss_edge_bypasses_the_capture_filter(tmp_path: Path) -> N
     )
     assert not updater.capture.rel_enabled(cs.RelationshipType.ANNOTATES)
     updater.function_registry[RUN] = cs.NodeLabel.FUNCTION
-    updater._restore_inbound_edges(
+    updater.edge_carry.restore_inbound_edges(
         [
             _captured("Gloss", "gloss:abc", "ANNOTATES", RUN),
             _captured("Gloss", "gloss:abc", "MENTIONS", RUN),
@@ -911,7 +911,7 @@ def test_a_capture_outage_aborts_an_incremental_run(tmp_path: Path) -> None:
     )
     updater._run.is_full_build = False
     with pytest.raises(RuntimeError, match="store down"):
-        updater._capture_inbound_edges(["app.py"])
+        updater.edge_carry.capture_inbound_edges(updater._run, ["app.py"])
 
 
 def test_a_capture_outage_on_a_full_build_names_how_notes_come_back() -> None:
@@ -934,8 +934,8 @@ def test_a_capture_outage_on_a_full_build_warns_and_continues(tmp_path: Path) ->
         queries={},
     )
     updater._run.is_full_build = True
-    with patch("codebase_rag.graph_updater.logger") as log:
-        assert updater._capture_inbound_edges(["app.py"]) == []
+    with patch("codebase_rag.updater.edge_carry.logger") as log:
+        assert updater.edge_carry.capture_inbound_edges(updater._run, ["app.py"]) == []
     log.warning.assert_called_once_with(lg.INBOUND_CAPTURE_FAILED)
 
 
@@ -1122,7 +1122,9 @@ def test_a_gloss_whose_subject_did_not_survive_is_not_re_attached(
     updater = GraphUpdater(
         ingestor=ingestor, repo_path=tmp_path, parsers={}, queries={}
     )
-    updater._restore_inbound_edges([_captured("Gloss", "gloss:abc", "ANNOTATES", RUN)])
+    updater.edge_carry.restore_inbound_edges(
+        [_captured("Gloss", "gloss:abc", "ANNOTATES", RUN)]
+    )
     ingestor.ensure_relationship_batch.assert_not_called()
 
 

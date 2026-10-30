@@ -367,14 +367,14 @@ def test_a_capture_outage_aborts_an_incremental_sync(tmp_path: Path) -> None:
     updater = _updater(_Store(fail_reads=True), tmp_path, full_build=False)
 
     with pytest.raises(RuntimeError, match="store down"):
-        updater._capture_trace_edges(["pkg/a.py"])
+        updater.edge_carry.capture_trace_edges(updater._run, ["pkg/a.py"])
 
 
 def test_a_capture_outage_on_a_full_build_warns_and_continues(tmp_path: Path) -> None:
     updater = _updater(_Store(fail_reads=True), tmp_path, full_build=True)
 
-    with patch("codebase_rag.graph_updater.logger") as log:
-        assert updater._capture_trace_edges(["pkg/a.py"]) == []
+    with patch("codebase_rag.updater.edge_carry.logger") as log:
+        assert updater.edge_carry.capture_trace_edges(updater._run, ["pkg/a.py"]) == []
 
     log.warning.assert_called_once_with(ls.TRACE_CARRY_CAPTURE_FAILED)
 
@@ -383,8 +383,8 @@ def test_a_carry_failure_warns_instead_of_failing_the_sync(tmp_path: Path) -> No
     captured = _capture(_Store(captured=[_captured_row()]))
     updater = _updater(_Store(fail_reads=True), tmp_path, full_build=False)
 
-    with patch("codebase_rag.graph_updater.logger") as log:
-        updater._carry_trace_edges(captured, ())
+    with patch("codebase_rag.updater.edge_carry.logger") as log:
+        updater.edge_carry.carry_trace_edges(captured, ())
 
     log.warning.assert_called_once_with(
         ls.TRACE_CARRY_FAILED.format(count=1, error="store down")
