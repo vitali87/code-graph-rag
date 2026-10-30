@@ -1982,6 +1982,7 @@ def main_single_query(
 async def main_async(
     repo_path: str,
     batch_size: int,
+    *,
     active_projects: list[str] | None = None,
     show_config_table: bool = True,
     pre_chat_sync: Callable[[], None] | None = None,
@@ -2038,6 +2039,7 @@ async def _run_pre_chat_sync(task: Callable[[], None], message: str) -> None:
 async def main_optimize_async(
     language: str,
     target_repo_path: str,
+    *,
     reference_document: str | None = None,
     orchestrator: str | None = None,
     cypher: str | None = None,

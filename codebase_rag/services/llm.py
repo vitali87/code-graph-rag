@@ -337,6 +337,7 @@ async def run_to_text_answer(
 
 def create_rag_orchestrator(
     tools: list[Tool[None]],
+    *,
     project_root: Path | None = None,
     load_instructions: bool = True,
     active_projects: list[str] | None = None,

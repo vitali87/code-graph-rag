@@ -307,6 +307,7 @@ class StackStatus:
 class StackManager:
     def __init__(
         self,
+        *,
         home: Path | None = None,
         package_compose: Path | None = None,
         memgraph_host: str | None = None,

@@ -142,6 +142,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
     def __init__(
         self,
         updater: GraphUpdater,
+        *,
         debounce_seconds: float = cs.DEFAULT_DEBOUNCE_SECONDS,
         max_wait_seconds: float = cs.DEFAULT_MAX_WAIT_SECONDS,
         timer_factory: TimerFactory = threading.Timer,

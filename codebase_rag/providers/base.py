@@ -107,6 +107,7 @@ class GoogleProvider(ModelProvider):
 
     def __init__(
         self,
+        *,
         api_key: str | None = None,
         provider_type: cs.GoogleProviderType | None = None,
         project_id: str | None = None,

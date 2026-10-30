@@ -1973,10 +1973,10 @@ def optimize(
             main_optimize_async(
                 language,
                 target_repo_path,
-                reference_document,
-                orchestrator,
-                cypher,
-                batch_size,
+                reference_document=reference_document,
+                orchestrator=orchestrator,
+                cypher=cypher,
+                batch_size=batch_size,
             )
         )
     except KeyboardInterrupt:

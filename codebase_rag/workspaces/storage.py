@@ -74,6 +74,7 @@ def save_workspace(config: WorkspaceConfig, home: Path | None = None) -> Path:
 
 def create_workspace(
     name: str,
+    *,
     description: str = "",
     repos: list[WorkspaceRepo] | None = None,
     home: Path | None = None,

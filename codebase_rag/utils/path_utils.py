@@ -689,6 +689,7 @@ def walk_eligible_files(
     repo_path: Path,
     exclude_paths: frozenset[str] | None = None,
     unignore_paths: frozenset[str] | None = None,
+    *,
     on_dir: Callable[[str, str], None] | None = None,
     on_symlink: Callable[[str], None] | None = None,
 ) -> Iterator[tuple[str, str, str]]:

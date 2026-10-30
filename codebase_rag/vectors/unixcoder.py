@@ -121,6 +121,7 @@ class UniXcoder(nn.Module):
     def generate(
         self,
         source_ids: torch.Tensor,
+        *,
         decoder_only: bool = True,
         eos_id: int | list[int] | None = None,
         beam_size: int = 5,
