@@ -67,6 +67,22 @@ RUN curl -fsSLO "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/x
     rm rustup-init && \
     cargo --version
 
+# The graph-rs fuzz targets (rust/cgr_graph_rs/fuzz) are cargo-fuzz targets,
+# built by the `language: rust` job. OSS-Fuzz's compile hands Rust builds
+# -Zsanitizer through RUSTFLAGS, which only a nightly accepts, so they get the
+# nightly and the cargo-fuzz release base-builder-rust pins, the pair OSS-Fuzz
+# builds against this image's clang. The nightly must be new enough for the
+# crate's dependencies, as RUST_TOOLCHAIN above must. A rust build also copies
+# the DEFAULT toolchain's std sources (for coverage reports) and stops if they
+# are missing, so the stable toolchain carries rust-src.
+ARG CARGO_FUZZ_VERSION=0.13.2
+ENV RUST_FUZZ_TOOLCHAIN=nightly-2025-09-05
+RUN rustup toolchain install "${RUST_FUZZ_TOOLCHAIN}" --profile minimal && \
+    rustup component add rust-src --toolchain "${RUST_TOOLCHAIN}" && \
+    cargo install cargo-fuzz --locked --version "${CARGO_FUZZ_VERSION}" && \
+    rm -rf /rust/registry && \
+    cargo fuzz --version
+
 # Make that interpreter the default `python3` so compile_python_fuzzer and
 # build.sh use it without either knowing where it came from.
 RUN ln -sf "$(uv python find 3.12)" /usr/local/bin/python3 && \

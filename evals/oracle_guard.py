@@ -9,7 +9,7 @@ each command, where the copies drifted apart.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 
 import typer
@@ -49,7 +49,7 @@ def require_oracle(
 
 
 @contextmanager
-def oracle_unavailable_exits() -> Iterator[None]:
+def oracle_unavailable_exits() -> Generator[None]:
     try:
         yield
     except NodeOracleUnavailable as unavailable:

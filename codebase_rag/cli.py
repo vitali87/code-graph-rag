@@ -8,7 +8,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Callable, Coroutine, Iterable, Iterator
+from collections.abc import Callable, Coroutine, Generator, Iterable
 from contextlib import ExitStack, contextmanager
 from fnmatch import fnmatch
 from functools import partial, wraps
@@ -79,7 +79,10 @@ from .sync_guard import RUNNING_SYNC_TOKENS as _RUNNING_SYNC_TOKENS
 from .sync_guard import OwnerCheck as _OwnerCheck
 from .sync_guard import SyncRefusedError, mark_sync_incomplete, release_project_claim
 from .sync_guard import clear_sync_incomplete as _clear_sync_incomplete
+from .sync_guard import partial_graph_refusal as _partial_graph_refusal
 from .sync_guard import project_owner_refusal as _project_owner_refusal
+from .sync_guard import retire_stranded_runs as _retire_stranded_runs
+from .sync_guard import stranded_runs as _stranded_runs
 from .sync_guard import sync_marker_params as _sync_marker_params
 from .sync_guard import sync_owner as _sync_owner
 from .sync_lock import SyncLockError, repo_sync_lock
@@ -95,6 +98,7 @@ from .types_defs import (
     DuplicatesReport,
     ProjectSync,
     PropertyValue,
+    ReingestReport,
     ResultRow,
     ResultValue,
 )
@@ -115,6 +119,7 @@ from .workspaces.cli import cli as workspace_cli
 
 if TYPE_CHECKING:
     from .graph_updater import GraphUpdater
+    from .watch import WriteMarker
 
 
 def _vendored_click_exception() -> type[click.ClickException]:
@@ -571,7 +576,7 @@ def _start_active_projects(
 
 
 @contextmanager
-def _console_on_stderr() -> Iterator[None]:
+def _console_on_stderr() -> Generator[None]:
     console = app_context.console
     app_context.console = terminal_aware_console(stderr=True)
     try:
@@ -943,7 +948,7 @@ def _release_project_claim(batch_size: int, project_name: str, repo: Path) -> No
 @contextmanager
 def _project_claim(
     batch_size: int, project_name: str, repo: Path, *, clean: bool, assume_yes: bool
-) -> Iterator[list[str] | None]:
+) -> Generator[list[str] | None]:
     """Hold this sync's claim on its project name while the sync runs (#2411).
 
     Yields the roots `_mark_sync_incomplete` must still find on the Project.
@@ -981,7 +986,7 @@ def _mark_sync_incomplete(
 
 
 @contextmanager
-def _sync_lock_or_exit(repo: Path, project_name: str) -> Iterator[None]:
+def _sync_lock_or_exit(repo: Path, project_name: str) -> Generator[None]:
     """Hold the checkout's sync lock for the whole sync, or stop first (#2441).
 
     Taken before the `--clean` wipe and the `:IncompleteRun` marker, so a
@@ -1104,16 +1109,17 @@ def _sweep_glosses_after_failed_delete(
 
 
 def _run_updater_deferring_interrupt(
-    updater: "GraphUpdater",
+    updater: "GraphUpdater", *, rebuild: bool = False
 ) -> KeyboardInterrupt | None:
     """Run the sync's graph update; return a Ctrl+C that landed after its commit.
 
     The run stamps the sync time as part of its commit (#2444), and the
     caller clears its marker before re-raising what this returns; a Ctrl+C
-    before the commit raises `SyncInterrupted` instead.
+    before the commit raises `SyncInterrupted` instead. `rebuild` forces a
+    full re-index over runs another writer left part-way.
     """
     try:
-        updater.run()
+        updater.run(force=rebuild)
     except ex.EmbeddingsInterrupted as stop:
         # Raised only after the run committed, so the graph is whole and
         # the sync is recorded like any other; the interrupt then ends
@@ -1183,6 +1189,15 @@ def _run_graph_sync(
             # hits and can map onto unrelated nodes in the rebuilt graph.
             clear_all_embeddings()
 
+        # Read before this sync marks: the runs whose markers its rebuild
+        # supersedes (review of PR #3493).
+        stranded = _stranded_runs(ingestor, project_name, cs.CLI_SYNC_RUN_ID)
+        if stranded:
+            logger.warning(
+                ls.REBUILD_OVER_STRANDED_RUNS.format(
+                    project=project_name, count=len(stranded)
+                )
+            )
         # After the wipe, which would delete the marker with everything else,
         # and before `ensure_constraints`, whose migration can already purge.
         _mark_sync_incomplete(ingestor, project_name, owner, owned_roots)
@@ -1202,8 +1217,9 @@ def _run_graph_sync(
             capture=_capture_selection(capture),
             skip_embeddings=skip_embeddings,
         )
-        interrupted = _run_updater_deferring_interrupt(updater)
+        interrupted = _run_updater_deferring_interrupt(updater, rebuild=bool(stranded))
         _clear_sync_incomplete(ingestor, project_name)
+        _retire_stranded_runs(ingestor, project_name, stranded)
         # Taken before the export: counting it made a no-op sync of a small
         # repo report the time to dump the whole shared graph (issue #2440).
         elapsed = time.monotonic() - elapsed
@@ -2003,7 +2019,12 @@ def mcp_server(
     workspace: str | None = typer.Option(
         None, "--workspace", help=ch.HELP_MCP_WORKSPACE
     ),
+    read_only: bool = typer.Option(False, "--read-only", help=ch.HELP_MCP_READ_ONLY),
 ) -> None:
+    # `is True`: typer passes a bool, while a direct call that omits the
+    # flag passes the truthy OptionInfo default, which must not turn the
+    # setting on.
+    settings.MCP_READ_ONLY = settings.MCP_READ_ONLY or read_only is True
     try:
         if transport == cs.MCPTransport.HTTP:
             from codebase_rag.mcp import serve_http
@@ -2248,6 +2269,75 @@ def check_command(
         raise typer.Exit(code=1)
 
 
+EditReingest = Callable[[list[str]], ReingestReport]
+
+
+@contextmanager
+def _guarded_edit_reingest(
+    ingestor: MemgraphIngestor, updater: "GraphUpdater", project_name: str, repo: Path
+) -> Generator[tuple[EditReingest, "WriteMarker"]]:
+    """The re-ingest an applied edit is measured through, behind the marker.
+
+    Refuses before anything is planned when a run left the project's graph
+    partial: the plan reads its call sites from the graph, so a caller a
+    stopped sync deleted would be neither rewritten nor reported (Greptile
+    review, PR #2164). The MCP tools refuse the same graph through
+    `_guarded_rename_reingest`.
+
+    The checkout's sync lock is held for the whole edit, from that check to
+    the marker's clear: a sync taking the checkout between the check and the
+    plan would leave the plan reading a graph it is rewriting (Greptile
+    review, PR #3493). It waits behind a running sync, as a scoped re-ingest
+    does, and the re-ingest re-enters it.
+
+    The callback is `cgr watch`'s scoped re-ingest. The marker goes down from
+    `before_write`, where the read-only prologue ends, and comes off once the
+    re-ingest returned. A failure after the first write leaves it down, so
+    the next edit, `cgr status` and the MCP server know the graph is partial;
+    the edit's `graph_incomplete` alone would not outlive this process.
+    """
+    held = ExitStack()
+    try:
+        held.enter_context(repo_sync_lock(repo, project_name, wait=True))
+    except SyncLockError as refused:
+        typer.echo(str(refused), err=True)
+        raise typer.Exit(code=1) from None
+    with held:
+        if (refusal := _partial_graph_refusal(ingestor, project_name)) is not None:
+            typer.echo(refusal, err=True)
+            raise typer.Exit(code=1)
+        from .watch import WriteMarker
+
+        with _sync_owner() as owner:
+            marker = WriteMarker(ingestor, project_name, owner, None)
+
+            def reingest(paths: list[str]) -> ReingestReport:
+                report = updater.reingest(paths, before_write=marker.mark_scoped)
+                if updater.reingest_mutated:
+                    marker.clear()
+                return report
+
+            yield reingest, marker
+
+
+def _mark_edit_partial(marker: "WriteMarker", project_name: str) -> str | None:
+    """Mark the graph partial after an edit reported `graph_incomplete`.
+
+    The edit's report decides, as in the MCP tools: a rollback whose
+    re-ingest stopped before its first write put no marker down, yet left
+    the graph describing files the rollback has since restored. Returns the
+    error to print after the edit's JSON when the marker cannot go down, so
+    the report of what changed is not lost.
+    """
+    try:
+        marker.mark()
+    except SyncRefusedError as refused:
+        return cs.CLI_ERR_EDIT_MARKER_FAILED.format(
+            project=project_name, error=refused.__cause__ or refused
+        )
+    return None
+
+
 @app.command(
     name=ch.CLICommandName.RENAME,
     help=ch.CMD_RENAME,
@@ -2288,31 +2378,141 @@ def rename_command(
             queries=queries,
             project_name=name,
         )
-        try:
-            report = rename(
-                repo_path.resolve(),
-                fetch_all,
-                name,
-                qualified_name,
-                new_name,
-                allow_heuristic=allow_heuristic,
-                dry_run=dry_run,
-                reingest=updater.reingest,
-                heuristic_opt_in=cs.RENAME_CLI_ALLOW_HEURISTIC,
+        with _guarded_edit_reingest(ingestor, updater, name, repo_path.resolve()) as (
+            reingest,
+            marker,
+        ):
+            try:
+                report = rename(
+                    repo_path.resolve(),
+                    fetch_all,
+                    name,
+                    qualified_name,
+                    new_name,
+                    allow_heuristic=allow_heuristic,
+                    dry_run=dry_run,
+                    reingest=reingest,
+                    heuristic_opt_in=cs.RENAME_CLI_ALLOW_HEURISTIC,
+                )
+            except RenameRefused as refused:
+                typer.echo(str(refused), err=True)
+                for site in sites_for([*refused.ambiguous, *refused.unplanned]):
+                    typer.echo(f"  {site}", err=True)
+                for entry in refused.unlocatable:
+                    typer.echo(f"  {entry}", err=True)
+                raise typer.Exit(code=1) from refused
+            marker_error = (
+                _mark_edit_partial(marker, name) if report.graph_incomplete else None
             )
-        except RenameRefused as refused:
-            typer.echo(str(refused), err=True)
-            for site in sites_for([*refused.ambiguous, *refused.unplanned]):
-                typer.echo(f"  {site}", err=True)
-            for entry in refused.unlocatable:
-                typer.echo(f"  {entry}", err=True)
-            raise typer.Exit(code=1) from refused
     payload = dict(report._asdict())
     payload[cs.KEY_SITES] = sites_for(report.sites)
     payload[cs.KEY_AMBIGUOUS] = sites_for(report.ambiguous)
     payload[cs.KEY_UNPLANNED] = sites_for(report.unplanned)
     payload["verdict"] = report.verdict._asdict() if report.verdict else None
     typer.echo(json.dumps(payload, indent=cs.MCP_JSON_INDENT, sort_keys=True))
+    if marker_error is not None:
+        typer.echo(marker_error, err=True)
+        raise typer.Exit(code=1)
+    if not report.applied and not dry_run:
+        raise typer.Exit(code=1)
+
+
+@app.command(
+    name=ch.CLICommandName.CHANGE_SIGNATURE,
+    help=ch.CMD_CHANGE_SIGNATURE,
+    short_help=ch.CMD_CHANGE_SIGNATURE,
+    epilog=ch.EXAMPLES_CHANGE_SIGNATURE,
+    rich_help_panel=ch.PANEL_USE,
+)
+def change_signature_command(
+    qualified_name: str = typer.Argument(..., help=ch.HELP_CHANGE_SIGNATURE_QN),
+    new_params: list[str] = typer.Argument(..., help=ch.HELP_CHANGE_SIGNATURE_PARAMS),
+    repo_path: Path = typer.Option(
+        Path(cs.MCP_DEFAULT_DIRECTORY),
+        "--repo-path",
+        exists=True,
+        file_okay=False,
+        help=ch.HELP_GRAPH_REPO_PATH,
+    ),
+    project: str | None = typer.Option(None, "--project", help=ch.HELP_GRAPH_PROJECT),
+    mapping: list[str] | None = typer.Option(
+        None, "--map", help=ch.HELP_CHANGE_SIGNATURE_MAP
+    ),
+    allow_heuristic: bool = typer.Option(
+        False, "--allow-heuristic", help=ch.HELP_CHANGE_SIGNATURE_ALLOW_HEURISTIC
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help=ch.HELP_CHANGE_SIGNATURE_DRY_RUN
+    ),
+) -> None:
+    from .editing.signature import change_signature
+    from .editing.signature_spec import (
+        SignatureRefused,
+        parse_mapping,
+        sites_for,
+        unmapped_for,
+    )
+    from .graph_cli import _project_and_fetch
+    from .graph_query import source_root_for
+
+    try:
+        parsed = parse_mapping(mapping or [])
+    except SignatureRefused as refused:
+        typer.echo(str(refused), err=True)
+        raise typer.Exit(code=1) from refused
+    name, fetch_all, ingestor = _project_and_fetch(project, repo_path)
+    with ingestor:
+        # An explicit --project may name a graph indexed from another
+        # checkout; its repo-relative paths must not be edited under this
+        # one. The MCP handler refuses the same mismatch.
+        if source_root_for(fetch_all, name, repo_path) is None:
+            typer.echo(
+                cs.SIGNATURE_CLI_WRONG_ROOT.format(
+                    project=name, root=repo_path.resolve()
+                ),
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        parsers, queries = load_parsers()
+        from .graph_updater import GraphUpdater
+
+        updater = GraphUpdater(
+            ingestor=ingestor,
+            repo_path=repo_path.resolve(),
+            parsers=parsers,
+            queries=queries,
+            project_name=name,
+        )
+        with _guarded_edit_reingest(ingestor, updater, name, repo_path.resolve()) as (
+            reingest,
+            marker,
+        ):
+            try:
+                report = change_signature(
+                    repo_path.resolve(),
+                    fetch_all,
+                    name,
+                    qualified_name,
+                    new_params,
+                    parsed,
+                    allow_heuristic=allow_heuristic,
+                    dry_run=dry_run,
+                    reingest=reingest,
+                )
+            except SignatureRefused as refused:
+                typer.echo(str(refused), err=True)
+                raise typer.Exit(code=1) from refused
+            marker_error = (
+                _mark_edit_partial(marker, name) if report.graph_incomplete else None
+            )
+    payload = dict(report._asdict())
+    payload[cs.KEY_SITES] = sites_for(report.sites)
+    payload[cs.KEY_UNMAPPED] = unmapped_for(report.unmapped)
+    payload[cs.KEY_VERDICT] = report.verdict._asdict() if report.verdict else None
+    typer.echo(json.dumps(payload, indent=cs.MCP_JSON_INDENT, sort_keys=True))
+    if marker_error is not None:
+        typer.echo(marker_error, err=True)
+        raise typer.Exit(code=1)
     if not report.applied and not dry_run:
         raise typer.Exit(code=1)
 
@@ -2587,6 +2787,16 @@ def context_command(
     typer.echo(json.dumps(payload, indent=cs.MCP_JSON_INDENT))
     if payload["resolved"] is None:
         typer.echo(cs.CONTEXT_UNRESOLVED.format(target=target), err=True)
+        raise typer.Exit(code=1)
+    # Only the target's own trim marks a slice truncated, so truncated and
+    # empty means not even its first line fitted.
+    if payload["truncated"] and not payload["pieces"]:
+        typer.echo(
+            cs.CONTEXT_TARGET_OVER_BUDGET.format(
+                target=payload["resolved"], budget=budget
+            ),
+            err=True,
+        )
         raise typer.Exit(code=1)
 
 
@@ -2972,7 +3182,8 @@ def _emit_dead_code(
 def _notice_single_project_endpoint_roots(show_progress: bool) -> None:
     """Endpoint roots off on a graph holding one project: every endpoint
     reads as uncalled. Stdout carries the JSON payload when that format is
-    chosen (local review P1), so the notice goes to stderr then."""
+    chosen (local review P1), and only the table under --quiet, so the
+    notice goes to stderr then."""
     if show_progress:
         app_context.console.print(
             style(cs.CLI_DEADCODE_SINGLE_PROJECT_ENDPOINTS, cs.Color.YELLOW)
@@ -3044,7 +3255,11 @@ def dead_code(
     from .dead_code import collect_dead_code_with_coverage
 
     chosen = _scan_project_option(project, project_name)
-    show_progress = output_format == cs.DeadCodeFormat.TABLE and output is None
+    show_progress = (
+        output_format == cs.DeadCodeFormat.TABLE
+        and output is None
+        and not settings.QUIET
+    )
     if show_progress:
         app_context.console.print(style(cs.CLI_DEADCODE_CONNECTING, cs.Color.CYAN))
 
@@ -3457,7 +3672,11 @@ def duplicates(
     from .duplicates import collect_duplicates_with_coverage
 
     chosen = _scan_project_option(project, project_name)
-    show_progress = output_format == cs.DuplicatesFormat.TABLE and output is None
+    show_progress = (
+        output_format == cs.DuplicatesFormat.TABLE
+        and output is None
+        and not settings.QUIET
+    )
     if show_progress:
         app_context.console.print(style(cs.CLI_DUPLICATES_CONNECTING, cs.Color.CYAN))
 

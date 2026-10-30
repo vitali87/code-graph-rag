@@ -63,6 +63,9 @@ jobs:
         with:
           fetch-depth: 2
           ssh-key: ${{ secrets.VERSION_BUMP_SSH_KEY }}
+          # "Commit version bump" and "Create git tag" push with this deploy
+          # key, so it has to stay configured after the checkout.
+          persist-credentials: true
 
       - name: Check if version was manually changed
         id: check_manual
@@ -882,8 +885,9 @@ jobs:
         # same wait, and no tag lands for as long as CI on main runs behind
         # (v0.1.88). "Create git tag" reads this step's outcome instead and
         # pushes a tag annotated as a deferred release over GITHUB_TOKEN, which
-        # triggers no publish, so the release moves to the next bump whose CI
-        # is proven.
+        # triggers no publish. deferred-release.yml publishes it once CI on
+        # main passes at it; until then it stays due, and the next bump whose
+        # CI is proven releases it.
         continue-on-error: true
         timeout-minutes: 50
         env:
@@ -980,13 +984,20 @@ jobs:
             git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "v${NEW_VERSION}"
           fi
 
+      # A release whose CI is not proven goes up as a draft, which publishes
+      # nothing; deferred-release.yml publishes it once CI on main passes.
       - name: Create release
-        if: steps.decide.outputs.release == 'true' && steps.commit.outputs.pushed == 'true' && steps.ci_gate.outcome == 'success'
+        if: steps.decide.outputs.release == 'true' && steps.commit.outputs.pushed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NEW_VERSION: ${{ steps.bump_version.outputs.new }}
+          CI_GATE: ${{ steps.ci_gate.outcome }}
         run: |
           TAG="v${NEW_VERSION}"
+          DRAFT=true
+          if [ "$CI_GATE" = success ]; then
+            DRAFT=false
+          fi
           : > /tmp/body.md
           # The 🔒 Security disclaimer must lead the release body, above the
           # AI highlights and the generated changelog (issue #1149). The
@@ -995,5 +1006,16 @@ jobs:
           [ -s /tmp/breaking.md ] && cat /tmp/breaking.md >> /tmp/body.md
           [ -s /tmp/highlights.md ] && cat /tmp/highlights.md >> /tmp/body.md
           cat /tmp/notes.md >> /tmp/body.md
-          gh release create "$TAG" --title "$TAG" --notes-file /tmp/body.md --verify-tag \
+          gh release create "$TAG" --title "$TAG" --notes-file /tmp/body.md --verify-tag --draft="$DRAFT" \
             || gh release edit "$TAG" --notes-file /tmp/body.md
+          # This release's notes cover every commit since the latest release,
+          # so the drafts this job left for earlier deferred bumps are
+          # superseded; deferred-release.yml publishes only the newest.
+          gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+              --jq '.[] | select(.draft and .author.login == "github-actions[bot]") | "\(.id) \(.tag_name)"' \
+            | while read -r ID OLD; do
+                if [ "$OLD" != "$TAG" ] && [[ "$ID" =~ ^[1-9][0-9]*$ ]]; then
+                  gh api -X DELETE "repos/${GITHUB_REPOSITORY}/releases/${ID}" > /dev/null \
+                    || echo "::warning::could not delete the superseded draft of ${OLD}"
+                fi
+              done

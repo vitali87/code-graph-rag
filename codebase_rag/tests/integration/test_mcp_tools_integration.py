@@ -124,13 +124,13 @@ class TestToolConsistency:
 
         takes_ctx_values = {name: tool.takes_ctx for name, tool in tools.items()}
 
+        # The reader reads `ctx.tool_call_approved` to ask before it returns a
+        # credential file (#3457); the rest need no run context.
         assert takes_ctx_values == {
             "query": False,
             "code": False,
             "editor": False,
-            "reader": False,
+            "reader": True,
             "writer": False,
             "lister": False,
         }
-
-        assert all(not takes_ctx for takes_ctx in takes_ctx_values.values())

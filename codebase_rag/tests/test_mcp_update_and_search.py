@@ -500,7 +500,7 @@ class TestMCPClient:
 
         mock_result = MagicMock()
         mock_result.content = [
-            ImageContent(type="image", data="aGk=", mimeType="image/png")
+            ImageContent(type="image", data="aGk=", mime_type="image/png")
         ]
 
         mock_session = AsyncMock()

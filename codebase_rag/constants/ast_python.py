@@ -49,6 +49,13 @@ TS_PY_ASYNC = "async"
 # target is bound to: `with` calls `__enter__`, `async with` awaits `__aenter__`.
 PY_DUNDER_ENTER = "__enter__"
 PY_DUNDER_AENTER = "__aenter__"
+# ...and what it calls when the block is left, however it is left.
+PY_DUNDER_EXIT = "__exit__"
+PY_DUNDER_AEXIT = "__aexit__"
+# `name` then, on the same line and statement, an `=`: a plain, annotated,
+# chained, unpacking or walrus assignment to it (and some comparisons and
+# keyword arguments, harmlessly). `{name}` is the escaped name.
+PY_ASSIGNED_NAME_PATTERN = r"\b{name}\b[^=\n;]*="
 # The `if TYPE_CHECKING:` guard (bare or `typing.`-qualified): its body is
 # read by type checkers only and binds nothing at runtime.
 PY_TYPE_CHECKING = "TYPE_CHECKING"
@@ -521,3 +528,24 @@ PY_COMPREHENSION_TYPES = frozenset(
 # tree stays alive outside the AST cache's memory cap, so the cache holds a
 # few trees, all of whose scopes it keeps, rather than a number of scopes.
 PY_SCOPE_CACHE_TREES = 8
+# The callable-parameter scan (`parsers/utils.py`, and the tree bridge's port
+# of it for the interface fingerprint): the scopes that capture an enclosing
+# def's parameters, and the ones it never enters.
+PY_CALLABLE_CLOSURE_TYPES = frozenset({TS_PY_FUNCTION_DEFINITION, TS_PY_LAMBDA})
+PY_CALLABLE_OPAQUE_TYPES = frozenset({TS_PY_CLASS_DEFINITION})
+# Parameters whose name sits in their `name` field.
+PY_NAMED_PARAMETER_TYPES = frozenset(
+    {TS_PY_DEFAULT_PARAMETER, TS_PY_TYPED_DEFAULT_PARAMETER}
+)
+# A nested def or class: its name binds in the enclosing body, its body is a
+# scope of its own.
+PY_SCOPE_BOUNDARY_TYPES = frozenset(
+    {TS_PY_FUNCTION_DEFINITION, TS_PY_CLASS_DEFINITION, TS_PY_DECORATED_DEFINITION}
+)
+# Statements whose `left` binds names in a nested function that shadow a
+# parameter it would otherwise capture (the callable-parameter scan).
+PY_CAPTURE_SHADOW_BINDERS = frozenset({TS_PY_ASSIGNMENT, TS_PY_FOR_STATEMENT})
+# The definitions a `decorated_definition` wraps, whose name it binds.
+PY_DECORATED_DEFINITION_TYPES = frozenset(
+    {TS_PY_FUNCTION_DEFINITION, TS_PY_CLASS_DEFINITION}
+)

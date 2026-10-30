@@ -7,7 +7,9 @@ on:
     branches: [main, master, develop]
   workflow_dispatch:
 
-permissions: read-all
+# Every job reads the code; a job that needs more grants it on itself.
+permissions:
+  contents: read
 
 concurrency:
   # PRs group by ref so rapid pushes cancel superseded runs (saves minutes).
@@ -26,6 +28,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Key the uv cache on dependencies, not the project version
         shell: bash
@@ -100,6 +104,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Key the uv cache on dependencies, not the project version
         shell: bash
@@ -160,6 +166,7 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up Go
         # The go/types helper's tests build it with the Go on PATH, and the
@@ -310,6 +317,7 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Start Memgraph
         run: |
@@ -380,6 +388,7 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Key the uv cache on dependencies, not the project version
         shell: bash
@@ -480,6 +489,9 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     timeout-minutes: 5
+    # The action reads the pull request's current title through the API.
+    permissions:
+      pull-requests: read
 
     steps:
       - name: Check PR title format
@@ -521,6 +533,7 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
