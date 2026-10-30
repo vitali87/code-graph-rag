@@ -30,6 +30,9 @@ SQLITE_TEXT = REPO_ROOT / "scripts" / "license_texts" / "native" / "sqlite.txt"
 ENCODING = "utf-8"
 
 CARGO = "cargo"
+# `cargo metadata` may fetch the registry index on a cold cache; past this it
+# is stuck, and the check fails as a failing cargo call does.
+CARGO_TIMEOUT_S = 600
 FEATURES = ("--features", "python")
 TREE_ARGS = (
     CARGO,
@@ -88,7 +91,12 @@ class Crate:
 
 def _cargo(args: tuple[str, ...]) -> str:
     return subprocess.run(  # nosec B603 - fixed cargo argument list
-        args, cwd=CRATE_DIR, check=True, capture_output=True, text=True
+        args,
+        cwd=CRATE_DIR,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=CARGO_TIMEOUT_S,
     ).stdout
 
 
