@@ -60,6 +60,7 @@ class ScalaCallResolution(LanguageCalls):
     __slots__ = ("_host", "_resolver")
 
     new_constructs_type = True
+    runs_declared_constructors = True
 
     def __init__(self, host: ScalaCallHost, resolver: CallResolver) -> None:
         self._host = host
@@ -141,6 +142,12 @@ class ScalaCallResolution(LanguageCalls):
         if callee_info is None:
             return None
         return f"{receiver}{cs.SEPARATOR_DOT}{member}", callee_info
+
+    def emit_constructor_calls(
+        self, ctx: CallScan, callee_qn: str, class_variants: list[str]
+    ) -> bool:
+        self.emit_auxiliary_ctor_calls(ctx.caller_spec, class_variants, ctx.ensure_rel)
+        return True
 
     def emit_auxiliary_ctor_calls(
         self,

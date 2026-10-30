@@ -841,6 +841,9 @@ class JsTsCallResolution(LanguageCalls):
     keys_members_by_symbol = True
     types_locals = True
     binds_builtin_calls = True
+    # A `new X(...)` runs X's `constructor` method (leaf name `constructor`,
+    # not Python's `__init__`).
+    constructor_member = cs.KEYWORD_CONSTRUCTOR
 
     def __init__(self, host: JsTsCallHost, resolver: CallResolver) -> None:
         self._host = host
@@ -1515,6 +1518,32 @@ class JsTsCallResolution(LanguageCalls):
         if name in cs.JS_TS_GLOBAL_RECEIVER_TYPES:
             return _ReceiverDeclaration(name, foreign=True)
         return None
+
+    def ingest_receiver_dispatch(
+        self, ctx: JsTsCallScan, call_node: Node, call_name: str, callee_qn: str
+    ) -> None:
+        if (
+            ctx.class_context
+            and call_name.startswith(cs.JS_THIS_CALL_PREFIX)
+            and self._resolver.function_registry.is_abstract(callee_qn)
+            and this_is_class_instance(call_node)
+        ):
+            # `this.m()` bound to an `abstract m()` declaration (issue #2524)
+            # runs a subclass override, never the declaration. Before the
+            # declaration had a node the call went unresolved and dispatched
+            # to those overrides; keep those edges beside the static one.
+            self.emit_this_dispatch(
+                ctx.caller_spec, ctx.class_context, call_name, ctx.ensure_rel
+            )
+
+    def emit_callee_twins(
+        self, ctx: JsTsCallScan, call_name: str, callee_type: str, callee_qn: str
+    ) -> None:
+        if cs.SEPARATOR_DOT in call_name and callee_type in (
+            cs.NodeLabel.FUNCTION,
+            cs.NodeLabel.METHOD,
+        ):
+            self.emit_member_twins(ctx.caller_spec, callee_qn, ctx.ensure_rel)
 
     def emit_this_dispatch(
         self,

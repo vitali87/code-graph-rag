@@ -63,6 +63,8 @@ class PhpCallResolution(LanguageCalls):
 
     __slots__ = ("_host", "_resolver")
 
+    inherits_constructors = True
+
     def __init__(self, host: PhpCallHost, resolver: CallResolver) -> None:
         self._host = host
         self._resolver = resolver

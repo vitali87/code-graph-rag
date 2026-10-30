@@ -264,6 +264,7 @@ class CppCallResolution(LanguageCalls):
     scans_callers_without_calls = True
     types_locals = True
     binds_operator_calls = True
+    runs_declared_constructors = True
 
     def __init__(
         self, host: CppCallHost, resolver: CallResolver, facts: DefinitionFacts
@@ -663,6 +664,18 @@ class CppCallResolution(LanguageCalls):
             return (cs.NodeLabel.CLASS, aliased_qn)
         return None
 
+    def bound_callee(
+        self,
+        ctx: CppCallScan,
+        call_node: Node,
+        call_name: str,
+        callee_type: str,
+        callee_qn: str,
+    ) -> tuple[str, str]:
+        if call_node.type == cs.TS_NEW_EXPRESSION and callee_type != cs.NodeLabel.CLASS:
+            return self.rebind_new_callee(ctx, call_name, callee_type, callee_qn)
+        return callee_type, callee_qn
+
     def rebind_new_callee(
         self, ctx: CppCallScan, call_name: str, callee_type: str, callee_qn: str
     ) -> tuple[str, str]:
@@ -1006,6 +1019,12 @@ class CppCallResolution(LanguageCalls):
                 (cs.NodeLabel.CLASS, cs.KEY_QUALIFIED_NAME, class_variant),
             )
         self.emit_ctor_calls(caller_spec, class_qn)
+
+    def emit_constructor_calls(
+        self, ctx: CallScan, callee_qn: str, class_variants: list[str]
+    ) -> bool:
+        self.emit_ctor_calls(ctx.caller_spec, callee_qn)
+        return True
 
     def emit_ctor_calls(self, caller_spec: tuple[str, str, str], class_qn: str) -> None:
         # Construction runs a ctor now and the dtor at end of lifetime;

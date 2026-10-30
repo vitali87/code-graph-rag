@@ -20,7 +20,7 @@ from ...node_text import safe_decode_text
 from ...types_defs import LanguageQueries, PropertyDict
 from ...utils import qn_markers
 from ..edge_site import EdgeSiteHost, host_site_scoped
-from ..language_calls import CallName, LanguageCalls
+from ..language_calls import CallName, CallScan, LanguageCalls
 from . import utils as dart_utils
 
 if TYPE_CHECKING:
@@ -381,6 +381,7 @@ class DartCallResolution(LanguageCalls):
     # #873) in a file with no call expression.
     scans_callers_without_calls = True
     types_locals = True
+    runs_declared_constructors = True
 
     def __init__(self, host: DartCallHost, resolver: CallResolver) -> None:
         self._host = host
@@ -690,6 +691,23 @@ class DartCallResolution(LanguageCalls):
                 cs.RelationshipType.CALLS,
                 (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, target_qn),
             )
+
+    def bound_callee(
+        self,
+        ctx: CallScan,
+        call_node: Node,
+        call_name: str,
+        callee_type: str,
+        callee_qn: str,
+    ) -> tuple[str, str]:
+        if (
+            callee_type != cs.NodeLabel.CLASS
+            and callee_qn in self._resolver.type_inference.facts.dart_constructor_qns
+        ):
+            self.instantiate_named_ctor_owner(
+                ctx.caller_spec, callee_qn, ctx.ensure_rel
+            )
+        return callee_type, callee_qn
 
     def instantiate_named_ctor_owner(
         self,

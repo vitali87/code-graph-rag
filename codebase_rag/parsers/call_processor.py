@@ -134,9 +134,6 @@ class _RefEmitScope(NamedTuple):
     ensure_rel: Callable[..., None]
 
 
-_JS_TS_LANGUAGES = cs.JS_TS_LANGUAGES
-
-
 # Nodes walked down a call's left spine before giving up on counting calls:
 # a long operator chain (`(a + b + ... ).m()`) is not a receiver chain.
 _CHAIN_SPINE_WALK_LIMIT = cs.MAX_RECEIVER_CHAIN_HOPS * 8
@@ -2202,14 +2199,12 @@ class CallProcessor:
         span_bindings: list[tuple[int, int, str, str]],
         caller_params: frozenset[str],
     ) -> CallScan:
-        is_js_ts = language in _JS_TS_LANGUAGES
         calls = self._calls_for(language)
         resolver = self._resolver
         resolve_func = self._resolve_noting
         builtins, operators = calls.binds_builtin_calls, calls.binds_operator_calls
         resolve_builtin = resolver.resolve_builtin_call if builtins else None
         resolve_cpp_op = resolver.cpp.resolve_cpp_operator_call if operators else None
-        is_python = language == cs.SupportedLanguage.PYTHON
         # A method-group pass is not an invocation: C# records it as
         # REFERENCES everywhere (CALLS here put 282 phantom edges into the
         # Polly call graph, retrieval precision 1.0 -> 0.92); flow languages
@@ -2232,8 +2227,6 @@ class CallProcessor:
             local_var_types=local_var_types,
             span_bindings=span_bindings,
             caller_params=caller_params,
-            is_js_ts=is_js_ts,
-            is_python=is_python,
             # The dispatch fan-out treats a receiver typed to a template
             # parameter like an untyped receiver rather than an external.
             cpp_template_params=calls.template_params(caller_node),
@@ -2546,27 +2539,10 @@ class CallProcessor:
         callee_info: tuple[str, str],
     ) -> None:
         callee_type, callee_qn = callee_info
-
-        if ctx.language == cs.SupportedLanguage.CSHARP:
-            self._csharp.record_cross_module_use(ctx.module_qn, callee_qn)
-
-        if (
-            ctx.language == cs.SupportedLanguage.DART
-            and callee_type != cs.NodeLabel.CLASS
-            and callee_qn in self._resolver.type_inference.facts.dart_constructor_qns
-        ):
-            self._dart.instantiate_named_ctor_owner(
-                ctx.caller_spec, callee_qn, ctx.ensure_rel
-            )
-
-        if (
-            ctx.language == cs.SupportedLanguage.CPP
-            and call_node.type == cs.TS_NEW_EXPRESSION
-            and callee_type != cs.NodeLabel.CLASS
-        ):
-            callee_type, callee_qn = self._cpp.rebind_new_callee(
-                ctx, call_name, callee_type, callee_qn
-            )
+        ctx.calls.record_cross_module_use(ctx.module_qn, callee_qn)
+        callee_type, callee_qn = ctx.calls.bound_callee(
+            ctx, call_node, call_name, callee_type, callee_qn
+        )
 
         # A callee that resolved to a builtin (e.g. JS setTimeout(target))
         # has no first-party body to follow into, so pass-through flow is
@@ -2633,7 +2609,7 @@ class CallProcessor:
         callee_qn: str,
     ) -> None:
         if (
-            ctx.is_python
+            ctx.calls.dispatches_protocol_stubs
             # A stub the name-only fallback merely guessed (a dict literal's
             # `.get(...)`) says nothing about the receiver: fanning it out
             # turned one guess into exact edges to every conformer, test
@@ -2647,57 +2623,12 @@ class CallProcessor:
         ):
             # The call resolved to a Protocol stub; the stub never runs, so emit
             # edges to the method on every conformer instead of the stub.
-            self._python.emit_protocol_conformer_edges(
+            ctx.calls.emit_protocol_conformer_edges(
                 ctx.caller_spec, dispatch_targets, ctx.ensure_rel
             )
             return
 
-        if (
-            ctx.is_python
-            and ctx.class_context
-            and (
-                call_name.startswith(cs.PY_SELF_PREFIX)
-                or call_name.startswith(cs.PY_CLS_PREFIX)
-            )
-            # A call that runs after `self = Other()` on every path calls
-            # through that value's type, which the resolved edge follows.
-            and not (
-                (
-                    rebinding := python_calls.receiver_rebinding_at(
-                        ctx, call_node, call_name
-                    )
-                )
-                and rebinding.always
-            )
-        ):
-            # self.M()/cls.M() statically targets the enclosing class's own or
-            # inherited M and dynamically dispatches to every concrete subclass
-            # override, so emit an edge to each in ADDITION to the resolved edge
-            # below; otherwise a base (or override) reached only through the
-            # self-call looks dead. Anchor on the enclosing class, not the
-            # resolved callee: when M is abstract with several overrides the trie
-            # resolves the call to an arbitrary sibling, so anchoring there would
-            # miss the base and the others. The self/cls receiver excludes
-            # super().M() and Base.M() (not virtual dispatch). Skip self.attr.M()
-            # (a call on a member, not on self).
-            self._python.emit_self_dispatch(
-                ctx.caller_spec, ctx.class_context, call_name, ctx.ensure_rel
-            )
-
-        if (
-            ctx.is_js_ts
-            and ctx.class_context
-            and call_name.startswith(cs.JS_THIS_CALL_PREFIX)
-            and self._resolver.function_registry.is_abstract(callee_qn)
-            and js_calls.this_is_class_instance(call_node)
-        ):
-            # `this.m()` bound to an `abstract m()` declaration (issue #2524)
-            # runs a subclass override, never the declaration. Before the
-            # declaration had a node the call went unresolved and dispatched
-            # to those overrides; keep those edges beside the static one.
-            self._js.emit_this_dispatch(
-                ctx.caller_spec, ctx.class_context, call_name, ctx.ensure_rel
-            )
+        ctx.calls.ingest_receiver_dispatch(ctx, call_node, call_name, callee_qn)
 
         if ctx.calls.flows_callables:
             # f(...) invoked through a parameter: the edge runs from the
@@ -2754,7 +2685,7 @@ class CallProcessor:
         # a same-named free function wins over the type (no
         # INSTANTIATES) and a macro is not a call target.
         julia_fn_variants: list[tuple[cs.NodeLabel, str]] = []
-        if ctx.language == cs.SupportedLanguage.JULIA:
+        if ctx.calls.functions_shadow_types:
             julia_fn_variants = [
                 (node_type, variant)
                 for variant in class_variants
@@ -2773,10 +2704,9 @@ class CallProcessor:
             # a phantom the database drops (issue #652).
             variant_type = self._resolver.function_registry.get(class_variant)
             if variant_type is not None and variant_type != cs.NodeLabel.CLASS:
-                if ctx.is_python:
-                    self._python.emit_binding_twin(
-                        ctx.caller_spec, class_variant, variant_type, ctx.ensure_rel
-                    )
+                ctx.calls.emit_binding_twin(
+                    ctx.caller_spec, class_variant, variant_type, ctx.ensure_rel
+                )
                 continue
             if julia_fn_variants:
                 # A shadowing function owns the call: no instantiation.
@@ -2786,16 +2716,10 @@ class CallProcessor:
                 cs.RelationshipType.INSTANTIATES,
                 (cs.NodeLabel.CLASS, cs.KEY_QUALIFIED_NAME, class_variant),
             )
-        if ctx.language == cs.SupportedLanguage.JULIA:
+        if ctx.calls.functions_shadow_types:
             self._emit_julia_construction_calls(ctx, callee_qn, julia_fn_variants)
             return None
-        if ctx.language in (
-            cs.SupportedLanguage.JAVA,
-            cs.SupportedLanguage.CSHARP,
-            cs.SupportedLanguage.CPP,
-            cs.SupportedLanguage.DART,
-            cs.SupportedLanguage.SCALA,
-        ):
+        if ctx.calls.runs_declared_constructors:
             # A Java/C#/C++/Dart constructor is a method named like its
             # class (`Foo.Foo`), not `__init__`; `new Foo(...)` / `Foo(...)`
             # runs one, so redirect a CALLS edge to every declared
@@ -2810,19 +2734,14 @@ class CallProcessor:
             # label is a hash-randomized StrEnum, so sort for determinism.
             self._emit_declared_ctor_calls(ctx, callee_qn, class_variants, ctor_rel)
             return None
-        if ctx.language == cs.SupportedLanguage.PHP:
+        if ctx.calls.inherits_constructors:
             # A PHP `new X(...)` runs `__construct`, X's own or, when X
             # declares none, the one it inherits (issue #2466).
             return self._resolver.php.php_constructor(callee_qn)
-        # A JS/TS `new X(...)` runs X's `constructor` method (leaf name
-        # `constructor`, not Python's `__init__`); redirect the CALLS
-        # edge there so an explicitly-declared constructor is reachable.
-        ctor_member = (
-            cs.KEYWORD_CONSTRUCTOR
-            if ctx.language in cs.JS_TS_LANGUAGES
-            else cs.PY_METHOD_INIT
-        )
-        init_qn = f"{callee_qn}{cs.SEPARATOR_DOT}{ctor_member}"
+        # Redirect the CALLS edge to the constructor member the language
+        # names (Python's `__init__`, JS/TS's `constructor`) so an
+        # explicitly-declared constructor is reachable.
+        init_qn = f"{callee_qn}{cs.SEPARATOR_DOT}{ctx.calls.constructor_member}"
         if init_qn not in self._resolver.function_registry:
             return None
         return (cs.NodeLabel.METHOD, init_qn)
@@ -2871,13 +2790,7 @@ class CallProcessor:
         class_variants: list[str],
         ctor_rel: cs.RelationshipType = cs.RelationshipType.CALLS,
     ) -> None:
-        if ctx.language == cs.SupportedLanguage.CPP:
-            self._cpp.emit_ctor_calls(ctx.caller_spec, callee_qn)
-            return
-        if ctx.language == cs.SupportedLanguage.SCALA:
-            self._scala.emit_auxiliary_ctor_calls(
-                ctx.caller_spec, class_variants, ctx.ensure_rel
-            )
+        if ctx.calls.emit_constructor_calls(ctx, callee_qn, class_variants):
             return
         # Every class variant INSTANTIATES above, so every one
         # takes its constructors too: `Box@8` for `class Box<T>`
@@ -2921,7 +2834,7 @@ class CallProcessor:
             self._resolver.member_alias_fanout(
                 callee_qn, call_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
             )
-            if ctx.is_python and cs.SEPARATOR_DOT in call_name
+            if ctx.calls.fans_out_member_aliases and cs.SEPARATOR_DOT in call_name
             else [callee_qn]
         )
         targets = self._resolver.lexical_call_targets(
@@ -2934,10 +2847,7 @@ class CallProcessor:
             ],
             ctx.caller_qn,
         )
-        if ctx.language in (
-            cs.SupportedLanguage.RUST,
-            cs.SupportedLanguage.JULIA,
-        ):
+        if ctx.calls.separate_macro_namespace:
             # Filter the fan-out by the macro registry: an invocation
             # binds only macros, a plain call only non-macros.
             is_macro_invocation = call_node.type in (
@@ -2965,11 +2875,9 @@ class CallProcessor:
         # The resolver's verdict on this callee, then one edge per
         # same-named candidate when the callee fans out (issue #1526).
         self._resolution = self._verdict
-        exact_in_every_build: dict[str, bool] = {}
-        if ctx.language == cs.SupportedLanguage.GO:
-            targets, exact_in_every_build = self._go.build_targets(
-                ctx.module_qn, callee_type, callee_qn, targets
-            )
+        targets, exact_in_every_build = ctx.calls.build_targets(
+            ctx.module_qn, callee_type, callee_qn, targets
+        )
         if len(targets) > 1:
             self._resolution = cs.EdgeResolution.OVERLOAD
         call_resolution = self._resolution
@@ -2998,10 +2906,9 @@ class CallProcessor:
             cs.NodeLabel.FUNCTION,
             cs.NodeLabel.METHOD,
         ):
-            if ctx.is_python:
-                self._python.emit_binding_twin(
-                    ctx.caller_spec, target_qn, target_type, ctx.ensure_rel
-                )
+            ctx.calls.emit_binding_twin(
+                ctx.caller_spec, target_qn, target_type, ctx.ensure_rel
+            )
             return
         # A callable variant takes its OWN label: a Scala method's local def
         # or anonymous-object member registers as a Function beside the
@@ -3021,28 +2928,12 @@ class CallProcessor:
         callee_type: str,
         callee_qn: str,
     ) -> None:
-        if ctx.language == cs.SupportedLanguage.GO:
-            self._go.emit_callee_fanouts(
-                ctx.caller_spec, ctx.module_qn, callee_type, callee_qn, ctx.ensure_rel
-            )
-        elif callee_type == cs.NodeLabel.METHOD:
+        if (
+            not ctx.calls.emit_dispatch_fanouts(ctx, callee_type, callee_qn)
+            and callee_type == cs.NodeLabel.METHOD
+        ):
             self._emit_interface_sole_impls(ctx, callee_qn)
-
-        if (
-            ctx.is_js_ts
-            and cs.SEPARATOR_DOT in call_name
-            and callee_type in (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD)
-        ):
-            self._js.emit_member_twins(ctx.caller_spec, callee_qn, ctx.ensure_rel)
-
-        if (
-            ctx.is_python
-            and callee_type == cs.NodeLabel.FUNCTION
-            and cs.SEPARATOR_DOT not in call_name
-        ):
-            self._python.emit_conditional_import_twin(
-                ctx.caller_spec, ctx.module_qn, call_name, callee_qn, ctx.ensure_rel
-            )
+        ctx.calls.emit_callee_twins(ctx, call_name, callee_type, callee_qn)
 
     def _emit_interface_sole_impls(self, ctx: CallScan, callee_qn: str) -> None:
         # A call bound to an interface/trait method (the static callee;

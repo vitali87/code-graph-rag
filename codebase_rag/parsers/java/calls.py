@@ -114,6 +114,7 @@ class JavaCallResolution(LanguageCalls):
 
     types_locals = True
     new_constructs_type = True
+    runs_declared_constructors = True
 
     def __init__(self, host: JavaCallHost, resolver: CallResolver) -> None:
         self._host = host

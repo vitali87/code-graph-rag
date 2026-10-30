@@ -40,6 +40,7 @@ class JuliaCallResolution(LanguageCalls):
     # calls.
     owns_nested_calls = True
     separate_macro_namespace = True
+    functions_shadow_types = True
 
     def __init__(self, host: JuliaCallHost) -> None:
         self._host = host

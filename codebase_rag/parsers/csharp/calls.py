@@ -287,6 +287,7 @@ class CSharpCallResolution(LanguageCalls):
     scans_callers_without_calls = True
     types_locals = True
     new_constructs_type = True
+    runs_declared_constructors = True
 
     def __init__(
         self,

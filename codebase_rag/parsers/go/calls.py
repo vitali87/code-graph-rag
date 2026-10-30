@@ -107,9 +107,11 @@ class GoCallHost(EdgeSiteHost, Protocol):
 class GoCallScan(Protocol):
     """The caller a Go call node is scanned in."""
 
+    caller_spec: tuple[str, str, str]
     module_qn: str
     class_context: str | None
     caller_qn: str
+    ensure_rel: Callable[..., None]
 
 
 class _ValueReceiverCallee(NamedTuple):
@@ -942,14 +944,16 @@ class GoCallResolution(LanguageCalls):
             for target in targets
         }
 
-    def emit_callee_fanouts(
-        self,
-        caller_spec: tuple[str, str, str],
-        module_qn: str,
-        callee_type: str,
-        callee_qn: str,
-        ensure_rel: Callable[..., None],
-    ) -> None:
+    def emit_dispatch_fanouts(
+        self, ctx: GoCallScan, callee_type: str, callee_qn: str
+    ) -> bool:
+        # Go's interface dispatch, which also covers an interface method's
+        # sole implementer, and its build-variant siblings.
+        caller_spec, module_qn, ensure_rel = (
+            ctx.caller_spec,
+            ctx.module_qn,
+            ctx.ensure_rel,
+        )
         if callee_type == cs.NodeLabel.FUNCTION:
             self._emit_build_variant_siblings(
                 caller_spec, module_qn, callee_qn, ensure_rel
@@ -961,6 +965,7 @@ class GoCallResolution(LanguageCalls):
                 self._emit_interface_dispatch(
                     caller_spec, module_qn, method_qn, ensure_rel, guessed=not exact
                 )
+        return True
 
     def _emit_build_variant_siblings(
         self,

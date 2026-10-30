@@ -96,6 +96,23 @@ class LanguageCalls:
     # Macros and functions live in SEPARATE namespaces: a macro invocation
     # binds only a macro, a plain call only a non-macro.
     separate_macro_namespace: ClassVar[bool] = False
+    # A constructor is a method named like its class, and a construction
+    # runs every one the class declares.
+    runs_declared_constructors: ClassVar[bool] = False
+    # The member a construction runs where the class declares it.
+    constructor_member: ClassVar[str] = cs.PY_METHOD_INIT
+    # A construction runs the class's own constructor or, where it declares
+    # none, the one it inherits.
+    inherits_constructors: ClassVar[bool] = False
+    # A call dispatches in the FUNCTION namespace: a same-named function
+    # owns `T(...)` over the type, and a type's construction runs its inner
+    # constructor.
+    functions_shadow_types: ClassVar[bool] = False
+    # A call bound to a Protocol stub runs on every conformer instead.
+    dispatches_protocol_stubs: ClassVar[bool] = False
+    # A `.member` call bound through a class-body alias may run every method
+    # the alias names.
+    fans_out_member_aliases: ClassVar[bool] = False
 
     def collect_callable_field_bindings(
         self, root_node: Node, module_qn: str, call_nodes: list[Node]
@@ -347,13 +364,85 @@ class LanguageCalls:
     ) -> None:
         """Write the edges a call whose callee did not bind still makes."""
 
+    def record_cross_module_use(self, module_qn: str, entity_qn: str) -> None:
+        """Record a module's use of a first-party entity, where the language
+        pins its imports by what each module uses."""
+
+    def bound_callee(
+        self,
+        ctx: CallScan,
+        call_node: Node,
+        call_name: str,
+        callee_type: str,
+        callee_qn: str,
+    ) -> tuple[str, str]:
+        """The callee a bound call's edges go to, after any edge the binding
+        itself implies."""
+        return callee_type, callee_qn
+
+    def emit_protocol_conformer_edges(
+        self,
+        caller_spec: tuple[str, str, str],
+        dispatch_targets: set[tuple[str, str]],
+        ensure_rel: Callable[..., None],
+    ) -> None:
+        """Write the calls a call bound to a Protocol stub makes on each
+        conformer."""
+
+    def ingest_receiver_dispatch(
+        self, ctx: CallScan, call_node: Node, call_name: str, callee_qn: str
+    ) -> None:
+        """Write the overrides a call through the instance's own receiver may
+        run besides the callee it binds."""
+
+    def emit_constructor_calls(
+        self, ctx: CallScan, callee_qn: str, class_variants: list[str]
+    ) -> bool:
+        """Write the constructor calls a construction makes where the language
+        finds its constructors its own way; True when it did."""
+        return False
+
+    def emit_binding_twin(
+        self,
+        caller_spec: tuple[str, str, str],
+        twin_qn: str,
+        twin_type: cs.NodeLabel,
+        ensure_rel: Callable[..., None],
+    ) -> None:
+        """Write the edge a callee's same-named twin of another kind takes,
+        where the name may hold either."""
+
+    def build_targets(
+        self,
+        module_qn: str,
+        callee_type: str,
+        callee_qn: str,
+        targets: list[str],
+    ) -> tuple[list[str], dict[str, bool]]:
+        """The targets a bound call reaches in the builds compiling the
+        caller, and whether each is exact in all of them."""
+        return targets, {}
+
+    def emit_dispatch_fanouts(
+        self, ctx: CallScan, callee_type: str, callee_qn: str
+    ) -> bool:
+        """Write the dispatch a bound call fans out to where the language
+        dispatches its own way; True when it did, in place of the edge to an
+        interface method's sole implementer."""
+        return False
+
+    def emit_callee_twins(
+        self, ctx: CallScan, call_name: str, callee_type: str, callee_qn: str
+    ) -> None:
+        """Write the edges to the twins of a bound callee the call may run
+        instead."""
+
 
 @dataclass(slots=True)
 class CallScan:
     # Per-invocation state _ingest_function_calls hands every call node it
-    # scans: the caller, its language's call strategy and the language flags
-    # not yet read off it, the bound resolvers, and the lazily-built alias
-    # maps shared across the caller's call nodes.
+    # scans: the caller, its language's call strategy and bound resolvers,
+    # and the lazily-built alias maps shared across the caller's call nodes.
     caller_node: Node
     caller_qn: str
     caller_spec: tuple[str, str, str]
@@ -366,8 +455,6 @@ class CallScan:
     local_var_types: dict[str, str] | None
     span_bindings: list[tuple[int, int, str, str]]
     caller_params: frozenset[str]
-    is_js_ts: bool
-    is_python: bool
     cpp_template_params: frozenset[str]
     resolve_func: Callable[..., tuple[str, str] | None]
     resolve_builtin: Callable[[str], tuple[str, str] | None] | None

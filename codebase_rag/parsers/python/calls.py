@@ -162,7 +162,6 @@ class PythonCallScan(Protocol):
     queries: Mapping[cs.SupportedLanguage, LanguageQueries]
     class_context: str | None
     local_var_types: dict[str, str] | None
-    is_python: bool
     resolve_func: Callable[..., tuple[str, str] | None]
     ensure_rel: Callable[..., None]
     alias_map: dict[str, str] | None
@@ -351,8 +350,7 @@ def receiver_rebinding_at(
     # receiver can have been rebound; every other call skips the scan.
     receiver, _, member = call_name.partition(cs.SEPARATOR_DOT)
     if (
-        not ctx.is_python
-        or not member
+        not member
         or receiver not in (cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS)
         or not ctx.local_var_types
         or receiver not in ctx.local_var_types
@@ -376,6 +374,8 @@ class PythonCallResolution(LanguageCalls):
     references_arguments = True
     binds_callable_fields = True
     types_locals = True
+    dispatches_protocol_stubs = True
+    fans_out_member_aliases = True
 
     def __init__(self, host: PythonCallHost, resolver: CallResolver) -> None:
         self._host = host
@@ -943,6 +943,36 @@ class PythonCallResolution(LanguageCalls):
                 (conformer_type, cs.KEY_QUALIFIED_NAME, target_qn),
             )
 
+    def ingest_receiver_dispatch(
+        self, ctx: PythonCallScan, call_node: Node, call_name: str, callee_qn: str
+    ) -> None:
+        if (
+            ctx.class_context
+            and (
+                call_name.startswith(cs.PY_SELF_PREFIX)
+                or call_name.startswith(cs.PY_CLS_PREFIX)
+            )
+            # A call that runs after `self = Other()` on every path calls
+            # through that value's type, which the resolved edge follows.
+            and not (
+                (rebinding := receiver_rebinding_at(ctx, call_node, call_name))
+                and rebinding.always
+            )
+        ):
+            # self.M()/cls.M() statically targets the enclosing class's own or
+            # inherited M and dynamically dispatches to every concrete subclass
+            # override, so emit an edge to each in ADDITION to the resolved edge
+            # below; otherwise a base (or override) reached only through the
+            # self-call looks dead. Anchor on the enclosing class, not the
+            # resolved callee: when M is abstract with several overrides the trie
+            # resolves the call to an arbitrary sibling, so anchoring there would
+            # miss the base and the others. The self/cls receiver excludes
+            # super().M() and Base.M() (not virtual dispatch). Skip self.attr.M()
+            # (a call on a member, not on self).
+            self.emit_self_dispatch(
+                ctx.caller_spec, ctx.class_context, call_name, ctx.ensure_rel
+            )
+
     def emit_self_dispatch(
         self,
         caller_spec: tuple[str, str, str],
@@ -993,6 +1023,14 @@ class PythonCallResolution(LanguageCalls):
                 caller_spec,
                 cs.RelationshipType.CALLS,
                 (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, init_qn),
+            )
+
+    def emit_callee_twins(
+        self, ctx: PythonCallScan, call_name: str, callee_type: str, callee_qn: str
+    ) -> None:
+        if callee_type == cs.NodeLabel.FUNCTION and cs.SEPARATOR_DOT not in call_name:
+            self.emit_conditional_import_twin(
+                ctx.caller_spec, ctx.module_qn, call_name, callee_qn, ctx.ensure_rel
             )
 
     def emit_conditional_import_twin(
