@@ -127,16 +127,29 @@ def test_a_dropped_parameter_the_body_still_reads_refuses(temp_repo: Path) -> No
     assert _read(root, UTIL) == UTIL_SOURCE
 
 
-def test_a_reorder_that_moves_a_default_before_what_it_reads_refuses(
-    temp_repo: Path,
+@pytest.mark.parametrize(
+    ("params", "reason"),
+    [
+        # `(b = a, a = 1)` would throw ReferenceError on `helper()`: `a` is
+        # not bound yet when `b`'s default runs.
+        ("(a = 1, b = a)", "the default of b reads `a`"),
+        # `(b = g(), a = f())` would call `g` before `f` on `helper()`.
+        ("(a = f(), b = g())", "run code"),
+    ],
+    ids=["reads-later", "runs-code"],
+)
+def test_a_reorder_that_changes_how_defaults_run_refuses(
+    temp_repo: Path, params: str, reason: str
 ) -> None:
-    # `(b = a, a = 1)` would throw ReferenceError on `helper()`: `a` is not
-    # bound yet when `b`'s default runs.
-    util = "function helper(a = 1, b = a) {\n  return b;\n}\nmodule.exports = { helper };\n"
+    util = (
+        "function f() { return 1; }\nfunction g() { return 2; }\n"
+        f"function helper{params} {{\n  return b;\n}}\n"
+        "module.exports = { helper };\n"
+    )
     app = "const { helper } = require('./util');\nfunction run() {\n  return helper();\n}\n"
     root = _indexed(temp_repo, util=util, app=app)
 
-    with pytest.raises(SignatureRefused, match="the default of b reads `a`"):
+    with pytest.raises(SignatureRefused, match=reason):
         _change(root, HELPER, ["b", "a"])
     assert _read(root, UTIL) == util
     assert _read(root, APP) == app

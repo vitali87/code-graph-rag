@@ -54,6 +54,10 @@ positionally:
 - A new header in which a default reads its own parameter or a later one
   refuses: parameters bind left to right, so that default would throw
   ReferenceError. Reordering `(a = 1, b = a)` to `(b = a, a = 1)` is one.
+  So does a reorder that would run two kept defaults' code in another
+  order: `(a = f(), b = g())` to `(b = g(), a = f())` would call `g` first.
+  A default counts as running code unless it is one of the values above
+  that may move at a site.
 
 ## The new parameter list
 
