@@ -61,7 +61,7 @@ class ScalaCallResolution:
         # `new shop.Cart()` names no import, so only the package index
         # reaches it.
         return ScalaCallee(
-            *self._resolver.resolve_scala_callee(
+            *self._resolver.scala.resolve_scala_callee(
                 call_name,
                 ctx.module_qn,
                 call_node.start_byte,
@@ -89,7 +89,7 @@ class ScalaCallResolution:
         receiver_type = binding.type_name if binding is not None else receiver
         if receiver_type is None:
             return None
-        callee_info = self._resolver.resolve_scala_selection(
+        callee_info = self._resolver.scala.resolve_scala_selection(
             receiver_type, member, ctx.module_qn, ctx.class_context, node.start_byte
         )
         if callee_info is None:

@@ -31,6 +31,7 @@ from .php.class_names import ClassPath as PhpClassPath
 from .python import resolution as python_resolution
 from .python import resolve_class_name
 from .rust.resolution import RustResolver, rust_caller
+from .scala.resolution import ScalaResolver
 from .type_inference import TypeInferenceEngine
 
 _CHAINED_METHOD_PATTERN = re.compile(r"\.([^.()]+)$")
@@ -110,6 +111,7 @@ class CallResolver:
         "java",
         "csharp",
         "lua",
+        "scala",
     )
 
     def __init__(
@@ -206,6 +208,7 @@ class CallResolver:
             self, function_registry, import_processor, type_inference
         )
         self.lua = LuaResolver(self, function_registry)
+        self.scala = ScalaResolver(self, function_registry, import_processor)
 
     def record_ctor_params(self, class_qn: str, params: tuple[str, ...]) -> None:
         self._ctor_params[class_qn] = params
@@ -2409,75 +2412,6 @@ class CallResolver:
             )
             return self.function_registry[method_qn], method_qn
         return self._resolve_inherited_method(class_qn, method_name)
-
-    def resolve_scala_selection(
-        self,
-        receiver_type: str,
-        member: str,
-        module_qn: str,
-        class_context: str | None,
-        position: int,
-    ) -> tuple[str, str] | None:
-        """The method a parameterless Scala selection `receiver.member` runs.
-
-        A `val` read and a parameterless call are spelled alike (`c.size`), so
-        only a receiver whose class is KNOWN decides: `this`, a local typed by
-        its binding, or an object named outright. `receiver_type` is the type
-        name written for it, or `this`. The member must be a method of that
-        class or an ancestor; no name-wide fallback answers for it.
-        """
-        class_qn = (
-            class_context
-            if receiver_type == cs.SCALA_THIS
-            else self.scala_class_qn(receiver_type, module_qn, position)
-        )
-        if class_qn is None:
-            return None
-        result = self._try_resolve_method(class_qn, member)
-        if result is None or result[0] != cs.NodeLabel.METHOD:
-            return None
-        return result
-
-    def scala_class_qn(
-        self, written: str, module_qn: str, position: int | None = None
-    ) -> str | None:
-        """The registered class a type name written in a Scala file names."""
-        class_qn = self.import_processor.scala.scala_type_qn(
-            module_qn, written, position
-        )
-        if (
-            class_qn is None
-            or self.function_registry.get(class_qn) != cs.NodeLabel.CLASS
-        ):
-            return None
-        return class_qn
-
-    def resolve_scala_callee(
-        self, call_name: str, module_qn: str, position: int, constructing: bool
-    ) -> tuple[bool, tuple[str, str] | None]:
-        """A Scala callee named through the imports in scope where it is called.
-
-        Decided (True) for a `new C(...)` the compiler's lookup reaches, and
-        for any name a package block around the call imports: that block's
-        import is the only binding visible there, so the file-level map, which
-        a sibling block may share a name with, must not answer. Undecided
-        otherwise.
-        """
-        if constructing and (
-            class_qn := self.scala_class_qn(call_name, module_qn, position)
-        ):
-            return True, (cs.NodeLabel.CLASS, class_qn)
-        head, _, rest = call_name.partition(cs.SEPARATOR_DOT)
-        imported = self.import_processor.scala.scala_block_import(
-            module_qn, head, position
-        )
-        if imported is None:
-            return False, None
-        target = f"{imported}{cs.SEPARATOR_DOT}{rest}" if rest else imported
-        kind = self.function_registry.get(target)
-        if kind is None or (constructing and kind != cs.NodeLabel.CLASS):
-            return True, None
-        return True, (kind, target)
 
     def resolve_builtin_call(self, call_name: str) -> tuple[str, str] | None:
         return resolve_js_builtin_call(call_name)
