@@ -376,18 +376,18 @@ class DefinitionProcessor:
 
     def resolve_deferred_cpp_methods(self) -> int:
         """Ingest the out-of-class C++ methods held until every class is
-        known (`FunctionIngest.resolve_deferred_cpp_methods`)."""
-        return self.function_ingest.resolve_deferred_cpp_methods()
+        known (`CppFunctionIngest.resolve_deferred_methods`)."""
+        return self.function_ingest.cpp.resolve_deferred_methods()
 
     def resolve_deferred_cpp_artifacts(self) -> int:
         """Decide the held-back artifact-shaped C++ nodes
-        (`FunctionIngest.resolve_deferred_cpp_artifacts`)."""
-        return self.function_ingest.resolve_deferred_cpp_artifacts()
+        (`CppFunctionIngest.resolve_deferred_artifacts`)."""
+        return self.function_ingest.cpp.resolve_deferred_artifacts()
 
     def resolve_deferred_cpp_prototypes(self) -> int:
         """Register the held-back C++ prototypes no definition duplicates
-        (`FunctionIngest.resolve_deferred_cpp_prototypes`)."""
-        return self.function_ingest.resolve_deferred_cpp_prototypes()
+        (`CppFunctionIngest.resolve_deferred_prototypes`)."""
+        return self.function_ingest.cpp.resolve_deferred_prototypes()
 
     def resolve_deferred_go_methods(self) -> int:
         """Ingest the Go receiver methods held until every receiver type is
@@ -401,23 +401,23 @@ class DefinitionProcessor:
 
     def resolve_deferred_cpp_containment(self) -> int:
         """Emit DEFINES for functions nested in out-of-class C++ method bodies
-        (`FunctionIngest.resolve_deferred_cpp_containment`)."""
-        return self.function_ingest.resolve_deferred_cpp_containment()
+        (`CppFunctionIngest.resolve_deferred_containment`)."""
+        return self.function_ingest.cpp.resolve_deferred_containment()
 
     def resolve_deferred_cpp_module_impls(self) -> int:
         """Emit the C++ ModuleImplementation IMPLEMENTS edges whose interface
-        exists (`ClassIngest.resolve_deferred_cpp_module_impls`)."""
-        return self.class_ingest.resolve_deferred_cpp_module_impls()
+        exists (`CppClassIngest.resolve_deferred_module_impls`)."""
+        return self.class_ingest.cpp.resolve_deferred_module_impls()
 
     def resolve_deferred_forward_declarations(self) -> int:
         """Drop or register the held-back C++ forward declarations
-        (`ClassIngest.resolve_deferred_forward_declarations`)."""
-        return self.class_ingest.resolve_deferred_forward_declarations()
+        (`CppClassIngest.resolve_deferred_forward_declarations`)."""
+        return self.class_ingest.cpp.resolve_deferred_forward_declarations()
 
     def resolve_deferred_cpp_inherits(self) -> int:
         """Emit the C++ INHERITS edges held until every class is registered
-        (`ClassIngest.resolve_deferred_cpp_inherits`)."""
-        return self.class_ingest.resolve_deferred_cpp_inherits()
+        (`CppClassIngest.resolve_deferred_inherits`)."""
+        return self.class_ingest.cpp.resolve_deferred_inherits()
 
     def resolve_deferred_inherits(self) -> int:
         """Emit the non-C++ INHERITS/IMPLEMENTS edges held until every class
@@ -659,7 +659,7 @@ class DefinitionProcessor:
                     },
                 )
             if language == cs.SupportedLanguage.CPP:
-                self.class_ingest.ingest_cpp_module_declarations(
+                self.class_ingest.cpp.ingest_module_declarations(
                     root_node, module_qn, file_path
                 )
                 CppTypeInferenceEngine().collect_type_aliases(

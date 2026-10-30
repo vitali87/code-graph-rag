@@ -16,19 +16,15 @@ from ...language_spec import LanguageSpec, module_directory_qn
 from ...node_text import safe_decode_text, sorted_captures
 from ...types_defs import (
     CppDefinitionSpan,
-    DeferredCppInherit,
     DeferredInherit,
     FunctionLocation,
-    FunctionSpanKey,
     PropertyDict,
     RustTraitImpl,
 )
 from ...utils import qn_markers
 from ...utils.path_utils import cached_relative_path, cached_resolve_posix
 from ..anchor_hash import anchor_hash_props
-from ..cpp import local_types as cpp_local_types
-from ..cpp import utils as cpp_utils
-from ..cpp.type_inference import CppTypeInferenceEngine
+from ..cpp import class_ingest as cpp_class_ingest
 from ..cpp.utils import record_cpp_definition_span
 from ..csharp import utils as csharp_utils
 from ..csharp.arity import CSharpArityIndex
@@ -147,26 +143,6 @@ def _skip_method(
     return _is_nested_inside_function(method_node, class_body, lang_config)
 
 
-class _DeferredForwardDecl(NamedTuple):
-    # A C/C++ forward declaration held back until every file's real definitions
-    # are registered, so we can tell an only-forward-declared type (keep it) from
-    # one that also has a bodied definition elsewhere (drop the phantom).
-    class_node: Node
-    class_name: str
-    # The namespace-qualified name (module-file prefix stripped, so `A::Foo` is
-    # `A.Foo` regardless of which header declares it). Comparing on this, not the
-    # bare simple name, keeps a forward-declared `B::Foo` when only `A::Foo` is
-    # defined, while still matching a cross-file forward/definition of one type.
-    ns_qn: str
-    module_qn: str
-    language: cs.SupportedLanguage
-    lang_queries: LanguageQueries
-    lang_config: LanguageSpec
-    file_path: Path | None
-    sorted_func_nodes: list[Node] | None
-    func_node_starts: list[int] | None
-
-
 class RustImplScope(NamedTuple):
     class_qn: str
     module_qn: str
@@ -193,55 +169,6 @@ def _impl_body_method_nodes(
         return None
     method_captures = sorted_captures(QueryCursor(method_query), body_node)
     return method_captures.get(cs.CAPTURE_FUNCTION, [])
-
-
-def _is_cpp_template_inner_specifier(
-    class_node: Node, language: cs.SupportedLanguage
-) -> bool:
-    return (
-        language == cs.SupportedLanguage.CPP
-        and class_node.type in cs.CPP_TYPE_SPECIFIER_NODE_TYPES
-        and class_node.parent is not None
-        and class_node.parent.type == cs.CppNodeType.TEMPLATE_DECLARATION
-    )
-
-
-def _is_elaborated_type_use(class_node: Node, language: cs.SupportedLanguage) -> bool:
-    # `struct Table *metatable;`, `f(struct stat *st)`, `sizeof(struct node)`:
-    # a bodyless tag written as the type of something only names a type
-    # declared elsewhere. Indexing it minted a Class nested under whatever
-    # held the use (`Udata.Table`, `node.node`, libc's `stat`), and that
-    # phantom could even win the field's OF_TYPE edge (issue #2615). A forward
-    # declaration has no declarator and stays on the deferred path, as does a
-    # bodyless typedef: `typedef struct lua_State lua_State;` is C's
-    # opaque-handle idiom and may be the only declaration the type has.
-    if (
-        language not in cs.C_FAMILY_LANGUAGES
-        or class_node.type not in cs.C_ELABORATED_TYPE_NODE_TYPES
-        or class_node.child_by_field_name(cs.FIELD_BODY) is not None
-        or (parent := class_node.parent) is None
-        or parent.type == cs.CppNodeType.TYPE_DEFINITION
-        or (written := parent.child_by_field_name(cs.FIELD_TYPE)) is None
-        or written.id != class_node.id
-    ):
-        return False
-    return (
-        parent.type not in cs.C_FORWARD_DECLARING_NODE_TYPES
-        or parent.child_by_field_name(cs.FIELD_DECLARATOR) is not None
-    )
-
-
-def _cpp_type_spec(class_node: Node) -> Node | None:
-    if class_node.type != cs.CppNodeType.TEMPLATE_DECLARATION:
-        return class_node
-    return next(
-        (
-            child
-            for child in class_node.children
-            if child.type in cs.CPP_TYPE_SPECIFIER_NODE_TYPES
-        ),
-        None,
-    )
 
 
 def _class_start_point(
@@ -375,16 +302,12 @@ class ClassIngest:
         "cpp_definition_spans",
         "rust_impl_method_traits",
         "rust_inherent_impl_methods",
-        "cpp_module_interfaces",
-        "cpp_interfaces_parsed_this_run",
         "pending_field_types",
         "folded_overloads",
         "_deferred_parent_links",
-        "_deferred_forward_decls",
-        "_deferred_cpp_inherits",
         "_deferred_inherits",
         "_rust_trait_impls",
-        "_deferred_cpp_module_impls",
+        "cpp",
     )
 
     def __init__(
@@ -424,8 +347,8 @@ class ClassIngest:
         # What a class's methods are written through, and where a
         # definition's docstring is read from.
         self._method_host = method_host
-        # A class's lexical parent, its DEFINES edge and the C++ class lookup
-        # are the function pass's, shared with every function it ingests.
+        # A class's lexical parent and its DEFINES edge are the function
+        # pass's, shared with every function it ingests.
         self._function_ingest = function_ingest
         # A Go interface's method specs are written by the Go interface pass.
         self._go_interface_ingest = go_interface_ingest
@@ -451,15 +374,11 @@ class ClassIngest:
         self.cpp_definition_spans = cpp_definition_spans
         self.rust_impl_method_traits = rust_impl_method_traits
         self.rust_inherent_impl_methods = rust_inherent_impl_methods
-        self.cpp_module_interfaces = cpp_module_interfaces
-        self.cpp_interfaces_parsed_this_run = cpp_interfaces_parsed_this_run
         self.pending_field_types = pending_field_types
         self.folded_overloads = folded_overloads
         # Shared with the function pass, which emits them once every parent
         # is registered.
         self._deferred_parent_links = deferred_parent_links
-        self._deferred_forward_decls: list[_DeferredForwardDecl] = []
-        self._deferred_cpp_inherits: list[DeferredCppInherit] = []
         # Non-C++ INHERITS/IMPLEMENTS held back until every class is
         # registered; resolve_deferred_inherits re-resolves the guesses.
         self._deferred_inherits: list[DeferredInherit] = []
@@ -468,30 +387,18 @@ class ClassIngest:
         # trait is registered, so resolve_deferred_inherits judges it and
         # flags the methods of the external ones (issue #1048).
         self._rust_trait_impls: list[RustTraitImpl] = []
-        # C++20 implementation units whose IMPLEMENTS edge waits for its
-        # interface to be known.
-        self._deferred_cpp_module_impls: list[tuple[str, str]] = []
-
-    def _namespace_qn(self, class_qn: str, module_qn: str) -> str:
-        # Strip the module-file prefix so two nodes for the same C++ type in
-        # different headers share one key (`leveldb.db.x.h.leveldb.VersionSet` and
-        # `...y.h.leveldb.VersionSet` both -> `leveldb.VersionSet`), while types in
-        # different namespaces stay distinct.
-        prefix = f"{module_qn}{cs.SEPARATOR_DOT}"
-        return class_qn[len(prefix) :] if class_qn.startswith(prefix) else class_qn
-
-    def _namespace_qn_has_definition(self, ns_qn: str) -> bool:
-        # A real definition of this namespace-qualified type is registered iff some
-        # class qn ends with it (`....leveldb.VersionSet`). find_ending_with is
-        # indexed by simple name, and because it is queried AFTER the registry is
-        # rehydrated from the graph, it also covers definitions in files an
-        # incremental run did not re-parse (issue: a forward decl must still drop
-        # when its definition lives in an unchanged file).
-        simple = ns_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
-        suffix = f"{cs.SEPARATOR_DOT}{ns_qn}"
-        return any(
-            qn.endswith(suffix)
-            for qn in self.function_registry.find_ending_with(simple)
+        self.cpp = cpp_class_ingest.CppClassIngest(
+            self,
+            function_ingest.cpp,
+            ingestor=ingestor,
+            repo_path=repo_path,
+            project_name=project_name,
+            function_registry=function_registry,
+            module_qn_to_file_path=module_qn_to_file_path,
+            import_processor=import_processor,
+            facts=facts,
+            module_interfaces=cpp_module_interfaces,
+            interfaces_parsed_this_run=cpp_interfaces_parsed_this_run,
         )
 
     def _resolve_to_qn(
@@ -568,51 +475,6 @@ class ClassIngest:
         ):
             return expanded, None
         return anchored, None
-
-    def ingest_cpp_module_declarations(
-        self,
-        root_node: Node,
-        module_qn: str,
-        file_path: Path,
-    ) -> None:
-        before = set(self.cpp_module_interfaces)
-        cpp_modules.ingest_cpp_module_declarations(
-            root_node,
-            module_qn,
-            file_path,
-            self.repo_path,
-            self.project_name,
-            self.ingestor,
-            self.cpp_module_interfaces,
-            self._deferred_cpp_module_impls,
-        )
-        # Remember what this parse added, so rehydration can rebuild the
-        # graph-derived entries without dropping an interface whose node
-        # write has not been flushed yet.
-        self.cpp_interfaces_parsed_this_run |= self.cpp_module_interfaces - before
-
-    def resolve_deferred_cpp_module_impls(self) -> int:
-        """Emit ModuleImplementation IMPLEMENTS edges for interfaces that exist.
-
-        An implementation unit (`module X;`) whose interface (`export module
-        X;`) lives in no parsed file has nothing real to point at; emitting
-        the edge anyway would mint a phantom the database drops.
-        """
-        deferred = self._deferred_cpp_module_impls
-        if not deferred:
-            return 0
-        self._deferred_cpp_module_impls = []
-        emitted = 0
-        for impl_qn, interface_qn in deferred:
-            if interface_qn not in self.cpp_module_interfaces:
-                continue
-            self.ingestor.ensure_relationship_batch(
-                (cs.NodeLabel.MODULE_IMPLEMENTATION, cs.KEY_QUALIFIED_NAME, impl_qn),
-                cs.RelationshipType.IMPLEMENTS,
-                (cs.NodeLabel.MODULE_INTERFACE, cs.KEY_QUALIFIED_NAME, interface_qn),
-            )
-            emitted += 1
-        return emitted
 
     def ingest_classes_and_methods(
         self,
@@ -719,106 +581,6 @@ class ClassIngest:
             start = _class_start_point(class_node, cs.SupportedLanguage.PYTHON)
             reservations[class_qn] = min(reservations.get(class_qn, start), start)
         self.function_registry.reserve_qns(reservations)
-
-    def resolve_deferred_forward_declarations(self) -> int:
-        # Run after every file's definitions are registered. A deferred forward
-        # declaration whose class name already produced a real node is a phantom
-        # (the bodied definition exists) -> drop it. Otherwise it is the only
-        # representation of the type -> register it now. Deterministic: the
-        # deferred list is in file (sorted) order, and the first surviving forward
-        # declaration of an only-declared type claims the name for the rest.
-        deferred = self._deferred_forward_decls
-        if not deferred:
-            return 0
-        self._deferred_forward_decls = []
-        registered = 0
-        for entry in deferred:
-            # Drop the forward declaration only when a real definition of the SAME
-            # namespace-qualified type exists (not merely the same simple name in
-            # another namespace). Otherwise it is the type's only node -> keep it.
-            if self._namespace_qn_has_definition(entry.ns_qn):
-                continue
-            self._process_class_node(
-                entry.class_node,
-                entry.module_qn,
-                entry.language,
-                entry.lang_queries,
-                entry.lang_config,
-                entry.file_path,
-                sorted_func_nodes=entry.sorted_func_nodes,
-                func_node_starts=entry.func_node_starts,
-                allow_defer=False,
-            )
-            registered += 1
-        return registered
-
-    def resolve_deferred_cpp_inherits(self) -> int:
-        """Emit C++ INHERITS edges now that every class is registered.
-
-        A base written in another header resolves scope-first across all
-        parsed files (the same lookup out-of-class methods use); a base that
-        resolves nowhere emits no edge, because the module-anchored guess is a
-        phantom endpoint the database silently drops anyway. Resolved qns
-        replace the guesses in class_inheritance in place so Pass-3 method
-        resolution and override detection walk the real hierarchy.
-        """
-        deferred = self._deferred_cpp_inherits
-        if not deferred:
-            return 0
-        self._deferred_cpp_inherits = []
-        emitted = 0
-        for entry in deferred:
-            parent_qn = self._resolve_cpp_base_qn(entry)
-            if parent_qn is None:
-                module_qn = module_qn_for_entity(
-                    entry.child_qn, self.module_qn_to_file_path
-                )
-                if module_qn is not None:
-                    self.import_processor.note_unresolved(
-                        module_qn, written_simple_name(entry.base_name)
-                    )
-                continue
-            bases = self.facts.class_inheritance.get(entry.child_qn)
-            if bases is not None and entry.base_index < len(bases):
-                bases[entry.base_index] = parent_qn
-            rel.create_inheritance_relationship(
-                entry.child_label,
-                entry.child_qn,
-                parent_qn,
-                self.function_registry,
-                self.ingestor,
-                entry.base_index,
-            )
-            emitted += 1
-        return emitted
-
-    def _resolve_cpp_base_qn(self, entry: DeferredCppInherit) -> str | None:
-        normalized = entry.base_name.replace(
-            cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT
-        )
-        # Scope-first (see resolve_deferred_cpp_methods): the enclosing
-        # namespaces distinguish same-leaf classes. The child itself is
-        # excluded so `class Type : public other::Type` never self-inherits.
-        candidates = [normalized]
-        if entry.namespace_path:
-            candidates.insert(
-                0, f"{entry.namespace_path}{cs.SEPARATOR_DOT}{normalized}"
-            )
-        for candidate in candidates:
-            parent_qn, resolved = self._function_ingest.resolve_cpp_class_qn(
-                candidate, "", exclude_qn=entry.child_qn
-            )
-            if resolved:
-                return parent_qn
-        # The guess strips a qualified base (`other::Type`) to its leaf, so
-        # it can collide with the CHILD's own qn when the base is
-        # unresolvable; a self-INHERITS is never real.
-        if (
-            entry.guess_qn != entry.child_qn
-            and self.function_registry.get(entry.guess_qn) is not None
-        ):
-            return entry.guess_qn
-        return None
 
     def resolve_deferred_inherits(self) -> int:
         """Emit non-C++ INHERITS/IMPLEMENTS edges now that every class is registered.
@@ -1426,50 +1188,27 @@ class ClassIngest:
             )
             return
 
-        # A C/C++ forward declaration (`class Widget;`, or `template <T> class
-        # Widget;`) is a bodyless type specifier. Registering it collides with the
-        # real definition's qn (suffixing it `@line`) and fragments one class into
-        # several same-named nodes, which makes member-call resolution pick among
-        # duplicates nondeterministically. But a type ONLY ever forward-declared
-        # (an opaque handle, or a metaprogramming primary defined solely via
-        # specializations) has no other node, so it must be kept. We cannot tell
-        # which until every file's definitions are in, so defer the forward
-        # declaration and decide in resolve_deferred_forward_declarations.
-        # The class query captures a templated class twice: the inner
-        # class_specifier AND its template_declaration wrapper. The wrapper is the
-        # canonical node (it carries the template params and always registers with
-        # its natural qn); the inner specifier is redundant. Drop the inner one
-        # outright (for bodied definitions too, not just bodyless forward decls)
-        # so the class registers exactly once. Registering both suffixes the second
-        # `@line`, splitting members (which attach to the bodied specifier) away
-        # from the natural qn that callers reference, orphaning the whole class.
-        if _is_cpp_template_inner_specifier(class_node, language):
-            return
-        if _is_elaborated_type_use(class_node, language):
-            return
-
-        type_spec = _cpp_type_spec(class_node)
-        if (
-            type_spec is not None
-            and type_spec.type in cs.CPP_TYPE_SPECIFIER_NODE_TYPES
-            and type_spec.child_by_field_name(cs.FIELD_BODY) is None
-            and allow_defer
+        if language in cs.C_FAMILY_LANGUAGES and self.cpp.skips_class(
+            class_node,
+            module_qn,
+            language,
+            lang_queries,
+            lang_config,
+            file_path,
+            sorted_func_nodes,
+            func_node_starts,
+            allow_defer,
         ):
-            self._defer_forward_declaration(
-                class_node,
-                module_qn,
-                language,
-                lang_queries,
-                lang_config,
-                file_path,
-                sorted_func_nodes,
-                func_node_starts,
-            )
             return
 
-        local_qn = self._cpp_local_type_qn(class_node, module_qn, language)
+        type_spec = cpp_class_ingest.type_spec(class_node)
+        local_qn = (
+            self.cpp.local_type_qn(class_node, module_qn)
+            if language == cs.SupportedLanguage.CPP
+            else None
+        )
         identity = (
-            self._cpp_local_type_identity(class_node, local_qn)
+            self.cpp.local_type_identity(class_node, local_qn)
             if local_qn is not None
             else id_.resolve_class_identity(
                 class_node,
@@ -1543,7 +1282,7 @@ class ClassIngest:
         self.class_owner_module[class_qn] = module_qn
 
         parent_label, parent_qn, parent_span = (
-            self._cpp_local_type_parent(class_node, local_qn, module_qn)
+            self.cpp.local_type_parent(class_node, local_qn, module_qn)
             if local_qn is not None
             else self._function_ingest.determine_function_parent(
                 class_node, class_qn, module_qn, lang_config, language
@@ -1605,7 +1344,7 @@ class ClassIngest:
             partial(self._resolve_to_qn, language=language),
             self.function_registry,
             self.facts.interface_implementers,
-            defer_cpp_inherits=self._deferred_cpp_inherits,
+            defer_cpp_inherits=self.cpp.deferred_inherits,
             defer_inherits=self._deferred_inherits,
             csharp_base_kinds=csharp_base_kinds,
         )
@@ -1636,76 +1375,6 @@ class ClassIngest:
             module_qn=module_qn,
             container_label=label,
         )
-
-    def _cpp_local_type_qn(
-        self, class_node: Node, module_qn: str, language: cs.SupportedLanguage
-    ) -> str | None:
-        # A type written in a function body is that function's, not the
-        # module's: two functions' local `Checker`s must not collide, and an
-        # unnamed functor needs a name for its operator() to hang off
-        # (issue #2555).
-        if language != cs.SupportedLanguage.CPP:
-            return None
-        return cpp_local_types.local_type_qn(
-            class_node, module_qn, self.facts.function_locations
-        )
-
-    @staticmethod
-    def _cpp_local_type_identity(
-        class_node: Node, local_qn: str
-    ) -> tuple[str, str, bool]:
-        return (
-            local_qn,
-            local_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1],
-            cpp_utils.is_exported(class_node),
-        )
-
-    def _cpp_local_type_parent(
-        self, class_node: Node, local_qn: str, module_qn: str
-    ) -> tuple[str, str, FunctionSpanKey | None]:
-        # A local type is defined by the callable it is written in, or by the
-        # local type it is nested in. The callable's span pins the parent
-        # node for the deferred link: an out-of-line method registers only
-        # once its class resolves after every file, and an overload's local
-        # type must bind to that overload, not a same-named twin.
-        owner_qn = local_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
-        parent = cpp_local_types.local_type_parent(class_node)
-        if parent is None or parent.type in cs.CPP_COMPOUND_TYPES:
-            return cs.NodeLabel.CLASS, owner_qn, None
-        span = function_span_key(module_qn, parent)
-        recorded = self.facts.function_locations.get(span)
-        label = recorded.label if recorded is not None else cs.NodeLabel.METHOD
-        return label, owner_qn, span
-
-    def _defer_forward_declaration(
-        self,
-        class_node: Node,
-        module_qn: str,
-        language: cs.SupportedLanguage,
-        lang_queries: LanguageQueries,
-        lang_config: LanguageSpec,
-        file_path: Path | None,
-        sorted_func_nodes: list[Node] | None,
-        func_node_starts: list[int] | None,
-    ) -> None:
-        deferred_identity = id_.resolve_class_identity(
-            class_node, module_qn, language, lang_config, file_path
-        )
-        if deferred_identity:
-            self._deferred_forward_decls.append(
-                _DeferredForwardDecl(
-                    class_node,
-                    deferred_identity[1],
-                    self._namespace_qn(deferred_identity[0], module_qn),
-                    module_qn,
-                    language,
-                    lang_queries,
-                    lang_config,
-                    file_path,
-                    sorted_func_nodes,
-                    func_node_starts,
-                )
-            )
 
     def _record_language_type_props(
         self,
@@ -1862,13 +1531,7 @@ class ClassIngest:
         file_path: Path | None,
     ) -> None:
         if language == cs.SupportedLanguage.CPP:
-            # Record this class's member-field types now (from the class body,
-            # usually a header) so out-of-line method bodies in other files can
-            # resolve `field_.method()` via the field's type at call resolution.
-            if field_types := CppTypeInferenceEngine().build_field_type_map(
-                member_node
-            ):
-                self.facts.class_field_types[class_qn] = field_types
+            self.cpp.record_field_types(member_node, class_qn)
         elif language == cs.SupportedLanguage.GO:
             # Record Go struct field types so a field-hop receiver
             # (`engine.trees.get()`) resolves, and a local bound from such a call
@@ -2308,7 +1971,7 @@ class ClassIngest:
             if ingested_qn is not None:
                 self._record_ingested_method(scope, method_node, ingested_qn)
             if language == cs.SupportedLanguage.CPP:
-                self._record_cpp_method_return_type(method_node, class_qn)
+                self.cpp.record_method_return_type(method_node, class_qn)
 
     def _without_overload_stubs(
         self, method_nodes: list[Node], module_qn: str | None
@@ -2489,18 +2152,6 @@ class ClassIngest:
                 rt_text,
                 csharp_utils.generic_arity_of_type_text(raw),
             )
-
-    def _record_cpp_method_return_type(self, method_node: Node, class_qn: str) -> None:
-        # Record a C++ method's return type so a chained call off a
-        # static factory method (`parser(...).parse(...)`, nlohmann's
-        # basic_json) can type the receiver and resolve the next hop.
-        method_name = cpp_utils.extract_function_name(method_node)
-        if method_name and (
-            return_type := cpp_utils.extract_return_type_name(method_node)
-        ):
-            self.facts.method_return_types[
-                f"{class_qn}{cs.SEPARATOR_DOT}{method_name}"
-            ] = return_type
 
     def _register_java_name_alias(
         self, module_qn: str, method_node: Node, location: FunctionLocation
