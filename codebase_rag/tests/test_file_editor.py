@@ -113,16 +113,22 @@ class TestReplaceCodeBlock:
     ) -> None:
         test_file = temp_project_root / "replace_test.py"
         test_file.write_text("existing_code = True", encoding="utf-8")
-        success = file_editor.apply_code_block(
+        result = file_editor.apply_code_block(
             "replace_test.py", "nonexistent_code", "replacement"
-        ).success
-        assert success is False
+        )
+        assert result.success is False
+        assert result.error_message == cs.MSG_SURGICAL_TARGET_NOT_FOUND.format(
+            path="replace_test.py"
+        )
 
     def test_replace_block_file_not_found(self, file_editor: FileEditor) -> None:
-        success = file_editor.apply_code_block(
-            "nonexistent.py", "target", "replacement"
-        ).success
-        assert success is False
+        # It used to answer "target code not found", sending the caller to
+        # fix a target in a file that is not there.
+        result = file_editor.apply_code_block("nonexistent.py", "target", "replacement")
+        assert result.success is False
+        assert result.error_message == cs.MSG_SURGICAL_FILE_MISSING.format(
+            path="nonexistent.py"
+        )
 
     def test_replace_block_outside_root(self, file_editor: FileEditor) -> None:
         # It used to answer the generic "target not found" here.
@@ -142,17 +148,64 @@ class TestReplaceCodeBlock:
         (temp_project_root / "latin.py").write_bytes(b"name = '\xe9'\n")
         result = file_editor.apply_code_block("latin.py", "name", "other")
         assert result.success is False
-        assert result.error_message == cs.MSG_SURGICAL_FAILED.format(path="latin.py")
+        assert result.error_message == te.UNICODE_DECODE.format(path="latin.py")
 
     def test_replace_identical_content(
         self, file_editor: FileEditor, temp_project_root: Path
     ) -> None:
         test_file = temp_project_root / "identical_test.py"
         test_file.write_text("same_content = True", encoding="utf-8")
-        success = file_editor.apply_code_block(
+        result = file_editor.apply_code_block(
             "identical_test.py", "same_content = True", "same_content = True"
-        ).success
-        assert success is False
+        )
+        assert result.success is False
+        assert result.error_message == cs.MSG_SURGICAL_IDENTICAL.format(
+            path="identical_test.py"
+        )
+
+    def test_a_file_in_its_declared_encoding_is_edited_and_kept_in_it(
+        self, file_editor: FileEditor, temp_project_root: Path
+    ) -> None:
+        # read_file decodes a PEP 263 file in its declared codec, so the
+        # editor must too: it used to read UTF-8 and refuse the file the
+        # caller had just read.
+        source = temp_project_root / "latin.py"
+        source.write_bytes(b"# -*- coding: latin-1 -*-\nname = '\xe9'\n")
+        result = file_editor.apply_code_block("latin.py", "name", "other")
+        assert result.success is True
+        assert source.read_bytes() == b"# -*- coding: latin-1 -*-\nother = '\xe9'\n"
+
+    def test_a_replacement_that_cannot_be_encoded_leaves_the_file_whole(
+        self, file_editor: FileEditor, temp_project_root: Path
+    ) -> None:
+        # A JSON client can send a lone surrogate. The file used to be opened
+        # for writing, and so truncated, before the text failed to encode.
+        source = temp_project_root / "module.py"
+        source.write_text("value = 1\n", encoding="utf-8")
+        result = file_editor.apply_code_block("module.py", "1", "'\ud800'")
+        assert result.success is False
+        assert result.error_message is not None
+        assert "surrogates not allowed" in result.error_message
+        assert source.read_text(encoding="utf-8") == "value = 1\n"
+
+    def test_a_write_that_fails_leaves_the_file_whole_and_names_the_cause(
+        self,
+        file_editor: FileEditor,
+        temp_project_root: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        def _disk_full(*_args: object) -> None:
+            raise OSError("No space left on device")
+
+        monkeypatch.setattr("codebase_rag.utils.atomic_write.os.replace", _disk_full)
+        source = temp_project_root / "module.py"
+        source.write_text("value = 1\n", encoding="utf-8")
+        result = file_editor.apply_code_block("module.py", "1", "2")
+        assert result.error_message == cs.MSG_SURGICAL_ERROR.format(
+            path="module.py", error="No space left on device"
+        )
+        assert source.read_text(encoding="utf-8") == "value = 1\n"
+        assert [p.name for p in temp_project_root.iterdir()] == ["module.py"]
 
 
 class TestCreateFileEditorTool:

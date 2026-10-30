@@ -12,7 +12,9 @@ from .. import constants as cs
 from .. import logs as ls
 from .. import tool_errors as te
 from ..types_defs import AfterWrite
+from ..utils.atomic_write import write_bytes_atomic
 from ..utils.path_utils import resolve_in_root
+from ..utils.source_encoding import source_codec
 from . import tool_descriptions as td
 from .schemas import EditResult
 
@@ -97,10 +99,6 @@ class FileEditor:
         self, file_path: str, target_block: str, replacement_block: str
     ) -> EditResult:
         logger.info(ls.TOOL_FILE_EDIT_SURGICAL.format(path=file_path))
-        failed = EditResult(
-            file_path=file_path,
-            error_message=cs.MSG_SURGICAL_FAILED.format(path=file_path),
-        )
         full_path = resolve_in_root(self.project_root, file_path)
         if full_path is None:
             logger.error(ls.FILE_OUTSIDE_ROOT.format(action=cs.FileAction.EDIT))
@@ -113,11 +111,16 @@ class FileEditor:
         try:
             if not full_path.is_file():
                 logger.error(ls.EDITOR_FILE_NOT_FOUND.format(path=file_path))
-                return failed
+                return EditResult(
+                    file_path=file_path,
+                    error_message=cs.MSG_SURGICAL_FILE_MISSING.format(path=file_path),
+                )
 
-            with open(
-                full_path, encoding=cs.ENCODING_UTF8, newline=cs.NEWLINE_UNTRANSLATED
-            ) as f:
+            # In the codec read_file decodes with, so a file the caller just
+            # read in its declared encoding can be edited, and is written back
+            # in it (issue #2901).
+            codec = source_codec(full_path)
+            with open(full_path, encoding=codec, newline=cs.NEWLINE_UNTRANSLATED) as f:
                 text = _StoredText(f.read())
 
             target = _in_view(target_block)
@@ -125,7 +128,12 @@ class FileEditor:
             if not starts:
                 logger.error(ls.EDITOR_BLOCK_NOT_FOUND.format(path=file_path))
                 logger.debug(ls.EDITOR_LOOKING_FOR, block=repr(target_block))
-                return failed
+                return EditResult(
+                    file_path=file_path,
+                    error_message=cs.MSG_SURGICAL_TARGET_NOT_FOUND.format(
+                        path=file_path
+                    ),
+                )
 
             # Replacing the first of several matches edits a place the caller
             # may not have meant, so an ambiguous target changes nothing.
@@ -156,22 +164,29 @@ class FileEditor:
 
             if original_content == modified_content:
                 logger.warning(ls.EDITOR_NO_CHANGES_IDENTICAL)
-                return failed
+                return EditResult(
+                    file_path=file_path,
+                    error_message=cs.MSG_SURGICAL_IDENTICAL.format(path=file_path),
+                )
 
-            with open(
-                full_path,
-                "w",
-                encoding=cs.ENCODING_UTF8,
-                newline=cs.NEWLINE_UNTRANSLATED,
-            ) as f:
-                f.write(modified_content)
+            # Encoded before anything is written, and swapped in whole, as
+            # write_file and structural_replace write: a replacement the codec
+            # cannot hold, or a write cut short, leaves the file as it was.
+            write_bytes_atomic(full_path, modified_content.encode(codec))
 
             logger.success(ls.TOOL_FILE_EDIT_SURGICAL_SUCCESS.format(path=file_path))
             return EditResult(file_path=file_path)
 
+        except UnicodeDecodeError:
+            error_msg = te.UNICODE_DECODE.format(path=file_path)
+            logger.warning(ls.FILE_EDITOR_ERR.format(msg=error_msg))
+            return EditResult(file_path=file_path, error_message=error_msg)
         except Exception as e:  # noqa: BLE001 -- tool boundary: any failure becomes the tool's error result
             logger.error(ls.EDITOR_SURGICAL_ERROR.format(error=e))
-            return failed
+            return EditResult(
+                file_path=file_path,
+                error_message=cs.MSG_SURGICAL_ERROR.format(path=file_path, error=e),
+            )
 
     async def replace_code_block_async(
         self, file_path: str, target_block: str, replacement_block: str

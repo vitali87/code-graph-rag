@@ -1142,9 +1142,22 @@ CONTRACT_NEW_CYCLE = "new import cycle: {cycles}"
 CONTRACT_STALE_IMPORTER = "importers still target the old module: {sites}"
 CONTRACT_NEW_DUPLICATE = "new duplicate: {pairs}"
 CONTRACT_PARSE_FAILED = "files no longer parse: {files}"
-MSG_SURGICAL_FAILED = (
-    "Failed to apply surgical replacement in {path}. "
-    "Target code not found or patches failed."
+MSG_SURGICAL_FAILED = "Failed to apply surgical replacement in {path}."
+# Each refusal names its cause, so a caller can tell a target that does not
+# match from a file that could not be written.
+MSG_SURGICAL_TARGET_NOT_FOUND = (
+    "Failed to apply surgical replacement in {path}: the target code was not "
+    "found. The file was not changed."
+)
+MSG_SURGICAL_FILE_MISSING = (
+    "Failed to apply surgical replacement in {path}: the file does not exist."
+)
+MSG_SURGICAL_IDENTICAL = (
+    "Failed to apply surgical replacement in {path}: the replacement is "
+    "identical to the target, so there is nothing to change."
+)
+MSG_SURGICAL_ERROR = (
+    "Failed to apply surgical replacement in {path}: {error}. The file was not changed."
 )
 
 GREP_SUGGESTION = " Use 'rg' instead of 'grep' for text searching."
