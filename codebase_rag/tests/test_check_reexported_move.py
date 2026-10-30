@@ -365,15 +365,17 @@ def test_a_caller_through_the_module_name_is_not_dangling(temp_repo: Path) -> No
     assert _runs(temp_repo) == "hello-world"
 
 
-def _move_ts(root: Path, util_after: str) -> StructuralDelta:
+TS_SLUG = "export function slug(s: string): string {\n  return s.toLowerCase();\n}\n"
+
+
+def _move_ts(root: Path, util_after: str, text: str = TS_SLUG) -> StructuralDelta:
     """Index a TS `slug` and its caller, move `slug` into `src/text.ts`."""
-    util = "export function slug(s: string): string {\n  return s.toLowerCase();\n}\n"
     app = (
         'import { slug } from "./util";\n\n'
         "export function page(t: string): string {\n  return slug(t);\n}\n"
     )
-    store, updater = _index(root, {"src/util.ts": util, "src/app.ts": app})
-    (root / "src/text.ts").write_text(util, encoding="utf-8")
+    store, updater = _index(root, {"src/util.ts": TS_SLUG, "src/app.ts": app})
+    (root / "src/text.ts").write_text(text, encoding="utf-8")
     (root / "src/util.ts").write_text(util_after, encoding="utf-8")
     paths = ["src/util.ts", "src/text.ts"]
     return observe(
@@ -480,6 +482,57 @@ def test_a_typescript_import_the_old_module_exports_is_not_dangling(
 
     assert delta["dangling_callers"] == []
     assert delta["dangling_importers"] == []
+
+
+_TS_PLAIN_SLUG = "function slug(s: string): string {\n  return s.toLowerCase();\n}\n"
+
+
+@pytest.mark.parametrize(
+    ("text", "dangling"),
+    [
+        # Negative (Greptile, PR #3312): `text.ts` declares `slug` without
+        # exporting it, so `export { slug } from "./text"` is an error and
+        # binds nothing for `import { slug } from "./util"`.
+        pytest.param(_TS_PLAIN_SLUG, [("page", "util")], id="not-exported"),
+        # Negative: a default export binds `default`, not `slug`.
+        pytest.param(
+            f"export default {_TS_PLAIN_SLUG}", [("page", "util")], id="default-only"
+        ),
+        pytest.param(TS_SLUG, [], id="exported-declaration"),
+        pytest.param(
+            "export const slug = (s: string): string => s.toLowerCase();\n",
+            [],
+            id="exported-const",
+        ),
+        pytest.param(
+            f"{_TS_PLAIN_SLUG}\nexport {{ slug }};\n", [], id="exported-by-a-clause"
+        ),
+        pytest.param(
+            _TS_PLAIN_SLUG.replace("slug", "slugify", 1)
+            + "\nexport { slugify as slug };\n",
+            [],
+            id="exported-under-its-name",
+        ),
+    ],
+)
+def test_a_typescript_re_export_binds_only_what_its_target_exports(
+    temp_repo: Path, text: str, dangling: list[tuple[str, str]]
+) -> None:
+    delta = _move_ts(temp_repo, 'export { slug } from "./text";\n', text)
+
+    assert _callers(delta) == dangling
+
+
+def test_a_typescript_re_export_of_a_default_export_is_not_dangling(
+    temp_repo: Path,
+) -> None:
+    delta = _move_ts(
+        temp_repo,
+        'export { default as slug } from "./text";\n',
+        f"export default {_TS_PLAIN_SLUG}",
+    )
+
+    assert delta["dangling_callers"] == []
 
 
 def test_cgr_check_passes_a_move_with_a_re_export(temp_repo: Path) -> None:

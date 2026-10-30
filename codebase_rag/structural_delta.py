@@ -41,6 +41,7 @@ from .duplicates import _jaccard
 from .graph_query import QueryFn, _longer_project_prefixes, _opt_int, _prefix
 from .language_spec import get_language_for_extension
 from .parser_loader import load_parsers
+from .parsers.js_ts.commonjs_exports import is_commonjs_module
 from .types_defs import PropertyDict, ReingestReport, ResultRow
 
 _METHOD_LABELS = frozenset({cs.NodeLabel.METHOD.value})
@@ -1232,8 +1233,8 @@ class _AfterBindings:
 
         `for_callers` asks for a binding a call from another module still
         works through: a name only assigned a literal (`helper = None`)
-        cannot be called, and a JS/TS module shares an imported name only
-        by exporting it.
+        cannot be called, and a JS/TS module shares a name, declared or
+        imported, only by exporting it.
         """
         if (module, name) in seen:
             return False
@@ -1244,17 +1245,9 @@ class _AfterBindings:
             # nothing to check the name against, so the import is taken
             # at its word unless it names a symbol the edit removed.
             return qn not in self._gone
-        definitions, bindings = self._facts(path)
+        bindings = self._facts(path)[1]
         names = self._source_names(path)
-        # A Python module's source says which of its definitions run: the
-        # graph also holds a `def` under `if TYPE_CHECKING:`, which binds
-        # nothing at run time.
-        defined = (
-            qn in definitions
-            if names is None
-            else _binds_itself(names, name, for_callers)
-        )
-        if defined:
+        if self._defines(path, qn, name, names, for_callers):
             return True
         own = [
             binding
@@ -1267,6 +1260,32 @@ class _AfterBindings:
         if self._exports_locally(module, path, name, own, seen, for_callers):
             return True
         return names is not None and _unfollowed_import(names, name, shared)
+
+    def _defines(
+        self,
+        path: str,
+        qn: str,
+        name: str,
+        names: _SourceNames | None,
+        for_callers: bool,
+    ) -> bool:
+        """Whether the module at `path` binds `name` by a definition of its own.
+
+        A Python module's source says which of its definitions run: the
+        graph also holds a `def` under `if TYPE_CHECKING:`, which binds
+        nothing at run time. An ES module shares a declaration with a caller
+        elsewhere only by exporting it, which `_exports_locally` reads; a
+        CommonJS one publishes through `module.exports`, taken at its word.
+        """
+        if names is not None:
+            return _binds_itself(names, name, for_callers)
+        if qn not in self._facts(path)[0]:
+            return False
+        return (
+            not for_callers
+            or _language(path) not in cs.JS_TS_LANGUAGES
+            or self._js_exports(path).commonjs
+        )
 
     def _resolves(
         self,
@@ -1323,14 +1342,15 @@ class _AfterBindings:
         seen: frozenset[tuple[str, str]],
         for_callers: bool,
     ) -> bool:
-        """Whether a JS/TS module's `export { local as name }` binds `name`.
+        """Whether a JS/TS module exports a binding of its own as `name`.
 
-        A clause without `from` exports a binding of the module's own: its
-        declaration, or a name it imports, so `import { slug } from
-        "./text"; export { slug };` shares `slug` as `export { slug } from
-        "./text"` does, and `export { s as slug }` shares the `s` it imports
-        under that name. The graph records no edge for such a clause. An
-        `import type { slug }` binds no value for it to export.
+        `export function name`, `export default name` (as `default`) and a
+        clause without `from` export one: its declaration, or a name it
+        imports, so `import { slug } from "./text"; export { slug };` shares
+        `slug` as `export { slug } from "./text"` does, and `export { s as
+        slug }` shares the `s` it imports under that name. The graph records
+        no edge for such an export. An `import type { slug }` binds no value
+        for it to export.
         """
         exports = self._js_exports(path)
         local = exports.local.get(name)
@@ -1392,9 +1412,13 @@ class _JsExports(NamedTuple):
     # `import type { T }`), (line, col, name) for a type-only specifier
     # (`export { type T }`) binding `name`: TypeScript erases both.
     type_only: frozenset[tuple[int, int, str | None]] = frozenset()
-    # `{exported: local}` for each value `export { local as exported }` without
-    # `from`; a clause with `from` is an IMPORTS edge in the graph.
+    # `{exported: local}` for each value the module exports of its own:
+    # `export { local as exported }` without `from` (a clause with `from` is
+    # an IMPORTS edge in the graph), `export function local`, and `export
+    # default local` as `default`.
     local: dict[str, str] = {}
+    # Whether the module publishes through `module.exports` alone.
+    commonjs: bool = False
 
     def erased(self, binding: ImportBinding) -> bool:
         if binding.line is None or binding.col is None:
@@ -1424,6 +1448,7 @@ def _js_exports(text: str, language: cs.SupportedLanguage) -> _JsExports:
             continue
         if statement.type == cs.TS_EXPORT_STATEMENT:
             starts.add(at)
+            local.update(_js_declared_exports(statement))
         # Only an `export { ... }` without `from` shares the module's own
         # bindings: an import, like a re-export, always names its source.
         shares_own = statement.child_by_field_name(cs.FIELD_SOURCE) is None
@@ -1432,7 +1457,9 @@ def _js_exports(text: str, language: cs.SupportedLanguage) -> _JsExports:
                 type_only.add((*at, bound))
             elif shares_own:
                 local[bound] = name
-    return _JsExports(frozenset(starts), frozenset(type_only), local)
+    return _JsExports(
+        frozenset(starts), frozenset(type_only), local, is_commonjs_module(root)
+    )
 
 
 def _js_specifiers(statement: Node) -> Iterator[tuple[str, str, bool]]:
@@ -1455,6 +1482,50 @@ def _js_specifier_nodes(statement: Node) -> Iterator[Node]:
             for part in child.named_children:
                 if part.type == cs.TS_NAMED_IMPORTS:
                     yield from part.named_children
+
+
+def _js_declared_exports(statement: Node) -> Iterator[tuple[str, str]]:
+    """(exported, local) for each value an export statement declares.
+
+    `export function slug` exports `slug`; `export default function slug`
+    and `export default slug;` export `slug` as `default`.
+    """
+    declaration = statement.child_by_field_name(cs.FIELD_DECLARATION)
+    if declaration is None:
+        declaration = statement.child_by_field_name(cs.FIELD_VALUE)
+    default = any(child.type == cs.TS_EXPORT_DEFAULT for child in statement.children)
+    for local in _js_value_names(declaration):
+        yield (cs.JS_DEFAULT_EXPORT_NAME if default else local), local
+
+
+def _js_value_names(node: Node | None) -> Iterator[str]:
+    """The values a declaration, or an identifier, names at run time.
+
+    A type (`interface`, `type`) or an ambient declaration (`declare
+    function`) has none, nor does an anonymous `export default` value.
+    """
+    if node is None or node.type in _TS_DECLARATIONS_WITHOUT_VALUES:
+        return
+    if node.type == cs.TS_IDENTIFIER:
+        yield _node_text(node)
+        return
+    if name := _field_text(node, cs.FIELD_NAME):
+        yield name
+        return
+    # `export const slug = ..., other = ...`: one name per declarator.
+    for declarator in node.named_children:
+        target = declarator.child_by_field_name(cs.FIELD_NAME)
+        if (
+            declarator.type == cs.TS_VARIABLE_DECLARATOR
+            and target is not None
+            and target.type == cs.TS_IDENTIFIER
+        ):
+            yield _node_text(target)
+
+
+_TS_DECLARATIONS_WITHOUT_VALUES = cs.TS_TYPE_ONLY_EXPORT_DECLARATIONS | {
+    cs.TS_AMBIENT_DECLARATION
+}
 
 
 def _has_type_token(node: Node) -> bool:
