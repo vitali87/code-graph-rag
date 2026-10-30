@@ -1508,33 +1508,81 @@ def _js_declared_exports(statement: Node) -> Iterator[tuple[str, str]]:
     (`interface`, `type`) or an ambient declaration (`declare function`)
     exports no value.
     """
-    value = _js_exported_value(statement)
-    if value is None or value.type in _TS_DECLARATIONS_WITHOUT_VALUES:
+    declaration = statement.child_by_field_name(cs.FIELD_DECLARATION)
+    if declaration is None:
+        yield from _js_default_value_export(statement)
         return
-    names = _js_value_names(value)
+    if declaration.type in _TS_DECLARATIONS_WITHOUT_VALUES:
+        return
+    names = _js_value_names(declaration)
     if not _js_is_default(statement):
         yield from ((local, local) for local in names)
         return
     yield cs.JS_DEFAULT_EXPORT_NAME, next(names, cs.JS_DEFAULT_EXPORT_NAME)
 
 
+def _js_default_value_export(statement: Node) -> Iterator[tuple[str, str]]:
+    """`default` for `export default <expression>`, with the local it names.
+
+    Under its wrappers (`(slug as Fn)`), an identifier names a binding of
+    the module; any other value is the module's own, held by `default` only.
+    """
+    value = _js_default_value(statement)
+    if value is None:
+        return
+    is_name = value.type == cs.TS_IDENTIFIER
+    yield (
+        cs.JS_DEFAULT_EXPORT_NAME,
+        (_node_text(value) if is_name else cs.JS_DEFAULT_EXPORT_NAME),
+    )
+
+
 def _js_literal_exports(statement: Node) -> Iterator[str]:
-    """`default`, when `export default` takes a literal no call runs on."""
-    value = _js_exported_value(statement)
-    if (
-        _js_is_default(statement)
-        and value is not None
-        and value.type in cs.JS_LITERAL_VALUE_TYPES
-    ):
+    """`default`, when `export default` takes a value no call can run on."""
+    value = _js_default_value(statement)
+    if value is not None and _js_is_inert(value):
         yield cs.JS_DEFAULT_EXPORT_NAME
 
 
-def _js_exported_value(statement: Node) -> Node | None:
-    """What an export statement declares, or the value `export default` takes."""
-    declaration = statement.child_by_field_name(cs.FIELD_DECLARATION)
-    if declaration is not None:
-        return declaration
-    return statement.child_by_field_name(cs.FIELD_VALUE)
+def _js_default_value(statement: Node) -> Node | None:
+    """The value `export default <expression>` exports, under its wrappers."""
+    value = statement.child_by_field_name(cs.FIELD_VALUE)
+    if value is None or not _js_is_default(statement):
+        return None
+    return _js_unwrapped(value)
+
+
+def _js_unwrapped(node: Node) -> Node:
+    """The operand an expression evaluates to, through every wrapper.
+
+    `(x)`, `x as T`, `x satisfies T`, `x!` and `f<T>` evaluate to their
+    first operand; `<T>x`, `(a, x)` and `y = x` to their last.
+    """
+    while (index := cs.JS_VALUE_WRAPPER_OPERAND.get(node.type)) is not None:
+        # A comment between the parentheses is a node of its own.
+        operands = [c for c in node.named_children if c.type != cs.TS_COMMENT]
+        if not operands:
+            break
+        node = operands[index]
+    return node
+
+
+def _js_is_inert(node: Node) -> bool:
+    """Whether a value is a literal or a primitive, which no call runs on.
+
+    A unary or update operator always yields a primitive (`-1`, `void 0`),
+    as does a binary one but `&&`, `||` and `??`, which yield an operand.
+    Any other value (a conditional, an `await`) may be callable, so it is
+    taken as exported, as an unresolved binding is elsewhere in this check.
+    """
+    if node.type in cs.JS_INERT_VALUE_TYPES:
+        return True
+    operator = node.child_by_field_name(cs.FIELD_OPERATOR)
+    return (
+        node.type == cs.TS_BINARY_EXPRESSION
+        and operator is not None
+        and operator.type not in cs.JS_OPERAND_OPERATORS
+    )
 
 
 def _js_is_default(statement: Node) -> bool:

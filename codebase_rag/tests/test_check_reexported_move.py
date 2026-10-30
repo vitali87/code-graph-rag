@@ -570,6 +570,86 @@ def test_a_typescript_re_export_of_a_default_export(
     assert _callers(delta) == dangling
 
 
+_DANGLES = [("page", "util")]
+
+
+@pytest.mark.parametrize(
+    ("text", "dangling"),
+    [
+        # Negative (Greptile, PR #3312): a wrapper keeps the value inside it,
+        # so a literal under one still serves no caller.
+        pytest.param(
+            "export default ({ lower: true });\n", _DANGLES, id="parenthesized"
+        ),
+        pytest.param(
+            "export default ((({ lower: true })));\n", _DANGLES, id="nested-parens"
+        ),
+        pytest.param(
+            "export default ({ lower: true } /* options */);\n",
+            _DANGLES,
+            id="parenthesized-with-a-comment",
+        ),
+        pytest.param(
+            "export default { lower: true } as const;\n", _DANGLES, id="as-const"
+        ),
+        pytest.param(
+            "export default { lower: true } satisfies object;\n",
+            _DANGLES,
+            id="satisfies",
+        ),
+        pytest.param(
+            "export default <object>{ lower: true };\n",
+            _DANGLES,
+            id="type-assertion",
+        ),
+        pytest.param("export default (0, { lower: true });\n", _DANGLES, id="sequence"),
+        pytest.param('export default ["slug"];\n', _DANGLES, id="array"),
+        pytest.param("export default `slug`;\n", _DANGLES, id="template"),
+        pytest.param("export default -1;\n", _DANGLES, id="unary"),
+        pytest.param('export default "sl" + "ug";\n', _DANGLES, id="binary"),
+        # Negative: the name under the wrapper is one the module never binds.
+        pytest.param(
+            "export default (missing as unknown);\n", _DANGLES, id="unbound-name"
+        ),
+        # A name under a wrapper is the module's binding of it.
+        pytest.param(
+            f"{_TS_PLAIN_SLUG}\nexport default (slug as typeof slug);\n",
+            [],
+            id="as-name",
+        ),
+        pytest.param(
+            f"{_TS_PLAIN_SLUG}\nexport default slug!;\n", [], id="non-null-name"
+        ),
+        pytest.param(
+            f"{_TS_PLAIN_SLUG}\nexport default ({{ lower: true }}, slug);\n",
+            [],
+            id="sequence-ending-in-a-name",
+        ),
+        pytest.param(
+            "export default ((s: string): string => s) satisfies "
+            "(s: string) => string;\n",
+            [],
+            id="satisfies-arrow",
+        ),
+        # Either operand may be the function, so the value is exported.
+        pytest.param(
+            f"{_TS_PLAIN_SLUG}\nconst on = true;\nexport default on ? slug : slug;\n",
+            [],
+            id="conditional",
+        ),
+        pytest.param(
+            f"{_TS_PLAIN_SLUG}\nexport default null ?? slug;\n", [], id="nullish"
+        ),
+    ],
+)
+def test_a_default_export_is_read_through_its_wrappers(
+    temp_repo: Path, text: str, dangling: list[tuple[str, str]]
+) -> None:
+    delta = _move_ts(temp_repo, 'export { default as slug } from "./text";\n', text)
+
+    assert _callers(delta) == dangling
+
+
 def test_a_re_export_of_an_anonymous_default_class_is_not_dangling(
     temp_repo: Path,
 ) -> None:
