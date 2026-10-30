@@ -1,0 +1,4 @@
+category,label,tp,fp,fn,precision,recall,f1
+scip_calls,typescript,541,1270,342,0.2987,0.6127,0.4016
+scip_calls,typescript:dispatch,541,1270,342,0.2987,0.6127,0.4016
+scip_calls,typescript:exact,521,103,362,0.8349,0.59,0.6914

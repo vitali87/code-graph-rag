@@ -86,6 +86,40 @@ class _CapturingIngestor:
         return None
 
 
+class CallCapturingIngestor(_CapturingIngestor):
+    """The eval capture, also keeping each CALLS edge's resolution tier.
+
+    `rels` drops edge properties; the call oracles (TraceEval, SCIP) grade
+    precision per tier too, so CALLS rows keep `resolution` here as
+    (from_label, from_id, to_label, to_id, resolution).
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls: list[tuple[str, str, str, str, str]] = []
+
+    def ensure_relationship_batch(
+        self,
+        from_spec: tuple[str, str, PropertyValue],
+        rel_type: str,
+        to_spec: tuple[str, str, PropertyValue],
+        properties: PropertyDict | None = None,
+    ) -> None:
+        super().ensure_relationship_batch(from_spec, rel_type, to_spec, properties)
+        if str(rel_type) != cs.RelationshipType.CALLS.value:
+            return
+        resolution = (properties or {}).get(cs.KEY_RESOLUTION)
+        self.calls.append(
+            (
+                str(from_spec[0]),
+                str(from_spec[2]),
+                str(to_spec[0]),
+                str(to_spec[2]),
+                "" if resolution is None else str(resolution),
+            )
+        )
+
+
 _MODULE_LABEL = cs.NodeLabel.MODULE.value
 _EXTERNAL_MODULE_LABEL = cs.NodeLabel.EXTERNAL_MODULE.value
 _EXTERNAL_PACKAGE_LABEL = cs.NodeLabel.EXTERNAL_PACKAGE.value
@@ -2891,9 +2925,8 @@ class _StatefulIngestor:
                 self._in.get((edge[3], edge[4]), set()).discard(edge)
 
 
-def _capture(target: Path, project_name: str) -> _CapturingIngestor:
+def _run_capture(target: Path, project_name: str, ingestor: _CapturingIngestor) -> None:
     parsers, queries = load_parsers()
-    ingestor = _CapturingIngestor()
     exclude_paths, unignore_paths = ignore_rules(target)
     GraphUpdater(
         ingestor=ingestor,
@@ -2904,6 +2937,17 @@ def _capture(target: Path, project_name: str) -> _CapturingIngestor:
         unignore_paths=unignore_paths,
         project_name=project_name,
     ).run(force=True)
+
+
+def _capture(target: Path, project_name: str) -> _CapturingIngestor:
+    ingestor = _CapturingIngestor()
+    _run_capture(target, project_name, ingestor)
+    return ingestor
+
+
+def capture_calls(target: Path, project_name: str) -> CallCapturingIngestor:
+    ingestor = CallCapturingIngestor()
+    _run_capture(target, project_name, ingestor)
     return ingestor
 
 

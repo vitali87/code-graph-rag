@@ -1,0 +1,12 @@
+category,label,tp,fp,fn,precision,recall,f1
+traceeval,python,5492,1508,2116,0.7846,0.7219,0.7519
+traceeval,javascript,3242,3155,2404,0.5068,0.5742,0.5384
+traceeval,java,7625,726,1197,0.9131,0.8643,0.888
+traceeval,macro_avg,16359,5389,5717,0.7348,0.7201,0.7261
+traceeval,python:static,5577,1423,1011,0.7967,0.8465,0.8209
+traceeval,javascript:static,3260,2862,2105,0.5325,0.6076,0.5676
+traceeval,java:static,7625,726,1197,0.9131,0.8643,0.888
+traceeval,macro_avg:static,16462,5011,4313,0.7474,0.7728,0.7588
+traceeval,python:exact,5048,1267,2560,0.7994,0.6635,0.7251
+traceeval,javascript:exact,3035,2071,2611,0.5944,0.5375,0.5645
+traceeval,java:exact,7461,673,1361,0.9173,0.8457,0.88

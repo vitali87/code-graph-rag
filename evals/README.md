@@ -89,6 +89,113 @@ To keep the trace and the static graph in agreement, `calls_trace._frame_qn` att
 
 Covered by `codebase_rag/tests/test_l3_decorator_normalization.py`.
 
+## TraceEval — CALLS vs execution-verified edges (Python, JavaScript, Java)
+
+[TraceEval](https://arxiv.org/abs/2605.11006) (Li et al., 2026) is 10,583
+real-world programs harnessed from 1,600+ permissively-licensed repositories,
+each with a `callgraph.json` whose every edge was witnessed by a dynamic tracer
+(`sys.settrace` for Python, AST instrumentation for JavaScript, method-entry
+injection for Java). The paper scores ten LLMs on its held-out test split
+(2,129 programs: 769 Python, 649 JavaScript, 711 Java); this eval scores cgr's
+static `CALLS` graph on the same programs, the same way.
+
+```bash
+uv run python -m evals.traceeval                     # test split, all three languages
+uv run python -m evals.traceeval --language java --limit 50
+```
+
+The corpus is fetched on first use: the benchmark repository pinned to one
+commit, its `traceeval.zip` checked against a pinned SHA-256 before extraction
+(data is CC-BY 4.0; nothing is committed here). Each program is copied to a
+scratch workspace, indexed with the in-memory capture, and its `CALLS` edges
+renamed into the tracer's naming scheme (`evals/traceeval/naming.py`):
+
+- **Python**: `<module>.<qualname>`, cgr's qualified name minus its project and
+  module prefix.
+- **JavaScript**: the same shape, with module-level code always `main` (the
+  tracer concatenates the files into one script whose stack starts there) and
+  object-literal members named through the literal's binding
+  (`editor.makeDropdown`).
+- **Java**: `<package>.<Class>:<method>(<params>)`, which the tracer builds from
+  the source text with a regular expression. Rather than approximate it,
+  `java_tracer_names` runs that same pattern over the file and each cgr method is
+  matched to the header its span covers, so the rule's quirks (a `final`
+  parameter contributes `final`, an enum's methods are named after the last
+  `class`) are reproduced rather than guessed.
+
+Scores are edge-level, micro-averaged within a language and macro-averaged across
+languages, after the benchmark's own normalization (`init`, `nested_class`,
+`stdlib`, ported verbatim in behaviour from its `normalize_edges.py`). Three rows
+per language:
+
+- `<language>`: the **paper protocol**, which reads directly against the paper's
+  Table 3;
+- `<language>:static`: the **static protocol**, which additionally removes, on
+  both sides, two kinds of tracer output no static call graph can express under
+  those names: class bodies that `sys.settrace` reports as calls
+  (`main -> main.admin` for a lower-case stub class, `main.Model -> main.Model.Meta`;
+  a call made inside a class body is credited to the defining scope, as cgr
+  attributes it), and functions the tracers name by ordinal (`<lambda1>`,
+  `<genexpr>`, `<arrow3>`), which are seen through (`P -> anon -> B` becomes
+  `P -> B`);
+- `<language>:exact`: the paper protocol against only the edges cgr bound with
+  resolution `exact`.
+
+Ground truth is the *execution-covered* call graph, so a static edge on a branch
+the harness never takes counts as a false positive; precision here is a lower
+bound in a way recall is not. Pinned by `test_traceeval_eval.py` (end to end on a
+hand-built corpus in the benchmark's layout), `test_traceeval_naming.py` and
+`test_traceeval_normalize.py`.
+
+## SCIP call-site oracle — per-language CALLS precision/recall
+
+[SCIP](https://github.com/sourcegraph/scip) indexes are emitted by compiler-grade
+indexers (type inference, import and overload resolution) and record which symbol
+every identifier occurrence resolves to. `evals/scip` reads an `index.scip`
+directly (`proto.py`, a small wire-format reader, no generated code) and derives a
+first-party call graph from it, then grades cgr at **definition-site**
+granularity: a step past the file-level, simple-name oracles above, on which
+edges into same-named functions in the same file are indistinguishable.
+
+```bash
+uv run python -m evals.scip --corpus codebase_rag     # Python, this repository
+uv run python -m evals.scip --corpus zod              # TypeScript, pinned
+uv run python -m evals.scip --corpus axios            # JavaScript, pinned
+uv run python -m evals.scip --corpus cgr_graph_rs     # Rust, this repository
+uv run python -m evals.scip --language go --target <module-root>
+uv run python -m evals.scip --language java --target <root> --index index.scip
+```
+
+How a call edge is read off the index (`calls.py`): a reference occurrence whose
+symbol is a first-party callable (a method descriptor `name().`, a callable kind,
+or for JS/TS a variable bound to a function expression), followed in the source by
+a call (`(` past type arguments and `?.`, a JS tagged template, a Python decorator,
+or a read of a Python `@property` getter, which runs it as cgr models it). A Python
+`Cls(...)` is a call of `Cls.__init__` when the class defines one. The caller is the
+innermost callable whose `enclosing_range` holds the occurrence, skipping a
+callable whose own decorators hold it (they run in the outer scope), else the
+file's module.
+
+Both sides then meet on definition sites (`join.py`): a SCIP definition is (file,
+line of the defining name, name), and the cgr node with that name whose span covers
+that line is the same definition, so neither naming scheme is translated into the
+other. What does not join keeps its own identity and scores as it is; cgr's
+`anonymous_<line>_<col>` functions fold into their named owner, as SCIP credits
+calls in an anonymous function to the enclosing one. Grading stays within the files
+the index covers. Rows per language: `<language>` (each call to the target the
+indexer bound), `<language>:dispatch` (each SCIP call widened to the overrides the
+index records through `is_implementation` relationships, the class-hierarchy view a
+dispatch-aware graph may also draw) and `<language>:exact` (cgr's `exact` edges
+only).
+
+Indexers (`indexers.py`): `scip-python` and `scip-typescript` are pinned in
+`evals/scip/node/package.json` and installed on first use (both need `node`);
+`rust-analyzer scip` needs a `Cargo.toml`; `scip-go`, `scip-java`, `scip-clang`
+and `scip-dotnet` run when on `PATH`; and any other SCIP emitter is graded by
+passing its `index.scip` with `--index`. Indexers run on a staged copy, since some
+write into the tree (`scip-typescript` writes a `tsconfig.json`). Pinned by
+`test_scip_proto.py`, `test_scip_calls.py` and `test_scip_join.py`.
+
 ## Retrieval — graph vs grep (file-level call localization)
 
 Answers the question raised in issue #424: does graph-augmented retrieval find
@@ -1187,6 +1294,8 @@ The measurement scope of each metric family:
 | Inheritance / overrides (resolved, 1.0/1.0) | Python only | stdlib `ast` + MRO |
 | Module-call attribution (L2) | Python only | stdlib `ast` import-time model |
 | CALLS retrieval (file-level, simple-name, first-party) | Go, Rust, Java, TS, JS, PHP, Lua, C, C++, Scala, C# | per-language compiler/parser oracles |
+| CALLS vs execution (qn-level, TraceEval) | Python, JS, Java | tracer-witnessed edges of 2,129 real-world programs |
+| CALLS vs SCIP (definition-site, first-party) | Python, TS, JS, Rust; Go, Java, C/C++, C# when their indexer is installed | scip-python, scip-typescript, rust-analyzer (scip-go, scip-java, scip-clang, scip-dotnet) |
 | Instantiation (file-level) | Python only | stdlib `ast` |
 | FLOWS_TO (stage-1 corpus) | Python, JS, Go, Java, Scala, Dart | hand-labelled `flows_corpus` |
 | No oracle yet | Dart (beyond flows corpus), Ruby | tracked in #1190 |
@@ -1217,7 +1326,106 @@ Span (end_line) accuracy on matched defs: 6800/6800 exact.
 | all calls | 634 | 634 | 0 | 1.0000 |
 | explicit (no dunders) | 580 | 580 | 0 | 1.0000 |
 
-The L3 fixture exercises rich Python plus all 11 supported languages; recall is a sound lower bound over the cgr code paths that fixture drives. These numbers are for the Python `codebase_rag` target — graded multi-language recall (JS/Rust/Go/Java/C/C++/Lua/PHP/Scala) is future work pending a SCIP-based oracle.
+The L3 fixture exercises rich Python plus all 11 supported languages; recall is a sound lower bound over the cgr code paths that fixture drives. These numbers are for the Python `codebase_rag` target. Multi-language CALLS are graded below: against execution by TraceEval (Python, JavaScript, Java) and per language against SCIP indexers.
+
+### TraceEval — CALLS vs execution-verified edges (`uv run python -m evals.traceeval`)
+
+Test split, all 2,129 programs (769 Python, 649 JavaScript, 711 Java; none failed
+to index). Snapshot: `traceeval_scores.csv`, `traceeval_diff.json`.
+
+| label | tp | fp | fn | precision | recall | f1 |
+|---|---|---|---|---|---|---|
+| python | 5492 | 1508 | 2116 | 0.7846 | 0.7219 | 0.7519 |
+| javascript | 3242 | 3155 | 2404 | 0.5068 | 0.5742 | 0.5384 |
+| java | 7625 | 726 | 1197 | 0.9131 | 0.8643 | 0.8880 |
+| macro_avg | 16359 | 5389 | 5717 | 0.7348 | 0.7201 | 0.7261 |
+| python:static | 5577 | 1423 | 1011 | 0.7967 | 0.8465 | 0.8209 |
+| javascript:static | 3260 | 2862 | 2105 | 0.5325 | 0.6076 | 0.5676 |
+| java:static | 7625 | 726 | 1197 | 0.9131 | 0.8643 | 0.8880 |
+| macro_avg:static | 16462 | 5011 | 4313 | 0.7474 | 0.7728 | 0.7588 |
+| python:exact | 5048 | 1267 | 2560 | 0.7994 | 0.6635 | 0.7251 |
+| javascript:exact | 3035 | 2071 | 2611 | 0.5944 | 0.5375 | 0.5645 |
+| java:exact | 7461 | 673 | 1361 | 0.9173 | 0.8457 | 0.8800 |
+
+Against the paper's Table 3 (same split, same scoring), cgr's macro F1 of 0.726 sits
+level with the strongest zero-shot model, Claude Opus 4.6 (0.729), and well above
+GPT-5.4 (0.600) and DeepSeek-v3.2 (0.621). The languages split it: on Java cgr
+scores 0.888 against Opus's 0.749, at 0.913 precision against 0.653; on Python 0.752
+against 0.791; on JavaScript 0.538 against 0.648. (cgr is deterministic and
+reads the whole program; the models answer zero-shot from the same source.)
+
+What the misses and extras are, read from the diff:
+
+- **Java** is close to its ceiling. The misses sampled are mostly runtime-only calls
+  (`System.out.println(obj)` invoking `toString()`, constructor chains through
+  `super(...)`/`this(...)`); the extras sampled are mostly calls on branches the
+  harness never takes, which execution-based truth cannot credit.
+- **Python**: about half of the paper-protocol misses are tracer artifacts, class
+  bodies reported as calls and ordinal-named lambdas and generator expressions,
+  which is why recall rises from 0.72 to 0.85 under the static protocol. Extras
+  include #3337 (a bare call inside a method binding to the enclosing class's
+  same-named method).
+- **JavaScript** is where cgr is weakest, and the eval found a defect: a call made
+  inside a nested function declaration is credited to every enclosing function too
+  (`function outer() { function inner() { return helper(); } }` yields both
+  `inner -> helper` and a false `outer -> helper`). 546 of the 3,155 false
+  positives (17%) have that shape. Most misses are calls through object-literal receivers
+  (`tools.saveFile()` gets no edge), calls through closures returned from factories,
+  and arrows the tracer names by ordinal.
+
+### SCIP call-site oracle — per-language CALLS (`uv run python -m evals.scip --corpus <name>`)
+
+Definition-site precision/recall against the call graph each language's SCIP indexer
+resolves. Snapshots: `scip_calls_<language>_scores.csv` and `_diff.json`.
+
+| corpus (language, indexer) | label | tp | fp | fn | precision | recall | f1 |
+|---|---|---|---|---|---|---|---|
+| `rust/cgr_graph_rs` (Rust, rust-analyzer 1.97.0) | rust | 815 | 132 | 7 | 0.8606 | 0.9915 | 0.9214 |
+| | rust:exact | 797 | 39 | 25 | 0.9533 | 0.9696 | 0.9614 |
+| axios v1.12.2 `lib` (JS, scip-typescript 0.4.0) | javascript | 208 | 228 | 6 | 0.4771 | 0.9720 | 0.6400 |
+| | javascript:exact | 186 | 128 | 28 | 0.5924 | 0.8692 | 0.7045 |
+| zod v4.1.9 `src/v4` (TS, scip-typescript 0.4.0) | typescript | 541 | 1270 | 342 | 0.2987 | 0.6127 | 0.4016 |
+| | typescript:exact | 521 | 103 | 362 | 0.8349 | 0.5900 | 0.6914 |
+| `codebase_rag` (Python, scip-python 0.6.6) | python | 34261 | 39591 | 887 | 0.4639 | 0.9748 | 0.6286 |
+| | python:dispatch | 34296 | 39556 | 916 | 0.4644 | 0.9740 | 0.6289 |
+| | python:exact | 34042 | 22137 | 1106 | 0.6060 | 0.9685 | 0.7455 |
+
+The `:dispatch` rows equal the strict ones except for Python: scip-typescript records
+no overrides in these two code bases and rust-analyzer records none for trait impls.
+
+Recall is high wherever the oracle can see the call (0.97 to 0.99 for Python, JS and
+Rust): cgr rarely misses a call a compiler-grade resolver binds. Precision is the
+open problem, and the `:exact` rows show where it is lost: edges cgr itself marks
+`heuristic` or `overload` are mostly wrong against SCIP, and the `exact` tier is
+markedly more precise in every language (TS 0.30 → 0.83, Rust 0.86 → 0.95). The
+extras, read from the diffs:
+
+- **Name-only binding of library methods** (every language): a call on a receiver
+  cgr cannot type binds by name to a same-named first-party function, e.g.
+  `path.glob()` to a test helper `glob`, a Rust `s.len()` on a `&str` to an
+  unrelated `len` method in `walk.rs` (26 of Rust's 132), and in zod, `parse.parse()`
+  through a namespace import to the unrelated `inst.parse` arrow. This is #3313's
+  shape, measured across languages.
+- **Protocol fan-out** (Python): a call through a `Protocol`-typed attribute gets an
+  edge to every structural conformer, here dozens of fake ingestors in `tests/`.
+  Over the full edge sets (the committed diff keeps a sample), about 12,300 of
+  Python's 39,591 extras go from production code into test files, and the top
+  callees are the ingestor protocol's methods (`ensure_relationship_batch` ~4,300,
+  `ensure_node_batch` ~2,900, `fetch_all` ~2,500). The *declared* protocol method,
+  which is what SCIP binds, is itself among the misses.
+- **Nested-function double attribution** (JS/TS): the defect TraceEval found, seen
+  again here. axios's `httpAdapter`, which wraps `dispatchHttpRequest`, which wraps
+  `handleResponse`, collects 38 extras for calls its inner functions make.
+- **Assigned methods** (zod): zod builds its classes as `inst.check = (...) => ...`
+  inside initializer callbacks. cgr binds `x.check()` to that assignment (181
+  of the 300 sampled extras); SCIP binds the interface signature the assignment implements, and records
+  no relationship between the two.
+
+Where the oracle is blind, it errs toward crediting cgr less, not more: SCIP gives no
+callable symbol to a function stored in a property or returned from a factory, so a
+call through one is a miss on neither side and an extra if cgr resolves it. zod's
+misses are calls through namespace-imported barrels (`core._coercedString(...)` with
+`import * as core from "../core/index.js"`), which cgr does not follow.
 
 ### Retrieval — graph vs grep (`uv run python -m evals.retrieval`)
 

@@ -1,0 +1,4 @@
+category,label,tp,fp,fn,precision,recall,f1
+scip_calls,rust,815,132,7,0.8606,0.9915,0.9214
+scip_calls,rust:dispatch,815,132,7,0.8606,0.9915,0.9214
+scip_calls,rust:exact,797,39,25,0.9533,0.9696,0.9614

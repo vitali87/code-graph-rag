@@ -1,0 +1,4 @@
+category,label,tp,fp,fn,precision,recall,f1
+scip_calls,javascript,208,228,6,0.4771,0.972,0.64
+scip_calls,javascript:dispatch,208,228,6,0.4771,0.972,0.64
+scip_calls,javascript:exact,186,128,28,0.5924,0.8692,0.7045

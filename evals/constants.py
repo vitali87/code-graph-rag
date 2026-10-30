@@ -851,3 +851,7 @@ PARITY_FILES = (
     "MATCH (f:File) WHERE f.absolute_path STARTS WITH $root "
     "RETURN f.path AS path, f.absolute_path AS absolute_path ORDER BY path LIMIT 5"
 )
+# The names cgr gives functions that have none in the source: callbacks
+# (`anonymous_<line>_<col>`), lambdas and IIFEs (`iife_arrow_<line>_<col>`).
+# The call oracles fold them into their named owner.
+CGR_ANONYMOUS_PATTERN = r"^(?:anonymous|lambda|iife(?:_[a-z]+)?)_\d+_\d+$"

@@ -31,6 +31,11 @@ docs/credits.md
 
 # Eval harness scratch workspace (regenerated each run); result files are committed
 evals/results/l3_workspace/
+evals/results/traceeval_workspace/
+# Pinned SCIP indexers (package.json + package-lock.json are committed)
+evals/scip/node/node_modules/
+evals/scip/node/.node-deps-installed
+evals/scip/node/.node-deps-lock/
 # Rust oracle build artifacts (the source + Cargo.lock are committed)
 evals/oracles/rs_oracle/target/
 evals/oracles/rs_oracle/.build.lock

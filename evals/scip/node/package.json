@@ -1,0 +1,10 @@
+{
+  "name": "scip_indexers",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pinned SCIP indexers for the cgr CALLS oracle (evals/scip)",
+  "dependencies": {
+    "@sourcegraph/scip-python": "0.6.6",
+    "@sourcegraph/scip-typescript": "0.4.0"
+  }
+}

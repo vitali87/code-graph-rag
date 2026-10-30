@@ -1,0 +1,4 @@
+category,label,tp,fp,fn,precision,recall,f1
+scip_calls,python,34261,39591,887,0.4639,0.9748,0.6286
+scip_calls,python:dispatch,34296,39556,916,0.4644,0.974,0.6289
+scip_calls,python:exact,34042,22137,1106,0.606,0.9685,0.7455
