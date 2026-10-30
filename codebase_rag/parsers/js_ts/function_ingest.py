@@ -17,6 +17,7 @@ from tree_sitter import Node
 from ... import constants as cs
 from ...types_defs import FunctionRegistryTrieProtocol, PropertyDict
 from ..definition_facts import DefinitionFacts
+from ..language_definitions import LanguageFunctionIngest
 from ..utils import function_span_key
 from . import utils as js_ts_utils
 
@@ -61,7 +62,7 @@ class _DeferredAnonymous(NamedTuple):
     lang_queries: LanguageQueries
 
 
-class JsTsFunctionIngest:
+class JsTsFunctionIngest(LanguageFunctionIngest):
     """Holds back anonymous JS/TS function expressions until their file's
     flush, and marks what a JS/TS function's name is visible to.
 

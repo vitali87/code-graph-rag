@@ -32,6 +32,7 @@ from ..class_ingest import base_targets as bt
 from ..class_ingest import identity as id_
 from ..class_ingest.utils import body_method_nodes, skip_method
 from ..definition_facts import DefinitionFacts
+from ..language_definitions import LanguageClassIngest
 from ..method_ingest import MethodIngestHost, ingest_method
 from ..utils import function_span_key
 from . import utils as rs_utils
@@ -81,7 +82,7 @@ def _enclosing_mod(module_node: Node) -> Node | None:
     return enclosing_module_node
 
 
-class RustClassIngest:
+class RustClassIngest(LanguageClassIngest):
     """Ingests Rust impl blocks and inline modules, and decides which trait
     impls only another crate's dispatch can call.
 

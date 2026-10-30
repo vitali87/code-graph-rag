@@ -18,6 +18,7 @@ from ... import constants as cs
 from ...node_text import safe_decode_text
 from ...types_defs import PropertyDict
 from ..class_ingest import identity as id_
+from ..language_definitions import LanguageClassIngest
 from .ast_analyzer import under_type_checking
 from .class_aliases import scan_class_body_aliases
 from .utils import external_stdlib_base_method_names
@@ -28,7 +29,7 @@ if TYPE_CHECKING:
     from ..definition_facts import DefinitionFacts
 
 
-class PythonClassIngest:
+class PythonClassIngest(LanguageClassIngest):
     """Reserves a Python class's plain name ahead of the function pass, and
     reads what a Python class body binds beside the shared class pass.
 
@@ -98,7 +99,13 @@ class PythonClassIngest:
         return sorted(scan_class_body_aliases(body).non_method)
 
     @staticmethod
-    def record_type_props(class_node: Node, class_props: PropertyDict) -> None:
+    def record_type_props(
+        class_node: Node,
+        class_qn: str,
+        class_name: str,
+        label: cs.NodeLabel,
+        class_props: PropertyDict,
+    ) -> None:
         # A checker-only class types `self` in mixins whose calls resolve
         # to the real implementation, so no edge ever reaches it; only the
         # parse can tell dead code it is a declaration.

@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 from tree_sitter import Node
 
 from ... import constants as cs
+from ..language_definitions import LanguageFunctionIngest
 
 if TYPE_CHECKING:
     from ...language_spec import LanguageSpec
@@ -45,7 +46,7 @@ def _anonymous_base_type(
     return None
 
 
-class JavaFunctionIngest:
+class JavaFunctionIngest(LanguageFunctionIngest):
     """Records the anonymous-class overrides the function pass captures.
 
     Built and owned by `FunctionIngest`. The anonymous-override record is the

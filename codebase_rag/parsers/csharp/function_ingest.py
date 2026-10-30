@@ -20,6 +20,7 @@ from ...node_text import safe_decode_text
 from ...types_defs import DeferredParentLink, FunctionLocation
 from ...utils.fqn_resolver import scoped_name_parts
 from ..definition_facts import DefinitionFacts
+from ..language_definitions import LanguageFunctionIngest
 from ..method_ingest import MethodIngestHost, ingest_method
 from ..parameter_nodes import csharp_call_shape
 from ..utils import function_span_key
@@ -49,7 +50,7 @@ def _nearest_preceding_type(
     return None
 
 
-class CSharpFunctionIngest:
+class CSharpFunctionIngest(LanguageFunctionIngest):
     """Drops or pins the C# local functions the function pass captures, and
     recovers the members a truncated type left at namespace level.
 
@@ -87,6 +88,7 @@ class CSharpFunctionIngest:
         self,
         func_node: Node,
         module_qn: str,
+        language: cs.SupportedLanguage,
         lang_config: LanguageSpec,
         lang_queries: LanguageQueries,
         file_path: Path | None,

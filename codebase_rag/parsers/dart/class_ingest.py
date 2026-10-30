@@ -17,6 +17,7 @@ from tree_sitter import Node
 
 from ... import constants as cs
 from ..class_ingest import parent_extraction as pe
+from ..language_definitions import LanguageClassIngest
 from . import utils as dart_utils
 from .type_inference import DartTypeInferenceEngine
 
@@ -39,7 +40,7 @@ class DartClassHost(Protocol):
     ) -> str: ...
 
 
-class DartClassIngest:
+class DartClassIngest(LanguageClassIngest):
     """Records what a Dart class and its methods declare beside the shared
     class pass, and roots the `@override` methods no registered ancestor
     defines.
@@ -89,7 +90,14 @@ class DartClassIngest:
         if field_types := DartTypeInferenceEngine().build_field_type_map(class_node):
             self.facts.class_field_types[class_qn] = field_types
 
-    def record_method_return_type(self, method_node: Node, ingested_qn: str) -> None:
+    def record_method(
+        self,
+        class_node: Node,
+        class_qn: str,
+        module_qn: str | None,
+        method_node: Node,
+        ingested_qn: str,
+    ) -> None:
         # Record Dart return types (a constructor "returns" its class)
         # so a local bound from a static factory or named constructor
         # (`var s = Greeter.create()`) types from the RECORDED return

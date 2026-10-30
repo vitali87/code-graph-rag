@@ -15,13 +15,14 @@ from ... import constants as cs
 from ...types_defs import DeferredInherit
 from ..class_ingest import base_targets as bt
 from ..class_ingest import parent_extraction as pe
+from ..language_definitions import LanguageClassIngest
 
 if TYPE_CHECKING:
     from ...types_defs import FunctionRegistryTrieProtocol
     from ..import_processor import ImportProcessor
 
 
-class JsTsClassIngest:
+class JsTsClassIngest(LanguageClassIngest):
     """Binds a deferred JS/TS base the module system's exports say it names.
 
     Built and owned by `ClassIngest`. The registry, the module paths and the

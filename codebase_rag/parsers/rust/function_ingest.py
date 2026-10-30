@@ -15,6 +15,7 @@ from tree_sitter import Node
 
 from ... import constants as cs
 from ..definition_facts import DefinitionFacts
+from ..language_definitions import LanguageFunctionIngest
 from ..utils import function_span_key
 from . import utils as rs_utils
 
@@ -57,7 +58,7 @@ class _DeferredBodyLocal(NamedTuple):
     lang_queries: LanguageQueries
 
 
-class RustFunctionIngest:
+class RustFunctionIngest(LanguageFunctionIngest):
     """Holds back Rust body-local items until their file's flush, and writes
     what a Rust function records beside the shared function pass.
 

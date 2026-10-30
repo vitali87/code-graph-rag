@@ -15,13 +15,14 @@ from tree_sitter import Node
 
 from ... import constants as cs
 from ...utils.path_utils import cached_relative_path
+from ..language_definitions import LanguageClassIngest
 from .type_inference import GoTypeInferenceEngine
 
 if TYPE_CHECKING:
     from ..definition_facts import DefinitionFacts
 
 
-class GoClassIngest:
+class GoClassIngest(LanguageClassIngest):
     """Records where each Go type is declared and what its struct fields are.
 
     Built and owned by `ClassIngest`. The definition facts and the location

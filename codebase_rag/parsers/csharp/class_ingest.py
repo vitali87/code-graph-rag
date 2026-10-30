@@ -24,6 +24,7 @@ from ...utils import qn_markers
 from ...utils.path_utils import cached_relative_path
 from ..class_ingest import base_targets as bt
 from ..class_ingest.utils import csharp_has_override_modifier
+from ..language_definitions import LanguageClassIngest
 from ..parameter_nodes import csharp_call_shape
 from ..utils import function_span_key, module_qn_for_entity
 from . import utils as csharp_utils
@@ -65,7 +66,7 @@ def signatured_method_qn(method_node: Node, class_qn: str) -> str | None:
     return None
 
 
-class CSharpClassIngest:
+class CSharpClassIngest(LanguageClassIngest):
     """Records what a C# type and its methods declare beside the shared class
     pass, and binds a deferred C# base the way C# scoping and arity do.
 
@@ -114,6 +115,7 @@ class CSharpClassIngest:
         class_node: Node,
         class_qn: str,
         class_name: str,
+        label: cs.NodeLabel,
         class_props: PropertyDict,
     ) -> None:
         self._record_namespace(class_node, class_qn, class_props)
@@ -145,7 +147,12 @@ class CSharpClassIngest:
             class_props[cs.KEY_GENERIC_ARITY] = arity
 
     def record_type_location(
-        self, class_qn: str, file_path: Path, class_start_line: int
+        self,
+        class_qn: str,
+        label: cs.NodeLabel,
+        file_path: Path,
+        class_start_line: int,
+        class_start_col: int,
     ) -> dict[str, str] | None:
         rel_path = cached_relative_path(file_path, self.repo_path).as_posix()
         # Reverse index for the Roslyn frontend's location-keyed facts:
@@ -222,6 +229,7 @@ class CSharpClassIngest:
 
     def record_method(
         self,
+        class_node: Node,
         class_qn: str,
         module_qn: str | None,
         method_node: Node,

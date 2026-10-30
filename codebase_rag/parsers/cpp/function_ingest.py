@@ -32,6 +32,7 @@ from ..ast_fingerprint import fingerprint_props
 from ..definition_facts import DefinitionFacts
 from ..endpoints import emit_endpoints
 from ..function_identity import FunctionResolution, name_start_point
+from ..language_definitions import LanguageFunctionIngest
 from ..method_ingest import MethodIngestHost, ingest_method
 from ..utils import extract_modifiers_and_decorators, function_span_key
 from . import utils as cpp_utils
@@ -149,7 +150,7 @@ class _DeferredContainment(NamedTuple):
     namespace_path: str
 
 
-class CppFunctionIngest:
+class CppFunctionIngest(LanguageFunctionIngest):
     """Binds out-of-class C++ method definitions to their class, and decides
     the C/C++ nodes held back until every class and definition is registered.
 
@@ -211,8 +212,10 @@ class CppFunctionIngest:
         self,
         func_node: Node,
         module_qn: str,
+        language: cs.SupportedLanguage,
         lang_config: LanguageSpec,
         lang_queries: LanguageQueries,
+        file_path: Path | None,
     ) -> bool:
         if self._handle_out_of_class_method(func_node, module_qn, lang_queries):
             return True

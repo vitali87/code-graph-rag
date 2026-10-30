@@ -20,6 +20,7 @@ from ...types_defs import DeferredCppInherit, FunctionSpanKey
 from ..class_ingest import cpp_modules
 from ..class_ingest import identity as id_
 from ..class_ingest import relationships as rel
+from ..language_definitions import LanguageClassIngest
 from ..utils import function_span_key, module_qn_for_entity, written_simple_name
 from . import local_types as cpp_local_types
 from . import utils as cpp_utils
@@ -122,7 +123,7 @@ def type_spec(class_node: Node) -> Node | None:
     )
 
 
-class CppClassIngest:
+class CppClassIngest(LanguageClassIngest):
     """Decides the C/C++ class captures that register nothing or wait, and
     writes what C/C++ types record beside the shared class pass.
 

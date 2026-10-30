@@ -31,6 +31,7 @@ from ..java import class_ingest as java_class_ingest
 from ..js_ts import class_ingest as js_ts_class_ingest
 from ..js_ts import utils as js_ts_utils
 from ..js_ts.utils import mark_js_ts_module_private
+from ..language_definitions import LanguageClassIngest
 from ..method_ingest import MethodIngestHost, ingest_method
 from ..php import class_ingest as php_class_ingest
 from ..python import class_ingest as python_class_ingest
@@ -132,6 +133,8 @@ class ClassIngest:
         "js_ts",
         "java",
         "python",
+        "_languages",
+        "_neutral",
     )
 
     def __init__(
@@ -257,6 +260,26 @@ class ClassIngest:
             anon_overrides=java_anon_overrides,
         )
         self.python = python_class_ingest.PythonClassIngest(function_registry, facts)
+        # The collaborator each language's class nodes go to; a language with
+        # none takes the neutral answers.
+        self._languages: dict[cs.SupportedLanguage, LanguageClassIngest] = {
+            cs.SupportedLanguage.PYTHON: self.python,
+            cs.SupportedLanguage.JS: self.js_ts,
+            cs.SupportedLanguage.TS: self.js_ts,
+            cs.SupportedLanguage.TSX: self.js_ts,
+            cs.SupportedLanguage.JAVA: self.java,
+            cs.SupportedLanguage.RUST: self.rust,
+            cs.SupportedLanguage.GO: self.go,
+            cs.SupportedLanguage.CPP: self.cpp,
+            cs.SupportedLanguage.CSHARP: self.csharp,
+            cs.SupportedLanguage.DART: self.dart,
+        }
+        self._neutral = LanguageClassIngest()
+
+    def _for(self, language: cs.SupportedLanguage | None) -> LanguageClassIngest:
+        if language is None:
+            return self._neutral
+        return self._languages.get(language, self._neutral)
 
     def _resolve_to_qn(
         self,
@@ -836,13 +859,17 @@ class ClassIngest:
         if language == cs.SupportedLanguage.PHP:
             php_class_ingest.record_namespace(class_node, class_props)
         elif language == cs.SupportedLanguage.CSHARP:
-            self.csharp.record_type_props(class_node, class_qn, class_name, class_props)
+            self.csharp.record_type_props(
+                class_node, class_qn, class_name, label, class_props
+            )
         elif language == cs.SupportedLanguage.GO and label == cs.NodeLabel.INTERFACE:
             # Stored so an incremental run that does not re-parse the
             # interface still knows what its method set is built from.
             class_props.update(go_ifaces.embeds_props(class_node))
         elif language == cs.SupportedLanguage.PYTHON:
-            self.python.record_type_props(class_node, class_props)
+            self.python.record_type_props(
+                class_node, class_qn, class_name, label, class_props
+            )
 
     def _record_declared_type_members(
         self,
@@ -894,7 +921,7 @@ class ClassIngest:
     ) -> dict[str, str] | None:
         if language == cs.SupportedLanguage.CSHARP and file_path is not None:
             return self.csharp.record_type_location(
-                class_qn, file_path, class_start_line
+                class_qn, label, file_path, class_start_line, class_start_col
             )
         if language == cs.SupportedLanguage.GO and file_path is not None:
             self.go.record_type_location(
@@ -1091,10 +1118,12 @@ class ClassIngest:
         module_qn = scope.module_qn
         if language == cs.SupportedLanguage.CSHARP:
             self.csharp.record_method(
-                scope.class_qn, module_qn, method_node, ingested_qn
+                scope.class_node, scope.class_qn, module_qn, method_node, ingested_qn
             )
         if language == cs.SupportedLanguage.DART:
-            self.dart.record_method_return_type(method_node, ingested_qn)
+            self.dart.record_method(
+                scope.class_node, scope.class_qn, module_qn, method_node, ingested_qn
+            )
         # Rust trait bodies reach here rather than the impl path above;
         # a trait is no module either (issue #1086).
         rs_utils.record_effective_module(

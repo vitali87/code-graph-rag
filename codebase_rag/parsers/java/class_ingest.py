@@ -15,6 +15,7 @@ from tree_sitter import Node
 
 from ... import constants as cs
 from ...types_defs import FunctionLocation
+from ..language_definitions import LanguageClassIngest
 from . import utils as java_utils
 
 if TYPE_CHECKING:
@@ -52,7 +53,7 @@ def signatured_method_qn(method_node: Node, class_qn: str) -> str | None:
     return None
 
 
-class JavaClassIngest:
+class JavaClassIngest(LanguageClassIngest):
     """Records what a Java method declares beside the shared class pass, and
     links anonymous-class overrides to their base type.
 

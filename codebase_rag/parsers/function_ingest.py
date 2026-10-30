@@ -45,6 +45,7 @@ from .java import function_ingest as java_function_ingest
 from .js_ts import function_ingest as js_ts_function_ingest
 from .js_ts import utils as js_ts_utils
 from .js_ts.utils import mark_js_ts_module_private
+from .language_definitions import LanguageFunctionIngest
 from .lua import function_ingest as lua_function_ingest
 from .method_ingest import MethodIngestHost
 from .parameter_nodes import PendingParameterType, emit_declared_parameters
@@ -96,6 +97,8 @@ class FunctionIngest:
         "go",
         "js_ts",
         "java",
+        "_languages",
+        "_neutral",
     )
 
     def __init__(
@@ -172,6 +175,27 @@ class FunctionIngest:
             self, function_registry, facts
         )
         self.java = java_function_ingest.JavaFunctionIngest(java_anon_overrides)
+        # The collaborator each language's functions go to; a language with
+        # none takes the neutral answers.
+        self._languages: dict[cs.SupportedLanguage, LanguageFunctionIngest] = {
+            cs.SupportedLanguage.JS: self.js_ts,
+            cs.SupportedLanguage.TS: self.js_ts,
+            cs.SupportedLanguage.TSX: self.js_ts,
+            cs.SupportedLanguage.JAVA: self.java,
+            cs.SupportedLanguage.RUST: self.rust,
+            cs.SupportedLanguage.GO: self.go,
+            cs.SupportedLanguage.CPP: self.cpp,
+            cs.SupportedLanguage.CSHARP: self.csharp,
+        }
+        self._neutral = LanguageFunctionIngest()
+
+    def _for(
+        self, language: cs.SupportedLanguage | str | None
+    ) -> LanguageFunctionIngest:
+        # A spec's language may be a plain string (`LanguageSpec.language`).
+        if language is None:
+            return self._neutral
+        return self._languages.get(language, self._neutral)
 
     def ingest_all_functions(
         self,
@@ -229,11 +253,11 @@ class FunctionIngest:
         match language:
             case cs.SupportedLanguage.CSHARP:
                 return self.csharp.skips_function(
-                    func_node, module_qn, lang_config, lang_queries, file_path
+                    func_node, module_qn, language, lang_config, lang_queries, file_path
                 )
             case cs.SupportedLanguage.CPP:
                 return self.cpp.skips_function(
-                    func_node, module_qn, lang_config, lang_queries
+                    func_node, module_qn, language, lang_config, lang_queries, file_path
                 )
             case cs.SupportedLanguage.GO:
                 return self.go.defers_receiver_method(func_node, module_qn)

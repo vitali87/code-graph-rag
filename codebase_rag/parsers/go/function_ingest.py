@@ -24,6 +24,7 @@ from ...types_defs import (
     SimpleNameLookup,
 )
 from ..definition_facts import DefinitionFacts
+from ..language_definitions import LanguageFunctionIngest
 from ..method_ingest import MethodIngestHost, ingest_method
 from . import interfaces as go_interfaces
 from . import utils as go_utils
@@ -59,7 +60,7 @@ _TYPE_NODE_TYPES = frozenset(
 )
 
 
-class GoFunctionIngest:
+class GoFunctionIngest(LanguageFunctionIngest):
     """Binds Go receiver methods to their receiver type once every type is
     registered, and writes what a Go function records beside the shared
     function pass.
