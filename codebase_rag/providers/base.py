@@ -62,8 +62,12 @@ class ApiKeyProvider(ModelProvider):
     _missing_key_error: ClassVar[str]
 
     def validate_config(self) -> None:
+        self._validated_api_key()
+
+    def _validated_api_key(self) -> str:
         if not self.api_key:
             raise ValueError(self._missing_key_error)
+        return self.api_key
 
 
 def _resolve_api_key(api_key: str | None, env_var: str) -> str | None:
@@ -127,10 +131,15 @@ class GoogleProvider(ModelProvider):
         return cs.Provider.GOOGLE
 
     def validate_config(self) -> None:
-        if self.provider_type == cs.GoogleProviderType.GLA and not self.api_key:
-            raise ValueError(ex.GOOGLE_GLA_NO_KEY)
+        if self.provider_type == cs.GoogleProviderType.GLA:
+            self._gla_api_key()
         if self.provider_type == cs.GoogleProviderType.VERTEX and not self.project_id:
             raise ValueError(ex.GOOGLE_VERTEX_NO_PROJECT)
+
+    def _gla_api_key(self) -> str:
+        if not self.api_key:
+            raise ValueError(ex.GOOGLE_GLA_NO_KEY)
+        return self.api_key
 
     def create_model(self, model_id: str) -> GoogleModel:
         from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
@@ -159,9 +168,7 @@ class GoogleProvider(ModelProvider):
                 )
             )
         else:
-            # api_key is guaranteed to be set by validate_config for gla type
-            assert self.api_key is not None
-            provider = PydanticGoogleProvider(api_key=self.api_key)
+            provider = PydanticGoogleProvider(api_key=self._gla_api_key())
 
         # Built unconditionally. An earlier version returned early when no
         # thinking budget was configured, so the DEFAULT path carried no
@@ -262,10 +269,7 @@ class AnthropicProvider(ApiKeyProvider):
             AnthropicProvider as PydanticAnthropicProvider,
         )
 
-        self.validate_config()
-        # api_key is guaranteed to be set by validate_config
-        assert self.api_key is not None
-        provider = PydanticAnthropicProvider(api_key=self.api_key)
+        provider = PydanticAnthropicProvider(api_key=self._validated_api_key())
         model_settings = AnthropicModelSettings(
             anthropic_cache_instructions=True,
             anthropic_cache_tool_definitions=True,
@@ -298,21 +302,23 @@ class AzureOpenAIProvider(ApiKeyProvider):
         return cs.Provider.AZURE
 
     def validate_config(self) -> None:
-        super().validate_config()
+        self._validated_credentials()
+
+    def _validated_credentials(self) -> tuple[str, str]:
+        """The api_key and endpoint, each checked present."""
+        api_key = self._validated_api_key()
         if not self.endpoint:
             raise ValueError(ex.AZURE_NO_ENDPOINT)
+        return api_key, self.endpoint
 
     def create_model(self, model_id: str) -> OpenAIChatModel:
         from pydantic_ai.models.openai import OpenAIChatModel
         from pydantic_ai.providers.azure import AzureProvider as PydanticAzureProvider
 
-        self.validate_config()
-        # api_key and endpoint are guaranteed to be set by validate_config
-        assert self.api_key is not None
-        assert self.endpoint is not None
+        api_key, endpoint = self._validated_credentials()
         provider = PydanticAzureProvider(
-            api_key=self.api_key,
-            azure_endpoint=self.endpoint,
+            api_key=api_key,
+            azure_endpoint=endpoint,
             api_version=self.api_version,
         )
         return OpenAIChatModel(model_id, provider=provider)
@@ -346,12 +352,10 @@ class MiniMaxProvider(ApiKeyProvider):
             OpenAIProvider as PydanticOpenAIProvider,
         )
 
-        self.validate_config()
-        # api_key is guaranteed to be set by validate_config
-        assert self.api_key is not None
+        api_key = self._validated_api_key()
         if urlsplit(self.endpoint).path.rstrip("/") == cs.MINIMAX_ANTHROPIC_SDK_PATH:
             anthropic_provider = PydanticAnthropicProvider(
-                api_key=self.api_key, base_url=self.endpoint
+                api_key=api_key, base_url=self.endpoint
             )
             # The Messages protocol falls back to the provider default exactly
             # as AnthropicProvider did before issue #1498, so the budget is set
@@ -363,7 +367,7 @@ class MiniMaxProvider(ApiKeyProvider):
                 provider=anthropic_provider,
                 settings=AnthropicModelSettings(max_tokens=_output_budget(model_id)),
             )
-        provider = PydanticOpenAIProvider(api_key=self.api_key, base_url=self.endpoint)
+        provider = PydanticOpenAIProvider(api_key=api_key, base_url=self.endpoint)
         return OpenAIChatModel(model_id, provider=provider)
 
 

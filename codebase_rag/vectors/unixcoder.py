@@ -7,6 +7,7 @@ from torch import nn
 from transformers import RobertaConfig, RobertaModel, RobertaTokenizer
 
 from .. import constants as cs
+from .. import exceptions as ex
 
 
 class UniXcoder(nn.Module):
@@ -36,6 +37,12 @@ class UniXcoder(nn.Module):
 
         self.tokenizer.add_tokens([cs.UNIXCODER_MASK_TOKEN], special_tokens=True)
 
+    def _pad_id(self) -> int:
+        pad_id = self.config.pad_token_id
+        if pad_id is None:
+            raise ValueError(ex.UNIXCODER_NO_PAD_TOKEN)
+        return pad_id
+
     def tokenize(
         self,
         inputs: list[str],
@@ -43,7 +50,12 @@ class UniXcoder(nn.Module):
         max_length: int = 512,
         padding: bool = False,
     ) -> list[list[int]]:
-        assert max_length < cs.UNIXCODER_MAX_CONTEXT
+        if max_length >= cs.UNIXCODER_MAX_CONTEXT:
+            raise ValueError(
+                ex.UNIXCODER_MAX_LENGTH.format(
+                    limit=cs.UNIXCODER_MAX_CONTEXT, max_length=max_length
+                )
+            )
 
         tokenizer = self.tokenizer
 
@@ -74,9 +86,7 @@ class UniXcoder(nn.Module):
                 converted if isinstance(converted, list) else [converted]
             )
             if padding:
-                pad_id = self.config.pad_token_id
-                assert pad_id is not None
-                tokens_id += [pad_id] * (max_length - len(tokens_id))
+                tokens_id += [self._pad_id()] * (max_length - len(tokens_id))
             tokens_ids.append(tokens_id)
         return tokens_ids
 
@@ -91,15 +101,16 @@ class UniXcoder(nn.Module):
                     t = t[: t.index(0)]
                 text = self.tokenizer.decode(t, clean_up_tokenization_spaces=False)
                 # One sequence decodes to one string; only a batch is a list.
-                assert isinstance(text, str)
+                if not isinstance(text, str):
+                    raise TypeError(
+                        ex.UNIXCODER_DECODE_NOT_TEXT.format(found=type(text).__name__)
+                    )
                 prediction.append(text)
             predictions.append(prediction)
         return predictions
 
     def forward(self, source_ids: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        pad_id = self.config.pad_token_id
-        assert pad_id is not None
-        mask = source_ids.ne(pad_id)
+        mask = source_ids.ne(self._pad_id())
         attention_mask = (mask.unsqueeze(1) * mask.unsqueeze(2)).unsqueeze(1)
         token_embeddings = self.model(source_ids, attention_mask=attention_mask)[0]
         sentence_embeddings = (token_embeddings * mask.unsqueeze(-1)).sum(1) / mask.sum(
@@ -117,8 +128,7 @@ class UniXcoder(nn.Module):
     ) -> torch.Tensor:
         # self.bias is registered as buffer (Tensor) but typed as Module by ty
         bias: torch.Tensor = getattr(self, cs.UNIXCODER_BUFFER_BIAS)
-        pad_id = self.config.pad_token_id
-        assert pad_id is not None
+        pad_id = self._pad_id()
 
         if decoder_only:
             mask = bias[:, : source_ids.size(-1), : source_ids.size(-1)]
@@ -131,7 +141,8 @@ class UniXcoder(nn.Module):
             # list[int] | None (models may declare several EOS tokens);
             # Beam accepts either and stops on any of them.
             eos_id = self.config.eos_token_id
-        assert eos_id is not None
+        if eos_id is None:
+            raise ValueError(ex.UNIXCODER_NO_EOS_TOKEN)
 
         device = source_ids.device
 

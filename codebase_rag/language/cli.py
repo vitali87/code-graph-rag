@@ -773,32 +773,25 @@ def _register_language(
 ) -> bool:
     grammar_dir = root / grammar_path
 
-    if lang_info := _parse_tree_sitter_json(
+    lang_info = _parse_tree_sitter_json(
         grammar_dir / cs.LANG_TREE_SITTER_JSON, grammar_dir_name, language_name
-    ):
-        language_name = lang_info.name
-        file_extension = lang_info.extensions
-    else:
+    )
+    if lang_info is None:
         typer.echo(cs.LANG_ERR_TREE_SITTER_JSON_WARNING.format(path=grammar_path))
-        info = _prompt_for_language_info(language_name)
-        language_name = info.name
-        file_extension = info.extensions
+        lang_info = _prompt_for_language_info(language_name)
+    name = lang_info.name
 
-    assert language_name is not None
-
-    categories = _resolve_node_categories(grammar_dir, language_name)
+    categories = _resolve_node_categories(grammar_dir, name)
     new_language_spec = LanguageSpec(
-        language=language_name,
-        file_extensions=tuple(file_extension),
+        language=name,
+        file_extensions=tuple(lang_info.extensions),
         function_node_types=tuple(categories.functions),
         class_node_types=tuple(categories.classes),
         module_node_types=tuple(categories.modules),
         call_node_types=tuple(categories.calls),
     )
 
-    return _update_config_file(
-        root / cs.LANG_CONFIG_FILE, language_name, new_language_spec
-    )
+    return _update_config_file(root / cs.LANG_CONFIG_FILE, name, new_language_spec)
 
 
 def _discard_added_submodule(

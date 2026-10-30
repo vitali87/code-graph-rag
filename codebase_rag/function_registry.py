@@ -32,6 +32,9 @@ def _variant_position(qualified_name: QualifiedName) -> tuple[int, int]:
 # an enum declares a type too, but it is also a value, so it is a value here.
 TYPE_SPACE_KINDS = frozenset({cs.NodeLabel.TYPE, cs.NodeLabel.INTERFACE})
 
+# The keys a trie node keeps its own qn and label under, beside its segments.
+_TRIE_NODE_KEYS = frozenset({cs.TRIE_QN_KEY, cs.TRIE_TYPE_KEY})
+
 
 class FunctionRegistryTrie:
     __slots__ = (
@@ -410,13 +413,20 @@ class FunctionRegistryTrie:
         self._invalidate_ending_with_cache(simple_name)
 
         parts = qualified_name.split(cs.SEPARATOR_DOT)
+        # A segment spelled like a node's own key (`__qn__`) would overwrite
+        # that node's qn, or be overwritten by it. Prefix lookups skip `__`
+        # segments anyway, so such a qn keeps its entry and goes without a
+        # trie path.
+        if not _TRIE_NODE_KEYS.isdisjoint(parts):
+            return
         current: TrieNode = self.root
 
         for part in parts:
             if part not in current:
                 current[part] = {}
             child = current[part]
-            assert isinstance(child, dict)
+            if not isinstance(child, dict):
+                return
             current = child
 
         current[cs.TRIE_TYPE_KEY] = func_type
@@ -520,7 +530,9 @@ class FunctionRegistryTrie:
             return False
 
         child = node[part]
-        assert isinstance(child, dict)
+        # A node's own key, named by a qn that `insert` gave no path.
+        if not isinstance(child, dict):
+            return False
         if self._cleanup_trie_path(parts[1:], child):
             del node[part]
 
@@ -535,7 +547,9 @@ class FunctionRegistryTrie:
             if part not in current:
                 return None
             child = current[part]
-            assert isinstance(child, dict)
+            # A prefix through a node's own key names no subtree.
+            if not isinstance(child, dict):
+                return None
             current = child
         return current
 
@@ -547,16 +561,21 @@ class FunctionRegistryTrie:
         results: list[tuple[QualifiedName, cs.NodeLabel]] = []
 
         def dfs(n: TrieNode) -> None:
-            if cs.TRIE_QN_KEY in n:
-                qn = n[cs.TRIE_QN_KEY]
-                func_type = n[cs.TRIE_TYPE_KEY]
-                assert isinstance(qn, str) and isinstance(func_type, cs.NodeLabel)
-                if filter_fn is None or filter_fn(qn):
-                    results.append((qn, func_type))
+            # `insert` writes a node's qn and label together, and gives every
+            # segment key a node, so the type checks only narrow.
+            qn = n.get(cs.TRIE_QN_KEY)
+            func_type = n.get(cs.TRIE_TYPE_KEY)
+            if (
+                isinstance(qn, str)
+                and isinstance(func_type, cs.NodeLabel)
+                and (filter_fn is None or filter_fn(qn))
+            ):
+                results.append((qn, func_type))
 
             for key, child in n.items():
-                if not key.startswith(cs.TRIE_INTERNAL_PREFIX):
-                    assert isinstance(child, dict)
+                if not key.startswith(cs.TRIE_INTERNAL_PREFIX) and isinstance(
+                    child, dict
+                ):
                     dfs(child)
 
         dfs(node)

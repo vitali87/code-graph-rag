@@ -55,6 +55,18 @@ OPENAI_EMBEDDING_BAD_INDEX = (
     "OpenAI-compatible embedding response has an invalid or duplicate index: {index}"
 )
 
+# UniXcoder errors
+UNIXCODER_MAX_LENGTH = (
+    "UniXcoder max_length must be below its {limit}-token context, got {max_length}"
+)
+UNIXCODER_NO_PAD_TOKEN = "The UniXcoder model config declares no padding token id"
+UNIXCODER_NO_EOS_TOKEN = (
+    "The UniXcoder model config declares no end-of-sequence token id"
+)
+UNIXCODER_DECODE_NOT_TEXT = (
+    "The UniXcoder tokenizer decoded one sequence to {found}, not a string"
+)
+
 # Configuration errors
 PROVIDER_EMPTY = "Provider name cannot be empty in 'provider:model' format."
 MODEL_ID_EMPTY = "Model ID cannot be empty."

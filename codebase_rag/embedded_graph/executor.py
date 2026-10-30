@@ -192,7 +192,10 @@ def compile_read(
 ) -> ReadPlan:
     stmt = parse(text)
     query = stmt.query if isinstance(stmt, a.Explain) else stmt
-    assert isinstance(query, a.Query)
+    if not isinstance(query, a.Query):
+        raise CompileError(
+            ecs.EG_ERR_UNSUPPORTED.format(what=ecs.EG_WHAT_SCHEMA_AS_READ)
+        )
     ctx = Ctx(dict(param_sig), json_arrow, native_walks)
     qc = QueryCompiler(ctx)
     pipeline = Pipeline()

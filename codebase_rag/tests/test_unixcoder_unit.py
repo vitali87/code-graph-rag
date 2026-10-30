@@ -341,5 +341,5 @@ class TestDecode:
         instance.tokenizer.decode.side_effect = lambda ids, **_kw: ["a", "b"]
         source_ids = torch.tensor([[[5, 6]]])
 
-        with pytest.raises(AssertionError):
+        with pytest.raises(TypeError):
             instance.decode(source_ids)

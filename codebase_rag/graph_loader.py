@@ -181,19 +181,22 @@ class GraphLoader:
     @property
     @ensure_loaded
     def nodes(self) -> list[GraphNode]:
-        assert self._nodes is not None, ex.NODES_NOT_LOADED
+        if self._nodes is None:
+            raise RuntimeError(ex.NODES_NOT_LOADED)
         return self._nodes
 
     @property
     @ensure_loaded
     def relationships(self) -> list[GraphRelationship]:
-        assert self._relationships is not None, ex.RELATIONSHIPS_NOT_LOADED
+        if self._relationships is None:
+            raise RuntimeError(ex.RELATIONSHIPS_NOT_LOADED)
         return self._relationships
 
     @property
     @ensure_loaded
     def metadata(self) -> GraphMetadata:
-        assert self._data is not None, ex.DATA_NOT_LOADED
+        if self._data is None:
+            raise RuntimeError(ex.DATA_NOT_LOADED)
         return self._data[cs.KEY_METADATA]
 
     # The finders return copies: handing out an index list let a caller's

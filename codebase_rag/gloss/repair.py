@@ -375,8 +375,10 @@ def _repair_note(
     comparable = note.comparable_hash
     # Physical rows, not distinct names: a same-name pair is two.
     rows = candidates.get((project, comparable), []) if comparable else []
-    if not rows and note.anchor is not None and quotes is not None:
-        _repair_by_quote(fetch_all, execute_write, note, project, quotes, report)
+    if not rows and (anchor := note.anchor) is not None and quotes is not None:
+        _repair_by_quote(
+            fetch_all, execute_write, note, anchor, project, quotes, report
+        )
     elif len(rows) == 1:
         execute_write(
             cq.CYPHER_GLOSS_MOVE,
@@ -402,14 +404,12 @@ def _repair_by_quote(
     fetch_all: QueryFn,
     execute_write: WriteFn,
     note: _Unanchored,
+    anchor: TextAnchor,
     project: str,
     quotes: _QuoteIndex,
     report: RepairReport,
 ) -> None:
-    assert note.anchor is not None
-    rows = _narrow_by_context(
-        note.anchor, quotes.candidates(project, note.anchor.quote)
-    )
+    rows = _narrow_by_context(anchor, quotes.candidates(project, anchor.quote))
     if len(rows) == 1 and rows[0].anchor_hash is None:
         # The move re-validates the candidate by its hash; without one the
         # body cannot be checked at write time, so the note is left as it is

@@ -242,9 +242,8 @@ def _cycles_through(
                 stack.append((w, [*path, w]))
 
 
-def _simple_cycles(
-    conn: sqlite3.Connection, _args: Sequence[SqlValue]
-) -> Iterable[Record]:
+def _cycles(conn: sqlite3.Connection) -> list[list[int]]:
+    """The graph's simple cycles, at most `_MAX_CYCLES` of them."""
     nodes, out, _ = _graph(conn)
     cycles: list[list[int]] = []
     for comp in _tarjan(nodes, out):
@@ -257,16 +256,21 @@ def _simple_cycles(
             _cycles_through(start, members, out, cycles)
             members.discard(start)
             if len(cycles) >= _MAX_CYCLES:
-                return [{ecs.EgProcCol.CYCLES: cycles}]
-    return [{ecs.EgProcCol.CYCLES: cycles}]
+                return cycles
+    return cycles
 
 
-def _find_cycle(conn: sqlite3.Connection, args: Sequence[SqlValue]) -> Iterable[Record]:
-    for record in _simple_cycles(conn, args):
-        cycles = record[ecs.EgProcCol.CYCLES]
-        assert isinstance(cycles, list)
-        return [{ecs.EgProcCol.CYCLE: cycles[0] if cycles else []}]
-    return [{ecs.EgProcCol.CYCLE: []}]
+def _simple_cycles(
+    conn: sqlite3.Connection, _args: Sequence[SqlValue]
+) -> Iterable[Record]:
+    return [{ecs.EgProcCol.CYCLES: _cycles(conn)}]
+
+
+def _find_cycle(
+    conn: sqlite3.Connection, _args: Sequence[SqlValue]
+) -> Iterable[Record]:
+    cycles = _cycles(conn)
+    return [{ecs.EgProcCol.CYCLE: cycles[0] if cycles else []}]
 
 
 def _toposort(conn: sqlite3.Connection, _args: Sequence[SqlValue]) -> Iterable[Record]:

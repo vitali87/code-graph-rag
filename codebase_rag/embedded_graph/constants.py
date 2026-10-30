@@ -597,6 +597,7 @@ EG_WHAT_VARLEN_ROW_PROPS = (
     "variable-length relationship properties that read a variable"
 )
 EG_WHAT_READ_WITHOUT_RETURN = "a read query without RETURN"
+EG_WHAT_SCHEMA_AS_READ = "a schema command compiled as a read query"
 EG_WHAT_UNION_UPDATES = "UNION with updating clauses"
 EG_WHAT_REMOVE_LABEL = "REMOVE of a label"
 EG_WHAT_MERGE_PATH = "MERGE of a path with unbound nodes"
