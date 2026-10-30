@@ -51,6 +51,7 @@ from .parameter_nodes import (
 )
 from .php import utils as php_utils
 from .positional_params import declared_positional_params
+from .rust import function_ingest as rust_function_ingest
 from .rust import utils as rs_utils
 from .type_facts import extract_type_facts, queue_type_facts, type_facts_props
 from .utils import (
@@ -115,13 +116,10 @@ def _java_anon_base_for_function(
 class _DeferredRegistration(NamedTuple):
     """A function held back from the generic pass until later passes claim.
 
-    Two shapes need this. An unnamed JS/TS function expression may be one a
-    named pass registers under its real name, and registering
-    `anonymous_row_col` eagerly minted a second node for every one of them
-    (521 locations on thrift's JS corpora). A Rust definition written inside a
-    function body owns no name any caller can reach, so it must not take one
-    from the method or module item that does (issue #1037). Registration
-    happens at the per-file flush.
+    An unnamed JS/TS function expression may be one a named pass registers
+    under its real name, and registering `anonymous_row_col` eagerly minted a
+    second node for every one of them (521 locations on thrift's JS corpora).
+    Registration happens at the per-file flush.
     """
 
     func_node: Node
@@ -178,8 +176,8 @@ class FunctionIngest:
         "_deferred_parent_links",
         "_deferred_go_methods",
         "_deferred_js_anonymous",
-        "_deferred_rust_body_local",
         "cpp",
+        "rust",
     )
 
     def __init__(
@@ -230,7 +228,7 @@ class FunctionIngest:
         # Unnamed JS/TS function expressions held back until the named
         # JS passes have claimed their spans (one node per source function).
         self._deferred_js_anonymous: list[_DeferredRegistration] = []
-        self._deferred_rust_body_local: list[_DeferredRegistration] = []
+        self.rust = rust_function_ingest.RustFunctionIngest(self, ingestor, facts)
         self.cpp = cpp_function_ingest.CppFunctionIngest(
             self,
             method_host=method_host,
@@ -376,25 +374,10 @@ class FunctionIngest:
             )
             return True
 
-        # A Rust item written inside a function body, a closure or a
-        # const/static initializer is reachable by path from nowhere, yet it
-        # registers in the qn space of the module or impl target that
-        # encloses it. Registering it here would let it take the natural qn
-        # of the method or module item of that name, which does own it and
-        # whose callers then resolve to this one; hold it back until those
-        # have claimed their names (issue #1037).
-        if language == cs.SupportedLanguage.RUST and rs_utils.is_body_local(func_node):
-            self._deferred_rust_body_local.append(
-                _DeferredRegistration(
-                    func_node,
-                    resolution,
-                    module_qn,
-                    language,
-                    lang_config,
-                    lang_queries,
-                )
+        if language == cs.SupportedLanguage.RUST:
+            return self.rust.defers_body_local(
+                func_node, resolution, module_qn, lang_config, lang_queries
             )
-            return True
         return False
 
     def _record_free_function_return_type(
@@ -403,15 +386,10 @@ class FunctionIngest:
         if language == cs.SupportedLanguage.CPP:
             self.cpp.record_return_type(func_node, qualified_name)
 
-        # Same for a free Rust fn (impl methods are recorded in class
-        # ingest): a call-bound local (`let s = make()`) types from
-        # this map. No impl target here, so a `Self` return stays None.
-        if language == cs.SupportedLanguage.RUST and (
-            return_type := rs_utils.extract_return_type_name(func_node, None)
-        ):
-            self.facts.method_return_types[qualified_name] = return_type
+        if language == cs.SupportedLanguage.RUST:
+            self.rust.record_return_type(func_node, qualified_name)
 
-        # Same for a Dart free function: a call-bound local
+        # A Dart free function's return type: a call-bound local
         # (`var g = makeIt()` via the enrichment pass) types from
         # this map.
         if language == cs.SupportedLanguage.DART and (
@@ -471,33 +449,6 @@ class FunctionIngest:
                 qualified_name=qualified_name,
                 container_qn=None,
             )
-
-    def flush_deferred_rust_body_local(self) -> None:
-        """Register the file's held-back Rust body-local items (issue #1037)."""
-        deferred = self._deferred_rust_body_local
-        self._deferred_rust_body_local = []
-        for entry in deferred:
-            self._register_function(
-                entry.func_node,
-                entry.resolution,
-                entry.module_qn,
-                entry.language,
-                entry.lang_config,
-                entry.lang_queries,
-            )
-            # A call-bound local (`let s = make()`) types from this map, so the
-            # return type has to be recorded here too. Under the qn the
-            # registry HANDED OUT, which for a body-local item contesting a
-            # module item of that name is the `@<line>` variant: recording
-            # under the proposed qn would overwrite the module item's own
-            # return type and mistype every caller of it.
-            location = self.facts.function_locations.get(
-                function_span_key(entry.module_qn, entry.func_node)
-            )
-            if location is not None and (
-                return_type := rs_utils.extract_return_type_name(entry.func_node, None)
-            ):
-                self.facts.method_return_types[location.qualified_name] = return_type
 
     def flush_deferred_js_anonymous(self) -> None:
         deferred = self._deferred_js_anonymous
@@ -801,9 +752,7 @@ class FunctionIngest:
         lang_config: LanguageSpec,
     ) -> str:
         if language == cs.SupportedLanguage.RUST:
-            return self._build_rust_function_qualified_name(
-                func_node, module_qn, func_name
-            )
+            return self.rust.qualified_name(func_node, module_qn, func_name)
 
         nested_qn = self._build_nested_qualified_name(
             func_node, module_qn, func_name, lang_config
@@ -1081,23 +1030,9 @@ class FunctionIngest:
             parent_span=parent_span,
         )
 
-        # A Rust closure is a value constructed at its definition site (a `.map`
-        # arg, spawn body, `let` binding), so it is used wherever it is written.
-        # Dead-code reachability walks CALLS/REFERENCES, not DEFINES, so mirror the
-        # DEFINES with a REFERENCES from the enclosing scope, else every closure is
-        # an orphan and reports dead. (JS/TS emit the analogous inline-callback ref.)
-        if (
-            language == cs.SupportedLanguage.RUST
-            and func_node.type == cs.TS_RS_CLOSURE_EXPRESSION
-        ):
-            self.ingestor.ensure_relationship_batch(
-                (parent_type, cs.KEY_QUALIFIED_NAME, parent_qn),
-                cs.RelationshipType.REFERENCES,
-                (
-                    cs.NodeLabel.FUNCTION,
-                    cs.KEY_QUALIFIED_NAME,
-                    resolution.qualified_name,
-                ),
+        if language == cs.SupportedLanguage.RUST:
+            self.rust.reference_closure(
+                func_node, parent_type, parent_qn, resolution.qualified_name
             )
 
         if resolution.is_exported and language == cs.SupportedLanguage.CPP:
@@ -1303,14 +1238,6 @@ class FunctionIngest:
     def _format_nested_qn(
         self, module_qn: str, path_parts: list[str], func_name: str
     ) -> str:
-        if path_parts:
-            return f"{module_qn}.{cs.SEPARATOR_DOT.join(path_parts)}.{func_name}"
-        return f"{module_qn}.{func_name}"
-
-    def _build_rust_function_qualified_name(
-        self, func_node: Node, module_qn: str, func_name: str
-    ) -> str:
-        path_parts = rs_utils.build_module_path(func_node)
         if path_parts:
             return f"{module_qn}.{cs.SEPARATOR_DOT.join(path_parts)}.{func_name}"
         return f"{module_qn}.{func_name}"
@@ -1685,16 +1612,9 @@ class FunctionIngest:
 
             current = current.parent
 
-        # A Rust item inside `mod inner` is contained by that inline module, not
-        # the file module. Its enclosing module qn is the item's OWN qn minus the
-        # item segment: re-deriving the mod path with build_module_path drops the
-        # class scope an inline mod under a trait/impl body carries (foo.inner vs
-        # foo.T.inner), so the DEFINES edge dangles off the inline Module node,
-        # which keeps that scope (issue #1018). The item qn already carries it.
-        if language == cs.SupportedLanguage.RUST and rs_utils.build_module_path(
-            func_node
+        if language == cs.SupportedLanguage.RUST and (
+            inline_parent := self.rust.inline_module_parent(func_node, func_qn)
         ):
-            nested = func_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
-            return cs.NodeLabel.MODULE, nested, None
+            return inline_parent
 
         return cs.NodeLabel.MODULE, module_qn, None

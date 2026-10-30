@@ -743,10 +743,8 @@ class TestRustFunctionQualifiedName:
         func_node = find_first_node_of_type(root, "function_item")
         assert func_node is not None
 
-        result = (
-            definition_processor.function_ingest._build_rust_function_qualified_name(
-                func_node, "crate.module", "my_function"
-            )
+        result = definition_processor.function_ingest.rust.qualified_name(
+            func_node, "crate.module", "my_function"
         )
         assert result == "crate.module.my_function"
 
@@ -768,10 +766,8 @@ mod submodule {
         func_node = find_first_node_of_type(root, "function_item")
         assert func_node is not None
 
-        result = (
-            definition_processor.function_ingest._build_rust_function_qualified_name(
-                func_node, "crate.module", "inner_func"
-            )
+        result = definition_processor.function_ingest.rust.qualified_name(
+            func_node, "crate.module", "inner_func"
         )
         assert "submodule" in result
         assert "inner_func" in result

@@ -937,7 +937,7 @@ class DefinitionProcessor:
     def _finalise_rust_file(self, module_qn: str, root_node: ASTNode) -> None:
         # The methods above have claimed their names; a body-local item
         # may now take what is left of the one it shares.
-        self.function_ingest.flush_deferred_rust_body_local()
+        self.function_ingest.rust.flush_deferred_body_local()
         # Function-body uses key on the REGISTERED qn of their
         # enclosing function, knowable only now that dedup variants
         # (`natural@<line>`) have been handed out.
