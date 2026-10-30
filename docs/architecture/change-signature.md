@@ -34,12 +34,14 @@ positionally:
 
 - A function declaration or a class method qualifies. Each parameter must
   be a name or a name with a default; a rest parameter (`...rest`) or a
-  destructured one (`{ a }`) refuses. A constructor refuses, since its call
-  sites are `new` expressions, and so does a getter or setter.
+  destructured one (`{ a }`) refuses, and so does a name declared twice. A
+  constructor refuses, since its call sites are `new` expressions, and so
+  does a getter or setter.
 - A new parameter is written `n` or `n = 0`.
-- A default the site skips is passed as `undefined`, which selects the
+- A default the site skips is passed as `void 0`, which selects the
   default as leaving the argument out does: `helper(2)` with a new `c`
-  mapped after the defaulted `b` becomes `helper(2, undefined, 5)`.
+  mapped after the defaulted `b` becomes `helper(2, void 0, 5)`. The name
+  `undefined` is not used, since a caller can bind it to another value.
 - A site stays unmapped when it spreads an array (`helper(...xs)`), passes
   more arguments than declared, calls through `.call` or `.apply`, or
   passes arguments that run code when the new order would run them in
@@ -49,6 +51,9 @@ positionally:
   refuses, and so does dropping a parameter the body or another default
   still mentions, or adding one under a name it already mentions. Nested
   functions count, so a closure that binds the same name refuses too.
+- A new header in which a default reads its own parameter or a later one
+  refuses: parameters bind left to right, so that default would throw
+  ReferenceError. Reordering `(a = 1, b = a)` to `(b = a, a = 1)` is one.
 
 ## The new parameter list
 

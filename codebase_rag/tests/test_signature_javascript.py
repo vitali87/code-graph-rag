@@ -107,23 +107,39 @@ def test_reordered_names_swap_places_at_every_site(temp_repo: Path) -> None:
     assert "return helper(y, x);" in _read(root, APP)
 
 
-def test_a_skipped_default_is_passed_as_undefined(temp_repo: Path) -> None:
-    # JavaScript has no keywords to skip a slot with; `undefined` is what an
-    # omitted argument is, and it still selects the default.
+def test_a_skipped_default_is_passed_as_void_0(temp_repo: Path) -> None:
+    # JavaScript has no keywords to skip a slot with; the undefined value is
+    # what an omitted argument is, and it still selects the default. `void 0`
+    # spells it where a caller's own `undefined` binding cannot shadow it.
     root = _indexed(temp_repo)
 
     report = _change(root, HELPER, ["a", "b = 'x'", "c = 0"], {"c": "=5"})
 
     assert report.applied, report.message
-    assert "return helper(2, undefined, 5);" in _read(root, APP)
+    assert "return helper(2, void 0, 5);" in _read(root, APP)
 
 
 def test_a_dropped_parameter_the_body_still_reads_refuses(temp_repo: Path) -> None:
     root = _indexed(temp_repo)
 
-    with pytest.raises(SignatureRefused, match="still reads `b`"):
+    with pytest.raises(SignatureRefused, match="still uses `b`"):
         _change(root, HELPER, ["a"])
     assert _read(root, UTIL) == UTIL_SOURCE
+
+
+def test_a_reorder_that_moves_a_default_before_what_it_reads_refuses(
+    temp_repo: Path,
+) -> None:
+    # `(b = a, a = 1)` would throw ReferenceError on `helper()`: `a` is not
+    # bound yet when `b`'s default runs.
+    util = "function helper(a = 1, b = a) {\n  return b;\n}\nmodule.exports = { helper };\n"
+    app = "const { helper } = require('./util');\nfunction run() {\n  return helper();\n}\n"
+    root = _indexed(temp_repo, util=util, app=app)
+
+    with pytest.raises(SignatureRefused, match="the default of b reads `a`"):
+        _change(root, HELPER, ["b", "a"])
+    assert _read(root, UTIL) == util
+    assert _read(root, APP) == app
 
 
 @pytest.mark.parametrize(
