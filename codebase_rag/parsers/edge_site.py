@@ -1,13 +1,12 @@
 """The edge site a language's call collaborator writes through its host.
 
 `CallProcessor` stamps every edge it emits with the node that produced it
-and the confidence of the binding (issues #1522, #1526): a pass sets both as
-it walks, and `_site_scoped` puts them back when the pass returns, so a
-nested pass cannot leak its last node into the edges its caller emits next.
-A language's call collaborator sets the same two on the processor that owns
-it, and `host_site_scoped` does that restoring for the collaborator's
-passes; the edges themselves it writes through the processor's own writer
-(`emit_rel`)."""
+and the confidence of the binding (issues #1522, #1526). The pass's
+collaborators, shared and per-language, set both on the processor that owns
+them as they walk, and `host_site_scoped` puts them back when a pass
+returns, so a nested pass cannot leak its last node into the edges its
+caller emits next; the edges themselves they write through the processor's
+own writer (`emit_rel`)."""
 
 from collections.abc import Callable
 from functools import wraps

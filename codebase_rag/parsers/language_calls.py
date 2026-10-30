@@ -482,7 +482,7 @@ class LanguageCalls:
 
 @dataclass(slots=True)
 class CallScan:
-    # Per-invocation state _ingest_function_calls hands every call node it
+    # Per-invocation state `CallerCalls.ingest` hands every call node it
     # scans: the caller, its language's call strategy and bound resolvers,
     # and the lazily-built alias maps shared across the caller's call nodes.
     caller_node: Node

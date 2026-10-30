@@ -22,7 +22,7 @@ from codebase_rag import cli
 from codebase_rag import constants as cs
 from codebase_rag.cli import app
 from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parsers.call_processor import CallProcessor
+from codebase_rag.parsers.call_scan import CallerCalls
 from codebase_rag.parsers.type_inference import TypeInferenceEngine
 from codebase_rag.tests.conftest import create_and_run_updater, get_relationships
 from codebase_rag.types_defs import ASTNode, LanguageQueries
@@ -235,10 +235,10 @@ def test_a_failed_caller_costs_only_its_own_calls(
     mock_ingestor: MagicMock,
     _fail_on_swallowed_pass_errors: list[str],
 ) -> None:
-    original = CallProcessor._ingest_function_calls
+    original = CallerCalls.ingest
 
     def explode(
-        self: CallProcessor,
+        self: CallerCalls,
         caller_node: Node,
         caller_qn: str,
         caller_type: str,
@@ -264,7 +264,7 @@ def test_a_failed_caller_costs_only_its_own_calls(
             call_name_cache,
         )
 
-    with patch.object(CallProcessor, "_ingest_function_calls", explode):
+    with patch.object(CallerCalls, "ingest", explode):
         updater = _index(temp_repo, _SHALLOW["go"](), mock_ingestor)
 
     calls = _calls(temp_repo, mock_ingestor)

@@ -1,8 +1,11 @@
 """A caller's calls: the scan the call pass runs over one function, method
 or module.
 
-`CallProcessor._ingest_function_calls` hands every caller to the
-`CallerCalls` it owns. The scan types the caller's locals, runs the side
+`CallProcessor` builds one `CallerCalls` and hands it every caller: the
+module's own share of a file's calls, and each caller its `CallerScan`
+names. Each scan puts the edge site back when it returns, so a caller's
+last call node never leaks into the edges of the one scanned next. The scan
+types the caller's locals, runs the side
 passes that read a caller (I/O access, Go RPC exposure, data flow), records
 the callable parameters it may invoke, writes the property reads and the
 references its language finds in it, and then binds each of its call nodes
@@ -25,7 +28,7 @@ from .call_host import CallStrategyHost
 from .call_resolver import CallResolver, Resolved
 from .callable_flow import CallableFlow
 from .cpp import calls as cpp_calls
-from .edge_site import EdgeWriterHost
+from .edge_site import EdgeWriterHost, host_site_scoped
 from .flow_access import FlowProcessor
 from .io_access import IOAccessProcessor
 from .language_calls import CallScan
@@ -79,6 +82,7 @@ class CallerCalls:
         self._rpc_exposure = rpc_exposure
         self._flow_access = flow_access
 
+    @host_site_scoped
     def ingest(
         self,
         caller_node: Node,
@@ -87,9 +91,9 @@ class CallerCalls:
         module_qn: str,
         language: cs.SupportedLanguage,
         queries: Mapping[cs.SupportedLanguage, LanguageQueries],
-        class_context: str | None,
-        call_nodes: list[Node] | None,
-        call_name_cache: dict[int, str | None] | None,
+        class_context: str | None = None,
+        call_nodes: list[Node] | None = None,
+        call_name_cache: dict[int, str | None] | None = None,
     ) -> None:
         local_var_types, span_bindings, cpp_spans = self._caller_local_types(
             caller_node, caller_qn, module_qn, language, class_context

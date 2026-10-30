@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag.parsers import dependency_parser
-from codebase_rag.parsers.call_processor import CallProcessor
+from codebase_rag.parsers.call_scan import CallerCalls
 from codebase_rag.parsers.function_ingest import FunctionIngest
 from codebase_rag.parsers.python.imports import PythonImporter
 from codebase_rag.parsers.type_inference import TypeInferenceEngine
@@ -50,7 +50,7 @@ def _run_with_broken_pass(
 @pytest.mark.parametrize(
     ("target", "attribute", "expected"),
     [
-        (CallProcessor, "_ingest_function_calls", "Failed to process calls in "),
+        (CallerCalls, "ingest", "Failed to process calls in "),
         (
             TypeInferenceEngine,
             "build_local_variable_type_map",

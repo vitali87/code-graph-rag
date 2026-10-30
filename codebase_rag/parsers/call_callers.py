@@ -6,8 +6,9 @@ captures and the methods of each class body it can name, gives each caller
 the qualified name and label the definition pass registered for it (its
 recorded location first, then the way that pass builds one), slices its
 share of the file's calls (`call_ownership`), and hands it to the pass's
-caller pass with its class context. It calls back through `CallerHost` for
-the caller pass, the recorded locations and a language's call strategy."""
+`CallerCalls` scan with its class context. It calls back through
+`CallerHost` for the recorded locations, a language's call strategy and the
+record of a caller whose pass failed."""
 
 from collections.abc import Mapping
 from typing import NamedTuple, Protocol
@@ -28,6 +29,7 @@ from .call_ownership import (
     calls_owned_by,
     top_level_calls,
 )
+from .call_scan import CallerCalls
 from .class_ingest.identity import build_nested_qualified_name_for_class
 from .language_calls import LanguageCalls
 from .utils import enclosing_class_node, get_function_captures
@@ -80,8 +82,7 @@ def _class_qn_for_calls(
 
 
 class CallerHost(CallStrategyHost, RecordedCallerHost, Protocol):
-    """What the caller scan calls on the call pass that builds it: the caller
-    pass a function, method or module's calls go through, where the
+    """What the caller scan calls on the call pass that builds it: where the
     definition pass recorded a function node, the record of a caller whose
     pass failed, and a language's call strategy."""
 
@@ -89,32 +90,23 @@ class CallerHost(CallStrategyHost, RecordedCallerHost, Protocol):
         self, message: str, caller: str, error: Exception
     ) -> None: ...
 
-    def _ingest_function_calls(
-        self,
-        caller_node: Node,
-        caller_qn: str,
-        caller_type: str,
-        module_qn: str,
-        language: cs.SupportedLanguage,
-        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
-        class_context: str | None = None,
-        call_nodes: list[Node] | None = None,
-        call_name_cache: dict[int, str | None] | None = None,
-    ) -> None: ...
-
 
 class CallerScan:
     """Names a file's callers and hands each its share of the file's calls.
 
-    Built and owned by `CallProcessor`."""
+    Built and owned by `CallProcessor`, with the scan each caller's calls go
+    through."""
 
-    __slots__ = ("_host", "_julia")
+    __slots__ = ("_host", "_julia", "_scan")
 
-    def __init__(self, host: CallerHost, julia: RegisteredNames) -> None:
+    def __init__(
+        self, host: CallerHost, julia: RegisteredNames, scan: CallerCalls
+    ) -> None:
         self._host = host
         # Julia's registered names decide which of its bodiless definitions
         # own their calls.
         self._julia = julia
+        self._scan = scan
 
     def ingest_function_callers(
         self,
@@ -205,7 +197,7 @@ class CallerScan:
             filtered = self._filtered_calls_for(
                 func_node, language, file_calls, owned_func_nodes
             )
-            host._ingest_function_calls(
+            self._scan.ingest(
                 func_node,
                 loc.qualified_name,
                 loc.label,
@@ -228,7 +220,7 @@ class CallerScan:
             filtered = self._filtered_calls_for(
                 func_node, language, file_calls, owned_func_nodes
             )
-            host._ingest_function_calls(
+            self._scan.ingest(
                 func_node,
                 caller_qn,
                 cs.NodeLabel.METHOD,
@@ -251,7 +243,7 @@ class CallerScan:
             filtered = self._filtered_calls_for(
                 func_node, language, file_calls, owned_func_nodes
             )
-            host._ingest_function_calls(
+            self._scan.ingest(
                 func_node,
                 func_qn,
                 cs.NodeLabel.FUNCTION,
@@ -385,7 +377,7 @@ class CallerScan:
                 else None
             )
             try:
-                host._ingest_function_calls(
+                self._scan.ingest(
                     method_node,
                     caller_qn,
                     caller_label,

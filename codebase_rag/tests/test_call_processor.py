@@ -1475,7 +1475,7 @@ class TestIngestFunctionCallsWithoutCallNodes:
         tree = parser.parse(code.encode(cs.ENCODING_UTF8))
         root_node = tree.root_node
 
-        cp._ingest_function_calls(
+        cp.scan.ingest(
             root_node,
             "proj.module.foo",
             cs.NodeLabel.FUNCTION,
@@ -1514,7 +1514,7 @@ class TestIngestFunctionCallsWithoutCallNodes:
                 cs.QUERY_CONFIG: queries[cs.SupportedLanguage.PYTHON][cs.QUERY_CONFIG],
             }
         }
-        cp._ingest_function_calls(
+        cp.scan.ingest(
             root_node,
             "proj.module.foo",
             cs.NodeLabel.FUNCTION,

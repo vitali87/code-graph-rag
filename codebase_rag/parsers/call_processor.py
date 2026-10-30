@@ -16,10 +16,9 @@ holds), the callback edges they write through (`call_callbacks`),
 callable-parameter flow (`callable_flow`) and the construction a class
 callee runs (`call_construction`)."""
 
-from collections.abc import Callable, Mapping
-from functools import wraps
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Concatenate
+from typing import Any
 
 from loguru import logger
 from tree_sitter import Node
@@ -62,7 +61,6 @@ from .csharp import calls as csharp_calls
 from .dart import calls as dart_calls
 from .definition_facts import DefinitionFacts
 from .dispatch_registry import DispatchRegistryProcessor
-from .edge_site import EdgeSiteHost
 from .flow_access import FlowProcessor
 from .go import calls as go_calls
 from .go.link_state import GoLinkState
@@ -91,29 +89,6 @@ _RESOLVED_RELS = frozenset(
         cs.RelationshipType.INSTANTIATES,
     }
 )
-
-
-def _site_scoped[H: EdgeSiteHost, **P, R](
-    fn: Callable[Concatenate[H, P], R],
-) -> Callable[Concatenate[H, P], R]:
-    """Restore the processor's current edge-site node when the pass returns.
-
-    A pass sets `_site_node` as it visits nodes so every edge it emits picks
-    up that site; restoring the previous value on exit keeps a nested pass
-    from leaking its last node into the edges its caller emits afterwards.
-    """
-
-    @wraps(fn)
-    def wrapper(host: H, /, *args: P.args, **kwargs: P.kwargs) -> R:
-        prev = host._site_node
-        prev_resolution = host._resolution
-        try:
-            return fn(host, *args, **kwargs)
-        finally:
-            host._site_node = prev
-            host._resolution = prev_resolution
-
-    return wrapper
 
 
 class CallProcessor:
@@ -153,7 +128,7 @@ class CallProcessor:
         "construction",
         "binding",
         "callers",
-        "_scan",
+        "scan",
         "failed_call_files",
         "_call_file",
         "_flow_processor",
@@ -177,7 +152,7 @@ class CallProcessor:
         self.ingestor = ingestor
         # The tree-sitter node whose span every edge emitted right now records
         # as its site (issue #1522); each pass sets it per visited node and
-        # `_site_scoped` restores it on exit. The cache keeps the variant
+        # `host_site_scoped` restores it on exit. The cache keeps the variant
         # fan-out of one site from re-deriving the same property dict.
         self._site_node: Node | None = None
         # Confidence of the edges emitted next (issue #1526); the main call
@@ -254,7 +229,6 @@ class CallProcessor:
             # declared in the repository's .cgr.toml.
             load_string_call_specs(repo_path),
         )
-        self.callers = CallerScan(self, self._julia)
         # Files whose call pass failed this run, whole or in one caller, for
         # the sync summary (issue #3173); `_call_file` is the file being walked.
         self.failed_call_files: set[Path] = set()
@@ -295,7 +269,7 @@ class CallProcessor:
             function_locations=self.facts.function_locations,
             project_name=project_name,
         )
-        self._scan = CallerCalls(
+        self.scan = CallerCalls(
             self,
             self._resolver,
             self._flow,
@@ -304,6 +278,7 @@ class CallProcessor:
             rpc_exposure=rpc_exposure,
             flow_access=self._flow_processor,
         )
+        self.callers = CallerScan(self, self._julia, self.scan)
 
     def _language_call_lookup(self) -> dict[str, LanguageCalls]:
         # The call strategy each language's files go to; JS, TS and TSX share
@@ -523,7 +498,7 @@ class CallProcessor:
             module_calls = self.callers.module_level_calls(
                 all_call_nodes, call_starts, sorted_func_nodes, language, module_qn
             )
-            self._ingest_function_calls(
+            self.scan.ingest(
                 root_node,
                 module_qn,
                 cs.NodeLabel.MODULE,
@@ -555,33 +530,6 @@ class CallProcessor:
         if loc is None or loc.qualified_name not in self._resolver.function_registry:
             return None
         return loc
-
-    @_site_scoped
-    def _ingest_function_calls(
-        self,
-        caller_node: Node,
-        caller_qn: str,
-        caller_type: str,
-        module_qn: str,
-        language: cs.SupportedLanguage,
-        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
-        class_context: str | None = None,
-        call_nodes: list[Node] | None = None,
-        call_name_cache: dict[int, str | None] | None = None,
-    ) -> None:
-        # The scan is `CallerCalls`'s; `_site_scoped` restores the site and
-        # resolution it leaves behind.
-        self._scan.ingest(
-            caller_node,
-            caller_qn,
-            caller_type,
-            module_qn,
-            language,
-            queries,
-            class_context,
-            call_nodes,
-            call_name_cache,
-        )
 
     def _record_caller_failure(
         self, message: str, caller: str, error: Exception
