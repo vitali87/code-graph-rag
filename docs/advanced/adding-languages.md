@@ -114,9 +114,9 @@ backbone, see [Adding a Language Frontend](../architecture/language-frontends.md
 ## Where language-specific code lives
 
 The pass modules (`import_processor.py`, `call_processor.py`,
-`call_resolver.py`, `definition_processor.py` and `class_ingest/`) own the
-language-neutral algorithm and reach a language's code through one dispatch
-per language. Code that reads a language's syntax or applies its rules
+`call_resolver.py`, `definition_processor.py`, `function_ingest.py` and
+`class_ingest/`) and the collaborators beside them own the language-neutral
+algorithm and reach a language's code through one dispatch per language. Code that reads a language's syntax or applies its rules
 belongs in that language's package, `codebase_rag/parsers/<language>/`: its
 parser utils, its type-inference engine, its compiler frontend
 (`frontend.py`, beside the tool it drives) and helpers such as
@@ -131,9 +131,11 @@ every language: `ImportProcessor` builds one importer per language package
 (`RustImporter` in `parsers/rust/imports.py`, `JsTsImporter` in
 `parsers/js_ts/imports.py`, and so on), looks a file's language up to hand
 the importer its imports, and keeps the shared import map, the import sites
-and the deferred IMPORTS edges and their flush for itself. A new language's
-import parsing goes in an importer in its own package, registered in that
-lookup.
+and the deferred IMPORTS edges for itself. `ImportEdges` (`import_edges.py`)
+flushes those edges once every module is known, and `import_targets.py`
+holds the lookups that check an import's target and point it at its own
+language's sibling. A new language's import parsing goes in an importer in
+its own package, registered in that lookup.
 
 The call pass has moved every language the same way: `CallProcessor` builds
 a `<Language>CallResolution` per language package (each in
@@ -156,14 +158,24 @@ language writes without a call node, and calls back through a narrow host
 protocol for what the pass shares. What reads nothing of the pass is module
 functions in the same files: Rust's macro-token call names, Lua's caller
 names, and the JS/TS value peels and call-name shapes the shared walkers
-apply. `CallProcessor` keeps for itself the order the steps run in, the scan
-of a caller's calls, the site and resolution every edge carries
-(`parsers/edge_site.py` holds the part a collaborator writes through), the
-name-based resolver, and what languages share: the reference walkers,
-callable-parameter flow, the class pass's qualified names and the
-construction a `new` runs. A new language's call behaviour goes in an
-override of the hook that asks for it, or a capability it turns on, in a
-collaborator in its own package, registered in that lookup.
+apply. `CallProcessor` keeps for itself the order the steps run in, the
+site and resolution every edge carries (`parsers/edge_site.py` holds the
+part a collaborator writes through) and the name-based resolver. What
+languages share sits in collaborators beside it, each calling back through
+a narrow host protocol: `CallerScan` (`call_callers.py`) names a file's
+callers and the class pass's qualified names, and `call_ownership.py` shares
+out their calls; `CallerCalls` (`call_scan.py`) scans one caller;
+`CallBinding` (`call_binding.py`) binds each call node, reading its name and
+arguments through `call_nodes.py`; `CallConstruction`
+(`call_construction.py`) runs the construction a `new` makes;
+`CallableFlow` (`callable_flow.py`) holds callable-parameter flow; and the
+reference walkers, `ReferenceWalkers` (`call_references.py`) and
+`TableReferences` (`call_tables.py`), write through `CallbackEdges`
+(`call_callbacks.py`). The methods a language collaborator's host protocol
+names stay on `CallProcessor`, which hands each call to the collaborator
+that owns it. A new language's call behaviour goes in an override of the
+hook that asks for it, or a capability it turns on, in a collaborator in its
+own package, registered in that lookup.
 
 That resolver has moved every language the same way: `CallResolver` builds a
 `RustResolver`, `JsTsResolver`, `GoResolver`, `CppResolver`,
@@ -217,11 +229,18 @@ functions the pass's docstring reader calls. A collaborator also holds what
 its language defers, such as C++'s forward declarations and out-of-class
 methods or Go's receiver methods, and the `resolve_deferred_*` pass that
 settles it. The passes keep the scan of a file's captures, a definition's
-node, identity, members and DEFINES edge, the non-C++ INHERITS/IMPLEMENTS
-resolution and the override walk. A new language's class, function or file
-handling goes in a collaborator in its own package that overrides the hooks
-it needs and is entered in the pass's lookup, rather than in a new
-`if language == ...` branch.
+node and members, and the override walk, and own collaborators for the
+rest, each with a narrow host protocol: a function's identity is
+`FunctionNaming`'s (`function_naming.py`) and its DEFINES edge, held until
+every parent registers, `FunctionContainment`'s
+(`function_containment.py`); a class body's methods are `ClassMethods`'s
+(`class_ingest/class_methods.py`) and the non-C++ INHERITS/IMPLEMENTS
+resolution `DeferredInherits`'s (`class_ingest/deferred_inherits.py`); a
+file's tree and combined captures come from `file_parse.py` and its Module
+node from `ModuleNodes` (`module_node.py`). A new language's class,
+function or file handling goes in a collaborator in its own package that
+overrides the hooks it needs and is entered in the pass's lookup, rather
+than in a new `if language == ...` branch.
 
 ## Example: Adding C# Support
 
