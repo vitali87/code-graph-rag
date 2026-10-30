@@ -17,7 +17,7 @@ from watchdog.events import (
 
 from codebase_rag import watch
 from codebase_rag.tests.conftest import create_and_run_updater
-from codebase_rag.watch import CodeChangeEventHandler
+from codebase_rag.watch import CodeChangeEventHandler, Debounce
 
 # A move is a deletion of its source plus a creation of its destination, and a
 # directory event stands for every file beneath it. Before these were handled
@@ -27,7 +27,7 @@ from codebase_rag.watch import CodeChangeEventHandler
 
 @pytest.fixture
 def handler(mock_updater: MagicMock) -> CodeChangeEventHandler:
-    h = CodeChangeEventHandler(mock_updater, debounce_seconds=0)
+    h = CodeChangeEventHandler(mock_updater, debounce=Debounce(seconds=0))
     return h
 
 
@@ -88,7 +88,9 @@ class TestFileMoves:
             timer.fire = lambda: fn(*args)
             return timer
 
-        h = CodeChangeEventHandler(mock_updater, timer_factory=factory)
+        h = CodeChangeEventHandler(
+            mock_updater, debounce=Debounce(timer_factory=factory)
+        )
         src = temp_repo / "a.py"
         dest = _write(temp_repo / "b.py")
         h.dispatch(FileMovedEvent(str(src), str(dest)))

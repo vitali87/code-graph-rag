@@ -11,12 +11,12 @@ from watchdog.events import (
     FileModifiedEvent,
 )
 
-from codebase_rag.watch import CodeChangeEventHandler
+from codebase_rag.watch import CodeChangeEventHandler, Debounce
 
 
 @pytest.fixture
 def event_handler(mock_updater: MagicMock) -> CodeChangeEventHandler:
-    handler = CodeChangeEventHandler(mock_updater, debounce_seconds=0)
+    handler = CodeChangeEventHandler(mock_updater, debounce=Debounce(seconds=0))
     return handler
 
 

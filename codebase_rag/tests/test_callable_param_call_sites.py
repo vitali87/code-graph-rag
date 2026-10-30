@@ -382,7 +382,7 @@ def test_editing_the_passing_file_keeps_the_receivers_invocation_site(
     main.write_text(edited, encoding="utf-8")
     mock.reset_mock()
 
-    watch.CodeChangeEventHandler(updater, debounce_seconds=0).dispatch(
+    watch.CodeChangeEventHandler(updater, debounce=watch.Debounce(seconds=0)).dispatch(
         FileModifiedEvent(str(main))
     )
 
@@ -406,7 +406,7 @@ def test_editing_the_receiver_moves_the_site_with_the_invocation(
     util.write_text(moved, encoding="utf-8")
     mock.reset_mock()
 
-    watch.CodeChangeEventHandler(updater, debounce_seconds=0).dispatch(
+    watch.CodeChangeEventHandler(updater, debounce=watch.Debounce(seconds=0)).dispatch(
         FileModifiedEvent(str(util))
     )
 

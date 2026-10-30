@@ -1045,10 +1045,10 @@ class _RulesChanged:
 
 
 def _rules_change_handler(repo: Path, updater: GraphUpdater, *, owed: bool):
-    from codebase_rag.watch import CodeChangeEventHandler
+    from codebase_rag.watch import CodeChangeEventHandler, Debounce
 
     handler = CodeChangeEventHandler(
-        updater, debounce_seconds=0, ignore_rules=_RulesChanged(repo, updater)
+        updater, debounce=Debounce(seconds=0), ignore_rules=_RulesChanged(repo, updater)
     )
     handler._needs_full_rebuild = owed
     return handler

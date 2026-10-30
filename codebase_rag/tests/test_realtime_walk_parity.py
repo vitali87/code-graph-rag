@@ -8,7 +8,7 @@ from watchdog.events import DirMovedEvent, FileModifiedEvent
 
 from codebase_rag import constants as cs
 from codebase_rag.utils.path_utils import walk_eligible_files
-from codebase_rag.watch import CodeChangeEventHandler
+from codebase_rag.watch import CodeChangeEventHandler, Debounce
 
 # The watcher and the repository walk must agree about which files are in the
 # graph. The watcher used to check directory names against the built-in
@@ -37,7 +37,7 @@ def _write(repo: Path, rel: str) -> Path:
 
 @pytest.fixture
 def handler(mock_updater: MagicMock) -> CodeChangeEventHandler:
-    return CodeChangeEventHandler(mock_updater, debounce_seconds=0)
+    return CodeChangeEventHandler(mock_updater, debounce=Debounce(seconds=0))
 
 
 @pytest.mark.parametrize(

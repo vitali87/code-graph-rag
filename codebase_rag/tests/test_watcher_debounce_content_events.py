@@ -28,7 +28,7 @@ from watchdog.events import (
 )
 
 from codebase_rag import logs, watch
-from codebase_rag.watch import CodeChangeEventHandler
+from codebase_rag.watch import CodeChangeEventHandler, Debounce
 
 DEBOUNCE_SECONDS = 5.0
 MAX_WAIT_SECONDS = 30.0
@@ -101,9 +101,11 @@ def timers() -> Timers:
 def handler(mock_updater: MagicMock, timers: Timers) -> CodeChangeEventHandler:
     return CodeChangeEventHandler(
         mock_updater,
-        debounce_seconds=DEBOUNCE_SECONDS,
-        max_wait_seconds=MAX_WAIT_SECONDS,
-        timer_factory=timers.factory,
+        debounce=Debounce(
+            seconds=DEBOUNCE_SECONDS,
+            max_wait_seconds=MAX_WAIT_SECONDS,
+            timer_factory=timers.factory,
+        ),
     )
 
 
@@ -337,7 +339,7 @@ class TestWithoutDebounce:
         # Unchanged: every event goes straight through, so the write's created
         # and modified each re-ingest and the open/close pair adds nothing.
         handler = CodeChangeEventHandler(
-            mock_updater, debounce_seconds=0, timer_factory=timers.factory
+            mock_updater, debounce=Debounce(seconds=0, timer_factory=timers.factory)
         )
 
         _feed(handler, source, INOTIFY_NEW_FILE_WRITE)
@@ -354,7 +356,7 @@ class TestWithoutDebounce:
         mock_updater: MagicMock,
         source: Path,
     ) -> None:
-        handler = CodeChangeEventHandler(mock_updater, debounce_seconds=0)
+        handler = CodeChangeEventHandler(mock_updater, debounce=Debounce(seconds=0))
 
         _feed(handler, source, INOTIFY_READ)
 

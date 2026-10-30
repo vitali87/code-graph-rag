@@ -62,7 +62,7 @@ def test_sibling_inline_mod_functions_survive_the_prefix_sweep(
     go_qn = f"{base}.src.a.b.c.go"
     assert go_qn in updater.function_registry
 
-    handler = watch.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler = watch.CodeChangeEventHandler(updater, debounce=watch.Debounce(seconds=0))
 
     touched = project / "src" / "a" / "b.rs"
     touched.write_text("pub fn refreshed_wrap() {}\n", encoding="utf-8")

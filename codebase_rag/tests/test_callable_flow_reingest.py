@@ -52,7 +52,7 @@ def _updater(project: Path, mock_ingestor: MagicMock) -> GraphUpdater:
 
 
 def _watch(updater: GraphUpdater) -> watch.CodeChangeEventHandler:
-    handler = watch.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler = watch.CodeChangeEventHandler(updater, debounce=watch.Debounce(seconds=0))
     return handler
 
 

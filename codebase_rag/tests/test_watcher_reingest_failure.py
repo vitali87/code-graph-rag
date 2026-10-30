@@ -27,7 +27,7 @@ import pytest
 
 from codebase_rag.constants import EventType
 from codebase_rag.exceptions import ReingestAborted
-from codebase_rag.watch import CodeChangeEventHandler
+from codebase_rag.watch import CodeChangeEventHandler, Debounce
 
 
 class _Event:
@@ -55,7 +55,7 @@ def updater() -> MagicMock:
 def handler(updater: MagicMock) -> CodeChangeEventHandler:
     # debounce off: dispatch runs the change inline, so the assertions below
     # observe the handler rather than a timer.
-    return CodeChangeEventHandler(updater=updater, debounce_seconds=0)
+    return CodeChangeEventHandler(updater=updater, debounce=Debounce(seconds=0))
 
 
 class TestReingestFailedMidRun:

@@ -28,7 +28,7 @@ from watchdog.events import FileModifiedEvent
 
 import codebase_rag.constants.languages as cs
 from codebase_rag.utils.path_utils import should_skip_rel_file, walk_eligible_files
-from codebase_rag.watch import CodeChangeEventHandler
+from codebase_rag.watch import CodeChangeEventHandler, Debounce
 
 # Kept out of the graph: machine-generated, never hand-edited.
 SKIPPED = (
@@ -300,7 +300,7 @@ class TestIndexerAndWatcherAgree:
         updater = MagicMock()
         updater.unignore_paths = frozenset({rel})
         updater.repo_path = tmp_path
-        handler = CodeChangeEventHandler(updater=updater, debounce_seconds=0)
+        handler = CodeChangeEventHandler(updater=updater, debounce=Debounce(seconds=0))
 
         seen: list[object] = []
         monkeypatch.setattr(handler, "_process_change", seen.append)
@@ -312,7 +312,7 @@ class TestIndexerAndWatcherAgree:
         plain = MagicMock()
         plain.unignore_paths = None
         plain.repo_path = tmp_path
-        other = CodeChangeEventHandler(updater=plain, debounce_seconds=0)
+        other = CodeChangeEventHandler(updater=plain, debounce=Debounce(seconds=0))
         dropped: list[object] = []
         monkeypatch.setattr(other, "_process_change", dropped.append)
         other.dispatch(FileModifiedEvent(str(target)))

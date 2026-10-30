@@ -13,7 +13,7 @@ from watchdog.events import (
     FileSystemEvent,
 )
 
-from codebase_rag.watch import CodeChangeEventHandler
+from codebase_rag.watch import CodeChangeEventHandler, Debounce
 
 # The watcher decides WHICH events reach the graph; GraphUpdater.reingest
 # decides what happens to them (issue #1524; see test_reingest.py for the
@@ -22,7 +22,7 @@ from codebase_rag.watch import CodeChangeEventHandler
 
 @pytest.fixture
 def handler(mock_updater: MagicMock) -> CodeChangeEventHandler:
-    h = CodeChangeEventHandler(mock_updater, debounce_seconds=0)
+    h = CodeChangeEventHandler(mock_updater, debounce=Debounce(seconds=0))
     return h
 
 

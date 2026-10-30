@@ -674,7 +674,7 @@ def _rules_handler(
 ) -> FileSystemEventHandler:
     handler = watch.CodeChangeEventHandler(
         _updater_double(tmp_path),
-        debounce_seconds=0,
+        debounce=watch.Debounce(seconds=0),
         ignore_rules=_ChangedRules(tmp_path, built),
     )
     handler._needs_full_rebuild = owed_rebuild

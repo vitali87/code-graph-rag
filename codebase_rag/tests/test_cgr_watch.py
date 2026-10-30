@@ -25,7 +25,7 @@ import sys
 import threading
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import AbstractContextManager, nullcontext
-from functools import partial
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
@@ -325,11 +325,16 @@ def watching(graph: _Graph, monkeypatch: pytest.MonkeyPatch) -> _Watch:
     monkeypatch.setattr(
         watch, "time", SimpleNamespace(sleep=harness.sleep, time=lambda: 1000.0)
     )
-    monkeypatch.setattr(
-        watch,
-        "CodeChangeEventHandler",
-        partial(watch.CodeChangeEventHandler, timer_factory=harness.timers.factory),
-    )
+    handler_cls = watch.CodeChangeEventHandler
+
+    def with_manual_timers(
+        updater: GraphUpdater, *, debounce: watch.Debounce, **rest: object
+    ) -> watch.CodeChangeEventHandler:
+        # The watcher's own timing, on timers the test fires.
+        manual = replace(debounce, timer_factory=harness.timers.factory)
+        return handler_cls(updater, debounce=manual, **rest)
+
+    monkeypatch.setattr(watch, "CodeChangeEventHandler", with_manual_timers)
     return harness
 
 

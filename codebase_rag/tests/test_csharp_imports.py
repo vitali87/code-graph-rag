@@ -346,7 +346,7 @@ public class RemoteStorageProvider
     )
     updater.run()
 
-    handler = watch.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler = watch.CodeChangeEventHandler(updater, debounce=watch.Debounce(seconds=0))
 
     installer.write_text(
         installer.read_text(encoding="utf-8") + "\n// touched\n", encoding="utf-8"
@@ -515,7 +515,7 @@ public class RemoteStorageProvider
     )
     updater.run()
 
-    handler = watch.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler = watch.CodeChangeEventHandler(updater, debounce=watch.Debounce(seconds=0))
 
     provider.write_text(
         provider.read_text(encoding="utf-8") + "\n// touched\n", encoding="utf-8"
@@ -638,7 +638,7 @@ public class RemoteStorageProvider
     )
     updater.run()
 
-    handler = watch.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler = watch.CodeChangeEventHandler(updater, debounce=watch.Debounce(seconds=0))
 
     provider.unlink()
     mock_ingestor.reset_mock()

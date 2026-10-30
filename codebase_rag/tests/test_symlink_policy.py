@@ -46,7 +46,7 @@ from codebase_rag.utils.path_utils import (
     python_stub_has_implementation,
     walk_eligible_files,
 )
-from codebase_rag.watch import CodeChangeEventHandler
+from codebase_rag.watch import CodeChangeEventHandler, Debounce
 from evals.cgr_graph import StatefulIngestor
 
 SECRET = "sk-live-123"
@@ -383,7 +383,7 @@ class TestWatcher:
     def test_the_watcher_ignores_a_link(
         self, mock_updater: MagicMock, watched: Path
     ) -> None:
-        handler = CodeChangeEventHandler(mock_updater, debounce_seconds=0)
+        handler = CodeChangeEventHandler(mock_updater, debounce=Debounce(seconds=0))
         assert not handler._is_relevant(str(watched / "alias.py"))
         assert not handler._is_relevant(str(watched / "linked.py"))
         assert handler._is_relevant(str(watched / "core.py"))
@@ -391,7 +391,7 @@ class TestWatcher:
     def test_a_created_link_is_not_reingested(
         self, mock_updater: MagicMock, watched: Path
     ) -> None:
-        handler = CodeChangeEventHandler(mock_updater, debounce_seconds=0)
+        handler = CodeChangeEventHandler(mock_updater, debounce=Debounce(seconds=0))
         mock_updater.has_indexed.return_value = False
         handler.dispatch(FileCreatedEvent(str(watched / "linked.py")))
         handler.dispatch(FileCreatedEvent(str(watched / "alias.py")))
@@ -402,7 +402,7 @@ class TestWatcher:
     ) -> None:
         # Both events arrive after the swap, so the path is a link by the
         # time each is handled; the graph still holds the file it replaced.
-        handler = CodeChangeEventHandler(mock_updater, debounce_seconds=0)
+        handler = CodeChangeEventHandler(mock_updater, debounce=Debounce(seconds=0))
         mock_updater.has_indexed.return_value = True
         path = watched / "alias.py"
         handler.dispatch(FileDeletedEvent(str(path)))
@@ -412,7 +412,7 @@ class TestWatcher:
     def test_the_watcher_and_the_walk_agree_on_links(
         self, mock_updater: MagicMock, watched: Path
     ) -> None:
-        handler = CodeChangeEventHandler(mock_updater, debounce_seconds=0)
+        handler = CodeChangeEventHandler(mock_updater, debounce=Debounce(seconds=0))
         names = ["alias.py", "core.py", "linked.py"]
         walked = set(_walked(watched))
         assert {n for n in names if handler._is_relevant(str(watched / n))} == walked
@@ -422,7 +422,7 @@ class TestWatcher:
     ) -> None:
         # Negative: once the link is gone there is nothing to follow, and a
         # graph built before the fix may still hold its module.
-        handler = CodeChangeEventHandler(mock_updater, debounce_seconds=0)
+        handler = CodeChangeEventHandler(mock_updater, debounce=Debounce(seconds=0))
         (watched / "alias.py").unlink()
         handler.dispatch(FileDeletedEvent(str(watched / "alias.py")))
         mock_updater.reingest.assert_called_once_with(
@@ -478,7 +478,7 @@ class TestWatcherReplacement:
 
         (repo / "old.py").unlink()
         _link(repo / "old.py", "core.py")
-        handler = CodeChangeEventHandler(updater, debounce_seconds=0)
+        handler = CodeChangeEventHandler(updater, debounce=Debounce(seconds=0))
         handler.dispatch(FileDeletedEvent(str(repo / "old.py")))
         handler.dispatch(FileCreatedEvent(str(repo / "old.py")))
 

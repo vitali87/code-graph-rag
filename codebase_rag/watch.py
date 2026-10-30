@@ -14,6 +14,7 @@ import os
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 from typing import Protocol
@@ -87,6 +88,18 @@ TimerFactory = Callable[..., PendingTimer]
 UpdaterFactory = Callable[[CgrignorePatterns], GraphUpdater]
 
 
+@dataclass(frozen=True, slots=True)
+class Debounce:
+    """When the handler applies a file's changes: `seconds` after its last
+    event, and at most `max_wait_seconds` after its first. `seconds` of 0
+    applies each change at once. `timer_factory` makes the timers that wait;
+    production always uses threading.Timer."""
+
+    seconds: float = cs.DEFAULT_DEBOUNCE_SECONDS
+    max_wait_seconds: float = cs.DEFAULT_MAX_WAIT_SECONDS
+    timer_factory: TimerFactory = threading.Timer
+
+
 class IgnoreRules:
     """The ignore rules the watcher applies, and the files they derive from.
 
@@ -143,9 +156,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         self,
         updater: GraphUpdater,
         *,
-        debounce_seconds: float = cs.DEFAULT_DEBOUNCE_SECONDS,
-        max_wait_seconds: float = cs.DEFAULT_MAX_WAIT_SECONDS,
-        timer_factory: TimerFactory = threading.Timer,
+        debounce: Debounce = Debounce(),
         ignore_rules: IgnoreRules | None = None,
         write_marker: WriteMarker | None = None,
     ):
@@ -159,16 +170,16 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         self._ignore_rules = ignore_rules
         # Injectable so a test can drive the debounce deterministically rather
         # than racing a wall clock, which is what made these tests flaky on
-        # loaded runners (issue #1005). Production always uses threading.Timer.
-        self._timer_factory = timer_factory
+        # loaded runners (issue #1005).
+        self._timer_factory = debounce.timer_factory
         # Set when a scoped re-ingest fails after it may have written, so the
         # next change re-indexes the whole repository before touching it
         # (issue #1681).
         self._needs_full_rebuild = False
 
-        self.debounce_seconds = debounce_seconds
-        self.max_wait_seconds = max_wait_seconds
-        self.debounce_enabled = debounce_seconds > 0
+        self.debounce_seconds = debounce.seconds
+        self.max_wait_seconds = debounce.max_wait_seconds
+        self.debounce_enabled = debounce.seconds > 0
 
         # Thread-safe state for tracking pending changes
         self.timers: dict[str, PendingTimer] = {}
@@ -185,7 +196,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         if self.debounce_enabled:
             logger.info(
                 ls.WATCHER_DEBOUNCE_ACTIVE.format(
-                    debounce=debounce_seconds, max_wait=max_wait_seconds
+                    debounce=debounce.seconds, max_wait=debounce.max_wait_seconds
                 )
             )
         else:
@@ -802,8 +813,7 @@ def _run_watcher_loop(
 
     event_handler = CodeChangeEventHandler(
         updater,
-        debounce_seconds=debounce_seconds,
-        max_wait_seconds=max_wait_seconds,
+        debounce=Debounce(debounce_seconds, max_wait_seconds),
         ignore_rules=ignore_rules,
         write_marker=marker,
     )
