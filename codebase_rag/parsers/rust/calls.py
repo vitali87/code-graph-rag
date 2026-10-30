@@ -37,6 +37,7 @@ class RustCallResolution(LanguageCalls):
     # A named nested `fn` gets its own caller node and keeps its own calls.
     owns_nested_calls = True
     types_locals = True
+    separate_macro_namespace = True
 
     def __init__(self, resolver: CallResolver) -> None:
         self._resolver = resolver

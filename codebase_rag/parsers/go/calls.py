@@ -22,7 +22,7 @@ from ...utils import qn_markers
 from ..callable_params import go_parameter_names
 from ..definition_facts import DefinitionFacts
 from ..edge_site import EdgeSiteHost, host_site_scoped
-from ..language_calls import LanguageCalls
+from ..language_calls import UNDECIDED_CALLEE, Callee, LanguageCalls
 from . import utils as go_utils
 from .type_inference import GO_EXTERNAL_TARGET
 
@@ -102,6 +102,14 @@ class GoCallHost(EdgeSiteHost, Protocol):
         caller_qn: str | None = None,
         language: cs.SupportedLanguage | None = None,
     ) -> None: ...
+
+
+class GoCallScan(Protocol):
+    """The caller a Go call node is scanned in."""
+
+    module_qn: str
+    class_context: str | None
+    caller_qn: str
 
 
 class _ValueReceiverCallee(NamedTuple):
@@ -576,6 +584,27 @@ class GoCallResolution(LanguageCalls):
 
     def resolve_callee(
         self,
+        ctx: GoCallScan,
+        call_node: Node,
+        call_name: str,
+        call_var_types: dict[str, str] | None,
+    ) -> Callee:
+        if call_node.type != cs.TS_GO_CALL_EXPRESSION:
+            return UNDECIDED_CALLEE
+        return Callee(
+            True,
+            self._resolve_call(
+                call_node,
+                call_name,
+                call_var_types,
+                ctx.module_qn,
+                ctx.class_context,
+                ctx.caller_qn,
+            ),
+        )
+
+    def _resolve_call(
+        self,
         call_node: Node,
         call_name: str,
         call_var_types: dict[str, str] | None,
@@ -696,7 +725,7 @@ class GoCallResolution(LanguageCalls):
         root_name = self._host._get_call_target_name(root, cs.SupportedLanguage.GO)
         if not root_name:
             return None
-        root_callee = self.resolve_callee(
+        root_callee = self._resolve_call(
             root, root_name, call_var_types, module_qn, class_context, caller_qn
         )
         if root_callee is None or root_callee[0] not in (

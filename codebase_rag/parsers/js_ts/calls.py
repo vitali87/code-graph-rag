@@ -28,7 +28,7 @@ from ..callable_params import js_ts_parameter_names
 from ..definition_docstring import extract_definition_docstring
 from ..edge_site import EdgeSiteHost, host_site_scoped
 from ..field_nodes import declared_fields
-from ..language_calls import UNDECIDED_NAME, CallName, LanguageCalls
+from ..language_calls import UNDECIDED_NAME, CallName, CallScan, LanguageCalls
 from . import bindings as js_bindings
 from . import utils as js_ts_utils
 
@@ -153,6 +153,7 @@ class JsTsCallScan(Protocol):
     module_qn: str
     language: cs.SupportedLanguage
     class_context: str | None
+    ensure_rel: Callable[..., None]
 
 
 # Every class shape whose body a `this.f` read can belong to.
@@ -839,6 +840,7 @@ class JsTsCallResolution(LanguageCalls):
     anonymous_calls_reach_module = True
     keys_members_by_symbol = True
     types_locals = True
+    binds_builtin_calls = True
 
     def __init__(self, host: JsTsCallHost, resolver: CallResolver) -> None:
         self._host = host
@@ -1078,12 +1080,17 @@ class JsTsCallResolution(LanguageCalls):
         self._factory_classes = {}
 
     def ingest_call_site(
-        self,
-        ctx: JsTsCallScan,
-        call_node: Node,
-        call_name: str | None,
-        ensure_rel: Callable[..., None],
+        self, ctx: JsTsCallScan, call_node: Node, call_name: str | None
     ) -> str | None:
+        if call_node.type != cs.TS_CALL_EXPRESSION:
+            return call_name
+        ensure_rel = ctx.ensure_rel
+        # An inline function ARGUMENT is handed to the callee regardless of
+        # whether the callee resolves: an external/param callee
+        # (`create((set) => ...)` passing `set((state) => ...)`, zustand) or a
+        # cast-wrapped one (`;(set as NamedSet)((state) => reducer(...))`)
+        # still consumes it. Reference each inline arg from this scope.
+        # Registry-guarded and idempotent with the callable-params path.
         self._inline_arg_references(
             call_node, ctx.caller_spec, ensure_rel, ctx.caller_qn, ctx.module_qn
         )
@@ -1221,6 +1228,40 @@ class JsTsCallResolution(LanguageCalls):
             elif _branch_operands(node, stack):
                 branched = True
         return locations if branched else []
+
+    def judge_callee(
+        self,
+        ctx: CallScan,
+        call_node: Node,
+        call_name: str,
+        callee_info: tuple[str, str] | None,
+    ) -> tuple[str, str] | None:
+        if callee_info is None:
+            return None
+        return self.judge_member_pick(ctx, call_node, callee_info)
+
+    def ingest_unresolved_call(
+        self, ctx: JsTsCallScan, call_node: Node, call_name: str
+    ) -> None:
+        if (
+            ctx.class_context
+            and call_name.startswith(cs.JS_THIS_CALL_PREFIX)
+            and this_is_class_instance(call_node)
+        ):
+            # `this.M()` binds `this` lexically to the enclosing class
+            # instance ONLY in a method body or a nested arrow that inherits
+            # its `this`; a plain nested `function(){}` rebinds `this` per
+            # call, so `this_is_class_instance` gates those out (JS
+            # same-syntax/different-semantics). Ordinary name resolution
+            # climbs one scope from the caller qn -- which lands on the class
+            # for a direct method but on the METHOD for a nested arrow --
+            # then falls back to a bare `M` lookup that, under cross-class
+            # same-name ambiguity, is dropped, so M reports dead (issue
+            # #971). Anchor on the enclosing class instead and emit the
+            # self-dispatch edge(s).
+            self.emit_this_dispatch(
+                ctx.caller_spec, ctx.class_context, call_name, ctx.ensure_rel
+            )
 
     def judge_member_pick(
         self, ctx: JsTsCallScan, call_node: Node, callee_info: tuple[str, str]

@@ -5,23 +5,38 @@ calls, and the auxiliary constructors a `new C(...)` may run.
 `CallProcessor` owns what every language shares (the scan of a caller's call
 nodes, the site and resolution each edge carries, the name-based resolver
 and the edges a resolved call writes) and hands Scala's part to the
-`ScalaCallResolution` it builds."""
+`ScalaCallResolution` it builds, which ingests what it binds through the
+pass."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, NamedTuple, Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from tree_sitter import Node
 
 from ... import constants as cs
 from ...node_text import decode_node_text
 from ...types_defs import ScalaBinding
-from ..language_calls import LanguageCalls
+from ..language_calls import Callee, CallScan, LanguageCalls
 from . import utils as scala_utils
 
 if TYPE_CHECKING:
     from ..call_resolver import CallResolver
+
+
+class ScalaCallHost(Protocol):
+    """What Scala call resolution calls on the call pass that builds it: the
+    ingest of a call bound to its callee, which writes the edges every
+    resolved call writes."""
+
+    def _ingest_resolved_call(
+        self,
+        ctx: CallScan,
+        call_node: Node,
+        call_name: str,
+        callee_info: tuple[str, str],
+    ) -> None: ...
 
 
 class ScalaCallScan(Protocol):
@@ -34,14 +49,6 @@ class ScalaCallScan(Protocol):
     scala_bindings: dict[str, list[ScalaBinding]] | None
 
 
-class ScalaCallee(NamedTuple):
-    # What a Scala call binds to through the compiler's lookup. `decided`
-    # False leaves the call to the name-based resolver; True means `callee`
-    # is the answer, and None there is a known non-edge.
-    decided: bool
-    callee: tuple[str, str] | None
-
-
 class ScalaCallResolution(LanguageCalls):
     """Binds Scala calls and selections through the compiler's lookup and
     writes the auxiliary-constructor calls a construction makes.
@@ -50,11 +57,12 @@ class ScalaCallResolution(LanguageCalls):
     by reference: the definition pass fills its registry as it registers
     each file."""
 
-    __slots__ = ("_resolver",)
+    __slots__ = ("_host", "_resolver")
 
     new_constructs_type = True
 
-    def __init__(self, resolver: CallResolver) -> None:
+    def __init__(self, host: ScalaCallHost, resolver: CallResolver) -> None:
+        self._host = host
         self._resolver = resolver
 
     def node_call_name(self, call_node: Node) -> str | None:
@@ -77,14 +85,28 @@ class ScalaCallResolution(LanguageCalls):
                     return decode_node_text(operator_node.text)
         return None
 
+    def ingest_call_shape(self, ctx: CallScan, call_node: Node) -> bool:
+        if call_node.type != cs.TS_SCALA_FIELD_EXPRESSION:
+            return False
+        if (selected := self.selection_callee(ctx, call_node)) is not None:
+            selection_name, callee_info = selected
+            self._host._ingest_resolved_call(
+                ctx, call_node, selection_name, callee_info
+            )
+        return True
+
     def resolve_callee(
-        self, ctx: ScalaCallScan, call_node: Node, call_name: str
-    ) -> ScalaCallee:
+        self,
+        ctx: ScalaCallScan,
+        call_node: Node,
+        call_name: str,
+        call_var_types: dict[str, str] | None,
+    ) -> Callee:
         # Named the way the compiler looks it up: the imports in scope at
         # the call, the file, its package's other files. A path-qualified
         # `new shop.Cart()` names no import, so only the package index
         # reaches it.
-        return ScalaCallee(
+        return Callee(
             *self._resolver.scala.resolve_scala_callee(
                 call_name,
                 ctx.module_qn,

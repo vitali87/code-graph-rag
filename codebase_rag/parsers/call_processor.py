@@ -47,7 +47,6 @@ from .go.link_state import GoLinkState
 from .import_processor import ImportProcessor
 from .io_access import IOAccessProcessor
 from .java import calls as java_calls
-from .java import utils as java_utils
 from .js_ts import bindings as js_bindings
 from .js_ts import calls as js_calls
 from .julia import calls as julia_calls
@@ -794,7 +793,7 @@ class CallProcessor:
         self._js = js_calls.JsTsCallResolution(self, self._resolver)
         self._python = python_calls.PythonCallResolution(self, self._resolver)
         self._java = java_calls.JavaCallResolution(self, self._resolver)
-        self._scala = scala_calls.ScalaCallResolution(self._resolver)
+        self._scala = scala_calls.ScalaCallResolution(self, self._resolver)
         self._php = php_calls.PhpCallResolution(self, self._resolver)
         self._c = cpp_calls.CCallResolution(
             self, self._resolver, self.module_qn_to_file_path
@@ -2203,26 +2202,14 @@ class CallProcessor:
         span_bindings: list[tuple[int, int, str, str]],
         caller_params: frozenset[str],
     ) -> CallScan:
-        is_java = language == cs.SupportedLanguage.JAVA
-        is_csharp = language == cs.SupportedLanguage.CSHARP
         is_js_ts = language in _JS_TS_LANGUAGES
-        is_cpp = language == cs.SupportedLanguage.CPP
-        # Template type-parameter names in scope at this caller (`template<typename
-        # SAX>` -> {"SAX"}): a receiver typed to one has no concrete type here, so the
-        # dispatch fan-out treats it like an untyped receiver rather than an external.
-        cpp_template_params = (
-            self._resolver.type_inference.cpp_type_inference.collect_template_param_names(
-                caller_node
-            )
-            if is_cpp
-            else frozenset()
-        )
+        calls = self._calls_for(language)
         resolver = self._resolver
         resolve_func = self._resolve_noting
-        resolve_builtin = resolver.resolve_builtin_call if is_js_ts else None
-        resolve_cpp_op = resolver.cpp.resolve_cpp_operator_call if is_cpp else None
+        builtins, operators = calls.binds_builtin_calls, calls.binds_operator_calls
+        resolve_builtin = resolver.resolve_builtin_call if builtins else None
+        resolve_cpp_op = resolver.cpp.resolve_cpp_operator_call if operators else None
         is_python = language == cs.SupportedLanguage.PYTHON
-        calls = self._calls_for(language)
         # A method-group pass is not an invocation: C# records it as
         # REFERENCES everywhere (CALLS here put 282 phantom edges into the
         # Polly call graph, retrieval precision 1.0 -> 0.92); flow languages
@@ -2245,12 +2232,11 @@ class CallProcessor:
             local_var_types=local_var_types,
             span_bindings=span_bindings,
             caller_params=caller_params,
-            is_java=is_java,
-            is_csharp=is_csharp,
             is_js_ts=is_js_ts,
-            is_cpp=is_cpp,
             is_python=is_python,
-            cpp_template_params=cpp_template_params,
+            # The dispatch fan-out treats a receiver typed to a template
+            # parameter like an untyped receiver rather than an external.
+            cpp_template_params=calls.template_params(caller_node),
             resolve_func=resolve_func,
             resolve_builtin=resolve_builtin,
             resolve_cpp_op=resolve_cpp_op,
@@ -2280,23 +2266,9 @@ class CallProcessor:
         # verdict; without this reset such an edge would inherit the
         # label the previous call node left behind (issue #1526).
         self._verdict = cs.EdgeResolution.EXACT
-        if ctx.is_java and call_node.type == cs.TS_JAVA_METHOD_REFERENCE:
-            if (
-                receiver := self._java.ingest_method_reference(
-                    ctx, call_node, ctx.ensure_rel
-                )
-            ) is not None:
-                self._ingest_java_constructor_reference(ctx, call_node, receiver)
+        if ctx.calls.ingest_call_shape(ctx, call_node):
             return
         call_name = self._scan_call_name(ctx, call_node)
-        if (
-            ctx.language == cs.SupportedLanguage.SCALA
-            and call_node.type == cs.TS_SCALA_FIELD_EXPRESSION
-        ):
-            if (selected := self._scala.selection_callee(ctx, call_node)) is not None:
-                selection_name, callee_info = selected
-                self._ingest_resolved_call(ctx, call_node, selection_name, callee_info)
-            return
         # A declared dispatcher (`callSp('usp_x')`) names its real callee in
         # a string, which no parser resolves as a call: without this the
         # edge stops at the dispatcher and the routine looks unreachable.
@@ -2304,34 +2276,11 @@ class CallProcessor:
         # one the syntax hides.
         if self._string_call_specs and call_name:
             self._emit_string_call_edges(ctx, call_node, call_name)
-        # `enter_state(n)` on a functor local, `Cmp{}(a, b)` on a temporary:
-        # a call on an object of class type runs that type's operator(),
-        # which no name lookup of the callee text reaches (issue #2555).
-        if (
-            ctx.is_cpp
-            and call_node.type == cs.TS_CPP_CALL_EXPRESSION
-            and (callee := call_node.child_by_field_name(cs.TS_FIELD_FUNCTION))
-            and (
-                functor := self._cpp.functor_operator(
-                    callee, ctx.module_qn, ctx.local_var_types
-                )
-            )
-        ):
-            self._ingest_resolved_call(
-                ctx, call_node, cs.CPP_OPERATOR_CALL_NAME, functor
-            )
+        if ctx.calls.ingest_functor_call(ctx, call_node):
             return
-        # An inline function ARGUMENT is handed to the callee regardless of
-        # whether the callee resolves: an external/param callee
-        # (`create((set) => ...)` passing `set((state) => ...)`, zustand) or a
-        # cast-wrapped one (`;(set as NamedSet)((state) => reducer(...))`)
-        # still consumes it. Reference each inline arg from this scope, BEFORE
-        # the no-name bail (a cast-wrapped callee yields no call name).
-        # Registry-guarded and idempotent with the callable-params path.
-        if ctx.is_js_ts and call_node.type == cs.TS_CALL_EXPRESSION:
-            call_name = self._js.ingest_call_site(
-                ctx, call_node, call_name, ctx.ensure_rel
-            )
+        # What the call site hands over whether or not its callee binds goes
+        # BEFORE the no-name bail (a cast-wrapped callee yields no call name).
+        call_name = ctx.calls.ingest_call_site(ctx, call_node, call_name)
         if not call_name:
             # A callee that is itself a call (`wraps(view_func)(_view_wrapper)`)
             # or otherwise yields no name still consumes its arguments through
@@ -2354,13 +2303,7 @@ class CallProcessor:
                     ctx.language,
                 )
             return
-        if ctx.language == cs.SupportedLanguage.SQL:
-            self._ingest_sql_routine_call(ctx, call_name)
-            return
         self._ingest_named_call(ctx, call_node, call_name)
-
-    def _ingest_sql_routine_call(self, ctx: CallScan, call_name: str) -> None:
-        self._link_sql_routine(ctx.module_qn, ctx.caller_spec, call_name)
 
     def _link_sql_routine(
         self,
@@ -2452,78 +2395,17 @@ class CallProcessor:
             call_var_types = self._overlay_span_binding(
                 call_name, call_node, ctx.local_var_types, ctx.span_bindings
             )
-        if (
-            call_var_types
-            and (
-                rebinding := python_calls.receiver_rebinding_at(
-                    ctx, call_node, call_name
-                )
-            )
-            and not rebinding.sometimes
-        ):
-            # No `self = Other()` can run before this call, so the method-wide
-            # type of `self` does not apply to it (issue #2620).
-            receiver = call_name.partition(cs.SEPARATOR_DOT)[0]
-            call_var_types = {
-                name: var_type
-                for name, var_type in call_var_types.items()
-                if name != receiver
-            }
-
-        if ctx.is_cpp:
-            self._cpp.emit_template_dispatch(
-                ctx.caller_spec,
-                call_name,
-                call_var_types,
-                ctx.cpp_template_params,
-                ctx.ensure_rel,
-            )
-
-        if (
-            ctx.is_cpp
-            and call_node.type in cpp_calls.OPERATOR_EXPRESSION_TYPES
-            and call_name.startswith(cs.OPERATOR_PREFIX)
-        ):
-            # An operator expression calls an overload only through an
-            # operand of class type; on built-in or unknown operands it is
-            # the language's own operation. Resolving its synthesized name
-            # like a call bound `int + int` to any project operator+, and,
-            # in the class defining one, its own `x + o.x` field arithmetic
-            # to itself (issue #2554). A miss notes no unresolved name:
-            # most C++ projects define some operator_plus, so every file
-            # using `+` would re-parse whenever another one is added.
-            if callee_info := self._cpp.operator_callee(
-                ctx, call_node, call_name, call_var_types
-            ):
-                self._ingest_resolved_call(ctx, call_node, call_name, callee_info)
+        language_calls = ctx.calls
+        call_var_types = language_calls.receiver_types(
+            ctx, call_node, call_name, call_var_types
+        )
+        if language_calls.ingest_own_call(ctx, call_node, call_name, call_var_types):
             return
         callee_info = self._resolve_call_callee(
             ctx, call_node, call_name, call_var_types
         )
         callee_info = self._fallback_callee(ctx, call_node, call_name, callee_info)
-
-        if not callee_info and ctx.is_python and cs.SEPARATOR_DOT in call_name:
-            # recv.field(...) where field is a callable struct field:
-            # resolve to the functions bound to it at construction sites.
-            self._python.ingest_callable_field_calls(
-                call_name, ctx.caller_spec, ctx.local_var_types, ctx.ensure_rel
-            )
-
-        if ctx.is_python and call_name.rsplit(cs.SEPARATOR_DOT, 1)[-1] in (
-            cs.HIGHER_ORDER_BUILTINS
-        ):
-            # sorted(xs, key=f) and friends invoke f synchronously in this
-            # frame, so the trace attributes the call to the enclosing fn.
-            self._python.ingest_higher_order_builtin_calls(
-                call_node,
-                ctx.caller_spec,
-                ctx.module_qn,
-                ctx.local_var_types,
-                ctx.class_context,
-                self._resolver.resolve_function_call,
-                ctx.ensure_rel,
-                ctx.caller_qn,
-            )
+        language_calls.ingest_indirect_calls(ctx, call_node, call_name, callee_info)
 
         if not callee_info:
             self._ingest_unresolved_call(ctx, call_node, call_name)
@@ -2538,47 +2420,9 @@ class CallProcessor:
         call_var_types: dict[str, str] | None,
     ) -> tuple[str, str] | None:
         if (
-            ctx.language == cs.SupportedLanguage.SCALA
-            and (scala := self._scala.resolve_callee(ctx, call_node, call_name)).decided
-        ):
-            return scala.callee
-        if ctx.is_java and call_node.type == cs.TS_METHOD_INVOCATION:
-            return self._java.resolve_callee(ctx, call_node, ctx.ensure_rel)
-        if ctx.is_csharp and call_node.type == cs.TS_CSHARP_INVOCATION_EXPRESSION:
-            return self._csharp.resolve_callee(
-                ctx,
-                call_node,
-                call_name,
-                call_var_types,
-                ctx.ensure_rel,
-                call_node.type in _OBJECT_CREATION_NODE_TYPES,
-            )
-        if (
-            ctx.language == cs.SupportedLanguage.PYTHON
-            and call_node.type == cs.TS_PY_CALL
-        ):
-            return self._python.resolve_callee(
-                ctx, call_node, call_name, call_var_types
-            )
-        if (
-            ctx.language == cs.SupportedLanguage.GO
-            and call_node.type == cs.TS_GO_CALL_EXPRESSION
-        ):
-            return self._go.resolve_callee(
-                call_node,
-                call_name,
-                call_var_types,
-                ctx.module_qn,
-                ctx.class_context,
-                ctx.caller_qn,
-            )
-        if (
-            ctx.language == cs.SupportedLanguage.PHP
-            and (
-                php := self._php.resolve_class_callee(ctx, call_node, call_name)
-            ).decided
-        ):
-            return php.callee
+            own := ctx.calls.resolve_callee(ctx, call_node, call_name, call_var_types)
+        ).decided:
+            return own.callee
         callee_info = ctx.resolve_func(
             call_name,
             ctx.module_qn,
@@ -2591,21 +2435,7 @@ class CallProcessor:
             constructing=ctx.calls.new_constructs_type
             and call_node.type in _OBJECT_CREATION_NODE_TYPES,
         )
-        return self._judge_resolved_callee(ctx, call_node, call_name, callee_info)
-
-    def _judge_resolved_callee(
-        self,
-        ctx: CallScan,
-        call_node: Node,
-        call_name: str,
-        callee_info: tuple[str, str] | None,
-    ) -> tuple[str, str] | None:
-        # What the name lookup found, checked against what the call site says.
-        if ctx.is_csharp and call_node.type in _OBJECT_CREATION_NODE_TYPES:
-            return self._csharp.construction_by_arity(call_node, call_name, callee_info)
-        if ctx.is_js_ts and callee_info is not None:
-            return self._js.judge_member_pick(ctx, call_node, callee_info)
-        return callee_info
+        return ctx.calls.judge_callee(ctx, call_node, call_name, callee_info)
 
     def _fallback_callee(
         self,
@@ -2614,13 +2444,10 @@ class CallProcessor:
         call_name: str,
         callee_info: tuple[str, str] | None,
     ) -> tuple[str, str] | None:
-        if callee_info and ctx.language in (
-            cs.SupportedLanguage.RUST,
-            cs.SupportedLanguage.JULIA,
-        ):
-            # Rust and Julia macros and functions live in SEPARATE
-            # namespaces: a macro invocation must not bind a same-named
-            # fn and vice versa.
+        if callee_info and ctx.calls.separate_macro_namespace:
+            # Where macros and functions live in SEPARATE namespaces (Rust,
+            # Julia), a macro invocation must not bind a same-named fn and
+            # vice versa.
             is_macro_target = callee_info[1] in self.facts.macro_qns
             is_macro_invocation = call_node.type in (
                 cs.TS_RS_MACRO_INVOCATION,
@@ -2641,8 +2468,8 @@ class CallProcessor:
             callee_info = ctx.resolve_builtin(call_name)
         if not callee_info and ctx.resolve_cpp_op is not None:
             callee_info = ctx.resolve_cpp_op(call_name, ctx.module_qn)
-        if not callee_info and ctx.language == cs.SupportedLanguage.CPP:
-            callee_info = self._cpp.local_alias_callee(ctx, call_node, call_name)
+        if not callee_info:
+            callee_info = ctx.calls.local_alias_callee(ctx, call_node, call_name)
         if not callee_info and cs.SEPARATOR_DOT not in call_name:
             callee_info = self._bare_name_callee(ctx, call_node, call_name, callee_info)
         return callee_info
@@ -2654,24 +2481,6 @@ class CallProcessor:
         call_name: str,
         callee_info: tuple[str, str] | None,
     ) -> tuple[str, str] | None:
-        if ctx.is_python:
-            # A bare name that resolves to nothing may be a local alias of a
-            # callable (do = self._start; do()). Resolve the assignment's
-            # right-hand side and treat the alias call as a call to it.
-            if ctx.alias_map is None:
-                ctx.alias_map = self._python.local_alias_map(
-                    ctx.caller_node,
-                    ctx.queries[ctx.language][cs.QUERY_CONFIG],
-                    ctx.module_qn,
-                )
-            if (rhs := ctx.alias_map.get(call_name)) is not None:
-                callee_info = ctx.resolve_func(
-                    rhs,
-                    ctx.module_qn,
-                    ctx.local_var_types,
-                    ctx.class_context,
-                    ctx.caller_qn,
-                )
         if callee_info is None and ctx.calls.flows_callables:
             # `x = factory(...); x(cb)`: x holds a closure returned by a
             # first-party factory (e.g. a retry/cache decorator applied
@@ -2708,26 +2517,7 @@ class CallProcessor:
             # one (issue #1568). Not where an import would be needed
             # anyway: the importer lookup finds those waiters.
             self._note_unresolved(ctx.module_qn, written_simple_name(call_name))
-        if (
-            ctx.is_js_ts
-            and ctx.class_context
-            and call_name.startswith(cs.JS_THIS_CALL_PREFIX)
-            and js_calls.this_is_class_instance(call_node)
-        ):
-            # `this.M()` binds `this` lexically to the enclosing class
-            # instance ONLY in a method body or a nested arrow that inherits
-            # its `this`; a plain nested `function(){}` rebinds `this` per
-            # call, so `this_is_class_instance` gates those out (JS
-            # same-syntax/different-semantics). Ordinary name resolution
-            # climbs one scope from the caller qn -- which lands on the class
-            # for a direct method but on the METHOD for a nested arrow --
-            # then falls back to a bare `M` lookup that, under cross-class
-            # same-name ambiguity, is dropped, so M reports dead (issue
-            # #971). Anchor on the enclosing class instead and emit the
-            # self-dispatch edge(s).
-            self._js.emit_this_dispatch(
-                ctx.caller_spec, ctx.class_context, call_name, ctx.ensure_rel
-            )
+        ctx.calls.ingest_unresolved_call(ctx, call_node, call_name)
         if ctx.calls.references_arguments:
             # The callee is not first-party (a framework/stdlib call such as
             # grpclib Handler(self.__rpc_x), JS setTimeout(target), or a
@@ -3117,35 +2907,6 @@ class CallProcessor:
                 ctx.caller_spec,
                 ctor_rel,
                 (ctor_type, cs.KEY_QUALIFIED_NAME, variant),
-            )
-
-    def _ingest_java_constructor_reference(
-        self, ctx: CallScan, ref_node: Node, receiver: Node
-    ) -> None:
-        # `Type::new` is a factory for Type: the type is resolved and
-        # INSTANTIATES'd exactly as `new Type(...)` is, and its constructors are
-        # referenced rather than called, since none runs here. The functional
-        # interface that would pick one is not visible to the parser, so each
-        # declared constructor is referenced, labelled `overload` when there
-        # are several. An array type (`int[]::new`) constructs no class.
-        if not (type_name := java_utils.method_reference_receiver_text(receiver)):
-            return
-        callee = ctx.resolve_func(
-            type_name,
-            ctx.module_qn,
-            ctx.local_var_types,
-            ctx.class_context,
-            ctx.caller_qn,
-            ctx.language,
-            call_point=ref_node.start_byte,
-            constructing=True,
-        )
-        if callee is None:
-            self._note_unresolved(ctx.module_qn, written_simple_name(type_name))
-            return
-        if self._resolver.function_registry.get(callee[1]) == cs.NodeLabel.CLASS:
-            self._redirect_construction(
-                ctx, callee[1], ctor_rel=cs.RelationshipType.REFERENCES
             )
 
     def _emit_resolved_callee_targets(

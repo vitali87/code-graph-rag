@@ -39,6 +39,7 @@ class JuliaCallResolution(LanguageCalls):
     # A named nested definition gets its own caller node and keeps its own
     # calls.
     owns_nested_calls = True
+    separate_macro_namespace = True
 
     def __init__(self, host: JuliaCallHost) -> None:
         self._host = host

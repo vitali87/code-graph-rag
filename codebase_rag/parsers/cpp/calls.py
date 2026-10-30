@@ -26,7 +26,7 @@ from ...utils import qn_markers
 from ..callable_params import cpp_parameter_names
 from ..definition_facts import DefinitionFacts
 from ..edge_site import EdgeSiteHost, host_site_scoped
-from ..language_calls import LanguageCalls
+from ..language_calls import CallScan, LanguageCalls
 from . import local_types as cpp_local_types
 from . import utils as cpp_utils
 from .function_values import (
@@ -44,8 +44,9 @@ if TYPE_CHECKING:
 class CppCallHost(EdgeSiteHost, Protocol):
     """What C++ call resolution calls on the call pass that builds it: the
     edge emitter, the location the definition pass recorded for a function
-    node, and the callback emitter a passed functor's reference goes through
-    like any other callback's."""
+    node, the ingest of a call bound to its callee, which writes the edges
+    every resolved call writes, and the callback emitter a passed functor's
+    reference goes through like any other callback's."""
 
     def _emit_rel(
         self,
@@ -58,6 +59,14 @@ class CppCallHost(EdgeSiteHost, Protocol):
     def _recorded_caller(
         self, func_node: Node, module_qn: str
     ) -> FunctionLocation | None: ...
+
+    def _ingest_resolved_call(
+        self,
+        ctx: CallScan,
+        call_node: Node,
+        call_name: str,
+        callee_info: tuple[str, str],
+    ) -> None: ...
 
     def _emit_callback_targets(
         self,
@@ -77,8 +86,12 @@ class CppCallScan(Protocol):
     once, on first use, for all of that caller's calls."""
 
     caller_node: Node
+    caller_spec: tuple[str, str, str]
     module_qn: str
     class_context: str | None
+    local_var_types: dict[str, str] | None
+    cpp_template_params: frozenset[str]
+    ensure_rel: Callable[..., None]
     cpp_local_aliases: dict[str, list[tuple[str, int, int]]] | None
     cpp_indirection: dict[str, int] | None
 
@@ -250,6 +263,7 @@ class CppCallResolution(LanguageCalls):
     # constructors without any call_expression node.
     scans_callers_without_calls = True
     types_locals = True
+    binds_operator_calls = True
 
     def __init__(
         self, host: CppCallHost, resolver: CallResolver, facts: DefinitionFacts
@@ -432,6 +446,64 @@ class CppCallResolution(LanguageCalls):
             if registry.get(local_qn) in _LOCAL_TYPE_NODE_TYPES:
                 return local_qn
         return None
+
+    def template_params(self, caller_node: Node) -> frozenset[str]:
+        # `template<typename SAX>` -> {"SAX"}.
+        return self._resolver.type_inference.cpp_type_inference.collect_template_param_names(
+            caller_node
+        )
+
+    def ingest_functor_call(self, ctx: CallScan, call_node: Node) -> bool:
+        # `enter_state(n)` on a functor local, `Cmp{}(a, b)` on a temporary:
+        # a call on an object of class type runs that type's operator(),
+        # which no name lookup of the callee text reaches (issue #2555).
+        if (
+            call_node.type == cs.TS_CPP_CALL_EXPRESSION
+            and (callee := call_node.child_by_field_name(cs.TS_FIELD_FUNCTION))
+            and (
+                functor := self.functor_operator(
+                    callee, ctx.module_qn, ctx.local_var_types
+                )
+            )
+        ):
+            self._host._ingest_resolved_call(
+                ctx, call_node, cs.CPP_OPERATOR_CALL_NAME, functor
+            )
+            return True
+        return False
+
+    def ingest_own_call(
+        self,
+        ctx: CallScan,
+        call_node: Node,
+        call_name: str,
+        call_var_types: dict[str, str] | None,
+    ) -> bool:
+        self.emit_template_dispatch(
+            ctx.caller_spec,
+            call_name,
+            call_var_types,
+            ctx.cpp_template_params,
+            ctx.ensure_rel,
+        )
+        if not (
+            call_node.type in OPERATOR_EXPRESSION_TYPES
+            and call_name.startswith(cs.OPERATOR_PREFIX)
+        ):
+            return False
+        # An operator expression calls an overload only through an
+        # operand of class type; on built-in or unknown operands it is
+        # the language's own operation. Resolving its synthesized name
+        # like a call bound `int + int` to any project operator+, and,
+        # in the class defining one, its own `x + o.x` field arithmetic
+        # to itself (issue #2554). A miss notes no unresolved name:
+        # most C++ projects define some operator_plus, so every file
+        # using `+` would re-parse whenever another one is added.
+        if callee_info := self.operator_callee(
+            ctx, call_node, call_name, call_var_types
+        ):
+            self._host._ingest_resolved_call(ctx, call_node, call_name, callee_info)
+        return True
 
     def emit_template_dispatch(
         self,

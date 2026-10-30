@@ -21,7 +21,7 @@ from ...language_spec import LanguageSpec
 from ...node_text import decode_node_text, safe_decode_text
 from ...types_defs import PropertyDict
 from ..edge_site import EdgeSiteHost, host_site_scoped
-from ..language_calls import LanguageCalls
+from ..language_calls import UNDECIDED_CALLEE, Callee, LanguageCalls
 from ..utils import module_qn_for_entity
 from . import utils as csharp_utils
 from .type_inference import CSHARP_EXTERNAL_TARGET, CSharpTypeInferenceEngine
@@ -65,6 +65,14 @@ class CSharpCallScan(Protocol):
     language: cs.SupportedLanguage
     class_context: str | None
     local_var_types: dict[str, str] | None
+    ensure_rel: Callable[..., None]
+
+
+# An object creation, explicit or target-typed (`new()`): its call name is
+# the TYPE it constructs.
+_CREATION_NODE_TYPES = frozenset(
+    {cs.TS_OBJECT_CREATION_EXPRESSION, cs.TS_CSHARP_IMPLICIT_OBJECT_CREATION_EXPRESSION}
+)
 
 
 def member_access_call_name(func_child: Node) -> str | None:
@@ -345,11 +353,11 @@ class CSharpCallResolution(LanguageCalls):
         call_node: Node,
         call_name: str,
         call_var_types: dict[str, str] | None,
-        ensure_rel: Callable[..., None],
-        constructing: bool,
-    ) -> tuple[str, str] | None:
-        # `constructing`: the call node is an object creation, whose name the
-        # name-based fallback reads as a TYPE (the call pass's own rule).
+    ) -> Callee:
+        # An invocation binds through the C# engine; an object creation is
+        # left to the name-based resolver, which reads its name as a TYPE.
+        if call_node.type != cs.TS_CSHARP_INVOCATION_EXPRESSION:
+            return UNDECIDED_CALLEE
         callee_info = self._resolver.csharp.resolve_csharp_method_call(
             call_node, ctx.module_qn, call_var_types, ctx.caller_qn
         )
@@ -369,7 +377,7 @@ class CSharpCallResolution(LanguageCalls):
             engine = self._resolver.type_inference.csharp_type_inference
             if not engine.semantic_fact_resolved(call_node, ctx.module_qn):
                 for sibling_qn in engine.csharp_same_arity_family(callee_info[1]):
-                    ensure_rel(
+                    ctx.ensure_rel(
                         ctx.caller_spec,
                         cs.RelationshipType.CALLS,
                         (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, sibling_qn),
@@ -396,8 +404,18 @@ class CSharpCallResolution(LanguageCalls):
                 ctx.class_context,
                 ctx.caller_qn,
                 ctx.language,
-                constructing=constructing,
             )
+        return Callee(True, callee_info)
+
+    def judge_callee(
+        self,
+        ctx: CSharpCallScan,
+        call_node: Node,
+        call_name: str,
+        callee_info: tuple[str, str] | None,
+    ) -> tuple[str, str] | None:
+        if call_node.type in _CREATION_NODE_TYPES:
+            return self.construction_by_arity(call_node, call_name, callee_info)
         return callee_info
 
     def construction_by_arity(

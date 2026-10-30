@@ -21,7 +21,7 @@ from ...language_spec import sql_object_reference_name
 from ...types_defs import LanguageQueries, PropertyDict
 from ..definition_facts import DefinitionFacts
 from ..edge_site import EdgeSiteHost, host_site_scoped
-from ..language_calls import CallName, LanguageCalls
+from ..language_calls import CallName, CallScan, LanguageCalls
 from .ddl import ddl_routine_references
 
 
@@ -71,6 +71,16 @@ class SqlCallResolution(LanguageCalls):
         # SQL call site fell through nameless and was dropped (issue #2449).
         # Normalized like the definition, so `TAX(x)` reaches `tax`.
         return CallName(True, sql_object_reference_name(call_node))
+
+    def ingest_own_call(
+        self,
+        ctx: CallScan,
+        call_node: Node,
+        call_name: str,
+        call_var_types: dict[str, str] | None,
+    ) -> bool:
+        self._host._link_sql_routine(ctx.module_qn, ctx.caller_spec, call_name)
+        return True
 
     def ingest_module_references(
         self,

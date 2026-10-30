@@ -39,6 +39,17 @@ class CallName(NamedTuple):
 UNDECIDED_NAME = CallName(False, None)
 
 
+class Callee(NamedTuple):
+    # What a call binds to through a language's own resolution. `decided`
+    # False leaves the call to the name-based resolver; True means `callee`
+    # is the answer, and None there is a known non-edge.
+    decided: bool
+    callee: tuple[str, str] | None
+
+
+UNDECIDED_CALLEE = Callee(False, None)
+
+
 class LanguageCalls:
     """A language's share of the call pass, as the answers the pass asks for.
 
@@ -76,6 +87,15 @@ class LanguageCalls:
     types_locals: ClassVar[bool] = False
     # A `new X(...)` names a TYPE, never a method or function.
     new_constructs_type: ClassVar[bool] = False
+    # A call no definition answers may bind a builtin of the language's
+    # runtime (`CallScan.resolve_builtin`).
+    binds_builtin_calls: ClassVar[bool] = False
+    # An operator name no definition answers may bind a project overload
+    # (`CallScan.resolve_cpp_op`).
+    binds_operator_calls: ClassVar[bool] = False
+    # Macros and functions live in SEPARATE namespaces: a macro invocation
+    # binds only a macro, a plain call only a non-macro.
+    separate_macro_namespace: ClassVar[bool] = False
 
     def collect_callable_field_bindings(
         self, root_node: Node, module_qn: str, call_nodes: list[Node]
@@ -238,6 +258,95 @@ class LanguageCalls:
         """A name for a call no shape names, read from where it sits."""
         return None
 
+    def template_params(self, caller_node: Node) -> frozenset[str]:
+        """The type-parameter names in scope at a caller: a receiver typed to
+        one has no concrete type there."""
+        return frozenset()
+
+    def ingest_call_shape(self, ctx: CallScan, call_node: Node) -> bool:
+        """Write the edges of a call node of a shape the language takes whole,
+        before it is named; True when the node was the language's."""
+        return False
+
+    def ingest_functor_call(self, ctx: CallScan, call_node: Node) -> bool:
+        """Ingest a call on an object whose type defines the call operator,
+        which no name lookup of the callee text reaches; True when it was
+        one."""
+        return False
+
+    def ingest_call_site(
+        self, ctx: CallScan, call_node: Node, call_name: str | None
+    ) -> str | None:
+        """Write what a call site hands over whether or not its callee binds,
+        and return the callee name the scan goes on with."""
+        return call_name
+
+    def receiver_types(
+        self,
+        ctx: CallScan,
+        call_node: Node,
+        call_name: str,
+        call_var_types: dict[str, str] | None,
+    ) -> dict[str, str] | None:
+        """The local types a named call resolves its receiver through, where
+        the call's own position narrows the caller's."""
+        return call_var_types
+
+    def ingest_own_call(
+        self,
+        ctx: CallScan,
+        call_node: Node,
+        call_name: str,
+        call_var_types: dict[str, str] | None,
+    ) -> bool:
+        """Ingest a named call the language binds its own way, never through
+        the name lookup; True when the call was the language's."""
+        return False
+
+    def resolve_callee(
+        self,
+        ctx: CallScan,
+        call_node: Node,
+        call_name: str,
+        call_var_types: dict[str, str] | None,
+    ) -> Callee:
+        """The callee a call binds through the language's own resolution,
+        before the name lookup."""
+        return UNDECIDED_CALLEE
+
+    def judge_callee(
+        self,
+        ctx: CallScan,
+        call_node: Node,
+        call_name: str,
+        callee_info: tuple[str, str] | None,
+    ) -> tuple[str, str] | None:
+        """What the name lookup found, checked against what the call site
+        says."""
+        return callee_info
+
+    def local_alias_callee(
+        self, ctx: CallScan, call_node: Node, call_name: str
+    ) -> tuple[str, str] | None:
+        """The callee of a call the lookups left unbound, through a local
+        alias of a callable or a type."""
+        return None
+
+    def ingest_indirect_calls(
+        self,
+        ctx: CallScan,
+        call_node: Node,
+        call_name: str,
+        callee_info: tuple[str, str] | None,
+    ) -> None:
+        """Write the calls a named call makes besides its callee's: functions
+        it runs through a field or an argument."""
+
+    def ingest_unresolved_call(
+        self, ctx: CallScan, call_node: Node, call_name: str
+    ) -> None:
+        """Write the edges a call whose callee did not bind still makes."""
+
 
 @dataclass(slots=True)
 class CallScan:
@@ -257,10 +366,7 @@ class CallScan:
     local_var_types: dict[str, str] | None
     span_bindings: list[tuple[int, int, str, str]]
     caller_params: frozenset[str]
-    is_java: bool
-    is_csharp: bool
     is_js_ts: bool
-    is_cpp: bool
     is_python: bool
     cpp_template_params: frozenset[str]
     resolve_func: Callable[..., tuple[str, str] | None]

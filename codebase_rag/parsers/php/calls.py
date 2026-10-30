@@ -9,14 +9,14 @@ and hands PHP's part to the `PhpCallResolution` it builds."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, NamedTuple, Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from tree_sitter import Node
 
 from ... import constants as cs
 from ...language_spec import LANGUAGE_FQN_SPECS
 from ...utils.fqn_resolver import scoped_name_parts
-from ..language_calls import LanguageCalls
+from ..language_calls import UNDECIDED_CALLEE, Callee, LanguageCalls
 from . import class_names
 from . import utils as php_utils
 
@@ -37,14 +37,6 @@ class PhpCallScan(Protocol):
 
     module_qn: str
     php_scope_classes: class_names.ScopeCache | None
-
-
-class PhpClassCallee(NamedTuple):
-    # What a PHP call whose class the site shows binds to. `decided` False
-    # leaves the call to the name-based resolver; True means `callee` is the
-    # answer, and None there is a known non-edge.
-    decided: bool
-    callee: tuple[str, str] | None
 
 
 def anonymous_class_qn(node: Node, module_qn: str) -> str | None:
@@ -98,18 +90,22 @@ class PhpCallResolution(LanguageCalls):
             return path[-1]
         return None
 
-    def resolve_class_callee(
-        self, ctx: PhpCallScan, call_node: Node, call_name: str
-    ) -> PhpClassCallee:
+    def resolve_callee(
+        self,
+        ctx: PhpCallScan,
+        call_node: Node,
+        call_name: str,
+        call_var_types: dict[str, str] | None,
+    ) -> Callee:
         # `new C(...)` is always decided here; a member call only when its
         # receiver's class is known, so a miss keeps the name-only fallback.
         if call_node.type == cs.TS_PHP_OBJECT_CREATION_EXPRESSION:
-            return PhpClassCallee(True, self._new_callee(ctx, call_node))
+            return Callee(True, self._new_callee(ctx, call_node))
         if call_node.type in cs.PHP_MEMBER_CALL_TYPES and (
             typed := self._typed_member(ctx, call_node, call_name)
         ):
-            return PhpClassCallee(True, typed)
-        return PhpClassCallee(False, None)
+            return Callee(True, typed)
+        return UNDECIDED_CALLEE
 
     def _new_callee(self, ctx: PhpCallScan, call_node: Node) -> tuple[str, str] | None:
         # `new C(...)` names a class through PHP's namespace and `use` rules

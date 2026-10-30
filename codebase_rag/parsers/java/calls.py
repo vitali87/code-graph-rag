@@ -1,14 +1,13 @@
 """Java's share of the call pass: the declaration a Java call binds through
 the javac frontend or the Java engine, the same-arity overloads it cannot
-tell apart, the methods a method reference hands over, the constructors an
-enum constant runs, and the parameter signature a Java method's qualified
-name carries.
+tell apart, the methods and constructors a method reference hands over, the
+constructors an enum constant runs, and the parameter signature a Java
+method's qualified name carries.
 
 `CallProcessor` owns what every language shares (the scan of a caller's call
 nodes, the site and resolution each edge carries, the name-based resolver,
-the class pass's qualified names and the construction a `new` or a
-`Type::new` runs) and hands Java's part to the `JavaCallResolution` it
-builds."""
+the class pass's qualified names and the construction a `new` runs) and
+hands Java's part to the `JavaCallResolution` it builds."""
 
 from __future__ import annotations
 
@@ -22,7 +21,8 @@ from ...language_spec import LanguageSpec
 from ...types_defs import FunctionLocation, LanguageQueries, PropertyDict
 from ..class_ingest.identity import build_nested_qualified_name_for_class
 from ..edge_site import EdgeSiteHost, host_site_scoped
-from ..language_calls import LanguageCalls
+from ..language_calls import UNDECIDED_CALLEE, Callee, CallScan, LanguageCalls
+from ..utils import written_simple_name
 from . import utils as java_utils
 from .type_inference import JAVA_EXTERNAL_TARGET
 
@@ -35,9 +35,11 @@ class JavaCallHost(EdgeSiteHost, Protocol):
     it. Beside the edge site, `_verdict`, how surely the call node being
     scanned binds its callee, which a tie between overloads lowers to
     `overload`; the record of a name no definition answers yet, which a
-    file added later may define; and, for the constructors an enum constant
-    runs, the edge emitter, a definition's recorded location and own name,
-    and the qualified name the class pass gives a class's member."""
+    file added later may define; the construction a `Type::new` references,
+    as the pass constructs a `new`; and, for the constructors an enum
+    constant runs, the edge emitter, a definition's recorded location and
+    own name, and the qualified name the class pass gives a class's
+    member."""
 
     _verdict: str
 
@@ -66,6 +68,13 @@ class JavaCallHost(EdgeSiteHost, Protocol):
         language: str,
     ) -> tuple[str, str]: ...
 
+    def _redirect_construction(
+        self,
+        ctx: CallScan,
+        callee_qn: str,
+        ctor_rel: cs.RelationshipType = cs.RelationshipType.CALLS,
+    ) -> tuple[str, str] | None: ...
+
 
 class JavaCallScan(Protocol):
     """The caller a Java call node is scanned in."""
@@ -73,7 +82,11 @@ class JavaCallScan(Protocol):
     caller_spec: tuple[str, str, str]
     caller_qn: str
     module_qn: str
+    language: cs.SupportedLanguage
+    class_context: str | None
     local_var_types: dict[str, str] | None
+    resolve_func: Callable[..., tuple[str, str] | None]
+    ensure_rel: Callable[..., None]
 
 
 def method_member(func_node: Node, func_name: str) -> str:
@@ -229,12 +242,53 @@ class JavaCallResolution(LanguageCalls):
             current = current.parent
         return (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn)
 
+    def ingest_call_shape(self, ctx: CallScan, call_node: Node) -> bool:
+        if call_node.type != cs.TS_JAVA_METHOD_REFERENCE:
+            return False
+        if (
+            receiver := self.ingest_method_reference(ctx, call_node, ctx.ensure_rel)
+        ) is not None:
+            self._ingest_constructor_reference(ctx, call_node, receiver)
+        return True
+
+    def _ingest_constructor_reference(
+        self, ctx: CallScan, ref_node: Node, receiver: Node
+    ) -> None:
+        # `Type::new` is a factory for Type: the type is resolved and
+        # INSTANTIATES'd exactly as `new Type(...)` is, and its constructors are
+        # referenced rather than called, since none runs here. The functional
+        # interface that would pick one is not visible to the parser, so each
+        # declared constructor is referenced, labelled `overload` when there
+        # are several. An array type (`int[]::new`) constructs no class.
+        if not (type_name := java_utils.method_reference_receiver_text(receiver)):
+            return
+        callee = ctx.resolve_func(
+            type_name,
+            ctx.module_qn,
+            ctx.local_var_types,
+            ctx.class_context,
+            ctx.caller_qn,
+            ctx.language,
+            call_point=ref_node.start_byte,
+            constructing=True,
+        )
+        if callee is None:
+            self._host._note_unresolved(ctx.module_qn, written_simple_name(type_name))
+            return
+        if self._resolver.function_registry.get(callee[1]) == cs.NodeLabel.CLASS:
+            self._host._redirect_construction(
+                ctx, callee[1], ctor_rel=cs.RelationshipType.REFERENCES
+            )
+
     def resolve_callee(
         self,
         ctx: JavaCallScan,
         call_node: Node,
-        ensure_rel: Callable[..., None],
-    ) -> tuple[str, str] | None:
+        call_name: str,
+        call_var_types: dict[str, str] | None,
+    ) -> Callee:
+        if call_node.type != cs.TS_METHOD_INVOCATION:
+            return UNDECIDED_CALLEE
         # The javac frontend (issue #1181): a HIT is the declaration the
         # compiler bound this call to, which the ARGUMENT TYPES select
         # and name-and-arity matching cannot; the external sentinel is
@@ -251,8 +305,8 @@ class JavaCallResolution(LanguageCalls):
                 call_node, ctx.module_qn, ctx.local_var_types, ctx.caller_qn
             )
             if callee_info is not None:
-                self._link_overload_ties(ctx, call_node, callee_info[1], ensure_rel)
-        return callee_info
+                self._link_overload_ties(ctx, call_node, callee_info[1], ctx.ensure_rel)
+        return Callee(True, callee_info)
 
     def _link_overload_ties(
         self,

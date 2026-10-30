@@ -26,7 +26,7 @@ from ..call_resolver import PY_EXTERNAL_TARGET
 from ..callable_params import python_parameter_names
 from ..edge_site import EdgeSiteHost, host_site_scoped
 from ..js_ts import calls as js_calls
-from ..language_calls import LanguageCalls
+from ..language_calls import UNDECIDED_CALLEE, Callee, LanguageCalls
 from .class_aliases import scan_class_body_aliases
 from .receiver_rebinding import ReceiverRebinding, receiver_rebinding
 
@@ -151,14 +151,21 @@ class PythonCallHost(EdgeSiteHost, Protocol):
 
 
 class PythonCallScan(Protocol):
-    """The caller a Python call node is scanned in."""
+    """The caller a Python call node is scanned in, and the local aliases
+    read on it once, on first use, for all of that caller's calls."""
 
+    caller_node: Node
+    caller_spec: tuple[str, str, str]
     module_qn: str
     caller_qn: str
     language: cs.SupportedLanguage
+    queries: Mapping[cs.SupportedLanguage, LanguageQueries]
     class_context: str | None
     local_var_types: dict[str, str] | None
     is_python: bool
+    resolve_func: Callable[..., tuple[str, str] | None]
+    ensure_rel: Callable[..., None]
+    alias_map: dict[str, str] | None
 
 
 # Python callers whose own bindings shadow module and class names for the
@@ -807,13 +814,37 @@ class PythonCallResolution(LanguageCalls):
         else:
             self._resolver.python_name_typed_params.pop(caller_qn, None)
 
+    def receiver_types(
+        self,
+        ctx: PythonCallScan,
+        call_node: Node,
+        call_name: str,
+        call_var_types: dict[str, str] | None,
+    ) -> dict[str, str] | None:
+        if (
+            call_var_types
+            and (rebinding := receiver_rebinding_at(ctx, call_node, call_name))
+            and not rebinding.sometimes
+        ):
+            # No `self = Other()` can run before this call, so the method-wide
+            # type of `self` does not apply to it (issue #2620).
+            receiver = call_name.partition(cs.SEPARATOR_DOT)[0]
+            return {
+                name: var_type
+                for name, var_type in call_var_types.items()
+                if name != receiver
+            }
+        return call_var_types
+
     def resolve_callee(
         self,
         ctx: PythonCallScan,
         call_node: Node,
         call_name: str,
         call_var_types: dict[str, str] | None,
-    ) -> tuple[str, str] | None:
+    ) -> Callee:
+        if call_node.type != cs.TS_PY_CALL:
+            return UNDECIDED_CALLEE
         # The Jedi frontend (issue #1183): a HIT is the exact callee
         # through re-exports/decorators the trie approximates; the
         # external sentinel proves the call leaves the repo and
@@ -835,7 +866,58 @@ class PythonCallResolution(LanguageCalls):
                 ctx.language,
                 call_point=call_node.start_byte,
             )
-        return callee_info
+        return Callee(True, callee_info)
+
+    def local_alias_callee(
+        self, ctx: PythonCallScan, call_node: Node, call_name: str
+    ) -> tuple[str, str] | None:
+        if cs.SEPARATOR_DOT in call_name:
+            return None
+        # A bare name that resolves to nothing may be a local alias of a
+        # callable (do = self._start; do()). Resolve the assignment's
+        # right-hand side and treat the alias call as a call to it.
+        if ctx.alias_map is None:
+            ctx.alias_map = self.local_alias_map(
+                ctx.caller_node,
+                ctx.queries[ctx.language][cs.QUERY_CONFIG],
+                ctx.module_qn,
+            )
+        if (rhs := ctx.alias_map.get(call_name)) is None:
+            return None
+        return ctx.resolve_func(
+            rhs,
+            ctx.module_qn,
+            ctx.local_var_types,
+            ctx.class_context,
+            ctx.caller_qn,
+        )
+
+    def ingest_indirect_calls(
+        self,
+        ctx: PythonCallScan,
+        call_node: Node,
+        call_name: str,
+        callee_info: tuple[str, str] | None,
+    ) -> None:
+        if not callee_info and cs.SEPARATOR_DOT in call_name:
+            # recv.field(...) where field is a callable struct field:
+            # resolve to the functions bound to it at construction sites.
+            self.ingest_callable_field_calls(
+                call_name, ctx.caller_spec, ctx.local_var_types, ctx.ensure_rel
+            )
+        if call_name.rsplit(cs.SEPARATOR_DOT, 1)[-1] in cs.HIGHER_ORDER_BUILTINS:
+            # sorted(xs, key=f) and friends invoke f synchronously in this
+            # frame, so the trace attributes the call to the enclosing fn.
+            self.ingest_higher_order_builtin_calls(
+                call_node,
+                ctx.caller_spec,
+                ctx.module_qn,
+                ctx.local_var_types,
+                ctx.class_context,
+                self._resolver.resolve_function_call,
+                ctx.ensure_rel,
+                ctx.caller_qn,
+            )
 
     def emit_protocol_conformer_edges(
         self,
