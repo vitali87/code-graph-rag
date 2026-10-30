@@ -8,13 +8,56 @@ import gc
 import json
 import sys
 import tracemalloc
-from collections import OrderedDict, defaultdict
+from collections import defaultdict
 from pathlib import Path
-from textwrap import dedent
+from typing import NotRequired, TypedDict
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-sys.path.insert(0, str(PROJECT_ROOT))
+
+class AllocatorStat(TypedDict):
+    file: str
+    size_diff: int
+    size_diff_human: str
+    count_diff: int
+
+
+class SnapshotDiff(TypedDict):
+    label: str
+    total_new_alloc: int
+    total_new_alloc_human: str
+    top_allocators: list[AllocatorStat]
+    # Set by the measurements that also record a structure's own size.
+    entries_size: NotRequired[int]
+    entry_count: NotRequired[int]
+    file_count: NotRequired[int]
+    source_bytes: NotRequired[int]
+    function_class_count: NotRequired[int]
+    cache_dict_size: NotRequired[int]
+
+
+class GcPressure(TypedDict):
+    label: str
+    temp_objects_created: int
+    gc_gen0_before: dict[str, int]
+    gc_gen0_after: dict[str, int]
+    gc_gen1_before: dict[str, int]
+    gc_gen1_after: dict[str, int]
+    gc_gen2_before: dict[str, int]
+    gc_gen2_after: dict[str, int]
+
+
+class PeakMemory(TypedDict):
+    current: int
+    current_human: str
+    peak: int
+    peak_human: str
+
+
+Measurement = SnapshotDiff | GcPressure | PeakMemory
+# One section's measurements by key; a section that cannot run holds an
+# "error" message instead.
+SectionResults = dict[str, Measurement | str]
 
 
 def format_bytes(size: int) -> str:
@@ -25,10 +68,10 @@ def format_bytes(size: int) -> str:
     return f"{size:.1f} TiB"
 
 
-def snapshot_diff(label: str, snap1: tracemalloc.Snapshot, snap2: tracemalloc.Snapshot, top_n: int = 15) -> dict:
+def snapshot_diff(label: str, snap1: tracemalloc.Snapshot, snap2: tracemalloc.Snapshot, top_n: int = 15) -> SnapshotDiff:
     stats = snap2.compare_to(snap1, "lineno")
     total_diff = sum(s.size_diff for s in stats if s.size_diff > 0)
-    result = {
+    result: SnapshotDiff = {
         "label": label,
         "total_new_alloc": total_diff,
         "total_new_alloc_human": format_bytes(total_diff),
@@ -45,9 +88,9 @@ def snapshot_diff(label: str, snap1: tracemalloc.Snapshot, snap2: tracemalloc.Sn
     return result
 
 
-def measure_object_sizes() -> dict:
+def measure_object_sizes() -> SectionResults:
     """Measure sizes of core Python data structures used in the codebase."""
-    results = {}
+    results: SectionResults = {}
 
     # 1. FunctionRegistryTrie: dict + trie node overhead
     from codebase_rag.function_registry import FunctionRegistryTrie
@@ -192,9 +235,9 @@ def measure_object_sizes() -> dict:
     return results
 
 
-def measure_tree_sitter_parsing() -> dict:
+def measure_tree_sitter_parsing() -> SectionResults:
     """Profile memory during tree-sitter parsing of actual Python files."""
-    results = {}
+    results: SectionResults = {}
 
     try:
         from tree_sitter import Language, Parser
@@ -219,11 +262,14 @@ def measure_tree_sitter_parsing() -> dict:
     for f in py_files:
         try:
             source = f.read_bytes()
-            total_bytes_parsed += len(source)
-            tree = parser.parse(source)
-            trees.append((f, tree))
-        except Exception:
-            pass
+        except OSError as error:
+            # An unreadable file drops out of the file count the label
+            # reports; the rest of the tree still profiles.
+            print(f"  skipped {f}: {error}", file=sys.stderr)
+            continue
+        total_bytes_parsed += len(source)
+        tree = parser.parse(source)
+        trees.append((f, tree))
 
     gc.collect()
     snap_after = tracemalloc.take_snapshot()
@@ -274,9 +320,9 @@ def measure_tree_sitter_parsing() -> dict:
     return results
 
 
-def measure_graph_loader_json() -> dict:
+def measure_graph_loader_json() -> SectionResults:
     """Profile GraphLoader JSON loading and indexing with synthetic data."""
-    results = {}
+    results: SectionResults = {}
 
     # Create synthetic graph JSON
     nodes = []
@@ -354,9 +400,9 @@ def measure_graph_loader_json() -> dict:
     return results
 
 
-def measure_embedding_cache() -> dict:
+def measure_embedding_cache() -> SectionResults:
     """Profile EmbeddingCache with simulated embeddings."""
-    results = {}
+    results: SectionResults = {}
 
     try:
         from codebase_rag.vectors.embedder import EmbeddingCache
@@ -387,9 +433,9 @@ def measure_embedding_cache() -> dict:
     return results
 
 
-def measure_gc_pressure() -> dict:
+def measure_gc_pressure() -> SectionResults:
     """Measure GC pressure by tracking collections during workload simulation."""
-    results = {}
+    results: SectionResults = {}
 
     gc.collect()
     gc_stats_before = gc.get_stats()
@@ -432,9 +478,9 @@ def measure_gc_pressure() -> dict:
     return results
 
 
-def measure_string_duplication() -> dict:
+def measure_string_duplication() -> SectionResults:
     """Estimate memory wasted on duplicated strings in typical data structures."""
-    results = {}
+    results: SectionResults = {}
 
     gc.collect()
     tracemalloc.clear_traces()
@@ -483,7 +529,7 @@ def measure_string_duplication() -> dict:
     return results
 
 
-def measure_peak_usage_full_pipeline() -> dict:
+def measure_peak_usage_full_pipeline() -> SectionResults:
     """Simulate the full pipeline memory envelope.
 
     This exercises the complete data structure lifecycle:
@@ -493,7 +539,7 @@ def measure_peak_usage_full_pipeline() -> dict:
     4. Buffer nodes and relationships
     5. Measure peak
     """
-    results = {}
+    results: SectionResults = {}
 
     gc.collect()
     tracemalloc.clear_traces()
@@ -593,10 +639,30 @@ def measure_peak_usage_full_pipeline() -> dict:
     return results
 
 
+def _print_measurement(value: Measurement | str) -> None:
+    if isinstance(value, dict) and "label" in value:
+        total = value.get("total_new_alloc_human", value.get("peak_human", "N/A"))
+        print(f"  {value['label']}")
+        print(f"    Total new allocation: {total}")
+        if "top_allocators" in value:
+            for i, alloc in enumerate(value["top_allocators"][:5]):
+                print(f"    [{i+1}] {alloc['size_diff_human']} ({alloc['count_diff']} objects) - {alloc['file'][:80]}")
+    elif isinstance(value, dict) and "current_human" in value:
+        print(f"  Current traced: {value['current_human']}")
+        print(f"  Peak traced: {value['peak_human']}")
+    elif isinstance(value, dict) and "temp_objects_created" in value:
+        print(f"  {value['label']}")
+        print(f"    Temp objects created: {value['temp_objects_created']}")
+        for gen in range(3):
+            before = value[f"gc_gen{gen}_before"]
+            after = value[f"gc_gen{gen}_after"]
+            print(f"    Gen{gen}: collections {before['collections']} -> {after['collections']}, collected {before['collected']} -> {after['collected']}")
+
+
 def main() -> None:
     tracemalloc.start(25)  # 25 frames for stack traces
 
-    all_results: dict[str, dict] = {}
+    all_results: dict[str, SectionResults] = {}
 
     print("=" * 70)
     print("MEMORY ALLOCATION PROFILING REPORT")
@@ -631,24 +697,8 @@ def main() -> None:
 
     for section_name, section_data in all_results.items():
         print(f"\n--- {section_name.upper()} ---")
-        for key, value in section_data.items():
-            if isinstance(value, dict) and "label" in value:
-                total = value.get("total_new_alloc_human", value.get("peak_human", "N/A"))
-                print(f"  {value['label']}")
-                print(f"    Total new allocation: {total}")
-                if "top_allocators" in value:
-                    for i, alloc in enumerate(value["top_allocators"][:5]):
-                        print(f"    [{i+1}] {alloc['size_diff_human']} ({alloc['count_diff']} objects) - {alloc['file'][:80]}")
-            elif isinstance(value, dict) and "current_human" in value:
-                print(f"  Current traced: {value['current_human']}")
-                print(f"  Peak traced: {value['peak_human']}")
-            elif isinstance(value, dict) and "temp_objects_created" in value:
-                print(f"  {value['label']}")
-                print(f"    Temp objects created: {value['temp_objects_created']}")
-                for gen in range(3):
-                    before = value[f"gc_gen{gen}_before"]
-                    after = value[f"gc_gen{gen}_after"]
-                    print(f"    Gen{gen}: collections {before['collections']} -> {after['collections']}, collected {before['collected']} -> {after['collected']}")
+        for value in section_data.values():
+            _print_measurement(value)
 
     output_path = PROJECT_ROOT / "benchmarks" / "memory_profile_results.json"
     with open(output_path, "w") as f:
