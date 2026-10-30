@@ -30,6 +30,7 @@ with atheris.instrument_imports():
     from codebase_rag.language_spec import LANGUAGE_FQN_SPECS, LANGUAGE_SPECS
     from codebase_rag.node_text import sorted_captures
     from codebase_rag.parser_loader import load_parsers
+    from codebase_rag.parsers.utils import _has_invalid_byte
 
 # Built once: loading a grammar per iteration would dominate the run and leave
 # the fuzzer exercising the loader instead of the parsers.
@@ -172,26 +173,6 @@ _NAME_SPAN_ANCESTOR_LIMIT = 3
 _SYNTHETIC_NAME_PREFIXES = "~"
 # What `errors="replace"` substitutes for an undecodable byte.
 _UNICODE_REPLACEMENT_CHAR = "\ufffd"
-
-
-def _has_invalid_byte(window: bytes, *, at_end: bool) -> bool:
-    """Whether `window` holds a byte no valid UTF-8 sequence explains.
-
-    The window is cut at an arbitrary offset, so it can begin or end
-    mid-character even when the source is well-formed (`\u00a9` is c2 a9, and
-    either half alone fails). The partial sequence at the CUT edge is trimmed
-    before decoding; `at_end` says which edge that is.
-    """
-    for trim in range(len(window)):
-        candidate = window[trim:] if not at_end else window[: len(window) - trim]
-        if not candidate:
-            return False
-        try:
-            candidate.decode(cs.ENCODING_UTF8)
-        except UnicodeDecodeError:
-            continue
-        return False
-    return True
 
 
 def _name_span(node: object, name: str) -> tuple[int, int] | None:
