@@ -24,10 +24,10 @@ from ..semantic_call_join import call_site_key, resolve_call_site
 from .arity import CSharpArityIndex
 from .arity import spellings as arity_spellings
 from .utils import (
-    _normalize_type_name,
     annotate_type_ref,
     generic_arity_of_type_text,
     leaf_type_segment,
+    normalize_type_name,
     split_type_ref,
     strip_generic_arguments,
     unique_carrier,
@@ -1509,7 +1509,7 @@ class CSharpTypeInferenceEngine:
             # The WRITTEN arity picks between simple-name twins (`(Opt<int>)o`
             # names the generic Opt<T>, never plain Opt).
             return self._type_name_to_qn(
-                _normalize_type_name(raw),
+                normalize_type_name(raw),
                 module_qn,
                 generic_arity_of_type_text(raw),
             )
@@ -1521,7 +1521,7 @@ class CSharpTypeInferenceEngine:
         type_node = receiver.child_by_field_name(cs.FIELD_TYPE)
         if type_text := safe_decode_text(type_node) if type_node else None:
             return self._type_name_to_qn(
-                _normalize_type_name(type_text),
+                normalize_type_name(type_text),
                 module_qn,
                 generic_arity_of_type_text(type_text),
             )
@@ -1620,7 +1620,7 @@ class CSharpTypeInferenceEngine:
         type_name, annotated_arity = split_type_ref(type_name)
         if generic_arity is None:
             generic_arity = annotated_arity or generic_arity_of_type_text(type_name)
-        expanded = self._expanded_type_path(_normalize_type_name(type_name), module_qn)
+        expanded = self._expanded_type_path(normalize_type_name(type_name), module_qn)
 
         if self.function_registry.get(expanded) in _TYPE_DECLS:
             return self.arity_twin(expanded, generic_arity)

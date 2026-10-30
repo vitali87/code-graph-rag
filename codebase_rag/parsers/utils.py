@@ -370,7 +370,7 @@ def unparenthesized(node: Node | None) -> Node | None:
     return node
 
 
-def _decorator_tail_names(decorators: list[str]) -> set[str]:
+def decorator_tail_names(decorators: list[str]) -> set[str]:
     return {
         decorator.lstrip("@#[]() ")
         .split("(")[0]
@@ -381,11 +381,11 @@ def _decorator_tail_names(decorators: list[str]) -> set[str]:
 
 
 def is_static_decorator(decorators: list[str]) -> bool:
-    return bool(_decorator_tail_names(decorators) & cs.STATIC_DECORATORS)
+    return bool(decorator_tail_names(decorators) & cs.STATIC_DECORATORS)
 
 
 def _is_abstract_decorator(decorators: list[str]) -> bool:
-    return bool(_decorator_tail_names(decorators) & cs.ABSTRACT_DECORATORS)
+    return bool(decorator_tail_names(decorators) & cs.ABSTRACT_DECORATORS)
 
 
 def _is_bodiless_ts_member(
@@ -400,7 +400,7 @@ def _is_bodiless_ts_member(
     )
 
 
-def _is_abstract_member(
+def is_abstract_member(
     decorators: list[str], method_node: ASTNode, language: cs.SupportedLanguage
 ) -> bool:
     return _is_abstract_decorator(decorators) or _is_bodiless_ts_member(
@@ -413,7 +413,7 @@ def is_stored_abstract_member(
     modifiers: list[str],
     language: cs.SupportedLanguage | None,
 ) -> bool:
-    """`_is_abstract_member` read back from a stored definition's properties.
+    """`is_abstract_member` read back from a stored definition's properties.
 
     An incremental run rehydrates unchanged members without their trees: a TS
     `abstract` member is told by its modifier. An interface member is told by

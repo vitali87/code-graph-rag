@@ -46,7 +46,7 @@ def definition_start_point(node: Node) -> tuple[int, int]:
     return node.start_point[0] + 1, node.start_point[1]
 
 
-def _normalize_type_name(text: str) -> str:
+def normalize_type_name(text: str) -> str:
     # Strip generic arguments (`List<int>` -> `List`), a nullable suffix
     # (`Widget?`/`int?` -> the underlying type, so a nullable receiver still
     # binds), and whitespace, so a parameter signature is stable and matches
@@ -167,7 +167,7 @@ def annotate_type_ref(text: str) -> str:
     # style (`Builder<T>` -> "Builder`1", `Builder` -> "Builder"): a plain
     # name always means arity 0, so simple-name twins stay distinguishable
     # through every stored type map without touching method signatures.
-    return type_ref(_normalize_type_name(text), generic_arity_of_type_text(text))
+    return type_ref(normalize_type_name(text), generic_arity_of_type_text(text))
 
 
 def type_ref(name: str, arity: int) -> str:
@@ -187,7 +187,7 @@ def normalize_csharp_type_name(type_node: Node) -> str | None:
     # None for unnameable types (`void` callers never chain off it, but a
     # void return is recorded harmlessly and simply never resolves).
     text = safe_decode_text(type_node)
-    return _normalize_type_name(text) if text else None
+    return normalize_type_name(text) if text else None
 
 
 def extract_parameter_type_names(method_node: Node) -> list[str]:
@@ -207,7 +207,7 @@ def extract_parameter_type_names(method_node: Node) -> list[str]:
             type_node = child
         if type_node is not None and type_node.text:
             if name := safe_decode_text(type_node):
-                types.append(_normalize_type_name(name))
+                types.append(normalize_type_name(name))
     return types
 
 

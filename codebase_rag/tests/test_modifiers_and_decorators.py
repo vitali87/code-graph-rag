@@ -3,7 +3,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.parser_loader import _create_highlights_query, load_parsers
 from codebase_rag.parsers.utils import (
-    _decorator_tail_names,
+    decorator_tail_names,
     extract_modifiers_and_decorators,
 )
 from codebase_rag.tests.test_function_ingest import find_first_node_of_type, parse_code
@@ -11,7 +11,7 @@ from codebase_rag.tests.test_function_ingest import find_first_node_of_type, par
 
 def test_decorator_tail_names_with_arguments() -> None:
     decorators = ["@cached_property(ttl=3600)", "#[test]", "@abc.abstractmethod()"]
-    result = _decorator_tail_names(decorators)
+    result = decorator_tail_names(decorators)
     assert result == {"cached_property", "test", "abstractmethod"}
 
 

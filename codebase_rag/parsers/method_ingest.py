@@ -47,10 +47,10 @@ from .type_facts import (
     type_facts_props,
 )
 from .utils import (
-    _decorator_tail_names,
-    _is_abstract_member,
     decorated_start_props,
+    decorator_tail_names,
     extract_modifiers_and_decorators,
+    is_abstract_member,
     is_static_decorator,
     warn_if_name_truncated,
 )
@@ -535,7 +535,7 @@ def _write_method(
     function_registry[method_qn] = cs.NodeLabel.METHOD
     if is_property:
         function_registry.mark_property(method_qn)
-    if _is_abstract_member(decorators, method_node, method.language):
+    if is_abstract_member(decorators, method_node, method.language):
         function_registry.mark_abstract(method_qn)
     function_registry.mark_callable_params(
         method_qn, callable_parameter_indices(method_node, method.language)
@@ -694,7 +694,7 @@ def ingest_exported_function(
 
 
 def _is_property_decorator(decorators: list[str]) -> bool:
-    return bool(_decorator_tail_names(decorators) & cs.PROPERTY_DECORATORS)
+    return bool(decorator_tail_names(decorators) & cs.PROPERTY_DECORATORS)
 
 
 def _js_ts_field_member_name(

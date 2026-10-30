@@ -2,9 +2,9 @@
 # arity annotation must round-trip through every stored type map, and the
 # arity counter must ignore nested generics and array brackets.
 from codebase_rag.parsers.csharp.utils import (
-    _normalize_type_name,
     annotate_type_ref,
     generic_arity_of_type_text,
+    normalize_type_name,
     split_type_ref,
 )
 
@@ -30,8 +30,8 @@ def test_annotate_and_split_round_trip() -> None:
 
 
 def test_normalize_type_name_preserves_qualified_suffix_after_generics() -> None:
-    assert _normalize_type_name("Outer<int>.Inner") == "Outer.Inner"
+    assert normalize_type_name("Outer<int>.Inner") == "Outer.Inner"
     assert (
-        _normalize_type_name("Outer<Dictionary<string, List<int>>>.Inner<string>?")
+        normalize_type_name("Outer<Dictionary<string, List<int>>>.Inner<string>?")
         == "Outer.Inner"
     )
