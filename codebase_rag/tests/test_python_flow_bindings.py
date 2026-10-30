@@ -183,6 +183,38 @@ def _calls(tmp_path: Path, files: dict[str, str]) -> dict[str, set[str]]:
     return out
 
 
+class _SiteIngestor(_CapturingIngestor):
+    def __init__(self) -> None:
+        super().__init__()
+        self.lines: dict[tuple[str, str], set[object]] = {}
+
+    def ensure_relationship_batch(self, from_spec, rel_type, to_spec, properties=None):
+        super().ensure_relationship_batch(from_spec, rel_type, to_spec, properties)
+        key = (
+            str(from_spec[2]).removeprefix(f"{PROJECT}."),
+            str(to_spec[2]).removeprefix(f"{PROJECT}."),
+        )
+        self.lines.setdefault(key, set()).add((properties or {}).get(cs.KEY_LINE))
+
+
+def _sites(tmp_path: Path, files: dict[str, str]) -> dict[tuple[str, str], set[object]]:
+    """{(caller, callee) without the project: the lines its edges are sited at}."""
+    repo = tmp_path / PROJECT
+    for rel, content in files.items():
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (repo / rel).write_text(content, encoding="utf-8")
+    parsers, queries = load_parsers()
+    ingestor = _SiteIngestor()
+    GraphUpdater(
+        ingestor=ingestor,
+        repo_path=repo,
+        parsers=parsers,
+        queries=queries,
+        project_name=PROJECT,
+    ).run(force=True)
+    return ingestor.lines
+
+
 CLASSES = (
     "class A:\n    def m(self):\n        pass\n"
     "class B:\n    def m(self):\n        pass\n"
@@ -241,6 +273,61 @@ class TestEdges:
         }
 
 
+RESPONSES = (
+    "class Response:\n"
+    "    @property\n    def content(self):\n        return b''\n"
+    "class Streaming:\n"
+    "    @property\n    def content(self):\n        raise AttributeError\n"
+)
+
+
+class TestMemberReads:
+    # A property read is an attribute, not a call; the bindings that reach
+    # its receiver decide it all the same (django's
+    # test_conditional_content_removal reads `res.content` after each of
+    # several `res = HttpResponse(...)` / `res = StreamingHttpResponse(...)`).
+    def test_a_property_read_goes_to_the_class_bound_before_it(
+        self, tmp_path: Path
+    ) -> None:
+        source = RESPONSES + (
+            "def use():\n"
+            "    res = Response()\n    res.content\n"
+            "    res = Streaming()\n    res.content\n"
+        )
+        calls = _calls(tmp_path, {"main.py": source})["main.use"]
+        assert {"main.Response.content", "main.Streaming.content"} <= calls
+
+    def test_a_property_passed_as_an_argument_reads_the_same_way(
+        self, tmp_path: Path
+    ) -> None:
+        source = RESPONSES + (
+            "def check(value):\n    pass\n"
+            "def use():\n"
+            "    res = Response()\n    check(res.content)\n"
+            "    res = Streaming()\n    check(res.content)\n"
+        )
+        calls = _calls(tmp_path, {"main.py": source})["main.use"]
+        assert {"main.Response.content", "main.Streaming.content"} <= calls
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            # One binding: the flat map's answer.
+            "    res = Streaming()\n    res.content\n",
+            # A parameter reaches the read, which nothing here types.
+            "    if res is None:\n        res = Streaming()\n    res.content\n",
+        ],
+    )
+    def test_a_read_this_cannot_decide_keeps_the_flat_answer(
+        self, tmp_path: Path, body: str
+    ) -> None:
+        source = RESPONSES + f"def use(res: Response = None):\n{body}"
+        calls = _calls(tmp_path, {"main.py": source}).get("main.use", set())
+        assert calls & {"main.Response.content", "main.Streaming.content"} == {
+            "main.Streaming.content"
+        }
+
+
 MANAGERS = (
     "class Base:\n"
     "    def __enter__(self):\n        return self\n"
@@ -264,6 +351,39 @@ class TestWithProtocol:
             "main.Base.__exit__",
             "main.Child.run",
         }
+
+    def test_a_body_that_only_enters_a_manager_calls_its_dunders(
+        self, tmp_path: Path
+    ) -> None:
+        # No call anywhere in the file: the with statement is itself one of
+        # the body's call nodes, so the protocol pass still runs.
+        source = MANAGERS + "def use(lock: Child):\n    with lock:\n        pass\n"
+        assert _calls(tmp_path, {"main.py": source})["main.use"] == {
+            "main.Child.__enter__",
+            "main.Base.__exit__",
+        }
+
+    def test_a_rebound_manager_is_the_one_bound_at_the_with(
+        self, tmp_path: Path
+    ) -> None:
+        source = MANAGERS + (
+            "def use():\n    m = Child()\n    with m:\n        pass\n    m = Base()\n"
+        )
+        calls = _calls(tmp_path, {"main.py": source})["main.use"]
+        assert "main.Child.__enter__" in calls
+        assert "main.Base.__enter__" not in calls
+
+    def test_a_protocol_edge_is_sited_at_its_with(self, tmp_path: Path) -> None:
+        source = MANAGERS + (
+            "def helper():\n    pass\n"
+            # The call after the with is the last call node the body's
+            # pass visits; the protocol edges must not take its site.
+            "def use():\n    with Child():\n        pass\n    helper()\n"
+        )
+        with_line = source.splitlines().index("    with Child():") + 1
+        sites = _sites(tmp_path, {"main.py": source})
+        assert sites[("main.use", "main.Child.__enter__")] == {with_line}
+        assert sites[("main.use", "main.Base.__exit__")] == {with_line}
 
     def test_async_with_calls_the_async_pair(self, tmp_path: Path) -> None:
         source = MANAGERS + "async def use():\n    async with Async():\n        pass\n"
