@@ -46,7 +46,7 @@ def hash_file_sha256_mmap(filepath: Path) -> str:
 
 
 def hash_file_md5(filepath: Path) -> str:
-    hasher = hashlib.md5()
+    hasher = hashlib.md5(usedforsecurity=False)
     with filepath.open("rb") as f:
         while chunk := f.read(8192):
             hasher.update(chunk)
