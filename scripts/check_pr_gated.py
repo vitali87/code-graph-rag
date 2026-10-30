@@ -1148,6 +1148,160 @@ def approval_findings(
     return reasons, caveats
 
 
+def _run_ownership_findings(
+    pr: str, head: str, state: str, at_head: list[dict[str, Any]]
+) -> tuple[list[str], list[str]]:
+    """Whether every CI run at the head resolves to `pr`.
+
+    Reasons and caveats, as `check` returns them, for the runs at the head.
+    """
+    reasons: list[str] = []
+    caveats: list[str] = []
+    if not at_head:
+        reasons.append(f"no CI run exists at the head SHA {head[:8]}")
+        return reasons, caveats
+    owners: set[str] = set()
+    # Whether every run's detail was actually READ. `_gh_stdout_or_empty`
+    # returns "" for a failed call and for an empty body alike, so an
+    # unreadable run and a genuinely empty `pull_requests` are otherwise
+    # indistinguishable -- and the closed-PR excuse below must never cover
+    # the first. A run whose detail did not parse leaves this False.
+    all_details_read = True
+    for run in at_head:
+        detail = _json_dict(
+            _gh_stdout_or_empty("api", f"repos/{REPO}/actions/runs/{run.get('id')}")
+        )
+        associated = detail.get("pull_requests")
+        if not detail or not isinstance(associated, list):
+            # Unreadable, or readable but carrying no `pull_requests` FIELD.
+            # A truthy detail that omits the key entirely is missing data,
+            # not a cleared association: GitHub's own cleared form is
+            # `"pull_requests": []`, a present-but-empty list (verified on
+            # run 34874043546, a 35-key object). Treating an absent key as
+            # cleared would excuse incomplete evidence on a closed PR.
+            all_details_read = False
+            continue
+        owners.update(str(p.get("number")) for p in associated if isinstance(p, dict))
+    # GitHub CLEARS a run's `pull_requests` once its PR closes or merges
+    # (issue #1944), so on a closed PR an empty owner set is GitHub's own
+    # doing rather than an unanswered question. Reported as unverified it
+    # made every correctly gated merged PR read as ungated -- measured on
+    # #1930, whose merged head carries `pull_requests: []` while an open
+    # PR's carries one entry, same repo and workflow.
+    #
+    # Only the EMPTY case is excused, and only when closed. A populated
+    # set naming a different PR is the rebase collision the message
+    # describes and still fails, whatever the state.
+    #
+    # Excused only when the runs were READ and reported no owner. A failed
+    # detail fetch keeps failing closed on a merged PR exactly as on an
+    # open one: that is the fail-open the empty-is-unverified rule closed.
+    cleared_by_close = not owners and all_details_read and state in ("MERGED", "CLOSED")
+    if not all_details_read:
+        # Checked BEFORE the owner match, not folded into it. A head can
+        # carry several CI runs: if one resolves to this PR and another is
+        # unreadable, `pr in owners` is true and the incomplete evidence
+        # would never be reported. Ownership is a claim about EVERY run at
+        # the head, so one unread run makes the answer unverified however
+        # good the others look.
+        reasons.append(
+            f"could not read every CI run detail at {head[:8]}, so run "
+            "ownership is unverified; an unread run may name another PR"
+        )
+    elif pr not in owners and not cleared_by_close:
+        # Empty is UNVERIFIED, not clean, on an OPEN PR. A run whose detail
+        # fetch failed, or one reporting `pull_requests: []`, leaves
+        # `owners` empty; the earlier `if owners and ...` guard then never
+        # fired and scored the absence of an answer as a pass (Greptile on
+        # PR #1625) -- the same fail-open shape this checker exists to
+        # catch.
+        found = sorted(owners) if owners else "none (could not be determined)"
+        reasons.append(
+            f"the CI run at {head[:8]} does not resolve to #{pr}; owners: {found}. "
+            "Branches sharing a head SHA after a rebase report each other's runs"
+        )
+    elif cleared_by_close:
+        caveats.append(
+            f"#{pr} is {state}, so GitHub has cleared its runs' "
+            "`pull_requests`; run ownership could not be re-checked and is "
+            "taken on trust here (issue #1944)"
+        )
+    return reasons, caveats
+
+
+def _required_context_reasons(
+    rollup: list[dict[str, object]],
+    judged: list[dict[str, object]],
+    at_head: list[dict[str, Any]],
+) -> list[str]:
+    reasons: list[str] = []
+    missing = required_contexts_present(rollup, [REQUIRED_CONTEXT])
+    if missing:
+        reasons.append(
+            f"required context absent at the head: {missing}; "
+            + absent_context_reason(REQUIRED_CONTEXT, rollup, at_head)
+        )
+    else:
+        for entry in judged:
+            if context_name(entry) != REQUIRED_CONTEXT:
+                continue
+            # By shape: once a bound name's check runs are filtered out, what
+            # remains can be a same-name commit status, which has no
+            # `conclusion` and would otherwise read as never finished.
+            if not entry_finished(entry):
+                reasons.append(f"'{REQUIRED_CONTEXT}' has not concluded")
+            elif (outcome := entry_outcome(entry)) != "SUCCESS":
+                reasons.append(f"'{REQUIRED_CONTEXT}' concluded {outcome}")
+    return reasons
+
+
+def _classic_context_findings(
+    classic_contexts: list[str],
+    bindings: dict[str, set[int]],
+    judged: list[dict[str, object]],
+) -> list[str]:
+    reasons: list[str] = []
+    # Contexts the CLASSIC layer requires are enforced exactly like the
+    # ruleset's, and a PR missing one is refused the same way.
+    for name in classic_contexts:
+        if name == REQUIRED_CONTEXT:
+            continue
+        if name in bindings and not any(
+            context_name(entry) == name for entry in judged
+        ):
+            # Only check runs carry the name; the binding below judges them.
+            continue
+        reasons.extend(classic_context_reasons(name, judged))
+    return reasons
+
+
+def _review_findings(view: dict[str, Any], head: str) -> tuple[list[str], list[str]]:
+    reasons: list[str] = []
+    caveats: list[str] = []
+    artifacts = [
+        (str(a.get("body", "")), _author_login(a))
+        for key in ("comments", "reviews")
+        for a in view.get(key, [])
+        if isinstance(a, dict)
+    ]
+    real_reviews = [
+        (body, author) for body, author in artifacts if is_real_review(body, author)
+    ]
+    if not real_reviews:
+        reasons.append(
+            f"no review artifact carries a verdict from a reviewing account "
+            f"({len(artifacts)} comment(s)/review(s) present, none of which is a "
+            "review by one of "
+            f"{sorted(a for a in TRUSTED_REVIEWERS if not a.endswith('[bot]'))})"
+        )
+    else:
+        caveats.extend(review_execution_caveats(real_reviews))
+        stale = stale_review_reason(real_reviews, head)
+        if stale:
+            reasons.append(stale)
+    return reasons, caveats
+
+
 def check(pr: str) -> tuple[list[str], list[str]]:
     """Reasons `pr` is not verifiably gated, and caveats on the evidence.
 
@@ -1195,112 +1349,18 @@ def check(pr: str) -> tuple[list[str], list[str]]:
         )
 
     at_head = ci_runs_at_head(head)
-    if not at_head:
-        reasons.append(f"no CI run exists at the head SHA {head[:8]}")
-    else:
-        owners: set[str] = set()
-        # Whether every run's detail was actually READ. `_gh_stdout_or_empty`
-        # returns "" for a failed call and for an empty body alike, so an
-        # unreadable run and a genuinely empty `pull_requests` are otherwise
-        # indistinguishable -- and the closed-PR excuse below must never cover
-        # the first. A run whose detail did not parse leaves this False.
-        all_details_read = True
-        for run in at_head:
-            detail = _json_dict(
-                _gh_stdout_or_empty("api", f"repos/{REPO}/actions/runs/{run.get('id')}")
-            )
-            associated = detail.get("pull_requests")
-            if not detail or not isinstance(associated, list):
-                # Unreadable, or readable but carrying no `pull_requests` FIELD.
-                # A truthy detail that omits the key entirely is missing data,
-                # not a cleared association: GitHub's own cleared form is
-                # `"pull_requests": []`, a present-but-empty list (verified on
-                # run 34874043546, a 35-key object). Treating an absent key as
-                # cleared would excuse incomplete evidence on a closed PR.
-                all_details_read = False
-                continue
-            owners.update(
-                str(p.get("number")) for p in associated if isinstance(p, dict)
-            )
-        # GitHub CLEARS a run's `pull_requests` once its PR closes or merges
-        # (issue #1944), so on a closed PR an empty owner set is GitHub's own
-        # doing rather than an unanswered question. Reported as unverified it
-        # made every correctly gated merged PR read as ungated -- measured on
-        # #1930, whose merged head carries `pull_requests: []` while an open
-        # PR's carries one entry, same repo and workflow.
-        #
-        # Only the EMPTY case is excused, and only when closed. A populated
-        # set naming a different PR is the rebase collision the message
-        # describes and still fails, whatever the state.
-        state = str(view.get("state", "")).upper()
-        # Excused only when the runs were READ and reported no owner. A failed
-        # detail fetch keeps failing closed on a merged PR exactly as on an
-        # open one: that is the fail-open the empty-is-unverified rule closed.
-        cleared_by_close = (
-            not owners and all_details_read and state in ("MERGED", "CLOSED")
-        )
-        if not all_details_read:
-            # Checked BEFORE the owner match, not folded into it. A head can
-            # carry several CI runs: if one resolves to this PR and another is
-            # unreadable, `pr in owners` is true and the incomplete evidence
-            # would never be reported. Ownership is a claim about EVERY run at
-            # the head, so one unread run makes the answer unverified however
-            # good the others look.
-            reasons.append(
-                f"could not read every CI run detail at {head[:8]}, so run "
-                "ownership is unverified; an unread run may name another PR"
-            )
-        elif pr not in owners and not cleared_by_close:
-            # Empty is UNVERIFIED, not clean, on an OPEN PR. A run whose detail
-            # fetch failed, or one reporting `pull_requests: []`, leaves
-            # `owners` empty; the earlier `if owners and ...` guard then never
-            # fired and scored the absence of an answer as a pass (Greptile on
-            # PR #1625) -- the same fail-open shape this checker exists to
-            # catch.
-            found = sorted(owners) if owners else "none (could not be determined)"
-            reasons.append(
-                f"the CI run at {head[:8]} does not resolve to #{pr}; owners: {found}. "
-                "Branches sharing a head SHA after a rebase report each other's runs"
-            )
-        elif cleared_by_close:
-            caveats.append(
-                f"#{pr} is {state}, so GitHub has cleared its runs' "
-                "`pull_requests`; run ownership could not be re-checked and is "
-                "taken on trust here (issue #1944)"
-            )
+    ownership_reasons, ownership_caveats = _run_ownership_findings(
+        pr, head, str(view.get("state", "")).upper(), at_head
+    )
+    reasons.extend(ownership_reasons)
+    caveats.extend(ownership_caveats)
 
     bindings = required_app_bindings(rules, protection)
     judged = without_bound_check_runs(rollup, set(bindings))
 
-    missing = required_contexts_present(rollup, [REQUIRED_CONTEXT])
-    if missing:
-        reasons.append(
-            f"required context absent at the head: {missing}; "
-            + absent_context_reason(REQUIRED_CONTEXT, rollup, at_head)
-        )
-    else:
-        for entry in judged:
-            if context_name(entry) != REQUIRED_CONTEXT:
-                continue
-            # By shape: once a bound name's check runs are filtered out, what
-            # remains can be a same-name commit status, which has no
-            # `conclusion` and would otherwise read as never finished.
-            if not entry_finished(entry):
-                reasons.append(f"'{REQUIRED_CONTEXT}' has not concluded")
-            elif (outcome := entry_outcome(entry)) != "SUCCESS":
-                reasons.append(f"'{REQUIRED_CONTEXT}' concluded {outcome}")
+    reasons.extend(_required_context_reasons(rollup, judged, at_head))
 
-    # Contexts the CLASSIC layer requires are enforced exactly like the
-    # ruleset's, and a PR missing one is refused the same way.
-    for name in classic_contexts:
-        if name == REQUIRED_CONTEXT:
-            continue
-        if name in bindings and not any(
-            context_name(entry) == name for entry in judged
-        ):
-            # Only check runs carry the name; the binding below judges them.
-            continue
-        reasons.extend(classic_context_reasons(name, judged))
+    reasons.extend(_classic_context_findings(classic_contexts, bindings, judged))
 
     # A binding to one App narrows what satisfies a name further. Read only
     # for a name that has one, so an unbound repo makes no extra call.
@@ -1315,27 +1375,9 @@ def check(pr: str) -> tuple[list[str], list[str]]:
             "reports on nothing"
         )
 
-    artifacts = [
-        (str(a.get("body", "")), _author_login(a))
-        for key in ("comments", "reviews")
-        for a in view.get(key, [])
-        if isinstance(a, dict)
-    ]
-    real_reviews = [
-        (body, author) for body, author in artifacts if is_real_review(body, author)
-    ]
-    if not real_reviews:
-        reasons.append(
-            f"no review artifact carries a verdict from a reviewing account "
-            f"({len(artifacts)} comment(s)/review(s) present, none of which is a "
-            "review by one of "
-            f"{sorted(a for a in TRUSTED_REVIEWERS if not a.endswith('[bot]'))})"
-        )
-    else:
-        caveats.extend(review_execution_caveats(real_reviews))
-        stale = stale_review_reason(real_reviews, head)
-        if stale:
-            reasons.append(stale)
+    review_reasons, review_caveats = _review_findings(view, head)
+    reasons.extend(review_reasons)
+    caveats.extend(review_caveats)
 
     caveats.extend(unrequired_failure_caveat(rollup, frozenset(classic_contexts)))
 
