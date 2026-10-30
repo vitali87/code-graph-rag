@@ -99,6 +99,8 @@ class JavaCallResolution(LanguageCalls):
 
     __slots__ = ("_host", "_resolver")
 
+    types_locals = True
+
     def __init__(self, host: JavaCallHost, resolver: CallResolver) -> None:
         self._host = host
         self._resolver = resolver

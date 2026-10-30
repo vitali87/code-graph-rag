@@ -10,22 +10,45 @@ rest of Rust's part to the `RustCallResolution` it builds."""
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from tree_sitter import Node
 
 from ... import constants as cs
 from ..language_calls import LanguageCalls
 from . import utils as rs_utils
 
+if TYPE_CHECKING:
+    from ..call_resolver import CallResolver
+
 
 class RustCallResolution(LanguageCalls):
-    """Attributes Rust callers as the definition pass registers them.
+    """Attributes Rust callers as the definition pass registers them and
+    reads the bindings a match arm or closure gives a name over its span.
 
-    Built and owned by `CallProcessor`."""
+    Built and owned by `CallProcessor`. The resolver is the pass's own, held
+    by reference: its type inference reads the registry the definition pass
+    fills."""
 
-    __slots__ = ()
+    __slots__ = ("_resolver",)
 
     # A named nested `fn` gets its own caller node and keeps its own calls.
     owns_nested_calls = True
+    types_locals = True
+
+    def __init__(self, resolver: CallResolver) -> None:
+        self._resolver = resolver
+
+    def span_bindings(
+        self,
+        caller_node: Node,
+        module_qn: str,
+        class_context: str | None,
+        local_var_types: dict[str, str],
+    ) -> list[tuple[int, int, str, str]]:
+        return self._resolver.type_inference.collect_rust_span_bindings(
+            caller_node, module_qn, class_context
+        )
 
     def class_name(self, class_node: Node) -> str | None:
         if class_node.type == cs.TS_IMPL_ITEM:

@@ -19,6 +19,7 @@ from ...language_spec import LanguageSpec
 from ...node_text import decode_node_text, safe_decode_text
 from ...types_defs import LanguageQueries, PropertyDict
 from ...utils import qn_markers
+from ..callable_params import go_parameter_names
 from ..definition_facts import DefinitionFacts
 from ..edge_site import EdgeSiteHost, host_site_scoped
 from ..language_calls import LanguageCalls
@@ -35,8 +36,8 @@ class GoCallHost(EdgeSiteHost, Protocol):
     Beside the edge site, which the fan-outs set per edge and put back as
     the pass's own emitters do: `_verdict`, how surely the last resolve
     bound its callee, which `_resolve_noting` notes and a chain root's
-    binding is judged by; and the assignment walker Go shares with other
-    languages, with the scope boundaries it stops at."""
+    binding is judged by; and the reference walkers Go shares with other
+    languages, with the scope boundaries they stop at."""
 
     _verdict: str
 
@@ -79,6 +80,18 @@ class GoCallHost(EdgeSiteHost, Protocol):
     def _flow_scope_boundaries(lang_config: LanguageSpec) -> frozenset[str]: ...
 
     def _ingest_assignment_function_references(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+        boundary_types: frozenset[str],
+        caller_qn: str | None = None,
+        language: cs.SupportedLanguage | None = None,
+    ) -> None: ...
+
+    def _ingest_returned_function_references(
         self,
         caller_node: Node,
         caller_spec: tuple[str, str, str],
@@ -339,6 +352,7 @@ class GoCallResolution(LanguageCalls):
 
     flows_callables = True
     references_arguments = True
+    types_locals = True
 
     def __init__(
         self,
@@ -394,7 +408,7 @@ class GoCallResolution(LanguageCalls):
         )
 
     def record_local_names(
-        self, caller_node: Node, caller_qn: str, caller_type: str
+        self, caller_node: Node, caller_qn: str, caller_type: str, module_qn: str
     ) -> None:
         # A file's package-level names cannot collide with its functions'
         # (the compiler rejects it), so only a function or method binds
@@ -409,6 +423,73 @@ class GoCallResolution(LanguageCalls):
             self._resolver.go_local_scopes[caller_qn] = scopes
         else:
             self._resolver.go_local_scopes.pop(caller_qn, None)
+
+    def span_bindings(
+        self,
+        caller_node: Node,
+        module_qn: str,
+        class_context: str | None,
+        local_var_types: dict[str, str],
+    ) -> list[tuple[int, int, str, str]]:
+        # A `for k, v := range xs` variable is the loop's own, so it holds
+        # the element type inside the loop and nowhere else (issue #2483).
+        return self._resolver.type_inference.collect_go_span_bindings(
+            caller_node, module_qn, local_var_types
+        )
+
+    def parameter_names(self, caller_node: Node) -> list[str] | None:
+        return go_parameter_names(caller_node)
+
+    def ingest_caller_references(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        caller_qn: str,
+        caller_type: str,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
+        class_context: str | None,
+        local_var_types: dict[str, str] | None,
+    ) -> None:
+        host = self._host
+        boundaries = host._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG])
+        host._ingest_assignment_function_references(
+            caller_node,
+            caller_spec,
+            module_qn,
+            local_var_types,
+            class_context,
+            boundaries,
+            caller_qn,
+            language=language,
+        )
+        # A function handed back bare (`return defaultUsageFunc`) is what
+        # Go's factories and getters lean on (cobra's getUsageFunc).
+        host._ingest_returned_function_references(
+            caller_node,
+            caller_spec,
+            module_qn,
+            local_var_types,
+            class_context,
+            boundaries,
+            caller_qn,
+            language,
+        )
+        # Module-scope literals are scanned before the no-calls early return,
+        # so only nested scopes here.
+        if caller_type != cs.NodeLabel.MODULE:
+            self.ingest_composite_function_references(
+                caller_node,
+                caller_spec,
+                module_qn,
+                local_var_types,
+                class_context,
+                boundaries,
+            )
+            self.ingest_composite_literal_instantiations(
+                caller_node, caller_spec, module_qn, boundaries
+            )
 
     def bound_method_caller(
         self, func_node: Node, func_name: str, module_qn: str

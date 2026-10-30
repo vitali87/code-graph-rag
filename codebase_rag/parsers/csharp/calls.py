@@ -277,6 +277,7 @@ class CSharpCallResolution(LanguageCalls):
     # A class can still READ properties (`return Size;`) in a file with no
     # call expression.
     scans_callers_without_calls = True
+    types_locals = True
 
     def __init__(
         self,
@@ -483,9 +484,14 @@ class CSharpCallResolution(LanguageCalls):
         caller_qn: str,
         module_qn: str,
         local_var_types: dict[str, str] | None,
+        class_context: str | None,
         lang_config: LanguageSpec,
         prop_names: set[str],
     ) -> None:
+        # A property getter access is a member_access_expression (usually in
+        # RECEIVER position), never an invocation, so callers that only READ
+        # a property emit no edge to it and dead-code flags it (Polly's
+        # Context.WrappedDictionary, ResiliencePipeline<T>.Pipeline).
         # Emit a REFERENCES edge (a read is not an invocation; the call
         # graph stays invocation-only) from the caller to each property of
         # its enclosing type read in receiver position. Registry-guarded via

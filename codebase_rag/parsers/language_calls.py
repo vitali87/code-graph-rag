@@ -23,6 +23,7 @@ from ..node_text import safe_decode_text
 from ..types_defs import LanguageQueries, ScalaBinding
 
 if TYPE_CHECKING:
+    from ..language_spec import LanguageSpec
     from .php import class_names as php_class_names
 
 
@@ -58,6 +59,9 @@ class LanguageCalls:
     # caller's share of the file's calls leaves those out instead of taking
     # everything its byte span holds.
     owns_nested_calls: ClassVar[bool] = False
+    # The pass builds a caller's map of local variable types, through which
+    # a receiver's type picks the method a call binds.
+    types_locals: ClassVar[bool] = False
 
     def collect_callable_field_bindings(
         self, root_node: Node, module_qn: str, call_nodes: list[Node]
@@ -135,6 +139,70 @@ class LanguageCalls:
         """The name an enclosing function without a `name` field gives the
         qualified name of a function nested in it; None leaves it out."""
         return None
+
+    def record_local_names(
+        self, caller_node: Node, caller_qn: str, caller_type: str, module_qn: str
+    ) -> None:
+        """Record the names a caller binds itself, which a bare call there
+        means instead of the definitions they shadow."""
+
+    def local_type_spans(
+        self,
+        caller_node: Node,
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+    ) -> list[tuple[int, int, str, str]]:
+        """The byte windows over which each disagreeing declaration of a local
+        types it, where the flat map can hold only one; the map may be
+        rewritten to the types the language's own lookup binds."""
+        return []
+
+    def span_bindings(
+        self,
+        caller_node: Node,
+        module_qn: str,
+        class_context: str | None,
+        local_var_types: dict[str, str],
+    ) -> list[tuple[int, int, str, str]]:
+        """Bindings that give one name a different type in different byte
+        ranges of the caller, each call resolving against the one holding
+        it."""
+        return []
+
+    def parameter_names(self, caller_node: Node) -> list[str] | None:
+        """A caller's parameter names in order, where callable-parameter flow
+        traces what each is bound to; None where it does not."""
+        return None
+
+    def ingest_property_reads(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        caller_qn: str,
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+        lang_config: LanguageSpec,
+        prop_names: set[str],
+    ) -> None:
+        """Write the edges a caller makes by reading a property, which runs
+        its getter without a call node."""
+
+    def ingest_caller_references(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        caller_qn: str,
+        caller_type: str,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
+        class_context: str | None,
+        local_var_types: dict[str, str] | None,
+    ) -> None:
+        """Write the edges a caller makes without a call node: a function it
+        stores, returns or defaults as a value, a constructor or dunder its
+        syntax runs."""
 
 
 @dataclass(slots=True)

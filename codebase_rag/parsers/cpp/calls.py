@@ -23,6 +23,7 @@ from ...language_spec import LanguageSpec
 from ...node_text import decode_node_text, safe_decode_text
 from ...types_defs import FunctionLocation, LanguageQueries, PropertyDict
 from ...utils import qn_markers
+from ..callable_params import cpp_parameter_names
 from ..definition_facts import DefinitionFacts
 from ..edge_site import EdgeSiteHost, host_site_scoped
 from ..language_calls import LanguageCalls
@@ -248,6 +249,7 @@ class CppCallResolution(LanguageCalls):
     # A constructor's member initializer list (`: buffer(g, 0)`) runs base
     # constructors without any call_expression node.
     scans_callers_without_calls = True
+    types_locals = True
 
     def __init__(
         self, host: CppCallHost, resolver: CallResolver, facts: DefinitionFacts
@@ -294,6 +296,30 @@ class CppCallResolution(LanguageCalls):
         # namespace (`module.fn`), dangling the CALLS source.
         return cpp_utils.build_qualified_name(func_node, module_qn, func_name)
 
+    def parameter_names(self, caller_node: Node) -> list[str] | None:
+        return cpp_parameter_names(caller_node)
+
+    def ingest_caller_references(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        caller_qn: str,
+        caller_type: str,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
+        class_context: str | None,
+        local_var_types: dict[str, str] | None,
+    ) -> None:
+        self.ingest_braced_return_instantiations(
+            caller_node, caller_spec, caller_qn, module_qn
+        )
+        self.ingest_member_init_ctor_calls(caller_node, caller_spec, module_qn)
+        self.ingest_implicit_base_lifecycle_calls(
+            caller_node, caller_spec, caller_qn, module_qn
+        )
+        self.ingest_declaration_ctor_calls(caller_node, caller_spec, module_qn)
+
     def caller_calls(self, func_node: Node, calls: list[Node]) -> list[Node]:
         # A member function of a type written in this body is its own
         # caller; its calls are not also this function's (issue #2555).
@@ -339,9 +365,14 @@ class CppCallResolution(LanguageCalls):
             return caller_qn, class_qn
         return None
 
-    def bind_local_types(
-        self, caller_node: Node, module_qn: str, var_types: dict[str, str]
+    def local_type_spans(
+        self,
+        caller_node: Node,
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
     ) -> list[tuple[int, int, str, str]]:
+        if not local_var_types:
+            return []
         # A variable of a type written in an enclosing function body binds
         # to that type's node, not whichever same-named class the
         # module-wide lookup meets first, so two functions' local
@@ -357,16 +388,16 @@ class CppCallResolution(LanguageCalls):
         anchors = self._local_anchors(caller_node, module_qn)
         scopes: list[tuple[int, int, str, bool]] | None = None
         spans: list[tuple[int, int, str, str]] = []
-        for name, type_name in list(var_types.items()):
+        for name, type_name in list(local_var_types.items()):
             if local_qn := self._local_type_under(anchors, type_name):
                 if scopes is None:
                     scopes = CppTypeInferenceEngine().declaration_scopes(caller_node)
                 bindings = _scoped_bindings(scopes, name, type_name, local_qn)
-                var_types[name] = bindings[0][3] if bindings else local_qn
-                if any(binding[3] != var_types[name] for binding in bindings):
+                local_var_types[name] = bindings[0][3] if bindings else local_qn
+                if any(binding[3] != local_var_types[name] for binding in bindings):
                     spans.extend(bindings)
             elif cpp_local_types.is_positional_name(type_name):
-                del var_types[name]
+                del local_var_types[name]
         return spans
 
     def _local_anchors(self, node: Node, module_qn: str) -> list[str]:
@@ -978,6 +1009,28 @@ class CCallResolution(LanguageCalls):
 
     def method_name(self, method_node: Node, module_qn: str) -> str | None:
         return cpp_utils.extract_function_name(method_node)
+
+    def ingest_caller_references(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        caller_qn: str,
+        caller_type: str,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
+        class_context: str | None,
+        local_var_types: dict[str, str] | None,
+    ) -> None:
+        # The module's own values are scanned before the no-calls early
+        # return, so only nested scopes here.
+        if caller_type != cs.NodeLabel.MODULE:
+            self.ingest_function_value_references(
+                caller_node,
+                caller_spec,
+                module_qn,
+                self._host._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
+            )
 
     def ingest_module_references(
         self,

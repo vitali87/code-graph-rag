@@ -21,6 +21,8 @@ class LuaCallResolution(LanguageCalls):
 
     __slots__ = ()
 
+    types_locals = True
+
     def caller_name(self, func_node: Node, module_qn: str) -> str | None:
         if name := super().caller_name(func_node, module_qn):
             return name

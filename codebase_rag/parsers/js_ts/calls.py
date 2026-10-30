@@ -24,6 +24,7 @@ from ... import constants as cs
 from ...language_spec import LanguageSpec
 from ...node_text import decode_node_text, safe_decode_text
 from ...types_defs import FunctionLocation, LanguageQueries, PropertyDict
+from ..callable_params import js_ts_parameter_names
 from ..definition_docstring import extract_definition_docstring
 from ..edge_site import EdgeSiteHost, host_site_scoped
 from ..field_nodes import declared_fields
@@ -91,6 +92,51 @@ class JsTsCallHost(EdgeSiteHost, Protocol):
         class_context: str | None,
         boundary_types: frozenset[str],
         caller_qn: str | None = None,
+    ) -> None: ...
+
+    def _ingest_assignment_function_references(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+        boundary_types: frozenset[str],
+        caller_qn: str | None = None,
+        language: cs.SupportedLanguage | None = None,
+    ) -> None: ...
+
+    def _ingest_default_param_references(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+        caller_qn: str | None,
+    ) -> None: ...
+
+    def _ingest_returned_function_references(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+        boundary_types: frozenset[str],
+        caller_qn: str | None = None,
+        language: cs.SupportedLanguage | None = None,
+    ) -> None: ...
+
+    def _ingest_collection_function_references(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+        boundary_types: frozenset[str],
+        language: cs.SupportedLanguage | None = None,
     ) -> None: ...
 
 
@@ -787,6 +833,7 @@ class JsTsCallResolution(LanguageCalls):
     scans_callers_without_calls = True
     anonymous_calls_reach_module = True
     keys_members_by_symbol = True
+    types_locals = True
 
     def __init__(self, host: JsTsCallHost, resolver: CallResolver) -> None:
         self._host = host
@@ -898,6 +945,74 @@ class JsTsCallResolution(LanguageCalls):
             None,
             self._host._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
         )
+
+    def parameter_names(self, caller_node: Node) -> list[str] | None:
+        return js_ts_parameter_names(caller_node)
+
+    def ingest_caller_references(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        caller_qn: str,
+        caller_type: str,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
+        class_context: str | None,
+        local_var_types: dict[str, str] | None,
+    ) -> None:
+        host = self._host
+        boundaries = host._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG])
+        host._ingest_assignment_function_references(
+            caller_node,
+            caller_spec,
+            module_qn,
+            local_var_types,
+            class_context,
+            boundaries,
+            caller_qn,
+            language=language,
+        )
+        host._ingest_jsx_component_references(
+            caller_node,
+            caller_spec,
+            module_qn,
+            local_var_types,
+            class_context,
+            boundaries,
+            caller_qn,
+        )
+        host._ingest_default_param_references(
+            caller_node,
+            caller_spec,
+            module_qn,
+            local_var_types,
+            class_context,
+            caller_qn,
+        )
+        host._ingest_returned_function_references(
+            caller_node,
+            caller_spec,
+            module_qn,
+            local_var_types,
+            class_context,
+            boundaries,
+            caller_qn,
+            language,
+        )
+        # Dispatch-table handler references. Module-scope literals are
+        # scanned before the no-calls early return, so only nested scopes
+        # here.
+        if caller_type != cs.NodeLabel.MODULE:
+            host._ingest_collection_function_references(
+                caller_node,
+                caller_spec,
+                module_qn,
+                local_var_types,
+                class_context,
+                boundaries,
+                language,
+            )
 
     def forget_file_bindings(self, module_qn: str) -> None:
         self._file_receiver_bindings.pop(module_qn, None)
@@ -1393,17 +1508,23 @@ class JsTsCallResolution(LanguageCalls):
         return None
 
     @host_site_scoped
-    def ingest_getter_reads(
+    def ingest_property_reads(
         self,
         caller_node: Node,
         caller_spec: tuple[str, str, str],
+        caller_qn: str,
         module_qn: str,
         local_var_types: dict[str, str] | None,
         class_context: str | None,
         lang_config: LanguageSpec,
         prop_names: set[str],
-        caller_qn: str | None = None,
     ) -> None:
+        # A getter read is a member_expression (`this.relation`,
+        # `loadMap.mainLoadMapItem`), never an invocation (issue #984). The
+        # return/assignment reference passes only inspect the direct value, so
+        # a getter read nested in a ternary, member chain, `if` condition, or
+        # binary expression emitted nothing and dead-code flagged it
+        # (TypeORM's JoinAttribute.relation, LoadMap.mainLoadMapItem).
         # Emit a REFERENCES edge (a read invokes the getter but is not a call, so
         # the call graph stays invocation-only) for every member_expression whose
         # property resolves to a getter ON THE RECEIVER'S OWN CLASS, wherever it

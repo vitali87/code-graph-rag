@@ -380,6 +380,7 @@ class DartCallResolution(LanguageCalls):
     # A getter body can read another getter (`=> _wonders.length`, issue
     # #873) in a file with no call expression.
     scans_callers_without_calls = True
+    types_locals = True
 
     def __init__(self, host: DartCallHost, resolver: CallResolver) -> None:
         self._host = host
@@ -408,6 +409,23 @@ class DartCallResolution(LanguageCalls):
                 dart_prop_names,
             )
 
+    def ingest_caller_references(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        caller_qn: str,
+        caller_type: str,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
+        class_context: str | None,
+        local_var_types: dict[str, str] | None,
+    ) -> None:
+        if class_context:
+            self.ingest_constructor_delegations(
+                caller_node, caller_spec, class_context, module_qn
+            )
+
     def ingest_module_initializer_reads(
         self,
         root_node: Node,
@@ -433,7 +451,7 @@ class DartCallResolution(LanguageCalls):
                 )
 
     @host_site_scoped
-    def ingest_getter_reads(
+    def ingest_property_reads(
         self,
         caller_node: Node,
         caller_spec: tuple[str, str, str],
@@ -444,6 +462,10 @@ class DartCallResolution(LanguageCalls):
         lang_config: LanguageSpec,
         prop_names: set[str],
     ) -> None:
+        # A getter access is a bare identifier or a member selector, never an
+        # invocation (issue #869), so callers that only READ a getter emit
+        # nothing and dead-code flags it (wonderous' _enableVideo/startYr
+        # family).
         # Emit a REFERENCES edge (a read is not an invocation; the call graph
         # stays invocation-only) from the caller to each getter it reads:
         # bare identifiers resolve against the enclosing class (implicit

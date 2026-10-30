@@ -23,6 +23,7 @@ from ...language_spec import LanguageSpec
 from ...node_text import safe_decode_text
 from ...types_defs import FunctionLocation, LanguageQueries, PropertyDict
 from ..call_resolver import PY_EXTERNAL_TARGET
+from ..callable_params import python_parameter_names
 from ..edge_site import EdgeSiteHost, host_site_scoped
 from ..js_ts import calls as js_calls
 from ..language_calls import LanguageCalls
@@ -38,8 +39,9 @@ class PythonCallHost(EdgeSiteHost, Protocol):
     edge emitter, the name-based resolve that notes its verdict for the call
     node being scanned, a function node's recorded location, a call's callee
     name and arguments, the callback emitter a passed function's edge goes
-    through like any other callback's, and the module-scope reference scans
-    Python shares with JS/TS. Beside the edge site, `_verdict`, how surely
+    through like any other callback's, and the reference walkers Python
+    shares with other languages, with the scope boundaries they stop at.
+    Beside the edge site, `_verdict`, how surely
     the call node being scanned binds its callee, which a single Protocol
     conformer's edge carries."""
 
@@ -97,6 +99,54 @@ class PythonCallHost(EdgeSiteHost, Protocol):
         language: cs.SupportedLanguage,
         queries: Mapping[cs.SupportedLanguage, LanguageQueries],
         class_field_assignments: bool = False,
+    ) -> None: ...
+
+    @staticmethod
+    def _flow_scope_boundaries(lang_config: LanguageSpec) -> frozenset[str]: ...
+
+    def _ingest_assignment_function_references(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+        boundary_types: frozenset[str],
+        caller_qn: str | None = None,
+        language: cs.SupportedLanguage | None = None,
+    ) -> None: ...
+
+    def _ingest_default_param_references(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+        caller_qn: str | None,
+    ) -> None: ...
+
+    def _ingest_returned_function_references(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+        boundary_types: frozenset[str],
+        caller_qn: str | None = None,
+        language: cs.SupportedLanguage | None = None,
+    ) -> None: ...
+
+    def _ingest_collection_function_references(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+        boundary_types: frozenset[str],
+        language: cs.SupportedLanguage | None = None,
     ) -> None: ...
 
 
@@ -318,6 +368,7 @@ class PythonCallResolution(LanguageCalls):
     flows_callables = True
     references_arguments = True
     binds_callable_fields = True
+    types_locals = True
 
     def __init__(self, host: PythonCallHost, resolver: CallResolver) -> None:
         self._host = host
@@ -346,6 +397,72 @@ class PythonCallResolution(LanguageCalls):
         self.ingest_class_alias_references(
             module_qn, combined_captures.get(cs.CAPTURE_CLASS) or []
         )
+
+    def parameter_names(self, caller_node: Node) -> list[str] | None:
+        return python_parameter_names(caller_node)
+
+    def ingest_caller_references(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        caller_qn: str,
+        caller_type: str,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
+        class_context: str | None,
+        local_var_types: dict[str, str] | None,
+    ) -> None:
+        host = self._host
+        boundaries = host._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG])
+        # Operator syntax (k in r, r[k], r[k]=v, len(r)) dispatches to dunder
+        # methods; emit those edges when the operand is a first-party type.
+        self.ingest_operator_dispatch_calls(
+            caller_node, caller_spec, module_qn, local_var_types
+        )
+        host._ingest_assignment_function_references(
+            caller_node,
+            caller_spec,
+            module_qn,
+            local_var_types,
+            class_context,
+            boundaries,
+            caller_qn,
+            language=language,
+        )
+        host._ingest_default_param_references(
+            caller_node,
+            caller_spec,
+            module_qn,
+            local_var_types,
+            class_context,
+            caller_qn,
+        )
+        # A returned bound method (django GEOSCoordSeq `return
+        # self._get_point_2d`) is invoked by whoever receives it.
+        host._ingest_returned_function_references(
+            caller_node,
+            caller_spec,
+            module_qn,
+            local_var_types,
+            class_context,
+            boundaries,
+            caller_qn,
+            language,
+        )
+        # Dispatch-table handler references. Module-scope literals are
+        # scanned before the no-calls early return, so only nested scopes
+        # here.
+        if caller_type != cs.NodeLabel.MODULE:
+            host._ingest_collection_function_references(
+                caller_node,
+                caller_spec,
+                module_qn,
+                local_var_types,
+                class_context,
+                boundaries,
+                language,
+            )
 
     def ingest_module_decorator_calls(
         self,
@@ -653,7 +770,7 @@ class PythonCallResolution(LanguageCalls):
             stack.extend(node.children)
 
     def record_local_names(
-        self, caller_node: Node, caller_qn: str, module_qn: str
+        self, caller_node: Node, caller_qn: str, caller_type: str, module_qn: str
     ) -> None:
         # Names this caller binds that also name an import: the resolver
         # refuses to read the import map for them (issue #1907).
@@ -1118,7 +1235,7 @@ class PythonCallResolution(LanguageCalls):
         return None
 
     @host_site_scoped
-    def ingest_property_accesses(
+    def ingest_property_reads(
         self,
         caller_node: Node,
         caller_spec: tuple[str, str, str],

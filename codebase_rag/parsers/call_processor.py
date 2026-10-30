@@ -31,10 +31,7 @@ from ..utils.path_utils import cached_relative_path
 from .call_resolver import CallResolver, Resolved
 from .callable_params import (
     callable_parameter_invocations,
-    cpp_parameter_names,
-    go_parameter_names,
     js_ts_parameter_names,
-    python_parameter_names,
 )
 from .class_ingest.identity import build_nested_qualified_name_for_class
 from .cpp import calls as cpp_calls
@@ -141,22 +138,6 @@ class _RefEmitScope(NamedTuple):
     resolve_func: Callable[..., tuple[str, str] | None]
     ensure_rel: Callable[..., None]
 
-
-_TYPED_LANGUAGES = frozenset(
-    {
-        cs.SupportedLanguage.PYTHON,
-        cs.SupportedLanguage.JS,
-        cs.SupportedLanguage.TS,
-        cs.SupportedLanguage.TSX,
-        cs.SupportedLanguage.JAVA,
-        cs.SupportedLanguage.CSHARP,
-        cs.SupportedLanguage.LUA,
-        cs.SupportedLanguage.GO,
-        cs.SupportedLanguage.CPP,
-        cs.SupportedLanguage.RUST,
-        cs.SupportedLanguage.DART,
-    }
-)
 
 _JS_TS_LANGUAGES = cs.JS_TS_LANGUAGES
 
@@ -827,7 +808,7 @@ class CallProcessor:
             self, self._resolver, self.module_qn_to_file_path
         )
         self._sql = sql_calls.SqlCallResolution(self, self.facts)
-        self._rust = rs_calls.RustCallResolution()
+        self._rust = rs_calls.RustCallResolution(self._resolver)
         self._lua = lua_calls.LuaCallResolution()
         self._julia = julia_calls.JuliaCallResolution(self)
         # The call strategy each language's files go to; JS, TS and TSX share
@@ -1841,18 +1822,9 @@ class CallProcessor:
     ) -> list[tuple[int, int, str, str]]:
         if local_var_types is None:
             return []
-        type_inference = self._resolver.type_inference
-        if language == cs.SupportedLanguage.RUST:
-            return type_inference.collect_rust_span_bindings(
-                caller_node, module_qn, class_context
-            )
-        if language == cs.SupportedLanguage.GO:
-            # A `for k, v := range xs` variable is the loop's own, so it holds
-            # the element type inside the loop and nowhere else (issue #2483).
-            return type_inference.collect_go_span_bindings(
-                caller_node, module_qn, local_var_types
-            )
-        return []
+        return self._calls_for(language).span_bindings(
+            caller_node, module_qn, class_context, local_var_types
+        )
 
     def _overlay_span_binding(
         self,
@@ -2181,10 +2153,10 @@ class CallProcessor:
         local_var_types, span_bindings, cpp_spans = self._caller_local_types(
             caller_node, caller_qn, module_qn, language, class_context
         )
-        if language == cs.SupportedLanguage.PYTHON:
-            self._python.record_local_names(caller_node, caller_qn, module_qn)
-        elif language == cs.SupportedLanguage.GO:
-            self._go.record_local_names(caller_node, caller_qn, caller_type)
+        language_calls = self._calls_for(language)
+        language_calls.record_local_names(
+            caller_node, caller_qn, caller_type, module_qn
+        )
 
         caller_spec = (caller_type, cs.KEY_QUALIFIED_NAME, caller_qn)
 
@@ -2221,7 +2193,7 @@ class CallProcessor:
             class_context,
             local_var_types,
         )
-        self._ingest_caller_references(
+        language_calls.ingest_caller_references(
             caller_node,
             caller_spec,
             caller_qn,
@@ -2277,7 +2249,8 @@ class CallProcessor:
     ]:
         """The caller's local types, its span-scoped bindings and its C++
         declaration windows."""
-        if language not in _TYPED_LANGUAGES:
+        language_calls = self._calls_for(language)
+        if not language_calls.types_locals:
             return None, [], []
         try:
             local_var_types = (
@@ -2285,11 +2258,9 @@ class CallProcessor:
                     caller_node, module_qn, language, class_context
                 )
             )
-            cpp_spans: list[tuple[int, int, str, str]] = []
-            if language == cs.SupportedLanguage.CPP and local_var_types:
-                cpp_spans = self._cpp.bind_local_types(
-                    caller_node, module_qn, local_var_types
-                )
+            cpp_spans = language_calls.local_type_spans(
+                caller_node, module_qn, local_var_types
+            )
             # Rust match arms and iterator-adaptor closures both reuse one
             # binding name for different types at different byte ranges (`cmd`
             # per arm; `|x|` per collection); the flat map keeps only one. These
@@ -2345,15 +2316,7 @@ class CallProcessor:
         local_var_types: dict[str, str] | None,
     ) -> frozenset[str]:
         caller_params: frozenset[str] = frozenset()
-        ordered_params: list[str] | None = None
-        if language == cs.SupportedLanguage.PYTHON:
-            ordered_params = python_parameter_names(caller_node)
-        elif language == cs.SupportedLanguage.GO:
-            ordered_params = go_parameter_names(caller_node)
-        elif language in _JS_TS_LANGUAGES:
-            ordered_params = js_ts_parameter_names(caller_node)
-        elif language == cs.SupportedLanguage.CPP:
-            ordered_params = cpp_parameter_names(caller_node)
+        ordered_params = self._calls_for(language).parameter_names(caller_node)
         if ordered_params is not None:
             # Every flow-traced language records its callable params and the
             # closures it returns, so a later `x = factory(); x(cb)` alias call can
@@ -2385,10 +2348,8 @@ class CallProcessor:
         # Runs independently of call_nodes: a getter access is an attribute, not
         # a call, so callers that read a property but make no other call must
         # still reach this pass before the early return below.
-        if language == cs.SupportedLanguage.PYTHON and (
-            prop_names := self._resolver.function_registry.property_names()
-        ):
-            self._python.ingest_property_accesses(
+        if prop_names := self._resolver.function_registry.property_names():
+            self._calls_for(language).ingest_property_reads(
                 caller_node,
                 caller_spec,
                 caller_qn,
@@ -2397,191 +2358,6 @@ class CallProcessor:
                 class_context,
                 queries[language][cs.QUERY_CONFIG],
                 prop_names,
-            )
-
-        # Same need as the Python pass above, C# shape: a property getter
-        # access is a member_access_expression (usually in RECEIVER position),
-        # never an invocation, so callers that only READ a property emit no
-        # edge to it and dead-code flags it (Polly's Context.WrappedDictionary,
-        # ResiliencePipeline<T>.Pipeline).
-        if language == cs.SupportedLanguage.CSHARP and (
-            csharp_prop_names := self._resolver.function_registry.property_names()
-        ):
-            self._csharp.ingest_property_reads(
-                caller_node,
-                caller_spec,
-                caller_qn,
-                module_qn,
-                local_var_types,
-                queries[language][cs.QUERY_CONFIG],
-                csharp_prop_names,
-            )
-
-        # Same need again, Dart shape (issue #869): a getter access is a bare
-        # identifier or a member selector, never an invocation, so callers
-        # that only READ a getter emit nothing and dead-code flags it
-        # (wonderous' _enableVideo/startYr family).
-        if language == cs.SupportedLanguage.DART and (
-            dart_prop_names := self._resolver.function_registry.property_names()
-        ):
-            self._dart.ingest_getter_reads(
-                caller_node,
-                caller_spec,
-                caller_qn,
-                module_qn,
-                local_var_types,
-                class_context,
-                queries[language][cs.QUERY_CONFIG],
-                dart_prop_names,
-            )
-
-        # Same need again, JS/TS shape (issue #984): a getter read is a
-        # member_expression (`this.relation`, `loadMap.mainLoadMapItem`), never
-        # an invocation. The return/assignment reference passes only inspect the
-        # direct value, so a getter read nested in a ternary, member chain, `if`
-        # condition, or binary expression emitted nothing and dead-code flagged
-        # it (TypeORM's JoinAttribute.relation, LoadMap.mainLoadMapItem).
-        if language in _JS_TS_LANGUAGES and (
-            js_ts_prop_names := self._resolver.function_registry.property_names()
-        ):
-            self._js.ingest_getter_reads(
-                caller_node,
-                caller_spec,
-                module_qn,
-                local_var_types,
-                class_context,
-                queries[language][cs.QUERY_CONFIG],
-                js_ts_prop_names,
-                caller_qn=caller_qn,
-            )
-
-    def _ingest_caller_references(
-        self,
-        caller_node: Node,
-        caller_spec: tuple[str, str, str],
-        caller_qn: str,
-        caller_type: str,
-        module_qn: str,
-        language: cs.SupportedLanguage,
-        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
-        class_context: str | None,
-        local_var_types: dict[str, str] | None,
-    ) -> None:
-        # Operator syntax (k in r, r[k], r[k]=v, len(r)) dispatches to dunder
-        # methods; emit those edges when the operand is a first-party type.
-        if language == cs.SupportedLanguage.PYTHON:
-            self._python.ingest_operator_dispatch_calls(
-                caller_node, caller_spec, module_qn, local_var_types
-            )
-        if (
-            language == cs.SupportedLanguage.PYTHON
-            or language in _JS_TS_LANGUAGES
-            or language == cs.SupportedLanguage.GO
-        ):
-            self._ingest_assignment_function_references(
-                caller_node,
-                caller_spec,
-                module_qn,
-                local_var_types,
-                class_context,
-                self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
-                caller_qn,
-                language=language,
-            )
-        if language in _JS_TS_LANGUAGES:
-            self._ingest_jsx_component_references(
-                caller_node,
-                caller_spec,
-                module_qn,
-                local_var_types,
-                class_context,
-                self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
-                caller_qn,
-            )
-        if language in _JS_TS_LANGUAGES or language == cs.SupportedLanguage.PYTHON:
-            # A DEFAULT PARAMETER value naming a function (`useStore(api,
-            # selector = identity as any)`, zustand; Python's
-            # `def run(self, conv=_via_default)`, issue #2838) references it:
-            # the default is invoked through the parameter when the caller
-            # omits the argument, never by a visible call.
-            self._ingest_default_param_references(
-                caller_node,
-                caller_spec,
-                module_qn,
-                local_var_types,
-                class_context,
-                caller_qn,
-            )
-        # A function handed back bare (`return defaultUsageFunc`) is a first-class
-        # value invoked by whoever receives it, never by a visible call; Go leans
-        # on this for factories/getters (cobra's getUsageFunc), Python on returned
-        # bound methods (django GEOSCoordSeq `return self._get_point_2d`).
-        # Reference it so the returned function is reachable. These languages share
-        # the `return_statement` node type, and the emit path resolves bare names
-        # and self-attributes alike.
-        if language in _JS_TS_LANGUAGES or language in (
-            cs.SupportedLanguage.GO,
-            cs.SupportedLanguage.PYTHON,
-        ):
-            self._ingest_returned_function_references(
-                caller_node,
-                caller_spec,
-                module_qn,
-                local_var_types,
-                class_context,
-                self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
-                caller_qn,
-                language,
-            )
-        # Dispatch-table handler references, for every flow language. Module-scope
-        # literals are scanned explicitly in process_calls_in_file (before the
-        # no-calls early return), so only nested scopes here.
-        if (
-            language == cs.SupportedLanguage.PYTHON or language in _JS_TS_LANGUAGES
-        ) and caller_type != cs.NodeLabel.MODULE:
-            self._ingest_collection_function_references(
-                caller_node,
-                caller_spec,
-                module_qn,
-                local_var_types,
-                class_context,
-                self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
-                language,
-            )
-        if language == cs.SupportedLanguage.GO and caller_type != cs.NodeLabel.MODULE:
-            self._go.ingest_composite_function_references(
-                caller_node,
-                caller_spec,
-                module_qn,
-                local_var_types,
-                class_context,
-                self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
-            )
-            self._go.ingest_composite_literal_instantiations(
-                caller_node,
-                caller_spec,
-                module_qn,
-                self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
-            )
-        if language == cs.SupportedLanguage.C and caller_type != cs.NodeLabel.MODULE:
-            self._c.ingest_function_value_references(
-                caller_node,
-                caller_spec,
-                module_qn,
-                self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
-            )
-        if language == cs.SupportedLanguage.CPP:
-            self._cpp.ingest_braced_return_instantiations(
-                caller_node, caller_spec, caller_qn, module_qn
-            )
-            self._cpp.ingest_member_init_ctor_calls(caller_node, caller_spec, module_qn)
-            self._cpp.ingest_implicit_base_lifecycle_calls(
-                caller_node, caller_spec, caller_qn, module_qn
-            )
-            self._cpp.ingest_declaration_ctor_calls(caller_node, caller_spec, module_qn)
-        if language == cs.SupportedLanguage.DART and class_context:
-            self._dart.ingest_constructor_delegations(
-                caller_node, caller_spec, class_context, module_qn
             )
 
     def _call_scan_context(
@@ -4084,7 +3860,9 @@ class CallProcessor:
         # whoever receives it, never by a visible call. Reference it from the
         # returning scope. Walk continues through anonymous arrows (the effect
         # callback is anonymous, so its `return` bubbles here) but stops at named
-        # nested functions, which own their returns.
+        # nested functions, which own their returns. The languages that run
+        # it share the `return_statement` node type, and the emit path
+        # resolves bare names and self-attributes alike.
         resolve_func = self._resolver.resolve_function_call
         ensure_rel = self._emit_rel
         # An expression-bodied arrow (`const persistImpl = (config) =>
@@ -4506,6 +4284,11 @@ class CallProcessor:
         class_context: str | None,
         caller_qn: str | None,
     ) -> None:
+        # A DEFAULT PARAMETER value naming a function (`useStore(api,
+        # selector = identity as any)`, zustand; Python's
+        # `def run(self, conv=_via_default)`, issue #2838) references it:
+        # the default is invoked through the parameter when the caller
+        # omits the argument, never by a visible call.
         params = caller_node.child_by_field_name(cs.FIELD_PARAMETERS)
         if params is None:
             return
