@@ -28,10 +28,10 @@ def recording(tmp_path: Path) -> Path:
 
 
 def test_a_recording_holds_every_procedure_and_its_setup(recording: Path) -> None:
-    assert sorted(p.name for p in recording.iterdir()) == [
-        parity.EXPECTED,
-        parity.GRAPH,
-    ]
+    # SQLite's -wal/-shm sidecars may sit beside the graph until the last
+    # connection to it is collected, so only the two files the check reads
+    # are required.
+    assert {parity.EXPECTED, parity.GRAPH} <= {p.name for p in recording.iterdir()}
     setup = json.loads((recording / parity.EXPECTED).read_text(encoding="utf-8"))
     assert set(setup["answers"]) == {*parity.PROCEDURES, "render_json"}
     assert setup["answers"]["render_json"] == '{"k":[1,2.5,null,true,"\\u00e9"]}'
