@@ -977,10 +977,11 @@ class GraphUpdater:
             module_qn,
             path,
         ) in self.factory.definition_processor.module_qn_to_file_path.items():
-            try:
-                key = path.relative_to(self.repo_path).as_posix()
-            except ValueError:
+            # A module recorded outside this checkout has no key a re-parse
+            # could produce, so it was not re-parsed.
+            if not path.is_relative_to(self.repo_path):
                 continue
+            key = path.relative_to(self.repo_path).as_posix()
             if key not in self._reparsed_file_keys:
                 continue
             names = sorted(recorded.get(module_qn, ()))
