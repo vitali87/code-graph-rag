@@ -87,18 +87,17 @@ def test_a_function_in_a_comment_or_string_is_not_expected(parser: Parser) -> No
     assert lost_sql_functions(source, parser.parse(source).root_node) == 0
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "parse_sql keeps a CREATE FUNCTION whose header does not parse even on "
-        "its own (OUT/INOUT parameters): its standalone parse still holds a "
-        "create_function inside the ERROR, so _standalone_function counts it "
-        "as defining and nothing blanks it. Its ERROR then swallows the next "
-        "statement: `two`, which parses on its own, is lost, and `pair` takes "
-        "`two`'s body and its CALLS edge to `one`"
-    ),
-)
 def test_a_function_after_an_unreadable_header_is_recovered(parser: Parser) -> None:
+    # `pair` does not parse even alone, so it is blanked; the file's own tree
+    # holds a `pair` only because its ERROR swallowed `two`.
     source = (_CLEAN + _UNREADABLE + _AFTER).encode()
     recovered = parse_sql(parser, source).root_node
     assert {"one", "two", "three"} <= _function_names(recovered)
+    two = next(
+        function
+        for function in nodes_of(recovered, "create_function")
+        if first(function, "object_reference").text == b"two"
+    )
+    # `two` keeps its own line and body, and with it its call to `one`.
+    assert two.start_point[0] + 1 == 4
+    assert first(two, "invocation").text == b"one()"

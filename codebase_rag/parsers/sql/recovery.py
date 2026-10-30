@@ -72,10 +72,11 @@ class _Standalone(NamedTuple):
 
 class _Isolation(NamedTuple):
     # Functions kept with a parse error, and their clean hollowed texts; the
-    # other statements that fail on their own; how many functions parse.
+    # other statements that fail on their own; where each function that
+    # parses on its own starts.
     noisy: list[tuple[_Statement, bytes]]
     failing_others: list[_Statement]
-    recoverable: int
+    recoverable: list[int]
 
 
 def parse_sql(parser: Parser, source: bytes) -> Tree:
@@ -85,12 +86,11 @@ def parse_sql(parser: Parser, source: bytes) -> Tree:
         return tree
     statements = _statements(source)
     expected = [s.lead for s in statements if s.is_function]
-    best, best_found = tree, _found(tree, expected)
-    if best_found == len(expected):
+    if _found(tree, expected) == len(expected):
         return tree
     isolated = _without_positional_params(source)
     isolation = _isolate(parser, statements, isolated)
-    return _quietest(parser, isolated, isolation, expected, best, best_found)
+    return _quietest(parser, isolated, isolation, tree)
 
 
 def _isolate(
@@ -100,13 +100,14 @@ def _isolate(
     # fails on its own, for the quieting steps.
     noisy: list[tuple[_Statement, bytes]] = []
     failing_others: list[_Statement] = []
-    recoverable = 0
+    recoverable: list[int] = []
     for statement in statements:
         text = bytes(isolated[statement.start : statement.end])
         if statement.is_function:
             kept = _standalone_function(parser, statement, text)
             isolated[statement.start : statement.end] = kept.text
-            recoverable += kept.defines
+            if kept.defines:
+                recoverable.append(statement.lead)
             if kept.clean_fallback is not None:
                 noisy.append((statement, kept.clean_fallback))
         elif parser.parse(text).root_node.has_error:
@@ -115,16 +116,14 @@ def _isolate(
 
 
 def _quietest(
-    parser: Parser,
-    isolated: bytearray,
-    isolation: _Isolation,
-    expected: list[int],
-    best: Tree,
-    best_found: int,
+    parser: Parser, isolated: bytearray, isolation: _Isolation, tree: Tree
 ) -> Tree:
     # Each step quiets more, at a cost: a hollowed body loses its calls, a
     # blanked statement its own content. Stop once every function that
-    # parses on its own is found.
+    # parses on its own is found. Only those count: the file's own tree can
+    # hold one that does not parse even alone only because its ERROR took
+    # the next function's text, and a tie on it would keep that tree.
+    best, best_found = tree, _found(tree, isolation.recoverable)
     for step in range(3):
         if step == 1:
             for statement, fallback in isolation.noisy:
@@ -133,9 +132,9 @@ def _quietest(
             for statement in isolation.failing_others:
                 _blank(isolated, statement.start, statement.end)
         retry = parser.parse(bytes(isolated))
-        if (found := _found(retry, expected)) > best_found:
+        if (found := _found(retry, isolation.recoverable)) > best_found:
             best, best_found = retry, found
-        if best_found >= isolation.recoverable:
+        if best_found >= len(isolation.recoverable):
             break
     return best
 
