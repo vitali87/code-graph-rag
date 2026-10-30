@@ -32,7 +32,7 @@ from ..js_ts import class_ingest as js_ts_class_ingest
 from ..js_ts import utils as js_ts_utils
 from ..js_ts.utils import mark_js_ts_module_private
 from ..method_ingest import MethodIngestHost, ingest_method
-from ..php import namespaces as php_namespaces
+from ..php import class_ingest as php_class_ingest
 from ..python import (
     external_stdlib_base_method_names,
     resolve_class_name,
@@ -894,7 +894,7 @@ class ClassIngest:
         class_props: PropertyDict,
     ) -> None:
         if language == cs.SupportedLanguage.PHP:
-            self._record_php_namespace(class_node, class_props)
+            php_class_ingest.record_namespace(class_node, class_props)
         elif language == cs.SupportedLanguage.CSHARP:
             self.csharp.record_type_props(class_node, class_qn, class_name, class_props)
         elif language == cs.SupportedLanguage.GO and label == cs.NodeLabel.INTERFACE:
@@ -936,16 +936,6 @@ class ClassIngest:
             )
         if language == cs.SupportedLanguage.DART:
             self.dart.record_heritage(member_node, class_qn, module_qn)
-
-    def _record_php_namespace(
-        self, class_node: Node, class_props: PropertyDict
-    ) -> None:
-        # A PHP class's qn follows its path, but other files `use` it by the
-        # namespace around its declaration; the dead-code walk needs that name
-        # to tell an imported project base from a vendor class of the same
-        # name (issue #2472).
-        if namespace := php_namespaces.enclosing_namespace(class_node):
-            class_props[cs.KEY_NAMESPACE] = namespace
 
     def _index_class_simple_name(self, class_name: str, class_qn: str) -> None:
         self.simple_name_lookup[class_name].add(class_qn)
