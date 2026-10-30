@@ -282,6 +282,24 @@ class CppCallResolution(LanguageCalls):
         name_node = class_node.child_by_field_name(cs.FIELD_NAME)
         return cpp_utils.type_name_text(name_node) if name_node is not None else None
 
+    def node_call_name(self, call_node: Node) -> str | None:
+        if call_node.type != cs.TS_NEW_EXPRESSION:
+            return None
+        # `new Foo(...)` names the class via the `type` field (no
+        # `function` field), so it fell through nameless and heap
+        # construction emitted nothing (issue #896, the singleton
+        # `new WindowClassRegistrar()`). Returning the type name routes
+        # it through the normal resolve loop: the class gets
+        # INSTANTIATES and its constructor CALLS. The type reduces
+        # STRUCTURALLY to its dotted class path (`new Foo<int>()` ->
+        # Foo, `new Outer<int>::Inner()` -> Outer.Inner; a textual cut
+        # at `<` would drop the nested suffix); a primitive type
+        # reduces to nothing and stays silent.
+        type_node = call_node.child_by_field_name(cs.FIELD_TYPE)
+        if type_node is None:
+            return None
+        return cpp_utils.new_expression_class_path(type_node)
+
     def class_qn(self, class_node: Node, module_qn: str, class_name: str) -> str | None:
         # A class inside a namespace is bound through the namespaces around
         # it (qn `module.ns.Class`).

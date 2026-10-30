@@ -278,6 +278,7 @@ class CSharpCallResolution(LanguageCalls):
     # call expression.
     scans_callers_without_calls = True
     types_locals = True
+    new_constructs_type = True
 
     def __init__(
         self,
@@ -290,6 +291,41 @@ class CSharpCallResolution(LanguageCalls):
         self._resolver = resolver
         self._project_name = project_name
         self._module_qn_to_file_path = module_qn_to_file_path
+
+    def function_field_name(self, func_child: Node) -> str | None:
+        match func_child.type:
+            case cs.TS_CSHARP_GENERIC_NAME:
+                # Bare generic call `Handle<TException>(...)`: the callee
+                # name is the identifier without its type arguments
+                # (methods register generic-free). Leaving the `<...>` on
+                # yielded no call name, so the call site vanished from the
+                # graph (Polly's parameterless HandleInner overload
+                # delegating to its Func sibling).
+                if func_child.text is not None:
+                    full = decode_node_text(func_child.text)
+                    return full.split(cs.CHAR_ANGLE_OPEN, 1)[0]
+            case cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
+                # C# member call `recv.Method(...)`: emit the `recv.Method`
+                # chain so the resolver can type `recv` and bind the method on
+                # it; an unknown-type receiver falls back to the bare
+                # method-name trie. `name` is the method, `expression` the
+                # receiver.
+                return member_access_call_name(func_child)
+            case cs.TS_CSHARP_CONDITIONAL_ACCESS_EXPRESSION:
+                # C# conditional call `recv?.Method(...)`: the method name
+                # lives on the member_binding child. Emit the same
+                # `recv.Method` chain as the unconditional form so the
+                # resolver (or its exact Roslyn call fact) can bind it.
+                return conditional_access_call_name(func_child)
+        return None
+
+    def node_call_name(self, call_node: Node) -> str | None:
+        if call_node.type == cs.TS_CSHARP_IMPLICIT_OBJECT_CREATION_EXPRESSION:
+            # C# 9 target-typed `new()` has no `type` field; the
+            # constructed type is named by the enclosing declaration
+            # (issue #773).
+            return target_typed_new_name(call_node)
+        return None
 
     def record_cross_module_use(self, module_qn: str, entity_qn: str) -> None:
         # A resolved first-party entity pins the C# namespace import to the
@@ -394,13 +430,13 @@ class CSharpCallResolution(LanguageCalls):
         arity = csharp_utils.generic_arity_of_type_text(written)
         return callee_info[0], engine.arity_twin(callee_info[1], arity)
 
-    def argument_target_name(
-        self, ctx: CSharpCallScan, creation_node: Node
-    ) -> str | None:
+    def fallback_call_name(self, ctx: CSharpCallScan, call_node: Node) -> str | None:
         # `Use(new(4))`: an argument's `new(...)` constructs the type of the
         # parameter it binds, which only the resolved callee can say
         # (issue #2579).
-        argument = creation_node.parent
+        if call_node.type != cs.TS_CSHARP_IMPLICIT_OBJECT_CREATION_EXPRESSION:
+            return None
+        argument = call_node.parent
         while argument is not None and argument.type == cs.TS_PARENTHESIZED_EXPRESSION:
             argument = argument.parent
         if argument is None or argument.type != cs.TS_CSHARP_ARGUMENT:

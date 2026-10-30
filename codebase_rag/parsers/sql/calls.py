@@ -21,7 +21,7 @@ from ...language_spec import sql_object_reference_name
 from ...types_defs import LanguageQueries, PropertyDict
 from ..definition_facts import DefinitionFacts
 from ..edge_site import EdgeSiteHost, host_site_scoped
-from ..language_calls import LanguageCalls
+from ..language_calls import CallName, LanguageCalls
 from .ddl import ddl_routine_references
 
 
@@ -64,6 +64,13 @@ class SqlCallResolution(LanguageCalls):
             or sql_object_reference_name(func_node)
             or None
         )
+
+    def call_name(self, call_node: Node) -> CallName:
+        # A SQL `invocation` names its routine through an unnamed
+        # `object_reference` child (no `function` or `name` field), so every
+        # SQL call site fell through nameless and was dropped (issue #2449).
+        # Normalized like the definition, so `TAX(x)` reaches `tax`.
+        return CallName(True, sql_object_reference_name(call_node))
 
     def ingest_module_references(
         self,

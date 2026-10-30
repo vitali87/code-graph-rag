@@ -1,7 +1,7 @@
 """Julia's share of the call pass: the name a Julia definition's body calls are
 attributed under (a definition node carries no `name` field), read the way
-the definition pass registers it, and the calls an anonymous arrow leaves to
-its enclosing scope.
+the definition pass registers it, the calls an anonymous arrow leaves to its
+enclosing scope, and the callee a call names.
 
 `CallProcessor` owns what every language shares (the scan of a caller's call
 nodes, the site and resolution each edge carries, the name-based resolver)
@@ -15,7 +15,7 @@ from tree_sitter import Node
 
 from ... import constants as cs
 from ...types_defs import FunctionLocation
-from ..language_calls import LanguageCalls
+from ..language_calls import CallName, LanguageCalls
 from . import utils as julia_utils
 
 
@@ -59,6 +59,13 @@ class JuliaCallResolution(LanguageCalls):
         return super().method_name(method_node, module_qn) or self.registered_name(
             method_node, module_qn
         )
+
+    def call_name(self, call_node: Node) -> CallName:
+        # A definition's own head IS a call_expression; drop heads
+        # here (no query negation to exclude them at capture time).
+        if julia_utils.is_signature_head(call_node):
+            return CallName(True, None)
+        return CallName(True, julia_utils.call_name(call_node))
 
     def attributable(self, func_nodes: list[Node], module_qn: str) -> list[Node]:
         # An anonymous Julia arrow gets no caller node: its calls

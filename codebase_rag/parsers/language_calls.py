@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, ClassVar, NamedTuple
 
 from tree_sitter import Node
 
@@ -25,6 +25,18 @@ from ..types_defs import LanguageQueries, ScalaBinding
 if TYPE_CHECKING:
     from ..language_spec import LanguageSpec
     from .php import class_names as php_class_names
+
+
+class CallName(NamedTuple):
+    # The callee name a language reads off a call node in its own shape.
+    # `decided` False leaves the call to the shared reading of its `function`
+    # field and node shape; True means `name` is the answer, and None there
+    # is a call that names nothing.
+    decided: bool
+    name: str | None
+
+
+UNDECIDED_NAME = CallName(False, None)
 
 
 class LanguageCalls:
@@ -62,6 +74,8 @@ class LanguageCalls:
     # The pass builds a caller's map of local variable types, through which
     # a receiver's type picks the method a call binds.
     types_locals: ClassVar[bool] = False
+    # A `new X(...)` names a TYPE, never a method or function.
+    new_constructs_type: ClassVar[bool] = False
 
     def collect_callable_field_bindings(
         self, root_node: Node, module_qn: str, call_nodes: list[Node]
@@ -203,6 +217,26 @@ class LanguageCalls:
         """Write the edges a caller makes without a call node: a function it
         stores, returns or defaults as a value, a constructor or dunder its
         syntax runs."""
+
+    def call_name(self, call_node: Node) -> CallName:
+        """The callee name of a call node the language names whole, in a
+        shape of its own, before the shared reading of the node."""
+        return UNDECIDED_NAME
+
+    def function_field_name(self, func_child: Node) -> str | None:
+        """The callee name a call's `function` field spells in a shape of the
+        language's own; None leaves it to the shared shapes."""
+        return None
+
+    def node_call_name(self, call_node: Node) -> str | None:
+        """The callee name of a call whose `function` field names nothing, in
+        a construction, operator or macro shape of the language's own; None
+        leaves it to the shared shapes."""
+        return None
+
+    def fallback_call_name(self, ctx: CallScan, call_node: Node) -> str | None:
+        """A name for a call no shape names, read from where it sits."""
+        return None
 
 
 @dataclass(slots=True)

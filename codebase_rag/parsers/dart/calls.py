@@ -20,7 +20,7 @@ from ...node_text import safe_decode_text
 from ...types_defs import LanguageQueries, PropertyDict
 from ...utils import qn_markers
 from ..edge_site import EdgeSiteHost, host_site_scoped
-from ..language_calls import LanguageCalls
+from ..language_calls import CallName, LanguageCalls
 from . import utils as dart_utils
 
 if TYPE_CHECKING:
@@ -385,6 +385,12 @@ class DartCallResolution(LanguageCalls):
     def __init__(self, host: DartCallHost, resolver: CallResolver) -> None:
         self._host = host
         self._resolver = resolver
+
+    def call_name(self, call_node: Node) -> CallName:
+        # A Dart call node is a selector/cascade_section holding the
+        # argument_part; the target name lives in the PRECEDING sibling
+        # chain, not inside the node.
+        return CallName(True, dart_utils.call_name(call_node))
 
     def method_name(self, method_node: Node, module_qn: str) -> str | None:
         # A factory_constructor_signature has no `name` field at all, so

@@ -1,7 +1,8 @@
 """Rust's share of the call pass: the callee a call inside a macro's token
 stream spells, which the grammar leaves as loose tokens rather than a call
-expression, the type an impl block's methods are attributed to, and the
-calls a closure leaves to its enclosing function.
+expression, the callee a member call or macro invocation names, the type
+an impl block's methods are attributed to, and the calls a closure leaves to
+its enclosing function.
 
 `CallProcessor` owns what every language shares (the scan of a caller's call
 nodes, the site and resolution each edge carries, the name-based resolver),
@@ -15,6 +16,7 @@ from typing import TYPE_CHECKING
 from tree_sitter import Node
 
 from ... import constants as cs
+from ...node_text import decode_node_text
 from ..language_calls import LanguageCalls
 from . import utils as rs_utils
 
@@ -60,6 +62,31 @@ class RustCallResolution(LanguageCalls):
             # registered node, silently dropping the CALLS edge.
             return rs_utils.extract_impl_target(class_node)
         return super().class_name(class_node)
+
+    def function_field_name(self, func_child: Node) -> str | None:
+        if (
+            func_child.type == cs.TS_RS_FIELD_EXPRESSION
+            and (text := func_child.text) is not None
+        ):
+            # Rust member call `a.b.method()`: use the full dotted receiver
+            # chain as the call name so the resolver can map the receiver to
+            # its inferred type (`self.shutdown.is_shutdown`, `cmd.apply`). A
+            # chain containing a call (`x.f().g`) is left to the chained-call
+            # path; a paren-free chain ends at the bare-method trie fallback
+            # when the receiver type is unknown.
+            return decode_node_text(text)
+        return None
+
+    def node_call_name(self, call_node: Node) -> str | None:
+        # `square!(3)`: the callee lives in the `macro` field (no
+        # `function`/`name` field), so the invocation was captured as a
+        # call but dropped nameless; unresolvable even now that
+        # macro_rules! definitions register as Function nodes.
+        if call_node.type == cs.TS_RS_MACRO_INVOCATION:
+            macro_node = call_node.child_by_field_name(cs.FIELD_MACRO)
+            if macro_node is not None and macro_node.text is not None:
+                return decode_node_text(macro_node.text)
+        return None
 
     def attributable(self, func_nodes: list[Node], module_qn: str) -> list[Node]:
         # A Rust closure (`expire.map(|_| state.next_expiration())`) is unnamed,

@@ -491,6 +491,11 @@ class GoCallResolution(LanguageCalls):
                 caller_node, caller_spec, module_qn, boundaries
             )
 
+    def function_field_name(self, func_child: Node) -> str | None:
+        if func_child.type != cs.TS_SELECTOR_EXPRESSION:
+            return None
+        return asserted_receiver_call_name(func_child)
+
     def bound_method_caller(
         self, func_node: Node, func_name: str, module_qn: str
     ) -> tuple[str, str] | None:

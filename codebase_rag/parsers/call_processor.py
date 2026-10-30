@@ -15,7 +15,6 @@ from .. import logs as ls
 from ..capture import ALL_ENABLED, CaptureSelection
 from ..language_spec import (
     LanguageSpec,
-    sql_object_reference_name,
 )
 from ..node_text import decode_node_text, safe_decode_text, sorted_captures
 from ..services import IngestorProtocol
@@ -51,18 +50,15 @@ from .java import calls as java_calls
 from .java import utils as java_utils
 from .js_ts import bindings as js_bindings
 from .js_ts import calls as js_calls
-from .js_ts import utils as js_ts_utils
 from .julia import calls as julia_calls
 from .julia import utils as julia_utils
 from .language_calls import CallScan, LanguageCalls
 from .lua import calls as lua_calls
 from .php import calls as php_calls
-from .php import class_names as php_class_names
 from .python import calls as python_calls
 from .rpc_exposure import GoRpcExposureProcessor
 from .rust import calls as rs_calls
 from .scala import calls as scala_calls
-from .scala import utils as scala_utils
 from .sql import calls as sql_calls
 from .string_call import load_string_call_specs, string_call_target
 from .type_inference import TypeInferenceEngine
@@ -216,10 +212,6 @@ _OBJECT_CREATION_NODE_TYPES = frozenset(
         cs.TS_CSHARP_IMPLICIT_OBJECT_CREATION_EXPRESSION,
         cs.TS_SCALA_INSTANCE_EXPRESSION,
     }
-)
-# Languages whose `new X(...)` names a TYPE, never a method or function.
-_NEW_CONSTRUCTS_LANGUAGES = frozenset(
-    {cs.SupportedLanguage.JAVA, cs.SupportedLanguage.CSHARP, cs.SupportedLanguage.SCALA}
 )
 _CALLABLE_NODE_LABELS = (
     cs.NodeLabel.FUNCTION,
@@ -1871,65 +1863,27 @@ class CallProcessor:
         # fn `run` instead of Listener.run).
         if call_node.type == cs.TS_IDENTIFIER and call_node.text is not None:
             return rs_calls.macro_token_call_name(call_node)
-        # A SQL `invocation` names its routine through an unnamed
-        # `object_reference` child (no `function` or `name` field), so every
-        # SQL call site fell through nameless and was dropped (issue #2449).
-        # Normalized like the definition, so `TAX(x)` reaches `tax`.
-        if language == cs.SupportedLanguage.SQL:
-            return sql_object_reference_name(call_node)
-        # A Dart call node is a selector/cascade_section holding the
-        # argument_part; the target name lives in the PRECEDING sibling
-        # chain, not inside the node.
-        if language == cs.SupportedLanguage.DART:
-            return dart_utils.call_name(call_node)
-        if language == cs.SupportedLanguage.JULIA:
-            # A definition's own head IS a call_expression; drop heads
-            # here (no query negation to exclude them at capture time).
-            if julia_utils.is_signature_head(call_node):
-                return None
-            return julia_utils.call_name(call_node)
+        calls = self._calls_for(language)
+        # A call node the language names in a shape of its own (a SQL
+        # `invocation`, a Dart selector, a Julia call, a JS/TS function called
+        # in place) is decided there, whole.
+        if (own := calls.call_name(call_node)).decided:
+            return own.name
         if func_child := call_node.child_by_field_name(cs.TS_FIELD_FUNCTION):
-            match func_child.type:
-                case cs.TS_PARENTHESIZED_EXPRESSION:
-                    return js_calls.iife_target_name(func_child)
-                case cs.TS_FUNCTION_EXPRESSION | cs.TS_GENERATOR_FUNCTION if (
-                    language in _JS_TS_LANGUAGES
-                ):
-                    # An unparenthesised direct IIFE (`const x = function ()
-                    # {...}()`) has the function itself as the callee. A NAMED
-                    # one registers under its own name (possibly a duplicate
-                    # variant), so only the span-resolved path may emit its
-                    # edge; a positional name here is for the anonymous form.
-                    if js_calls.iife_callee_name(func_child):
-                        return None
-                    return (
-                        f"{cs.PREFIX_IIFE_DIRECT}"
-                        f"{func_child.start_point[0]}_{func_child.start_point[1]}"
-                    )
-            if (
-                name := self._function_field_call_name(func_child, language)
-            ) is not None:
+            if func_child.type == cs.TS_PARENTHESIZED_EXPRESSION:
+                return js_calls.iife_target_name(func_child)
+            if (name := self._function_field_call_name(func_child, calls)) is not None:
                 return name
-        return self._node_shaped_call_name(call_node, language)
-
-    def _prefixed_generic_call_name(
-        self, func_child: Node, language: cs.SupportedLanguage | None
-    ) -> str | None:
-        operand = js_calls.prefixed_generic_callee(func_child)
-        if operand is None:
-            return None
-        return self._function_field_call_name(operand, language)
+        return self._node_shaped_call_name(call_node, calls)
 
     def _function_field_call_name(
-        self, func_child: Node, language: cs.SupportedLanguage | None
+        self, func_child: Node, calls: LanguageCalls
     ) -> str | None:
         # The callee name a call's `function` field spells; None means no case
         # named it and the caller falls back to the call node's own shape.
+        if (name := calls.function_field_name(func_child)) is not None:
+            return name
         match func_child.type:
-            case cs.TS_SELECTOR_EXPRESSION if language == cs.SupportedLanguage.GO and (
-                asserted_call := go_calls.asserted_receiver_call_name(func_child)
-            ):
-                return asserted_call
             case (
                 cs.TS_IDENTIFIER
                 | cs.TS_ATTRIBUTE
@@ -1946,92 +1900,21 @@ class CallProcessor:
                 inner = func_child.child_by_field_name(cs.TS_FIELD_FUNCTION)
                 if inner and inner.text:
                     return decode_node_text(inner.text)
-            case cs.TS_RS_FIELD_EXPRESSION if language == cs.SupportedLanguage.RUST:
-                # Rust member call `a.b.method()`: use the full dotted receiver
-                # chain as the call name so the resolver can map the receiver to
-                # its inferred type (`self.shutdown.is_shutdown`, `cmd.apply`). A
-                # chain containing a call (`x.f().g`) is left to the chained-call
-                # path; a paren-free chain ends at the bare-method trie fallback
-                # when the receiver type is unknown.
-                if (text := func_child.text) is not None:
-                    return decode_node_text(text)
             case cs.TS_CPP_FIELD_EXPRESSION:
                 return cpp_calls.field_call_name(func_child)
-            case cs.TS_CSHARP_GENERIC_NAME if language == cs.SupportedLanguage.CSHARP:
-                # Bare generic call `Handle<TException>(...)`: the callee
-                # name is the identifier without its type arguments
-                # (methods register generic-free). Leaving the `<...>` on
-                # yielded no call name, so the call site vanished from the
-                # graph (Polly's parameterless HandleInner overload
-                # delegating to its Func sibling).
-                if func_child.text is not None:
-                    full = decode_node_text(func_child.text)
-                    return full.split(cs.CHAR_ANGLE_OPEN, 1)[0]
-            case cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION if (
-                language == cs.SupportedLanguage.CSHARP
-            ):
-                # C# member call `recv.Method(...)`: emit the `recv.Method`
-                # chain so the resolver can type `recv` and bind the method on
-                # it; an unknown-type receiver falls back to the bare
-                # method-name trie. `name` is the method, `expression` the
-                # receiver.
-                return csharp_calls.member_access_call_name(func_child)
-            case cs.TS_CSHARP_CONDITIONAL_ACCESS_EXPRESSION if (
-                language == cs.SupportedLanguage.CSHARP
-            ):
-                # C# conditional call `recv?.Method(...)`: the method name
-                # lives on the member_binding child. Emit the same
-                # `recv.Method` chain as the unconditional form so the
-                # resolver (or its exact Roslyn call fact) can bind it.
-                return csharp_calls.conditional_access_call_name(func_child)
-            case callee_type if (
-                callee_type in cs.TS_JS_PREFIXED_CALLEES
-                and language in _JS_TS_LANGUAGES
-            ):
-                return self._prefixed_generic_call_name(func_child, language)
-            case cs.TS_CALL_EXPRESSION if language in _JS_TS_LANGUAGES:
-                # A bound function that is itself invoked (`fn.bind(ctx)()`)
-                # has a nested `fn.bind(ctx)` call_expression as its callee, so
-                # no earlier case names it. Resolve to fn so the invocation
-                # links to fn, not the Function.prototype builtin (issue:
-                # JoinAttribute.relation's local getValue called as
-                # getValue.bind(this)()). It guards on the bound-call unwrap so
-                # a plain call-of-a-call (`getFactory()()`) stays unnamed, then
-                # peels to a fixpoint for chained binds / interleaved casts.
-                return js_calls.bound_function_call_name(func_child)
         return None
 
     def _node_shaped_call_name(
-        self, call_node: Node, language: cs.SupportedLanguage | None
+        self, call_node: Node, calls: LanguageCalls
     ) -> str | None:
         # The callee name of a call node with no `function` field (or whose
         # `function` field named nothing): construction, operator, method
         # invocation and macro shapes, then the node's own `name` field.
-        match call_node.type:
-            case cs.TS_NEW_EXPRESSION if language == cs.SupportedLanguage.CPP:
-                # C++ `new Foo(...)` names the class via the `type` field (no
-                # `function` field), so it fell through nameless and heap
-                # construction emitted nothing (issue #896, the singleton
-                # `new WindowClassRegistrar()`). Returning the type name routes
-                # it through the normal resolve loop: the class gets
-                # INSTANTIATES and its constructor CALLS. The type reduces
-                # STRUCTURALLY to its dotted class path (`new Foo<int>()` ->
-                # Foo, `new Outer<int>::Inner()` -> Outer.Inner; a textual cut
-                # at `<` would drop the nested suffix); a primitive type
-                # reduces to nothing and stays silent.
-                type_node = call_node.child_by_field_name(cs.FIELD_TYPE)
-                if type_node is not None:
-                    return cpp_utils.new_expression_class_path(type_node)
-            case cs.TS_CSHARP_IMPLICIT_OBJECT_CREATION_EXPRESSION if (
-                language == cs.SupportedLanguage.CSHARP
-            ):
-                # C# 9 target-typed `new()` has no `type` field; the
-                # constructed type is named by the enclosing declaration
-                # (issue #773).
-                return csharp_calls.target_typed_new_name(call_node)
-        if (name := self._construction_call_name(call_node, language)) is not None:
+        if (name := calls.node_call_name(call_node)) is not None:
             return name
-        if (name := self._operator_call_name(call_node, language)) is not None:
+        if (name := self._construction_call_name(call_node, calls)) is not None:
+            return name
+        if (name := self._operator_call_name(call_node)) is not None:
             return name
 
         if name_node := call_node.child_by_field_name(cs.FIELD_NAME):
@@ -2041,55 +1924,22 @@ class CallProcessor:
         return None
 
     @staticmethod
-    def _construction_call_name(
-        call_node: Node, language: cs.SupportedLanguage | None
-    ) -> str | None:
-        match call_node.type:
-            case cs.TS_SCALA_INSTANCE_EXPRESSION if (
-                language == cs.SupportedLanguage.SCALA
-            ):
-                # Scala `new C(...)` holds its type as an unnamed child, so
-                # it fell through nameless and emitted nothing (issue #2450).
-                return scala_utils.instance_type_name(call_node)
-            case cs.TS_NEW_EXPRESSION if language in _JS_TS_LANGUAGES:
-                # JS/TS `new Foo(...)` names the class via the `constructor` field
-                # (no `function` field). Returning the constructor name routes
-                # construction through the normal resolve loop: a first-party class
-                # gets INSTANTIATES (+ CALLS to its constructor), and an inline
-                # callback argument (`new CancelablePromise(cb)`) is referenced so
-                # it is not reported as dead.
-                ctor = js_ts_utils.constructor_of(call_node)
-                if ctor is not None and ctor.text is not None:
-                    return decode_node_text(ctor.text)
-            case cs.TS_OBJECT_CREATION_EXPRESSION if language in (
-                cs.SupportedLanguage.JAVA,
-                cs.SupportedLanguage.CSHARP,
-            ):
-                # Java/C# `new Foo(...)` names the class via the `type` field (no
-                # `function` field). Returning the base type name routes construction
-                # through the normal resolve loop: the class gets INSTANTIATES and its
-                # constructor(s) get CALLS. Strip generic args (`new ArrayList<T>()`
-                # -> ArrayList); a scoped name (`Outer.Inner`) is left for the resolver.
-                type_node = call_node.child_by_field_name(cs.FIELD_TYPE)
-                if type_node is not None and type_node.text is not None:
-                    return decode_node_text(type_node.text).split(
-                        cs.CHAR_ANGLE_OPEN, 1
-                    )[0]
-            case cs.TS_PHP_OBJECT_CREATION_EXPRESSION if (
-                language == cs.SupportedLanguage.PHP
-            ):
-                # PHP `new Box(...)` writes the class as an unfielded child, so
-                # no case above named it and construction emitted nothing
-                # (issue #2466). The class's own simple name, after `use`
-                # aliases, is what a file added later would define; the
-                # resolver reads the full namespace path off the node.
-                if path := php_class_names.new_expression_class_path(call_node):
-                    return path[-1]
+    def _construction_call_name(call_node: Node, calls: LanguageCalls) -> str | None:
+        if (
+            call_node.type == cs.TS_OBJECT_CREATION_EXPRESSION
+            and calls.new_constructs_type
+        ):
+            # Java/C# `new Foo(...)` names the class via the `type` field (no
+            # `function` field). Returning the base type name routes construction
+            # through the normal resolve loop: the class gets INSTANTIATES and its
+            # constructor(s) get CALLS. Strip generic args (`new ArrayList<T>()`
+            # -> ArrayList); a scoped name (`Outer.Inner`) is left for the resolver.
+            type_node = call_node.child_by_field_name(cs.FIELD_TYPE)
+            if type_node is not None and type_node.text is not None:
+                return decode_node_text(type_node.text).split(cs.CHAR_ANGLE_OPEN, 1)[0]
         return None
 
-    def _operator_call_name(
-        self, call_node: Node, language: cs.SupportedLanguage | None
-    ) -> str | None:
+    def _operator_call_name(self, call_node: Node) -> str | None:
         match call_node.type:
             case (
                 cs.TS_CPP_BINARY_EXPRESSION
@@ -2102,27 +1952,6 @@ class CallProcessor:
                     return cpp_utils.convert_operator_symbol_to_name(operator_text)
             case cs.TS_METHOD_INVOCATION:
                 return self._method_invocation_call_name(call_node)
-            # Scala infix operator call (`a ~> b`, `xs map f`): the callee is the
-            # `operator` field's method name. tree-sitter has no `function` field
-            # here, so it is unreachable above. Gated to Scala since the node type
-            # string is Scala-specific and the guard keeps other languages inert.
-            # Infix is unambiguously a method call; a bare `field_expression`
-            # (`obj.done` with no parens) is deliberately NOT named here because
-            # Scala's uniform access makes a nullary call and a `val` read
-            # syntactically identical, so resolving it by simple name would turn a
-            # same-named field read into a spurious CALLS edge.
-            case cs.TS_SCALA_INFIX_EXPRESSION if language == cs.SupportedLanguage.SCALA:
-                operator_node = call_node.child_by_field_name(cs.FIELD_OPERATOR)
-                if operator_node and operator_node.text:
-                    return decode_node_text(operator_node.text)
-            # Rust `square!(3)`: the callee lives in the `macro` field (no
-            # `function`/`name` field), so the invocation was captured as a
-            # call but dropped nameless here; unresolvable even now that
-            # macro_rules! definitions register as Function nodes.
-            case cs.TS_RS_MACRO_INVOCATION if language == cs.SupportedLanguage.RUST:
-                macro_node = call_node.child_by_field_name(cs.FIELD_MACRO)
-                if macro_node is not None and macro_node.text is not None:
-                    return decode_node_text(macro_node.text)
         return None
 
     @staticmethod
@@ -2578,12 +2407,8 @@ class CallProcessor:
             call_name = ctx.call_name_cache[node_id]
         else:
             call_name = self._get_call_target_name(call_node, ctx.language)
-            if (
-                call_name is None
-                and ctx.is_csharp
-                and call_node.type == cs.TS_CSHARP_IMPLICIT_OBJECT_CREATION_EXPRESSION
-            ):
-                call_name = self._csharp.argument_target_name(ctx, call_node)
+            if call_name is None:
+                call_name = ctx.calls.fallback_call_name(ctx, call_node)
             if ctx.call_name_cache is not None:
                 ctx.call_name_cache[node_id] = call_name
         return call_name
@@ -2763,7 +2588,7 @@ class CallProcessor:
             ctx.language,
             call_point=call_node.start_byte,
             # A Java/C#/Scala `new X(...)` names a type, never a method.
-            constructing=ctx.language in _NEW_CONSTRUCTS_LANGUAGES
+            constructing=ctx.calls.new_constructs_type
             and call_node.type in _OBJECT_CREATION_NODE_TYPES,
         )
         return self._judge_resolved_callee(ctx, call_node, call_name, callee_info)
@@ -3099,7 +2924,7 @@ class CallProcessor:
             )
 
         if (
-            ctx.language in _NEW_CONSTRUCTS_LANGUAGES
+            ctx.calls.new_constructs_type
             and call_node.type in _OBJECT_CREATION_NODE_TYPES
             and callee_type != cs.NodeLabel.CLASS
         ):

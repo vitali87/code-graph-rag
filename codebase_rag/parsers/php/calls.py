@@ -86,6 +86,18 @@ class PhpCallResolution(LanguageCalls):
     def class_qn(self, class_node: Node, module_qn: str, class_name: str) -> str | None:
         return anonymous_class_qn(class_node, module_qn)
 
+    def node_call_name(self, call_node: Node) -> str | None:
+        # `new Box(...)` writes the class as an unfielded child, so no shared
+        # shape names it and construction emitted nothing (issue #2466). The
+        # class's own simple name, after `use` aliases, is what a file added
+        # later would define; the resolver reads the full namespace path off
+        # the node.
+        if call_node.type == cs.TS_PHP_OBJECT_CREATION_EXPRESSION and (
+            path := class_names.new_expression_class_path(call_node)
+        ):
+            return path[-1]
+        return None
+
     def resolve_class_callee(
         self, ctx: PhpCallScan, call_node: Node, call_name: str
     ) -> PhpClassCallee:

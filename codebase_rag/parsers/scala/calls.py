@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, NamedTuple, Protocol
 from tree_sitter import Node
 
 from ... import constants as cs
+from ...node_text import decode_node_text
 from ...types_defs import ScalaBinding
 from ..language_calls import LanguageCalls
 from . import utils as scala_utils
@@ -51,8 +52,30 @@ class ScalaCallResolution(LanguageCalls):
 
     __slots__ = ("_resolver",)
 
+    new_constructs_type = True
+
     def __init__(self, resolver: CallResolver) -> None:
         self._resolver = resolver
+
+    def node_call_name(self, call_node: Node) -> str | None:
+        match call_node.type:
+            case cs.TS_SCALA_INSTANCE_EXPRESSION:
+                # Scala `new C(...)` holds its type as an unnamed child, so
+                # it fell through nameless and emitted nothing (issue #2450).
+                return scala_utils.instance_type_name(call_node)
+            # Infix operator call (`a ~> b`, `xs map f`): the callee is the
+            # `operator` field's method name; tree-sitter has no `function`
+            # field here. Infix is unambiguously a method call; a bare
+            # `field_expression` (`obj.done` with no parens) is deliberately
+            # NOT named here because Scala's uniform access makes a nullary
+            # call and a `val` read syntactically identical, so resolving it
+            # by simple name would turn a same-named field read into a
+            # spurious CALLS edge.
+            case cs.TS_SCALA_INFIX_EXPRESSION:
+                operator_node = call_node.child_by_field_name(cs.FIELD_OPERATOR)
+                if operator_node and operator_node.text:
+                    return decode_node_text(operator_node.text)
+        return None
 
     def resolve_callee(
         self, ctx: ScalaCallScan, call_node: Node, call_name: str

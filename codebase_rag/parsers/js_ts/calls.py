@@ -28,7 +28,7 @@ from ..callable_params import js_ts_parameter_names
 from ..definition_docstring import extract_definition_docstring
 from ..edge_site import EdgeSiteHost, host_site_scoped
 from ..field_nodes import declared_fields
-from ..language_calls import LanguageCalls
+from ..language_calls import UNDECIDED_NAME, CallName, LanguageCalls
 from . import bindings as js_bindings
 from . import utils as js_ts_utils
 
@@ -39,11 +39,12 @@ if TYPE_CHECKING:
 class JsTsCallHost(EdgeSiteHost, Protocol):
     """What JS/TS call resolution reads and sets on the call pass that builds
     it: the edge emitter, a function node's own name and the location the
-    definition pass recorded for it, the reference an inline callback
-    argument gets, the reference walkers JS/TS shares with other languages
-    and the scope boundaries they stop at, and `_verdict`, how surely the
-    call node being scanned binds its callee, which a member pick its
-    receiver's declared type confirms raises to exact."""
+    definition pass recorded for it, the callee name a `function` field
+    spells, the reference an inline callback argument gets, the reference
+    walkers JS/TS shares with other languages and the scope boundaries they
+    stop at, and `_verdict`, how surely the call node being scanned binds its
+    callee, which a member pick its receiver's declared type confirms raises
+    to exact."""
 
     _verdict: str
 
@@ -138,6 +139,10 @@ class JsTsCallHost(EdgeSiteHost, Protocol):
         boundary_types: frozenset[str],
         language: cs.SupportedLanguage | None = None,
     ) -> None: ...
+
+    def _function_field_call_name(
+        self, func_child: Node, calls: LanguageCalls
+    ) -> str | None: ...
 
 
 class JsTsCallScan(Protocol):
@@ -910,6 +915,58 @@ class JsTsCallResolution(LanguageCalls):
                 and recorded.is_named
             )
         ]
+
+    def call_name(self, call_node: Node) -> CallName:
+        func_child = call_node.child_by_field_name(cs.TS_FIELD_FUNCTION)
+        if func_child is None or func_child.type not in (
+            cs.TS_FUNCTION_EXPRESSION,
+            cs.TS_GENERATOR_FUNCTION,
+        ):
+            return UNDECIDED_NAME
+        # An unparenthesised direct IIFE (`const x = function ()
+        # {...}()`) has the function itself as the callee. A NAMED
+        # one registers under its own name (possibly a duplicate
+        # variant), so only the span-resolved path may emit its
+        # edge; a positional name here is for the anonymous form.
+        if iife_callee_name(func_child):
+            return CallName(True, None)
+        return CallName(
+            True,
+            f"{cs.PREFIX_IIFE_DIRECT}"
+            f"{func_child.start_point[0]}_{func_child.start_point[1]}",
+        )
+
+    def function_field_name(self, func_child: Node) -> str | None:
+        if func_child.type in cs.TS_JS_PREFIXED_CALLEES:
+            operand = prefixed_generic_callee(func_child)
+            if operand is None:
+                return None
+            return self._host._function_field_call_name(operand, self)
+        if func_child.type == cs.TS_CALL_EXPRESSION:
+            # A bound function that is itself invoked (`fn.bind(ctx)()`)
+            # has a nested `fn.bind(ctx)` call_expression as its callee, so
+            # no shared shape names it. Resolve to fn so the invocation
+            # links to fn, not the Function.prototype builtin (issue:
+            # JoinAttribute.relation's local getValue called as
+            # getValue.bind(this)()). It guards on the bound-call unwrap so
+            # a plain call-of-a-call (`getFactory()()`) stays unnamed, then
+            # peels to a fixpoint for chained binds / interleaved casts.
+            return bound_function_call_name(func_child)
+        return None
+
+    def node_call_name(self, call_node: Node) -> str | None:
+        if call_node.type != cs.TS_NEW_EXPRESSION:
+            return None
+        # `new Foo(...)` names the class via the `constructor` field
+        # (no `function` field). Returning the constructor name routes
+        # construction through the normal resolve loop: a first-party class
+        # gets INSTANTIATES (+ CALLS to its constructor), and an inline
+        # callback argument (`new CancelablePromise(cb)`) is referenced so
+        # it is not reported as dead.
+        ctor = js_ts_utils.constructor_of(call_node)
+        if ctor is not None and ctor.text is not None:
+            return decode_node_text(ctor.text)
+        return None
 
     def scope_name(self, function_node: Node) -> str | None:
         # An arrow-const ancestor (`getQueryString = () => {...}`) has no
