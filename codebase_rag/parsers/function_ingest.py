@@ -36,6 +36,7 @@ from .java import function_ingest as java_function_ingest
 from .js_ts import function_ingest as js_ts_function_ingest
 from .js_ts.utils import mark_js_ts_module_private
 from .language_definitions import LanguageFunctionIngest
+from .language_map import by_language
 from .lua import function_ingest as lua_function_ingest
 from .method_ingest import MethodIngestHost
 from .parameter_nodes import PendingParameterType, emit_declared_parameters
@@ -158,20 +159,22 @@ class FunctionIngest:
         self.lua = lua_function_ingest.LuaFunctionIngest()
         # The collaborator each language's functions go to; a language with
         # none takes the neutral answers.
-        self._languages: dict[cs.SupportedLanguage, LanguageFunctionIngest] = {
-            cs.SupportedLanguage.PYTHON: self.python,
-            cs.SupportedLanguage.JS: self.js_ts,
-            cs.SupportedLanguage.TS: self.js_ts,
-            cs.SupportedLanguage.TSX: self.js_ts,
-            cs.SupportedLanguage.JAVA: self.java,
-            cs.SupportedLanguage.RUST: self.rust,
-            cs.SupportedLanguage.GO: self.go,
-            cs.SupportedLanguage.CPP: self.cpp,
-            cs.SupportedLanguage.LUA: self.lua,
-            cs.SupportedLanguage.PHP: self.php,
-            cs.SupportedLanguage.CSHARP: self.csharp,
-            cs.SupportedLanguage.DART: self.dart,
-        }
+        self._languages: dict[cs.SupportedLanguage, LanguageFunctionIngest] = (
+            by_language(
+                {
+                    cs.SupportedLanguage.PYTHON: self.python,
+                    cs.JS_TS_LANGUAGES: self.js_ts,
+                    cs.SupportedLanguage.JAVA: self.java,
+                    cs.SupportedLanguage.RUST: self.rust,
+                    cs.SupportedLanguage.GO: self.go,
+                    cs.SupportedLanguage.CPP: self.cpp,
+                    cs.SupportedLanguage.LUA: self.lua,
+                    cs.SupportedLanguage.PHP: self.php,
+                    cs.SupportedLanguage.CSHARP: self.csharp,
+                    cs.SupportedLanguage.DART: self.dart,
+                }
+            )
+        )
         self._neutral = LanguageFunctionIngest()
 
     def _for(

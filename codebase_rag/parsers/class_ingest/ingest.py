@@ -23,6 +23,7 @@ from ..java import class_ingest as java_class_ingest
 from ..js_ts import class_ingest as js_ts_class_ingest
 from ..js_ts.utils import mark_js_ts_module_private
 from ..language_definitions import LanguageClassIngest
+from ..language_map import by_language
 from ..method_ingest import MethodIngestHost
 from ..php import class_ingest as php_class_ingest
 from ..python import class_ingest as python_class_ingest
@@ -172,21 +173,21 @@ class ClassIngest:
     def _language_ingests(self) -> dict[cs.SupportedLanguage, LanguageClassIngest]:
         # The collaborator each language's class nodes go to; a language with
         # none takes the neutral answers.
-        return {
-            cs.SupportedLanguage.PYTHON: self.python,
-            cs.SupportedLanguage.JS: self.js_ts,
-            cs.SupportedLanguage.TS: self.js_ts,
-            cs.SupportedLanguage.TSX: self.js_ts,
-            cs.SupportedLanguage.JAVA: self.java,
-            cs.SupportedLanguage.RUST: self.rust,
-            cs.SupportedLanguage.GO: self.go,
-            cs.SupportedLanguage.CPP: self.cpp,
-            cs.SupportedLanguage.C: self.c,
-            cs.SupportedLanguage.PHP: self.php,
-            cs.SupportedLanguage.CSHARP: self.csharp,
-            cs.SupportedLanguage.DART: self.dart,
-            cs.SupportedLanguage.SCALA: self.scala,
-        }
+        return by_language(
+            {
+                cs.SupportedLanguage.PYTHON: self.python,
+                cs.JS_TS_LANGUAGES: self.js_ts,
+                cs.SupportedLanguage.JAVA: self.java,
+                cs.SupportedLanguage.RUST: self.rust,
+                cs.SupportedLanguage.GO: self.go,
+                cs.SupportedLanguage.CPP: self.cpp,
+                cs.SupportedLanguage.C: self.c,
+                cs.SupportedLanguage.PHP: self.php,
+                cs.SupportedLanguage.CSHARP: self.csharp,
+                cs.SupportedLanguage.DART: self.dart,
+                cs.SupportedLanguage.SCALA: self.scala,
+            }
+        )
 
     def _unwalked_suffixes(self) -> tuple[str, ...]:
         # The files whose read-back implementer pairs the override walk
