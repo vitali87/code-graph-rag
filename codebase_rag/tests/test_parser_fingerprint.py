@@ -102,6 +102,20 @@ class TestComputeParserFingerprint:
         source.write_text("A = 2\n")
         assert compute_parser_fingerprint(pkg) != before
 
+    def test_changes_when_an_updater_collaborator_changes(self, tmp_path: Path) -> None:
+        # The parse, frontend and graph read-back code moved out of
+        # graph_updater.py into `updater/`; it still decides how sources
+        # become edges, so an edit there must trip the fingerprint even though
+        # graph_updater itself is unchanged.
+        pkg = tmp_path / "pkg"
+        updater_dir = pkg / "updater"
+        updater_dir.mkdir(parents=True)
+        source = updater_dir / "file_parse.py"
+        source.write_text("A = 1\n")
+        before = compute_parser_fingerprint(pkg)
+        source.write_text("A = 2\n")
+        assert compute_parser_fingerprint(pkg) != before
+
     def test_changes_when_the_module_qn_rule_changes(self, tmp_path: Path) -> None:
         """`base_module_qn` decides every module's identity, so a change to it
         must re-key the graph.

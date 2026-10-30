@@ -399,7 +399,14 @@ EDIT_KEY_MODE = "mode"
 # relative to the codebase_rag package root.
 # `analyzers` holds the ast-grep finding analyzer: it decides which finding
 # nodes a file gets and how they are keyed, exactly as a parser decides edges.
-PARSER_FINGERPRINT_SOURCE_DIRS: tuple[str, ...] = ("parsers", "constants", "analyzers")
+# `updater` holds what `graph_updater.py` hands each part of a sync to: the
+# per-file parse, the frontend runs and the graph read-back decide edges too.
+PARSER_FINGERPRINT_SOURCE_DIRS: tuple[str, ...] = (
+    "parsers",
+    "constants",
+    "analyzers",
+    "updater",
+)
 PARSER_FINGERPRINT_SOURCE_FILES: tuple[str, ...] = (
     "graph_updater.py",
     "function_registry.py",
