@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 from collections.abc import Collection
 from datetime import UTC, datetime
@@ -78,9 +79,11 @@ _GIT_TIMEOUT_S = 120
 
 
 def _git_line(repo_path: Path, *args: str) -> str | None:
+    if (git := shutil.which(cs.SHELL_CMD_GIT)) is None:
+        return None
     try:
         proc = subprocess.run(
-            ["git", "-C", str(repo_path), *args],
+            [git, "-C", str(repo_path), *args],
             capture_output=True,
             text=True,
             encoding=cs.ENCODING_UTF8,
