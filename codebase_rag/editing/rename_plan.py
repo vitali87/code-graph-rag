@@ -65,6 +65,7 @@ class RenamePlanner:
         fetch_all: QueryFn,
         project_name: str,
         repo_root: Path,
+        *,
         heuristic_opt_in: str = cs.MCPParamName.ALLOW_HEURISTIC,
     ) -> None:
         self.repo_root = repo_root.resolve()

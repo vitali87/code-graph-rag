@@ -65,12 +65,15 @@ class Renamer(RenamePlanner):
         fetch_all: QueryFn,
         project_name: str,
         repo_root: Path,
+        *,
         verify: Callable[[StagedTree], VerificationResult | bool | None] | None = None,
         after_apply: Callable[[list[str]], None] | None = None,
         reingest: Reingest | None = None,
         heuristic_opt_in: str = cs.MCPParamName.ALLOW_HEURISTIC,
     ) -> None:
-        super().__init__(fetch_all, project_name, repo_root, heuristic_opt_in)
+        super().__init__(
+            fetch_all, project_name, repo_root, heuristic_opt_in=heuristic_opt_in
+        )
         self.verify = verify
         self.after_apply = after_apply
         # With a re-ingest the rename is held to its postcondition contract
@@ -239,6 +242,7 @@ def rename(
     repo_root: Path,
     qualified_name: str,
     new_name: str,
+    *,
     allow_heuristic: bool = False,
     dry_run: bool = False,
     verify: Callable[[StagedTree], VerificationResult | bool | None] | None = None,
