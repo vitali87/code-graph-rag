@@ -153,22 +153,19 @@ def test_an_ambiguous_namespace_target_resolves_to_nothing(tmp_path: Path) -> No
     """
     from types import SimpleNamespace
 
-    from codebase_rag.parsers.call_resolver import CallResolver
+    from codebase_rag.parsers.php.resolution import php_target_for_namespace_import
 
-    resolver = object.__new__(CallResolver)
-    resolver.import_processor = SimpleNamespace(
-        php=SimpleNamespace(
-            php_module_namespaces={"proj.one": "App.Text", "proj.two": "App.Text"},
-        ),
+    php = SimpleNamespace(
+        php_module_namespaces={"proj.one": "App.Text", "proj.two": "App.Text"},
     )
-    resolver.function_registry = _registry(
+    registry = _registry(
         {
             "proj.one.format": "Function",
             "proj.two.format": "Function",
         }
     )
 
-    assert resolver._php_target_for_namespace_import("App.Text.format") is None, (
+    assert php_target_for_namespace_import(php, registry, "App.Text.format") is None, (
         "an import naming a namespace declared by TWO modules that both define "
         "the symbol was resolved to one of them; with two equally valid "
         "candidates the import cannot say which is meant"
@@ -176,9 +173,9 @@ def test_an_ambiguous_namespace_target_resolves_to_nothing(tmp_path: Path) -> No
 
     # The paired positive: with ONE candidate it resolves, so the None above is
     # the ambiguity guard rather than the helper being inert.
-    resolver.function_registry = _registry({"proj.one.format": "Function"})
+    registry = _registry({"proj.one.format": "Function"})
     assert (
-        resolver._php_target_for_namespace_import("App.Text.format")
+        php_target_for_namespace_import(php, registry, "App.Text.format")
         == "proj.one.format"
     )
 
@@ -361,7 +358,7 @@ def test_two_import_keys_differing_only_in_case_resolve_to_nothing(
     """Ambiguous folded keys must decline rather than pick one.
 
     Found by mutation: dropping the `len(matches) == 1` guard from
-    `_php_import_key` left all 14 other tests passing, because no fixture had
+    `php_import_key` left all 14 other tests passing, because no fixture had
     two keys folding to the same name.
 
     PHP rejects a duplicate `use` at compile time, so this state should not
@@ -491,16 +488,10 @@ def test_a_mixed_case_import_resolves_like_php_does(tmp_path: Path) -> None:
     symbol differing in case. An implementation folding only one would satisfy
     a test that varied both together.
     """
-    from codebase_rag.parsers.call_resolver import CallResolver
+    from codebase_rag.parsers.php.resolution import php_target_for_namespace_import
 
-    resolver = object.__new__(CallResolver)
-    resolver.import_processor = SimpleNamespace(
-        php=SimpleNamespace(
-            php_module_namespaces={"proj.text": "App.Text"},
-        ),
-        commonjs_direct_exports={},
-    )
-    resolver.function_registry = _registry({"proj.text.format": "Function"})
+    php = SimpleNamespace(php_module_namespaces={"proj.text": "App.Text"})
+    registry = _registry({"proj.text.format": "Function"})
 
     for target in (
         "App.Text.format",  # exact
@@ -510,7 +501,7 @@ def test_a_mixed_case_import_resolves_like_php_does(tmp_path: Path) -> None:
         "app.text.FORMAT",  # both, the reported case
     ):
         assert (
-            resolver._php_target_for_namespace_import(target) == "proj.text.format"
+            php_target_for_namespace_import(php, registry, target) == "proj.text.format"
         ), (
             f"{target!r} did not resolve; PHP treats namespace and function "
             "names as case-insensitive, so this import is valid and binds"
@@ -527,13 +518,13 @@ def test_the_case_fold_is_ascii_only(tmp_path: Path) -> None:
 
     The Kelvin sign folds to plain `k` under Unicode rules and must not match.
     """
-    from codebase_rag.parsers.call_resolver import _php_fold
+    from codebase_rag.parsers.php.class_names import ascii_fold
 
-    assert _php_fold("App.Text") == "app.text"
-    assert _php_fold("FORMAT") == "format"
+    assert ascii_fold("App.Text") == "app.text"
+    assert ascii_fold("FORMAT") == "format"
 
     kelvin = "\u212a"  # KELVIN SIGN; casefolds to "k" under Unicode
-    assert _php_fold(kelvin) != "k", (
+    assert ascii_fold(kelvin) != "k", (
         "the fold reached beyond ASCII; PHP would treat these identifiers as "
         "distinct, so matching them creates an edge the language does not"
     )

@@ -5,7 +5,6 @@ from collections import defaultdict, deque
 from collections.abc import Iterable
 from functools import lru_cache
 from pathlib import PurePath
-from typing import NamedTuple
 
 from loguru import logger
 from tree_sitter import Node
@@ -26,9 +25,8 @@ from .java import resolution as java_resolution
 from .js_ts.resolution import JsTsResolver, bind_receiver, class_value_of
 from .js_ts.resolution import resolve_builtin_call as resolve_js_builtin_call
 from .lua import utils as lua_utils
-from .php import class_names as php_class_names
+from .php import resolution as php_resolution
 from .php.class_names import ClassPath as PhpClassPath
-from .php.class_names import ascii_fold as _php_fold
 from .python import resolution as python_resolution
 from .python import resolve_class_name
 from .rust.resolution import RustResolver, rust_caller
@@ -64,15 +62,6 @@ class Resolved(tuple[str, str]):
         resolved = super().__new__(cls, (label, qn))
         resolved.resolution = resolution
         return resolved
-
-
-class _PhpCasedIndex(NamedTuple):
-    """PHP definitions declared with capitals, by ASCII-folded name."""
-
-    # (owner qn, folded method name) -> method qn
-    methods: dict[tuple[str, str], str]
-    # folded class name -> class qns
-    classes: dict[str, list[str]]
 
 
 @lru_cache(maxsize=cs.RESOLVER_NAME_CACHE_SIZE)
@@ -128,13 +117,12 @@ class CallResolver:
         "_ctor_param_attrs",
         "_pending_field_bindings",
         "_module_language_cache",
-        "_php_class_namespaces",
-        "_php_cased_index",
         "_rust",
         "_js_ts",
         "_go",
         "_cpp",
         "_python",
+        "_php",
     )
 
     def __init__(
@@ -187,10 +175,6 @@ class CallResolver:
         self._ctor_param_attrs: dict[tuple[str, str], str] = {}
         self._pending_field_bindings: list[tuple[str, int | str, str]] = []
         self._module_language_cache: dict[str, cs.SupportedLanguage | None] = {}
-        # {PHP module qn: {class qn: folded namespace it is declared in}},
-        # read off each file's declarations on first use (issue #2466).
-        self._php_class_namespaces: dict[str, dict[str, PhpClassPath]] = {}
-        self._php_cased_index: _PhpCasedIndex | None = None
         # A language's share of the resolution reads the same registry, maps
         # and facts, and calls back here for what every language shares.
         self._rust = RustResolver(
@@ -220,6 +204,9 @@ class CallResolver:
             self.python_name_typed_params,
             self.python_shadowed_imports,
             self.python_local_names,
+        )
+        self._php = php_resolution.PhpResolver(
+            self, function_registry, import_processor, type_inference, facts
         )
 
     def record_ctor_params(self, class_qn: str, params: tuple[str, ...]) -> None:
@@ -397,9 +384,7 @@ class CallResolver:
         # makes `_languages_can_call` drop the candidate a clean index
         # resolves (issue #1575).
         self._module_language_cache.clear()
-        # A re-parsed PHP file may have moved a class between namespaces.
-        self._php_class_namespaces.clear()
-        self._php_cased_index = None
+        self._php.reset_resolution_memos()
         self._js_ts.reset_resolution_memos()
         # The C# chained-receiver memo (issue #1800) is a resolution cache
         # like the rest and expires with them: it is keyed by byte span, and a
@@ -1532,7 +1517,7 @@ class CallResolver:
         # PHP call already relies on, dropping the call; leave it to the trie.
         # NARROWED (#1185 stage 1): the `namespace` declaration IS now tracked,
         # in `import_processor.php.php_module_namespaces`, and
-        # `_php_target_for_namespace_import` uses it to bind a `use function`
+        # `php_target_for_namespace_import` uses it to bind a `use function`
         # import to the module declaring that namespace. So a first-party
         # target whose namespace is declared somewhere in the repo resolves
         # rather than deferring.
@@ -1702,226 +1687,13 @@ class CallResolver:
 
         return self._try_resolve_wildcard_imports(call_name, import_map)
 
-    def _php_target_for_namespace_import(
-        self, imported_path: str, kind: cs.NodeLabel | None = None
-    ) -> str | None:
-        """Map a PHP `use function A\\B\\c` target onto the qn that registers it.
-
-        CGR qualifies PHP by file path, so the import target `App.Text.format`
-        never equals the registered `project.text.format`. Previously that miss
-        dropped through to the simple-name trie, which binds to whichever
-        same-named function it reaches first -- so `use function App\\Text\\format`
-        could resolve to `App\\Money\\format` (issue #1185). A wrong edge, not a
-        missing one.
-
-        Splits the target into the namespace it names and the symbol within it,
-        then finds the module that DECLARED that namespace and looks the symbol
-        up there. PSR-4 maps a namespace prefix to a directory root, so the two
-        cannot be derived from one another -- the declaration is the only link.
-
-        Returns None rather than guessing whenever the answer is not unique:
-        no module declares the namespace, or several do (PHP permits one
-        namespace across many files, and two files may both define `format`).
-        The trie fallback then applies exactly as before, so this can only
-        replace an arbitrary binding with a determined one, never introduce a
-        new arbitrary one.
-
-        Matching is ASCII CASE-INSENSITIVE, because namespaces and function
-        names are in PHP: `use function app\\text\\FORMAT` binds to
-        `App\\Text\\format`, verified by executing it under PHP 8.5. Comparing
-        with exact casing sent such imports to the trie, which is the same
-        wrong-edge path this function exists to avoid.
-
-        ASCII-only rather than `str.casefold()`: PHP folds A-Z only, so
-        folding non-ASCII identifiers would match names the language treats as
-        distinct -- trading a missed binding for a wrong one. The registered
-        qualified name is returned unchanged; folding is for COMPARISON, never
-        for the value handed back, which must stay the graph's real key.
-        """
-        # A fully-qualified import (`use function \App\Text\format`) is
-        # idiomatic PHP and runs identically to the unqualified spelling,
-        # verified under PHP 8.5. The leading backslash becomes a leading
-        # separator when the path is dotted, which would never match a
-        # declared `App.Text`. Stripping it is a spelling normalisation, not a
-        # semantic change -- in PHP a `use` path is ALWAYS resolved from the
-        # global namespace whether or not the backslash is written.
-        imported_path = imported_path.lstrip(cs.SEPARATOR_DOT)
-        namespace, separator, symbol = imported_path.rpartition(cs.SEPARATOR_DOT)
-        if not separator or not namespace or not symbol:
-            return None
-        wanted = _php_fold(namespace)
-        namespaces = self.import_processor.php.php_module_namespaces
-        matches = [
-            (module_qn, f"{module_qn}{cs.SEPARATOR_DOT}{symbol}")
-            for module_qn, declared in namespaces.items()
-            if _php_fold(declared) == wanted
-        ]
-        found: list[str] = []
-        for module_qn, exact_qn in matches:
-            # `kind` keeps PHP's separate symbol tables apart: a class and a
-            # function may share a name in one namespace (issue #2466).
-            if exact_qn in self.function_registry and (
-                kind is None or self.function_registry[exact_qn] == kind
-            ):
-                found.append(exact_qn)
-                continue
-            # The symbol's casing may differ from the registration too, so a
-            # direct lookup can miss where PHP would bind. `find_with_prefix`
-            # is the registry's own scoped query -- iterating the whole
-            # registry is not part of the trie protocol at all, and would be
-            # a full scan per import even where it happened to work.
-            #
-            # NO trailing separator. The trie splits the prefix on dots and
-            # walks a node per part, so `"proj.text."` yields a final EMPTY
-            # part that is never a key and the lookup always returns []. An
-            # earlier version passed the dot and the whole case-insensitive
-            # fallback was silently dead (#1484). The
-            # boundary is re-established below by requiring the remainder to
-            # start with the separator.
-            prefix = module_qn
-            wanted_symbol = _php_fold(symbol)
-            found.extend(
-                qn
-                for qn, qn_kind in self.function_registry.find_with_prefix(prefix)
-                if (kind is None or qn_kind == kind)
-                # `find_with_prefix` walks whole dot-separated parts, so the
-                # remainder always starts with the separator for a real
-                # descendant. Requiring it re-establishes the boundary the
-                # trailing dot used to provide, and rejects a sibling module
-                # whose name merely starts with this one (`proj.textutil`).
-                and (remainder := qn[len(prefix) :]).startswith(cs.SEPARATOR_DOT)
-                # Direct children only: a nested `module.Class.method` is not
-                # the free function this import names.
-                and cs.SEPARATOR_DOT not in remainder[1:]
-                and _php_fold(remainder[1:]) == wanted_symbol
-            )
-        if len(found) != 1:
-            return None
-        return found[0]
-
-    def _is_php_function_import(self, call_name: str, module_qn: str | None) -> bool:
-        """Whether `call_name` arrived via `use function`, not a class `use`.
-
-        Returns False when `module_qn` is unknown rather than defaulting to
-        True: an unidentified module cannot demonstrate the import was a
-        function binding, and the fallback's whole purpose is to avoid
-        asserting a target it cannot justify. The trie fallback still applies,
-        so this can only decline to add an edge, never remove a correct one.
-        """
-        if module_qn is None:
-            return False
-        imported = self.import_processor.php.php_function_imports.get(
-            module_qn, frozenset()
-        )
-        if call_name in imported:
-            return True
-        # PHP function names are case-insensitive at the CALL SITE too, so
-        # `use function App\Text\format` followed by `FORMAT()` is valid and
-        # runs. Verified by executing it under PHP 8.5. An exact-case lookup
-        # here recognised the import but not the call, so the resolver
-        # returned None and the call fell to the trie -- the same wrong-edge
-        # path, reached through the alias rather than the target.
-        folded = _php_fold(call_name)
-        return any(_php_fold(name) == folded for name in imported)
-
     def resolve_php_class_path(
         self, path: PhpClassPath, module_qn: str
     ) -> Resolved | None:
         """The class a fully qualified PHP class path names, and how surely."""
         self._verdict = cs.EdgeResolution.EXACT
-        found = self._php_class_path(path, module_qn)
+        found = self._php.php_class_path(path, module_qn)
         return None if found is None else Resolved(*found, self._verdict)
-
-    def _php_class_path(
-        self, path: PhpClassPath, module_qn: str
-    ) -> tuple[str, str] | None:
-        """The class a fully qualified PHP class path names (issue #2466).
-
-        A class is a candidate only where PHP declares it in the namespace the
-        path spells. A file with one statement-form namespace records it per
-        module, which also matches a class written in another case; a class
-        in a braced block is registered under that block (`mod.Vendor.Box`)
-        and the file records nothing, so its declaration says where it lives.
-        A namespaced path binds exactly or not at all. A global path binds
-        the caller's own class exactly and another file's by name only.
-        """
-        *namespace, symbol = path
-        if namespace and (
-            class_qn := self._php_target_for_namespace_import(
-                cs.SEPARATOR_DOT.join(path), kind=cs.NodeLabel.CLASS
-            )
-        ):
-            return self.function_registry[class_qn], class_qn
-        wanted = tuple(_php_fold(part) for part in namespace)
-        candidates = [
-            qn
-            for qn in self._php_class_candidates(symbol)
-            if self._php_declared_namespace(qn) == wanted
-        ]
-        if namespace:
-            # Several files declaring one namespaced class is a conditional
-            # declaration this site cannot choose between.
-            if len(candidates) != 1:
-                return None
-            return self.function_registry[candidates[0]], candidates[0]
-        if own := next(
-            (qn for qn in candidates if self._parent_qn(qn) == module_qn), None
-        ):
-            return self.function_registry[own], own
-        if not candidates:
-            return None
-        best = self._best_trie_candidate(candidates, module_qn)
-        self._verdict = cs.EdgeResolution.HEURISTIC
-        return self.function_registry[best], best
-
-    def _php_class_candidates(self, symbol: str) -> list[str]:
-        # Every class whose name PHP would match to `symbol`, which compares
-        # class names ASCII case-insensitively: as written, declared in lower
-        # case, or declared with capitals (`new box()` builds `Box`). Each is
-        # named as declared, which is what the edge must target.
-        folded = _php_fold(symbol)
-        found = dict.fromkeys(
-            [
-                *self.function_registry.find_ending_with(symbol),
-                *self.function_registry.find_ending_with(folded),
-                *self._php_cased_definitions().classes.get(folded, ()),
-            ]
-        )
-        return [qn for qn in found if self.function_registry[qn] == cs.NodeLabel.CLASS]
-
-    def _php_declared_namespace(self, class_qn: str) -> PhpClassPath | None:
-        # The ASCII-folded namespace PHP declares `class_qn` in; None when its
-        # file is not PHP or its declaration cannot be read this run, which
-        # never passes for the global namespace.
-        if self._module_language(class_qn) != cs.SupportedLanguage.PHP:
-            return None
-        module_qn = self._php_module_of(class_qn)
-        if module_qn is None:
-            return None
-        declared = self._php_class_namespaces.get(module_qn)
-        if declared is None:
-            root = self._cached_module_root(module_qn)
-            declared = (
-                {
-                    qn: tuple(_php_fold(part) for part in namespace)
-                    for qn, namespace in php_class_names.declared_class_namespaces(
-                        root, module_qn
-                    ).items()
-                }
-                if root is not None
-                else {}
-            )
-            self._php_class_namespaces[module_qn] = declared
-        return declared.get(class_qn)
-
-    def _php_module_of(self, qualified_name: str) -> str | None:
-        modules = self.type_inference.module_qn_to_file_path
-        probe = qualified_name
-        while cs.SEPARATOR_DOT in probe:
-            probe = self._parent_qn(probe)
-            if probe in modules:
-                return probe
-        return None
 
     def resolve_php_method_on_class_path(
         self, path: PhpClassPath, method_name: str, module_qn: str
@@ -1930,78 +1702,11 @@ class CallResolver:
         bound as surely as the class is."""
         if (owner := self.resolve_php_class_path(path, module_qn)) is None:
             return None
-        method = self._php_method(owner[1], method_name)
+        method = self._php.php_method(owner[1], method_name)
         return None if method is None else Resolved(*method, owner.resolution)
 
     def php_constructor(self, class_qn: str) -> tuple[str, str] | None:
-        """The `__construct` a `new` of `class_qn` runs: the class's own, else
-        the nearest one it inherits, which PHP runs in its place."""
-        return self._php_method(class_qn, cs.PHP_METHOD_CONSTRUCT)
-
-    def _php_method(self, class_qn: str, method_name: str) -> tuple[str, str] | None:
-        # PHP method names are ASCII case-insensitive, so a child's
-        # `__CONSTRUCT` overrides its parent's `__construct`: each class is
-        # searched in any casing before its ancestors are, and the edge names
-        # the method as declared.
-        wanted = _php_fold(method_name)
-        queue = deque([class_qn])
-        seen = {class_qn}
-        while queue:
-            owner = self._follow_reexports(queue.popleft())
-            if (
-                method_qn := self._php_declared_method(owner, method_name, wanted)
-            ) is not None:
-                return self.function_registry[method_qn], method_qn
-            for parent in self.facts.class_inheritance.get(owner, []):
-                if parent not in seen:
-                    seen.add(parent)
-                    queue.append(parent)
-        return None
-
-    def _php_declared_method(
-        self, owner_qn: str, method_name: str, folded: str
-    ) -> str | None:
-        for spelling in (method_name, folded):
-            method_qn = f"{owner_qn}{cs.SEPARATOR_DOT}{spelling}"
-            if self.function_registry.get(method_qn) == cs.NodeLabel.METHOD:
-                return method_qn
-        return self._php_cased_definitions().methods.get((owner_qn, folded))
-
-    def _php_cased_definitions(self) -> _PhpCasedIndex:
-        # PHP classes and methods declared with an upper-case letter, by
-        # folded name. A lookup by the written or the folded spelling misses
-        # them (`box` for `Box`, `__construct` for `__CONSTRUCT`), and the
-        # registry's prefix walk cannot list a method like `__CONSTRUCT`,
-        # since the trie skips every `__`-prefixed key as one of its markers.
-        if self._php_cased_index is None:
-            index = _PhpCasedIndex({}, {})
-            for qn, kind in self.function_registry.items():
-                if kind not in (cs.NodeLabel.CLASS, cs.NodeLabel.METHOD):
-                    continue
-                owner_qn, _, leaf = qn.rpartition(cs.SEPARATOR_DOT)
-                if (folded := _php_fold(leaf)) == leaf or (
-                    self._module_language(owner_qn) != cs.SupportedLanguage.PHP
-                ):
-                    continue
-                if kind == cs.NodeLabel.METHOD:
-                    index.methods.setdefault((owner_qn, folded), qn)
-                else:
-                    index.classes.setdefault(folded, []).append(qn)
-            self._php_cased_index = index
-        return self._php_cased_index
-
-    def _php_import_key(self, call_name: str, import_map: dict[str, str]) -> str | None:
-        """The import-map key matching `call_name` under PHP case folding.
-
-        Returns None unless EXACTLY ONE key folds to the same name. Two keys
-        differing only in case cannot both be the intended target, and PHP
-        would reject the duplicate `use` at compile time anyway -- so
-        declining is correct rather than cautious, and the trie fallback still
-        applies.
-        """
-        folded = _php_fold(call_name)
-        matches = [key for key in import_map if _php_fold(key) == folded]
-        return matches[0] if len(matches) == 1 else None
+        return self._php.php_constructor(class_qn)
 
     @staticmethod
     def _julia_caller_scopes(caller_qn: str, module_qn: str) -> list[str]:
@@ -2027,7 +1732,8 @@ class CallResolver:
             imported_qn = import_map[call_name]
         elif (
             language == cs.SupportedLanguage.PHP
-            and (folded_key := self._php_import_key(call_name, import_map)) is not None
+            and (folded_key := php_resolution.php_import_key(call_name, import_map))
+            is not None
         ):
             # PHP records `import_map` under the DECLARATION spelling, so a
             # call written `FORMAT()` against `use function App\Text\format`
@@ -2060,9 +1766,15 @@ class CallResolver:
         # local names arrived via `use function`, so this needs no new parsing.
         if (
             language == cs.SupportedLanguage.PHP
-            and self._is_php_function_import(call_name, module_qn)
+            and php_resolution.is_php_function_import(
+                self.import_processor.php, call_name, module_qn
+            )
             and imported_qn not in self.function_registry
-            and (php_qn := self._php_target_for_namespace_import(imported_qn))
+            and (
+                php_qn := php_resolution.php_target_for_namespace_import(
+                    self.import_processor.php, self.function_registry, imported_qn
+                )
+            )
         ):
             logger.debug(ls.CALL_DIRECT_IMPORT, call_name=call_name, qn=php_qn)
             return self.function_registry[php_qn], php_qn
