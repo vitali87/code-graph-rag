@@ -38,6 +38,10 @@ from .records import (
 if TYPE_CHECKING:
     from pathlib import Path
 
+# One symbolizer run resolves every address of a trace, a few thousand
+# typically, in seconds; the bound only stops a hung one.
+_SYMBOLIZER_TIMEOUT_S = 600
+
 Symbolizer = Callable[[str, int, Sequence[int]], dict[int, tuple[str, str, int]]]
 
 
@@ -159,6 +163,7 @@ def _atos_symbolizer(
         text=True,
         encoding=cs.ENCODING_UTF8,
         check=True,
+        timeout=_SYMBOLIZER_TIMEOUT_S,
     )
     symbols: dict[int, tuple[str, str, int]] = {}
     lines = result.stdout.splitlines()
@@ -194,6 +199,7 @@ def _addr2line_symbolizer(
         text=True,
         encoding=cs.ENCODING_UTF8,
         check=True,
+        timeout=_SYMBOLIZER_TIMEOUT_S,
     )
     lines = result.stdout.splitlines()
     symbols: dict[int, tuple[str, str, int]] = {}

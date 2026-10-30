@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import errno
 import io
 import json
 import os
@@ -22,6 +23,12 @@ from rich.console import Console
 from .. import cli_help as ch
 from .. import constants as cs
 from ..language_spec import LANGUAGE_SPECS, LanguageSpec
+
+# `git submodule add` clones the grammar over the network, and may stop at a
+# credential prompt, so the bound is generous: it only stops a hung git.
+_GIT_TIMEOUT_S = 1800
+# The status `timeout(1)` gives a command it stopped.
+_TIMED_OUT_EXIT = 124
 
 
 class LanguageInfo(NamedTuple):
@@ -94,6 +101,12 @@ def _require_source_checkout(command: str | None) -> Path:
 
 
 def _run_git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    git = shutil.which(cs.SHELL_CMD_GIT)
+    if git is None:
+        # What running a missing `git` raises, so callers see no difference.
+        raise FileNotFoundError(
+            errno.ENOENT, os.strerror(errno.ENOENT), cs.SHELL_CMD_GIT
+        )
     # A hook or wrapper may export another repository's GIT_DIR, which git
     # obeys over `cwd`; the checkout found above must be the one edited.
     env = {
@@ -101,15 +114,22 @@ def _run_git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
         for key, value in os.environ.items()
         if key not in cs.GIT_LOCATION_ENV_VARS
     }
-    return subprocess.run(
-        ["git", *args],
-        cwd=root,
-        env=env,
-        check=True,
-        capture_output=True,
-        text=True,
-        encoding=cs.ENCODING_UTF8,
-    )
+    try:
+        return subprocess.run(
+            [git, *args],
+            cwd=root,
+            env=env,
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding=cs.ENCODING_UTF8,
+            timeout=_GIT_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired as error:
+        # Every caller reports a failed git command, and a hung one failed.
+        raise subprocess.CalledProcessError(
+            _TIMED_OUT_EXIT, error.cmd, stderr=str(error)
+        ) from error
 
 
 def _git_dir(root: Path) -> Path:

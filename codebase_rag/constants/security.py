@@ -248,6 +248,8 @@ CYPHER_PLAN_READ_OPERATOR_SUFFIXES: tuple[str, ...] = ("Scan", "Seek", "SeekByRa
 # Shell command constants
 SHELL_CMD_GREP = "grep"
 SHELL_CMD_GIT = "git"
+# The Docker CLI, which runs the bundled Memgraph stack and `cgr doctor` checks.
+DOCKER_BIN = "docker"
 SHELL_CMD_RM = "rm"
 SHELL_RM_RF_FLAG = "-rf"
 SHELL_RETURN_CODE_ERROR = -1

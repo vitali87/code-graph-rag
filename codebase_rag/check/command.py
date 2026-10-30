@@ -42,6 +42,10 @@ from .delta import StructuralDelta, normalise_paths, observe
 from .isolation import GraphStore, IsolationGuard
 
 _GIT_DELETED = "D"
+# Each git call here reads the index and the tree once; even a very large
+# checkout answers in seconds, so this only stops a hung git (a stuck lock,
+# a credential prompt) from hanging the check.
+_GIT_TIMEOUT_S = 300
 
 
 class CheckError(ValueError):
@@ -62,13 +66,23 @@ def changed_since(repo_root: Path, base: str) -> tuple[list[str], list[str]]:
     # A range (`HEAD~1..HEAD`, `main...HEAD`) makes `git diff` compare its
     # endpoints instead of a commit with the working tree, silently leaving
     # the current edits out; only a value naming one commit is a base.
-    verified = subprocess.run(
-        [cs.SHELL_CMD_GIT, "rev-parse", "--verify", "--quiet", f"{base}^{{commit}}"],
-        cwd=repo_root,
-        capture_output=True,
-        encoding=cs.ENCODING_UTF8,
-        check=False,
-    )
+    try:
+        verified = subprocess.run(
+            [
+                cs.SHELL_CMD_GIT,
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                f"{base}^{{commit}}",
+            ],
+            cwd=repo_root,
+            capture_output=True,
+            encoding=cs.ENCODING_UTF8,
+            check=False,
+            timeout=_GIT_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise CheckError(cs.CHECK_GIT_FAILED.format(base=base, error=error)) from error
     if verified.returncode != 0:
         raise CheckError(cs.CHECK_BASE_NOT_A_COMMIT.format(base=base))
     try:
@@ -91,6 +105,7 @@ def changed_since(repo_root: Path, base: str) -> tuple[list[str], list[str]]:
             capture_output=True,
             encoding=cs.ENCODING_UTF8,
             check=True,
+            timeout=_GIT_TIMEOUT_S,
         ).stdout
         untracked = subprocess.run(
             [cs.SHELL_CMD_GIT, "ls-files", "--others", "--exclude-standard", "-z"],
@@ -98,8 +113,9 @@ def changed_since(repo_root: Path, base: str) -> tuple[list[str], list[str]]:
             capture_output=True,
             encoding=cs.ENCODING_UTF8,
             check=True,
+            timeout=_GIT_TIMEOUT_S,
         ).stdout
-    except (OSError, subprocess.CalledProcessError) as error:
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
         detail = getattr(error, "stderr", "") or str(error)
         raise CheckError(
             cs.CHECK_GIT_FAILED.format(base=base, error=detail.strip())

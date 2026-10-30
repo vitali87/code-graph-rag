@@ -43,14 +43,24 @@ def _build_submodule(lang_name: str) -> bool:
     if not (submodule_path / cs.SETUP_PY).exists():
         return True
     logger.debug(ls.BUILDING_BINDINGS, lang=lang_name)
-    result = subprocess.run(
-        [sys.executable, cs.SETUP_PY, cs.BUILD_EXT_CMD, cs.INPLACE_FLAG],
-        check=False,
-        cwd=str(submodule_path),
-        capture_output=True,
-        text=True,
-        encoding=cs.ENCODING_UTF8,
-    )
+    try:
+        result = subprocess.run(
+            [sys.executable, cs.SETUP_PY, cs.BUILD_EXT_CMD, cs.INPLACE_FLAG],
+            check=False,
+            cwd=str(submodule_path),
+            capture_output=True,
+            text=True,
+            encoding=cs.ENCODING_UTF8,
+            timeout=cs.BUILD_EXT_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired as error:
+        logger.debug(
+            ls.BUILD_FAILED,
+            lang=lang_name,
+            stdout=error.stdout,
+            stderr=error.stderr,
+        )
+        return False
     if result.returncode != 0:
         logger.debug(
             ls.BUILD_FAILED,

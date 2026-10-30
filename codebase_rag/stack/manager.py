@@ -527,7 +527,7 @@ class StackManager:
         publishes Qdrant on no fixed port, leaves the default to compare
         against, as before this check.
         """
-        if not self.compose_file.exists() or shutil.which(scs.DOCKER_BIN) is None:
+        if not self.compose_file.exists() or shutil.which(cs.DOCKER_BIN) is None:
             return
         try:
             self._adopt_published_qdrant(self._resolved_config())
@@ -546,7 +546,7 @@ class StackManager:
         if (
             settings.QDRANT_API_KEY
             and self.compose_file.exists()
-            and shutil.which(scs.DOCKER_BIN) is not None
+            and shutil.which(cs.DOCKER_BIN) is not None
         ):
             self._adopt_published_qdrant(self._resolved_config())
 
@@ -627,7 +627,7 @@ class StackManager:
         project's own Qdrant container is running. StackError when Docker or
         Compose cannot tell, or Compose publishes Qdrant on no fixed port.
         """
-        if shutil.which(scs.DOCKER_BIN) is None:
+        if shutil.which(cs.DOCKER_BIN) is None:
             raise StackError(scs.ERR_DOCKER_NOT_INSTALLED)
         config = self._resolved_config(scs.ERR_COMPOSE_CONFIG_FAILED)
         target = scs.QDRANT_CONTAINER_HTTP_PORT
@@ -736,10 +736,10 @@ class StackManager:
             self._warn_if_ports_are_public(self.compose_file)
 
     def check_docker(self) -> None:
-        if shutil.which(scs.DOCKER_BIN) is None:
+        if shutil.which(cs.DOCKER_BIN) is None:
             raise StackError(scs.ERR_DOCKER_NOT_INSTALLED)
         info = subprocess.run(
-            [scs.DOCKER_BIN, "info"],
+            [cs.DOCKER_BIN, "info"],
             capture_output=True,
             text=True,
             encoding=cs.ENCODING_UTF8,
@@ -749,7 +749,7 @@ class StackManager:
         if info.returncode != 0:
             raise StackError(scs.ERR_DOCKER_DAEMON_DOWN)
         compose = subprocess.run(
-            [scs.DOCKER_BIN, scs.DOCKER_COMPOSE_SUBCOMMAND, "version"],
+            [cs.DOCKER_BIN, scs.DOCKER_COMPOSE_SUBCOMMAND, "version"],
             capture_output=True,
             text=True,
             encoding=cs.ENCODING_UTF8,
@@ -761,7 +761,7 @@ class StackManager:
 
     def _compose_cmd(self, *args: str) -> list[str]:
         return [
-            scs.DOCKER_BIN,
+            cs.DOCKER_BIN,
             scs.DOCKER_COMPOSE_SUBCOMMAND,
             "-p",
             self.project_name,
@@ -845,7 +845,7 @@ class StackManager:
     def _stop_containers(self, command: str, timeout: float, *services: str) -> None:
         if not self.compose_file.exists():
             return
-        if shutil.which(scs.DOCKER_BIN) is None:
+        if shutil.which(cs.DOCKER_BIN) is None:
             raise StackError(scs.ERR_DOCKER_NOT_INSTALLED)
         logger.info(ls.STACK_STOPPING)
         result = subprocess.run(
@@ -880,7 +880,16 @@ class StackManager:
             args.extend(["--tail", str(tail)])
         if service:
             args.append(service)
-        completed = subprocess.run(self._compose_cmd(*args), check=False)
+        # `-f` streams until the user stops it; only a one-shot read is bounded.
+        timeout = None if follow else scs.DEFAULT_DOCKER_TIMEOUT_S
+        try:
+            completed = subprocess.run(
+                self._compose_cmd(*args), check=False, timeout=timeout
+            )
+        except subprocess.TimeoutExpired as error:
+            raise StackError(
+                scs.ERR_STACK_LOGS_TIMED_OUT.format(timeout=timeout)
+            ) from error
         return completed.returncode
 
     def restart(self) -> None:

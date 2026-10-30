@@ -436,6 +436,9 @@ BINDINGS_DIR = "bindings"
 SETUP_PY = "setup.py"
 BUILD_EXT_CMD = "build_ext"
 INPLACE_FLAG = "--inplace"
+# Compiling a large grammar's generated parser (C++, C#) takes minutes on a
+# slow machine; the bound only stops a hung build.
+BUILD_EXT_TIMEOUT_S = 1800
 LANG_ATTR_PREFIX = "language_"
 LANG_ATTR_TYPESCRIPT = "language_typescript"
 LANG_ATTR_TSX = "language_tsx"

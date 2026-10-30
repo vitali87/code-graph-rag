@@ -20,6 +20,10 @@ cli = typer.Typer(
     add_completion=False,
 )
 
+# `git rev-parse HEAD` answers at once; the bound only keeps a hung git from
+# holding up the conversion for a warning.
+_GIT_HEAD_TIMEOUT_S = 30
+
 _InputFile = Annotated[Path, typer.Argument(exists=True, dir_okay=False)]
 _RepoPath = Annotated[
     Path | None,
@@ -155,19 +159,23 @@ def _warn_commit_mismatch(commit: str | None, repo_path: Path) -> None:
     """Warn when the profiled binary's commit differs from the repo HEAD."""
     if commit is None:
         return
+    import shutil
     import subprocess
 
     from .. import constants as cs
 
+    if (git := shutil.which(cs.SHELL_CMD_GIT)) is None:
+        return
     try:
         result = subprocess.run(
-            ["git", "-C", str(repo_path), "rev-parse", "HEAD"],
+            [git, "-C", str(repo_path), "rev-parse", "HEAD"],
             capture_output=True,
             text=True,
             encoding=cs.ENCODING_UTF8,
             check=False,
+            timeout=_GIT_HEAD_TIMEOUT_S,
         )
-    except OSError:
+    except (OSError, subprocess.TimeoutExpired):
         return
     head = result.stdout.strip()
     if head and not head.startswith(commit) and not commit.startswith(head):

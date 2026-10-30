@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import os
+import shutil
 import subprocess
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -137,6 +138,15 @@ def _ollama_has_model(pulled: list[str], model_id: str) -> bool:
     return any(name in wanted for name in pulled)
 
 
+def _docker_not_installed() -> HealthCheckResult:
+    return HealthCheckResult(
+        name=dcs.HEALTH_CHECK_DOCKER_NOT_RUNNING,
+        passed=False,
+        message=dcs.HEALTH_CHECK_DOCKER_NOT_INSTALLED_MSG,
+        error=dcs.HEALTH_CHECK_DOCKER_NOT_IN_PATH,
+    )
+
+
 class HealthChecker:
     __slots__ = ("results",)
 
@@ -144,9 +154,11 @@ class HealthChecker:
         self.results: list[HealthCheckResult] = []
 
     def check_docker(self) -> HealthCheckResult:
+        if (docker := shutil.which(cs.DOCKER_BIN)) is None:
+            return _docker_not_installed()
         try:
             result = subprocess.run(
-                ["docker", "info", "--format", "{{.ServerVersion}}"],
+                [docker, "info", "--format", "{{.ServerVersion}}"],
                 capture_output=True,
                 text=True,
                 encoding=cs.ENCODING_UTF8,
@@ -168,12 +180,7 @@ class HealthChecker:
                     error=result.stderr.strip() or dcs.HEALTH_CHECK_DOCKER_EXIT_CODE,
                 )
         except FileNotFoundError:
-            return HealthCheckResult(
-                name=dcs.HEALTH_CHECK_DOCKER_NOT_RUNNING,
-                passed=False,
-                message=dcs.HEALTH_CHECK_DOCKER_NOT_INSTALLED_MSG,
-                error=dcs.HEALTH_CHECK_DOCKER_NOT_IN_PATH,
-            )
+            return _docker_not_installed()
         except subprocess.TimeoutExpired:
             return HealthCheckResult(
                 name=dcs.HEALTH_CHECK_DOCKER_NOT_RUNNING,

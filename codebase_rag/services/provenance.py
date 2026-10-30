@@ -71,6 +71,11 @@ def _codec_schema_sha256() -> str | None:
     return None
 
 
+# `git status --porcelain` walks the whole worktree, seconds on a large
+# one; the bound only stops a hung git from holding up the manifest.
+_GIT_TIMEOUT_S = 120
+
+
 def _git_line(repo_path: Path, *args: str) -> str | None:
     try:
         proc = subprocess.run(
@@ -79,8 +84,9 @@ def _git_line(repo_path: Path, *args: str) -> str | None:
             text=True,
             encoding=cs.ENCODING_UTF8,
             check=False,
+            timeout=_GIT_TIMEOUT_S,
         )
-    except OSError:
+    except (OSError, subprocess.TimeoutExpired):
         return None
     if proc.returncode != 0:
         return None

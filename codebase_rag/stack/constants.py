@@ -5,7 +5,6 @@ COMPOSE_PROJECT_NAME = "cgr"
 COMPOSE_FILENAME = "docker-compose.yaml"
 STATE_FILENAME = "state.json"
 
-DOCKER_BIN = "docker"
 DOCKER_COMPOSE_SUBCOMMAND = "compose"
 
 DEFAULT_HEALTH_TIMEOUT_S = 60.0
@@ -81,6 +80,7 @@ ERR_STACK_NOT_HEALTHY = (
     "Stack started but {service} did not become healthy within {timeout}s."
 )
 ERR_COMPOSE_FILE_MISSING = "Compose file not found at {path}."
+ERR_STACK_LOGS_TIMED_OUT = "'docker compose logs' did not finish within {timeout}s"
 
 # The descriptor C code writes stderr to, whatever sys.stderr is bound to.
 NATIVE_STDERR_FD = 2

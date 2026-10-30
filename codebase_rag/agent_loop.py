@@ -895,9 +895,11 @@ def _git_state() -> tuple[str, bool] | None:
     repo = app_context.session.target_repo
     if repo is None or not repo.exists():
         return None
+    if (git := shutil.which(cs.SHELL_CMD_GIT)) is None:
+        return None
     try:
         result = subprocess.run(
-            ["git", "status", "--porcelain", "--branch"],
+            [git, "status", "--porcelain", "--branch"],
             capture_output=True,
             text=True,
             encoding=cs.ENCODING_UTF8,
