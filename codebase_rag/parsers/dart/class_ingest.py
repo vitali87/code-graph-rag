@@ -118,15 +118,6 @@ class DartClassIngest(LanguageClassIngest):
             if method_node.type in cs.DART_CONSTRUCTOR_SIGNATURE_TYPES:
                 self.facts.dart_constructor_qns.add(ingested_qn)
 
-    def annotated_override_sink(self) -> dict[str, list[tuple[str, str]]] | None:
-        # An external base (a Flutter widget class) is not introspectable
-        # the way Python stdlib bases are, but Dart marks every override
-        # explicitly with @override. Whether a parent is truly external is
-        # unknowable here (it may live in a file parsed later), so only
-        # RECORD the annotated methods; resolve_deferred_inherits decides
-        # once every class is registered.
-        return self.annotated_overrides
-
     def record_resolved_base(self, entry: DeferredInherit, parent_qn: str) -> None:
         # `implements` targets never enter class_inheritance, so the override
         # ancestry walk needs the resolved first-party IMPLEMENTS parents

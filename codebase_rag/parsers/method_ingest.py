@@ -58,6 +58,7 @@ from .utils import (
 if TYPE_CHECKING:
     from ..services import IngestorProtocol
     from ..types_defs import PendingTypeFact
+    from .dart.definition_state import DartDefinitionState
     from .parameter_nodes import PendingParameterType
 
 
@@ -73,8 +74,8 @@ class DocstringHost(Protocol):
 class MethodIngestHost(DocstringHost, Protocol):
     """What `ingest_method` reads from the definition pass that calls it: the
     graph and registries a method is written to, the queues its endpoint,
-    type and parameter facts wait in until every type is registered, and its
-    docstring."""
+    type and parameter facts wait in until every type is registered, the
+    Dart state its `@override` methods are recorded in, and its docstring."""
 
     ingestor: IngestorProtocol
     function_registry: FunctionRegistryTrieProtocol
@@ -83,6 +84,7 @@ class MethodIngestHost(DocstringHost, Protocol):
     pending_endpoints: list[tuple[cs.NodeLabel, str, list[str], str | None]]
     pending_type_facts: list[PendingTypeFact]
     pending_parameter_types: list[PendingParameterType]
+    dart: DartDefinitionState
 
 
 def _member_name_start_point(node: Node) -> tuple[int, int]:
@@ -102,17 +104,13 @@ def _method_end_line(node: ASTNode, language: cs.SupportedLanguage | None) -> in
 
 
 def _resolve_method_name(
-    method_node: ASTNode, language: cs.SupportedLanguage, skip_cpp_artifact_check: bool
+    method_node: ASTNode, language: cs.SupportedLanguage
 ) -> str | None:
     if language == cs.SupportedLanguage.CPP:
         # Inside an intact class body a macro invocation parsed as a type-less
         # member (`FMT_CATCH(...) {}`) can never be a ctor of another class, so
-        # the shape check alone is decisive here. skip_cpp_artifact_check: the
-        # orphan-ctor flush already ran the class-registry tiebreak (a zero-param
-        # orphan ctor SHARES the artifact shape and must not be re-dropped here).
-        if not skip_cpp_artifact_check and cpp_utils.is_macro_invocation_artifact(
-            method_node
-        ):
+        # the shape check alone is decisive here.
+        if cpp_utils.is_macro_invocation_artifact(method_node):
             return None
         return cpp_utils.extract_function_name(method_node) or None
     if language == cs.SupportedLanguage.CSHARP:
@@ -206,28 +204,30 @@ def _method_container_label(
 
 
 def _record_method_overrides(
+    host: MethodIngestHost,
     method_props: PropertyDict,
-    method_qn: str,
-    method_name: str,
+    method: _MethodSite,
     container_qn: str,
     decorators: list[str],
     external_override_names: frozenset[str],
-    annotated_override_sink: dict[str, list[tuple[str, str]]] | None,
 ) -> None:
     # Overriding a method of an EXTERNAL stdlib base (click's TextWrapper
     # subclass overriding textwrap's _wrap_chunks): the base's machinery invokes
     # it, so the dead-code surfaces root this property.
-    if method_name in external_override_names:
+    if method.name in external_override_names:
         method_props[cs.KEY_OVERRIDES_EXTERNAL] = True
-    # A Dart @override is only an EXTERNAL override if the resolved ancestry
-    # says so, which is unknowable until every class is registered: record it
-    # for resolve_deferred_inherits to judge.
+    # An external Dart base (a Flutter widget class) is not introspectable the
+    # way Python stdlib bases are, but Dart marks every override with
+    # @override. It is only an EXTERNAL override if the resolved ancestry says
+    # so, which is unknowable until every class is registered (the base may
+    # live in a file parsed later): record it for resolve_deferred_inherits to
+    # judge.
     if (
-        annotated_override_sink is not None
+        method.language == cs.SupportedLanguage.DART
         and cs.DART_OVERRIDE_ANNOTATION in decorators
     ):
-        annotated_override_sink.setdefault(container_qn, []).append(
-            (method_qn, method_name)
+        host.dart.annotated_overrides.setdefault(container_qn, []).append(
+            (method.qualified_name, method.name)
         )
 
 
@@ -372,21 +372,25 @@ def ingest_method(
     container_type: cs.NodeLabel,
     language: cs.SupportedLanguage,
     *,
+    file_path: Path | None,
+    module_qn: str | None,
     lang_queries: LanguageQueries | None = None,
     method_qualified_name: str | None = None,
-    file_path: Path | None = None,
+    method_name: str | None = None,
     defer_containment: list[DeferredParentLink] | None = None,
-    module_qn: str | None = None,
     external_override_names: frozenset[str] = frozenset(),
-    annotated_override_sink: dict[str, list[tuple[str, str]]] | None = None,
-    skip_cpp_artifact_check: bool = False,
     member_aliases: tuple[str, ...] = (),
 ) -> str | None:
     # Returns the registered method qn (post register_unique_qn, so with any
     # @line dedup suffix) so a caller can wire further edges to the exact node,
     # e.g. an anonymous-class override method's OVERRIDES edge to its base. Returns
     # None only when the method has no resolvable name and nothing was registered.
-    method_name = _resolve_method_name(method_node, language, skip_cpp_artifact_check)
+    # A caller that has already named the method passes `method_name`, and no
+    # language's naming rule runs again: the C++ orphan-ctor flush names a
+    # node its class-registry tiebreak judged a ctor, and a zero-param orphan
+    # ctor SHARES the macro-artifact shape the C++ rule would drop it for.
+    if method_name is None:
+        method_name = _resolve_method_name(method_node, language)
     if method_name is None:
         return None
     start = _method_start_point(method_node, language)
@@ -438,13 +442,7 @@ def ingest_method(
     )
 
     _record_method_overrides(
-        method_props,
-        method_qn,
-        method_name,
-        container_qn,
-        decorators,
-        external_override_names,
-        annotated_override_sink,
+        host, method_props, method, container_qn, decorators, external_override_names
     )
 
     _write_method(host, method, method_props, decorators, is_property)

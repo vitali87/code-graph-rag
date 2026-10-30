@@ -691,7 +691,7 @@ class CppFunctionIngest(LanguageFunctionIngest):
         class_qn = self._lookup_artifact_class(entry, name)
         file_path = self.module_qn_to_file_path.get(entry.module_qn)
         if class_qn is not None:
-            return self._reattach_orphan_ctor(entry, class_qn, file_path)
+            return self._reattach_orphan_ctor(entry, name, class_qn, file_path)
         if not cpp_utils.has_named_parameter(entry.func_node):
             return False
         resolution = self._host._resolve_function_identity(
@@ -730,6 +730,7 @@ class CppFunctionIngest(LanguageFunctionIngest):
     def _reattach_orphan_ctor(
         self,
         entry: _DeferredArtifact,
+        name: str,
         class_qn: str,
         file_path: Path | None,
     ) -> bool:
@@ -743,9 +744,9 @@ class CppFunctionIngest(LanguageFunctionIngest):
             cs.NodeLabel.CLASS,
             cs.SupportedLanguage.CPP,
             lang_queries=entry.lang_queries,
+            method_name=name,
             file_path=file_path,
             module_qn=entry.module_qn,
-            skip_cpp_artifact_check=True,
         )
         if method_qn is None:
             return False

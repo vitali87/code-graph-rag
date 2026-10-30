@@ -140,10 +140,6 @@ class LanguageClassIngest:
         # The method names an external base of the class defines.
         return frozenset()
 
-    def annotated_override_sink(self) -> dict[str, list[tuple[str, str]]] | None:
-        # Where a method the language marks as an override is recorded.
-        return None
-
     def repeats_member_signature(
         self, method_node: Node, seen_signatures: set[str]
     ) -> bool:

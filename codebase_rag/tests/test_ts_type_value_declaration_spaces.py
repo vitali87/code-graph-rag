@@ -726,7 +726,13 @@ class TestMethodContainerOnATwin:
             _get_docstring=lambda _node, _lang: None,
         )
         method_ingest.ingest_method(
-            host, member, container_qn, label, cs.SupportedLanguage.TS
+            host,
+            member,
+            container_qn,
+            label,
+            cs.SupportedLanguage.TS,
+            file_path=None,
+            module_qn=None,
         )
         return [
             c.from_spec

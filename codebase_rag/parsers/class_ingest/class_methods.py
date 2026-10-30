@@ -112,7 +112,6 @@ class ClassMethods:
         method_nodes = self._without_overload_stubs(method_nodes, scope.module_qn)
 
         external_override_names = language_ingest.external_override_names(class_qn)
-        annotated_override_sink = language_ingest.annotated_override_sink()
         seen_signatures: set[str] = set()
 
         for method_node in method_nodes:
@@ -134,7 +133,6 @@ class ClassMethods:
                 file_path=scope.file_path,
                 module_qn=scope.module_qn,
                 external_override_names=external_override_names,
-                annotated_override_sink=annotated_override_sink,
                 member_aliases=member_aliases.get(method_node.id, ()),
             )
             if ingested_qn is not None:

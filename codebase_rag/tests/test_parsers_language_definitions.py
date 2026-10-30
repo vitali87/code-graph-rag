@@ -40,7 +40,6 @@ def test_the_class_hooks_take_nothing_themselves() -> None:
     assert ingest.non_method_members(class_node) == []
     assert ingest.member_aliases(class_node) == {}
     assert ingest.external_override_names("proj.mod.Shape") == frozenset()
-    assert ingest.annotated_override_sink() is None
     assert ingest.is_enum("proj.mod.Shape") is False
     assert ingest.overrides_linked_apart() == ()
     assert ingest.namespaced_class("Shape") is None
