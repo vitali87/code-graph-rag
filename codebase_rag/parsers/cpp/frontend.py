@@ -284,7 +284,14 @@ class _Collector:
         if label == fc.LABEL_TYPE:
             self._process_type(cursor, rel, module_qn)
             return None
+        return self._process_class_or_function(cursor, label, rel, module_qn)
 
+    def _process_class_or_function(
+        self, cursor: Cursor, label: str, rel: str, module_qn: str
+    ) -> _Scope:
+        # A class or free function, DEFINED by its file's Module; a class
+        # also records its bases, and a function is the scope its calls are
+        # attributed to.
         qn = (
             self.resolver.class_qn(cursor)
             if label == fc.LABEL_CLASS

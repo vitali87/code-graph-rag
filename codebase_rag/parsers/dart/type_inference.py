@@ -197,25 +197,17 @@ def _record_binding(
     # One name-plus-initializer run: the first identifier is the variable,
     # a second identifier followed by an argument selector is a
     # construction base typing the variable when no declared type applies.
-    var_name: str | None = None
-    init_base: str | None = None
-    has_argument_selector = False
-    for part in parts:
-        if part.type == cs.TS_DART_IDENTIFIER and part.text:
-            if var_name is None:
-                var_name = part.text.decode(cs.ENCODING_UTF8)
-            elif init_base is None:
-                init_base = part.text.decode(cs.ENCODING_UTF8)
-        elif part.type == cs.TS_DART_SELECTOR and any(
-            inner.type == cs.TS_DART_ARGUMENT_PART for inner in part.named_children
-        ):
-            has_argument_selector = True
+    var_name, init_base = _leading_identifiers(parts)
     if var_name is None:
         return
     if declared_type is not None:
         _record(var_name, declared_type, types, conflicts)
         return
-    if init_base is not None and has_argument_selector and init_base[:1].isupper():
+    if (
+        init_base is not None
+        and any(_is_argument_selector(part) for part in parts)
+        and init_base[:1].isupper()
+    ):
         _record(var_name, init_base, types, conflicts)
 
 
@@ -224,31 +216,44 @@ def _record_static_call(
 ) -> None:
     # shape: identifier var, identifier Base, selector(.member),
     # selector(argument_part); anything else is not a class-qualified call
-    var_name: str | None = None
-    base: str | None = None
-    member: str | None = None
-    has_argument_selector = False
-    for part in parts:
-        if part.type == cs.TS_DART_IDENTIFIER and part.text:
-            if var_name is None:
-                var_name = part.text.decode(cs.ENCODING_UTF8)
-            elif base is None:
-                base = part.text.decode(cs.ENCODING_UTF8)
-        elif part.type == cs.TS_DART_SELECTOR:
-            if any(
-                inner.type == cs.TS_DART_ARGUMENT_PART for inner in part.named_children
-            ):
-                has_argument_selector = True
-            elif member is None:
-                member = _selector_member_name(part)
+    var_name, base = _leading_identifiers(parts)
+    member = next(
+        (
+            name
+            for part in parts
+            if part.type == cs.TS_DART_SELECTOR
+            and not _is_argument_selector(part)
+            and (name := _selector_member_name(part)) is not None
+        ),
+        None,
+    )
     if (
         var_name is not None
         and base is not None
         and member is not None
-        and has_argument_selector
+        and any(_is_argument_selector(part) for part in parts)
         and base[:1].isupper()
     ):
         bindings[var_name] = (base, member)
+
+
+def _leading_identifiers(parts: list[Node]) -> tuple[str | None, str | None]:
+    # The first two identifiers of a run, wherever its selectors fall.
+    names = [
+        part.text.decode(cs.ENCODING_UTF8)
+        for part in parts
+        if part.type == cs.TS_DART_IDENTIFIER and part.text
+    ]
+    return (
+        names[0] if names else None,
+        names[1] if len(names) > 1 else None,
+    )
+
+
+def _is_argument_selector(part: Node) -> bool:
+    return part.type == cs.TS_DART_SELECTOR and any(
+        inner.type == cs.TS_DART_ARGUMENT_PART for inner in part.named_children
+    )
 
 
 def _record(

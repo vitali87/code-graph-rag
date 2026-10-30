@@ -499,38 +499,46 @@ def c_macro_split_declaration(func_node: Node) -> Node | None:
     # declarator. That MISSING `;` is the only thing separating this from a
     # block macro (`START_TEST(name) {...}`), which yields the same
     # definition with nothing split off before it, so it is required.
-    if func_node.type != cs.CppNodeType.FUNCTION_DEFINITION:
+    if not _reads_name_as_type(func_node):
         return None
+    split = func_node.prev_sibling
+    if split is None or not _closes_after_macro(split):
+        return None
+    return split
+
+
+def _reads_name_as_type(func_node: Node) -> bool:
+    # A definition whose `type` is the real name and whose declarator is the
+    # bare parameter list, parenthesized.
+    if func_node.type != cs.CppNodeType.FUNCTION_DEFINITION:
+        return False
     name_node = func_node.child_by_field_name(cs.FIELD_TYPE)
     params = func_node.child_by_field_name(cs.FIELD_DECLARATOR)
-    if (
-        name_node is None
-        or name_node.type != cs.CppNodeType.TYPE_IDENTIFIER
-        or params is None
-        or params.type != cs.CppNodeType.PARENTHESIZED_DECLARATOR
+    return (
+        name_node is not None
+        and name_node.type == cs.CppNodeType.TYPE_IDENTIFIER
+        and params is not None
+        and params.type == cs.CppNodeType.PARENTHESIZED_DECLARATOR
         # `T (f(void)) {...}` wraps a real declarator that names the function
-        or any(
+        and not any(
             child.type == cs.CppNodeType.FUNCTION_DECLARATOR
             for child in params.named_children
         )
-    ):
-        return None
-    split = func_node.prev_sibling
-    if (
-        split is None
-        or split.type != cs.CppNodeType.DECLARATION
-        or split.child_count == 0
-    ):
-        return None
+    )
+
+
+def _closes_after_macro(split: Node) -> bool:
+    # A declaration recovery closed with a MISSING `;` right after an
+    # identifier (behind any `*`): the return type and the macro.
+    if split.type != cs.CppNodeType.DECLARATION or split.child_count == 0:
+        return False
     terminator = split.children[-1]
     if not terminator.is_missing or terminator.type != cs.CHAR_SEMICOLON:
-        return None
+        return False
     macro = split.child_by_field_name(cs.FIELD_DECLARATOR)
     while macro is not None and macro.type == cs.CppNodeType.POINTER_DECLARATOR:
         macro = macro.child_by_field_name(cs.FIELD_DECLARATOR)
-    if macro is None or macro.type != cs.CppNodeType.IDENTIFIER:
-        return None
-    return split
+    return macro is not None and macro.type == cs.CppNodeType.IDENTIFIER
 
 
 def c_macro_split_function_name(func_node: Node) -> str | None:

@@ -236,14 +236,9 @@ def extract_parent_classes(
             )
         )
 
-    # PHP `extends` (a class's superclass or an interface's superinterfaces)
-    # is a base_clause listing `name` nodes; both are inheritance.
-    if base_clause := find_child_by_type(class_node, cs.TS_PHP_BASE_CLAUSE):
-        parent_classes.extend(
-            resolve_to_qn(parent_name, module_qn)
-            for child in base_clause.children
-            if (parent_name := php_base_simple_name(child))
-        )
+    parent_classes.extend(
+        _php_base_clause_parents(class_node, module_qn, resolve_to_qn)
+    )
 
     if class_node.type == cs.TS_RS_TRAIT_ITEM:
         parent_classes.extend(
@@ -258,34 +253,12 @@ def extract_parent_classes(
             extract_dart_parent_classes(class_node, module_qn, resolve_to_qn)
         )
 
-    # Julia `<:` base: the type_head's first named child is a
-    # binary_expression (type name left, supertype right).
     if class_node.type in (
         cs.TS_JULIA_STRUCT_DEFINITION,
         cs.TS_JULIA_ABSTRACT_DEFINITION,
         cs.TS_JULIA_PRIMITIVE_DEFINITION,
-    ):
-        type_head = find_child_by_type(class_node, cs.TS_JULIA_TYPE_HEAD)
-        if type_head is not None and type_head.named_children:
-            head = type_head.named_children[0]
-            if head.type == cs.TS_BINARY_EXPRESSION and head.named_children:
-                base = head.named_children[-1]
-                if base.type == cs.TS_JULIA_PARAMETRIZED_TYPE_EXPRESSION:
-                    # `struct Dog{T} <: Animal{T}`: the base name is the
-                    # parametrized expression's first named child.
-                    base = next(iter(base.named_children), None)
-                if (
-                    base is not None
-                    and base.type
-                    in (
-                        cs.TS_JULIA_IDENTIFIER,
-                        cs.TS_JULIA_FIELD_EXPRESSION,
-                        cs.TS_JULIA_SCOPED_IDENTIFIER,
-                    )
-                    and base.text
-                ):
-                    if name := safe_decode_text(base):
-                        parent_classes.append(resolve_to_qn(name, module_qn))
+    ) and (name := _julia_supertype_name(class_node)):
+        parent_classes.append(resolve_to_qn(name, module_qn))
 
     if class_node.type in cs.SPEC_SCALA_CLASS_TYPES:
         parent_classes.extend(
@@ -293,6 +266,49 @@ def extract_parent_classes(
         )
 
     return parent_classes
+
+
+def _php_base_clause_parents(
+    class_node: Node, module_qn: str, resolve_to_qn: Callable[[str, str], str]
+) -> list[str]:
+    # PHP `extends` (a class's superclass or an interface's superinterfaces)
+    # is a base_clause listing `name` nodes; both are inheritance.
+    base_clause = find_child_by_type(class_node, cs.TS_PHP_BASE_CLAUSE)
+    if base_clause is None:
+        return []
+    return [
+        resolve_to_qn(parent_name, module_qn)
+        for child in base_clause.children
+        if (parent_name := php_base_simple_name(child))
+    ]
+
+
+def _julia_supertype_name(type_node: Node) -> str | None:
+    # Julia `<:` base: the type_head's first named child is a
+    # binary_expression (type name left, supertype right).
+    type_head = find_child_by_type(type_node, cs.TS_JULIA_TYPE_HEAD)
+    if type_head is None or not type_head.named_children:
+        return None
+    head = type_head.named_children[0]
+    if head.type != cs.TS_BINARY_EXPRESSION or not head.named_children:
+        return None
+    base = head.named_children[-1]
+    if base.type == cs.TS_JULIA_PARAMETRIZED_TYPE_EXPRESSION:
+        # `struct Dog{T} <: Animal{T}`: the base name is the parametrized
+        # expression's first named child.
+        base = next(iter(base.named_children), None)
+    if (
+        base is None
+        or base.type
+        not in (
+            cs.TS_JULIA_IDENTIFIER,
+            cs.TS_JULIA_FIELD_EXPRESSION,
+            cs.TS_JULIA_SCOPED_IDENTIFIER,
+        )
+        or not base.text
+    ):
+        return None
+    return safe_decode_text(base)
 
 
 def _rust_supertrait_parents(

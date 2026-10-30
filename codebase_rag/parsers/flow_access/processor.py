@@ -863,6 +863,84 @@ def _propagate_summaries(
     return resolved, is_tainted
 
 
+# Value-preserving wrappers: the taint of what each holds carries through.
+_LEAN_VALUE_WRAPPERS = frozenset(
+    {
+        cs.TS_AWAIT_EXPRESSION,
+        cs.TS_PARENTHESIZED_EXPRESSION,
+        cs.TS_GO_TYPE_CONVERSION_EXPRESSION,
+        cs.TS_RS_REFERENCE_EXPRESSION,
+    }
+)
+
+
+def _lean_value_operands(
+    node: Node, lean: _LeanCtx
+) -> tuple[Node | None, Node | None] | None:
+    # The two operands an expression's value MAY be either of, whose taints
+    # union; None for any other expression.
+    node_type = node.type
+    if node_type in (cs.TS_JS_TERNARY_EXPRESSION, cs.TS_PY_CONDITIONAL_EXPRESSION):
+        # `c ? a : b` (Java shares ternary_expression, C++ spells it
+        # conditional_expression): the value MAY be either branch, so their
+        # taints union; the condition never becomes the value.
+        return (
+            node.child_by_field_name(cs.TS_FIELD_CONSEQUENCE),
+            node.child_by_field_name(cs.FIELD_ALTERNATIVE),
+        )
+    if (
+        node_type == cs.TS_BINARY_EXPRESSION
+        and lean.flow.language in _HOISTED_DECL_LANGS
+        and _is_short_circuit(node)
+    ):
+        # JS-ONLY: `env || 'fallback'` / `??` / `&&` yield one OPERAND as the
+        # result, so the taints of both union (MAY). In Go/Java/C++/Rust these
+        # operators produce a boolean, never an operand, so the value stays
+        # clean there.
+        return (
+            node.child_by_field_name(cs.TS_FIELD_LEFT),
+            node.child_by_field_name(cs.TS_FIELD_RIGHT),
+        )
+    return None
+
+
+def _lean_identity_call(arg: Node, lean: _LeanCtx) -> bool:
+    # A factory call one level down (`Files.newBufferedWriter(Path.of("cfg"))`)
+    # whose own first argument is the handle's identity.
+    if not lean.identity_calls or arg.type != lean.descriptor.call_type:
+        return False
+    raw = call_name(arg)
+    # A static import (`import static java.nio.file.Path.of`) spells the
+    # factory bare (`of("cfg")`); resolve it through the import map to its
+    # qualified form before the identity-call check, so the literal is still
+    # recovered (#1204).
+    # Membership is NOT shadow-aware (#1216, accepted limitation): a
+    # same-class/inherited `of(..)` or a local nested `Path` class still
+    # matches, mis-attributing a literal identity where `<dynamic>` would
+    # be correct. Fixing it needs the full call resolver in this
+    # deliberately lightweight path, for triggers that are valid but
+    # uncommon Java (a shadowed static import, or a local nested class
+    # reusing a well-known name).
+    return raw is not None and (
+        raw in lean.identity_calls
+        or lean.flow.import_map.get(raw) in lean.identity_calls
+    )
+
+
+def _lean_identity_new(arg: Node, lean: _LeanCtx) -> bool:
+    # A `new` identity carrier one level down (`new PrintWriter(new
+    # File("x"))`) whose own first argument is the handle's identity.
+    new_type = lean.descriptor.new_expression_type
+    if not lean.identity_new_types or new_type is None or arg.type != new_type:
+        return False
+    inner_type = arg.child_by_field_name(cs.TS_FIELD_TYPE)
+    return (
+        inner_type is not None
+        and inner_type.text is not None
+        and inner_type.text.decode(cs.ENCODING_UTF8) in lean.identity_new_types
+    )
+
+
 class FlowProcessor:
     """Detects intra-procedural value flow in a function body and emits FLOWS_TO
     edges: resource->resource (a read source reaches a write sink), caller->callee
@@ -1866,50 +1944,33 @@ class FlowProcessor:
         # function whose return is deferred (pending) to the fixpoint.
         if node is None:
             return None
+        if node.type in _LEAN_VALUE_WRAPPERS:
+            return self._lean_expr_taint(self._lean_wrapped_value(node), tainted, lean)
+        if (operands := _lean_value_operands(node, lean)) is not None:
+            return _merge_optional_taints(
+                self._lean_expr_taint(operands[0], tainted, lean),
+                self._lean_expr_taint(operands[1], tainted, lean),
+            )
+        return self._lean_leaf_taint(node, tainted, lean)
+
+    def _lean_wrapped_value(self, node: Node) -> Node | None:
+        # The expression a value-preserving wrapper holds.
+        match node.type:
+            case cs.TS_GO_TYPE_CONVERSION_EXPRESSION:
+                # Go `[]byte(s)` / `string(b)`: value-preserving, taint carries.
+                return node.child_by_field_name(cs.TS_GO_FIELD_OPERAND)
+            case cs.TS_RS_REFERENCE_EXPRESSION:
+                # Rust `&s` / `&mut s`: a borrow of a tainted value is tainted.
+                return node.child_by_field_name(cs.FIELD_VALUE)
+            case _:
+                # Unwrap `await expr` and `(expr)` to the inner source expression.
+                return self._js_first_expr(node)
+
+    def _lean_leaf_taint(
+        self, node: Node, tainted: _TaintMap, lean: _LeanCtx
+    ) -> Taint | None:
         d = lean.descriptor
         node_type = node.type
-        if node_type in (cs.TS_AWAIT_EXPRESSION, cs.TS_PARENTHESIZED_EXPRESSION):
-            # Unwrap `await expr` and `(expr)` to the inner source expression.
-            return self._lean_expr_taint(self._js_first_expr(node), tainted, lean)
-        if node_type == cs.TS_GO_TYPE_CONVERSION_EXPRESSION:
-            # Go `[]byte(s)` / `string(b)`: value-preserving, taint carries.
-            return self._lean_expr_taint(
-                node.child_by_field_name(cs.TS_GO_FIELD_OPERAND), tainted, lean
-            )
-        if node_type == cs.TS_RS_REFERENCE_EXPRESSION:
-            # Rust `&s` / `&mut s`: a borrow of a tainted value is tainted.
-            return self._lean_expr_taint(
-                node.child_by_field_name(cs.FIELD_VALUE), tainted, lean
-            )
-        if node_type in (cs.TS_JS_TERNARY_EXPRESSION, cs.TS_PY_CONDITIONAL_EXPRESSION):
-            # `c ? a : b` (Java shares ternary_expression, C++ spells it
-            # conditional_expression): the value MAY be either branch, so
-            # their taints union; the condition never becomes the value.
-            return _merge_optional_taints(
-                self._lean_expr_taint(
-                    node.child_by_field_name(cs.TS_FIELD_CONSEQUENCE), tainted, lean
-                ),
-                self._lean_expr_taint(
-                    node.child_by_field_name(cs.FIELD_ALTERNATIVE), tainted, lean
-                ),
-            )
-        if (
-            node_type == cs.TS_BINARY_EXPRESSION
-            and lean.flow.language in _HOISTED_DECL_LANGS
-            and _is_short_circuit(node)
-        ):
-            # JS-ONLY: `env || 'fallback'` / `??` / `&&` yield one OPERAND
-            # as the result, so the taints of both union (MAY). In
-            # Go/Java/C++/Rust these operators produce a boolean, never an
-            # operand, so the value stays clean there.
-            return _merge_optional_taints(
-                self._lean_expr_taint(
-                    node.child_by_field_name(cs.TS_FIELD_LEFT), tainted, lean
-                ),
-                self._lean_expr_taint(
-                    node.child_by_field_name(cs.TS_FIELD_RIGHT), tainted, lean
-                ),
-            )
         if node_type == d.identifier_type:
             return (
                 tainted.get(node.text.decode(cs.ENCODING_UTF8)) if node.text else None
@@ -2138,38 +2199,10 @@ class FlowProcessor:
         if identity != DYNAMIC_TARGET or ctor.target_arg != 0:
             return identity
         arg = positional_arg_node(node, 0, None)
-        if arg is None:
-            return identity
-        if lean.identity_calls and arg.type == d.call_type:
-            raw = call_name(arg)
-            # A static import (`import static java.nio.file.Path.of`) spells the
-            # factory bare (`of("cfg")`); resolve it through the import map to its
-            # qualified form before the identity-call check, so the literal is still
-            # recovered (#1204).
-            # Membership is NOT shadow-aware (#1216, accepted limitation): a
-            # same-class/inherited `of(..)` or a local nested `Path` class still
-            # matches, mis-attributing a literal identity where `<dynamic>` would
-            # be correct. Fixing it needs the full call resolver in this
-            # deliberately lightweight path, for triggers that are valid but
-            # uncommon Java (a shadowed static import, or a local nested class
-            # reusing a well-known name).
-            if raw is not None and (
-                raw in lean.identity_calls
-                or lean.flow.import_map.get(raw) in lean.identity_calls
-            ):
-                return self._lean_literal_arg0(arg, lean)
-        if (
-            lean.identity_new_types
-            and d.new_expression_type is not None
-            and arg.type == d.new_expression_type
+        if arg is not None and (
+            _lean_identity_call(arg, lean) or _lean_identity_new(arg, lean)
         ):
-            inner_type = arg.child_by_field_name(cs.TS_FIELD_TYPE)
-            if (
-                inner_type is not None
-                and inner_type.text is not None
-                and inner_type.text.decode(cs.ENCODING_UTF8) in lean.identity_new_types
-            ):
-                return self._lean_literal_arg0(arg, lean)
+            return self._lean_literal_arg0(arg, lean)
         return identity
 
     @staticmethod

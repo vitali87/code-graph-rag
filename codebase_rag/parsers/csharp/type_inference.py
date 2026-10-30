@@ -518,9 +518,29 @@ class CSharpTypeInferenceEngine:
         # the trie fallback was self-looping it onto the caller's own override.
         if receiver.type == cs.TS_CSHARP_BASE_EXPRESSION:
             return self._resolve_base_call(method_name, arg_count, caller_qn)
+        return self._resolve_member_call(
+            receiver,
+            method_name,
+            arg_count,
+            local_var_types or {},
+            module_qn,
+            caller_qn,
+        )
 
+    def _resolve_member_call(
+        self,
+        receiver: Node,
+        method_name: str,
+        arg_count: int,
+        local_var_types: dict[str, str],
+        module_qn: str,
+        caller_qn: str | None,
+    ) -> tuple[str, str] | None:
+        """`receiver.method_name(...)` with `arg_count` arguments, bound on
+        the receiver's type, through an extension method, or to an external
+        target."""
         receiver_class_qn = self._resolve_receiver_class_qn(
-            receiver, local_var_types or {}, module_qn, caller_qn
+            receiver, local_var_types, module_qn, caller_qn
         )
         # Resolution order matters: an EXACT-ARITY instance method wins, then
         # an (always arity-exact) extension method, and only then the instance
@@ -541,7 +561,7 @@ class CSharpTypeInferenceEngine:
         # only path that binds `x.M()` to a method not in x's hierarchy.
         if ext := self._try_extension_call(
             receiver,
-            local_var_types or {},
+            local_var_types,
             module_qn,
             caller_qn,
             method_name,
@@ -560,7 +580,7 @@ class CSharpTypeInferenceEngine:
             receiver,
             method_name,
             receiver_class_qn,
-            local_var_types or {},
+            local_var_types,
             caller_qn,
         )
 
@@ -1600,34 +1620,11 @@ class CSharpTypeInferenceEngine:
         type_name, annotated_arity = split_type_ref(type_name)
         if generic_arity is None:
             generic_arity = annotated_arity or generic_arity_of_type_text(type_name)
-        type_name = _normalize_type_name(type_name)
-        expanded = type_name.replace("::", cs.SEPARATOR_DOT)
-        global_prefix = f"global{cs.SEPARATOR_DOT}"
-        is_global = expanded.startswith(global_prefix)
-        if is_global:
-            expanded = expanded[len(global_prefix) :]
-        import_map = self.import_processor.import_mapping.get(module_qn)
-        first, separator, rest = expanded.partition(cs.SEPARATOR_DOT)
-        if not is_global and import_map and (mapped := import_map.get(first)):
-            expanded = f"{mapped}{separator}{rest}" if separator else mapped
+        expanded = self._expanded_type_path(_normalize_type_name(type_name), module_qn)
 
         if self.function_registry.get(expanded) in _TYPE_DECLS:
             return self.arity_twin(expanded, generic_arity)
-        # The written path names the DECLARED form (`Zeta.Widget`), which a
-        # folded qn no longer ends with, so it is looked up in the
-        # declared-form index; the leading alias was expanded above, so
-        # `Z.Widget` under `using Z = Zeta;` lands here as `Zeta.Widget`
-        # (issues #2000, #2004).
-        # `Widget` and `Widget<T>` share the declared form, so the written
-        # arity picks between them first.
-        carriers = self.facts.csharp_namespaced_qns.get(expanded)
-        if carriers and len(carriers) > 1 and generic_arity is not None:
-            carriers = {
-                qn
-                for qn in carriers
-                if self.facts.csharp_class_generic_arity.get(qn, 0) == generic_arity
-            } or carriers
-        if declared := unique_carrier(carriers, self.facts.csharp_partial_groups):
+        if declared := self._declared_form_carrier(expanded, generic_arity):
             return declared
         leaf = expanded.rsplit(cs.SEPARATOR_DOT, 1)[-1]
         candidates = [
@@ -1638,6 +1635,41 @@ class CSharpTypeInferenceEngine:
             and self._csharp_qualified_qn_matches(qn, expanded, module_qn)
         ]
         return self._disambiguate_type_candidates(candidates, generic_arity, module_qn)
+
+    def _expanded_type_path(self, type_name: str, module_qn: str) -> str:
+        """A written type path, dotted, with a leading `global::` dropped and
+        a leading alias or imported name expanded through the module's
+        imports (`global::` opts out of that)."""
+        expanded = type_name.replace("::", cs.SEPARATOR_DOT)
+        global_prefix = f"global{cs.SEPARATOR_DOT}"
+        if expanded.startswith(global_prefix):
+            return expanded[len(global_prefix) :]
+        import_map = self.import_processor.import_mapping.get(module_qn)
+        first, separator, rest = expanded.partition(cs.SEPARATOR_DOT)
+        if import_map and (mapped := import_map.get(first)):
+            return f"{mapped}{separator}{rest}" if separator else mapped
+        return expanded
+
+    def _declared_form_carrier(
+        self, expanded: str, generic_arity: int | None
+    ) -> str | None:
+        """The one type whose declared form the written path names.
+
+        The written path names the DECLARED form (`Zeta.Widget`), which a
+        folded qn no longer ends with, so it is looked up in the
+        declared-form index; the leading alias was expanded first, so
+        `Z.Widget` under `using Z = Zeta;` lands here as `Zeta.Widget`
+        (issues #2000, #2004). `Widget` and `Widget<T>` share the declared
+        form, so the written arity picks between them first.
+        """
+        carriers = self.facts.csharp_namespaced_qns.get(expanded)
+        if carriers and len(carriers) > 1 and generic_arity is not None:
+            carriers = {
+                qn
+                for qn in carriers
+                if self.facts.csharp_class_generic_arity.get(qn, 0) == generic_arity
+            } or carriers
+        return unique_carrier(carriers, self.facts.csharp_partial_groups)
 
     def _csharp_qualified_qn_matches(
         self, candidate_qn: str, expanded: str, module_qn: str

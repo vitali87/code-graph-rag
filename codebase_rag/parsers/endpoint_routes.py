@@ -496,24 +496,10 @@ def _go_methods_chain(call: Node) -> list[str] | None:
     # the empty list then yields nothing, never a wrong ANY template.
     node = call
     for _ in range(_CHAIN_DEPTH_LIMIT):
-        # `(r.HandleFunc(p, h)).Methods("GET")`: the parentheses change
-        # nothing about the chain.
-        while (
-            node.parent is not None
-            and node.parent.type == cs.TS_PARENTHESIZED_EXPRESSION
-        ):
-            node = node.parent
-        selector = node.parent
-        outer = selector.parent if selector is not None else None
-        if (
-            selector is None
-            or selector.type != cs.TS_GO_SELECTOR_EXPRESSION
-            or selector.child_by_field_name(cs.FIELD_OPERAND) != node
-            or outer is None
-            or outer.type != cs.TS_GO_CALL_EXPRESSION
-            or outer.child_by_field_name(cs.FIELD_FUNCTION) != selector
-        ):
+        link = _go_next_chain_link(node)
+        if link is None:
             return None
+        selector, outer = link
         if _decode(selector.child_by_field_name(cs.FIELD_FIELD)) == _GO_METHODS_LINK:
             verbs = [_go_verb(arg) for arg in _call_args(outer)]
             if not verbs or None in verbs:
@@ -521,6 +507,29 @@ def _go_methods_chain(call: Node) -> list[str] | None:
             return [verb for verb in verbs if verb is not None]
         node = outer
     return None
+
+
+def _go_next_chain_link(node: Node) -> tuple[Node, Node] | None:
+    # The `.Link(...)` called on `node`'s value: its selector and the call
+    # around it, or None when `node` is not the receiver of a further call.
+    # `(r.HandleFunc(p, h)).Methods("GET")`: the parentheses change nothing
+    # about the chain.
+    while (
+        node.parent is not None and node.parent.type == cs.TS_PARENTHESIZED_EXPRESSION
+    ):
+        node = node.parent
+    selector = node.parent
+    outer = selector.parent if selector is not None else None
+    if (
+        selector is None
+        or selector.type != cs.TS_GO_SELECTOR_EXPRESSION
+        or selector.child_by_field_name(cs.FIELD_OPERAND) != node
+        or outer is None
+        or outer.type != cs.TS_GO_CALL_EXPRESSION
+        or outer.child_by_field_name(cs.FIELD_FUNCTION) != selector
+    ):
+        return None
+    return selector, outer
 
 
 def _go_verb(node: Node) -> str | None:
@@ -625,31 +634,37 @@ def _go_path_value(
         node.type == cs.TS_BINARY_EXPRESSION
         and _decode(node.child_by_field_name(cs.FIELD_OPERATOR)) == _GO_CONCAT_OPERATOR
     ):
-        left = _go_path_value(
-            node.child_by_field_name(cs.TS_FIELD_LEFT), evidence, depth + 1
-        )
-        right = _go_path_value(
-            node.child_by_field_name(cs.TS_FIELD_RIGHT), evidence, depth + 1
-        )
-        if left is not None and right is not None:
-            return left + right
-        # The generated mount prefix is a STRUCT FIELD
-        # (`options.BaseURL+"/v2/things"`), which no const lookup can resolve.
-        # The suffix is a real route under an unknown lead, and `/**` is what
-        # the template vocabulary already spells for that, so the
-        # registration keeps its full meaning instead of claiming a lead it
-        # does not have. Restricted to a field access: any other unresolvable
-        # left operand may be knowable (a function-local literal) or
-        # truncated (the depth valve), and a wrong template is worse than none.
-        left_node = node.child_by_field_name(cs.TS_FIELD_LEFT)
-        if (
-            left is None
-            and right is not None
-            and right.startswith(cs.SEPARATOR_SLASH)
-            and left_node is not None
-            and left_node.type == cs.TS_GO_SELECTOR_EXPRESSION
-        ):
-            return f"{UNKNOWN_LEAD}{right}"
+        return _go_concat_path_value(node, evidence, depth)
+    return None
+
+
+def _go_concat_path_value(
+    node: Node, evidence: _ModuleEvidence, depth: int
+) -> str | None:
+    # A `+` of two path values, each read like any other.
+    left_node = node.child_by_field_name(cs.TS_FIELD_LEFT)
+    left = _go_path_value(left_node, evidence, depth + 1)
+    right = _go_path_value(
+        node.child_by_field_name(cs.TS_FIELD_RIGHT), evidence, depth + 1
+    )
+    if left is not None and right is not None:
+        return left + right
+    # The generated mount prefix is a STRUCT FIELD
+    # (`options.BaseURL+"/v2/things"`), which no const lookup can resolve.
+    # The suffix is a real route under an unknown lead, and `/**` is what
+    # the template vocabulary already spells for that, so the
+    # registration keeps its full meaning instead of claiming a lead it
+    # does not have. Restricted to a field access: any other unresolvable
+    # left operand may be knowable (a function-local literal) or
+    # truncated (the depth valve), and a wrong template is worse than none.
+    if (
+        left is None
+        and right is not None
+        and right.startswith(cs.SEPARATOR_SLASH)
+        and left_node is not None
+        and left_node.type == cs.TS_GO_SELECTOR_EXPRESSION
+    ):
+        return f"{UNKNOWN_LEAD}{right}"
     return None
 
 
@@ -674,6 +689,14 @@ def _go_registration(
     handler = _handler_identifier(
         args[1] if len(args) > 1 else None, cs.TS_PY_IDENTIFIER
     )
+    return _go_route(field, path, handler, scope)
+
+
+def _go_route(
+    field: str, path: str, handler: str | None, scope: str
+) -> RouteRegistration | None:
+    # A verb method (`r.Get`) names its verb; a `Handle`/`HandleFunc`
+    # pattern may lead with one (`"GET /x"`), and otherwise serves them all.
     method = _GO_VERB_METHODS.get(field)
     if method is not None and path.startswith("/"):
         return RouteRegistration(method, path, handler, scope)
