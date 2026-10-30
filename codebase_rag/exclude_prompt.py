@@ -26,6 +26,8 @@ def detect_excludable_directories(repo_path: Path) -> set[str]:
         try:
             entries = list(current.iterdir())
         except PermissionError:
+            # The index walk cannot list it either, so nothing in it is
+            # indexed and nothing needs excluding.
             continue
         for path in entries:
             # Only directories the walk can reach are offered: it follows no

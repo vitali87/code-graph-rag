@@ -299,6 +299,8 @@ def _spellings(path: str) -> list[str]:
         try:
             forms.append(native.resolve().as_posix())
         except (OSError, RuntimeError):
+            # A symlink loop or an unreadable component: the path is matched
+            # as written.
             pass
     return list(dict.fromkeys(forms))
 

@@ -78,16 +78,16 @@ def _connection_error_types() -> tuple[type[BaseException], ...]:
         try:
             neo4j_exceptions = importlib.import_module(cs.NEO4J_EXCEPTIONS_MODULE)
         except ImportError:  # pragma: no cover - depends on extras
-            pass
-        else:
-            # `DriverError` is the client-side/transport branch --
-            # ServiceUnavailable and SessionExpired live here. `AuthError`
-            # is a server error but still means "cannot connect". The rest
-            # of `Neo4jError` (a Cypher syntax error, say) is a genuine
-            # query failure and must NOT be reported as a connectivity
-            # problem, so it deliberately falls through to the generic
-            # branch.
-            types += [neo4j_exceptions.DriverError, neo4j_exceptions.AuthError]
+            # Without the extra there is no driver to raise its errors.
+            return tuple(types)
+        # `DriverError` is the client-side/transport branch --
+        # ServiceUnavailable and SessionExpired live here. `AuthError`
+        # is a server error but still means "cannot connect". The rest
+        # of `Neo4jError` (a Cypher syntax error, say) is a genuine
+        # query failure and must NOT be reported as a connectivity
+        # problem, so it deliberately falls through to the generic
+        # branch.
+        types += [neo4j_exceptions.DriverError, neo4j_exceptions.AuthError]
     return tuple(types)
 
 

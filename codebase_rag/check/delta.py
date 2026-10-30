@@ -273,6 +273,7 @@ def normalise_paths(paths: Iterable[Path | str], repo_root: Path | None) -> list
             try:
                 path = path.resolve().relative_to(repo_root.resolve())
             except ValueError:
+                # Outside the repository: no graph node has this path.
                 continue
         out.add(path.as_posix())
     return sorted(out)

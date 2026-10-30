@@ -29,6 +29,9 @@ def price_run(usage: RunUsage, provider: str, model_id: str) -> Decimal | None:
     for provider_id in (provider or None, None):
         try:
             return calc_price(usage, model_ref, provider_id=provider_id).total_price
-        except Exception:  # noqa: BLE001, S112  # pricing is display-only, never fatal
+        except (LookupError, ValueError):
+            # An unknown provider or model (LookupError), or usage the
+            # table cannot price (ValueError): pricing is display-only, so
+            # the next provider is tried and the run is left unpriced.
             continue
     return None

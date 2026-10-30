@@ -69,10 +69,8 @@ ALL_ENABLED = _selection_for(_ALL_RELS)
 
 
 def _resolve_token(token: str) -> frozenset[cs.RelationshipType] | None:
-    try:
+    if _is_group(token):
         return cs.CAPTURE_GROUP_RELS[cs.CaptureGroup(token.lower())]
-    except ValueError:
-        pass
     try:
         return frozenset({cs.RelationshipType(token.upper())})
     except ValueError:

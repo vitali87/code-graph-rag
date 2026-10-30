@@ -1408,12 +1408,17 @@ def _shift_tab_listener():
         finally:
             try:
                 loop.remove_reader(fd)
-            except Exception:  # noqa: BLE001, S110 - best-effort; the terminal restore below must still run
+            except (OSError, RuntimeError, ValueError):
+                # What the selector raises for a descriptor it no longer
+                # watches. Best effort: the terminal restore below must
+                # still run, and a reader left on a closed loop never fires.
                 pass
     finally:
         try:
             termios.tcsetattr(fd, termios.TCSADRAIN, original)
         except (termios.error, OSError):
+            # stdin is no longer the terminal it was (closed, or detached
+            # from its tty), so there are no settings left to put back.
             pass
 
 

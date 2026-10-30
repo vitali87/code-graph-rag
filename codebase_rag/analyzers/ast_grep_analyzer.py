@@ -138,7 +138,9 @@ class FindingAnalyzer:
                 continue
             try:
                 raw = file_path.read_bytes()
-            except OSError:
+            except OSError as exc:
+                # Gone or unreadable since the parse read it: it has no findings.
+                logger.debug(ls.FILE_UNREADABLE, path=file_path, error=exc)
                 continue
             # decode with replacement so a few malformed bytes don't skip the
             # whole file; ast-grep tolerates U+FFFD in the source.

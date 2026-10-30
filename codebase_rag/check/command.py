@@ -303,7 +303,9 @@ class _FileSnapshot:
         except FileNotFoundError:
             self._absent = True
         except OSError:
-            # Unreadable: leave whatever is there alone.
+            # Unreadable: neither absent nor readable, which `unrestorable`
+            # reports so the isolated run is refused before it writes, and
+            # `put_back` leaves whatever is there alone.
             pass
 
     @property

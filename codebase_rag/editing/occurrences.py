@@ -36,9 +36,11 @@ from functools import cached_property, partial
 from pathlib import Path, PurePosixPath
 from typing import NamedTuple
 
+from loguru import logger
 from tree_sitter import Node
 
 from .. import constants as cs
+from .. import logs as ls
 from ..config import load_ignore_patterns
 from ..language_spec import get_language_for_extension, language_family
 from ..parser_loader import load_parsers
@@ -220,7 +222,12 @@ def find_occurrences(repo_root: Path, target: Target) -> list[Occurrence]:
             continue
         try:
             source = (Path(directory) / filename).read_bytes()
-        except OSError:
+        except OSError as error:
+            # Said, not skipped quietly: a reference in this file goes
+            # unrenamed.
+            logger.warning(
+                ls.FILE_UNREADABLE, path=Path(directory) / filename, error=error
+            )
             continue
         # A plain substring test first: most files never mention the name,
         # and they are not worth a parse.
@@ -357,6 +364,8 @@ def _declared(
             source = (repo_root / path).read_bytes()
             start = line_col_to_byte(source, line, col)
         except (OSError, PatcherError):
+            # A file gone or changed since the graph recorded the
+            # definition places nothing a declaration file could declare.
             continue
         token = _identifier_at(parser.parse(source).root_node, start, start + width)
         if token is not None and (names := _nesting(token)) is not None:
