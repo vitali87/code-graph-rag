@@ -293,6 +293,7 @@ This checks that all required dependencies and services are available.
 <!-- SECTION:dependencies -->
 - **loguru**: Python logging made (stupidly) simple
 - **mcp**: Model Context Protocol SDK
+- **jsonschema**: An implementation of JSON Schema validation for Python
 - **pydantic-ai-slim**: AI Agent Framework, the Pydantic way, slim package
 - **pydantic-settings**: Settings management using Pydantic
 - **python-dotenv**: Read key-value pairs from a .env file and set them as environment variables

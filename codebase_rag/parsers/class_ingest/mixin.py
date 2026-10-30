@@ -21,6 +21,7 @@ from ...types_defs import (
     DeferredCppInherit,
     DeferredInherit,
     FunctionLocation,
+    FunctionLocations,
     FunctionSpanKey,
     NodeType,
     PendingTypeFact,
@@ -387,7 +388,7 @@ class ClassIngestMixin:
     rust_impl_owner_module: dict[str, str]
     rehydrated_definition_paths: dict[str, str]
     go_interfaces: dict[str, go_ifaces.GoInterfaceDecl]
-    function_locations: dict[FunctionSpanKey, FunctionLocation]
+    function_locations: FunctionLocations
     cpp_definition_spans: dict[str, list[CppDefinitionSpan]]
     _deferred_forward_decls: list[_DeferredForwardDecl]
     _deferred_parent_links: list[DeferredParentLink]

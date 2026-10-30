@@ -14,7 +14,9 @@ It provides:
 - the graph procedures (PageRank, degree centrality, weakly and strongly
   connected components, betweenness centrality, ancestors and descendants);
 - the ingestor's batch writes;
-- decoding of query results.
+- decoding of query results;
+- the indexer's definition hashes, Python scope walks and interface
+  fingerprints, computed on the trees py-tree-sitter parsed.
 
 It is not meant to be used on its own. See
 [Graph Backends](https://github.com/vitali87/code-graph-rag/blob/main/docs/architecture/embedded-graph.md)

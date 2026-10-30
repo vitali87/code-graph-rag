@@ -7,7 +7,9 @@ on:
     branches: [main, master, develop]
   workflow_dispatch:
 
-permissions: read-all
+# Every job reads the code; a job that needs more grants it on itself.
+permissions:
+  contents: read
 
 concurrency:
   # PRs group by ref so rapid pushes cancel superseded runs (saves minutes).
@@ -26,6 +28,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Key the uv cache on dependencies, not the project version
         shell: bash
@@ -35,13 +39,13 @@ jobs:
             uv.lock > "$RUNNER_TEMP/uv-deps.lock"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
           cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
@@ -100,6 +104,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Key the uv cache on dependencies, not the project version
         shell: bash
@@ -109,13 +115,13 @@ jobs:
             uv.lock > "$RUNNER_TEMP/uv-deps.lock"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
           cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
@@ -160,6 +166,7 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up Go
         # The go/types helper's tests build it with the Go on PATH, and the
@@ -177,13 +184,13 @@ jobs:
             uv.lock > "$RUNNER_TEMP/uv-deps.lock"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
           cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -281,13 +288,13 @@ jobs:
             uv.lock > "$RUNNER_TEMP/uv-deps.lock"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
           cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
@@ -310,6 +317,7 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Start Memgraph
         run: |
@@ -332,13 +340,13 @@ jobs:
             uv.lock > "$RUNNER_TEMP/uv-deps.lock"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
           cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
@@ -380,6 +388,7 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Key the uv cache on dependencies, not the project version
         shell: bash
@@ -389,13 +398,13 @@ jobs:
             uv.lock > "$RUNNER_TEMP/uv-deps.lock"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
           cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
@@ -430,12 +439,18 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
+
+      # cargo (under the crate's wheel build) and pip trust the system store,
+      # and the runner's ca-certificates may still carry distrusted eMudhra
+      # roots: deselect them before anything is fetched.
+      - name: Distrust the eMudhra roots
+        run: sudo bash scripts/distrust_ca_roots.sh
 
       - name: Build wheel
         run: uv build --wheel
@@ -446,24 +461,19 @@ jobs:
       - name: Build the cgr-graph-rs wheel
         run: uv build --wheel rust/cgr_graph_rs --out-dir dist-rust
 
-      # pip trusts the system store as well as its own certifi, and the runner's
-      # ca-certificates may still carry emSign ECC Root CA - G3: deselect it.
-      - name: Distrust emSign ECC Root CA - G3
-        run: |
-          sudo sed -i 's|^mozilla/emSign_ECC_Root_CA_-_G3\.crt$|!&|' /etc/ca-certificates.conf
-          sudo update-ca-certificates --fresh > /dev/null
-          test ! -e /etc/ssl/certs/emSign_ECC_Root_CA_-_G3.pem
-
       # Deliberately plain venv + pip: uv.lock must not participate.
       - name: Install the wheel with unlocked resolution
         run: |
           python -m venv .fresh-venv
           # The venv's bundled pip may predate the emSign distrust (pip
-          # 26.2.2), so it fetches only pip itself, checked against a pinned
-          # SHA-256, before the upgrade to the newest release.
-          ./.fresh-venv/bin/python -m pip install "pip @ https://files.pythonhosted.org/packages/3f/06/3e4420302363fbb71be3c7f35ce042f54bfca330e3e66b3a2e3c4cca579f/pip-26.2.2-py3-none-any.whl#sha256=fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70"
-          ./.fresh-venv/bin/python -m pip install --upgrade pip
-          ./.fresh-venv/bin/python -m pip install dist/*.whl --find-links dist-rust
+          # 26.2.2), so it fetches only pip itself, the release
+          # scripts/pip-requirements.txt pins by SHA-256 and Dependabot keeps
+          # current.
+          ./.fresh-venv/bin/python -m pip install --require-hashes -r scripts/pip-requirements.txt
+          # Both wheels are named, so pip has to take this build of the crate
+          # even when PyPI carries a newer one in range; everything else
+          # resolves unlocked.
+          ./.fresh-venv/bin/python -m pip install dist/*.whl dist-rust/*.whl
 
       - name: Record resolved dependency versions
         run: ./.fresh-venv/bin/python -m pip list
@@ -479,6 +489,9 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     timeout-minutes: 5
+    # The action reads the pull request's current title through the API.
+    permissions:
+      pull-requests: read
 
     steps:
       - name: Check PR title format
@@ -520,6 +533,7 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -535,13 +549,13 @@ jobs:
             uv.lock > "$RUNNER_TEMP/uv-deps.lock"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
           cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
@@ -568,7 +582,8 @@ jobs:
     # rust/cgr_graph_rs (published as cgr-graph-rs, a default dependency on
     # the platforms it has wheels for) runs the embedded graph's whole-graph
     # procedures, its Cypher parser, the ingestor's batch writes and result
-    # decoding (issue #386). Its own tests check the algorithms and the
+    # decoding (issue #386), and the indexer's definition hashes on
+    # py-tree-sitter's own trees. Its own tests check the algorithms and the
     # grammar; the Python tests check it returns and writes exactly what
     # the Python implementations it replaces do, and run the engine's
     # suites with it installed. rust-wheels.yml builds and tests the wheels.
@@ -588,13 +603,13 @@ jobs:
             uv.lock > "$RUNNER_TEMP/uv-deps.lock"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
           cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
@@ -612,7 +627,7 @@ jobs:
 
       - name: Check it against the Python procedures and parser
         run: |
-          uv run --no-sync pytest codebase_rag/tests/test_embedded_graph_rust.py codebase_rag/tests/test_embedded_graph_rust_parser.py codebase_rag/tests/test_embedded_graph_native.py --tb=short
+          uv run --no-sync pytest codebase_rag/tests/test_embedded_graph_rust.py codebase_rag/tests/test_embedded_graph_rust_parser.py codebase_rag/tests/test_embedded_graph_native.py codebase_rag/tests/test_native_trees.py --tb=short
 
       - name: Run the engine's tests on the Rust parser
         run: |

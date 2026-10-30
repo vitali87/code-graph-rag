@@ -46,7 +46,8 @@ Every top-level command, from the CLI's own help registry:
 | `cgr edits` | Show or undo recorded edit transactions (multi-file edits applied through cgr). |
 | `cgr graph` | Deterministic graph queries (resolve, definition, callers, callees, implementors, overrides, importers, tests-reaching) as JSON, no LLM. |
 | `cgr check` | Report the structural delta of the working tree against a git ref: dangling callers and importers, arity findings, new duplicates, new import cycles, tests reaching the edited symbols. |
-| `cgr rename` | Rename a definition everywhere the graph references it (definition, call and reference sites, imports, overrides, __all__); refuses on guessed sites and on occurrences the graph has no site for. |
+| `cgr rename` | Rename a definition everywhere the graph references it (definition, call and reference sites, imports, overrides, __all__); refuses on guessed sites, on occurrences the graph has no site for, and on a graph a stopped sync left partial. |
+| `cgr change-signature` | Change a Python definition's parameter list and rewrite every call site the graph knows; sites the mapping cannot complete are listed, not touched; refuses on a graph a stopped sync left partial. |
 | `cgr context` | Print a graph-ranked context slice for a symbol, location or task within a token budget: source, caller lines, callee signatures, types, tests, docs. |
 | `cgr port` | Judge a port between languages: pair the functions of two implementations and compare their calls and arity, as JSON, no LLM. |
 | `cgr workspace` | Manage named groups of repositories |
@@ -299,6 +300,7 @@ cgr mcp-server
 | `--host` | HTTP bind host. Used only with --transport http. |
 | `--port` | HTTP bind port. Used only with --transport http. |
 | `--workspace` | Serve the projects of workspace NAME: `list_projects` shows them, a `project` argument, when given, must name one (omitted, the server takes the project rooted at its directory, or the workspace's only one), and source is read from each repo's own root. Also read from the MCP_WORKSPACE environment variable. |
+| `--read-only` | Serve only the tools that read (graph queries, file reads, ask_agent); write_file, the edit tools, indexing, annotate and the delete tools are neither listed nor run. Also set by MCP_READ_ONLY=true. |
 <!-- /SECTION:cli_options_mcp_server -->
 
 ### `cgr index`

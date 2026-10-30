@@ -84,11 +84,16 @@ jobs:
           ref: ${{ inputs.ref || github.ref }}
           persist-credentials: false
 
+      # The wheel goes to PyPI when publish.yml calls this workflow, so its
+      # build tools come from no cache another run could have written.
+      # setup-uv's default would cache a dispatched publish.
       - name: Install uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          enable-cache: false
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
@@ -135,11 +140,16 @@ jobs:
           ref: ${{ inputs.ref || github.ref }}
           persist-credentials: false
 
+      # The wheel goes to PyPI when publish.yml calls this workflow, so its
+      # build tools come from no cache another run could have written.
+      # setup-uv's default would cache a dispatched publish.
       - name: Install uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          enable-cache: false
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
@@ -173,11 +183,16 @@ jobs:
           ref: ${{ inputs.ref || github.ref }}
           persist-credentials: false
 
+      # The wheel goes to PyPI when publish.yml calls this workflow, so its
+      # build tools come from no cache another run could have written.
+      # setup-uv's default would cache a dispatched publish.
       - name: Install uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          enable-cache: false
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
@@ -233,13 +248,15 @@ jobs:
             uv.lock > "$RUNNER_TEMP/uv-deps.lock"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
-          enable-cache: true
+          # Only a pull request's run uses the cache: in publish.yml's run
+          # every job can upload an artifact that publish-rust then ships.
+          enable-cache: ${{ github.event_name == 'pull_request' }}
           cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
@@ -294,13 +311,15 @@ jobs:
             uv.lock > "$RUNNER_TEMP/uv-deps.lock"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
-          enable-cache: true
+          # Only a pull request's run uses the cache: in publish.yml's run
+          # every job can upload an artifact that publish-rust then ships.
+          enable-cache: ${{ github.event_name == 'pull_request' }}
           cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
@@ -322,10 +341,14 @@ jobs:
           uv pip install wheel-gnu/*.whl
           uv run --no-sync python scripts/rust_wheel_parity.py record parity
 
+      # The root-user warning is silenced through the environment rather than
+      # --root-user-action=ignore: Scorecard counts a pip install of local
+      # wheels as pinned only while every other argument is a bare flag.
       - name: Ask the musl wheel the same in Alpine
         run: |
           docker run --rm \
+            -e PIP_ROOT_USER_ACTION=ignore \
             -v "$PWD/parity:/parity" -v "$PWD/wheel-musl:/wheel:ro" \
             -v "$PWD/scripts:/scripts:ro" \
             python:3.12-alpine@sha256:1b668429b3511ab407d8e00648891631b0b1a4d7e15e3ca70f38ab5b91ad4ab4 \
-            sh -c "pip install --quiet --root-user-action=ignore --no-index /wheel/*.whl && python /scripts/rust_wheel_parity.py check /parity"
+            sh -c "pip install --quiet --no-index /wheel/*.whl && python /scripts/rust_wheel_parity.py check /parity"

@@ -399,6 +399,14 @@ CGRIGNORE_READ_FAILED = "Failed to read {path}: {error}"
 
 CGR_INSTRUCTIONS_LOADED = "Loaded project instructions from {path} ({chars} chars)"
 CGR_INSTRUCTIONS_READ_FAILED = "Failed to read project instructions {path}: {error}"
+CGR_INSTRUCTIONS_UNAPPROVED = (
+    "Skipped {path}: its current content has not been approved. Approve it in an "
+    "interactive session (cgr start), or export CGR_TRUST_PROJECT_INSTRUCTIONS=true "
+    "(a .env file cannot set it)"
+)
+CGR_INSTRUCTIONS_STORE_UNREADABLE = (
+    "Ignoring unreadable instruction approvals {path}: {error}"
+)
 
 # File watcher logs
 WATCHER_ACTIVE = "File watcher is now active."
@@ -1173,6 +1181,7 @@ MCP_SERVER_INIT_SERVICES = "[GraphCode MCP] Initializing services..."
 MCP_SERVER_INIT_SUCCESS = "[GraphCode MCP] Services initialized successfully"
 MCP_SERVER_CALLING_TOOL = "[GraphCode MCP] Calling tool: {name}"
 MCP_SERVER_UNKNOWN_TOOL = "[GraphCode MCP] Unknown tool: {name}"
+MCP_SERVER_READ_ONLY_REFUSED = "[GraphCode MCP] Refused {name}: the server is read-only"
 MCP_SERVER_TOOL_ERROR = "[GraphCode MCP] Error executing tool '{name}': {error}"
 MCP_SERVER_STARTING = "[GraphCode MCP] Starting MCP server..."
 MCP_SERVER_CREATED = "[GraphCode MCP] Server created, starting stdio transport..."
@@ -1205,6 +1214,23 @@ MCP_INCOMPLETE_MARKER_RECOVERED = (
 CLI_SYNC_MARKER_NOT_CLEARED = (
     "The sync of {project} finished, but its incomplete-run marker could not "
     "be cleared: {error}. The graph is complete; the next sync clears it."
+)
+REBUILD_OVER_STRANDED_RUNS = (
+    "{count} earlier run(s) that wrote to project {project} stopped part-way, "
+    "so its graph may be partial. Re-indexing the whole repository instead of "
+    "only what changed."
+)
+STRANDED_RUNS_RETIRED = (
+    "Cleared {count} incomplete-run marker(s) the rebuild of {project} superseded."
+)
+STRANDED_RUNS_UNREADABLE = (
+    "Could not read which earlier runs left project {project} partial "
+    "({error}); their markers stay until a later full sync."
+)
+STRANDED_RUNS_NOT_RETIRED = (
+    "The rebuild of {project} finished, but the incomplete-run markers it "
+    "superseded could not be cleared: {error}. The graph is complete; the next "
+    "full sync clears them."
 )
 CLI_DELETE_MARKER_NOT_CLEARED = (
     "Project {project} was deleted, but its incomplete-run marker could not be "
@@ -1597,4 +1623,12 @@ CHECKOUT_STATE_HISTORY_DROPPED = (
 # The embedded graph's Rust extension (embedded_graph/native.py).
 EG_NATIVE_WRITE_FAILED = (
     "The Rust extension could not write a batch ({error}); the engine writes it"
+)
+# The Rust extension's tree walks (parsers/native_trees.py).
+NATIVE_TREES_UNAVAILABLE = (
+    "Rust tree walks unavailable ({error}); Python walks the trees"
+)
+NATIVE_TREES_DISAGREE = (
+    "The Rust tree walks read the probe tree differently from py-tree-sitter "
+    "({check}, at a {node_type} node); Python walks the trees"
 )

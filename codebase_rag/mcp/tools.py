@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from loguru import logger
+from mcp.types import ToolAnnotations
 from pydantic_ai import Agent, DeferredToolRequests, Tool
 from pydantic_ai.tools import ToolFuncPlain
 
@@ -18,7 +19,7 @@ from codebase_rag import gloss, graph_query
 from codebase_rag import logs as lg
 from codebase_rag import structural_delta as sd
 from codebase_rag import tool_errors as te
-from codebase_rag.config import load_ignore_patterns
+from codebase_rag.config import load_ignore_patterns, settings
 from codebase_rag.gloss_anchor import ParsedSource, SourceReader, parse_source
 from codebase_rag.graph_updater import GraphUpdater, ReingestAborted
 from codebase_rag.models import ToolMetadata
@@ -32,6 +33,7 @@ from codebase_rag.services.llm import (
     run_to_text_answer,
 )
 from codebase_rag.services.provenance import head_commit
+from codebase_rag.sync_guard import retire_stranded_runs, run_owner, stranded_runs
 from codebase_rag.sync_lock import repo_sync_lock
 from codebase_rag.tools import tool_descriptions as td
 from codebase_rag.tools.ast_grep_service import AstGrepService
@@ -46,7 +48,11 @@ from codebase_rag.tools.directory_lister import (
 )
 from codebase_rag.tools.duplicate_detection import create_find_duplicates_tool
 from codebase_rag.tools.file_editor import FileEditor, create_file_editor_tool
-from codebase_rag.tools.file_reader import FileReader, create_file_reader_tool
+from codebase_rag.tools.file_reader import (
+    FileReader,
+    create_file_reader_tool,
+    read_file_text,
+)
 from codebase_rag.tools.file_writer import FileWriter, create_file_writer_tool
 from codebase_rag.tools.semantic_search import (
     create_get_function_source_tool,
@@ -158,6 +164,7 @@ _NOT_GRAPH_READERS = frozenset(
         cs.MCPToolName.UPDATE_REPOSITORY,
         cs.MCPToolName.REINGEST,
         cs.MCPToolName.RENAME,
+        cs.MCPToolName.CHANGE_SIGNATURE,
         cs.MCPToolName.SURGICAL_REPLACE_CODE,
         cs.MCPToolName.READ_FILE,
         cs.MCPToolName.WRITE_FILE,
@@ -681,6 +688,7 @@ class MCPToolsRegistry:
                 cs.MCPToolName.REMOTE_DEPENDENCIES, {}, [], self.remote_dependencies
             ),
             cs.MCPToolName.RENAME: self._rename_tool(),
+            cs.MCPToolName.CHANGE_SIGNATURE: self._change_signature_tool(),
             cs.MCPToolName.CONTEXT: self._context_tool(),
             cs.MCPToolName.QUERY_CODE_GRAPH: ToolMetadata(
                 name=cs.MCPToolName.QUERY_CODE_GRAPH,
@@ -1503,6 +1511,11 @@ class MCPToolsRegistry:
         # a marker saying so lets a fresh process clear it and carry on rather
         # than refuse until a full update (#1705 review). The phase advances
         # to writing immediately before `delete_project`.
+        #
+        # The runs whose markers this re-index supersedes are read first
+        # (review of PR #3493). It deletes the project before rebuilding it,
+        # so it is already the full rebuild they need.
+        stranded = stranded_runs(self.ingestor, project_name, self._run_id)
         if (refusal := self._require_marker(project_name, writing=False)) is not None:
             raise RuntimeError(refusal)
         self._cleanup_embeddings_then_begin_writing(project_name)
@@ -1534,6 +1547,7 @@ class MCPToolsRegistry:
         # (#1705 review).
         if (stuck := self._require_marker_cleared(project_name)) is not None:
             raise RuntimeError(stuck)
+        retire_stranded_runs(self.ingestor, project_name, stranded)
         self._live_updater = updater
 
         return cs.MCP_INDEX_SUCCESS_PROJECT.format(
@@ -1602,6 +1616,10 @@ class MCPToolsRegistry:
         # Aborts on failure because the marker is the only protection that
         # survives a restart; nothing has been touched yet, so stopping costs
         # nothing.
+        #
+        # The runs whose markers this update supersedes are read first, and
+        # force a full re-index (review of PR #3493).
+        stranded = stranded_runs(self.ingestor, project_name, self._run_id)
         if (refusal := self._require_marker(project_name)) is not None:
             raise RuntimeError(refusal)
         self.ingestor.ensure_constraints()
@@ -1617,7 +1635,13 @@ class MCPToolsRegistry:
             exclude_paths=exclude_paths,
             project_name=project_name,
         )
-        updater.run()
+        if stranded:
+            logger.warning(
+                lg.REBUILD_OVER_STRANDED_RUNS.format(
+                    project=project_name, count=len(stranded)
+                )
+            )
+        updater.run(force=bool(stranded))
         self.ingestor.flush_all()
         # Cleared only after the flush: the marker must outlive any failure
         # that leaves batches uncommitted.
@@ -1630,6 +1654,7 @@ class MCPToolsRegistry:
         # (#1705 review).
         if (stuck := self._require_marker_cleared(project_name)) is not None:
             raise RuntimeError(stuck)
+        retire_stranded_runs(self.ingestor, project_name, stranded)
         self._live_updater = updater
         return cs.MCP_UPDATE_SUCCESS.format(path=self.project_root)
 
@@ -1694,7 +1719,10 @@ class MCPToolsRegistry:
             cs.KEY_RUN_ID: self._run_id,
         }
         if incomplete:
-            query = cq.CYPHER_MARK_PROJECT_INCOMPLETE
+            # Naming this process lets a full rebuild retire the marker once
+            # it has exited without clearing it (review of PR #3496).
+            query = cq.CYPHER_MARK_RUN_INCOMPLETE
+            params |= run_owner()
             params[cs.KEY_WRITING] = writing
         else:
             query = cq.CYPHER_CLEAR_PROJECT_INCOMPLETE
@@ -3608,6 +3636,160 @@ class MCPToolsRegistry:
             payload[cs.DICT_KEY_ERROR] = payload_marker_error
         return payload
 
+    def _change_signature_tool(self) -> ToolMetadata:
+        def prop(kind: cs.MCPSchemaType, description: str) -> MCPInputSchemaProperty:
+            return MCPInputSchemaProperty(type=kind, description=description)
+
+        return ToolMetadata(
+            name=cs.MCPToolName.CHANGE_SIGNATURE,
+            description=td.MCP_TOOLS[cs.MCPToolName.CHANGE_SIGNATURE],
+            input_schema=MCPInputSchema(
+                type=cs.MCPSchemaType.OBJECT,
+                properties={
+                    cs.MCPParamName.QUALIFIED_NAME: prop(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_QUALIFIED_NAME
+                    ),
+                    cs.MCPParamName.NEW_PARAMS: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.ARRAY,
+                        description=td.MCP_PARAM_NEW_PARAMS,
+                        items={cs.MCPSchemaField.TYPE: cs.MCPSchemaType.STRING},
+                    ),
+                    cs.MCPParamName.MAPPING: prop(
+                        cs.MCPSchemaType.OBJECT, td.MCP_PARAM_MAPPING
+                    ),
+                    cs.MCPParamName.ALLOW_HEURISTIC: prop(
+                        cs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_ALLOW_HEURISTIC
+                    ),
+                    cs.MCPParamName.DRY_RUN: prop(
+                        cs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_RENAME_DRY_RUN
+                    ),
+                    cs.MCPParamName.PROJECT: prop(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
+                    ),
+                },
+                required=[
+                    cs.MCPParamName.QUALIFIED_NAME,
+                    cs.MCPParamName.NEW_PARAMS,
+                ],
+            ),
+            handler=self.change_signature,
+            returns_json=True,
+        )
+
+    async def change_signature(
+        self,
+        qualified_name: str,
+        new_params: list[str],
+        mapping: dict[str, str] | None = None,
+        allow_heuristic: bool = False,
+        dry_run: bool = False,
+        project: str | None = None,
+    ) -> object:
+        # Under the ingestor lock for the same reason as `rename`: a rebuild
+        # landing between planning and writing would rewrite stale sites.
+        return await self._graph_query(
+            cs.MCPToolName.CHANGE_SIGNATURE,
+            project,
+            lambda name: self._run_change_signature(
+                name, qualified_name, new_params, mapping, allow_heuristic, dry_run
+            ),
+        )
+
+    def _signature_reingest(
+        self, project_name: str
+    ) -> tuple[Callable[[list[str]], ReingestReport] | None, Callable[[], None]]:
+        """The guarded re-ingest callback for an applied signature change, and
+        a release to run once the change returns.
+
+        Built before planning, as for `rename`, so a graph left partial by an
+        earlier run refuses the change before any file is written. Hydrating
+        a cold updater marks the project mid-update, and only the callback
+        clears that mark; a change refused before it re-ingests (a bad
+        parameter list, an unmapped hierarchy) would otherwise leave the
+        project marked and every later read refusing. The release clears the
+        mark this call made when the callback never ran. A retained updater
+        marks nothing up front, so there is nothing to release.
+        """
+        before = self._live_updater
+        guarded = self._guarded_rename_reingest(project_name)
+        hydrated = guarded is not None and self._live_updater is not before
+        ran = False
+
+        def reingest(paths: list[str]) -> ReingestReport:
+            nonlocal ran
+            ran = True
+            assert guarded is not None
+            return guarded(paths)
+
+        def release() -> None:
+            if hydrated and not ran:
+                self._require_marker_cleared(project_name)
+
+        return (reingest if guarded is not None else None), release
+
+    def _run_change_signature(
+        self,
+        project_name: str,
+        qualified_name: str,
+        new_params: list[str],
+        mapping: dict[str, str] | None,
+        allow_heuristic: bool,
+        dry_run: bool,
+    ) -> object:
+        from codebase_rag.editing.signature import change_signature
+        from codebase_rag.editing.signature_spec import (
+            SignatureRefused,
+            sites_for,
+            unmapped_for,
+        )
+
+        # Paths are meaningful only under the root the project was indexed
+        # from (issue #1542), exactly as for `rename`.
+        root = graph_query.source_root_for(
+            self.ingestor.fetch_all, project_name, Path(self.project_root)
+        )
+        if root is None:
+            return {
+                cs.DICT_KEY_ERROR: cs.RENAME_WRONG_ROOT.format(project=project_name)
+            }
+        # A preview never re-ingests, so it gets no callback: building one
+        # hydrates an updater and marks the project mid-update, and only the
+        # callback itself clears that mark.
+        reingest, release = (
+            (None, None) if dry_run else self._signature_reingest(project_name)
+        )
+        try:
+            report = change_signature(
+                root,
+                self.ingestor.fetch_all,
+                project_name,
+                qualified_name,
+                new_params,
+                mapping,
+                allow_heuristic=allow_heuristic,
+                dry_run=dry_run,
+                reingest=reingest,
+            )
+        except SignatureRefused as refused:
+            return {cs.DICT_KEY_ERROR: str(refused)}
+        finally:
+            if release is not None:
+                release()
+        payload_marker_error: str | None = None
+        if report.graph_incomplete:
+            # The rollback's re-ingest failed: the same invalidation, in
+            # memory and durably, that `_run_rename` applies.
+            self._live_updater = None
+            self._invalidate_graph_for(project_name)
+            payload_marker_error = self._require_marker(project_name, writing=True)
+        payload = dict(report._asdict())
+        payload[cs.KEY_SITES] = sites_for(report.sites)
+        payload[cs.KEY_UNMAPPED] = unmapped_for(report.unmapped)
+        payload[cs.KEY_VERDICT] = report.verdict._asdict() if report.verdict else None
+        if payload_marker_error is not None:
+            payload[cs.DICT_KEY_ERROR] = payload_marker_error
+        return payload
+
     async def query_code_graph(
         self, natural_language_query: str, project: str | None = None
     ) -> QueryResultDict:
@@ -3777,6 +3959,10 @@ class MCPToolsRegistry:
             return te.failure(cs.MCP_READ_OFFSET_NEGATIVE.format(offset=offset))
         if limit is not None and limit < cs.MCP_READ_LIMIT_MINIMUM:
             return te.failure(cs.MCP_READ_LIMIT_NOT_POSITIVE.format(limit=limit))
+        if not settings.ALLOW_SENSITIVE_READS and self.file_reader.is_sensitive(
+            file_path
+        ):
+            return te.failure(cs.MCP_READ_SENSITIVE_REFUSED.format(path=file_path))
         try:
             if offset is not None or limit is not None:
                 project_root = Path(self.project_root).resolve()
@@ -3791,9 +3977,9 @@ class MCPToolsRegistry:
                 )
             else:
                 # Returned as is: a ToolFailure must stay one (issue #2650).
-                return await _plain_function(self._file_reader_tool)(
-                    file_path=file_path
-                )
+                # Not through the agent's tool: that one defers a credential
+                # file for approval, and this path has already decided.
+                return await read_file_text(self.file_reader, file_path)
 
         except Exception as e:
             logger.error(lg.MCP_ERROR_READ.format(error=e))
@@ -3834,11 +4020,29 @@ class MCPToolsRegistry:
                 inputSchema=metadata.input_schema,
             )
             for metadata in self._tools.values()
+            if self.serves(metadata.name)
         ]
+
+    def serves(self, name: str) -> bool:
+        """Whether this server offers `name`: every tool, or under read-only
+        mode only those that never write (issue #3458)."""
+        return not settings.MCP_READ_ONLY or name in cs.MCP_READ_ONLY_TOOLS
 
     def get_tool_handler(self, name: str) -> tuple[MCPHandlerType, bool] | None:
         metadata = self._tools.get(name)
         return None if metadata is None else (metadata.handler, metadata.returns_json)
+
+
+def tool_annotations(name: str) -> ToolAnnotations:
+    """What a client may assume of tool `name` before calling it, so its own
+    approval rules can tell `callers` from `wipe_database` (issue #3458).
+    Every tool works on this server's graph and files, never the open web."""
+    return ToolAnnotations(
+        read_only_hint=name in cs.MCP_READ_ONLY_TOOLS,
+        destructive_hint=name in cs.MCP_DESTRUCTIVE_TOOLS,
+        idempotent_hint=name in cs.MCP_IDEMPOTENT_TOOLS,
+        open_world_hint=False,
+    )
 
 
 def create_mcp_tools_registry(
