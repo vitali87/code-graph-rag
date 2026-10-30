@@ -46,7 +46,12 @@ from codebase_rag import mgclient_probe
 from codebase_rag.stack import constants as cs
 from codebase_rag.stack import health
 from codebase_rag.stack import manager as manager_module
-from codebase_rag.stack.manager import StackError, StackManager
+from codebase_rag.stack.manager import (
+    StackCompose,
+    StackEndpoints,
+    StackError,
+    StackManager,
+)
 from codebase_rag.types_defs import MgclientProbeReport, MgclientProbeRequest
 
 STDOUT_FD = 1
@@ -1022,9 +1027,8 @@ def guarded_stack(tmp_path: Path) -> Iterator[StackManager]:
     """A stack whose Memgraph has credentials and whose Qdrant has no key."""
     mgr = StackManager(
         home=tmp_path / "cgr-home",
-        package_compose=Path(os.devnull),
-        memgraph_host=LOOPBACK,
-        memgraph_port=7687,
+        compose=StackCompose(package_compose=Path(os.devnull)),
+        endpoints=StackEndpoints(memgraph_host=LOOPBACK, memgraph_port=7687),
     )
     mgr.memgraph_credentials = LOGIN
     with patch.object(

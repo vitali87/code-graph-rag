@@ -13,7 +13,7 @@ from pathlib import Path
 import yaml
 
 from codebase_rag.stack import constants as stack_cs
-from codebase_rag.stack.manager import StackManager
+from codebase_rag.stack.manager import StackCompose, StackManager
 from codebase_rag.types_defs import JsonValue
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -37,7 +37,7 @@ def _environment(service: dict[str, JsonValue]) -> dict[str, str]:
 
 def _rendered(tmp_path: Path) -> Path:
     return StackManager(
-        home=tmp_path, package_compose=COMPOSE_PATH
+        home=tmp_path, compose=StackCompose(package_compose=COMPOSE_PATH)
     ).ensure_compose_file()
 
 

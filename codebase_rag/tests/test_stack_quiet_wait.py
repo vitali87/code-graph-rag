@@ -23,7 +23,12 @@ from codebase_rag import constants as root_cs
 from codebase_rag.stack import cli as stack_cli
 from codebase_rag.stack import constants as cs
 from codebase_rag.stack import health
-from codebase_rag.stack.manager import StackError, StackManager
+from codebase_rag.stack.manager import (
+    StackCompose,
+    StackEndpoints,
+    StackError,
+    StackManager,
+)
 
 # What mgclient's C transport prints for each failed read or write (issue
 # #2356).
@@ -90,9 +95,8 @@ def stack_home(tmp_path: Path) -> Path:
 def _manager(home: Path, port: int) -> StackManager:
     mgr = StackManager(
         home=home,
-        package_compose=Path("/dev/null"),
-        memgraph_host=cs.LOOPBACK_HOST,
-        memgraph_port=port,
+        compose=StackCompose(package_compose=Path("/dev/null")),
+        endpoints=StackEndpoints(memgraph_host=cs.LOOPBACK_HOST, memgraph_port=port),
     )
     mgr.memgraph_credentials = None
     return mgr

@@ -1,4 +1,6 @@
 from .manager import (
+    StackCompose,
+    StackEndpoints,
     StackManager,
     StackStatus,
     bundled_qdrant_url,
@@ -11,6 +13,8 @@ from .manager import (
 )
 
 __all__ = [
+    "StackCompose",
+    "StackEndpoints",
     "StackManager",
     "StackStatus",
     "bundled_qdrant_url",

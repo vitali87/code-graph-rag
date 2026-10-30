@@ -16,7 +16,7 @@ import yaml
 from loguru import logger
 
 from codebase_rag.stack import constants as cs
-from codebase_rag.stack.manager import StackManager
+from codebase_rag.stack.manager import StackCompose, StackManager
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPOSE_PATH = REPO_ROOT / "codebase_rag" / "docker-compose.yaml"
@@ -73,7 +73,9 @@ class TestPublicPortWarning:
         home = tmp_path / "cgr_home"
         home.mkdir()
         (home / cs.COMPOSE_FILENAME).write_text(rendered, encoding="utf-8")
-        return StackManager(home=home, package_compose=COMPOSE_PATH)
+        return StackManager(
+            home=home, compose=StackCompose(package_compose=COMPOSE_PATH)
+        )
 
     def _warnings(self, manager: StackManager) -> list[str]:
         messages: list[str] = []

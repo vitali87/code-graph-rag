@@ -10,7 +10,7 @@ from typer.testing import CliRunner
 
 from codebase_rag.stack import cli as stack_cli
 from codebase_rag.stack import constants as stack_cs
-from codebase_rag.stack.manager import StackError, StackManager
+from codebase_rag.stack.manager import StackCompose, StackError, StackManager
 
 
 def _fake_subprocess_result(
@@ -38,7 +38,7 @@ def test_ensure_compose_file_copies_when_missing(
     stack_home: Path, tmp_path: Path
 ) -> None:
     src = _make_compose_source(tmp_path)
-    mgr = StackManager(home=stack_home, package_compose=src)
+    mgr = StackManager(home=stack_home, compose=StackCompose(package_compose=src))
     target = mgr.ensure_compose_file()
     assert target == stack_home / stack_cs.COMPOSE_FILENAME
     assert target.read_text(encoding="utf-8") == src.read_text(encoding="utf-8")
@@ -50,7 +50,7 @@ def test_ensure_compose_file_preserves_existing(
     src = _make_compose_source(tmp_path)
     target = stack_home / stack_cs.COMPOSE_FILENAME
     target.write_text("custom: yes\n", encoding="utf-8")
-    mgr = StackManager(home=stack_home, package_compose=src)
+    mgr = StackManager(home=stack_home, compose=StackCompose(package_compose=src))
     result = mgr.ensure_compose_file()
     assert result.read_text(encoding="utf-8") == "custom: yes\n"
 
@@ -59,13 +59,15 @@ def test_ensure_compose_file_raises_when_source_missing(
     stack_home: Path, tmp_path: Path
 ) -> None:
     missing = tmp_path / "nope.yaml"
-    mgr = StackManager(home=stack_home, package_compose=missing)
+    mgr = StackManager(home=stack_home, compose=StackCompose(package_compose=missing))
     with pytest.raises(StackError):
         mgr.ensure_compose_file()
 
 
 def test_check_docker_raises_when_docker_not_on_path(stack_home: Path) -> None:
-    mgr = StackManager(home=stack_home, package_compose=Path("/dev/null"))
+    mgr = StackManager(
+        home=stack_home, compose=StackCompose(package_compose=Path("/dev/null"))
+    )
     with patch("codebase_rag.stack.manager.shutil.which", return_value=None):
         with pytest.raises(StackError) as exc:
             mgr.check_docker()
@@ -73,7 +75,9 @@ def test_check_docker_raises_when_docker_not_on_path(stack_home: Path) -> None:
 
 
 def test_check_docker_raises_when_daemon_down(stack_home: Path) -> None:
-    mgr = StackManager(home=stack_home, package_compose=Path("/dev/null"))
+    mgr = StackManager(
+        home=stack_home, compose=StackCompose(package_compose=Path("/dev/null"))
+    )
     with (
         patch(
             "codebase_rag.stack.manager.shutil.which", return_value="/usr/bin/docker"
@@ -89,7 +93,9 @@ def test_check_docker_raises_when_daemon_down(stack_home: Path) -> None:
 
 
 def test_check_docker_raises_when_compose_missing(stack_home: Path) -> None:
-    mgr = StackManager(home=stack_home, package_compose=Path("/dev/null"))
+    mgr = StackManager(
+        home=stack_home, compose=StackCompose(package_compose=Path("/dev/null"))
+    )
 
     def fake_run(cmd: list[str], **_: object) -> subprocess.CompletedProcess[str]:
         if cmd[:2] == ["docker", "info"]:
@@ -108,7 +114,9 @@ def test_check_docker_raises_when_compose_missing(stack_home: Path) -> None:
 
 
 def test_status_returns_stopped_when_nothing_reachable(stack_home: Path) -> None:
-    mgr = StackManager(home=stack_home, package_compose=Path("/dev/null"))
+    mgr = StackManager(
+        home=stack_home, compose=StackCompose(package_compose=Path("/dev/null"))
+    )
     with (
         patch("codebase_rag.stack.manager.wait_for_memgraph", return_value=False),
         patch("codebase_rag.stack.manager.wait_for_qdrant", return_value=False),
@@ -118,7 +126,9 @@ def test_status_returns_stopped_when_nothing_reachable(stack_home: Path) -> None
 
 
 def test_status_returns_running_when_both_reachable(stack_home: Path) -> None:
-    mgr = StackManager(home=stack_home, package_compose=Path("/dev/null"))
+    mgr = StackManager(
+        home=stack_home, compose=StackCompose(package_compose=Path("/dev/null"))
+    )
     with (
         patch("codebase_rag.stack.manager.wait_for_memgraph", return_value=True),
         patch("codebase_rag.stack.manager.wait_for_qdrant", return_value=True),
@@ -130,7 +140,9 @@ def test_status_returns_running_when_both_reachable(stack_home: Path) -> None:
 
 
 def test_status_returns_partial_when_only_memgraph_reachable(stack_home: Path) -> None:
-    mgr = StackManager(home=stack_home, package_compose=Path("/dev/null"))
+    mgr = StackManager(
+        home=stack_home, compose=StackCompose(package_compose=Path("/dev/null"))
+    )
     with (
         patch("codebase_rag.stack.manager.wait_for_memgraph", return_value=True),
         patch("codebase_rag.stack.manager.wait_for_qdrant", return_value=False),
@@ -141,7 +153,10 @@ def test_status_returns_partial_when_only_memgraph_reachable(stack_home: Path) -
 
 def test_compose_cmd_uses_project_and_file(stack_home: Path, tmp_path: Path) -> None:
     src = _make_compose_source(tmp_path)
-    mgr = StackManager(home=stack_home, package_compose=src, project_name="cgr-test")
+    mgr = StackManager(
+        home=stack_home,
+        compose=StackCompose(package_compose=src, project_name="cgr-test"),
+    )
     cmd = mgr._compose_cmd("up", "-d")
     assert cmd[0] == "docker"
     assert cmd[1] == "compose"
@@ -156,7 +171,7 @@ def test_ensure_running_skips_docker_when_already_up(
     stack_home: Path, tmp_path: Path
 ) -> None:
     src = _make_compose_source(tmp_path)
-    mgr = StackManager(home=stack_home, package_compose=src)
+    mgr = StackManager(home=stack_home, compose=StackCompose(package_compose=src))
     with (
         patch("codebase_rag.stack.manager.wait_for_memgraph", return_value=True),
         patch("codebase_rag.stack.manager.wait_for_qdrant", return_value=True),
@@ -171,7 +186,7 @@ def test_ensure_running_skips_docker_when_already_up(
 
 def test_ensure_running_starts_when_stopped(stack_home: Path, tmp_path: Path) -> None:
     src = _make_compose_source(tmp_path)
-    mgr = StackManager(home=stack_home, package_compose=src)
+    mgr = StackManager(home=stack_home, compose=StackCompose(package_compose=src))
     reachable_state = {"memgraph": False, "qdrant": False}
 
     def memgraph_check(*_: object, **__: object) -> bool:
@@ -200,7 +215,7 @@ def test_ensure_running_starts_when_stopped(stack_home: Path, tmp_path: Path) ->
 
 def test_up_propagates_failure(stack_home: Path, tmp_path: Path) -> None:
     src = _make_compose_source(tmp_path)
-    mgr = StackManager(home=stack_home, package_compose=src)
+    mgr = StackManager(home=stack_home, compose=StackCompose(package_compose=src))
     with (
         patch.object(mgr, "check_docker"),
         patch(
@@ -275,7 +290,8 @@ class TestAlreadyRunningStackWarns:
 
     def _running_manager(self, stack_home: Path, tmp_path: Path) -> StackManager:
         return StackManager(
-            home=stack_home, package_compose=_make_compose_source(tmp_path)
+            home=stack_home,
+            compose=StackCompose(package_compose=_make_compose_source(tmp_path)),
         )
 
     def test_warns_when_already_up_with_public_ports(
@@ -327,7 +343,8 @@ class TestDaemonStatusWarns:
 
     def _invoke_status(self, stack_home: Path, tmp_path: Path) -> list[str]:
         mgr = StackManager(
-            home=stack_home, package_compose=_make_compose_source(tmp_path)
+            home=stack_home,
+            compose=StackCompose(package_compose=_make_compose_source(tmp_path)),
         )
         with (
             patch("codebase_rag.stack.cli.StackManager", return_value=mgr),
@@ -375,7 +392,8 @@ class TestMaybeStartStackWarns:
         from codebase_rag.cli import _maybe_start_stack
 
         mgr = StackManager(
-            home=stack_home, package_compose=_make_compose_source(tmp_path)
+            home=stack_home,
+            compose=StackCompose(package_compose=_make_compose_source(tmp_path)),
         )
         with (
             patch("codebase_rag.cli.StackManager", return_value=mgr),

@@ -21,7 +21,7 @@ from typer.testing import CliRunner
 
 from codebase_rag.stack import cli as stack_cli
 from codebase_rag.stack import constants as stack_cs
-from codebase_rag.stack.manager import StackError, StackManager
+from codebase_rag.stack.manager import StackCompose, StackError, StackManager
 
 PROGRESS = """ Network cgr_default Creating
  Network cgr_default Created
@@ -80,7 +80,7 @@ def mgr(tmp_path: Path) -> StackManager:
     src.write_text("services: {}\n", encoding="utf-8")
     home = tmp_path / "home"
     home.mkdir()
-    return StackManager(home=home, package_compose=src)
+    return StackManager(home=home, compose=StackCompose(package_compose=src))
 
 
 def _up(mgr: StackManager, output: str, running: set[str]) -> list[str]:
@@ -119,7 +119,9 @@ def test_a_lab_failure_under_another_project_name_is_still_optional(
     # failure failed a usable stack again.
     src = tmp_path / "compose.yaml"
     src.write_text("services: {}\n", encoding="utf-8")
-    mgr = StackManager(home=tmp_path, package_compose=src, project_name=project)
+    mgr = StackManager(
+        home=tmp_path, compose=StackCompose(package_compose=src, project_name=project)
+    )
 
     records = _up(
         mgr,
@@ -136,7 +138,10 @@ def test_another_projects_container_is_not_this_stacks_lab(tmp_path: Path) -> No
     # read as a regex wildcard) or plain `cgr-lab-1` is not this stack's Lab.
     src = tmp_path / "compose.yaml"
     src.write_text("services: {}\n", encoding="utf-8")
-    mgr = StackManager(home=tmp_path, package_compose=src, project_name="my.stack")
+    mgr = StackManager(
+        home=tmp_path,
+        compose=StackCompose(package_compose=src, project_name="my.stack"),
+    )
 
     for other in ("myxstack", "cgr"):
         output = _bind_failure(stack_cs.SERVICE_LAB, 3000, other)

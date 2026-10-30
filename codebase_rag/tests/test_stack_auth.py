@@ -31,7 +31,7 @@ from codebase_rag.stack import cli as stack_cli
 from codebase_rag.stack import constants as cs
 from codebase_rag.stack import health
 from codebase_rag.stack import manager as manager_module
-from codebase_rag.stack.manager import StackError, StackManager
+from codebase_rag.stack.manager import StackCompose, StackError, StackManager
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPOSE_PATH = REPO_ROOT / "codebase_rag" / "docker-compose.yaml"
@@ -96,7 +96,9 @@ def _no_containers(*_: list[str] | dict[str, str]) -> str:
 
 
 def _manager(tmp_path: Path) -> StackManager:
-    return StackManager(home=tmp_path / "cgr-home", package_compose=COMPOSE_PATH)
+    return StackManager(
+        home=tmp_path / "cgr-home", compose=StackCompose(package_compose=COMPOSE_PATH)
+    )
 
 
 def _warnings_from[T](action: Callable[[], T]) -> list[str]:
@@ -257,7 +259,7 @@ def test_a_qdrant_only_start_never_asks_memgraph(
     qdrant_up = iter([False, True, True])
     mgr = StackManager(
         home=tmp_path / "cgr-home",
-        package_compose=COMPOSE_PATH,
+        compose=StackCompose(package_compose=COMPOSE_PATH),
         services=(cs.SERVICE_QDRANT,),
     )
     qdrant_only = {cs.SERVICE_QDRANT: MATCHING_ENV[cs.SERVICE_QDRANT]}

@@ -18,7 +18,7 @@ import yaml
 from loguru import logger
 
 from codebase_rag.stack import constants as stack_cs
-from codebase_rag.stack.manager import StackManager
+from codebase_rag.stack.manager import StackCompose, StackManager
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPOSE_PATH = REPO_ROOT / "codebase_rag" / "docker-compose.yaml"
@@ -79,7 +79,7 @@ def _warnings_for(stack_home: Path) -> list[str]:
     sink = logger.add(messages.append, level="WARNING", format="{message}")
     try:
         StackManager(
-            home=stack_home, package_compose=COMPOSE_PATH
+            home=stack_home, compose=StackCompose(package_compose=COMPOSE_PATH)
         ).ensure_compose_file()
     finally:
         logger.remove(sink)

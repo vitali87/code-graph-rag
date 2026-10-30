@@ -304,17 +304,34 @@ class StackStatus:
     qdrant_endpoint: str
 
 
+@dataclass(frozen=True, slots=True)
+class StackCompose:
+    """The compose file a stack is rendered from and the Compose project it
+    runs as. No `package_compose` takes the file packaged with cgr."""
+
+    package_compose: Path | None = None
+    project_name: str = scs.COMPOSE_PROJECT_NAME
+
+
+@dataclass(frozen=True, slots=True)
+class StackEndpoints:
+    """Where a stack's health checks reach its services. A Memgraph host or
+    port left out is read from MEMGRAPH_HOST or MEMGRAPH_PORT when the
+    manager is built."""
+
+    memgraph_host: str | None = None
+    memgraph_port: int | None = None
+    qdrant_port: int = 6333
+
+
 class StackManager:
     def __init__(
         self,
         *,
         home: Path | None = None,
-        package_compose: Path | None = None,
-        memgraph_host: str | None = None,
-        memgraph_port: int | None = None,
-        qdrant_port: int = 6333,
-        project_name: str = scs.COMPOSE_PROJECT_NAME,
         services: tuple[str, ...] = scs.CORE_SERVICES,
+        compose: StackCompose = StackCompose(),
+        endpoints: StackEndpoints = StackEndpoints(),
     ) -> None:
         self.home = (home or settings.CGR_HOME).expanduser()
         # The services this manager starts and checks. A graph backend other
@@ -322,22 +339,22 @@ class StackManager:
         # check needs the driver such an install need not have.
         self.services = services
         self.package_compose = (
-            package_compose
+            compose.package_compose
             or (
                 Path(__file__).resolve().parent / scs.PACKAGE_COMPOSE_RELATIVE
             ).resolve()
         )
-        self.memgraph_host = memgraph_host or settings.MEMGRAPH_HOST
-        self.memgraph_port = memgraph_port or settings.MEMGRAPH_PORT
+        self.memgraph_host = endpoints.memgraph_host or settings.MEMGRAPH_HOST
+        self.memgraph_port = endpoints.memgraph_port or settings.MEMGRAPH_PORT
         self.memgraph_credentials = _memgraph_credentials()
-        self.qdrant_port = qdrant_port
+        self.qdrant_port = endpoints.qdrant_port
         self._qdrant_bind = _bind_host(self.home)
         self.qdrant_host = _bundled_qdrant_probe_host(self._qdrant_bind)
         self._qdrant_keys: dict[tuple[str, int], str | None] = {}
         # Each service's running containers just before `up -d`, or None when
         # that is unknown; see _started_here.
         self._containers_before_start: dict[str, str] | None = None
-        self.project_name = project_name
+        self.project_name = compose.project_name
 
     @property
     def qdrant_api_key(self) -> str | None:
