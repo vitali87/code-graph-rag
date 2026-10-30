@@ -9,7 +9,7 @@ and hands Dart's part to the `DartCallResolution` it builds."""
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Protocol
 
 from tree_sitter import Node
@@ -17,7 +17,7 @@ from tree_sitter import Node
 from ... import constants as cs
 from ...language_spec import LanguageSpec
 from ...node_text import safe_decode_text
-from ...types_defs import PropertyDict
+from ...types_defs import LanguageQueries, PropertyDict
 from ...utils import qn_markers
 from ..edge_site import EdgeSiteHost, host_site_scoped
 from ..language_calls import LanguageCalls
@@ -377,10 +377,30 @@ class DartCallResolution(LanguageCalls):
     # which is untuned for Dart: a tear-off passed as an argument keeps
     # its target reachable (Flutter's `onPressed: _handleTap`).
     references_arguments = True
+    # A getter body can read another getter (`=> _wonders.length`, issue
+    # #873) in a file with no call expression.
+    scans_callers_without_calls = True
 
     def __init__(self, host: DartCallHost, resolver: CallResolver) -> None:
         self._host = host
         self._resolver = resolver
+
+    def ingest_module_references(
+        self,
+        root_node: Node,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
+        combined_captures: dict[str, list[Node]],
+        sorted_func_nodes: list[Node] | None,
+    ) -> None:
+        if dart_prop_names := self._resolver.function_registry.property_names():
+            self.ingest_module_initializer_reads(
+                root_node,
+                module_qn,
+                queries[language][cs.QUERY_CONFIG],
+                dart_prop_names,
+            )
 
     def ingest_module_initializer_reads(
         self,

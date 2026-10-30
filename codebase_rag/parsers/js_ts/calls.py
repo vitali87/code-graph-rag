@@ -15,7 +15,7 @@ shared walkers apply to JS/TS syntax are the module functions here."""
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, NamedTuple, Protocol
 
 from tree_sitter import Node
@@ -23,7 +23,7 @@ from tree_sitter import Node
 from ... import constants as cs
 from ...language_spec import LanguageSpec
 from ...node_text import decode_node_text, safe_decode_text
-from ...types_defs import FunctionLocation, PropertyDict
+from ...types_defs import FunctionLocation, LanguageQueries, PropertyDict
 from ..definition_docstring import extract_definition_docstring
 from ..edge_site import EdgeSiteHost, host_site_scoped
 from ..field_nodes import declared_fields
@@ -39,9 +39,10 @@ class JsTsCallHost(EdgeSiteHost, Protocol):
     """What JS/TS call resolution reads and sets on the call pass that builds
     it: the edge emitter, a function node's own name and the location the
     definition pass recorded for it, the reference an inline callback
-    argument gets, and `_verdict`, how surely the call node being scanned
-    binds its callee, which a member pick its receiver's declared type
-    confirms raises to exact."""
+    argument gets, the reference walkers JS/TS shares with other languages
+    and the scope boundaries they stop at, and `_verdict`, how surely the
+    call node being scanned binds its callee, which a member pick its
+    receiver's declared type confirms raises to exact."""
 
     _verdict: str
 
@@ -67,6 +68,29 @@ class JsTsCallHost(EdgeSiteHost, Protocol):
         caller_qn: str | None = None,
         rel_type: cs.RelationshipType = cs.RelationshipType.REFERENCES,
         module_qn: str | None = None,
+    ) -> None: ...
+
+    @staticmethod
+    def _flow_scope_boundaries(lang_config: LanguageSpec) -> frozenset[str]: ...
+
+    def _ingest_py_js_module_references(
+        self,
+        root_node: Node,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
+        class_field_assignments: bool = False,
+    ) -> None: ...
+
+    def _ingest_jsx_component_references(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+        boundary_types: frozenset[str],
+        caller_qn: str | None = None,
     ) -> None: ...
 
 
@@ -758,6 +782,11 @@ class JsTsCallResolution(LanguageCalls):
 
     flows_callables = True
     references_arguments = True
+    # A method's inline callback (`run() { return () => 1; }`) gets its
+    # REFERENCES edge only when the class pass runs (issue #970).
+    scans_callers_without_calls = True
+    anonymous_calls_reach_module = True
+    keys_members_by_symbol = True
 
     def __init__(self, host: JsTsCallHost, resolver: CallResolver) -> None:
         self._host = host
@@ -780,6 +809,32 @@ class JsTsCallResolution(LanguageCalls):
         # factory qn -> the class its returns construct, read once per pass
         # (issue #2453). Strings only, so no tree is pinned.
         self._factory_classes: dict[str, str | None] = {}
+
+    def ingest_module_references(
+        self,
+        root_node: Node,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
+        combined_captures: dict[str, list[Node]],
+        sorted_func_nodes: list[Node] | None,
+    ) -> None:
+        # A class field's initializer runs at construction, so the
+        # assignment scan descends into class bodies too.
+        self._host._ingest_py_js_module_references(
+            root_node, module_qn, language, queries, class_field_assignments=True
+        )
+        # A module-scope JSX element (export default <App />) can sit
+        # in a file with no call expressions; scan before the early
+        # return like the assignment pass.
+        self._host._ingest_jsx_component_references(
+            root_node,
+            (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
+            module_qn,
+            None,
+            None,
+            self._host._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
+        )
 
     def forget_file_bindings(self, module_qn: str) -> None:
         self._file_receiver_bindings.pop(module_qn, None)

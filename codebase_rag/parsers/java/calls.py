@@ -1,7 +1,8 @@
 """Java's share of the call pass: the declaration a Java call binds through
 the javac frontend or the Java engine, the same-arity overloads it cannot
-tell apart, the methods a method reference hands over, and the parameter
-signature a Java method's qualified name carries.
+tell apart, the methods a method reference hands over, the constructors an
+enum constant runs, and the parameter signature a Java method's qualified
+name carries.
 
 `CallProcessor` owns what every language shares (the scan of a caller's call
 nodes, the site and resolution each edge carries, the name-based resolver,
@@ -11,13 +12,16 @@ builds."""
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Protocol
 
 from tree_sitter import Node
 
 from ... import constants as cs
-from ..edge_site import EdgeSiteHost
+from ...language_spec import LanguageSpec
+from ...types_defs import FunctionLocation, LanguageQueries, PropertyDict
+from ..class_ingest.identity import build_nested_qualified_name_for_class
+from ..edge_site import EdgeSiteHost, host_site_scoped
 from ..language_calls import LanguageCalls
 from . import utils as java_utils
 from .type_inference import JAVA_EXTERNAL_TARGET
@@ -30,12 +34,37 @@ class JavaCallHost(EdgeSiteHost, Protocol):
     """What Java call resolution sets and calls on the call pass that builds
     it. Beside the edge site, `_verdict`, how surely the call node being
     scanned binds its callee, which a tie between overloads lowers to
-    `overload`; and the record of a name no definition answers yet, which a
-    file added later may define."""
+    `overload`; the record of a name no definition answers yet, which a
+    file added later may define; and, for the constructors an enum constant
+    runs, the edge emitter, a definition's recorded location and own name,
+    and the qualified name the class pass gives a class's member."""
 
     _verdict: str
 
     def _note_unresolved(self, module_qn: str, name: str) -> None: ...
+
+    def _emit_rel(
+        self,
+        from_spec: tuple[str, str, str],
+        rel_type: str,
+        to_spec: tuple[str, str, str],
+        properties: PropertyDict | None = None,
+    ) -> None: ...
+
+    def _recorded_caller(
+        self, func_node: Node, module_qn: str
+    ) -> FunctionLocation | None: ...
+
+    def _get_node_name(self, node: Node, field: str = cs.FIELD_NAME) -> str | None: ...
+
+    def _class_member_qn_and_label(
+        self,
+        func_node: Node,
+        class_qn: str,
+        func_name: str,
+        lang_config: LanguageSpec,
+        language: str,
+    ) -> tuple[str, str]: ...
 
 
 class JavaCallScan(Protocol):
@@ -62,7 +91,7 @@ def method_member(func_node: Node, func_name: str) -> str:
 class JavaCallResolution(LanguageCalls):
     """Binds Java calls through the javac frontend or the Java engine, links
     the overloads a binding cannot tell apart, and writes the references a
-    method reference makes.
+    method reference makes and the constructor calls an enum constant makes.
 
     Built and owned by `CallProcessor`. The resolver is the pass's own, held
     by reference: the definition pass fills its registry as it registers
@@ -73,6 +102,126 @@ class JavaCallResolution(LanguageCalls):
     def __init__(self, host: JavaCallHost, resolver: CallResolver) -> None:
         self._host = host
         self._resolver = resolver
+
+    def ingest_module_references(
+        self,
+        root_node: Node,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
+        combined_captures: dict[str, list[Node]],
+        sorted_func_nodes: list[Node] | None,
+    ) -> None:
+        # A constant runs its enum's constructor without any call
+        # expression, so a file holding only an enum has to be covered
+        # before the no-calls early return (issue #2547).
+        self._ingest_enum_constant_ctor_calls(
+            module_qn, combined_captures.get(cs.CAPTURE_CLASS) or [], queries
+        )
+
+    @host_site_scoped
+    def _ingest_enum_constant_ctor_calls(
+        self,
+        module_qn: str,
+        class_nodes: list[Node],
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
+    ) -> None:
+        # Outside its own constructors, `CLASS("c")` is the only thing that runs
+        # a Java enum constructor (`new` on an enum is a compile error), and no
+        # call node names it, so every parameterised enum constructor looked
+        # dead. Each constant CALLS the constructors its argument count admits;
+        # one candidate is the compiler's choice, several (same arity) fan out
+        # as `overload`, the way `new X(...)` does. No INSTANTIATES: that edge
+        # only targets Class.
+        host = self._host
+        for enum_node in class_nodes:
+            if enum_node.type != cs.TS_ENUM_DECLARATION:
+                continue
+            constants = java_utils.enum_constants(enum_node)
+            if not constants:
+                continue
+            ctors = [
+                (ctor, target)
+                for ctor in java_utils.enum_constructors(enum_node)
+                if (
+                    target := self._enum_ctor_target(
+                        ctor, enum_node, module_qn, queries
+                    )
+                )
+                is not None
+            ]
+            if not ctors:
+                continue
+            caller_spec = self._enum_initializer(enum_node, module_qn)
+            for constant in constants:
+                arg_count = java_utils.argument_count(constant)
+                targets = [
+                    target
+                    for ctor, target in ctors
+                    if java_utils.accepts_argument_count(ctor, arg_count)
+                ]
+                host._site_node = constant
+                host._resolution = (
+                    cs.EdgeResolution.EXACT
+                    if len(targets) == 1
+                    else cs.EdgeResolution.OVERLOAD
+                )
+                for target_label, target_qn in targets:
+                    # A bare `NONE` has no argument list for the site to
+                    # count, yet it is a zero-argument invocation all the same.
+                    host._emit_rel(
+                        caller_spec,
+                        cs.RelationshipType.CALLS,
+                        (target_label, cs.KEY_QUALIFIED_NAME, target_qn),
+                        {cs.KEY_ARG_COUNT: arg_count, cs.KEY_KWARG_NAMES: []},
+                    )
+
+    def _enum_ctor_target(
+        self,
+        ctor_node: Node,
+        enum_node: Node,
+        module_qn: str,
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
+    ) -> tuple[str, str] | None:
+        host = self._host
+        if loc := host._recorded_caller(ctor_node, module_qn):
+            return loc.label, loc.qualified_name
+        # The class pass's own derivation, for a run that did not re-record
+        # this file's definitions.
+        enum_name = host._get_node_name(enum_node)
+        ctor_name = host._get_node_name(ctor_node)
+        if not enum_name or not ctor_name:
+            return None
+        language = cs.SupportedLanguage.JAVA
+        java_config = queries[language][cs.QUERY_CONFIG]
+        enum_qn = (
+            build_nested_qualified_name_for_class(
+                enum_node, module_qn, enum_name, java_config
+            )
+            or f"{module_qn}{cs.SEPARATOR_DOT}{enum_name}"
+        )
+        target_qn, target_label = host._class_member_qn_and_label(
+            ctor_node, enum_qn, ctor_name, java_config, language
+        )
+        if target_qn not in self._resolver.function_registry:
+            return None
+        return target_label, target_qn
+
+    def _enum_initializer(
+        self, enum_node: Node, module_qn: str
+    ) -> tuple[str, str, str]:
+        # A local enum initialises when its method first uses it, so that
+        # method runs the constructors: a dead method keeps them dead. Any
+        # other enum initialises at class load, which the graph attributes to
+        # the module, as it does a static field initializer.
+        current = enum_node.parent
+        while current is not None:
+            if current.type in cs.JAVA_METHOD_NODE_TYPES:
+                if loc := self._host._recorded_caller(current, module_qn):
+                    return (loc.label, cs.KEY_QUALIFIED_NAME, loc.qualified_name)
+                break
+            current = current.parent
+        return (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn)
 
     def resolve_callee(
         self,

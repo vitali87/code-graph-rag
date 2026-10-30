@@ -41,6 +41,41 @@ class LanguageCalls:
     # target stays reachable; every flow language references it, and a
     # language may take this half without the flow.
     references_arguments: ClassVar[bool] = False
+    # A file with no call node still gets the caller passes: the language's
+    # callers make edges without one, which the class pass writes.
+    scans_callers_without_calls: ClassVar[bool] = False
+    # An anonymous function gets no caller pass, so a call nested only in
+    # anonymous scopes is the module's rather than nobody's.
+    anonymous_calls_reach_module: ClassVar[bool] = False
+    # A pre-pass over every file records the functions a construction binds
+    # to a class's callable fields (`collect_callable_field_bindings`).
+    binds_callable_fields: ClassVar[bool] = False
+    # A pre-pass over every file records the members a symbol key installs
+    # (`collect_symbol_bindings`).
+    keys_members_by_symbol: ClassVar[bool] = False
+
+    def collect_callable_field_bindings(
+        self, root_node: Node, module_qn: str, call_nodes: list[Node]
+    ) -> None:
+        """Record the functions a file's constructions bind to callable
+        fields, resolved once every file's constructors are known."""
+
+    def collect_symbol_bindings(self, root_node: Node, module_qn: str) -> None:
+        """Record the symbol constants a file declares and the members it
+        installs under them, resolved once every file is swept."""
+
+    def ingest_module_references(
+        self,
+        root_node: Node,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
+        combined_captures: dict[str, list[Node]],
+        sorted_func_nodes: list[Node] | None,
+    ) -> None:
+        """Write the edges a file makes at module scope without a call node,
+        before the pass's early return for a file with no call: a function
+        stored as a value, a construction that runs a constructor."""
 
 
 @dataclass(slots=True)

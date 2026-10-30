@@ -68,7 +68,7 @@ from .rust import calls as rs_calls
 from .rust import utils as rs_utils
 from .scala import calls as scala_calls
 from .scala import utils as scala_utils
-from .sql.ddl import ddl_routine_references
+from .sql import calls as sql_calls
 from .string_call import load_string_call_specs, string_call_target
 from .type_inference import TypeInferenceEngine
 from .utils import (
@@ -755,6 +755,7 @@ class CallProcessor:
         "_scala",
         "_php",
         "_c",
+        "_sql",
         "_language_calls",
         "_default_calls",
         "_callable_flow",
@@ -833,6 +834,7 @@ class CallProcessor:
         self._c = cpp_calls.CCallResolution(
             self, self._resolver, self.module_qn_to_file_path
         )
+        self._sql = sql_calls.SqlCallResolution(self, self.facts)
         # The call strategy each language's files go to; JS, TS and TSX share
         # one. A language with none, and a walk that names no language, get
         # the base, which adds nothing to the pass.
@@ -849,6 +851,7 @@ class CallProcessor:
             cs.SupportedLanguage.CSHARP: self._csharp,
             cs.SupportedLanguage.DART: self._dart,
             cs.SupportedLanguage.SCALA: self._scala,
+            cs.SupportedLanguage.SQL: self._sql,
         }
         self._default_calls = LanguageCalls()
         # Inter-procedural callable-parameter flow: ordered params per function and
@@ -1158,13 +1161,13 @@ class CallProcessor:
         # (keyword name or positional index) and resolved by
         # finalize_field_bindings after every file's ctor metadata (param
         # order + param->attribute renames) is collected.
-        if language != cs.SupportedLanguage.PYTHON:
+        calls = self._calls_for(language)
+        if not calls.binds_callable_fields:
             return
         try:
             module_qn = self._module_qn(
                 file_path, cached_relative_path(file_path, self.repo_path)
             )
-            self._python.collect_ctor_field_metadata(root_node, module_qn)
             call_nodes = (
                 func_class_captures_cache[file_path].get(cs.CAPTURE_CALL)
                 if func_class_captures_cache is not None
@@ -1175,8 +1178,7 @@ class CallProcessor:
                 call_nodes, _ = self._collect_all_call_nodes(
                     root_node, language, queries
                 )
-            for call_node in call_nodes:
-                self._python.record_call_field_bindings(call_node, module_qn)
+            calls.collect_callable_field_bindings(root_node, module_qn, call_nodes)
         except Exception as e:  # noqa: BLE001 -- isolation: one unit's failure must not end the run
             self.failed_call_files.add(file_path)
             logger.error(ls.CALL_PROCESSING_FAILED, path=file_path, error=e)
@@ -1252,7 +1254,8 @@ class CallProcessor:
             # entries reachable; scan before the no-calls early return so a file
             # that only defines functions and a table is still covered. Runs for
             # every flow language with an object/array/dict literal form.
-            self._ingest_module_scope_references(
+            calls = self._calls_for(language)
+            calls.ingest_module_references(
                 root_node,
                 module_qn,
                 language,
@@ -1260,26 +1263,11 @@ class CallProcessor:
                 combined_captures,
                 sorted_func_nodes,
             )
-            if (
-                not all_call_nodes
-                and language
-                not in (
-                    cs.SupportedLanguage.CSHARP,
-                    cs.SupportedLanguage.CPP,
-                    cs.SupportedLanguage.DART,
-                )
-                and language not in _JS_TS_LANGUAGES
-            ):
+            if not all_call_nodes and not calls.scans_callers_without_calls:
                 # A file with no call expressions has nothing further to
-                # process, except in C#, where a class can still READ
-                # properties (`return Size;`), C++, where a ctor's
-                # member initializer list (`: buffer(g, 0)`) runs base
-                # ctors without any call_expression node, Dart, where
-                # a getter body can read another getter (`=> _wonders.length`,
-                # issue #873), and JS/TS, where a method's inline callback
-                # (`run() { return () => 1; }`) gets its REFERENCES edge only
-                # when the class pass runs (issue #970); these passes run per
-                # caller inside class processing, so they proceed.
+                # process, unless its language's callers make edges without
+                # one; those passes run per caller inside class processing,
+                # so they proceed.
                 return
             self._process_calls_in_classes(
                 root_node,
@@ -1368,228 +1356,25 @@ class CallProcessor:
             func_node_starts = None
         return all_call_nodes, call_starts, func_node_starts
 
-    def _ingest_module_scope_references(
-        self,
-        root_node: Node,
-        module_qn: str,
-        language: cs.SupportedLanguage,
-        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
-        combined_captures: dict[str, list[Node]],
-        sorted_func_nodes: list[Node] | None,
-    ) -> None:
-        if language == cs.SupportedLanguage.DART and (
-            dart_prop_names := self._resolver.function_registry.property_names()
-        ):
-            self._dart.ingest_module_initializer_reads(
-                root_node,
-                module_qn,
-                queries[language][cs.QUERY_CONFIG],
-                dart_prop_names,
-            )
-        if language == cs.SupportedLanguage.PYTHON or language in _JS_TS_LANGUAGES:
-            self._ingest_py_js_module_references(
-                root_node, module_qn, language, queries
-            )
-        if language == cs.SupportedLanguage.GO:
-            self._ingest_go_module_references(root_node, module_qn, language, queries)
-        if language == cs.SupportedLanguage.C:
-            # A file-scope ops table or hook struct (`static hooks_t h = {
-            # my_alloc, my_free };`) is wired when the program loads, often in
-            # a file that makes no call at all.
-            self._c.ingest_function_value_references(
-                root_node,
-                (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
-                module_qn,
-                self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
-            )
-        if language in _JS_TS_LANGUAGES:
-            # A module-scope JSX element (export default <App />) can sit
-            # in a file with no call expressions; scan before the early
-            # return like the assignment pass.
-            self._ingest_jsx_component_references(
-                root_node,
-                (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
-                module_qn,
-                None,
-                None,
-                self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
-            )
-        if language == cs.SupportedLanguage.PYTHON:
-            self._python.ingest_module_decorator_calls(
-                root_node,
-                module_qn,
-                language,
-                queries,
-                combined_captures,
-                sorted_func_nodes,
-            )
-            self._python.ingest_class_alias_references(
-                module_qn, combined_captures.get(cs.CAPTURE_CLASS) or []
-            )
-        if language == cs.SupportedLanguage.JAVA:
-            # A constant runs its enum's constructor without any call
-            # expression, so a file holding only an enum has to be covered
-            # before the no-calls early return (issue #2547).
-            self._ingest_java_enum_constant_ctor_calls(
-                module_qn, combined_captures.get(cs.CAPTURE_CLASS) or [], queries
-            )
-        if language == cs.SupportedLanguage.SQL:
-            # A trigger, aggregate, cast, type or handler clause runs the
-            # routine it names without an `invocation`; a schema file often
-            # holds no call at all (issue #3181).
-            self._ingest_sql_ddl_references(root_node, module_qn)
-
-    @_site_scoped
-    def _ingest_sql_ddl_references(self, root_node: Node, module_qn: str) -> None:
-        # The module runs the DDL, so it is the caller, as for a CHECK
-        # constraint's `invocation`. The site is the routine's name in the
-        # clause; no node spans it when the statement did not parse.
-        text, row, col = self._sql_source_as_written(root_node)
-        if not text:
-            return
-        self._site_node = None
-        module_spec = (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn)
-        for reference in ddl_routine_references(text, row, col):
-            self._resolution = cs.EdgeResolution.EXACT
-            self._link_sql_routine(
-                module_qn, module_spec, reference.name, reference.site
-            )
-
-    def _sql_source_as_written(self, root_node: Node) -> tuple[bytes | None, int, int]:
-        # The text to scan and the point it starts at. The tree's own text can
-        # be the statement-isolated re-parse's copy, which blanks every
-        # statement the grammar cannot read on its own (#3180), and most DDL
-        # that names a routine is such a statement. The bytes that tree was
-        # parsed from hold them, whole: a blanked statement that opens or
-        # closes the file lies outside the root's span.
-        path = self._call_file
-        source = self.facts.sql_sources.get(path) if path is not None else None
-        if source is None:
-            row, col = root_node.start_point
-            return root_node.text, row, col
-        return source, 0, 0
-
-    @_site_scoped
-    def _ingest_java_enum_constant_ctor_calls(
-        self,
-        module_qn: str,
-        class_nodes: list[Node],
-        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
-    ) -> None:
-        # Outside its own constructors, `CLASS("c")` is the only thing that runs
-        # a Java enum constructor (`new` on an enum is a compile error), and no
-        # call node names it, so every parameterised enum constructor looked
-        # dead. Each constant CALLS the constructors its argument count admits;
-        # one candidate is the compiler's choice, several (same arity) fan out
-        # as `overload`, the way `new X(...)` does. No INSTANTIATES: that edge
-        # only targets Class.
-        for enum_node in class_nodes:
-            if enum_node.type != cs.TS_ENUM_DECLARATION:
-                continue
-            constants = java_utils.enum_constants(enum_node)
-            if not constants:
-                continue
-            ctors = [
-                (ctor, target)
-                for ctor in java_utils.enum_constructors(enum_node)
-                if (
-                    target := self._java_enum_ctor_target(
-                        ctor, enum_node, module_qn, queries
-                    )
-                )
-                is not None
-            ]
-            if not ctors:
-                continue
-            caller_spec = self._java_enum_initializer(enum_node, module_qn)
-            for constant in constants:
-                arg_count = java_utils.argument_count(constant)
-                targets = [
-                    target
-                    for ctor, target in ctors
-                    if java_utils.accepts_argument_count(ctor, arg_count)
-                ]
-                self._site_node = constant
-                self._resolution = (
-                    cs.EdgeResolution.EXACT
-                    if len(targets) == 1
-                    else cs.EdgeResolution.OVERLOAD
-                )
-                for target_label, target_qn in targets:
-                    # A bare `NONE` has no argument list for the site to
-                    # count, yet it is a zero-argument invocation all the same.
-                    self._emit_rel(
-                        caller_spec,
-                        cs.RelationshipType.CALLS,
-                        (target_label, cs.KEY_QUALIFIED_NAME, target_qn),
-                        {cs.KEY_ARG_COUNT: arg_count, cs.KEY_KWARG_NAMES: []},
-                    )
-
-    def _java_enum_ctor_target(
-        self,
-        ctor_node: Node,
-        enum_node: Node,
-        module_qn: str,
-        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
-    ) -> tuple[str, str] | None:
-        if loc := self._recorded_caller(ctor_node, module_qn):
-            return loc.label, loc.qualified_name
-        # The class pass's own derivation, for a run that did not re-record
-        # this file's definitions.
-        enum_name = self._get_node_name(enum_node)
-        ctor_name = self._get_node_name(ctor_node)
-        if not enum_name or not ctor_name:
-            return None
-        language = cs.SupportedLanguage.JAVA
-        target_qn, target_label = self._class_member_qn_and_label(
-            ctor_node,
-            _class_qn_for_calls(enum_node, module_qn, enum_name, language, queries),
-            ctor_name,
-            queries[language][cs.QUERY_CONFIG],
-            language,
-        )
-        if target_qn not in self._resolver.function_registry:
-            return None
-        return target_label, target_qn
-
-    def _java_enum_initializer(
-        self, enum_node: Node, module_qn: str
-    ) -> tuple[str, str, str]:
-        # A local enum initialises when its method first uses it, so that
-        # method runs the constructors: a dead method keeps them dead. Any
-        # other enum initialises at class load, which the graph attributes to
-        # the module, as it does a static field initializer.
-        current = enum_node.parent
-        while current is not None:
-            if current.type in cs.JAVA_METHOD_NODE_TYPES:
-                if loc := self._recorded_caller(current, module_qn):
-                    return (loc.label, cs.KEY_QUALIFIED_NAME, loc.qualified_name)
-                break
-            current = current.parent
-        return (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn)
-
     def _ingest_py_js_module_references(
         self,
         root_node: Node,
         module_qn: str,
         language: cs.SupportedLanguage,
         queries: Mapping[cs.SupportedLanguage, LanguageQueries],
+        class_field_assignments: bool = False,
     ) -> None:
+        # A Python class body (import time) or a JS/TS class-field
+        # initializer (construction time) can store a dispatch table
+        # as a class ATTRIBUTE (django's `data_types = {"CharField":
+        # _get_varchar_...}`; a JS `opts = { retryStrategy }`), which
+        # is construction-load wiring like a module-level table; the
+        # scan descends through classes but still stops at function
+        # scopes. ponytail: decorated classes stay boundaries
+        # (decorated_definition also wraps functions).
         collection_boundaries = self._flow_scope_boundaries(
             queries[language][cs.QUERY_CONFIG]
-        )
-        if language == cs.SupportedLanguage.PYTHON or language in _JS_TS_LANGUAGES:
-            # A Python class body (import time) or a JS/TS class-field
-            # initializer (construction time) can store a dispatch table
-            # as a class ATTRIBUTE (django's `data_types = {"CharField":
-            # _get_varchar_...}`; a JS `opts = { retryStrategy }`), which
-            # is construction-load wiring like a module-level table; the
-            # scan descends through classes but still stops at function
-            # scopes. ponytail: decorated classes stay boundaries
-            # (decorated_definition also wraps functions).
-            collection_boundaries = collection_boundaries - frozenset(
-                queries[language][cs.QUERY_CONFIG].class_node_types
-            )
+        ) - frozenset(queries[language][cs.QUERY_CONFIG].class_node_types)
         self._ingest_collection_function_references(
             root_node,
             (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
@@ -1606,11 +1391,11 @@ class CallProcessor:
         assignment_boundaries = self._flow_scope_boundaries(
             queries[language][cs.QUERY_CONFIG]
         )
-        if language in _JS_TS_LANGUAGES:
-            # A JS/TS class-field initializer (`log = noop`) runs at
-            # construction, so descend into class bodies to reference the
-            # function it binds; the scan still stops at method/function
-            # scopes, so a local assignment inside a method stays theirs.
+        if class_field_assignments:
+            # A class-field initializer (`log = noop`) runs at construction,
+            # so descend into class bodies to reference the function it
+            # binds; the scan still stops at method/function scopes, so a
+            # local assignment inside a method stays theirs.
             assignment_boundaries = assignment_boundaries - frozenset(
                 queries[language][cs.QUERY_CONFIG].class_node_types
             )
@@ -1624,44 +1409,6 @@ class CallProcessor:
             language=language,
         )
 
-    def _ingest_go_module_references(
-        self,
-        root_node: Node,
-        module_qn: str,
-        language: cs.SupportedLanguage,
-        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
-    ) -> None:
-        # A module-scope Go func map/slice (var funcMap = map[...]{...})
-        # keeps its function entries reachable; scan before the no-calls
-        # early return so a file defining only funcs and a table counts.
-        self._go.ingest_composite_function_references(
-            root_node,
-            (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
-            module_qn,
-            None,
-            None,
-            self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
-        )
-        # A module-scope `var e = &Error{}` constructs too (issue #1642).
-        self._go.ingest_composite_literal_instantiations(
-            root_node,
-            (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
-            module_qn,
-            self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
-        )
-        # A module-scope Go var bound to a bare function value
-        # (var preExecHookFn = preExecHook) references it even in a file
-        # with no calls, so scan before the no-calls early return.
-        self._ingest_assignment_function_references(
-            root_node,
-            (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
-            module_qn,
-            None,
-            None,
-            self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
-            language=language,
-        )
-
     def _module_level_calls(
         self,
         all_call_nodes: list[Node],
@@ -1671,15 +1418,16 @@ class CallProcessor:
         module_qn: str,
     ) -> list[Node]:
         if sorted_func_nodes and call_starts is not None:
-            # JS/TS: exclude only calls owned by ATTRIBUTABLE functions, so a
-            # call nested purely in anonymous scopes (`create((set) => ({
-            # inc: () => set((state) => ...) }))`, zustand's store shape) is
-            # processed at module scope instead of by nobody: an anon arrow
-            # gets no caller pass, and a call inside a NAMED function is
-            # still excluded because that function's flat filter owns it.
+            # Where an anonymous function gets no caller pass (JS/TS),
+            # exclude only calls owned by ATTRIBUTABLE functions, so a call
+            # nested purely in anonymous scopes (`create((set) => ({ inc: ()
+            # => set((state) => ...) }))`, zustand's store shape) is
+            # processed at module scope instead of by nobody, and a call
+            # inside a NAMED function is still excluded because that
+            # function's flat filter owns it.
             exclusion_nodes = (
                 self._attributable_func_nodes(sorted_func_nodes, language, module_qn)
-                if language in _JS_TS_LANGUAGES
+                if self._calls_for(language).anonymous_calls_reach_module
                 else sorted_func_nodes
             )
             return self._filter_top_level_calls(
@@ -5989,7 +5737,8 @@ class CallProcessor:
     ) -> None:
         # Pre-pass for symbol-keyed member dispatch (issue #989), one walk
         # per JS/TS file.
-        if language not in _JS_TS_LANGUAGES:
+        calls = self._calls_for(language)
+        if not calls.keys_members_by_symbol:
             return
         try:
             module_qn = self._module_qn(
@@ -5998,7 +5747,7 @@ class CallProcessor:
         except ValueError:
             return
         try:
-            self._js.collect_symbol_bindings(root_node, module_qn)
+            calls.collect_symbol_bindings(root_node, module_qn)
         except Exception as e:  # noqa: BLE001 -- isolation: one unit's failure must not end the run
             self.failed_call_files.add(file_path)
             logger.error(ls.CALL_PROCESSING_FAILED, path=file_path, error=e)

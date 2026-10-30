@@ -12,15 +12,16 @@ and hands C++'s part to the `CppCallResolution` it builds, C's to the
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
 from tree_sitter import Node
 
 from ... import constants as cs
+from ...language_spec import LanguageSpec
 from ...node_text import decode_node_text, safe_decode_text
-from ...types_defs import PropertyDict
+from ...types_defs import LanguageQueries, PropertyDict
 from ...utils import qn_markers
 from ..definition_facts import DefinitionFacts
 from ..edge_site import EdgeSiteHost, host_site_scoped
@@ -239,6 +240,9 @@ class CppCallResolution(LanguageCalls):
 
     flows_callables = True
     references_arguments = True
+    # A constructor's member initializer list (`: buffer(g, 0)`) runs base
+    # constructors without any call_expression node.
+    scans_callers_without_calls = True
 
     def __init__(
         self, host: CppCallHost, resolver: CallResolver, facts: DefinitionFacts
@@ -856,7 +860,7 @@ class CppCallResolution(LanguageCalls):
 
 class CCallHost(EdgeSiteHost, Protocol):
     """What C's function-value references call on the call pass that builds
-    them: the edge emitter."""
+    them: the edge emitter, and the scope boundaries a scan stops at."""
 
     def _emit_rel(
         self,
@@ -865,6 +869,9 @@ class CCallHost(EdgeSiteHost, Protocol):
         to_spec: tuple[str, str, str],
         properties: PropertyDict | None = None,
     ) -> None: ...
+
+    @staticmethod
+    def _flow_scope_boundaries(lang_config: LanguageSpec) -> frozenset[str]: ...
 
 
 class CCallResolution(LanguageCalls):
@@ -904,6 +911,25 @@ class CCallResolution(LanguageCalls):
     def reset_file_scopes(self) -> None:
         self._file_scopes = {}
         self._include_closures = {}
+
+    def ingest_module_references(
+        self,
+        root_node: Node,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
+        combined_captures: dict[str, list[Node]],
+        sorted_func_nodes: list[Node] | None,
+    ) -> None:
+        # A file-scope ops table or hook struct (`static hooks_t h = {
+        # my_alloc, my_free };`) is wired when the program loads, often in
+        # a file that makes no call at all.
+        self.ingest_function_value_references(
+            root_node,
+            (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
+            module_qn,
+            self._host._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
+        )
 
     @host_site_scoped
     def ingest_function_value_references(

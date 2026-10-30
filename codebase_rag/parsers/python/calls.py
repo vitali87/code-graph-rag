@@ -37,10 +37,11 @@ class PythonCallHost(EdgeSiteHost, Protocol):
     """What Python call resolution calls on the call pass that builds it: the
     edge emitter, the name-based resolve that notes its verdict for the call
     node being scanned, a function node's recorded location, a call's callee
-    name and arguments, and the callback emitter a passed function's edge
-    goes through like any other callback's. Beside the edge site, `_verdict`,
-    how surely the call node being scanned binds its callee, which a single
-    Protocol conformer's edge carries."""
+    name and arguments, the callback emitter a passed function's edge goes
+    through like any other callback's, and the module-scope reference scans
+    Python shares with JS/TS. Beside the edge site, `_verdict`, how surely
+    the call node being scanned binds its callee, which a single Protocol
+    conformer's edge carries."""
 
     _verdict: str
 
@@ -87,6 +88,15 @@ class PythonCallHost(EdgeSiteHost, Protocol):
         caller_qn: str | None = None,
         rel_type: cs.RelationshipType = cs.RelationshipType.CALLS,
         language: cs.SupportedLanguage | None = None,
+    ) -> None: ...
+
+    def _ingest_py_js_module_references(
+        self,
+        root_node: Node,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
+        class_field_assignments: bool = False,
     ) -> None: ...
 
 
@@ -307,10 +317,35 @@ class PythonCallResolution(LanguageCalls):
 
     flows_callables = True
     references_arguments = True
+    binds_callable_fields = True
 
     def __init__(self, host: PythonCallHost, resolver: CallResolver) -> None:
         self._host = host
         self._resolver = resolver
+
+    def ingest_module_references(
+        self,
+        root_node: Node,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
+        combined_captures: dict[str, list[Node]],
+        sorted_func_nodes: list[Node] | None,
+    ) -> None:
+        self._host._ingest_py_js_module_references(
+            root_node, module_qn, language, queries
+        )
+        self.ingest_module_decorator_calls(
+            root_node,
+            module_qn,
+            language,
+            queries,
+            combined_captures,
+            sorted_func_nodes,
+        )
+        self.ingest_class_alias_references(
+            module_qn, combined_captures.get(cs.CAPTURE_CLASS) or []
+        )
 
     def ingest_module_decorator_calls(
         self,
@@ -488,6 +523,13 @@ class PythonCallResolution(LanguageCalls):
                 return (owner.label, cs.KEY_QUALIFIED_NAME, owner.qualified_name)
             ancestor = ancestor.parent
         return module_spec
+
+    def collect_callable_field_bindings(
+        self, root_node: Node, module_qn: str, call_nodes: list[Node]
+    ) -> None:
+        self.collect_ctor_field_metadata(root_node, module_qn)
+        for call_node in call_nodes:
+            self.record_call_field_bindings(call_node, module_qn)
 
     def record_call_field_bindings(self, call_node: Node, module_qn: str) -> None:
         # A class construction whose arguments name functions binds each

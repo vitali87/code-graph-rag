@@ -274,6 +274,9 @@ class CSharpCallResolution(LanguageCalls):
     # which is untuned for C#: a method group passed as an argument
     # keeps its target reachable (Polly's EmptyHandler family).
     references_arguments = True
+    # A class can still READ properties (`return Size;`) in a file with no
+    # call expression.
+    scans_callers_without_calls = True
 
     def __init__(
         self,

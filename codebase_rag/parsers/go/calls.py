@@ -8,15 +8,16 @@ fallback) and hands Go's part to the `GoCallResolution` it builds."""
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple, Protocol
 
 from tree_sitter import Node
 
 from ... import constants as cs
+from ...language_spec import LanguageSpec
 from ...node_text import decode_node_text, safe_decode_text
-from ...types_defs import PropertyDict
+from ...types_defs import LanguageQueries, PropertyDict
 from ...utils import qn_markers
 from ..definition_facts import DefinitionFacts
 from ..edge_site import EdgeSiteHost, host_site_scoped
@@ -34,7 +35,8 @@ class GoCallHost(EdgeSiteHost, Protocol):
     Beside the edge site, which the fan-outs set per edge and put back as
     the pass's own emitters do: `_verdict`, how surely the last resolve
     bound its callee, which `_resolve_noting` notes and a chain root's
-    binding is judged by."""
+    binding is judged by; and the assignment walker Go shares with other
+    languages, with the scope boundaries it stops at."""
 
     _verdict: str
 
@@ -71,6 +73,21 @@ class GoCallHost(EdgeSiteHost, Protocol):
         resolve_func: Callable[..., tuple[str, str] | None],
         ensure_rel: Callable[..., None],
         caller_qn: str | None = None,
+    ) -> None: ...
+
+    @staticmethod
+    def _flow_scope_boundaries(lang_config: LanguageSpec) -> frozenset[str]: ...
+
+    def _ingest_assignment_function_references(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+        boundary_types: frozenset[str],
+        caller_qn: str | None = None,
+        language: cs.SupportedLanguage | None = None,
     ) -> None: ...
 
 
@@ -345,6 +362,36 @@ class GoCallResolution(LanguageCalls):
     def reset_package_index(self) -> None:
         self._package_index = {}
         self._package_index_size = -1
+
+    def ingest_module_references(
+        self,
+        root_node: Node,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
+        combined_captures: dict[str, list[Node]],
+        sorted_func_nodes: list[Node] | None,
+    ) -> None:
+        module_spec = (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn)
+        boundaries = self._host._flow_scope_boundaries(
+            queries[language][cs.QUERY_CONFIG]
+        )
+        # A module-scope Go func map/slice (var funcMap = map[...]{...})
+        # keeps its function entries reachable; scan before the no-calls
+        # early return so a file defining only funcs and a table counts.
+        self.ingest_composite_function_references(
+            root_node, module_spec, module_qn, None, None, boundaries
+        )
+        # A module-scope `var e = &Error{}` constructs too (issue #1642).
+        self.ingest_composite_literal_instantiations(
+            root_node, module_spec, module_qn, boundaries
+        )
+        # A module-scope Go var bound to a bare function value
+        # (var preExecHookFn = preExecHook) references it even in a file
+        # with no calls, so scan before the no-calls early return.
+        self._host._ingest_assignment_function_references(
+            root_node, module_spec, module_qn, None, None, boundaries, language=language
+        )
 
     def record_local_names(
         self, caller_node: Node, caller_qn: str, caller_type: str
