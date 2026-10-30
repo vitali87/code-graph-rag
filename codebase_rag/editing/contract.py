@@ -191,7 +191,7 @@ def _check_symbols(expectation: Expectation, delta: StructuralDelta) -> list[str
     # Set equality alone is too strong, though: unlike `added`/`removed`, whose
     # elements are independent, a qualified name is a PATH. Renaming `helper`
     # necessarily moves `helper.inner` to `assist.inner` -- the child's own
-    # segment did not change, its ancestor's did -- and `_hierarchy` (rename.py)
+    # segment did not change, its ancestor's did -- and `rename_hierarchy`
     # walks only `overrides` edges, so no descendant is ever enumerated. Demanding
     # verbatim equality would roll back every correct rename of a symbol that
     # contains a nested definition, and would make a class move (whose methods

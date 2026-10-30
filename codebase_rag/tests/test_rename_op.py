@@ -93,7 +93,7 @@ def test_a_decorated_definition_renames_its_def_token_not_the_decorator(
     graph = _index(temp_repo, mock_ingestor)
     if not grammar:
         monkeypatch.setattr(
-            "codebase_rag.editing.rename.get_language_for_extension",
+            "codebase_rag.editing.rename_sites.get_language_for_extension",
             lambda _suffix: None,
         )
     report = rename(
@@ -982,7 +982,8 @@ def test_a_restored_rename_is_seen_past_multibyte_text(tmp_path: Path) -> None:
     unknown, i.e. it says the edit may still be on disk when it is not
     (Greptile, PR #1547).
     """
-    from codebase_rag.editing.rename import Renamer, RenameSite
+    from codebase_rag.editing.rename import RenameSite
+    from codebase_rag.editing.rename_contract import RestorationCheck
 
     # 'café' is 5 characters and 6 bytes, so byte and char columns diverge
     # by one from here on. Without the accent this test passes either way.
@@ -993,14 +994,13 @@ def test_a_restored_rename_is_seen_past_multibyte_text(tmp_path: Path) -> None:
         "fixture guard: the columns must differ or this proves nothing"
     )
 
-    run = Renamer.__new__(Renamer)
-    run.repo_root = tmp_path
+    run = RestorationCheck(tmp_path)
     report = MagicMock()
     report.old_name = "helper"
     report.new_name = "assist"
     report.sites = [RenameSite("call", "m.py", 1, byte_col, "m.caller", None)]
 
-    assert run._old_name_is_back(report) is True
+    assert run.old_name_is_back(report) is True
 
 
 def test_a_rollback_revokes_its_own_projects_healing_licence() -> None:
@@ -1068,15 +1068,15 @@ def test_one_restored_site_is_not_a_full_undo(tmp_path: Path) -> None:
     site restored and another still renamed, that is a lie in the dangerous
     direction: the caller stops looking (Greptile, PR #1547).
     """
-    from codebase_rag.editing.rename import Renamer, RenameSite
+    from codebase_rag.editing.rename import RenameSite
+    from codebase_rag.editing.rename_contract import RestorationCheck
 
     (tmp_path / "a.py").write_text("def helper():\n    pass\n", encoding="utf-8")
     # Restored.
     (tmp_path / "b.py").write_text("assist()\n", encoding="utf-8")
     # Still renamed: the rename is NOT fully undone.
 
-    run = Renamer.__new__(Renamer)
-    run.repo_root = tmp_path
+    run = RestorationCheck(tmp_path)
     report = MagicMock()
     report.old_name = "helper"
     report.new_name = "assist"
@@ -1085,7 +1085,7 @@ def test_one_restored_site_is_not_a_full_undo(tmp_path: Path) -> None:
         RenameSite("call", "b.py", 1, 0, "b.caller", None),
     ]
 
-    assert run._old_name_is_back(report) is False
+    assert run.old_name_is_back(report) is False
 
 
 def test_every_site_restored_is_a_full_undo(tmp_path: Path) -> None:
@@ -1094,13 +1094,13 @@ def test_every_site_restored_is_a_full_undo(tmp_path: Path) -> None:
     Without this, "always return False" passes the test above and the
     already-undone branch becomes unreachable.
     """
-    from codebase_rag.editing.rename import Renamer, RenameSite
+    from codebase_rag.editing.rename import RenameSite
+    from codebase_rag.editing.rename_contract import RestorationCheck
 
     (tmp_path / "a.py").write_text("def helper():\n    pass\n", encoding="utf-8")
     (tmp_path / "b.py").write_text("helper()\n", encoding="utf-8")
 
-    run = Renamer.__new__(Renamer)
-    run.repo_root = tmp_path
+    run = RestorationCheck(tmp_path)
     report = MagicMock()
     report.old_name = "helper"
     report.new_name = "assist"
@@ -1109,7 +1109,7 @@ def test_every_site_restored_is_a_full_undo(tmp_path: Path) -> None:
         RenameSite("call", "b.py", 1, 0, "b.caller", None),
     ]
 
-    assert run._old_name_is_back(report) is True
+    assert run.old_name_is_back(report) is True
 
 
 def test_an_import_site_does_not_block_a_full_undo(tmp_path: Path) -> None:
@@ -1121,7 +1121,8 @@ def test_an_import_site_does_not_block_a_full_undo(tmp_path: Path) -> None:
     column 0 of `from pkg.util import helper` is `from p`, which never
     matches whatever the tree says (CI, PR #1547).
     """
-    from codebase_rag.editing.rename import Renamer, RenameSite
+    from codebase_rag.editing.rename import RenameSite
+    from codebase_rag.editing.rename_contract import RestorationCheck
 
     (tmp_path / "util.py").write_text(
         "def helper(a):\n    return a\n", encoding="utf-8"
@@ -1131,8 +1132,7 @@ def test_an_import_site_does_not_block_a_full_undo(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    run = Renamer.__new__(Renamer)
-    run.repo_root = tmp_path
+    run = RestorationCheck(tmp_path)
     report = MagicMock()
     report.old_name = "helper"
     report.new_name = "assist"
@@ -1143,7 +1143,7 @@ def test_an_import_site_does_not_block_a_full_undo(tmp_path: Path) -> None:
         RenameSite("import", "app.py", 1, 0, "app", None),
     ]
 
-    assert run._old_name_is_back(report) is True
+    assert run.old_name_is_back(report) is True
 
 
 def test_a_rename_of_only_import_sites_is_not_a_full_undo(tmp_path: Path) -> None:
@@ -1153,18 +1153,18 @@ def test_a_rename_of_only_import_sites_is_not_a_full_undo(tmp_path: Path) -> Non
     reversal, so the honest answer is False. Without this, "skip imports"
     could be written as "ignore everything" and still pass the test above.
     """
-    from codebase_rag.editing.rename import Renamer, RenameSite
+    from codebase_rag.editing.rename import RenameSite
+    from codebase_rag.editing.rename_contract import RestorationCheck
 
     (tmp_path / "app.py").write_text("from util import assist\n", encoding="utf-8")
 
-    run = Renamer.__new__(Renamer)
-    run.repo_root = tmp_path
+    run = RestorationCheck(tmp_path)
     report = MagicMock()
     report.old_name = "helper"
     report.new_name = "assist"
     report.sites = [RenameSite("import", "app.py", 1, 0, "app", None)]
 
-    assert run._old_name_is_back(report) is False
+    assert run.old_name_is_back(report) is False
 
 
 def test_a_rewritten_import_left_on_the_new_name_is_not_a_full_undo(
@@ -1179,7 +1179,8 @@ def test_a_rewritten_import_left_on_the_new_name_is_not_a_full_undo(
     reference restored, but an import still on the NEW name, report as fully
     reversed (Greptile, PR #1547).
     """
-    from codebase_rag.editing.rename import Renamer, RenameSite
+    from codebase_rag.editing.rename import RenameSite
+    from codebase_rag.editing.rename_contract import RestorationCheck
 
     (tmp_path / "util.py").write_text(
         "def helper(a):\n    return a\n", encoding="utf-8"
@@ -1190,8 +1191,7 @@ def test_a_rewritten_import_left_on_the_new_name_is_not_a_full_undo(
         encoding="utf-8",
     )
 
-    run = Renamer.__new__(Renamer)
-    run.repo_root = tmp_path
+    run = RestorationCheck(tmp_path)
     report = MagicMock()
     report.old_name = "helper"
     report.new_name = "assist"
@@ -1201,7 +1201,7 @@ def test_a_rewritten_import_left_on_the_new_name_is_not_a_full_undo(
         RenameSite("import", "app.py", 1, 0, "app", None),
     ]
 
-    assert run._old_name_is_back(report) is False
+    assert run.old_name_is_back(report) is False
 
 
 def test_a_restored_import_completes_the_undo(tmp_path: Path) -> None:
@@ -1210,7 +1210,8 @@ def test_a_restored_import_completes_the_undo(tmp_path: Path) -> None:
     Without this, "always fail when an import site exists" passes the test
     above and no rename with an importer could ever report as reversed.
     """
-    from codebase_rag.editing.rename import Renamer, RenameSite
+    from codebase_rag.editing.rename import RenameSite
+    from codebase_rag.editing.rename_contract import RestorationCheck
 
     (tmp_path / "util.py").write_text(
         "def helper(a):\n    return a\n", encoding="utf-8"
@@ -1220,8 +1221,7 @@ def test_a_restored_import_completes_the_undo(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    run = Renamer.__new__(Renamer)
-    run.repo_root = tmp_path
+    run = RestorationCheck(tmp_path)
     report = MagicMock()
     report.old_name = "helper"
     report.new_name = "assist"
@@ -1231,7 +1231,7 @@ def test_a_restored_import_completes_the_undo(tmp_path: Path) -> None:
         RenameSite("import", "app.py", 1, 0, "app", None),
     ]
 
-    assert run._old_name_is_back(report) is True
+    assert run.old_name_is_back(report) is True
 
 
 def test_a_near_miss_name_in_an_import_is_not_the_old_name(tmp_path: Path) -> None:
@@ -1242,7 +1242,8 @@ def test_a_near_miss_name_in_an_import_is_not_the_old_name(tmp_path: Path) -> No
     of and report the rename reversed while the import still binds the new
     name. The word boundaries are what stop it (#1547).
     """
-    from codebase_rag.editing.rename import Renamer, RenameSite
+    from codebase_rag.editing.rename import RenameSite
+    from codebase_rag.editing.rename_contract import RestorationCheck
 
     (tmp_path / "util.py").write_text(
         "def helper(a):\n    return a\n", encoding="utf-8"
@@ -1253,8 +1254,7 @@ def test_a_near_miss_name_in_an_import_is_not_the_old_name(tmp_path: Path) -> No
         encoding="utf-8",
     )
 
-    run = Renamer.__new__(Renamer)
-    run.repo_root = tmp_path
+    run = RestorationCheck(tmp_path)
     report = MagicMock()
     report.old_name = "helper"
     report.new_name = "assist"
@@ -1264,7 +1264,7 @@ def test_a_near_miss_name_in_an_import_is_not_the_old_name(tmp_path: Path) -> No
         RenameSite("import", "app.py", 1, 0, "app", None),
     ]
 
-    assert run._old_name_is_back(report) is False
+    assert run.old_name_is_back(report) is False
 
 
 def test_an_alias_matching_the_old_name_is_not_the_restored_import(
@@ -1280,7 +1280,8 @@ def test_an_alias_matching_the_old_name_is_not_the_restored_import(
     The check now asks what each entry IMPORTS, ignoring what it binds
     locally, which is the question the rewriter itself answers.
     """
-    from codebase_rag.editing.rename import Renamer, RenameSite
+    from codebase_rag.editing.rename import RenameSite
+    from codebase_rag.editing.rename_contract import RestorationCheck
 
     (tmp_path / "util.py").write_text(
         "def helper(a):\n    return a\n", encoding="utf-8"
@@ -1291,8 +1292,7 @@ def test_an_alias_matching_the_old_name_is_not_the_restored_import(
         encoding="utf-8",
     )
 
-    run = Renamer.__new__(Renamer)
-    run.repo_root = tmp_path
+    run = RestorationCheck(tmp_path)
     report = MagicMock()
     report.old_name = "helper"
     report.new_name = "assist"
@@ -1305,7 +1305,7 @@ def test_an_alias_matching_the_old_name_is_not_the_restored_import(
         RenameSite("import", "app.py", 1, 0, "app", None),
     ]
 
-    assert run._old_name_is_back(report) is False
+    assert run.old_name_is_back(report) is False
 
 
 def test_an_aliased_import_of_the_old_name_still_counts_as_restored(
@@ -1317,7 +1317,8 @@ def test_an_aliased_import_of_the_old_name_still_counts_as_restored(
     question. Without this, "require a bare old name" passes the test above
     and breaks every aliased import.
     """
-    from codebase_rag.editing.rename import Renamer, RenameSite
+    from codebase_rag.editing.rename import RenameSite
+    from codebase_rag.editing.rename_contract import RestorationCheck
 
     (tmp_path / "util.py").write_text(
         "def helper(a):\n    return a\n", encoding="utf-8"
@@ -1327,8 +1328,7 @@ def test_an_aliased_import_of_the_old_name_still_counts_as_restored(
         encoding="utf-8",
     )
 
-    run = Renamer.__new__(Renamer)
-    run.repo_root = tmp_path
+    run = RestorationCheck(tmp_path)
     report = MagicMock()
     report.old_name = "helper"
     report.new_name = "assist"
@@ -1337,7 +1337,7 @@ def test_an_aliased_import_of_the_old_name_still_counts_as_restored(
         RenameSite("import", "app.py", 1, 0, "app", None),
     ]
 
-    assert run._old_name_is_back(report) is True
+    assert run.old_name_is_back(report) is True
 
 
 def test_an_all_entry_left_on_the_new_name_is_not_a_full_undo(tmp_path: Path) -> None:
@@ -1349,18 +1349,18 @@ def test_an_all_entry_left_on_the_new_name_is_not_a_full_undo(tmp_path: Path) ->
     reference and import restored but `__all__` still listing the NEW name
     reported as fully reversed (Greptile, PR #1547).
     """
-    from codebase_rag.editing.rename import Renamer, RenameSite
+    from codebase_rag.editing.rename import RenameSite
+    from codebase_rag.editing.rename_contract import RestorationCheck
 
     (tmp_path / "util.py").write_text(
         '__all__ = ["assist"]\n\n\ndef helper(a):\n    return a\n', encoding="utf-8"
     )
 
-    run = Renamer.__new__(Renamer)
-    run.repo_root = tmp_path
+    run = RestorationCheck(tmp_path)
     # What `_stage_sites` would have recorded: one `__all__` entry rewritten
     # in this file. The check counts against THAT rather than against the
     # file's exports as a set, so the fixture has to supply it.
-    run._all_rewrites = {
+    run.all_rewrites = {
         "util.py": _all_offsets((tmp_path / "util.py").read_text(), "assist")
         or _all_offsets((tmp_path / "util.py").read_text(), "helper")
     }
@@ -1369,7 +1369,7 @@ def test_an_all_entry_left_on_the_new_name_is_not_a_full_undo(tmp_path: Path) ->
     report.new_name = "assist"
     report.sites = [RenameSite("definition", "util.py", 4, 4, "util.helper", None)]
 
-    assert run._old_name_is_back(report) is False
+    assert run.old_name_is_back(report) is False
 
 
 @pytest.mark.parametrize(
@@ -1398,14 +1398,14 @@ def test_a_multiline_import_is_read_to_its_closing_bracket(
     single-line rows are the control that the join did not break the ordinary
     path.
     """
-    from codebase_rag.editing.rename import Renamer, RenameSite
+    from codebase_rag.editing.rename import RenameSite
+    from codebase_rag.editing.rename_contract import RestorationCheck
 
     (tmp_path / "app.py").write_text(body, encoding="utf-8")
-    run = Renamer.__new__(Renamer)
-    run.repo_root = tmp_path
+    run = RestorationCheck(tmp_path)
 
     site = RenameSite("import", "app.py", 1, 0, "app", None)
-    assert run._import_names_the_old_name(site, "helper") is restored, (
+    assert run.import_names_the_old_name(site, "helper") is restored, (
         f"import form read as {'not ' if restored else ''}restored: {body!r}"
     )
 
@@ -1414,7 +1414,7 @@ def _all_offsets(text: str, name: str) -> list[tuple[int, int, int]]:
     """`(offset, block_start, block_end)` for each `name` entry, as staged."""
     import re
 
-    from codebase_rag.editing.rename import _ALL_BLOCK, _ALL_ENTRY
+    from codebase_rag.editing.rename_contract import _ALL_BLOCK, _ALL_ENTRY
 
     return [
         (block.start(1) + literal.start("name"), block.start(1), block.end(1))
@@ -1457,7 +1457,7 @@ def test_the_all_check_reads_the_entries_this_rename_rewrote(
     The last two rows are the ones that discriminate: they are the mirror of
     each other, and no aggregate can satisfy both.
     """
-    from codebase_rag.editing.rename import Renamer
+    from codebase_rag.editing.rename_contract import RestorationCheck
 
     offsets = _all_offsets(before, "helper")
     if restore == "full":
@@ -1467,10 +1467,9 @@ def test_the_all_check_reads_the_entries_this_rename_rewrote(
         after = before[:last] + "assist" + before[last + len("helper") :]
 
     (tmp_path / "util.py").write_text(after, encoding="utf-8")
-    run = Renamer.__new__(Renamer)
-    run.repo_root = tmp_path
+    run = RestorationCheck(tmp_path)
 
-    assert run._all_rewrites_are_undone("util.py", "helper", offsets) is complete, (
+    assert run.all_rewrites_are_undone("util.py", "helper", offsets) is complete, (
         f"a {restore} restoration of {before!r} judged "
         f"{'incomplete' if complete else 'complete'}, which is backwards"
     )
@@ -1499,7 +1498,7 @@ def test_a_shifted_block_answers_unknown_rather_than_guessing(
     instead of coordinates, that is an IMPROVEMENT, not a regression -- delete
     it and keep their change, provided the coincidence case above still holds.
     """
-    from codebase_rag.editing.rename import Renamer
+    from codebase_rag.editing.rename_contract import RestorationCheck
 
     staged = '__all__ = ["helper"]\n\n\ndef helper():\n    return 1\n'
     offsets = _all_offsets(staged, "helper")
@@ -1507,10 +1506,9 @@ def test_a_shifted_block_answers_unknown_rather_than_guessing(
     # A genuine, complete restoration -- with one unrelated line added above.
     shifted = "# an unrelated comment\n" + staged
     (tmp_path / "util.py").write_text(shifted, encoding="utf-8")
-    run = Renamer.__new__(Renamer)
-    run.repo_root = tmp_path
+    run = RestorationCheck(tmp_path)
 
-    assert run._all_rewrites_are_undone("util.py", "helper", offsets) is False, (
+    assert run.all_rewrites_are_undone("util.py", "helper", offsets) is False, (
         "a shifted block was accepted as restored; the bounds check is what "
         "stops a coincidental old name at a stale offset reading as a repair, "
         "and it cannot distinguish a pure shift from a rewrite"
@@ -1519,7 +1517,7 @@ def test_a_shifted_block_answers_unknown_rather_than_guessing(
     # The control: unshifted, the same restoration IS recognised. Without it
     # this test passes against a check that rejects everything.
     (tmp_path / "same.py").write_text(staged, encoding="utf-8")
-    assert run._all_rewrites_are_undone("same.py", "helper", offsets) is True, (
+    assert run.all_rewrites_are_undone("same.py", "helper", offsets) is True, (
         "the unshifted restoration was rejected too, so the check refuses "
         "everything rather than being merely strict about position"
     )
@@ -1539,7 +1537,7 @@ def test_a_shifted_file_does_not_mimic_a_restoration(tmp_path: Path) -> None:
     shifts its enclosing `__all__` block too, so a coincidental `helper` at
     the old position no longer falls inside a block at the staged bounds.
     """
-    from codebase_rag.editing.rename import Renamer
+    from codebase_rag.editing.rename_contract import RestorationCheck
 
     staged = '__all__ = ["helper"]\n'
     offsets = _all_offsets(staged, "helper")
@@ -1555,10 +1553,9 @@ def test_a_shifted_file_does_not_mimic_a_restoration(tmp_path: Path) -> None:
     )
 
     (tmp_path / "util.py").write_text(shifted, encoding="utf-8")
-    run = Renamer.__new__(Renamer)
-    run.repo_root = tmp_path
+    run = RestorationCheck(tmp_path)
 
-    assert run._all_rewrites_are_undone("util.py", "helper", offsets) is False, (
+    assert run.all_rewrites_are_undone("util.py", "helper", offsets) is False, (
         "a shifted file with a coincidental old name at the stale offset was "
         "read as a completed rollback"
     )
@@ -1576,7 +1573,8 @@ def test_one_restored_all_block_does_not_excuse_another(tmp_path: Path) -> None:
     this, and it reported a complete rollback with a live export still on the
     new name (Greptile, PR #1547, third round on this function).
     """
-    from codebase_rag.editing.rename import Renamer, RenameSite
+    from codebase_rag.editing.rename import RenameSite
+    from codebase_rag.editing.rename_contract import RestorationCheck
 
     (tmp_path / "util.py").write_text(
         '__all__ = ["helper"]\n\n'
@@ -1586,8 +1584,7 @@ def test_one_restored_all_block_does_not_excuse_another(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    run = Renamer.__new__(Renamer)
-    run.repo_root = tmp_path
+    run = RestorationCheck(tmp_path)
     report = MagicMock()
     report.old_name = "helper"
     report.new_name = "assist"
@@ -1597,12 +1594,12 @@ def test_one_restored_all_block_does_not_excuse_another(tmp_path: Path) -> None:
     # the same trap this file already documents.
     report.sites = [RenameSite("definition", "util.py", 7, 4, "util.helper", None)]
 
-    run._all_rewrites = {
+    run.all_rewrites = {
         "util.py": _all_offsets((tmp_path / "util.py").read_text(), "assist")
         + _all_offsets((tmp_path / "util.py").read_text(), "helper")
     }
     assert (
-        run._all_rewrites_are_undone(
+        run.all_rewrites_are_undone(
             "util.py",
             "helper",
             _all_offsets((tmp_path / "util.py").read_text(), "assist"),
@@ -1612,7 +1609,7 @@ def test_one_restored_all_block_does_not_excuse_another(tmp_path: Path) -> None:
         "fixture guard: the __all__ scan itself must reject this file, or the "
         "assertion below is satisfied by an earlier check short-circuiting"
     )
-    assert run._old_name_is_back(report) is False, (
+    assert run.old_name_is_back(report) is False, (
         "one restored __all__ block excused a second block still exporting "
         "the renamed symbol, so a partial undo reported as complete"
     )
@@ -1624,15 +1621,15 @@ def test_a_restored_all_entry_completes_the_undo(tmp_path: Path) -> None:
     Without this, "any file with __all__ fails" passes the test above and
     no module exporting the renamed symbol could report as reversed.
     """
-    from codebase_rag.editing.rename import Renamer, RenameSite
+    from codebase_rag.editing.rename import RenameSite
+    from codebase_rag.editing.rename_contract import RestorationCheck
 
     (tmp_path / "util.py").write_text(
         '__all__ = ["helper"]\n\n\ndef helper(a):\n    return a\n', encoding="utf-8"
     )
 
-    run = Renamer.__new__(Renamer)
-    run.repo_root = tmp_path
-    run._all_rewrites = {
+    run = RestorationCheck(tmp_path)
+    run.all_rewrites = {
         "util.py": _all_offsets((tmp_path / "util.py").read_text(), "assist")
         or _all_offsets((tmp_path / "util.py").read_text(), "helper")
     }
@@ -1641,25 +1638,25 @@ def test_a_restored_all_entry_completes_the_undo(tmp_path: Path) -> None:
     report.new_name = "assist"
     report.sites = [RenameSite("definition", "util.py", 4, 4, "util.helper", None)]
 
-    assert run._old_name_is_back(report) is True
+    assert run.old_name_is_back(report) is True
 
 
 def test_a_file_without_an_all_list_is_unaffected(tmp_path: Path) -> None:
     """The second control: no `__all__` means nothing to check there."""
-    from codebase_rag.editing.rename import Renamer, RenameSite
+    from codebase_rag.editing.rename import RenameSite
+    from codebase_rag.editing.rename_contract import RestorationCheck
 
     (tmp_path / "util.py").write_text(
         "def helper(a):\n    return a\n", encoding="utf-8"
     )
 
-    run = Renamer.__new__(Renamer)
-    run.repo_root = tmp_path
+    run = RestorationCheck(tmp_path)
     report = MagicMock()
     report.old_name = "helper"
     report.new_name = "assist"
     report.sites = [RenameSite("definition", "util.py", 1, 4, "util.helper", None)]
 
-    assert run._old_name_is_back(report) is True
+    assert run.old_name_is_back(report) is True
 
 
 class _NestedProjectGraph(RecordedGraph):

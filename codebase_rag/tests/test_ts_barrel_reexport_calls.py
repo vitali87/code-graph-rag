@@ -771,7 +771,7 @@ def test_the_star_walk_binds_each_consumer_to_its_first_star_barrel(
         return STAR_WALK_IMPORTERS.get(source, [])
 
     monkeypatch.setattr(graph_query, "importers", importers)
-    bound = Renamer(MagicMock(), "p", tmp_path)._js_star_bound("p.a", "foo")
+    bound = Renamer(MagicMock(), "p", tmp_path).sites.js_star_bound("p.a", "foo")
     assert bound == {
         "src/near.ts": "src/c.ts",
         "src/app.ts": "src/c.ts",
