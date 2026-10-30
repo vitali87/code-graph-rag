@@ -8,6 +8,11 @@ from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.definition_processor import DefinitionProcessor
+from codebase_rag.parsers.function_naming import (
+    extract_node_name,
+    format_nested_qn,
+    generate_anonymous_function_name,
+)
 from codebase_rag.tests.conftest import get_node_names, run_updater
 
 
@@ -116,7 +121,6 @@ class TestExtractFunctionName:
 class TestGenerateAnonymousFunctionName:
     def test_iife_parenthesized(
         self,
-        definition_processor: DefinitionProcessor,
         parsers_and_queries: tuple,
     ) -> None:
         parsers, _ = parsers_and_queries
@@ -128,14 +132,11 @@ class TestGenerateAnonymousFunctionName:
         func_node = find_first_node_of_type(root, "function_expression")
         assert func_node is not None
 
-        result = definition_processor.function_ingest._generate_anonymous_function_name(
-            func_node
-        )
+        result = generate_anonymous_function_name(func_node)
         assert result.startswith("iife_func_")
 
     def test_iife_arrow(
         self,
-        definition_processor: DefinitionProcessor,
         parsers_and_queries: tuple,
     ) -> None:
         parsers, _ = parsers_and_queries
@@ -147,14 +148,11 @@ class TestGenerateAnonymousFunctionName:
         arrow_node = find_first_node_of_type(root, "arrow_function")
         assert arrow_node is not None
 
-        result = definition_processor.function_ingest._generate_anonymous_function_name(
-            arrow_node
-        )
+        result = generate_anonymous_function_name(arrow_node)
         assert result.startswith("iife_arrow_")
 
     def test_regular_anonymous(
         self,
-        definition_processor: DefinitionProcessor,
         parsers_and_queries: tuple,
     ) -> None:
         parsers, _ = parsers_and_queries
@@ -166,9 +164,7 @@ class TestGenerateAnonymousFunctionName:
         func_node = find_first_node_of_type(root, "function")
         assert func_node is not None
 
-        result = definition_processor.function_ingest._generate_anonymous_function_name(
-            func_node
-        )
+        result = generate_anonymous_function_name(func_node)
         assert result.startswith("anonymous_")
 
 
@@ -242,36 +238,26 @@ class MyClass:
 class TestFormatNestedQn:
     def test_with_path_parts(
         self,
-        definition_processor: DefinitionProcessor,
     ) -> None:
-        result = definition_processor.function_ingest._format_nested_qn(
-            "proj.module", ["outer", "middle"], "inner"
-        )
+        result = format_nested_qn("proj.module", ["outer", "middle"], "inner")
         assert result == "proj.module.outer.middle.inner"
 
     def test_empty_path_parts(
         self,
-        definition_processor: DefinitionProcessor,
     ) -> None:
-        result = definition_processor.function_ingest._format_nested_qn(
-            "proj.module", [], "func"
-        )
+        result = format_nested_qn("proj.module", [], "func")
         assert result == "proj.module.func"
 
     def test_single_path_part(
         self,
-        definition_processor: DefinitionProcessor,
     ) -> None:
-        result = definition_processor.function_ingest._format_nested_qn(
-            "proj.module", ["wrapper"], "nested"
-        )
+        result = format_nested_qn("proj.module", ["wrapper"], "nested")
         assert result == "proj.module.wrapper.nested"
 
 
 class TestExtractNodeName:
     def test_function_with_name(
         self,
-        definition_processor: DefinitionProcessor,
         parsers_and_queries: tuple,
     ) -> None:
         parsers, _ = parsers_and_queries
@@ -283,12 +269,11 @@ class TestExtractNodeName:
         func_node = find_first_node_of_type(root, "function_definition")
         assert func_node is not None
 
-        result = definition_processor.function_ingest._extract_node_name(func_node)
+        result = extract_node_name(func_node)
         assert result == "my_function"
 
     def test_class_with_name(
         self,
-        definition_processor: DefinitionProcessor,
         parsers_and_queries: tuple,
     ) -> None:
         parsers, _ = parsers_and_queries
@@ -300,7 +285,7 @@ class TestExtractNodeName:
         class_node = find_first_node_of_type(root, "class_definition")
         assert class_node is not None
 
-        result = definition_processor.function_ingest._extract_node_name(class_node)
+        result = extract_node_name(class_node)
         assert result == "MyClass"
 
 
@@ -372,8 +357,10 @@ class TestBuildNestedQualifiedName:
         assert func_node is not None
 
         lang_config = queries[cs.SupportedLanguage.PYTHON]["config"]
-        result = definition_processor.function_ingest._build_nested_qualified_name(
-            func_node, "proj.module", "my_func", lang_config
+        result = (
+            definition_processor.function_ingest._naming.build_nested_qualified_name(
+                func_node, "proj.module", "my_func", lang_config
+            )
         )
         assert result == "proj.module.my_func"
 
@@ -396,8 +383,10 @@ def outer():
         assert inner_func is not None
 
         lang_config = queries[cs.SupportedLanguage.PYTHON]["config"]
-        result = definition_processor.function_ingest._build_nested_qualified_name(
-            inner_func, "proj.module", "inner", lang_config
+        result = (
+            definition_processor.function_ingest._naming.build_nested_qualified_name(
+                inner_func, "proj.module", "inner", lang_config
+            )
         )
         assert result == "proj.module.outer.inner"
 
@@ -421,8 +410,10 @@ def level1():
         assert level3_func is not None
 
         lang_config = queries[cs.SupportedLanguage.PYTHON]["config"]
-        result = definition_processor.function_ingest._build_nested_qualified_name(
-            level3_func, "proj.module", "level3", lang_config
+        result = (
+            definition_processor.function_ingest._naming.build_nested_qualified_name(
+                level3_func, "proj.module", "level3", lang_config
+            )
         )
         assert result == "proj.module.level1.level2.level3"
 
@@ -445,8 +436,10 @@ class MyClass:
         assert method_node is not None
 
         lang_config = queries[cs.SupportedLanguage.PYTHON]["config"]
-        result = definition_processor.function_ingest._build_nested_qualified_name(
-            method_node, "proj.module", "my_method", lang_config
+        result = (
+            definition_processor.function_ingest._naming.build_nested_qualified_name(
+                method_node, "proj.module", "my_method", lang_config
+            )
         )
         assert result is None
 
@@ -673,8 +666,10 @@ class TestCollectAncestorPathParts:
         assert func_node is not None
 
         lang_config = queries[cs.SupportedLanguage.PYTHON]["config"]
-        result = definition_processor.function_ingest._collect_ancestor_path_parts(
-            func_node, func_node.parent, lang_config, skip_classes=False
+        result = (
+            definition_processor.function_ingest._naming.collect_ancestor_path_parts(
+                func_node, func_node.parent, lang_config, skip_classes=False
+            )
         )
         assert result == []
 
@@ -697,8 +692,10 @@ def outer():
         assert inner_func is not None
 
         lang_config = queries[cs.SupportedLanguage.PYTHON]["config"]
-        result = definition_processor.function_ingest._collect_ancestor_path_parts(
-            inner_func, inner_func.parent, lang_config, skip_classes=False
+        result = (
+            definition_processor.function_ingest._naming.collect_ancestor_path_parts(
+                inner_func, inner_func.parent, lang_config, skip_classes=False
+            )
         )
         assert result == ["outer"]
 
@@ -722,8 +719,10 @@ def level1():
         assert level3_func is not None
 
         lang_config = queries[cs.SupportedLanguage.PYTHON]["config"]
-        result = definition_processor.function_ingest._collect_ancestor_path_parts(
-            level3_func, level3_func.parent, lang_config, skip_classes=False
+        result = (
+            definition_processor.function_ingest._naming.collect_ancestor_path_parts(
+                level3_func, level3_func.parent, lang_config, skip_classes=False
+            )
         )
         assert result == ["level1", "level2"]
 
