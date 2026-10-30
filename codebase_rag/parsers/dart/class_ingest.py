@@ -11,6 +11,7 @@ INHERITS/IMPLEMENTS resolution) and hands Dart's part to the
 from __future__ import annotations
 
 from functools import partial
+from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
 from tree_sitter import Node
@@ -23,7 +24,7 @@ from .type_inference import DartTypeInferenceEngine
 
 if TYPE_CHECKING:
     from ...services import IngestorProtocol
-    from ...types_defs import FunctionRegistryTrieProtocol
+    from ...types_defs import DeferredInherit, FunctionRegistryTrieProtocol
     from ..definition_facts import DefinitionFacts
 
 
@@ -54,6 +55,7 @@ class DartClassIngest(LanguageClassIngest):
         "function_registry",
         "facts",
         "annotated_overrides",
+        "_implements",
     )
 
     def __init__(
@@ -72,6 +74,9 @@ class DartClassIngest(LanguageClassIngest):
         # The `@override` methods of each class, recorded as it is ingested
         # and judged by flag_external_overrides once every class is.
         self.annotated_overrides = annotated_overrides
+        # The first-party IMPLEMENTS parents of each class, collected as the
+        # deferred inherits resolve and read by flag_external_overrides.
+        self._implements: dict[str, list[str]] = {}
 
     def record_heritage(self, member_node: Node, class_qn: str, module_qn: str) -> None:
         if type_args := pe.extract_dart_extends_type_args(
@@ -83,7 +88,16 @@ class DartClassIngest(LanguageClassIngest):
         if on_type := dart_utils.extension_on_type(member_node):
             self.facts.dart_extension_on_types[class_qn] = on_type
 
-    def record_field_types(self, class_node: Node, class_qn: str) -> None:
+    def record_members(
+        self,
+        class_node: Node,
+        member_node: Node,
+        class_qn: str,
+        module_qn: str,
+        label: cs.NodeLabel,
+        modifiers: list[str],
+        file_path: Path | None,
+    ) -> None:
         # Record Dart field types (`Greeter buddy;`) so a field-typed
         # receiver (`buddy.greet()`, `this.buddy.hail()`) resolves
         # through the field's declared type.
@@ -107,10 +121,23 @@ class DartClassIngest(LanguageClassIngest):
             if method_node.type in cs.DART_CONSTRUCTOR_SIGNATURE_TYPES:
                 self.facts.dart_constructor_qns.add(ingested_qn)
 
-    def flag_external_overrides(
-        self,
-        implements_map: dict[str, list[str]],
-    ) -> None:
+    def annotated_override_sink(self) -> dict[str, list[tuple[str, str]]] | None:
+        # An external base (a Flutter widget class) is not introspectable
+        # the way Python stdlib bases are, but Dart marks every override
+        # explicitly with @override. Whether a parent is truly external is
+        # unknowable here (it may live in a file parsed later), so only
+        # RECORD the annotated methods; resolve_deferred_inherits decides
+        # once every class is registered.
+        return self.annotated_overrides
+
+    def record_resolved_base(self, entry: DeferredInherit, parent_qn: str) -> None:
+        # `implements` targets never enter class_inheritance, so the override
+        # ancestry walk needs the resolved first-party IMPLEMENTS parents
+        # collected here or a registered interface's method is wrongly rooted.
+        if entry.rel_type == cs.RelationshipType.IMPLEMENTS:
+            self._implements.setdefault(entry.child_qn, []).append(parent_qn)
+
+    def flag_external_overrides(self) -> None:
         # Every Dart class ultimately extends Object, so an @override whose
         # name NO registered ancestor defines can only target external code:
         # a framework base (direct or through any chain of first-party
@@ -121,6 +148,8 @@ class DartClassIngest(LanguageClassIngest):
         # stay an ordinary candidate. Runs from resolve_deferred_inherits
         # because ancestry is only known after every class is registered;
         # the partial row MERGEs into the node ingested during Pass 2.
+        implements_map = self._implements
+        self._implements = {}
         for child_qn, methods in self.annotated_overrides.items():
             for method_qn, method_name in methods:
                 if self._registered_ancestor_defines(

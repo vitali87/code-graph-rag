@@ -76,6 +76,29 @@ class JavaClassIngest(LanguageClassIngest):
         self.facts = facts
         self.anon_overrides = anon_overrides
 
+    def method_qualified_name(self, method_node: Node, class_qn: str) -> str | None:
+        return signatured_method_qn(method_node, class_qn)
+
+    def record_method(
+        self,
+        class_node: Node,
+        class_qn: str,
+        module_qn: str | None,
+        method_node: Node,
+        ingested_qn: str,
+    ) -> None:
+        if module_qn is not None:
+            self.record_anonymous_override(
+                method_node, class_node, ingested_qn, module_qn
+            )
+
+    def externalized_base(self, raw_name: str) -> str | None:
+        # java.lang is implicitly imported: a bare base in its table gets
+        # its canonical java.lang qn.
+        if raw_name in cs.JAVA_LANG_CLASS_NAMES:
+            return f"{cs.JAVA_LANG_PREFIX}{raw_name}"
+        return None
+
     def record_anonymous_override(
         self, method_node: Node, class_node: Node, ingested_qn: str, module_qn: str
     ) -> None:

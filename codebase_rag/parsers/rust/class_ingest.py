@@ -108,6 +108,16 @@ class RustClassIngest(LanguageClassIngest):
         "_trait_impls",
     )
 
+    # First claim wins: a fn in a mod inside a trait const default is already
+    # claimed by the function pass under its own qn, and overwriting would
+    # re-attribute its calls to this pass's twin.
+    keeps_claimed_method_spans = True
+    # An impl's OVERRIDES follow the impl block (impl_method_traits,
+    # inherent_impl_methods), which only parsing records, and walking the
+    # trait instead would link an inherent method sharing the trait method's
+    # name. An unchanged impl keeps the edges its own parse wrote.
+    joins_read_back_implementers = False
+
     def __init__(
         self,
         host: RustClassHost,
@@ -149,6 +159,32 @@ class RustClassIngest(LanguageClassIngest):
         # flag_external_trait_overrides) and flags the methods of the external
         # ones (issue #1048).
         self._trait_impls: list[RustTraitImpl] = []
+
+    def skips_class(
+        self,
+        class_node: Node,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        lang_queries: LanguageQueries,
+        lang_config: LanguageSpec,
+        file_path: Path | None,
+        sorted_func_nodes: list[Node] | None,
+        func_node_starts: list[int] | None,
+        allow_defer: bool,
+    ) -> bool:
+        # An impl block is no type of its own: its methods join the type it
+        # targets.
+        if class_node.type != cs.TS_IMPL_ITEM:
+            return False
+        self.ingest_impl_methods(
+            class_node,
+            module_qn,
+            language,
+            lang_queries,
+            sorted_func_nodes=sorted_func_nodes,
+            func_node_starts=func_node_starts,
+        )
+        return True
 
     def ingest_impl_methods(
         self,
@@ -506,8 +542,6 @@ class RustClassIngest(LanguageClassIngest):
         the crate root can name the trait at all, so the chain is followed to
         its end rather than one hop.
         """
-        if entry.language != cs.SupportedLanguage.RUST:
-            return None
         qn = entry.parent_qn
         seen = {qn}
         while True:
@@ -529,7 +563,16 @@ class RustClassIngest(LanguageClassIngest):
             if self.function_registry.get(qn) in bt.base_target_kinds(entry.language):
                 return qn
 
-    def record_field_types(self, class_node: Node, class_qn: str) -> None:
+    def record_members(
+        self,
+        class_node: Node,
+        member_node: Node,
+        class_qn: str,
+        module_qn: str,
+        label: cs.NodeLabel,
+        modifiers: list[str],
+        file_path: Path | None,
+    ) -> None:
         # Record Rust struct field types so a field-hop receiver
         # (`self.shutdown.is_shutdown()`) resolves through the field's type,
         # plus guard-container inner types (`state: Mutex<State>` -> State),

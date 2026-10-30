@@ -1,12 +1,14 @@
 """C/C++'s share of the class pass: the forward declarations it holds until
 every definition is registered, the template and elaborated-type captures
 that register nothing, the types a function body declares, the C++20 module
-units, the INHERITS edges it resolves once every class is known, and the
-field and method return types a C++ class records.
+units and the exported classes the class captures miss, the INHERITS edges
+it resolves once every class is known, and the field and method return
+types a C++ class records.
 
 `ClassIngest` owns what every language shares (the scan of a file's class
-captures, a class's node, members and relationships) and hands C/C++'s part
-to the `CppClassIngest` it builds."""
+captures, a class's node, members and relationships) and hands C++'s part
+to the `CppClassIngest` it builds, and C's to the `CClassIngest` that shares
+it."""
 
 from __future__ import annotations
 
@@ -183,6 +185,11 @@ class CppClassIngest(LanguageClassIngest):
         # C++20 implementation units whose IMPLEMENTS edge waits for its
         # interface to be known.
         self._deferred_module_impls: list[tuple[str, str]] = []
+
+    def extra_class_nodes(self, root_node: Node) -> list[Node]:
+        # `export class Foo {...}` mis-parses as a function definition, which
+        # the class captures never yield.
+        return cpp_modules.find_cpp_exported_classes(root_node)
 
     def skips_class(
         self,
@@ -469,7 +476,16 @@ class CppClassIngest(LanguageClassIngest):
         label = recorded.label if recorded is not None else cs.NodeLabel.METHOD
         return label, owner_qn, span
 
-    def record_field_types(self, member_node: Node, class_qn: str) -> None:
+    def record_members(
+        self,
+        class_node: Node,
+        member_node: Node,
+        class_qn: str,
+        module_qn: str,
+        label: cs.NodeLabel,
+        modifiers: list[str],
+        file_path: Path | None,
+    ) -> None:
         # Record this class's member-field types now (from the class body,
         # usually a header) so out-of-line method bodies in other files can
         # resolve `field_.method()` via the field's type at call resolution.
@@ -487,3 +503,41 @@ class CppClassIngest(LanguageClassIngest):
             self.facts.method_return_types[
                 f"{class_qn}{cs.SEPARATOR_DOT}{method_name}"
             ] = return_type
+
+
+class CClassIngest(LanguageClassIngest):
+    """Decides the C class captures that register nothing or wait, the way
+    `CppClassIngest` decides C++'s: the rest of C++'s share (local types,
+    exported classes, field and method return types) is C++'s alone.
+
+    Built and owned by `ClassIngest`, beside the `CppClassIngest` whose held-back
+    forward declarations it shares."""
+
+    __slots__ = ("_cpp",)
+
+    def __init__(self, cpp: CppClassIngest) -> None:
+        self._cpp = cpp
+
+    def skips_class(
+        self,
+        class_node: Node,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        lang_queries: LanguageQueries,
+        lang_config: LanguageSpec,
+        file_path: Path | None,
+        sorted_func_nodes: list[Node] | None,
+        func_node_starts: list[int] | None,
+        allow_defer: bool,
+    ) -> bool:
+        return self._cpp.skips_class(
+            class_node,
+            module_qn,
+            language,
+            lang_queries,
+            lang_config,
+            file_path,
+            sorted_func_nodes,
+            func_node_starts,
+            allow_defer,
+        )

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, NamedTuple
 from tree_sitter import Node, QueryCursor
 
 from ... import constants as cs
-from ...language_spec import LanguageSpec
+from ...language_spec import LANGUAGE_SPECS, LanguageSpec
 from ...node_text import sorted_captures
 from ...types_defs import (
     CppDefinitionSpan,
@@ -23,13 +23,12 @@ from ..cpp.utils import record_cpp_definition_span
 from ..csharp import class_ingest as csharp_class_ingest
 from ..dart import class_ingest as dart_class_ingest
 from ..definition_facts import DefinitionFacts
-from ..enum_variants import emit_declared_variants, is_python_enum
+from ..enum_variants import emit_declared_variants
 from ..field_nodes import PendingFieldType, emit_declared_fields
 from ..go import class_ingest as go_class_ingest
 from ..go import interfaces as go_ifaces
 from ..java import class_ingest as java_class_ingest
 from ..js_ts import class_ingest as js_ts_class_ingest
-from ..js_ts import utils as js_ts_utils
 from ..js_ts.utils import mark_js_ts_module_private
 from ..language_definitions import LanguageClassIngest
 from ..method_ingest import MethodIngestHost, ingest_method
@@ -38,6 +37,7 @@ from ..python import class_ingest as python_class_ingest
 from ..python import resolve_class_name
 from ..rust import class_ingest as rust_class_ingest
 from ..rust import utils as rs_utils
+from ..scala import class_ingest as scala_class_ingest
 from ..utils import (
     decorated_start_props,
     extract_modifiers_and_decorators,
@@ -45,7 +45,6 @@ from ..utils import (
     written_simple_name,
 )
 from . import base_targets as bt
-from . import cpp_modules
 from . import definition_label as nt
 from . import identity as id_
 from . import method_override as mo
@@ -65,28 +64,6 @@ if TYPE_CHECKING:
     from ..import_processor import ImportProcessor
 
 
-def _class_start_point(
-    class_node: Node, language: cs.SupportedLanguage
-) -> tuple[int, int]:
-    if language == cs.SupportedLanguage.CSHARP:
-        # Skip a leading `#if [Attr] #endif` directive so the start line is
-        # the conditional attribute, not the `#if` line (matches Roslyn).
-        from ..csharp import utils as csharp_utils
-
-        return csharp_utils.definition_start_point(class_node)
-    return class_node.start_point[0] + 1, class_node.start_point[1]
-
-
-def _signatured_method_qn(
-    method_node: Node, class_qn: str, language: cs.SupportedLanguage
-) -> str | None:
-    if language == cs.SupportedLanguage.JAVA:
-        return java_class_ingest.signatured_method_qn(method_node, class_qn)
-    if language == cs.SupportedLanguage.CSHARP:
-        return csharp_class_ingest.signatured_method_qn(method_node, class_qn)
-    return None
-
-
 class _MethodScope(NamedTuple):
     # The per-class context every method of one class body is ingested under.
     class_node: Node
@@ -104,12 +81,12 @@ class ClassIngest:
     and the override walk. A language's own share is the collaborator it
     builds from that language's package (`CppClassIngest`, `RustClassIngest`,
     `CSharpClassIngest` and the rest), which holds what that language defers
-    until its own `resolve_deferred_*` pass."""
+    until its own `resolve_deferred_*` pass and answers the `LanguageClassIngest`
+    hooks this pass looks it up by language to call."""
 
     __slots__ = (
         "_method_host",
         "_function_ingest",
-        "_go_interface_ingest",
         "ingestor",
         "repo_path",
         "project_name",
@@ -119,13 +96,13 @@ class ClassIngest:
         "import_processor",
         "facts",
         "class_owner_module",
-        "go_interfaces",
         "cpp_definition_spans",
         "pending_field_types",
         "folded_overloads",
         "_deferred_parent_links",
         "_deferred_inherits",
         "cpp",
+        "c",
         "rust",
         "csharp",
         "go",
@@ -133,8 +110,11 @@ class ClassIngest:
         "js_ts",
         "java",
         "python",
+        "php",
+        "scala",
         "_languages",
         "_neutral",
+        "_unwalked_read_back_suffixes",
     )
 
     def __init__(
@@ -177,8 +157,6 @@ class ClassIngest:
         # A class's lexical parent and its DEFINES edge are the function
         # pass's, shared with every function it ingests.
         self._function_ingest = function_ingest
-        # A Go interface's method specs are written by the Go interface pass.
-        self._go_interface_ingest = go_interface_ingest
         self.ingestor = ingestor
         self.repo_path = repo_path
         self.project_name = project_name
@@ -188,7 +166,6 @@ class ClassIngest:
         self.import_processor = import_processor
         self.facts = facts
         self.class_owner_module = class_owner_module
-        self.go_interfaces = go_interfaces
         self.cpp_definition_spans = cpp_definition_spans
         self.pending_field_types = pending_field_types
         self.folded_overloads = folded_overloads
@@ -211,6 +188,7 @@ class ClassIngest:
             module_interfaces=cpp_module_interfaces,
             interfaces_parsed_this_run=cpp_interfaces_parsed_this_run,
         )
+        self.c = cpp_class_ingest.CClassIngest(self.cpp)
         self.rust = rust_class_ingest.RustClassIngest(
             self,
             method_host=method_host,
@@ -239,7 +217,11 @@ class ClassIngest:
             type_locations=csharp_type_locations,
         )
         self.go = go_class_ingest.GoClassIngest(
-            repo_path=repo_path, facts=facts, type_locations=go_type_locations
+            repo_path=repo_path,
+            facts=facts,
+            type_locations=go_type_locations,
+            interfaces=go_interfaces,
+            interface_ingest=go_interface_ingest,
         )
         self.dart = dart_class_ingest.DartClassIngest(
             self,
@@ -260,6 +242,8 @@ class ClassIngest:
             anon_overrides=java_anon_overrides,
         )
         self.python = python_class_ingest.PythonClassIngest(function_registry, facts)
+        self.php = php_class_ingest.PhpClassIngest()
+        self.scala = scala_class_ingest.ScalaClassIngest(import_processor)
         # The collaborator each language's class nodes go to; a language with
         # none takes the neutral answers.
         self._languages: dict[cs.SupportedLanguage, LanguageClassIngest] = {
@@ -271,10 +255,21 @@ class ClassIngest:
             cs.SupportedLanguage.RUST: self.rust,
             cs.SupportedLanguage.GO: self.go,
             cs.SupportedLanguage.CPP: self.cpp,
+            cs.SupportedLanguage.C: self.c,
+            cs.SupportedLanguage.PHP: self.php,
             cs.SupportedLanguage.CSHARP: self.csharp,
             cs.SupportedLanguage.DART: self.dart,
+            cs.SupportedLanguage.SCALA: self.scala,
         }
         self._neutral = LanguageClassIngest()
+        # The files whose read-back implementer pairs the override walk
+        # leaves out, by the suffixes of the languages that say so.
+        self._unwalked_read_back_suffixes = tuple(
+            extension
+            for language, language_ingest in self._languages.items()
+            if not language_ingest.joins_read_back_implementers
+            for extension in LANGUAGE_SPECS[language].file_extensions
+        )
 
     def _for(self, language: cs.SupportedLanguage | None) -> LanguageClassIngest:
         if language is None:
@@ -324,8 +319,7 @@ class ClassIngest:
             captures = sorted_captures(cursor, root_node)
             class_nodes = captures.get(cs.CAPTURE_CLASS, [])
 
-        if language == cs.SupportedLanguage.CPP:
-            class_nodes.extend(cpp_modules.find_cpp_exported_classes(root_node))
+        class_nodes.extend(self._for(language).extra_class_nodes(root_node))
 
         file_path = self.module_qn_to_file_path.get(module_qn)
 
@@ -370,7 +364,7 @@ class ClassIngest:
                 cs.ONEOF_MODULE, []
             )
         if module_nodes:
-            self.rust.ingest_inline_modules(
+            self._for(language).ingest_inline_modules(
                 module_nodes, module_qn, lang_queries[cs.QUERY_CONFIG]
             )
 
@@ -390,26 +384,22 @@ class ClassIngest:
         deferred = self._deferred_inherits
         self._deferred_inherits = []
         emitted = 0
-        # `implements` targets never enter class_inheritance, so the override
-        # ancestry walk needs the resolved first-party IMPLEMENTS parents
-        # collected here or a registered interface's method is wrongly rooted.
-        dart_implements: dict[str, list[str]] = {}
         for entry in deferred:
             child_type = self._deferred_child_label(entry)
             if child_type is None:
                 continue
+            language_ingest = self._for(entry.language)
             # Scope first (issue #2534); a base no scope reaches falls to the
             # name search, whose `PB`/`PB<T>` pick the written arity settles
             # (issue #2579).
-            scoped = self.csharp.scoped_base(entry)
+            scoped = language_ingest.scoped_base(entry)
             resolved = (
                 (scoped, False)
                 if scoped is not None
-                else self.csharp.base_by_arity(
+                else language_ingest.base_by_arity(
                     entry, self._resolve_deferred_parent_qn(entry)
                 )
             )
-            is_dart = entry.language == cs.SupportedLanguage.DART
             if resolved is None or resolved[1]:
                 # Resolved nowhere, or to a node outside the index: the file
                 # defining this base may be added later (issue #1568).
@@ -423,11 +413,9 @@ class ClassIngest:
             heuristic = (
                 scoped is None and entry.written_ref is not None and not resolved[1]
             )
-            self._emit_resolved_inherit(
-                entry, child_type, resolved, is_dart, dart_implements, heuristic
-            )
+            self._emit_resolved_inherit(entry, child_type, resolved, heuristic)
             emitted += 1
-        self.dart.flag_external_overrides(dart_implements)
+        self.dart.flag_external_overrides()
         self.rust.flag_external_trait_overrides()
         return emitted
 
@@ -466,27 +454,14 @@ class ClassIngest:
         # Only a type declaration is a base: a registered member of the same
         # name (a C# property, a method) is not, however it was reached.
         target_kinds = bt.base_target_kinds(entry.language)
-        if entry.language == cs.SupportedLanguage.SCALA and (
-            (
-                imported := self.import_processor.scala.scala_base_qn(
-                    entry.module_qn,
-                    entry.child_qn,
-                    entry.parent_qn,
-                    entry.base_index,
-                )
-            )
-            is not None
-            and self.function_registry.get(imported) in target_kinds
-        ):
-            # Ahead of the registry check: parse time bound the base by name
-            # alone when only a package block imports it, and a sibling
-            # block's same-named class can be what that found.
+        language_ingest = self._for(entry.language)
+        if (
+            imported := language_ingest.imported_base(entry)
+        ) is not None and self.function_registry.get(imported) in target_kinds:
             return imported, False
         if self.function_registry.get(entry.parent_qn) in target_kinds:
             return entry.parent_qn, False
-        if (followed := self.rust.reexport_target(entry)) is not None:
-            return followed, False
-        if (followed := self.js_ts.reexport_target(entry)) is not None:
+        if (followed := language_ingest.reexport_target(entry)) is not None:
             return followed, False
         if entry.alt_parent_qn is not None:
             # The written path was exact and still landed on nothing, which a
@@ -508,7 +483,7 @@ class ClassIngest:
         # The module-anchored fallback shape carries the raw written name
         # as the remainder after the module qn.
         raw_name = entry.parent_qn[len(prefix) :]
-        if (bound := self.js_ts.namespace_member(raw_name, entry)) is not None:
+        if (bound := language_ingest.namespace_member(raw_name, entry)) is not None:
             return bound, False
         resolved = self._resolve_class_name(raw_name, entry.module_qn, entry.language)
         if (
@@ -534,7 +509,7 @@ class ClassIngest:
         # IS the written name and externalizes. A dotted remainder (a
         # nested child like SimpleHashMap.Entry) was never written as
         # such; derivation would be a lie, so no edge.
-        if (sibling := self.csharp.arity_sibling(entry)) is not None:
+        if (sibling := self._for(entry.language).arity_sibling(entry)) is not None:
             return sibling, False
         self_prefix = f"{entry.module_qn}{cs.SEPARATOR_DOT}"
         if entry.parent_qn.startswith(self_prefix):
@@ -616,15 +591,8 @@ class ClassIngest:
     def _externalize_written_base(
         self, raw_name: str, language: cs.SupportedLanguage
     ) -> tuple[str, bool]:
-        if language in cs.JS_TS_LANGUAGES and raw_name in cs.JS_GLOBAL_CLASS_NAMES:
-            return f"{cs.BUILTIN_PREFIX}{cs.SEPARATOR_DOT}{raw_name}", True
-        # java.lang is implicitly imported: a bare base in its table gets
-        # its canonical java.lang qn.
-        if (
-            language == cs.SupportedLanguage.JAVA
-            and raw_name in cs.JAVA_LANG_CLASS_NAMES
-        ):
-            return f"{cs.JAVA_LANG_PREFIX}{raw_name}", True
+        if (canonical := self._for(language).externalized_base(raw_name)) is not None:
+            return canonical, True
         # Language-agnostic fallback: the written base name resolves to no
         # indexed class, so the base is external to the index by
         # construction (Python `object`, Rust `Default`, a generated Java
@@ -643,18 +611,8 @@ class ClassIngest:
         func_node_starts: list[int] | None = None,
         allow_defer: bool = True,
     ) -> None:
-        if language == cs.SupportedLanguage.RUST and class_node.type == cs.TS_IMPL_ITEM:
-            self.rust.ingest_impl_methods(
-                class_node,
-                module_qn,
-                language,
-                lang_queries,
-                sorted_func_nodes=sorted_func_nodes,
-                func_node_starts=func_node_starts,
-            )
-            return
-
-        if language in cs.C_FAMILY_LANGUAGES and self.cpp.skips_class(
+        language_ingest = self._for(language)
+        if language_ingest.skips_class(
             class_node,
             module_qn,
             language,
@@ -668,11 +626,7 @@ class ClassIngest:
             return
 
         type_spec = cpp_class_ingest.type_spec(class_node)
-        local_qn = (
-            self.cpp.local_type_qn(class_node, module_qn)
-            if language == cs.SupportedLanguage.CPP
-            else None
-        )
+        local_qn = language_ingest.local_type_qn(class_node, module_qn)
         identity = (
             self.cpp.local_type_identity(class_node, local_qn)
             if local_qn is not None
@@ -688,13 +642,15 @@ class ClassIngest:
             return
 
         class_qn, class_name, is_exported = identity
-        class_start_line, class_start_col = _class_start_point(class_node, language)
+        class_start_line, class_start_col = language_ingest.class_start_point(
+            class_node
+        )
         label = nt.definition_label(class_node, class_name, class_qn, language)
         class_qn = self.function_registry.register_unique_qn(
             class_qn,
             class_start_line,
             class_start_col,
-            kind=label if language in cs.JS_TS_LANGUAGES else None,
+            kind=label if language_ingest.separate_declaration_spaces else None,
         )
 
         modifiers, decorators = extract_modifiers_and_decorators(
@@ -717,8 +673,8 @@ class ClassIngest:
                 file_path, self.repo_path
             ).as_posix()
             class_props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
-        self._record_language_type_props(
-            class_node, class_qn, class_name, label, language, class_props
+        language_ingest.record_type_props(
+            class_node, class_qn, class_name, label, class_props
         )
         # A container's hash covers its whole subtree, the same reading as a
         # function's: a note on a class is about the class as declared, and
@@ -729,11 +685,7 @@ class ClassIngest:
         class_props.update(decorated_start_props(class_node))
         # Stored on the node so an incremental run that does not re-parse
         # this file can register them again.
-        non_method_members = (
-            self.python.non_method_members(class_node)
-            if language == cs.SupportedLanguage.PYTHON
-            else []
-        )
+        non_method_members = language_ingest.non_method_members(class_node)
         if non_method_members:
             class_props[cs.KEY_NON_METHOD_MEMBERS] = non_method_members
         self.ingestor.ensure_node_batch(label, class_props)
@@ -794,13 +746,12 @@ class ClassIngest:
         # classifications (keyed by its rel-path + start line) to the split so
         # INHERITS/IMPLEMENTS is semantic, not the I-prefix guess. Empty/absent
         # for non-C# types or when the frontend is off -> heuristic stands.
-        csharp_base_kinds = self._record_type_location(
-            class_qn,
-            label,
-            language,
-            file_path,
-            class_start_line,
-            class_start_col,
+        csharp_base_kinds = (
+            language_ingest.record_type_location(
+                class_qn, label, file_path, class_start_line, class_start_col
+            )
+            if file_path is not None
+            else None
         )
         rel.create_class_relationships(
             member_node,
@@ -822,18 +773,8 @@ class ClassIngest:
         self._record_declared_type_members(
             member_node, class_qn, module_qn, label, language, class_props
         )
-        if language == cs.SupportedLanguage.GO and label == cs.NodeLabel.INTERFACE:
-            self._go_interface_ingest.ingest_interface_methods(
-                class_node, class_qn, module_qn, file_path
-            )
-        self._record_class_field_types(
-            class_node,
-            member_node,
-            class_qn,
-            module_qn,
-            language,
-            modifiers,
-            file_path,
+        language_ingest.record_members(
+            class_node, member_node, class_qn, module_qn, label, modifiers, file_path
         )
         self._ingest_class_methods(
             member_node,
@@ -847,30 +788,6 @@ class ClassIngest:
             container_label=label,
         )
 
-    def _record_language_type_props(
-        self,
-        class_node: Node,
-        class_qn: str,
-        class_name: str,
-        label: cs.NodeLabel,
-        language: cs.SupportedLanguage,
-        class_props: PropertyDict,
-    ) -> None:
-        if language == cs.SupportedLanguage.PHP:
-            php_class_ingest.record_namespace(class_node, class_props)
-        elif language == cs.SupportedLanguage.CSHARP:
-            self.csharp.record_type_props(
-                class_node, class_qn, class_name, label, class_props
-            )
-        elif language == cs.SupportedLanguage.GO and label == cs.NodeLabel.INTERFACE:
-            # Stored so an incremental run that does not re-parse the
-            # interface still knows what its method set is built from.
-            class_props.update(go_ifaces.embeds_props(class_node))
-        elif language == cs.SupportedLanguage.PYTHON:
-            self.python.record_type_props(
-                class_node, class_qn, class_name, label, class_props
-            )
-
     def _record_declared_type_members(
         self,
         member_node: Node,
@@ -880,13 +797,11 @@ class ClassIngest:
         language: cs.SupportedLanguage,
         class_props: PropertyDict,
     ) -> None:
+        language_ingest = self._for(language)
         # The variants ride with their enum the way fields ride with their
         # owner (issue #1807). After the relationships, because a Python enum
         # is a Class that only its resolved bases identify (issue #2583).
-        if label == cs.NodeLabel.ENUM or (
-            language == cs.SupportedLanguage.PYTHON
-            and is_python_enum(self.facts.class_inheritance.get(class_qn, ()))
-        ):
+        if label == cs.NodeLabel.ENUM or language_ingest.is_enum(class_qn):
             emit_declared_variants(
                 self.ingestor,
                 label,
@@ -896,8 +811,7 @@ class ClassIngest:
                 class_props,
                 self.import_processor.import_mapping.get(module_qn),
             )
-        if language == cs.SupportedLanguage.DART:
-            self.dart.record_heritage(member_node, class_qn, module_qn)
+        language_ingest.record_heritage(member_node, class_qn, module_qn)
 
     def _index_class_simple_name(self, class_name: str, class_qn: str) -> None:
         self.simple_name_lookup[class_name].add(class_qn)
@@ -910,61 +824,17 @@ class ClassIngest:
             leaf = class_name.rsplit(cs.SEPARATOR_DOUBLE_COLON, 1)[-1]
             self.simple_name_lookup[leaf].add(class_qn)
 
-    def _record_type_location(
-        self,
-        class_qn: str,
-        label: cs.NodeLabel,
-        language: cs.SupportedLanguage,
-        file_path: Path | None,
-        class_start_line: int,
-        class_start_col: int,
-    ) -> dict[str, str] | None:
-        if language == cs.SupportedLanguage.CSHARP and file_path is not None:
-            return self.csharp.record_type_location(
-                class_qn, label, file_path, class_start_line, class_start_col
-            )
-        if language == cs.SupportedLanguage.GO and file_path is not None:
-            self.go.record_type_location(
-                class_qn, label, file_path, class_start_line, class_start_col
-            )
-        return None
-
-    def _record_class_field_types(
-        self,
-        class_node: Node,
-        member_node: Node,
-        class_qn: str,
-        module_qn: str,
-        language: cs.SupportedLanguage,
-        modifiers: list[str],
-        file_path: Path | None,
-    ) -> None:
-        if language == cs.SupportedLanguage.CPP:
-            self.cpp.record_field_types(member_node, class_qn)
-        elif language == cs.SupportedLanguage.GO:
-            self.go.record_field_types(class_node, class_qn)
-        elif language == cs.SupportedLanguage.RUST:
-            self.rust.record_field_types(class_node, class_qn)
-        elif language == cs.SupportedLanguage.DART:
-            self.dart.record_field_types(class_node, class_qn)
-        elif language == cs.SupportedLanguage.CSHARP:
-            self.csharp.record_class_members(
-                member_node, class_qn, module_qn, modifiers, file_path
-            )
-
     def _emit_resolved_inherit(
         self,
         entry: DeferredInherit,
         child_type: str,
         resolved: tuple[str, bool],
-        is_dart: bool,
-        dart_implements: dict[str, list[str]],
         heuristic: bool = False,
     ) -> None:
         parent_qn, is_external = resolved
         resolution = cs.EdgeResolution.HEURISTIC if heuristic else None
-        if not is_external and entry.language == cs.SupportedLanguage.CSHARP:
-            self.csharp.pin_base_module(entry, parent_qn)
+        if not is_external:
+            self._for(entry.language).record_resolved_base(entry, parent_qn)
         external_label: str | None = None
         if is_external:
             # The import pass mints the same node for IMPORTS edges, so
@@ -1005,8 +875,6 @@ class ClassIngest:
         self.facts.interface_implementers.setdefault(parent_qn, set()).add(
             entry.child_qn
         )
-        if is_dart and not is_external:
-            dart_implements.setdefault(entry.child_qn, []).append(parent_qn)
 
     def _ingest_class_methods(
         self,
@@ -1030,11 +898,8 @@ class ClassIngest:
             return
 
         lang_config: LanguageSpec = lang_queries[cs.QUERY_CONFIG]
-        member_aliases = (
-            self.python.member_aliases(body_node)
-            if language == cs.SupportedLanguage.PYTHON
-            else {}
-        )
+        language_ingest = self._for(language)
+        member_aliases = language_ingest.member_aliases(body_node)
 
         method_nodes = body_method_nodes(
             body_node, lang_queries, sorted_func_nodes, func_node_starts
@@ -1043,26 +908,16 @@ class ClassIngest:
             return
         method_nodes = self._without_overload_stubs(method_nodes, module_qn)
 
-        external_override_names, annotated_override_sink = (
-            self._method_override_context(class_qn, language)
-        )
+        external_override_names = language_ingest.external_override_names(class_qn)
+        annotated_override_sink = language_ingest.annotated_override_sink()
         scope = _MethodScope(class_node, class_qn, language, file_path, module_qn)
-        # Gated on language: Dart spells its ordinary members `method_signature`.
-        seen_signatures: set[str] | None = (
-            set() if language in cs.JS_TS_LANGUAGES else None
-        )
+        seen_signatures: set[str] = set()
 
         for method_node in method_nodes:
             if skip_method(method_node, class_node, body_node, lang_config):
                 continue
-            if seen_signatures is not None and js_ts_utils.repeats_member_signature(
-                method_node, seen_signatures
-            ):
+            if language_ingest.repeats_member_signature(method_node, seen_signatures):
                 continue
-
-            method_qualified_name = _signatured_method_qn(
-                method_node, class_qn, language
-            )
 
             ingested_qn = ingest_method(
                 self._method_host,
@@ -1071,7 +926,9 @@ class ClassIngest:
                 container_label,
                 language,
                 lang_queries=lang_queries,
-                method_qualified_name=method_qualified_name,
+                method_qualified_name=language_ingest.method_qualified_name(
+                    method_node, class_qn
+                ),
                 file_path=file_path,
                 module_qn=module_qn,
                 external_override_names=external_override_names,
@@ -1080,8 +937,7 @@ class ClassIngest:
             )
             if ingested_qn is not None:
                 self._record_ingested_method(scope, method_node, ingested_qn)
-            if language == cs.SupportedLanguage.CPP:
-                self.cpp.record_method_return_type(method_node, class_qn)
+            language_ingest.record_method_return_type(method_node, class_qn)
 
     def _without_overload_stubs(
         self, method_nodes: list[Node], module_qn: str | None
@@ -1094,36 +950,14 @@ class ClassIngest:
             return method_nodes
         return [node for node in method_nodes if node.start_byte not in stubs]
 
-    def _method_override_context(
-        self, class_qn: str, language: cs.SupportedLanguage
-    ) -> tuple[frozenset[str], dict[str, list[tuple[str, str]]] | None]:
-        external_override_names: frozenset[str] = frozenset()
-        annotated_override_sink: dict[str, list[tuple[str, str]]] | None = None
-        if language == cs.SupportedLanguage.PYTHON:
-            external_override_names = self.python.external_override_names(class_qn)
-        elif language == cs.SupportedLanguage.DART:
-            # An external base (a Flutter widget class) is not introspectable
-            # the way Python stdlib bases are, but Dart marks every override
-            # explicitly with @override. Whether a parent is truly external is
-            # unknowable here (it may live in a file parsed later), so only
-            # RECORD the annotated methods; resolve_deferred_inherits decides
-            # once every class is registered.
-            annotated_override_sink = self.dart.annotated_overrides
-        return external_override_names, annotated_override_sink
-
     def _record_ingested_method(
         self, scope: _MethodScope, method_node: Node, ingested_qn: str
     ) -> None:
         language = scope.language
         module_qn = scope.module_qn
-        if language == cs.SupportedLanguage.CSHARP:
-            self.csharp.record_method(
-                scope.class_node, scope.class_qn, module_qn, method_node, ingested_qn
-            )
-        if language == cs.SupportedLanguage.DART:
-            self.dart.record_method(
-                scope.class_node, scope.class_qn, module_qn, method_node, ingested_qn
-            )
+        self._for(language).record_method(
+            scope.class_node, scope.class_qn, module_qn, method_node, ingested_qn
+        )
         # Rust trait bodies reach here rather than the impl path above;
         # a trait is no module either (issue #1086).
         rs_utils.record_effective_module(
@@ -1142,19 +976,11 @@ class ClassIngest:
             cs.NodeLabel.METHOD.value,
             ingested_qn,
         )
-        if language == cs.SupportedLanguage.JAVA and module_qn is not None:
-            self.java.record_anonymous_override(
-                method_node, scope.class_node, ingested_qn, module_qn
-            )
         # Record where this method landed so Pass-3 call attribution
         # reuses the registered qn/label instead of re-deriving them.
         # The walks diverge on preprocessor-distorted C++ class bodies
         # and on TS declaration merging, where the member registers
         # under the namespace's duplicate-suffixed qn (issue #652).
-        # For Rust, first claim wins: a fn in a mod inside a trait
-        # const default is already claimed by the function pass under
-        # its own qn, and overwriting would re-attribute its calls to
-        # this pass's twin.
         if module_qn is not None:
             self._record_method_location(scope, module_qn, method_node, ingested_qn)
 
@@ -1171,13 +997,13 @@ class ClassIngest:
             qualified_name=ingested_qn,
             container_qn=scope.class_qn,
         )
+        language_ingest = self._for(scope.language)
         if (
-            scope.language != cs.SupportedLanguage.RUST
+            not language_ingest.keeps_claimed_method_spans
             or span not in self.facts.function_locations
         ):
             self.facts.function_locations[span] = location
-        if scope.language == cs.SupportedLanguage.JAVA:
-            self.java.register_name_alias(module_qn, method_node, location)
+        language_ingest.register_name_alias(module_qn, method_node, location)
 
     def process_all_method_overrides(self, module_qns: Collection[str] = ()) -> None:
         # Every module the graph holds, read-back ones included: a C++ type
@@ -1192,9 +1018,18 @@ class ClassIngest:
             self.rust.impl_method_traits,
             self.rust.inherent_impl_methods,
             module_qns={*self.module_qn_to_file_path, *module_qns},
-            linked_apart=self.go_interfaces.keys(),
+            linked_apart=self._overrides_linked_apart(),
         )
         self.java.resolve_anonymous_overrides()
+
+    def _overrides_linked_apart(self) -> set[str]:
+        # The types another pass links the overrides of, from every language
+        # that has such a pass.
+        return {
+            qn
+            for language_ingest in dict.fromkeys(self._languages.values())
+            for qn in language_ingest.overrides_linked_apart()
+        }
 
     def _override_walk_implementers(self) -> dict[str, set[str]]:
         # The walk visits a class's superclasses and interfaces together and
@@ -1202,21 +1037,14 @@ class ClassIngest:
         # pairs, an unchanged class that extends one type and implements
         # another walked its superclasses alone and took an edge its own
         # parse never chose (issue #2403), so the pairs read back join them.
-        # A Rust impl's do not: its edge follows the impl block
-        # (rust_impl_method_traits, rust_inherent_impl_methods), which only
-        # parsing records, and walking the trait instead would link an
-        # inherent method sharing the trait method's name. An unchanged impl
-        # keeps the edges its own parse wrote.
-        #
-        # Nor do a Go interface's (issue #2483): link_go_interfaces gave each
-        # implementer its OVERRIDES, one per interface satisfied and labelled
-        # with the pair's confidence, from every method set, read back ones
-        # included. The walk would add an unlabelled copy, and a pair the
-        # graph still holds after an edit took it away.
+        # Not those of a language whose override edges something else decides
+        # (`joins_read_back_implementers`), nor the parsed pairs of a type
+        # another pass links the overrides of (`overrides_linked_apart`).
+        linked_apart = self._overrides_linked_apart()
         merged = {
             qn: set(impls)
             for qn, impls in self.facts.interface_implementers.items()
-            if qn not in self.go_interfaces
+            if qn not in linked_apart
         }
         for iface, implementers in self.facts.rehydrated_interface_implementers.items():
             if walked := {qn for qn in implementers if self._walks_read_back(qn)}:
@@ -1224,11 +1052,12 @@ class ClassIngest:
         return merged
 
     def _walks_read_back(self, implementer_qn: str) -> bool:
-        # Read back from a file other than Rust or Go. No recorded path means
-        # this run parsed the class (its parsed pairs already cover it) or it
-        # is a Rust impl target with no node of its own.
+        # Read back from a file whose language joins its read-back pairs. No
+        # recorded path means this run parsed the class (its parsed pairs
+        # already cover it) or it is a Rust impl target with no node of its
+        # own.
         path = self.facts.rehydrated_definition_paths.get(implementer_qn)
-        return path is not None and not path.endswith((cs.EXT_RS, cs.EXT_GO))
+        return path is not None and not path.endswith(self._unwalked_read_back_suffixes)
 
     def _resolve_class_name(
         self,
@@ -1237,9 +1066,9 @@ class ClassIngest:
         language: cs.SupportedLanguage | None = None,
     ) -> str | None:
         resolved = self._resolve_base_name(class_name, module_qn, language)
-        if resolved is not None or language != cs.SupportedLanguage.CSHARP:
+        if resolved is not None:
             return resolved
-        return self.csharp.namespaced_class(class_name)
+        return self._for(language).namespaced_class(class_name)
 
     def _get_node_type_for_inheritance(self, qualified_name: str) -> str:
         return rel.get_node_type_for_inheritance(qualified_name, self.function_registry)

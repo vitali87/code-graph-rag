@@ -11,11 +11,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from tree_sitter import Node
+
 from ... import constants as cs
 from ...types_defs import DeferredInherit
 from ..class_ingest import base_targets as bt
 from ..class_ingest import parent_extraction as pe
 from ..language_definitions import LanguageClassIngest
+from . import utils as js_ts_utils
 
 if TYPE_CHECKING:
     from ...types_defs import FunctionRegistryTrieProtocol
@@ -30,6 +33,9 @@ class JsTsClassIngest(LanguageClassIngest):
 
     __slots__ = ("function_registry", "module_qn_to_file_path", "import_processor")
 
+    # TypeScript keeps a type and a value of one name apart (issue #2520).
+    separate_declaration_spaces = True
+
     def __init__(
         self,
         *,
@@ -41,6 +47,17 @@ class JsTsClassIngest(LanguageClassIngest):
         self.module_qn_to_file_path = module_qn_to_file_path
         self.import_processor = import_processor
 
+    def repeats_member_signature(
+        self, method_node: Node, seen_signatures: set[str]
+    ) -> bool:
+        # JS/TS alone: Dart spells its ordinary members `method_signature`.
+        return js_ts_utils.repeats_member_signature(method_node, seen_signatures)
+
+    def externalized_base(self, raw_name: str) -> str | None:
+        if raw_name in cs.JS_GLOBAL_CLASS_NAMES:
+            return f"{cs.BUILTIN_PREFIX}{cs.SEPARATOR_DOT}{raw_name}"
+        return None
+
     def reexport_target(self, entry: DeferredInherit) -> str | None:
         """The class a JS/TS base reaches through its module's exports.
 
@@ -51,8 +68,6 @@ class JsTsClassIngest(LanguageClassIngest):
         rename it again; only what a class can extend (a type, or in JS a
         constructor function) is a base at the end.
         """
-        if entry.language not in cs.JS_TS_LANGUAGES:
-            return None
         followed = self.import_processor.js_ts.follow_js_reexports(
             entry.parent_qn, self.module_qn_to_file_path, self.function_registry
         )
@@ -72,8 +87,6 @@ class JsTsClassIngest(LanguageClassIngest):
         # the project (`React` from a default import is `react.default`)
         # registers nothing, so `React.Component` keeps the written name it is
         # externalized under, which React dead-code rooting matches on.
-        if entry.language not in cs.JS_TS_LANGUAGES:
-            return None
         candidate = pe.js_ts_namespace_member_qn(
             raw_name, self.import_processor.import_mapping.get(entry.module_qn, {})
         )

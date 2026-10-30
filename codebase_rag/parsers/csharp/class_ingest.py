@@ -110,6 +110,11 @@ class CSharpClassIngest(LanguageClassIngest):
         self._partial_index = partial_index
         self.type_locations = type_locations
 
+    def class_start_point(self, class_node: Node) -> tuple[int, int]:
+        # Skip a leading `#if [Attr] #endif` directive so the start line is
+        # the conditional attribute, not the `#if` line (matches Roslyn).
+        return csharp_utils.definition_start_point(class_node)
+
     def record_type_props(
         self,
         class_node: Node,
@@ -163,11 +168,13 @@ class CSharpClassIngest(LanguageClassIngest):
             (rel_path, class_start_line)
         )
 
-    def record_class_members(
+    def record_members(
         self,
+        class_node: Node,
         member_node: Node,
         class_qn: str,
         module_qn: str,
+        label: cs.NodeLabel,
         modifiers: list[str],
         file_path: Path | None,
     ) -> None:
@@ -226,6 +233,9 @@ class CSharpClassIngest(LanguageClassIngest):
         group = self._partial_index.setdefault(key, [])
         group.append(class_qn)
         self.facts.csharp_partial_groups[class_qn] = group
+
+    def method_qualified_name(self, method_node: Node, class_qn: str) -> str | None:
+        return signatured_method_qn(method_node, class_qn)
 
     def record_method(
         self,
@@ -339,8 +349,6 @@ class CSharpClassIngest(LanguageClassIngest):
         # (Polly's Foo.cs + Foo.TResult.cs), so only a UNIQUE same-simple-name
         # type declaration under the module's parent package qualifies;
         # ambiguity keeps the no-edge answer rather than guessing.
-        if entry.language != cs.SupportedLanguage.CSHARP:
-            return None
         type_decls = (cs.NodeLabel.CLASS, cs.NodeLabel.INTERFACE, cs.NodeLabel.ENUM)
         # The written arity names the sibling (issue #764): a twin in the
         # same file carries it in its qn (`Foo`1`, issue #2579), one in
@@ -386,7 +394,7 @@ class CSharpClassIngest(LanguageClassIngest):
             return min(in_package)
         return None
 
-    def pin_base_module(self, entry: DeferredInherit, parent_qn: str) -> None:
+    def record_resolved_base(self, entry: DeferredInherit, parent_qn: str) -> None:
         # A resolved first-party base pins the C# namespace import to the
         # module defining it (issue #1347).
         target_module = module_qn_for_entity(parent_qn, self.module_qn_to_file_path)

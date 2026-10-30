@@ -1,35 +1,56 @@
 """Go's share of the class pass: the location index the go/types facts join
-back through, and a struct's field types.
+back through, an interface's embeds and method specs, a struct's field
+types, and the interfaces whose overrides the Go interface link writes.
 
 `ClassIngest` owns what every language shares (the scan of a file's class
 captures, a class's node, members and relationships) and hands Go's part to
-the `GoClassIngest` it builds; a Go interface's method specs are the Go
-interface pass's."""
+the `GoClassIngest` it builds; a Go interface's method specs are written by
+the Go interface pass."""
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from tree_sitter import Node
 
 from ... import constants as cs
+from ...types_defs import PropertyDict
 from ...utils.path_utils import cached_relative_path
 from ..language_definitions import LanguageClassIngest
+from . import interfaces as go_ifaces
 from .type_inference import GoTypeInferenceEngine
 
 if TYPE_CHECKING:
     from ..definition_facts import DefinitionFacts
+    from .interface_ingest import GoInterfaceIngest
 
 
 class GoClassIngest(LanguageClassIngest):
-    """Records where each Go type is declared and what its struct fields are.
+    """Records where each Go type is declared, what an interface embeds and
+    declares, and what a struct's fields are.
 
-    Built and owned by `ClassIngest`. The definition facts and the location
-    index are the pass's own, held by reference: the go/types join reads the
-    index after Pass 2, and the graph updater's rehydration refills it."""
+    Built and owned by `ClassIngest`. The definition facts, the location
+    index and the interfaces are the pass's own, held by reference: the
+    go/types join reads the index after Pass 2, the graph updater's
+    rehydration refills it, and the interface pass fills the interfaces as
+    it writes their method specs."""
 
-    __slots__ = ("repo_path", "facts", "type_locations")
+    __slots__ = (
+        "repo_path",
+        "facts",
+        "type_locations",
+        "interfaces",
+        "_interface_ingest",
+    )
+
+    # link_go_interfaces gives each implementer its OVERRIDES, one per
+    # interface satisfied and labelled with the pair's confidence, from every
+    # method set, read-back ones included (issue #2483). The override walk
+    # would add an unlabelled copy, and a pair the graph still holds after an
+    # edit took it away.
+    joins_read_back_implementers = False
 
     def __init__(
         self,
@@ -37,10 +58,27 @@ class GoClassIngest(LanguageClassIngest):
         repo_path: Path,
         facts: DefinitionFacts,
         type_locations: dict[tuple[str, int, int], tuple[str, str]],
+        interfaces: dict[str, go_ifaces.GoInterfaceDecl],
+        interface_ingest: GoInterfaceIngest,
     ) -> None:
         self.repo_path = repo_path
         self.facts = facts
         self.type_locations = type_locations
+        self.interfaces = interfaces
+        self._interface_ingest = interface_ingest
+
+    def record_type_props(
+        self,
+        class_node: Node,
+        class_qn: str,
+        class_name: str,
+        label: cs.NodeLabel,
+        class_props: PropertyDict,
+    ) -> None:
+        # Stored so an incremental run that does not re-parse the interface
+        # still knows what its method set is built from.
+        if label == cs.NodeLabel.INTERFACE:
+            class_props.update(go_ifaces.embeds_props(class_node))
 
     def record_type_location(
         self,
@@ -61,9 +99,27 @@ class GoClassIngest(LanguageClassIngest):
             str(label),
         )
 
-    def record_field_types(self, class_node: Node, class_qn: str) -> None:
+    def record_members(
+        self,
+        class_node: Node,
+        member_node: Node,
+        class_qn: str,
+        module_qn: str,
+        label: cs.NodeLabel,
+        modifiers: list[str],
+        file_path: Path | None,
+    ) -> None:
+        if label == cs.NodeLabel.INTERFACE:
+            self._interface_ingest.ingest_interface_methods(
+                class_node, class_qn, module_qn, file_path
+            )
         # Record Go struct field types so a field-hop receiver
         # (`engine.trees.get()`) resolves, and a local bound from such a call
         # (`root := engine.trees.get(m)`) picks up the return type.
         if field_types := GoTypeInferenceEngine().build_field_type_map(class_node):
             self.facts.class_field_types[class_qn] = field_types
+
+    def overrides_linked_apart(self) -> Collection[str]:
+        # The interfaces link_go_interfaces links the overrides of, for the
+        # reason above.
+        return self.interfaces.keys()

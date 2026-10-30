@@ -18,6 +18,7 @@ from ... import constants as cs
 from ...node_text import safe_decode_text
 from ...types_defs import PropertyDict
 from ..class_ingest import identity as id_
+from ..enum_variants import is_python_enum
 from ..language_definitions import LanguageClassIngest
 from .ast_analyzer import under_type_checking
 from .class_aliases import scan_class_body_aliases
@@ -111,6 +112,9 @@ class PythonClassIngest(LanguageClassIngest):
         # parse can tell dead code it is a declaration.
         if under_type_checking(class_node):
             class_props[cs.KEY_TYPE_CHECKING_ONLY] = True
+
+    def is_enum(self, class_qn: str) -> bool:
+        return is_python_enum(self.facts.class_inheritance.get(class_qn, ()))
 
     def external_override_names(self, class_qn: str) -> frozenset[str]:
         # Names defined by an EXTERNAL stdlib base of this class (click's
