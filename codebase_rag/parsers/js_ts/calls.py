@@ -24,6 +24,7 @@ from ... import constants as cs
 from ...language_spec import LanguageSpec
 from ...node_text import decode_node_text, safe_decode_text
 from ...types_defs import FunctionLocation, LanguageQueries, PropertyDict
+from ..call_host import PyJsValueReferenceHost
 from ..callable_params import js_ts_parameter_names
 from ..definition_docstring import extract_definition_docstring
 from ..edge_site import EdgeSiteHost, host_site_scoped
@@ -36,7 +37,7 @@ if TYPE_CHECKING:
     from ..call_resolver import CallResolver
 
 
-class JsTsCallHost(EdgeSiteHost, Protocol):
+class JsTsCallHost(EdgeSiteHost, PyJsValueReferenceHost, Protocol):
     """What JS/TS call resolution reads and sets on the call pass that builds
     it: the edge emitter, a function node's own name and the location the
     definition pass recorded for it, the callee name a `function` field
@@ -72,18 +73,6 @@ class JsTsCallHost(EdgeSiteHost, Protocol):
         module_qn: str | None = None,
     ) -> None: ...
 
-    @staticmethod
-    def _flow_scope_boundaries(lang_config: LanguageSpec) -> frozenset[str]: ...
-
-    def _ingest_py_js_module_references(
-        self,
-        root_node: Node,
-        module_qn: str,
-        language: cs.SupportedLanguage,
-        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
-        class_field_assignments: bool = False,
-    ) -> None: ...
-
     def _ingest_jsx_component_references(
         self,
         caller_node: Node,
@@ -93,51 +82,6 @@ class JsTsCallHost(EdgeSiteHost, Protocol):
         class_context: str | None,
         boundary_types: frozenset[str],
         caller_qn: str | None = None,
-    ) -> None: ...
-
-    def _ingest_assignment_function_references(
-        self,
-        caller_node: Node,
-        caller_spec: tuple[str, str, str],
-        module_qn: str,
-        local_var_types: dict[str, str] | None,
-        class_context: str | None,
-        boundary_types: frozenset[str],
-        caller_qn: str | None = None,
-        language: cs.SupportedLanguage | None = None,
-    ) -> None: ...
-
-    def _ingest_default_param_references(
-        self,
-        caller_node: Node,
-        caller_spec: tuple[str, str, str],
-        module_qn: str,
-        local_var_types: dict[str, str] | None,
-        class_context: str | None,
-        caller_qn: str | None,
-    ) -> None: ...
-
-    def _ingest_returned_function_references(
-        self,
-        caller_node: Node,
-        caller_spec: tuple[str, str, str],
-        module_qn: str,
-        local_var_types: dict[str, str] | None,
-        class_context: str | None,
-        boundary_types: frozenset[str],
-        caller_qn: str | None = None,
-        language: cs.SupportedLanguage | None = None,
-    ) -> None: ...
-
-    def _ingest_collection_function_references(
-        self,
-        caller_node: Node,
-        caller_spec: tuple[str, str, str],
-        module_qn: str,
-        local_var_types: dict[str, str] | None,
-        class_context: str | None,
-        boundary_types: frozenset[str],
-        language: cs.SupportedLanguage | None = None,
     ) -> None: ...
 
     def _function_field_call_name(

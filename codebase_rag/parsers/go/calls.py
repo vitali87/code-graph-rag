@@ -15,10 +15,10 @@ from typing import TYPE_CHECKING, NamedTuple, Protocol
 from tree_sitter import Node
 
 from ... import constants as cs
-from ...language_spec import LanguageSpec
 from ...node_text import decode_node_text, safe_decode_text
 from ...types_defs import LanguageQueries, PropertyDict
 from ...utils import qn_markers
+from ..call_host import ValueReferenceHost, VerdictNotingHost
 from ..callable_params import go_parameter_names
 from ..definition_facts import DefinitionFacts
 from ..edge_site import EdgeSiteHost, host_site_scoped
@@ -30,14 +30,14 @@ if TYPE_CHECKING:
     from ..call_resolver import CallResolver
 
 
-class GoCallHost(EdgeSiteHost, Protocol):
+class GoCallHost(EdgeSiteHost, ValueReferenceHost, VerdictNotingHost, Protocol):
     """What Go call resolution reads and sets on the call pass that builds it.
 
     Beside the edge site, which the fan-outs set per edge and put back as
     the pass's own emitters do: `_verdict`, how surely the last resolve
-    bound its callee, which `_resolve_noting` notes and a chain root's
-    binding is judged by; and the reference walkers Go shares with other
-    languages, with the scope boundaries they stop at."""
+    bound its callee, which `_noted` notes and a chain root's binding is
+    judged by; and the reference walkers Go shares with other languages,
+    with the scope boundaries they stop at."""
 
     _verdict: str
 
@@ -53,17 +53,6 @@ class GoCallHost(EdgeSiteHost, Protocol):
         self, call_node: Node, language: cs.SupportedLanguage | None = None
     ) -> str | None: ...
 
-    def _resolve_noting(
-        self,
-        call_name: str,
-        module_qn: str,
-        local_var_types: dict[str, str] | None = None,
-        class_context: str | None = None,
-        caller_qn: str | None = None,
-        language: cs.SupportedLanguage | None = None,
-        call_point: int | None = None,
-    ) -> tuple[str, str] | None: ...
-
     def _emit_value_function_ref(
         self,
         node: Node,
@@ -74,33 +63,6 @@ class GoCallHost(EdgeSiteHost, Protocol):
         resolve_func: Callable[..., tuple[str, str] | None],
         ensure_rel: Callable[..., None],
         caller_qn: str | None = None,
-    ) -> None: ...
-
-    @staticmethod
-    def _flow_scope_boundaries(lang_config: LanguageSpec) -> frozenset[str]: ...
-
-    def _ingest_assignment_function_references(
-        self,
-        caller_node: Node,
-        caller_spec: tuple[str, str, str],
-        module_qn: str,
-        local_var_types: dict[str, str] | None,
-        class_context: str | None,
-        boundary_types: frozenset[str],
-        caller_qn: str | None = None,
-        language: cs.SupportedLanguage | None = None,
-    ) -> None: ...
-
-    def _ingest_returned_function_references(
-        self,
-        caller_node: Node,
-        caller_spec: tuple[str, str, str],
-        module_qn: str,
-        local_var_types: dict[str, str] | None,
-        class_context: str | None,
-        boundary_types: frozenset[str],
-        caller_qn: str | None = None,
-        language: cs.SupportedLanguage | None = None,
     ) -> None: ...
 
 
@@ -633,14 +595,16 @@ class GoCallResolution(LanguageCalls):
         ):
             callee_info = chained.callee
         elif callee_info is None:
-            callee_info = self._host._resolve_noting(
-                call_name,
-                module_qn,
-                call_var_types,
-                class_context,
-                caller_qn,
-                cs.SupportedLanguage.GO,
-                call_point=call_node.start_byte,
+            callee_info = self._host._noted(
+                self._resolver.resolve_function_call(
+                    call_name,
+                    module_qn,
+                    call_var_types,
+                    class_context,
+                    caller_qn,
+                    cs.SupportedLanguage.GO,
+                    call_point=call_node.start_byte,
+                )
             )
         return callee_info
 

@@ -20,6 +20,7 @@ from ... import constants as cs
 from ...language_spec import LanguageSpec
 from ...node_text import decode_node_text, safe_decode_text
 from ...types_defs import PropertyDict
+from ..call_host import VerdictNotingHost
 from ..edge_site import EdgeSiteHost, host_site_scoped
 from ..language_calls import UNDECIDED_CALLEE, Callee, LanguageCalls
 from ..utils import module_qn_for_entity
@@ -30,9 +31,9 @@ if TYPE_CHECKING:
     from ..call_resolver import CallResolver
 
 
-class CSharpCallHost(EdgeSiteHost, Protocol):
+class CSharpCallHost(EdgeSiteHost, VerdictNotingHost, Protocol):
     """What C#'s call passes call on the call pass that builds them: the edge
-    emitter, and the name-based resolve that notes its verdict for the call
+    emitter, and the note of how surely a name-based resolve binds the call
     node being scanned."""
 
     def _emit_rel(
@@ -42,18 +43,6 @@ class CSharpCallHost(EdgeSiteHost, Protocol):
         to_spec: tuple[str, str, str],
         properties: PropertyDict | None = None,
     ) -> None: ...
-
-    def _resolve_noting(
-        self,
-        call_name: str,
-        module_qn: str,
-        local_var_types: dict[str, str] | None = None,
-        class_context: str | None = None,
-        caller_qn: str | None = None,
-        language: cs.SupportedLanguage | None = None,
-        call_point: int | None = None,
-        constructing: bool = False,
-    ) -> tuple[str, str] | None: ...
 
 
 class CSharpCallScan(Protocol):
@@ -398,13 +387,15 @@ class CSharpCallResolution(LanguageCalls):
             # bare call has already exhausted C#'s legitimate scopes
             # (local function, enclosing type, and static import), so a
             # miss is external rather than a name-wide guess (#2005).
-            callee_info = self._host._resolve_noting(
-                call_name,
-                ctx.module_qn,
-                call_var_types,
-                ctx.class_context,
-                ctx.caller_qn,
-                ctx.language,
+            callee_info = self._host._noted(
+                self._resolver.resolve_function_call(
+                    call_name,
+                    ctx.module_qn,
+                    call_var_types,
+                    ctx.class_context,
+                    ctx.caller_qn,
+                    ctx.language,
+                )
             )
         return Callee(True, callee_info)
 

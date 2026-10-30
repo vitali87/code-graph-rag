@@ -22,6 +22,7 @@ from ... import constants as cs
 from ...language_spec import LanguageSpec
 from ...node_text import safe_decode_text
 from ...types_defs import FunctionLocation, LanguageQueries, PropertyDict
+from ..call_host import PyJsValueReferenceHost, VerdictNotingHost
 from ..call_resolver import PY_EXTERNAL_TARGET
 from ..callable_params import python_parameter_names
 from ..edge_site import EdgeSiteHost, host_site_scoped
@@ -34,9 +35,9 @@ if TYPE_CHECKING:
     from ..call_resolver import CallResolver
 
 
-class PythonCallHost(EdgeSiteHost, Protocol):
+class PythonCallHost(EdgeSiteHost, PyJsValueReferenceHost, VerdictNotingHost, Protocol):
     """What Python call resolution calls on the call pass that builds it: the
-    edge emitter, the name-based resolve that notes its verdict for the call
+    edge emitter, the note of how surely a name-based resolve binds the call
     node being scanned, a function node's recorded location, a call's callee
     name and arguments, the callback emitter a passed function's edge goes
     through like any other callback's, and the reference walkers Python
@@ -59,17 +60,6 @@ class PythonCallHost(EdgeSiteHost, Protocol):
         self, func_node: Node, module_qn: str
     ) -> FunctionLocation | None: ...
 
-    def _resolve_noting(
-        self,
-        call_name: str,
-        module_qn: str,
-        local_var_types: dict[str, str] | None = None,
-        class_context: str | None = None,
-        caller_qn: str | None = None,
-        language: cs.SupportedLanguage | None = None,
-        call_point: int | None = None,
-    ) -> tuple[str, str] | None: ...
-
     def _get_call_target_name(
         self, call_node: Node, language: cs.SupportedLanguage | None = None
     ) -> str | None: ...
@@ -89,63 +79,6 @@ class PythonCallHost(EdgeSiteHost, Protocol):
         ensure_rel: Callable[..., None],
         caller_qn: str | None = None,
         rel_type: cs.RelationshipType = cs.RelationshipType.CALLS,
-        language: cs.SupportedLanguage | None = None,
-    ) -> None: ...
-
-    def _ingest_py_js_module_references(
-        self,
-        root_node: Node,
-        module_qn: str,
-        language: cs.SupportedLanguage,
-        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
-        class_field_assignments: bool = False,
-    ) -> None: ...
-
-    @staticmethod
-    def _flow_scope_boundaries(lang_config: LanguageSpec) -> frozenset[str]: ...
-
-    def _ingest_assignment_function_references(
-        self,
-        caller_node: Node,
-        caller_spec: tuple[str, str, str],
-        module_qn: str,
-        local_var_types: dict[str, str] | None,
-        class_context: str | None,
-        boundary_types: frozenset[str],
-        caller_qn: str | None = None,
-        language: cs.SupportedLanguage | None = None,
-    ) -> None: ...
-
-    def _ingest_default_param_references(
-        self,
-        caller_node: Node,
-        caller_spec: tuple[str, str, str],
-        module_qn: str,
-        local_var_types: dict[str, str] | None,
-        class_context: str | None,
-        caller_qn: str | None,
-    ) -> None: ...
-
-    def _ingest_returned_function_references(
-        self,
-        caller_node: Node,
-        caller_spec: tuple[str, str, str],
-        module_qn: str,
-        local_var_types: dict[str, str] | None,
-        class_context: str | None,
-        boundary_types: frozenset[str],
-        caller_qn: str | None = None,
-        language: cs.SupportedLanguage | None = None,
-    ) -> None: ...
-
-    def _ingest_collection_function_references(
-        self,
-        caller_node: Node,
-        caller_spec: tuple[str, str, str],
-        module_qn: str,
-        local_var_types: dict[str, str] | None,
-        class_context: str | None,
-        boundary_types: frozenset[str],
         language: cs.SupportedLanguage | None = None,
     ) -> None: ...
 
@@ -858,14 +791,16 @@ class PythonCallResolution(LanguageCalls):
         if callee_info == PY_EXTERNAL_TARGET:
             callee_info = None
         elif callee_info is None:
-            callee_info = self._host._resolve_noting(
-                call_name,
-                ctx.module_qn,
-                call_var_types,
-                ctx.class_context,
-                ctx.caller_qn,
-                ctx.language,
-                call_point=call_node.start_byte,
+            callee_info = self._host._noted(
+                self._resolver.resolve_function_call(
+                    call_name,
+                    ctx.module_qn,
+                    call_var_types,
+                    ctx.class_context,
+                    ctx.caller_qn,
+                    ctx.language,
+                    call_point=call_node.start_byte,
+                )
             )
         return Callee(True, callee_info)
 
