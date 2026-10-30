@@ -391,7 +391,7 @@ def profile_directory_structure() -> list[Timing]:
     for spec in LANGUAGE_SPECS.values():
         package_indicators.update(spec.package_indicators)
 
-    def identify_packages():
+    def identify_packages() -> int:
         dirs = set()
         for p in REPO_PATH.rglob("*"):
             if p.is_dir() and not should_skip_path(p, REPO_PATH):
