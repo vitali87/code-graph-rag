@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -141,22 +142,37 @@ def _macro_parameter_list(tokens: list[Token]) -> tuple[int, set[str]]:
     return len(tokens), params
 
 
+@dataclass(frozen=True, slots=True)
+class CppRegistries:
+    """The updater's registries the frontend records its output in, each
+    optional.
+
+    With ``function_registry`` / ``simple_name_lookup``, emitted definitions
+    are registered for cross-file resolution; with ``structural_elements``,
+    each Module is linked to its parent via CONTAINS_MODULE (the full-replace
+    path used by GraphUpdater); ``owned_qns`` receives the file that
+    registered each qn.
+    """
+
+    function_registry: FunctionRegistryTrieProtocol | None = None
+    simple_name_lookup: SimpleNameLookup | None = None
+    structural_elements: dict[Path, str | None] | None = None
+    owned_qns: dict[str, set[str]] | None = None
+
+
 class _Collector:
     def __init__(
         self,
         resolver: CppQnResolver,
         *,
-        function_registry: FunctionRegistryTrieProtocol | None = None,
-        simple_name_lookup: SimpleNameLookup | None = None,
-        structural_elements: dict[Path, str | None] | None = None,
+        registries: CppRegistries = CppRegistries(),
         hybrid: bool = False,
-        owned_qns: dict[str, set[str]] | None = None,
     ) -> None:
         self.resolver = resolver
         # Per-file ownership of every registered qn: frontend registrations
         # have no tree-sitter span records, so the watch prefix sweep needs
         # its own record of which FILE registered each qn (issue #1025).
-        self.owned_qns = owned_qns
+        self.owned_qns = registries.owned_qns
         # Hybrid mode: tree-sitter remains the backbone (its definitions and
         # CALLS stand), so collect ONLY the facts libclang is uniquely right
         # about: macro definitions/uses and includes. Definition qns diverge
@@ -164,9 +180,9 @@ class _Collector:
         # node may be emitted; macro and Module qns are scheme-identical and
         # safe.
         self.hybrid = hybrid
-        self.function_registry = function_registry
-        self.simple_name_lookup = simple_name_lookup
-        self.structural_elements = structural_elements
+        self.function_registry = registries.function_registry
+        self.simple_name_lookup = registries.simple_name_lookup
+        self.structural_elements = registries.structural_elements
         self.nodes: dict[_NodeKey, tuple[str, PropertyDict, bool]] = {}
         self.modules: dict[str, PropertyDict] = {}
         self.edges: set[_EdgeKey] = set()
@@ -851,12 +867,9 @@ def run_cpp_frontend(
     project_name: str,
     compdb_dir: Path,
     *,
-    function_registry: FunctionRegistryTrieProtocol | None = None,
-    simple_name_lookup: SimpleNameLookup | None = None,
-    structural_elements: dict[Path, str | None] | None = None,
+    registries: CppRegistries = CppRegistries(),
     exclude_paths: frozenset[str] | None = None,
     unignore_paths: frozenset[str] | None = None,
-    owned_qns: dict[str, set[str]] | None = None,
 ) -> frozenset[str]:
     """Index C/C++ via libclang + a compile_commands.json (macro-accurate).
 
@@ -867,19 +880,11 @@ def run_cpp_frontend(
     definitions register as Function nodes and macro uses emit CALLS from their
     enclosing function (see the graph-schema docs). Returns the set of
     repo-relative files it covered (so callers can skip them in the tree-sitter
-    pass).
-
-    When ``function_registry`` / ``simple_name_lookup`` are supplied, emitted
-    definitions are registered for cross-file resolution; when
-    ``structural_elements`` is supplied, each Module is linked to its parent via
-    CONTAINS_MODULE (the full-replace path used by GraphUpdater).
+    pass). What it emits is also recorded in the given ``registries``.
     """
     collector = _Collector(
         CppQnResolver(repo_path, project_name, exclude_paths, unignore_paths),
-        function_registry=function_registry,
-        simple_name_lookup=simple_name_lookup,
-        structural_elements=structural_elements,
-        owned_qns=owned_qns,
+        registries=registries,
     )
     _parse_and_collect(collector, compdb_dir)
     collector.flush(ingestor)
@@ -892,12 +897,9 @@ def run_cpp_frontend_hybrid(
     project_name: str,
     compdb_dir: Path,
     *,
-    function_registry: FunctionRegistryTrieProtocol | None = None,
-    simple_name_lookup: SimpleNameLookup | None = None,
-    structural_elements: dict[Path, str | None] | None = None,
+    registries: CppRegistries = CppRegistries(),
     exclude_paths: frozenset[str] | None = None,
     unignore_paths: frozenset[str] | None = None,
-    owned_qns: dict[str, set[str]] | None = None,
 ) -> tuple[list[PendingMacroCall], list[PendingExpansionCall]]:
     """Layer libclang's macro, alias, and include facts onto a tree-sitter index.
 
@@ -912,11 +914,8 @@ def run_cpp_frontend_hybrid(
     """
     collector = _Collector(
         CppQnResolver(repo_path, project_name, exclude_paths, unignore_paths),
-        function_registry=function_registry,
-        simple_name_lookup=simple_name_lookup,
-        structural_elements=structural_elements,
+        registries=registries,
         hybrid=True,
-        owned_qns=owned_qns,
     )
     _parse_and_collect(collector, compdb_dir)
     collector.flush(ingestor)

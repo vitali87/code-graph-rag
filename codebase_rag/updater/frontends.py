@@ -13,6 +13,7 @@ from .. import logs as ls
 from ..config import settings
 from ..function_registry import FunctionRegistryTrie
 from ..parsers.cpp.frontend import (
+    CppRegistries,
     cpp_frontend_available,
     find_compile_commands,
     run_cpp_frontend,
@@ -128,12 +129,7 @@ class FrontendRunner:
                 self._repo_path,
                 self._project_name,
                 compdb_dir,
-                function_registry=self._function_registry,
-                simple_name_lookup=self._simple_name_lookup,
-                structural_elements=(
-                    self._factory.structure_processor.structural_elements
-                ),
-                owned_qns=self._owned_qns,
+                registries=self._cpp_registries(),
                 exclude_paths=self._scope.exclude_paths,
                 unignore_paths=self._scope.unignore_paths,
             )
@@ -152,17 +148,20 @@ class FrontendRunner:
                 self._repo_path,
                 self._project_name,
                 compdb_dir,
-                function_registry=self._function_registry,
-                simple_name_lookup=self._simple_name_lookup,
-                structural_elements=(
-                    self._factory.structure_processor.structural_elements
-                ),
+                registries=self._cpp_registries(),
                 exclude_paths=self._scope.exclude_paths,
                 unignore_paths=self._scope.unignore_paths,
-                owned_qns=self._owned_qns,
             )
         )
         logger.info(ls.CPP_FRONTEND_COVERED.format(count=len(self.cpp_covered)))
+
+    def _cpp_registries(self) -> CppRegistries:
+        return CppRegistries(
+            function_registry=self._function_registry,
+            simple_name_lookup=self._simple_name_lookup,
+            structural_elements=self._factory.structure_processor.structural_elements,
+            owned_qns=self._owned_qns,
+        )
 
     def run_csharp_frontend(self) -> None:
         # Roslyn before Pass 2: its exact base kinds (INHERITS vs IMPLEMENTS)

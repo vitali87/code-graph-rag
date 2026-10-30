@@ -15,6 +15,7 @@ from codebase_rag import constants as cs
 from codebase_rag import graph_updater as gu
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers.cpp.frontend import CppRegistries
 from codebase_rag.updater import frontends
 from evals.cgr_graph import StatefulIngestor
 
@@ -30,14 +31,16 @@ def _definitions_seen_by_the_frontend(
     monkeypatch.setattr(frontends, "find_compile_commands", lambda _repo: root)
     seen: list[bool] = []
 
-    def libclang(*_args: object, function_registry: object, **_kw: object) -> set:
-        seen.append(any(qn.endswith(".area") for qn, _ in function_registry.items()))
+    def libclang(*_args: object, registries: CppRegistries, **_kw: object) -> set:
+        registry = registries.function_registry
+        seen.append(any(qn.endswith(".area") for qn, _ in registry.items()))
         return set()
 
     def hybrid(
-        *_args: object, function_registry: object, **_kw: object
+        *_args: object, registries: CppRegistries, **_kw: object
     ) -> tuple[list, list]:
-        seen.append(any(qn.endswith(".area") for qn, _ in function_registry.items()))
+        registry = registries.function_registry
+        seen.append(any(qn.endswith(".area") for qn, _ in registry.items()))
         return [], []
 
     monkeypatch.setattr(frontends, "run_cpp_frontend", libclang)
