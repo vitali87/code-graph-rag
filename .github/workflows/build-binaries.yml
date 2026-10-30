@@ -92,24 +92,20 @@ jobs:
         with:
           fetch-depth: 0
           submodules: recursive
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
-      - name: Key the uv cache on dependencies, not the project version
-        shell: bash
-        run: |
-          awk 'skip && /^version = / { skip = 0; next }
-               { skip = /^name = "code-graph-rag"\r?$/; print }' \
-            uv.lock > "$RUNNER_TEMP/uv-deps.lock"
-
+      # What a tag's run builds is published, so this workflow restores no
+      # cache another run could have written. setup-uv's default would still
+      # cache a dispatch, which publishes when dispatched on a tag.
       - name: Install uv
         uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
-          enable-cache: true
-          cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
+          enable-cache: false
 
       - name: Install dependencies
         shell: bash
@@ -189,10 +185,18 @@ jobs:
 
       - name: Upload to release
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
-        with:
-          files: dist/code-graph-rag-*
-          fail_on_unmatched_files: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          # The legs race to create the release when the tag has none yet; a
+          # leg whose create loses that race finds the release the winner made.
+          gh release view "$TAG" > /dev/null 2>&1 \
+            || gh release create "$TAG" --verify-tag --title "$TAG" --notes "" \
+            || gh release view "$TAG" > /dev/null
+          gh release upload "$TAG" dist/code-graph-rag-* --clobber
 
   sign-release:
     name: Sign Release Artifacts
@@ -222,10 +226,16 @@ jobs:
           done
 
       - name: Upload signatures to release
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
-        with:
-          files: artifacts/*.sigstore.json
-          fail_on_unmatched_files: false
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          shopt -s nullglob
+          signatures=(artifacts/*.sigstore.json)
+          if [ "${#signatures[@]}" -gt 0 ]; then
+            gh release upload "$TAG" "${signatures[@]}" --clobber
+          fi
 
       - name: Generate build provenance
         id: attest
@@ -237,10 +247,13 @@ jobs:
 
       - name: Stage provenance bundle
         shell: bash
-        run: cp "${{ steps.attest.outputs.bundle-path }}" artifacts/multiple.intoto.jsonl
+        env:
+          BUNDLE_PATH: ${{ steps.attest.outputs.bundle-path }}
+        run: cp "$BUNDLE_PATH" artifacts/multiple.intoto.jsonl
 
       - name: Upload provenance to release
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
-        with:
-          files: artifacts/multiple.intoto.jsonl
-          fail_on_unmatched_files: false
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: gh release upload "$TAG" artifacts/multiple.intoto.jsonl --clobber
