@@ -4,7 +4,7 @@
 import os
 import sys
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, NotRequired, TypedDict
 
 try:
     import requests
@@ -16,15 +16,23 @@ except ImportError:
     sys.exit(1)
 
 REQUEST_TIMEOUT_SECONDS = 30
+GITHUB_LABELS_URL = "https://api.github.com/repos/{repo}/labels"
+GITHUB_LABEL_URL = GITHUB_LABELS_URL + "/{name}"
 
 
-def load_labels_config() -> list[dict]:
+class Label(TypedDict):
+    name: str
+    color: str
+    description: NotRequired[str]
+
+
+def load_labels_config() -> list[Label]:
     """Load labels from .github/labels.yml"""
     labels_file = Path(__file__).parent.parent / ".github" / "labels.yml"
 
     if not labels_file.exists():
         print(f"Error: Labels file not found at {labels_file}")
-        sys.exit(1)
+        raise typer.Exit(code=1)
 
     with open(labels_file, encoding="utf-8") as f:
         labels = yaml.safe_load(f)
@@ -41,15 +49,14 @@ def get_github_token(
     if not resolved_token:
         print("Error: GitHub token required.")
         print("Provide via --token argument or GITHUB_TOKEN environment variable")
-        sys.exit(1)
+        raise typer.Exit(code=1)
 
-    assert resolved_token is not None
     return resolved_token, repo
 
 
-def get_existing_labels(repo: str, token: str) -> dict[str, dict]:
+def get_existing_labels(repo: str, token: str) -> dict[str, Label]:
     """Get existing labels from repository"""
-    url = f"https://api.github.com/repos/{repo}/labels"
+    url = GITHUB_LABELS_URL.format(repo=repo)
     headers = {
         "Authorization": f"token {token}",
         "Accept": "application/vnd.github.v3+json",
@@ -62,8 +69,8 @@ def get_existing_labels(repo: str, token: str) -> dict[str, dict]:
 
 
 def create_or_update_label(
-    repo: str, token: str, label: dict, existing: dict | None = None
-):
+    repo: str, token: str, label: Label, existing: Label | None = None
+) -> bool:
     """Create or update a label"""
     headers = {
         "Authorization": f"token {token}",
@@ -77,13 +84,13 @@ def create_or_update_label(
     }
 
     if existing:
-        url = f"https://api.github.com/repos/{repo}/labels/{label['name']}"
+        url = GITHUB_LABEL_URL.format(repo=repo, name=label["name"])
         response = requests.patch(
             url, headers=headers, json=data, timeout=REQUEST_TIMEOUT_SECONDS
         )
         action = "Updated"
     else:
-        url = f"https://api.github.com/repos/{repo}/labels"
+        url = GITHUB_LABELS_URL.format(repo=repo)
         response = requests.post(
             url, headers=headers, json=data, timeout=REQUEST_TIMEOUT_SECONDS
         )
@@ -116,9 +123,9 @@ def main(
     try:
         existing_labels = get_existing_labels(resolved_repo, resolved_token)
         print(f"Found {len(existing_labels)} existing labels\n")
-    except Exception as e:  # noqa: BLE001 -- command boundary: reported to the user, not a traceback
+    except Exception as e:  # command boundary: reported to the user, not a traceback
         print(f"Error fetching existing labels: {e}")
-        sys.exit(1)
+        raise typer.Exit(code=1) from e
 
     success_count = 0
     fail_count = 0
@@ -138,7 +145,7 @@ def main(
     print(f"\nDone! Created/Updated: {success_count}, Failed: {fail_count}")
 
     if fail_count > 0:
-        sys.exit(1)
+        raise typer.Exit(code=1)
 
 
 if __name__ == "__main__":
