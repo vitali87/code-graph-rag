@@ -622,7 +622,7 @@ class DefinitionProcessor:
             # Before the function pass below, which would otherwise take a
             # class's plain name first (issue #2621).
             if language == cs.SupportedLanguage.PYTHON:
-                self.class_ingest.reserve_python_class_qns(
+                self.class_ingest.python.reserve_class_qns(
                     combined_captures,
                     module_qn,
                     queries[language][cs.QUERY_CONFIG],

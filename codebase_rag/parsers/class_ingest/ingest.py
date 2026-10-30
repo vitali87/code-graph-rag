@@ -9,7 +9,7 @@ from tree_sitter import Node, QueryCursor
 
 from ... import constants as cs
 from ...language_spec import LanguageSpec
-from ...node_text import safe_decode_text, sorted_captures
+from ...node_text import sorted_captures
 from ...types_defs import (
     CppDefinitionSpan,
     DeferredInherit,
@@ -33,12 +33,8 @@ from ..js_ts import utils as js_ts_utils
 from ..js_ts.utils import mark_js_ts_module_private
 from ..method_ingest import MethodIngestHost, ingest_method
 from ..php import class_ingest as php_class_ingest
-from ..python import (
-    external_stdlib_base_method_names,
-    resolve_class_name,
-    under_type_checking,
-)
-from ..python.class_aliases import scan_class_body_aliases
+from ..python import class_ingest as python_class_ingest
+from ..python import resolve_class_name
 from ..rust import class_ingest as rust_class_ingest
 from ..rust import utils as rs_utils
 from ..utils import (
@@ -94,32 +90,6 @@ def _signatured_method_qn(
     return None
 
 
-def _python_member_aliases(
-    body_node: Node, language: cs.SupportedLanguage
-) -> dict[int, tuple[str, ...]]:
-    # Method node id -> the other member names the class body binds it to
-    # (`run = _plain`, issue #2620), so the method registers under them too.
-    if language != cs.SupportedLanguage.PYTHON:
-        return {}
-    names: dict[int, list[str]] = {}
-    for alias, methods in scan_class_body_aliases(body_node).members.items():
-        for method in methods:
-            names.setdefault(method.id, []).append(alias)
-    return {method_id: tuple(aliases) for method_id, aliases in names.items()}
-
-
-def _python_non_method_members(
-    class_node: Node, language: cs.SupportedLanguage
-) -> list[str]:
-    # The names the class body binds to a value that is no method (`run =
-    # None`): they hide a base's `run` from attribute lookup (issue #2620).
-    if language != cs.SupportedLanguage.PYTHON:
-        return []
-    if (body := class_node.child_by_field_name(cs.FIELD_BODY)) is None:
-        return []
-    return sorted(scan_class_body_aliases(body).non_method)
-
-
 class _MethodScope(NamedTuple):
     # The per-class context every method of one class body is ingested under.
     class_node: Node
@@ -162,6 +132,7 @@ class ClassIngest:
         "dart",
         "js_ts",
         "java",
+        "python",
     )
 
     def __init__(
@@ -286,6 +257,7 @@ class ClassIngest:
             facts=facts,
             anon_overrides=java_anon_overrides,
         )
+        self.python = python_class_ingest.PythonClassIngest(function_registry, facts)
 
     def _resolve_to_qn(
         self,
@@ -379,42 +351,6 @@ class ClassIngest:
             self.rust.ingest_inline_modules(
                 module_nodes, module_qn, lang_queries[cs.QUERY_CONFIG]
             )
-
-    def reserve_python_class_qns(
-        self,
-        combined_captures: dict[str, list] | None,
-        module_qn: str,
-        lang_config: LanguageSpec,
-        file_path: Path | None,
-    ) -> None:
-        # A file's functions and methods register before its classes, so a
-        # `def Tool` shim written below `class Tool` took the plain name the
-        # class is owed as the first definition (issue #2621). Only a class
-        # sharing its name with a def can lose it, which spares every other
-        # class a second identity pass (and a second truncated-name warning).
-        reservations: dict[str, tuple[int, int]] = {}
-        captures = combined_captures or {}
-        def_names = {
-            safe_decode_text(func_node.child_by_field_name(cs.FIELD_NAME))
-            for func_node in captures.get(cs.CAPTURE_FUNCTION, [])
-        }
-        for class_node in captures.get(cs.CAPTURE_CLASS, []):
-            name = safe_decode_text(class_node.child_by_field_name(cs.FIELD_NAME))
-            if name is None or name not in def_names:
-                continue
-            identity = id_.resolve_class_identity(
-                class_node,
-                module_qn,
-                cs.SupportedLanguage.PYTHON,
-                lang_config,
-                file_path,
-            )
-            if identity is None:
-                continue
-            class_qn = identity[0]
-            start = _class_start_point(class_node, cs.SupportedLanguage.PYTHON)
-            reservations[class_qn] = min(reservations.get(class_qn, start), start)
-        self.function_registry.reserve_qns(reservations)
 
     def resolve_deferred_inherits(self) -> int:
         """Emit non-C++ INHERITS/IMPLEMENTS edges now that every class is registered.
@@ -771,7 +707,12 @@ class ClassIngest:
         class_props.update(decorated_start_props(class_node))
         # Stored on the node so an incremental run that does not re-parse
         # this file can register them again.
-        if non_method_members := _python_non_method_members(class_node, language):
+        non_method_members = (
+            self.python.non_method_members(class_node)
+            if language == cs.SupportedLanguage.PYTHON
+            else []
+        )
+        if non_method_members:
             class_props[cs.KEY_NON_METHOD_MEMBERS] = non_method_members
         self.ingestor.ensure_node_batch(label, class_props)
         self.function_registry[class_qn] = label
@@ -901,13 +842,8 @@ class ClassIngest:
             # Stored so an incremental run that does not re-parse the
             # interface still knows what its method set is built from.
             class_props.update(go_ifaces.embeds_props(class_node))
-        elif language == cs.SupportedLanguage.PYTHON and under_type_checking(
-            class_node
-        ):
-            # A checker-only class types `self` in mixins whose calls resolve
-            # to the real implementation, so no edge ever reaches it; only the
-            # parse can tell dead code it is a declaration.
-            class_props[cs.KEY_TYPE_CHECKING_ONLY] = True
+        elif language == cs.SupportedLanguage.PYTHON:
+            self.python.record_type_props(class_node, class_props)
 
     def _record_declared_type_members(
         self,
@@ -1068,7 +1004,11 @@ class ClassIngest:
             return
 
         lang_config: LanguageSpec = lang_queries[cs.QUERY_CONFIG]
-        member_aliases = _python_member_aliases(body_node, language)
+        member_aliases = (
+            self.python.member_aliases(body_node)
+            if language == cs.SupportedLanguage.PYTHON
+            else {}
+        )
 
         method_nodes = body_method_nodes(
             body_node, lang_queries, sorted_func_nodes, func_node_starts
@@ -1131,23 +1071,10 @@ class ClassIngest:
     def _method_override_context(
         self, class_qn: str, language: cs.SupportedLanguage
     ) -> tuple[frozenset[str], dict[str, list[tuple[str, str]]] | None]:
-        # Names defined by an EXTERNAL stdlib base of this class (click's
-        # `class TextWrapper(textwrap.TextWrapper)`): a method matching one
-        # overrides the base and is invoked by its machinery, so mark it for
-        # the dead-code root property. Only unregistered (external) parents
-        # contribute; first-party bases resolve via OVERRIDES edges.
         external_override_names: frozenset[str] = frozenset()
         annotated_override_sink: dict[str, list[tuple[str, str]]] | None = None
         if language == cs.SupportedLanguage.PYTHON:
-            external_parents = [
-                p
-                for p in self.facts.class_inheritance.get(class_qn, [])
-                if self.function_registry.get(p) is None
-            ]
-            if external_parents:
-                external_override_names = external_stdlib_base_method_names(
-                    external_parents
-                )
+            external_override_names = self.python.external_override_names(class_qn)
         elif language == cs.SupportedLanguage.DART:
             # An external base (a Flutter widget class) is not introspectable
             # the way Python stdlib bases are, but Dart marks every override
