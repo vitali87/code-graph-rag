@@ -860,10 +860,10 @@ def test_reingest_reruns_the_language_frontend(
     updater = create_and_run_updater(temp_repo, mock_ingestor)
     owners = {
         "run_go_frontend": updater.frontend_runner,
-        "rehydrate_go_type_locations": updater.graph_rehydrator,
-        "rehydrate_function_locations": updater.graph_rehydrator,
+        "rehydrate_go_type_locations": updater.location_rehydrator,
+        "rehydrate_function_locations": updater.location_rehydrator,
         "run_csharp_frontend": updater.frontend_runner,
-        "rehydrate_csharp_type_locations": updater.graph_rehydrator,
+        "rehydrate_csharp_type_locations": updater.location_rehydrator,
         "run_java_frontend": updater.frontend_runner,
         "run_python_frontend": updater.frontend_runner,
     }

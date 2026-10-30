@@ -96,7 +96,7 @@ def test_go_implements_joins_across_an_unchanged_file(tmp_path: Path) -> None:
         )
     ]
 
-    updater.graph_rehydrator.rehydrate_go_type_locations(updater._run)
+    updater.location_rehydrator.rehydrate_go_type_locations(updater._run)
     go_joins.join_implements(updater.factory.definition_processor, updater._sink)
 
     assert (
@@ -133,7 +133,7 @@ def test_go_type_rehydration_guards_old_graphs_and_fresh_entries(
     dp = updater.factory.definition_processor
     dp.go_type_locations[("pkg/dup.go", 5, 0)] = ("proj.pkg.fresh.Dup", "Class")
 
-    updater.graph_rehydrator.rehydrate_go_type_locations(updater._run)
+    updater.location_rehydrator.rehydrate_go_type_locations(updater._run)
 
     assert dp.go_type_locations[("pkg/dup.go", 5, 0)] == (
         "proj.pkg.fresh.Dup",
@@ -175,7 +175,7 @@ def test_function_rehydration_keys_span_and_name_alias(tmp_path: Path) -> None:
     updater = _updater(repo, graph)
     dp = updater.factory.definition_processor
 
-    updater.graph_rehydrator.rehydrate_function_locations(updater._run)
+    updater.location_rehydrator.rehydrate_function_locations(updater._run)
 
     span = dp.facts.function_locations[("proj.pkg.util", 10, 0)]
     alias = dp.facts.function_locations[("proj.pkg.util", 10, 5)]
@@ -209,7 +209,7 @@ def test_alias_keys_at_the_name_tokens_own_line(tmp_path: Path) -> None:
     updater = _updater(repo, graph)
     dp = updater.factory.definition_processor
 
-    updater.graph_rehydrator.rehydrate_function_locations(updater._run)
+    updater.location_rehydrator.rehydrate_function_locations(updater._run)
 
     assert ("proj.pkg.s", 5, 0) in dp.facts.function_locations
     assert ("proj.pkg.s", 7, 2) in dp.facts.function_locations
@@ -240,7 +240,7 @@ def test_function_rehydration_never_overwrites_fresh_entries(tmp_path: Path) -> 
     )
     dp.facts.function_locations[("proj.m", 4, 0)] = fresh
 
-    updater.graph_rehydrator.rehydrate_function_locations(updater._run)
+    updater.location_rehydrator.rehydrate_function_locations(updater._run)
 
     assert dp.facts.function_locations[("proj.m", 4, 0)] == fresh
     # The alias key was still free and rehydrates to the persisted record.

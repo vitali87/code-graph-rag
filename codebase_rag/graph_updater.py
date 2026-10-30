@@ -62,6 +62,7 @@ from .updater.generated_sources import GeneratedSources
 from .updater.gloss_reanchor import GlossReanchor
 from .updater.import_closure import ImportClosure
 from .updater.legacy_retirement import LegacyRetirement
+from .updater.location_rehydration import LocationRehydrator
 from .updater.module_seeding import ModuleQnSeeding
 from .updater.rehydration import GraphRehydrator
 from .updater.reingest_planner import ReingestPlanner
@@ -300,6 +301,15 @@ class GraphUpdater:
             capture=self.capture,
             owns=self._owns,
             owned_rows=self._owned_rows,
+        )
+        # The location indexes the semantic joins resolve against, read back
+        # for the files a sync did not re-parse.
+        self.location_rehydrator = LocationRehydrator(
+            graph=self._graph,
+            factory=self.factory,
+            project_name=self.project_name,
+            owned_rows=self._owned_rows,
+            recorded_module_qn=self.graph_rehydrator.recorded_module_qn,
         )
         # The compiler frontends layered over Tree-sitter, and the hybrid
         # C/C++ macro uses they leave for after the definition pass.
@@ -724,12 +734,12 @@ class GraphUpdater:
             # (force=False but _is_full_build) already re-parsed every file, so the
             # project-wide query would be wasted work -- skip it.
             if not force and not self._run.is_full_build:
-                self.graph_rehydrator.rehydrate_csharp_type_locations(self._run)
+                self.location_rehydrator.rehydrate_csharp_type_locations(self._run)
                 # Same posture for the col-keyed indexes (issue #1240): the Go
                 # IMPLEMENTS and semantic-call joins below resolve against
                 # locations Pass 2 filled only for re-parsed files.
-                self.graph_rehydrator.rehydrate_go_type_locations(self._run)
-                self.graph_rehydrator.rehydrate_function_locations(self._run)
+                self.location_rehydrator.rehydrate_go_type_locations(self._run)
+                self.location_rehydrator.rehydrate_function_locations(self._run)
 
             # Partial groups join AFTER Pass 2: the Roslyn declaration
             # locations resolve against the Class qns Pass 2 just registered.
@@ -1336,7 +1346,7 @@ class GraphUpdater:
         self.graph_rehydrator.rehydrate_registry_from_graph(
             self._run, self._reparsed_file_keys
         )
-        self.graph_rehydrator.rehydrate_function_locations(self._run)
+        self.location_rehydrator.rehydrate_function_locations(self._run)
         self._reingest_hydrated = True
 
     def _rerun_frontends_for(self, languages: set[cs.SupportedLanguage]) -> None:
@@ -1346,20 +1356,20 @@ class GraphUpdater:
         # re-runs and its joins re-emit before the scoped call pass.
         if cs.SupportedLanguage.GO in languages:
             self.frontend_runner.run_go_frontend()
-            self.graph_rehydrator.rehydrate_go_type_locations(self._run)
-            self.graph_rehydrator.rehydrate_function_locations(self._run)
+            self.location_rehydrator.rehydrate_go_type_locations(self._run)
+            self.location_rehydrator.rehydrate_function_locations(self._run)
             go_joins.join_implements(self.factory.definition_processor, self._sink)
         if cs.SupportedLanguage.CSHARP in languages:
             self.frontend_runner.run_csharp_frontend()
-            self.graph_rehydrator.rehydrate_csharp_type_locations(self._run)
-            self.graph_rehydrator.rehydrate_function_locations(self._run)
+            self.location_rehydrator.rehydrate_csharp_type_locations(self._run)
+            self.location_rehydrator.rehydrate_function_locations(self._run)
             csharp_joins.join_partials(self.factory.definition_processor)
         if cs.SupportedLanguage.JAVA in languages:
             self.frontend_runner.run_java_frontend()
-            self.graph_rehydrator.rehydrate_function_locations(self._run)
+            self.location_rehydrator.rehydrate_function_locations(self._run)
         if cs.SupportedLanguage.PYTHON in languages:
             self.frontend_runner.run_python_frontend(self._parsed_files)
-            self.graph_rehydrator.rehydrate_function_locations(self._run)
+            self.location_rehydrator.rehydrate_function_locations(self._run)
 
     def _reingest_delete(
         self, reparse: dict[str, Path], gone: dict[str, Path], hashes: FileHashCache
