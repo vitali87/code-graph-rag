@@ -366,7 +366,7 @@ class FileStateSweep:
             del qn_to_path[qn]
             self._rehydrated_module_qns.discard(qn)
         # The paths read back from the graph for an earlier incremental run
-        # go with the registry entries: `_module_language` falls through to
+        # go with the registry entries: `module_language` falls through to
         # them for a definition qn, and a replacement in another language
         # (util.rs -> util.py) would otherwise still answer RUST for the qn
         # its new file re-registers (issue #1575).
