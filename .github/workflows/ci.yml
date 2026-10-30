@@ -311,19 +311,6 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      - name: Start Memgraph
-        run: |
-          docker run -d --name memgraph -p 7687:7687 memgraph/memgraph-platform:latest
-          echo "Waiting for Memgraph to start..."
-          for i in {1..30}; do
-            if docker exec memgraph mgconsole --no-history -c "RETURN 1;" 2>/dev/null; then
-              echo "Memgraph is ready!"
-              break
-            fi
-            echo "Attempt $i/30: Memgraph not ready yet..."
-            sleep 2
-          done
-
       - name: Key the uv cache on dependencies, not the project version
         shell: bash
         run: |
@@ -346,10 +333,10 @@ jobs:
         run: |
           uv sync --extra treesitter-full --extra test --extra semantic --extra milvus --extra neo4j --group dev
 
+      # Each database test starts its own pinned engine through
+      # testcontainers (tests/integration/conftest.py), so the job runs no
+      # database of its own.
       - name: Run integration tests
-        env:
-          MEMGRAPH_HOST: localhost
-          MEMGRAPH_PORT: 7687
         run: |
           uv run pytest -m "integration" -v --tb=short --cov=codebase_rag --cov-report=xml --cov-report=term
 
