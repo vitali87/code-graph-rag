@@ -42,6 +42,7 @@ from codebase_rag.tests.conftest import (
 from codebase_rag.tools.ast_grep_service import AstGrepService
 from codebase_rag.utils import path_utils
 from codebase_rag.utils.path_utils import (
+    WalkHooks,
     has_implementation_sibling,
     python_stub_has_implementation,
     walk_eligible_files,
@@ -129,7 +130,7 @@ class TestWalk:
         self, layout: Path
     ) -> None:
         reported: list[str] = []
-        list(walk_eligible_files(layout, on_symlink=reported.append))
+        list(walk_eligible_files(layout, hooks=WalkHooks(on_symlink=reported.append)))
         assert sorted(reported) == LINKS
 
     def test_a_link_an_ignore_rule_drops_is_not_reported(self, layout: Path) -> None:
@@ -143,7 +144,7 @@ class TestWalk:
             for _d, _n, rel in walk_eligible_files(
                 layout,
                 exclude_paths=frozenset({"NOTES.md"}),
-                on_symlink=reported.append,
+                hooks=WalkHooks(on_symlink=reported.append),
             )
         ]
         assert "NOTES.md" not in reported

@@ -22,6 +22,7 @@ from ..sync.state import (
 )
 from ..utils import path_utils
 from ..utils.path_utils import (
+    WalkHooks,
     cached_relative_path,
     should_skip_path,
     vanished,
@@ -213,8 +214,9 @@ class TreeScan:
             self._repo_path,
             self._scope.exclude_paths,
             self._scope.unignore_paths,
-            on_dir=self._record_dir_mtime,
-            on_symlink=skipped_links.append,
+            hooks=WalkHooks(
+                on_dir=self._record_dir_mtime, on_symlink=skipped_links.append
+            ),
         ):
             eligible.append((Path(f"{dirpath}/{fname}"), rel_path_str))
         _log_skipped_symlinks(self._repo_path, skipped_links)

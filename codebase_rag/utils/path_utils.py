@@ -685,13 +685,26 @@ def _skipped_link(
     return True
 
 
+@dataclass(frozen=True, slots=True)
+class WalkHooks:
+    """What a caller of `walk_eligible_files` hears about while it walks.
+
+    ``on_dir`` receives ``(dir_key, dirpath)`` per visited directory, for the
+    indexer's mtime bookkeeping; it must not mutate the walk. ``on_symlink``
+    receives the repo-relative path of each symbolic link the ignore rules
+    would otherwise have let through, file or directory.
+    """
+
+    on_dir: Callable[[str, str], None] | None = None
+    on_symlink: Callable[[str], None] | None = None
+
+
 def walk_eligible_files(
     repo_path: Path,
     exclude_paths: frozenset[str] | None = None,
     unignore_paths: frozenset[str] | None = None,
     *,
-    on_dir: Callable[[str, str], None] | None = None,
-    on_symlink: Callable[[str], None] | None = None,
+    hooks: WalkHooks | None = None,
 ) -> Iterator[tuple[str, str, str]]:
     """Yield ``(dirpath, filename, rel_path)`` for every indexable file, in order.
 
@@ -706,13 +719,11 @@ def walk_eligible_files(
     filter predicates. Nothing forced the two orderings to stay equal, and a
     set-based parity test cannot see the difference.
 
-    ``on_dir`` receives ``(dir_key, dirpath)`` per visited directory, for the
-    indexer's mtime bookkeeping; it must not mutate the walk.
-
-    A symbolic link is never walked (`is_symlink_entry`), and ``on_symlink``
-    receives the repo-relative path of each one the ignore rules would
-    otherwise have let through, file or directory.
+    A symbolic link is never walked (`is_symlink_entry`); ``hooks`` hears about
+    each visited directory and each skipped link (`WalkHooks`).
     """
+    on_dir = hooks.on_dir if hooks is not None else None
+    on_symlink = hooks.on_symlink if hooks is not None else None
     repo_str = str(repo_path)
     # A repo path that already ends in a separator (the filesystem root, "/")
     # must not have another counted, or the slice below eats the first
