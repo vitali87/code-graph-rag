@@ -46,7 +46,6 @@ from .js_ts.module_system import JsTsModuleSystem
 from .js_ts.overloads import signature_docstring
 from .julia.file_ingest import JuliaFileIngest
 from .language_definitions import LanguageFileIngest
-from .language_map import by_language
 from .module_node import ModuleNodes
 from .notebook import is_notebook_path
 from .parameter_nodes import PendingParameterType
@@ -216,30 +215,29 @@ class DefinitionProcessor:
         self._neutral = LanguageFileIngest()
 
     def _file_ingests(self) -> dict[cs.SupportedLanguage, LanguageFileIngest]:
+        js_ts = JsTsFileIngest(
+            ingestor=self.ingestor,
+            import_processor=self.import_processor,
+            ingest=self.js_ts_ingest,
+            module_system=self.js_ts_module_system,
+            function_ingest=self.function_ingest.js_ts,
+        )
         # The collaborator each language's files go to; a language with none
         # takes the neutral answers.
-        return by_language(
-            {
-                cs.SupportedLanguage.PYTHON: PythonFileIngest(self.class_ingest.python),
-                cs.JS_TS_LANGUAGES: JsTsFileIngest(
-                    ingestor=self.ingestor,
-                    import_processor=self.import_processor,
-                    ingest=self.js_ts_ingest,
-                    module_system=self.js_ts_module_system,
-                    function_ingest=self.function_ingest.js_ts,
-                ),
-                cs.SupportedLanguage.RUST: RustFileIngest(
-                    self.function_ingest.rust, self.import_processor, self.facts
-                ),
-                cs.SupportedLanguage.GO: GoFileIngest(self.facts),
-                cs.SupportedLanguage.CPP: CppFileIngest(
-                    self.class_ingest.cpp, self.facts
-                ),
-                cs.SupportedLanguage.JULIA: JuliaFileIngest(),
-                cs.SupportedLanguage.PHP: PhpFileIngest(),
-                cs.SupportedLanguage.SQL: self._sql,
-            }
-        )
+        return {
+            cs.SupportedLanguage.PYTHON: PythonFileIngest(self.class_ingest.python),
+            cs.SupportedLanguage.JS: js_ts,
+            cs.SupportedLanguage.TS: js_ts,
+            cs.SupportedLanguage.TSX: js_ts,
+            cs.SupportedLanguage.RUST: RustFileIngest(
+                self.function_ingest.rust, self.import_processor, self.facts
+            ),
+            cs.SupportedLanguage.GO: GoFileIngest(self.facts),
+            cs.SupportedLanguage.CPP: CppFileIngest(self.class_ingest.cpp, self.facts),
+            cs.SupportedLanguage.JULIA: JuliaFileIngest(),
+            cs.SupportedLanguage.PHP: PhpFileIngest(),
+            cs.SupportedLanguage.SQL: self._sql,
+        }
 
     def _for(self, language: cs.SupportedLanguage) -> LanguageFileIngest:
         return self._languages.get(language, self._neutral)
