@@ -132,6 +132,7 @@ STATIC_CALLS_CGR_DONE = "cgr CALLS edges: {count}"
 INDEXING_FETCHING = "Fetching corpus {name} at {commit}"
 INDEXING_MEASURING = "Indexing {target} (project={project}) in a child interpreter"
 INDEXING_CHILD_FAILED = "indexing child process failed:\n{stderr}"
+INDEXING_CHILD_TIMED_OUT = "indexing child process did not finish within {seconds}s"
 INDEXING_UNKNOWN_CORPUS = "Unknown corpus {corpus!r}; known: {known}"
 INDEXING_ROW_HINT = "README benchmark-table row:"
 INDEXING_RESETTING = (

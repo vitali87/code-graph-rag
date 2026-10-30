@@ -46,7 +46,7 @@ class CorpusSpec(NamedTuple):
 CORPORA: dict[str, CorpusSpec] = {
     "django": CorpusSpec(
         name="django",
-        url="https://github.com/django/django",
+        url=ec.INDEXING_DJANGO_URL,
         commit="9e7cc2b628fe8fd3895986af9b7fc9525034c1b0",  # tag 5.2
         subdir="",
     ),
@@ -96,102 +96,89 @@ def measure_indexing_run(target: Path, project_name: str) -> IndexingStats:
     )
 
 
+def _git(checkout: Path, *args: str, timeout: int = ec.INDEXING_GIT_TIMEOUT_S) -> None:
+    # A step that hangs past its timeout raises TimeoutExpired and stops the
+    # eval, as a failing one stops it with CalledProcessError.
+    subprocess.run(["git", "-C", str(checkout), *args], check=True, timeout=timeout)
+
+
+def _git_output(checkout: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(checkout), *args],
+        capture_output=True,
+        text=True,
+        encoding=cs.ENCODING_UTF8,
+        check=False,
+        timeout=ec.INDEXING_GIT_TIMEOUT_S,
+    ).stdout.strip()
+
+
 def _ensure_corpus(spec: CorpusSpec, corpus_dir: Path) -> Path:
     checkout = corpus_dir / spec.name
     target = checkout / spec.subdir if spec.subdir else checkout
     if (checkout / ".git").exists():
-        head = subprocess.run(
-            ["git", "-C", str(checkout), "rev-parse", "HEAD"],
-            capture_output=True,
-            text=True,
-            encoding=cs.ENCODING_UTF8,
-            check=False,
-        ).stdout.strip()
+        head = _git_output(checkout, "rev-parse", "HEAD")
         if head == spec.commit:
             # --ignored: a stale file in an ignored directory hides from a
             # plain status yet still gets indexed (CodeRabbit review on
             # PR #1388).
-            dirty = subprocess.run(
-                ["git", "-C", str(checkout), "status", "--porcelain", "--ignored"],
-                capture_output=True,
-                text=True,
-                encoding=cs.ENCODING_UTF8,
-                check=False,
-            ).stdout.strip()
+            dirty = _git_output(checkout, "status", "--porcelain", "--ignored")
             if dirty:
                 # A dirty cache would index edited or stray content while the
                 # report pins the result to spec.commit, making the numbers
                 # non-reproducible; restore the pinned tree (CodeRabbit
                 # review on PR #1388).
                 logger.info(ls.INDEXING_RESETTING.format(name=spec.name))
-                subprocess.run(
-                    [
-                        "git",
-                        "-C",
-                        str(checkout),
-                        "checkout",
-                        "-q",
-                        "--force",
-                        spec.commit,
-                    ],
-                    check=True,
-                )
-                subprocess.run(
-                    ["git", "-C", str(checkout), "clean", "-qdffx"],
-                    check=True,
-                )
+                _git(checkout, "checkout", "-q", "--force", spec.commit)
+                _git(checkout, "clean", "-qdffx")
             return target
     logger.info(ls.INDEXING_FETCHING.format(name=spec.name, commit=spec.commit))
     checkout.mkdir(parents=True, exist_ok=True)
     if not (checkout / ".git").exists():
-        subprocess.run(["git", "init", "-q", str(checkout)], check=True)
-    subprocess.run(
-        ["git", "-C", str(checkout), "config", "remote.origin.url", spec.url],
-        check=True,
+        _git(checkout, "init", "-q")
+    _git(checkout, "config", "remote.origin.url", spec.url)
+    _git(
+        checkout,
+        "fetch",
+        "-q",
+        "--depth",
+        "1",
+        "origin",
+        spec.commit,
+        timeout=ec.INDEXING_FETCH_TIMEOUT_S,
     )
-    subprocess.run(
-        [
-            "git",
-            "-C",
-            str(checkout),
-            "fetch",
-            "-q",
-            "--depth",
-            "1",
-            "origin",
-            spec.commit,
-        ],
-        check=True,
-    )
-    subprocess.run(
-        ["git", "-C", str(checkout), "checkout", "-q", "--force", spec.commit],
-        check=True,
-    )
+    _git(checkout, "checkout", "-q", "--force", spec.commit)
     # A force checkout keeps non-conflicting untracked files from the
     # previous commit; drop them too, or a stale file leaks into the indexed
     # graph while the report records spec.commit (CodeRabbit review on
     # PR #1388).
-    subprocess.run(["git", "-C", str(checkout), "clean", "-qdffx"], check=True)
+    _git(checkout, "clean", "-qdffx")
     return target
 
 
 def _measure_in_child_process(target: Path, project_name: str) -> IndexingStats:
     logger.info(ls.INDEXING_MEASURING.format(target=target, project=project_name))
-    proc = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "evals.indexing_bench",
-            "--measure-target",
-            str(target),
-            "--project-name",
-            project_name,
-        ],
-        capture_output=True,
-        text=True,
-        encoding=cs.ENCODING_UTF8,
-        check=False,
-    )
+    try:
+        proc = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "evals.indexing_bench",
+                "--measure-target",
+                str(target),
+                "--project-name",
+                project_name,
+            ],
+            capture_output=True,
+            text=True,
+            encoding=cs.ENCODING_UTF8,
+            check=False,
+            timeout=ec.INDEXING_CHILD_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError(
+            ls.INDEXING_CHILD_TIMED_OUT.format(seconds=ec.INDEXING_CHILD_TIMEOUT_S)
+        ) from error
     if proc.returncode != 0:
         raise RuntimeError(ls.INDEXING_CHILD_FAILED.format(stderr=proc.stderr[-2000:]))
     # The child writes exactly one JSON line as its final stdout line; anything

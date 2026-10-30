@@ -776,8 +776,15 @@ INHERITANCE_LANGUAGE_HELP = (
 )
 
 INDEXING_DEFAULT_CORPUS = "django"
+INDEXING_DJANGO_URL = "https://github.com/django/django"
 INDEXING_CORPUS_DIR = "evals/results/corpora"
 INDEXING_RESULTS_FILE = "indexing_bench.json"
+# Each well above the step's real run time (the recorded django index took
+# 68 s); the depth-1 fetch is network-bound, so it gets more room than a local
+# git step.
+INDEXING_GIT_TIMEOUT_S = 300
+INDEXING_FETCH_TIMEOUT_S = 1800
+INDEXING_CHILD_TIMEOUT_S = 3600
 
 AGENTIC_DEFAULT_SAMPLE = 40
 AGENTIC_QA_TIMEOUT_S = 300
