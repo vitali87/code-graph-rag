@@ -1149,9 +1149,18 @@ SIGNATURE_JS_RENAME = (
     "for JavaScript yet (issue #{issue})"
 )
 SIGNATURE_JS_DROPPED_STILL_READ = (
-    "Cannot drop parameter {name} of {qn}: its body still reads `{name}`, which "
-    "would then read an outer name or throw ReferenceError; remove that use by "
+    "Cannot drop parameter {name} of {qn}: its body still uses `{name}`, which "
+    "would then reach an outer name or throw ReferenceError; remove that use by "
     "hand first"
+)
+SIGNATURE_JS_DUPLICATE_PARAM = (
+    "Cannot change the signature of {qn}: it declares parameter {name} more "
+    "than once, and the body sees only the last of them"
+)
+SIGNATURE_JS_DEFAULT_READS_LATER = (
+    "Cannot change the signature of {qn}: the default of {name} reads `{later}`, "
+    "which is not bound yet when that default runs, so a call leaving {name} "
+    "out would throw ReferenceError"
 )
 SIGNATURE_PLANNED = "{count} site(s) would be rewritten, {skipped} left unmapped"
 SIGNATURE_PARSE_FAILED = "Signature change rolled back: {files} would no longer parse"
