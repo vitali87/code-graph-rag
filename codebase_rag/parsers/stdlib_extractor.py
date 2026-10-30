@@ -420,8 +420,11 @@ class StdlibExtractor:
                 if (go := shutil.which(_GO)) is None:
                     raise FileNotFoundError(_GO)
 
+                # The path is the import a source file spells, so `--` keeps
+                # one that leads with a dash (`-modfile=...`) from being read
+                # as a flag of `go list`.
                 resolve_result = subprocess.run(
-                    [go, "list", "-f", "{{.Dir}}", package_path],
+                    [go, "list", "-f", "{{.Dir}}", "--", package_path],
                     check=False,
                     capture_output=True,
                     text=True,

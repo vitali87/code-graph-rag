@@ -504,6 +504,24 @@ class TestGoExtractorWithMockedSubprocess:
             assert run_call.kwargs["timeout"] == se._GO_RUN_TIMEOUT
             assert "package main" in run_call.kwargs["input"]
 
+    def test_a_go_import_that_leads_with_a_dash_is_no_go_list_flag(
+        self, extractor: StdlibExtractor
+    ) -> None:
+        # The package path comes from an import string in the indexed source,
+        # so `go list` must take it as a package even when it spells a flag.
+        failed_list = MagicMock(returncode=1, stdout="")
+
+        with (
+            patch("shutil.which", return_value="/opt/go/bin/go"),
+            patch("subprocess.run", return_value=failed_list) as mock_run,
+        ):
+            extractor.extract_module_path(
+                "-modfile=evil.mod/Println", cs.SupportedLanguage.GO
+            )
+
+        argv = mock_run.call_args_list[0].args[0]
+        assert argv[-2:] == ["--", "-modfile=evil.mod"]
+
     def test_go_extractor_falls_back_when_go_is_not_on_path(
         self, extractor: StdlibExtractor
     ) -> None:
