@@ -59,7 +59,7 @@ from .config import (
     settings,
 )
 from .context_pruning import describe_prune, prune_old_tool_results
-from .models import AppContext
+from .models import AppContext, ChatOpening, ChatProject, ModelOverrides
 from .prompts import OPTIMIZATION_PROMPT, OPTIMIZATION_PROMPT_WITH_REFERENCE
 from .providers.base import get_provider_from_config
 from .services import ReadOnlyQueryProtocol
@@ -1987,15 +1987,12 @@ async def main_async(
     batch_size: int,
     *,
     active_projects: list[str] | None = None,
-    show_config_table: bool = True,
-    pre_chat_sync: Callable[[], None] | None = None,
-    pre_chat_sync_message: str = cs.MSG_SYNCING_KNOWLEDGE_GRAPH,
-    project_name: str | None = None,
-    project_named: bool = False,
+    opening: ChatOpening = ChatOpening(),
+    project: ChatProject = ChatProject(),
 ) -> None:
     project_root = _setup_common_initialization(repo_path)
 
-    if show_config_table:
+    if opening.show_config_table:
         table = create_configuration_table(repo_path)
         app_context.console.print(table)
 
@@ -2013,8 +2010,8 @@ async def main_async(
         refresher = GraphRefresher(
             ingestor,
             project_root,
-            project_name or derive_project_name(project_root),
-            project_named,
+            project.name or derive_project_name(project_root),
+            project.named,
         )
         rag_agent, tool_names, system_prompt = _initialize_services_and_agent(
             repo_path,
@@ -2024,8 +2021,8 @@ async def main_async(
         )
         _prime_context_token_counter(rag_agent, system_prompt)
 
-        if pre_chat_sync is not None:
-            await _run_pre_chat_sync(pre_chat_sync, pre_chat_sync_message)
+        if opening.sync is not None:
+            await _run_pre_chat_sync(opening.sync, opening.sync_message)
 
         await run_chat_loop(rag_agent, [], project_root, tool_names)
 
@@ -2044,13 +2041,12 @@ async def main_optimize_async(
     target_repo_path: str,
     *,
     reference_document: str | None = None,
-    orchestrator: str | None = None,
-    cypher: str | None = None,
+    models: ModelOverrides = ModelOverrides(),
     batch_size: int | None = None,
 ) -> None:
     project_root = _setup_common_initialization(target_repo_path)
 
-    update_model_settings(orchestrator, cypher)
+    update_model_settings(models.orchestrator, models.cypher)
 
     app_context.console.print(
         cs.UI_OPTIMIZATION_INIT.format(language=language, path=project_root)

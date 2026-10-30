@@ -21,6 +21,7 @@ from codebase_rag.cli import app
 from codebase_rag.config import settings
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.mcp.handler_base import plain_function
+from codebase_rag.models import ChatOpening, ChatProject
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.tools import tool_descriptions as td
 from codebase_rag.tools.file_editor import FileEditor, create_file_editor_tool
@@ -157,7 +158,9 @@ async def test_the_chat_session_reingests_an_approved_replace_code(
         patch.object(main_mod, "_setup_common_initialization", return_value=root),
     ):
         orchestrator.return_value = (MagicMock(), "prompt")
-        await main_mod.main_async(str(root), 100, show_config_table=False)
+        await main_mod.main_async(
+            str(root), 100, opening=ChatOpening(show_config_table=False)
+        )
 
     assert f"{project}.util.log" in _callees(store, f"{project}.plugins._on_start")
 
@@ -203,8 +206,7 @@ def test_a_workspace_session_refreshes_the_repos_registered_project(
         )
 
     assert result.exit_code == 0, result.output
-    assert session.call_args.kwargs["project_name"] == "custom_a"
-    assert session.call_args.kwargs["project_named"] is True
+    assert session.call_args.kwargs["project"] == ChatProject("custom_a", True)
 
 
 # Negative: what must not change.
@@ -248,5 +250,6 @@ def test_a_session_outside_a_workspace_keeps_the_derived_project(
         )
 
     assert result.exit_code == 0, result.output
-    assert session.call_args.kwargs["project_name"] == derive_project_name(repo)
-    assert session.call_args.kwargs["project_named"] is False
+    assert session.call_args.kwargs["project"] == ChatProject(
+        derive_project_name(repo), False
+    )

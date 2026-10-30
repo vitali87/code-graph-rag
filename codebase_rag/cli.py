@@ -68,6 +68,7 @@ from .graph_cli import cli as graph_cli
 from .graph_dialects import DIALECT_MEMGRAPH
 from .graph_export import export_graph_to_file
 from .language.cli import cli as language_cli
+from .models import ChatOpening, ChatProject, ModelOverrides
 from .parser_loader import load_parsers
 from .port.cli import cli as port_cli
 from .project_selection import ProjectChoice, choose_project, scope_refusal
@@ -658,11 +659,12 @@ def _launch_session(
                     target_repo_path,
                     batch_size,
                     active_projects=active_projects,
-                    show_config_table=False,
-                    pre_chat_sync=sync_task,
-                    pre_chat_sync_message=sync_message,
-                    project_name=project_name,
-                    project_named=project_named,
+                    opening=ChatOpening(
+                        show_config_table=False,
+                        sync=sync_task,
+                        sync_message=sync_message,
+                    ),
+                    project=ChatProject(project_name, project_named),
                 )
             )
     except KeyboardInterrupt:
@@ -1987,8 +1989,7 @@ def optimize(
                 language,
                 target_repo_path,
                 reference_document=reference_document,
-                orchestrator=orchestrator,
-                cypher=cypher,
+                models=ModelOverrides(orchestrator, cypher),
                 batch_size=batch_size,
             )
         )

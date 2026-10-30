@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from rich.console import Console
 
-from .constants import PermissionMode, SupportedLanguage
+from .constants import MSG_SYNCING_KNOWLEDGE_GRAPH, PermissionMode, SupportedLanguage
 from .types_defs import MCPHandlerType, MCPInputSchema, PropertyValue
 from .utils.terminal_console import terminal_aware_console
 
@@ -69,6 +69,34 @@ class SessionState:
 class AppContext:
     session: SessionState = field(default_factory=SessionState)
     console: Console = field(default_factory=terminal_aware_console)
+
+
+@dataclass(frozen=True, slots=True)
+class ChatOpening:
+    """What the chat does before its first prompt: print the configuration
+    table, and run `sync` under the `sync_message` status line."""
+
+    show_config_table: bool = True
+    sync: Callable[[], None] | None = None
+    sync_message: str = MSG_SYNCING_KNOWLEDGE_GRAPH
+
+
+@dataclass(frozen=True, slots=True)
+class ChatProject:
+    """The project the chat's approved writes re-ingest into: no `name`
+    derives it from the checkout, and `named` says the user chose it."""
+
+    name: str | None = None
+    named: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ModelOverrides:
+    """Models a run uses instead of the configured orchestrator and Cypher
+    models, as `provider:model` strings."""
+
+    orchestrator: str | None = None
+    cypher: str | None = None
 
 
 @dataclass
