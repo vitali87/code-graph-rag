@@ -188,11 +188,11 @@ class RenamePlanner:
                 [],
                 [],
             )
-        sites: list[RenameSite] = []
-        unlocatable: list[str] = []
-        old_name: str | None = None
-        label: str | None = None
-        for member in members:
+        # `rename_hierarchy` lists `qn` first, so the first member names the
+        # symbol; a later one stands in only where the ones before had none.
+        first, *others = members
+        sites, unlocatable, old_name, label = self.sites.collect(first, found.guessed)
+        for member in others:
             member_sites, member_unlocatable, member_name, member_label = (
                 self.sites.collect(member, found.guessed)
             )
@@ -200,7 +200,6 @@ class RenamePlanner:
             label = label or member_label
             sites.extend(member_sites)
             unlocatable.extend(member_unlocatable)
-        assert old_name is not None
         covered = {(s.path, s.line, s.col) for s in sites if s.resolution != CHAIN}
         sites = [
             s

@@ -95,10 +95,11 @@ def _callee_span(
         else None
     )
     best = call_node_at(root, line, col, recorded_end)
-    if best is None:
+    # `call_node_at` picks among calls that have a callee, so there is one
+    # whenever there is a call.
+    func = best.child_by_field_name(cs.FIELD_FUNCTION) if best is not None else None
+    if func is None:
         return None
-    func = best.child_by_field_name(cs.FIELD_FUNCTION)
-    assert func is not None
     return func.start_byte, func.end_byte
 
 

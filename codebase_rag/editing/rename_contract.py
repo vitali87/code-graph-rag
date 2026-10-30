@@ -303,7 +303,7 @@ def enforce_contract(
     fetch_all: QueryFn,
     project_name: str,
     repo_root: Path,
-    reingest: Reingest | None,
+    reingest: Reingest,
     all_rewrites: AllRewrites,
 ) -> RenameReport:
     """Measure an applied rename and undo it when its postcondition fails.
@@ -311,7 +311,6 @@ def enforce_contract(
     `all_rewrites` is what staging rewrote in `__all__` lists, so a
     rollback that cannot be confirmed from the history is read off the tree.
     """
-    assert reingest is not None
     try:
         pairs = declared_renames(fetch_all, project_name, report, new_name)
         delta = measure(

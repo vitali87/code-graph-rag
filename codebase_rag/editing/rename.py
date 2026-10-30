@@ -202,7 +202,7 @@ class Renamer(RenamePlanner):
             diff=outcome.diff,
             message=outcome.message,
         )
-        if outcome.applied and self.reingest is not None:
+        if outcome.applied and (reingest := self.reingest) is not None:
             report = enforce_contract(
                 report,
                 new_name,
@@ -210,7 +210,7 @@ class Renamer(RenamePlanner):
                 fetch_all=self.fetch_all,
                 project_name=self.project_name,
                 repo_root=self.repo_root,
-                reingest=self.reingest,
+                reingest=reingest,
                 all_rewrites=self._all_rewrites,
             )
         if report.applied and self.after_apply is not None:
