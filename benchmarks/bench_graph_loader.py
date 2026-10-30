@@ -68,7 +68,7 @@ def bench_find_nodes_by_label(loader: GraphLoader) -> float:
 def bench_find_node_by_property(loader: GraphLoader) -> float:
     start = time.perf_counter()
     for i in range(100):
-        qn = f"project.module{i}.Class{i * 10 // 10}.method{i * 10}"
+        qn = f"project.module{i * 10 // 100}.Class{i * 10 // 10}.method{i * 10}"
         _ = loader.find_node_by_property("qualified_name", qn)
     return time.perf_counter() - start
 
