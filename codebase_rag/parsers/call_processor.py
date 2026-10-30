@@ -3,7 +3,6 @@ from __future__ import annotations
 from bisect import bisect_left, bisect_right
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
 from functools import wraps
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -26,7 +25,6 @@ from ..types_defs import (
     FunctionRegistryTrieProtocol,
     LanguageQueries,
     PropertyDict,
-    ScalaBinding,
 )
 from ..utils import qn_markers
 from ..utils.path_utils import cached_relative_path
@@ -59,6 +57,7 @@ from .js_ts import bindings as js_bindings
 from .js_ts import calls as js_calls
 from .js_ts import utils as js_ts_utils
 from .julia import utils as julia_utils
+from .language_calls import CallScan, LanguageCalls
 from .lua import calls as lua_calls
 from .php import calls as php_calls
 from .php import class_names as php_class_names
@@ -145,43 +144,6 @@ class _RefEmitScope(NamedTuple):
     ensure_rel: Callable[..., None]
 
 
-@dataclass(slots=True)
-class _CallScanContext:
-    # Per-invocation state _ingest_function_calls hands every call node it
-    # scans: the caller, its language flags and bound resolvers, and the
-    # lazily-built alias maps shared across the caller's call nodes.
-    caller_node: Node
-    caller_qn: str
-    caller_spec: tuple[str, str, str]
-    module_qn: str
-    language: cs.SupportedLanguage
-    queries: Mapping[cs.SupportedLanguage, LanguageQueries]
-    class_context: str | None
-    call_name_cache: dict[int, str | None] | None
-    local_var_types: dict[str, str] | None
-    span_bindings: list[tuple[int, int, str, str]]
-    caller_params: frozenset[str]
-    is_java: bool
-    is_csharp: bool
-    is_js_ts: bool
-    is_cpp: bool
-    is_python: bool
-    is_flow_lang: bool
-    is_arg_ref_lang: bool
-    cpp_template_params: frozenset[str]
-    resolve_func: Callable[..., tuple[str, str] | None]
-    resolve_builtin: Callable[[str], tuple[str, str] | None] | None
-    resolve_cpp_op: Callable[[str, str], tuple[str, str] | None] | None
-    ensure_rel: Callable[..., None]
-    arg_ref_rel: cs.RelationshipType
-    scala_bindings: dict[str, list[ScalaBinding]] | None = None
-    alias_map: dict[str, str] | None = None
-    factory_aliases: dict[str, str] | None = None
-    cpp_local_aliases: dict[str, list[tuple[str, int, int]]] | None = None
-    php_scope_classes: php_class_names.ScopeCache | None = None
-    cpp_indirection: dict[str, int] | None = None
-
-
 _TYPED_LANGUAGES = frozenset(
     {
         cs.SupportedLanguage.PYTHON,
@@ -205,12 +167,6 @@ _C_FAMILY_LANGUAGES = frozenset({cs.SupportedLanguage.C, cs.SupportedLanguage.CP
 _JS_TS_LANGUAGES = cs.JS_TS_LANGUAGES
 
 
-# Languages with argument-REFERENCE edges but no interprocedural
-# callable-param flow: passing a function keeps it reachable (REFERENCES),
-# while invocation edges stay with the flow languages.
-_ARG_REF_ONLY_LANGUAGES = frozenset(
-    {cs.SupportedLanguage.CSHARP, cs.SupportedLanguage.DART}
-)
 # Nodes walked down a call's left spine before giving up on counting calls:
 # a long operator chain (`(a + b + ... ).m()`) is not a receiver chain.
 _CHAIN_SPINE_WALK_LIMIT = cs.MAX_RECEIVER_CHAIN_HOPS * 8
@@ -799,6 +755,8 @@ class CallProcessor:
         "_scala",
         "_php",
         "_c",
+        "_language_calls",
+        "_default_calls",
         "_callable_flow",
         "_flow_bucket",
         "failed_call_files",
@@ -875,6 +833,24 @@ class CallProcessor:
         self._c = cpp_calls.CCallResolution(
             self, self._resolver, self.module_qn_to_file_path
         )
+        # The call strategy each language's files go to; JS, TS and TSX share
+        # one. A language with none, and a walk that names no language, get
+        # the base, which adds nothing to the pass.
+        self._language_calls: dict[str, LanguageCalls] = {
+            cs.SupportedLanguage.PYTHON: self._python,
+            cs.SupportedLanguage.JS: self._js,
+            cs.SupportedLanguage.TS: self._js,
+            cs.SupportedLanguage.TSX: self._js,
+            cs.SupportedLanguage.JAVA: self._java,
+            cs.SupportedLanguage.GO: self._go,
+            cs.SupportedLanguage.CPP: self._cpp,
+            cs.SupportedLanguage.C: self._c,
+            cs.SupportedLanguage.PHP: self._php,
+            cs.SupportedLanguage.CSHARP: self._csharp,
+            cs.SupportedLanguage.DART: self._dart,
+            cs.SupportedLanguage.SCALA: self._scala,
+        }
+        self._default_calls = LanguageCalls()
         # Inter-procedural callable-parameter flow: ordered params per function and
         # the per-call-site argument bindings, resolved to a fixpoint in finalize.
         self._flow_param_names: dict[str, list[str]] = {}
@@ -924,6 +900,11 @@ class CallProcessor:
             function_locations=self.facts.function_locations,
             project_name=project_name,
         )
+
+    def _calls_for(self, language: str | None) -> LanguageCalls:
+        if language is None:
+            return self._default_calls
+        return self._language_calls.get(language, self._default_calls)
 
     def _emit_rel(
         self,
@@ -2765,7 +2746,7 @@ class CallProcessor:
 
     def _ingest_call_nodes(
         self,
-        ctx: _CallScanContext,
+        ctx: CallScan,
         call_nodes: list[Node],
         cpp_spans: list[tuple[int, int, str, str]],
     ) -> None:
@@ -3044,7 +3025,7 @@ class CallProcessor:
         local_var_types: dict[str, str] | None,
         span_bindings: list[tuple[int, int, str, str]],
         caller_params: frozenset[str],
-    ) -> _CallScanContext:
+    ) -> CallScan:
         is_java = language == cs.SupportedLanguage.JAVA
         is_csharp = language == cs.SupportedLanguage.CSHARP
         is_js_ts = language in _JS_TS_LANGUAGES
@@ -3064,37 +3045,24 @@ class CallProcessor:
         resolve_builtin = resolver.resolve_builtin_call if is_js_ts else None
         resolve_cpp_op = resolver.cpp.resolve_cpp_operator_call if is_cpp else None
         is_python = language == cs.SupportedLanguage.PYTHON
-        # Languages with interprocedural callable-parameter flow enabled: a
-        # callback passed to a first-party function whose parameter is invoked
-        # (directly or in a nested closure) is traced to the concrete callback.
-        is_flow_lang = (
-            is_python
-            or language == cs.SupportedLanguage.GO
-            or language in _JS_TS_LANGUAGES
-            or is_cpp
-        )
-        # C# and Dart get the argument-REFERENCE half only (a method group or
-        # tear-off passed as an argument keeps its target reachable, Polly's
-        # EmptyHandler family, Flutter's `onPressed: _handleTap` callbacks)
-        # without the interprocedural callable-param flow, which is untuned
-        # for them.
-        is_arg_ref_lang = is_flow_lang or language in _ARG_REF_ONLY_LANGUAGES
+        calls = self._calls_for(language)
         # A method-group pass is not an invocation: C# records it as
         # REFERENCES everywhere (CALLS here put 282 phantom edges into the
         # Polly call graph, retrieval precision 1.0 -> 0.92); flow languages
         # keep their historical CALLS form for external/builtin callees.
         arg_ref_rel = (
             cs.RelationshipType.CALLS
-            if is_flow_lang
+            if calls.flows_callables
             else cs.RelationshipType.REFERENCES
         )
-        return _CallScanContext(
+        return CallScan(
             caller_node=caller_node,
             caller_qn=caller_qn,
             caller_spec=caller_spec,
             module_qn=module_qn,
             language=language,
             queries=queries,
+            calls=calls,
             class_context=class_context,
             call_name_cache=call_name_cache,
             local_var_types=local_var_types,
@@ -3105,8 +3073,6 @@ class CallProcessor:
             is_js_ts=is_js_ts,
             is_cpp=is_cpp,
             is_python=is_python,
-            is_flow_lang=is_flow_lang,
-            is_arg_ref_lang=is_arg_ref_lang,
             cpp_template_params=cpp_template_params,
             resolve_func=resolve_func,
             resolve_builtin=resolve_builtin,
@@ -3125,7 +3091,7 @@ class CallProcessor:
         noted for the edge the scan emits."""
         return self._noted(self._resolver.resolve_function_call(*args, **kwargs))
 
-    def _ingest_call_node(self, ctx: _CallScanContext, call_node: Node) -> None:
+    def _ingest_call_node(self, ctx: CallScan, call_node: Node) -> None:
         if _exceeds_receiver_chain_cap(call_node):
             # Left unresolved: resolving it would re-read the whole chain.
             return
@@ -3197,7 +3163,7 @@ class CallProcessor:
             # decorator wrapper. REFERENCES (not arg_ref_rel) is
             # deliberate and predates the C# split: with no callee name
             # there is no invocation to assert, for ANY language.
-            if ctx.is_arg_ref_lang:
+            if ctx.calls.references_arguments:
                 self._ingest_argument_function_references(
                     call_node,
                     ctx.caller_spec,
@@ -3216,7 +3182,7 @@ class CallProcessor:
             return
         self._ingest_named_call(ctx, call_node, call_name)
 
-    def _ingest_sql_routine_call(self, ctx: _CallScanContext, call_name: str) -> None:
+    def _ingest_sql_routine_call(self, ctx: CallScan, call_name: str) -> None:
         self._link_sql_routine(ctx.module_qn, ctx.caller_spec, call_name)
 
     def _link_sql_routine(
@@ -3258,7 +3224,7 @@ class CallProcessor:
                 site,
             )
 
-    def _scan_call_name(self, ctx: _CallScanContext, call_node: Node) -> str | None:
+    def _scan_call_name(self, ctx: CallScan, call_node: Node) -> str | None:
         node_id = id(call_node)
         if ctx.call_name_cache is not None and node_id in ctx.call_name_cache:
             call_name = ctx.call_name_cache[node_id]
@@ -3275,7 +3241,7 @@ class CallProcessor:
         return call_name
 
     def _emit_string_call_edges(
-        self, ctx: _CallScanContext, call_node: Node, call_name: str
+        self, ctx: CallScan, call_node: Node, call_name: str
     ) -> None:
         target_name = string_call_target(call_node, call_name, self._string_call_specs)
         if target_name:
@@ -3306,7 +3272,7 @@ class CallProcessor:
                 )
 
     def _ingest_named_call(
-        self, ctx: _CallScanContext, call_node: Node, call_name: str
+        self, ctx: CallScan, call_node: Node, call_name: str
     ) -> None:
         call_var_types = ctx.local_var_types
         if ctx.span_bindings:
@@ -3393,7 +3359,7 @@ class CallProcessor:
 
     def _resolve_call_callee(
         self,
-        ctx: _CallScanContext,
+        ctx: CallScan,
         call_node: Node,
         call_name: str,
         call_var_types: dict[str, str] | None,
@@ -3456,7 +3422,7 @@ class CallProcessor:
 
     def _judge_resolved_callee(
         self,
-        ctx: _CallScanContext,
+        ctx: CallScan,
         call_node: Node,
         call_name: str,
         callee_info: tuple[str, str] | None,
@@ -3470,7 +3436,7 @@ class CallProcessor:
 
     def _fallback_callee(
         self,
-        ctx: _CallScanContext,
+        ctx: CallScan,
         call_node: Node,
         call_name: str,
         callee_info: tuple[str, str] | None,
@@ -3510,7 +3476,7 @@ class CallProcessor:
 
     def _bare_name_callee(
         self,
-        ctx: _CallScanContext,
+        ctx: CallScan,
         call_node: Node,
         call_name: str,
         callee_info: tuple[str, str] | None,
@@ -3533,7 +3499,7 @@ class CallProcessor:
                     ctx.class_context,
                     ctx.caller_qn,
                 )
-        if callee_info is None and ctx.is_flow_lang:
+        if callee_info is None and ctx.calls.flows_callables:
             # `x = factory(...); x(cb)`: x holds a closure returned by a
             # first-party factory (e.g. a retry/cache decorator applied
             # imperatively). Record the call so cb flows into that closure's
@@ -3561,7 +3527,7 @@ class CallProcessor:
         return callee_info
 
     def _ingest_unresolved_call(
-        self, ctx: _CallScanContext, call_node: Node, call_name: str
+        self, ctx: CallScan, call_node: Node, call_name: str
     ) -> None:
         if call_name and ctx.language not in cs.IMPORT_BOUND_CALL_LANGUAGES:
             # The callee may be defined by a file added later; keep
@@ -3589,7 +3555,7 @@ class CallProcessor:
             self._js.emit_this_dispatch(
                 ctx.caller_spec, ctx.class_context, call_name, ctx.ensure_rel
             )
-        if ctx.is_arg_ref_lang:
+        if ctx.calls.references_arguments:
             # The callee is not first-party (a framework/stdlib call such as
             # grpclib Handler(self.__rpc_x), JS setTimeout(target), or a
             # runtime dispatcher), so the call chain cannot be followed into
@@ -3611,7 +3577,7 @@ class CallProcessor:
 
     def _ingest_resolved_call(
         self,
-        ctx: _CallScanContext,
+        ctx: CallScan,
         call_node: Node,
         call_name: str,
         callee_info: tuple[str, str],
@@ -3649,7 +3615,7 @@ class CallProcessor:
         # operator rule and emit no edge at all.
         callee_is_builtin = callee_qn.startswith(_BUILTIN_QN_PREFIX)
         if callee_is_builtin:
-            if ctx.is_arg_ref_lang:
+            if ctx.calls.references_arguments:
                 self._ingest_argument_function_references(
                     call_node,
                     ctx.caller_spec,
@@ -3664,7 +3630,7 @@ class CallProcessor:
                 )
             return
 
-        if ctx.is_flow_lang:
+        if ctx.calls.flows_callables:
             self._collect_callable_flow(
                 call_node,
                 callee_qn,
@@ -3674,7 +3640,7 @@ class CallProcessor:
                 ctx.local_var_types,
                 ctx.class_context,
             )
-        if ctx.is_arg_ref_lang:
+        if ctx.calls.references_arguments:
             # Functions are first-class values: a first-party callee may STORE
             # a passed callback for later dynamic dispatch (config objects,
             # codecs, registries), which callable-param flow cannot trace, or
@@ -3697,7 +3663,7 @@ class CallProcessor:
 
     def _ingest_first_party_call(
         self,
-        ctx: _CallScanContext,
+        ctx: CallScan,
         call_node: Node,
         call_name: str,
         callee_type: str,
@@ -3770,7 +3736,7 @@ class CallProcessor:
                 ctx.caller_spec, ctx.class_context, call_name, ctx.ensure_rel
             )
 
-        if ctx.is_flow_lang:
+        if ctx.calls.flows_callables:
             # f(...) invoked through a parameter: the edge runs from the
             # callee to whatever each call site binds to that parameter.
             self._ingest_callable_param_calls(
@@ -3816,7 +3782,7 @@ class CallProcessor:
 
     def _redirect_construction(
         self,
-        ctx: _CallScanContext,
+        ctx: CallScan,
         callee_qn: str,
         ctor_rel: cs.RelationshipType = cs.RelationshipType.CALLS,
     ) -> tuple[str, str] | None:
@@ -3900,7 +3866,7 @@ class CallProcessor:
 
     def _emit_julia_construction_calls(
         self,
-        ctx: _CallScanContext,
+        ctx: CallScan,
         callee_qn: str,
         fn_variants: list[tuple[cs.NodeLabel, str]],
     ) -> None:
@@ -3937,7 +3903,7 @@ class CallProcessor:
 
     def _emit_declared_ctor_calls(
         self,
-        ctx: _CallScanContext,
+        ctx: CallScan,
         callee_qn: str,
         class_variants: list[str],
         ctor_rel: cs.RelationshipType = cs.RelationshipType.CALLS,
@@ -3981,7 +3947,7 @@ class CallProcessor:
             )
 
     def _ingest_java_constructor_reference(
-        self, ctx: _CallScanContext, ref_node: Node, receiver: Node
+        self, ctx: CallScan, ref_node: Node, receiver: Node
     ) -> None:
         # `Type::new` is a factory for Type: the type is resolved and
         # INSTANTIATES'd exactly as `new Type(...)` is, and its constructors are
@@ -4011,7 +3977,7 @@ class CallProcessor:
 
     def _emit_resolved_callee_targets(
         self,
-        ctx: _CallScanContext,
+        ctx: CallScan,
         call_node: Node,
         call_name: str,
         callee_type: str,
@@ -4084,7 +4050,7 @@ class CallProcessor:
         return True
 
     def _emit_callee_target(
-        self, ctx: _CallScanContext, callee_type: str, target_qn: str
+        self, ctx: CallScan, callee_type: str, target_qn: str
     ) -> None:
         # A duplicate-suffixed variant may be a DIFFERENT kind of node (a TS
         # namespace merged onto a function registers as a class); only
@@ -4116,7 +4082,7 @@ class CallProcessor:
 
     def _emit_callee_fanouts(
         self,
-        ctx: _CallScanContext,
+        ctx: CallScan,
         call_name: str,
         callee_type: str,
         callee_qn: str,
@@ -4144,7 +4110,7 @@ class CallProcessor:
                 ctx.caller_spec, ctx.module_qn, call_name, callee_qn, ctx.ensure_rel
             )
 
-    def _emit_interface_sole_impls(self, ctx: _CallScanContext, callee_qn: str) -> None:
+    def _emit_interface_sole_impls(self, ctx: CallScan, callee_qn: str) -> None:
         # A call bound to an interface/trait method (the static callee;
         # removing its declaration breaks the call) with exactly ONE
         # implementer also runs the concrete method, so edge both. The

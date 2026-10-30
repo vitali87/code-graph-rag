@@ -20,6 +20,7 @@ from ...types_defs import PropertyDict
 from ...utils import qn_markers
 from ..definition_facts import DefinitionFacts
 from ..edge_site import EdgeSiteHost, host_site_scoped
+from ..language_calls import LanguageCalls
 from . import utils as go_utils
 from .type_inference import GO_EXTERNAL_TARGET
 
@@ -301,7 +302,7 @@ def factory_bindings(node: Node) -> list[tuple[str, str]]:
     return bindings
 
 
-class GoCallResolution:
+class GoCallResolution(LanguageCalls):
     """Binds Go calls and writes the edges Go's own rules add to them.
 
     Built and owned by `CallProcessor`. The resolver, the module paths and
@@ -318,6 +319,9 @@ class GoCallResolution:
         "_package_index_size",
         "_type_declarations",
     )
+
+    flows_callables = True
+    references_arguments = True
 
     def __init__(
         self,

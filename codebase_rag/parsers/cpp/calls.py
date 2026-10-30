@@ -24,6 +24,7 @@ from ...types_defs import PropertyDict
 from ...utils import qn_markers
 from ..definition_facts import DefinitionFacts
 from ..edge_site import EdgeSiteHost, host_site_scoped
+from ..language_calls import LanguageCalls
 from . import local_types as cpp_local_types
 from . import utils as cpp_utils
 from .function_values import (
@@ -226,7 +227,7 @@ def field_call_name(func_child: Node) -> str | None:
     return None
 
 
-class CppCallResolution:
+class CppCallResolution(LanguageCalls):
     """Binds the C++ calls a name lookup cannot, and writes the constructions
     and lifecycle calls C++ runs without a call expression.
 
@@ -235,6 +236,9 @@ class CppCallResolution:
     it registers each file."""
 
     __slots__ = ("_host", "_resolver", "_facts")
+
+    flows_callables = True
+    references_arguments = True
 
     def __init__(
         self, host: CppCallHost, resolver: CallResolver, facts: DefinitionFacts
@@ -863,7 +867,7 @@ class CCallHost(EdgeSiteHost, Protocol):
     ) -> None: ...
 
 
-class CCallResolution:
+class CCallResolution(LanguageCalls):
     """Writes the references a C function stored as a value makes, bound the
     way C's scoping and linkage bind the name: the file's own definition, an
     object the file or a header it includes declares, or a definition with

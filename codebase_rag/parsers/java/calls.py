@@ -18,6 +18,7 @@ from tree_sitter import Node
 
 from ... import constants as cs
 from ..edge_site import EdgeSiteHost
+from ..language_calls import LanguageCalls
 from . import utils as java_utils
 from .type_inference import JAVA_EXTERNAL_TARGET
 
@@ -58,7 +59,7 @@ def method_member(func_node: Node, func_name: str) -> str:
     return f"{name}{param_sig}"
 
 
-class JavaCallResolution:
+class JavaCallResolution(LanguageCalls):
     """Binds Java calls through the javac frontend or the Java engine, links
     the overloads a binding cannot tell apart, and writes the references a
     method reference makes.

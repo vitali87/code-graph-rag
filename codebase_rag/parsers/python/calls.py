@@ -25,6 +25,7 @@ from ...types_defs import FunctionLocation, LanguageQueries, PropertyDict
 from ..call_resolver import PY_EXTERNAL_TARGET
 from ..edge_site import EdgeSiteHost, host_site_scoped
 from ..js_ts import calls as js_calls
+from ..language_calls import LanguageCalls
 from .class_aliases import scan_class_body_aliases
 from .receiver_rebinding import ReceiverRebinding, receiver_rebinding
 
@@ -293,7 +294,7 @@ def receiver_rebinding_at(
     return receiver_rebinding(call_node, receiver)
 
 
-class PythonCallResolution:
+class PythonCallResolution(LanguageCalls):
     """Binds Python calls through the Jedi frontend, writes the edges Python's
     own rules add to them and the calls Python makes without a call node,
     and records the per-caller and per-class facts the resolver reads.
@@ -303,6 +304,9 @@ class PythonCallResolution:
     each file."""
 
     __slots__ = ("_host", "_resolver")
+
+    flows_callables = True
+    references_arguments = True
 
     def __init__(self, host: PythonCallHost, resolver: CallResolver) -> None:
         self._host = host

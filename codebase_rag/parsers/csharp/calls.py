@@ -21,6 +21,7 @@ from ...language_spec import LanguageSpec
 from ...node_text import decode_node_text, safe_decode_text
 from ...types_defs import PropertyDict
 from ..edge_site import EdgeSiteHost, host_site_scoped
+from ..language_calls import LanguageCalls
 from ..utils import module_qn_for_entity
 from . import utils as csharp_utils
 from .type_inference import CSHARP_EXTERNAL_TARGET, CSharpTypeInferenceEngine
@@ -258,7 +259,7 @@ def _member_receiver_type(
     return recv_type
 
 
-class CSharpCallResolution:
+class CSharpCallResolution(LanguageCalls):
     """Binds C# invocations and object creations through the C# engine,
     writes the edges a method group or a property read makes, and pins the
     namespace import each resolved use reaches.
@@ -268,6 +269,11 @@ class CSharpCallResolution:
     registers each file."""
 
     __slots__ = ("_host", "_resolver", "_project_name", "_module_qn_to_file_path")
+
+    # The argument-REFERENCE half without the callable-parameter flow,
+    # which is untuned for C#: a method group passed as an argument
+    # keeps its target reachable (Polly's EmptyHandler family).
+    references_arguments = True
 
     def __init__(
         self,

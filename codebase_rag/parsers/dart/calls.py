@@ -20,6 +20,7 @@ from ...node_text import safe_decode_text
 from ...types_defs import PropertyDict
 from ...utils import qn_markers
 from ..edge_site import EdgeSiteHost, host_site_scoped
+from ..language_calls import LanguageCalls
 from . import utils as dart_utils
 
 if TYPE_CHECKING:
@@ -363,7 +364,7 @@ def _shadow_spans(
     return spans
 
 
-class DartCallResolution:
+class DartCallResolution(LanguageCalls):
     """Writes the getter reads and constructor runs Dart spells without a
     call node, and the class a named constructor call constructs.
 
@@ -371,6 +372,11 @@ class DartCallResolution:
     reference."""
 
     __slots__ = ("_host", "_resolver")
+
+    # The argument-REFERENCE half without the callable-parameter flow,
+    # which is untuned for Dart: a tear-off passed as an argument keeps
+    # its target reachable (Flutter's `onPressed: _handleTap`).
+    references_arguments = True
 
     def __init__(self, host: DartCallHost, resolver: CallResolver) -> None:
         self._host = host

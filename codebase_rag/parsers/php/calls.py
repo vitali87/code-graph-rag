@@ -16,6 +16,7 @@ from tree_sitter import Node
 from ... import constants as cs
 from ...language_spec import LANGUAGE_FQN_SPECS
 from ...utils.fqn_resolver import scoped_name_parts
+from ..language_calls import LanguageCalls
 from . import class_names
 
 if TYPE_CHECKING:
@@ -59,7 +60,7 @@ def anonymous_class_qn(node: Node, module_qn: str) -> str | None:
     return cs.SEPARATOR_DOT.join([module_qn, *parts])
 
 
-class PhpCallResolution:
+class PhpCallResolution(LanguageCalls):
     """Binds the PHP calls whose class the site shows: a construction, and a
     member call on a receiver the site shows was constructed.
 

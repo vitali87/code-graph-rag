@@ -16,6 +16,7 @@ from tree_sitter import Node
 
 from ... import constants as cs
 from ...types_defs import ScalaBinding
+from ..language_calls import LanguageCalls
 from . import utils as scala_utils
 
 if TYPE_CHECKING:
@@ -40,7 +41,7 @@ class ScalaCallee(NamedTuple):
     callee: tuple[str, str] | None
 
 
-class ScalaCallResolution:
+class ScalaCallResolution(LanguageCalls):
     """Binds Scala calls and selections through the compiler's lookup and
     writes the auxiliary-constructor calls a construction makes.
 

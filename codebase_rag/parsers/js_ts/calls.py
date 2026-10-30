@@ -27,6 +27,7 @@ from ...types_defs import FunctionLocation, PropertyDict
 from ..definition_docstring import extract_definition_docstring
 from ..edge_site import EdgeSiteHost, host_site_scoped
 from ..field_nodes import declared_fields
+from ..language_calls import LanguageCalls
 from . import bindings as js_bindings
 from . import utils as js_ts_utils
 
@@ -735,7 +736,7 @@ def _collect_file_bindings(
     return js_bindings.JsFileBindingCollector(unwrap_ts_value).collect(root)
 
 
-class JsTsCallResolution:
+class JsTsCallResolution(LanguageCalls):
     """Binds the JS/TS call sites a name lookup cannot, judges a member pick
     against the receiver's declared type, writes the dispatch and getter
     edges JS/TS's rules add, and keeps the per-run indexes they read.
@@ -754,6 +755,9 @@ class JsTsCallResolution:
         "_proto_evidence_cache",
         "_factory_classes",
     )
+
+    flows_callables = True
+    references_arguments = True
 
     def __init__(self, host: JsTsCallHost, resolver: CallResolver) -> None:
         self._host = host
