@@ -1,4 +1,5 @@
-"""SQL's share of the call pass: the routines a file's DDL runs without an
+"""SQL's share of the call pass: the name a routine's body calls are
+attributed under, and the routines a file's DDL runs without an
 `invocation` (a trigger, aggregate, cast, type or handler clause names one),
 read from the source as written.
 
@@ -16,6 +17,7 @@ from typing import Protocol
 from tree_sitter import Node
 
 from ... import constants as cs
+from ...language_spec import sql_object_reference_name
 from ...types_defs import LanguageQueries, PropertyDict
 from ..definition_facts import DefinitionFacts
 from ..edge_site import EdgeSiteHost, host_site_scoped
@@ -40,7 +42,8 @@ class SqlCallHost(EdgeSiteHost, Protocol):
 
 
 class SqlCallResolution(LanguageCalls):
-    """Writes the routine references a SQL file's DDL makes.
+    """Names a routine as the definition pass does and writes the routine
+    references a SQL file's DDL makes.
 
     Built and owned by `CallProcessor`. The definition facts are the pass's
     own, held by reference: the definition pass records each SQL file's
@@ -51,6 +54,16 @@ class SqlCallResolution(LanguageCalls):
     def __init__(self, host: SqlCallHost, facts: DefinitionFacts) -> None:
         self._host = host
         self._facts = facts
+
+    def caller_name(self, func_node: Node, module_qn: str) -> str | None:
+        # `create_function` has no `name` field either; without its name
+        # the routine got no caller pass and its body's calls went to the
+        # module (issue #2449).
+        return (
+            super().caller_name(func_node, module_qn)
+            or sql_object_reference_name(func_node)
+            or None
+        )
 
     def ingest_module_references(
         self,

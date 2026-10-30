@@ -38,7 +38,6 @@ from .callable_params import (
 )
 from .class_ingest.identity import build_nested_qualified_name_for_class
 from .cpp import calls as cpp_calls
-from .cpp import local_types as cpp_local_types
 from .cpp import utils as cpp_utils
 from .csharp import calls as csharp_calls
 from .csharp import utils as csharp_utils
@@ -56,16 +55,15 @@ from .java import utils as java_utils
 from .js_ts import bindings as js_bindings
 from .js_ts import calls as js_calls
 from .js_ts import utils as js_ts_utils
+from .julia import calls as julia_calls
 from .julia import utils as julia_utils
 from .language_calls import CallScan, LanguageCalls
 from .lua import calls as lua_calls
 from .php import calls as php_calls
 from .php import class_names as php_class_names
-from .php import utils as php_utils
 from .python import calls as python_calls
 from .rpc_exposure import GoRpcExposureProcessor
 from .rust import calls as rs_calls
-from .rust import utils as rs_utils
 from .scala import calls as scala_calls
 from .scala import utils as scala_utils
 from .sql import calls as sql_calls
@@ -160,10 +158,6 @@ _TYPED_LANGUAGES = frozenset(
     }
 )
 
-# C and C++ share the function_definition/declarator shape, so the callee
-# name lives in a nested declarator (no `name` field), needing the libclang
-# declarator-aware extractor rather than a plain child_by_field_name("name").
-_C_FAMILY_LANGUAGES = frozenset({cs.SupportedLanguage.C, cs.SupportedLanguage.CPP})
 _JS_TS_LANGUAGES = cs.JS_TS_LANGUAGES
 
 
@@ -201,23 +195,18 @@ def _class_qn_for_calls(
     class_node: Node,
     module_qn: str,
     class_name: str,
-    language: cs.SupportedLanguage,
-    queries: Mapping[cs.SupportedLanguage, LanguageQueries],
+    calls: LanguageCalls,
+    lang_config: LanguageSpec,
 ) -> str:
     # A C++ class inside a namespace, or a NESTED class (Outer.Inner), is bound
     # by the definition pass through its enclosing scope (qn `module.ns.Class`
     # / `module.Outer.Inner`); the bare `module.class_name` join drops those
     # ancestors, dangling every inline method's CALLS source off a phantom
     # node. Use the SAME builders the definition pass uses so the qns agree.
-    if language == cs.SupportedLanguage.CPP:
-        return cpp_utils.build_qualified_name(class_node, module_qn, class_name)
-    if language == cs.SupportedLanguage.PHP and (
-        anonymous_qn := php_calls.anonymous_class_qn(class_node, module_qn)
-    ):
-        return anonymous_qn
     return (
-        build_nested_qualified_name_for_class(
-            class_node, module_qn, class_name, queries[language][cs.QUERY_CONFIG]
+        calls.class_qn(class_node, module_qn, class_name)
+        or build_nested_qualified_name_for_class(
+            class_node, module_qn, class_name, lang_config
         )
         or f"{module_qn}{cs.SEPARATOR_DOT}{class_name}"
     )
@@ -756,6 +745,9 @@ class CallProcessor:
         "_php",
         "_c",
         "_sql",
+        "_rust",
+        "_lua",
+        "_julia",
         "_language_calls",
         "_default_calls",
         "_callable_flow",
@@ -835,6 +827,9 @@ class CallProcessor:
             self, self._resolver, self.module_qn_to_file_path
         )
         self._sql = sql_calls.SqlCallResolution(self, self.facts)
+        self._rust = rs_calls.RustCallResolution()
+        self._lua = lua_calls.LuaCallResolution()
+        self._julia = julia_calls.JuliaCallResolution(self)
         # The call strategy each language's files go to; JS, TS and TSX share
         # one. A language with none, and a walk that names no language, get
         # the base, which adds nothing to the pass.
@@ -852,6 +847,9 @@ class CallProcessor:
             cs.SupportedLanguage.DART: self._dart,
             cs.SupportedLanguage.SCALA: self._scala,
             cs.SupportedLanguage.SQL: self._sql,
+            cs.SupportedLanguage.RUST: self._rust,
+            cs.SupportedLanguage.LUA: self._lua,
+            cs.SupportedLanguage.JULIA: self._julia,
         }
         self._default_calls = LanguageCalls()
         # Inter-procedural callable-parameter flow: ordered params per function and
@@ -982,24 +980,15 @@ class CallProcessor:
         # the plain byte span.
         if all_call_nodes is None or call_starts is None:
             return None
-        if language in (
-            cs.SupportedLanguage.RUST,
-            cs.SupportedLanguage.JULIA,
-        ):
+        language_calls = self._calls_for(language)
+        if language_calls.owns_nested_calls:
             return self._calls_owned_by(
                 func_node, owned_func_nodes, all_call_nodes, call_starts
             )
-        calls = self._filter_calls_in_node(all_call_nodes, call_starts, func_node)
-        if language == cs.SupportedLanguage.CPP:
-            # A member function of a type written in this body is its own
-            # caller; its calls are not also this function's (issue #2555).
-            # A lambda is no caller of its own, so its calls still count here.
-            return [
-                call
-                for call in calls
-                if not cpp_local_types.in_local_type_member(call, func_node)
-            ]
-        return calls
+        return language_calls.caller_calls(
+            func_node,
+            self._filter_calls_in_node(all_call_nodes, call_starts, func_node),
+        )
 
     def _filter_calls_in_node(
         self,
@@ -1085,7 +1074,7 @@ class CallProcessor:
                 ):
                     # The RHS is the body; an anonymous arrow's calls stay
                     # module-attributed or they drop entirely.
-                    if self._julia_caller_name(func_node, module_qn) is None:
+                    if self._julia.registered_name(func_node, module_qn) is None:
                         continue
                     body = func_node.named_children[-1]
                 else:
@@ -1109,21 +1098,6 @@ class CallProcessor:
             and (candidate in self.facts.macro_qns) == want_macro
         ]
         return matches[0] if len(matches) == 1 else None
-
-    def _julia_caller_name(self, func_node: Node, module_qn: str) -> str | None:
-        # The name the definition pass registers for this node, or None
-        # while it stays anonymous; every caller pass derives attribution
-        # through this helper so both passes name a node identically.
-        name = julia_utils.function_head_name(
-            func_node
-        ) or julia_utils.arrow_assigned_name(func_node)
-        if name:
-            return name
-        if (
-            recorded := self._recorded_caller(func_node, module_qn)
-        ) is not None and recorded.is_named:
-            return recorded.qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
-        return None
 
     def _module_qn(self, file_path: Path, relative_path: Path) -> str:
         # The definition pass is the single source of truth for module qns:
@@ -1509,74 +1483,7 @@ class CallProcessor:
     ) -> str | None:
         # The caller name a function node's body calls are attributed under;
         # None means the node gets no caller pass and is skipped.
-        if language in _C_FAMILY_LANGUAGES:
-            return self._c_family_caller_func_name(func_node, language, module_qn)
-        func_name = self._get_node_name(func_node)
-        if not func_name and language in _JS_TS_LANGUAGES:
-            func_name = js_ts_utils.arrow_binding_name(func_node)
-        if not func_name and language == cs.SupportedLanguage.SQL:
-            # `create_function` has no `name` field either; without its name
-            # the routine got no caller pass and its body's calls went to the
-            # module (issue #2449).
-            func_name = sql_object_reference_name(func_node)
-        if (
-            not func_name
-            and language == cs.SupportedLanguage.LUA
-            and func_node.type == cs.TS_LUA_FUNCTION_DEFINITION
-        ):
-            # A function expression bound to a variable or table field
-            # (`local f = function()`, `M.f = function()`) has no name field;
-            # the definition pass names it after its assignment target, so
-            # recover the same name here or the whole body is skipped. A
-            # table-constructor field value is named by its key path first
-            # (issue #1631), through the SAME helper the definition pass
-            # uses: a returned or passed table has no assignment target at
-            # all, and without this the body's calls were dropped or
-            # credited to the enclosing function (#1631).
-            func_name = lua_calls.caller_func_name(func_node)
-        if not func_name and language == cs.SupportedLanguage.JULIA:
-            # Julia definition nodes carry no `name` field; recover it
-            # here or the body is skipped.
-            func_name = julia_utils.function_head_name(
-                func_node
-            ) or julia_utils.arrow_assigned_name(func_node)
-        if not func_name:
-            # A nameless JS/TS function expression that a NAMED pass
-            # registered (`exports.f = function`, `x: function`) has a
-            # real node; its body's calls belong to that node, not the
-            # module, so adopt the record's simple name and fall through
-            # (the recorded-caller branch below reuses the registered qn).
-            # A GENERATED record (anonymous callback, IIFE) keeps the
-            # historical bubble-to-module attribution.
-            if (
-                language not in _JS_TS_LANGUAGES
-                or (recorded := self._recorded_caller(func_node, module_qn)) is None
-                or not recorded.is_named
-            ):
-                return None
-            func_name = recorded.qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
-        return func_name
-
-    def _c_family_caller_func_name(
-        self, func_node: Node, language: cs.SupportedLanguage, module_qn: str
-    ) -> str | None:
-        # A macro-invocation artifact the ingest pass declined to register
-        # (no class bears its name) must not become a call target either;
-        # mirror ingest's decision via the recorded locations so the two
-        # passes never diverge.
-        if (
-            language == cs.SupportedLanguage.CPP
-            and cpp_utils.is_macro_invocation_artifact(func_node)
-            and self._recorded_caller(func_node, module_qn) is None
-        ):
-            return None
-        func_name = cpp_utils.extract_function_name(func_node)
-        # The definition pass names a macro-split C definition from its
-        # `type` field (issue #2528); without the same name here its body is
-        # skipped and every call in it is lost.
-        if not func_name and language == cs.SupportedLanguage.C:
-            func_name = cpp_utils.c_macro_split_function_name(func_node)
-        return func_name or None
+        return self._calls_for(language).caller_name(func_node, module_qn)
 
     def _ingest_func_node_calls(
         self,
@@ -1612,40 +1519,13 @@ class CallProcessor:
                 call_name_cache=call_name_cache,
             )
             return
-        # An out-of-line C++ method definition (`Ret Class::method() {...}`
-        # at namespace/file scope) is bound by the definition pass to its
-        # class node (qn `class_qn.method`). Attribute its body's calls to
-        # that method node, not a phantom module-rooted qn, so the CALLS
-        # edges join to a real node.
-        if language == cs.SupportedLanguage.CPP and (
-            bound := self._cpp.out_of_class_method_caller(
-                func_node, func_name, module_qn
-            )
-        ):
-            caller_qn, class_qn = bound
-            filtered = self._filtered_calls_for(
-                func_node, language, all_call_nodes, call_starts, owned_func_nodes
-            )
-            self._ingest_function_calls(
-                func_node,
-                caller_qn,
-                cs.NodeLabel.METHOD,
-                module_qn,
-                language,
-                queries,
-                class_qn,
-                call_nodes=filtered,
-                call_name_cache=call_name_cache,
-            )
-            return
-        # A Go receiver method (`func (t T) m()`) is declared at file scope
-        # but the definition pass binds it to its receiver type's node
-        # (qn `module.T.m`). Attribute its body's calls to that method node,
-        # not the receiver-dropping `module.m`, so the CALLS edges join to
-        # a real node.
-        if language == cs.SupportedLanguage.GO and (
-            bound := self._go.receiver_method_caller(func_node, func_name, module_qn)
-        ):
+        # A method written outside its type's body (a C++ out-of-line
+        # definition, a Go receiver method) is bound by the definition pass
+        # to that type's node. Attribute its body's calls to that method
+        # node, not a phantom module-rooted qn, so the CALLS edges join to a
+        # real node.
+        language_calls = self._calls_for(language)
+        if bound := language_calls.bound_method_caller(func_node, func_name, module_qn):
             caller_qn, container_qn = bound
             filtered = self._filtered_calls_for(
                 func_node, language, all_call_nodes, call_starts, owned_func_nodes
@@ -1662,17 +1542,12 @@ class CallProcessor:
                 call_name_cache=call_name_cache,
             )
             return
-        # A C++ free function inside a namespace is bound by the definition
-        # pass via build_qualified_name (qn `module.ns.fn`); _build_nested...
-        # ignores namespace_definition ancestors and would drop the namespace
-        # (`module.fn`), dangling the CALLS source. Use the same builder so
-        # the qns agree.
-        func_qn = (
-            cpp_utils.build_qualified_name(func_node, module_qn, func_name)
-            if language == cs.SupportedLanguage.CPP
-            else self._build_nested_qualified_name(
-                func_node, module_qn, func_name, lang_config
-            )
+        # The qn the definition pass builds, through the language's own
+        # builder where it has one, so the qns agree.
+        func_qn = language_calls.function_qn(
+            func_node, module_qn, func_name
+        ) or self._build_nested_qualified_name(
+            func_node, module_qn, func_name, lang_config
         )
         if func_qn:
             filtered = self._filtered_calls_for(
@@ -1702,54 +1577,12 @@ class CallProcessor:
     def _get_class_name_for_node(
         self, class_node: Node, language: cs.SupportedLanguage
     ) -> str | None:
-        if language == cs.SupportedLanguage.RUST and class_node.type == cs.TS_IMPL_ITEM:
-            # Use the same bare-type extraction as the definition pass
-            # (rs_utils.extract_impl_target), which strips generic arguments
-            # (`Chars<'a>` -> `Chars`). _get_node_name returns the full generic
-            # text, so a call inside a generic impl block was attributed to a
-            # caller qn bearing the generics (crate.lib.Chars<'a>.go) matching
-            # no registered node, silently dropping the CALLS edge.
-            return rs_utils.extract_impl_target(class_node)
-        if language == cs.SupportedLanguage.PHP and (
-            anonymous_name := php_utils.anonymous_class_name(class_node)
-        ):
-            # Named as the definition pass names it, so its methods get a
-            # class pass and the module pass leaves them alone (issue #2538).
-            return anonymous_name
-        if language == cs.SupportedLanguage.CPP and (
-            name_node := class_node.child_by_field_name(cs.FIELD_NAME)
-        ):
-            # A specialization is spelled as the definition pass spells it,
-            # so a caller qn built from it names the same class (issue #2434).
-            return cpp_utils.type_name_text(name_node)
-        return self._get_node_name(class_node)
+        return self._calls_for(language).class_name(class_node)
 
     def _class_method_name(
         self, method_node: Node, language: cs.SupportedLanguage, module_qn: str
     ) -> str | None:
-        if language in _C_FAMILY_LANGUAGES:
-            method_name = cpp_utils.extract_function_name(method_node)
-        elif language == cs.SupportedLanguage.DART:
-            # A factory_constructor_signature has no `name` field at all, so
-            # the field lookup skipped every factory and its body was never
-            # scanned (issue #2482); the definition pass names it this way.
-            method_name = dart_utils.get_name(method_node)
-        else:
-            method_name = self._get_node_name(method_node)
-        if method_name or language not in _JS_TS_LANGUAGES:
-            return method_name
-        if method_name := js_ts_utils.arrow_binding_name(method_node):
-            return method_name
-        # A nameless function expression the definition pass registered
-        # under a name (`x: function () {}` in a method's object literal,
-        # `this.h = function () {}` in a constructor) has a real node:
-        # adopt the record's simple name, as the module pass does. Since
-        # #1903 handed every class-scoped function to this pass, skipping it
-        # here would leave that node with no outgoing edge.
-        recorded = self._recorded_caller(method_node, module_qn)
-        if recorded is not None and recorded.is_named:
-            return recorded.qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
-        return None
+        return self._calls_for(language).method_name(method_node, module_qn)
 
     def _process_methods_in_class(
         self,
@@ -1788,10 +1621,6 @@ class CallProcessor:
             if not self._method_in_class_body(method_node, body_node, lang_config):
                 continue
             method_name = self._class_method_name(method_node, language, module_qn)
-            if not method_name and language == cs.SupportedLanguage.JULIA:
-                # Same name recovery as the module pass, else the inner
-                # constructor's body is skipped (issue #1882).
-                method_name = self._julia_caller_name(method_node, module_qn)
             if not method_name:
                 continue
             # method_nodes includes functions nested inside methods. Build the
@@ -1858,11 +1687,7 @@ class CallProcessor:
         if path_parts:
             joined = cs.SEPARATOR_DOT.join([*path_parts, func_name])
             return f"{class_qn}{cs.SEPARATOR_DOT}{joined}", cs.NodeLabel.FUNCTION
-        member = (
-            java_calls.method_member(func_node, func_name)
-            if language == cs.SupportedLanguage.JAVA
-            else func_name
-        )
+        member = self._calls_for(language).member_name(func_node, func_name)
         return f"{class_qn}{cs.SEPARATOR_DOT}{member}", cs.NodeLabel.METHOD
 
     @staticmethod
@@ -1980,18 +1805,17 @@ class CallProcessor:
             captures = sorted_captures(cursor, root_node)
             class_nodes = captures.get(cs.CAPTURE_CLASS, [])
 
+        language_calls = self._calls_for(language)
         for class_node in class_nodes:
-            class_name = self._get_class_name_for_node(class_node, language)
-            if not class_name and language in _JS_TS_LANGUAGES:
-                # An anonymous class expression (`static Proxy = class {...}`)
-                # has no `name`; recover its field/declarator binding name so
-                # its methods get a caller pass (issue #970). Matches the qn the
-                # definition pass builds via _js_get_name.
-                class_name = js_ts_utils.class_binding_name(class_node)
+            class_name = language_calls.class_name(class_node)
             if not class_name:
                 continue
             class_qn = _class_qn_for_calls(
-                class_node, module_qn, class_name, language, queries
+                class_node,
+                module_qn,
+                class_name,
+                language_calls,
+                queries[language][cs.QUERY_CONFIG],
             )
             if body_node := class_node.child_by_field_name(cs.FIELD_BODY):
                 self._process_methods_in_class(
@@ -5626,15 +5450,7 @@ class CallProcessor:
             if name_node.text is None:
                 return None
             return name_node.text.decode(cs.ENCODING_UTF8)
-        # A JS/TS arrow-const ancestor (`getQueryString = () => {...}`) has no
-        # `name` field (the name lives on the parent declarator), so it would be
-        # dropped, flattening a nested callee's qn (request.encodePair instead
-        # of request.getQueryString.encodePair). Recover the binding name the
-        # definition pass used so the qns agree; else the callee's own
-        # inline-arg/object callbacks never match and report dead.
-        if lang_config.language in _JS_TS_LANGUAGES:
-            return js_ts_utils.arrow_binding_name(function_node) or None
-        return None
+        return self._calls_for(lang_config.language).scope_name(function_node)
 
     def _build_nested_qualified_name(
         self,
@@ -5679,33 +5495,7 @@ class CallProcessor:
         # callback pattern). Returning only attributable nodes as the exclusion
         # set lets an anonymous arrow's calls bubble up to the nearest named
         # function/method, matching where the oracle attributes them.
-        if language == cs.SupportedLanguage.RUST:
-            # A Rust closure (`expire.map(|_| state.next_expiration())`) is unnamed,
-            # so the call loop skips it (no caller node); like JS/TS anon arrows its
-            # calls must bubble to the enclosing fn/method (which holds the captured
-            # locals' types) instead of being excluded and dropped. Named nested
-            # `fn`s stay attributable and keep their own calls.
-            return [n for n in func_nodes if n.type != cs.TS_RS_CLOSURE_EXPRESSION]
-        if language == cs.SupportedLanguage.JULIA:
-            # An anonymous Julia arrow gets no caller node: its calls
-            # bubble to the enclosing scope like JS/TS arrows.
-            return [n for n in func_nodes if self._julia_caller_name(n, module_qn)]
-        if language not in _JS_TS_LANGUAGES:
-            return func_nodes
-        # A nameless function expression the definition pass registered under
-        # a name (`x: function () {}` in an object literal, `this.h = function
-        # () {}`) gets its own caller pass, so it must own its calls too, or
-        # the enclosing function keeps a second copy of every edge.
-        return [
-            n
-            for n in func_nodes
-            if self._get_node_name(n)
-            or js_ts_utils.arrow_binding_name(n)
-            or (
-                (recorded := self._recorded_caller(n, module_qn)) is not None
-                and recorded.is_named
-            )
-        ]
+        return self._calls_for(language).attributable(func_nodes, module_qn)
 
     def forget_callable_flow(self, file_path: Path) -> None:
         # A deleted file is never re-walked, so nothing else replaces its
@@ -5773,7 +5563,4 @@ class CallProcessor:
             return False
         if class_node.child_by_field_name(cs.FIELD_BODY) is None:
             return False
-        class_name = self._get_class_name_for_node(class_node, language)
-        if not class_name and language in _JS_TS_LANGUAGES:
-            class_name = js_ts_utils.class_binding_name(class_node)
-        return bool(class_name)
+        return bool(self._get_class_name_for_node(class_node, language))

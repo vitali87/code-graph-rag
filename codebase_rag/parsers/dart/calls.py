@@ -385,6 +385,12 @@ class DartCallResolution(LanguageCalls):
         self._host = host
         self._resolver = resolver
 
+    def method_name(self, method_node: Node, module_qn: str) -> str | None:
+        # A factory_constructor_signature has no `name` field at all, so
+        # the field lookup skipped every factory and its body was never
+        # scanned (issue #2482); the definition pass names it this way.
+        return dart_utils.get_name(method_node)
+
     def ingest_module_references(
         self,
         root_node: Node,

@@ -810,6 +810,69 @@ class JsTsCallResolution(LanguageCalls):
         # (issue #2453). Strings only, so no tree is pinned.
         self._factory_classes: dict[str, str | None] = {}
 
+    def caller_name(self, func_node: Node, module_qn: str) -> str | None:
+        return super().caller_name(func_node, module_qn) or self._bound_name(
+            func_node, module_qn
+        )
+
+    def method_name(self, method_node: Node, module_qn: str) -> str | None:
+        # A nameless function expression the definition pass registered
+        # under a name (`x: function () {}` in a method's object literal,
+        # `this.h = function () {}` in a constructor) has a real node, named
+        # as the module pass names it. Since #1903 handed every class-scoped
+        # function to the class pass, skipping it there would leave that
+        # node with no outgoing edge.
+        return self.caller_name(method_node, module_qn)
+
+    def _bound_name(self, func_node: Node, module_qn: str) -> str | None:
+        if name := js_ts_utils.arrow_binding_name(func_node):
+            return name
+        # A nameless JS/TS function expression that a NAMED pass
+        # registered (`exports.f = function`, `x: function`) has a
+        # real node; its body's calls belong to that node, not the
+        # module, so adopt the record's simple name (the recorded-caller
+        # branch of the caller pass reuses the registered qn). A GENERATED
+        # record (anonymous callback, IIFE) keeps the historical
+        # bubble-to-module attribution.
+        recorded = self._host._recorded_caller(func_node, module_qn)
+        if recorded is not None and recorded.is_named:
+            return recorded.qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        return None
+
+    def class_name(self, class_node: Node) -> str | None:
+        # An anonymous class expression (`static Proxy = class {...}`)
+        # has no `name`; recover its field/declarator binding name so
+        # its methods get a caller pass (issue #970). Matches the qn the
+        # definition pass builds via _js_get_name.
+        return super().class_name(class_node) or js_ts_utils.class_binding_name(
+            class_node
+        )
+
+    def attributable(self, func_nodes: list[Node], module_qn: str) -> list[Node]:
+        # A nameless function expression the definition pass registered under
+        # a name (`x: function () {}` in an object literal, `this.h = function
+        # () {}`) gets its own caller pass, so it must own its calls too, or
+        # the enclosing function keeps a second copy of every edge.
+        return [
+            n
+            for n in func_nodes
+            if self._host._get_node_name(n)
+            or js_ts_utils.arrow_binding_name(n)
+            or (
+                (recorded := self._host._recorded_caller(n, module_qn)) is not None
+                and recorded.is_named
+            )
+        ]
+
+    def scope_name(self, function_node: Node) -> str | None:
+        # An arrow-const ancestor (`getQueryString = () => {...}`) has no
+        # `name` field (the name lives on the parent declarator), so it would be
+        # dropped, flattening a nested callee's qn (request.encodePair instead
+        # of request.getQueryString.encodePair). Recover the binding name the
+        # definition pass used so the qns agree; else the callee's own
+        # inline-arg/object callbacks never match and report dead.
+        return js_ts_utils.arrow_binding_name(function_node) or None
+
     def ingest_module_references(
         self,
         root_node: Node,

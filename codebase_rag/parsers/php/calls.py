@@ -18,6 +18,7 @@ from ...language_spec import LANGUAGE_FQN_SPECS
 from ...utils.fqn_resolver import scoped_name_parts
 from ..language_calls import LanguageCalls
 from . import class_names
+from . import utils as php_utils
 
 if TYPE_CHECKING:
     from ..call_resolver import CallResolver
@@ -73,6 +74,17 @@ class PhpCallResolution(LanguageCalls):
     def __init__(self, host: PhpCallHost, resolver: CallResolver) -> None:
         self._host = host
         self._resolver = resolver
+
+    def class_name(self, class_node: Node) -> str | None:
+        # An anonymous class is named as the definition pass names it, so its
+        # methods get a class pass and the module pass leaves them alone
+        # (issue #2538).
+        return php_utils.anonymous_class_name(class_node) or super().class_name(
+            class_node
+        )
+
+    def class_qn(self, class_node: Node, module_qn: str, class_name: str) -> str | None:
+        return anonymous_class_qn(class_node, module_qn)
 
     def resolve_class_callee(
         self, ctx: PhpCallScan, call_node: Node, call_name: str

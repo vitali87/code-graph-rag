@@ -2,15 +2,40 @@
 are attributed under, which the definition pass derives from the function's
 table field, its assignment target or a generated name.
 
-`CallProcessor` owns what every language shares and names a Lua caller
-through `caller_func_name`."""
+`CallProcessor` owns what every language shares and hands Lua's part to the
+`LuaCallResolution` it builds."""
 
 from __future__ import annotations
 
 from tree_sitter import Node
 
 from ... import constants as cs
+from ..language_calls import LanguageCalls
 from . import utils as lua_utils
+
+
+class LuaCallResolution(LanguageCalls):
+    """Names a Lua caller as the definition pass names it.
+
+    Built and owned by `CallProcessor`."""
+
+    __slots__ = ()
+
+    def caller_name(self, func_node: Node, module_qn: str) -> str | None:
+        if name := super().caller_name(func_node, module_qn):
+            return name
+        if func_node.type != cs.TS_LUA_FUNCTION_DEFINITION:
+            return None
+        # A function expression bound to a variable or table field
+        # (`local f = function()`, `M.f = function()`) has no name field;
+        # the definition pass names it after its assignment target, so
+        # recover the same name here or the whole body is skipped. A
+        # table-constructor field value is named by its key path first
+        # (issue #1631), through the SAME helper the definition pass
+        # uses: a returned or passed table has no assignment target at
+        # all, and without this the body's calls were dropped or
+        # credited to the enclosing function (#1631).
+        return caller_func_name(func_node) or None
 
 
 def caller_func_name(func_node: Node) -> str | None:

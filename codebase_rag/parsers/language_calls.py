@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, ClassVar
 from tree_sitter import Node
 
 from .. import constants as cs
+from ..node_text import safe_decode_text
 from ..types_defs import LanguageQueries, ScalaBinding
 
 if TYPE_CHECKING:
@@ -53,6 +54,10 @@ class LanguageCalls:
     # A pre-pass over every file records the members a symbol key installs
     # (`collect_symbol_bindings`).
     keys_members_by_symbol: ClassVar[bool] = False
+    # A function nested in a caller owns the calls in its body, so the
+    # caller's share of the file's calls leaves those out instead of taking
+    # everything its byte span holds.
+    owns_nested_calls: ClassVar[bool] = False
 
     def collect_callable_field_bindings(
         self, root_node: Node, module_qn: str, call_nodes: list[Node]
@@ -76,6 +81,60 @@ class LanguageCalls:
         """Write the edges a file makes at module scope without a call node,
         before the pass's early return for a file with no call: a function
         stored as a value, a construction that runs a constructor."""
+
+    def caller_name(self, func_node: Node, module_qn: str) -> str | None:
+        """The name a function node's body calls are attributed under, None
+        for a node that gets no caller pass."""
+        return safe_decode_text(func_node.child_by_field_name(cs.FIELD_NAME)) or None
+
+    def method_name(self, method_node: Node, module_qn: str) -> str | None:
+        """The name a function in a class body is attributed under; a node
+        without one gets no caller pass."""
+        return safe_decode_text(method_node.child_by_field_name(cs.FIELD_NAME))
+
+    def class_name(self, class_node: Node) -> str | None:
+        """A class's name as the definition pass spells it in its members'
+        qualified names; a class without one gets no class pass."""
+        return safe_decode_text(class_node.child_by_field_name(cs.FIELD_NAME))
+
+    def class_qn(self, class_node: Node, module_qn: str, class_name: str) -> str | None:
+        """A class's qualified name where the language's definition pass
+        builds it its own way; None takes the nested-scope builder."""
+        return None
+
+    def function_qn(
+        self, func_node: Node, module_qn: str, func_name: str
+    ) -> str | None:
+        """An unrecorded function's qualified name where the language's
+        definition pass builds it its own way; None takes the nested-scope
+        builder."""
+        return None
+
+    def bound_method_caller(
+        self, func_node: Node, func_name: str, module_qn: str
+    ) -> tuple[str, str] | None:
+        """(method qn, owner qn) of a method written outside its type's body,
+        which the definition pass binds to that type's node."""
+        return None
+
+    def member_name(self, func_node: Node, func_name: str) -> str:
+        """The member name a class-body function is registered under in its
+        class's qualified name."""
+        return func_name
+
+    def caller_calls(self, func_node: Node, calls: list[Node]) -> list[Node]:
+        """A caller's own calls, out of the calls its byte span holds."""
+        return calls
+
+    def attributable(self, func_nodes: list[Node], module_qn: str) -> list[Node]:
+        """The function nodes that get a caller pass of their own and so own
+        their calls; the calls of the rest bubble to the enclosing scope."""
+        return func_nodes
+
+    def scope_name(self, function_node: Node) -> str | None:
+        """The name an enclosing function without a `name` field gives the
+        qualified name of a function nested in it; None leaves it out."""
+        return None
 
 
 @dataclass(slots=True)

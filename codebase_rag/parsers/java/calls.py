@@ -103,6 +103,9 @@ class JavaCallResolution(LanguageCalls):
         self._host = host
         self._resolver = resolver
 
+    def member_name(self, func_node: Node, func_name: str) -> str:
+        return method_member(func_node, func_name)
+
     def ingest_module_references(
         self,
         root_node: Node,

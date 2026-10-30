@@ -410,11 +410,13 @@ class GoCallResolution(LanguageCalls):
         else:
             self._resolver.go_local_scopes.pop(caller_qn, None)
 
-    def receiver_method_caller(
-        self, func_node: Node, method_name: str, module_qn: str
+    def bound_method_caller(
+        self, func_node: Node, func_name: str, module_qn: str
     ) -> tuple[str, str] | None:
-        # Resolve a Go receiver method to its (method_qn, container_qn),
-        # mirroring the definition pass's receiver-type binding. The receiver
+        # A receiver method (`func (t T) m()`) is declared at file scope, but
+        # the definition pass binds it to its receiver type's node (qn
+        # `module.T.m`, not the receiver-dropping `module.m`). Resolve it to
+        # its (method_qn, container_qn), mirroring that binding. The receiver
         # type resolves to its node qn (same or sibling file in the package),
         # and the registry check ensures the method node exists before
         # overriding the default attribution.
@@ -427,13 +429,13 @@ class GoCallResolution(LanguageCalls):
         # package; same-package siblings outrank the global class-name
         # resolver, whose leaf lookup collides across packages on common
         # names like `Server` and dangles every edge (issue #930).
-        package_hit = self._package_receiver_qn(receiver_type, method_name, module_qn)
+        package_hit = self._package_receiver_qn(receiver_type, func_name, module_qn)
         if package_hit is not None:
             return package_hit
         container_qn = self._resolver._resolve_class_name(receiver_type, module_qn) or (
             f"{module_qn}{cs.SEPARATOR_DOT}{receiver_type}"
         )
-        caller_qn = f"{container_qn}{cs.SEPARATOR_DOT}{method_name}"
+        caller_qn = f"{container_qn}{cs.SEPARATOR_DOT}{func_name}"
         if caller_qn in self._resolver.function_registry:
             return caller_qn, container_qn
         return None

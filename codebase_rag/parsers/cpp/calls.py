@@ -21,7 +21,7 @@ from tree_sitter import Node
 from ... import constants as cs
 from ...language_spec import LanguageSpec
 from ...node_text import decode_node_text, safe_decode_text
-from ...types_defs import LanguageQueries, PropertyDict
+from ...types_defs import FunctionLocation, LanguageQueries, PropertyDict
 from ...utils import qn_markers
 from ..definition_facts import DefinitionFacts
 from ..edge_site import EdgeSiteHost, host_site_scoped
@@ -42,8 +42,9 @@ if TYPE_CHECKING:
 
 class CppCallHost(EdgeSiteHost, Protocol):
     """What C++ call resolution calls on the call pass that builds it: the
-    edge emitter, and the callback emitter a passed functor's reference
-    goes through like any other callback's."""
+    edge emitter, the location the definition pass recorded for a function
+    node, and the callback emitter a passed functor's reference goes through
+    like any other callback's."""
 
     def _emit_rel(
         self,
@@ -52,6 +53,10 @@ class CppCallHost(EdgeSiteHost, Protocol):
         to_spec: tuple[str, str, str],
         properties: PropertyDict | None = None,
     ) -> None: ...
+
+    def _recorded_caller(
+        self, func_node: Node, module_qn: str
+    ) -> FunctionLocation | None: ...
 
     def _emit_callback_targets(
         self,
@@ -251,12 +256,61 @@ class CppCallResolution(LanguageCalls):
         self._resolver = resolver
         self._facts = facts
 
-    def out_of_class_method_caller(
-        self, func_node: Node, method_name: str, module_qn: str
+    def caller_name(self, func_node: Node, module_qn: str) -> str | None:
+        # A macro-invocation artifact the ingest pass declined to register
+        # (no class bears its name) must not become a call target either;
+        # mirror ingest's decision via the recorded locations so the two
+        # passes never diverge.
+        if (
+            cpp_utils.is_macro_invocation_artifact(func_node)
+            and self._host._recorded_caller(func_node, module_qn) is None
+        ):
+            return None
+        # C and C++ share the function_definition/declarator shape, so the
+        # name lives in a nested declarator (no `name` field), needing the
+        # declarator-aware extractor rather than the `name` field.
+        return cpp_utils.extract_function_name(func_node) or None
+
+    def method_name(self, method_node: Node, module_qn: str) -> str | None:
+        return cpp_utils.extract_function_name(method_node)
+
+    def class_name(self, class_node: Node) -> str | None:
+        # A specialization is spelled as the definition pass spells it,
+        # so a caller qn built from it names the same class (issue #2434).
+        name_node = class_node.child_by_field_name(cs.FIELD_NAME)
+        return cpp_utils.type_name_text(name_node) if name_node is not None else None
+
+    def class_qn(self, class_node: Node, module_qn: str, class_name: str) -> str | None:
+        # A class inside a namespace is bound through the namespaces around
+        # it (qn `module.ns.Class`).
+        return cpp_utils.build_qualified_name(class_node, module_qn, class_name)
+
+    def function_qn(
+        self, func_node: Node, module_qn: str, func_name: str
+    ) -> str | None:
+        # A free function inside a namespace is bound by the definition
+        # pass via build_qualified_name (qn `module.ns.fn`); the nested-scope
+        # builder ignores namespace_definition ancestors and would drop the
+        # namespace (`module.fn`), dangling the CALLS source.
+        return cpp_utils.build_qualified_name(func_node, module_qn, func_name)
+
+    def caller_calls(self, func_node: Node, calls: list[Node]) -> list[Node]:
+        # A member function of a type written in this body is its own
+        # caller; its calls are not also this function's (issue #2555).
+        # A lambda is no caller of its own, so its calls still count here.
+        return [
+            call
+            for call in calls
+            if not cpp_local_types.in_local_type_member(call, func_node)
+        ]
+
+    def bound_method_caller(
+        self, func_node: Node, func_name: str, module_qn: str
     ) -> tuple[str, str] | None:
-        # Resolve an out-of-line C++ method definition to its (method_qn,
-        # class_qn), mirroring the definition pass's class binding. The leaf
-        # class name resolves the class across files (header-declared classes);
+        # Resolve an out-of-line C++ method definition (`Ret Class::method()
+        # {...}` at namespace/file scope) to its (method_qn, class_qn),
+        # mirroring the definition pass's class binding. The leaf class name
+        # resolves the class across files (header-declared classes);
         # `endswith(normalized)` guards against a leaf collision binding to the
         # wrong class, and the registry check ensures the method node exists
         # before overriding the default attribution.
@@ -280,7 +334,7 @@ class CppCallResolution(LanguageCalls):
         class_qn = self._resolver._resolve_class_name(leaf, module_qn)
         if not class_qn or not class_qn.endswith(normalized):
             return None
-        caller_qn = f"{class_qn}{cs.SEPARATOR_DOT}{method_name}"
+        caller_qn = f"{class_qn}{cs.SEPARATOR_DOT}{func_name}"
         if caller_qn in self._resolver.function_registry:
             return caller_qn, class_qn
         return None
@@ -911,6 +965,19 @@ class CCallResolution(LanguageCalls):
     def reset_file_scopes(self) -> None:
         self._file_scopes = {}
         self._include_closures = {}
+
+    def caller_name(self, func_node: Node, module_qn: str) -> str | None:
+        # The name lives in a nested declarator, as in C++.
+        func_name = cpp_utils.extract_function_name(func_node)
+        # The definition pass names a macro-split C definition from its
+        # `type` field (issue #2528); without the same name here its body is
+        # skipped and every call in it is lost.
+        if not func_name:
+            func_name = cpp_utils.c_macro_split_function_name(func_node)
+        return func_name or None
+
+    def method_name(self, method_node: Node, module_qn: str) -> str | None:
+        return cpp_utils.extract_function_name(method_node)
 
     def ingest_module_references(
         self,

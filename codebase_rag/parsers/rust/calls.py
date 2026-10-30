@@ -1,17 +1,50 @@
 """Rust's share of the call pass: the callee a call inside a macro's token
 stream spells, which the grammar leaves as loose tokens rather than a call
-expression.
+expression, the type an impl block's methods are attributed to, and the
+calls a closure leaves to its enclosing function.
 
 `CallProcessor` owns what every language shares (the scan of a caller's call
-nodes, the site and resolution each edge carries, the name-based resolver)
-and names a macro-internal call through `macro_token_call_name`."""
+nodes, the site and resolution each edge carries, the name-based resolver),
+names a macro-internal call through `macro_token_call_name` and hands the
+rest of Rust's part to the `RustCallResolution` it builds."""
 
 from __future__ import annotations
 
 from tree_sitter import Node
 
 from ... import constants as cs
+from ..language_calls import LanguageCalls
 from . import utils as rs_utils
+
+
+class RustCallResolution(LanguageCalls):
+    """Attributes Rust callers as the definition pass registers them.
+
+    Built and owned by `CallProcessor`."""
+
+    __slots__ = ()
+
+    # A named nested `fn` gets its own caller node and keeps its own calls.
+    owns_nested_calls = True
+
+    def class_name(self, class_node: Node) -> str | None:
+        if class_node.type == cs.TS_IMPL_ITEM:
+            # Use the same bare-type extraction as the definition pass
+            # (rs_utils.extract_impl_target), which strips generic arguments
+            # (`Chars<'a>` -> `Chars`). A name keeping the generic text
+            # attributed a call inside a generic impl block to a caller qn
+            # bearing the generics (crate.lib.Chars<'a>.go) matching no
+            # registered node, silently dropping the CALLS edge.
+            return rs_utils.extract_impl_target(class_node)
+        return super().class_name(class_node)
+
+    def attributable(self, func_nodes: list[Node], module_qn: str) -> list[Node]:
+        # A Rust closure (`expire.map(|_| state.next_expiration())`) is unnamed,
+        # so the call loop skips it (no caller node); like JS/TS anon arrows its
+        # calls must bubble to the enclosing fn/method (which holds the captured
+        # locals' types) instead of being excluded and dropped. Named nested
+        # `fn`s stay attributable and keep their own calls.
+        return [n for n in func_nodes if n.type != cs.TS_RS_CLOSURE_EXPRESSION]
 
 
 def macro_token_call_name(ident: Node) -> str | None:
