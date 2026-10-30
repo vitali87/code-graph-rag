@@ -61,7 +61,9 @@ Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by c
 ## Latest News 🔥
 
 <!-- SECTION:latest_news -->
-- **MiniMax Models**: Current MiniMax text models have been added.
+- **CLI and MCP Enhancements**: The `change_signature` operation is now accessible via the CLI and MCP, with improved handling for partial graphs and classification as a destructive writer.
+- **Fuzzing Improvements**: The Graph-RS project now includes additional fuzz targets for more comprehensive testing.
+- **Model Updates**: Current MiniMax text models have been added.
 <!-- /SECTION:latest_news -->
 
 See [NEWS.md](NEWS.md) for the full history.
