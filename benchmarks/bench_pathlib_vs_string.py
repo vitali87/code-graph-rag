@@ -64,6 +64,9 @@ def bench_pathlib_should_skip(paths: list[str], repo_root: str, skip_patterns: l
             parts = relative.parts
             _ = any(part in skip_set for part in parts)
         except ValueError:
+            # A path outside the root has nothing to skip, as in the string
+            # variant. Every generated path is under it, so this never fires,
+            # and a log call here would be timed along with the loop.
             pass
     return time.perf_counter() - start
 
