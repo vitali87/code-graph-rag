@@ -603,7 +603,7 @@ class AppConfig(BaseSettings):
     _active_orchestrator: ModelConfig | None = None
     _active_cypher: ModelConfig | None = None
 
-    QUIET: bool = Field(False, validation_alias="CGR_QUIET")
+    QUIET: bool = Field(False, validation_alias=cs.ENV_CGR_QUIET)
 
     # The GitHub Sponsors line a finished command ends on in a terminal; set
     # false to drop it without the rest of the output `--quiet` drops.

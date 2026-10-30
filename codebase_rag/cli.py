@@ -334,6 +334,10 @@ def _global_options(
         False,
         "--quiet",
         "-q",
+        # Read here as well as by the setting: the flag's value is assigned
+        # to the setting below, so without it the default False overwrote
+        # the CGR_QUIET the setting had read.
+        envvar=cs.ENV_CGR_QUIET,
         help=ch.HELP_QUIET,
         is_eager=True,
     ),

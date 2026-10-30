@@ -134,6 +134,9 @@ WATCHER_SLEEP_INTERVAL = 1
 LOG_LEVEL_INFO = "INFO"
 LOG_LEVEL_ERROR = "ERROR"
 ENV_LOGURU_LEVEL = "LOGURU_LEVEL"
+# Quiet mode from the environment, the `--quiet` flag's envvar and the setting's
+# alias both.
+ENV_CGR_QUIET = "CGR_QUIET"
 # Where a refused setting came from, as its error message names it.
 SETTING_ORIGIN_ENVIRONMENT = "the environment"
 SETTING_ORIGIN_DOTENV = "./.env"
