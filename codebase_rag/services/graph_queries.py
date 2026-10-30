@@ -90,6 +90,14 @@ class GraphQueries(GraphSession):
         logger.info(ls.MG_PROJECT_DELETED.format(project_name=project_name))
 
     def ensure_constraints(self) -> None:
+        """Retire the #897 path keys where any remain, then create the unique
+        constraints and indexes.
+
+        Not DDL alone: the migration may drop constraints and purge legacy
+        Folder/File structure, so a sync puts its incomplete-run marker down
+        before calling this. On a graph already found clean it costs one
+        SHOW CONSTRAINTS and a marker lookup before the DDL.
+        """
         logger.info(ls.MG_ENSURING_CONSTRAINTS)
         self._migrate_legacy_path_keys()
         failed = self._apply_schema_ddl(
