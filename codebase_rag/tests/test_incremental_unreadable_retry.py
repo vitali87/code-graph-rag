@@ -14,10 +14,10 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag import graph_updater as gu
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.sync.checkout_state import state_file
+from codebase_rag.updater import tree_scan
 from codebase_rag.utils.path_utils import vanished
 from evals.cgr_graph import StatefulIngestor
 
@@ -47,17 +47,17 @@ def test_an_unreadable_file_is_retried_by_the_next_run(
     (root / "pkg" / "__init__.py").write_text("")
     (root / "pkg" / "b.py").write_text("def b():\n    return 2\n")
     store = StatefulIngestor()
-    real = gu.hash_file_with_bytes
+    real = tree_scan.hash_file_with_bytes
 
     # Portable unreadability: the read of `b.py` fails on this run only.
     def failing(path: Path):
         return None if path.name == "b.py" else real(path)
 
-    monkeypatch.setattr(gu, "hash_file_with_bytes", failing)
+    monkeypatch.setattr(tree_scan, "hash_file_with_bytes", failing)
     first = _updater(root, store)
     first.run(force=True)
     assert first._reparsed_file_keys == {"a.py", "pkg/__init__.py"}
-    monkeypatch.setattr(gu, "hash_file_with_bytes", real)
+    monkeypatch.setattr(tree_scan, "hash_file_with_bytes", real)
 
     second = _updater(root, store)
     assert second._is_already_in_sync() is False
@@ -106,16 +106,16 @@ def test_a_file_that_becomes_unreadable_after_a_healthy_run_is_retried(
     import os
 
     os.utime(edited, (cache_mtime + 1, cache_mtime + 1))
-    real = gu.hash_file_with_bytes
+    real = tree_scan.hash_file_with_bytes
     monkeypatch.setattr(
-        gu,
+        tree_scan,
         "hash_file_with_bytes",
         lambda path: None if path.name == "b.py" else real(path),
     )
     unreadable_run = _updater(root, store)
     unreadable_run.run()
     assert "pkg/b.py" not in unreadable_run._reparsed_file_keys
-    monkeypatch.setattr(gu, "hash_file_with_bytes", real)
+    monkeypatch.setattr(tree_scan, "hash_file_with_bytes", real)
 
     retry = _updater(root, store)
     assert retry._is_already_in_sync() is False
@@ -148,16 +148,16 @@ def test_a_symbol_renamed_while_unreadable_leaves_no_stale_entity(
     edited = root / "pkg" / "b.py"
     edited.write_text("def new_name():\n    return 2\n")
     os.utime(edited, (cache_mtime + 1, cache_mtime + 1))
-    real = gu.hash_file_with_bytes
+    real = tree_scan.hash_file_with_bytes
     monkeypatch.setattr(
-        gu,
+        tree_scan,
         "hash_file_with_bytes",
         lambda path: None if path.name == "b.py" else real(path),
     )
     _updater(root, store).run()
     cache = json.loads(state_file(root, cs.HASH_CACHE_FILENAME).read_text())
     assert cache["pkg/b.py"] == cs.HASH_CACHE_UNREADABLE
-    monkeypatch.setattr(gu, "hash_file_with_bytes", real)
+    monkeypatch.setattr(tree_scan, "hash_file_with_bytes", real)
 
     retry = _updater(root, store)
     assert retry._is_already_in_sync() is False
@@ -229,7 +229,7 @@ def test_a_path_under_a_directory_now_a_file_is_gone(
             raise PermissionError(errno.EACCES, "Permission denied", str(path))
         return real_lstat(path, *args, **kwargs)
 
-    monkeypatch.setattr(gu.os, "lstat", denied)
+    monkeypatch.setattr(os, "lstat", denied)
     assert vanished(present) is False
 
 
@@ -258,7 +258,7 @@ def test_a_windows_reparse_loop_is_gone(
             raise exc
         return real_stat(path, *args, **kwargs)
 
-    monkeypatch.setattr(gu.os, "stat", unresolvable)
+    monkeypatch.setattr(os, "stat", unresolvable)
     assert vanished(link) is True
     # Any other EINVAL is still "unreadable", not gone.
     winerror = None
@@ -285,7 +285,7 @@ def test_a_link_whose_target_cannot_be_reached_is_not_gone(
             raise PermissionError(13, "Permission denied", str(path))
         return real_stat(path, *args, **kwargs)
 
-    monkeypatch.setattr(gu.os, "stat", denied)
+    monkeypatch.setattr(os, "stat", denied)
     assert vanished(link) is False
 
 

@@ -12,11 +12,10 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag import graph_updater as gu
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.sync.checkout_state import state_file
-from codebase_rag.updater import sync_keeper
+from codebase_rag.updater import sync_keeper, tree_scan
 from evals.cgr_graph import StatefulIngestor
 
 
@@ -50,9 +49,9 @@ def test_a_cached_file_that_became_unreadable_does_not_end_the_run(
         return hashlib.md5(path.read_bytes(), usedforsecurity=False).hexdigest()
 
     monkeypatch.setattr(sync_keeper, "hash_file", unreadable)
-    real_with_bytes = gu.hash_file_with_bytes
+    real_with_bytes = tree_scan.hash_file_with_bytes
     monkeypatch.setattr(
-        gu,
+        tree_scan,
         "hash_file_with_bytes",
         lambda path: None if path.name == "b.py" else real_with_bytes(path),
     )

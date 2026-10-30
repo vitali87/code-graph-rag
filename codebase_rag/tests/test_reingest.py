@@ -459,7 +459,7 @@ def test_reingest_reparses_in_walk_order_across_directories(
     store = StatefulIngestor()
     updater = _sibling_updater(store, root)
     updater.run(force=True)
-    walk_order = [key for _fp, key in updater._collect_eligible_files()]
+    walk_order = [key for _fp, key in updater.tree_scan.collect_eligible_files()]
     seen: list[str] = []
     real_delete = updater._reingest_delete
 

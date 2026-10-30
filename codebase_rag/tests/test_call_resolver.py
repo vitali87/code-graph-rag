@@ -1321,7 +1321,7 @@ class TestDeterministicFileOrder:
             queries=queries,
         )
 
-        eligible = updater._collect_eligible_files()
+        eligible = updater.tree_scan.collect_eligible_files()
         paths_str = [str(f) for f in eligible]
 
         assert paths_str == sorted(paths_str)

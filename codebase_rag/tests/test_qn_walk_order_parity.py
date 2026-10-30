@@ -1,7 +1,7 @@
 """The C++ qn map and the indexer must walk in the SAME ORDER, not merely see
 the same files (issue #1178, criterion 4; the coupling of #1025).
 
-``qn.py`` documents its walk as reproducing ``_collect_eligible_files``'
+``qn.py`` documents its walk as reproducing ``collect_eligible_files``'
 ordering *exactly*, because the module-qn disambiguation rule gives the base
 qn to whichever file is seen FIRST and appends an extension to the loser. The
 pre-existing parity tests in ``test_cpp_qn_map_exclude_unignore.py`` compare
@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -52,12 +53,15 @@ def _indexer_order(
     unignore_paths: frozenset[str] | None = None,
 ) -> list[str]:
     """The exact ORDER the tree-sitter pass would process files in."""
-    updater = GraphUpdater.__new__(GraphUpdater)
-    updater.repo_path = repo
-    updater.exclude_paths = exclude_paths
-    updater.unignore_paths = unignore_paths
-    updater._single_file = None
-    return [key for _path, key in updater._collect_eligible_files()]
+    updater = GraphUpdater(
+        ingestor=MagicMock(),
+        repo_path=repo,
+        parsers={},
+        queries={},
+        unignore_paths=unignore_paths,
+        exclude_paths=exclude_paths,
+    )
+    return [key for _path, key in updater.tree_scan.collect_eligible_files()]
 
 
 class TestTheSharedWalkOrderIsPinnedAbsolutely:

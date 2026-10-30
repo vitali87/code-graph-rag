@@ -1436,6 +1436,7 @@ INCREMENTAL_UNREADABLE_RETRY = (
     "{count} unreadable file(s) are marked in the cache, so the next update "
     "retries them whatever their directories' mtimes say"
 )
+DIR_MTIME_UNREADABLE = "Not recording the mtime of directory {path}: {error}"
 # Symlinks are never followed by a repository walk (issue #2451).
 SYMLINK_SKIPPED_OUTSIDE = (
     "Skipping symlink {path}: its target {target} is outside the repository "

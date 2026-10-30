@@ -527,7 +527,7 @@ class SyncStateKeeper:
         """Whether the hash cache is the placeholder of a build that never committed.
 
         A full build writes an empty cache before its first graph write
-        (`_hash_baseline`) and replaces it, stamping the parser fingerprint
+        (`TreeScan.hash_baseline`) and replaces it, stamping the parser fingerprint
         beside it, only at its commit point. An empty cache with no stamp is
         therefore a build that stopped short (Ctrl+C, a crash), and blaming a
         parser change or a wiped database for the rebuild that follows sent

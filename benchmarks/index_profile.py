@@ -35,7 +35,7 @@ STAGES = (
             "embedded_graph/",
         ),
     ),
-    ("file scan + hashing", ("_scan_eligible_file", "hash_file")),
+    ("file scan + hashing", ("scan_eligible_file", "hash_file")),
     ("imports / startup", ("_find_and_load",)),
 )
 OWN = "codebase_rag/"

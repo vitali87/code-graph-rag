@@ -27,7 +27,7 @@ def _eligible_rel_files(
     unignore_paths: frozenset[str] | None = None,
 ) -> list[str]:
     # Delegates to the one shared walk so this path cannot drift from
-    # GraphUpdater._collect_eligible_files. The module-qn disambiguation below
+    # TreeScan.collect_eligible_files. The module-qn disambiguation below
     # depends on walk ORDER (the file processed LATER in a basename collision
     # gets its extension appended), so a divergence in ordering -- not just in
     # which files are eligible -- silently reassigns qualified names across the

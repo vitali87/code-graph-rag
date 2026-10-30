@@ -27,7 +27,7 @@ from codebase_rag.sync.state import (
     publish_hash_cache,
 )
 from codebase_rag.tests.conftest import force_mtime_after_cache, get_nodes
-from codebase_rag.updater import sync_keeper
+from codebase_rag.updater import sync_keeper, tree_scan
 
 
 @pytest.fixture
@@ -572,7 +572,7 @@ class TestCrashBetweenCacheSaveAndFlush:
         target = py_project / "module_b.py"
         target.write_text("def b():\n    return 2\n", encoding="utf-8")
 
-        real_hash = graph_updater_module.hash_file_with_bytes
+        real_hash = tree_scan.hash_file_with_bytes
         raced = "def b():\n    return 999\n"
         fired = False
 
@@ -592,16 +592,14 @@ class TestCrashBetweenCacheSaveAndFlush:
                 path.write_text(raced, encoding="utf-8")
             return result
 
-        monkeypatch.setattr(
-            graph_updater_module, "hash_file_with_bytes", _hash_then_edit
-        )
+        monkeypatch.setattr(tree_scan, "hash_file_with_bytes", _hash_then_edit)
         GraphUpdater(
             ingestor=mock_ingestor,
             repo_path=py_project,
             parsers=parsers,
             queries=queries,
         ).run()
-        monkeypatch.setattr(graph_updater_module, "hash_file_with_bytes", real_hash)
+        monkeypatch.setattr(tree_scan, "hash_file_with_bytes", real_hash)
 
         assert fired, (
             "the wrapper never fired, so no edit raced the loop and the "
@@ -1414,6 +1412,8 @@ class TestFastPathInSync:
         )
         single._single_file = py_project / "module_a.py"
         single.graph_pruner._single_file = single._single_file
+        single.sync_keeper._single_file = single._single_file
+        single.tree_scan._single_file = single._single_file
         single.run()
 
         successor = GraphUpdater(

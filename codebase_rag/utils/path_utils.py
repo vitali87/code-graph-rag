@@ -696,7 +696,7 @@ def walk_eligible_files(
     """Yield ``(dirpath, filename, rel_path)`` for every indexable file, in order.
 
     The single definition of the repository walk. Both the tree-sitter indexer
-    (``GraphUpdater._collect_eligible_files``) and the C++ module-qn map
+    (``TreeScan.collect_eligible_files``) and the C++ module-qn map
     (``cpp_frontend.qn.build_module_qn_map``) consume it, because the module-qn
     disambiguation rule hands the base qn to whichever file is seen FIRST and
     appends an extension to the loser -- so the two must agree on ORDER, not

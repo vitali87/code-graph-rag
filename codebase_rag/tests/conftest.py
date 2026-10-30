@@ -43,6 +43,7 @@ from codebase_rag.types_defs import (
     RelEndpointSpec,
     ResultRow,
 )
+from codebase_rag.updater.tree_scan import TreeScan
 
 if TYPE_CHECKING:
     from codebase_rag.mcp.tools import MCPToolsRegistry
@@ -447,11 +448,11 @@ def _grammars_missing_for(updater: GraphUpdater) -> frozenset[rag_cs.SupportedLa
     # gate the test on its language's grammar.
     # The probe is the harness's, not the run's: what the walk logs (each
     # skipped symlink and their summary, issue #2451) belongs to the run.
-    logger.disable(GraphUpdater.__module__)
+    logger.disable(TreeScan.__module__)
     try:
-        files = updater._collect_eligible_files()
+        files = updater.tree_scan.collect_eligible_files()
     finally:
-        logger.enable(GraphUpdater.__module__)
+        logger.enable(TreeScan.__module__)
     return frozenset(
         language
         for path, _rel_path in files

@@ -207,16 +207,16 @@ class TestCachelessRebuild:
 
         state_file(repo, cs.HASH_CACHE_FILENAME).unlink()
         state_file(repo, cs.DIR_MTIMES_FILENAME).unlink()
-        import codebase_rag.graph_updater as gu
+        from codebase_rag.updater import tree_scan
 
-        real_hash = gu.hash_file_with_bytes
+        real_hash = tree_scan.hash_file_with_bytes
 
         def failing_hash(path: Path) -> tuple[str, bytes] | None:
             if path.name == "locked.py":
                 return None
             return real_hash(path)
 
-        monkeypatch.setattr(gu, "hash_file_with_bytes", failing_hash)
+        monkeypatch.setattr(tree_scan, "hash_file_with_bytes", failing_hash)
         _index(memgraph_ingestor, repo)
 
         rows = memgraph_ingestor.fetch_all(

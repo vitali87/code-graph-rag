@@ -33,6 +33,7 @@ from codebase_rag.tests.test_incremental_inbound_deferred_targets import (
 )
 from codebase_rag.updater.file_parse import FileParser
 from codebase_rag.updater.frontends import FrontendRunner
+from codebase_rag.updater.tree_scan import TreeScan
 from evals.cgr_graph import StatefulIngestor
 
 # The caller sits in another package: a sync re-parses every Go file of an
@@ -216,10 +217,10 @@ def test_a_run_failing_after_pass_2_bookkeeping_still_restores_the_inbound_edges
     _index(store, root, force=True)
     _edit_after_cache(root / "box.py", root, "#")
 
-    def fail(_self: GraphUpdater, *_args: object) -> None:
+    def fail(_self: TreeScan, *_args: object) -> None:
         raise OSError("fingerprint input unreadable")
 
-    monkeypatch.setattr(GraphUpdater, "_stash_parser_fingerprint", fail)
+    monkeypatch.setattr(TreeScan, "stash_parser_fingerprint", fail)
     with pytest.raises(OSError, match="fingerprint input unreadable"):
         _index(store, root, force=False)
 

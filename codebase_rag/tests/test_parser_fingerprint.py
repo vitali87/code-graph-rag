@@ -26,6 +26,7 @@ from codebase_rag.parser_fingerprint import compute_parser_fingerprint
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.sync.checkout_state import state_file
 from codebase_rag.types_defs import PropertyDict
+from codebase_rag.updater import tree_scan
 from codebase_rag.utils.path_utils import base_module_qn
 
 STALE_FINGERPRINT = "0" * 32
@@ -379,7 +380,7 @@ class TestFingerprintStamping:
         _make_updater(py_project, mock_ingestor).run()
         _fingerprint_path(py_project).write_text(STALE_FINGERPRINT, encoding="utf-8")
 
-        real_hash = graph_updater.hash_file_with_bytes
+        real_hash = tree_scan.hash_file_with_bytes
 
         def refuse_module_b(filepath: Path) -> tuple[str, bytes] | None:
             if filepath.name == "module_b.py":
@@ -387,13 +388,13 @@ class TestFingerprintStamping:
             return real_hash(filepath)
 
         updater = _make_updater(py_project, mock_ingestor)
-        monkeypatch.setattr(graph_updater, "hash_file_with_bytes", refuse_module_b)
+        monkeypatch.setattr(tree_scan, "hash_file_with_bytes", refuse_module_b)
         updater.run()
 
         stored = _fingerprint_path(py_project).read_text(encoding="utf-8").strip()
         assert stored == compute_parser_fingerprint(repo_path=py_project)
 
-        monkeypatch.setattr(graph_updater, "hash_file_with_bytes", real_hash)
+        monkeypatch.setattr(tree_scan, "hash_file_with_bytes", real_hash)
         retry = _make_updater(py_project, mock_ingestor)
         assert retry._is_already_in_sync() is False
         retry.run()
@@ -414,8 +415,8 @@ class TestFingerprintStamping:
         _make_updater(py_project, mock_ingestor).run()
         _fingerprint_path(py_project).write_text(STALE_FINGERPRINT, encoding="utf-8")
 
-        real_hash = graph_updater.hash_file_with_bytes
-        real_vanished = graph_updater.vanished
+        real_hash = tree_scan.hash_file_with_bytes
+        real_vanished = tree_scan.vanished
 
         def refuse_module_b(filepath: Path) -> tuple[str, bytes] | None:
             if filepath.name == "module_b.py":
@@ -426,8 +427,9 @@ class TestFingerprintStamping:
             return filepath.name == "module_b.py" or real_vanished(filepath)
 
         updater = _make_updater(py_project, mock_ingestor)
-        monkeypatch.setattr(graph_updater, "hash_file_with_bytes", refuse_module_b)
+        monkeypatch.setattr(tree_scan, "hash_file_with_bytes", refuse_module_b)
         monkeypatch.setattr(graph_updater, "vanished", module_b_gone)
+        monkeypatch.setattr(tree_scan, "vanished", module_b_gone)
         monkeypatch.setattr(graph_pruning, "vanished", module_b_gone)
         updater.run()
 

@@ -1,6 +1,6 @@
 """Regression tests for the C++ module-qn map's walk filters (issue #1099).
 
-``build_module_qn_map`` reproduces ``GraphUpdater._collect_eligible_files`` so
+``build_module_qn_map`` reproduces ``TreeScan.collect_eligible_files`` so
 the libclang path synthesises qualified names byte-identical to the tree-sitter
 pass. It used to walk without ``--exclude``/``.cgrignore``, so the two saw
 different file sets and disagreed on the qn of any file caught by a basename
@@ -10,6 +10,7 @@ collision.
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import MagicMock
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parsers.cpp.qn import build_module_qn_map
@@ -29,12 +30,15 @@ def _indexer_rel_files(
     unignore_paths: frozenset[str] | None = None,
 ) -> set[str]:
     """The exact file set the tree-sitter pass would index."""
-    updater = GraphUpdater.__new__(GraphUpdater)
-    updater.repo_path = repo
-    updater.exclude_paths = exclude_paths
-    updater.unignore_paths = unignore_paths
-    updater._single_file = None
-    return {key for _path, key in updater._collect_eligible_files()}
+    updater = GraphUpdater(
+        ingestor=MagicMock(),
+        repo_path=repo,
+        parsers={},
+        queries={},
+        unignore_paths=unignore_paths,
+        exclude_paths=exclude_paths,
+    )
+    return {key for _path, key in updater.tree_scan.collect_eligible_files()}
 
 
 class TestExcludedFilesDoNotClaimQns:
