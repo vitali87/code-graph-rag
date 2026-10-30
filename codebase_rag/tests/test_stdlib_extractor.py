@@ -1,3 +1,5 @@
+import os
+import sys
 import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -57,7 +59,10 @@ class TestCacheHelpers:
 
 class TestToolAvailability:
     def test_is_tool_available_caches_result(self) -> None:
-        with patch("subprocess.run") as mock_run:
+        with (
+            patch("shutil.which", return_value="/opt/bin/python"),
+            patch("subprocess.run") as mock_run,
+        ):
             mock_run.return_value = MagicMock(returncode=0)
 
             result1 = se._is_tool_available("python")
@@ -66,18 +71,38 @@ class TestToolAvailability:
             assert result1 is True
             assert result2 is True
             assert mock_run.call_count == 1
+            # The probe starts the executable PATH resolved, never a bare name.
+            assert mock_run.call_args.args[0][0] == "/opt/bin/python"
 
-    def test_is_tool_available_returns_false_on_file_not_found(self) -> None:
-        with patch("subprocess.run", side_effect=FileNotFoundError):
+    def test_is_tool_available_returns_false_when_not_on_path(self) -> None:
+        with (
+            patch("shutil.which", return_value=None),
+            patch("subprocess.run") as mock_run,
+        ):
             result = se._is_tool_available("nonexistent_tool")
 
             assert result is False
             assert se._EXTERNAL_TOOLS["nonexistent_tool"] is False
+            mock_run.assert_not_called()
+
+    def test_is_tool_available_returns_false_on_file_not_found(self) -> None:
+        # Found on PATH, gone by the time it is started.
+        with (
+            patch("shutil.which", return_value="/opt/bin/gone_tool"),
+            patch("subprocess.run", side_effect=FileNotFoundError),
+        ):
+            result = se._is_tool_available("gone_tool")
+
+            assert result is False
+            assert se._EXTERNAL_TOOLS["gone_tool"] is False
 
     def test_is_tool_available_returns_false_on_timeout(self) -> None:
         import subprocess
 
-        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("cmd", 2)):
+        with (
+            patch("shutil.which", return_value="/opt/bin/slow_tool"),
+            patch("subprocess.run", side_effect=subprocess.TimeoutExpired("cmd", 2)),
+        ):
             result = se._is_tool_available("slow_tool")
 
             assert result is False
@@ -458,24 +483,40 @@ class TestGoExtractorWithMockedSubprocess:
         mock_list_result.returncode = 0
         mock_list_result.stdout = "/usr/local/go/src/fmt"
 
-        mock_popen = MagicMock()
-        mock_popen.__enter__ = MagicMock(return_value=mock_popen)
-        mock_popen.__exit__ = MagicMock(return_value=False)
-        mock_popen.returncode = 0
-        mock_popen.communicate.return_value = (
-            '{"hasEntity": true, "entityType": "function"}',
-            "",
-        )
+        mock_run_result = MagicMock()
+        mock_run_result.returncode = 0
+        mock_run_result.stdout = '{"hasEntity": true, "entityType": "function"}'
 
         with (
-            patch("subprocess.run", return_value=mock_list_result),
-            patch("subprocess.Popen", return_value=mock_popen),
+            patch("shutil.which", return_value="/opt/go/bin/go"),
+            patch(
+                "subprocess.run", side_effect=[mock_list_result, mock_run_result]
+            ) as mock_run,
         ):
             result = extractor.extract_module_path(
                 "fmt/Println", cs.SupportedLanguage.GO
             )
 
             assert result == "fmt"
+            list_call, run_call = mock_run.call_args_list
+            assert list_call.args[0][:2] == ["/opt/go/bin/go", "list"]
+            assert run_call.args[0] == ["/opt/go/bin/go", "run", "-"]
+            assert run_call.kwargs["timeout"] == se._GO_RUN_TIMEOUT
+            assert "package main" in run_call.kwargs["input"]
+
+    def test_go_extractor_falls_back_when_go_is_not_on_path(
+        self, extractor: StdlibExtractor
+    ) -> None:
+        with (
+            patch("shutil.which", return_value=None),
+            patch("subprocess.run") as mock_run,
+        ):
+            result = extractor.extract_module_path(
+                "fmt/Println", cs.SupportedLanguage.GO
+            )
+
+            assert result == "fmt"
+            mock_run.assert_not_called()
 
     def test_go_extractor_fallback_on_go_list_failure(
         self, extractor: StdlibExtractor
@@ -513,6 +554,35 @@ class TestGoExtractorWithMockedSubprocess:
             )
 
             assert result == "fmt/lowercase"
+
+    @pytest.mark.skipif(
+        sys.platform == "win32", reason="the stand-in `go` is a shell script"
+    )
+    def test_a_go_run_that_overruns_is_stopped(
+        self,
+        extractor: StdlibExtractor,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # A `go run` that never finishes (a cold module cache, a wedged
+        # toolchain) used to hold the lookup until it exited: the timeout
+        # fired, but leaving the Popen context waited on the program. Now it
+        # is killed and the lookup falls back to the naming heuristic.
+        fake_go = tmp_path / "go"
+        fake_go.write_text(
+            '#!/bin/sh\nif [ "$1" = list ]; then echo /tmp; exit 0; fi\n'
+            "exec sleep 30\n",
+            encoding="utf-8",
+        )
+        fake_go.chmod(0o755)
+        monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ['PATH']}")
+        monkeypatch.setattr(se, "_GO_RUN_TIMEOUT", 0.5)
+
+        started = time.monotonic()
+        result = extractor.extract_module_path("fmt/Println", cs.SupportedLanguage.GO)
+
+        assert result == "fmt"
+        assert time.monotonic() - started < 10
 
 
 class TestJavaExtractorWithMockedSubprocess:
@@ -586,12 +656,16 @@ class TestLuaExtractorWithMockedSubprocess:
         mock_result.returncode = 0
         mock_result.stdout = "hasEntity=true"
 
-        with patch("subprocess.run", return_value=mock_result):
+        with (
+            patch("shutil.which", return_value="/opt/bin/lua"),
+            patch("subprocess.run", return_value=mock_result) as mock_run,
+        ):
             result = extractor.extract_module_path(
                 "string.upper", cs.SupportedLanguage.LUA
             )
 
             assert result == "string"
+            assert mock_run.call_args.args[0][0] == "/opt/bin/lua"
 
     def test_lua_extractor_fallback_on_entity_not_found(
         self, extractor: StdlibExtractor
@@ -600,7 +674,10 @@ class TestLuaExtractorWithMockedSubprocess:
         mock_result.returncode = 0
         mock_result.stdout = "hasEntity=false"
 
-        with patch("subprocess.run", return_value=mock_result):
+        with (
+            patch("shutil.which", return_value="/opt/bin/lua"),
+            patch("subprocess.run", return_value=mock_result),
+        ):
             result = extractor.extract_module_path(
                 "string.nonexistent", cs.SupportedLanguage.LUA
             )
@@ -713,13 +790,15 @@ class TestJsExtractorWithMockedNode:
 
         with (
             patch.object(se, "_is_tool_available", return_value=True),
-            patch("subprocess.run", return_value=mock_result),
+            patch("shutil.which", return_value="/opt/bin/node"),
+            patch("subprocess.run", return_value=mock_result) as mock_run,
         ):
             result = extractor.extract_module_path(
                 "fs.readFile", cs.SupportedLanguage.JS
             )
 
             assert result == "fs"
+            assert mock_run.call_args.args[0][0] == "/opt/bin/node"
 
     def test_js_extractor_fallback_on_entity_not_found(
         self, extractor: StdlibExtractor
@@ -730,6 +809,7 @@ class TestJsExtractorWithMockedNode:
 
         with (
             patch.object(se, "_is_tool_available", return_value=True),
+            patch("shutil.which", return_value="/opt/bin/node"),
             patch("subprocess.run", return_value=mock_result),
         ):
             result = extractor.extract_module_path(
@@ -747,6 +827,7 @@ class TestJsExtractorWithMockedNode:
 
         with (
             patch.object(se, "_is_tool_available", return_value=True),
+            patch("shutil.which", return_value="/opt/bin/node"),
             patch("subprocess.run", return_value=mock_result),
         ):
             result = extractor.extract_module_path("path.join", cs.SupportedLanguage.JS)
@@ -758,6 +839,7 @@ class TestJsExtractorWithMockedNode:
 
         with (
             patch.object(se, "_is_tool_available", return_value=True),
+            patch("shutil.which", return_value="/opt/bin/node"),
             patch("subprocess.run", side_effect=subprocess.TimeoutExpired("node", 5)),
         ):
             result = extractor.extract_module_path(

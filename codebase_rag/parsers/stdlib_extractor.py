@@ -1,4 +1,5 @@
 import json
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -46,25 +47,44 @@ _cache_dirty = False
 
 _EXTERNAL_TOOLS: dict[str, bool] = {}
 
+# The introspection tools, each started by the full path `shutil.which`
+# finds for it; one not on PATH leaves its language to the naming heuristics.
+_NODE = "node"
+_GO = "go"
+_LUA = "lua"
+# How long each probe may run before its lookup falls back to the heuristics
+# as a missing tool does: a `--version` answer is immediate, a script lookup
+# takes a moment, and `go run` compiles its program first.
+_TOOL_PROBE_TIMEOUT = 2
+_NODE_LOOKUP_TIMEOUT = 5
+_GO_LIST_TIMEOUT = 5
+_GO_RUN_TIMEOUT = 10
+_LUA_LOOKUP_TIMEOUT = 5
+
 
 def _is_tool_available(tool_name: str) -> bool:
     if tool_name in _EXTERNAL_TOOLS:
         return _EXTERNAL_TOOLS[tool_name]
 
+    executable = shutil.which(tool_name)
+    available = executable is not None and _tool_starts(executable)
+    _EXTERNAL_TOOLS[tool_name] = available
+    if not available:
+        logger.debug(ls.IMP_TOOL_NOT_AVAILABLE, tool=tool_name)
+    return available
+
+
+def _tool_starts(executable: str) -> bool:
     try:
         subprocess.run(
-            [tool_name, "--version"], check=False, capture_output=True, timeout=2
+            [executable, "--version"],
+            check=False,
+            capture_output=True,
+            timeout=_TOOL_PROBE_TIMEOUT,
         )
-        _EXTERNAL_TOOLS[tool_name] = True
-        return True
-    except (
-        FileNotFoundError,
-        subprocess.TimeoutExpired,
-        subprocess.CalledProcessError,
-    ):
-        _EXTERNAL_TOOLS[tool_name] = False
-        logger.debug(ls.IMP_TOOL_NOT_AVAILABLE, tool=tool_name)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
+    return True
 
 
 def _cache_file() -> Path:
@@ -321,7 +341,7 @@ class StdlibExtractor:
         module_name = parts[0]
         entity_name = parts[-1]
 
-        if _is_tool_available("node"):
+        if _is_tool_available(_NODE) and (node := shutil.which(_NODE)) is not None:
             try:
                 import os
 
@@ -349,12 +369,12 @@ class StdlibExtractor:
                 env["ENTITY_NAME"] = entity_name
 
                 subprocess_result = subprocess.run(
-                    ["node", "-e", node_script],
+                    [node, "-e", node_script],
                     check=False,
                     capture_output=True,
                     text=True,
                     encoding=cs.ENCODING_UTF8,
-                    timeout=5,
+                    timeout=_NODE_LOOKUP_TIMEOUT,
                     env=env,
                 )
 
@@ -397,13 +417,16 @@ class StdlibExtractor:
                 package_path = cs.SEPARATOR_SLASH.join(parts[:-1])
                 entity_name = parts[-1]
 
+                if (go := shutil.which(_GO)) is None:
+                    raise FileNotFoundError(_GO)
+
                 resolve_result = subprocess.run(
-                    ["go", "list", "-f", "{{.Dir}}", package_path],
+                    [go, "list", "-f", "{{.Dir}}", package_path],
                     check=False,
                     capture_output=True,
                     text=True,
                     encoding=cs.ENCODING_UTF8,
-                    timeout=5,
+                    timeout=_GO_LIST_TIMEOUT,
                 )
 
                 if resolve_result.returncode != 0:
@@ -413,7 +436,7 @@ class StdlibExtractor:
 
                 package_dir = resolve_result.stdout.strip()
                 if not package_dir:
-                    raise subprocess.CalledProcessError(1, ["go", "list"])
+                    raise subprocess.CalledProcessError(1, resolve_result.args)
 
                 go_script = """
 package main
@@ -490,26 +513,28 @@ func main() {
                 env["PACKAGE_PATH"] = package_dir
                 env["ENTITY_NAME"] = entity_name
 
-                with subprocess.Popen(
-                    ["go", "run", "-"],
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
+                # `run` kills the program when it overruns; a Popen context
+                # would wait for it on exit, however long it took.
+                run_result = subprocess.run(
+                    [go, "run", "-"],
+                    input=go_script,
+                    check=False,
+                    capture_output=True,
                     text=True,
                     encoding=cs.ENCODING_UTF8,
+                    timeout=_GO_RUN_TIMEOUT,
                     env=env,
-                ) as proc:
-                    stdout, _ = proc.communicate(go_script, timeout=10)
+                )
 
-                    if proc.returncode == 0:
-                        data = json.loads(stdout.strip())
-                        if data[cs.JSON_KEY_HAS_ENTITY]:
-                            _cache_stdlib_result(
-                                cs.SupportedLanguage.GO,
-                                full_qualified_name,
-                                package_path,
-                            )
-                            return package_path
+                if run_result.returncode == 0:
+                    data = json.loads(run_result.stdout.strip())
+                    if data[cs.JSON_KEY_HAS_ENTITY]:
+                        _cache_stdlib_result(
+                            cs.SupportedLanguage.GO,
+                            full_qualified_name,
+                            package_path,
+                        )
+                        return package_path
 
             except (
                 subprocess.TimeoutExpired,
@@ -663,6 +688,9 @@ func main() {
             try:
                 import os
 
+                if (lua := shutil.which(_LUA)) is None:
+                    raise FileNotFoundError(_LUA)
+
                 lua_script = """
 -- Get module and entity names from environment
 local module_name = os.getenv("MODULE_NAME")
@@ -703,12 +731,12 @@ end
                 env["ENTITY_NAME"] = entity_name
 
                 result = subprocess.run(
-                    ["lua", "-e", lua_script],
+                    [lua, "-e", lua_script],
                     check=False,
                     capture_output=True,
                     text=True,
                     encoding=cs.ENCODING_UTF8,
-                    timeout=5,
+                    timeout=_LUA_LOOKUP_TIMEOUT,
                     env=env,
                 )
 
