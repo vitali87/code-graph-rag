@@ -68,19 +68,29 @@ def _read_token(text: str, i: int, tokens: list[Token]) -> tuple[Token, int]:
     if ch == ecs.EG_PARAM_SIGIL:
         end = _word_end(text, i + 1)
         return Token(ecs.EgTok.PARAM, text[i:end], text[i + 1 : end], i), end
-    if ch.isdigit() or (
-        ch == ecs.EgPunct.DOT
-        and i + 1 < len(text)
-        and text[i + 1].isdigit()
-        and not _after_value(tokens)
-    ):
+    if _starts_number(text, i, tokens):
         return _read_number(text, i)
     if ch.isalpha() or ch == ecs.EG_IDENT_EXTRA:
         end = _word_end(text, i + 1)
         return Token(ecs.EgTok.IDENT, text[i:end], text[i:end], i), end
+    return _read_punct(text, i)
+
+
+def _starts_number(text: str, i: int, tokens: list[Token]) -> bool:
+    ch = text[i]
+    return ch.isdigit() or (
+        ch == ecs.EgPunct.DOT
+        and i + 1 < len(text)
+        and text[i + 1].isdigit()
+        and not _after_value(tokens)
+    )
+
+
+def _read_punct(text: str, i: int) -> tuple[Token, int]:
     two = text[i : i + 2]
     if two in ecs.EG_PUNCTUATION_2:
         return Token(ecs.EgTok.PUNCT, two, two, i), i + 2
+    ch = text[i]
     if ch in ecs.EG_PUNCTUATION_1:
         return Token(ecs.EgTok.PUNCT, ch, ch, i), i + 1
     raise CypherSyntaxError(i, repr(ch))

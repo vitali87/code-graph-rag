@@ -29,7 +29,7 @@ from tree_sitter import Node, Tree
 
 from .. import constants as cs
 from .. import cypher_queries as cq
-from ..crash_correlation import ArityError, diagnose_arity
+from ..crash_correlation import ArityError, ArityVerdict, diagnose_arity
 from ..dead_code import (
     NodeId,
     is_test_symbol,
@@ -1846,16 +1846,37 @@ def _passes_self_explicitly(
     as one (CapWords); `tool.m(self, x)` through an instance binds `tool`
     and passes `self` as well (PR #2946).
     """
-    if repo_root is None or site.line is None or site.col is None:
+    if repo_root is None:
         return False
-    tree = _python_source_tree(repo_root / site.caller_path)
-    if tree is None:
-        return False
-    call = _call_starting_at(tree.root_node, site.line - 1, site.col)
+    call = _site_call(site, repo_root)
     function = call.child_by_field_name(cs.TS_FIELD_FUNCTION) if call else None
-    if function is None or function.type != cs.TS_PY_ATTRIBUTE:
+    if call is None or function is None or function.type != cs.TS_PY_ATTRIBUTE:
         return False
     receiver = function.child_by_field_name(cs.TS_FIELD_OBJECT)
+    if not _receiver_names_class(receiver, definition):
+        return False
+    first = _first_positional_argument(call)
+    return (
+        first is not None
+        and first.type == cs.TS_PY_IDENTIFIER
+        and _node_text(first) == cs.PY_KEYWORD_SELF
+        and not _is_classmethod(definition, repo_root)
+    )
+
+
+def _site_call(site: CallSite, repo_root: Path) -> Node | None:
+    """The call a Python site records, read back from its file."""
+    if site.line is None or site.col is None:
+        return None
+    tree = _python_source_tree(repo_root / site.caller_path)
+    if tree is None:
+        return None
+    return _call_starting_at(tree.root_node, site.line - 1, site.col)
+
+
+def _receiver_names_class(receiver: Node | None, definition: Definition) -> bool:
+    """Whether a member call's receiver names a class: the method's own, or
+    one spelled as a class is (CapWords)."""
     if (
         receiver is None
         or receiver.type == cs.TS_PY_CALL
@@ -1864,10 +1885,12 @@ def _passes_self_explicitly(
         return False
     named = _node_text(receiver).rsplit(cs.SEPARATOR_DOT, 1)[-1]
     owner = definition.qualified_name.rsplit(cs.SEPARATOR_DOT, 2)[-2:-1]
-    if not (named[:1].isupper() or named in owner):
-        return False
-    arguments = call.child_by_field_name(cs.TS_FIELD_ARGUMENTS) if call else None
-    first = next(
+    return named[:1].isupper() or named in owner
+
+
+def _first_positional_argument(call: Node) -> Node | None:
+    arguments = call.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
+    return next(
         (
             argument
             for argument in (arguments.named_children if arguments else [])
@@ -1875,11 +1898,17 @@ def _passes_self_explicitly(
         ),
         None,
     )
+
+
+def _called_through_class(
+    site: CallSite, definition: Definition, repo_root: Path | None
+) -> bool:
+    """A positional first argument that is the receiver written out
+    (`_passes_self_explicitly`)."""
     return (
-        first is not None
-        and first.type == cs.TS_PY_IDENTIFIER
-        and _node_text(first) == cs.PY_KEYWORD_SELF
-        and not _is_classmethod(definition, repo_root)
+        site.arg_count is not None
+        and site.arg_count > len(site.kwarg_names)
+        and _passes_self_explicitly(site, definition, repo_root)
     )
 
 
@@ -2069,11 +2098,7 @@ def _arity_verdict(
     if signature is None:
         return declared_count, verdict
     bound = definition.label in _METHOD_LABELS and not (
-        (
-            site.arg_count is not None
-            and site.arg_count > len(site.kwarg_names)
-            and _passes_self_explicitly(site, definition, repo_root)
-        )
+        _called_through_class(site, definition, repo_root)
         or _passes_receiver_by_keyword(site, signature)
     )
     return declared_count, (_signature_verdict(site, signature, bound) or verdict)
@@ -2103,10 +2128,10 @@ def _python_count_verdict(
         return len(declared), cs.DELTA_ARITY_UNKNOWN
     # An unbound call through the class supplies `self` itself, so it is
     # judged as a plain function call against every declared parameter.
-    is_method = definition.label in _METHOD_LABELS and not (
-        site.arg_count > len(site.kwarg_names)
-        and _passes_self_explicitly(site, definition, repo_root)
+    is_method = definition.label in _METHOD_LABELS and not _called_through_class(
+        site, definition, repo_root
     )
+    receiver = 1 if is_method else 0
     # `arg_count` counts keyword arguments too (issue #1522); only the
     # positionals plus the keywords naming a declared positional parameter
     # fill the declared list. A keyword naming nothing declared is neutral:
@@ -2114,7 +2139,7 @@ def _python_count_verdict(
     # positional list cannot see, and a wrong name is not an arity fault.
     positional = site.arg_count - len(site.kwarg_names)
     matched = sum(1 for name in site.kwarg_names if name in declared)
-    passed = positional + matched + (1 if is_method else 0)
+    passed = positional + matched + receiver
     # `diagnose_arity` owns the receiver arithmetic (`self` counts for
     # CPython but is not caller-supplied); here the "message" is the site.
     verdict = diagnose_arity(
@@ -2122,22 +2147,40 @@ def _python_count_verdict(
         declared,
         is_method,
     )
-    declared_count = verdict.declared_count - (1 if is_method else 0)
-    if positional + (1 if is_method else 0) > verdict.declared_count:
+    return verdict.declared_count - receiver, _counted_outcome(
+        site,
+        definition,
+        repo_root,
+        verdict,
+        written=positional + receiver,
+        passed=passed,
+    )
+
+
+def _counted_outcome(
+    site: CallSite,
+    definition: Definition,
+    repo_root: Path | None,
+    verdict: ArityVerdict,
+    *,
+    written: int,
+    passed: int,
+) -> str:
+    """The count verdict once `diagnose_arity` has weighed `passed`, of
+    which `written` are positional (the receiver included)."""
+    if written > verdict.declared_count:
         if _is_variadic(definition, repo_root):
-            return declared_count, cs.DELTA_ARITY_OK
-        return declared_count, cs.DELTA_ARITY_TOO_MANY
+            return cs.DELTA_ARITY_OK
+        return cs.DELTA_ARITY_TOO_MANY
     # `*rest` adds positionals the graph cannot count, so the written ones
     # are a floor: over the declared list they are too many whatever `rest`
     # holds (above), but at or under it nothing says whether the call fits
     # (issue #2635). `**opts` adds no positional and needs no such care.
     if site.star_args:
-        return declared_count, cs.DELTA_ARITY_UNKNOWN
-    if verdict.confirmed:
-        return declared_count, cs.DELTA_ARITY_OK
-    if passed > verdict.declared_count:
-        return declared_count, cs.DELTA_ARITY_OK
-    return declared_count, cs.DELTA_ARITY_POSSIBLY_MISSING
+        return cs.DELTA_ARITY_UNKNOWN
+    if verdict.confirmed or passed > verdict.declared_count:
+        return cs.DELTA_ARITY_OK
+    return cs.DELTA_ARITY_POSSIBLY_MISSING
 
 
 def _site_finding(

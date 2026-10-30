@@ -531,10 +531,8 @@ class _MatchBuilder:
     def _node(self, np: a.NodePattern) -> CE:
         alias = self.ctx.fresh(sq.NODE_PREFIX)
         self.from_items.append(sq.table(sq.NODES, alias))
-        bound = self.scope.get(np.var) if np.var and self.scope.has(np.var) else None
+        bound = self._bound_node(np.var)
         if bound is not None:
-            if bound.t.kind not in (Kind.NODE, Kind.ANY, Kind.NULL):
-                raise CompileError(ecs.EG_ERR_NOT_NODE.format(name=np.var))
             self.conds.append(sq.eq(sq.column(alias, sq.ID), bound.sql))
         labels = np.labels or self._labels_from_where(np.var)
         names = labels or (bound.names if bound is not None else ())
@@ -542,14 +540,25 @@ class _MatchBuilder:
             self.conds.append(sq.is_in(sq.column(alias, sq.LABEL), labels))
         ce = CE(sq.column(alias, sq.ID), ty.NODE, alias, names)
         self._prop_conditions(alias, np.props, names, is_node=True)
-        if np.var and bound is None:
+        if not np.var:
+            return ce
+        if bound is None:
             self._bind(np.var, ce)
-        elif np.var and bound is not None:
+        else:
             # Same node, now joined: later reads use the joined row.
             self.scope = self.scope.with_var(
                 np.var, CE(bound.sql, ty.NODE, alias, names, const=bound.const)
             )
         return ce
+
+    def _bound_node(self, var: str | None) -> CE | None:
+        """The node an earlier pattern or clause bound `var` to, if any."""
+        if not var or not self.scope.has(var):
+            return None
+        bound = self.scope.get(var)
+        if bound.t.kind not in (Kind.NODE, Kind.ANY, Kind.NULL):
+            raise CompileError(ecs.EG_ERR_NOT_NODE.format(name=var))
+        return bound
 
     def _labels_from_where(self, var: str | None) -> tuple[str, ...]:
         """Labels a WHERE conjunct requires of an unlabelled node, if any.

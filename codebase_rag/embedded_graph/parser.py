@@ -190,39 +190,49 @@ class _Parser:
         return a.SingleQuery(tuple(clauses))
 
     def clause(self) -> a.Clause | None:
-        if self.at_word(ecs.EgKw.OPTIONAL):
-            self.advance()
-            self.expect_word(ecs.EgKw.MATCH)
-            return self.match(optional=True)
-        if self.accept_word(ecs.EgKw.MATCH):
-            return self.match(optional=False)
-        if self.accept_word(ecs.EgKw.UNWIND):
-            expr = self.expression()
-            self.expect_word(ecs.EgKw.AS)
-            return a.Unwind(expr, self.variable())
-        if self.accept_word(ecs.EgKw.WITH):
-            return self.projection(is_return=False)
-        if self.accept_word(ecs.EgKw.RETURN):
-            return self.projection(is_return=True)
-        if self.accept_word(ecs.EgKw.CREATE):
-            return a.Create(self.pattern_list())
-        if self.accept_word(ecs.EgKw.MERGE):
-            return self.merge()
-        if self.accept_word(ecs.EgKw.SET):
-            return a.SetClause(self.set_items())
-        if self.accept_word(ecs.EgKw.REMOVE):
-            return self.remove()
-        if self.at_word(ecs.EgKw.DETACH):
-            self.advance()
-            self.expect_word(ecs.EgKw.DELETE)
-            return a.Delete(True, self.expression_list())
-        if self.accept_word(ecs.EgKw.DELETE):
-            return a.Delete(False, self.expression_list())
-        if self.accept_word(ecs.EgKw.FOREACH):
-            return self.foreach()
-        if self.accept_word(ecs.EgKw.CALL):
-            return self.call()
-        return None
+        tok = self.tok
+        parse = (
+            _CLAUSE_PARSERS.get(tok.text.upper())
+            if tok.kind == ecs.EgTok.IDENT
+            else None
+        )
+        if parse is None:
+            return None
+        self.advance()
+        return parse(self)
+
+    # The clauses past their keyword, which `clause` has consumed.
+
+    def _optional_match(self) -> a.Match:
+        self.expect_word(ecs.EgKw.MATCH)
+        return self.match(optional=True)
+
+    def _required_match(self) -> a.Match:
+        return self.match(optional=False)
+
+    def _unwind(self) -> a.Unwind:
+        expr = self.expression()
+        self.expect_word(ecs.EgKw.AS)
+        return a.Unwind(expr, self.variable())
+
+    def _with(self) -> a.Projection:
+        return self.projection(is_return=False)
+
+    def _return(self) -> a.Projection:
+        return self.projection(is_return=True)
+
+    def _create(self) -> a.Create:
+        return a.Create(self.pattern_list())
+
+    def _set(self) -> a.SetClause:
+        return a.SetClause(self.set_items())
+
+    def _detach_delete(self) -> a.Delete:
+        self.expect_word(ecs.EgKw.DELETE)
+        return a.Delete(True, self.expression_list())
+
+    def _delete(self) -> a.Delete:
+        return a.Delete(False, self.expression_list())
 
     def match(self, optional: bool) -> a.Match:
         patterns = self.pattern_list()
@@ -706,6 +716,11 @@ class _Parser:
             return a.Var(tok.text)
         if tok.kind != ecs.EgTok.IDENT:
             raise self.error(ecs.EG_EXPECT_EXPRESSION)
+        return self._word_atom(tok)
+
+    def _word_atom(self, tok: Token) -> a.Expr:
+        """An atom spelled by a word: a literal, CASE, a quantifier, a call
+        or a variable."""
         upper = tok.text.upper()
         if upper in _WORD_LITERALS:
             self.advance()
@@ -816,6 +831,24 @@ class _Parser:
         default = self.expression() if self.accept_word(ecs.EgKw.ELSE) else None
         self.expect_word(ecs.EgKw.END)
         return a.Case(subject, tuple(whens), default)
+
+
+# The word that opens each clause, and what parses the rest of it.
+_CLAUSE_PARSERS: dict[str, Callable[[_Parser], a.Clause]] = {
+    ecs.EgKw.OPTIONAL: _Parser._optional_match,
+    ecs.EgKw.MATCH: _Parser._required_match,
+    ecs.EgKw.UNWIND: _Parser._unwind,
+    ecs.EgKw.WITH: _Parser._with,
+    ecs.EgKw.RETURN: _Parser._return,
+    ecs.EgKw.CREATE: _Parser._create,
+    ecs.EgKw.MERGE: _Parser.merge,
+    ecs.EgKw.SET: _Parser._set,
+    ecs.EgKw.REMOVE: _Parser.remove,
+    ecs.EgKw.DETACH: _Parser._detach_delete,
+    ecs.EgKw.DELETE: _Parser._delete,
+    ecs.EgKw.FOREACH: _Parser.foreach,
+    ecs.EgKw.CALL: _Parser.call,
+}
 
 
 def _token_source(tok: Token) -> str:

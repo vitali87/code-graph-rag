@@ -342,18 +342,37 @@ class SignatureChanger:
         allow_heuristic: bool,
         patcher: Patcher,
     ) -> _Candidate:
-        path, line, col = row["path"], row["line"], row["col"]
-        resolution = row["resolution"]
-        if path is None or line is None or col is None:
+        path, line, col = _mappable_location(row, allow_heuristic)
+        source, call = self._site_call(row, (path, line, col), patcher)
+        args = call.child_by_field_name(cs.FIELD_ARGUMENTS)
+        if args is None or args.type != cs.TS_ARGUMENT_LIST:
+            # `helper(x for x in xs)`: a generator, not a list of values.
             raise _Unmapped(
-                cs.SIGNATURE_SITE_NO_LOCATION.format(
-                    resolution=resolution or cs.EdgeResolution.DYNAMIC.value
-                )
+                cs.SIGNATURE_SITE_UNREADABLE.format(text=_text(args or call, source))
             )
-        if resolution in AMBIGUOUS and not allow_heuristic:
-            raise _Unmapped(cs.SIGNATURE_SITE_GUESSED.format(resolution=resolution))
-        if get_language_for_extension(Path(path).suffix) != cs.SupportedLanguage.PYTHON:
-            raise _Unmapped(cs.SIGNATURE_SITE_NOT_PYTHON.format(path=path))
+        if _binds_its_receiver(header) and _passes_receiver(call, source, header.qn):
+            # `Base.f(obj, a)` passes `self` as its first argument: binding
+            # it to the first declared parameter would shift every value
+            # one slot. Left as written rather than guessed at.
+            raise _Unmapped(
+                cs.SIGNATURE_SITE_EXPLICIT_RECEIVER.format(text=_text(call, source))
+            )
+        bound = _bind_arguments(args, source, old)
+        site = SignatureSite(
+            _CALL, path, line, col, row["qualified_name"], row["resolution"]
+        )
+        return _Candidate(
+            site, (args.start_byte, args.end_byte), _text(args, source), bound
+        )
+
+    def _site_call(
+        self,
+        row: graph_query.CallSiteRow,
+        location: tuple[str, int, int],
+        patcher: Patcher,
+    ) -> tuple[bytes, Node]:
+        """The site's file and the call node the row records in it."""
+        path, line, col = location
         try:
             source = patcher.source(path)
         except PatcherError as error:
@@ -370,24 +389,7 @@ class SignatureChanger:
         call = call_node_at(root, line, col, recorded_end)
         if call is None:
             raise _Unmapped(cs.SIGNATURE_SITE_NO_CALL)
-        args = call.child_by_field_name(cs.FIELD_ARGUMENTS)
-        if args is None or args.type != cs.TS_ARGUMENT_LIST:
-            # `helper(x for x in xs)`: a generator, not a list of values.
-            raise _Unmapped(
-                cs.SIGNATURE_SITE_UNREADABLE.format(text=_text(args or call, source))
-            )
-        if _binds_its_receiver(header) and _passes_receiver(call, source, header.qn):
-            # `Base.f(obj, a)` passes `self` as its first argument: binding
-            # it to the first declared parameter would shift every value
-            # one slot. Left as written rather than guessed at.
-            raise _Unmapped(
-                cs.SIGNATURE_SITE_EXPLICIT_RECEIVER.format(text=_text(call, source))
-            )
-        bound = _bind_arguments(args, source, old)
-        site = SignatureSite(_CALL, path, line, col, row["qualified_name"], resolution)
-        return _Candidate(
-            site, (args.start_byte, args.end_byte), _text(args, source), bound
-        )
+        return source, call
 
     # -- staging and applying --
 
@@ -489,6 +491,26 @@ class SignatureChanger:
         return report
 
 
+def _mappable_location(
+    row: graph_query.CallSiteRow, allow_heuristic: bool
+) -> tuple[str, int, int]:
+    """The site's path, line and column: `_Unmapped` for one with no
+    location, a guessed edge not opted into, or a file not in Python."""
+    path, line, col = row["path"], row["line"], row["col"]
+    resolution = row["resolution"]
+    if path is None or line is None or col is None:
+        raise _Unmapped(
+            cs.SIGNATURE_SITE_NO_LOCATION.format(
+                resolution=resolution or cs.EdgeResolution.DYNAMIC.value
+            )
+        )
+    if resolution in AMBIGUOUS and not allow_heuristic:
+        raise _Unmapped(cs.SIGNATURE_SITE_GUESSED.format(resolution=resolution))
+    if get_language_for_extension(Path(path).suffix) != cs.SupportedLanguage.PYTHON:
+        raise _Unmapped(cs.SIGNATURE_SITE_NOT_PYTHON.format(path=path))
+    return path, line, col
+
+
 def _binds_its_receiver(header: _Header) -> bool:
     """An instance method: called through an instance, `self` is implicit.
 
@@ -515,25 +537,37 @@ def _passes_receiver(call: Node, source: bytes, method_qn: str) -> bool:
     class leaves an instance call unmapped, which costs a hand edit; erring
     the other way shifts every argument one slot.
     """
-    function = call.child_by_field_name(cs.FIELD_FUNCTION)
-    target = (
-        function.child_by_field_name(cs.FIELD_OBJECT)
-        if function is not None and function.type == cs.TS_PY_ATTRIBUTE
-        else None
-    )
+    target = _call_receiver(call)
     if target is None:
         return False
     if target.type == cs.TS_PY_CALL:
         callee = target.child_by_field_name(cs.FIELD_FUNCTION)
         return callee is not None and _text(callee, source) == cs.PY_TYPE_BUILTIN
+    name = _receiver_name(target, source)
+    return name is not None and _names_class(name, method_qn)
+
+
+def _call_receiver(call: Node) -> Node | None:
+    """`X` in a call `X.f(...)`; None for a call of a bare name."""
+    function = call.child_by_field_name(cs.FIELD_FUNCTION)
+    if function is None or function.type != cs.TS_PY_ATTRIBUTE:
+        return None
+    return function.child_by_field_name(cs.FIELD_OBJECT)
+
+
+def _receiver_name(target: Node, source: bytes) -> str | None:
+    """The name a receiver spells: an attribute's last part, or a name read
+    as what an import binds to it; None for any other expression."""
     if target.type == cs.TS_PY_ATTRIBUTE:
         attribute = target.child_by_field_name(cs.TS_PY_FIELD_ATTRIBUTE)
-        name = _text(attribute, source) if attribute is not None else ""
-    elif target.type == cs.TS_PY_IDENTIFIER:
+        return _text(attribute, source) if attribute is not None else ""
+    if target.type == cs.TS_PY_IDENTIFIER:
         name = _text(target, source)
-        name = _imported_as(target, source, name) or name
-    else:
-        return False
+        return _imported_as(target, source, name) or name
+    return None
+
+
+def _names_class(name: str, method_qn: str) -> bool:
     owner = method_qn.rsplit(cs.SEPARATOR_DOT, 2)
     return (
         name in (cs.PY_KEYWORD_CLS, cs.PY_CLASS_ATTRIBUTE)
