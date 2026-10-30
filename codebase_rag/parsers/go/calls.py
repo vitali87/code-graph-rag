@@ -533,7 +533,8 @@ class GoCallResolution:
             )
         # A struct lacking the method may still promote it from an embedded
         # field, which this walk does not model; that stays the resolver's
-        # call, as it does for a typed variable (`_typed_receiver_lacks_method`).
+        # call, as it does for a typed variable
+        # (`PythonResolver.typed_receiver_lacks_method`).
         callee = (
             self._resolver._try_resolve_method(class_qn, method) if class_qn else None
         )

@@ -1145,19 +1145,19 @@ class TestDequeBfs:
 
 class TestSeparatorPattern:
     def test_splits_on_dot(self) -> None:
-        from codebase_rag.parsers.call_resolver import _SEPARATOR_PATTERN
+        from codebase_rag.parsers.call_site import SEPARATOR_PATTERN
 
-        assert _SEPARATOR_PATTERN.split("a.b.c") == ["a", "b", "c"]
+        assert SEPARATOR_PATTERN.split("a.b.c") == ["a", "b", "c"]
 
     def test_splits_on_colon(self) -> None:
-        from codebase_rag.parsers.call_resolver import _SEPARATOR_PATTERN
+        from codebase_rag.parsers.call_site import SEPARATOR_PATTERN
 
-        assert _SEPARATOR_PATTERN.split("module:func") == ["module", "func"]
+        assert SEPARATOR_PATTERN.split("module:func") == ["module", "func"]
 
     def test_splits_on_double_colon(self) -> None:
-        from codebase_rag.parsers.call_resolver import _SEPARATOR_PATTERN
+        from codebase_rag.parsers.call_site import SEPARATOR_PATTERN
 
-        assert _SEPARATOR_PATTERN.split("crate::module::func") == [
+        assert SEPARATOR_PATTERN.split("crate::module::func") == [
             "crate",
             "",
             "module",
@@ -1166,15 +1166,15 @@ class TestSeparatorPattern:
         ]
 
     def test_no_separator_returns_single_element(self) -> None:
-        from codebase_rag.parsers.call_resolver import _SEPARATOR_PATTERN
+        from codebase_rag.parsers.call_site import SEPARATOR_PATTERN
 
-        assert _SEPARATOR_PATTERN.split("simple") == ["simple"]
+        assert SEPARATOR_PATTERN.split("simple") == ["simple"]
 
     def test_last_element_matches_function_name(self) -> None:
-        from codebase_rag.parsers.call_resolver import _SEPARATOR_PATTERN
+        from codebase_rag.parsers.call_site import SEPARATOR_PATTERN
 
-        assert _SEPARATOR_PATTERN.split("a.b.func")[-1] == "func"
-        assert _SEPARATOR_PATTERN.split("module:method")[-1] == "method"
+        assert SEPARATOR_PATTERN.split("a.b.func")[-1] == "func"
+        assert SEPARATOR_PATTERN.split("module:method")[-1] == "method"
 
 
 class TestChainedMethodPattern:

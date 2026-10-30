@@ -1,6 +1,6 @@
 """The resolver's name memos are bounded.
 
-`_trie_search_name`, the candidate-name split and Go's stored result parse
+`trie_search_name`, the candidate-name split and Go's stored result parse
 memoised into module dicts that were never cleared. A long-lived MCP server
 or `cgr watch` indexing several repositories kept every call name and
 qualified name it had ever seen.
@@ -10,15 +10,15 @@ from __future__ import annotations
 
 from codebase_rag import constants as cs
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.parsers import call_resolver
+from codebase_rag.parsers import call_resolver, call_site
 from codebase_rag.parsers.go import interfaces as go_ifaces
 
 
 def test_the_search_name_memo_stays_within_its_bound() -> None:
-    call_resolver._trie_search_name.cache_clear()
+    call_site.trie_search_name.cache_clear()
     for i in range(cs.RESOLVER_NAME_CACHE_SIZE + 10):
-        assert call_resolver._trie_search_name(f"pkg.mod.f{i}") == f"f{i}"
-    info = call_resolver._trie_search_name.cache_info()
+        assert call_site.trie_search_name(f"pkg.mod.f{i}") == f"f{i}"
+    info = call_site.trie_search_name.cache_info()
     assert info.currsize == cs.RESOLVER_NAME_CACHE_SIZE
 
 

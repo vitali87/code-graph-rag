@@ -19,7 +19,8 @@ from tree_sitter import Language, Parser
 
 from codebase_rag import constants as cs
 from codebase_rag.parsers.call_processor import _exceeds_receiver_chain_cap
-from codebase_rag.parsers.call_resolver import CallResolver, _split_receiver_chain
+from codebase_rag.parsers.call_resolver import CallResolver
+from codebase_rag.parsers.call_site import split_receiver_chain
 from evals.cgr_graph import capture
 
 _CAP = cs.MAX_RECEIVER_CHAIN_HOPS
@@ -27,14 +28,14 @@ _CAP = cs.MAX_RECEIVER_CHAIN_HOPS
 
 def test_split_stops_past_the_cap() -> None:
     at_cap = "a" + ".m()" * (_CAP - 1)
-    assert _split_receiver_chain(at_cap) == ["a", *["m()"] * (_CAP - 1)]
-    assert _split_receiver_chain(at_cap + ".m()") is None
+    assert split_receiver_chain(at_cap) == ["a", *["m()"] * (_CAP - 1)]
+    assert split_receiver_chain(at_cap + ".m()") is None
 
 
 def test_split_still_ignores_dots_inside_arguments() -> None:
     # Dots inside arguments are not hops, so they never count toward the cap.
     args = ".".join(["x"] * (_CAP * 2))
-    assert _split_receiver_chain(f"a.m({args})") == ["a", f"m({args})"]
+    assert split_receiver_chain(f"a.m({args})") == ["a", f"m({args})"]
 
 
 def _python_calls(source: str) -> list:
