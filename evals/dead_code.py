@@ -19,6 +19,7 @@ from codebase_rag.types_defs import DeadCodeConfig
 from . import constants as ec
 from . import logs as ls
 from .cgr_graph import capture
+from .report_io import write_text_atomic
 from .score import _prf
 from .types_defs import DiffBucket, LocationStats, ScoreResult, ScoreRow
 
@@ -81,7 +82,7 @@ def main(
 
     out_dir.mkdir(parents=True, exist_ok=True)
     report = out_dir / ec.DEAD_CODE_DIFF_FILENAME
-    report.write_text(json.dumps(sorted(dead), indent=2), encoding="utf-8")
+    write_text_atomic(report, json.dumps(sorted(dead), indent=2))
 
 
 if __name__ == "__main__":

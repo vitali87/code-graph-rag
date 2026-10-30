@@ -35,6 +35,7 @@ from codebase_rag.types_defs import (
 from . import constants as ec
 from . import logs as ls
 from .cgr_graph import capture
+from .report_io import write_text_atomic
 from .score import _prf
 from .types_defs import DiffBucket, LocationStats, ScoreResult, ScoreRow
 
@@ -209,7 +210,7 @@ def main(
         cs.KEY_TRUNCATED: report.truncated or links_truncated,
     }
     report_path = out_dir / ec.DUPLICATES_REPORT_FILENAME
-    report_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    write_text_atomic(report_path, json.dumps(payload, indent=2))
 
 
 if __name__ == "__main__":

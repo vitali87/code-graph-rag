@@ -40,6 +40,8 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.sync.checkout_state import state_dir
 
+from .report_io import write_text_atomic
+
 CORPUS_DIR = Path(__file__).parent / "flows_corpus"
 EXPECTED_FILE = CORPUS_DIR / "expected.json"
 
@@ -147,7 +149,7 @@ def main(
         f"{s.language},{s.tp},{s.fp},{s.fn},{s.precision:.4f},{s.recall:.4f}"
         for s in scores
     ]
-    results.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    write_text_atomic(results, "\n".join(lines) + "\n")
 
 
 if __name__ == "__main__":

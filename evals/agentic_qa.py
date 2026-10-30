@@ -39,6 +39,7 @@ if TYPE_CHECKING:
 
 from . import constants as ec
 from . import logs as ls
+from .report_io import write_text_atomic
 from .retrieval.python import (
     _callee_name,
     first_party_property_names,
@@ -561,7 +562,7 @@ def _init_records_file(
     """
     header = json.dumps({"fingerprint": fingerprint})
     if not resume or not records_path.exists():
-        records_path.write_text(header + "\n")
+        write_text_atomic(records_path, header + "\n")
         return {}
     lines = records_path.read_text().splitlines()
     stored: object = None
@@ -742,7 +743,7 @@ def main(
         "summary": results,
         "records": all_records,
     }
-    out_path.write_text(json.dumps(payload, indent=2) + "\n")
+    write_text_atomic(out_path, json.dumps(payload, indent=2) + "\n")
     logger.success(ls.WROTE_SCORES.format(path=out_path))
     _print_summary(results)
 

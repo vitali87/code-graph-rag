@@ -43,6 +43,7 @@ from codebase_rag.types_defs import JsonValue, PropertyValue, ResultRow, ResultV
 
 from . import constants as ec
 from . import logs as ls
+from .report_io import write_text_atomic
 from .types_defs import ParityDump, ParityQueryRecording, ParityRecording
 
 app = typer.Typer(no_args_is_help=True)
@@ -150,8 +151,8 @@ def dump(
         nodes = ingestor.fetch_all(ec.PARITY_DUMP_NODES)
         rels = ingestor.fetch_all(ec.PARITY_DUMP_RELS)
         params = _params(ingestor, project)
-    out.write_text(
-        json.dumps({"nodes": nodes, "rels": rels, "params": params}, default=str)
+    write_text_atomic(
+        out, json.dumps({"nodes": nodes, "rels": rels, "params": params}, default=str)
     )
     logger.info(
         ls.PARITY_DUMPED.format(nodes=len(nodes), rels=len(rels), project=project)
@@ -256,7 +257,7 @@ def run(
                     ms=(time.perf_counter() - start) * ec.PARITY_MS_PER_S,
                 )
     recording["results"] = results
-    out.write_text(json.dumps(recording, default=str))
+    write_text_atomic(out, json.dumps(recording, default=str))
     logger.info(ls.PARITY_RAN.format(count=len(results), engine=engine, path=out))
 
 

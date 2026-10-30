@@ -29,6 +29,7 @@ from codebase_rag.parser_loader import load_parsers
 from . import constants as ec
 from . import logs as ls
 from .cgr_graph import CapturingIngestor
+from .report_io import write_text_atomic
 from .types_defs import IndexingStats
 
 console = Console()
@@ -209,7 +210,7 @@ def _report(stats: IndexingStats, out_dir: Path) -> None:
     if out_path.exists():
         existing = json.loads(out_path.read_text())
     existing[stats["corpus"]] = stats
-    out_path.write_text(json.dumps(existing, indent=2, sort_keys=True) + "\n")
+    write_text_atomic(out_path, json.dumps(existing, indent=2, sort_keys=True) + "\n")
     logger.success(ls.WROTE_SCORES.format(path=out_path))
 
     table = Table(title=f"Indexing benchmark — {stats['corpus']}")

@@ -15,6 +15,7 @@ from . import constants as ec
 from . import logs as ls
 from .calls_trace import trace_calls
 from .cgr_graph import extract_cgr_calls
+from .report_io import write_text_atomic
 
 console = Console()
 
@@ -502,9 +503,9 @@ def main(
 
     out_dir.mkdir(parents=True, exist_ok=True)
     diff_path = out_dir / ec.L3_DIFF_FILENAME
-    diff_path.write_text(
+    write_text_atomic(
+        diff_path,
         json.dumps({"missing": [f"{a} -> {b}" for a, b in missed]}, indent=2),
-        encoding="utf-8",
     )
     logger.success(ls.WROTE_DIFF.format(path=diff_path))
 
