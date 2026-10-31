@@ -1161,6 +1161,17 @@ CONTRACT_RENAME_MISSING = "{old} was not renamed to {new}"
 CONTRACT_RENAME_UNEXPECTED = "unexpected rename: {pairs}"
 CONTRACT_SYMBOLS_MOVED = "symbol set changed: added {added}; removed {removed}"
 CONTRACT_CALLERS_MOVED = "call site count changed: {before} before, {after} after"
+# A touched file that no longer parses (issue #3232).
+DELTA_PARSE_ERROR = "{path}:{line}:{col}: {detail}"
+DELTA_PARSE_MISSING = "missing {token!r}"
+DELTA_PARSE_UNEXPECTED = "syntax error at {token!r}"
+DELTA_PARSE_TOKEN_CHARS = 24
+# What declares a definition the broken tree lost, read off its base line:
+# the word before the name and the marks between them (`def `, `function* `,
+# a Go receiver's `T) `), or nothing but the line's start (a TypeScript
+# method). A call left behind (`return f(`) holds neither.
+DELTA_DECLARATION_LEAD_PATTERN = rb"(\w+)(\W*)$"
+DELTA_DECLARATION_LINE_START_PATTERN = rb"(?m)^[^\w\n]*"
 CONTRACT_DANGLING = "dangling callers: {sites}"
 CONTRACT_SITES_UNMAPPED = "call sites neither mapped nor listed as unmapped: {sites}"
 CONTRACT_HEURISTIC_REWRITTEN = "sites resolved by guesswork were rewritten: {sites}"

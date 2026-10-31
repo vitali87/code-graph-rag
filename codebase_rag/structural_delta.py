@@ -40,7 +40,9 @@ from .dead_code import (
 from .duplicates import _jaccard
 from .graph_query import QueryFn, _longer_project_prefixes, _opt_int, _prefix
 from .language_spec import get_language_for_extension
+from .parser_loader import load_parsers
 from .types_defs import PropertyDict, ReingestReport, ResultRow
+from .utils.source_encoding import grammar_bytes
 
 _METHOD_LABELS = frozenset({cs.NodeLabel.METHOD.value})
 
@@ -226,6 +228,20 @@ class StaleImporter(TypedDict):
     line: int
 
 
+class ParseError(TypedDict):
+    """A touched file that parsed at the base and no longer does (#3232)."""
+
+    path: str
+    line: int
+    col: int
+    message: str
+    # Definitions the base held in the file that the broken tree lost while
+    # the edited text still declares them: tree-sitter's recovery dropped them,
+    # not the edit, so they are not `removed` and nothing calling them is
+    # dangling.
+    unreliable: list[str]
+
+
 class StructuralDelta(TypedDict):
     paths: list[str]
     reparsed: list[str]
@@ -243,6 +259,9 @@ class StructuralDelta(TypedDict):
     stale_importers: list[StaleImporter]
     tests_reaching: list[TestReach]
     call_sites: SiteCounts
+    # Filled by `observe` when the caller can read the base version of each
+    # file; empty otherwise.
+    parse_errors: list[ParseError]
     reingest_ms: float
     delta_ms: float
 
@@ -2667,6 +2686,7 @@ def structural_delta(
         )
         if touched
         else [],
+        parse_errors=[],
         call_sites=SiteCounts(
             before=_inbound_calls(before), after=_inbound_calls(after)
         ),
@@ -2734,11 +2754,14 @@ def observe(
     apply: Callable[[], ReingestReport],
     repo_root: Path | None = None,
     declared_renames: frozenset[tuple[str, str]] = frozenset(),
+    base_source: Callable[[str], bytes | None] | None = None,
 ) -> StructuralDelta:
     """Snapshot `paths`, run `apply` (the scoped re-ingest), snapshot, diff.
 
     The caller holds whatever lock serialises graph writes; both reads and
-    the re-ingest must see one generation of the graph.
+    the re-ingest must see one generation of the graph. `base_source` reads
+    a path's content before the edit (None for a file that had none): with
+    it, a file the edit left unparsable is reported in `parse_errors`.
     """
     path_list = sorted(set(paths))
     started = time.perf_counter()
@@ -2768,6 +2791,18 @@ def observe(
         declared_renames=declared_renames,
         longer_project_prefixes=longer_prefixes,
     )
+    if base_source is not None and repo_root is not None:
+        # A path the re-ingest skipped under the project's exclusions is not
+        # in the graph, so its syntax is nothing the check measures.
+        skipped = set(report.skipped)
+        indexed = [path for path in path_list if path not in skipped]
+        _report_parse_errors(
+            delta,
+            before,
+            new_parse_errors(repo_root, indexed, base_source),
+            repo_root,
+            base_source,
+        )
     # The re-ingest's own clock covers only its inner work; the caller sees
     # the wall time of the whole apply step, and `delta_ms` is everything
     # this function added on top of it: both snapshots and the diff.
@@ -2777,10 +2812,188 @@ def observe(
     return delta
 
 
+def new_parse_errors(
+    repo_root: Path, paths: Iterable[str], base_source: Callable[[str], bytes | None]
+) -> list[ParseError]:
+    """The files among `paths` that no longer parse, though their base did.
+
+    A file whose base did not parse either (an older break, or syntax the
+    grammar does not know) is no finding of this edit; a file with no base
+    is held to parsing like any other.
+    """
+    # Deferred: the parser package would load at CLI start-up through
+    # editing -> structural_delta (issue #2253).
+    from .parsers.cpp.preproc_recovery import parse_with_preproc_recovery
+
+    parsers, _queries = load_parsers()
+    errors: list[ParseError] = []
+    for path in sorted(set(paths)):
+        language = get_language_for_extension(Path(path).suffix)
+        if not isinstance(language, cs.SupportedLanguage):
+            continue
+        parser = parsers.get(language)
+        if parser is None:
+            continue
+        try:
+            content = (repo_root / path).read_bytes()
+        except OSError:
+            continue
+        # Parsed as ingestion parses it: a C++ annotation macro or a
+        # conditional directive the plain grammar splits on is recovered.
+        root = parse_with_preproc_recovery(
+            parser, grammar_bytes(content, language, repo_root / path), language
+        ).root_node
+        if not root.has_error:
+            continue
+        base = base_source(path)
+        if (
+            base is not None
+            and parse_with_preproc_recovery(
+                parser, grammar_bytes(base, language, repo_root / path), language
+            ).root_node.has_error
+        ):
+            continue
+        node = _first_error(root)
+        line, col = node.start_point[0] + 1, node.start_point[1]
+        detail = (
+            cs.DELTA_PARSE_MISSING.format(token=node.type)
+            if node.is_missing
+            else cs.DELTA_PARSE_UNEXPECTED.format(
+                token=(node.text or b"")
+                .decode(cs.ENCODING_UTF8, errors="replace")
+                .split("\n", 1)[0][: cs.DELTA_PARSE_TOKEN_CHARS]
+            )
+        )
+        errors.append(
+            ParseError(
+                path=path,
+                line=line,
+                col=col,
+                message=cs.DELTA_PARSE_ERROR.format(
+                    path=path, line=line, col=col, detail=detail
+                ),
+                unreliable=[],
+            )
+        )
+    return errors
+
+
+def _first_error(node: Node) -> Node:
+    """The first MISSING node, or the first stray token of the first ERROR.
+
+    The outermost ERROR is where the parse broke; what nests inside it is
+    the recovery's guess at the rest. It can also swallow whole definitions
+    before the break (`def g()` without its colon wraps the file from line
+    1), so the position is its first child that is not one of them.
+    """
+    while not node.is_missing:
+        if node.is_error:
+            return next(
+                (c for c in node.children if not (c.is_named and not c.has_error)),
+                node,
+            )
+        broken = next((c for c in node.children if c.has_error or c.is_missing), None)
+        if broken is None:
+            return node
+        node = broken
+    return node
+
+
+def _report_parse_errors(
+    delta: StructuralDelta,
+    before: Snapshot,
+    errors: list[ParseError],
+    repo_root: Path,
+    base_source: Callable[[str], bytes | None],
+) -> None:
+    """Attach `errors`, and stop blaming the edit for what they hid."""
+    broken = {error["path"]: error for error in errors}
+    removed = {
+        qn: definition
+        for qn in delta["symbols"]["removed"]
+        if (definition := before.definitions.get(qn)) is not None
+        and definition.path in broken
+    }
+    texts = {
+        path: (_read_or_none(repo_root / path), base_source(path))
+        for path in {definition.path for definition in removed.values()}
+    }
+    # A definition whose declaration the edit erased from the text was
+    # deleted, not lost to the recovery, even with a call to it left behind:
+    # its callers dangle as any removal's do.
+    lost = {
+        qn
+        for qn, definition in removed.items()
+        if not _erased_by_the_edit(definition, *texts[definition.path])
+    }
+    for qn in sorted(lost):
+        broken[removed[qn].path]["unreliable"].append(qn)
+    delta["symbols"]["removed"] = [
+        qn for qn in delta["symbols"]["removed"] if qn not in lost
+    ]
+    delta["dangling_callers"] = [
+        c for c in delta["dangling_callers"] if c["target"] not in lost
+    ]
+    delta["dangling_importers"] = [
+        i for i in delta["dangling_importers"] if i["target"] not in lost
+    ]
+    delta["parse_errors"] = errors
+
+
+def _read_or_none(path: Path) -> bytes | None:
+    try:
+        return path.read_bytes()
+    except OSError:
+        return None
+
+
+def _erased_by_the_edit(
+    definition: Definition, edited: bytes | None, base: bytes | None
+) -> bool:
+    """True when the base declares `definition` and the edited file does not.
+
+    No parse is trusted here: the edited tree is the broken one. A name no
+    source spells (`anonymous_3_4`), or a text that cannot be read, is left
+    to the recovery.
+    """
+    if edited is None or base is None:
+        return False
+    declared = _declaration(definition, base)
+    return declared.search(base) is not None and declared.search(edited) is None
+
+
+def _declaration(definition: Definition, base: bytes) -> re.Pattern[bytes]:
+    """How the base declares `definition`, as a pattern for the edited text.
+
+    The name as the first of its graph lines in the base spells it, with
+    the word and marks before it there (`def f`, `function f`, `func f`,
+    `class C`, `void m`, `T) m` for a Go method), or opening a line when
+    nothing precedes it: a call left behind (`return f(`, `t.m(`) declares
+    nothing. The bare word when those lines do not spell it.
+    """
+    name = re.escape(definition.name.encode(cs.ENCODING_UTF8)) + rb"(?!\w)"
+    word = re.compile(rb"(?<!\w)" + name)
+    # Split as tree-sitter counts rows, which only `\n` ends.
+    lines = base.split(b"\n")[max(definition.start_line - 1, 0) : definition.end_line]
+    spelt = next(((line, m) for line in lines if (m := word.search(line))), None)
+    if spelt is None:
+        return word
+    line, match = spelt
+    lead = re.search(cs.DELTA_DECLARATION_LEAD_PATTERN, line[: match.start()])
+    if lead is None:
+        return re.compile(cs.DELTA_DECLARATION_LINE_START_PATTERN + name)
+    marks = [re.escape(bytes([c])) for c in lead[2] if not bytes([c]).isspace()]
+    joint = rb"\s*" + rb"\s*".join(marks) + rb"\s*" if marks else rb"\s+"
+    return re.compile(rb"(?<!\w)" + re.escape(lead[1]) + joint + name)
+
+
 def has_findings(delta: StructuralDelta) -> bool:
     """True when the delta reports something an author should look at."""
     return bool(
-        delta["dangling_callers"]
+        # A file the edit left unparsable is re-ingested from whatever the
+        # recovery kept, so it outranks everything else (issue #3232).
+        delta["parse_errors"]
+        or delta["dangling_callers"]
         # An import of a removed name fails when the importing module loads,
         # with or without a call site to go with it (issue #2516).
         or delta["dangling_importers"]
