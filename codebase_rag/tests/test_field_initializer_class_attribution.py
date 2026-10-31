@@ -666,3 +666,41 @@ public class Both {
     assert not any(s.endswith("N.Both") for s, _ in instantiates), instantiates
     module_edges = [(s, t) for s, t in instantiates if s.endswith("App")]
     assert len(module_edges) == 1, instantiates
+
+
+def test_csharp_nested_generic_twin_initializers_attribute_to_own_class(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A nested class inside a generic twin (`Outer<T>.Inner` beside
+    # `Outer.Inner`) has no single constructor here, so the class node
+    # owns the initializers. The registered class qn spells EVERY type
+    # segment's arity, not just the leaf: qualifying the leaf alone
+    # resolves the generic twin's initializer to the non-generic twin's
+    # class node, stealing its edge (issue #3339, Antigravity review).
+    project = temp_repo / "csnestedgeneric"
+    project.mkdir()
+    (project / "App.cs").write_text(
+        """
+namespace N;
+public class Factory { public Factory() {} }
+public class Outer {
+  public class Inner {
+    private readonly Factory f = new Factory();
+  }
+}
+public class Outer<T> {
+  public class Inner {
+    private readonly Factory f = new Factory();
+  }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(project, mock_ingestor, skip_if_missing="c_sharp")
+
+    instantiates = _instantiates(mock_ingestor)
+    assert len(instantiates) == 2, instantiates
+    plain = [e for e in instantiates if e[0].endswith("N.Outer.Inner")]
+    generic = [e for e in instantiates if e[0].endswith("N.Outer`1.Inner")]
+    assert len(plain) == 1, instantiates
+    assert len(generic) == 1, instantiates
