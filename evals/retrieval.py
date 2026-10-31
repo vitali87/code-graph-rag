@@ -32,6 +32,7 @@ from .module_calls import _callee_name, _first_party_names, _is_dunder
 from .score import _diff_bucket, _fmt_name_edge, _prf
 from .structure_report import render, write_outputs
 from .types_defs import (
+    ColGrepEdges,
     DiffBucket,
     LocationStats,
     NameEdge,
@@ -260,7 +261,7 @@ def colgrep_call_edges(
     mode: ec.GrepMode,
     data_dir: Path,
     top_k: int = ec.COLGREP_DEFAULT_TOP_K,
-) -> set[NameEdge]:
+) -> ColGrepEdges:
     root = target.resolve()
     edges: set[NameEdge] = set()
     for name in sorted(first_party):
@@ -270,13 +271,12 @@ def colgrep_call_edges(
             ec.COLGREP_SEARCH,
             _colgrep_search_args(name, mode, top_k),
         )
+        # colgrep exits 0 with no output when nothing matches, even under -e,
+        # so a nonzero exit is a real failure. Scoring it would count that
+        # symbol's callers as misses and quietly lower recall, and one failure
+        # usually means the index or model is broken for every search.
         if completed.returncode != 0:
-            logger.warning(
-                ls.RETRIEVAL_COLGREP_QUERY_FAILED.format(
-                    name=name, error=completed.stderr.strip()
-                )
-            )
-            continue
+            return ColGrepEdges(edges, (name, completed.stderr.strip()))
         for line in completed.stdout.splitlines():
             # colgrep prints absolute paths or paths relative to its cwd,
             # depending on the user's settings; joining onto the root handles
@@ -287,7 +287,7 @@ def colgrep_call_edges(
                 continue
             if rel in files:
                 edges.add(_edge(rel, name))
-    return edges
+    return ColGrepEdges(edges, None)
 
 
 def sample_symbols(symbols: set[str], size: int, seed: int) -> set[str]:
@@ -335,7 +335,17 @@ def _colgrep_conditions_in(
             )
         )
         start = time.perf_counter()
-        edges = colgrep_call_edges(target, first_party, files, mode, data_dir, top_k)
+        edges, failure = colgrep_call_edges(
+            target, first_party, files, mode, data_dir, top_k
+        )
+        if failure is not None:
+            name, error = failure
+            logger.error(
+                ls.RETRIEVAL_COLGREP_QUERY_FAILED.format(
+                    mode=mode.value, name=name, error=error
+                )
+            )
+            raise typer.Exit(code=1)
         seconds = time.perf_counter() - start
         logger.success(
             ls.RETRIEVAL_COLGREP_DONE.format(

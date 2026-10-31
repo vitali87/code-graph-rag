@@ -178,6 +178,9 @@ symbol with no callers still gets up to k files back, and one with more than k
 caller files cannot reach full recall. The arm builds the index once (`colgrep init -y`),
 then runs every search with `--no-update` and `--force-cpu`, and logs the
 index time and the time per search, so the CPU cost sits next to the scores.
+ColGrep exits normally when a search finds nothing, so a search that exits with
+an error is a real failure. The run stops there, rather than score that
+symbol's callers as misses and quietly lower ColGrep's recall.
 
 ColGrep answers one query per process, so the arm runs one search per symbol
 and mode. On `codebase_rag` (about 29,000 symbols) that is too many, hence

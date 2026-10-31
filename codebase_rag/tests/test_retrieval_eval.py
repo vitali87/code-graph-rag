@@ -308,16 +308,18 @@ def test_colgrep_edges_keep_only_graded_files(
     # Absolute and cwd-relative paths both map onto the graded file set; a
     # file outside it or outside the target is dropped.
     data_dir = repo / "cg"
-    assert colgrep_call_edges(repo, {"helper"}, files, ec.GrepMode.NAME, data_dir) == {
+    by_name = colgrep_call_edges(repo, {"helper"}, files, ec.GrepMode.NAME, data_dir)
+    by_call = colgrep_call_edges(repo, {"helper"}, files, ec.GrepMode.CALL, data_dir)
+
+    assert by_name.edges == {
         _edge("pkg/core.py", "helper"),
         _edge("pkg/uses.py", "helper"),
     }
-    assert colgrep_call_edges(repo, {"helper"}, files, ec.GrepMode.CALL, data_dir) == {
-        _edge("pkg/core.py", "helper")
-    }
+    assert by_call.edges == {_edge("pkg/core.py", "helper")}
+    assert by_name.failure is None and by_call.failure is None
 
 
-def test_colgrep_failed_search_is_skipped(
+def test_colgrep_failed_search_stops_the_arm(
     repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fake = _FakeColGrep(
@@ -327,11 +329,44 @@ def test_colgrep_failed_search_is_skipped(
     monkeypatch.setattr(subprocess, "run", fake)
     _trees, files = parse_py_trees(repo)
 
-    edges = colgrep_call_edges(
+    result = colgrep_call_edges(
         repo, {"helper", "build"}, files, ec.GrepMode.NAME, repo / "cg"
     )
 
-    assert edges == {_edge("pkg/core.py", "helper")}
+    # Searches run in name order, so `build` fails first and `helper` is never
+    # asked: a failed search must not be scored as a symbol with no callers.
+    assert result.failure == ("build", "boom")
+    assert len(fake.calls) == 1
+
+
+@needs_rg
+def test_main_stops_on_a_failed_colgrep_search(
+    repo: Path,
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(subprocess, "run", _FakeColGrep({}, fail=frozenset({"run"})))
+    real_which = shutil.which
+
+    def which(cmd: str, mode: int = 1, path: str | None = None) -> str | None:
+        return cmd if cmd == ec.COLGREP_BIN else real_which(cmd, mode, path)
+
+    monkeypatch.setattr(shutil, "which", which)
+    out_dir = tmp_path_factory.mktemp("out")
+
+    with pytest.raises(typer.Exit):
+        main(
+            target=repo,
+            project_name="",
+            out_dir=out_dir,
+            sample=0,
+            seed=0,
+            colgrep=True,
+            colgrep_k=2,
+        )
+
+    # No table is written, so no score with a silent hole in it.
+    assert not (out_dir / ec.RETRIEVAL_SCORES_FILENAME).exists()
 
 
 def test_colgrep_index_reports_failure(

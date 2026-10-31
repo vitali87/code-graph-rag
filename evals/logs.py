@@ -98,7 +98,10 @@ RETRIEVAL_COLGREP_INDEX_FAILED = "ColGrep could not index {target}: {error}"
 RETRIEVAL_EXTRACTING_COLGREP = (
     "Running ColGrep ({mode}, k={top_k}): {count} searches over {target}"
 )
-RETRIEVAL_COLGREP_QUERY_FAILED = "ColGrep search for '{name}' failed: {error}"
+RETRIEVAL_COLGREP_QUERY_FAILED = (
+    "ColGrep ({mode}) search for '{name}' failed; stopping rather than score "
+    "its callers as misses: {error}"
+)
 RETRIEVAL_COLGREP_DONE = (
     "colgrep ({mode}) call edges: {count} "
     "({queries} searches in {seconds:.1f}s, {per_query:.2f}s each)"
