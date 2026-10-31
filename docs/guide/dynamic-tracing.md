@@ -95,6 +95,11 @@ mvn test -DargLine='-javaagent:build/cgr-jvm-agent.jar=include=com.example;repo=
 # Gradle: add the same -javaagent flag to test { jvmArgs ... }
 ```
 
+The agent is built for JDK 24, so the JVM it attaches to must be
+JDK 24 or newer too; an older one refuses to load it and the run fails before
+any test. For a test run that is the forked test JVM, which uses the JDK
+running Maven or Gradle unless a toolchain picks another.
+
 `MAVEN_OPTS` sets only the JVM that runs Maven itself, not the one Surefire
 forks for the tests (`forkCount=1` by default), so an agent passed there
 traces no test method; it reaches the tests only with `-DargLine` (or with

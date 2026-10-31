@@ -47,5 +47,14 @@ def test_flags_already_in_the_surefire_arg_line_are_kept() -> None:
     assert "overrides `-DargLine`" in recipe, recipe
 
 
+def test_the_test_jvm_must_be_new_enough_for_the_agent() -> None:
+    # The agent is built with `--release 24`; an older forked test JVM, which
+    # a toolchain can pick even when Maven itself runs on JDK 24, aborts with
+    # UnsupportedClassVersionError before any test runs.
+    recipe = _jvm_recipe()
+    assert "JDK 24 or newer" in recipe, recipe
+    assert "toolchain" in recipe, recipe
+
+
 def test_the_gradle_line_is_unchanged() -> None:
     assert "test { jvmArgs" in _jvm_recipe()
