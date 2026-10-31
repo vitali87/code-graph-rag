@@ -548,3 +548,6 @@ JS_RECEIVER_METHODS = frozenset({"call", "apply"})
 JS_IDENTIFIER_ESCAPE = r"\\u\{([0-9a-fA-F]+)\}|\\u([0-9a-fA-F]{4})"
 JS_ESCAPE_MARK = "\\"
 JS_EVAL_NAME = "eval"
+# The argument passed for a default a call skips: undefined even where the
+# caller has bound the name `undefined` to something else.
+JS_SKIPPED_ARGUMENT = "void 0"
