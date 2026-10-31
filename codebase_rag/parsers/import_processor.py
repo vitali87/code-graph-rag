@@ -411,8 +411,17 @@ _JSONC_TRAILING_COMMA_RE = re.compile(r",(\s*[}\]])")
 def _js_destructured_names(pattern: Node) -> list[tuple[str, str]]:
     # (local, imported) name pairs bound by an object destructuring pattern:
     # `{ writeFileSync }` -> (writeFileSync, writeFileSync); `{ x: y }` -> (y, x).
+    # A default stands in only for a missing key, so `{ x = d }` reads `x`
+    # as `{ x }` does (issue #3252).
     out: list[tuple[str, str]] = []
-    for child in pattern.named_children:
+    for entry in pattern.named_children:
+        child = (
+            entry.child_by_field_name(cs.FIELD_LEFT)
+            if entry.type == cs.TS_OBJECT_ASSIGNMENT_PATTERN
+            else entry
+        )
+        if child is None:
+            continue
         if child.type == cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN:
             if name := safe_decode_text(child):
                 out.append((name, name))
@@ -422,10 +431,12 @@ def _js_destructured_names(pattern: Node) -> list[tuple[str, str]]:
 
 
 def _js_pair_binding(pair: Node) -> tuple[str, str] | None:
-    # `{ x: y }` binds local `y` to imported `x`; any other value shape
-    # (a nested pattern, a default) binds nothing this reader tracks.
+    # `{ x: y }` and `{ x: y = d }` bind local `y` to imported `x`; any
+    # other value shape (a nested pattern) binds nothing this reader tracks.
     key = pair.child_by_field_name(cs.FIELD_KEY)
     value = pair.child_by_field_name(cs.FIELD_VALUE)
+    if value is not None and value.type == cs.TS_ASSIGNMENT_PATTERN:
+        value = value.child_by_field_name(cs.FIELD_LEFT)
     if key is None or value is None or value.type != cs.TS_IDENTIFIER:
         return None
     imported = safe_decode_text(key)
@@ -433,6 +444,14 @@ def _js_pair_binding(pair: Node) -> tuple[str, str] | None:
     if imported and local:
         return local, imported
     return None
+
+
+def _js_at_module_level(declaration: Node) -> bool:
+    # A declaration at the program's top level, an exported one included.
+    holder = declaration.parent
+    if holder is not None and holder.type == cs.TS_EXPORT_STATEMENT:
+        holder = holder.parent
+    return holder is not None and holder.type == cs.TS_PROGRAM
 
 
 def _js_default_export_local(statement: Node) -> str | None:
@@ -4855,6 +4874,7 @@ class ImportProcessor:
     def _parse_js_ts_imports(
         self, captures: dict, module_qn: str, root_node: Node
     ) -> None:
+        declarations: list[Node] = []
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
             if import_node.type == cs.TS_IMPORT_STATEMENT:
                 self._parse_js_import_statement(import_node, module_qn)
@@ -4864,11 +4884,48 @@ class ImportProcessor:
                 cs.TS_VARIABLE_DECLARATION,
             ):
                 self._parse_js_require(import_node, module_qn)
+                declarations.append(import_node)
 
             elif import_node.type == cs.TS_EXPORT_STATEMENT:
                 self._parse_js_reexport(import_node, module_qn)
                 self._record_js_export_bindings(import_node, module_qn)
+        # Once every namespace of the file is bound, wherever it was written.
+        for decl_node in declarations:
+            self._parse_js_namespace_destructure(decl_node, module_qn)
+
         self._record_commonjs_export_bindings(root_node, module_qn)
+
+    def _parse_js_namespace_destructure(
+        self, decl_node: Node, current_module: str
+    ) -> None:
+        # `const { pad } = U` with `U` an imported binding reads `pad` out
+        # of what `U` names: out of a whole module (`import * as U`,
+        # `const U = require(...)`) that is the export, as `import { pad }`
+        # would bind it (issue #3252); out of an imported object, its member.
+        # Only at module level is `U` sure to be the import: in a function a
+        # parameter or local can shadow it (`function run(U) {...}`), and a
+        # function's locals would leak into the one map the module keeps.
+        if not _js_at_module_level(decl_node):
+            return
+        bindings = self.import_mapping[current_module]
+        for declarator in decl_node.children:
+            if declarator.type != cs.TS_VARIABLE_DECLARATOR:
+                continue
+            name_node = declarator.child_by_field_name(cs.FIELD_NAME)
+            value_node = declarator.child_by_field_name(cs.FIELD_VALUE)
+            if name_node is None or value_node is None:
+                continue
+            # A plain name (`const x = U`) or an array pattern destructures
+            # no key, and only a bare `U` can be the imported name itself.
+            namespace = safe_decode_text(value_node)
+            module = bindings.get(namespace) if namespace else None
+            if module is None:
+                continue
+            is_package = namespace in self.js_ts_package_imports.get(current_module, ())
+            for local, imported in _js_destructured_names(name_node):
+                bindings[local] = f"{module}{cs.SEPARATOR_DOT}{imported}"
+                self._record_import_site(current_module, local, decl_node, imported)
+                self._note_js_package_import(current_module, local, is_package)
 
     def _record_commonjs_export_bindings(self, root_node: Node, module_qn: str) -> None:
         """Record what a CommonJS module publishes as its export table.

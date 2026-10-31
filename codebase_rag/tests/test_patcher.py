@@ -378,7 +378,11 @@ def test_typescript_rename_preserves_syntax(tmp_path: Path) -> None:
     patcher.replace_identifier_at("m.ts", 4, 14, "helper", "assist")
     (result,) = patcher.apply().values()
     assert result.parses is True
-    assert result.content.decode().replace("assist", "helper") == TS_SRC
+    # The shorthand `{ helper }` keeps its key and binds the renamed value
+    # (issue #3252); everything else around the three tokens is untouched.
+    assert result.content.decode() == TS_SRC.replace("helper", "assist").replace(
+        "{ assist,", "{ helper: assist,"
+    )
     assert result.content.count(b"assist") == 3
 
 
