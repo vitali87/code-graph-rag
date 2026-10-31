@@ -361,11 +361,16 @@ def build_class_changes(
         old_method_set = frozenset(old_methods.get(qn, ()))
         new_method_set = scan.methods
         old_base_set = tuple(sorted(hierarchy.get(qn, ())))
+        # Only bases whose spelling actually changed can hide an
+        # identity change: an unchanged graph-backed base shared by
+        # both sides must not defeat the reset for the whole tuple
+        # (mixed local + external inheritance, comment-only edit).
+        # The length check keeps a count change from collapsing into
+        # a spelling match when the key sets deduplicate.
+        differing_bases = set(new_bases) ^ set(old_base_set)
         if (
-            new_bases != old_base_set
-            and not any(
-                base in graph_backed_qns for base in (*new_bases, *old_base_set)
-            )
+            len(new_bases) == len(old_base_set)
+            and not any(base in graph_backed_qns for base in differing_bases)
             and {_spelling_key(base, project_name) for base in new_bases}
             == {_spelling_key(base, project_name) for base in old_base_set}
         ):

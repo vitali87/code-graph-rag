@@ -668,6 +668,32 @@ def test_base_added_this_run_beats_spelling_match() -> None:
     assert child_change.new_bases == ("proj.foo.Bar",)
 
 
+def test_mixed_local_and_external_bases_comment_only_edit_reports_no_change() -> None:
+    # Multiple inheritance mixing a first-party base (identical on
+    # both sides) with an external base (spelling-only difference):
+    # the unchanged graph-backed base must not defeat the spelling
+    # reset for the whole tuple, or a comment-only edit invents a
+    # change and re-parses callers for nothing.
+    scanned = _scanned(
+        "ext.py",
+        "proj.ext",
+        "from local import LocalBase\n"
+        "from foo import ExternalBase\n\n"
+        "class Child(LocalBase, ExternalBase):\n"
+        "    def get(self): ...\n",
+    )
+    changes = build_class_changes(
+        [scanned],
+        {"proj.ext.Child": "ext.py"},
+        {"proj.ext.Child": {"get"}},
+        {"proj.ext.Child": ["foo.ExternalBase", "proj.local.LocalBase"]},
+        PROJECT,
+        changed_keys=["ext.py"],
+        graph_class_qns={"proj.local.LocalBase"},
+    )
+    assert changes == []
+
+
 def test_root_base_breaks_named_implementer_uniqueness() -> None:
     # `proj.lib.Client` is a root base: it appears only as a hierarchy
     # value, with no methods entry and no bases of its own. It still
