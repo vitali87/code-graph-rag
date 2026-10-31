@@ -19,6 +19,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag import gloss
+from codebase_rag.gloss_repair import repair_mentions
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.mcp.tools import MCPToolsRegistry
 from codebase_rag.tools import tool_descriptions as td
@@ -159,6 +160,31 @@ class FakeGraph:
                 for g, props in self.glosses.items()
                 if in_project(props) and names_target(props) and g not in attached
             ]
+        elif query == cq.CYPHER_GLOSS_MENTION_ANCHORS:
+            # The mention pass (issue #3230): attached notes that mention
+            # anything, with the edges they have now.
+            attached = {g for g, _qn in self.annotates}
+            out = [
+                {**row, cs.KEY_ATTACHED: row[cs.KEY_MENTIONS]}
+                for g, props in self.glosses.items()
+                if g in attached and props.get(cs.KEY_MENTION_QNS)
+                for row in [self._gloss_row(g)]
+            ]
+        elif query in (
+            cq.CYPHER_DEFINITIONS_BY_QNS,
+            cq.CYPHER_DEFINITIONS_BY_ANCHOR_HASH,
+        ):
+            by_qn = query == cq.CYPHER_DEFINITIONS_BY_QNS
+            wanted = {str(v) for v in p[cs.KEY_QNS if by_qn else cs.KEY_HASHES]}  # type: ignore[union-attr]
+            out = [
+                {
+                    cs.KEY_QUALIFIED_NAME: qn,
+                    cs.KEY_ANCHOR_HASH: n.get(cs.KEY_ANCHOR_HASH),
+                }
+                for qn, n in self.nodes.items()
+                if (qn if by_qn else n.get(cs.KEY_ANCHOR_HASH)) in wanted
+                and (by_qn or qn.startswith(str(p[cs.KEY_PROJECT_PREFIX])))
+            ]
         else:
             raise AssertionError(f"unexpected query: {query[:60]}")
         # Deliberately unsorted: the tools must sort.
@@ -174,6 +200,9 @@ class FakeGraph:
         """
         p = params or {}
         self.writes.append((query, p))
+        if query == cq.CYPHER_GLOSS_SET_MENTIONS:
+            self._set_mentions(p)
+            return
         if query != cq.CYPHER_GLOSS_WRITE:
             raise AssertionError(f"unexpected write: {query[:60]}")
         key = str(p[cs.KEY_QN])
@@ -221,6 +250,34 @@ class FakeGraph:
         self.mentions = {(g, qn) for g, qn in self.mentions if g != key}
         for qn in wanted:
             self.mentions.add((key, qn))
+
+    def _set_mentions(self, p: PropertyDict) -> None:
+        """The mention pass's write, with the real statement's two gates: the
+        note still carries the nonce the pass read, and every followed key
+        still names a definition carrying that hash. Else nothing changes."""
+        key = str(p[cs.KEY_QN])
+        props = self.glosses[key]
+        if props.get(cs.KEY_WRITE_ID, "") != p[cs.KEY_WRITE_ID]:
+            return
+        separator = str(p[cs.KEY_KEY_SEPARATOR])
+        targets = [str(q) for q in p[cs.KEY_ATTACH_QNS] if str(q) in self.nodes]  # type: ignore[union-attr]
+        for attach_key in p[cs.KEY_ATTACH_KEYS]:  # type: ignore[union-attr]
+            qn, _sep, anchor_hash = str(attach_key).partition(separator)
+            if self.nodes.get(qn, {}).get(cs.KEY_ANCHOR_HASH) != anchor_hash:
+                return
+            targets.append(qn)
+        for name in (
+            cs.KEY_MENTION_QNS,
+            cs.KEY_MENTION_HASHES,
+            cs.KEY_MENTION_QUOTES,
+            cs.KEY_MENTIONS_LOST,
+        ):
+            if p[name] is None:
+                props.pop(name, None)
+            else:
+                props[name] = p[name]
+        self.mentions = {(g, qn) for g, qn in self.mentions if g != key}
+        self.mentions |= {(key, qn) for qn in targets}
 
 
 def _write(graph: FakeGraph, target: str, **kw: Any) -> Any:
@@ -748,6 +805,50 @@ async def test_mcp_annotate_writes_and_glosses_reads_it_back(tmp_path: Path) -> 
 
 
 @pytest.mark.anyio
+async def test_mcp_glosses_keeps_a_lost_mention_beside_one_that_took_its_name(
+    tmp_path: Path,
+) -> None:
+    # The note mentions Store.get and validate. One sync deletes Store.get; a
+    # later one moves validate's code under Store.get's name. `glosses` shows
+    # the live mention and still lists the lost one, whose own anchors are
+    # kept, so its code is followed when it comes back (bot review, #3329).
+    graph = FakeGraph()
+    registry = _registry(graph, tmp_path)
+    row = await registry.annotate(
+        target=RUN,
+        body=BODY,
+        kind=cs.GlossKind.INVARIANT.value,
+        mentions=f"{STORE_GET},{VALIDATE}",
+        project=P,
+    )
+    assert not _is_refusal(row)
+
+    async def synced() -> tuple[list[str], list[str]]:
+        repair_mentions(graph.fetch_all, graph.execute_write, project_name=P)
+        read = await registry.glosses(target=RUN, project=P)
+        (note,) = read["annotating"]
+        return note["mentions"], note["mentions_lost"]
+
+    del graph.nodes[STORE_GET]
+    assert await synced() == ([VALIDATE], [STORE_GET])
+
+    graph.nodes[STORE_GET] = {
+        **graph.nodes.pop(VALIDATE),
+        cs.KEY_QUALIFIED_NAME: STORE_GET,
+    }
+    assert await synced() == ([STORE_GET], [STORE_GET])
+    stored = graph.glosses[row["qualified_name"]]
+    assert stored[cs.KEY_MENTION_QNS] == [STORE_GET, STORE_GET]
+    assert stored[cs.KEY_MENTION_HASHES] == ["fp-validate", "fp-store-get"]
+
+    cache_get = f"{P}.app.Cache.get"
+    graph.nodes[cache_get] = _node(
+        "Method", cache_get, "app.py", 21, 23, anchor_hash="fp-store-get"
+    )
+    assert await synced() == ([cache_get, STORE_GET], [])
+
+
+@pytest.mark.anyio
 async def test_mcp_stamps_the_commit_only_for_the_servers_own_checkout(
     tmp_path: Path,
 ) -> None:
@@ -941,10 +1042,14 @@ class _RecordingStore:
         # When set, the store reports one note the name tier left unattached
         # (no comparable hash), so the repair tier has something to mark.
         self.unanchored: list[ResultRow] = []
+        # When set, attached notes whose mentions the mention pass places.
+        self.mentioning: list[ResultRow] = []
 
     def fetch_all(self, query: str, params: PropertyDict | None = None) -> list:
         if query == cq.CYPHER_UNANCHORED_GLOSSES:
             return list(self.unanchored)
+        if query == cq.CYPHER_GLOSS_MENTION_ANCHORS:
+            return list(self.mentioning)
         return []
 
     def execute_write(self, query: str, params: PropertyDict | None = None) -> None:
@@ -976,7 +1081,19 @@ def test_reanchoring_rebuilds_edges_from_the_notes_own_record(tmp_path: Path) ->
             cs.KEY_PROJECT: P,
         }
     ]
-    # The repair covers the syncing project's notes only (issue #3236).
+    # An attached note whose one mention has no edge now: the mention pass
+    # rebuilds its edges (here, marks the mention lost: nothing carries it).
+    store.mentioning = [
+        {
+            cs.KEY_QUALIFIED_NAME: "gloss:attached",
+            cs.KEY_TARGET_QN: RUN,
+            cs.KEY_PROJECT: P,
+            cs.KEY_MENTION_QNS: [VALIDATE],
+            cs.KEY_ATTACHED: [],
+        }
+    ]
+    # The repair and the mention pass cover the syncing project's notes only
+    # (issue #3236).
     updater = GraphUpdater(
         ingestor=store,  # type: ignore[arg-type]
         repo_path=tmp_path,
@@ -987,16 +1104,16 @@ def test_reanchoring_rebuilds_edges_from_the_notes_own_record(tmp_path: Path) ->
     updater._reanchor_glosses()
     # Name tier first; then the repair tier places or marks what the name
     # tier left unattached (here: one note with no comparable hash, marked
-    # LOST); then the mentions restore, so a note that has just MOVED gets
-    # its MENTIONS edges back in the same run; then grading.
+    # LOST); then the mentions, so a note that has just MOVED gets its
+    # MENTIONS edges back in the same run; then grading.
     assert store.writes == [
         cq.CYPHER_REANCHOR_GLOSSES,
         cq.CYPHER_GLOSS_MARK,
-        cq.CYPHER_REANCHOR_GLOSS_MENTIONS,
+        cq.CYPHER_GLOSS_SET_MENTIONS,
         cq.CYPHER_GRADE_GLOSS_ANCHORS,
     ]
     assert "g.target_qn" in cq.CYPHER_REANCHOR_GLOSSES
-    assert "g.mention_qns" in cq.CYPHER_REANCHOR_GLOSS_MENTIONS
+    assert "g.mention_qns" in cq.CYPHER_GLOSS_MENTION_ANCHORS
     # Only an unattached note is re-anchored; an attached one is left alone.
     assert "WHERE subjects = 0" in cq.CYPHER_REANCHOR_GLOSSES
 
@@ -1165,6 +1282,36 @@ def test_a_note_records_its_subjects_text_quote_when_the_source_is_readable() ->
     assert stored[cs.KEY_ANCHOR_PREFIX] == expected.prefix
     assert stored[cs.KEY_ANCHOR_SUFFIX] == expected.suffix
     assert calls == [(P, "app.py")]
+
+
+def test_a_note_records_each_mentions_anchors_beside_its_name() -> None:
+    # A mention carries the anchors the subject does, in `mention_qns` order,
+    # so the repair can follow it when it is renamed or moved (issue #3230).
+    # An empty string stands for "none": a definition without a hash, or a
+    # file the reader cannot supply.
+    from codebase_rag.gloss_anchor import text_anchor
+
+    graph = FakeGraph()
+    _calls, read = _reader({"app.py": APP_PY})
+    row = _write(
+        graph, STORE_GET, mentions=f"{VALIDATE},{RUN},{UTIL_GET}", read_source=read
+    )
+    assert not _is_refusal(row)
+    stored = graph.glosses[row["qualified_name"]]
+    parsed = read(P, "app.py")
+    assert parsed is not None
+    run_anchor = text_anchor(parsed, "run", 3, 8)
+    assert run_anchor is not None
+    assert stored[cs.KEY_MENTION_QNS] == [RUN, UTIL_GET, VALIDATE]
+    assert stored[cs.KEY_MENTION_HASHES] == ["fp-run", "", "fp-validate"]
+    assert stored[cs.KEY_MENTION_QUOTES] == [run_anchor.quote, "", ""]
+
+
+def test_the_write_statement_records_the_mention_anchors() -> None:
+    # A fresh write is a fresh reading: no mention starts out lost.
+    assert "g.mention_hashes = $mention_hashes" in cq.CYPHER_GLOSS_WRITE
+    assert "g.mention_quotes = $mention_quotes" in cq.CYPHER_GLOSS_WRITE
+    assert "g.mentions_lost = null" in cq.CYPHER_GLOSS_WRITE
 
 
 def test_a_note_without_a_reader_or_without_the_file_carries_no_quote() -> None:
