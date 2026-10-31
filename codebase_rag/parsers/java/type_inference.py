@@ -32,10 +32,11 @@ if TYPE_CHECKING:
 JAVA_EXTERNAL_TARGET: tuple[str, str] = ("", "")
 
 
-def _capture_site(scope_node: ASTNode) -> tuple[ASTNode, ASTNode] | None:
+def _capture_site(scope_node: ASTNode) -> tuple[ASTNode, ASTNode, ASTNode] | None:
     """For a method of an anonymous or local class: the method whose locals
-    it captures, and the node that creates or declares the class (where the
-    captures are read). None for a method of a member or top-level class."""
+    it captures, the node that creates or declares the class (where the
+    captures are read), and the class body. None for a method of a member or
+    top-level class."""
     body = scope_node.parent
     if body is None or body.type != cs.TS_CLASS_BODY or body.parent is None:
         return None
@@ -46,11 +47,22 @@ def _capture_site(scope_node: ASTNode) -> tuple[ASTNode, ASTNode] | None:
     current = site.parent
     while current is not None:
         if current.type in cs.JAVA_METHOD_NODE_TYPES:
-            return current, site
+            return current, site, body
         if current.type in cs.JAVA_CLASS_NODE_TYPES:
             return None
         current = current.parent
     return None
+
+
+def _declared_field_names(class_body: ASTNode) -> set[str]:
+    return {
+        name
+        for field in class_body.children
+        if field.type == cs.TS_FIELD_DECLARATION
+        for declarator in field.children_by_field_name(cs.FIELD_DECLARATOR)
+        if (name_node := declarator.child_by_field_name(cs.FIELD_NAME))
+        and (name := safe_decode_text(name_node))
+    }
 
 
 def _encloses(container: ASTNode, node: ASTNode) -> bool:
@@ -218,8 +230,7 @@ class JavaTypeInferenceEngine(
             # lambda bound exactly (issue #2937). They are seeded first, so the
             # method's own locals infer through them (`var alias = codec;`) and
             # its own names shadow them (bot review on PR #2991).
-            if (capture := _capture_site(scope_node)) is not None:
-                local_var_types.update(self._captures_at(*capture, module_qn))
+            self._seed_captures(scope_node, local_var_types, module_qn)
             self._collect_all_variable_types(scope_node, local_var_types, module_qn)
             logger.debug(ls.JAVA_VAR_TYPE_MAP_BUILT, count=len(local_var_types))
 
@@ -227,6 +238,21 @@ class JavaTypeInferenceEngine(
             logger.error(ls.JAVA_VAR_TYPE_MAP_FAILED, error=e)
 
         return local_var_types
+
+    def _seed_captures(
+        self, scope_node: ASTNode, types: dict[str, str], module_qn: str
+    ) -> None:
+        if (capture := _capture_site(scope_node)) is None:
+            return
+        enclosing, site, body = capture
+        # A field the class declares hides a captured local of the same name
+        # (JLS 6.4.1), so `codec` in its methods is the field, not the
+        # capture (bot review on PR #2991). The class's field pass types it
+        # where it can; a capture left in place would bind the wrong class.
+        shadowed = _declared_field_names(body)
+        for name, type_name in self._captures_at(enclosing, site, module_qn).items():
+            if name not in shadowed:
+                types[name] = type_name
 
     def _captures_at(
         self, enclosing: ASTNode, site: ASTNode, module_qn: str
@@ -240,8 +266,7 @@ class JavaTypeInferenceEngine(
         is itself in an anonymous class sees its own captures the same way.
         """
         types: dict[str, str] = {}
-        if (outer := _capture_site(enclosing)) is not None:
-            types.update(self._captures_at(*outer, module_qn))
+        self._seed_captures(enclosing, types, module_qn)
         self._analyze_java_parameters(enclosing, types, module_qn)
         for decl in _nodes_of_type(enclosing, cs.TS_LOCAL_VARIABLE_DECLARATION):
             if (

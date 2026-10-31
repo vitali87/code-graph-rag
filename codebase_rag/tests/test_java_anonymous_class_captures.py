@@ -147,6 +147,29 @@ public class Scoped {
       }
     };
   }
+
+  static Handler localField(final Codec codec) {
+    class Local implements Handler {
+      private final Other codec = new Other();
+
+      @Override
+      public String handle(String in) {
+        return codec.encode(in); // local-class-field
+      }
+    }
+    return new Local();
+  }
+
+  static Handler anonymousField(final Codec codec) {
+    return new Handler() {
+      private final Other codec = new Other();
+
+      @Override
+      public String handle(String in) {
+        return codec.encode(in); // anonymous-field
+      }
+    };
+  }
 }
 """
 
@@ -215,6 +238,23 @@ def test_a_same_named_local_of_a_sibling_block_is_not_captured(
 def test_a_local_assigned_from_a_capture_is_typed(graph: RecordedGraph) -> None:
     line = _scoped_line("alias-call")
     assert _callers_of_encode(graph, source="Scoped").get(line) == "exact"
+
+
+def test_a_field_of_the_local_class_shadows_the_captured_name(
+    graph: RecordedGraph,
+) -> None:
+    # Bot review on PR #2991: in Java the class's own `Other codec` field, not
+    # the captured `Codec codec`, is what `codec` names inside its methods.
+    line = _scoped_line("local-class-field")
+    assert _callers_of_encode(graph, OTHER_ENCODE, "Scoped").get(line) == "exact"
+    assert line not in _callers_of_encode(graph, source="Scoped")
+
+
+def test_a_field_of_the_anonymous_class_shadows_the_captured_name(
+    graph: RecordedGraph,
+) -> None:
+    line = _scoped_line("anonymous-field")
+    assert line not in _callers_of_encode(graph, source="Scoped")
 
 
 # Negative: what must not change.
