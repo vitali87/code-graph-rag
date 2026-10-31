@@ -23,9 +23,9 @@ the structural delta and undone when its postcondition contract (issue
 #1531) fails: every site of the changed signature must read as mapped or
 be in the unmapped list.
 
-Python only for now: the header and the argument lists are read with the
-Python grammar, and a definition in any other language refuses (issue
-#1908).
+Headers and argument lists are read and written through a dialect per
+language: Python, and JavaScript (`signature_js.py`, `signature_js_bind.py`). A definition in any
+other language refuses (issue #1908).
 """
 
 from __future__ import annotations
@@ -49,17 +49,20 @@ from .signature_bind import (
     _find_definition,
     _params_of,
     _refuse_body_conflicts,
+    _render_arguments,
     _render_site,
     _take_receiver,
     _text,
 )
 from .signature_contract import enforce_contract
+from .signature_js_bind import JAVASCRIPT
 from .signature_spec import (
     _CALL,
     _DEFINITION,
     _IDENTIFIER_RE,
     LANGUAGES_ISSUE,
     ParamSpec,
+    SignatureDialect,
     SignatureRefused,
     SignatureReport,
     SignatureSite,
@@ -69,6 +72,7 @@ from .signature_spec import (
     _Edit,
     _Header,
     _new_specs,
+    _parse_new_param,
     _resolve_sources,
     _Source,
     _Unmapped,
@@ -95,8 +99,7 @@ class SignatureChanger:
         # transaction undone when the contract fails.
         self.reingest = reingest
         parsers, _queries = load_parsers()
-        self._parsers = dict(parsers)
-        self._parser: Parser = self._parsers[cs.SupportedLanguage.PYTHON]
+        self._parsers: dict[cs.SupportedLanguage, Parser] = dict(parsers)
 
     # -- planning --
 
@@ -126,14 +129,17 @@ class SignatureChanger:
         patcher = Patcher(self.repo_root, parsers=self._parsers)
         members = hierarchy(self.fetch_all, self.project, qn).members
         headers = [self._header(member, patcher) for member in members]
+        dialect = _DIALECTS[headers[0].language]
         old = headers[0].params
         old_names = [p.name for p in old]
         _check_hierarchy(qn, headers, old_names)
-        new = _new_specs(new_params, old)
+        new = _new_specs(
+            new_params, old, dialect.parse_new_param, dialect.defaults_last
+        )
         sources = _resolve_sources(new, old, mapping or {})
         for spec, source in zip(new, sources, strict=True):
             if source is not None and source.literal is not None:
-                _check_literal(spec, source.literal)
+                dialect.check_literal(spec, source.literal)
         # A bare old name carries that parameter's own spelling over (each
         # override keeps its own); spelling a kept parameter out again
         # re-annotates it.
@@ -157,11 +163,11 @@ class SignatureChanger:
             and source.index is not None
             and old_names[source.index] != spec.name
         ]
-        _refuse_body_conflicts(headers, old_names, new, renamed)
+        dialect.refuse_body_conflicts(headers, old_names, new, renamed)
         sites: list[SignatureSite] = []
         edits: list[_Edit] = []
         for header in headers:
-            edits.extend(_definition_edits(header, new, carried, renamed))
+            edits.extend(dialect.definition_edits(header, new, carried, renamed))
             sites.append(
                 SignatureSite(
                     _DEFINITION,
@@ -197,9 +203,13 @@ class SignatureChanger:
         path = definition["path"]
         if not definition["found"] or not path:
             raise SignatureRefused(cs.RENAME_UNKNOWN.format(qn=qn))
-        if get_language_for_extension(Path(path).suffix) != cs.SupportedLanguage.PYTHON:
+        language = get_language_for_extension(Path(path).suffix)
+        dialect = _DIALECTS.get(language) if language is not None else None
+        if language is None or dialect is None:
             raise SignatureRefused(
-                cs.SIGNATURE_NOT_PYTHON.format(qn=qn, path=path, issue=LANGUAGES_ISSUE)
+                cs.SIGNATURE_UNSUPPORTED_LANGUAGE.format(
+                    qn=qn, path=path, issue=LANGUAGES_ISSUE
+                )
             )
         try:
             source = patcher.source(path)
@@ -210,13 +220,13 @@ class SignatureChanger:
         start = definition["start_line"] or 1
         end = definition["end_line"] or start
         name = definition["name"] or qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
-        root = self._parser.parse(source).root_node
-        node = _find_definition(root, name, start, end)
+        root = self._parsers[language].parse(source).root_node
+        node = dialect.find_definition(root, name, start, end)
         params = node.child_by_field_name(cs.FIELD_PARAMETERS) if node else None
         if node is None or params is None:
             raise SignatureRefused(cs.SIGNATURE_NO_HEADER.format(qn=qn, path=path))
-        specs = _params_of(params, source, qn)
-        receiver = _take_receiver(qn, definition["label"], specs, node, source)
+        specs = dialect.params_of(params, source, qn)
+        receiver = dialect.take_receiver(qn, definition["label"], specs, node, source)
         return _Header(
             qn,
             path,
@@ -227,6 +237,7 @@ class SignatureChanger:
             specs,
             node,
             source,
+            language,
         )
 
     def _collect_sites(
@@ -241,6 +252,7 @@ class SignatureChanger:
         edits: list[_Edit],
     ) -> list[UnmappedSite]:
         unmapped: list[UnmappedSite] = []
+        render = _DIALECTS[headers[0].language].render_arguments
         candidates = self._candidates(headers, old, allow_heuristic, patcher, unmapped)
         # Innermost first, so a site nested in another's arguments (or a
         # body rename inside a recursive call) is already planned when the
@@ -257,7 +269,7 @@ class SignatureChanger:
         for index in order:
             candidate = candidates[index]
             try:
-                edit = _render_site(candidate, new, sources, edits)
+                edit = _render_site(candidate, new, sources, edits, render)
             except _Unmapped as skip:
                 unmapped.append(
                     UnmappedSite(
@@ -350,8 +362,11 @@ class SignatureChanger:
             )
         if resolution in AMBIGUOUS and not allow_heuristic:
             raise _Unmapped(cs.SIGNATURE_SITE_GUESSED.format(resolution=resolution))
-        if get_language_for_extension(Path(path).suffix) != cs.SupportedLanguage.PYTHON:
-            raise _Unmapped(cs.SIGNATURE_SITE_NOT_PYTHON.format(path=path))
+        # A call from another language reaches the definition through some
+        # binding layer this operation cannot read.
+        if get_language_for_extension(Path(path).suffix) != header.language:
+            raise _Unmapped(cs.SIGNATURE_SITE_OTHER_LANGUAGE.format(path=path))
+        dialect = _DIALECTS[header.language]
         try:
             source = patcher.source(path)
         except PatcherError as error:
@@ -364,24 +379,12 @@ class SignatureChanger:
             if end_line is not None and end_col is not None
             else None
         )
-        root = self._parser.parse(source).root_node
+        root = self._parsers[header.language].parse(source).root_node
         call = call_node_at(root, line, col, recorded_end)
         if call is None:
             raise _Unmapped(cs.SIGNATURE_SITE_NO_CALL)
-        args = call.child_by_field_name(cs.FIELD_ARGUMENTS)
-        if args is None or args.type != cs.TS_ARGUMENT_LIST:
-            # `helper(x for x in xs)`: a generator, not a list of values.
-            raise _Unmapped(
-                cs.SIGNATURE_SITE_UNREADABLE.format(text=_text(args or call, source))
-            )
-        if _binds_its_receiver(header) and _passes_receiver(call, source, header.qn):
-            # `Base.f(obj, a)` passes `self` as its first argument: binding
-            # it to the first declared parameter would shift every value
-            # one slot. Left as written rather than guessed at.
-            raise _Unmapped(
-                cs.SIGNATURE_SITE_EXPLICIT_RECEIVER.format(text=_text(call, source))
-            )
-        bound = _bind_arguments(args, source, old)
+        args = dialect.site_arguments(header, call, source)
+        bound = dialect.bind_arguments(args, source, old)
         site = SignatureSite(_CALL, path, line, col, row["qualified_name"], resolution)
         return _Candidate(
             site, (args.start_byte, args.end_byte), _text(args, source), bound
@@ -487,6 +490,23 @@ class SignatureChanger:
         return report
 
 
+def _python_site_arguments(header: _Header, call: Node, source: bytes) -> Node:
+    args = call.child_by_field_name(cs.FIELD_ARGUMENTS)
+    if args is None or args.type != cs.TS_ARGUMENT_LIST:
+        # `helper(x for x in xs)`: a generator, not a list of values.
+        raise _Unmapped(
+            cs.SIGNATURE_SITE_UNREADABLE.format(text=_text(args or call, source))
+        )
+    if _binds_its_receiver(header) and _passes_receiver(call, source, header.qn):
+        # `Base.f(obj, a)` passes `self` as its first argument: binding
+        # it to the first declared parameter would shift every value
+        # one slot. Left as written rather than guessed at.
+        raise _Unmapped(
+            cs.SIGNATURE_SITE_EXPLICIT_RECEIVER.format(text=_text(call, source))
+        )
+    return args
+
+
 def _binds_its_receiver(header: _Header) -> bool:
     """An instance method: called through an instance, `self` is implicit.
 
@@ -564,6 +584,23 @@ def _imported_as(node: Node, source: bytes, alias: str) -> str | None:
             continue
         pending.extend(current.named_children)
     return None
+
+
+_DIALECTS: dict[cs.SupportedLanguage, SignatureDialect] = {
+    cs.SupportedLanguage.PYTHON: SignatureDialect(
+        find_definition=_find_definition,
+        params_of=_params_of,
+        take_receiver=_take_receiver,
+        parse_new_param=_parse_new_param,
+        check_literal=_check_literal,
+        refuse_body_conflicts=_refuse_body_conflicts,
+        definition_edits=_definition_edits,
+        site_arguments=_python_site_arguments,
+        bind_arguments=_bind_arguments,
+        render_arguments=_render_arguments,
+    ),
+    cs.SupportedLanguage.JS: JAVASCRIPT,
+}
 
 
 def change_signature(

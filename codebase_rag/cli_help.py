@@ -200,7 +200,8 @@ HELP_RENAME_ALLOW_HEURISTIC = (
 )
 HELP_RENAME_DRY_RUN = "Print the plan and diff without writing anything."
 CMD_CHANGE_SIGNATURE = (
-    "Change a Python definition's parameter list and rewrite every call site "
+    "Change a Python or JavaScript definition's parameter list and rewrite "
+    "every call site "
     "the graph knows; sites the mapping cannot complete are listed, not touched; "
     "refuses on a graph a stopped sync left partial."
 )

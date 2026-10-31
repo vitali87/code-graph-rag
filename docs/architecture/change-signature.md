@@ -23,8 +23,49 @@ The MCP tool of the same name takes `qualified_name`, `new_params` (a list
 of strings) and the optional `mapping` (an object), `allow_heuristic`,
 `dry_run` and `project` fields, and returns the same report as JSON.
 
-Python only for now. A definition in another language refuses with a
-message naming the language, and the follow-up is issue #1908.
+Python and JavaScript definitions are supported. A definition in another
+language refuses, and the follow-up is issue #1908. A call site written in
+another language than the definition stays unmapped.
+
+### JavaScript
+
+JavaScript has no keyword arguments, so every site is rewritten
+positionally:
+
+- A function declaration or a class method qualifies. Each parameter must
+  be a name or a name with a default; a rest parameter (`...rest`) or a
+  destructured one (`{ a }`) refuses, and so does a name declared twice. A
+  constructor refuses, since its call sites are `new` expressions, and so
+  does a getter or setter.
+- A new parameter is written `n` or `n = 0`. A required parameter may
+  follow a defaulted one, as JavaScript allows; a site that leaves it out
+  stays unmapped. A mapped value must be exactly one expression, so
+  `--map n==1, 2` refuses rather than writing two arguments.
+- A default the site skips is passed as `void 0`, which selects the
+  default as leaving the argument out does: `helper(2)` with a new `c`
+  mapped after the defaulted `b` becomes `helper(2, void 0, 5)`. The name
+  `undefined` is not used, since a caller can bind it to another value.
+- A site stays unmapped when it spreads an array (`helper(...xs)`), passes
+  more arguments than declared, calls through `.call` or `.apply`, or
+  passes arguments that run code when the new order would run them in
+  another order. A name, a number, a string, `true`, `false`, `null`,
+  `undefined` and `this` run no code and may move.
+- Renaming a parameter refuses for now. A body that reads `arguments`
+  refuses, and so does dropping a parameter the body or another default
+  still mentions, or adding one under a name it already mentions. Nested
+  functions count, so a closure that binds the same name refuses too. A
+  name spelled with escapes (`\u0061`) counts as the name it spells, and a
+  parameter declared that way refuses. A body that uses `eval` refuses
+  adding or dropping a parameter, since `eval('a')` reads `a` through a
+  string; a reorder keeps every name and still goes through.
+- A new header in which a default reads its own parameter or a later one
+  refuses: parameters bind left to right, so that default would throw
+  ReferenceError. Reordering `(a = 1, b = a)` to `(b = a, a = 1)` is one.
+  So does a reorder that swaps a kept default that runs code with one that
+  runs code or reads a name: `(a = f(), b = g())` to `(b = g(), a = f())`
+  would call `g` first, and `(a = (n = 1), b = n)` to `(b = n, a = (n = 1))`
+  would read the old `n`. A default counts as running code unless it is one
+  of the values above that may move at a site.
 
 ## The new parameter list
 

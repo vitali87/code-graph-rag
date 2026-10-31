@@ -352,9 +352,14 @@ def _check_literal(spec: ParamSpec, literal: str) -> None:
         )
 
 
-def _new_specs(new_params: Sequence[str], old: Sequence[ParamSpec]) -> list[ParamSpec]:
+def _new_specs(
+    new_params: Sequence[str],
+    old: Sequence[ParamSpec],
+    parse: Callable[[str, Mapping[str, ParamSpec]], ParamSpec] = _parse_new_param,
+    defaults_last: bool = True,
+) -> list[ParamSpec]:
     by_name = {spec.name: spec for spec in old}
-    specs = [_parse_new_param(text, by_name) for text in new_params]
+    specs = [parse(text, by_name) for text in new_params]
     seen: set[str] = set()
     defaulted = False
     for spec in specs:
@@ -363,7 +368,7 @@ def _new_specs(new_params: Sequence[str], old: Sequence[ParamSpec]) -> list[Para
         seen.add(spec.name)
         if spec.has_default:
             defaulted = True
-        elif defaulted:
+        elif defaulted and defaults_last:
             raise SignatureRefused(
                 cs.SIGNATURE_REQUIRED_AFTER_DEFAULT.format(name=spec.name)
             )

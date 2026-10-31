@@ -1015,9 +1015,9 @@ SIGNATURE_CLI_WRONG_ROOT = (
     "Project {project} was not indexed from {root}; "
     "pass the --repo-path it was indexed from"
 )
-SIGNATURE_NOT_PYTHON = (
-    "Cannot change the signature of {qn}: {path} is not Python, and only Python "
-    "definitions are supported for now (issue #{issue})"
+SIGNATURE_UNSUPPORTED_LANGUAGE = (
+    "Cannot change the signature of {qn}: {path} is in a language it does not "
+    "support yet; Python and JavaScript are supported (issue #{issue})"
 )
 SIGNATURE_DEFINITION_UNREADABLE = (
     "Cannot change the signature of {qn}: its file {path} cannot be read "
@@ -1098,7 +1098,7 @@ SIGNATURE_SITE_NO_LOCATION = "site carries no location ({resolution})"
 SIGNATURE_SITE_GUESSED = (
     "site was resolved by {resolution}; pass allow_heuristic to rewrite it"
 )
-SIGNATURE_SITE_NOT_PYTHON = "{path} is not Python"
+SIGNATURE_SITE_OTHER_LANGUAGE = "{path} is not in the definition's language"
 SIGNATURE_SITE_UNREADABLE_FILE = "file cannot be read ({error})"
 SIGNATURE_SITE_NO_CALL = "no call found at the recorded position"
 SIGNATURE_SITE_UNREADABLE = "arguments cannot be read positionally: `{text}`"
