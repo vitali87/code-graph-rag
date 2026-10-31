@@ -206,6 +206,137 @@ mod tests {
     assert walks == {f"{base}.util.TempDir.path": cs.EdgeResolution.EXACT}, walks
 
 
+def test_self_and_super_paths_count_from_the_inline_module(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `self::` names the inline module the call is written in, and each
+    # `super::` one module up from it, not from the file module, whose own
+    # `make` returns the decoy.
+    base = _index(
+        temp_repo,
+        mock_ingestor,
+        "rs_modfn_selfsuper",
+        """\
+use crate::aaa::Ignore;
+
+fn make() -> Ignore { Ignore }
+
+pub mod outer {
+    pub struct Maker;
+    impl Maker {
+        pub fn path(&self) -> u8 { 2 }
+    }
+    pub fn make() -> Maker { Maker }
+
+    pub fn here() -> u8 {
+        let m = self::make();
+        m.path()
+    }
+
+    pub mod inner {
+        pub fn up() -> u8 {
+            let m = super::make();
+            m.path()
+        }
+
+        pub mod deeper {
+            pub fn two_up() -> u8 {
+                let m = super::super::make();
+                m.path()
+            }
+        }
+    }
+}
+""",
+    )
+    maker_path = {f"{base}.walk.outer.Maker.path": cs.EdgeResolution.EXACT}
+    for caller in ("here", "inner.up", "inner.deeper.two_up"):
+        targets = _path_targets(mock_ingestor, f"{base}.walk.outer.{caller}")
+        assert targets == maker_path, (caller, targets)
+
+
+def test_helper_return_type_is_read_in_the_helpers_module(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The caller has its own `TempDir` in scope; `tmpdir` returns util's.
+    # The return type names the type where `tmpdir` is written.
+    base = _index(
+        temp_repo,
+        mock_ingestor,
+        "rs_modfn_owner",
+        """\
+use crate::util;
+use crate::util::tmpdir;
+
+mod other {
+    pub struct TempDir;
+    impl TempDir {
+        pub fn path(&self) -> u8 { 3 }
+    }
+}
+
+use other::TempDir;
+
+pub fn qualified() -> u8 {
+    let _own: Option<TempDir> = None;
+    let td = util::tmpdir();
+    td.path()
+}
+
+pub fn imported() -> u8 {
+    let td = tmpdir();
+    td.path()
+}
+""",
+    )
+    temp_path = {f"{base}.util.TempDir.path": cs.EdgeResolution.EXACT}
+    for caller in ("qualified", "imported"):
+        targets = _path_targets(mock_ingestor, f"{base}.walk.{caller}")
+        assert targets == temp_path, (caller, targets)
+
+
+def test_inner_module_reexport_shadows_an_outer_same_named_module(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Inside `tests`, `util` is its own child module, which re-exports the
+    # crate's `tmpdir`; the file's `util::tmpdir` returning `Wrong` is
+    # shadowed there.
+    base = _index(
+        temp_repo,
+        mock_ingestor,
+        "rs_modfn_reexport",
+        """\
+mod util {
+    pub struct Wrong;
+    impl Wrong {
+        pub fn path(&self) -> u8 { 4 }
+    }
+    pub fn tmpdir() -> Wrong { Wrong }
+}
+
+pub fn top() -> u8 {
+    let td = util::tmpdir();
+    td.path()
+}
+
+mod tests {
+    mod util {
+        pub use crate::util::tmpdir;
+    }
+
+    pub fn walks() -> u8 {
+        let td = util::tmpdir();
+        td.path()
+    }
+}
+""",
+    )
+    top = _path_targets(mock_ingestor, f"{base}.walk.top")
+    assert top == {f"{base}.walk.util.Wrong.path": cs.EdgeResolution.EXACT}, top
+    walks = _path_targets(mock_ingestor, f"{base}.walk.tests.walks")
+    assert walks == {f"{base}.util.TempDir.path": cs.EdgeResolution.EXACT}, walks
+
+
 def test_external_module_call_leaves_the_local_untyped(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
