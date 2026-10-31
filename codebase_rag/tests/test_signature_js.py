@@ -224,5 +224,7 @@ def test_a_mapped_value_that_is_one_expression_passes(literal: str) -> None:
 )
 def test_a_mapped_value_that_is_not_one_argument_refuses(literal: str) -> None:
     # `1)(2` would turn `helper(3, <n>, 'z')` into `helper(3, 1)(2, 'z')`.
+    spec = ParamSpec("n", "n", None, False)
+
     with pytest.raises(SignatureRefused, match="not one JavaScript expression"):
-        _check_literal(ParamSpec("n", "n", None, False), literal)
+        _check_literal(spec, literal)
