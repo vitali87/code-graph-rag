@@ -898,3 +898,160 @@ class TestDoVariableTypeLookup:
         result = engine._do_variable_type_lookup("varName", "com.example")
 
         assert result is None
+
+
+class TestTryWithResourcesAndCatchParameters:
+    # Issue #3341: try-with-resources variables and catch parameters never
+    # entered the variable-type map, so calls through them got no CALLS edge.
+
+    def test_explicit_resource(self, engine: JavaTypeInferenceEngine) -> None:
+        method = _parse_java_method("try (Res r = new Res()) { int y = r.hashCode(); }")
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        assert result["r"] == "Res"
+
+    def test_var_resource_inferred_from_initializer(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        method = _parse_java_method("try (var r = new Res()) { int y = r.hashCode(); }")
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        assert result["r"] == "Res"
+
+    def test_final_resource(self, engine: JavaTypeInferenceEngine) -> None:
+        method = _parse_java_method(
+            "try (final Res r = new Res()) { int y = r.hashCode(); }"
+        )
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        assert result["r"] == "Res"
+
+    def test_two_resources(self, engine: JavaTypeInferenceEngine) -> None:
+        method = _parse_java_method(
+            "try (Res a = new Res(); Res b = new Res()) { int y = 1; }"
+        )
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        assert result["a"] == "Res"
+        assert result["b"] == "Res"
+
+    def test_catch_parameter(self, engine: JavaTypeInferenceEngine) -> None:
+        method = _parse_java_method(
+            "try { int x = 1; } catch (AppError e) { int y = 2; }"
+        )
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        assert result["e"] == "AppError"
+
+    def test_catch_parameter_final_and_annotated(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        method = _parse_java_method(
+            "try { int x = 1; } catch (final @Deprecated AppError e) { int y = 2; }"
+        )
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        assert result["e"] == "AppError"
+
+    def test_catch_parameter_scoped_type(self, engine: JavaTypeInferenceEngine) -> None:
+        method = _parse_java_method(
+            "try { int x = 1; } catch (pkg.AppError e) { int y = 2; }"
+        )
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        assert result["e"] == "pkg.AppError"
+
+    def _engine_with_inheritance(
+        self,
+        mock_import_processor: MagicMock,
+        mock_function_registry: MagicMock,
+        mock_ast_cache: MagicMock,
+        class_inheritance: dict[str, list[str]],
+    ) -> JavaTypeInferenceEngine:
+        return JavaTypeInferenceEngine(
+            import_processor=mock_import_processor,
+            function_registry=mock_function_registry,
+            repo_path=Path("/test/repo"),
+            project_name="test_project",
+            ast_cache=mock_ast_cache,
+            queries={},
+            module_qn_to_file_path={},
+            class_inheritance=class_inheritance,
+            simple_name_lookup=defaultdict(set),
+        )
+
+    def test_multi_catch_common_first_party_supertype(
+        self,
+        mock_import_processor: MagicMock,
+        mock_function_registry: MagicMock,
+        mock_ast_cache: MagicMock,
+    ) -> None:
+        engine = self._engine_with_inheritance(
+            mock_import_processor,
+            mock_function_registry,
+            mock_ast_cache,
+            {
+                "AppError": ["BaseError"],
+                "OtherError": ["BaseError"],
+                "BaseError": ["RuntimeException"],
+            },
+        )
+        method = _parse_java_method(
+            "try { int x = 1; } catch (AppError | OtherError e) { int y = 2; }"
+        )
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        assert result["e"] == "BaseError"
+
+    def test_multi_catch_unrelated_types_stay_untyped(
+        self,
+        mock_import_processor: MagicMock,
+        mock_function_registry: MagicMock,
+        mock_ast_cache: MagicMock,
+    ) -> None:
+        engine = self._engine_with_inheritance(
+            mock_import_processor,
+            mock_function_registry,
+            mock_ast_cache,
+            {
+                "AppError": ["RuntimeException"],
+                "OtherError": ["RuntimeException"],
+            },
+        )
+        method = _parse_java_method(
+            "try { int x = 1; } catch (AppError | OtherError e) { int y = 2; }"
+        )
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        assert "e" not in result
+
+    def test_multi_catch_jdk_types_stay_untyped(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        # IOException | SQLException share only JDK supertypes: never guess.
+        method = _parse_java_method(
+            "try { int x = 1; } catch (IOException | SQLException e) { int y = 2; }"
+        )
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        assert "e" not in result
+
+    def test_bare_resource_keeps_outer_type(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        # Java 9 `try (r)` declares nothing: it must not clobber the outer type.
+        method = _parse_java_method("Other r = new Other(); try (r) { int y = 2; }")
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        assert result["r"] == "Other"

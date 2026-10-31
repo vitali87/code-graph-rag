@@ -142,6 +142,8 @@ class JavaVariableAnalyzerMixin:
             scope_node, local_var_types, module_qn
         )
         self._analyze_java_enhanced_for_loops(scope_node, local_var_types, module_qn)
+        self._analyze_java_try_resources(scope_node, local_var_types, module_qn)
+        self._analyze_java_catch_parameters(scope_node, local_var_types, module_qn)
 
     def _analyze_java_parameters(
         self, scope_node: ASTNode, local_var_types: dict[str, str], module_qn: str
@@ -401,6 +403,150 @@ class JavaVariableAnalyzerMixin:
                     name=var_name,
                     type=resolved_type,
                 )
+
+    def _analyze_java_try_resources(
+        self, scope_node: ASTNode, local_var_types: dict[str, str], module_qn: str
+    ) -> None:
+        self._traverse_for(
+            scope_node,
+            cs.TS_JAVA_RESOURCE,
+            self._process_java_resource,
+            local_var_types,
+            module_qn,
+        )
+
+    def _process_java_resource(
+        self, resource_node: ASTNode, local_var_types: dict[str, str], module_qn: str
+    ) -> None:
+        # A `resource` binds via the same `name`/`type`/`value` fields as a
+        # variable declarator, so it is typed exactly like a local: the
+        # constructed type for `var r = new Res()`, else the declared type
+        # (issue #3341). A bare Java 9 resource `try (r)` has no `type`
+        # field: it declares nothing, so it must not touch the outer
+        # variable's type either.
+        if not (type_node := resource_node.child_by_field_name(cs.FIELD_TYPE)):
+            return
+        if not (declared_type := safe_decode_text(type_node)):
+            return
+        self._process_variable_declarator(
+            resource_node, declared_type, local_var_types, module_qn
+        )
+
+    def _analyze_java_catch_parameters(
+        self, scope_node: ASTNode, local_var_types: dict[str, str], module_qn: str
+    ) -> None:
+        self._traverse_for(
+            scope_node,
+            cs.TS_CATCH_FORMAL_PARAMETER,
+            self._process_catch_formal_parameter,
+            local_var_types,
+            module_qn,
+        )
+
+    def _process_catch_formal_parameter(
+        self,
+        param_node: ASTNode,
+        local_var_types: dict[str, str],
+        module_qn: str,
+    ) -> None:
+        if not (name_node := param_node.child_by_field_name(cs.FIELD_NAME)):
+            return
+        if not (var_name := safe_decode_text(name_node)):
+            return
+        alternatives = self._catch_type_alternatives(param_node)
+        if not alternatives:
+            return
+        if len(alternatives) == 1:
+            resolved_type = self._resolve_java_type_name(alternatives[0], module_qn)
+            local_var_types[var_name] = resolved_type
+            logger.debug(ls.JAVA_CATCH_PARAMETER, name=var_name, type=resolved_type)
+            return
+        # A multi-catch parameter is typed by the nearest common first-party
+        # supertype, if there is one. With none, it stays untyped: writing
+        # nothing leaves any outer variable of the same name untouched.
+        if common := self._common_first_party_supertype(alternatives, module_qn):
+            local_var_types[var_name] = common
+            logger.debug(ls.JAVA_CATCH_PARAMETER, name=var_name, type=common)
+
+    def _catch_type_alternatives(self, param_node: ASTNode) -> list[str]:
+        # The `catch_type` child holds the parameter's type(s): one type node,
+        # or one per `|`-separated alternative of a multi-catch. An ERROR
+        # child means the type list did not parse (e.g. annotations on a
+        # union alternative, which this grammar rejects): bind nothing
+        # rather than read a fragment of it as a type.
+        for child in param_node.children:
+            if child.type != cs.TS_JAVA_CATCH_TYPE:
+                continue
+            alternatives: list[str] = []
+            for type_child in child.named_children:
+                if type_child.type in (
+                    cs.TS_ANNOTATION,
+                    cs.TS_MARKER_ANNOTATION,
+                    cs.TS_ERROR,
+                ):
+                    return []
+                if text := safe_decode_text(type_child):
+                    alternatives.append(text)
+            return list(dict.fromkeys(alternatives))
+        return []
+
+    def _common_first_party_supertype(
+        self, alternatives: list[str], module_qn: str
+    ) -> str | None:
+        # Lowest common ancestor over the superclass chains `class_inheritance`
+        # records, restricted to first-party types: a supertype only counts
+        # if it is itself a parsed class in the repo. A chain that runs into
+        # a JDK type (Exception, Throwable, ...) therefore ends there with
+        # no match, instead of guessing that type for the parameter.
+        chains = []
+        for alternative in alternatives:
+            resolved = self._resolve_java_type_name(alternative, module_qn)
+            key = self._inheritance_key_for(resolved)
+            chains.append(self._java_superclass_chain(key or resolved))
+        best: str | None = None
+        best_key: tuple[int, int] | None = None
+        for candidate in chains[0]:
+            if candidate not in self.class_inheritance:
+                continue
+            positions = []
+            for chain in chains:
+                if candidate not in chain:
+                    break
+                positions.append(chain.index(candidate))
+            else:
+                key = (max(positions), sum(positions))
+                if best_key is None or key < best_key:
+                    best, best_key = candidate, key
+        return best
+
+    def _inheritance_key_for(self, resolved_type: str) -> str | None:
+        # The qn a type name resolves to and the qn `class_inheritance` keys
+        # its classes by are not always the same string: a resolved
+        # same-package name can stay a simple name while the registry keys
+        # the class under its doubled file-module form
+        # (`<module>.AppError.AppError`). Match on the simple name, and only
+        # when exactly one parsed class carries it, so a same-named class in
+        # another package can never stand in for this one.
+        if resolved_type in self.class_inheritance:
+            return resolved_type
+        simple_name = resolved_type.rpartition(cs.SEPARATOR_DOT)[2]
+        matches = [
+            qn
+            for qn in self.class_inheritance
+            if qn.rpartition(cs.SEPARATOR_DOT)[2] == simple_name
+        ]
+        return matches[0] if len(matches) == 1 else None
+
+    def _java_superclass_chain(self, class_qn: str) -> list[str]:
+        chain: list[str] = []
+        seen: set[str] = set()
+        current: str | None = class_qn
+        while current and current not in seen:
+            seen.add(current)
+            chain.append(current)
+            parents = self.class_inheritance.get(current)
+            current = parents[0] if parents else None
+        return chain
 
     @depth_guard(
         max_depth=cs.JAVA_MAX_INFERENCE_DEPTH,
