@@ -28,7 +28,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import TypedDict
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = REPO_ROOT / "server.json"
@@ -73,7 +73,29 @@ LISTED = "{server} {version} is already in the MCP Registry."
 UNREACHABLE = "Could not ask {service} about {name} {version}: {error}"
 
 
-def load_manifest() -> dict[str, Any]:
+class Package(TypedDict, total=False):
+    registryType: str
+    identifier: str
+    version: str
+
+
+class Manifest(TypedDict, total=False):
+    name: str
+    title: str
+    description: str
+    version: str
+    packages: list[Package]
+
+
+class PyPIInfo(TypedDict, total=False):
+    description: str | None
+
+
+class PyPIRelease(TypedDict, total=False):
+    info: PyPIInfo
+
+
+def load_manifest() -> Manifest:
     return json.loads(MANIFEST.read_text(encoding="utf-8"))
 
 
@@ -83,9 +105,7 @@ def project_metadata() -> tuple[str, str]:
     return project["name"], project["version"]
 
 
-def manifest_problems(
-    manifest: dict[str, Any], *, name: str, version: str
-) -> list[str]:
+def manifest_problems(manifest: Manifest, *, name: str, version: str) -> list[str]:
     problems = []
     if manifest.get("version") != version:
         problems.append(
@@ -122,12 +142,12 @@ def has_name_token(readme: str, server: str) -> bool:
     return False
 
 
-def _fetch_json(url: str) -> dict[str, Any] | None:
-    """The JSON at url, or None when the service answers 404."""
+def _fetch(url: str) -> bytes | None:
+    """The body at url, or None when the service answers 404."""
     request = urllib.request.Request(url, headers={"Accept": "application/json"})  # noqa: S310 - fixed https URLs above
     try:
         with urllib.request.urlopen(request, timeout=TIMEOUT_S) as response:  # noqa: S310 - fixed https URLs above
-            return json.load(response)
+            return response.read()
     except urllib.error.HTTPError as error:
         if error.code == 404:
             return None
@@ -136,17 +156,18 @@ def _fetch_json(url: str) -> dict[str, Any] | None:
 
 def pypi_readme(name: str, version: str) -> str | None:
     """The README PyPI holds for the release, or None when it has none."""
-    payload = _fetch_json(PYPI_RELEASE_URL.format(name=name, version=version))
-    if payload is None:
+    body = _fetch(PYPI_RELEASE_URL.format(name=name, version=version))
+    if body is None:
         return None
-    return payload.get("info", {}).get("description") or ""
+    release: PyPIRelease = json.loads(body)
+    return release.get("info", {}).get("description") or ""
 
 
 def registry_lists(server: str, version: str) -> bool:
     url = REGISTRY_VERSION_URL.format(
         name=urllib.parse.quote(server, safe=""), version=version
     )
-    return _fetch_json(url) is not None
+    return _fetch(url) is not None
 
 
 def check_pypi(name: str, server: str, version: str) -> int:
@@ -193,7 +214,7 @@ def main(argv: list[str] | None = None) -> int:
         for problem in problems:
             print(problem, file=sys.stderr)  # noqa: T201
         return 1
-    server = manifest["name"]
+    server = manifest.get("name", "")
     try:
         if service == PYPI:
             return check_pypi(name, server, version)

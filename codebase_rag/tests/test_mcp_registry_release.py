@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any
+from typing import TypedDict
 
 import pytest
 import yaml
@@ -31,7 +31,23 @@ TITLE_MAX = 100
 NAME_PATTERN = re.compile(r"[a-zA-Z0-9.-]+/[a-zA-Z0-9._-]+")
 
 
-def _manifest() -> dict[str, Any]:
+# Functional form: "if" and "cancel-in-progress" are not identifiers.
+Concurrency = TypedDict("Concurrency", {"group": str, "cancel-in-progress": bool})
+Step = TypedDict("Step", {"id": str, "if": str, "run": str, "uses": str}, total=False)
+Job = TypedDict(
+    "Job",
+    {
+        "needs": list[str],
+        "if": str,
+        "concurrency": Concurrency,
+        "env": dict[str, str],
+        "steps": list[Step],
+    },
+    total=False,
+)
+
+
+def _manifest() -> registry_check.Manifest:
     return json.loads((REPO_ROOT / "server.json").read_text(encoding="utf-8"))
 
 
@@ -43,11 +59,11 @@ def _tag() -> str:
     return f"v{_project()[1]}"
 
 
-def _job() -> dict[str, Any]:
+def _job() -> Job:
     return yaml.safe_load(PUBLISH_WORKFLOW.read_text(encoding="utf-8"))["jobs"][JOB]
 
 
-def _step_index(steps: list[dict[str, Any]], needle: str) -> int:
+def _step_index(steps: list[Step], needle: str) -> int:
     return next(i for i, step in enumerate(steps) if needle in step.get("run", ""))
 
 
@@ -180,7 +196,7 @@ class TestMain:
     ) -> None:
         urls: list[str] = []
         monkeypatch.setattr(
-            registry_check, "_fetch_json", lambda url: urls.append(url) or None
+            registry_check, "_fetch", lambda url: urls.append(url) or None
         )
         assert not registry_check.registry_lists("io.github.acme/widget", "1.2.3")
         assert urls == [
