@@ -172,9 +172,10 @@ uv run python -m evals.retrieval --target codebase_rag --colgrep --sample 500
   them.
 
 Each search returns the top `--colgrep-k` files (default 15, ColGrep's own
-default), so this is a ranked retriever with a fixed budget: a symbol with no
-callers still gets up to k files back, and one with more than k caller files
-cannot reach full recall. The arm builds the index once (`colgrep init -y`),
+default; ColGrep 1.8 merges its ranked code units into one result per file
+before it cuts at k), so this is a ranked retriever with a fixed budget: a
+symbol with no callers still gets up to k files back, and one with more than k
+caller files cannot reach full recall. The arm builds the index once (`colgrep init -y`),
 then runs every search with `--no-update` and `--force-cpu`, and logs the
 index time and the time per search, so the CPU cost sits next to the scores.
 
@@ -182,12 +183,20 @@ ColGrep answers one query per process, so the arm runs one search per symbol
 and mode. On `codebase_rag` (about 29,000 symbols) that is too many, hence
 `--sample N`: every condition, the graph and grep included, is then scored on
 the same seeded random sample of `N` symbols (`--seed`, default 0), so the
-rows stay comparable. `--sample` works without `--colgrep` too. ColGrep keeps
-its index under its own data directory (`~/.local/share/colgrep` on Linux),
-not in the repository. The flags follow the colgrep 1.8 command line; the
-command the arm sends and how it reads the answer are pinned in
-`codebase_rag/tests/test_retrieval_eval.py` against a stand-in binary, not
-the real model.
+rows stay comparable. `--sample` works without `--colgrep` too. A sample whose
+symbols are never called leaves nothing to grade, so the run stops and says so.
+
+ColGrep keeps its saved settings (model, keyword versus semantic balance,
+pooling, ignore rules) next to its index directory, so the arm points
+`COLGREP_DATA_DIR` at a fresh temporary directory for each run: ColGrep runs
+on its defaults whatever the machine has saved, and your own indexes are left
+alone. The cost is a full index build per run, which the log times. The model
+and the ONNX runtime are cached elsewhere and are downloaded only once.
+
+The flags follow the colgrep 1.8 command line; the command the arm sends, the
+settings directory it passes and how it reads the answer are pinned in
+`codebase_rag/tests/test_retrieval_eval.py` against a stand-in binary, not the
+real model.
 
 ## Indexing-time benchmark — pinned corpora
 

@@ -84,6 +84,10 @@ RETRIEVAL_RG_MISSING = (
 RETRIEVAL_SAMPLED = (
     "scoring every condition on {count} of {total} symbols (seed={seed})"
 )
+RETRIEVAL_EMPTY_ORACLE = (
+    "the oracle has no call edges for these {count} symbols, so there is "
+    "nothing to grade; use a larger --sample or another --seed"
+)
 RETRIEVAL_COLGREP_MISSING = (
     "'{binary}' not found on PATH; install ColGrep (lightonai/next-plaid) "
     "or drop --colgrep"

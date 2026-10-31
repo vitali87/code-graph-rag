@@ -665,9 +665,15 @@ RETRIEVAL_SAMPLE_SEED = 0
 # would parse a symbol named `init`, `status` or `update` as a subcommand.
 # `--force-cpu` because the question is whether it competes on CPU; the index
 # is built once by `init` so every query can skip the change scan with
-# `--no-update`. `-s` makes `-e` case-sensitive like ripgrep (colgrep defaults
+# `--no-update`. ColGrep keeps its settings (model, keyword/semantic balance,
+# pooling, ignore rules) in config.json beside its index directory, so pointing
+# COLGREP_DATA_DIR at a fresh temporary directory runs it on its defaults
+# whatever the machine's saved settings, and leaves the user's indexes alone. `-s` makes `-e` case-sensitive like ripgrep (colgrep defaults
 # to case-insensitive). Results are one per file, so `-l` lists the k files.
 COLGREP_BIN = "colgrep"
+COLGREP_DATA_DIR_ENV = "COLGREP_DATA_DIR"
+COLGREP_INDICES_DIR = "indices"
+COLGREP_TMP_PREFIX = "cgr-colgrep-"
 COLGREP_INIT = "init"
 COLGREP_SEARCH = "search"
 COLGREP_YES = "-y"

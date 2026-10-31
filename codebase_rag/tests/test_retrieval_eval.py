@@ -4,6 +4,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import typer
 
 from codebase_rag import constants as cs
 from evals import constants as ec
@@ -230,6 +231,7 @@ class _FakeColGrep:
         self.fail = fail
         self.init_error = init_error
         self.calls: list[list[str]] = []
+        self.data_dirs: list[str] = []
 
     def __call__(
         self, argv: list[str], **kwargs: _KwargValue
@@ -237,6 +239,9 @@ class _FakeColGrep:
         if not isinstance(argv, list) or argv[0] != ec.COLGREP_BIN:
             return _REAL_RUN(argv, **kwargs)
         self.calls.append(list(argv))
+        env = kwargs["env"]
+        assert isinstance(env, dict)
+        self.data_dirs.append(env[ec.COLGREP_DATA_DIR_ENV])
         if argv[1] == ec.COLGREP_INIT:
             code = 0 if self.init_error is None else 2
             return subprocess.CompletedProcess(argv, code, "", self.init_error or "")
@@ -254,10 +259,14 @@ def _follows(argv: list[str], flag: str, value: str) -> bool:
 def test_colgrep_search_command(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     fake = _FakeColGrep({})
     monkeypatch.setattr(subprocess, "run", fake)
+    data_dir = repo / "cg"
 
-    colgrep_call_edges(repo, {"init"}, set(), ec.GrepMode.NAME, top_k=7)
-    colgrep_call_edges(repo, {"init"}, set(), ec.GrepMode.CALL, top_k=7)
+    colgrep_call_edges(repo, {"init"}, set(), ec.GrepMode.NAME, data_dir, top_k=7)
+    colgrep_call_edges(repo, {"init"}, set(), ec.GrepMode.CALL, data_dir, top_k=7)
     name_argv, call_argv = fake.calls
+    # ColGrep reads its saved settings from beside this directory, so every
+    # call must carry it, or the user's own settings would steer the run.
+    assert fake.data_dirs == [str(data_dir)] * 2
 
     for argv in (name_argv, call_argv):
         # The explicit `search` subcommand plus `--` keep a symbol named like
@@ -298,11 +307,12 @@ def test_colgrep_edges_keep_only_graded_files(
 
     # Absolute and cwd-relative paths both map onto the graded file set; a
     # file outside it or outside the target is dropped.
-    assert colgrep_call_edges(repo, {"helper"}, files, ec.GrepMode.NAME) == {
+    data_dir = repo / "cg"
+    assert colgrep_call_edges(repo, {"helper"}, files, ec.GrepMode.NAME, data_dir) == {
         _edge("pkg/core.py", "helper"),
         _edge("pkg/uses.py", "helper"),
     }
-    assert colgrep_call_edges(repo, {"helper"}, files, ec.GrepMode.CALL) == {
+    assert colgrep_call_edges(repo, {"helper"}, files, ec.GrepMode.CALL, data_dir) == {
         _edge("pkg/core.py", "helper")
     }
 
@@ -317,7 +327,9 @@ def test_colgrep_failed_search_is_skipped(
     monkeypatch.setattr(subprocess, "run", fake)
     _trees, files = parse_py_trees(repo)
 
-    edges = colgrep_call_edges(repo, {"helper", "build"}, files, ec.GrepMode.NAME)
+    edges = colgrep_call_edges(
+        repo, {"helper", "build"}, files, ec.GrepMode.NAME, repo / "cg"
+    )
 
     assert edges == {_edge("pkg/core.py", "helper")}
 
@@ -326,11 +338,11 @@ def test_colgrep_index_reports_failure(
     repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(subprocess, "run", _FakeColGrep({}))
-    assert colgrep_index(repo) is None
+    assert colgrep_index(repo, repo / "cg") is None
 
     failing = _FakeColGrep({}, init_error="model download failed")
     monkeypatch.setattr(subprocess, "run", failing)
-    assert colgrep_index(repo) == "model download failed"
+    assert colgrep_index(repo, repo / "cg") == "model download failed"
     (argv,) = failing.calls
     assert argv[:2] == [ec.COLGREP_BIN, ec.COLGREP_INIT]
     assert ec.COLGREP_YES in argv
@@ -394,3 +406,25 @@ def test_main_scores_colgrep_arms_on_the_sample(
     assert len(fake.calls) - len(searched) == 1
     assert len(searched) == 2 * 3
     assert all(_follows(argv, ec.COLGREP_TOP_K_FLAG, "2") for argv in searched)
+    # One throwaway settings-and-index directory for the whole run, removed
+    # afterwards, never ColGrep's default location.
+    (data_dir,) = set(fake.data_dirs)
+    assert not Path(data_dir).exists()
+
+
+@needs_rg
+def test_main_stops_when_nothing_is_called(
+    tmp_path: Path, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    (tmp_path / "lonely.py").write_text("def lonely():\n    return 1\n", "utf-8")
+
+    with pytest.raises(typer.Exit):
+        main(
+            target=tmp_path,
+            project_name="",
+            out_dir=tmp_path_factory.mktemp("out"),
+            sample=0,
+            seed=0,
+            colgrep=False,
+            colgrep_k=ec.COLGREP_DEFAULT_TOP_K,
+        )

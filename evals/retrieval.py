@@ -9,10 +9,12 @@
 # (does the graph beat grep) from any LLM in the loop, the decoupled
 # measurement the GitLab GKG eval flagged as out of scope.
 import ast
+import os
 import random
 import re
 import shutil
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from typing import Annotated
@@ -203,7 +205,7 @@ def grep_call_edges(
 
 
 def _run_colgrep(
-    target: Path, subcommand: str, args: list[str]
+    target: Path, data_dir: Path, subcommand: str, args: list[str]
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [
@@ -215,6 +217,7 @@ def _run_colgrep(
             *args,
         ],
         cwd=target,
+        env={**os.environ, ec.COLGREP_DATA_DIR_ENV: str(data_dir)},
         capture_output=True,
         text=True,
         encoding=cs.ENCODING_UTF8,
@@ -222,9 +225,9 @@ def _run_colgrep(
     )
 
 
-def colgrep_index(target: Path) -> str | None:
+def colgrep_index(target: Path, data_dir: Path) -> str | None:
     completed = _run_colgrep(
-        target, ec.COLGREP_INIT, [ec.COLGREP_YES, ec.RG_SEARCH_PATH]
+        target, data_dir, ec.COLGREP_INIT, [ec.COLGREP_YES, ec.RG_SEARCH_PATH]
     )
     return completed.stderr.strip() if completed.returncode != 0 else None
 
@@ -255,13 +258,17 @@ def colgrep_call_edges(
     first_party: set[str],
     files: set[str],
     mode: ec.GrepMode,
+    data_dir: Path,
     top_k: int = ec.COLGREP_DEFAULT_TOP_K,
 ) -> set[NameEdge]:
     root = target.resolve()
     edges: set[NameEdge] = set()
     for name in sorted(first_party):
         completed = _run_colgrep(
-            root, ec.COLGREP_SEARCH, _colgrep_search_args(name, mode, top_k)
+            root,
+            data_dir,
+            ec.COLGREP_SEARCH,
+            _colgrep_search_args(name, mode, top_k),
         )
         if completed.returncode != 0:
             logger.warning(
@@ -293,9 +300,21 @@ def sample_symbols(symbols: set[str], size: int, seed: int) -> set[str]:
 def _colgrep_conditions(
     target: Path, first_party: set[str], files: set[str], top_k: int
 ) -> list[tuple[str, set[NameEdge]]]:
+    with tempfile.TemporaryDirectory(prefix=ec.COLGREP_TMP_PREFIX) as tmp:
+        data_dir = Path(tmp) / ec.COLGREP_INDICES_DIR
+        return _colgrep_conditions_in(target, first_party, files, top_k, data_dir)
+
+
+def _colgrep_conditions_in(
+    target: Path,
+    first_party: set[str],
+    files: set[str],
+    top_k: int,
+    data_dir: Path,
+) -> list[tuple[str, set[NameEdge]]]:
     logger.info(ls.RETRIEVAL_COLGREP_INDEXING.format(target=target))
     start = time.perf_counter()
-    if (error := colgrep_index(target)) is not None:
+    if (error := colgrep_index(target, data_dir)) is not None:
         logger.error(
             ls.RETRIEVAL_COLGREP_INDEX_FAILED.format(target=target, error=error)
         )
@@ -316,7 +335,7 @@ def _colgrep_conditions(
             )
         )
         start = time.perf_counter()
-        edges = colgrep_call_edges(target, first_party, files, mode, top_k)
+        edges = colgrep_call_edges(target, first_party, files, mode, data_dir, top_k)
         seconds = time.perf_counter() - start
         logger.success(
             ls.RETRIEVAL_COLGREP_DONE.format(
@@ -404,6 +423,12 @@ def main(
     properties = first_party_property_names(trees) & first_party
     oracle = oracle_call_edges(trees, first_party, properties)
     logger.success(ls.RETRIEVAL_ORACLE_DONE.format(count=len(oracle)))
+    # With no call to grade, a condition that also finds nothing has no row at
+    # all, so the table would silently lose conditions; a small --sample of
+    # uncalled symbols is the realistic way to get here.
+    if not oracle:
+        logger.error(ls.RETRIEVAL_EMPTY_ORACLE.format(count=len(first_party)))
+        raise typer.Exit(code=1)
 
     logger.info(ls.RETRIEVAL_EXTRACTING_CGR.format(target=target, project=project))
     graph = cgr_call_edges(target, project, first_party)
