@@ -76,7 +76,9 @@ def test_an_arrow_function_is_not_a_header_it_reads() -> None:
     assert _find_definition(root, "helper", 1, 1) is None
 
 
-@pytest.mark.parametrize("param", ["...rest", "{ a }", "[a, b]", "{ a } = {}"])
+@pytest.mark.parametrize(
+    "param", ["...rest", "{ a }", "[a, b]", "{ a } = {}", "\\u0061", "\\u0062 = 1"]
+)
 def test_a_parameter_that_is_not_a_plain_name_refuses(param: str) -> None:
     with pytest.raises(SignatureRefused, match="is not a plain parameter") as refused:
         _header(f"function helper(x, {param}) {{\n  return x;\n}}\n")
@@ -140,9 +142,39 @@ SOURCE = "function helper(a, b = 'x') {\n  return String(a) + b;\n}\n"
             [],
             "still uses `a`",
         ),
+        (
+            "function helper(a, b) {\n  return \\u0061 + b;\n}\n",
+            ["b"],
+            [],
+            "still uses `a`",
+        ),
+        (
+            "function helper(a, b) {\n  return \\u{61} + b;\n}\n",
+            ["b"],
+            [],
+            "still uses `a`",
+        ),
+        (
+            "function helper(a, b) {\n  return eval('a') + b;\n}\n",
+            ["b"],
+            [],
+            "uses `eval`",
+        ),
+        (
+            "function helper(a) {\n  return eval('a');\n}\n",
+            ["a", "n"],
+            [],
+            "uses `eval`",
+        ),
         (SOURCE, ["a", "b", "String"], [], "already used"),
         (
             "function helper(a, b) {\n  return arguments.length;\n}\n",
+            ["b", "a"],
+            [],
+            "reads `arguments`",
+        ),
+        (
+            "function helper(a, b) {\n  return \\u0061rguments.length;\n}\n",
             ["b", "a"],
             [],
             "reads `arguments`",
@@ -153,8 +185,13 @@ SOURCE = "function helper(a, b = 'x') {\n  return String(a) + b;\n}\n"
         "dropped-read",
         "dropped-read-by-default",
         "dropped-assigned-by-shorthand-pattern",
+        "dropped-read-escaped",
+        "dropped-read-escaped-braces",
+        "dropped-read-by-eval",
+        "added-beside-eval",
         "added-taken",
         "arguments",
+        "arguments-escaped",
         "rename",
     ],
 )
@@ -167,6 +204,13 @@ def test_a_change_the_body_would_disagree_with_refuses(
 
     with pytest.raises(SignatureRefused, match=reason):
         _refuse_body_conflicts([header], old_names, specs, renamed)
+
+
+def test_a_reorder_beside_eval_passes() -> None:
+    # `eval` reads by name, and a reorder keeps every name.
+    header = _header("function helper(a, b) {\n  return eval('a - b');\n}\n")
+
+    _refuse_body_conflicts([header], ["a", "b"], _specs("b", "a"), [])
 
 
 def test_dropping_a_name_the_body_never_mentions_passes() -> None:
