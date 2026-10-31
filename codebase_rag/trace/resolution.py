@@ -389,10 +389,12 @@ def _runtime_name_parts(qualname: str) -> list[str]:
 
 def _named_by(candidates: list[CallableNode], parts: list[str]) -> list[CallableNode]:
     suffix = cs.SEPARATOR_DOT + cs.SEPARATOR_DOT.join(parts)
+    # Every marker goes, not only the last: a method of a redefined class is
+    # indexed as `C@6.run`, and co_qualname marks no segment.
     return [
         n
         for n in candidates
-        if _natural_qualified_name(n.qualified_name).endswith(suffix)
+        if qn_markers.strip_all_markers(n.qualified_name).endswith(suffix)
     ]
 
 

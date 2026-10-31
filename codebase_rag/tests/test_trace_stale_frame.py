@@ -78,3 +78,30 @@ def test_a_current_frame_still_resolves(tmp_path: Path) -> None:
     assert driver.qualified_name == f"{_PROJECT}.m.driver"
     assert lam is None
     assert stats.unresolved == {cs.TraceUnresolvedReason.SYNTHETIC.value: 1}
+
+
+def test_a_method_of_a_redefined_class_resolves_by_name(tmp_path: Path) -> None:
+    # A file's second `class C` is indexed as `C@6`, so its method is
+    # `C@6.run` with the marker on an inner segment, while co_qualname is
+    # `C.run`. Only the line fallback used to find it.
+    first = CallableNode(
+        label=cs.NodeLabel.METHOD,
+        qualified_name=f"{_PROJECT}.m.C.first",
+        path="m.py",
+        start_line=2,
+        end_line=3,
+    )
+    run = CallableNode(
+        label=cs.NodeLabel.METHOD,
+        qualified_name=f"{_PROJECT}.m.C@6.run",
+        path="m.py",
+        start_line=7,
+        end_line=8,
+    )
+    stats = ResolutionStats()
+    resolved = FrameResolver(tmp_path, [first, run]).resolve(
+        _frame(tmp_path, "C.run", 7), stats
+    )
+    assert resolved is not None
+    assert resolved.qualified_name == run.qualified_name
+    assert stats.total == 0
