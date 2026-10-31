@@ -5119,8 +5119,15 @@ class CallResolver:
         # project `get` out.
         import_map = self.import_processor.import_mapping.get(module_qn, {})
         if (target := import_map.get(call_name)) is not None:
-            owner = target.rpartition(cs.SEPARATOR_DOT)[0]
-            return qn == target or _qn_under(qn, target) or _qn_within(qn, owner)
+            owner, _, imported_name = target.rpartition(cs.SEPARATOR_DOT)
+            # A re-export keeps its function's name, so under an alias
+            # (`from lib import _wrap as shout`) a `lib.shout` only shares the
+            # local name and is a sibling the import never names.
+            return (
+                qn == target
+                or _qn_under(qn, target)
+                or (imported_name == call_name and _qn_within(qn, owner))
+            )
         return any(
             key.startswith(cs.IMPORTED_NAME_WILDCARD) and _qn_within(qn, module)
             for key, module in import_map.items()

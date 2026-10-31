@@ -137,6 +137,16 @@ def qualified():
     return lib.print("x")
 """
 
+# `shout` here is `lib._wrap`, which `lib` re-exports from `lib.progress`;
+# `lib.shout` only shares the local name (bot review on PR #2968).
+ALIASED_REEXPORT = """\
+from lib import _wrap as shout
+
+
+def wrapped():
+    return shout(1)
+"""
+
 
 @pytest.fixture(scope="module")
 def graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
@@ -153,6 +163,7 @@ def graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
     _write(root, "external.py", EXTERNAL)
     _write(root, "getter.py", GETTER)
     _write(root, "star_other.py", STAR_OTHER)
+    _write(root, "aliased_reexport.py", ALIASED_REEXPORT)
     return _index(root, MagicMock())
 
 
@@ -215,3 +226,9 @@ def test_an_except_variable_passed_on_names_no_function(
     graph: RecordedGraph,
 ) -> None:
     assert "other.error" not in _targets(graph, "app.handled")
+
+
+def test_an_aliased_import_names_no_sibling_sharing_the_alias(
+    graph: RecordedGraph,
+) -> None:
+    assert "lib.shout" not in _targets(graph, "aliased_reexport.wrapped")
