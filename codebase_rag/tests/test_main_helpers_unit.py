@@ -601,17 +601,17 @@ class TestExportGraphToFile:
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         ingestor = MagicMock()
-        ingestor.export_graph_to_dict.return_value = {
-            cs.KEY_METADATA: {
-                cs.KEY_TOTAL_NODES: 3,
-                cs.KEY_TOTAL_RELATIONSHIPS: 2,
-            },
+        ingestor.iter_export_nodes.return_value = iter([{"id": 1}, {"id": 2}, {"id": 3}])
+        ingestor.iter_export_relationships.return_value = iter([{"id": 10}, {"id": 11}])
+        ingestor.export_graph_metadata.return_value = {
+            cs.KEY_TOTAL_NODES: 3,
+            cs.KEY_TOTAL_RELATIONSHIPS: 2,
         }
         output = tmp_path / "nested" / "graph.json"
 
         assert export_graph_to_file(ingestor, str(output)) is True
         assert output.exists()
-        assert cs.KEY_METADATA in output.read_text(encoding="utf-8")
+        assert cs.KEY_TOTAL_NODES in output.read_text(encoding="utf-8")
         assert "Export contains 3 nodes and 2 relationships" in _plain(
             capsys.readouterr().out
         )
@@ -620,7 +620,7 @@ class TestExportGraphToFile:
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         ingestor = MagicMock()
-        ingestor.export_graph_to_dict.side_effect = RuntimeError("boom")
+        ingestor.iter_export_nodes.side_effect = RuntimeError("boom")
 
         assert export_graph_to_file(ingestor, str(tmp_path / "graph.json")) is False
         assert "boom" in _plain(capsys.readouterr().out)

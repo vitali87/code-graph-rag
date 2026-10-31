@@ -8,7 +8,8 @@ counted the export's time as the sync's: a no-op sync of a 6-file repo read
 
 from __future__ import annotations
 
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Iterator
+from typing import Any
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -62,11 +63,17 @@ def clock() -> Generator[FakeClock, None, None]:
 def ingestor(clock: FakeClock) -> MagicMock:
     store = MagicMock()
 
-    def export(project_names: tuple[str, ...] | list[str] = ()) -> GraphData:
-        clock.advance(EXPORT_SECONDS)
-        return GRAPH
+    def iter_nodes(project_names: tuple[str, ...] | list[str] = ()) -> Iterator[dict[str, Any]]:
+        clock.advance(EXPORT_SECONDS / 2)
+        yield from GRAPH["nodes"]
 
-    store.export_graph_to_dict.side_effect = export
+    def iter_rels(project_names: tuple[str, ...] | list[str] = ()) -> Iterator[dict[str, Any]]:
+        clock.advance(EXPORT_SECONDS / 2)
+        yield from GRAPH["relationships"]
+
+    store.iter_export_nodes.side_effect = iter_nodes
+    store.iter_export_relationships.side_effect = iter_rels
+    store.export_graph_metadata.return_value = GRAPH["metadata"]
     return store
 
 
@@ -101,7 +108,7 @@ def _start(
 
 
 def _scope(ingestor: MagicMock) -> list[str]:
-    call = ingestor.export_graph_to_dict.call_args
+    call = ingestor.iter_export_nodes.call_args
     if call.args:
         return list(call.args[0])
     return list(call.kwargs.get("project_names", []))
@@ -252,7 +259,7 @@ def test_without_output_nothing_is_exported_and_the_sync_is_timed(
     )
 
     assert result.exit_code == 0, result.output
-    ingestor.export_graph_to_dict.assert_not_called()
+    ingestor.iter_export_nodes.assert_not_called()
     assert (
         cs.CLI_MSG_SYNC_DONE.format(project="alpha", elapsed=SYNC_SECONDS)
         in result.output
@@ -270,13 +277,13 @@ def test_output_still_requires_update_graph(
 
     assert result.exit_code == 1
     assert cs.CLI_ERR_OUTPUT_REQUIRES_UPDATE in result.output
-    ingestor.export_graph_to_dict.assert_not_called()
+    ingestor.iter_export_nodes.assert_not_called()
 
 
 def test_a_failed_export_still_fails_the_command(
     ingestor: MagicMock, clock: FakeClock, tmp_path: Path
 ) -> None:
-    ingestor.export_graph_to_dict.side_effect = RuntimeError("boom")
+    ingestor.iter_export_nodes.side_effect = RuntimeError("boom")
 
     result = _start(
         ingestor,

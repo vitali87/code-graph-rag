@@ -619,6 +619,30 @@ MATCH (a)-[r]->(b)
 RETURN id(a) as from_id, id(b) as to_id, type(r) as type, properties(r) as properties
 """
 
+# Whole-graph and project exports stream in id-range pages instead of
+# materialising every row in memory (issue #3149): $lo inclusive, $hi
+# exclusive, the page size bounds the rows fetched at once. The queries
+# return exactly the rows the un-paged ones do, in the same shape.
+CYPHER_EXPORT_NODES_PAGE = """
+MATCH (n) WHERE id(n) >= $lo AND id(n) < $hi
+RETURN id(n) as node_id, labels(n) as labels, properties(n) as properties
+"""
+
+CYPHER_EXPORT_RELATIONSHIPS_PAGE = """
+MATCH (a)-[r]->(b) WHERE id(r) >= $lo AND id(r) < $hi
+RETURN id(a) as from_id, id(b) as to_id, type(r) as type, properties(r) as properties
+"""
+
+CYPHER_MAX_NODE_ID = """
+MATCH (n)
+RETURN max(id(n)) as max_id
+"""
+
+CYPHER_MAX_RELATIONSHIP_ID = """
+MATCH ()-[r]->()
+RETURN max(id(r)) as max_id
+"""
+
 # What a project owns is what deleting it removes: its containment tree and
 # everything the containers define (the walk of CYPHER_DELETE_PROJECT). Walking
 # from the Project node rather than matching a qualified-name prefix keeps
@@ -660,6 +684,34 @@ WITH owned, owned + reached AS exported, [x IN reached WHERE x:Resource] AS reso
 UNWIND owned + resources AS a
 MATCH (a)-[r]->(b)
 WHERE NOT a:Resource OR b IN exported
+RETURN id(a) as from_id, id(b) as to_id, type(r) as type, properties(r) as properties
+"""
+)
+
+# The paged forms of the project export queries: the same owned/exported
+# sets, one id-range window at a time ($lo inclusive, $hi exclusive), so the
+# export never holds more than one page of rows in memory.
+CYPHER_EXPORT_PROJECT_NODES_PAGE = (
+    _CYPHER_PROJECT_OWNED_NODES
+    + """OPTIONAL MATCH (n)-->(reached)
+WITH collect(DISTINCT n) + collect(DISTINCT reached) AS exported
+UNWIND exported AS node
+WITH DISTINCT node
+WHERE id(node) >= $lo AND id(node) < $hi
+RETURN id(node) as node_id, labels(node) as labels, properties(node) as properties
+"""
+)
+
+CYPHER_EXPORT_PROJECT_RELATIONSHIPS_PAGE = (
+    _CYPHER_PROJECT_OWNED_NODES
+    + """WITH collect(n) AS owned
+UNWIND owned AS n
+OPTIONAL MATCH (n)-->(reached)
+WITH owned, collect(DISTINCT reached) AS reached
+WITH owned, owned + reached AS exported, [x IN reached WHERE x:Resource] AS resources
+UNWIND owned + resources AS a
+MATCH (a)-[r]->(b)
+WHERE (NOT a:Resource OR b IN exported) AND id(r) >= $lo AND id(r) < $hi
 RETURN id(a) as from_id, id(b) as to_id, type(r) as type, properties(r) as properties
 """
 )
