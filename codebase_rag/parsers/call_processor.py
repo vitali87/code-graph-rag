@@ -4611,7 +4611,16 @@ class CallProcessor:
             body = ctor_node.child_by_field_name(cs.FIELD_BODY)
             if body is None or not body.named_children:
                 return False
-            first = body.named_children[0]
+            # Comments are named children in tree-sitter-java, so a
+            # leading comment must not hide the invocation behind it.
+            statements = [
+                child
+                for child in body.named_children
+                if child.type not in (cs.TS_LINE_COMMENT, cs.TS_BLOCK_COMMENT)
+            ]
+            if not statements:
+                return False
+            first = statements[0]
             if first.type != cs.TS_EXPLICIT_CONSTRUCTOR_INVOCATION:
                 return False
             return any(

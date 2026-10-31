@@ -221,6 +221,51 @@ class Chain {
         s.endswith("Chain.Chain()") and t.endswith("Factory.Factory()")
         for s, t in calls
     ), calls
+    # One source site, one edge: the site identity is unique, so no
+    # module/class double-processing copy exists.
+    sites = [
+        site
+        for site in _sites(mock_ingestor, "CALLS")
+        if site[1].endswith("Factory.Factory()")
+    ]
+    assert len(sites) == 1, sites
+    assert len({(s, t, line, col) for s, t, line, col in sites}) == 1, sites
+
+
+def test_java_delegating_constructor_with_leading_comment_attributes_to_sink(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Comments are named children in tree-sitter-java: a comment
+    # before `this(...)` must not hide the delegation, or the chain
+    # would misread as two sinks and fall back to the class node.
+    project = temp_repo / "jcomment"
+    (project / "com" / "example").mkdir(parents=True)
+    (project / "com" / "example" / "M.java").write_text(
+        """
+package com.example;
+class Factory { Factory() {} }
+class Chain {
+  Factory f = new Factory();
+  Chain() { /* delegate */ // to the sink
+    this(1); }
+  Chain(int x) {}
+}
+""",
+        encoding="utf-8",
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="java")
+
+    calls = _calls(mock_ingestor)
+    sink_edges = [
+        (s, t)
+        for s, t in calls
+        if s.endswith("Chain.Chain(int)") and t.endswith("Factory.Factory()")
+    ]
+    assert len(sink_edges) == 1, calls
+    assert not any(
+        s.endswith("Chain.Chain()") and t.endswith("Factory.Factory()")
+        for s, t in calls
+    ), calls
 
 
 def test_java_inner_class_field_initializer_attributes_to_inner(
@@ -330,6 +375,15 @@ public class Chain {
         and t.endswith("Factory.Factory")
         for s, t in calls
     ), calls
+    # One source site, one edge: the site identity is unique, so no
+    # module/class double-processing copy exists.
+    sites = [
+        site
+        for site in _sites(mock_ingestor, "CALLS")
+        if site[1].endswith("Factory.Factory")
+    ]
+    assert len(sites) == 1, sites
+    assert len({(s, t, line, col) for s, t, line, col in sites}) == 1, sites
 
 
 def test_java_independent_overloads_attribute_to_class_node(
