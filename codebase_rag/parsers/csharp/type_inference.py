@@ -269,6 +269,26 @@ def _declarator_named(declarator: Node, name: str) -> bool:
     )
 
 
+def _is_member_name(node: Node) -> bool:
+    # `x.sink` names a member of `x`, not the simple name `sink`.
+    parent = node.parent
+    if parent is None or parent.type != cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
+        return False
+    member = parent.child_by_field_name(cs.FIELD_NAME)
+    return member is not None and member.id == node.id
+
+
+def _foreach_binds_at(loop: Node, child: Node, name: str) -> bool:
+    # Only the variable and the body: the collection expression is outside
+    # the binding's scope, so `foreach (var sink in sink.All)` reads the
+    # outer `sink`.
+    bound = loop.child_by_field_name(cs.FIELD_LEFT)
+    if bound is None or safe_decode_text(bound) != name:
+        return False
+    body = loop.child_by_field_name(cs.FIELD_BODY)
+    return child.id == bound.id or (body is not None and child.id == body.id)
+
+
 def _local_declarator_type_text(type_node: Node | None, declarator: Node) -> str | None:
     """The declared type of a local's declarator, or for `var` the type its
     initializer constructs (None when neither is read)."""
@@ -481,13 +501,15 @@ class CSharpTypeInferenceEngine:
                 text = self._foreach_element_text(loop, scope_node)
             if not name:
                 continue
-            if text:
+            if text and not self._named_outside_its_binders(scope_node, name):
                 self._record_type(name, annotate_type_ref(text), types, conflicted)
             else:
                 # The map is per method, so a loop whose element type is not
                 # read must not inherit another binding's type for the name:
                 # `foreach (var sink in MakeOthers())` after a typed `sink`
-                # loop bound to its type (bot review on PR #2990).
+                # loop bound to its type. Nor may the loop's type reach a use
+                # of the name before or after the loop, where it is a field
+                # (bot review on PR #2990).
                 types.pop(name, None)
                 conflicted.add(name)
 
@@ -679,6 +701,37 @@ class CSharpTypeInferenceEngine:
                         == name
                     ):
                         return True
+        return False
+
+    def _named_outside_its_binders(self, scope_node: Node, name: str) -> bool:
+        """Whether `name` is used in this method outside every `foreach` that
+        binds it and every block that declares it as a local: there it is a
+        field, a property or a type, which the one map per method cannot hold
+        beside a loop's type (bot review on PR #2990)."""
+        stack = list(scope_node.children)
+        while stack:
+            current = stack.pop()
+            stack.extend(current.children)
+            if (
+                current.type == cs.TS_CSHARP_IDENTIFIER
+                and safe_decode_text(current) == name
+                and not _is_member_name(current)
+                and not self._bound_by_loop_or_local(current, name)
+            ):
+                return True
+        return False
+
+    def _bound_by_loop_or_local(self, node: Node, name: str) -> bool:
+        child, current = node, node.parent
+        while current is not None:
+            if current.type == cs.TS_CSHARP_FOREACH_STATEMENT:
+                if _foreach_binds_at(current, child, name):
+                    return True
+            elif current.type == cs.TS_CSHARP_BLOCK and self._block_declares(
+                current, name
+            ):
+                return True
+            child, current = current, current.parent
         return False
 
     def _declared_type_name(self, decl: Node) -> str | None:

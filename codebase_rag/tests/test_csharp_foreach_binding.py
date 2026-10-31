@@ -89,6 +89,19 @@ namespace Acme
         {
             foreach (var sink in _sinks) sink.Emit(m);
         }
+
+        // Bot review on PR #2990: outside the loop the name is the field.
+        readonly Other spare;
+        public void FieldBeforeLoop(string m)
+        {
+            spare.Emit(m);
+            foreach (ISink spare in _sinks) { }
+        }
+        public void FieldAfterLoop(string m)
+        {
+            foreach (var spare in _sinks) { }
+            spare.Emit(m);
+        }
     }
 }
 """
@@ -157,6 +170,17 @@ def test_a_binding_that_hides_the_field_types_the_loop(
 ) -> None:
     # The loop reads the enclosing loop's `Other[]` binding or the `params
     # Other[]` parameter, not the `ISink[]` field of the same name.
+    callees = _callees(graph, caller)
+    assert callees.get(OTHER_EMIT) == "exact", callees
+    assert EMIT not in callees
+
+
+@pytest.mark.parametrize("caller", ["FieldBeforeLoop", "FieldAfterLoop"])
+def test_a_loop_type_does_not_reach_the_field_of_its_name(
+    graph: RecordedGraph, caller: str
+) -> None:
+    # Before and after the loop `spare` is the `Other` field, not the loop's
+    # ISink variable.
     callees = _callees(graph, caller)
     assert callees.get(OTHER_EMIT) == "exact", callees
     assert EMIT not in callees
