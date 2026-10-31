@@ -107,8 +107,10 @@ def test_values_that_run_code_keep_their_order() -> None:
 
 
 def test_values_that_run_code_are_never_reordered() -> None:
+    sources: list[_Source | None] = [_Source(1), _Source(0)]
+
     with pytest.raises(_Unmapped, match="in another order"):
-        _render("helper(f(), g())", [B, A], [_Source(1), _Source(0)])
+        _render("helper(f(), g())", [B, A], sources)
 
 
 SOURCE = "function helper(a, b = 'x') {\n  return String(a) + b;\n}\n"
@@ -187,9 +189,10 @@ def test_a_reorder_that_runs_defaults_in_another_order_refuses(
     header = _header(f"function helper{params} {{\n  return 0;\n}}\n")
     own = {p.name: p for p in header.params}
     reordered = [own[name] for name in new]
+    carried = set(new)
 
     with pytest.raises(SignatureRefused, match="would run in the other order"):
-        _definition_edits(header, reordered, set(new), [])
+        _definition_edits(header, reordered, carried, [])
 
 
 @pytest.mark.parametrize(
