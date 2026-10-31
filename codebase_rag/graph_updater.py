@@ -31,6 +31,7 @@ from .checkout_state import prepare_state_dir, state_dir
 from .config import settings
 from .dispatch_dependents import (
     ScannedFile,
+    base_change_component_qns,
     build_class_changes,
     dispatch_target_prefixes,
     scan_python_classes,
@@ -5551,6 +5552,34 @@ class GraphUpdater:
                         method_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
                     )
                 )
+        # A class that changed bases can detach a descendant override
+        # whose name neither the changed nor the Protocol names can
+        # ask the filtered query for. Read the whole method sets of
+        # the affected hierarchy components, so the target computation
+        # below can name that override.
+        component_qns = base_change_component_qns(
+            changes, hierarchy, self.project_name, tuple(longer_project_prefixes)
+        )
+        if component_qns:
+            try:
+                component_rows = self._graph_rows(
+                    cs.CYPHER_DISPATCH_METHODS_FOR_CLASSES,
+                    {cs.KEY_QNS: sorted(component_qns)},
+                )
+            except Exception:
+                logger.warning(
+                    ls.PRUNE_QUERY_FAILED, label="dispatch component methods"
+                )
+            else:
+                for row in component_rows:
+                    class_qn = row.get(cs.KEY_CLASS_QN)
+                    method_qn = row.get(cs.KEY_METHOD_QN)
+                    if isinstance(class_qn, str) and isinstance(method_qn, str):
+                        class_methods.setdefault(class_qn, set()).add(
+                            qn_markers.strip_dup_marker(
+                                method_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+                            )
+                        )
         prefixes, base_qns = dispatch_target_prefixes(
             changes,
             hierarchy,

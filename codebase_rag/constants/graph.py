@@ -1537,6 +1537,17 @@ CYPHER_DISPATCH_CLASS_METHODS = (
     "OR m.qualified_name CONTAINS ('.' + name + '@')) "
     "RETURN c.qualified_name AS class_qn, m.qualified_name AS method_qn"
 )
+# Every method the named classes define, plus the `@line` duplicate
+# variants, which a CALLS edge can also target. Read only for the
+# hierarchy components of classes that changed bases: a descendant
+# override's name is not among the changed or Protocol method names
+# the filtered query above can ask for, and without it the detached
+# override's callers are never queued (issue #3338).
+CYPHER_DISPATCH_METHODS_FOR_CLASSES = (
+    "MATCH (c:Class)-[:DEFINES_METHOD]->(m:Method) "
+    "WHERE c.qualified_name IN $qns "
+    "RETURN c.qualified_name AS class_qn, m.qualified_name AS method_qn"
+)
 # Files holding a CALLS edge into one of the dispatch targets, plus the
 # `@line` variants of those targets. Files already in the re-parse set
 # ($paths) are excluded: they re-parse anyway. The target prefixes are

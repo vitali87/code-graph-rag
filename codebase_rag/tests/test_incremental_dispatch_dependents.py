@@ -495,3 +495,174 @@ def test_scoped_reingest_removal_prunes_dispatch_edges(temp_repo: Path) -> None:
         t.endswith("Splitter.do_match") for t in _callees(snapshot, "Transformer.run")
     )
     assert snapshot == clean
+
+
+INHERIT_LIB = """from typing import Protocol
+
+
+class Client(Protocol):
+    def get(self, key: str) -> bytes: ...
+
+    def set(self, key: str, value: bytes) -> None: ...
+
+
+class Cache:
+    def __init__(self, client: Client):
+        self.client = client
+
+    def load(self, k):
+        return self.client.get(k)
+"""
+
+INHERIT_BASE = """class Base:
+    def get(self, key):
+        return b"b"
+
+
+class Child(Base):
+    def set(self, key, value):
+        return None
+"""
+
+INHERIT_REAL = """class Real:
+    def get(self, k):
+        return b"r"
+
+    def set(self, k, value):
+        return None
+"""
+
+
+def test_incremental_conformer_through_inherited_method_gains_new_target(
+    temp_repo: Path,
+) -> None:
+    """`Child` conforms only through `Base.get`, inherited, so the
+    caller's existing edge names `Base.get`, not `Child.get`. Adding
+    a standalone full conformer must re-parse the caller so it gains
+    the new edge, matching a fresh index."""
+    before = {"inherit_lib.py": INHERIT_LIB, "inherit_base.py": INHERIT_BASE}
+    root = temp_repo / "proj"
+    _materialise(root, before)
+    store = _StatefulIngestor()
+    _index(store, root, cs.SupportedLanguage.PYTHON, force=True)
+    assert any(t.endswith("Base.get") for t in _callees(_snapshot(store), "Cache.load"))
+    _add_after_cache(root, "inherit_real.py", INHERIT_REAL)
+    _index(store, root, cs.SupportedLanguage.PYTHON, force=False)
+    snapshot = _snapshot(store)
+
+    clean, _clean_store = _clean_snapshot(
+        temp_repo, {**before, "inherit_real.py": INHERIT_REAL}
+    )
+    load_targets = _callees(clean, "Cache.load")
+    assert any(t.endswith("Base.get") for t in load_targets)
+    assert any(t.endswith("Real.get") for t in load_targets)
+    assert _callees(snapshot, "Cache.load") == load_targets
+    assert snapshot == clean
+
+
+NAMED_LIB = """from typing import Protocol
+
+
+class ClientProtocol(Protocol):
+    def get(self, key: str) -> bytes: ...
+
+    def set(self, key: str, value: bytes) -> None: ...
+
+
+class Cache:
+    def __init__(self, client: ClientProtocol):
+        self.client = client
+
+    def load(self, k):
+        return self.client.get(k)
+"""
+
+NAMED_OLD = 'class Client:\n    def get(self, k):\n        return b"a"\n'
+
+NAMED_NEW = """class Client:
+    def get(self, k):
+        return b"b"
+
+    def set(self, k, value):
+        return None
+"""
+
+
+def test_incremental_second_same_named_client_retires_old_named_target(
+    temp_repo: Path,
+) -> None:
+    """The old partial `Client` was the unique named implementer, so
+    the caller held an edge to it. Adding a second, full `Client`
+    ends that uniqueness: a fresh index drops the old edge and adds
+    the new one, and the incremental sync must do the same."""
+    before = {"named_lib.py": NAMED_LIB, "a_impl.py": NAMED_OLD}
+    root = temp_repo / "proj"
+    _materialise(root, before)
+    store = _StatefulIngestor()
+    _index(store, root, cs.SupportedLanguage.PYTHON, force=True)
+    assert any(
+        t.endswith("a_impl.Client.get")
+        for t in _callees(_snapshot(store), "Cache.load")
+    )
+    _add_after_cache(root, "b_impl.py", NAMED_NEW)
+    _index(store, root, cs.SupportedLanguage.PYTHON, force=False)
+    snapshot = _snapshot(store)
+
+    clean, _clean_store = _clean_snapshot(temp_repo, {**before, "b_impl.py": NAMED_NEW})
+    load_targets = _callees(clean, "Cache.load")
+    assert not any(t.endswith("a_impl.Client.get") for t in load_targets)
+    assert any(t.endswith("b_impl.Client.get") for t in load_targets)
+    assert _callees(snapshot, "Cache.load") == load_targets
+    assert snapshot == clean
+
+
+DETACH_ROOT = """class Root:
+    def m(self):
+        return "root"
+
+    def run(self):
+        return self.m()
+"""
+
+DETACH_A = "from root3 import Root\n\n\nclass A(Root):\n    pass\n"
+
+DETACH_MID_OLD = "from a3 import A\n\n\nclass Mid(A):\n    pass\n"
+
+DETACH_MID_NEW = "from b3 import B\n\n\nclass Mid(B):\n    pass\n"
+
+DETACH_LEAF = 'from mid3 import Mid\n\n\nclass Leaf(Mid):\n    def m(self):\n        return "leaf"\n'
+
+DETACH_B = "class B:\n    pass\n"
+
+
+def test_incremental_detached_subclass_prunes_dispatch_edge(
+    temp_repo: Path,
+) -> None:
+    """`Mid` changes bases with no methods of its own, detaching
+    `Leaf.m` from `Root`'s self-dispatch targets. The caller in the
+    root file holds the old edge and must be re-parsed so it is
+    pruned, matching a fresh index."""
+    before = {
+        "root3.py": DETACH_ROOT,
+        "a3.py": DETACH_A,
+        "mid3.py": DETACH_MID_OLD,
+        "leaf3.py": DETACH_LEAF,
+        "b3.py": DETACH_B,
+    }
+    root = temp_repo / "proj"
+    _materialise(root, before)
+    store = _StatefulIngestor()
+    _index(store, root, cs.SupportedLanguage.PYTHON, force=True)
+    assert any(t.endswith("Leaf.m") for t in _callees(_snapshot(store), "Root.run"))
+    _add_after_cache(root, "mid3.py", DETACH_MID_NEW)
+    _index(store, root, cs.SupportedLanguage.PYTHON, force=False)
+    snapshot = _snapshot(store)
+
+    clean, _clean_store = _clean_snapshot(
+        temp_repo, {**before, "mid3.py": DETACH_MID_NEW}
+    )
+    run_targets = _callees(clean, "Root.run")
+    assert any(t.endswith("Root.m") for t in run_targets)
+    assert not any(t.endswith("Leaf.m") for t in run_targets)
+    assert _callees(snapshot, "Root.run") == run_targets
+    assert snapshot == clean

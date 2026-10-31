@@ -405,6 +405,43 @@ def _neighbourhood(
     return found
 
 
+def base_change_component_qns(
+    changes: list[ClassChange],
+    hierarchy: dict[str, list[str]],
+    project_name: str,
+    longer_project_prefixes: tuple[str, ...] = (),
+) -> set[str]:
+    """The classes in the hierarchy components of classes that changed
+    bases, old and new state both: a caller of the updater, whose
+    method sets are read filtered to the changed and Protocol names,
+    needs these classes' whole method sets to learn a descendant
+    override's name, which neither filter can name."""
+    merged_hierarchy: dict[str, list[str]] = {
+        child: list(bases) for child, bases in hierarchy.items()
+    }
+    for change in changes:
+        if change.present:
+            merged_hierarchy[change.qn] = list(change.new_bases)
+        else:
+            merged_hierarchy.pop(change.qn, None)
+    found: set[str] = set()
+    for change in changes:
+        if set(change.old_bases) == set(change.new_bases):
+            continue
+        found.update(
+            _neighbourhood(change.qn, hierarchy, project_name, longer_project_prefixes)
+        )
+        found.update(
+            _neighbourhood(
+                change.qn,
+                merged_hierarchy,
+                project_name,
+                longer_project_prefixes,
+            )
+        )
+    return found
+
+
 def _effective_methods(
     class_qn: str,
     hierarchy: dict[str, list[str]],
@@ -463,6 +500,79 @@ def _protocol_method_sets(
         if names:
             result[protocol_qn] = names
     return result
+
+
+def _method_owners(
+    class_qn: str,
+    method: str,
+    hierarchy: dict[str, list[str]],
+    methods: dict[str, set[str]],
+) -> set[str]:
+    # The classes on the inheritance chain that define `method` themselves:
+    # the CALLS edge for an inherited method names the defining class,
+    # the way `_try_resolve_method` walks the chain, never the conformer
+    # that merely inherits it. Every definer counts, not just the first
+    # the MRO would pick: a prefix that matches nothing only over-queues
+    # a re-parse, while a missed owner loses the caller outright.
+    found: set[str] = set()
+    stack = [class_qn]
+    seen: set[str] = set()
+    while stack:
+        current = stack.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        if method in methods.get(current, ()):
+            found.add(current)
+        stack.extend(hierarchy.get(current, ()))
+    return found
+
+
+def _descendant_methods(
+    root: str,
+    hierarchy: dict[str, list[str]],
+    methods: dict[str, set[str]],
+) -> set[str]:
+    # The methods the strict descendants of `root` define: when `root`
+    # changes bases, a descendant override can leave or join the
+    # self-dispatch targets of a call in an ancestor even though the
+    # changed class itself defines no method of that name.
+    children: dict[str, set[str]] = {}
+    for child, bases in hierarchy.items():
+        for base in bases:
+            children.setdefault(base, set()).add(child)
+    found: set[str] = set()
+    stack = [root]
+    seen = {root}
+    while stack:
+        current = stack.pop()
+        for child in children.get(current, ()):
+            if child in seen:
+                continue
+            seen.add(child)
+            found.update(methods.get(child, ()))
+            stack.append(child)
+    return found
+
+
+def _named_implementer(
+    protocol_qn: str,
+    classes: set[str],
+    protocols: set[str],
+    by_simple: dict[str, list[str]],
+) -> str | None:
+    # The unique `Xxx` implementer of `XxxProtocol` among `classes`,
+    # the mirror of `_protocol_impl_map` for one state of the graph:
+    # uniqueness is judged per state, because adding a class can end
+    # it, and the old state must keep naming its old implementer.
+    simple = _simple_name(protocol_qn)
+    if not simple.endswith(_PROTOCOL_LEAF):
+        return None
+    wanted = simple[: -len(_PROTOCOL_LEAF)]
+    candidates = [
+        qn for qn in by_simple.get(wanted, []) if qn in classes and qn not in protocols
+    ]
+    return candidates[0] if len(candidates) == 1 else None
 
 
 def _conformers(
@@ -541,10 +651,32 @@ def dispatch_target_prefixes(
     by_simple: dict[str, list[str]] = {}
     for qn in all_classes:
         by_simple.setdefault(_simple_name(qn), []).append(qn)
+    # Each state judges the named-implementer uniqueness over its own
+    # classes: a class added by this run did not exist in the old state,
+    # and a removed one is gone from the new state.
+    old_state_classes = {
+        qn
+        for qn in set(class_methods)
+        | set(hierarchy)
+        | {change.qn for change in changes if not change.present}
+        if _owns(qn, project_name, longer_project_prefixes)
+    }
+    new_state_classes = {
+        qn
+        for qn in set(merged_methods)
+        | set(merged_hierarchy)
+        | {change.qn for change in changes if change.present}
+        if _owns(qn, project_name, longer_project_prefixes)
+    }
     prefixes: set[str] = set()
     base_qns: set[str] = set()
     for change in changes:
         method_names = change.old_methods | change.new_methods
+        if set(change.old_bases) != set(change.new_bases):
+            method_names |= _descendant_methods(change.qn, hierarchy, class_methods)
+            method_names |= _descendant_methods(
+                change.qn, merged_hierarchy, merged_methods
+            )
         bases = {
             base
             for base in {*change.old_bases, *change.new_bases}
@@ -566,30 +698,27 @@ def dispatch_target_prefixes(
             new_required = new_protocol_sets.get(protocol_qn, set())
             if not old_required and not new_required:
                 continue
-            simple = _simple_name(protocol_qn)
-            named: str | None = None
-            if simple.endswith(_PROTOCOL_LEAF):
-                wanted = simple[: -len(_PROTOCOL_LEAF)]
-                candidates = [
-                    qn for qn in by_simple.get(wanted, []) if qn not in protocols
-                ]
-                if len(candidates) == 1:
-                    named = candidates[0]
+            named_old = _named_implementer(
+                protocol_qn, old_state_classes, set(protocols), by_simple
+            )
+            named_new = _named_implementer(
+                protocol_qn, new_state_classes, set(protocols), by_simple
+            )
             old_conformers = _conformers(
                 old_required,
-                all_classes,
+                old_state_classes,
                 set(protocols),
                 hierarchy,
                 class_methods,
-                named,
+                named_old,
             )
             new_conformers = _conformers(
                 new_required,
-                all_classes,
+                new_state_classes,
                 set(protocols),
                 merged_hierarchy,
                 merged_methods,
-                named,
+                named_new,
             )
             old_effective = _effective_methods(change.qn, hierarchy, class_methods)
             new_effective = _effective_methods(
@@ -599,10 +728,8 @@ def dispatch_target_prefixes(
                 (old_required and old_required <= old_effective)
                 or (new_required and new_required <= new_effective)
                 or (
-                    change.qn == named
-                    and bool(
-                        (old_required & old_effective) | (new_required & new_effective)
-                    )
+                    (change.qn == named_old and bool(old_required & old_effective))
+                    or (change.qn == named_new and bool(new_required & new_effective))
                 )
                 # A method added to a parent can complete a child's
                 # conformance without the child, or the parent, changing
@@ -612,13 +739,21 @@ def dispatch_target_prefixes(
             )
             if not touched:
                 continue
-            for required, conformers in (
-                (old_required, old_conformers),
-                (new_required, new_conformers),
+            for required, conformers, state_hierarchy, state_methods in (
+                (old_required, old_conformers, hierarchy, class_methods),
+                (new_required, new_conformers, merged_hierarchy, merged_methods),
             ):
                 for method in required:
                     prefixes.add(f"{protocol_qn}{cs.SEPARATOR_DOT}{method}")
                     for conformer, held in conformers.items():
                         if method in held:
-                            prefixes.add(f"{conformer}{cs.SEPARATOR_DOT}{method}")
+                            owners = _method_owners(
+                                conformer, method, state_hierarchy, state_methods
+                            )
+                            # A held method with no definer on the chain
+                            # can only mean the method set read was
+                            # partial; keep the conformer name rather
+                            # than name nothing at all.
+                            for owner in owners or {conformer}:
+                                prefixes.add(f"{owner}{cs.SEPARATOR_DOT}{method}")
     return prefixes, base_qns

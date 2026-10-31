@@ -1766,6 +1766,23 @@ class _StatefulIngestor:
                         for name in names
                     )
                 ]
+            case cs.CYPHER_DISPATCH_METHODS_FOR_CLASSES:
+                # Mirrors CYPHER_DISPATCH_METHODS_FOR_CLASSES (issue
+                # #3338): every method the named classes define.
+                raw_qns = (params or {}).get(cs.KEY_QNS)
+                wanted = (
+                    {str(qn) for qn in raw_qns} if isinstance(raw_qns, list) else set()
+                )
+                return [
+                    {
+                        cs.KEY_CLASS_QN: _text(from_val),
+                        cs.KEY_METHOD_QN: _text(to_val),
+                    }
+                    for from_label, from_val, rel_type, _tl, to_val, _site in self.keyed_edges
+                    if rel_type == cs.RelationshipType.DEFINES_METHOD.value
+                    and from_label == cs.NodeLabel.CLASS.value
+                    and _str(from_val) in wanted
+                ]
             case cs.CYPHER_DISPATCH_CALLER_PATHS:
                 # Mirrors CYPHER_DISPATCH_CALLER_PATHS (issue #3338):
                 # files holding a CALLS edge into a dispatch target.

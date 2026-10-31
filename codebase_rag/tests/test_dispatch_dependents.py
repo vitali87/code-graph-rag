@@ -343,6 +343,56 @@ def test_ambiguous_same_named_base_falls_back_to_all_known() -> None:
     }
 
 
+def test_protocol_targets_name_the_inherited_method_owner() -> None:
+    # `B` conforms only through `A.get`, inherited: the CALLS edge a
+    # caller holds names `A.get`, the class that defines the method,
+    # never `B.get`. Adding a full conformer must queue that caller,
+    # so the prefixes name the owner, not the conformer.
+    hierarchy = {
+        "proj.lib.Client": ["typing.Protocol"],
+        "proj.lib.B": ["proj.lib.A"],
+    }
+    methods = {
+        "proj.lib.Client": {"get", "set"},
+        "proj.lib.A": {"get"},
+        "proj.lib.B": {"set"},
+        "proj.real.Real": {"get", "set"},
+    }
+    prefixes, _bases = dispatch_target_prefixes(
+        [_change("proj.real.Real", set(), {"get", "set"})],
+        hierarchy,
+        methods,
+        {"proj.lib.Client": {"get", "set"}},
+        PROJECT,
+    )
+    assert "proj.lib.A.get" in prefixes
+    assert "proj.lib.B.set" in prefixes
+    assert "proj.real.Real.get" in prefixes
+
+
+def test_protocol_named_uniqueness_is_per_state() -> None:
+    # Two partial `Client`s, one old and one newly added: the merged
+    # class set makes the name non-unique, but the OLD state had
+    # exactly one, so its old target must still be named and its
+    # callers re-parsed to prune it. The new partial names nothing.
+    hierarchy = {"proj.lib.ClientProtocol": ["typing.Protocol"]}
+    # The old graph holds only the old partial: the new one arrives
+    # through the change, as the merged state overlays it.
+    methods = {
+        "proj.lib.ClientProtocol": {"get", "set"},
+        "proj.a.Client": {"get"},
+    }
+    prefixes, _bases = dispatch_target_prefixes(
+        [_change("proj.b.Client", set(), {"get"})],
+        hierarchy,
+        methods,
+        {"proj.lib.ClientProtocol": {"get", "set"}},
+        PROJECT,
+    )
+    assert "proj.a.Client.get" in prefixes
+    assert "proj.b.Client.get" not in prefixes
+
+
 def test_protocol_conformance_completed_through_an_inherited_method() -> None:
     # The parent gains `set`; the child inherits it and only then
     # conforms. Neither the parent nor the child conforms on its own,
@@ -365,4 +415,6 @@ def test_protocol_conformance_completed_through_an_inherited_method() -> None:
     )
     assert "proj.lib.Client.put" in prefixes
     assert "proj.lib.B.put" in prefixes
-    assert "proj.lib.B.get" in prefixes
+    # `B` inherits `get` from `A`: the target is `A.get`, the class
+    # that defines it, not `B.get`.
+    assert "proj.lib.A.get" in prefixes
