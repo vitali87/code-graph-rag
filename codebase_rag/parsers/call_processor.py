@@ -379,6 +379,18 @@ _FIELD_INITIALIZER_LANGUAGES = frozenset(
         cs.SupportedLanguage.CSHARP,
     }
 )
+# Callable-valued expressions whose bodies run when invoked, not at
+# construction: a Java/C# lambda or a C# anonymous method assigned to a
+# field. They are not in those languages' `function_node_types`, so the
+# initializer-value walk must name them explicitly, or their bodies'
+# calls would be attributed to the constructor (Greptile review).
+_INITIALIZER_DEFERRED_NODE_TYPES = frozenset(
+    {
+        cs.TS_JAVA_LAMBDA_EXPRESSION,
+        cs.TS_CSHARP_LAMBDA_EXPRESSION,
+        cs.TS_CSHARP_ANONYMOUS_METHOD_EXPRESSION,
+    }
+)
 # The class-body member type holding a field initializer, per language.
 _JS_TS_FIELD_NODE_TYPES = frozenset(
     {cs.TS_PUBLIC_FIELD_DEFINITION, cs.TS_JS_FIELD_DEFINITION}
@@ -4560,10 +4572,22 @@ class CallProcessor:
                 if child.type == cs.TS_CONSTRUCTOR_DECLARATION
             ]
         if language == cs.SupportedLanguage.CSHARP:
+            # A static constructor runs once at type load, not per
+            # instance, so it never owns instance field initializers:
+            # exclude it, or a static-only class would attribute to it
+            # and a class with both would fall back to the class node
+            # instead of the instance constructor (Greptile/CodeRabbit
+            # review). The `static` modifier is a direct `modifier`
+            # child, as for fields in `_is_instance_field_node`.
             return [
                 child
                 for child in body_node.children
                 if child.type == cs.TS_CSHARP_CONSTRUCTOR_DECLARATION
+                and not any(
+                    grandchild.type == cs.TS_CSHARP_MODIFIER
+                    and safe_decode_text(grandchild) == cs.TS_STATIC
+                    for grandchild in child.children
+                )
             ]
         return []
 
@@ -4649,6 +4673,7 @@ class CallProcessor:
             if (
                 node.type in lang_config.function_node_types
                 or node.type in lang_config.class_node_types
+                or node.type in _INITIALIZER_DEFERRED_NODE_TYPES
             ):
                 nested_spans.append((node.start_byte, node.end_byte))
             stack.extend(node.children)
