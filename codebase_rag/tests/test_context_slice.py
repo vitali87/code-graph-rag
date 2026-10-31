@@ -13,7 +13,7 @@ import pytest
 from typer.testing import CliRunner
 
 from codebase_rag import constants as cs
-from codebase_rag.context_slice import _doc_pieces, context
+from codebase_rag.context_slice import _doc_pieces, _hotness, context
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.utils.token_utils import count_tokens
@@ -490,3 +490,19 @@ def test_a_section_row_without_a_start_line_is_skipped(tmp_path: Path) -> None:
     )
 
     assert [p.qualified_name for p in pieces] == ["notes#3"]
+
+
+def test_hotness_counts_a_traced_pair_once_however_many_sites_it_has() -> None:
+    # Trace confirmation writes a pair's observation onto each of its sites
+    # (issue #2429), so a caller's rows repeat one count (issue #3532).
+    rows = [
+        {cs.KEY_QUALIFIED_NAME: f"{PROJECT}.app.run", cs.TRACE_PROP_CALL_COUNT: 5},
+        {cs.KEY_QUALIFIED_NAME: f"{PROJECT}.app.run", cs.TRACE_PROP_CALL_COUNT: 5},
+        {cs.KEY_QUALIFIED_NAME: f"{PROJECT}.app.other", cs.TRACE_PROP_CALL_COUNT: 7},
+    ]
+
+    hotness = _hotness(lambda query, params=None: rows, PROJECT, _qn("pkg.util.helper"))
+
+    # Negative: two call sites do not make `run` hotter than a caller the
+    # trace observed more often.
+    assert hotness == {f"{PROJECT}.app.run": 5, f"{PROJECT}.app.other": 7}
