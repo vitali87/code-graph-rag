@@ -668,7 +668,10 @@ class RustTypeInferenceEngine:
 
     def build_variant_payload_map(self, enum_node: Node) -> dict[str, str]:
         # {variant: payload type} for an enum's single-field tuple variants
-        # (`Literal(LiteralStrategy)` -> {"Literal": "LiteralStrategy"}).
+        # (`Literal(LiteralStrategy)` -> {"Literal": "LiteralStrategy"}). The
+        # payload keeps the module path it is written with, since
+        # `a::Handler` and `b::Handler` are two types; the spelling is the
+        # enum module's, so it is resolved there (PR #3014 review).
         payloads: dict[str, str] = {}
         if enum_node.type != cs.TS_RS_ENUM_ITEM:
             return payloads
@@ -690,7 +693,7 @@ class RustTypeInferenceEngine:
             if len(types) != 1:
                 continue
             if (name := safe_decode_text(name_node)) and (
-                payload := self._bare_type_name(types[0])
+                payload := self._binding_type_name(types[0])
             ):
                 payloads[name] = payload
         return payloads

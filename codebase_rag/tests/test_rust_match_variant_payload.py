@@ -29,11 +29,22 @@ impl Exact { pub fn hit(&self) -> bool { true } }
 """
 
 
-def _index(temp_repo: Path, mock_ingestor: MagicMock, name: str, lib_rs: str) -> str:
+def _index(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+    name: str,
+    lib_rs: str,
+    modules: dict[str, str] | None = None,
+    dependencies: str = "",
+) -> str:
     project = temp_repo / name
     (project / "src").mkdir(parents=True)
-    (project / "Cargo.toml").write_text(_CARGO.format(name=name), encoding="utf-8")
+    (project / "Cargo.toml").write_text(
+        _CARGO.format(name=name) + dependencies, encoding="utf-8"
+    )
     (project / "src" / "lib.rs").write_text(_STRATEGIES + lib_rs, encoding="utf-8")
+    for module, source in (modules or {}).items():
+        (project / "src" / f"{module}.rs").write_text(source, encoding="utf-8")
     create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
     return f"{name}.src.lib"
 
@@ -213,3 +224,158 @@ fn first(pair: Pair) -> bool {
     base = _index(temp_repo, mock_ingestor, "rs_match_pair", source)
     edges = _hit_edges(mock_ingestor, f"{base}.first")
     assert (f"{base}.PrefixStrategy.hit", _EXACT) not in edges.values(), edges
+
+
+_OWN_LITERAL = """\
+pub struct LiteralStrategy;
+impl LiteralStrategy { pub fn hit(&self) -> bool { true } }
+"""
+
+
+def test_payload_path_is_read_where_the_enum_declares_it(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # PR #3014 review: the payload lost its module path, so `a::` and `b::`
+    # LiteralStrategy both became the caller's own LiteralStrategy.
+    source = """\
+pub mod a;
+pub mod b;
+
+pub enum Job {
+    Literal(a::LiteralStrategy),
+    Prefix(b::LiteralStrategy),
+}
+
+fn run(job: Job) -> bool {
+    match job {
+        Job::Literal(s) => s.hit(),
+        Job::Prefix(s) => s.hit(),
+    }
+}
+"""
+    modules = {"a": _OWN_LITERAL, "b": _OWN_LITERAL}
+    base = _index(temp_repo, mock_ingestor, "rs_match_paths", source, modules)
+    package = base.removesuffix(".lib")
+    edges = _hit_edges(mock_ingestor, f"{base}.run")
+    assert edges == {
+        _line_of(source, "        Job::Literal(s) => s.hit(),"): (
+            f"{package}.a.LiteralStrategy.hit",
+            _EXACT,
+        ),
+        _line_of(source, "        Job::Prefix(s) => s.hit(),"): (
+            f"{package}.b.LiteralStrategy.hit",
+            _EXACT,
+        ),
+    }, edges
+
+
+def test_imported_enum_payload_is_read_in_the_enums_module(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # PR #3014 review: a bare payload name means the type the enum's own
+    # module has under it, not the caller's LiteralStrategy.
+    source = """\
+pub mod strategies;
+use crate::strategies::Strategy;
+
+fn run(strategy: Strategy) -> bool {
+    match strategy {
+        Strategy::Literal(s) => s.hit(),
+    }
+}
+"""
+    strategies = (
+        _OWN_LITERAL + "pub enum Strategy {\n    Literal(LiteralStrategy),\n}\n"
+    )
+    base = _index(
+        temp_repo,
+        mock_ingestor,
+        "rs_match_imported",
+        source,
+        {"strategies": strategies},
+    )
+    package = base.removesuffix(".lib")
+    edges = _hit_edges(mock_ingestor, f"{base}.run")
+    assert list(edges.values()) == [
+        (f"{package}.strategies.LiteralStrategy.hit", _EXACT)
+    ], edges
+
+
+def test_bare_variant_takes_the_enum_it_is_imported_from(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # PR #3014 review: a bare `Literal(s)` took any enum of the caller's
+    # module declaring a `Literal`, here the unrelated `Local`, not the
+    # `Command` the module imports the variant from. A function's own `use`
+    # outranks the module's.
+    source = """\
+pub mod commands;
+use crate::commands::Command::Literal;
+
+pub enum Local {
+    Literal(PrefixStrategy),
+}
+
+fn run(command: commands::Command) -> bool {
+    match command {
+        Literal(s) => s.hit(),
+    }
+}
+
+fn scoped(local: Local) -> bool {
+    use self::Local::*;
+    match local {
+        Literal(p) => p.hit(),
+    }
+}
+"""
+    commands = "pub enum Command {\n    Literal(crate::LiteralStrategy),\n}\n"
+    base = _index(
+        temp_repo, mock_ingestor, "rs_match_bare", source, {"commands": commands}
+    )
+    run = _hit_edges(mock_ingestor, f"{base}.run")
+    assert list(run.values()) == [(f"{base}.LiteralStrategy.hit", _EXACT)], run
+    scoped = _hit_edges(mock_ingestor, f"{base}.scoped")
+    assert list(scoped.values()) == [(f"{base}.PrefixStrategy.hit", _EXACT)], scoped
+
+
+def test_external_enum_does_not_take_a_first_party_namesakes_payload(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # PR #3014 review: `external_crate::Strategy` matched no first-party
+    # path, so the lookup fell back to the first-party `Strategy` by its
+    # name alone and bound its payload, an exact edge into this crate. The
+    # fixture was checked against a local stub of `external_crate`.
+    source = """\
+pub mod local;
+use external_crate::Strategy;
+
+fn written(strategy: external_crate::Strategy) -> bool {
+    match strategy {
+        external_crate::Strategy::Literal(s) => s.hit(),
+        _ => false,
+    }
+}
+
+fn imported(strategy: Strategy) -> bool {
+    match strategy {
+        Strategy::Literal(s) => s.hit(),
+        _ => false,
+    }
+}
+"""
+    local = "pub enum Strategy {\n    Literal(crate::LiteralStrategy),\n}\n"
+    base = _index(
+        temp_repo,
+        mock_ingestor,
+        "rs_match_external",
+        source,
+        {"local": local},
+        dependencies='\n[dependencies]\nexternal_crate = "1.0"\n',
+    )
+    for caller in ("written", "imported"):
+        edges = _hit_edges(mock_ingestor, f"{base}.{caller}")
+        assert (f"{base}.LiteralStrategy.hit", _EXACT) not in edges.values(), (
+            caller,
+            edges,
+        )
