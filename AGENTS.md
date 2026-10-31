@@ -41,7 +41,9 @@ To move them:
    `cgr-graph-rs` floor in `pyproject.toml`), as CI requires for any change
    to the library. If the new crate needs a newer Rust than
    `RUST_TOOLCHAIN` in `.clusterfuzzlite/Dockerfile`, raise that too: the
-   fuzz build compiles the crate with it and fails otherwise.
+   fuzz build compiles the crate with it and fails otherwise. The same goes
+   for `RUST_FUZZ_TOOLCHAIN`, the nightly the crate's cargo-fuzz targets are
+   built with.
 5. Run `codebase_rag/tests/test_native_trees.py` and
    `cargo test --manifest-path rust/cgr_graph_rs/Cargo.toml`.
 

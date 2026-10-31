@@ -32,7 +32,7 @@ pub mod snapshot;
 pub mod trees;
 pub mod walk;
 
-const DEFAULT_ITERATIONS: u32 = 100;
+const DEFAULT_ITERATIONS: u64 = 100;
 const DEFAULT_DAMPING: f64 = 0.85;
 const DEFAULT_EPSILON: f64 = 1e-5;
 
@@ -148,7 +148,7 @@ pub fn pagerank_until(
     args: &[Arg],
     deadline: &Deadline,
 ) -> Result<Vec<Record>, TimedOut> {
-    let iterations = int_arg(args, 0).map_or(DEFAULT_ITERATIONS, |v| v.max(0) as u32);
+    let iterations = int_arg(args, 0).map_or(DEFAULT_ITERATIONS, |v| v.max(0) as u64);
     let damping = float_arg(args, 1).unwrap_or(DEFAULT_DAMPING);
     let epsilon = float_arg(args, 2).unwrap_or(DEFAULT_EPSILON);
     let n = g.ids.len();

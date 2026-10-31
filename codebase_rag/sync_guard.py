@@ -24,8 +24,12 @@ from . import constants as cs
 from . import cypher_queries as cq
 from . import logs as ls
 from .services import QueryProtocol
-from .types_defs import PropertyValue
-from .utils.process_owner import process_host
+from .types_defs import PropertyValue, ResultRow
+from .utils.process_owner import (
+    pid_has_exited,
+    process_host,
+    process_table_identified,
+)
 
 
 class SyncRefusedError(RuntimeError):
@@ -282,3 +286,98 @@ def partial_graph_refusal(ingestor: QueryProtocol, project_name: str) -> str | N
     ):
         return cs.CLI_ERR_EDIT_GRAPH_PARTIAL.format(project=project_name)
     return None
+
+
+class StrandedRun(NamedTuple):
+    """A run whose marker a full rebuild retires, and the exited process it names."""
+
+    run_id: str
+    owner_host: str
+    owner_pid: int
+
+
+def run_owner() -> dict[str, PropertyValue]:
+    """The process an MCP or `cgr check` run's marker names (review of PR #3496)."""
+    return {cs.KEY_OWNER_HOST: process_host(), cs.KEY_OWNER_PID: os.getpid()}
+
+
+def _stopped_run(row: ResultRow) -> StrandedRun | None:
+    """The run a marker names if its process provably exited.
+
+    Only a process in this process table can be checked, and only where the
+    host's name tells this table from every other (`process_table_identified`):
+    a hostname alone may be another machine's, whose pid is no process here.
+    A marker from another host, from a live process (this one included), or
+    from before markers named their process is kept: it may guard a graph its
+    run is still writing, as `cli._stopped_sync_token` reasons.
+    """
+    run_id = row.get(cs.KEY_RUN_ID)
+    pid = row.get(cs.KEY_OWNER_PID)
+    here = process_host()
+    if (
+        not isinstance(run_id, str)
+        or not process_table_identified()
+        or row.get(cs.KEY_OWNER_HOST) != here
+        or not isinstance(pid, int)
+        or pid == os.getpid()
+        or not pid_has_exited(pid)
+    ):
+        return None
+    return StrandedRun(run_id, here, pid)
+
+
+def stranded_runs(
+    ingestor: QueryProtocol, project_name: str, own_run_id: str
+) -> list[StrandedRun]:
+    """The other runs whose markers a full rebuild of the project supersedes.
+
+    Asked before the rebuild marks. A run counts only once its process has
+    exited, whichever checkout it wrote from: the checkout's sync lock keeps
+    out only the writers of this checkout under this CGR_HOME, and a run of
+    the same project elsewhere may still be writing (review of PR #3496). The
+    rebuild must then be forced: a stopped re-ingest may have deleted an
+    unchanged dependent's definitions, which an incremental run skips by its
+    saved hash, as `cgr watch`'s `_marked_run` says. A store that cannot
+    answer yields none, so the rebuild runs as before and those markers stay
+    for the next one.
+    """
+    try:
+        rows = ingestor.fetch_all(
+            cq.CYPHER_STRANDED_RUN_IDS,
+            {cs.KEY_PROJECT_NAME: project_name, cs.KEY_RUN_ID: own_run_id},
+        )
+    except Exception as exc:
+        logger.warning(
+            ls.STRANDED_RUNS_UNREADABLE.format(project=project_name, error=exc)
+        )
+        return []
+    return [run for row in rows if (run := _stopped_run(row)) is not None]
+
+
+def retire_stranded_runs(
+    ingestor: QueryProtocol, project_name: str, runs: list[StrandedRun]
+) -> None:
+    """Take off the markers of `runs` once a forced rebuild committed.
+
+    Never fails the rebuild, which is complete by now: a marker that stays
+    only refuses until the next full sync retires it.
+    """
+    if not runs:
+        return
+    try:
+        for run in runs:
+            ingestor.execute_write(
+                cq.CYPHER_RETIRE_STRANDED_RUN,
+                {
+                    cs.KEY_PROJECT_NAME: project_name,
+                    cs.KEY_RUN_ID: run.run_id,
+                    cs.KEY_OWNER_HOST: run.owner_host,
+                    cs.KEY_OWNER_PID: run.owner_pid,
+                },
+            )
+    except Exception as exc:
+        logger.warning(
+            ls.STRANDED_RUNS_NOT_RETIRED.format(project=project_name, error=exc)
+        )
+        return
+    logger.info(ls.STRANDED_RUNS_RETIRED.format(project=project_name, count=len(runs)))

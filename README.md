@@ -61,9 +61,7 @@ Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by c
 ## Latest News 🔥
 
 <!-- SECTION:latest_news -->
-- **Dependencies Updated**: Several dependencies have been updated to the latest versions, including neo4j, qdrant-client, and transformers, bringing in bug fixes and new features.
-- **CLI Improvements**: The `change_signature` operation is now accessible through the CLI and MCP, with updated documentation.
-- **Graph-RS Fuzzing**: Expanded fuzz testing for the graph-rs component with new targets for procedures, bulk writing, and input decoding.
+- **MiniMax Models Added**: Current MiniMax text models have been included.
 <!-- /SECTION:latest_news -->
 
 See [NEWS.md](NEWS.md) for the full history.
@@ -231,6 +229,10 @@ Please see [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines. Good 
 For issues or questions, check the [Troubleshooting](docs/advanced/troubleshooting.md) guide first, then open an issue.
 
 If cgr is useful to you, please consider pledging support on [GitHub Sponsors](https://github.com/sponsors/vitali87). cgr links the page under `cgr --version` and, in a terminal, after most commands finish; set `CGR_SPONSOR_PLEDGE=false` to hide that line.
+
+## Accessibility
+
+[ACCESSIBILITY.md](ACCESSIBILITY.md) describes what cgr and its documentation support for people using assistive technology or alternative settings, the known limitations and their workarounds, and how to report a barrier.
 
 ## License
 

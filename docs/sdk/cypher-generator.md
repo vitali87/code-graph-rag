@@ -63,4 +63,5 @@ settings.set_cypher("anthropic", "claude-haiku-4-5", api_key="sk-ant-your-key")
 | Anthropic | `claude-opus-5`, `claude-sonnet-5`, `claude-haiku-4-5` |
 | Google | `gemini-3.6-flash`, `gemini-3.5-flash-lite` |
 | OpenAI | `gpt-5.6-terra`, `gpt-5.6-luna` |
+| MiniMax | `MiniMax-M3.1-Flash`, `MiniMax-M3` |
 | Ollama | `qwen2.5-coder`, `llama3.2` |

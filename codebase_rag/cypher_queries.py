@@ -198,6 +198,13 @@ CYPHER_CLEAR_PROJECT_INCOMPLETE = (
 CYPHER_MARK_CLI_SYNC_INCOMPLETE = (
     CYPHER_MARK_PROJECT_INCOMPLETE + ", " + _CLI_SYNC_MARKER_OWNER_SET
 )
+# The MCP server's runs and `cgr check` name their process the same way
+# (review of PR #3496), so a full rebuild can tell a run whose process exited
+# from one still writing. No token: each of these runs has an id of its own.
+CYPHER_MARK_RUN_INCOMPLETE = (
+    CYPHER_MARK_PROJECT_INCOMPLETE
+    + ", m.owner_host = $owner_host, m.owner_pid = $owner_pid"
+)
 CYPHER_CLI_SYNC_MARKER_OWNER = (
     "MATCH (m:IncompleteRun {project: $project_name, run_id: $run_id}) "
     "RETURN m.owner_host AS owner_host, m.owner_pid AS owner_pid, "
@@ -259,6 +266,29 @@ CYPHER_PROJECT_IS_INCOMPLETE = (
     "MATCH (m:IncompleteRun {project: $project_name}) "
     "RETURN coalesce(m.run_incomplete, false) AS run_incomplete, "
     "coalesce(m.writing, true) AS writing"
+)
+# The runs a full rebuild of the project supersedes (review of PR #3493): no
+# other path removes a marker its run left after its first write, so one
+# whose process died stayed down for good. Read before the rebuild marks,
+# with the process each marker names: `sync_guard.stranded_runs` keeps only
+# the runs whose process provably exited, since the checkout's sync lock
+# keeps out no writer of another checkout or CGR_HOME under the same project
+# name (review of PR #3496). A marker from before run ids existed is left
+# alone, as `CYPHER_CLEAR_LEGACY_PROJECT_INCOMPLETE` leaves it.
+CYPHER_STRANDED_RUN_IDS = (
+    "MATCH (m:IncompleteRun {project: $project_name}) "
+    "WHERE m.run_id IS NOT NULL AND m.run_id <> $run_id "
+    "AND coalesce(m.writing, true) "
+    "RETURN m.run_id AS run_id, m.owner_host AS owner_host, "
+    "m.owner_pid AS owner_pid"
+)
+# Deletes one run `CYPHER_STRANDED_RUN_IDS` returned, once the forced rebuild
+# that supersedes it has committed and cleared its own marker, and only while
+# the marker still names the exited process: the CLI sync's run id is shared,
+# so a CLI writer that started since has marked it under its own.
+CYPHER_RETIRE_STRANDED_RUN = (
+    "MATCH (m:IncompleteRun {project: $project_name, run_id: $run_id}) "
+    "WHERE m.owner_host = $owner_host AND m.owner_pid = $owner_pid DELETE m"
 )
 
 # Every project with an outstanding marker, whichever path wrote it: `cgr
