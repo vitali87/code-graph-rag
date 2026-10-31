@@ -52,12 +52,14 @@ def test_new_expression_reaches_overloaded_constructors(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
     # Overload resolution by argument type is not attempted; for reachability a
-    # `new X(...)` reaches every declared constructor of X so none is reported dead.
+    # `new X(...)` reaches every declared constructor of X that takes its
+    # argument count. One of another arity cannot run (issue #2703).
     _project(
         temp_repo,
         "class Box {\n"
         "  Box() { }\n"
         "  Box(int x) { }\n"
+        "  Box(String s) { }\n"
         "}\n"
         "class User {\n"
         "  Box build() { return new Box(1); }\n"
@@ -66,10 +68,13 @@ def test_new_expression_reaches_overloaded_constructors(
     create_and_run_updater(temp_repo, mock_ingestor, skip_if_missing="java")
     calls = _edges(mock_ingestor, "CALLS")
     assert any(
-        f.endswith(".User.build()") and t.endswith(".Box.Box()") for f, t in calls
+        f.endswith(".User.build()") and t.endswith(".Box.Box(int)") for f, t in calls
     )
     assert any(
-        f.endswith(".User.build()") and t.endswith(".Box.Box(int)") for f, t in calls
+        f.endswith(".User.build()") and t.endswith(".Box.Box(String)") for f, t in calls
+    )
+    assert not any(
+        f.endswith(".User.build()") and t.endswith(".Box.Box()") for f, t in calls
     )
 
 
