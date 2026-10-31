@@ -38,5 +38,14 @@ def test_a_pom_that_already_sets_arg_line_is_covered() -> None:
     assert "@{argLine}" in _jvm_recipe()
 
 
+def test_flags_already_in_the_surefire_arg_line_are_kept() -> None:
+    # `@{argLine}` reads the property a plugin sets, not the flags the element
+    # held, and without that property the test JVM cannot start. A pom's
+    # `<argLine>` also wins over `-DargLine`, so those flags need the agent.
+    recipe = _jvm_recipe()
+    assert "<argLine>-Xmx512m -javaagent:...</argLine>" in recipe, recipe
+    assert "overrides `-DargLine`" in recipe, recipe
+
+
 def test_the_gradle_line_is_unchanged() -> None:
     assert "test { jvmArgs" in _jvm_recipe()
