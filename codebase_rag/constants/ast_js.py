@@ -7,6 +7,7 @@ from .ast_nodes import (
     TS_INTERFACE_DECLARATION,
     TS_MEMBER_EXPRESSION,
     TS_NEW_EXPRESSION,
+    TS_STRING,
     TS_TYPE_ALIAS_DECLARATION,
 )
 
@@ -373,6 +374,17 @@ TS_AMBIENT_DECLARATION = "ambient_declaration"
 TS_PREDEFINED_TYPE = "predefined_type"
 TS_TUPLE_TYPE = "tuple_type"
 TS_PARENTHESIZED_TYPE = "parenthesized_type"
+# `readonly T[]` (issue #3276).
+TS_READONLY_TYPE = "readonly_type"
+# The generic containers whose `xs[i]` is an element: indexable, unlike a
+# `Set` or an `Iterable` (issue #3276).
+TS_INDEXABLE_GENERIC_NAMES = frozenset({"Array", "ReadonlyArray"})
+# An `xs["length"]` index names the array's own property, not an element
+# (issue #3276).
+TS_PROPERTY_NAME_INDEX_TYPES = frozenset({TS_STRING, TS_TEMPLATE_STRING})
+# How deep a type alias may refer to another before the chain is abandoned:
+# `type A = B; type B = A` names nothing (issue #3276).
+TS_ALIAS_MAX_DEPTH = 8
 TS_FIELD_TYPE_ARGUMENTS = "type_arguments"
 TS_TYPE_DECLARATION_NODES = frozenset(
     {
