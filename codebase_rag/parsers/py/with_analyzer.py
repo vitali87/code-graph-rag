@@ -436,7 +436,10 @@ class PythonWithBindingMixin(_WithBase):
         }
 
     def _factory_local_types(
-        self, definition: Node, factory_module_qn: str
+        self,
+        definition: Node,
+        factory_module_qn: str,
+        before: int | None = None,
     ) -> dict[str, str]:
         """The types the factory's own simple bindings give its locals:
         `t = Thing()` before `yield t` in the standard try/finally shape.
@@ -444,14 +447,20 @@ class PythonWithBindingMixin(_WithBase):
         targets: a name the factory never binds, or binds from something
         unreadable, stays unknown rather than guessed. Parameters are not
         read: a factory yielding a parameter needs its annotation, which
-        the annotation path above already covers."""
+        the annotation path above already covers. Bindings are read in
+        document order, so a later binding overwrites the earlier one,
+        and `before` limits the map to the bindings reaching a given
+        yield: one after it has not happened yet when the value is
+        yielded."""
         local_types: dict[str, str] = {}
         body = definition.child_by_field_name(cs.FIELD_BODY)
         if body is None:
             return local_types
-        stack = list(body.children)
+        stack = list(reversed(body.children))
         while stack:
             node = stack.pop()
+            if before is not None and node.start_byte > before:
+                continue
             pair: tuple[Node | None, Node | None] | None = None
             if node.type == cs.TS_PY_ASSIGNMENT:
                 pair = (
@@ -487,7 +496,7 @@ class PythonWithBindingMixin(_WithBase):
                 cs.TS_PY_LAMBDA,
             ):
                 continue
-            stack.extend(node.children)
+            stack.extend(reversed(node.children))
         return local_types
 
     def _yield_expression_type(
@@ -496,14 +505,17 @@ class PythonWithBindingMixin(_WithBase):
         """The one type every `yield` in the factory's own body yields, or
         None when they disagree or cannot be read: the same single-value
         rule `_enter_return_type` applies to `return` statements. A yield
-        of a bare name reads the factory's own bindings for it, so the
-        try/finally shape (`t = Thing(); yield t`) types too."""
-        factory_types = self._factory_local_types(definition, factory_module_qn)
+        of a bare name reads the factory's own bindings reaching that
+        yield, so the try/finally shape (`t = Thing(); yield t`) types
+        too, and a rebinding after the yield does not reach it."""
         found: set[str | None] = set()
         for value in _own_yield_values(definition):
             if value is None:
                 found.add(None)
                 continue
+            factory_types = self._factory_local_types(
+                definition, factory_module_qn, before=value.start_byte
+            )
             if value.type == cs.TS_PY_IDENTIFIER:
                 inferred = factory_types.get(safe_decode_text(value) or "")
             else:

@@ -91,6 +91,18 @@ def _walrus_nodes_under(node: Node) -> Iterator[Node]:
             stack.extend(current.children)
 
 
+def _references_any(node: Node, names: frozenset[str]) -> bool:
+    """Whether any identifier under `node` names one of `names`: a walrus
+    value reading a comprehension loop variable, for example."""
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        if current.type == cs.TS_PY_IDENTIFIER and safe_decode_text(current) in names:
+            return True
+        stack.extend(current.children)
+    return False
+
+
 def _match_pattern_class(pattern: Node) -> str | None:
     """The class a case pattern matches, or None: exactly one
     `class_pattern`, or a union of class patterns naming the same class.
@@ -1623,23 +1635,33 @@ class PythonAstAnalyzerMixin(_AstBase):
         which holds the comprehension's loop variables: a walrus leaks
         into the enclosing body (PEP 572), so its type belongs in the
         enclosing map, unlike a loop variable's. A name the enclosing
-        body already types keeps its type: the flat map holds one type
-        per name, and the walrus is one binding among possibly several."""
-        for walrus in _walrus_nodes_under(comprehension):
+        body already types keeps its type -- except when the walrus
+        value reads one of this comprehension's loop variables: the
+        loop variable shadows the outer name inside the comprehension,
+        so the enclosing-map type describes a different value and the
+        scratch type wins. Walruses run in document order, each seeing
+        the ones before it."""
+        loop_names = _comprehension_names(comprehension)
+        view = dict(scratch)
+        for walrus in sorted(
+            _walrus_nodes_under(comprehension), key=lambda node: node.start_byte
+        ):
             name, value_node = _walrus_parts(walrus)
-            if not name or value_node is None or name in local_var_types:
+            if not name or value_node is None:
                 continue
             if (
                 inferred := self._infer_type_from_expression_simple(
                     value_node, module_qn
                 )
-                or self._infer_type_from_expression_complex(
-                    value_node, module_qn, scratch
-                )
-                or _identifier_type(value_node, scratch)
+                or self._infer_type_from_expression_complex(value_node, module_qn, view)
+                or _identifier_type(value_node, view)
             ):
-                local_var_types[name] = inferred
-                logger.debug(lg.PY_TYPE_COMPLEX, var=name, type=inferred)
+                view[name] = inferred
+                if name not in local_var_types or _references_any(
+                    value_node, loop_names
+                ):
+                    local_var_types[name] = inferred
+                    logger.debug(lg.PY_TYPE_COMPLEX, var=name, type=inferred)
 
     def _process_assignment_annotation(
         self,

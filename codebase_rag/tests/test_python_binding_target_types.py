@@ -410,6 +410,44 @@ SOURCE = (
     "def weird_ann_with():\n"
     "    with weird_ann(Thing()) as t:\n"
     "        return t.go()\n"
+    "\n"
+    "\n"
+    "@contextmanager\n"
+    "def rebound_factory():\n"
+    "    t = Other()\n"
+    "    t = Thing()\n"
+    "    yield t\n"
+    "\n"
+    "\n"
+    "@contextmanager\n"
+    "def yield_before_binding():\n"
+    "    yield t\n"
+    "    t = Thing()\n"
+    "\n"
+    "\n"
+    "def rebound_factory_with():\n"
+    "    with rebound_factory() as t:\n"
+    "        return t.go()\n"
+    "\n"
+    "\n"
+    "def yield_before_binding_with():\n"
+    "    with yield_before_binding() as t:\n"
+    "        return t.go()\n"
+    "\n"
+    "\n"
+    "def comprehension_walrus_shadow():\n"
+    "    x = Other()\n"
+    "    return [t.go() for x in [Thing()] if (t := x) is not None]\n"
+)
+
+CHILD = (
+    "from helpers import HBase\n"
+    "\n"
+    "\n"
+    "class ChildSub(HBase):\n"
+    "    def use_child_release(self):\n"
+    "        with self.release() as t:\n"
+    "            return t.go()\n"
 )
 
 HELPERS = (
@@ -442,6 +480,7 @@ def _build(tmp_path: Path) -> GraphUpdater:
     repo.mkdir(parents=True, exist_ok=True)
     (repo / "m.py").write_text(SOURCE, encoding="utf-8")
     (repo / "helpers.py").write_text(HELPERS, encoding="utf-8")
+    (repo / "child.py").write_text(CHILD, encoding="utf-8")
     parsers, queries = load_parsers()
     updater = GraphUpdater(
         ingestor=_StatefulIngestor(), repo_path=repo, parsers=parsers, queries=queries
@@ -451,13 +490,16 @@ def _build(tmp_path: Path) -> GraphUpdater:
 
 
 def _calls(tmp_path: Path) -> dict[str, dict[str, str]]:
-    """{caller's simple name: {callee qn: resolution}} for `m.py`'s CALLS."""
+    """{caller's simple name: {callee qn: resolution}} for the CALLS from
+    `m.py` and the `child.py` cross-module fixture."""
     ingestor = _build(tmp_path).ingestor
     assert isinstance(ingestor, _StatefulIngestor)
     found: dict[str, dict[str, str]] = {}
     for edge in ingestor.keyed_edges:
         _src_label, src, rel, _dst_label, dst, _site = edge
-        if rel != cs.RelationshipType.CALLS or not str(src).startswith(f"{PROJECT}.m."):
+        if rel != cs.RelationshipType.CALLS or not str(src).startswith(
+            (f"{PROJECT}.m.", f"{PROJECT}.child.")
+        ):
             continue
         resolution = ingestor.edge_props.get(edge, {}).get(cs.KEY_RESOLUTION)
         found.setdefault(str(src).rsplit(".", 1)[-1], {})[str(dst)] = str(resolution)
@@ -706,3 +748,28 @@ def test_annotation_from_another_module_is_not_a_generator_annotation(
     tmp_path: Path,
 ) -> None:
     assert _calls(tmp_path)["weird_ann_with"].get(THING_GO) != EXACT
+
+
+def test_factory_rebinding_uses_the_last_binding(tmp_path: Path) -> None:
+    calls = _calls(tmp_path)["rebound_factory_with"]
+    assert calls.get(THING_GO) == EXACT
+    assert calls.get(OTHER_GO) != EXACT
+
+
+def test_yield_before_its_binding_stays_untyped(tmp_path: Path) -> None:
+    calls = _calls(tmp_path).get("yield_before_binding_with", {})
+    assert calls.get(THING_GO) != EXACT
+    assert calls.get(OTHER_GO) != EXACT
+
+
+def test_comprehension_walrus_reads_the_loop_variable(tmp_path: Path) -> None:
+    calls = _calls(tmp_path).get("comprehension_walrus_shadow", {})
+    assert calls.get(THING_GO) == EXACT
+    assert calls.get(OTHER_GO) != EXACT
+    assert _local_types(tmp_path, "comprehension_walrus_shadow").get("t") == "Thing"
+
+
+def test_child_module_inherited_contextmanager_without_its_own_import(
+    tmp_path: Path,
+) -> None:
+    assert _calls(tmp_path)["use_child_release"].get(HTHING_GO) == EXACT
