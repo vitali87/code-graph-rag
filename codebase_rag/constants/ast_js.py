@@ -67,6 +67,15 @@ TS_TYPE_ONLY_TOKEN = "type"
 TS_TYPE_ONLY_EXPORT_DECLARATIONS = frozenset(
     {TS_INTERFACE_DECLARATION, TS_TYPE_ALIAS_DECLARATION}
 )
+# The callee node of a dynamic `import("./x")`.
+TS_JS_DYNAMIC_IMPORT = "import"
+# Every statement that is a call, awaited or not, at any depth: where a
+# `require("./db");` or `import("./cache");` whose value is dropped sits
+# (issue #3267).
+JS_CALL_STATEMENT_QUERY = (
+    "(expression_statement [(call_expression) (await_expression)]) @statement"
+)
+CAPTURE_JS_CALL_STATEMENT = "statement"
 # JSX element nodes that carry a component name (javascript and tsx grammars
 # share these); the closing element repeats the name and must not double-emit.
 TS_JSX_SELF_CLOSING_ELEMENT = "jsx_self_closing_element"
