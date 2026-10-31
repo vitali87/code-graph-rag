@@ -1145,6 +1145,11 @@ class CSharpTypeInferenceEngine:
         if not caller_qn:
             return
         scope = caller_qn.split(cs.CHAR_PAREN_OPEN, 1)[0]
+        # A caller that IS a registered type (a Class-node caller, issue
+        # #3339) is itself the first enclosing-type candidate; peeling
+        # starts from the namespace otherwise and never tries the class.
+        if self.function_registry.get(scope) in _TYPE_DECLS:
+            yield scope
         while cs.SEPARATOR_DOT in scope:
             scope = scope.rsplit(cs.SEPARATOR_DOT, 1)[0]
             if len(scope) <= len(module_qn):
@@ -1731,6 +1736,12 @@ class CSharpTypeInferenceEngine:
         # Strip any parameter signature before splitting off the method leaf,
         # so a qualified param type (`M(System.String)`) does not fool rsplit.
         base = caller_qn.split(cs.CHAR_PAREN_OPEN, 1)[0]
+        # A caller that IS a registered type (a Class-node caller, as for
+        # field initializers with no single constructor, issue #3339) is
+        # its own containing class; peeling a leaf off it would land on
+        # the namespace and lose every enclosing-type member.
+        if self.function_registry.get(base) in _TYPE_DECLS:
+            return base
         class_qn = base.rsplit(cs.SEPARATOR_DOT, 1)[0]
         return class_qn if self.function_registry.get(class_qn) in _TYPE_DECLS else None
 

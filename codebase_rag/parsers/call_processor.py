@@ -4422,7 +4422,7 @@ class CallProcessor:
             language,
             lang_config,
         )
-        caller_qn, caller_label = target
+        caller_qn, caller_label, class_context = target
         attributed: set[int] = set()
         for field_node in body_node.children:
             if not self._is_instance_field_node(field_node, language):
@@ -4442,7 +4442,7 @@ class CallProcessor:
                         module_qn,
                         language,
                         queries,
-                        class_qn,
+                        class_context,
                         call_nodes=calls,
                         call_name_cache=call_name_cache,
                     )
@@ -4460,102 +4460,79 @@ class CallProcessor:
         module_qn: str,
         language: cs.SupportedLanguage,
         lang_config: LanguageSpec,
-    ) -> tuple[str, str]:
-        # The singular explicit constructor, or the class node when there
-        # is none. Overloads attribute to their single non-delegating sink
-        # only: a `this(...)`-chained constructor's initializers run once,
-        # as part of the chain's target, so edging every overload would
-        # fan the same call out once per overload. Overloads with no clear
-        # sink (independent overloads, a delegation cycle) fall back to
-        # the class node rather than guessing one of them. The class qn is
-        # the definition pass's registered one: the structural build drops
-        # a C# namespace, which would dangle the edge off a phantom node.
+    ) -> tuple[str, str, str]:
+        # (caller qn, caller label, class-context qn). The class-context
+        # qn is the scope bare calls resolve in: for C# it is the
+        # registered class qn, not the structural one, because the
+        # structural build drops the namespace and bare-call scoping
+        # against it finds no registered member (a bare `Helper()` in a
+        # no-constructor class would otherwise be swallowed: filtered
+        # out of the module pass but unresolvable in the class pass).
+        # One explicit constructor owns the initializers when its
+        # semantics are unambiguous. No explicit constructor, and
+        # MULTIPLE overloaded constructors alike, fall back to the class
+        # node: `this()` delegation differs between Java and C#, so
+        # picking one overload as the owner would invent an execution
+        # path, and fanning one source site out over every overload
+        # would duplicate it. The class-level owner is the safe
+        # attribution until a frontend proves a canonical owner. The
+        # class qn is the definition pass's registered one: the
+        # structural build drops a C# namespace, which would dangle the
+        # edge off a phantom node.
         class_target = (
             self._registered_class_qn(class_node, class_name, class_qn, module_qn)
             if language == cs.SupportedLanguage.CSHARP
             else class_qn
         )
         ctor_nodes = self._class_constructor_nodes(body_node, language)
-        if len(ctor_nodes) == 1:
-            ctor_node = ctor_nodes[0]
-        elif ctor_nodes:
-            sinks = [
-                node
-                for node in ctor_nodes
-                if not self._constructor_delegates(node, language)
-            ]
-            if len(sinks) != 1:
-                return class_target, cs.NodeLabel.CLASS
-            ctor_node = sinks[0]
-        else:
-            return class_target, cs.NodeLabel.CLASS
+        if len(ctor_nodes) != 1:
+            return class_target, cs.NodeLabel.CLASS, class_target
+        ctor_node = ctor_nodes[0]
         if loc := self._recorded_caller(ctor_node, module_qn):
-            return loc.qualified_name, loc.label
+            return loc.qualified_name, loc.label, class_target
         if language == cs.SupportedLanguage.CSHARP:
             # A C# constructor's registered qn carries its parameter
             # signature; rebuilding it here risks a phantom caller, so an
             # unrecorded constructor falls back to the class node.
-            return class_target, cs.NodeLabel.CLASS
+            return class_target, cs.NodeLabel.CLASS, class_target
         ctor_name = (
             cs.KEYWORD_CONSTRUCTOR
             if language in _JS_TS_LANGUAGES
             else self._get_node_name(ctor_node)
         )
         if not ctor_name:
-            return class_target, cs.NodeLabel.CLASS
-        return self._class_member_qn_and_label(
+            return class_target, cs.NodeLabel.CLASS, class_target
+        member_qn, member_label = self._class_member_qn_and_label(
             ctor_node, class_qn, ctor_name, lang_config, language
         )
+        return member_qn, member_label, class_target
 
     def _registered_class_qn(
         self, class_node: Node, class_name: str, class_qn: str, module_qn: str
     ) -> str:
         # A C# class's registered qn inserts its namespace (and any
         # enclosing types) between the module and the class name, which
-        # the structural build omits. Rebuild from the AST scope chain
-        # and accept it only when the definition pass registered exactly
-        # that qn as a Class, so a misread can never invent a caller.
-        # A file-scoped namespace (`namespace N;`) is a SIBLING of the
-        # declarations it scopes, not their ancestor, so each level of
-        # the chain also scans the preceding siblings for one.
-        chain: list[Node] = []
-        node: Node | None = class_node
-        while node is not None:
-            chain.append(node)
-            node = node.parent
-        chain.reverse()
-        scope_parts: list[str] = []
-        for parent, child in zip(chain, chain[1:]):
-            if parent.type in (
-                cs.TS_CSHARP_NAMESPACE_DECLARATION,
-                cs.TS_CSHARP_CLASS_DECLARATION,
-                cs.TS_CSHARP_STRUCT_DECLARATION,
-                cs.TS_CSHARP_RECORD_DECLARATION,
-            ):
-                name_node = parent.child_by_field_name(cs.FIELD_NAME)
-                if (text := safe_decode_text(name_node)) is not None:
-                    scope_parts.append(text)
-                continue
-            file_scoped: str | None = None
-            for sibling in parent.children:
-                if (
-                    sibling.start_byte == child.start_byte
-                    and sibling.end_byte == child.end_byte
-                ):
-                    break
-                if sibling.type == cs.TS_CSHARP_FILE_SCOPED_NAMESPACE_DECLARATION:
-                    name_node = sibling.child_by_field_name(cs.FIELD_NAME)
-                    if (text := safe_decode_text(name_node)) is not None:
-                        file_scoped = text
-            if file_scoped is not None:
-                scope_parts.append(file_scoped)
-        if not scope_parts:
+        # the structural build omits. Rebuild from the declaration's
+        # namespace-qualified name and accept it only when the
+        # definition pass registered exactly that qn as a Class, so a
+        # misread can never invent a caller. When the directory already
+        # spells the namespace the registered qn drops it (issue #1629),
+        # so the candidate misses and the structural qn is correct.
+        # The own name carries its CLR arity spelling when the file
+        # declares the name at another arity too (issue #2579): a plain
+        # candidate would match the non-generic twin and misattribute a
+        # generic twin's initializers to it, or dangle when there is no
+        # non-generic twin at all.
+        qualified = csharp_utils.namespace_qualified_name(class_node)
+        if qualified is None:
             return class_qn
-        candidate = (
-            f"{module_qn}{cs.SEPARATOR_DOT}"
-            f"{cs.SEPARATOR_DOT.join(scope_parts)}"
-            f"{cs.SEPARATOR_DOT}{class_name}"
-        )
+        head, sep, own = qualified.rpartition(cs.SEPARATOR_DOT)
+        arity_name = csharp_utils.arity_qualified_name(class_node, own)
+        if sep:
+            qualified = f"{head}{sep}{arity_name}"
+        else:
+            qualified = arity_name
+        candidate = f"{module_qn}{cs.SEPARATOR_DOT}{qualified}"
         if self._resolver.function_registry.get(candidate) == cs.NodeLabel.CLASS:
             return candidate
         return class_qn
@@ -4589,34 +4566,6 @@ class CallProcessor:
                 if child.type == cs.TS_CSHARP_CONSTRUCTOR_DECLARATION
             ]
         return []
-
-    @staticmethod
-    def _constructor_delegates(ctor_node: Node, language: cs.SupportedLanguage) -> bool:
-        # True when this constructor hands construction to a sibling via
-        # `this(...)`: Java's explicit constructor invocation as the first
-        # statement, or C#'s `: this(...)` initializer. A `super(...)` /
-        # `: base(...)` call constructs the base, not a sibling, so the
-        # constructor still runs its own field initializers.
-        if language == cs.SupportedLanguage.JAVA:
-            body = ctor_node.child_by_field_name(cs.FIELD_BODY)
-            if body is None or not body.named_children:
-                return False
-            first = body.named_children[0]
-            if first.type != cs.TS_EXPLICIT_CONSTRUCTOR_INVOCATION:
-                return False
-            return any(
-                safe_decode_text(child) == cs.TS_THIS for child in first.children
-            )
-        if language == cs.SupportedLanguage.CSHARP:
-            for child in ctor_node.children:
-                if child.type != cs.TS_CSHARP_CONSTRUCTOR_INITIALIZER:
-                    continue
-                return any(
-                    grandchild.type == cs.TS_CSHARP_THIS
-                    for grandchild in child.children
-                )
-            return False
-        return False
 
     def _is_instance_field_node(
         self, node: Node, language: cs.SupportedLanguage
