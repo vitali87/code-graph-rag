@@ -448,13 +448,15 @@ class JsTsModuleSystemMixin:
                     loc.qualified_name
                 )
 
-    def _record_esm_default_export(self, root_node: ASTNode, module_qn: str) -> None:
+    def record_esm_default_export(self, root_node: ASTNode, module_qn: str) -> None:
         """Remember which definition the module's `export default` names.
 
         Runs after every definition's qn is registered (an anonymous default
         function is known only by its span). A default import is mapped to
         `<module>.default`, which nothing is registered under, so without this
-        a call through it reached nothing (issue #2724).
+        a call through it reached nothing (issue #2724). An incremental run
+        also calls it for each unchanged module a re-parsed file imports from,
+        since it parses only the changed files.
         """
         target = self._esm_default_export_target(root_node, module_qn)
         if target is not None:

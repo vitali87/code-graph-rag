@@ -2715,6 +2715,13 @@ class GraphUpdater:
             self.queries,
             self.factory.definition_processor.function_locations,
         )
+        if language in cs.JS_TS_LANGUAGES:
+            # A default import resolves through its module's recorded
+            # `export default`, which only Pass 2 records; an unchanged
+            # exporter has its definitions read back from the graph by now.
+            self.factory.definition_processor.record_esm_default_export(
+                entry[0], module_qn
+            )
         return True
 
     @property

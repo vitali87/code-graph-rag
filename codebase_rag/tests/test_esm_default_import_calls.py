@@ -6,15 +6,22 @@ definition is registered under, so `fmt()` got no CALLS edge, or a
 `heuristic` one when the local name happened to equal the exported
 function's. The CommonJS form (`module.exports = function`) already
 resolved `exact`.
+
+An incremental sync that re-parses only the importer must keep those edges:
+the exporters are unchanged, so their `export default` is not parsed again
+unless the run reads it back.
 """
 
 from __future__ import annotations
+
+from pathlib import Path
 
 import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import force_mtime_after_cache
 from evals.cgr_graph import _StatefulIngestor
 
 PROJECT = "jsdef"
@@ -43,15 +50,18 @@ FILES = {
 }
 
 MAIN = f"{PROJECT}.src.main.main"
+IMPORTER = "src/main.ts"
+DEFAULT_EXPORTERS = ["anonfn", "arrow", "ident", "aliased", "namedfn"]
 
 
-@pytest.fixture(scope="module")
-def callees(tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
-    root = tmp_path_factory.mktemp("repo") / PROJECT
+def _materialise(root: Path) -> None:
     for rel, text in FILES.items():
         path = root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
+
+
+def _updater(store: _StatefulIngestor, root: Path) -> GraphUpdater:
     parsers, queries = load_parsers()
     missing = sorted(
         str(lang.value)
@@ -62,14 +72,16 @@ def callees(tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
         # A module-scoped fixture runs before the per-test grammar skip
         # hook is installed, so a base install must skip here.
         pytest.skip(f"{', '.join(missing)} parser not available")
-    store = _StatefulIngestor()
-    GraphUpdater(
+    return GraphUpdater(
         ingestor=store,
         repo_path=root,
         parsers=parsers,
         queries=queries,
         project_name=PROJECT,
-    ).run(force=True)
+    )
+
+
+def _main_callees(store: _StatefulIngestor) -> dict[str, str]:
     return {
         str(edge[4]): str(store.props_for(edge).get(cs.KEY_RESOLUTION))
         for edge in store.keyed_edges
@@ -77,23 +89,73 @@ def callees(tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
     }
 
 
-@pytest.mark.parametrize(
-    "module",
-    ["anonfn", "arrow", "ident", "aliased", "namedfn"],
-)
-def test_a_default_import_call_is_an_exact_call_to_the_default_export(
-    callees: dict[str, str], module: str
-) -> None:
+def _exact_default_export_call(callees: dict[str, str], module: str) -> None:
     targets = {qn: res for qn, res in callees.items() if f".src.{module}." in qn}
 
     assert len(targets) == 1, callees
     assert set(targets.values()) == {cs.EdgeResolution.EXACT.value}, targets
 
 
+def _index_then_edit_importer(root: Path) -> _StatefulIngestor:
+    _materialise(root)
+    store = _StatefulIngestor()
+    _updater(store, root).run()
+    importer = root / IMPORTER
+    importer.write_text(
+        FILES[IMPORTER] + "\nexport function unrelated(): number {\n  return 0;\n}\n",
+        encoding="utf-8",
+    )
+    force_mtime_after_cache(root, importer)
+    return store
+
+
+@pytest.fixture(scope="module")
+def callees(tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
+    root = tmp_path_factory.mktemp("repo") / PROJECT
+    _materialise(root)
+    store = _StatefulIngestor()
+    _updater(store, root).run(force=True)
+    return _main_callees(store)
+
+
+@pytest.mark.parametrize("module", DEFAULT_EXPORTERS)
+def test_a_default_import_call_is_an_exact_call_to_the_default_export(
+    callees: dict[str, str], module: str
+) -> None:
+    _exact_default_export_call(callees, module)
+
+
 def test_the_targets_are_the_exported_definitions(callees: dict[str, str]) -> None:
     assert f"{PROJECT}.src.namedfn.named" in callees
     assert f"{PROJECT}.src.ident.hex" in callees
     assert f"{PROJECT}.src.aliased.pad" in callees
+
+
+def test_an_incremental_sync_of_the_importer_keeps_the_default_import_calls(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / PROJECT
+    store = _index_then_edit_importer(root)
+    # A fresh updater, as `cgr start --update-graph` builds one per sync: it
+    # holds only what this run parses and reads back from the graph.
+    _updater(store, root).run()
+    callees = _main_callees(store)
+
+    for module in DEFAULT_EXPORTERS:
+        _exact_default_export_call(callees, module)
+
+
+def test_a_scoped_reingest_of_the_importer_keeps_the_default_import_calls(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / PROJECT
+    store = _index_then_edit_importer(root)
+    # The MCP path: a new updater per call re-ingests just the named file.
+    _updater(store, root).reingest([IMPORTER])
+    callees = _main_callees(store)
+
+    for module in DEFAULT_EXPORTERS:
+        _exact_default_export_call(callees, module)
 
 
 # Negative: what must not change.
