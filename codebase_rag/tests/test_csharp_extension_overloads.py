@@ -14,6 +14,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from codebase_rag import constants as cs
 from codebase_rag.tests.conftest import get_relationships, run_updater
 
 SKIP = "c_sharp"
@@ -49,8 +50,14 @@ def _class_and_method(qn: str) -> str:
 
 
 def _callees(mock_ingestor: MagicMock, caller_suffix: str) -> set[str]:
+    return set(_verdicts(mock_ingestor, caller_suffix))
+
+
+def _verdicts(mock_ingestor: MagicMock, caller_suffix: str) -> dict[str, str]:
     return {
-        _class_and_method(str(c.args[2][2]))
+        _class_and_method(str(c.args[2][2])): str(
+            (c.kwargs.get("properties") or {}).get(cs.KEY_RESOLUTION)
+        )
         for c in get_relationships(mock_ingestor, "CALLS")
         if str(c.args[0][2]).split("(", 1)[0].endswith(caller_suffix)
     }
@@ -155,4 +162,71 @@ internal class App { internal int CallExt() { return new N.Calc().Ext(5); } }
     assert _callees(mock_ingestor, ".App.CallExt") == {
         "Exts.Ext(N.Calc, int)",
         "Exts.Ext(Calc, string)",
+    }
+
+
+def test_the_overload_set_is_labelled_overload(
+    project: Path, mock_ingestor: MagicMock
+) -> None:
+    # Arity chose the bound overload no more than the others, so no edge of
+    # the set may claim `exact`: `--min-resolution exact` would read each as
+    # a proven call. A lone extension the call binds stays exact.
+    (project / "Ext.cs").write_text(
+        """\
+namespace Demo;
+internal class Calc { }
+internal static class Exts
+{
+    internal static int Ext(this Calc c, int a) { return a; }
+    internal static int Ext(this Calc c, string a) { return 0; }
+    internal static int Solo(this Calc c, int a) { return a; }
+}
+internal class App
+{
+    internal int CallExt(Calc c) { return c.Ext(5); }
+    internal int CallSolo(Calc c) { return c.Solo(5); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(project, mock_ingestor, skip_if_missing=SKIP)
+
+    assert _verdicts(mock_ingestor, ".App.CallExt") == {
+        "Exts.Ext(Calc, int)": cs.EdgeResolution.OVERLOAD,
+        "Exts.Ext(Calc, string)": cs.EdgeResolution.OVERLOAD,
+    }
+    assert _verdicts(mock_ingestor, ".App.CallSolo") == {
+        "Exts.Solo(Calc, int)": cs.EdgeResolution.EXACT,
+    }
+
+
+def test_explicit_type_arguments_skip_a_non_generic_overload(
+    project: Path, mock_ingestor: MagicMock
+) -> None:
+    # C# refuses type arguments on a non-generic method, so `c.Ext<int>(5)`
+    # can only run the generic overload. Without them, type inference lets
+    # `c.Ext(5)` bind either, and the call still reaches both.
+    (project / "Ext.cs").write_text(
+        """\
+namespace Demo;
+internal class Calc { }
+internal static class Exts
+{
+    internal static int Ext<T>(this Calc c, T a) { return 0; }
+    internal static int Ext(this Calc c, object a) { return 0; }
+}
+internal class App
+{
+    internal int CallGeneric(Calc c) { return c.Ext<int>(5); }
+    internal int CallPlain(Calc c) { return c.Ext(5); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(project, mock_ingestor, skip_if_missing=SKIP)
+
+    assert _callees(mock_ingestor, ".App.CallGeneric") == {"Exts.Ext(Calc, T)"}
+    assert _callees(mock_ingestor, ".App.CallPlain") == {
+        "Exts.Ext(Calc, T)",
+        "Exts.Ext(Calc, object)",
     }

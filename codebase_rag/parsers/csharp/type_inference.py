@@ -52,6 +52,15 @@ def _method_base(method_qn: str) -> str:
     return method_qn.split(cs.CHAR_PAREN_OPEN, 1)[0]
 
 
+def _member_call_has_type_arguments(call_node: Node) -> bool:
+    """`c.Ext<int>(5)`, whose member name is a generic_name, not `c.Ext(5)`."""
+    func = call_node.child_by_field_name(cs.TS_FIELD_FUNCTION)
+    if func is None or func.type != cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
+        return False
+    name = func.child_by_field_name(cs.FIELD_NAME)
+    return name is not None and name.type == cs.TS_CSHARP_GENERIC_NAME
+
+
 def _arity(leaf: str) -> int:
     # Parameter count of a (possibly signatured) method leaf: `M(int, string)`
     # -> 2, `M` / `M()` -> 0. Only depth-0 commas separate parameters, so a
@@ -629,6 +638,7 @@ class CSharpTypeInferenceEngine:
             caller_qn,
             method_name,
             arg_count,
+            _member_call_has_type_arguments(call_node),
         ):
             return cs.NodeLabel.METHOD.value, ext
         if receiver_class_qn is not None and (
@@ -1263,6 +1273,7 @@ class CSharpTypeInferenceEngine:
         caller_qn: str | None,
         method_name: str,
         arg_count: int,
+        generic_call: bool,
     ) -> str | None:
         if not self.csharp_extension_methods:
             return None
@@ -1276,6 +1287,7 @@ class CSharpTypeInferenceEngine:
             method_name,
             arg_count,
             self._receiver_type_arity(receiver, local_var_types, module_qn, caller_qn),
+            generic_call,
         )
 
     def _receiver_type_name(
@@ -1466,6 +1478,7 @@ class CSharpTypeInferenceEngine:
         method_name: str,
         arg_count: int,
         receiver_arity: int | None = None,
+        generic_call: bool = False,
     ) -> str | None:
         candidates = self.csharp_extension_methods.get(method_name)
         if not candidates:
@@ -1497,6 +1510,14 @@ class CSharpTypeInferenceEngine:
                 receiver_type_name, recv_type, ext_namespace, ambiguous_unqualified
             ):
                 matches.append(qn)
+        # A type argument (`c.Ext<int>(5)`) cannot bind a non-generic method.
+        # With no known generic match the matches stand, as for a bare call
+        # (_find_bare_call_matches): genericness is only recorded for parsed
+        # methods.
+        if generic_call and (
+            generic := [qn for qn in matches if qn in self.csharp_generic_methods]
+        ):
+            matches = generic
         # Matches from different static classes are a name colliding across
         # them and are left unresolved rather than guessed. Several from ONE
         # class are an overload set of that extension, differing in types
@@ -1506,13 +1527,18 @@ class CSharpTypeInferenceEngine:
         owners = {_method_base(qn) for qn in matches}
         return min(matches) if len(owners) == 1 else None
 
-    def csharp_extension_overloads(self, ext_qn: str) -> list[str]:
-        """The other overloads a call bound to extension `ext_qn` may run.
+    def csharp_extension_overloads(self, ext_qn: str, call_node: Node) -> list[str]:
+        """The other overloads call `call_node`, bound to extension `ext_qn`, may run.
 
-        Same static class, same `this` receiver type and same arity: the set
+        Same static class, same `this` receiver type and same arity, and
+        generic when the call carries type arguments: the set
         `_find_extension_method` chose one of. An overload extending another
         type is not one a receiver of this type can bind.
         """
+        generic_only = (
+            ext_qn in self.csharp_generic_methods
+            and _member_call_has_type_arguments(call_node)
+        )
         base = _method_base(ext_qn)
         candidates = self.csharp_extension_methods.get(
             base.rsplit(cs.SEPARATOR_DOT, 1)[-1], []
@@ -1533,6 +1559,7 @@ class CSharpTypeInferenceEngine:
             and _namespaced_receiver(recv_type, namespace) == receiver
             and _method_base(qn) == base
             and _arity(qn) == arity
+            and (not generic_only or qn in self.csharp_generic_methods)
         ]
 
     def _count_arguments(self, call_node: Node) -> int:

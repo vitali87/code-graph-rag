@@ -6758,12 +6758,25 @@ class CallProcessor:
         # An extension call bound to one of an overload set whose members
         # differ only in parameter types reaches the whole set, as the
         # bare-call same-arity family does (issue #2839).
-        for overload_qn in engine.csharp_extension_overloads(callee_info[1]):
-            ctx.ensure_rel(
-                ctx.caller_spec,
-                cs.RelationshipType.CALLS,
-                (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, overload_qn),
-            )
+        overloads = engine.csharp_extension_overloads(callee_info[1], call_node)
+        if not overloads:
+            return
+        # Arity bound one member no more than the others, so every edge of
+        # the set is an `overload`, as a Java tie is. The resolver's verdict
+        # carries the label onto the primary edge, emitted later; the edge
+        # label proper is scoped to the siblings.
+        self._resolver.last_resolution = cs.EdgeResolution.OVERLOAD
+        prev_resolution = self._resolution
+        self._resolution = cs.EdgeResolution.OVERLOAD
+        try:
+            for overload_qn in overloads:
+                ctx.ensure_rel(
+                    ctx.caller_spec,
+                    cs.RelationshipType.CALLS,
+                    (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, overload_qn),
+                )
+        finally:
+            self._resolution = prev_resolution
 
     def _resolve_python_callee(
         self,
