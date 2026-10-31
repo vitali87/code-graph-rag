@@ -586,3 +586,83 @@ def test_descendant_methods_collects_strict_descendants_only() -> None:
     # Strict descendants only: A's own method stays out, and the
     # cycle terminates with B's method collected once.
     assert _descendant_methods("proj.m.A", cyclic, cyclic_methods) == {"b"}
+
+
+def test_external_to_first_party_base_change_is_reported() -> None:
+    # The persisted hierarchy spells the base `foo.Bar` (external);
+    # the graph now holds `proj.foo.Bar`. The spelling match must not
+    # swallow the identity change: the change queues the new base's
+    # callers so the subclass override edge lands on it.
+    scanned = _scanned(
+        "ext.py",
+        "proj.ext",
+        "from foo import Bar\n\nclass Child(Bar):\n    def get(self): ...\n",
+    )
+    changes = build_class_changes(
+        [scanned],
+        {"proj.ext.Child": "ext.py"},
+        {"proj.ext.Child": {"get"}},
+        {"proj.ext.Child": ["foo.Bar"]},
+        PROJECT,
+        changed_keys=["ext.py"],
+        graph_class_qns={"proj.foo.Bar"},
+    )
+    assert len(changes) == 1, changes
+    assert changes[0].old_bases == ("foo.Bar",)
+    assert changes[0].new_bases == ("proj.foo.Bar",)
+    prefixes, _bases = dispatch_target_prefixes(
+        changes,
+        {"proj.ext.Child": ["foo.Bar"]},
+        {"proj.ext.Child": {"get"}, "proj.foo.Bar": {"get"}},
+        {},
+        PROJECT,
+    )
+    assert "proj.foo.Bar.get" in prefixes
+
+
+def test_first_party_to_external_spelling_change_is_reported() -> None:
+    # The persisted spelling is graph-backed, and the scan resolves
+    # the bare base name to both spellings: the graph holds `foo.Bar`
+    # as a recorded class too (the same-name fallback returns every
+    # known class of that leaf). The identities differ, so the change
+    # must surface instead of hiding behind the spelling match.
+    scanned = _scanned(
+        "ext.py", "proj.ext", "class Child(Bar):\n    def get(self): ...\n"
+    )
+    changes = build_class_changes(
+        [scanned],
+        {"proj.ext.Child": "ext.py", "foo.Bar": "foo.py"},
+        {"proj.ext.Child": {"get"}},
+        {"proj.ext.Child": ["proj.foo.Bar"]},
+        PROJECT,
+        changed_keys=["ext.py"],
+        graph_class_qns={"proj.foo.Bar"},
+    )
+    assert len(changes) == 1, changes
+    assert changes[0].old_bases == ("proj.foo.Bar",)
+    assert changes[0].new_bases == ("foo.Bar", "proj.foo.Bar")
+
+
+def test_base_added_this_run_beats_spelling_match() -> None:
+    # The base class is defined by another file this run adds: the
+    # persisted hierarchy spells it `foo.Bar`, the scan resolves it to
+    # `proj.foo.Bar`, and the graph does not hold it yet. A guard that
+    # only consults the graph would still swallow this change; the
+    # scan's own classes vouch for the new identity too.
+    base = _scanned("base.py", "proj.foo", "class Bar:\n    def get(self): ...\n")
+    child = _scanned(
+        "ext.py",
+        "proj.ext",
+        "from foo import Bar\n\nclass Child(Bar):\n    def get(self): ...\n",
+    )
+    changes = build_class_changes(
+        [base, child],
+        {"proj.ext.Child": "ext.py"},
+        {"proj.ext.Child": {"get"}},
+        {"proj.ext.Child": ["foo.Bar"]},
+        PROJECT,
+        changed_keys=["base.py", "ext.py"],
+    )
+    child_change = next(c for c in changes if c.qn == "proj.ext.Child")
+    assert child_change.old_bases == ("foo.Bar",)
+    assert child_change.new_bases == ("proj.foo.Bar",)

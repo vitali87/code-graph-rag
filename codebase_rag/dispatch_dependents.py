@@ -333,6 +333,13 @@ def build_class_changes(
     for qn in known_classes:
         by_simple_name.setdefault(_simple_name(qn), set()).add(qn)
     existing_classes = known_classes | set(graph_class_qns)
+    # A base spelling is graph-backed when the graph, this run's scan,
+    # or the persisted hierarchy names a class of exactly that
+    # spelling. Only then can a spelling difference hide an identity
+    # change. A base the hierarchy merely mentions as a value is an
+    # unresolved external guess, not a class, so a comment-only edit
+    # on an external base still reports no change.
+    graph_backed_qns = set(graph_class_qns) | set(scanned_qns) | set(hierarchy)
     changes: list[ClassChange] = []
     for qn, (scanned, scan) in scanned_qns.items():
         old_base_keys = {
@@ -354,12 +361,18 @@ def build_class_changes(
         old_method_set = frozenset(old_methods.get(qn, ()))
         new_method_set = scan.methods
         old_base_set = tuple(sorted(hierarchy.get(qn, ())))
-        if new_bases != old_base_set and {
-            _spelling_key(base, project_name) for base in new_bases
-        } == {_spelling_key(base, project_name) for base in old_base_set}:
-            # Same bases, different spellings: keep the persisted
-            # spelling, which is the one the graph will hold after
-            # the re-parse, so the merged state matches it.
+        if (
+            new_bases != old_base_set
+            and not any(
+                base in graph_backed_qns for base in (*new_bases, *old_base_set)
+            )
+            and {_spelling_key(base, project_name) for base in new_bases}
+            == {_spelling_key(base, project_name) for base in old_base_set}
+        ):
+            # Same bases, different spellings, neither side a class the
+            # graph, this run's scan, or the hierarchy names: keep the
+            # persisted spelling, which is the one the graph will hold
+            # after the re-parse, so the merged state matches it.
             new_bases = old_base_set
         if qn not in old_classes:
             if new_method_set or new_bases:
