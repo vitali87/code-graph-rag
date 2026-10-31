@@ -5,6 +5,7 @@ from __future__ import annotations
 import tomllib
 from fnmatch import fnmatch
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -207,7 +208,7 @@ _GRAPH_RS = "/rust/cgr_graph_rs"
 _GRAPH_RS_FUZZ = "/rust/cgr_graph_rs/fuzz"
 
 
-def _graph_rs_update() -> dict[str, object]:
+def _graph_rs_update() -> dict[str, Any]:
     config = yaml.safe_load(
         (REPO_ROOT / ".github" / "dependabot.yml").read_text(encoding=cs.ENCODING_UTF8)
     )
