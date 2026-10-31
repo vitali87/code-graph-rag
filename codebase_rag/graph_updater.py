@@ -4222,6 +4222,11 @@ class GraphUpdater:
             self.function_registry.set_non_method_members(
                 qn, [name for name in names if isinstance(name, str)]
             )
+        # And an unchanged C++ type's callable data members (`int (*cb)()`),
+        # or a re-parsed file's `o->cb()` loses the free `cb` it reaches.
+        self.factory.definition_processor.cpp_callable_fields.update(
+            _stored_strings(row.get(cs.KEY_CALLABLE_FIELDS))
+        )
         # Restore the macro-namespace set for unchanged files: the Rust
         # macro/fn gate consults it, so a re-parsed file's invocation of a
         # macro defined elsewhere would otherwise drop.

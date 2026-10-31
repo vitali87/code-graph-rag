@@ -1627,6 +1627,9 @@ class _StatefulIngestor:
                         if cs.KEY_IS_EXPORTED in props
                         else None,
                         cs.KEY_EMBEDS: _texts(props.get(cs.KEY_EMBEDS)),
+                        cs.KEY_CALLABLE_FIELDS: _texts(
+                            props.get(cs.KEY_CALLABLE_FIELDS)
+                        ),
                     }
                     defs.append(row)
                 return defs

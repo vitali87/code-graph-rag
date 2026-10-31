@@ -36,6 +36,9 @@ KEY_MEMBER_ALIASES = "member_aliases"
 # The member names a Python class body binds to a value that is no method
 # (`run = None`), which hide a base class's `run` (issue #2620).
 KEY_NON_METHOD_MEMBERS = "non_method_members"
+# The C++ data members a call can invoke (`int (*cb)()`, `std::function`), so
+# `o->cb()` may reach a free `cb` that member syntax otherwise rules out.
+KEY_CALLABLE_FIELDS = "callable_fields"
 # The types a Go interface embeds, as written (`Reader`, `io.Writer`): its
 # method set includes theirs, so satisfying it needs them too (issue #2483).
 KEY_EMBEDS = "embeds"
@@ -1239,6 +1242,7 @@ CYPHER_ALL_DEFINITION_QNS = (
     "n.start_line AS start_line, n.end_line AS end_line, "
     "n.member_aliases AS member_aliases, "
     "n.non_method_members AS non_method_members, "
+    "n.callable_fields AS callable_fields, "
     "n.modifiers AS modifiers, n.decorators AS decorators, "
     "n.return_type AS return_type, n.param_types AS param_types, "
     "n.namespace AS namespace, n.is_object_member AS is_object_member, "

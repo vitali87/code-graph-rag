@@ -218,6 +218,7 @@ class ProcessorFactory:
                 cpp_out_of_class_methods=self.definition_processor.cpp_out_of_class_methods,
                 function_locations=self.definition_processor.function_locations,
                 macro_qns=self.definition_processor.macro_qns,
+                cpp_callable_fields=self.definition_processor.cpp_callable_fields,
                 ast_cache=self.ast_cache,
                 go_package_names=self.definition_processor.go_package_names,
                 sql_sources=self.definition_processor.sql_sources,
