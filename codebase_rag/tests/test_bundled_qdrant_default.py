@@ -123,7 +123,10 @@ class _Compose:
     `config` renders the project with Qdrant published where `published`
     says, the way Compose resolves it from every source (the environment,
     the .env beside the compose file, COMPOSE_ENV_FILES, edits to the file);
-    `ps` lists the project's running Qdrant container, if `running`.
+    `ps` lists the project's running Qdrant container, if `running`, and
+    `ps --format json memgraph` the running Memgraph with the addresses Docker
+    publishes its Bolt port on: by default where the app connects (issue
+    #2878).
     """
 
     def __init__(self) -> None:
@@ -133,12 +136,39 @@ class _Compose:
             str(stack_cs.QDRANT_CLIENT_DEFAULT_PORT),
         )
         self.running = True
+        # None: published where settings say the app connects, read per call.
+        self.memgraph_published: list[tuple[str, int]] | None = None
+        self.memgraph_running = True
         self.failing: set[str] = set()
         self.calls: list[list[str]] = []
         self.envs: list[dict[str, str]] = []
 
     def publish(self, port: int | str, host_ip: str = stack_cs.LOOPBACK_HOST) -> None:
         self.published = (host_ip, str(port))
+
+    def _memgraph_ps(self) -> str:
+        if not self.memgraph_running:
+            return ""
+        published = (
+            self.memgraph_published
+            if self.memgraph_published is not None
+            else [(stack_cs.LOOPBACK_HOST, settings.MEMGRAPH_PORT)]
+        )
+        publishers = [
+            {
+                "URL": host,
+                "TargetPort": stack_cs.MEMGRAPH_CONTAINER_BOLT_PORT,
+                "PublishedPort": port,
+                "Protocol": "tcp",
+            }
+            for host, port in published
+        ]
+        container = {
+            "Service": stack_cs.SERVICE_MEMGRAPH,
+            "State": "running",
+            "Publishers": publishers,
+        }
+        return json.dumps(container) + "\n"
 
     def which(self, name: str) -> str | None:
         return f"/usr/bin/{name}" if self.docker_installed else None
@@ -155,6 +185,10 @@ class _Compose:
         subcommand = next(c for c in ("config", "ps") if c in cmd)
         if subcommand in self.failing:
             return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="boom")
+        if subcommand == "ps" and stack_cs.SERVICE_MEMGRAPH in cmd:
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout=self._memgraph_ps(), stderr=""
+            )
         if subcommand == "ps":
             stdout = _RUNNING_CONTAINER_ID if self.running else ""
             return subprocess.CompletedProcess(cmd, 0, stdout=stdout, stderr="")

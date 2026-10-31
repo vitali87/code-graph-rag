@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -151,6 +152,108 @@ def _names_published_qdrant(url: str | None, bind: str, port: int) -> bool:
     if not bind or bind in cs.WILDCARD_BIND_HOSTS:
         return _is_local_address(host)
     return bind in _addresses_of(host)
+
+
+def _ps_containers(ps_output: str) -> list[JsonValue]:
+    """The containers in `docker compose ps` JSON output: an object per
+    line, or one array on older Compose."""
+    containers: list[JsonValue] = []
+    for line in ps_output.splitlines():
+        try:
+            parsed = json.loads(line)
+        except ValueError:
+            continue
+        containers.extend(parsed if isinstance(parsed, list) else [parsed])
+    return containers
+
+
+def _bolt_endpoint(publisher: JsonValue) -> tuple[str, int] | None:
+    """(bind address, port) of a `docker compose ps` publisher of Bolt."""
+    if not isinstance(publisher, dict):
+        return None
+    port = publisher.get(cs.COMPOSE_PS_PUBLISHER_PORT_KEY)
+    host = publisher.get(cs.COMPOSE_PS_PUBLISHER_HOST_KEY)
+    if (
+        publisher.get(cs.COMPOSE_PS_PUBLISHER_TARGET_KEY)
+        == cs.MEMGRAPH_CONTAINER_BOLT_PORT
+        and isinstance(port, int)
+        and port
+    ):
+        return host if isinstance(host, str) else "", port
+    return None
+
+
+def _published_bolt(ps_output: str) -> list[tuple[str, int]]:
+    """(bind address, port) of every Bolt publisher in `docker compose ps`
+    JSON output: an object per line, or one array on older Compose."""
+    endpoints: list[tuple[str, int]] = []
+    for container in _ps_containers(ps_output):
+        publishers = (
+            container.get(cs.COMPOSE_PS_PUBLISHERS_KEY)
+            if isinstance(container, dict)
+            else None
+        )
+        for publisher in publishers if isinstance(publishers, list) else []:
+            if (endpoint := _bolt_endpoint(publisher)) is not None:
+                endpoints.append(endpoint)
+    return endpoints
+
+
+# Where a socket connects: (host, port) for IPv4, with flow and scope for IPv6.
+_SocketAddress = tuple[str, int] | tuple[str, int, int, int] | tuple[int, bytes]
+
+
+def _addresses_to_try(host: str, port: int) -> list[tuple[int, _SocketAddress]]:
+    """The addresses a client of `host:port` tries, in its order: getaddrinfo's."""
+    try:
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except OSError:
+        return []
+    return [(family, address) for family, _, _, _, address in infos]
+
+
+def _publishes_on(bind: str, family: int, address: str) -> bool:
+    """Whether a port published on `bind` is the one at `address`.
+
+    A wildcard bind publishes on this machine's addresses of its own family
+    alone: beside `0.0.0.0`, another server can hold the port on `[::1]`.
+    """
+    if not bind:
+        return _is_local_address(address)
+    if bind in cs.WILDCARD_BIND_HOSTS:
+        own_family = socket.AF_INET6 if ":" in bind else socket.AF_INET
+        return family == own_family and _is_local_address(address)
+    return bind == address
+
+
+def _takes_connections(family: int, address: _SocketAddress) -> bool:
+    """Whether a server accepts connections at `address`. One that does not
+    answer in time may well, so it counts as one that does."""
+    try:
+        with socket.socket(family, socket.SOCK_STREAM) as probe:
+            probe.settimeout(cs.MEMGRAPH_ADDRESS_PROBE_TIMEOUT_S)
+            probe.connect(address)
+    except TimeoutError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _reaches_published(host: str, port: int, binds: list[str]) -> bool:
+    """Whether a client of `host:port` reaches the port published on `binds`.
+
+    The client keeps the first of the host's addresses that takes the
+    connection, so one address the port is published on is not enough: an
+    earlier one another server answers on wins (`localhost` as `::1` ahead
+    of `127.0.0.1`).
+    """
+    for family, address in _addresses_to_try(host, port):
+        if any(_publishes_on(bind, family, str(address[0])) for bind in binds):
+            return True
+        if _takes_connections(family, address):
+            return False
+    return False
 
 
 def _bundled_qdrant_api_key(bind: str, port: int) -> str | None:
@@ -639,6 +742,40 @@ class StackManager:
         if running is None:
             raise StackError(cs.ERR_COMPOSE_PS_FAILED)
         return bool(running)
+
+    def runs_configured_memgraph(self) -> bool:
+        """Whether this project's running Memgraph is the one the app uses.
+
+        Compose's resolved configuration cannot say: the port mapping
+        interpolates MEMGRAPH_PORT, so it follows whatever port the caller
+        set. Docker's publishers of the running container are where the
+        stack's Memgraph actually listens (issue #2878). StackError when
+        Compose cannot tell.
+        """
+        try:
+            result = subprocess.run(
+                self._compose_cmd(
+                    *cs.COMPOSE_PS_RUNNING_JSON_ARGS, cs.SERVICE_MEMGRAPH
+                ),
+                capture_output=True,
+                text=True,
+                encoding=root_cs.ENCODING_UTF8,
+                timeout=cs.DEFAULT_STATUS_TIMEOUT_S,
+                check=False,
+                env=self._compose_env(),
+            )
+        except OSError as e:
+            raise StackError(cs.ERR_COMPOSE_PS_FAILED) from e
+        if result.returncode != 0:
+            raise StackError(cs.ERR_COMPOSE_PS_FAILED)
+        binds = [
+            bind
+            for bind, port in _published_bolt(result.stdout)
+            if port == self.memgraph_port
+        ]
+        return bool(binds) and _reaches_published(
+            self.memgraph_host, self.memgraph_port, binds
+        )
 
     def raise_if_auth_not_enforced(self) -> None:
         """Refuse a running stack whose authentication differs from the settings.
@@ -1178,6 +1315,22 @@ def bundled_qdrant_url(home: Path | None = None) -> str | None:
         return None
     host, port = manager.qdrant_host, manager.qdrant_port
     url = qdrant_base_url(host, port)
+    # The stack's Qdrant holds its own graph's vectors, keyed by that graph's
+    # node ids: another Memgraph's sync would mix its vectors in, and its
+    # `--clean` would drop the stack graph's collection (issue #2878).
+    try:
+        same_graph = manager.runs_configured_memgraph()
+    except (StackError, subprocess.TimeoutExpired) as e:
+        logger.info(ls.QDRANT_BUNDLED_UNVERIFIED.format(detail=e, path=path))
+        return None
+    if not same_graph:
+        memgraph = f"{manager.memgraph_host}:{manager.memgraph_port}"
+        logger.info(
+            ls.QDRANT_BUNDLED_OTHER_MEMGRAPH.format(
+                url=url, memgraph=memgraph, path=path
+            )
+        )
+        return None
     timeout = cs.BUNDLED_QDRANT_PROBE_TIMEOUT_S
     match qdrant_anonymous_access(port, timeout=timeout, host=host):
         case cs.AnonymousAccess.ALLOWED if qdrant_identifies(
