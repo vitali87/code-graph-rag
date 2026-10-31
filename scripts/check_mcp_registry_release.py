@@ -73,6 +73,7 @@ NO_TOKEN = (
 ON_PYPI = "{name} {version} is on PyPI with the registry's ownership token."
 NOT_LISTED = "{server} {version} is not in the MCP Registry yet."
 LISTED = "{server} {version} is already in the MCP Registry."
+UNEXPECTED_ANSWER = "the registry answered with {found!r} {version!r}"
 UNREACHABLE = "Could not ask {service} about {name} {version}: {error}"
 
 
@@ -96,6 +97,15 @@ class PyPIInfo(TypedDict, total=False):
 
 class PyPIRelease(TypedDict, total=False):
     info: PyPIInfo
+
+
+class RegistryServer(TypedDict, total=False):
+    name: str
+    version: str
+
+
+class RegistryEntry(TypedDict, total=False):
+    server: RegistryServer
 
 
 def load_manifest() -> Manifest:
@@ -170,7 +180,20 @@ def registry_lists(server: str, version: str) -> bool:
     url = REGISTRY_VERSION_URL.format(
         name=urllib.parse.quote(server, safe=""), version=version
     )
-    return _fetch(url) is not None
+    body = _fetch(url)
+    if body is None:
+        return False
+    # Any other answer than this version's record (a proxy's error page, a cut
+    # off body) must not read as listed: that would skip the publish.
+    entry: RegistryEntry = json.loads(body)
+    found = entry.get("server", {}) if isinstance(entry, dict) else {}
+    if (found.get("name"), found.get("version")) != (server, version):
+        raise ValueError(
+            UNEXPECTED_ANSWER.format(
+                found=found.get("name"), version=found.get("version")
+            )
+        )
+    return True
 
 
 def check_pypi(name: str, server: str, version: str) -> int:
@@ -222,7 +245,8 @@ def main(argv: list[str] | None = None) -> int:
         if service == PYPI:
             return check_pypi(name, server, version)
         return check_registry(server, version)
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
+    # ValueError covers a body that is not JSON, or not the record asked for.
+    except (urllib.error.URLError, TimeoutError, ValueError) as error:
         print(  # noqa: T201
             UNREACHABLE.format(
                 service=service, name=server, version=version, error=error

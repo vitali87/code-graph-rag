@@ -191,6 +191,31 @@ class TestMain:
         monkeypatch.setattr(registry_check, lookup, unreachable)
         assert registry_check.main([service, _tag()]) == 1
 
+    def test_the_registry_record_for_the_version_counts_as_listed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        name, version = _manifest()["name"], _project()[1]
+        record = {"server": {"name": name, "version": version}}
+        monkeypatch.setattr(registry_check, "_fetch", lambda _: json.dumps(record))
+        assert registry_check.main(["registry", _tag()]) == 0
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            "<html>Service temporarily unavailable</html>",
+            "",
+            "[]",
+            json.dumps({"server": {"name": "io.github.acme/widget", "version": "1"}}),
+        ],
+    )
+    def test_any_other_registry_answer_stops_the_release(
+        self, body: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Read as listed, it would skip the publish and leave the release
+        out of the registry."""
+        monkeypatch.setattr(registry_check, "_fetch", lambda _: body)
+        assert registry_check.main(["registry", _tag()]) == 1
+
     def test_the_registry_lookup_escapes_the_name_and_sees_deleted_versions(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
