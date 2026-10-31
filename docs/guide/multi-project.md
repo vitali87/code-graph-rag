@@ -182,3 +182,29 @@ Deleting a project also removes its embeddings from the vector store and
 its notes (glosses written with the MCP `annotate` tool), the same as the
 MCP `delete_project` tool, so indexing the checkout again starts with no
 notes.
+
+A checkout that was moved, renamed or deleted leaves its project behind with a
+`root_path` that no longer exists; `cgr status` marks those `(missing)`. Sweep
+them in one pass:
+
+```bash
+# List the projects whose root is gone, removing nothing
+cgr prune --dry-run
+
+# Remove them, asking first
+cgr prune
+```
+
+A project is pruned only when its root is provably absent -- an unreadable
+directory (a permissions error, an unavailable mount) is treated as live --
+the checkout `cgr` itself runs from is never pruned, every purge is
+verified against a fresh read of the graph before it is reported, and the
+purge itself is conditional on the project still naming the root that was
+checked, so a concurrent sync repointing the project is skipped, not
+destroyed. A pruned project loses what `delete-project` takes: its graph,
+its embeddings and its notes.
+
+Prune judges `root_path`s on the machine it runs on: a shared graph whose
+projects were indexed inside containers or on other hosts reads those roots
+as missing from here. Prune only a graph whose checkouts live on the machine
+asking.

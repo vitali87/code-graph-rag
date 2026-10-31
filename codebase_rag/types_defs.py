@@ -971,6 +971,9 @@ class ProjectSync(NamedTuple):
     # one whose first sync never finished.
     last_synced_at: str | None
     interrupted: bool
+    # The checkout the project was indexed from (#2479); None for a project
+    # that records none, or one known only from its incomplete-run marker.
+    root_path: str | None = None
 
 
 class AstFingerprintResult(NamedTuple):

@@ -378,10 +378,12 @@ WITH p, nested, collect(DISTINCT container) + collect(DISTINCT defined) AS owned
 CYPHER_RECORD_PROJECT_SYNC = (
     "MATCH (p:Project {name: $project_name}) SET p.last_synced_at = $last_synced_at"
 )
-# A project synced before the time was recorded reads back null.
+# A project synced before the time was recorded reads back null. The root
+# rides along so `cgr status` can mark one that is gone (#2479).
 CYPHER_PROJECT_SYNC_TIMES = (
     "MATCH (p:Project) "
-    "RETURN p.name AS name, p.last_synced_at AS last_synced_at ORDER BY p.name"
+    "RETURN p.name AS name, p.last_synced_at AS last_synced_at, "
+    "p.root_path AS root_path ORDER BY p.name"
 )
 
 # Retires a project whose checkout was just re-indexed under another name
@@ -403,6 +405,7 @@ OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD|HAS_
 DETACH DELETE p, container, defined
 """
 
+
 # Deletes what `p` claims, except a Folder or File another project claims
 # too: that one only loses `p`'s edges. The named nodes go first, so the
 # check that follows walks up from each Folder/File over what is left; no
@@ -410,8 +413,9 @@ DETACH DELETE p, container, defined
 # Another project `q` claims a Folder/File it reaches through Folders and
 # Files from itself or from one of its own Packages, the same two walks as
 # _CYPHER_PROJECT_CLAIMS taken upward.
-CYPHER_DELETE_PROJECT = f"""
-MATCH (p:Project {{name: $project_name}})
+def _delete_project(match_filter: str = "") -> str:
+    return f"""
+MATCH (p:Project {{name: $project_name}}){match_filter}
 {_CYPHER_PROJECT_CLAIMS}
 WITH [c IN owned WHERE c:Folder OR c:File] AS shareable,
 [c IN owned WHERE NOT (c:Folder OR c:File)] AS named
@@ -429,6 +433,17 @@ WHERE other_claims = 0
 DETACH DELETE c
 """
 
+
+CYPHER_DELETE_PROJECT = _delete_project()
+
+# The same delete, made conditional on the project still naming the root the
+# run checked (#2479): the WHERE and the DELETE are one statement, so a
+# concurrent sync repointing `root_path` between `cgr prune`'s check and its
+# purge leaves the project alone. It returns nothing either way; the caller
+# reads whether the project is gone afterwards.
+CYPHER_DELETE_PROJECT_IF_ROOT = _delete_project("\nWHERE p.root_path = $expected_root")
+
+
 # Run after CYPHER_DELETE_PROJECT: the project's Packages and Modules that no
 # containment path from it reached, such as a tree the #897 repair cut off
 # from its Project, go too rather than outliving it as orphans (issue
@@ -436,9 +451,10 @@ DETACH DELETE c
 # CYPHER_DELETE_MODULE relies on. Glosses are keyed by qualified name as
 # well, but are neither label and hang off nothing this walks, so they
 # survive the rebuild they are meant to survive (issue #1828).
-CYPHER_DELETE_PROJECT_CUT_OFF_UNITS = f"""
+def _delete_cut_off_units(guard: str = "", carried: str = "") -> str:
+    return f"""{guard}
 OPTIONAL MATCH (longer:Project) WHERE longer.name STARTS WITH $project_prefix
-WITH collect(longer.name) AS nested
+WITH {carried}collect(longer.name) AS nested
 OPTIONAL MATCH (pkg:Package) WHERE {_belongs_to_named("pkg")}
 WITH nested, collect(pkg) AS packages
 OPTIONAL MATCH (mod:Module) WHERE {_belongs_to_named("mod")}
@@ -448,6 +464,39 @@ UNWIND units AS u
 OPTIONAL MATCH (u)-[:{_DEFINITION_RELS}|CONTAINS_SECTION*]->(defined)
 WITH collect(DISTINCT u) + collect(DISTINCT defined) AS gone
 FOREACH (n IN gone | DETACH DELETE n)
+"""
+
+
+CYPHER_DELETE_PROJECT_CUT_OFF_UNITS = _delete_cut_off_units()
+
+# The same sweep for `cgr prune` (#2479), run only while no project of the
+# name exists, checked in the same statement: the sweep matches by name, so
+# a sync that recreated the project after the conditional delete would
+# otherwise lose its units to it. `recreated` is carried as a grouping key
+# into the first aggregation, so a recreated project leaves no row to sweep
+# with rather than one with an empty `nested`.
+CYPHER_DELETE_PROJECT_CUT_OFF_UNITS_IF_GONE = _delete_cut_off_units(
+    "\nOPTIONAL MATCH (other:Project {name: $project_name})"
+    "\nWITH count(other) AS recreated WHERE recreated = 0",
+    "recreated, ",
+)
+
+# What of a project is left once the delete and the cut-off sweep above ran
+# (#2479): its Project node, and every Package and Module under its name but
+# not under a longer registered name, the set the sweep removes. `cgr prune`
+# reports a purge done only when a fresh read answers 0, so a delete that
+# stopped halfway is an error rather than a success. Aggregated, so a gone
+# project still answers one row.
+CYPHER_COUNT_PROJECT_NODES = f"""
+OPTIONAL MATCH (longer:Project) WHERE longer.name STARTS WITH $project_prefix
+WITH collect(longer.name) AS nested
+OPTIONAL MATCH (p:Project {{name: $project_name}})
+WITH nested, count(p) AS projects
+OPTIONAL MATCH (pkg:Package) WHERE {_belongs_to_named("pkg")}
+WITH nested, projects, count(pkg) AS packages
+OPTIONAL MATCH (mod:Module) WHERE {_belongs_to_named("mod")}
+WITH projects, packages, count(mod) AS modules
+RETURN projects + packages + modules AS residual
 """
 
 
