@@ -29,6 +29,13 @@ from .ast_cache import BoundedASTCache
 from .capture import CaptureSelection, default_capture
 from .checkout_state import prepare_state_dir, state_dir
 from .config import settings
+from .dispatch_dependents import (
+    ScannedFile,
+    base_change_component_qns,
+    build_class_changes,
+    dispatch_target_prefixes,
+    scan_python_classes,
+)
 from .function_registry import FunctionRegistryTrie
 from .gloss_anchor import ParsedSource, parse_source
 from .gloss_repair import repair_mentions, repair_unanchored
@@ -5397,6 +5404,246 @@ class GraphUpdater:
                 )
         return known
 
+    def _dispatch_dependent_keys(
+        self,
+        added: list[tuple[str, bytes]],
+        modified: list[tuple[str, bytes]],
+        deleted: Collection[str] = (),
+    ) -> list[str]:
+        """Files whose CALLS edges a dispatch change rebinds (issue #3338).
+
+        A new subclass override or Protocol conformer changes the
+        dispatch target set of unchanged callers, with no edge pointing
+        at the new file and no unresolved reference for the waiter
+        lookups to follow. The callers are found from the OLD graph,
+        before the changed files' subtrees are deleted: the hierarchy
+        and method sets the new bytes are judged against, and the CALLS
+        edges into the targets the dispatch set gained or lost. The
+        dependency set is the union of the old and the new state, so a
+        removal prunes its callers' edges instead of orphaning them.
+
+        Callers enter through the `waiters` sets of both incremental
+        paths, which re-parse unconditionally: the interface-fingerprint
+        skip (issue #2531) can never retain a dispatch caller's edges,
+        because the skip is consulted only for dependents of a file
+        whose interface held, and a dispatch dependent is queued for
+        what a DIFFERENT file gained or lost. No fingerprint is read
+        or written here, and unchanged files keep theirs. A failed read
+        degrades to the previous behaviour, never worse.
+        """
+        entries = [
+            (key, data) for key, data in (*added, *modified) if key.endswith(cs.EXT_PY)
+        ]
+        deleted_keys = [key for key in deleted if key.endswith(cs.EXT_PY)]
+        changed_keys = [key for key, _data in entries] + deleted_keys
+        if not changed_keys or not isinstance(self.ingestor, QueryProtocol):
+            return []
+        scanned_files = [
+            ScannedFile(
+                key,
+                base_module_qn(Path(key), self.project_name),
+                PurePosixPath(key).name in cs.PY_PACKAGE_INIT_FILES,
+                classes,
+                imports,
+            )
+            for key, data in entries
+            for classes, imports in [scan_python_classes(data)]
+        ]
+        prefix = self.project_name + cs.SEPARATOR_DOT
+        longer_project_prefixes = [
+            name for name in self._registered_project_names() if name.startswith(prefix)
+        ]
+        try:
+            old_rows = self._graph_rows(
+                cq.CYPHER_DELTA_DEFINITIONS,
+                {
+                    cs.KEY_PROJECT_PREFIX: prefix,
+                    cs.KEY_LONGER_PROJECT_PREFIXES: longer_project_prefixes,
+                    cs.CYPHER_PARAM_PATHS: changed_keys,
+                },
+            )
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="dispatch definitions")
+            return []
+        old_classes: dict[str, str] = {}
+        old_methods: dict[str, set[str]] = {}
+        for row in old_rows:
+            qn = row.get(cs.KEY_QUALIFIED_NAME)
+            path = row.get(cs.KEY_PATH)
+            label = row.get(cs.KEY_LABEL)
+            if not isinstance(qn, str) or not isinstance(path, str):
+                continue
+            if label in (cs.NodeLabel.CLASS.value, cs.NodeLabel.INTERFACE.value):
+                old_classes[qn] = path
+            elif label == cs.NodeLabel.METHOD.value:
+                natural = qn_markers.natural_qn(qn)
+                parent, sep, leaf = natural.rpartition(cs.SEPARATOR_DOT)
+                if sep:
+                    old_methods.setdefault(parent, set()).add(leaf)
+        if not scanned_files and not old_classes:
+            return []
+        try:
+            hierarchy_rows = self._owned_rows(
+                self._graph_rows(
+                    cs.CYPHER_ALL_INHERITS, {cs.KEY_PROJECT_PREFIX: prefix}
+                ),
+                cs.KEY_CHILD_QN,
+            )
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="dispatch hierarchy")
+            return []
+        hierarchy: dict[str, list[str]] = {}
+        for row in hierarchy_rows:
+            child = row.get(cs.KEY_CHILD_QN)
+            base = row.get(cs.KEY_BASE_QN)
+            if isinstance(child, str) and isinstance(base, str):
+                hierarchy.setdefault(child, []).append(base)
+        # Every class and interface node the graph holds, so base
+        # resolution can tell a real base in an unchanged file from an
+        # import-resolved guess for an external base. A failed read
+        # falls back to the classes this run and the hierarchy name:
+        # the phantom guess is still dropped, and only a base in an
+        # unchanged file could then be missed for this run.
+        graph_class_qns: set[str] = set()
+        try:
+            class_qn_rows = self._owned_rows(
+                self._graph_rows(
+                    cs.CYPHER_DISPATCH_CLASS_QNS,
+                    {cs.KEY_PROJECT_PREFIX: prefix},
+                ),
+                cs.KEY_QUALIFIED_NAME,
+            )
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="dispatch class names")
+        else:
+            for row in class_qn_rows:
+                if isinstance(qn := row.get(cs.KEY_QUALIFIED_NAME), str):
+                    graph_class_qns.add(qn)
+        changes = build_class_changes(
+            scanned_files,
+            old_classes,
+            old_methods,
+            hierarchy,
+            self.project_name,
+            changed_keys,
+            graph_class_qns,
+        )
+        if not changes:
+            return []
+        try:
+            protocol_rows = self._graph_rows(
+                cs.CYPHER_DISPATCH_PROTOCOL_METHODS,
+                {cs.KEY_PROJECT_PREFIX: prefix},
+            )
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="dispatch protocols")
+            return []
+        protocols: dict[str, set[str]] = {}
+        for row in protocol_rows:
+            class_qn = row.get(cs.KEY_CLASS_QN)
+            method_qn = row.get(cs.KEY_METHOD_QN)
+            if isinstance(class_qn, str) and isinstance(method_qn, str):
+                protocols.setdefault(class_qn, set()).add(
+                    qn_markers.strip_dup_marker(
+                        method_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+                    )
+                )
+        method_names = {
+            name
+            for change in changes
+            for name in (*change.old_methods, *change.new_methods)
+        } | {name for names in protocols.values() for name in names}
+        try:
+            method_rows = self._graph_rows(
+                cs.CYPHER_DISPATCH_CLASS_METHODS,
+                {
+                    cs.KEY_PROJECT_PREFIX: prefix,
+                    cs.CYPHER_PARAM_NAMES: sorted(method_names),
+                },
+            )
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="dispatch methods")
+            return []
+        class_methods: dict[str, set[str]] = {}
+        for row in method_rows:
+            class_qn = row.get(cs.KEY_CLASS_QN)
+            method_qn = row.get(cs.KEY_METHOD_QN)
+            if isinstance(class_qn, str) and isinstance(method_qn, str):
+                class_methods.setdefault(class_qn, set()).add(
+                    qn_markers.strip_dup_marker(
+                        method_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+                    )
+                )
+        # A class that changed bases can detach a descendant override
+        # whose name neither the changed nor the Protocol names can
+        # ask the filtered query for. Read the whole method sets of
+        # the affected hierarchy components, so the target computation
+        # below can name that override.
+        component_qns = base_change_component_qns(
+            changes, hierarchy, self.project_name, tuple(longer_project_prefixes)
+        )
+        if component_qns:
+            try:
+                component_rows = self._graph_rows(
+                    cs.CYPHER_DISPATCH_METHODS_FOR_CLASSES,
+                    {cs.KEY_QNS: sorted(component_qns)},
+                )
+            except Exception:
+                logger.warning(
+                    ls.PRUNE_QUERY_FAILED, label="dispatch component methods"
+                )
+            else:
+                for row in component_rows:
+                    class_qn = row.get(cs.KEY_CLASS_QN)
+                    method_qn = row.get(cs.KEY_METHOD_QN)
+                    if isinstance(class_qn, str) and isinstance(method_qn, str):
+                        class_methods.setdefault(class_qn, set()).add(
+                            qn_markers.strip_dup_marker(
+                                method_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+                            )
+                        )
+        prefixes, base_qns = dispatch_target_prefixes(
+            changes,
+            hierarchy,
+            class_methods,
+            protocols,
+            self.project_name,
+            tuple(longer_project_prefixes),
+        )
+        if not prefixes and not base_qns:
+            return []
+        try:
+            caller_rows = (
+                self._graph_rows(
+                    cs.CYPHER_DISPATCH_CALLER_PATHS,
+                    {
+                        cs.CYPHER_PARAM_PATHS: changed_keys,
+                        cs.KEY_PROJECT_PREFIX: prefix,
+                        cs.CYPHER_PARAM_TARGET_PREFIXES: sorted(prefixes),
+                    },
+                )
+                if prefixes
+                else []
+            )
+            base_rows = (
+                self._graph_rows(
+                    cs.CYPHER_DISPATCH_BASE_PATHS,
+                    {cs.KEY_QNS: sorted(base_qns)},
+                )
+                if base_qns
+                else []
+            )
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="dispatch callers")
+            return []
+        return sorted(
+            {
+                path
+                for row in (*caller_rows, *base_rows)
+                if isinstance(path := row.get(cs.KEY_CALLER_PATH), str) and path
+            }
+        )
+
     def _defined_simple_names(self, key: str, file_bytes: bytes) -> set[str]:
         """The simple names of the functions and classes a file defines, from
         a parse of its bytes with the language's combined query: what a
@@ -7240,6 +7487,14 @@ class GraphUpdater:
             *self._unresolved_importer_keys(added_keys),
             *self._unresolved_reference_waiters(added_entries, modified_entries),
             *self._dart_package_waiters({*present, *deleted_before_parse}),
+            # Dispatch dependents join the waiters, not the affected
+            # callers: a new override or conformer rebinds callers the
+            # caller query cannot see, and a waiter re-parses even when
+            # the changed file's interface fingerprint held (issue
+            # #3338; the fingerprint skip is issue #2531).
+            *self._dispatch_dependent_keys(
+                added_entries, modified_entries, deleted_before_parse
+            ),
         }
         # A foreign definer's definitions are rebuilt with the module it
         # defines into, so their callers are its dependents as a re-indexed
@@ -9052,23 +9307,30 @@ class GraphUpdater:
         # Inbound edges find dependents of files that already existed; the
         # unresolved-import lookup finds importers of files this call CREATED,
         # which by construction have no inbound edges yet (issue #1682).
+        # Created files offer everything; modified files offer only the
+        # definitions they gained (bot review on PR #1979).
+        created_entries = [
+            (key, self._delombok_overlay.get(key, _read_bytes(path)))
+            for key, path in sorted(present.items())
+            if created is not None and key in created
+        ]
+        modified_entries = [
+            (key, self._delombok_overlay.get(key, _read_bytes(path)))
+            for key, path in sorted(present.items())
+            if created is None or key not in created
+        ]
         waiters = {
             *self._unresolved_importer_keys(sorted(present)),
-            # Created files offer everything; modified files offer only the
-            # definitions they gained (bot review on PR #1979).
-            *self._unresolved_reference_waiters(
-                [
-                    (key, self._delombok_overlay.get(key, _read_bytes(path)))
-                    for key, path in sorted(present.items())
-                    if created is not None and key in created
-                ],
-                [
-                    (key, self._delombok_overlay.get(key, _read_bytes(path)))
-                    for key, path in sorted(present.items())
-                    if created is None or key not in created
-                ],
-            ),
+            *self._unresolved_reference_waiters(created_entries, modified_entries),
             *self._dart_package_waiters(keys),
+            # Dispatch dependents join the waiters, as on the batch
+            # path: a new override or conformer rebinds callers the
+            # caller query cannot see, and a waiter re-parses even when
+            # the changed file's interface fingerprint held (issues
+            # #3338 and #2531).
+            *self._dispatch_dependent_keys(
+                created_entries, modified_entries, sorted(gone)
+            ),
         }
         for caller_key in (
             *self._dependent_keys(keys, stable or {}, waiters),

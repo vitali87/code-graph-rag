@@ -1505,6 +1505,84 @@ CYPHER_ALL_INHERITS = (
     "r.base_index AS base_index "
     "ORDER BY child_qn, base_index"
 )
+# Dispatch dependents for an incremental sync (issue #3338): a new subclass
+# override or Protocol conformer changes which CALLS edges unchanged callers
+# must hold, without any edge pointing at the new file and without leaving
+# an unresolved reference, so the affected-caller lookup never finds those
+# callers. These queries read the OLD graph, before the changed files'
+# subtrees are deleted: the hierarchy and method sets the new source is
+# judged against, and the CALLS edges whose targets the dispatch set
+# gained or lost. All six are emulated in evals/cgr_graph.py; a structural
+# edit here without a matching case there fails closed in the unit suite.
+# Every class and interface node the project owns. Base resolution
+# trusts only a project-prefixed base guess that names a class here or
+# in this run's scan: an import-resolved guess for an external base has
+# no node, and comparing it with the persisted bases invents a change
+# for a comment-only edit (issue #3338).
+CYPHER_DISPATCH_CLASS_QNS = (
+    "MATCH (n) "
+    "WHERE n.qualified_name STARTS WITH $project_prefix "
+    "AND ANY(label IN labels(n) WHERE label IN ['Class', 'Interface']) "
+    "RETURN n.qualified_name AS qualified_name"
+)
+# The classes a Protocol declares, with the methods each declares: a
+# Protocol is a class whose direct base is named Protocol, the same test
+# CallResolver._protocol_classes applies to the rehydrated hierarchy.
+CYPHER_DISPATCH_PROTOCOL_METHODS = (
+    "MATCH (p:Class)-[:INHERITS]->(proto) "
+    "WHERE proto.qualified_name IS NOT NULL "
+    "AND (proto.qualified_name ENDS WITH '.Protocol' "
+    "OR proto.qualified_name = 'Protocol') "
+    "AND p.qualified_name STARTS WITH $project_prefix "
+    "MATCH (p)-[:DEFINES_METHOD]->(m:Method) "
+    "RETURN p.qualified_name AS class_qn, m.qualified_name AS method_qn"
+)
+# Every method of the given names a project class defines. The caller
+# filters by leaf name in Python; the query keeps only the rows whose
+# qualified name ends at that leaf, plus the `@line` duplicate variants,
+# which a CALLS edge can also target.
+CYPHER_DISPATCH_CLASS_METHODS = (
+    "MATCH (c:Class)-[:DEFINES_METHOD]->(m:Method) "
+    "WHERE c.qualified_name STARTS WITH $project_prefix "
+    "AND ANY(name IN $names WHERE m.qualified_name ENDS WITH ('.' + name) "
+    "OR m.qualified_name CONTAINS ('.' + name + '@')) "
+    "RETURN c.qualified_name AS class_qn, m.qualified_name AS method_qn"
+)
+# Every method the named classes define, plus the `@line` duplicate
+# variants, which a CALLS edge can also target. Read only for the
+# hierarchy components of classes that changed bases: a descendant
+# override's name is not among the changed or Protocol method names
+# the filtered query above can ask for, and without it the detached
+# override's callers are never queued (issue #3338).
+CYPHER_DISPATCH_METHODS_FOR_CLASSES = (
+    "MATCH (c:Class)-[:DEFINES_METHOD]->(m:Method) "
+    "WHERE c.qualified_name IN $qns "
+    "RETURN c.qualified_name AS class_qn, m.qualified_name AS method_qn"
+)
+# Files holding a CALLS edge into one of the dispatch targets, plus the
+# `@line` variants of those targets. Files already in the re-parse set
+# ($paths) are excluded: they re-parse anyway. The target prefixes are
+# `ClassQn.method` strings; a target whose qualified name merely shares a
+# prefix (`Foo.getaway` for prefix `Foo.get`) never matches, because the
+# remainder after the prefix must be empty or a duplicate marker.
+CYPHER_DISPATCH_CALLER_PATHS = (
+    "MATCH (caller)-[:CALLS]->(target) "
+    "WHERE caller.path IS NOT NULL AND NOT caller.path IN $paths "
+    "AND caller.qualified_name STARTS WITH $project_prefix "
+    "AND target.qualified_name STARTS WITH $project_prefix "
+    "AND ANY(prefix IN $target_prefixes WHERE target.qualified_name = prefix "
+    "OR target.qualified_name STARTS WITH (prefix + '@')) "
+    "RETURN DISTINCT caller.path AS caller_path"
+)
+# The files defining the base classes a new subclass extends: the
+# base-defining file re-parses with the subclass, so a self-dispatch call
+# it holds is re-derived against the new hierarchy even when no CALLS edge
+# of its own names a dispatch target (issue #3338).
+CYPHER_DISPATCH_BASE_PATHS = (
+    "MATCH (base:Class) "
+    "WHERE base.qualified_name IN $qns AND base.path IS NOT NULL "
+    "RETURN DISTINCT base.path AS caller_path"
+)
 # Implementer -> interface/trait pairs for incremental runs (issue #2403):
 # parsing records them only for the files it reads, and the sole-implementer
 # dispatch and the override walk need every implementer.
@@ -1602,6 +1680,8 @@ CYPHER_ALL_METHOD_LOCATIONS = (
 KEY_CHILD_QN = "child_qn"
 KEY_BASE_QN = "base_qn"
 KEY_BASE_INDEX = "base_index"
+KEY_CLASS_QN = "class_qn"
+KEY_METHOD_QN = "method_qn"
 # Result columns of the location-rehydration and module-count queries. Named
 # so the readers and the eval double cannot drift apart on the spelling, which
 # is the failure these queries were already prone to (issue #1716).
@@ -1611,6 +1691,7 @@ KEY_COUNT = "count"
 
 CYPHER_PARAM_PATHS = "paths"
 CYPHER_PARAM_MODULE_NAMES = "module_names"
+CYPHER_PARAM_TARGET_PREFIXES = "target_prefixes"
 KEY_CALLER_PATH = "caller_path"
 KEY_CALLER_LABEL = "caller_label"
 KEY_CALLER_QN = "caller_qn"
