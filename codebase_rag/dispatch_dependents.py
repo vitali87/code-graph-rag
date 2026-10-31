@@ -684,13 +684,20 @@ def dispatch_target_prefixes(
     by_simple: dict[str, list[str]] = {}
     for qn in all_classes:
         by_simple.setdefault(_simple_name(qn), []).append(qn)
-    # Each state judges the named-implementer uniqueness over its own
-    # classes: a class added by this run did not exist in the old state,
-    # and a removed one is gone from the new state.
+    # Each state names every class it holds, including a root base
+    # that appears only as a hierarchy value (no methods entry of its
+    # own, no bases of its own) and a modified class whose old shape
+    # the filtered method read dropped: both still judge
+    # named-implementer uniqueness, and omitting them lets a
+    # same-named class look unique when it is not. A brand-new class
+    # has an empty old shape and stays out of the old state; a removed
+    # class stays out of the new state.
     old_state_classes = {
         qn
         for qn in set(class_methods)
         | set(hierarchy)
+        | {base for bases in hierarchy.values() for base in bases}
+        | {change.qn for change in changes if change.old_methods or change.old_bases}
         | {change.qn for change in changes if not change.present}
         if _owns(qn, project_name, longer_project_prefixes)
     }
@@ -698,9 +705,11 @@ def dispatch_target_prefixes(
         qn
         for qn in set(merged_methods)
         | set(merged_hierarchy)
+        | {base for bases in merged_hierarchy.values() for base in bases}
         | {change.qn for change in changes if change.present}
         if _owns(qn, project_name, longer_project_prefixes)
     }
+    protocol_qns = set(protocols)
     prefixes: set[str] = set()
     base_qns: set[str] = set()
     for change in changes:
@@ -732,15 +741,15 @@ def dispatch_target_prefixes(
             if not old_required and not new_required:
                 continue
             named_old = _named_implementer(
-                protocol_qn, old_state_classes, set(protocols), by_simple
+                protocol_qn, old_state_classes, protocol_qns, by_simple
             )
             named_new = _named_implementer(
-                protocol_qn, new_state_classes, set(protocols), by_simple
+                protocol_qn, new_state_classes, protocol_qns, by_simple
             )
             old_conformers = _conformers(
                 old_required,
                 old_state_classes,
-                set(protocols),
+                protocol_qns,
                 hierarchy,
                 class_methods,
                 named_old,
@@ -748,7 +757,7 @@ def dispatch_target_prefixes(
             new_conformers = _conformers(
                 new_required,
                 new_state_classes,
-                set(protocols),
+                protocol_qns,
                 merged_hierarchy,
                 merged_methods,
                 named_new,

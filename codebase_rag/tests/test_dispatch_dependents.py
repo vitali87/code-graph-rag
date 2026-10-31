@@ -7,6 +7,8 @@ from __future__ import annotations
 from codebase_rag.dispatch_dependents import (
     ClassChange,
     ScannedFile,
+    _descendant_methods,
+    base_change_component_qns,
     build_class_changes,
     dispatch_target_prefixes,
     scan_python_classes,
@@ -513,3 +515,74 @@ def test_protocol_conformance_completed_through_an_inherited_method() -> None:
     # `B` inherits `get` from `A`: the target is `A.get`, the class
     # that defines it, not `B.get`.
     assert "proj.lib.A.get" in prefixes
+
+
+def test_base_change_component_qns_covers_old_and_new_components() -> None:
+    # A base change is judged in both states: the old component
+    # (Root, A, Mid, Leaf) and the new one (B, Mid, Leaf) are both
+    # needed to read whole method sets, so a descendant override's
+    # name is available either way. A change that keeps its bases,
+    # and a third-party base, contribute nothing.
+    hierarchy = {
+        "proj.m.A": ["proj.m.Root"],
+        "proj.m.Mid": ["proj.m.A"],
+        "proj.m.Leaf": ["proj.m.Mid"],
+    }
+    components = base_change_component_qns(
+        [_change("proj.m.Mid", set(), set(), ("proj.m.A",), ("proj.m.B",))],
+        hierarchy,
+        PROJECT,
+    )
+    assert components == {
+        "proj.m.Root",
+        "proj.m.A",
+        "proj.m.Mid",
+        "proj.m.Leaf",
+        "proj.m.B",
+    }, components
+    assert (
+        base_change_component_qns(
+            [_change("proj.m.Mid", set(), {"m"}, ("proj.m.A",), ("proj.m.A",))],
+            hierarchy,
+            PROJECT,
+        )
+        == set()
+    )
+    assert base_change_component_qns(
+        [_change("proj.m.MyDict", set(), set(), (), ("dict",))],
+        {"proj.m.MyDict": ["dict"]},
+        PROJECT,
+    ) == {"proj.m.MyDict"}
+
+
+def test_descendant_methods_collects_strict_descendants_only() -> None:
+    # Only strict descendants count, and a hierarchy cycle terminates
+    # instead of looping: the changed class's own methods are the
+    # caller's business, not the descendants'.
+    hierarchy = {
+        "proj.m.A": ["proj.m.Root"],
+        "proj.m.Mid": ["proj.m.A"],
+        "proj.m.Leaf": ["proj.m.Mid"],
+        "proj.m.Unrelated": [],
+    }
+    methods = {
+        "proj.m.Root": {"root_method"},
+        "proj.m.A": {"a"},
+        "proj.m.Mid": {"m1", "m2"},
+        "proj.m.Leaf": {"leaf"},
+        "proj.m.Unrelated": {"u"},
+    }
+    assert _descendant_methods("proj.m.Root", hierarchy, methods) == {
+        "a",
+        "m1",
+        "m2",
+        "leaf",
+    }
+    cyclic = {
+        "proj.m.A": ["proj.m.B"],
+        "proj.m.B": ["proj.m.A"],
+    }
+    cyclic_methods = {"proj.m.A": {"a"}, "proj.m.B": {"b"}}
+    # Strict descendants only: A's own method stays out, and the
+    # cycle terminates with B's method collected once.
+    assert _descendant_methods("proj.m.A", cyclic, cyclic_methods) == {"b"}
