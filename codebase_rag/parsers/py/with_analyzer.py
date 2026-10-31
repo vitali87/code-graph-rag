@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import TYPE_CHECKING, NamedTuple
 
 from loguru import logger
@@ -10,7 +11,7 @@ from ... import logs as lg
 from ...types_defs import FunctionRegistryTrieProtocol, NodeType
 from ..import_processor import ImportProcessor
 from ..utils import follow_reexports, safe_decode_text
-from .utils import resolve_class_name, resolve_dotted_class
+from .utils import resolve_class_name, resolve_dotted_class, split_top_level
 
 
 class WithTarget(NamedTuple):
@@ -42,6 +43,8 @@ if TYPE_CHECKING:
 
         def _find_method_ast_node(self, method_qn: str) -> Node | None: ...
 
+        def _find_function_ast_node(self, fn_qn: str) -> Node | None: ...
+
         def _find_return_statements(
             self, node: Node, return_nodes: list[Node]
         ) -> None: ...
@@ -57,6 +60,47 @@ if TYPE_CHECKING:
     _WithBase: type = _WithBindingDeps
 else:
     _WithBase = object
+
+
+def _own_yield_values(definition: Node) -> Iterator[Node | None]:
+    """The values `definition` itself yields, None for a bare `yield`.
+
+    Nested defs and classes are not descended into: their yields are
+    theirs, and a lambda cannot yield.
+    """
+    body = definition.child_by_field_name(cs.FIELD_BODY)
+    if body is None:
+        return
+    stack = list(body.children)
+    while stack:
+        node = stack.pop()
+        if node.type == cs.TS_PY_YIELD:
+            children = node.named_children
+            yield children[0] if children else None
+            continue
+        if node.type in (
+            cs.TS_PY_FUNCTION_DEFINITION,
+            cs.TS_PY_CLASS_DEFINITION,
+            cs.TS_PY_LAMBDA,
+        ):
+            continue
+        stack.extend(node.children)
+
+
+def _enclosing_class_qn(node: Node, module_qn: str) -> str | None:
+    """The `module.Class` of the class whose method body holds `node`,
+    or None when no class encloses it."""
+    current = node.parent
+    while current is not None and current.type != cs.TS_PY_CLASS_DEFINITION:
+        if current.type == cs.TS_PY_MODULE:
+            return None
+        current = current.parent
+    if current is None:
+        return None
+    name = current.child_by_field_name(cs.FIELD_NAME)
+    if (class_name := safe_decode_text(name)) is None:
+        return None
+    return f"{module_qn}{cs.SEPARATOR_DOT}{class_name}"
 
 
 def _receiver_parameter(method: Node) -> tuple[str | None, str | None]:
@@ -124,6 +168,13 @@ class PythonWithBindingMixin(_WithBase):
     class instead of falling to the name-only fallback. An indexed method
     that returns something the pass cannot read (`return self._conn`, a bare
     `return`) leaves the target untyped: unknown, never guessed as the class.
+
+    The exception is a `@contextmanager` / `@asynccontextmanager` factory
+    (issue #3340): the entered value is the generator's yield type, from
+    the `Iterator[T]` / `Generator[T, ...]` return annotation, else from
+    the `yield` expressions. A factory without that decorator keeps the
+    refusal above: its return type is the manager's, not the entered
+    value's.
     """
 
     __slots__ = ()
@@ -148,6 +199,14 @@ class PythonWithBindingMixin(_WithBase):
                 target.manager, local_var_types, module_qn
             )
             if not manager_type:
+                # A `@contextmanager` factory with no readable return type
+                # still hands its target the yielded value: resolve the
+                # factory itself rather than wait on a manager type that
+                # will never arrive (#3340).
+                if entered := self._contextmanager_entered_type(target, module_qn):
+                    local_var_types[target.name] = entered
+                    logger.debug(lg.PY_TYPE_WITH, var=target.name, type=entered)
+                    continue
                 pending.append(target)
                 continue
             if entered := self._entered_type(target, manager_type, module_qn):
@@ -173,6 +232,12 @@ class PythonWithBindingMixin(_WithBase):
     ) -> str | None:
         class_qn = self._indexed_class_qn(manager_type, module_qn, target.manager)
         if class_qn is None:
+            # A `@contextmanager` / `@asynccontextmanager` factory: the
+            # entered value is the generator's yield type, read from the
+            # factory itself. Any other factory keeps the refusal below:
+            # its return type is the manager's, not the entered value's.
+            if entered := self._contextmanager_entered_type(target, module_qn):
+                return entered
             # An external class's `__enter__` cannot be read, so the
             # convention applies -- but only to a constructor call: a
             # factory's return type (`-> Generator`, `-> Iterator[W]`) is not
@@ -189,6 +254,269 @@ class PythonWithBindingMixin(_WithBase):
                 # one `v = X()` stores.
                 return manager_type if returned == class_qn else returned
         return manager_type
+
+    def _contextmanager_entered_type(
+        self, target: WithTarget, module_qn: str
+    ) -> str | None:
+        """The yield type of the `@contextmanager` / `@asynccontextmanager`
+        factory `target` calls, or None when the manager is not such a
+        factory (issue #3340)."""
+        factory = self._contextmanager_factory(target.manager, module_qn)
+        if factory is None:
+            return None
+        definition, factory_module_qn = factory
+        if not self._is_contextmanager_factory(definition, factory_module_qn):
+            return None
+        return self._contextmanager_yield_type(definition, factory_module_qn)
+
+    def _contextmanager_factory(
+        self, manager: Node, module_qn: str
+    ) -> tuple[Node, str] | None:
+        """The definition of the function or bare-`self`/`cls` method a
+        `with` manager calls, with the module it is defined in.
+
+        A call through any other attribute receiver (`self.proxy.release()`)
+        is not followed: the receiver's type is not known here, and
+        guessing it would type the target from the wrong method. A factory
+        nested inside another def is not followed either: its definition
+        carries no qualified name the by-name lookup can find.
+        """
+        if manager.type != cs.TS_PY_CALL:
+            return None
+        callee = manager.child_by_field_name(cs.TS_FIELD_FUNCTION)
+        if callee is None:
+            return None
+        if callee.type == cs.TS_PY_IDENTIFIER:
+            name = safe_decode_text(callee)
+            if not name:
+                return None
+            candidates = [f"{module_qn}{cs.SEPARATOR_DOT}{name}"]
+            if imported := self.import_processor.import_mapping.get(module_qn, {}).get(
+                name
+            ):
+                candidates.append(
+                    follow_reexports(
+                        imported,
+                        self.import_processor.import_mapping,
+                        self.function_registry,
+                    )
+                )
+            for qn in candidates:
+                if self.function_registry.get(qn) != NodeType.FUNCTION:
+                    continue
+                if (definition := self._find_function_ast_node(qn)) is not None:
+                    return definition, qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+            return None
+        if callee.type != cs.TS_PY_ATTRIBUTE:
+            return None
+        parts = (safe_decode_text(callee) or "").split(cs.SEPARATOR_DOT)
+        if len(parts) == 2 and parts[0] in (cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS):
+            enclosing = _enclosing_class_qn(manager, module_qn)
+            if enclosing is None:
+                return None
+            # An inherited `@contextmanager` method is found through the
+            # enclosing class's MRO, the way `_entered_type` finds an
+            # inherited `__enter__`.
+            for owner in self._get_mro(enclosing):
+                method_qn = f"{owner}{cs.SEPARATOR_DOT}{parts[1]}"
+                if (definition := self._find_method_ast_node(method_qn)) is not None:
+                    return definition, owner.rsplit(cs.SEPARATOR_DOT, 1)[0]
+            return None
+        import_map = self.import_processor.import_mapping.get(module_qn, {})
+        if parts and parts[0] in import_map:
+            qn = (
+                f"{import_map[parts[0]]}"
+                f"{cs.SEPARATOR_DOT}{cs.SEPARATOR_DOT.join(parts[1:])}"
+            )
+            if (
+                self.function_registry.get(qn) == NodeType.FUNCTION
+                and (definition := self._find_function_ast_node(qn)) is not None
+            ):
+                return definition, qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        return None
+
+    def _is_contextmanager_factory(
+        self, definition: Node, factory_module_qn: str
+    ) -> bool:
+        """Whether `definition` carries a contextlib contextmanager
+        decorator, spelled bare, aliased or qualified.
+
+        A bare name counts only when the defining module's import map
+        resolves it to contextlib: an unrelated decorator that happens to
+        be named `contextmanager` is not one. A dotted spelling counts
+        only when it resolves to `contextlib.contextmanager` /
+        `contextlib.asynccontextmanager` the same way.
+        """
+        statement = definition.parent
+        if statement is None or statement.type != cs.TS_PY_DECORATED_DEFINITION:
+            return False
+        import_map = self.import_processor.import_mapping.get(factory_module_qn, {})
+        for child in statement.named_children:
+            if child.type != cs.TS_PY_DECORATOR or not child.named_children:
+                continue
+            spelling = "".join(
+                (safe_decode_text(child.named_children[0]) or "").split()
+            ).split(cs.CHAR_PAREN_OPEN, 1)[0]
+            if not spelling:
+                continue
+            parts = spelling.split(cs.SEPARATOR_DOT)
+            if parts[0] in import_map:
+                resolved = import_map[parts[0]]
+                if len(parts) > 1:
+                    resolved = (
+                        f"{resolved}"
+                        f"{cs.SEPARATOR_DOT}{cs.SEPARATOR_DOT.join(parts[1:])}"
+                    )
+            elif len(parts) == 1:
+                continue
+            else:
+                resolved = spelling
+            if resolved in cs.PY_CONTEXTMANAGER_DECORATOR_QNS:
+                return True
+        return False
+
+    def _contextmanager_yield_type(
+        self, definition: Node, factory_module_qn: str
+    ) -> str | None:
+        """The type a contextmanager factory yields: the element type of
+        its `Iterator` / `Generator` return annotation, else the type of
+        its `yield` values when they agree."""
+        annotation = definition.child_by_field_name(cs.FIELD_RETURN_TYPE)
+        if annotation is not None:
+            text = (safe_decode_text(annotation) or "").strip().strip("\"'")
+            if yielded := self._yield_annotation_type(text, factory_module_qn):
+                return yielded
+        return self._yield_expression_type(definition, factory_module_qn)
+
+    def _yield_annotation_type(self, text: str, module_qn: str) -> str | None:
+        """The first type argument of a generator annotation, or None for
+        any other annotation: only `Iterator[T]`, `Generator[T, ...]`,
+        `AsyncIterator[T]` and `AsyncGenerator[T, ...]` name the yielded
+        type. The base name is resolved through the factory module's
+        import map, so an alias (`Iterator as It`) counts only when it
+        resolves to `typing` / `collections.abc`; a bare name with no
+        import entry keeps the spelling check, so star-imports work."""
+        bracket = text.find("[")
+        if bracket < 0 or not text.endswith("]"):
+            return None
+        if not self._is_generator_annotation(text[:bracket].strip(), module_qn):
+            return None
+        parts = split_top_level(text[bracket + 1 : -1])
+        first = parts[0].strip().strip("\"'") if parts else None
+        if not first:
+            return None
+        return self._resolved_type(first, module_qn)
+
+    def _is_generator_annotation(self, base: str, module_qn: str) -> bool:
+        """Whether `base` names a generator annotation, resolved through
+        the factory module's import map when it has an entry for the
+        first segment: a same-named import from elsewhere is not one."""
+        parts = base.split(cs.SEPARATOR_DOT)
+        import_map = self.import_processor.import_mapping.get(module_qn, {})
+        if parts[0] in import_map:
+            resolved = import_map[parts[0]]
+            if len(parts) > 1:
+                resolved = (
+                    f"{resolved}{cs.SEPARATOR_DOT}{cs.SEPARATOR_DOT.join(parts[1:])}"
+                )
+            return resolved in cs.PY_GENERATOR_ANNOTATION_QNS
+        if len(parts) == 1:
+            return parts[0] in cs.PY_GENERATOR_ANNOTATIONS
+        return base in cs.PY_GENERATOR_ANNOTATION_QNS
+
+    def _factory_local_types(
+        self,
+        definition: Node,
+        factory_module_qn: str,
+        before: int | None = None,
+    ) -> dict[str, str]:
+        """The types the factory's own simple bindings give its locals:
+        `t = Thing()` before `yield t` in the standard try/finally shape.
+        Only the factory's own body is read, and only plain identifier
+        targets: a name the factory never binds, or binds from something
+        unreadable, stays unknown rather than guessed. Parameters are not
+        read: a factory yielding a parameter needs its annotation, which
+        the annotation path above already covers. Bindings are read in
+        document order, so a later binding overwrites the earlier one,
+        and `before` limits the map to the bindings reaching a given
+        yield: one after it has not happened yet when the value is
+        yielded."""
+        local_types: dict[str, str] = {}
+        body = definition.child_by_field_name(cs.FIELD_BODY)
+        if body is None:
+            return local_types
+        stack = list(reversed(body.children))
+        while stack:
+            node = stack.pop()
+            if before is not None and node.start_byte > before:
+                continue
+            pair: tuple[Node | None, Node | None] | None = None
+            if node.type == cs.TS_PY_ASSIGNMENT:
+                pair = (
+                    node.child_by_field_name(cs.TS_FIELD_LEFT),
+                    node.child_by_field_name(cs.TS_FIELD_RIGHT),
+                )
+            elif node.type == cs.TS_PY_NAMED_EXPRESSION:
+                pair = (
+                    node.child_by_field_name(cs.FIELD_NAME),
+                    node.child_by_field_name(cs.FIELD_VALUE),
+                )
+            if pair is not None:
+                name_node, value_node = pair
+                if (
+                    name_node is not None
+                    and name_node.type == cs.TS_PY_IDENTIFIER
+                    and value_node is not None
+                    and (name := safe_decode_text(name_node))
+                    and (
+                        inferred := self._infer_type_from_expression_simple(
+                            value_node, factory_module_qn
+                        )
+                        or self._infer_type_from_expression_complex(
+                            value_node, factory_module_qn, local_types
+                        )
+                    )
+                ):
+                    local_types[name] = inferred
+                continue
+            if node.type in (
+                cs.TS_PY_FUNCTION_DEFINITION,
+                cs.TS_PY_CLASS_DEFINITION,
+                cs.TS_PY_LAMBDA,
+            ):
+                continue
+            stack.extend(reversed(node.children))
+        return local_types
+
+    def _yield_expression_type(
+        self, definition: Node, factory_module_qn: str
+    ) -> str | None:
+        """The one type every `yield` in the factory's own body yields, or
+        None when they disagree or cannot be read: the same single-value
+        rule `_enter_return_type` applies to `return` statements. A yield
+        of a bare name reads the factory's own bindings reaching that
+        yield, so the try/finally shape (`t = Thing(); yield t`) types
+        too, and a rebinding after the yield does not reach it."""
+        found: set[str | None] = set()
+        for value in _own_yield_values(definition):
+            if value is None:
+                found.add(None)
+                continue
+            factory_types = self._factory_local_types(
+                definition, factory_module_qn, before=value.start_byte
+            )
+            if value.type == cs.TS_PY_IDENTIFIER:
+                inferred = factory_types.get(safe_decode_text(value) or "")
+            else:
+                inferred = self._infer_type_from_expression_simple(
+                    value, factory_module_qn
+                ) or self._infer_type_from_expression_complex(
+                    value, factory_module_qn, factory_types
+                )
+            found.add(
+                self._resolved_type(inferred, factory_module_qn) if inferred else None
+            )
+        return found.pop() if len(found) == 1 else None
 
     def _enter_return_type(
         self, method: Node, method_qn: str, receiver_qn: str
