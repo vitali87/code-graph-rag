@@ -23,8 +23,17 @@ FILES = {
         '[package]\nname = "grep-searcher"\nversion = "0.1.0"\nedition = "2021"\n'
     ),
     "crates/searcher/src/lib.rs": (
+        "pub mod ext_line_buffer;\npub mod ext_searcher;\n"
         "pub mod line_buffer;\npub mod searcher;\n"
         "pub use crate::searcher::BinaryDetection;\n"
+    ),
+    # Blocks written away from their types, named so that the wrong one
+    # wins a tie on import distance.
+    "crates/searcher/src/ext_line_buffer.rs": (
+        "impl crate::line_buffer::BinaryDetection {\n    pub fn reset() {}\n}\n"
+    ),
+    "crates/searcher/src/ext_searcher.rs": (
+        "impl crate::searcher::BinaryDetection {\n    pub fn reset() {}\n}\n"
     ),
     "crates/searcher/src/line_buffer.rs": "pub struct BinaryDetection(pub u8);\n",
     "crates/searcher/src/searcher.rs": (
@@ -48,10 +57,32 @@ FILES = {
         "fn imported() -> BinaryDetection {\n"
         "    BinaryDetection::convert(2)\n"
         "}\n\n"
+        "fn out_of_module_impl() {\n"
+        "    grep_searcher::BinaryDetection::reset();\n"
+        "}\n\n"
         "fn main() {\n    let _ = fully_qualified();\n    let _ = imported();\n}\n"
     ),
     # No path and no import: the bare name is one of two types (#2941).
     "crates/app/src/bare.rs": "pub fn bare() {\n    let _ = BinaryDetection::convert(5);\n}\n",
+    # The head is the caller's own module, which re-exports the type.
+    "crates/app/src/local.rs": (
+        "mod reexport;\n\n"
+        "pub fn local_head() {\n"
+        "    let _ = reexport::BinaryDetection::convert(3);\n"
+        "}\n"
+    ),
+    "crates/app/src/local/reexport.rs": "pub use grep_searcher::BinaryDetection;\n",
+    # `self::` in an inline mod counts from the mod, not from the file, whose
+    # own `BinaryDetection` is another type.
+    "crates/app/src/inline.rs": (
+        "pub struct BinaryDetection;\n\n"
+        "mod inner {\n"
+        "    pub use grep_searcher::BinaryDetection;\n\n"
+        "    pub fn relative() {\n"
+        "        let _ = self::BinaryDetection::convert(4);\n"
+        "    }\n"
+        "}\n"
+    ),
 }
 
 CONVERT = "crates.searcher.src.searcher.BinaryDetection.convert"
@@ -80,13 +111,29 @@ def _callees(graph: RecordedGraph, caller: str) -> dict[str, str]:
         "crates.app.src.main.fully_qualified",
         "crates.app.src.main.imported",
         "crates.searcher.src.searcher.in_crate",
+        "crates.app.src.local.local_head",
+        "crates.app.src.inline.inner.relative",
     ],
-    ids=["crate-path", "use-imported", "crate-relative"],
+    ids=[
+        "crate-path",
+        "use-imported",
+        "crate-relative",
+        "local-module-head",
+        "inline-mod-self",
+    ],
 )
 def test_a_path_qualified_type_call_binds_the_named_type(
     graph: RecordedGraph, caller: str
 ) -> None:
     assert _callees(graph, caller) == {CONVERT: "exact"}
+
+
+def test_a_path_qualified_call_binds_the_block_on_the_named_type(
+    graph: RecordedGraph,
+) -> None:
+    assert _callees(graph, "crates.app.src.main.out_of_module_impl") == {
+        "crates.searcher.src.ext_searcher.BinaryDetection.reset": "exact"
+    }
 
 
 # Negative: what must not change.
