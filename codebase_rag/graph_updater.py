@@ -2716,6 +2716,13 @@ class GraphUpdater:
             self.queries,
             self.factory.definition_processor.function_locations,
         )
+        if language in cs.JS_TS_LANGUAGES:
+            # A default import resolves through its module's recorded
+            # `export default`, which only Pass 2 records; an unchanged
+            # exporter has its definitions read back from the graph by now.
+            self.factory.definition_processor.record_esm_default_export(
+                entry[0], module_qn
+            )
         return True
 
     @property
@@ -6050,6 +6057,7 @@ class GraphUpdater:
         """Drop the import-side state a removed file's module qns recorded."""
         for prefix in module_qn_prefixes:
             self.factory.import_processor.commonjs_direct_exports.pop(prefix, None)
+            self.factory.import_processor.esm_default_exports.pop(prefix, None)
         if file_path.suffix in (*cs.C_EXTENSIONS, *cs.CPP_EXTENSIONS):
             for qn in recorded_qns:
                 self.factory.import_processor.drop_cpp_module_import_state(qn)
