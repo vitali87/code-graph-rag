@@ -440,6 +440,16 @@ CONTEXTMANAGER_DECORATORS: frozenset[str] = frozenset(
 PY_GENERATOR_ANNOTATIONS: frozenset[str] = frozenset(
     {"Iterator", "Generator", "AsyncIterator", "AsyncGenerator"}
 )
+# The fully qualified spellings, precomputed once: the decorator and
+# yield-type checks rebuilt these sets on every call (#3340).
+PY_CONTEXTMANAGER_DECORATOR_QNS: frozenset[str] = frozenset(
+    f"{PY_CONTEXTLIB_MODULE}.{name}" for name in CONTEXTMANAGER_DECORATORS
+)
+PY_GENERATOR_ANNOTATION_QNS: frozenset[str] = frozenset(
+    f"{module}.{name}"
+    for module in PY_GENERATOR_ANNOTATION_MODULES
+    for name in PY_GENERATOR_ANNOTATIONS
+)
 
 # Eager builtins that invoke a callable argument synchronously in the caller's
 # stack frame, so the trace attributes the call to the enclosing function (no

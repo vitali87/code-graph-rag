@@ -371,10 +371,7 @@ class PythonWithBindingMixin(_WithBase):
                 continue
             else:
                 resolved = spelling
-            if resolved in {
-                f"{cs.PY_CONTEXTLIB_MODULE}{cs.SEPARATOR_DOT}{name}"
-                for name in cs.CONTEXTMANAGER_DECORATORS
-            }:
+            if resolved in cs.PY_CONTEXTMANAGER_DECORATOR_QNS:
                 return True
         return False
 
@@ -422,18 +419,10 @@ class PythonWithBindingMixin(_WithBase):
                 resolved = (
                     f"{resolved}{cs.SEPARATOR_DOT}{cs.SEPARATOR_DOT.join(parts[1:])}"
                 )
-            return resolved in {
-                f"{module}.{name}"
-                for module in cs.PY_GENERATOR_ANNOTATION_MODULES
-                for name in cs.PY_GENERATOR_ANNOTATIONS
-            }
+            return resolved in cs.PY_GENERATOR_ANNOTATION_QNS
         if len(parts) == 1:
             return parts[0] in cs.PY_GENERATOR_ANNOTATIONS
-        return base in {
-            f"{module}.{name}"
-            for module in cs.PY_GENERATOR_ANNOTATION_MODULES
-            for name in cs.PY_GENERATOR_ANNOTATIONS
-        }
+        return base in cs.PY_GENERATOR_ANNOTATION_QNS
 
     def _factory_local_types(
         self,
