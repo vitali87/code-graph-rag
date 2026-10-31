@@ -932,6 +932,7 @@ WHERE {_any_label("n", _DEAD_CODE_NODE_LABELS)} AND n.qualified_name STARTS WITH
 RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name,
        n.name AS name, n.path AS path, n.namespace AS namespace,
        n.start_line AS start_line, n.end_line AS end_line,
+       n.decorated_start_line AS decorated_start_line,
        n.decorators AS decorators, n.is_exported AS is_exported,
        n.overrides_external AS overrides_external,
        n.is_program_main AS is_program_main,

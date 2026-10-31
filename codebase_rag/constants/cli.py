@@ -1142,6 +1142,14 @@ SIGNATURE_CONTRACT_UNMEASURED = (
 )
 # context slice (issue #1536).
 CONTEXT_WHY_TARGET = "target"
+# How many of the candidates left out of a context slice it names; the rest
+# are only counted in `omitted_count` (issue #3243).
+CONTEXT_OMITTED_SAMPLE = 10
+# How deep a context slice prints each piece: inside the slice and its
+# `pieces` list, each level one MCP_JSON_INDENT more.
+CONTEXT_PIECE_DEPTH = 2
+# Files whose decoded lines a context slice keeps between quotes of them.
+CONTEXT_SOURCE_CACHE_FILES = 256
 CONTEXT_WHY_CALLER = "direct caller: the call line"
 CONTEXT_WHY_CALLEE = "direct callee: its signature"
 CONTEXT_WHY_RETURNS = "type it returns"

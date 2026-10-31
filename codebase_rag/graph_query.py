@@ -562,7 +562,9 @@ def source_root_for(
     return local if Path(stored).resolve() == local else None
 
 
-def _decorated_start(row: ResultRow, own_start: int | None) -> int | None:
+def _decorated_start(
+    row: ResultRow | PropertyDict, own_start: int | None
+) -> int | None:
     """The first decorator's line when the node records one above its own
     start, else that start (issue #2428).
 
@@ -1173,6 +1175,20 @@ class ReachIndex:
                     next_frontier.append(caller)
             frontier = next_frontier
         return depth_of, through_of
+
+    def span(self, qualified_name: str) -> tuple[int, int]:
+        """The recorded (start, end) lines of a node, 0 where unknown; the
+        start is the first decorator's line, as `definition()` answers."""
+        entry = self._by_qn.get(qualified_name)
+        if entry is None:
+            return 0, 0
+        props = entry[1]
+        own, end = props.get(cs.KEY_START_LINE), props.get(cs.KEY_END_LINE)
+        start = _decorated_start(props, own if isinstance(own, int) else None)
+        return (
+            start if isinstance(start, int) else 0,
+            end if isinstance(end, int) else 0,
+        )
 
     def tests_reaching(self, qualified_name: str) -> list[TestReachRow]:
         depth_of, through_of = self._walk(qualified_name)
