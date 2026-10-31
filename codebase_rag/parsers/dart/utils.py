@@ -19,6 +19,25 @@ class DartConstructorDelegation(NamedTuple):
     name: str | None
 
 
+class DartCombinator(NamedTuple):
+    """One `show A, B` (`shows`) or `hide C` clause of a Dart directive."""
+
+    shows: bool
+    names: frozenset[str]
+
+
+class DartBareImport(NamedTuple):
+    """A directive that brings a library's names in unprefixed: a plain
+    `import`, with its `show` / `hide` clauses, or a `part`."""
+
+    library: str
+    combinators: tuple[DartCombinator, ...]
+
+    def admits(self, name: str) -> bool:
+        # The clauses apply in turn, so `show A, B hide B` lets in `A` only.
+        return all((name in c.names) == c.shows for c in self.combinators)
+
+
 def _identifier_texts(node: Node) -> list[bytes]:
     return [
         text
@@ -217,10 +236,26 @@ def dart_exposes_library(directive: Node) -> bool:
     `export 'x.dart';` re-exports x, and `part 'x.dart';` makes x part of the
     library itself; a plain `import` only brings x into this file's scope.
     """
-    if directive.type == cs.TS_DART_PART_DIRECTIVE:
-        return True
+    return directive.type == cs.TS_DART_PART_DIRECTIVE or dart_is_export(directive)
+
+
+def dart_is_export(directive: Node) -> bool:
+    """Is this an `export` directive? It hands its target's names to the
+    library's importers but brings none into the library's own scope."""
     return any(
         child.type == cs.TS_DART_LIBRARY_EXPORT for child in directive.named_children
+    )
+
+
+def dart_combinators(directive: Node) -> tuple[DartCombinator, ...]:
+    """The `show` / `hide` clauses of an import or export, in source order."""
+    return tuple(
+        DartCombinator(
+            shows=node.children[0].type == cs.TS_DART_SHOW,
+            names=frozenset(decode_node_text(text) for text in _identifier_texts(node)),
+        )
+        for node in _walk_named(directive)
+        if node.type == cs.TS_DART_COMBINATOR and node.children
     )
 
 
