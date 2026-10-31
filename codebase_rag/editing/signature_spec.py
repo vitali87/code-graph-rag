@@ -102,6 +102,7 @@ class _Header(NamedTuple):
     params: list[ParamSpec]
     function: Node  # the `function_definition`, for its body
     source: bytes
+    language: cs.SupportedLanguage = cs.SupportedLanguage.PYTHON
 
 
 class _Binding(NamedTuple):

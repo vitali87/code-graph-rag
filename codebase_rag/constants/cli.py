@@ -1117,6 +1117,60 @@ SIGNATURE_SITE_EXPLICIT_RECEIVER = (
     "reaches the method through its class and passes the receiver as an "
     "argument (`{text}`); rewrite it by hand"
 )
+SIGNATURE_SITE_REORDERS_EFFECTS = (
+    "its arguments run code, and the new order would run them in another "
+    "order: `{text}`"
+)
+SIGNATURE_JS_HEADER_PROBE = "function _{params} {{}}"
+SIGNATURE_JS_CALL_PROBE = "_({args});"
+SIGNATURE_JS_BAD_LITERAL = (
+    "The value `{literal}` mapped to {name} is not one JavaScript expression; "
+    "written into a call it would not be exactly one argument"
+)
+SIGNATURE_JS_UNSUPPORTED_PARAMS = (
+    "Cannot change the signature of {qn}: `{text}` is not a plain parameter "
+    "(a name, with or without a default), and only those can be remapped"
+)
+SIGNATURE_JS_BAD_PARAM = (
+    "Not one plain parameter: `{text}` (expected `name` or `name = default`)"
+)
+SIGNATURE_JS_INVALID_HEADER = (
+    "The new parameter list of {qn} is not valid JavaScript: `{text}`"
+)
+SIGNATURE_JS_CONSTRUCTOR = (
+    "Cannot change the signature of {qn}: a constructor is called through `new` "
+    "and `super(...)`, which are not listed as its call sites"
+)
+SIGNATURE_JS_ACCESSOR = (
+    "Cannot change the signature of {qn}: a getter or setter is read or "
+    "assigned, never called with arguments"
+)
+SIGNATURE_JS_CALLS_EVAL = (
+    "Cannot add or drop a parameter of {qn}: its body uses `eval`, which can "
+    "read any parameter through a name written in a string"
+)
+SIGNATURE_JS_READS_ARGUMENTS = (
+    "Cannot change the signature of {qn}: its body reads `arguments`, which "
+    "sees every value by position"
+)
+SIGNATURE_JS_RENAME = (
+    "Cannot rename parameter {old} of {qn} to {new}: renaming is not supported "
+    "for JavaScript yet (issue #{issue})"
+)
+SIGNATURE_JS_DROPPED_STILL_READ = (
+    "Cannot drop parameter {name} of {qn}: its body still uses `{name}`, which "
+    "would then reach an outer name or throw ReferenceError; remove that use by "
+    "hand first"
+)
+SIGNATURE_JS_DUPLICATE_PARAM = (
+    "Cannot change the signature of {qn}: it declares parameter {name} more "
+    "than once, and the body sees only the last of them"
+)
+SIGNATURE_JS_DEFAULT_READS_LATER = (
+    "Cannot change the signature of {qn}: the default of {name} reads `{later}`, "
+    "which is not bound yet when that default runs, so a call leaving {name} "
+    "out would throw ReferenceError"
+)
 SIGNATURE_PLANNED = "{count} site(s) would be rewritten, {skipped} left unmapped"
 SIGNATURE_PARSE_FAILED = "Signature change rolled back: {files} would no longer parse"
 SIGNATURE_CONTRACT_FAILED = (
