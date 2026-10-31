@@ -1,9 +1,7 @@
 # Instance field initializers run when an object is constructed, so their
 # calls/instantiations belong to the class's constructor (or the class node
-# when there is no single explicit constructor — including overloaded
-# constructors, where picking one owner would invent an execution path),
-# not to the file's Module (issue #3339). Static field initializers run
-# at definition time and stay module-attributed.
+# when there is none), not to the file's Module (issue #3339). Static field
+# initializers run at definition time and stay module-attributed.
 from __future__ import annotations
 
 from pathlib import Path
@@ -193,12 +191,9 @@ class Svc {
     assert any(not s.endswith("Svc()") for s in helper_sources)
 
 
-def test_java_overloaded_constructor_chain_attributes_to_class_node(
+def test_java_overloaded_constructor_chain_attributes_to_sink_only(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # Multiple overloaded constructors: the class node owns the
-    # initializer call exactly once. No fan-out over the overloads, and
-    # no `this()`-chain sink is invented as the owner.
     project = temp_repo / "jchain"
     (project / "com" / "example").mkdir(parents=True)
     (project / "com" / "example" / "M.java").write_text(
@@ -216,29 +211,16 @@ class Chain {
     create_and_run_updater(project, mock_ingestor, skip_if_missing="java")
 
     calls = _calls(mock_ingestor)
-    class_edges = [
+    sink_edges = [
         (s, t)
         for s, t in calls
-        if s.endswith("Chain") and t.endswith("Factory.Factory()")
+        if s.endswith("Chain.Chain(int)") and t.endswith("Factory.Factory()")
     ]
-    assert len(class_edges) == 1, calls
+    assert len(sink_edges) == 1, calls
     assert not any(
         s.endswith("Chain.Chain()") and t.endswith("Factory.Factory()")
         for s, t in calls
     ), calls
-    assert not any(
-        s.endswith("Chain.Chain(int)") and t.endswith("Factory.Factory()")
-        for s, t in calls
-    ), calls
-    # One source site, one edge: the site identity is unique, so no
-    # module/class double-processing copy exists.
-    sites = [
-        site
-        for site in _sites(mock_ingestor, "CALLS")
-        if site[1].endswith("Factory.Factory()")
-    ]
-    assert len(sites) == 1, sites
-    assert len({(s, t, line, col) for s, t, line, col in sites}) == 1, sites
 
 
 def test_java_inner_class_field_initializer_attributes_to_inner(
@@ -316,12 +298,9 @@ public class Svc {
     ), calls
 
 
-def test_csharp_overloaded_constructor_chain_attributes_to_class_node(
+def test_csharp_overloaded_constructor_chain_attributes_to_sink_only(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # Multiple overloaded constructors: the class node owns the
-    # initializer call exactly once. No fan-out over the overloads, and
-    # no `: this(...)` sink is invented as the owner.
     project = temp_repo / "csChain"
     project.mkdir()
     (project / "App.cs").write_text(
@@ -339,25 +318,197 @@ public class Chain {
     run_updater(project, mock_ingestor, skip_if_missing="c_sharp")
 
     calls = _calls(mock_ingestor)
+    sink_edges = [
+        (s, t)
+        for s, t in calls
+        if s.endswith("Chain.Chain(int)") and t.endswith("Factory.Factory")
+    ]
+    assert len(sink_edges) == 1, calls
+    assert not any(
+        s.endswith("Chain.Chain")
+        and not s.endswith("(int)")
+        and t.endswith("Factory.Factory")
+        for s, t in calls
+    ), calls
+
+
+def test_java_independent_overloads_attribute_to_class_node(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Two overloads, neither delegating: there is no single sink, so
+    # the class node owns the initializer exactly once rather than
+    # fanning the site out over both overloads.
+    project = temp_repo / "jindep"
+    (project / "com" / "example").mkdir(parents=True)
+    (project / "com" / "example" / "M.java").write_text(
+        """
+package com.example;
+class Factory { Factory() {} }
+class Chain {
+  Factory f = new Factory();
+  Chain() {}
+  Chain(int x) {}
+}
+""",
+        encoding="utf-8",
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="java")
+
+    calls = _calls(mock_ingestor)
     class_edges = [
         (s, t)
         for s, t in calls
-        if s.endswith("N.Chain") and t.endswith("Factory.Factory")
+        if s.endswith("Chain") and t.endswith("Factory.Factory()")
     ]
     assert len(class_edges) == 1, calls
     assert not any(
-        s.endswith("Chain.Chain") and t.endswith("Factory.Factory") for s, t in calls
+        "Chain.Chain(" in s and t.endswith("Factory.Factory()") for s, t in calls
     ), calls
+
+
+def test_java_three_constructor_chain_attributes_to_sink_only(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A chain of any length runs the initializers exactly once, in
+    # its single sink (JLS 12.5).
+    project = temp_repo / "jchain3"
+    (project / "com" / "example").mkdir(parents=True)
+    (project / "com" / "example" / "M.java").write_text(
+        """
+package com.example;
+class Factory { Factory() {} }
+class Chain {
+  Factory f = new Factory();
+  Chain() { this(1); }
+  Chain(int x) { this(1, 2); }
+  Chain(int x, int y) {}
+}
+""",
+        encoding="utf-8",
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="java")
+
+    calls = _calls(mock_ingestor)
+    sink_edges = [
+        (s, t)
+        for s, t in calls
+        if s.endswith("Chain.Chain(int,int)") and t.endswith("Factory.Factory()")
+    ]
+    assert len(sink_edges) == 1, calls
+    assert not any(
+        s.endswith("Chain.Chain()") and t.endswith("Factory.Factory()")
+        for s, t in calls
+    ), calls
+    assert not any(
+        s.endswith("Chain.Chain(int)") and t.endswith("Factory.Factory()")
+        for s, t in calls
+    ), calls
+
+
+def test_java_super_only_constructor_counts_as_sink(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `super()` constructs the base, not a sibling: the constructor
+    # still runs its own field initializers, so it is the sink when
+    # the only other overload delegates to it.
+    project = temp_repo / "jsuper"
+    (project / "com" / "example").mkdir(parents=True)
+    (project / "com" / "example" / "M.java").write_text(
+        """
+package com.example;
+class Factory { Factory() {} }
+class Chain {
+  Factory f = new Factory();
+  Chain() { super(); }
+  Chain(int x) { this(); }
+}
+""",
+        encoding="utf-8",
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="java")
+
+    calls = _calls(mock_ingestor)
+    sink_edges = [
+        (s, t)
+        for s, t in calls
+        if s.endswith("Chain.Chain()") and t.endswith("Factory.Factory()")
+    ]
+    assert len(sink_edges) == 1, calls
+    assert not any(
+        s.endswith("Chain.Chain(int)") and t.endswith("Factory.Factory()")
+        for s, t in calls
+    ), calls
+
+
+def test_csharp_base_only_constructor_counts_as_sink(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `: base()` constructs the base, not a sibling: the constructor
+    # still runs its own field initializers, so it is the sink when
+    # the only other overload delegates to it (ECMA-334 17.10.2).
+    project = temp_repo / "csbase"
+    project.mkdir()
+    (project / "App.cs").write_text(
+        """
+namespace N;
+public class Factory { public Factory() {} }
+public class Chain {
+  private Factory f = new Factory();
+  public Chain() : base() {}
+  public Chain(int x) : this() {}
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(project, mock_ingestor, skip_if_missing="c_sharp")
+
+    calls = _calls(mock_ingestor)
+    # The no-argument constructor's registered qn carries no `()`
+    # suffix, unlike the `(int)` overload's.
+    sink_edges = [
+        (s, t)
+        for s, t in calls
+        if s.endswith("Chain.Chain") and t.endswith("Factory.Factory")
+    ]
+    assert len(sink_edges) == 1, calls
     assert not any(
         s.endswith("Chain.Chain(int)") and t.endswith("Factory.Factory")
         for s, t in calls
     ), calls
-    sites = [
-        site
-        for site in _sites(mock_ingestor, "CALLS")
-        if site[1].endswith("Factory.Factory")
+
+
+def test_java_delegation_cycle_attributes_to_class_node(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Every overload delegates, so there is no sink to count (a cycle
+    # is a compile error): the class node owns the initializer exactly
+    # once rather than guessing an owner.
+    project = temp_repo / "jcycle"
+    (project / "com" / "example").mkdir(parents=True)
+    (project / "com" / "example" / "M.java").write_text(
+        """
+package com.example;
+class Factory { Factory() {} }
+class Chain {
+  Factory f = new Factory();
+  Chain() { this(1); }
+  Chain(int x) { this(); }
+}
+""",
+        encoding="utf-8",
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="java")
+
+    calls = _calls(mock_ingestor)
+    class_edges = [
+        (s, t)
+        for s, t in calls
+        if s.endswith("Chain") and t.endswith("Factory.Factory()")
     ]
-    assert len(sites) == 1, sites
+    assert len(class_edges) == 1, calls
+    assert not any(
+        "Chain.Chain(" in s and t.endswith("Factory.Factory()") for s, t in calls
+    ), calls
 
 
 def test_ts_overload_signatures_with_one_implementation_use_constructor(
