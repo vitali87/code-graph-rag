@@ -9014,6 +9014,21 @@ class CallProcessor:
             self._emit_conditional_rhs_refs(value, scope)
             return
         if (
+            value.type in _INLINE_FUNC_VALUE_TYPES
+            and node.type == cs.TS_VARIABLE_DECLARATOR
+            and js_ts_utils.arrow_binding_name(value) is not None
+            and not js_ts_utils.name_is_body_scoped(value)
+        ):
+            # `const foo = () => {}` is foo's own definition, not a use of
+            # it: referencing it from the scope rooted every arrow const and
+            # dead-code never reported one (issue #2857). Its uses reference
+            # it by name like any function's. That holds only when it is
+            # registered as foo: `const run = function worker() {}` registers
+            # worker and `const b = (() => {}).bind(x)` an anonymous function,
+            # which calls to run or b never resolve to, so those keep the
+            # reference.
+            return
+        if (
             value.type in _ASSIGNMENT_RHS_REF_TYPES
             or value.type in _INLINE_FUNC_VALUE_TYPES
         ):
