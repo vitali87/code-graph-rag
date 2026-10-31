@@ -1,4 +1,4 @@
-from collections.abc import Callable, Collection, Mapping
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -33,6 +33,11 @@ from .utils import follow_reexports
 
 if TYPE_CHECKING:
     from .factory import ASTCacheProtocol
+
+# Registry kinds a Rust type name can land on.
+_RS_TYPE_NODE_TYPES = frozenset(
+    {NodeType.CLASS, NodeType.ENUM, NodeType.TYPE, NodeType.INTERFACE}
+)
 
 
 def _shared[T](value: T | None, empty: Callable[[], T]) -> T:
@@ -987,6 +992,8 @@ class TypeInferenceEngine:
         # trie fallback. Only fills names not already typed, or typed only by
         # their initializer's constructor-like spelling (#3168).
         bounds: dict[str, list[str]] | None = None
+        # Walked once, and only when a binding needs typing.
+        scopes: list[str] | None = None
         for (
             name,
             segments,
@@ -996,8 +1003,10 @@ class TypeInferenceEngine:
                 var_types[name], segments
             ):
                 continue
+            if scopes is None:
+                scopes = self._rust_inline_mod_scopes(caller_node, module_qn)
             if return_type := self._infer_rust_call_return_type(
-                segments, module_qn, var_types, call_point
+                segments, module_qn, var_types, call_point, scopes
             ):
                 var_types[name] = return_type
                 if len(segments) == 2 and segments[0] == cs.KEYWORD_SELF:
@@ -1012,12 +1021,23 @@ class TypeInferenceEngine:
                         )
                     self._apply_rust_generic_bound(bounds, module_qn, var_types, name)
 
+    @staticmethod
+    def _rust_inline_mod_scopes(caller_node: ASTNode, module_qn: str) -> list[str]:
+        # The caller's enclosing inline `mod` scopes as qns, innermost first,
+        # the order Rust looks a name up in (issue #2942).
+        path = rs_utils.inline_mod_path(caller_node)
+        return [
+            cs.SEPARATOR_DOT.join([module_qn, *path[:depth]])
+            for depth in range(len(path), 0, -1)
+        ]
+
     def _infer_rust_call_return_type(
         self,
         segments: list[str],
         module_qn: str,
         var_types: dict[str, str],
         call_point: int | None,
+        scopes: Sequence[str] = (),
     ) -> str | None:
         # Walk a flattened chain to the type it yields:
         #   ['Command','from_frame']  -> base type Command, method from_frame
@@ -1028,15 +1048,36 @@ class TypeInferenceEngine:
         # field) -> field-type -> method-return -> identity.
         if not segments:
             return None
-        current_type = self._rust_chain_base_type(
-            segments, module_qn, var_types, call_point
+        # Base of the chain: a typed local (self/var), else a free fn called by
+        # bare name (`let s = make()`).
+        base = var_types.get(segments[0]) or self._rust_free_fn_return_type(
+            segments[0], module_qn, call_point, scopes
         )
-        if current_type is None:
+        if base is not None:
+            return self._walk_rust_hops(base, segments[1:], module_qn)
+        # A bare unresolved name types nothing. With hops, the head is a type
+        # (`Command::from_frame`), else a module the fn is reached through
+        # (`util::tmpdir()`, `crate::util::tmpdir()`, `inner::make()`).
+        if len(segments) == 1:
             return None
+        if (
+            walked := self._walk_rust_hops(segments[0], segments[1:], module_qn)
+        ) is not None:
+            return walked
+        fn_type = self._rust_module_fn_return_type(
+            segments[0], segments[1], module_qn, scopes
+        )
+        if fn_type is None:
+            return None
+        return self._walk_rust_hops(fn_type, segments[2:], module_qn)
+
+    def _walk_rust_hops(
+        self, current_type: str | None, hops: list[str], module_qn: str
+    ) -> str | None:
         # Inner type of the guard-wrapped field just hopped through, pending a guard
         # accessor to unwrap it (None otherwise).
         guard_inner: str | None = None
-        for hop in segments[1:]:
+        for hop in hops:
             if current_type is None:
                 return None
             if guard_inner is not None and hop in cs.RS_GUARD_ACCESSORS:
@@ -1076,30 +1117,16 @@ class TypeInferenceEngine:
             return current_type, None
         return None
 
-    def _rust_chain_base_type(
-        self,
-        segments: list[str],
-        module_qn: str,
-        var_types: dict[str, str],
-        call_point: int | None,
-    ) -> str | None:
-        # Base of a flattened chain: a typed local (self/var) when present in
-        # var_types, else a free fn called by bare name (`let s = make()`), else the
-        # segment itself as a type name, useful only when there are hops to walk, so
-        # a bare unresolved name types nothing.
-        base = var_types.get(segments[0]) or self._rust_free_fn_return_type(
-            segments[0], module_qn, call_point
-        )
-        if base is not None:
-            return base
-        return segments[0] if len(segments) > 1 else None
-
     def _resolve_rust_type_qn(self, type_name: str, module_qn: str) -> str:
         # Resolve a Rust type name to its class-node qn, honoring imports: an
         # external `use` target is a raw `::`-path (`std::io::Read`) matched by
         # simple name, a local one an already-resolved project qn. Falls back to
         # same-module resolution for a locally-defined type. A fully-qualified
-        # inline base (`crate::cmd::Command`) carries its own path.
+        # inline base (`crate::cmd::Command`) carries its own path, and a
+        # helper's return type read in the helper's own module arrives as
+        # the qn it resolved to there.
+        if cs.SEPARATOR_DOT in type_name and type_name in self.function_registry:
+            return type_name
         if cs.SEPARATOR_DOUBLE_COLON in type_name:
             return self._resolve_rust_import_path(type_name)
         import_map = self.import_processor.import_mapping.get(module_qn, {})
@@ -1129,7 +1156,11 @@ class TypeInferenceEngine:
         return self._resolve_class_name(type_name, module_qn) or type_name
 
     def _rust_free_fn_return_type(
-        self, name: str, module_qn: str, call_point: int | None
+        self,
+        name: str,
+        module_qn: str,
+        call_point: int | None,
+        scopes: Sequence[str] = (),
     ) -> str | None:
         # Return type of a free fn called by bare name: same-module first, then a
         # `use`-imported fn resolved through its raw `::` path. A type-name base
@@ -1157,19 +1188,108 @@ class TypeInferenceEngine:
             if shadow_type and self._rust_binding_type_resolves(shadow_type, module_qn):
                 return shadow_type
             return None
-        if return_type := self.method_return_types.get(
-            f"{module_qn}{cs.SEPARATOR_DOT}{name}"
-        ):
-            return return_type
-        import_map = self.import_processor.import_mapping.get(module_qn, {})
-        if target := import_map.get(name):
-            if cs.SEPARATOR_DOUBLE_COLON in target:
-                target = self._resolve_rust_import_path(
-                    target, node_types=(NodeType.FUNCTION,)
-                )
-            # A crate::/super::/self:: use target is already a project qn.
-            return self.method_return_types.get(target)
+        # Each enclosing inline mod, innermost first, then the file module: a
+        # fn defined in a scope, or a `use` there, shadows every outer one
+        # (`mod tests { fn tmpdir() ... }`, issue #2942).
+        import_mapping = self.import_processor.import_mapping
+        for scope in (*scopes, module_qn):
+            if return_type := self._rust_fn_return_type(
+                f"{scope}{cs.SEPARATOR_DOT}{name}"
+            ):
+                return return_type
+            if target := import_mapping.get(scope, {}).get(name):
+                return self._rust_imported_fn_return_type(target)
         return None
+
+    def _rust_imported_fn_return_type(self, target: str) -> str | None:
+        if cs.SEPARATOR_DOUBLE_COLON in target:
+            target = self._resolve_rust_import_path(
+                target, node_types=(NodeType.FUNCTION,)
+            )
+        # A crate::/super::/self:: use target is already a project qn.
+        return self._rust_fn_return_type(target)
+
+    def _rust_fn_return_type(self, fn_qn: str) -> str | None:
+        # A helper's recorded return type is the name as the helper's module
+        # spells it, so it is read there: the caller may have a same-named
+        # type of its own in scope. Left bare when that module neither
+        # defines it nor imports it from the project, as before.
+        return_type = self.method_return_types.get(fn_qn)
+        if return_type is None:
+            return None
+        owner = fn_qn.rpartition(cs.SEPARATOR_DOT)[0]
+        return self._rust_owner_type_qn(return_type, owner) or return_type
+
+    def _rust_owner_type_qn(self, type_name: str, owner: str) -> str | None:
+        # The first-party type `type_name` names in module `owner`: one it
+        # defines, or one a project `use` there binds (re-exports followed).
+        imports = self.import_processor.import_mapping
+        target = imports.get(owner, {}).get(type_name)
+        if target is None:
+            target = f"{owner}{cs.SEPARATOR_DOT}{type_name}"
+        elif cs.SEPARATOR_DOUBLE_COLON in target:
+            return None
+        target = follow_reexports(target, imports, self.function_registry)
+        if self.function_registry.get(target) in _RS_TYPE_NODE_TYPES:
+            return target
+        return None
+
+    def _rust_module_fn_return_type(
+        self, path: str, item: str, module_qn: str, scopes: Sequence[str]
+    ) -> str | None:
+        # Return type of `path::item()` where `path` names a module: the
+        # first candidate module holding `item`, itself or through a `pub
+        # use`, decides, in the order `_rust_module_path_candidates` yields
+        # them. A candidate module that has `use`s of its own decides even
+        # without it, since it shadows every outer same-named module, as in
+        # the call resolver.
+        imports = self.import_processor.import_mapping
+        for module in self._rust_module_path_candidates(path, module_qn, scopes):
+            fn_qn = follow_reexports(
+                f"{module}{cs.SEPARATOR_DOT}{item}", imports, self.function_registry
+            )
+            if fn_qn in self.function_registry:
+                return self._rust_fn_return_type(fn_qn)
+            if module in imports:
+                return None
+        return None
+
+    def _rust_module_path_candidates(
+        self, path: str, module_qn: str, scopes: Sequence[str]
+    ) -> Iterator[str]:
+        # Where a module path written at a call can point, in the order the
+        # call resolver binds its head (`_try_resolve_rust_module_qualified`):
+        # crate::/self::/super:: rewritten as a `use` path is; else, per
+        # scope innermost first, a `use path::{self}`, a child module, then a
+        # `use` binding (which decides); last, the file's submodule tree.
+        parts = path.split(cs.SEPARATOR_DOUBLE_COLON)
+        head, rest = parts[0], parts[1:]
+        if head in (cs.RUST_CRATE_KEYWORD, cs.KEYWORD_SELF, cs.KEYWORD_SUPER):
+            # self::/super:: count from the innermost inline mod the call is
+            # written in, which the file module alone does not tell.
+            effective = (
+                scopes[0] if scopes and head != cs.RUST_CRATE_KEYWORD else module_qn
+            )
+            base = self.import_processor._rewrite_rust_local_use_path(path, effective)
+            if (
+                base != cs.RUST_UNRESOLVABLE_QN
+                and cs.SEPARATOR_DOUBLE_COLON not in base
+            ):
+                yield base
+            return
+        import_mapping = self.import_processor.import_mapping
+        self_modules = self.import_processor.rust_self_module_imports
+        for scope in (*scopes, module_qn):
+            if mapped := self_modules.get(scope, {}).get(head):
+                yield cs.SEPARATOR_DOT.join([mapped, *rest])
+                return
+            yield cs.SEPARATOR_DOT.join([scope, *parts])
+            if mapped := import_mapping.get(scope, {}).get(head):
+                # An external `use` (a `::` path) speaks for the name too.
+                if cs.SEPARATOR_DOUBLE_COLON not in mapped:
+                    yield cs.SEPARATOR_DOT.join([mapped, *rest])
+                return
+        yield self.import_processor._rust_resolve_relative(module_qn, parts, module_qn)
 
     def _resolve_rust_import_path(
         self,
