@@ -1,5 +1,3 @@
-import csv
-import json
 from pathlib import Path
 from typing import Annotated
 
@@ -13,7 +11,10 @@ from . import logs as ls
 from .ast_oracle import extract_oracle_graph
 from .cgr_graph import extract_cgr_graph
 from .score import score
+from .structure_report import render, write_outputs
 from .types_defs import ScoreResult
+
+_TITLE = "cgr L1 structure eval (Python)"
 
 console = Console()
 
@@ -47,47 +48,12 @@ def main(
     )
 
     result = score(cgr_graph, oracle_graph)
-    _write_outputs(result, out_dir)
+    write_outputs(result, out_dir, ec.SCORES_FILENAME, ec.DIFF_FILENAME)
     _render(result)
 
 
-def _write_outputs(result: ScoreResult, out_dir: Path) -> None:
-    out_dir.mkdir(parents=True, exist_ok=True)
-    scores_path = out_dir / ec.SCORES_FILENAME
-    with scores_path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(ec.CSV_FIELDS))
-        writer.writeheader()
-        for row in result.rows:
-            writer.writerow(row)
-    logger.success(ls.WROTE_SCORES.format(path=scores_path))
-
-    diff_path = out_dir / ec.DIFF_FILENAME
-    diff_path.write_text(json.dumps(result.diff, indent=2), encoding="utf-8")
-    logger.success(ls.WROTE_DIFF.format(path=diff_path))
-
-
 def _render(result: ScoreResult) -> None:
-    table = Table(title="cgr L1 structure eval (Python)")
-    table.add_column("category")
-    table.add_column("label")
-    table.add_column("tp", justify="right")
-    table.add_column("fp", justify="right")
-    table.add_column("fn", justify="right")
-    table.add_column("precision", justify="right")
-    table.add_column("recall", justify="right")
-    table.add_column("f1", justify="right")
-    for row in result.rows:
-        table.add_row(
-            row["category"],
-            row["label"],
-            str(row["tp"]),
-            str(row["fp"]),
-            str(row["fn"]),
-            f"{row['precision']:.4f}",
-            f"{row['recall']:.4f}",
-            f"{row['f1']:.4f}",
-        )
-    console.print(table)
+    render(result, _TITLE)
 
     loc = result.location
     location_table = Table(title="span (end_line) accuracy on matched defs")

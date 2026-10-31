@@ -1,0 +1,60 @@
+# SPDX-License-Identifier: MIT
+#
+# cargo-fuzz targets for cgr_graph_rs. Run one with
+# `cargo +nightly fuzz run <target>` from rust/cgr_graph_rs; each target's
+# header says what it checks. The package is a workspace of its own, so the
+# crate's own build and tests never compile it.
+
+[package]
+name = "cgr_graph_rs-fuzz"
+version = "0.0.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[lib]
+name = "cgr_graph_rs_fuzz"
+path = "src/lib.rs"
+
+[dependencies]
+cgr_graph_rs = { path = ".." }
+libfuzzer-sys = "0.4"
+# The crate's own pin, for the in-memory database the SQLite target builds.
+rusqlite = { version = "0.37", features = ["bundled"] }
+
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "cypher_parse"
+path = "fuzz_targets/cypher_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "json_string"
+path = "fuzz_targets/json_string.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "graph_algorithms"
+path = "fuzz_targets/graph_algorithms.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sqlite_graph"
+path = "fuzz_targets/sqlite_graph.rs"
+test = false
+doc = false
+bench = false

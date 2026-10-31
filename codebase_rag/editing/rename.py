@@ -11,7 +11,10 @@ The graph knows every site, so a rename is a graph operation:
 2. refuse when a site is ambiguous (`heuristic`, `overload`, `dynamic`)
    unless the caller accepts the risk with `allow_heuristic`; a graph-known
    site with no rewrite location refuses regardless, it cannot be rewritten
-   at all and applying would leave it under the old name;
+   at all and applying would leave it under the old name. The index misses
+   sites too, so the plan is cross-checked against the source: an
+   occurrence of the name in code that no site covers refuses the same way
+   (issue #2564);
 3. rewrite the identifier at every site through the span patcher (issue
    #1529) and the import statements through the import rewriter (issue
    #1530), stage the results in a transaction (issue #1528), verify that
@@ -27,7 +30,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Iterable
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import NamedTuple
 
 from loguru import logger
@@ -36,15 +39,33 @@ from tree_sitter import Node
 from .. import constants as cs
 from .. import cypher_queries as cq
 from .. import graph_query
+from ..function_registry import TYPE_SPACE_KINDS
 from ..graph_updater import ReingestAborted
-from ..language_spec import get_language_for_extension
+from ..language_spec import csharp_partial_key_from_graph, get_language_for_extension
 from ..parser_loader import load_parsers
+from ..parsers.go import utils as go_utils
+from ..parsers.go.builds import GoBuilds
+from ..parsers.go.module_paths import read_package_clause
+from ..parsers.js_ts.overloads import overload_signatures
+from ..parsers.py.overloads import overload_stub_names
 from ..types_defs import PropertyParams, ResultRow
-from ..utils.path_utils import base_module_qn
+from ..utils import qn_markers
+from ..utils.path_utils import (
+    base_module_qn,
+    declaration_implementations,
+    python_stub_implementations,
+)
 from .contract import Reingest, Verdict, measure, rename_expectation, verify
 from .imports import ANY_MODULE, ImportRewriter, ImportSite, SymbolMove, _imported
-from .patcher import Patcher, PatcherError, line_col_to_byte
-from .sites import AMBIGUOUS, call_node_at, calls_starting_at, hierarchy
+from .occurrences import (
+    Occurrence,
+    Target,
+    binding_scope,
+    declares_target,
+    find_occurrences,
+)
+from .patcher import Patcher, PatcherError, byte_to_line_col, line_col_to_byte
+from .sites import AMBIGUOUS, Hierarchy, call_node_at, calls_starting_at, hierarchy
 from .transaction import (
     EditTransaction,
     StagedTree,
@@ -66,6 +87,13 @@ _SITELESS = "siteless"
 _STALE_CALL = (-1, -1)
 # A same-named link of a fluent chain the index has no row for.
 _CHAIN = "chain"
+# An occurrence of the name in code that no graph site accounts for (#2564).
+_UNPLANNED = "unplanned"
+# One that may not even be the symbol: a method call through an object the
+# source does not show to be of its class. `allow_heuristic` never rewrites it.
+_RECEIVER_UNKNOWN = "receiver_unknown"
+# A file and the (line, col) start and exclusive end of a statement in it.
+_Span = tuple[str, tuple[int, int], tuple[int, int]]
 _MEMBER_NAME_TYPES = frozenset(
     {cs.TS_IDENTIFIER, cs.TS_PROPERTY_IDENTIFIER, "field_identifier"}
 )
@@ -88,6 +116,11 @@ _ALL_ENTRY = cs.PY_DUNDER_ALL_ENTRY_PATTERN
 # that it works.
 _MAX_IMPORT_LINES = 200
 
+# The labels of TypeScript's type-only declarations, which may share their
+# qualified name with a value (issue #2520).
+_TYPE_SPACE_LABELS = frozenset(str(kind) for kind in TYPE_SPACE_KINDS)
+_TS_LANGUAGES = frozenset({cs.SupportedLanguage.TS, cs.SupportedLanguage.TSX})
+
 
 class RenameSite(NamedTuple):
     """One place the old name is written and must become the new one."""
@@ -104,11 +137,16 @@ class RenameRefused(ValueError):
     """The rename would rewrite through a guess; nothing was changed."""
 
     def __init__(
-        self, message: str, ambiguous: list[RenameSite], unlocatable: list[str]
+        self,
+        message: str,
+        ambiguous: list[RenameSite],
+        unlocatable: list[str],
+        unplanned: list[RenameSite] | None = None,
     ) -> None:
         super().__init__(message)
         self.ambiguous = ambiguous
         self.unlocatable = unlocatable
+        self.unplanned = unplanned or []
 
 
 class RenameReport(NamedTuple):
@@ -130,20 +168,199 @@ class RenameReport(NamedTuple):
     # the graph may hold a partial picture and must be rebuilt.
     graph_incomplete: bool = False
     undone: bool | None = None
+    # Occurrences of the old name the graph has no site for, rewritten as
+    # guessed sites under `allow_heuristic` (issue #2564).
+    unplanned: tuple[RenameSite, ...] = ()
+    # The graph's own symbols for the target's declaration in a `.d.ts`
+    # beside its module (`proj.src.util.d.ts.helper`), renamed with it
+    # through `unplanned`.
+    companions: tuple[str, ...] = ()
 
 
 # --- site collection -----------------------------------------------------------
 
 
-def _longer_project_prefixes(fetch_all: QueryFn, project_name: str) -> tuple[str, ...]:
-    requested_prefix = f"{project_name}{cs.SEPARATOR_DOT}"
-    names = {
-        name
-        for row in fetch_all(cq.CYPHER_LIST_PROJECTS, None)
-        if isinstance(name := row.get(cs.KEY_NAME), str)
-        and name.startswith(requested_prefix)
+def _hierarchy(
+    fetch_all: QueryFn, project: str, qn: str, repo_root: Path | None = None
+) -> Hierarchy:
+    """`qn`, every other part of the C# partial type `qn` is a part of, and
+    every method `qn` overrides or is overridden by, transitively, with the
+    members only a guessed OVERRIDES edge reaches."""
+    parts = _csharp_partial_parts(fetch_all, project, qn)
+    found = hierarchy(
+        fetch_all,
+        project,
+        qn,
+        lambda member: (
+            _go_build_variants(fetch_all, project, member, repo_root)
+            if repo_root is not None
+            else []
+        ),
+    )
+    members = list(dict.fromkeys([qn, *parts, *found.members]))
+    return Hierarchy(members, found.guessed - set(parts))
+
+
+def _go_build_variants(
+    fetch_all: QueryFn, project: str, qn: str, repo_root: Path
+) -> list[str]:
+    """The other builds' declarations of Go method or function `qn`.
+
+    A package declares a name once per build (`func (T) M()` in `t_linux.go`
+    and in `t_windows.go`, `M()` in `i_linux.go`'s and `i_windows.go`'s
+    `I`), and a caller every build compiles calls each build's. Renaming
+    one left the others, and the builds holding them no longer compiled
+    (#3360 review). A variant is a Go declaration of the same kind and name
+    (a method of the same-named receiver, or a function) in the same
+    package: its directory and `package` clause (`p_test` beside `p` is
+    another), seen from the same files (a `_test.go` file's from test files
+    alone), in a file no build compiles with `qn`'s. A Python `helper`
+    beside a Go one, another package's, or a twin a build could compile
+    together with it (which would not compile) is none."""
+    definition = graph_query.definition(fetch_all, project, qn, None)
+    path, name, label = definition["path"], definition["name"], definition["label"]
+    if (
+        not path
+        or not name
+        or label not in (cs.NodeLabel.METHOD, cs.NodeLabel.FUNCTION)
+        or not _is_go_path(path)
+    ):
+        return []
+    place = _go_declaration_place(repo_root, path, qn, label)
+    if place is None:
+        return []
+    builds = GoBuilds(repo_root)
+    return sorted(
+        other
+        for symbol in graph_query.resolve(fetch_all, project, name)
+        if (other := symbol["qualified_name"]) != qn
+        and symbol["label"] == label
+        and (other_path := symbol["path"])
+        and other_path != path
+        and _is_go_path(other_path)
+        and _go_declaration_place(repo_root, other_path, other, label) == place
+        and builds.apart((path, other_path))
+    )
+
+
+def _go_implementers_unknown(
+    fetch_all: QueryFn, project: str, members: list[str]
+) -> tuple[str, str, str] | None:
+    """A Go interface whose implementers cgr cannot tell that declares the
+    name the Go methods among `members` share, where they could satisfy it,
+    as (interface, why, name); None when there is none.
+
+    Such an interface gets no IMPLEMENTS or OVERRIDES edge by name (#3360),
+    so the hierarchy cannot show what renaming the name must take along:
+    renaming one of its implementations leaves it and any other behind, and
+    renaming its own method leaves every implementation. Any type, in any
+    package, may satisfy it through an exported name; an unexported one only
+    in the interface's own package, which shares its directory."""
+    definitions = [
+        graph_query.definition(fetch_all, project, member, None) for member in members
+    ]
+    methods = [
+        found
+        for found in definitions
+        if found["label"] == cs.NodeLabel.METHOD
+        and found["path"]
+        and _is_go_path(found["path"])
+    ]
+    name = methods[0]["name"] if methods else None
+    if not name:
+        return None
+    directories = {PurePosixPath(str(found["path"])).parent for found in methods}
+    owns = graph_query._owner_check(fetch_all, project)
+    rows = fetch_all(
+        cq.CYPHER_GRAPH_GO_IMPLEMENTERS_UNKNOWN,
+        {cs.KEY_PROJECT_PREFIX: f"{project}{cs.SEPARATOR_DOT}", cs.KEY_NAME: name},
+    )
+    for row in sorted(rows, key=lambda row: str(row.get(cs.KEY_QUALIFIED_NAME))):
+        interface = str(row.get(cs.KEY_QUALIFIED_NAME) or "")
+        directory = PurePosixPath(str(row.get(cs.KEY_PATH) or "")).parent
+        if owns(interface) and (name[:1].isupper() or directory in directories):
+            return interface, str(row.get(cs.KEY_IMPLEMENTERS_UNKNOWN) or ""), name
+    return None
+
+
+def _is_go_path(path: str) -> bool:
+    return get_language_for_extension(Path(path).suffix) == cs.SupportedLanguage.GO
+
+
+def _go_declaration_place(
+    repo_root: Path, path: str, qn: str, label: str
+) -> tuple[str, str] | None:
+    # The files that see it (its package, `dir:clause`, or that package's
+    # test files) and the name of its receiver type (a method's) or "" (a
+    # function's). None when its `package` clause cannot be read.
+    clause = read_package_clause(repo_root / path)
+    if clause is None:
+        return None
+    owner = (
+        qn_markers.natural_qn(qn)
+        .rpartition(cs.SEPARATOR_DOT)[0]
+        .rpartition(cs.SEPARATOR_DOT)[2]
+        if label == cs.NodeLabel.METHOD
+        else ""
+    )
+    package = go_utils.package_key(path, clause)
+    return go_utils.declaration_scope(path, package), owner
+
+
+def _csharp_partial_parts(fetch_all: QueryFn, project: str, qn: str) -> list[str]:
+    """The other parts of the C# `partial` type `qn`; [] for anything else.
+
+    Each file declaring a partial type holds its own node, joined into one
+    type only while parsing, so renaming the part asked for alone left
+    `partial class Order` in the other files as a second type holding the
+    rest of the members, and the build broke (issue #2469). The parts are
+    the ones parsing groups: declared `partial`, of one kind and name, in one
+    directory under one namespace-qualified name.
+    """
+    definition = graph_query.definition(fetch_all, project, qn, None)
+    path, name, label = definition["path"], definition["name"], definition["label"]
+    if (
+        not path
+        or not name
+        or label not in cs.CSHARP_PARTIAL_TYPE_LABELS
+        or get_language_for_extension(Path(path).suffix) != cs.SupportedLanguage.CSHARP
+    ):
+        return []
+    owns = graph_query._owner_check(fetch_all, project)
+    rows = fetch_all(
+        cs.CYPHER_SAME_NAMED_CSHARP_TYPES,
+        {cs.KEY_PROJECT_PREFIX: f"{project}{cs.SEPARATOR_DOT}", cs.KEY_NAME: name},
+    )
+    # `Box` and `Box<T>` are two types (issue #2579): the key spells the
+    # arity, so a partial twin of another arity is not one of the parts.
+    arity = next(
+        (_generic_arity(row) for row in rows if row.get(cs.KEY_QUALIFIED_NAME) == qn),
+        0,
+    )
+    key = csharp_partial_key_from_graph(qn, path, project, arity)
+    parts = {
+        part
+        for row in rows
+        if isinstance(part := row.get(cs.KEY_QUALIFIED_NAME), str)
+        and isinstance(part_path := row.get(cs.KEY_PATH), str)
+        and isinstance(modifiers := row.get(cs.KEY_MODIFIERS), list)
+        and cs.TS_CSHARP_MODIFIER_PARTIAL in modifiers
+        and row.get(cs.KEY_LABEL) == label
+        and owns(part)
+        and csharp_partial_key_from_graph(part, part_path, project, _generic_arity(row))
+        == key
     }
-    return tuple(sorted(names))
+    # `qn` is among them only when it is declared `partial` itself; a type
+    # that is not has no other parts, whatever shares its name.
+    if key is None or qn not in parts:
+        return []
+    return sorted(parts - {qn})
+
+
+def _generic_arity(row: ResultRow) -> int:
+    """A C# type row's stored generic arity; 0 for a non-generic type."""
+    arity = row.get(cs.KEY_GENERIC_ARITY)
+    return arity if isinstance(arity, int) else 0
 
 
 def _name_token(
@@ -254,23 +471,105 @@ def _chain_links(
     if parser is None:
         return []
     root = parser.parse(source).root_node
+    # Each link's own site starts at its name (issue #3166); the links of
+    # its chain are the calls that start where the site's call starts.
+    starts = {call.start_point for call in calls_starting_at(root, line - 1, col)}
+    starts = starts or {(line - 1, col)}
     found: list[tuple[int, int]] = []
     stack: list[Node] = [root]
     while stack:
         node = stack.pop()
-        if node.start_point == (line - 1, col):
-            func = node.child_by_field_name(cs.FIELD_FUNCTION)
-            member = func.children[-1] if func is not None and func.children else None
-            if (
-                member is not None
-                and member.type in _MEMBER_NAME_TYPES
-                and member.text is not None
-                and member.text.decode(cs.ENCODING_UTF8, errors="replace") == name
-            ):
-                found.append((member.start_point[0] + 1, member.start_point[1]))
-        if node.start_point[0] <= line - 1 <= node.end_point[0]:
+        if (
+            node.start_point in starts
+            and (member := _called_member(node, name)) is not None
+        ):
+            found.append((member.start_point[0] + 1, member.start_point[1]))
+        if any(node.start_point[0] <= row <= node.end_point[0] for row, _ in starts):
             stack.extend(node.children)
     return sorted(found)
+
+
+def _called_member(call: Node, name: str) -> Node | None:
+    # The member name a call invokes (`name` in `obj.name(...)`), if it is
+    # `name`; None for a bare call or another member.
+    func = call.child_by_field_name(cs.FIELD_FUNCTION)
+    member = func.children[-1] if func is not None and func.children else None
+    if (
+        member is not None
+        and member.type in _MEMBER_NAME_TYPES
+        and member.text is not None
+        and member.text.decode(cs.ENCODING_UTF8, errors="replace") == name
+    ):
+        return member
+    return None
+
+
+def _jsx_closing_token(
+    source: bytes,
+    language: cs.SupportedLanguage | None,
+    token: tuple[int, int],
+) -> tuple[int, int] | None:
+    """(line, col) of the same name in the closing tag of the JSX element
+    whose opening tag holds `token`, or None.
+
+    The graph records one use per element, at its opening tag, so renaming
+    `Frame` left `<Box>{children}</Frame>`, which no compiler accepts
+    (issue #2811). The closing tag repeats the opening tag's name verbatim
+    (`</Ns.Card>` for `<Ns.Card>`), so the token sits at the same offset in
+    it. A self-closing element has no closing tag.
+    """
+    if language not in cs.JS_TS_LANGUAGES:
+        return None
+    parsers, _queries = load_parsers()
+    parser = parsers.get(language)
+    if parser is None:
+        return None
+    point = (token[0] - 1, token[1])
+    node = parser.parse(source).root_node.descendant_for_point_range(point, point)
+    while node is not None and node.type != cs.TS_JSX_OPENING_ELEMENT:
+        node = node.parent
+    if node is None or node.parent is None or node.parent.type != cs.TS_JSX_ELEMENT:
+        return None
+    opening = node.child_by_field_name(cs.FIELD_NAME)
+    closing_tag = node.parent.child_by_field_name(cs.FIELD_JSX_CLOSE_TAG)
+    closing = (
+        closing_tag.child_by_field_name(cs.FIELD_NAME)
+        if closing_tag is not None
+        else None
+    )
+    offset = line_col_to_byte(source, *token)
+    if (
+        opening is None
+        or closing is None
+        or closing.text != opening.text
+        or not opening.start_byte <= offset < opening.end_byte
+    ):
+        return None
+    return byte_to_line_col(source, closing.start_byte + offset - opening.start_byte)
+
+
+def _add_jsx_closing_site(
+    sites: list[RenameSite],
+    kind: str,
+    path: str,
+    source: bytes,
+    token: tuple[int, int],
+    owner: str,
+    resolution: str | None,
+) -> None:
+    """Append the closing-tag twin of a JSX opening-tag site, once (#2811).
+
+    Kept out of `Renamer._add_site` so that method stays under the
+    cognitive complexity limit (S3776).
+    """
+    closing = _jsx_closing_token(
+        source, get_language_for_extension(Path(path).suffix), token
+    )
+    if closing is None:
+        return
+    if any((s.path, s.line, s.col) == (path, *closing) for s in sites):
+        return
+    sites.append(RenameSite(kind, path, closing[0], closing[1], owner, resolution))
 
 
 def _chain_link_sites(
@@ -329,8 +628,10 @@ def _last_identifier(
         # (a grammar whose call node has no `function` field, such as Java's
         # method_invocation) keeps the fallback.
         return _STALE_CALL
-    if callee is not None and callee[0] == start:
-        start, end = callee
+    if callee is not None and callee[0] <= start < callee[1]:
+        # The callee ends the token search, whether the site starts with it
+        # or at its member name (issue #3166): never inside the arguments.
+        end = callee[1]
     text = source[start:end].decode(cs.ENCODING_UTF8, errors="replace")
     if callee is None:
         # No grammar: cut at the last opening parenthesis so the arguments
@@ -345,6 +646,43 @@ def _last_identifier(
     from .patcher import byte_to_line_col
 
     return byte_to_line_col(source, offset)
+
+
+def _overload_stub_sites(definition: RenameSite, patcher: Patcher) -> list[RenameSite]:
+    """The name tokens of the overload declarations a definition owns.
+
+    The graph folds Python's `@overload` stubs (issue #2590) and TypeScript's
+    overload signatures (issue #2457) into their implementation, so no node
+    names them; renaming only the implementation would strand them under the
+    old name, which for TypeScript is a type error (TS2389).
+    """
+    language = get_language_for_extension(Path(definition.path).suffix)
+    if language != cs.SupportedLanguage.PYTHON and language not in _TS_LANGUAGES:
+        return []
+    parsers, _queries = load_parsers()
+    parser = parsers.get(language)
+    if parser is None:
+        return []
+    root = parser.parse(patcher.source(definition.path)).root_node
+    point = (definition.line - 1, definition.col)
+    token = root.descendant_for_point_range(point, point)
+    function = token.parent if token is not None else None
+    if function is None:
+        return []
+    if language in _TS_LANGUAGES:
+        names = [
+            name
+            for signature in overload_signatures(function)
+            if (name := signature.child_by_field_name(cs.FIELD_NAME)) is not None
+        ]
+    elif function.type == cs.TS_PY_FUNCTION_DEFINITION:
+        names = overload_stub_names(function, root)
+    else:
+        return []
+    return [
+        definition._replace(line=name.start_point[0] + 1, col=name.start_point[1])
+        for name in names
+    ]
 
 
 class Renamer:
@@ -369,9 +707,15 @@ class Renamer:
         # (issue #1531): the delta of what it wrote is measured and the
         # transaction undone when the contract fails.
         self.reingest = reingest
+        # Per renamed symbol: (owner, line, col) of each CALLS site that runs
+        # it through a parameter, and that parameter (issue #2459).
+        self._callback_sites: dict[str, dict[tuple[str, int, int], str]] = {}
         # How the caller spells the opt-in the heuristic refusal tells the
         # user to pass: a CLI flag is not an MCP parameter (issue #2886).
         self.heuristic_opt_in = heuristic_opt_in
+        # The members of the hierarchy being planned that only a guessed
+        # OVERRIDES edge reaches: their declarations are guessed sites.
+        self._guessed_members: frozenset[str] = frozenset()
 
     def _module_of(self, qn: str) -> tuple[str, str | None]:
         # The defining module's qn and path, from the definition's own path:
@@ -396,12 +740,14 @@ class Renamer:
         sites: list[RenameSite] = [
             self._definition_site(qn, definition, path, old_name, patcher)
         ]
+        sites.extend(_overload_stub_sites(sites[0], patcher))
         # Calls, references and constructions.
         for row in graph_query.callers(self.fetch_all, self.project, qn):
             self._add_site(sites, unlocatable, "call", row, old_name, patcher)
         params = {
             cs.KEY_PROJECT_PREFIX: f"{self.project}{cs.SEPARATOR_DOT}",
             cs.KEY_QN: qn,
+            cs.KEY_LABEL: definition["label"],
         }
         # Both reads below are prefix-scoped, and `foo.` selects `foo.bar`'s
         # rows too: a site in a project whose name extends this one must not
@@ -590,7 +936,10 @@ class Renamer:
                 [],
                 [],
             ) from error
-        start = definition["start_line"] or 1
+        # From the `def`/`class` line, not the decorated start: a decorator
+        # may spell the old name (`@register(fetch=1)`) and is not the
+        # definition's name token (issue #2428).
+        start = definition["name_line"] or definition["start_line"] or 1
         end = definition["end_line"] or start
         token = _name_token(
             source, get_language_for_extension(Path(path).suffix), start, end, old_name
@@ -599,9 +948,12 @@ class Renamer:
             raise RenameRefused(
                 cs.RENAME_NO_DEFINITION_TOKEN.format(qn=qn, path=path), [], []
             )
-        return RenameSite(
-            "definition", path, token[0], token[1], qn, cs.EdgeResolution.EXACT
+        resolution = (
+            cs.EdgeResolution.HEURISTIC
+            if qn in self._guessed_members
+            else cs.EdgeResolution.EXACT
         )
+        return RenameSite("definition", path, token[0], token[1], qn, resolution)
 
     def _add_type_edge_sites(
         self,
@@ -648,8 +1000,9 @@ class Renamer:
     ) -> None:
         """Record a graph-known occurrence that cannot be rewritten.
 
-        Both refusal paths in `_add_site` -- a row with no usable position,
-        and a file the patcher cannot read -- append the same pair. Sharing
+        Every refusal path of a site -- a row with no usable position, a
+        file the patcher cannot read, a position that file does not have, a
+        class run through a parameter -- appends the same pair. Sharing
         them keeps `_add_site` under the cognitive complexity limit (S3776)
         by removing a whole branch body rather than straight-line setup,
         which is the part that actually counts.
@@ -658,6 +1011,135 @@ class Renamer:
             cs.RENAME_UNLOCATABLE_SITE.format(owner=owner, resolution=resolution)
         )
         sites.append(RenameSite("unlocatable", path, line, col, owner, site_resolution))
+
+    def _via_param(self, row: ResultRow | graph_query.CallSiteRow) -> str | None:
+        """The parameter the row's owner runs the renamed symbol through.
+
+        A reference row carries it. A callers row is matched against the
+        callback sites of the symbol it reaches, `through`, read once per
+        symbol (issue #2459).
+        """
+        if isinstance(via_param := row.get(cs.KEY_VIA_PARAM), str):
+            return via_param
+        through = row.get("through")
+        if not isinstance(through, str):
+            return None
+        if through not in self._callback_sites:
+            params = {
+                cs.KEY_PROJECT_PREFIX: f"{self.project}{cs.SEPARATOR_DOT}",
+                cs.KEY_QN: through,
+            }
+            self._callback_sites[through] = {
+                (str(site[cs.KEY_QUALIFIED_NAME]), line, col): str(
+                    site[cs.KEY_VIA_PARAM]
+                )
+                for site in self.fetch_all(cq.CYPHER_GRAPH_CALLBACK_SITES, params)
+                if isinstance(line := site.get(cs.KEY_LINE), int)
+                and isinstance(col := site.get(cs.KEY_COL), int)
+            }
+        key = (str(row.get("qualified_name") or ""), row.get("line"), row.get("col"))
+        return self._callback_sites[through].get(key)
+
+    @staticmethod
+    def _span_in_file(
+        source: bytes, line: int, col: int, end_line: int, end_col: int
+    ) -> bool:
+        """Whether both ends of a site span are positions `source` has."""
+        try:
+            line_col_to_byte(source, line, col)
+            line_col_to_byte(source, end_line, end_col)
+        except PatcherError:
+            return False
+        return True
+
+    @classmethod
+    def _add_callback_site(
+        cls,
+        sites: list[RenameSite],
+        unlocatable: list[str],
+        row: ResultRow | graph_query.CallSiteRow,
+        via_param: str,
+    ) -> None:
+        """A site where the owner runs what it was handed (`f(y)` in `apply(f, x)`).
+
+        The name written there is the parameter's, so nothing is rewritten
+        (issue #2459). A function is named where it is passed, a REFERENCES
+        edge of its own that joins the plan. A class passed as a value is
+        recorded there only against its constructor, if at all, so its rename
+        cannot see that site and refuses rather than leave it under the old
+        name.
+        """
+        if row.get(cs.KEY_REL_TYPE) != cs.RelationshipType.INSTANTIATES:
+            return
+        line, col = row.get("line"), row.get("col")
+        cls._record_unlocatable(
+            sites,
+            unlocatable,
+            owner=str(row.get("qualified_name") or ""),
+            path=str(row.get("path") or ""),
+            line=line if isinstance(line, int) else 0,
+            col=col if isinstance(col, int) else 0,
+            resolution=cs.RENAME_RESOLUTION_CLASS_VIA_PARAM.format(param=via_param),
+            site_resolution=_SITELESS,
+        )
+
+    @staticmethod
+    def _site_end(
+        row: ResultRow | graph_query.CallSiteRow, line: int, col: int, old_name: str
+    ) -> tuple[int, int]:
+        """Where a site ends: its recorded end, else `old_name` written at its start."""
+        end_line, end_col = row.get("end_line"), row.get("end_col")
+        return (
+            end_line if isinstance(end_line, int) else line,
+            end_col if isinstance(end_col, int) else col + len(old_name),
+        )
+
+    @classmethod
+    def _site_source(
+        cls,
+        sites: list[RenameSite],
+        unlocatable: list[str],
+        patcher: Patcher,
+        *,
+        owner: str,
+        path: str,
+        span: tuple[int, int, int, int],
+    ) -> bytes | None:
+        """The file holding a site's `span`, else None once recorded unlocatable."""
+        line, col = span[0], span[1]
+        try:
+            source = patcher.source(path)
+        except PatcherError:
+            # The graph knows this occurrence but its file cannot be read:
+            # renaming around it would leave it under the old name.
+            cls._record_unlocatable(
+                sites,
+                unlocatable,
+                owner=owner,
+                path=path,
+                line=line,
+                col=col,
+                resolution="missing file",
+                site_resolution=_SITELESS,
+            )
+            return None
+        if not cls._span_in_file(source, *span):
+            # A position the file does not have: an index older than the
+            # file, or a site recorded against another file (issue #2459).
+            # It cannot be rewritten, so it refuses instead of escaping as a
+            # PatcherError.
+            cls._record_unlocatable(
+                sites,
+                unlocatable,
+                owner=owner,
+                path=path,
+                line=line,
+                col=col,
+                resolution=cs.RENAME_RESOLUTION_BAD_POSITION,
+                site_resolution=_SITELESS,
+            )
+            return None
+        return source
 
     def _add_site(
         self,
@@ -668,10 +1150,12 @@ class Renamer:
         old_name: str,
         patcher: Patcher,
     ) -> None:
+        if via_param := self._via_param(row):
+            self._add_callback_site(sites, unlocatable, row, via_param)
+            return
         owner = str(row.get("qualified_name") or "")
         path = row.get("path")
         line, col = row.get("line"), row.get("col")
-        end_line, end_col = row.get("end_line"), row.get("end_col")
         resolution = row.get("resolution")
         resolution_text = str(resolution) if isinstance(resolution, str) else None
         if (
@@ -693,22 +1177,13 @@ class Renamer:
                 site_resolution=resolution_text or _SITELESS,
             )
             return
-        try:
-            source = patcher.source(path)
-        except PatcherError:
-            # The graph knows this occurrence but its file cannot be read:
-            # renaming around it would leave it under the old name.
-            self._record_unlocatable(
-                sites,
-                unlocatable,
-                owner=owner,
-                path=path,
-                line=line,
-                col=col,
-                resolution="missing file",
-                site_resolution=_SITELESS,
-            )
+        span = (line, col, *self._site_end(row, line, col, old_name))
+        source = self._site_source(
+            sites, unlocatable, patcher, owner=owner, path=path, span=span
+        )
+        if source is None:
             return
+        end_line, end_col = row.get("end_line"), row.get("end_col")
         token = _last_identifier(
             source,
             line,
@@ -737,6 +1212,7 @@ class Renamer:
             # rewrite here.
             return
         sites.append(RenameSite(kind, path, token[0], token[1], owner, resolution_text))
+        _add_jsx_closing_site(sites, kind, path, source, token, owner, resolution_text)
         if kind == "call":
             sites.extend(
                 _chain_link_sites(kind, path, source, line, col, old_name, owner, token)
@@ -783,6 +1259,75 @@ class Renamer:
                     pending.append(row["module"])
         return out
 
+    def _refuse_twin_bound_imports(self, report: RenameReport) -> None:
+        """Refuse when an import the rename rewrites also binds a type.
+
+        A TS `type input` and `function input` share one name (issue #2520),
+        and `import { input }` binds both. Rewriting it to the function's new
+        name leaves the file's `input<number>` annotation unbound, while
+        keeping the old name beside it would need an import the rewriter
+        does not write; the rename refuses instead.
+        """
+        bound = [
+            site
+            for member in report.hierarchy
+            for site in self._twin_bound_imports(member, report.old_name)
+        ]
+        if bound:
+            raise RenameRefused(
+                cs.RENAME_TWIN_BOUND_IMPORT.format(
+                    qn=report.qualified_name,
+                    name=report.old_name,
+                    paths=", ".join(sorted({site.path for site in bound})),
+                ),
+                bound,
+                list(report.unlocatable),
+            )
+
+    def _twin_bound_imports(self, qn: str, old_name: str) -> list[RenameSite]:
+        """The imports of `qn` in TS files that also use its type-space twin."""
+        typed = [
+            RenameSite(
+                "import",
+                site.path,
+                site.line,
+                site.col,
+                module,
+                cs.EdgeResolution.EXACT,
+            )
+            for site, module in self._import_sites(qn, old_name)
+            if get_language_for_extension(Path(site.path).suffix) in _TS_LANGUAGES
+        ]
+        if not typed:
+            return []
+        label = graph_query.definition(self.fetch_all, self.project, qn, None)["label"]
+        if label is None or label in _TYPE_SPACE_LABELS:
+            return []
+        owns = graph_query._owner_check(self.fetch_all, self.project)
+        paths: set[str] = set()
+        for twin_label in _TYPE_SPACE_LABELS:
+            params = {
+                cs.KEY_PROJECT_PREFIX: f"{self.project}{cs.SEPARATOR_DOT}",
+                cs.KEY_QN: qn,
+                cs.KEY_LABEL: twin_label,
+            }
+            for query in (cq.CYPHER_GRAPH_TYPE_EDGES, cq.CYPHER_GRAPH_REFERENCES):
+                paths.update(
+                    path
+                    for row in self.fetch_all(query, params)
+                    if owns(str(row.get(cs.KEY_QUALIFIED_NAME) or ""))
+                    and isinstance(path := row.get(cs.KEY_PATH), str)
+                )
+        # `implements X` names only the type side, and that edge is not one of
+        # the label-scoped reads above.
+        paths.update(
+            row["path"]
+            for row in graph_query.implementors(self.fetch_all, self.project, qn)
+            if row["relationship"] == cs.RelationshipType.IMPLEMENTS
+            and row["path"] is not None
+        )
+        return [site for site in typed if site.path in paths]
+
     def _doc_mentions(self, old_name: str) -> list[str]:
         pattern = re.compile(_IDENTIFIER_RE % re.escape(old_name))
         found: list[str] = []
@@ -813,15 +1358,34 @@ class Renamer:
         """Collect everything a rename touches; refuse on ambiguity."""
         if not re.fullmatch(r"[A-Za-z_]\w*", new_name):
             raise RenameRefused(cs.RENAME_BAD_NAME.format(name=new_name), [], [])
-        members = hierarchy(self.fetch_all, self.project, qn)
+        found = _hierarchy(self.fetch_all, self.project, qn, self.repo_root)
+        members = found.members
+        self._guessed_members = found.guessed
+        unknown = _go_implementers_unknown(self.fetch_all, self.project, members)
+        if unknown is not None:
+            interface, why, name = unknown
+            raise RenameRefused(
+                cs.RENAME_GO_IMPLEMENTERS_UNKNOWN.format(
+                    qn=qn,
+                    interface=interface,
+                    name=name,
+                    why=cs.RENAME_GO_IMPLEMENTERS_UNKNOWN_WHY.get(
+                        why, cs.RENAME_GO_IMPLEMENTERS_UNKNOWN_WHY_OTHER
+                    ),
+                ),
+                [],
+                [],
+            )
         sites: list[RenameSite] = []
         unlocatable: list[str] = []
         old_name: str | None = None
+        label: str | None = None
         for member in members:
-            member_sites, member_unlocatable, member_name, _label = self._collect(
+            member_sites, member_unlocatable, member_name, member_label = self._collect(
                 member
             )
             old_name = old_name or member_name
+            label = label or member_label
             sites.extend(member_sites)
             unlocatable.extend(member_unlocatable)
         assert old_name is not None
@@ -851,26 +1415,54 @@ class Renamer:
         ambiguous = [
             s for s in sites if s.resolution in AMBIGUOUS or s.resolution == _CHAIN
         ]
-        if ambiguous and not allow_heuristic:
+        imports = [
+            (site, module)
+            for member in members
+            for site, module in self._import_sites(member, old_name)
+        ]
+        unplanned, companions = self._unplanned(
+            sites, [site for site, _module in imports], members, old_name, label
+        )
+        unknown = [s for s in unplanned if s.resolution == _RECEIVER_UNKNOWN]
+        if unknown and allow_heuristic:
             raise RenameRefused(
-                cs.RENAME_AMBIGUOUS.format(
-                    qn=qn, count=len(ambiguous), option=self.heuristic_opt_in
+                cs.RENAME_RECEIVER_UNKNOWN.format(
+                    qn=qn,
+                    count=len(unknown),
+                    name=old_name,
+                    locations=_locations(unknown),
+                    option=self.heuristic_opt_in,
                 ),
                 ambiguous,
                 unlocatable,
+                unplanned,
             )
-        for member in members:
-            for site, module in self._import_sites(member, old_name):
-                sites.append(
-                    RenameSite(
-                        "import",
-                        site.path,
-                        site.line,
-                        site.col,
-                        module,
-                        cs.EdgeResolution.EXACT,
-                    )
-                )
+        if (ambiguous or unplanned) and not allow_heuristic:
+            raise RenameRefused(
+                _refusal_message(
+                    qn,
+                    old_name,
+                    ambiguous,
+                    unplanned,
+                    len(unknown),
+                    self.heuristic_opt_in,
+                ),
+                ambiguous,
+                unlocatable,
+                unplanned,
+            )
+        sites.extend(unplanned)
+        sites.extend(
+            RenameSite(
+                "import",
+                site.path,
+                site.line,
+                site.col,
+                module,
+                cs.EdgeResolution.EXACT,
+            )
+            for site, module in imports
+        )
         return RenameReport(
             qualified_name=qn,
             old_name=old_name,
@@ -889,11 +1481,200 @@ class Renamer:
             hierarchy=tuple(members),
             diff="",
             message=cs.RENAME_PLANNED.format(count=len(sites)),
+            unplanned=tuple(unplanned),
+            companions=companions,
         )
+
+    def _unplanned(
+        self,
+        sites: list[RenameSite],
+        imports: list[ImportSite],
+        hierarchy: list[str],
+        old_name: str,
+        label: str | None,
+    ) -> tuple[list[RenameSite], tuple[str, ...]]:
+        """Occurrences of `old_name` in code that the plan does not cover,
+        and the graph's symbols for the target's declarations among them
+        (see `RenameReport.companions`).
+
+        The graph's sites are the plan, so an occurrence none of them covers
+        is one the index never saw: renaming around it leaves it under the
+        old name, and the build breaks while the rename reports success
+        (issue #2564). An occurrence the graph gives to ANOTHER symbol of the
+        same name is not one: that symbol keeps its name.
+        """
+        definitions = [s for s in sites if s.kind == "definition"]
+        definition = definitions[0].path
+        language = get_language_for_extension(Path(definition).suffix)
+        if language is None:
+            return [], ()
+        kind = _target_kind(label)
+        owners = _owners(hierarchy)
+        owner_paths = frozenset(s.path for s in definitions)
+        target = Target(
+            old_name,
+            language,
+            kind,
+            definition,
+            owners,
+            owner_paths,
+            self._rivals(hierarchy, owner_paths)
+            if kind is cs.RenameTargetKind.METHOD
+            else frozenset(),
+            frozenset((s.path, s.line, s.col) for s in definitions),
+        )
+        planned = {(s.path, s.line, s.col) for s in sites}
+        statements = [_statement(site) for site in imports]
+        leftover = [
+            occurrence
+            for occurrence in find_occurrences(self.repo_root, target)
+            if (occurrence.path, occurrence.line, occurrence.col) not in planned
+            and not _inside(occurrence, statements)
+        ]
+        if not leftover:
+            return [], ()
+        foreign = self._foreign_paths(hierarchy, label)
+        chosen = (
+            self._chosen_paths(hierarchy, old_name)
+            if language in cs.JS_TS_LANGUAGES and kind is not cs.RenameTargetKind.METHOD
+            else set()
+        )
+        namesakes = self._namesakes(old_name, hierarchy, target)
+        unplanned = [
+            RenameSite(
+                "call" if occurrence.called else "reference",
+                occurrence.path,
+                occurrence.line,
+                occurrence.col,
+                base_module_qn(Path(occurrence.path), self.project),
+                _UNPLANNED if occurrence.certain else _RECEIVER_UNKNOWN,
+            )
+            for occurrence in leftover
+            if occurrence.path not in foreign
+            and (occurrence.path, occurrence.line, occurrence.col)
+            not in namesakes.positions
+            and not _inside(occurrence, namesakes.statements)
+            and not (occurrence.bare and _inside(occurrence, namesakes.bound))
+            and not (occurrence.bare and occurrence.path in chosen)
+        ]
+        positions = {(s.path, s.line, s.col) for s in unplanned}
+        companions = tuple(
+            other
+            for other, position in namesakes.companions.items()
+            if position in positions
+        )
+        return unplanned, companions
+
+    def _rivals(
+        self, hierarchy: list[str], owner_paths: frozenset[str]
+    ) -> frozenset[tuple[str, str]]:
+        """Every other symbol of the project named like a class a method is
+        declared in, with its file: what `Cache` may mean when it is not
+        the method's class."""
+        classes = {_owner_class(member) for member in hierarchy}
+        rivals: set[tuple[str, str]] = set()
+        for name in _owners(hierarchy):
+            for symbol in graph_query.resolve(self.fetch_all, self.project, name):
+                path = symbol["path"]
+                if (
+                    path is not None
+                    and path not in owner_paths
+                    and symbol["qualified_name"] not in classes
+                    and not _declares_one_of(path, owner_paths)
+                ):
+                    rivals.add((name, path))
+        return frozenset(rivals)
+
+    def _chosen_paths(self, hierarchy: list[str], old_name: str) -> set[str]:
+        """JS/TS files whose bare `old_name` is a name of their own for the
+        target: a default import (`import mul from`), or a barrel's chosen
+        name for it (`export { default as Widget } from`) imported from
+        that barrel. The plan leaves those files' sites as they are
+        (`_js_import_bound`), so the cross-check leaves their bare
+        occurrences too; a file that also imports the target by its own
+        name is still held to it."""
+        paths: set[str] = set()
+        for member in hierarchy:
+            by_name, aliased, _star_bound = self._js_name_bindings(member, old_name)
+            paths.update(aliased - by_name)
+        return paths
+
+    def _foreign_paths(self, hierarchy: list[str], label: str | None) -> set[str]:
+        """Files whose sites the graph gives to a project whose name extends
+        this one: the plan leaves them alone (#1989), so its cross-check
+        does too. The reads are scoped to the target's label as the plan's
+        are, since a TS type and a value share one name (issue #2520)."""
+        owns = graph_query._owner_check(self.fetch_all, self.project)
+        paths: set[str] = set()
+        for member in hierarchy:
+            params = {
+                cs.KEY_PROJECT_PREFIX: f"{self.project}{cs.SEPARATOR_DOT}",
+                cs.KEY_QN: member,
+                cs.KEY_LABEL: label,
+            }
+            for query in (
+                cq.CYPHER_GRAPH_CALLERS,
+                cq.CYPHER_GRAPH_REFERENCES,
+                cq.CYPHER_GRAPH_TYPE_EDGES,
+            ):
+                paths.update(
+                    path
+                    for row in self.fetch_all(query, params)
+                    if not owns(str(row.get(cs.KEY_QUALIFIED_NAME) or ""))
+                    and isinstance(path := row.get(cs.KEY_PATH), str)
+                )
+        return paths
+
+    def _namesakes(
+        self, old_name: str, hierarchy: list[str], target: Target
+    ) -> _Namesakes:
+        """Where the graph writes `old_name` for a symbol outside `hierarchy`:
+        each same-named definition's own name, every site the graph gives it
+        and the import statements binding it, as a rename of that symbol
+        would collect them. A symbol that is the target's declaration in a
+        `.d.ts` beside its module is the target's, not another one."""
+        namesakes = _Namesakes(set(), [], [], {})
+        for symbol in graph_query.resolve(self.fetch_all, self.project, old_name):
+            other = symbol["qualified_name"]
+            if other in hierarchy:
+                continue
+            try:
+                other_sites, _unlocatable, _name, _label = self._collect(other)
+                other_imports = self._import_sites(other, old_name)
+            except (RenameRefused, PatcherError):
+                # Its definition or one of its sites cannot be located in the
+                # tree: what it would cover stays unplanned, since refusing
+                # over a namesake's stale graph is safer than crediting it
+                # with an occurrence that may be ours.
+                continue
+            declared = next((s for s in other_sites if s.kind == "definition"), None)
+            if declared is not None and declares_target(
+                self.repo_root, target, declared.path, declared.line, declared.col
+            ):
+                namesakes.companions[other] = (
+                    declared.path,
+                    declared.line,
+                    declared.col,
+                )
+                continue
+            namesakes.positions.update((s.path, s.line, s.col) for s in other_sites)
+            for site, _module in other_imports:
+                namesakes.statements.append(_statement(site))
+                # `from other import helper` makes every bare `helper` where
+                # it binds the other symbol's: the whole file at module
+                # level, the function around it inside one.
+                if site.alias == old_name and (
+                    scope := binding_scope(
+                        self.repo_root, site.path, site.line, site.col
+                    )
+                ):
+                    namesakes.bound.append((site.path, scope[0], scope[1]))
+        return namesakes
 
     def _all_paths(self, hierarchy: list[str], old_name: str) -> set[str]:
         """Python modules whose `__all__` may list the name: the defining
-        module of each module-level member, plus the modules importing it."""
+        module of each module-level member and its `.pyi` stubs, plus the
+        modules importing it."""
         paths: set[str] = set()
         for member in hierarchy:
             module_qn, module_path = self._module_of(member)
@@ -901,6 +1682,7 @@ class Renamer:
                 continue
             if module_path:
                 paths.add(module_path)
+                paths.update(_stubs_of(self.repo_root, module_path))
             paths.update(site.path for site, _m in self._import_sites(member, old_name))
         return {
             path
@@ -914,6 +1696,8 @@ class Renamer:
     ) -> tuple[EditTransaction, dict[str, object], list[str]]:
         """Patch every site into a transaction; nothing touches the tree."""
         old_name = report.old_name
+        # Beside the import rewrite it guards, before anything is patched.
+        self._refuse_twin_bound_imports(report)
         patcher = Patcher(self.repo_root)
         done: set[tuple[str, int, int]] = set()
         for site in report.sites:
@@ -953,7 +1737,12 @@ class Renamer:
             if offsets:
                 self._all_rewrites[path] = offsets
         tx = EditTransaction(self.repo_root)
-        results = patcher.stage_into(tx)
+        try:
+            results = patcher.stage_into(tx)
+        except PatcherError as error:
+            # A new name the file's declared encoding cannot hold (#2901).
+            tx.rollback()
+            raise RenameRefused(str(error), [], []) from error
         broken = [key for key, result in results.items() if result.parses is False]
         return tx, dict(results), broken
 
@@ -1270,10 +2059,12 @@ class Renamer:
                 member,
                 member.rsplit(cs.SEPARATOR_DOT, 1)[0] + cs.SEPARATOR_DOT + new_name,
             )
-            for member in report.hierarchy
+            for member in (*report.hierarchy, *report.companions)
         ]
         pairs = list(parents)
-        longer_project_prefixes = _longer_project_prefixes(self.fetch_all, self.project)
+        longer_project_prefixes = graph_query._longer_project_prefixes(
+            self.fetch_all, self.project
+        )
         for row in self.fetch_all(
             cq.CYPHER_DELTA_DEFINITIONS,
             {
@@ -1401,6 +2192,117 @@ class Renamer:
             undone=True,
             message=cs.RENAME_CONTRACT_FAILED.format(reasons=reasons),
         )
+
+
+class _Namesakes(NamedTuple):
+    positions: set[tuple[str, int, int]]
+    statements: list[_Span]
+    # Where an import binds the bare name to the other symbol.
+    bound: list[_Span]
+    # The symbols that are the target's own declaration in a `.d.ts`, each
+    # with where it is declared.
+    companions: dict[str, tuple[str, int, int]]
+
+
+def _declares_one_of(path: str, implementations: frozenset[str]) -> bool:
+    """Whether `path` is the declaration file (`.pyi`, `.d.ts`) of one of
+    `implementations`."""
+    return any(
+        candidate.as_posix() in implementations
+        for candidate in declaration_implementations(PurePosixPath(path))
+    )
+
+
+def _stubs_of(repo_root: Path, path: str) -> set[str]:
+    """The `.pyi` stubs on disk that declare the module `path` implements:
+    `x.pyi` for `x.py`, and `x/__init__.pyi` or `x.pyi` for `x/__init__.py`."""
+    implementation = PurePosixPath(path)
+    candidates = [implementation.with_suffix(cs.EXT_PYI)]
+    if implementation.parent.name:
+        candidates.append(implementation.parent.with_suffix(cs.EXT_PYI))
+    return {
+        stub.as_posix()
+        for stub in candidates
+        if implementation in python_stub_implementations(stub)
+        and (repo_root / stub).is_file()
+    }
+
+
+def _target_kind(label: str | None) -> cs.RenameTargetKind:
+    match label:
+        case cs.NodeLabel.FUNCTION.value:
+            return cs.RenameTargetKind.FUNCTION
+        case cs.NodeLabel.METHOD.value:
+            return cs.RenameTargetKind.METHOD
+        case _:
+            return cs.RenameTargetKind.TYPE
+
+
+def _owners(hierarchy: list[str]) -> frozenset[str]:
+    # The class segment of each member's name; a Java or C# signature may
+    # hold dots of its own (`put(Map.Entry)`), so it is cut off first.
+    owners: set[str] = set()
+    for member in hierarchy:
+        segments = member.partition(cs.CHAR_PAREN_OPEN)[0].split(cs.SEPARATOR_DOT)
+        if len(segments) > 1:
+            owners.add(segments[-2])
+    return frozenset(owners)
+
+
+def _owner_class(member: str) -> str:
+    return member.partition(cs.CHAR_PAREN_OPEN)[0].rpartition(cs.SEPARATOR_DOT)[0]
+
+
+def _statement(site: ImportSite) -> _Span:
+    # The statement's own span, not its lines: `import x; helper(1)` puts a
+    # call on the import's line that the import does not cover.
+    return site.path, (site.line, site.col), (site.end_line, site.end_col)
+
+
+def _inside(occurrence: Occurrence, spans: list[_Span]) -> bool:
+    position = (occurrence.line, occurrence.col)
+    return any(
+        path == occurrence.path and start <= position < end
+        for path, start, end in spans
+    )
+
+
+def _refusal_message(
+    qn: str,
+    old_name: str,
+    ambiguous: list[RenameSite],
+    unplanned: list[RenameSite],
+    unknown: int,
+    option: str,
+) -> str:
+    # `option` is how the caller spells the opt-in: a CLI flag is not an MCP
+    # parameter (issue #2886).
+    if not unplanned:
+        return cs.RENAME_AMBIGUOUS.format(qn=qn, count=len(ambiguous), option=option)
+    message = cs.RENAME_UNPLANNED.format(
+        qn=qn,
+        count=len(unplanned),
+        name=old_name,
+        locations=_locations(unplanned),
+        option=option,
+    )
+    if unknown:
+        message += cs.RENAME_UNPLANNED_RECEIVER_UNKNOWN.format(
+            count=unknown, option=option
+        )
+    if ambiguous:
+        message += cs.RENAME_UNPLANNED_ALSO_GUESSED.format(count=len(ambiguous))
+    return message
+
+
+def _locations(sites: list[RenameSite]) -> str:
+    locations = list(dict.fromkeys(f"{s.path}:{s.line}" for s in sites))
+    shown = cs.SEPARATOR_COMMA_SPACE.join(locations[: cs.RENAME_UNPLANNED_SHOWN])
+    if len(locations) > cs.RENAME_UNPLANNED_SHOWN:
+        shown = cs.RENAME_UNPLANNED_MORE.format(
+            shown=shown, more=len(locations) - cs.RENAME_UNPLANNED_SHOWN
+        )
+    return shown
 
 
 def rename(

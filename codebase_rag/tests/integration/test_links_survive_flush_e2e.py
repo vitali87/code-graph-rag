@@ -17,9 +17,11 @@ if TYPE_CHECKING:
 
 pytestmark = [pytest.mark.integration]
 
+# A link starts at the section it sits in (issue #2458), so the document's
+# links are read through its sections.
 LINKED = (
-    "MATCH (:Module {qualified_name: $qn})-[:LINKS_TO]->(f:File) "
-    "RETURN f.path AS path ORDER BY path"
+    "MATCH (:Module {qualified_name: $qn})-[:CONTAINS_SECTION*0..]->()"
+    "-[:LINKS_TO]->(f:File) RETURN f.path AS path ORDER BY path"
 )
 
 

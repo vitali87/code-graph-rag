@@ -1,0 +1,40 @@
+[build-system]
+requires = ["maturin>=1.9,<2"]
+build-backend = "maturin"
+
+[project]
+name = "cgr-graph-rs"
+version = "0.1.4"
+description = "Native acceleration for code-graph-rag's embedded graph"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+# The wheel is one library with every crate it uses compiled in, so it
+# carries their licences as well as its own.
+license-files = ["LICENSE", "THIRD_PARTY_LICENSES.md"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+]
+
+[project.urls]
+Homepage = "https://github.com/vitali87/code-graph-rag"
+Source = "https://github.com/vitali87/code-graph-rag/tree/main/rust/cgr_graph_rs"
+
+[tool.maturin]
+features = ["python"]
+
+[tool.uv]
+# A checkout builds this from source; uv reuses the built wheel until the
+# Rust code or its manifests change.
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "Cargo.toml" },
+    { file = "Cargo.lock" },
+    { file = "src/**/*.rs" },
+]

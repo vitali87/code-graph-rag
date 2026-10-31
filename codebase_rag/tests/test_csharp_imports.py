@@ -300,7 +300,7 @@ def test_watched_modification_reemits_internal_import_edges(
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2]))
     from watchdog.events import FileModifiedEvent
 
-    import realtime_updater
+    from codebase_rag import watch
     from codebase_rag.graph_updater import GraphUpdater
     from codebase_rag.parser_loader import load_parsers
 
@@ -346,7 +346,7 @@ public class RemoteStorageProvider
     )
     updater.run()
 
-    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler = watch.CodeChangeEventHandler(updater, debounce_seconds=0)
 
     installer.write_text(
         installer.read_text(encoding="utf-8") + "\n// touched\n", encoding="utf-8"
@@ -469,7 +469,7 @@ def test_watched_provider_edit_keeps_the_importers_edge(
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2]))
     from watchdog.events import FileModifiedEvent
 
-    import realtime_updater
+    from codebase_rag import watch
     from codebase_rag.graph_updater import GraphUpdater
     from codebase_rag.parser_loader import load_parsers
 
@@ -515,7 +515,7 @@ public class RemoteStorageProvider
     )
     updater.run()
 
-    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler = watch.CodeChangeEventHandler(updater, debounce_seconds=0)
 
     provider.write_text(
         provider.read_text(encoding="utf-8") + "\n// touched\n", encoding="utf-8"
@@ -592,7 +592,7 @@ def test_watched_provider_deletion_stops_targeting_its_module(
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2]))
     from watchdog.events import FileDeletedEvent
 
-    import realtime_updater
+    from codebase_rag import watch
     from codebase_rag.graph_updater import GraphUpdater
     from codebase_rag.parser_loader import load_parsers
 
@@ -638,7 +638,7 @@ public class RemoteStorageProvider
     )
     updater.run()
 
-    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler = watch.CodeChangeEventHandler(updater, debounce_seconds=0)
 
     provider.unlink()
     mock_ingestor.reset_mock()

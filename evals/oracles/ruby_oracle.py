@@ -2,13 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from codebase_rag import constants as cs
-
 from .. import constants as ec
 from ..types_defs import GraphData, OraclePayload
 from ._common import (
-    is_ignored,
-    node_oracle_available,
     node_oracle_skip_reason,
     payload_to_graph,
     run_node_oracle_payload,
@@ -16,12 +12,6 @@ from ._common import (
 
 _ORACLE_DIR = Path(__file__).parent / ec.RUBY_ORACLE_DIRNAME
 _SCRIPT = _ORACLE_DIR / ec.RUBY_ORACLE_SCRIPT
-_NODE_MODULES = _ORACLE_DIR / ec.NODE_MODULES_DIRNAME
-_CALLABLE_KINDS = frozenset({cs.NodeLabel.FUNCTION.value, cs.NodeLabel.METHOD.value})
-
-
-def ruby_oracle_available() -> bool:
-    return node_oracle_available(_ORACLE_DIR)
 
 
 def ruby_oracle_skip_reason() -> str | None:
@@ -41,23 +31,3 @@ def _run_ruby_oracle_payload(target: Path) -> OraclePayload:
 
 def run_ruby_oracle(target: Path) -> GraphData:
     return payload_to_graph(_run_ruby_oracle_payload(target))
-
-
-def run_ruby_call_oracle(target: Path) -> tuple[set[tuple[str, str]], frozenset[str]]:
-    # File-level Ruby call sites restricted to first-party callees (simple name
-    # is a declared Function/Method), with the declared name universe so the cgr
-    # side is held to the same set. Mirrors the Go, Rust, Java, TypeScript, Lua
-    # and PHP oracles.
-    payload = _run_ruby_oracle_payload(target)
-    declared = frozenset(
-        rec[ec.ORACLE_KEY_NAME]
-        for rec in payload.get(ec.ORACLE_KEY_NODES, [])
-        if rec.get(ec.ORACLE_KEY_KIND) in _CALLABLE_KINDS
-    )
-    edges = {
-        (call[ec.ORACLE_KEY_FILE], call[ec.ORACLE_KEY_NAME])
-        for call in payload.get(ec.ORACLE_KEY_CALLS, [])
-        if call[ec.ORACLE_KEY_NAME] in declared
-        and not is_ignored(call[ec.ORACLE_KEY_FILE])
-    }
-    return edges, declared

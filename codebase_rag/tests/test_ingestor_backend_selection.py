@@ -10,7 +10,13 @@ raising -- and the parallel MERGE flush depends on those constraints.
 
 from __future__ import annotations
 
-from codebase_rag.graph_dialects import DIALECT_MEMGRAPH, DIALECT_NEO4J, get_dialect
+from codebase_rag.config import AppConfig
+from codebase_rag.graph_dialects import (
+    DIALECT_MEMGRAPH,
+    DIALECT_NEO4J,
+    DIALECT_SQLITE,
+    get_dialect,
+)
 from codebase_rag.services.graph_service import MemgraphIngestor, _apply_memory_limit
 
 
@@ -128,8 +134,12 @@ class TestMemoryLimit:
 
 
 class TestDialectResolution:
-    def test_the_default_engine_is_memgraph(self) -> None:
-        # An existing install must keep working with no configuration.
+    def test_the_default_engine_is_the_embedded_graph(self) -> None:
+        # A first run must work with no server and no configuration (#386).
+        assert AppConfig.model_fields["GRAPH_BACKEND"].default == DIALECT_SQLITE
+
+    def test_the_ingestor_follows_the_configured_engine(self) -> None:
+        # The suite pins GRAPH_BACKEND to Memgraph (conftest).
         assert MemgraphIngestor(host="h", port=1)._dialect.name == DIALECT_MEMGRAPH
 
     def test_an_explicit_dialect_wins(self) -> None:

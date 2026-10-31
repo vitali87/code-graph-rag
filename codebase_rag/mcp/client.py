@@ -20,27 +20,29 @@ async def _query_with_errlog(question: str, errlog: io.TextIOWrapper) -> dict[st
         args=["-m", "codebase_rag.cli", "mcp-server"],
     )
 
-    async with stdio_client(server=server_params, errlog=errlog) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            result = await session.call_tool(
-                cs.MCPToolName.ASK_AGENT,
-                {cs.MCPParamName.QUESTION: question},
-            )
+    async with (
+        stdio_client(server=server_params, errlog=errlog) as (read, write),
+        ClientSession(read, write) as session,
+    ):
+        await session.initialize()
+        result = await session.call_tool(
+            cs.MCPToolName.ASK_AGENT,
+            {cs.MCPParamName.QUESTION: question},
+        )
 
-            first = result.content[0] if result.content else None
-            # Only a text item carries an answer; an image or resource first
-            # item is treated like an empty result.
-            if isinstance(first, TextContent):
-                response_text = first.text
-                try:
-                    parsed = json.loads(response_text)
-                    if isinstance(parsed, dict):
-                        return parsed
-                    return {"output": str(parsed)}
-                except json.JSONDecodeError:
-                    return {"output": response_text}
-            return {"output": "No response from server"}
+        first = result.content[0] if result.content else None
+        # Only a text item carries an answer; an image or resource first
+        # item is treated like an empty result.
+        if isinstance(first, TextContent):
+            response_text = first.text
+            try:
+                parsed = json.loads(response_text)
+                if isinstance(parsed, dict):
+                    return parsed
+                return {"output": str(parsed)}
+            except json.JSONDecodeError:
+                return {"output": response_text}
+        return {"output": "No response from server"}
 
 
 def query_mcp_server(question: str) -> dict[str, str]:

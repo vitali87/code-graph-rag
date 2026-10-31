@@ -252,7 +252,7 @@ class TestDeletingAProjectThatIsNotThere:
             result = runner.invoke(app, ["delete-project", "-n", "click"])
 
         assert result.exit_code == 1, result.output
-        assert "Project 'click' not found" in _plain(result.output)
+        assert "Project 'click' is not indexed" in _plain(result.output)
         assert _alarming(logged) == []
         embeddings.assert_not_called()
         conn.close.assert_called_once_with()

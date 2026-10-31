@@ -61,3 +61,7 @@ def test_milvus_uri_is_isolated_for_unit_tests(tmp_path: Path) -> None:
     # developer's real embeddings database; the isolated file must live under
     # pytest's own temp area, not merely be absolute.
     assert Path(settings.MILVUS_URI).is_relative_to(tmp_path.parent)
+
+
+def test_sqlite_vector_path_is_isolated_for_unit_tests(tmp_path: Path) -> None:
+    assert settings.vector_db_file.is_relative_to(tmp_path.parent)

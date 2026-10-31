@@ -1,0 +1,9 @@
+# pip alone, for the first install an interpreter's bundled pip makes: that
+# pip may predate the emSign distrust (pip 26.2.2), so it fetches nothing but
+# its replacement. Installed with --require-hashes, so pip checks the wheel
+# against these SHA-256s; Dependabot moves the pin and its hashes together.
+# Used by the unlocked-resolution job in .github/workflows/ci.yml and by
+# .clusterfuzzlite/Dockerfile.
+pip==26.2.2 \
+    --hash=sha256:3a8e5c800492787f33a4114ef54444546c340df428974ebba17e0fd47e11af2f \
+    --hash=sha256:fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70

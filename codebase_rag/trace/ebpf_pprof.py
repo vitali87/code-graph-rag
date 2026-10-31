@@ -60,13 +60,17 @@ from loguru import logger
 from .. import constants as cs
 from .instrumented import _bare_name as _cpp_bare_name
 from .pprof import (
-    _bare_name as _go_bare_name,
-)
-from .pprof import (
+    _backfill_start_lines,
     _decompress,
     _fields,
+    _first_lines,
+    _Function,
     _parse_function,
+    _parse_line,
     _repeated_uint,
+)
+from .pprof import (
+    _bare_name as _go_bare_name,
 )
 from .records import (
     CallRecord,
@@ -154,6 +158,8 @@ class _Mapping:
 class _Location:
     mapping_id: int = 0
     function_ids: list[int] = field(default_factory=list)
+    # (function id, line) of each inline Line record (issue #2877).
+    lines: list[tuple[int, int]] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -179,15 +185,6 @@ def _parse_mapping(payload: bytes) -> tuple[int, _Mapping]:
     return mapping_id, mapping
 
 
-def _line_function_ids(line_payload: bytes) -> list[int]:
-    """The function ids of a Location's inline Line records."""
-    return [
-        value
-        for line_field, _wire, value in _fields(line_payload)
-        if line_field == 1 and isinstance(value, int)
-    ]
-
-
 def _parse_location(payload: bytes) -> tuple[int, _Location]:
     """A location's id, mapping id, and function ids (inline frames)."""
     location_id = 0
@@ -198,7 +195,10 @@ def _parse_location(payload: bytes) -> tuple[int, _Location]:
         elif field_num == 2 and isinstance(value, int):
             location.mapping_id = value
         elif field_num == 4 and isinstance(value, bytes):
-            location.function_ids.extend(_line_function_ids(value))
+            function_id, line = _parse_line(value)
+            if function_id:
+                location.function_ids.append(function_id)
+                location.lines.append((function_id, line))
     return location_id, location
 
 
@@ -273,6 +273,17 @@ def _decode(raw: bytes) -> _Profile:
         elif field_num == 6:
             strings.append(value.decode("utf-8", errors="replace"))
     samples = [_parse_sample(payload, strings) for payload in sample_payloads]
+    sampled_lines: dict[int, int] = {}
+    for location in locations.values():
+        _first_lines(location.lines, into=sampled_lines)
+    _backfill_start_lines(
+        {
+            function_id: function
+            for function_id, function in functions.items()
+            if isinstance(function, _Function)
+        },
+        sampled_lines,
+    )
     return _Profile(strings, functions, locations, mappings, samples)
 
 

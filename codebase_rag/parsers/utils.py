@@ -19,6 +19,7 @@ from ..types_defs import (
     FunctionSpanKey,
     LanguageQueries,
     NodeType,
+    OverloadSignature,
     PropertyDict,
     SimpleNameLookup,
     TreeSitterNodeProtocol,
@@ -53,21 +54,99 @@ def follow_reexports(
     # module (pkg.sym), not the real definition (pkg.mod.sym), so an unregistered
     # qn may be a re-export. Follow the module's import map one hop at a time
     # until a registered symbol is reached, guarding against cycles.
-    seen: set[str] = set()
-    current = qn
-    while (
-        current
-        and current not in seen
-        and current not in function_registry
-        and cs.SEPARATOR_DOT in current
-    ):
-        seen.add(current)
+    if qn in function_registry:
+        return qn
+    return _ImportMapWalk(import_mapping, function_registry).follow(qn)[0]
+
+
+class _ImportMapWalk:
+    """One `follow_reexports` lookup.
+
+    A module two star paths reach is walked on each: the first path can end
+    ambiguous where the second does not, so marking the module visited for
+    the whole lookup lost the export the second path provides. Only a qn on
+    the current path stops a walk, which still ends every cycle; a qn settled
+    without meeting one is remembered, so a module shared by many paths is
+    still walked once.
+    """
+
+    __slots__ = ("_imports", "_registry", "_path", "_settled")
+
+    def __init__(
+        self,
+        import_mapping: Mapping[str, Mapping[str, str]],
+        function_registry: FunctionRegistryTrieProtocol,
+    ) -> None:
+        self._imports = import_mapping
+        self._registry = function_registry
+        self._path: set[str] = set()
+        self._settled: dict[str, str] = {}
+
+    def follow(self, qn: str) -> tuple[str, bool]:
+        # Where `qn` leads, and whether a cycle cut the walk short. A cut walk
+        # depends on the path that reached it, so it is never settled.
+        current = qn
+        entered: list[str] = []
+        cut = False
+        while current and current not in self._registry and cs.SEPARATOR_DOT in current:
+            if current in self._settled:
+                current = self._settled[current]
+                break
+            if current in self._path:
+                cut = True
+                break
+            self._path.add(current)
+            entered.append(current)
+            following, star_cut = self._step(current)
+            cut = cut or star_cut
+            if not following or following == current:
+                break
+            current = following
+        self._path.difference_update(entered)
+        if not cut:
+            self._settled.update(dict.fromkeys(entered, current))
+        return current, cut
+
+    def _step(self, current: str) -> tuple[str | None, bool]:
         module_qn, _, name = current.rpartition(cs.SEPARATOR_DOT)
-        following = import_mapping.get(module_qn, {}).get(name)
-        if not following or following == current:
-            break
-        current = following
-    return current
+        if following := self._imports.get(module_qn, {}).get(name):
+            return following, False
+        return self._star_target(module_qn, name)
+
+    def _star_target(self, module_qn: str, name: str) -> tuple[str | None, bool]:
+        # A star re-export (`export * from './router'`, `from .mod import *`)
+        # binds no name of its own, so a barrel's member is whichever star
+        # source exports it, possibly through further stars. Only a source
+        # that reaches a registered definition its module exports counts: a
+        # private one is never re-exported, so it neither stands in for the
+        # name nor makes an exported one ambiguous. Two exported ones are
+        # ambiguous (TypeScript exports neither), so nothing is guessed; one
+        # reached along two paths is one binding, not two.
+        reached: set[str] = set()
+        cut = False
+        for key, source in self._imports.get(module_qn, {}).items():
+            if not key.startswith(cs.GLOB_ALL):
+                continue
+            target, branch_cut = self.follow(f"{source}{cs.SEPARATOR_DOT}{name}")
+            cut = cut or branch_cut
+            if target in self._registry and not self._registry.is_module_private(
+                target
+            ):
+                reached.add(target)
+        return (reached.pop() if len(reached) == 1 else None), cut
+
+
+def mark_js_ts_module_private(
+    function_registry: FunctionRegistryTrieProtocol,
+    qualified_name: str,
+    is_exported: bool,
+    language: cs.SupportedLanguage | None,
+) -> None:
+    # `export * from` passes on only what a module exports, so the star lookup
+    # in follow_reexports must tell a private declaration from an exported
+    # one; the flag the node already carries is recorded where it can ask.
+    if language in cs.JS_TS_LANGUAGES and not is_exported:
+        function_registry.mark_module_private(qualified_name)
 
 
 def function_span_key(module_qn: str, node: Node) -> FunctionSpanKey:
@@ -180,21 +259,8 @@ def extract_modifiers_and_decorators(
     body_node = node.child_by_field_name(cs.FIELD_BODY)
     header_end_byte = body_node.start_byte if body_node else node.end_byte
 
-    target_node = node
-    if node.parent and node.parent.type in (
-        cs.TS_PY_DECORATED_DEFINITION,
-        cs.TS_EXPORT_STATEMENT,
-        # Dart wraps a class member's function_signature in a
-        # method_signature that owns the `static` token.
-        cs.TS_DART_METHOD_SIGNATURE,
-    ):
-        target_node = node.parent
-
-    query_nodes = [target_node]
-    curr_sibling = target_node.prev_named_sibling
-    while curr_sibling and _is_leading_annotation(target_node, curr_sibling):
-        query_nodes.insert(0, curr_sibling)
-        curr_sibling = curr_sibling.prev_named_sibling
+    query_nodes = _annotated_nodes(node)
+    target_node = query_nodes[-1]
 
     modifiers: list[str] = []
     decorators: list[str] = []
@@ -207,6 +273,43 @@ def extract_modifiers_and_decorators(
         )
 
     return modifiers, decorators
+
+
+def _annotated_nodes(node: ASTNode) -> list[ASTNode]:
+    """The nodes a definition's modifiers and decorators are written on, in
+    source order: its leading annotation siblings, then the definition's own
+    node or the wrapper that owns them."""
+    target_node = node
+    if node.parent and node.parent.type in (
+        cs.TS_PY_DECORATED_DEFINITION,
+        cs.TS_EXPORT_STATEMENT,
+        # Dart wraps a class member's function_signature in a
+        # method_signature that owns the `static` token.
+        cs.TS_DART_METHOD_SIGNATURE,
+    ):
+        target_node = node.parent
+
+    nodes = [target_node]
+    curr_sibling = target_node.prev_named_sibling
+    while curr_sibling and _is_leading_annotation(target_node, curr_sibling):
+        nodes.insert(0, curr_sibling)
+        curr_sibling = curr_sibling.prev_named_sibling
+    return nodes
+
+
+def decorated_start_props(node: ASTNode) -> PropertyDict:
+    """`decorated_start_line` when decorators or attributes sit above `node`
+    but outside its own span, else nothing (issue #2428).
+
+    Read from the same nodes the `decorators` list is, so the decorated
+    source of a definition starts at the first of them; a wrapper that starts
+    on the definition's own line (`export class`) widens nothing. The node's
+    `start_line` stays where it is: everything line-based keys on it.
+    """
+    first_row = _annotated_nodes(node)[0].start_point[0]
+    if first_row >= node.start_point[0]:
+        return {}
+    return {cs.KEY_DECORATED_START_LINE: first_row + 1}
 
 
 def _is_leading_annotation(target_node: ASTNode, sibling: ASTNode) -> bool:
@@ -252,6 +355,55 @@ def _cached_decode_bytes(text_bytes: bytes) -> str:
     # UnicodeDecodeError and abandoned the whole file -- one bad byte in a
     # Python decorator dropped every definition in it (issue #1797).
     return decode_node_text(text_bytes)
+
+
+# The member-name fields a call's callee carries: JS/TS `property`, Python
+# `attribute`, Rust/Go/C++/Scala `field`.
+_MEMBER_NAME_FIELDS = (cs.FIELD_PROPERTY, cs.TS_PY_FIELD_ATTRIBUTE, cs.FIELD_FIELD)
+
+
+def member_call_name(node: Node) -> Node | None:
+    """The method name a member call invokes, or None for any other call."""
+    # Java `method_invocation` / PHP `member_call_expression`: the call
+    # itself holds the receiver and the name.
+    if node.child_by_field_name(cs.FIELD_OBJECT) is not None and (
+        name := node.child_by_field_name(cs.FIELD_NAME)
+    ):
+        return name
+    func = node.child_by_field_name(cs.FIELD_FUNCTION)
+    if func is not None and func.type == cs.TS_GENERIC_FUNCTION:
+        # Rust turbofish `x.parse::<u64>()`.
+        func = func.child_by_field_name(cs.FIELD_FUNCTION)
+    if func is None:
+        return None
+    if func.type == cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
+        return func.child_by_field_name(cs.FIELD_NAME)
+    if func.type == cs.TS_CSHARP_CONDITIONAL_ACCESS_EXPRESSION:
+        binding = next(
+            (
+                c
+                for c in func.children
+                if c.type == cs.TS_CSHARP_MEMBER_BINDING_EXPRESSION
+            ),
+            None,
+        )
+        return binding.child_by_field_name(cs.FIELD_NAME) if binding else None
+    for field in _MEMBER_NAME_FIELDS:
+        if (member := func.child_by_field_name(field)) is not None:
+            return member
+    return None
+
+
+def call_site_start(node: Node) -> tuple[int, int]:
+    """Where a call's edge site starts: a member call's name, else the node.
+
+    Shared by indexing and by the edit operations that find a call again
+    from its recorded (line, col) (issue #3166).
+    """
+    name = member_call_name(node)
+    if name is not None and name.start_byte > node.start_byte:
+        return name.start_point
+    return node.start_point
 
 
 def node_site_properties(node: Node) -> PropertyDict:
@@ -314,6 +466,19 @@ def contains_node(parent: ASTNode, target: ASTNode) -> bool:
     )
 
 
+def unparenthesized(node: Node | None) -> Node | None:
+    """The expression under any parentheses: `(fn)()` still calls `fn`.
+
+    Without the unwrap a stored computed lookup invoked as `(fn)()` was not
+    recognised as a call, and `(registry[name])()` was not recognised as a
+    computed dispatch, so an unrelated invoked literal in the same body could
+    be recorded as the dynamic-trace site (#1543 review).
+    """
+    while node is not None and node.type == cs.TS_PARENTHESIZED_EXPRESSION:
+        node = next(iter(node.named_children), None)
+    return node
+
+
 def _decorator_tail_names(decorators: list[str]) -> set[str]:
     return {
         decorator.lstrip("@#[]() ")
@@ -336,25 +501,51 @@ def _is_abstract_decorator(decorators: list[str]) -> bool:
     return bool(_decorator_tail_names(decorators) & cs.ABSTRACT_DECORATORS)
 
 
-_PY_NAMED_PARAMETERS = frozenset(
-    {cs.TS_PY_DEFAULT_PARAMETER, cs.TS_PY_TYPED_DEFAULT_PARAMETER}
-)
+def _is_bodiless_ts_member(
+    method_node: ASTNode, language: cs.SupportedLanguage
+) -> bool:
+    # An interface or `abstract` TS member never runs itself, like a Python
+    # @abstractmethod stub (issue #2524). Gated on language because Dart spells
+    # its ordinary, bodied members `method_signature` too.
+    return (
+        language in cs.JS_TS_LANGUAGES
+        and method_node.type in cs.TS_BODILESS_METHOD_TYPES
+    )
+
+
+def _is_abstract_member(
+    decorators: list[str], method_node: ASTNode, language: cs.SupportedLanguage
+) -> bool:
+    return _is_abstract_decorator(decorators) or _is_bodiless_ts_member(
+        method_node, language
+    )
+
+
+def is_stored_abstract_member(
+    decorators: list[str],
+    modifiers: list[str],
+    language: cs.SupportedLanguage | None,
+) -> bool:
+    """`_is_abstract_member` read back from a stored definition's properties.
+
+    An incremental run rehydrates unchanged members without their trees: a TS
+    `abstract` member is told by its modifier. An interface member is told by
+    its owner's label, which the call resolver reads itself.
+    """
+    return _is_abstract_decorator(decorators) or (
+        language in cs.JS_TS_LANGUAGES and cs.TS_ABSTRACT_MODIFIER in modifiers
+    )
+
+
 _PY_KEYWORD_ONLY_BOUNDARIES = frozenset(
     {cs.TS_PY_KEYWORD_SEPARATOR, cs.TS_PY_LIST_SPLAT_PATTERN}
-)
-_PY_SCOPE_BOUNDARIES = frozenset(
-    {
-        cs.TS_PY_FUNCTION_DEFINITION,
-        cs.TS_PY_CLASS_DEFINITION,
-        cs.TS_PY_DECORATED_DEFINITION,
-    }
 )
 
 
 def _python_parameter_name(param_node: Node) -> str | None:
     if param_node.type == cs.TS_PY_IDENTIFIER:
         return safe_decode_text(param_node)
-    if param_node.type in _PY_NAMED_PARAMETERS:
+    if param_node.type in cs.PY_NAMED_PARAMETER_TYPES:
         name_node = param_node.child_by_field_name(cs.FIELD_NAME)
         if name_node is not None and name_node.type == cs.TS_PY_IDENTIFIER:
             return safe_decode_text(name_node)
@@ -366,7 +557,6 @@ def _python_parameter_name(param_node: Node) -> str | None:
     return None
 
 
-_PY_CLOSURE_SCOPES = frozenset({cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_LAMBDA})
 _GO_CLOSURE_SCOPES = frozenset({cs.TS_GO_FUNC_LITERAL})
 
 
@@ -384,8 +574,8 @@ class _CallableScanConfig(NamedTuple):
 _PY_SCAN = _CallableScanConfig(
     cs.TS_PY_CALL,
     cs.TS_PY_IDENTIFIER,
-    _PY_CLOSURE_SCOPES,
-    frozenset({cs.TS_PY_CLASS_DEFINITION}),
+    cs.PY_CALLABLE_CLOSURE_TYPES,
+    cs.PY_CALLABLE_OPAQUE_TYPES,
 )
 _GO_SCAN = _CallableScanConfig(
     cs.TS_GO_CALL_EXPRESSION,
@@ -393,21 +583,11 @@ _GO_SCAN = _CallableScanConfig(
     _GO_CLOSURE_SCOPES,
     frozenset(),
 )
-_JS_TS_CLOSURE_SCOPES = frozenset(
-    {
-        cs.TS_ARROW_FUNCTION,
-        cs.TS_FUNCTION_EXPRESSION,
-        cs.TS_FUNCTION_DECLARATION,
-    }
-)
 _JS_SCAN = _CallableScanConfig(
     cs.TS_CALL_EXPRESSION,
     cs.TS_IDENTIFIER,
-    _JS_TS_CLOSURE_SCOPES,
-    frozenset({cs.TS_CLASS_DECLARATION}),
-)
-_JS_TS_TYPED_PARAMETERS = frozenset(
-    {cs.TS_REQUIRED_PARAMETER, cs.TS_OPTIONAL_PARAMETER}
+    cs.JS_TS_CALLABLE_CLOSURE_TYPES,
+    cs.JS_TS_CALLABLE_OPAQUE_TYPES,
 )
 _CPP_CLOSURE_SCOPES = frozenset({cs.TS_CPP_LAMBDA_EXPRESSION})
 _CPP_SCAN = _CallableScanConfig(
@@ -550,7 +730,7 @@ def _js_ts_parameter_name(param: Node) -> str | None:
     # A bare identifier, or the identifier `pattern` of a TS typed parameter.
     if param.type == cs.TS_IDENTIFIER:
         return safe_decode_text(param)
-    if param.type in _JS_TS_TYPED_PARAMETERS:
+    if param.type in cs.JS_TS_TYPED_PARAMETER_TYPES:
         pattern = param.child_by_field_name(cs.TS_FIELD_PATTERN)
         if pattern is not None and pattern.type == cs.TS_IDENTIFIER:
             return safe_decode_text(pattern)
@@ -563,29 +743,46 @@ def _scan_invoked_parameters(
     invoked: set[str],
     config: _CallableScanConfig,
     bound_names: Callable[[Node], set[str]],
+    sites: dict[str, list[Node]] | None = None,
 ) -> None:
     # Mark a candidate parameter invoked when it is called by bare name in this
     # lexical scope. Descend into nested closures that CAPTURE a candidate (do not
     # rebind it) so `outer(cb) { inner() { cb() } }` still attributes cb to outer,
     # the closure form decorator/formatter factories use. A nested scope's own
     # bound names are removed first so a shadowing local cannot masquerade as the
-    # captured outer parameter. Class-like scopes are skipped entirely.
+    # captured outer parameter. Class-like scopes are skipped entirely. `sites`,
+    # when given, also collects every invoking call node per parameter.
     if not candidates:
         return
     stack: list[Node] = [scope_node]
     while stack:
         node = stack.pop()
         for child in node.children:
-            name = _bare_call_name(child, config)
-            if name is not None and name in candidates:
-                invoked.add(name)
+            _record_invocation(child, candidates, invoked, config, sites)
             if child.type in config.closure_types:
                 inner = candidates - bound_names(child)
-                _scan_invoked_parameters(child, inner, invoked, config, bound_names)
-                continue
-            if child.type in config.opaque_types:
-                continue
-            stack.append(child)
+                _scan_invoked_parameters(
+                    child, inner, invoked, config, bound_names, sites
+                )
+            elif child.type not in config.opaque_types:
+                stack.append(child)
+
+
+def _record_invocation(
+    node: Node,
+    candidates: set[str],
+    invoked: set[str],
+    config: _CallableScanConfig,
+    sites: dict[str, list[Node]] | None,
+) -> None:
+    # When `node` calls a candidate by bare name (`cb()`), mark that candidate
+    # invoked and, if `sites` collects them, keep `node` as one of its sites.
+    name = _bare_call_name(node, config)
+    if name is None or name not in candidates:
+        return
+    invoked.add(name)
+    if sites is not None:
+        sites.setdefault(name, []).append(node)
 
 
 def _bare_call_name(node: Node, config: _CallableScanConfig) -> str | None:
@@ -625,7 +822,7 @@ def _python_collect_bound_targets(node: Node, out: set[str]) -> None:
     while stack:
         current = stack.pop()
         for child in current.children:
-            if child.type in _PY_SCOPE_BOUNDARIES:
+            if child.type in cs.PY_SCOPE_BOUNDARY_TYPES:
                 # A nested def/class NAME binds here, but its body has its own
                 # scope; record the name and do not descend.
                 if name := _python_scope_boundary_name(child):
@@ -641,11 +838,7 @@ def _python_scope_boundary_name(child: Node) -> str | None:
     named = child
     if child.type == cs.TS_PY_DECORATED_DEFINITION:
         named = next(
-            (
-                c
-                for c in child.children
-                if c.type in (cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_CLASS_DEFINITION)
-            ),
+            (c for c in child.children if c.type in cs.PY_DECORATED_DEFINITION_TYPES),
             child,
         )
     name_node = named.child_by_field_name(cs.FIELD_NAME)
@@ -654,7 +847,7 @@ def _python_scope_boundary_name(child: Node) -> str | None:
 
 def _python_collect_direct_bindings(child: Node, out: set[str]) -> None:
     child_type = child.type
-    if child_type in (cs.TS_PY_ASSIGNMENT, cs.TS_PY_FOR_STATEMENT):
+    if child_type in cs.PY_CAPTURE_SHADOW_BINDERS:
         # Both bind whatever their `left` names.
         left = child.child_by_field_name(cs.TS_FIELD_LEFT)
         if left is not None:
@@ -662,7 +855,7 @@ def _python_collect_direct_bindings(child: Node, out: set[str]) -> None:
     elif child_type == cs.TS_PY_AS_PATTERN_TARGET:
         # `with ... as x` and `except ... as x` bind x here.
         _python_collect_target_identifiers(child, out)
-    elif child_type in _PY_IMPORT_STATEMENTS:
+    elif child_type in cs.PY_IMPORT_TYPES:
         _python_collect_import_bound_names(child, out)
     elif child_type == cs.TS_PY_GLOBAL_STATEMENT:
         # `global x` rebinds x to module scope: it is not a capture of the
@@ -705,9 +898,11 @@ def _python_collect_case_pattern_bindings(node: Node, out: set[str]) -> None:
         stack.extend(current.children)
 
 
-_PY_IMPORT_STATEMENTS = frozenset(
-    {cs.TS_PY_IMPORT_STATEMENT, cs.TS_PY_IMPORT_FROM_STATEMENT}
-)
+def python_import_bound_names(node: Node) -> set[str]:
+    # The names one `import` / `from ... import` statement binds.
+    out: set[str] = set()
+    _python_collect_import_bound_names(node, out)
+    return out
 
 
 def _python_collect_import_bound_names(node: Node, out: set[str]) -> None:
@@ -801,12 +996,19 @@ def python_positional_parameter_names(func_node: Node) -> list[str]:
     return names
 
 
-def callable_parameter_indices(
+class _CallableScanInputs(NamedTuple):
+    names: list[str]
+    body: Node
+    scan: _CallableScanConfig
+    scope_bound: Callable[[Node], set[str]]
+
+
+def _callable_scan_inputs(
     func_node: Node, language: cs.SupportedLanguage | None
-) -> dict[str, int]:
-    # Maps each parameter invoked as a call inside the function body to its
-    # positional index in the call-site argument list (self/cls dropped so the
-    # index lines up with how bound methods are invoked).
+) -> _CallableScanInputs | None:
+    # The ordered parameters, the body and the language's scan rules; None
+    # for a language without callable-parameter flow or a function with no
+    # body or no parameters.
     if language == cs.SupportedLanguage.PYTHON:
         names = python_parameter_names(func_node)
         scan, scope_bound = _PY_SCAN, _python_scope_bound_names
@@ -820,14 +1022,51 @@ def callable_parameter_indices(
         names = cpp_parameter_names(func_node)
         scan, scope_bound = _CPP_SCAN, _cpp_scope_bound_names
     else:
-        return {}
+        return None
     body_node = func_node.child_by_field_name(cs.FIELD_BODY)
     if body_node is None or not names:
+        return None
+    return _CallableScanInputs(names, body_node, scan, scope_bound)
+
+
+def callable_parameter_indices(
+    func_node: Node, language: cs.SupportedLanguage | None
+) -> dict[str, int]:
+    # Maps each parameter invoked as a call inside the function body to its
+    # positional index in the call-site argument list (self/cls dropped so the
+    # index lines up with how bound methods are invoked).
+    if (inputs := _callable_scan_inputs(func_node, language)) is None:
         return {}
-    invoked = _invoked_parameter_names(body_node, set(names), scan, scope_bound)
+    names = inputs.names
+    invoked = _invoked_parameter_names(
+        inputs.body, set(names), inputs.scan, inputs.scope_bound
+    )
     if not invoked:
         return {}
     return {name: index for index, name in enumerate(names) if name in invoked}
+
+
+def callable_parameter_invocations(
+    func_node: Node, language: cs.SupportedLanguage | None
+) -> dict[str, list[Node]]:
+    # The call nodes behind callable_parameter_indices, in source order: where
+    # the function itself invokes each parameter. A callback it receives runs
+    # there, in this function's file, which is where the CALLS edge to that
+    # callback is located (issue #2459).
+    if (inputs := _callable_scan_inputs(func_node, language)) is None:
+        return {}
+    sites: dict[str, list[Node]] = {}
+    _scan_invoked_parameters(
+        inputs.body,
+        set(inputs.names),
+        set(),
+        inputs.scan,
+        inputs.scope_bound,
+        sites,
+    )
+    for nodes in sites.values():
+        nodes.sort(key=lambda node: node.start_byte)
+    return sites
 
 
 def go_parameter_names(func_node: Node) -> list[str]:
@@ -908,7 +1147,7 @@ def _js_ts_parameter_slot(child: Node) -> tuple[str | None, bool] | None:
         return None
     if node_type == cs.TS_IDENTIFIER:
         return safe_decode_text(child), False
-    if node_type in _JS_TS_TYPED_PARAMETERS:
+    if node_type in cs.JS_TS_TYPED_PARAMETER_TYPES:
         pattern = child.child_by_field_name(cs.TS_FIELD_PATTERN)
         if pattern is None:
             return None, False
@@ -1359,6 +1598,12 @@ def _method_container_label(
     # carry the container's real node label. Callers pass Class by default, but a
     # trait/interface (Interface) or enum (Enum) container would then never match
     # and drop the containment edge. Prefer the label it was registered with.
+    # Where a TS interface shares its name with a value (issue #2520) the
+    # registry holds the value's kind, so the label the owner was declared with
+    # decides: an interface's members stay on the Interface node.
+    type_side = function_registry.type_kind(container_qn)
+    if type_side is not None and type_side.value == container_type.value:
+        return container_type
     container_label = container_type
     registered = function_registry.get(container_qn)
     if registered is not None and registered != NodeType.METHOD:
@@ -1392,6 +1637,99 @@ def _record_method_overrides(
         )
 
 
+class _CppMember(NamedTuple):
+    qualified_name: str
+    signature: OverloadSignature | None
+    declared_in_class: bool
+
+
+def _register_cpp_member_qn(
+    method_node: ASTNode,
+    natural_qn: str,
+    function_registry: FunctionRegistryTrieProtocol,
+    start_line: int,
+    start_col: int,
+) -> _CppMember:
+    # A C++ member is seen twice, in-class and out of it, so the plain
+    # `@line` dedup would split one member in two; the signature keeps one
+    # node per overload instead (issue #2455). Without a readable parameter
+    # list the plain name stands, as it did for every member before.
+    # Local import: cpp.overloads imports this module for its decode helper.
+    from .cpp.overloads import cpp_overload_signature, declared_in_class_body
+
+    declared = declared_in_class_body(method_node)
+    signature = cpp_overload_signature(method_node)
+    if signature is None:
+        return _CppMember(natural_qn, None, declared)
+    qualified_name = function_registry.register_overload_qn(
+        natural_qn,
+        signature,
+        start_line,
+        start_col,
+        declared_in_class=declared,
+    )
+    return _CppMember(qualified_name, signature, declared)
+
+
+def _register_method_qn(
+    method_node: ASTNode,
+    method_qn: str,
+    language: cs.SupportedLanguage,
+    function_registry: FunctionRegistryTrieProtocol,
+    start_line: int,
+    start_col: int,
+    file_path: Path | None = None,
+) -> tuple[str, _CppMember | None]:
+    # The registered qn, and for C++ the member it names (issue #2455).
+    if language == cs.SupportedLanguage.CPP:
+        cpp_member = _register_cpp_member_qn(
+            method_node, method_qn, function_registry, start_line, start_col
+        )
+        return cpp_member.qualified_name, cpp_member
+    # TypeScript keeps a type and a same-named value as two nodes (#2520).
+    kind = NodeType.METHOD if language in cs.JS_TS_LANGUAGES else None
+    # A Go method's natural qn is its receiver type's, which each build file
+    # declaring the method again shares (#3360 review).
+    origin = (
+        str(file_path)
+        if language == cs.SupportedLanguage.GO and file_path is not None
+        else None
+    )
+    registered = function_registry.register_unique_qn(
+        method_qn, start_line, start_col, kind=kind, origin=origin
+    )
+    return registered, None
+
+
+def _cpp_member_props(cpp_member: _CppMember | None) -> PropertyDict:
+    if cpp_member is None or cpp_member.signature is None:
+        return {}
+    props: PropertyDict = {cs.KEY_SIGNATURE: cpp_member.signature.text}
+    # Written only by the class body, never as False: node writes merge,
+    # so the definition written after its declaration leaves it standing.
+    if cpp_member.declared_in_class:
+        props[cs.KEY_DECLARED_IN_CLASS] = True
+    return props
+
+
+def _record_member_aliases(
+    method_props: PropertyDict,
+    function_registry: FunctionRegistryTrieProtocol,
+    container_qn: str,
+    method_qn: str,
+    member_aliases: tuple[str, ...],
+) -> None:
+    if not member_aliases:
+        return
+    # Stored on the node so an incremental run that does not re-parse
+    # this file can register the aliases again (issue #2620).
+    method_props[cs.KEY_MEMBER_ALIASES] = list(member_aliases)
+    for alias in member_aliases:
+        function_registry.add_member_alias(
+            f"{container_qn}{cs.SEPARATOR_DOT}{alias}", method_qn
+        )
+
+
 def _method_positional_params_props(
     method_node: ASTNode, language: cs.SupportedLanguage
 ) -> PropertyDict:
@@ -1412,6 +1750,24 @@ def _method_positional_params_props(
 
     declared = declared_positional_params(method_node, language)
     return {} if declared is None else {cs.KEY_POSITIONAL_PARAMS: declared}
+
+
+def _language_method_props(
+    method_node: ASTNode, language: cs.SupportedLanguage
+) -> PropertyDict:
+    """The Method properties only one language records."""
+    if language == cs.SupportedLanguage.CSHARP:
+        # Local import: the C# helpers import this module.
+        from .csharp import utils as csharp_utils
+
+        return csharp_utils.extension_method_props(method_node)
+    if language == cs.SupportedLanguage.JAVA:
+        # Local import: the Java helpers import this module.
+        from .java import utils as java_utils
+
+        if java_utils.is_main_declaration(method_node):
+            return {cs.KEY_IS_PROGRAM_MAIN: True}
+    return {}
 
 
 def ingest_method(
@@ -1435,6 +1791,7 @@ def ingest_method(
     pending_endpoints: list | None = None,
     type_fact_sink: list | None = None,
     parameter_type_sink: list | None = None,
+    member_aliases: tuple[str, ...] = (),
 ) -> str | None:
     # Returns the registered method qn (post register_unique_qn, so with any
     # @line dedup suffix) so a caller can wire further edges to the exact node,
@@ -1451,10 +1808,15 @@ def ingest_method(
     warn_if_name_truncated(method_node, method_name, file_path)
 
     method_qn = method_qualified_name or f"{container_qn}.{method_name}"
-    if language != cs.SupportedLanguage.CPP:
-        method_qn = function_registry.register_unique_qn(
-            method_qn, method_start_line, method_start_col
-        )
+    method_qn, cpp_member = _register_method_qn(
+        method_node,
+        method_qn,
+        language,
+        function_registry,
+        method_start_line,
+        method_start_col,
+        file_path,
+    )
 
     decorators = []
     modifiers = []
@@ -1488,12 +1850,14 @@ def ingest_method(
             file_path, repo_path
         ).as_posix()
         method_props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
+    method_props.update(_cpp_member_props(cpp_member))
     method_props.update(_method_positional_params_props(method_node, language))
     # Local import: type_facts imports this module for safe_decode_with_fallback.
     from .type_facts import extract_type_facts, queue_type_facts, type_facts_props
 
     type_facts = extract_type_facts(method_node, language)
     method_props.update(type_facts_props(type_facts))
+    method_props.update(_language_method_props(method_node, language))
     method_path = method_props.get(cs.KEY_PATH)
     queue_type_facts(
         type_fact_sink,
@@ -1505,10 +1869,14 @@ def ingest_method(
     )
     method_props.update(fingerprint_props(method_node))
     method_props.update(anchor_hash_props(method_node, decorators))
+    method_props.update(decorated_start_props(method_node))
 
     is_property = _method_is_property(method_node, language, decorators)
     if is_property:
         method_props[cs.KEY_IS_PROPERTY] = True
+    _record_member_aliases(
+        method_props, function_registry, container_qn, method_qn, member_aliases
+    )
 
     _record_method_overrides(
         method_props,
@@ -1558,7 +1926,7 @@ def ingest_method(
     function_registry[method_qn] = NodeType.METHOD
     if is_property:
         function_registry.mark_property(method_qn)
-    if _is_abstract_decorator(decorators):
+    if _is_abstract_member(decorators, method_node, language):
         function_registry.mark_abstract(method_qn)
     function_registry.mark_callable_params(
         method_qn, callable_parameter_indices(method_node, language)
@@ -1714,6 +2082,9 @@ def ingest_exported_function(
 
 
 def is_method_node(func_node: ASTNode, lang_config: LanguageSpec) -> bool:
+    if lang_config.language == cs.SupportedLanguage.JULIA:
+        return False
+
     current = func_node.parent
     if not isinstance(current, Node):
         return False
@@ -1952,3 +2323,26 @@ def written_simple_name(name: str) -> str:
     return name.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT).rsplit(
         cs.SEPARATOR_DOT, 1
     )[-1]
+
+
+def method_signature_arity(method_name: str) -> int | None:
+    # Number of top-level parameters in a signatured method name
+    # (`readField(A,JsonReader,BoundField)` -> 3, `create()` -> 0); None when the
+    # name carries no signature (Python/JS methods). Commas inside generics
+    # (`Map<K, V>`) are nested, so only depth-0 commas separate parameters.
+    open_idx = method_name.find(cs.CHAR_PAREN_OPEN)
+    if open_idx < 0:
+        return None
+    inner = method_name[open_idx + 1 : method_name.rfind(cs.CHAR_PAREN_CLOSE)]
+    if not inner.strip():
+        return 0
+    depth = 0
+    count = 1
+    for ch in inner:
+        if ch in "<([":
+            depth += 1
+        elif ch in ">)]":
+            depth -= 1
+        elif ch == "," and depth == 0:
+            count += 1
+    return count

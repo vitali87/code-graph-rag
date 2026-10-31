@@ -110,10 +110,12 @@ def test_delegating_ctor_emits_ctor_call(
     run_updater(temp_repo, mock_ingestor)
 
     calls = _calls(mock_ingestor)
-    assert any(
-        src.endswith(".widget.widget") and dst.endswith(".widget.widget")
-        for src, dst in calls
-    ), calls
+    # The two ctors are overloads, so the delegating `widget()` is its own
+    # `@line` node and its `: widget(0)` fans out to both (issue #2455).
+    project = temp_repo.name
+    assert (f"{project}.w.widget.widget@5", f"{project}.w.widget.widget") in calls, (
+        calls
+    )
 
 
 def test_template_base_member_init_emits_ctor_call(

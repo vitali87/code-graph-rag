@@ -183,6 +183,36 @@ def test_go_capitalized_symbols_are_exported(tmp_path: Path) -> None:
     assert _one(exported, ".internal") is False
 
 
+def test_java_interface_members_are_exported(tmp_path: Path) -> None:
+    if "java" not in load_parsers()[0]:
+        pytest.skip("java parser not available")
+    exported = _run(
+        tmp_path,
+        {
+            "Codec.java": """\
+public interface Codec {
+    String encode(String value);
+    default String encodeTwice(String value) { return encode(encode(value)); }
+    static Codec identity() { return value -> value; }
+    private String helper(String value) { return value; }
+}
+""",
+            "Envelope.java": """\
+public class Envelope {
+    public interface Nested { void run(); }
+    void local() {}
+}
+""",
+        },
+    )
+    assert _one(exported, ".Codec.encode(String)") is True
+    assert _one(exported, ".Codec.encodeTwice(String)") is True
+    assert _one(exported, ".Codec.identity()") is True
+    assert _one(exported, ".Codec.helper(String)") is False
+    assert _one(exported, ".Envelope.Nested.run()") is True
+    assert _one(exported, ".Envelope.local()") is False
+
+
 def test_ts_export_keyword_marks_exported(tmp_path: Path) -> None:
     if "typescript" not in load_parsers()[0]:
         pytest.skip("typescript parser not available")

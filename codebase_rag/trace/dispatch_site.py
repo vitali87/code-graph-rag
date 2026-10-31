@@ -25,7 +25,7 @@ from tree_sitter import Node
 from .. import constants as cs
 from ..language_spec import get_language_for_extension
 from ..parser_loader import load_parsers
-from ..parsers.utils import node_site_properties, safe_decode_text
+from ..parsers.utils import node_site_properties, safe_decode_text, unparenthesized
 from ..types_defs import PropertyDict
 
 # A lambda counts as another callable's body too: the trace resolver drops
@@ -127,7 +127,7 @@ def _computed_lookup_target(node: Node) -> str | None:
     left = node.child_by_field_name(cs.FIELD_LEFT)
     # `fn = (registry[name])` stores the same lookup as the bare form
     # (#1543 review).
-    right = _unparenthesised(node.child_by_field_name(cs.FIELD_RIGHT))
+    right = unparenthesized(node.child_by_field_name(cs.FIELD_RIGHT))
     if left is None or right is None or left.type != cs.TS_PY_IDENTIFIER:
         return None
     if right.type == cs.TS_PY_SUBSCRIPT:
@@ -152,24 +152,10 @@ def _called_identifier(node: Node) -> str | None:
     """The bare name a call invokes (`fn()`), if any."""
     if node.type != cs.TS_PY_CALL:
         return None
-    func = _unparenthesised(node.child_by_field_name(cs.FIELD_FUNCTION))
+    func = unparenthesized(node.child_by_field_name(cs.FIELD_FUNCTION))
     if func is None or func.type != cs.TS_PY_IDENTIFIER:
         return None
     return safe_decode_text(func)
-
-
-def _unparenthesised(func: Node | None) -> Node | None:
-    """The callee under any parentheses: `(fn)()`, `(table[key])()`.
-
-    The call is still of what the parentheses hold, and without the unwrap
-    a stored computed lookup invoked as `(fn)()` was not recognised as a
-    call, and `(registry[name])()` was not recognised as a computed
-    dispatch, so an unrelated invoked literal in the same body could be
-    recorded as the site (#1543 review).
-    """
-    while func is not None and func.type == cs.TS_PARENTHESIZED_EXPRESSION:
-        func = next(iter(func.named_children), None)
-    return func
 
 
 def _is_computed_dispatch(node: Node) -> bool:
@@ -180,7 +166,7 @@ def _is_computed_dispatch(node: Node) -> bool:
     """
     if node.type != cs.TS_PY_CALL:
         return False
-    func = _unparenthesised(node.child_by_field_name(cs.FIELD_FUNCTION))
+    func = unparenthesized(node.child_by_field_name(cs.FIELD_FUNCTION))
     if func is None:
         return False
     if func.type == cs.TS_PY_SUBSCRIPT:

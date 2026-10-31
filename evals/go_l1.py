@@ -28,7 +28,7 @@ def main(
         project_name,
         out_dir,
         available=go_available,
-        oracle_missing=ls.GO_ORACLE_MISSING.format(binary=ec.GO_BIN),
+        oracle_missing=ls.GO_ORACLE_MISSING,
         extract_cgr=extract_cgr_go_graph,
         run_oracle=run_go_oracle,
         oracle_binary=ec.GO_BIN,

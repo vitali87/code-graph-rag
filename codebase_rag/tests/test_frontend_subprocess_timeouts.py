@@ -134,12 +134,13 @@ def test_the_detector_recognises_bounded_and_unbounded_calls() -> None:
 
 
 def test_a_timed_out_go_build_degrades_rather_than_raising(tmp_path: Path) -> None:
-    """A wedged `go build` must return False, not propagate TimeoutExpired.
+    """A wedged `go build` must return None, not propagate TimeoutExpired.
 
     The timeout is only half the fix. Letting TimeoutExpired escape would turn
     a hung toolchain into a FAILED INDEX, which inverts the protocol's
     invariant that a missing toolchain degrades to the tree-sitter backbone and
-    never worse.
+    never worse. None, not False: a timeout says nothing about whether the
+    helper builds, so it is not remembered as a failed build (PR #2417).
     """
     from codebase_rag.parsers.go_frontend import frontend as gof
 
@@ -147,8 +148,7 @@ def test_a_timed_out_go_build_degrades_rather_than_raising(tmp_path: Path) -> No
         gof.subprocess, "run", side_effect=subprocess.TimeoutExpired("go", 1)
     ):
         assert (
-            gof._compile_tool("/usr/bin/go", tmp_path / "src", tmp_path / "out")
-            is False
+            gof._compile_tool("/usr/bin/go", tmp_path / "src", tmp_path / "out") is None
         )
 
 

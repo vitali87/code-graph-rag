@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from pathlib import Path
 
 from loguru import logger
@@ -15,7 +16,9 @@ TARGET_FILES = (
     "docs/guide/mcp-server.md",
     "docs/guide/interactive-querying.md",
     "docs/guide/cli-reference.md",
+    "docs/guide/realtime-updates.md",
     "docs/getting-started/installation.md",
+    "docs/advanced/ignore-patterns.md",
 )
 
 SECTION_PATTERN = re.compile(
@@ -35,6 +38,18 @@ def replace_sections(readme_content: str, sections: dict[str, str]) -> str:
         return match.group(0)
 
     return SECTION_PATTERN.sub(replacer, readme_content)
+
+
+def stale_sections(
+    content: str, sections: dict[str, str], names: Iterable[str]
+) -> list[str]:
+    """The sections among `names` whose text in `content` is not what the
+    generator writes now."""
+    return sorted(
+        name
+        for name in names
+        if replace_sections(content, {name: sections[name]}) != content
+    )
 
 
 def marked_sections(content: str) -> set[str]:

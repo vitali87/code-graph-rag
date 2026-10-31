@@ -1,0 +1,38 @@
+[package]
+name = "cgr_graph_rs"
+version = "0.1.4"
+edition = "2021"
+description = "Native acceleration for code-graph-rag: its embedded graph, and its indexer's tree walks"
+license = "MIT"
+publish = false
+
+[lib]
+name = "cgr_graph_rs"
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# The Python module, built by maturin; `cargo test` leaves it off and so
+# needs no interpreter to link against.
+python = ["dep:pyo3", "pyo3/extension-module"]
+default = []
+
+[dependencies]
+blake2 = "0.11"
+pyo3 = { version = "0.29", features = ["abi3-py312"], optional = true }
+rusqlite = { version = "0.37", features = ["bundled"] }
+sha2 = "0.11"
+# The tree walks (src/trees) read the trees py-tree-sitter built, so this
+# runtime must lay out and walk a tree exactly as the one compiled into the
+# `tree-sitter` wheel cgr pins does: 0.26.8's node, tree, cursor, subtree
+# and language sources are byte-identical to py-tree-sitter 0.26.0's. Bump
+# the two together, as AGENTS.md describes; `TreeBridge` refuses any other
+# py-tree-sitter version, and test_native_trees.py any other pair of pins.
+tree-sitter = "=0.26.8"
+
+[dev-dependencies]
+tree-sitter-python = "=0.25.0"
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
+opt-level = 3

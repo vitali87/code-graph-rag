@@ -23,24 +23,41 @@ jobs:
     # ci.yml mirrors this condition, so both must key on the same field.
     if: github.event_name == 'push' || (github.event.pull_request.user.login != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
-    # The coverage run of the full suite alone takes about 28 min, so a 30 min
-    # cap cut the scan off and the Sonar gate never saw an analysis.
-    timeout-minutes: 50
+    # The coverage run of the full suite alone now takes 26-47 min depending on
+    # the runner, and the scan 2-4 min more, so a 50 min cap cut the scan off
+    # and the Sonar gate never saw an analysis.
+    timeout-minutes: 70
 
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Go
+        # The go/types helper's tests build it with the Go on PATH, and the
+        # runner image's Go is older than the floor in gotypes/go.mod.
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ">=1.27.2"
+          cache-dependency-path: codebase_rag/parsers/go_frontend/gotypes/go.sum
+
+      - name: Key the uv cache on dependencies, not the project version
+        shell: bash
+        run: |
+          awk 'skip && /^version = / { skip = 0; next }
+               { skip = /^name = "code-graph-rag"\r?$/; print }' \
+            uv.lock > "$RUNNER_TEMP/uv-deps.lock"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
-          cache-dependency-glob: "uv.lock"
+          cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
@@ -75,6 +92,6 @@ jobs:
         run: uv run pytest -n auto -m "not integration" --tb=short --cov=codebase_rag --cov-report=xml
 
       - name: SonarCloud Scan
-        uses: SonarSource/sonarqube-scan-action@ba9859eae8dd6bd29e412f25ddbbef3d032000f4 # v8.2.2
+        uses: SonarSource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9 # v8.3.0
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

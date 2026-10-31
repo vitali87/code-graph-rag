@@ -20,6 +20,7 @@ from unittest.mock import patch
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from evals.cgr_graph import _StatefulIngestor
@@ -146,7 +147,9 @@ def test_an_unchanged_survivor_whose_reparse_read_fails_keeps_its_module(
     after = _modules(store)
     assert after.get(header_qn) == "util.h", after
     assert "util.c" in after.values(), after
-    cache = json.loads((root / cs.HASH_CACHE_FILENAME).read_text(encoding="utf-8"))
+    cache = json.loads(
+        state_file(root, cs.HASH_CACHE_FILENAME).read_text(encoding="utf-8")
+    )
     assert cache.get("util.h") == cs.HASH_CACHE_UNREADABLE, cache
 
 
@@ -185,5 +188,7 @@ def test_an_unchanged_unopenable_survivor_is_marked_for_retry(
     ):
         _index(store, root, force=False)
 
-    cache = json.loads((root / cs.HASH_CACHE_FILENAME).read_text(encoding="utf-8"))
+    cache = json.loads(
+        state_file(root, cs.HASH_CACHE_FILENAME).read_text(encoding="utf-8")
+    )
     assert cache.get("util.h") == cs.HASH_CACHE_UNREADABLE, cache

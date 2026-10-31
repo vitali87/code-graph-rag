@@ -18,6 +18,7 @@ from loguru import logger
 
 from codebase_rag import constants as cs
 from codebase_rag.capture import resolve_capture
+from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import (
     CYPHER_PROJECT_MODULES,
     CYPHER_PROJECT_PY_MODULES,
@@ -487,7 +488,7 @@ def test_reingest_removes_the_cache_when_it_cannot_backdate_it(
     store = _StatefulIngestor()
     updater = _updater(store, fixture_root)
     updater.run(force=True)
-    cache = fixture_root / cs.HASH_CACHE_FILENAME
+    cache = state_file(fixture_root, cs.HASH_CACHE_FILENAME)
     changed, deleted = edit_rename_callee(fixture_root)
 
     def failing_utime(path: object, times: object = None, **kwargs: object) -> None:
@@ -508,7 +509,7 @@ def test_reingest_reports_a_cache_it_could_neither_backdate_nor_remove(
     store = _StatefulIngestor()
     updater = _updater(store, fixture_root)
     updater.run(force=True)
-    cache = fixture_root / cs.HASH_CACHE_FILENAME
+    cache = state_file(fixture_root, cs.HASH_CACHE_FILENAME)
     changed, deleted = edit_rename_callee(fixture_root)
 
     def failing_utime(path: object, times: object = None, **kwargs: object) -> None:
@@ -806,7 +807,7 @@ def test_reingest_keeps_the_hash_cache_current(fixture_root: Path) -> None:
     store = _StatefulIngestor()
     updater = _updater(store, fixture_root)
     updater.run(force=True)
-    cache = fixture_root / cs.HASH_CACHE_FILENAME
+    cache = state_file(fixture_root, cs.HASH_CACHE_FILENAME)
     assert cache.is_file()
 
     changed, deleted = edit_add_function_and_call(fixture_root)
@@ -1161,7 +1162,7 @@ def test_reingest_does_not_hide_an_edit_it_was_not_told_about(
     store = _StatefulIngestor()
     updater = _updater(store, fixture_root)
     updater.run(force=True)
-    cache = fixture_root / cs.HASH_CACHE_FILENAME
+    cache = state_file(fixture_root, cs.HASH_CACHE_FILENAME)
     stamped_before = cache.stat().st_mtime
 
     # Both edits land after the cache was stamped; only one is reported.
@@ -1238,7 +1239,7 @@ def test_reingest_skips_paths_the_ignore_rules_exclude(
     assert report.affected == ()
     assert report.removed == ()
     assert _snapshot(store) == before
-    cache = json.loads((fixture_root / cs.HASH_CACHE_FILENAME).read_text())
+    cache = json.loads(state_file(fixture_root, cs.HASH_CACHE_FILENAME).read_text())
     assert rel not in cache
 
 

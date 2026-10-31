@@ -27,7 +27,7 @@ import pytest
 
 from codebase_rag.constants import EventType
 from codebase_rag.graph_updater import ReingestAborted
-from realtime_updater import CodeChangeEventHandler
+from codebase_rag.watch import CodeChangeEventHandler
 
 
 class _Event:
@@ -43,6 +43,8 @@ class _Event:
 def updater() -> MagicMock:
     mock = MagicMock()
     mock.repo_path = Path("/repo")
+    # A full run takes the checkout's sync lock under the project's name.
+    mock.project_name = "repo"
     # A real updater always carries both sets, as None when unconfigured.
     mock.exclude_paths = None
     mock.unignore_paths = None

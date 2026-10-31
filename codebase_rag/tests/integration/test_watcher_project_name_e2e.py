@@ -1,9 +1,10 @@
-"""Issue #2432 against a real Memgraph: `cgr start`, then the watcher, one project.
+"""Issue #2432 against a real Memgraph: `cgr start`, then `cgr watch`, one project.
 
 The reproduction from the issue: sync a checkout with `cgr start
 --update-graph`, start the watcher on it, edit a file. The watcher used to
 re-index the checkout into a second project named after the bare directory
-and apply the edit there, so `cgr start`'s project never saw it.
+and apply the edit there, so `cgr start`'s project never saw it. The watcher
+runs as the shipped `cgr watch` command (issue #2433).
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ import pytest
 from typer.testing import CliRunner
 from watchdog.events import FileModifiedEvent
 
-import realtime_updater
+from codebase_rag import watch
 from codebase_rag.cli import app
 from codebase_rag.services.graph_service import MemgraphIngestor
 from codebase_rag.utils.path_utils import derive_project_name
@@ -39,13 +40,11 @@ def test_the_watchers_edit_reaches_the_project_cgr_start_synced(
     source = shop / "m.py"
     source.write_text("def a():\n    return 1\n", encoding="utf-8")
 
+    def connect(batch_size: int) -> MemgraphIngestor:
+        return MemgraphIngestor(host=host, port=port, batch_size=batch_size)
+
     with (
-        patch(
-            "codebase_rag.cli.connect_memgraph",
-            lambda batch_size: MemgraphIngestor(
-                host=host, port=port, batch_size=batch_size
-            ),
-        ),
+        patch("codebase_rag.cli.connect_memgraph", connect),
         patch("codebase_rag.cli._update_and_validate_models"),
     ):
         synced = runner.invoke(
@@ -73,11 +72,16 @@ def test_the_watchers_edit_reaches_the_project_cgr_start_synced(
         handler.dispatch(FileModifiedEvent(str(source)))
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(realtime_updater, "Observer", observer_cls)
+    monkeypatch.setattr(watch, "connect_memgraph", connect)
+    monkeypatch.setattr(watch, "Observer", observer_cls)
     monkeypatch.setattr(
-        realtime_updater, "time", SimpleNamespace(sleep=edit_then_stop, time=time.time)
+        watch, "time", SimpleNamespace(sleep=edit_then_stop, time=time.time)
     )
-    realtime_updater.start_watcher(str(shop), host, port, debounce_seconds=0)
+    watched = runner.invoke(
+        app,
+        ["watch", "--repo-path", str(shop), "--debounce", "0", "--no-start-stack"],
+    )
+    assert watched.exit_code == 0, watched.output
 
     project = derive_project_name(shop)
     projects = memgraph_ingestor.fetch_all(

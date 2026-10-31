@@ -1,3 +1,5 @@
+from collections.abc import Iterator
+
 from tree_sitter import Node
 
 from ... import constants as cs
@@ -30,6 +32,129 @@ def build_qualified_name(node: Node, module_qn: str, name: str) -> str:
     if path_parts:
         return cs.SEPARATOR_DOT.join([module_qn, *path_parts, name])
     return cs.SEPARATOR_DOT.join([module_qn, name])
+
+
+def type_name_text(name_node: Node) -> str | None:
+    """The single-line name a class's `name` node spells (issue #2434).
+
+    A specialization is named by a `template_type` (`Box<T*, int>`) whose
+    raw text keeps the source's line breaks, indentation and comments, so a
+    reformat renamed the node. It is rendered from its tokens instead: one
+    space after each comma, between two words the source kept apart, and
+    between two tokens that written together would lex as others
+    (`a + ++b` is not `a+++b`, which reads `a++ + b`), none elsewhere. A `.`
+    in the arguments (`decltype(x.data())`, `Ts...`) would read as a
+    qualified-name separator, so it becomes CPP_TEMPLATE_ARG_DOT. A plain
+    identifier is its own text.
+    """
+    if name_node.child_count == 0:
+        return safe_decode_text(name_node)
+    parts: list[str] = []
+    previous: Node | None = None
+    for token in _name_tokens(name_node):
+        text = _token_text(token)
+        if not text:
+            continue
+        if previous is not None and _keeps_apart(previous, parts[-1], token, text):
+            parts.append(cs.CHAR_SPACE)
+        parts.append(text)
+        previous = token
+    name = "".join(parts)
+    return name.replace(cs.SEPARATOR_DOT, cs.CPP_TEMPLATE_ARG_DOT) or None
+
+
+def _keeps_apart(previous: Node, previous_text: str, token: Node, text: str) -> bool:
+    if previous_text == cs.CHAR_COMMA:
+        return True
+    if _is_word_char(previous_text[-1]) and _is_word_char(text[0]):
+        return token.start_byte > previous.end_byte
+    if _joins_template_lists(previous, token, text):
+        return False
+    # Maximal munch: written together, the two would lex as other tokens
+    # (review of PR 3356).
+    return _spells_punctuator(previous_text, text) or _continues_pp_number(
+        previous, previous_text, text
+    )
+
+
+def _joins_template_lists(previous: Node, token: Node, text: str) -> bool:
+    # Two template-list delimiters (`A<B<C>>` closes two lists however the
+    # source spaced it), or a list's `<` before a leading `::` (`A<::T>`),
+    # read as written. Any other `>` or `<` is an operator and is kept apart.
+    return _is_template_delimiter(previous) and (
+        _is_template_delimiter(token) or text == cs.SEPARATOR_DOUBLE_COLON
+    )
+
+
+def _is_template_delimiter(token: Node) -> bool:
+    parent = token.parent
+    return (
+        token.type in cs.CPP_TEMPLATE_LIST_DELIMITERS
+        and parent is not None
+        and parent.type in cs.CPP_TEMPLATE_LIST_TYPES
+    )
+
+
+def _spells_punctuator(left: str, right: str) -> bool:
+    # An end of `left` and a start of `right` spell a multi-character
+    # punctuator or comment opener (`+` `++`, `<=` `>`), or `right` begins
+    # its rest (`.` `.` before a third `.`).
+    return any(
+        left.endswith(punctuator[:cut])
+        and (right.startswith(punctuator[cut:]) or punctuator[cut:].startswith(right))
+        for punctuator in cs.CPP_MULTI_CHAR_PUNCTUATORS
+        for cut in range(1, len(punctuator))
+    )
+
+
+def _continues_pp_number(previous: Node, previous_text: str, text: str) -> bool:
+    # `0x1E` then `+1` would lex as the one preprocessing number `0x1E+1`.
+    return (
+        previous.type in cs.CPP_PP_NUMBER_TOKEN_TYPES
+        and previous_text[-1] in cs.CPP_PP_NUMBER_EXPONENTS
+        and text[0] in cs.CPP_PP_NUMBER_SIGNS
+    )
+
+
+def _token_text(token: Node) -> str:
+    raw = safe_decode_text(token) or ""
+    if token.type in cs.CPP_LITERAL_ARGUMENT_TYPES:
+        # Its spaces are part of the argument's value; only a line break or
+        # tab is escaped, to keep the name on one line. A raw literal's own
+        # backslashes are escaped first, so `R"(a\nb)"` and a raw literal
+        # holding a real line break stay two names.
+        if token.type == cs.TS_CPP_RAW_STRING_LITERAL:
+            # A CRLF checkout's line break is the same one new-line as an LF
+            # checkout's (translation phase 1), so both give one name.
+            raw = raw.replace(cs.CPP_SOURCE_CRLF, cs.CPP_SOURCE_NEWLINE).replace(
+                cs.CPP_LITERAL_BACKSLASH, cs.CPP_LITERAL_ESCAPED_BACKSLASH
+            )
+        # A dot leader the literal already holds is written as its escape, so
+        # it never reads as a `.` that CPP_TEMPLATE_ARG_DOT stands in for.
+        raw = raw.replace(cs.CPP_TEMPLATE_ARG_DOT, cs.CPP_TEMPLATE_ARG_DOT_ESCAPE)
+        return raw.translate(_LITERAL_LINE_ESCAPES)
+    return cs.CHAR_SPACE.join(raw.split())
+
+
+_LITERAL_LINE_ESCAPES = str.maketrans(cs.CPP_LITERAL_LINE_ESCAPES)
+
+
+def _name_tokens(node: Node) -> Iterator[Node]:
+    # The leaves under `node` in source order, comments left out; a literal
+    # argument is one token, kept whole.
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        if current.type == cs.TS_COMMENT:
+            continue
+        if current.child_count == 0 or current.type in cs.CPP_LITERAL_ARGUMENT_TYPES:
+            yield current
+        else:
+            stack.extend(reversed(current.children))
+
+
+def _is_word_char(char: str) -> bool:
+    return char.isalnum() or char == cs.CHAR_UNDERSCORE
 
 
 def extract_namespace_path(node: Node) -> list[str]:

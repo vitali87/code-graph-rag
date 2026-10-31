@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import subprocess
-import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -178,49 +176,25 @@ class TestBuildBinaryCommand:
 
         assert "'readline'" in spec.read_text(encoding="utf-8")
 
-    def test_excludes_sqlite3_from_the_bundle(self) -> None:
-        """filelock 3.32 imports `sqlite3` for its read-write locks.
+    def test_bundles_sqlite3(self) -> None:
+        """The embedded graph, the default backend, is a SQLite file.
 
-        Collecting it put `libsqlite3.so.0` / `sqlite3.dll` in the binary,
-        which the third-party notice step refuses as an unlicensed library.
+        The module was once excluded because filelock's import of it bundled
+        `libsqlite3` with no licence entry; a frozen CLI without it failed on
+        `--help`, since graph_service imports sqlite3 at load. The library
+        now has a notice entry instead (test_third_party_notices).
         """
         with patch("build_binary.subprocess.run") as mock_run:
             build_binary()
 
         cmd = mock_run.call_args.args[0]
         exclude_pair = [cs.PYINSTALLER_ARG_EXCLUDE_MODULE, "sqlite3"]
-        assert any(cmd[i : i + 2] == exclude_pair for i in range(len(cmd) - 1)), cmd
+        assert not any(cmd[i : i + 2] == exclude_pair for i in range(len(cmd) - 1)), cmd
 
-    def test_darwin_spec_excludes_sqlite3_too(self) -> None:
+    def test_darwin_spec_bundles_sqlite3_too(self) -> None:
         spec = Path(__file__).resolve().parents[2] / "code-graph-rag-darwin-arm64.spec"
 
-        assert "'sqlite3'" in spec.read_text(encoding="utf-8")
-
-    def test_filelock_still_locks_when_sqlite3_is_unavailable(
-        self, tmp_path: Path
-    ) -> None:
-        """Excluding `sqlite3` must not break filelock, which the binary uses.
-
-        `ReadWriteLock is None` is the known positive that the import was
-        really blocked; with sqlite3 present it is a class.
-        """
-        script = (
-            "import sys\n"
-            "sys.modules['sqlite3'] = None\n"
-            "import filelock\n"
-            "assert filelock.ReadWriteLock is None, filelock.ReadWriteLock\n"
-            "with filelock.FileLock(sys.argv[1]):\n"
-            "    print('locked')\n"
-        )
-        result = subprocess.run(
-            [sys.executable, "-c", script, str(tmp_path / "x.lock")],
-            capture_output=True,
-            encoding=cs.ENCODING_UTF8,
-            check=False,
-        )
-
-        assert result.returncode == 0, result.stderr
-        assert result.stdout.strip() == "locked"
+        assert "'sqlite3'" not in spec.read_text(encoding="utf-8")
 
 
 class TestForbiddenBundleEntries:

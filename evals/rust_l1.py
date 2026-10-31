@@ -28,7 +28,7 @@ def main(
         project_name,
         out_dir,
         available=rust_available,
-        oracle_missing=ls.RS_ORACLE_MISSING.format(binary=ec.CARGO_BIN),
+        oracle_missing=ls.RS_ORACLE_MISSING,
         extract_cgr=extract_cgr_rust_graph,
         run_oracle=run_rust_oracle,
         oracle_binary=ec.CARGO_BIN,

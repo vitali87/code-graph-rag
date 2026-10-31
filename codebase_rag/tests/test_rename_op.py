@@ -18,19 +18,26 @@ from codebase_rag.editing.rename import RenameRefused, rename
 from codebase_rag.tests.conftest import create_and_run_updater
 from codebase_rag.types_defs import PropertyDict, ResultRow
 
+# Every index here reads the fingerprint's tool and grammar versions once
+# per session (conftest).
+pytestmark = pytest.mark.usefixtures("fingerprint_inputs_once_per_session")
+
 
 class RecordedGraph:
     """The fixed queries answered from what the indexer emitted."""
 
     def __init__(self, mock: MagicMock, project: str) -> None:
         self.nodes: dict[str, dict] = {}
+        # Every label written under a qn: a TS type and a same-named value
+        # are two nodes sharing it (#2520), merged in `nodes`.
+        self.labels: dict[str, set[str]] = {}
         self.edges: list[tuple[str, str, str, dict]] = []
         for c in mock.ensure_node_batch.call_args_list:
             props = dict(c.args[1])
             props[cs.KEY_LABEL] = str(c.args[0])
-            self.nodes.setdefault(str(props.get(cs.KEY_QUALIFIED_NAME, "")), {}).update(
-                props
-            )
+            node_qn = str(props.get(cs.KEY_QUALIFIED_NAME, ""))
+            self.labels.setdefault(node_qn, set()).add(props[cs.KEY_LABEL])
+            self.nodes.setdefault(node_qn, {}).update(props)
         for c in mock.ensure_relationship_batch.call_args_list:
             props = (
                 c.kwargs.get("properties")
@@ -55,6 +62,8 @@ class RecordedGraph:
             cs.KEY_DOCSTRING: n.get(cs.KEY_DOCSTRING),
             cs.KEY_NAME_START_LINE: n.get(cs.KEY_NAME_START_LINE),
             cs.KEY_NAME_START_COL: n.get(cs.KEY_NAME_START_COL),
+            cs.KEY_DECORATED_START_LINE: n.get(cs.KEY_DECORATED_START_LINE),
+            cs.KEY_DECORATORS: n.get(cs.KEY_DECORATORS),
         }
 
     def fetch_all(
@@ -72,6 +81,23 @@ class RecordedGraph:
             return []
         if query == cq.CYPHER_GRAPH_DEFINITION:
             return [self._node_row(qn)] if qn in self.nodes else []
+        if query == cq.CYPHER_GRAPH_RESOLVE_NAME:
+            # The rename's cross-check asks for the symbol's namesakes, whose
+            # sites are theirs and not unplanned occurrences (issue #2564).
+            prefix = str(p.get(cs.KEY_PROJECT_PREFIX, ""))
+            suffix = str(p.get(cs.KEY_SUFFIX, ""))
+            labels = {label.value for label in cs.DEFINITION_NODE_LABELS}
+            return [
+                self._node_row(name)
+                for name, node in self.nodes.items()
+                if name.startswith(prefix)
+                and node[cs.KEY_LABEL] in labels
+                and (
+                    name == qn
+                    or name.endswith(suffix)
+                    or node.get(cs.KEY_NAME) == p.get(cs.KEY_NAME)
+                )
+            ]
         if query in (
             cq.CYPHER_GRAPH_CALLERS,
             cq.CYPHER_GRAPH_REFERENCES,
@@ -82,9 +108,13 @@ class RecordedGraph:
                 cq.CYPHER_GRAPH_REFERENCES: {"REFERENCES", "INSTANTIATES"},
                 cq.CYPHER_GRAPH_TYPE_EDGES: {"INHERITS", "ACCEPTS", "RETURNS"},
             }[query]
+            # `$label IN labels(target)`: the twin-aware reads scope to one.
+            label = p.get(cs.KEY_LABEL)
             out: list[ResultRow] = []
             for src, rel, dst, props in self.edges:
                 if dst != qn or rel not in rels or src not in self.nodes:
+                    continue
+                if label is not None and label not in self.labels.get(dst, set()):
                     continue
                 out.append(
                     {
@@ -107,9 +137,20 @@ class RecordedGraph:
                     }
                 )
             return out
+        if query == cq.CYPHER_GRAPH_IMPLEMENTORS:
+            return [
+                {
+                    cs.KEY_LABEL: self.nodes[src][cs.KEY_LABEL],
+                    cs.KEY_QUALIFIED_NAME: src,
+                    cs.KEY_PATH: self.nodes[src].get(cs.KEY_PATH),
+                    cs.KEY_REL_TYPE: rel,
+                }
+                for src, rel, dst, _props in self.edges
+                if dst == qn and rel in ("INHERITS", "IMPLEMENTS") and src in self.nodes
+            ]
         if query == cq.CYPHER_GRAPH_OVERRIDES:
             out = []
-            for src, rel, dst, _props in self.edges:
+            for src, rel, dst, props in self.edges:
                 if rel != "OVERRIDES":
                     continue
                 for a, b in ((src, dst), (dst, src)):
@@ -120,6 +161,7 @@ class RecordedGraph:
                                 cs.KEY_QUALIFIED_NAME: a,
                                 cs.KEY_PATH: self.nodes[a].get(cs.KEY_PATH),
                                 cs.KEY_REL_TYPE: rel,
+                                cs.KEY_RESOLUTION: props.get(cs.KEY_RESOLUTION),
                             }
                         )
             return out
@@ -146,6 +188,40 @@ class RecordedGraph:
                     }
                 )
             return out
+        if query == cq.CYPHER_GRAPH_GO_IMPLEMENTERS_UNKNOWN:
+            prefix = str(p.get(cs.KEY_PROJECT_PREFIX, ""))
+            marked = sorted(
+                {
+                    src
+                    for src, rel, dst, _props in self.edges
+                    if rel == "DEFINES_METHOD"
+                    and self.nodes.get(dst, {}).get(cs.KEY_NAME) == p.get(cs.KEY_NAME)
+                    and src.startswith(prefix)
+                    and "Interface" in self.labels.get(src, set())
+                    and self.nodes[src].get(cs.KEY_IMPLEMENTERS_UNKNOWN)
+                }
+            )
+            return [
+                {
+                    cs.KEY_QUALIFIED_NAME: src,
+                    cs.KEY_PATH: self.nodes[src].get(cs.KEY_PATH),
+                    cs.KEY_IMPLEMENTERS_UNKNOWN: self.nodes[src].get(
+                        cs.KEY_IMPLEMENTERS_UNKNOWN
+                    ),
+                }
+                for src in marked
+            ]
+        if query == cq.CYPHER_GRAPH_CALLBACK_SITES:
+            return [
+                {
+                    cs.KEY_QUALIFIED_NAME: src,
+                    cs.KEY_LINE: props.get(cs.KEY_LINE),
+                    cs.KEY_COL: props.get(cs.KEY_COL),
+                    cs.KEY_VIA_PARAM: props[cs.KEY_VIA_PARAM],
+                }
+                for src, rel, dst, props in self.edges
+                if rel == "CALLS" and dst == qn and props.get(cs.KEY_VIA_PARAM)
+            ]
         raise AssertionError(f"unexpected query: {query[:50]}")
 
 
@@ -188,6 +264,46 @@ def _smoke(root: Path) -> None:
         check=False,
     )
     assert result.returncode == 0, result.stderr
+
+
+DECORATED = (
+    "def register(**kw):\n"
+    "    def deco(fn):\n"
+    "        return fn\n"
+    "\n"
+    "    return deco\n"
+    "\n"
+    "\n"
+    "@register(fetch=1)\n"
+    "def fetch(url):\n"
+    "    return url\n"
+)
+
+
+@pytest.mark.parametrize("grammar", [True, False])
+def test_a_decorated_definition_renames_its_def_token_not_the_decorator(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    grammar: bool,
+) -> None:
+    """The definition span opens at the first decorator (issue #2428), and a
+    decorator can spell the old name; the name token is still the one on the
+    `def` line, with a grammar or through the whole-word fallback."""
+    _write(temp_repo, "mod.py", DECORATED)
+    graph = _index(temp_repo, mock_ingestor)
+    if not grammar:
+        monkeypatch.setattr(
+            "codebase_rag.editing.rename.get_language_for_extension",
+            lambda _suffix: None,
+        )
+    report = rename(
+        temp_repo, graph.fetch_all, graph.project, f"{graph.project}.mod.fetch", "load"
+    )
+    assert report.applied, report.message
+    assert (temp_repo / "mod.py").read_text(encoding="utf-8") == DECORATED.replace(
+        "def fetch(url):", "def load(url):"
+    )
 
 
 def test_markdown_mentions_of_the_old_name_are_reported(
@@ -485,6 +601,7 @@ def test_typescript_rename(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     assert "h(1, 2) + assist(3, 4)" in app
 
 
+@pytest.mark.usefixtures("one_go_helper_per_session")
 def test_go_rename(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     _write(temp_repo, "go.mod", "module app\n\ngo 1.21\n")
     _write(
@@ -925,6 +1042,64 @@ def test_an_unrecorded_chain_link_is_renamed_only_as_a_guess(
     )
     calls = sorted((s.col, s.resolution) for s in report.sites if s.kind == "call")
     assert calls == [(15, "exact"), (25, "chain")]
+
+
+def test_a_multi_line_chain_is_renamed_link_by_link(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Each link's row starts at its own name (issue #3166); rename still
+    # finds every link, exact, and leaves the receiver alone.
+    _write(
+        temp_repo,
+        "pkg/fluent.py",
+        FLUENT.format(annotation=": Fluent").replace(
+            "return obj.helper(1).helper(2)",
+            "return (\n        obj.helper(1)\n        .helper(2)\n    )",
+        ),
+    )
+    graph = _index(temp_repo, mock_ingestor)
+    report = rename(
+        temp_repo,
+        graph.fetch_all,
+        graph.project,
+        f"{graph.project}.pkg.fluent.Fluent.helper",
+        "assist",
+    )
+    assert report.applied, report.message
+    assert (
+        "obj.assist(1)\n        .assist(2)"
+        in (temp_repo / "pkg" / "fluent.py").read_text()
+    )
+    calls = sorted(
+        (s.line, s.col, s.resolution) for s in report.sites if s.kind == "call"
+    )
+    assert calls == [(9, 12, "exact"), (10, 9, "exact")]
+
+
+def test_a_member_call_whose_argument_spells_the_name_renames_the_call(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The site starts at `helper` (issue #3166) and runs to the call's end;
+    # the token is still the callee's, not the `"helper"` in its arguments.
+    _write(
+        temp_repo,
+        "pkg/fluent.py",
+        FLUENT.format(annotation=": Fluent").replace(
+            "return obj.helper(1).helper(2)", 'return obj.helper("helper")'
+        ),
+    )
+    graph = _index(temp_repo, mock_ingestor)
+    report = rename(
+        temp_repo,
+        graph.fetch_all,
+        graph.project,
+        f"{graph.project}.pkg.fluent.Fluent.helper",
+        "assist",
+    )
+    assert report.applied, report.message
+    assert (
+        'return obj.assist("helper")' in (temp_repo / "pkg" / "fluent.py").read_text()
+    )
 
 
 def test_a_siteless_heuristic_call_refuses_even_with_allow_heuristic(

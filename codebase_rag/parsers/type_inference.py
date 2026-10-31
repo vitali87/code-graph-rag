@@ -19,13 +19,16 @@ from .csharp_frontend import CallSiteKey
 from .dart.type_inference import DartTypeInferenceEngine
 from .frontends.protocol import ResolvedCallSite
 from .go import GoTypeInferenceEngine
+from .go import utils as go_utils
 from .import_processor import ImportProcessor
 from .java import JavaTypeInferenceEngine
 from .js_ts import JsTypeInferenceEngine
+from .js_ts import utils as js_ts_utils
 from .lua import LuaTypeInferenceEngine
 from .py import PythonTypeInferenceEngine, resolve_class_name
 from .rs import RustTypeInferenceEngine
 from .rs import utils as rs_utils
+from .rs.type_inference import is_constructor_guess
 from .utils import follow_reexports
 
 if TYPE_CHECKING:
@@ -55,6 +58,8 @@ class TypeInferenceEngine:
         "class_field_element_types",
         "method_return_types",
         "go_function_return_types",
+        "go_package_names",
+        "go_declaration_variants",
         "go_call_sites",
         "go_external_sites",
         "java_call_sites",
@@ -109,6 +114,8 @@ class TypeInferenceEngine:
         class_field_element_types: dict[str, dict[str, str]] | None = None,
         method_return_types: dict[str, str] | None = None,
         go_function_return_types: dict[str, str] | None = None,
+        go_package_names: dict[str, str] | None = None,
+        go_declaration_variants: dict[str, tuple[str, ...]] | None = None,
         go_call_sites: dict[CallSiteKey, ResolvedCallSite] | None = None,
         go_external_sites: set[CallSiteKey] | None = None,
         java_call_sites: dict[CallSiteKey, ResolvedCallSite] | None = None,
@@ -166,6 +173,14 @@ class TypeInferenceEngine:
         # Shared reference (as with class_field_types): Go free-fn qn ->
         # FIRST return type, read only by the single-segment binding path.
         self.go_function_return_types = _shared(go_function_return_types, dict)
+        # Shared reference (as with class_field_types): each Go file module's
+        # `package` clause, recorded as the file is parsed. A directory can
+        # hold two packages, `p` and the external test package `p_test`, so
+        # the free-function index keys by both (#2616 review).
+        self.go_package_names = _shared(go_package_names, dict)
+        # Go interface -> the declarations of its name each build makes
+        # (shared, filled by the interface link before any call is typed).
+        self.go_declaration_variants = _shared(go_declaration_variants, dict)
         # Shared references (as with csharp_call_sites): the go/types call-site
         # facts and external sites, populated after construction and read by the
         # Go resolver's semantic path (issue #1179).
@@ -177,7 +192,12 @@ class TypeInferenceEngine:
         # external proofs (issue #1183), populated after construction.
         self.python_call_sites = _shared(python_call_sites, dict)
         self.python_external_sites = _shared(python_external_sites, set)
-        self._go_free_fn_index: dict[tuple[str, str], str] = {}
+        # (directory package, name) -> {(file's `package` clause, None when
+        # unrecorded; whether the file is the external test package): the
+        # return types its functions of that name declare}.
+        self._go_free_fn_index: dict[
+            tuple[str, str], dict[tuple[str | None, bool], set[str]]
+        ] = {}
         self._go_free_fn_index_size = -1
         # Shared reference (as with class_field_types): C# partial-class part
         # groups, populated during ingestion and read by the C# resolver to
@@ -387,6 +407,8 @@ class TypeInferenceEngine:
         local = self._build_local_variable_type_map(
             caller_node, module_qn, language, class_context
         )
+        if language == cs.SupportedLanguage.GO:
+            self._resolve_go_qualified_locals(module_qn, local)
         # When the caller is a method, overlay its class's member-field types as a
         # base so a bare `field_.method()` receiver resolves; a same-named parameter
         # or local shadows a field, so the local map wins on conflict.
@@ -418,6 +440,73 @@ class TypeInferenceEngine:
         elif language == cs.SupportedLanguage.DART:
             self._enrich_dart_call_locals(caller_node, local)
         return local
+
+    def collect_go_span_bindings(
+        self,
+        caller_node: ASTNode,
+        module_qn: str,
+        var_types: dict[str, str] | None = None,
+    ) -> list[tuple[int, int, str, str]]:
+        """Go range variables and the locals shadowing them (issue #2483),
+        each typed as the resolver reads it in `module_qn`. A local bound to
+        a call (`s := makeOther()`) takes the call's return type, as the flat
+        map's does. A qualified `geo.Shape` is the type of the package this
+        file imports as `geo`. One naming no indexed type (an external
+        package's), or no type at all, stays a binding, untyped: its bare
+        name would bind whatever this package calls Shape, and dropping it
+        would let an outer declaration of the name answer for it."""
+        engine = self.go_type_inference
+
+        def value_type(value: ASTNode) -> str | None:
+            if (typed := engine.infer_value_type(value)) is not None:
+                return typed
+            segments = (
+                engine.callee_segments(value)
+                if value.type == cs.TS_GO_CALL_EXPRESSION
+                else None
+            )
+            return (
+                self._infer_go_call_return_type(segments, module_qn, var_types or {})
+                if segments
+                else None
+            )
+
+        return [
+            (start, end, name, self._go_span_type(type_name, module_qn))
+            for start, end, name, type_name in engine.collect_range_span_bindings(
+                caller_node, value_type
+            )
+        ]
+
+    def _go_span_type(self, type_name: str, module_qn: str) -> str:
+        # A qn a call's return type resolved to already is one; a written type
+        # resolves through this file's imports.
+        if not type_name:
+            return cs.GO_UNTYPED_BINDING
+        if type_name in self.function_registry:
+            return type_name
+        return self._go_written_type(type_name, module_qn) or cs.GO_UNTYPED_BINDING
+
+    def _resolve_go_qualified_locals(
+        self, module_qn: str, var_types: dict[str, str]
+    ) -> None:
+        # A local declared with another package's type (`s geo.Shape`) is that
+        # package's type, not whatever this package calls Shape (issue #2483).
+        # One this index cannot place (an external package's) keeps the bare
+        # name the walker gave it before.
+        for name, type_name in var_types.items():
+            if cs.SEPARATOR_DOT in type_name:
+                var_types[name] = (
+                    self._go_written_type(type_name, module_qn)
+                    or type_name.rpartition(cs.SEPARATOR_DOT)[2]
+                )
+
+    def _go_written_type(self, type_name: str, module_qn: str) -> str | None:
+        qualifier, _, name = type_name.rpartition(cs.SEPARATOR_DOT)
+        if not qualifier:
+            return type_name
+        package_qn = self._go_imported_package(qualifier, module_qn)
+        return self._go_type_in_package(package_qn, name) if package_qn else None
 
     def collect_rust_span_bindings(
         self, caller_node: ASTNode, module_qn: str, class_context: str | None
@@ -571,11 +660,23 @@ class TypeInferenceEngine:
         # Resolves the callee selector hop by hop: base local type, struct-field
         # types for middle hops, then the final method's recorded return type. Only
         # fills names not already typed.
-        for name, segments in self.go_type_inference.collect_call_var_bindings(
-            caller_node
-        ):
+        scopes: go_utils.GoLocalScopes | None = None
+        for (
+            name,
+            segments,
+            call_point,
+        ) in self.go_type_inference.collect_call_var_bindings(caller_node):
             if name in var_types:
                 continue
+            if len(segments) == 2 and not var_types.get(segments[0]):
+                # `r := router.New()` where a local `router` the walker could
+                # not type is in scope calls that local's method: the import it
+                # hides says nothing about `r` (#2616 review). A local declared
+                # only after the call, or in a block already closed, hides
+                # nothing there.
+                scopes = scopes or go_utils.local_binding_scopes(caller_node)
+                if go_utils.bound_at(scopes, segments[0], call_point):
+                    continue
             if return_type := self._infer_go_call_return_type(
                 segments, module_qn, var_types
             ):
@@ -595,6 +696,10 @@ class TypeInferenceEngine:
             return None
         base_type = var_types.get(segments[0])
         if not base_type:
+            if len(segments) == 2:
+                return self._go_package_call_return_type(
+                    segments[0], segments[1], module_qn
+                )
             return None
         class_qn = self._resolve_class_name(base_type, module_qn) or base_type
         for field in segments[1:-1]:
@@ -694,6 +799,61 @@ class TypeInferenceEngine:
         # INSTANTIATES on a call that now reaches a static factory (#2012).
         self.dart_constructor_qns.difference_update(qns)
 
+    def js_callable_return_type(self, callable_qn: str, static: bool) -> str | None:
+        """The class a JS/TS method or function returns, read in its own file.
+
+        Unlike the languages that record a hop's return in
+        `method_return_types` as they ingest, TS needs its whole module scope
+        (imports included) to say which class a return names (issue #2468).
+        A method is found through its class's own qn path (a namespace, a
+        function or a method may hold the class); only a module-level
+        function is read. `static` picks a class's static member over an
+        instance one of the same name.
+        """
+        kind = self.function_registry.get(callable_qn)
+        if (
+            kind not in (NodeType.METHOD, NodeType.FUNCTION)
+            or (located := self._js_qn_path(callable_qn)) is None
+        ):
+            return None
+        root, language, module_qn, path = located
+        # A method's path holds its class; a function is read at module level.
+        if (kind == NodeType.FUNCTION) != (len(path) == 1):
+            return None
+        return self.js_type_inference.callable_return_type(
+            root, path, module_qn, language, static
+        )
+
+    def js_static_member(
+        self, class_qn: str, member_name: str
+    ) -> tuple[bool, int | None]:
+        """Whether a JS/TS class declares a static `member_name`, and its
+        method's line (see `JsTypeInferenceEngine.static_member`)."""
+        located = self._js_qn_path(class_qn)
+        body = (
+            js_ts_utils.find_class_body_at(located[0], located[3]) if located else None
+        )
+        if body is None:
+            return False, None
+        return self.js_type_inference.static_member(body, member_name)
+
+    def _js_qn_path(
+        self, qualified_name: str
+    ) -> tuple[ASTNode, cs.SupportedLanguage, str, list[str]] | None:
+        """The parsed JS/TS module a qn lives in (the longest prefix naming
+        one), and the qn's segments below it."""
+        module_qn = qualified_name
+        while cs.SEPARATOR_DOT in module_qn:
+            module_qn = module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+            if (file_path := self.module_qn_to_file_path.get(module_qn)) is None:
+                continue
+            entry = self.ast_cache.load(file_path)
+            if entry is None or entry[1] not in cs.JS_TS_LANGUAGES:
+                return None
+            path = qualified_name[len(module_qn) + 1 :].split(cs.SEPARATOR_DOT)
+            return entry[0], entry[1], module_qn, path
+        return None
+
     def _go_free_fn_return_type(self, name: str, module_qn: str) -> str | None:
         # Same module (file) first; then the enclosing package's sibling files
         # (same parent dir), since Go free functions are package-scoped, not
@@ -706,16 +866,117 @@ class TypeInferenceEngine:
             return hit
         if cs.SEPARATOR_DOT not in module_qn:
             return None
+        clause = self.go_package_names.get(module_qn)
+        return self._go_package_fn_return_type(
+            self._go_file_package(module_qn),
+            name,
+            lambda other, _external: go_utils.shares_package_clause(clause, other),
+        )
+
+    def _go_file_package(self, module_qn: str) -> str:
+        return go_utils.file_package_qn(
+            module_qn,
+            self.module_qn_to_file_path.get(module_qn),
+            self.repo_path,
+            self.project_name,
+        )
+
+    def _go_package_fn_return_type(
+        self,
+        package_qn: str,
+        name: str,
+        admits: Callable[[str | None, bool], bool],
+    ) -> str | None:
+        # The one return type the package's functions named `name` declare, or
+        # None when they disagree: build-tag variants (`router_linux.go`,
+        # `router_windows.go`) each declare it, and neither variant's type is
+        # the call's in every build. The directory alone is not the package:
+        # `p_test`'s `NewRouter` beside `p`'s is another package's function,
+        # no variant of it, so the index keeps each file's `package` clause
+        # and whether it is that external test package, and `admits` picks
+        # the asking package's files by them (#2616 review).
         if len(self.go_function_return_types) != self._go_free_fn_index_size:
             self._go_free_fn_index = {}
             for qn, return_type in self.go_function_return_types.items():
-                head, _, fn_name = qn.rpartition(cs.SEPARATOR_DOT)
-                package, _, _file = head.rpartition(cs.SEPARATOR_DOT)
-                if package:
-                    self._go_free_fn_index.setdefault((package, fn_name), return_type)
+                module_qn, _, fn_name = qn.rpartition(cs.SEPARATOR_DOT)
+                if package := self._go_file_package(module_qn):
+                    by_clause = self._go_free_fn_index.setdefault(
+                        (package, fn_name), {}
+                    )
+                    scope = (
+                        self.go_package_names.get(module_qn),
+                        self._go_external_test(module_qn),
+                    )
+                    by_clause.setdefault(scope, set()).add(return_type)
             self._go_free_fn_index_size = len(self.go_function_return_types)
-        package_prefix = module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
-        return self._go_free_fn_index.get((package_prefix, name))
+        returns = {
+            return_type
+            for (clause, external), types in self._go_free_fn_index.get(
+                (package_qn, name), {}
+            ).items()
+            if admits(clause, external)
+            for return_type in types
+        }
+        return next(iter(returns)) if len(returns) == 1 else None
+
+    def _go_package_call_return_type(
+        self, qualifier: str, name: str, module_qn: str
+    ) -> str | None:
+        # `r := gotest.NewRouter()`: the callee's bare `*Mux` names a type of
+        # the package the import binds `gotest` to, not of the caller's, so it
+        # is qualified here to that package's one type of that name. Left
+        # bare, it resolved against the caller's package (an external
+        # `_test` package has no Mux) and `r.Get` fell to the name trie
+        # (#2571). A return type naming yet another package stays untyped.
+        package_qn = self._go_imported_package(qualifier, module_qn)
+        if not package_qn:
+            return None
+        return_type = self._go_package_fn_return_type(
+            package_qn, name, lambda _clause, external: not external
+        )
+        if not return_type or cs.SEPARATOR_DOT in return_type:
+            return None
+        return self._go_type_in_package(package_qn, return_type)
+
+    def _go_imported_package(self, qualifier: str, module_qn: str) -> str | None:
+        # The package Go file `module_qn` imports as `qualifier`.
+        return (self.import_processor.import_mapping.get(module_qn) or {}).get(
+            qualifier
+        )
+
+    def _go_type_in_package(self, package_qn: str, name: str) -> str | None:
+        # The one type `name` of the package an import binds `package_qn`
+        # names: a type whose file sits in its directory and is no external
+        # test file, the same test its functions pass.
+        declared = go_utils.package_level_definitions(
+            self.function_registry,
+            name,
+            go_utils.TYPE_DECLARATION_TYPES,
+            lambda qn: self._go_imported_file(
+                qn.rpartition(cs.SEPARATOR_DOT)[0], package_qn
+            ),
+        )
+        return go_utils.one_declaration(declared, self.go_declaration_variants)
+
+    def _go_imported_file(self, module_qn: str, package_qn: str) -> bool:
+        # Whether Go file `module_qn` is a file of the package an import
+        # binding `package_qn` names: in its directory, and not in the
+        # external test package `p_test` that `go test` builds beside it.
+        return self._go_file_package(module_qn) == package_qn and not (
+            self._go_external_test(module_qn)
+        )
+
+    def _go_external_test(self, module_qn: str) -> bool:
+        # Whether Go file `module_qn` is in its directory's external test
+        # package, judged by its `_test.go` file name and `_test` clause
+        # together. A module with no recorded file (an unchanged file on an
+        # incremental run) is judged by its qn's last segment, the stem.
+        path = self.module_qn_to_file_path.get(module_qn)
+        stem = path.stem if path else module_qn.rpartition(cs.SEPARATOR_DOT)[2]
+        return go_utils.is_external_test(
+            self.go_package_names.get(module_qn),
+            stem.endswith(cs.GO_TEST_FILE_SUFFIX),
+        )
 
     def _enrich_rust_call_locals(
         self, caller_node: ASTNode, module_qn: str, var_types: dict[str, str]
@@ -723,14 +984,17 @@ class TypeInferenceEngine:
         # Type a Rust local bound from an associated-function call
         # (`let cmd = Command::from_frame(f)?`) with the call's return type, so a
         # later `cmd.apply()` resolves to the real type, not the ambiguous name-only
-        # trie fallback. Only fills names not already typed.
+        # trie fallback. Only fills names not already typed, or typed only by
+        # their initializer's constructor-like spelling (#3168).
         bounds: dict[str, list[str]] | None = None
         for (
             name,
             segments,
             call_point,
         ) in self.rust_type_inference.collect_call_var_bindings(caller_node):
-            if name in var_types:
+            if name in var_types and not is_constructor_guess(
+                var_types[name], segments
+            ):
                 continue
             if return_type := self._infer_rust_call_return_type(
                 segments, module_qn, var_types, call_point

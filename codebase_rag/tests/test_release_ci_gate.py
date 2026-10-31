@@ -17,6 +17,9 @@ REPO = "vitali87/code-graph-rag"
 SHA = "58670b840701c5c4212ee20d622705548da1c164"
 WORKFLOW_ID = 229278790
 GATE_NAME = "Require successful CI for the release source"
+RELEASE_PUSHED = (
+    "steps.decide.outputs.release == 'true' && steps.commit.outputs.pushed == 'true'"
+)
 STUBS = r"""
 git() {
   if [[ "$*" == 'rev-parse HEAD^' ]]; then
@@ -102,6 +105,11 @@ def _steps() -> list[Step]:
     ]
 
 
+MARKER = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))["env"][
+    "DEFERRED_RELEASE_MARKER"
+]
+
+
 def _execute(
     pages: str,
     *,
@@ -118,14 +126,29 @@ def _execute(
         names.index("Commit version bump") : names.index("Create git tag") + 1
     ]:
         condition = step.get("if")
-        if condition == "steps.decide.outputs.release == 'true'" and not release:
+        if condition == RELEASE_PUSHED and not release:
             continue
         assert condition in {
             "steps.check_manual.outputs.skip == 'false'",
-            "steps.decide.outputs.release == 'true'",
+            "steps.commit.outputs.pushed == 'true'",
+            RELEASE_PUSHED,
         }
         assert "${{" not in step["run"]
-        scripts.append("(\n" + step["run"] + "\n)\n")
+        script = "(\n" + step["run"] + "\n)\n"
+        if step["name"] == GATE_NAME:
+            # continue-on-error, as GitHub runs it: the gate's failure is
+            # recorded as its outcome rather than ending the job. Not `if (…)`
+            # or `|| …`: bash ignores `set -e` inside a subshell used as a
+            # condition, so the gate's own error handling would stop working.
+            script = (
+                "set +e\n"
+                + script
+                + "gate_status=$?\n"
+                + "set -e\n"
+                + "CI_GATE=failure\n"
+                + 'if [ "$gate_status" -eq 0 ]; then CI_GATE=success; fi\n'
+            )
+        scripts.append(script)
     return subprocess.run(
         [
             bash,
@@ -160,6 +183,10 @@ def _execute(
             "GH_NEXT_PAGES": "",
             "NEW_VERSION": "0.0.951",
             "RELEASE": str(release).lower(),
+            "CI_GATE": "skipped",
+            "DEFERRED_RELEASE_MARKER": MARKER,
+            "GITHUB_OUTPUT": os.devnull,
+            "GITHUB_STEP_SUMMARY": os.devnull,
             **(env or {}),
         },
         capture_output=True,
@@ -170,19 +197,34 @@ def _execute(
     )
 
 
-def _assert_blocked(result: subprocess.CompletedProcess[str]) -> None:
-    assert result.returncode != 0, result.stdout + result.stderr
-    assert "git: commit -m chore: bump version to 0.0.951" in result.stdout
+def _assert_deferred(result: subprocess.CompletedProcess[str]) -> None:
+    """The bump keeps its tag, pushed over GITHUB_TOKEN so nothing publishes;
+    only the release waits for a bump whose CI is proven. The annotation is
+    what keeps that release due on the next run."""
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (
+        "git: commit --allow-empty -m chore: bump version to 0.0.951" in result.stdout
+    )
     assert "git: push\n" in result.stdout
-    assert "git: tag " not in result.stdout
+    assert (
+        f"git: tag -a v0.0.951 -m {MARKER}: CI is not proven for {SHA}" in result.stdout
+    )
+    assert (
+        f"git: push https://x-access-token:unused-test-token@github.com/{REPO}.git"
+        " v0.0.951"
+    ) in result.stdout
     assert "git: push origin v" not in result.stdout
+    assert "::warning::CI is not proven" in result.stdout
 
 
 def test_successful_ci_releases_the_pushed_bump() -> None:
     result = _execute(_pages([_make_ci_run()]))
 
     assert result.returncode == 0, result.stdout + result.stderr
+    assert "git: tag v0.0.951\n" in result.stdout
     assert "git: push origin v0.0.951" in result.stdout
+    assert "git: push https://x-access-token:" not in result.stdout
+    assert "::warning::" not in result.stdout
     assert "wait:" not in result.stdout
 
 
@@ -203,7 +245,9 @@ def test_interim_tag_does_not_wait_for_ci() -> None:
     result = _execute(_pages([]), release=False, env={"GH_RUNS_EXIT": "1"})
 
     assert result.returncode == 0, result.stdout + result.stderr
+    assert "git: tag v0.0.951\n" in result.stdout
     assert "git: push https://x-access-token:" in result.stdout
+    assert "::warning::" not in result.stdout
     assert "wait:" not in result.stdout
 
 
@@ -220,17 +264,17 @@ def test_interim_tag_does_not_wait_for_ci() -> None:
         None,
     ],
 )
-def test_unsuccessful_ci_keeps_the_bump_but_blocks_the_tag(
+def test_unsuccessful_ci_tags_the_bump_without_a_release(
     conclusion: str | None,
 ) -> None:
-    _assert_blocked(_execute(_pages([_make_ci_run(conclusion=conclusion)])))
+    _assert_deferred(_execute(_pages([_make_ci_run(conclusion=conclusion)])))
 
 
 @pytest.mark.parametrize(
     "status", ["queued", "in_progress", "pending", "waiting", "requested"]
 )
 def test_unfinished_ci_cannot_release(status: str) -> None:
-    _assert_blocked(_execute(_pages([_make_ci_run(status=status, conclusion=None)])))
+    _assert_deferred(_execute(_pages([_make_ci_run(status=status, conclusion=None)])))
 
 
 @pytest.mark.parametrize(
@@ -244,10 +288,10 @@ def test_delayed_ci_can_finish_successfully(initial: list[WorkflowRun]) -> None:
     assert "git: push origin v0.0.951" in result.stdout
 
 
-def test_no_run_times_out_without_tagging() -> None:
+def test_no_run_times_out_into_an_interim_tag() -> None:
     result = _execute(_pages([]))
 
-    _assert_blocked(result)
+    _assert_deferred(result)
     assert "Timed out" in result.stdout
 
 
@@ -277,7 +321,7 @@ def test_no_run_times_out_without_tagging() -> None:
     ],
 )
 def test_unrelated_green_run_is_not_release_evidence(run: WorkflowRun) -> None:
-    _assert_blocked(_execute(_pages([run])))
+    _assert_deferred(_execute(_pages([run])))
 
 
 @pytest.mark.parametrize(
@@ -298,7 +342,7 @@ def test_missing_run_identity_fails_closed(field: str) -> None:
     run = _make_ci_run()
     run.pop(field)
 
-    _assert_blocked(_execute(_pages([run])))
+    _assert_deferred(_execute(_pages([run])))
 
 
 @pytest.mark.parametrize(
@@ -319,7 +363,7 @@ def test_newer_run_or_attempt_overrides_old_success(
     pages = [[newer], [_make_ci_run()]]
     if not newer_first:
         pages.reverse()
-    _assert_blocked(_execute(_pages(*pages)))
+    _assert_deferred(_execute(_pages(*pages)))
 
 
 def test_success_on_later_page_is_accepted() -> None:
@@ -336,13 +380,13 @@ def test_successful_rerun_supersedes_old_failure() -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_ci_that_fails_after_waiting_blocks_the_tag() -> None:
+def test_ci_that_fails_after_waiting_defers_the_release() -> None:
     result = _execute(
         _pages([_make_ci_run(status="in_progress", conclusion=None)]),
         env={"GH_NEXT_PAGES": _pages([_make_ci_run(conclusion="failure")])},
     )
 
-    _assert_blocked(result)
+    _assert_deferred(result)
     assert "wait: 30" in result.stdout
 
 
@@ -351,7 +395,7 @@ def test_incomplete_pagination_cannot_authorize_a_release() -> None:
 
     result = _execute(pages)
 
-    _assert_blocked(result)
+    _assert_deferred(result)
     assert (
         f"::error::Could not validate complete CI run evidence for {SHA}"
         in result.stdout
@@ -363,7 +407,7 @@ def test_incomplete_pagination_cannot_authorize_a_release() -> None:
 def test_api_failure_cannot_authorize_a_release_even_with_success_output(
     field: str,
 ) -> None:
-    _assert_blocked(_execute(_pages([_make_ci_run()]), env={field: "1"}))
+    _assert_deferred(_execute(_pages([_make_ci_run()]), env={field: "1"}))
 
 
 @pytest.mark.parametrize(
@@ -380,7 +424,7 @@ def test_api_failure_cannot_authorize_a_release_even_with_success_output(
 def test_malformed_responses_fail_closed(pages: str) -> None:
     result = _execute(pages)
 
-    _assert_blocked(result)
+    _assert_deferred(result)
     assert (
         f"::error::Could not validate complete CI run evidence for {SHA}"
         in result.stdout
@@ -409,7 +453,7 @@ def test_malformed_responses_fail_closed(pages: str) -> None:
 def test_workflow_identity_must_be_verified(
     workflow: dict[str, str | int | None],
 ) -> None:
-    _assert_blocked(
+    _assert_deferred(
         _execute(_pages([_make_ci_run()]), env={"GH_WORKFLOW": json.dumps(workflow)})
     )
 
@@ -418,7 +462,7 @@ def test_workflow_identity_must_be_verified(
     "env", [{"PARENT_SHA": "b" * 40}, {"GITHUB_REF": "refs/heads/feature"}]
 )
 def test_release_source_must_be_the_bump_parent_on_main(env: dict[str, str]) -> None:
-    _assert_blocked(_execute(_pages([_make_ci_run()]), env=env))
+    _assert_deferred(_execute(_pages([_make_ci_run()]), env=env))
 
 
 def test_gate_is_required_between_bump_push_and_release_side_effects() -> None:
@@ -427,6 +471,8 @@ def test_gate_is_required_between_bump_push_and_release_side_effects() -> None:
     steps = job["steps"]
     names = [step["name"] for step in steps]
     gate = steps[names.index(GATE_NAME)]
+    tag = steps[names.index("Create git tag")]
+    release = steps[names.index("Create release")]
 
     assert names.index("Commit version bump") < names.index(GATE_NAME)
     assert (
@@ -434,11 +480,116 @@ def test_gate_is_required_between_bump_push_and_release_side_effects() -> None:
         < names.index("Create git tag")
         < names.index("Create release")
     )
-    assert gate["if"] == "steps.decide.outputs.release == 'true'"
-    assert not gate.get("continue-on-error", False)
+    assert gate["if"] == RELEASE_PUSHED
+    # The gate's failure must defer the release, not end the job before the
+    # tag: _execute stands in for continue-on-error with the CI_GATE variable,
+    # so the tag step has to read exactly that outcome.
+    assert gate["continue-on-error"] is True
+    assert gate["id"] == "ci_gate"
+    assert tag["if"] == "steps.commit.outputs.pushed == 'true'"
+    assert tag["env"]["CI_GATE"] == "${{ steps.ci_gate.outcome }}"
+    # A release the gate did not pass goes up as a draft, which publishes
+    # nothing; the tests below cover the draft.
+    assert release["if"] == RELEASE_PUSHED
+    assert release["env"]["CI_GATE"] == "${{ steps.ci_gate.outcome }}"
     assert gate["timeout-minutes"] == 50
     assert gate["env"]["CI_WAIT_ATTEMPTS"] == 90
     assert job["timeout-minutes"] >= 90
     assert job["permissions"]["actions"] == "read"
     assert "github.ref == 'refs/heads/main'" in job["if"]
     assert "workflow_run" not in workflow.get("on", workflow.get(True, {}))
+
+
+# gh lists the drafts from a fixture through the real jq, so the filter that
+# picks which ones to delete is exercised too. jq on Windows ends each line
+# with CRLF, which gh on the Ubuntu runner never does: left in, the CR sticks
+# to the tag name and the step deletes its own draft as an older one.
+RELEASE_STUBS = r"""
+gh() {
+  printf 'gh %s\n' "$*" >> calls
+  case "$1 $2" in
+    "release create" | "api -X") return 0 ;;
+    "api repos/$GITHUB_REPOSITORY/releases?per_page=100") jq -r "$4" releases.json | tr -d '\r' ;;
+    *) return 1 ;;
+  esac
+}
+"""
+BOT = "github-actions[bot]"
+
+
+def _release(
+    release_id: int, tag: str, *, draft: bool = True, author: str = BOT
+) -> dict[str, int | str | bool | dict[str, str]]:
+    return {
+        "id": release_id,
+        "tag_name": tag,
+        "draft": draft,
+        "author": {"login": author},
+    }
+
+
+def _create_release(
+    tmp_path: Path, gate: str, releases: list
+) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+    bash = shutil.which("bash")
+    if bash is None or shutil.which("jq") is None:
+        pytest.skip("the Ubuntu workflow requires bash and jq")
+    (tmp_path / "notes.md").write_text("notes\n", encoding="utf-8")
+    (tmp_path / "releases.json").write_text(json.dumps(releases), encoding="utf-8")
+    step = next(step for step in _steps() if step["name"] == "Create release")
+    result = subprocess.run(
+        [
+            bash,
+            "--noprofile",
+            "--norc",
+            "-e",
+            "-c",
+            RELEASE_STUBS + step["run"].replace("/tmp/", "./"),
+        ],
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "GITHUB_REPOSITORY": REPO,
+            "NEW_VERSION": "0.0.951",
+            "CI_GATE": gate,
+        },
+        capture_output=True,
+        text=True,
+        encoding=cs.ENCODING_UTF8,
+        check=False,
+        timeout=15,
+    )
+    calls = (tmp_path / "calls").read_text(encoding="utf-8").splitlines()
+    return result, calls
+
+
+@pytest.mark.parametrize("gate, draft", [("success", "false"), ("failure", "true")])
+def test_a_release_whose_ci_is_not_proven_is_created_as_a_draft(
+    tmp_path: Path, gate: str, draft: str
+) -> None:
+    result, calls = _create_release(tmp_path, gate, [])
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (
+        "gh release create v0.0.951 --title v0.0.951 --notes-file ./body.md"
+        f" --verify-tag --draft={draft}"
+    ) in calls
+
+
+def test_a_new_release_deletes_the_drafts_it_supersedes(tmp_path: Path) -> None:
+    result, calls = _create_release(
+        tmp_path,
+        "failure",
+        [
+            _release(5, "v0.0.950"),
+            _release(6, "v0.0.951"),
+            _release(4, "v0.0.940", author="vitali87"),
+            _release(3, "v0.0.930", draft=False),
+        ],
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    deleted = [call for call in calls if "-X DELETE" in call]
+    # Only the bump job's own older draft: a person's draft, a published
+    # release and this version's own draft stay.
+    assert deleted == [f"gh api -X DELETE repos/{REPO}/releases/5"]

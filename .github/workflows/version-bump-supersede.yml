@@ -1,0 +1,76 @@
+name: Version Bump Supersede
+
+# version-bump.yml admits one run at a time, and a run needs a runner even to
+# stand down. When runners are scarce, each of N quick merges then waits for
+# one in turn, and the newest merge's bump waits behind all of them: in
+# October 2026, 32 merges left it waiting for over half a day. Every run still
+# waiting for a commit that this merge contains would only stand down at the
+# tip check, since main now holds a newer commit, so this workflow cancels
+# them and the newest run is next.
+#
+# A separate workflow rather than a job in version-bump.yml: a run's status
+# there would then be "in progress" while this job ran, hiding a bump job
+# that is still waiting behind it. A run already started is left alone: it
+# may have pushed its bump and be waiting on CI to tag it. One that starts
+# between the listing and the cancel started after this merge reached main,
+# so its tip check stands it down before it can push, and cancelling it
+# loses nothing; re-reading its status first would not close that gap
+# either. A run for a commit this one does not contain may be for a newer
+# merge, which has to bump.
+on:
+  push:
+    branches:
+      - main
+
+permissions: read-all
+
+jobs:
+  supersede:
+    name: Cancel bump runs this merge supersedes
+    # The bump commit's own push supersedes nothing: its merge's run bumped.
+    # Known as in version-bump.yml, so a merge titled like the bump commit
+    # still cancels the runs it supersedes.
+    if: >-
+      !(startsWith(github.event.head_commit.message, 'chore: bump version to ') &&
+      github.event.head_commit.author.email == 'github-actions[bot]@users.noreply.github.com')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Cancel waiting bump runs for commits this one contains
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          RUNS=""
+          for STATUS in requested pending waiting queued; do
+            if ! PAGE=$(gh api --paginate \
+                "repos/${GITHUB_REPOSITORY}/actions/workflows/version-bump.yml/runs?branch=main&event=push&status=${STATUS}&per_page=100" \
+                --jq '.workflow_runs[] | "\(.id) \(.head_sha)"'); then
+              echo "::warning::could not list the ${STATUS} bump runs; they stand down by themselves once they run"
+              continue
+            fi
+            RUNS="${RUNS}${PAGE}"$'\n'
+          done
+          CANCELLED=0
+          while read -r ID RUN_SHA; do
+            if [[ ! "$ID" =~ ^[1-9][0-9]*$ || ! "$RUN_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+              continue
+            fi
+            # "ahead" only when RUN_SHA is an ancestor of this commit: anything
+            # else (identical, behind, diverged, a failed lookup) is kept.
+            AHEAD=$(gh api \
+              "repos/${GITHUB_REPOSITORY}/compare/${RUN_SHA}...${GITHUB_SHA}?per_page=1" \
+              --jq .status) || AHEAD=""
+            if [ "$AHEAD" != ahead ]; then
+              continue
+            fi
+            if gh api -X POST "repos/${GITHUB_REPOSITORY}/actions/runs/${ID}/cancel" > /dev/null; then
+              echo "Cancelled run ${ID} for ${RUN_SHA}, which ${GITHUB_SHA} contains"
+              CANCELLED=$((CANCELLED + 1))
+            else
+              echo "::warning::could not cancel run ${ID} for ${RUN_SHA}; it stands down by itself once it runs"
+            fi
+          done < <(printf '%s' "$RUNS" | sort -u)
+          echo "- **Superseded bump runs:** ${CANCELLED} cancelled" >> "$GITHUB_STEP_SUMMARY"

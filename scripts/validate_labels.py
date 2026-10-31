@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 import sys
+from collections.abc import Collection, Mapping
 from pathlib import Path
 
 COLOR_RE = re.compile(r"^[0-9a-f]{6}$")
@@ -123,15 +124,78 @@ def validate_labels(text: str) -> int:
     return len(data)
 
 
+def validate_template_labels(
+    templates: Mapping[str, str], label_names: Collection[str]
+) -> int:
+    """Check that issue forms apply only labels the manifest defines,
+    returning how many label references were checked.
+
+    `templates` maps each file name to its text. GitHub applies a form's
+    labels only when they already exist in the repository and drops the
+    others without an error, so a form naming a label the manifest never
+    creates files every issue it opens without that label.
+    """
+    import yaml
+
+    defined = {name.casefold() for name in label_names}
+    checked = 0
+    for filename, text in sorted(templates.items()):
+        try:
+            data = yaml.safe_load(text)
+        except yaml.YAMLError as exc:
+            raise LabelError(f"{filename}: could not parse: {exc}") from exc
+
+        labels = data.get("labels") if isinstance(data, dict) else None
+        if labels is None:
+            continue
+        if isinstance(labels, str):
+            # Issue forms accept a comma-separated string as well as a list.
+            labels = [part.strip() for part in labels.split(",") if part.strip()]
+        if not isinstance(labels, list) or not all(
+            isinstance(label, str) for label in labels
+        ):
+            raise LabelError(
+                f"{filename}: labels must be a list of strings, got {labels!r}"
+            )
+        for label in labels:
+            if label.casefold() not in defined:
+                raise LabelError(
+                    f"{filename}: label {label!r} is not defined in labels.yml, "
+                    f"so GitHub would not apply it"
+                )
+            checked += 1
+    return checked
+
+
 def main() -> int:
-    """Validate the manifest, printing the failure and returning non-zero."""
-    manifest = Path(__file__).parent.parent / ".github" / "labels.yml"
+    """Validate the manifest and the labels the issue forms apply, printing
+    the failure and returning non-zero."""
+    import yaml
+
+    github = Path(__file__).parent.parent / ".github"
+    manifest = github / "labels.yml"
     try:
-        count = validate_labels(manifest.read_text(encoding="utf-8"))
+        text = manifest.read_text(encoding="utf-8")
+        count = validate_labels(text)
     except LabelError as exc:
         sys.stderr.write(f"{manifest.name}: {exc}\n")
         return 1
     sys.stdout.write(f"{manifest.name}: {count} labels OK\n")
+
+    template_dir = github / "ISSUE_TEMPLATE"
+    templates = {
+        path.name: path.read_text(encoding="utf-8")
+        for path in sorted(template_dir.glob("*.y*ml"))
+    }
+    names = [entry["name"] for entry in yaml.safe_load(text)]
+    try:
+        references = validate_template_labels(templates, names)
+    except LabelError as exc:
+        sys.stderr.write(f"{template_dir.name}/{exc}\n")
+        return 1
+    sys.stdout.write(
+        f"{template_dir.name}: {references} labels in {len(templates)} files OK\n"
+    )
     return 0
 
 

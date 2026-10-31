@@ -147,7 +147,9 @@ def test_score_csharp_retrieval_prf() -> None:
     result = score_csharp_retrieval(
         {("A.cs", "F"), ("A.cs", "G")}, {("A.cs", "F"), ("B.cs", "H")}
     )
-    row = next(r for r in result.rows if r["label"] == ec.CSHARP_RETRIEVAL_LABEL)
+    row = next(
+        r for r in result.rows if r["label"] == ec.RetrievalCondition.GRAPH.value
+    )
     assert (row["tp"], row["fp"], row["fn"]) == (1, 1, 1)
 
 

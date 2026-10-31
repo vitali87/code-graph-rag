@@ -20,17 +20,28 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
+      actions: read
       packages: write
       attestations: write
       id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # No image of a commit main's CI has not passed: a release created by
+      # hand and a dispatch reach this job too, not only version-bump.yml's
+      # gated tag. The checkout above is this same commit.
+      - name: Require green CI at this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/require_green_ci.py "$GITHUB_SHA"
 
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
-      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -54,8 +65,11 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # BuildKit scans each platform's final image (Debian and Python
+          # packages) and pushes the SPDX SBOM as an attestation beside it.
+          sbom: true
+          # No cache-from/cache-to: a GitHub Actions cache entry can be
+          # written by any run on main, and this image is pushed.
 
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v2
         with:

@@ -26,7 +26,6 @@ import pytest
 from loguru import logger
 from typer.testing import CliRunner
 
-from codebase_rag import cgr_state
 from codebase_rag import logs as ls
 from codebase_rag.cli import app
 from codebase_rag.services.graph_service import MemgraphIngestor
@@ -326,7 +325,9 @@ def test_debug_still_lists_every_symbol_file_folder_and_dependency(
 
 
 class _FakeCursor:
-    def __init__(self, columns: tuple[str, ...], rows: list[tuple[int, ...]]) -> None:
+    def __init__(
+        self, columns: tuple[str, ...], rows: list[tuple[object, ...]]
+    ) -> None:
         self.description = [SimpleNamespace(name=c) for c in columns] or None
         self._rows = rows
 
@@ -337,7 +338,7 @@ class _FakeCursor:
     ) -> None:
         return None
 
-    def fetchall(self) -> list[tuple[int, ...]]:
+    def fetchall(self) -> list[tuple[object, ...]]:
         return self._rows
 
     def close(self) -> None:
@@ -348,7 +349,9 @@ class _FakeConnection:
     """A Memgraph connection whose every query succeeds with `rows`."""
 
     def __init__(
-        self, columns: tuple[str, ...] = (), rows: list[tuple[int, ...]] | None = None
+        self,
+        columns: tuple[str, ...] = (),
+        rows: list[tuple[object, ...]] | None = None,
     ) -> None:
         self.autocommit = False
         self._columns = columns
@@ -378,7 +381,6 @@ def test_a_read_only_session_logs_nothing_at_the_default_level() -> None:
 
 @pytest.mark.parametrize("command", ["status", "stats"])
 def test_a_read_only_command_prints_only_its_report(command: str) -> None:
-    cgr_state.record_sync("alpha")
     status = StackStatus(
         state=StackState.RUNNING,
         memgraph_reachable=True,
@@ -387,8 +389,14 @@ def test_a_read_only_command_prints_only_its_report(command: str) -> None:
         memgraph_endpoint="localhost:7687",
         qdrant_endpoint="localhost:6333",
     )
+    # `status` lists the projects the graph holds.
+    connection = (
+        _FakeConnection(columns=("name", "last_synced_at"), rows=[("alpha", None)])
+        if command == "status"
+        else _FakeConnection()
+    )
     with (
-        _memgraph(_FakeConnection()),
+        _memgraph(connection),
         patch("codebase_rag.cli.StackManager") as manager,
         _log_lines(_INFO) as lines,
     ):

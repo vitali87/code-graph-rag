@@ -18,8 +18,8 @@ from codebase_rag import logs as ls
 from codebase_rag.cypher_queries import (
     CYPHER_TRACE_CARRY_ENDPOINTS,
     CYPHER_TRACE_CARRY_STATIC_PAIRS,
-    CYPHER_TRACE_CONFIRM_CALLS,
     CYPHER_TRACE_EDGES_AT_PATHS,
+    build_trace_confirm_calls_query,
 )
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.trace.carry import (
@@ -212,7 +212,7 @@ def test_carry_confirms_a_pair_the_reparse_gave_a_static_edge(tmp_path: Path) ->
     assert (summary.carried, summary.newly_stale, summary.dropped) == (1, 0, 0)
     assert store.writes == [
         (
-            CYPHER_TRACE_CONFIRM_CALLS,
+            build_trace_confirm_calls_query(_FUNCTION, _FUNCTION),
             {
                 cs.KEY_FROM_QN: _CALLER,
                 cs.KEY_TO_QN: _CALLEE,

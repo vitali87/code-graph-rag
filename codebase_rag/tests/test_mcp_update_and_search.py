@@ -350,12 +350,11 @@ class TestMainSingleQuery:
         with (
             patch("codebase_rag.main.connect_memgraph") as mock_conn,
             patch("codebase_rag.main._initialize_services_and_agent") as mock_init,
-            patch("codebase_rag.main.asyncio") as mock_asyncio,
             patch("codebase_rag.main._setup_common_initialization"),
         ):
             mock_agent = MagicMock()
+            mock_agent.run = AsyncMock(return_value=mock_response)
             mock_init.return_value = (mock_agent, [], "system prompt")
-            mock_asyncio.run.return_value = mock_response
             mock_conn.return_value.__enter__ = MagicMock(return_value=MagicMock())
             mock_conn.return_value.__exit__ = MagicMock(return_value=False)
 
@@ -373,13 +372,12 @@ class TestMainSingleQuery:
         with (
             patch("codebase_rag.main.connect_memgraph") as mock_conn,
             patch("codebase_rag.main._initialize_services_and_agent") as mock_init,
-            patch("codebase_rag.main.asyncio") as mock_asyncio,
             patch("codebase_rag.main._setup_common_initialization"),
             patch("codebase_rag.main.logger") as mock_logger,
         ):
             mock_agent = MagicMock()
+            mock_agent.run = AsyncMock(return_value=mock_response)
             mock_init.return_value = (mock_agent, [], "system prompt")
-            mock_asyncio.run.return_value = mock_response
             mock_conn.return_value.__enter__ = MagicMock(return_value=MagicMock())
             mock_conn.return_value.__exit__ = MagicMock(return_value=False)
 
@@ -502,7 +500,7 @@ class TestMCPClient:
 
         mock_result = MagicMock()
         mock_result.content = [
-            ImageContent(type="image", data="aGk=", mimeType="image/png")
+            ImageContent(type="image", data="aGk=", mime_type="image/png")
         ]
 
         mock_session = AsyncMock()

@@ -28,12 +28,9 @@ from typing import TYPE_CHECKING
 
 from .. import constants as cs
 from .pprof import convert_pprof_profile
-from .records import FramePoint
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    from .pprof import _Function
 
 # A trailing ``::h<hex>`` is the legacy (v0-predecessor) mangling disambiguator
 # that ``rustc_demangle`` leaves on unless the alternate format is used.
@@ -112,25 +109,6 @@ def _bare_name(symbol: str) -> str:
     return name
 
 
-def _build_frame(
-    function: _Function | None, strings: list[str], root_prefix: str
-) -> FramePoint | None:
-    """A project FramePoint for the function, or None if out of scope."""
-    if function is None or not (0 < function.filename_index < len(strings)):
-        return None
-    path = strings[function.filename_index]
-    if not path.startswith(root_prefix):
-        return None
-    if _RUST_EXCLUDED_DIR in path[len(root_prefix) :].split("/"):
-        return None
-    name = (
-        strings[function.name_index] if 0 < function.name_index < len(strings) else ""
-    )
-    return FramePoint(
-        path=path, qualname=_bare_name(name), line=max(function.start_line, 0)
-    )
-
-
 def convert_rust_pprof(
     profile_path: Path,
     repo_root: Path,
@@ -140,15 +118,16 @@ def convert_rust_pprof(
     """Write ``profile_path``'s project call edges to ``output``; returns count.
 
     The pprof decode/accumulate/emit pipeline is shared with Go via
-    ``convert_pprof_profile``; only ``_build_frame`` (Rust demangling and the
-    ``target`` exclusion) and the header tags differ.
+    ``convert_pprof_profile``; only ``_bare_name`` (Rust demangling), the
+    ``target`` exclusion and the header tags differ.
     """
     return convert_pprof_profile(
         profile_path,
         repo_root,
         output,
         workload,
-        build_frame=_build_frame,
+        excluded_dir=_RUST_EXCLUDED_DIR,
+        bare_name=_bare_name,
         language=cs.TRACE_LANGUAGE_RUST,
         tracer=cs.TRACE_TOOL_NAME_RUST_PPROF,
     )

@@ -26,7 +26,7 @@ from .. import constants as cs
 from .. import logs as ls
 from ..types_defs import JsonValue
 from ..utils.json_io import loads_json
-from ..utils.path_utils import should_skip_path
+from ..utils.path_utils import is_symlink_entry, should_skip_path
 
 
 class ContractOperation(NamedTuple):
@@ -65,7 +65,8 @@ def discover_contract_operations(
         ]
         for filename in filenames:
             path = Path(directory) / filename
-            if should_skip_path(
+            # A link is not followed, as by the file walk (issue #2451).
+            if is_symlink_entry(path) or should_skip_path(
                 path, repo_path, exclude_paths, unignore_paths, is_file=True
             ):
                 continue

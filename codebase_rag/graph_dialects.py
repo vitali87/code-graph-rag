@@ -37,6 +37,7 @@ from .types_defs import ResultRow
 # Engine identifiers, used by settings and by the registry below.
 DIALECT_MEMGRAPH = "memgraph"
 DIALECT_NEO4J = "neo4j"
+DIALECT_SQLITE = "sqlite"
 
 
 def _quote_identifier(name: str) -> str:
@@ -215,9 +216,26 @@ class Neo4jDialect:
         return query
 
 
+class SqliteDialect(MemgraphDialect):
+    """The embedded engine (`codebase_rag.embedded_graph`), a SQLite file.
+
+    Its Cypher front end accepts Memgraph's DDL and reports constraints in
+    Memgraph's row shape, so only the memory bound differs: it is no query
+    clause here but SQLite's heap limit, which the ingestor sets on the
+    connection generated queries run on.
+    """
+
+    name = DIALECT_SQLITE
+
+    def apply_memory_limit(self, query: str, mb: int) -> str:
+        del mb
+        return query
+
+
 _DIALECTS: dict[str, type[GraphDialect]] = {
     DIALECT_MEMGRAPH: MemgraphDialect,
     DIALECT_NEO4J: Neo4jDialect,
+    DIALECT_SQLITE: SqliteDialect,
 }
 
 

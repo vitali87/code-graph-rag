@@ -16,8 +16,8 @@ from codebase_rag import cypher_queries as cq
 from codebase_rag import graph_query
 from codebase_rag.cypher_queries import (
     CYPHER_TRACE_CALLABLES,
-    CYPHER_TRACE_CONFIRM_CALLS,
     CYPHER_TRACE_EXISTING_CALLS,
+    build_trace_confirm_calls_query,
 )
 from codebase_rag.dead_code import collect_dead_code, default_dead_code_config
 from codebase_rag.tests.conftest import create_and_run_updater
@@ -74,6 +74,26 @@ def test_exact_and_heuristic_calls_are_tagged(
     create_and_run_updater(temp_repo, mock_ingestor)
     by_callee = _resolutions(mock_ingestor, ".pkg.app.run")
     # Bound through the import: exact. Not imported, found by name only: heuristic.
+    assert by_callee["helper"] == {cs.EdgeResolution.EXACT}
+    assert by_callee["lonely"] == {cs.EdgeResolution.HEURISTIC}
+
+
+def test_a_call_through_a_rebound_local_carries_each_bindings_label(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `a()` reaches both functions `a` was bound to; each edge says how its
+    # own binding resolved, not how the last one did.
+    (temp_repo / "pkg").mkdir()
+    (temp_repo / "pkg" / "__init__.py").write_text("")
+    (temp_repo / "pkg" / "util.py").write_text(
+        "def helper():\n    return 1\n\n\ndef lonely():\n    return 2\n"
+    )
+    (temp_repo / "pkg" / "app.py").write_text(
+        "from pkg.util import helper\n\n\n"
+        "def run(flag):\n    a = helper\n    if flag:\n        a = lonely\n    a()\n"
+    )
+    create_and_run_updater(temp_repo, mock_ingestor)
+    by_callee = _resolutions(mock_ingestor, ".pkg.app.run")
     assert by_callee["helper"] == {cs.EdgeResolution.EXACT}
     assert by_callee["lonely"] == {cs.EdgeResolution.HEURISTIC}
 
@@ -254,7 +274,9 @@ def test_trace_confirmation_leaves_trace_only_edges_alone() -> None:
     # A static edge and an earlier run's trace-only edge can share a pair;
     # confirming the pair must not relabel the `dynamic` one. No Cypher
     # engine runs here, so the filter is pinned on the query text.
-    assert "coalesce(r.static_missed, false) = false" in CYPHER_TRACE_CONFIRM_CALLS
+    assert "coalesce(r.static_missed, false) = false" in (
+        build_trace_confirm_calls_query("Function", "Method")
+    )
 
 
 def test_schema_and_query_column_carry_resolution() -> None:
@@ -289,6 +311,14 @@ def test_callers_rows_surface_resolution() -> None:
 # --- trace write-back ------------------------------------------------------------
 
 
+_CALLABLE_LABELS = ("Function", "Method", "Module")
+_CONFIRM_QUERIES = {
+    build_trace_confirm_calls_query(a, b)
+    for a in _CALLABLE_LABELS
+    for b in _CALLABLE_LABELS
+}
+
+
 class _Graph:
     def __init__(self, callables: list[dict], existing: list[dict]) -> None:
         self.callables = callables
@@ -304,9 +334,7 @@ class _Graph:
         raise AssertionError(query)
 
     def execute_write(self, query: str, params: dict | None = None) -> None:
-        assert query == CYPHER_TRACE_CONFIRM_CALLS, (
-            "only the in-place upgrade may write"
-        )
+        assert query in _CONFIRM_QUERIES, "only the in-place upgrade may write"
         self.writes.append((query, dict(params or {})))
 
     def ensure_node_batch(self, label: str, properties: dict) -> None:
@@ -402,7 +430,7 @@ def test_trace_upgrades_observed_edges_and_tags_dynamic_ones(tmp_path: Path) -> 
     # The observed static edge is upgraded in place, on every site.
     assert graph.writes == [
         (
-            CYPHER_TRACE_CONFIRM_CALLS,
+            build_trace_confirm_calls_query("Function", "Function"),
             {
                 cs.KEY_FROM_QN: f"{PROJECT}.pkg.app.run",
                 cs.KEY_TO_QN: f"{PROJECT}.pkg.svc.known",

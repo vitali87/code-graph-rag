@@ -83,5 +83,7 @@ def test_score_lua_retrieval_prf() -> None:
     result = score_lua_retrieval(
         {("a.lua", "f"), ("a.lua", "g")}, {("a.lua", "f"), ("b.lua", "h")}
     )
-    row = next(r for r in result.rows if r["label"] == ec.LUA_RETRIEVAL_LABEL)
+    row = next(
+        r for r in result.rows if r["label"] == ec.RetrievalCondition.GRAPH.value
+    )
     assert (row["tp"], row["fp"], row["fn"]) == (1, 1, 1)

@@ -89,6 +89,15 @@ class TestWorkflowJob:
             "the smoke must run on the fresh venv's interpreter"
         )
 
+    def test_job_installs_the_crate_it_carries(self) -> None:
+        # code-graph-rag requires cgr-graph-rs, so the job builds the crate in
+        # this checkout and names its wheel in the unlocked install: a PR is
+        # smoked with the library it changes, not whatever PyPI has.
+        script = _job_run_script(_workflow()["jobs"][JOB_ID])
+
+        assert "uv build --wheel rust/cgr_graph_rs --out-dir dist-rust" in script
+        assert "pip install dist/*.whl dist-rust/*.whl" in script
+
     def test_job_runs_the_smoke_script(self) -> None:
         script = _job_run_script(_workflow()["jobs"][JOB_ID])
 
@@ -140,9 +149,9 @@ class TestSmokeScript:
         assert smoke_module.main() == 0
 
 
-class _DecoratorlessServer:
-    """The mcp 2.x ``Server`` shape: handlers are constructor arguments and the
-    ``list_tools()``/``call_tool()`` decorators the 1.x API had are gone."""
+class _HandlerlessServer:
+    """A ``Server`` whose constructor takes no ``on_*`` handlers, as mcp 1.x's
+    did: the server registers its handlers through them since 2.x."""
 
     def __init__(self, name: str) -> None:
         self.name = name
@@ -172,17 +181,18 @@ class TestMcpServerSmokeCheck:
     ) -> None:
         smoke_module.check_mcp_server_lists_tools()
 
-    def test_an_sdk_without_the_decorator_api_fails_the_smoke(
+    def test_an_sdk_without_the_handler_api_fails_the_smoke(
         self,
         smoke_module: ModuleType,
         isolated_server_config: None,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        # RED without the check: this is the break a fresh install hit with
-        # mcp 2.2.0, and no CI job reported it.
-        monkeypatch.setattr(mcp_server, "Server", _DecoratorlessServer)
+        # RED without the check: an SDK that moves handler registration is
+        # the break a fresh install hit with mcp 2.2.0 (#2519), and no
+        # lock-synced CI job reported it.
+        monkeypatch.setattr(mcp_server, "Server", _HandlerlessServer)
 
-        with pytest.raises(smoke_module.SmokeFailure, match="list_tools"):
+        with pytest.raises(smoke_module.SmokeFailure, match="on_list_tools"):
             smoke_module.check_mcp_server_lists_tools()
 
     def test_the_check_needs_no_graph_database(

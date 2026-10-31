@@ -6,7 +6,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
 from loguru import logger
-from pydantic_ai import Agent, DeferredToolRequests, Tool
+from pydantic_ai import (
+    Agent,
+    DeferredToolRequests,
+    DeferredToolResults,
+    Tool,
+    ToolDenied,
+)
 from pydantic_ai.agent import AgentRetries, AgentRunResult
 from pydantic_ai.exceptions import ModelAPIError
 
@@ -293,6 +299,40 @@ def create_research_agent(tools: list[Tool]) -> Agent:
         )
     except Exception as e:
         raise ex.LLMGenerationError(ex.LLM_INIT_RESEARCH.format(error=e)) from e
+
+
+async def run_to_text_answer(
+    agent: Agent[None, str | DeferredToolRequests],
+    prompt: str,
+    *,
+    approve: bool,
+    denial: str,
+) -> str:
+    """Run `agent` until it answers in text, settling every approval request
+    without an operator: all approved, or all denied with `denial`, which the
+    model reads as the tool's result and can answer around.
+
+    Only the chat loop can ask the user. A run that stopped at the first
+    `DeferredToolRequests` handed its repr back as the answer, with nothing
+    applied and nothing to say so (issue #2657).
+    """
+    result = await agent.run(prompt, message_history=[])
+    output = result.output
+    rounds = 0
+    while isinstance(output, DeferredToolRequests):
+        if rounds == cs.NONINTERACTIVE_APPROVAL_ROUNDS:
+            raise RuntimeError(cs.NONINTERACTIVE_APPROVAL_LOOP.format(rounds=rounds))
+        rounds += 1
+        settled = DeferredToolResults()
+        for call in output.approvals:
+            settled.approvals[call.tool_call_id] = (
+                True if approve else ToolDenied(denial)
+            )
+        result = await agent.run(
+            message_history=result.all_messages(), deferred_tool_results=settled
+        )
+        output = result.output
+    return output
 
 
 def create_rag_orchestrator(

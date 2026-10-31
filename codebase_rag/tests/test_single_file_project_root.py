@@ -17,17 +17,19 @@ Two consequences, and the second is the damaging one:
   resolve against it).
 
 The root is found by walking up to the nearest ancestor holding the hash
-cache, which every directory run writes at `repo_path / HASH_CACHE_FILENAME`.
+cache, which every directory run writes into `state_dir(repo_path)`.
 """
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.checkout_state import state_dir, state_file
 from codebase_rag.graph_updater import GraphUpdater, _project_root_for_single_file
 from codebase_rag.parser_loader import load_parsers
 
@@ -188,8 +190,8 @@ def test_the_root_is_the_nearest_cached_ancestor(tmp_path: Path) -> None:
     outer = tmp_path / "outer"
     inner = outer / "inner"
     (inner / "pkg").mkdir(parents=True)
-    (outer / cs.HASH_CACHE_FILENAME).write_text("{}", encoding="utf-8")
-    (inner / cs.HASH_CACHE_FILENAME).write_text("{}", encoding="utf-8")
+    state_file(outer, cs.HASH_CACHE_FILENAME).write_text("{}", encoding="utf-8")
+    state_file(inner, cs.HASH_CACHE_FILENAME).write_text("{}", encoding="utf-8")
     target = inner / "pkg" / "mod.py"
     target.write_text("x = 1\n", encoding="utf-8")
 
@@ -241,7 +243,7 @@ def test_the_nearest_marker_wins_whichever_kind_it_is(tmp_path: Path) -> None:
     inner = outer / "inner"
     (inner / "pkg").mkdir(parents=True)
     (outer / cs.GIT_DIR_NAME).mkdir()
-    (inner / cs.HASH_CACHE_FILENAME).write_text("{}", encoding="utf-8")
+    state_file(inner, cs.HASH_CACHE_FILENAME).write_text("{}", encoding="utf-8")
     target = inner / "pkg" / "mod.py"
     target.write_text("x = 1\n", encoding="utf-8")
 
@@ -284,6 +286,9 @@ def test_the_cache_must_be_a_file_not_a_directory(tmp_path: Path) -> None:
     outer = tmp_path / "outer"
     root = outer / "proj"
     root.mkdir(parents=True)
+    # In the state directory and in the tree, where an older cgr kept it:
+    # both are read as evidence, so both must insist on a file.
+    state_file(outer, cs.HASH_CACHE_FILENAME).mkdir()
     (outer / cs.HASH_CACHE_FILENAME).mkdir()
     target = root / "mod.py"
     target.write_text("x = 1\n", encoding="utf-8")
@@ -315,7 +320,7 @@ def test_the_derived_project_name_follows_the_project_root(tmp_path: Path) -> No
 
     root = tmp_path / "nested"
     (root / "pkg").mkdir(parents=True)
-    (root / cs.HASH_CACHE_FILENAME).write_text("{}", encoding="utf-8")
+    state_file(root, cs.HASH_CACHE_FILENAME).write_text("{}", encoding="utf-8")
     target = root / "pkg" / "module_a.py"
     target.write_text("x = 1\n", encoding="utf-8")
 
@@ -342,12 +347,13 @@ def test_a_cached_root_outranks_a_nearer_git_marker(tmp_path: Path) -> None:
     and overwriting `Project.root_path` with the nested directory.
 
     The cache is EVIDENCE of what actually indexed the file; `.git` is only a
-    guess at a root. So a cached ancestor wins at any depth.
+    guess at a root. So a cached ancestor whose run indexed the nested
+    checkout wins at any depth; the cache says so by listing its files.
     """
     outer = tmp_path / "outer"
     inner = outer / "components" / "inner"
     (inner / "pkg").mkdir(parents=True)
-    (outer / cs.HASH_CACHE_FILENAME).write_text("{}", encoding="utf-8")
+    _cache_listing(outer, "components/inner/pkg/module_a.py")
     (inner / cs.GIT_DIR_NAME).write_text("gitdir: /elsewhere\n", encoding="utf-8")
     target = inner / "pkg" / "module_a.py"
     target.write_text("x = 1\n", encoding="utf-8")
@@ -356,6 +362,123 @@ def test_a_cached_root_outranks_a_nearer_git_marker(tmp_path: Path) -> None:
         "a nested .git outranked the cached root that actually indexed the "
         "file; the update would write a second identity for it"
     )
+
+
+def _cache_listing(root: Path, *keys: str) -> Path:
+    """A hash cache as a directory run at `root` writes it, listing `keys`."""
+    cache = state_file(root, cs.HASH_CACHE_FILENAME)
+    cache.write_text(json.dumps(dict.fromkeys(keys, "0" * 64)), encoding="utf-8")
+    return cache
+
+
+def _nested_checkout(tmp_path: Path) -> tuple[Path, Path, Path]:
+    outer = tmp_path / "outer"
+    inner = outer / "lib"
+    (inner / "pkg").mkdir(parents=True)
+    (inner / cs.GIT_DIR_NAME).mkdir()
+    target = inner / "pkg" / "mod.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    return outer, inner, target
+
+
+def test_a_cache_left_by_a_removed_checkout_does_not_outrank_a_nested_git(
+    tmp_path: Path,
+) -> None:
+    """The state outlives the tree it describes (Greptile, PR #2557).
+
+    Kept under CGR_HOME by path, the cache of a checkout that was removed
+    still marks that path once a different tree takes it. That tree's nested
+    checkout was never indexed from the old root, and its `.git` must win:
+    keying the file against the old root writes it under the wrong project
+    and module path.
+    """
+    outer, inner, target = _nested_checkout(tmp_path)
+    _cache_listing(outer, "other-checkout/pkg/mod.py", "README.md")
+
+    assert _project_root_for_single_file(target) == inner
+
+
+def test_a_new_file_in_a_nested_checkout_the_cached_root_indexed_roots_there(
+    tmp_path: Path,
+) -> None:
+    """Negative: listing the checkout is enough, not listing the file.
+
+    A file added since the last directory run is not in the cache yet, and
+    the next directory run keys it under the outer root like its siblings.
+    """
+    outer, _inner, target = _nested_checkout(tmp_path)
+    _cache_listing(outer, "lib/pkg/sibling.py")
+
+    assert _project_root_for_single_file(target) == outer
+
+
+def test_a_cache_listing_only_a_lookalike_directory_does_not_outrank_it(
+    tmp_path: Path,
+) -> None:
+    """`lib-old/...` is not under `lib/`: the match is on whole segments."""
+    outer, inner, target = _nested_checkout(tmp_path)
+    _cache_listing(outer, "lib-old/pkg/mod.py", "lib.py")
+
+    assert _project_root_for_single_file(target) == inner
+
+
+@pytest.mark.parametrize("content", ["{", "[]", "null"])
+def test_an_unreadable_cache_does_not_outrank_a_nested_git(
+    tmp_path: Path, content: str
+) -> None:
+    """A cache that lists nothing readable is no evidence about the checkout."""
+    outer, inner, target = _nested_checkout(tmp_path)
+    state_file(outer, cs.HASH_CACHE_FILENAME).write_text(content, encoding="utf-8")
+
+    assert _project_root_for_single_file(target) == inner
+
+
+def test_a_cache_an_older_cgr_left_in_the_tree_is_held_to_the_same_rule(
+    tmp_path: Path,
+) -> None:
+    """The copy in the tree is read the same way: it outranks the nested
+    `.git` when it lists the nested checkout, and only then."""
+    outer, inner, target = _nested_checkout(tmp_path)
+    legacy = outer / cs.HASH_CACHE_FILENAME
+    legacy.write_text(json.dumps({"elsewhere.py": "0"}), encoding="utf-8")
+
+    assert _project_root_for_single_file(target) == inner
+
+    legacy.write_text(json.dumps({"lib/pkg/mod.py": "0"}), encoding="utf-8")
+
+    assert _project_root_for_single_file(target) == outer
+
+
+def test_an_unrelated_cache_still_marks_the_root_with_no_nested_git(
+    tmp_path: Path,
+) -> None:
+    """Negative: with no `.git` competing, the cached ancestor still wins
+    whatever it lists, as before; the rule only ranks the two markers."""
+    root = tmp_path / "proj"
+    (root / "pkg").mkdir(parents=True)
+    _cache_listing(root, "elsewhere.py")
+    target = root / "pkg" / "mod.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+
+    assert _project_root_for_single_file(target) == root
+
+
+def test_a_cache_further_up_that_lists_the_nested_checkout_still_wins(
+    tmp_path: Path,
+) -> None:
+    """A stale cache in between is passed over, not taken as the answer:
+    the walk goes on to the ancestor that did index the nested checkout."""
+    top = tmp_path / "top"
+    outer = top / "outer"
+    inner = outer / "lib"
+    (inner / "pkg").mkdir(parents=True)
+    (inner / cs.GIT_DIR_NAME).mkdir()
+    target = inner / "pkg" / "mod.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    _cache_listing(outer, "gone.py")
+    _cache_listing(top, "outer/lib/pkg/mod.py")
+
+    assert _project_root_for_single_file(target) == top
 
 
 def test_the_nearest_git_still_wins_when_no_cache_exists(tmp_path: Path) -> None:
@@ -394,7 +517,7 @@ def test_a_single_file_run_creates_no_hash_cache(
 
     _run(root / "pkg" / "module_a.py", parsers_and_queries)
 
-    assert not (root / "pkg" / cs.HASH_CACHE_FILENAME).exists(), (
+    assert not (state_dir(root / "pkg") / cs.HASH_CACHE_FILENAME).exists(), (
         "a single-file run created a hash cache in its target's directory; "
         "that directory now poses as a project root for every later run"
     )
@@ -417,7 +540,7 @@ def test_a_single_file_run_still_updates_an_existing_cache(
     _tree(root)
     _run(root, parsers_and_queries)
 
-    cache = root / cs.HASH_CACHE_FILENAME
+    cache = state_file(root, cs.HASH_CACHE_FILENAME)
     before = json.loads(cache.read_text(encoding="utf-8"))
     (root / "pkg" / "module_a.py").write_text(
         "class Alpha:\n    def added(self):\n        pass\n", encoding="utf-8"

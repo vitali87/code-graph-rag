@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.checkout_state import state_file
 from codebase_rag.function_registry import FunctionRegistryTrie
 from codebase_rag.parsers.type_facts import (
     TypeReferenceResolver,
@@ -468,7 +469,7 @@ def test_incremental_run_requeues_unchanged_definitions(temp_repo: Path) -> None
     run(force=True)
     assert not {e for e in store.edges if e[2] == cs.RelationshipType.RETURNS.value}
 
-    cache = root / cs.HASH_CACHE_FILENAME
+    cache = state_file(root, cs.HASH_CACHE_FILENAME)
     _write(root, {"z.py": "class Widget:\n    pass\n"})
     future = cache.stat().st_mtime + 5
     import os

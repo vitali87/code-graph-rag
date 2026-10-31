@@ -10,6 +10,15 @@ PY_PACKAGE_INIT_FILES: tuple[str, ...] = (INIT_PY, INIT_PYI)
 
 ENCODING_UTF8 = "utf-8"
 ENCODING_UTF8_SIG = "utf-8-sig"
+# BOM-aware: decoding picks the byte order from the mark and drops it.
+ENCODING_UTF16 = "utf-16"
+ENCODING_UTF32 = "utf-32"
+# One byte order each, for the text after a BOM: writing that text back in
+# one of these, behind the same mark, gives the file's own bytes.
+ENCODING_UTF16_LE = "utf-16-le"
+ENCODING_UTF16_BE = "utf-16-be"
+ENCODING_UTF32_LE = "utf-32-le"
+ENCODING_UTF32_BE = "utf-32-be"
 ENCODING_ASCII = "ascii"
 # Codec names (as `codecs.lookup` normalises them) whose bytes the grammar
 # already reads as they are, so a source declaring one needs no transcoding.
@@ -33,6 +42,13 @@ SYNTHETIC_NAME_PREFIXES = "~"
 # What `errors="replace"` substitutes for an undecodable byte. Its presence
 # in an extracted symbol name means the name is damaged.
 UNICODE_REPLACEMENT_CHAR = "\ufffd"
+# Line endings a text file can use. Text-mode reading maps each one to "\n",
+# so an editor that writes back what it read must read and write with
+# newline="" (no translation) to keep the file's own endings.
+LINE_FEED = "\n"
+CARRIAGE_RETURN = "\r"
+CRLF = "\r\n"
+NEWLINE_UNTRANSLATED = ""
 
 ARG_TARGET_CODE = "target_code"
 ARG_REPLACEMENT_CODE = "replacement_code"
@@ -46,6 +62,7 @@ ARG_DRY_RUN = "dry_run"
 
 SEPARATOR_DOT = "."
 SEPARATOR_SLASH = "/"
+SEPARATOR_BACKSLASH = "\\"
 # Splits "provider:model" both in user-supplied settings and in the model
 # names pydantic-ai enumerates.
 MODEL_STRING_SEPARATOR = ":"
@@ -71,6 +88,11 @@ DUP_QN_MARKER = "@"
 # so same-line twins stay distinct (issue #1071). Every consumer splits on
 # DUP_QN_MARKER and keeps the base, so nothing reads the suffix back.
 DUP_QN_COLUMN_MARKER = "_"
+# The CLR metadata spelling of a generic arity (`Foo`1` for `Foo<T>`). C#
+# overloads a type name by arity, so a generic type declared beside a
+# same-named type of another arity carries it in its qn (issue #2579), and a
+# stored C# type reference carries its written arity the same way.
+CSHARP_GENERIC_ARITY_MARKER = "`"
 
 PATH_CURRENT_DIR = "."
 PATH_PARENT_DIR = ".."
@@ -109,20 +131,20 @@ CONTENT_EVENT_TYPES = frozenset(
 )
 
 
-REALTIME_LOGGER_FORMAT = (
-    "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
-    "<level>{level: <8}</level> | "
-    "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
-    "<level>{message}</level>"
-)
-
 WATCHER_SLEEP_INTERVAL = 1
 LOG_LEVEL_INFO = "INFO"
 LOG_LEVEL_ERROR = "ERROR"
 ENV_LOGURU_LEVEL = "LOGURU_LEVEL"
+# Where a refused setting came from, as its error message names it.
+SETTING_ORIGIN_ENVIRONMENT = "the environment"
+SETTING_ORIGIN_DOTENV = "./.env"
+# python-dotenv's switch for not loading `.env`, and the values that turn it on,
+# honoured as `load_dotenv` honours them.
+ENV_PYTHON_DOTENV_DISABLED = "PYTHON_DOTENV_DISABLED"
+PYTHON_DOTENV_DISABLED_VALUES = frozenset({"1", "true", "t", "yes", "y"})
 LOGURU_DEFAULT_HANDLER_ID = 0
 
-# Debounce settings for realtime watcher
+# Debounce settings for the real-time watcher (`cgr watch`)
 DEFAULT_DEBOUNCE_SECONDS = 5
 DEFAULT_MAX_WAIT_SECONDS = 30
 
@@ -230,7 +252,47 @@ EXPOSES_CLEANUP_PENDING_FILENAME = ".cgr-exposes-cleanup-pending"
 # could not establish were left (issue #1985). Unchanged files would otherwise
 # take the in-sync fast path, which never prunes, and keep those rows forever.
 PRUNE_PENDING_FILENAME = ".cgr-prune-pending"
+# Present while an embeddings pass a run left incomplete is still owed by the
+# project the file names: a symbol's point was not stored and verified, or a
+# stale point was not removed. Unchanged files would otherwise take the in-sync
+# fast path, which never embeds, and an edited function whose new point the
+# store refused stayed unsearchable until another file changed (review of PR
+# #2550). One file per project, `{digest}` the SHA-256 of its name, so that
+# projects syncing one checkout at once never rewrite each other's (review of
+# PR #3358). Not in CGR_STATE_FILENAMES: no cgr ever wrote one into the tree,
+# so there is nothing to move out of it.
+EMBEDDINGS_PENDING_PROJECT_TEMPLATE = ".cgr-embeddings-pending-{digest}"
+# The vector store backend a project's points were last settled in, one file
+# per project for the same reason; likewise never written into the tree.
+EMBEDDINGS_STORE_PROJECT_TEMPLATE = ".cgr-embeddings-store-{digest}"
+# The marker an earlier build shared between every project of a checkout: a
+# JSON list of the projects owing a pass, or an empty file. Read so that each
+# still retries once, then split into the per-project files above.
+EMBEDDINGS_PENDING_FILENAME = ".cgr-embeddings-pending"
 PARSER_FINGERPRINT_FILENAME = ".cgr-parser-fingerprint"
+# The parser fingerprint asks each active toolchain for its version (`go
+# version`, `javac -version`, `dotnet --version`) on every sync. A probe that
+# misses the first timeout, or whose process the OS could not start for want
+# of a resource, is asked once more, for longer, unless an earlier process
+# already got an answer from the same binary under the same pins.
+TOOL_VERSION_PROBE_TIMEOUT = 10.0
+TOOL_VERSION_PROBE_RETRY_TIMEOUT = 30.0
+# A toolchain that could not be asked in either attempt. It is not `absent`
+# (no binary, or one that exits non-zero): a slow machine is not a missing
+# compiler, so this value compares as unchanged rather than forcing a re-parse.
+TOOL_VERSION_UNKNOWN = "unknown"
+# Files that select a toolchain from the probe's working directory or one of
+# its parents: `go.work` and `go.mod` (its `go` and `toolchain` lines) for Go,
+# `global.json` for .NET. A remembered answer stands only while they do.
+TOOLCHAIN_PIN_FILENAMES: tuple[str, ...] = ("go.work", "go.mod", "global.json")
+# The last answer each probe gave, keyed by the binary's path and stat
+# identity, the argument, the working directory and its pins; at most
+# TOOL_VERSION_PROBE_CACHE_MAX_ENTRIES of them, the most recent kept.
+TOOL_VERSION_PROBE_CACHE_FILENAME = ".cgr-tool-version-probes.json"
+TOOL_VERSION_PROBE_CACHE_MAX_ENTRIES = 16
+# The tool versions the checkout's last parser fingerprint hashed, which an
+# `unknown` answer stands in for.
+TOOL_VERSIONS_HASHED_FILENAME = ".cgr-tool-versions.json"
 DELOMBOK_STATE_FILENAME = ".cgr-delombok-state.json"
 # The exclusion set the last run indexed under, covering both the excludes and
 # the unignores (which come from `!` lines in .cgrignore/.gitignore and from
@@ -246,23 +308,82 @@ EXCLUSION_STATE_PROJECTS_KEY = "projects"
 # Recorded edit transactions for `cgr edits show|undo` (issue #1528).
 EDIT_HISTORY_FILENAME = ".cgr-edit-history.json"
 EDIT_LOCK_FILENAME = ".cgr-edit-lock"
+# Held by the one writer syncing the checkout (issue #2441), in the
+# checkout's state directory under CGR_HOME like the edit lock (issue #2427).
+SYNC_LOCK_FILENAME = ".cgr-sync-lock"
+# How often a scoped reingest re-checks a lock a running sync holds.
+SYNC_LOCK_POLL_SECONDS = 0.2
+# How long, and how often, a sync that is refused rather than queued retries
+# a lock whose recorded holder has exited: Windows releases a dead process's
+# byte-range locks asynchronously, "depending upon available system
+# resources" (LockFileEx), so a sync rerun right after one was killed can
+# find its lock still held.
+SYNC_LOCK_RELEASE_GRACE_SECONDS = 2.0
+SYNC_LOCK_RELEASE_POLL_SECONDS = 0.05
+# The byte a Windows sync locks, far past the holder's pid and project at
+# the start of the file: a byte-range lock there also blocks other
+# processes' reads, and a refused writer must read whom it waits for.
+SYNC_LOCK_REGION_OFFSET = 1 << 20
+# A refused writer reads at most this much of the holder's name, well short
+# of the locked byte above.
+SYNC_LOCK_HOLDER_MAX_BYTES = 4096
+# The ids of edit history entries taken from the tree, or that left the
+# history (undone or aged out), which are never added from a history in the
+# tree again (issue #2427).
+EDIT_HISTORY_LEDGER_FILENAME = ".cgr-edit-history-ledger.json"
 PLATFORM_WINDOWS = "win32"
 # Permission bits copied onto a replacement file (rwx for u/g/o, setuid etc.).
 EDIT_MODE_MASK = 0o7777
 # Mode of the exclusively created temp sibling before the target's mode is
 # copied onto it: owner-only, so nothing reads staged bytes mid-write.
 EDIT_TEMP_FILE_MODE = 0o600
+# Approvals of repositories' .cgr.md files, under CGR_HOME (issue #3456).
+TRUSTED_INSTRUCTIONS_FILENAME = "trusted_instructions.json"
+ENV_CGR_HOME = "CGR_HOME"
+CGR_HOME_DIRNAME = ".cgr"
+TRUST_STORE_FILE_MODE = 0o600
+TRUST_STORE_DIR_MODE = 0o700
+# Between ~/.cgr.md and the repository's .cgr.md in the system prompt.
+CGR_INSTRUCTIONS_SEPARATOR = "\n\n---\n\n"
+# Read only from the environment cgr starts with, never from `.env` in the
+# working directory, which usually belongs to the repository being analysed.
+ENVIRONMENT_ONLY_SETTINGS = frozenset(
+    {"CGR_TRUST_PROJECT_INSTRUCTIONS", "CGR_ALLOW_SENSITIVE_READS"}
+)
+# Every file cgr keeps about one checkout. They live in that checkout's
+# directory under CGR_HOME / CGR_STATE_DIRNAME rather than in the working
+# tree, and a copy an older cgr left in the tree is moved there, so a name
+# added here is kept out of the tree and migrated with no code of its own
+# (issue #2427); a lock is registered in CGR_STATE_LOCK_FILENAMES as well.
 CGR_STATE_FILENAMES: frozenset[str] = frozenset(
     {
         HASH_CACHE_FILENAME,
         DIR_MTIMES_FILENAME,
+        EXPOSES_CLEANUP_PENDING_FILENAME,
+        PRUNE_PENDING_FILENAME,
+        EMBEDDINGS_PENDING_FILENAME,
         PARSER_FINGERPRINT_FILENAME,
+        TOOL_VERSION_PROBE_CACHE_FILENAME,
+        TOOL_VERSIONS_HASHED_FILENAME,
         DELOMBOK_STATE_FILENAME,
         EXCLUSION_STATE_FILENAME,
         EDIT_HISTORY_FILENAME,
+        EDIT_HISTORY_LEDGER_FILENAME,
         EDIT_LOCK_FILENAME,
+        SYNC_LOCK_FILENAME,
     }
 )
+# The state files that are locks. One an older cgr left in the tree is never
+# moved, copied or removed: another process may hold it, or be about to open
+# it by that path, so replacing it would let two holders run at once.
+# Instead it stays. The edit lock's tree copy is taken along with the lock
+# under CGR_HOME for as long as it is there (issue #2427); no released cgr
+# took a sync lock in the tree, so a sync takes only the one under CGR_HOME
+# and leaves a tree copy alone (issue #2441).
+CGR_STATE_LOCK_FILENAMES: frozenset[str] = frozenset(
+    {EDIT_LOCK_FILENAME, SYNC_LOCK_FILENAME}
+)
+CGR_STATE_DIRNAME = "state"
 # Edit transactions (issue #1528).
 EDIT_HISTORY_LIMIT = 50
 

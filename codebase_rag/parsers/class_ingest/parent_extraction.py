@@ -124,7 +124,8 @@ def split_csharp_base_refs(
 ) -> tuple[list[str], list[str]]:
     # Return the (inherited, implemented) bases as written: generic-free,
     # with the written arity in CLR style (`NotificationHandler`1`), so a
-    # later scope lookup can tell `Base<T>` from `Base<T1, T2>`. C# folds
+    # later scope lookup can tell `Base<T>` from `Base<T1, T2>`, and `Base`
+    # from `Base<T>`, which are two types too (issue #2579). C# folds
     # the base class and all interfaces into one base_list; the base class,
     # if any, is the FIRST entry (grammar-enforced) and must not look like
     # an interface. An interface's bases are all inheritance; a
@@ -173,7 +174,8 @@ def split_csharp_bases(
     base_kinds: dict[str, str] | None = None,
 ) -> tuple[list[str], list[str]]:
     # Return (inherited_qns, implemented_qns), in the order and split of
-    # split_csharp_base_refs.
+    # split_csharp_base_refs. The parse-time lookup is by the written name;
+    # the deferred pass moves it to the written arity's twin.
     inherited, implemented = split_csharp_base_refs(class_node, base_kinds)
     return (
         [_resolve_csharp_ref(ref, module_qn, resolve_to_qn) for ref in inherited],
@@ -256,6 +258,35 @@ def extract_parent_classes(
             extract_dart_parent_classes(class_node, module_qn, resolve_to_qn)
         )
 
+    # Julia `<:` base: the type_head's first named child is a
+    # binary_expression (type name left, supertype right).
+    if class_node.type in (
+        cs.TS_JULIA_STRUCT_DEFINITION,
+        cs.TS_JULIA_ABSTRACT_DEFINITION,
+        cs.TS_JULIA_PRIMITIVE_DEFINITION,
+    ):
+        type_head = find_child_by_type(class_node, cs.TS_JULIA_TYPE_HEAD)
+        if type_head is not None and type_head.named_children:
+            head = type_head.named_children[0]
+            if head.type == cs.TS_BINARY_EXPRESSION and head.named_children:
+                base = head.named_children[-1]
+                if base.type == cs.TS_JULIA_PARAMETRIZED_TYPE_EXPRESSION:
+                    # `struct Dog{T} <: Animal{T}`: the base name is the
+                    # parametrized expression's first named child.
+                    base = next(iter(base.named_children), None)
+                if (
+                    base is not None
+                    and base.type
+                    in (
+                        cs.TS_JULIA_IDENTIFIER,
+                        cs.TS_JULIA_FIELD_EXPRESSION,
+                        cs.TS_JULIA_SCOPED_IDENTIFIER,
+                    )
+                    and base.text
+                ):
+                    if name := safe_decode_text(base):
+                        parent_classes.append(resolve_to_qn(name, module_qn))
+
     if class_node.type in cs.SPEC_SCALA_CLASS_TYPES:
         parent_classes.extend(
             extract_scala_parent_classes(class_node, module_qn, resolve_to_qn)
@@ -277,33 +308,6 @@ def _rust_supertrait_parents(
         if base is not None and base.text and (name := safe_decode_text(base)):
             parents.append(resolve_to_qn(name, module_qn))
     return parents
-
-
-# Only these wrappers are descended; see the constants module for why
-# `type_arguments` must not be.
-_SCALA_BASE_WRAPPERS = (
-    cs.TS_SCALA_GENERIC_TYPE,
-    cs.TS_SCALA_STABLE_TYPE_IDENTIFIER,
-)
-
-
-def _scala_base_type_identifier(node: Node) -> Node | None:
-    """The `type_identifier` naming a Scala base, at whatever depth it sits.
-
-    Descends the LAST type-bearing child at each level, which is what picks
-    the simple name out of `foo.bar.Baz`: the qualifier segments come first
-    and the type name is last. Bounded to the wrapper kinds the grammar
-    actually produces, so this never walks into a type argument list and
-    returns `Int` from `foo.Service[Int]`.
-    """
-    if node.type == cs.TS_TYPE_IDENTIFIER:
-        return node
-    if node.type not in _SCALA_BASE_WRAPPERS:
-        return None
-    for child in reversed(node.children):
-        if found := _scala_base_type_identifier(child):
-            return found
-    return None
 
 
 def _scala_base_written_name(node: Node) -> str | None:
@@ -711,16 +715,45 @@ def extract_interface_parents(
     if not extends_clause:
         return []
 
-    parent_classes: list[str] = []
-    for child in extends_clause.children:
-        if child.type == cs.TS_TYPE_IDENTIFIER and child.text:
-            if parent_name := safe_decode_text(child):
-                parent_classes.append(
-                    resolve_js_ts_parent_class(
-                        parent_name, module_qn, import_processor, resolve_to_qn
-                    )
-                )
-    return parent_classes
+    return [
+        resolve_js_ts_parent_class(
+            parent_name, module_qn, import_processor, resolve_to_qn
+        )
+        for child in extends_clause.named_children
+        if (parent_name := _ts_heritage_type_name(child))
+    ]
+
+
+def _ts_heritage_type_name(type_node: Node) -> str | None:
+    """The type a TS `implements` or interface `extends` entry names, as written.
+
+    Only a bare type was read, so `implements Router<T>`, `extends Store<K, V>`
+    and `implements r.Plain` recorded no edge (issue #2560). A generic_type
+    names its supertype through its `name` field; its type arguments are uses
+    of other types, never supertypes. A namespace member stays dotted so the
+    deferred pass can resolve its head through the import that binds it.
+    """
+    if type_node.type == cs.TS_GENERIC_TYPE:
+        name_node = type_node.child_by_field_name(cs.FIELD_NAME)
+        if name_node is None:
+            return None
+        type_node = name_node
+    if type_node.type not in cs.TS_HERITAGE_TYPE_NAME_TYPES:
+        return None
+    return safe_decode_text(type_node) or None
+
+
+def js_ts_namespace_member_qn(written: str, import_map: dict[str, str]) -> str | None:
+    """The qn `r.Plain` names when `r` is an import binding, else None.
+
+    `import * as r from './router'` binds `r` to the module, so the member is
+    that module's `Plain`. The answer is a candidate only: the caller keeps it
+    when it is a registered type.
+    """
+    head, sep, tail = written.partition(cs.SEPARATOR_DOT)
+    if not sep or not (bound := import_map.get(head)):
+        return None
+    return f"{bound}{cs.SEPARATOR_DOT}{tail}"
 
 
 def extract_mixin_parent_classes(
@@ -791,7 +824,7 @@ def extract_implemented_interfaces(
         )
 
     # TypeScript `class C implements I, J` lives in class_heritage >
-    # implements_clause (no `interfaces` field), holding type_identifiers.
+    # implements_clause (no `interfaces` field), holding the written types.
     _extend_ts_implemented_interfaces(
         class_node, implemented_interfaces, module_qn, resolve_to_qn
     )
@@ -821,10 +854,11 @@ def _extend_ts_implemented_interfaces(
     implements_clause = find_child_by_type(class_heritage, cs.TS_IMPLEMENTS_CLAUSE)
     if not implements_clause:
         return
-    for child in implements_clause.children:
-        if child.type == cs.TS_TYPE_IDENTIFIER and child.text:
-            if name := safe_decode_text(child):
-                interface_list.append(resolve_to_qn(name, module_qn))
+    interface_list.extend(
+        resolve_to_qn(name, module_qn)
+        for child in implements_clause.named_children
+        if (name := _ts_heritage_type_name(child))
+    )
 
 
 def _extend_php_implemented_interfaces(

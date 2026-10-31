@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -17,7 +18,7 @@ from ...types_defs import (
 from ..import_processor import ImportProcessor
 from ..utils import get_cached_query, safe_decode_text
 from .forward_refs import unquote_forward_refs
-from .utils import resolve_class_name
+from .utils import resolve_class_name, resolve_dotted_class
 
 # Deepest operand chain `_value_leaves` will walk. Each term of `a or b or c`
 # or `x + y + z` is one level. Measured over every assignment in this repo the
@@ -54,6 +55,8 @@ if TYPE_CHECKING:
             self, node: ASTNode, module_qn: str, scope: ASTNode | None = None
         ) -> str | None: ...
 
+        def _type_of_annotated_name(self, text: str, module_qn: str) -> str | None: ...
+
         def _find_class_node(self, class_qn: str) -> ASTNode | None: ...
 
         def _find_method_ast_node(self, method_qn: str) -> ASTNode | None: ...
@@ -70,6 +73,10 @@ if TYPE_CHECKING:
         ) -> str | None: ...
 
         def _get_method_return_type_from_ast(self, method_qn: str) -> str | None: ...
+
+        def name_typed_parameters(
+            self, caller_node: ASTNode, module_qn: str
+        ) -> dict[str, str]: ...
 
     _VarBase: type = _VariableAnalyzerDeps
 else:
@@ -102,6 +109,11 @@ def _reflected_dunder(dunder: str) -> str:
     return f"__r{dunder[2:]}"
 
 
+def _name_spelling(name: str) -> str:
+    """`user_repo`, `UserRepo` and `_UserRepo` all spell `userrepo`."""
+    return name.replace(cs.CHAR_UNDERSCORE, "").lower()
+
+
 def _container_element_type(type_str: str | None) -> str | None:
     """The element inside a canonical ``list[<element>]`` marker, else ``None``."""
     if (
@@ -130,34 +142,22 @@ class PythonVariableAnalyzerMixin(_VarBase):
             return
 
         for param in params_node.children:
-            self._process_parameter(param, local_var_types, module_qn)
+            self._process_parameter(param, local_var_types)
+        # An untyped parameter's name guess comes from the one list the call
+        # resolver labels heuristic, so no guess binds a call exactly (#2608).
+        guessed = self.name_typed_parameters(caller_node, module_qn)
+        for param_name, class_name in guessed.items():
+            local_var_types[param_name] = class_name
+            logger.debug(lg.PY_PARAM_TYPE_INFERRED, param=param_name, type=class_name)
 
     def _process_parameter(
-        self, param: ASTNode, local_var_types: dict[str, str], module_qn: str
+        self, param: ASTNode, local_var_types: dict[str, str]
     ) -> None:
         match param.type:
-            case cs.TS_PY_IDENTIFIER:
-                self._process_untyped_parameter(param, local_var_types, module_qn)
             case cs.TS_PY_TYPED_PARAMETER:
                 self._process_typed_parameter(param, local_var_types)
             case cs.TS_PY_TYPED_DEFAULT_PARAMETER:
                 self._process_typed_default_parameter(param, local_var_types)
-
-    def _process_untyped_parameter(
-        self, param: ASTNode, local_var_types: dict[str, str], module_qn: str
-    ) -> None:
-        if (
-            param.text is None
-            or (param_name := safe_decode_text(param)) is None
-            or not (
-                inferred_type := self._infer_type_from_parameter_name(
-                    param_name, module_qn
-                )
-            )
-        ):
-            return
-        local_var_types[param_name] = inferred_type
-        logger.debug(lg.PY_PARAM_TYPE_INFERRED, param=param_name, type=inferred_type)
 
     def _process_typed_parameter(
         self, param: ASTNode, local_var_types: dict[str, str]
@@ -196,6 +196,11 @@ class PythonVariableAnalyzerMixin(_VarBase):
     def _infer_type_from_parameter_name(
         self, param_name: str, module_qn: str
     ) -> str | None:
+        # `self` / `cls` ARE the enclosing class, which the type-map builder
+        # seeds from the class itself; matched by name, an imported `F`
+        # ("self".endswith("f")) took every receiver in the module (#2608).
+        if param_name in cs.PY_RECEIVER_PARAM_NAMES:
+            return None
         logger.debug(lg.PY_TYPE_INFER_ATTEMPT, param=param_name, module=module_qn)
         available_class_names = self._collect_available_classes(module_qn)
         logger.debug(lg.PY_AVAILABLE_CLASSES, classes=available_class_names)
@@ -227,31 +232,22 @@ class PythonVariableAnalyzerMixin(_VarBase):
     def _find_best_class_match(
         self, param_name: str, available_class_names: list[str]
     ) -> str | None:
-        param_lower = param_name.lower()
-        best_match = None
-        highest_score = 0
-
-        for class_name in available_class_names:
-            score = self._calculate_match_score(param_lower, class_name.lower())
-            if score > highest_score:
-                highest_score = score
-                best_match = class_name
-
-        logger.debug(
-            lg.PY_BEST_MATCH, param=param_name, match=best_match, score=highest_score
-        )
-        return best_match
-
-    def _calculate_match_score(self, param_lower: str, class_lower: str) -> int:
-        if param_lower == class_lower:
-            return cs.PY_SCORE_EXACT_MATCH
-        if class_lower.endswith(param_lower) or param_lower.endswith(class_lower):
-            return cs.PY_SCORE_SUFFIX_MATCH
-        if class_lower in param_lower:
-            return int(
-                cs.PY_SCORE_CONTAINS_BASE * (len(class_lower) / len(param_lower))
-            )
-        return 0
+        # Only the parameter's WHOLE name spelling a class names it: `payload`
+        # a `Payload`, `user_repo` a `UserRepo`. A suffix or substring does not
+        # (`data` is no `A`, `user` no `AppUser`), nor does a class name too
+        # short to tell from an ordinary variable, and two classes spelled
+        # alike leave the parameter untyped rather than pick one (#2608).
+        spelled = _name_spelling(param_name)
+        matches = {
+            class_name
+            for class_name in available_class_names
+            if len(class_spelling := _name_spelling(class_name))
+            >= cs.PY_PARAM_NAME_MIN_CLASS_LEN
+            and class_spelling == spelled
+        }
+        match = next(iter(matches)) if len(matches) == 1 else None
+        logger.debug(lg.PY_NAME_MATCH, param=param_name, match=match)
+        return match
 
     def _analyze_comprehension(
         self, comp_node: ASTNode, local_var_types: dict[str, str], module_qn: str
@@ -361,13 +357,48 @@ class PythonVariableAnalyzerMixin(_VarBase):
         right_node = assignment.child_by_field_name(cs.TS_FIELD_RIGHT)
         if not (
             left_node
-            and right_node
             and left_node.type == cs.TS_PY_ATTRIBUTE
             and (left_text := left_node.text)
             and (attr_name := left_text.decode(cs.ENCODING_UTF8)).startswith(
                 cs.PY_SELF_PREFIX
             )
         ):
+            return
+        annotation_node = assignment.child_by_field_name(cs.TS_FIELD_TYPE)
+        if annotation_node is not None:
+            annotation = safe_decode_text(annotation_node)
+            if annotation:
+                annotation = unquote_forward_refs(annotation)
+                # The shared normalizer accepts optional pipe unions, but not
+                # their typing.Union spelling.
+                if union := re.fullmatch(
+                    r"(?:typing\.)?Union\[([^,\[\]]+),\s*None\]", annotation
+                ):
+                    annotation = f"{union.group(1)} | None"
+            assigned_type = (
+                self._type_of_annotated_name(annotation, module_qn)
+                if annotation
+                else None
+            )
+            if (
+                assigned_type
+                and cs.SEPARATOR_DOT in assigned_type
+                and not self._get_project_class_qn(assigned_type, module_qn)
+            ):
+                # `models.Store` / `m.Store` names the class through the
+                # module's imports; the registry only knows `proj.models.Store`.
+                assigned_type = resolve_dotted_class(
+                    assigned_type,
+                    module_qn,
+                    self.import_processor,
+                    self.function_registry,
+                )
+            if assigned_type and self._get_project_class_qn(assigned_type, module_qn):
+                local_var_types[attr_name] = assigned_type
+            else:
+                local_var_types.pop(attr_name, None)
+            return
+        if right_node is None:
             return
         # Read without its body's type map (a whole module's self-assignments,
         # or `__init__`'s for another method), so the assignment goes along:

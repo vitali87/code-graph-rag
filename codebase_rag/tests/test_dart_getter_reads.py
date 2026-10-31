@@ -805,6 +805,7 @@ def test_a_reparse_drops_the_dart_prefix_state(tmp_path: Path) -> None:
     (Copilot, PR #2040).
     """
     from codebase_rag.parsers.import_processor import ImportProcessor
+    from codebase_rag.parsers.js_ts.reexports import JsExport
 
     class _Probe(ImportProcessor):  # __slots__ forbids stubbing on instances
         def _retract_import_sites(self, module_qn: str) -> None:
@@ -821,13 +822,21 @@ def test_a_reparse_drops_the_dart_prefix_state(tmp_path: Path) -> None:
     processor._cpp_declaration_mappings = set()
     processor.csharp_static_imports = {}
     processor.csharp_global_static_imports = {}
-    processor.js_export_bindings = {}
+    processor._scala_imports = {}
+    processor._scala_block_imports = {}
+    processor.java_static_imports = {}
+    # A module's export table, CommonJS publications included, is the whole
+    # API the re-export walk follows: a re-parse must not keep a stale one.
+    processor.js_export_bindings = {"m": {"Svc": JsExport("m.svc.Svc", local=False)}}
+    processor._julia_scope_map_keys = {"m": {"m.Inner"}}
 
     processor._clear_module_import_state("m")
 
+    assert "m" not in processor.js_export_bindings
     assert processor.dart_prefix_shadows.get("m") is None
     assert processor.dart_import_aliases.get("m") is None
     assert processor.dart_exposed_libraries.get("m") is None
+    assert processor._julia_scope_map_keys.get("m") is None
     # The control: the mapping it sits beside is emptied, not dropped, so
     # this is the documented reset rather than a wholesale delete.
     assert processor.import_mapping["m"] == {}

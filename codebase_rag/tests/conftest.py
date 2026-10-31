@@ -21,9 +21,12 @@ from loguru import logger
 from codebase_rag import constants as rag_cs
 from codebase_rag import graph_audit
 from codebase_rag.capture import CaptureSelection
+from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.language_spec import LANGUAGE_SPECS, get_language_for_extension
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers import native_trees
+from codebase_rag.parsers.py.ast_analyzer import clear_scope_facts
 from codebase_rag.types_defs import GraphNodeRecord, GraphRelRecord
 
 if TYPE_CHECKING:
@@ -33,6 +36,19 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 # pytester drives the cgr-trace pytest plugin end-to-end in its own sessions.
 pytest_plugins = ["pytester"]
+
+# The milvus-lite tests start gRPC in the worker. Where a child is a real fork
+# (macOS), gRPC's fork handlers then log "FD from fork parent still in poll
+# list" at INFO into every later child's stderr, which the tests that read a
+# child's exact output catch. Set before any test imports gRPC.
+os.environ.setdefault("GRPC_VERBOSITY", "ERROR")
+# Quieting those handlers did not stop them running in every macOS child
+# between fork and exec, and children there have died without a word: a
+# build-lock holder that never printed, a toolchain probe that exited
+# non-zero, a benchmark child killed by SIGTRAP. Every child the suite spawns
+# execs at once, the case gRPC's fork-support doc says to turn the handlers
+# off for; set to false, gRPC registers none.
+os.environ["GRPC_ENABLE_FORK_SUPPORT"] = "false"
 
 
 class NodeProtocol(Protocol):
@@ -113,6 +129,8 @@ logger.remove()
 # entry per pass, and the import pass logs at WARNING rather than ERROR.
 _PASS_FAILURE_PREFIXES = (
     "Failed to process calls in ",
+    # A caller's local types, contained to that caller (issue #3173).
+    "Failed to infer local types in ",
     "Failed to parse or ingest ",
     "Failed to parse imports in ",
     "Error parsing ",
@@ -157,6 +175,36 @@ def assert_no_pass_failures(failures: list[str]) -> None:
     assert not failures, "a per-file pass failed:\n" + "\n".join(failures)
 
 
+@pytest.fixture(params=[True, False], ids=["rust_scopes", "python_scopes"])
+def both_scope_walks(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> Generator[None, None, None]:
+    """Runs a test once on the Rust scope walks and once on their Python
+    twins (issue #3473), so each behaviour the walks carry holds on both. A
+    build without the walks skips the Rust run."""
+    if request.param and native_trees.scope_bridge() is None:
+        pytest.skip("cgr_graph_rs without the scope walks is installed")
+    monkeypatch.setattr(native_trees, "ENABLED", request.param)
+    clear_scope_facts()
+    yield
+    clear_scope_facts()
+
+
+@pytest.fixture(params=[True, False], ids=["rust_interface", "python_interface"])
+def both_interface_walks(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> Generator[None, None, None]:
+    """Runs a test once on the Rust interface fingerprint and once on its
+    Python twin (issue #3473), so each rule the fingerprint applies holds on
+    both. A build without the walk skips the Rust run."""
+    if request.param and native_trees.interface_bridge() is None:
+        pytest.skip("cgr_graph_rs without the interface fingerprint is installed")
+    monkeypatch.setattr(native_trees, "ENABLED", request.param)
+    clear_scope_facts()
+    yield
+    clear_scope_facts()
+
+
 @pytest.fixture(autouse=True)
 def _disable_stack_autostart() -> Generator[None, None, None]:
     from unittest.mock import patch
@@ -184,9 +232,16 @@ def _grammars_missing_for(updater: GraphUpdater) -> frozenset[rag_cs.SupportedLa
     # The updater's own eligibility walk, not a raw rglob: a file the run
     # would ignore anyway (node_modules, exclusions, hidden dirs) must not
     # gate the test on its language's grammar.
+    # The probe is the harness's, not the run's: what the walk logs (each
+    # skipped symlink and their summary, issue #2451) belongs to the run.
+    logger.disable(GraphUpdater.__module__)
+    try:
+        files = updater._collect_eligible_files()
+    finally:
+        logger.enable(GraphUpdater.__module__)
     return frozenset(
         language
-        for path, _rel_path in updater._collect_eligible_files()
+        for path, _rel_path in files
         if (language := get_language_for_extension(path.suffix)) is not None
         and language in unavailable
     )
@@ -261,6 +316,17 @@ def _pin_csharp_frontend_treesitter(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _forget_toolchain_probe_answers(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The parser fingerprint remembers each toolchain's version answer for the
+    # life of the process, so one test's real or scripted `go version` would
+    # answer the next test's probe in the same worker. Each test starts as a
+    # new process does, remembering nothing.
+    from codebase_rag import parser_fingerprint
+
+    monkeypatch.setattr(parser_fingerprint, "_PROBE_ANSWERS", {})
+
+
+@pytest.fixture(autouse=True)
 def _isolate_vector_store(
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -282,6 +348,35 @@ def _isolate_vector_store(
         "MILVUS_URI",
         str(tmp_path_factory.mktemp("milvus-iso") / "milvus.db"),
     )
+    # Unset it already lands under the isolated CGR_HOME; a developer .env
+    # that sets it would not.
+    monkeypatch.setattr(
+        settings,
+        "SQLITE_VECTOR_PATH",
+        tmp_path_factory.mktemp("sqlite-vec-iso") / "vectors.sqlite",
+    )
+
+
+@pytest.fixture(autouse=True)
+def _pin_graph_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The suite's graph fakes model Memgraph -- a patched mgclient, Memgraph
+    # DDL, Memgraph plan rows -- and predate the embedded default (issue
+    # #386), so they keep that backend, whatever a developer's .env says.
+    # The embedded engine's tests choose it explicitly.
+    from codebase_rag.config import settings
+    from codebase_rag.graph_dialects import DIALECT_MEMGRAPH
+
+    monkeypatch.setattr(settings, "GRAPH_BACKEND", DIALECT_MEMGRAPH)
+
+
+@pytest.fixture(autouse=True)
+def _pin_vector_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Likewise the vector fakes model Qdrant and predate the `sqlite` default,
+    # so they keep that backend; the other backends' tests choose theirs.
+    from codebase_rag.config import settings
+    from codebase_rag.constants import VectorStoreBackend
+
+    monkeypatch.setattr(settings, "VECTOR_STORE_BACKEND", VectorStoreBackend.QDRANT)
 
 
 @pytest.fixture(autouse=True)
@@ -293,6 +388,78 @@ def _isolate_cgr_home(
     home = tmp_path_factory.mktemp("cgr-home-iso")
     monkeypatch.setattr(settings, "CGR_HOME", home)
     return home
+
+
+def shared_session_dir(tmp_path_factory: pytest.TempPathFactory, name: str) -> Path:
+    """A directory every xdist worker of this test session shares (the
+    session's own base temp without xdist)."""
+    base = tmp_path_factory.getbasetemp()
+    shared = (base.parent if os.environ.get("PYTEST_XDIST_WORKER") else base) / name
+    shared.mkdir(exist_ok=True)
+    return shared
+
+
+@pytest.fixture(scope="session")
+def _shared_go_helper_cache(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    return shared_session_dir(tmp_path_factory, "go-helper-shared")
+
+
+@pytest.fixture
+def one_go_helper_per_session(
+    _shared_go_helper_cache: Path, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """The go/types helper built once per test session, shared by every xdist
+    worker (its build takes a lock), for the tests that use it: each test's
+    fresh CGR_HOME (above) made each one rebuild it, a `go env`, a `go build`
+    and a link apiece, slowest on Windows. Tests of the helper's own build
+    and cache keep their isolation by not using this."""
+    from codebase_rag.parsers.go_frontend import frontend
+
+    monkeypatch.setattr(frontend, "_cache_dir", lambda: _shared_go_helper_cache)
+    return _shared_go_helper_cache
+
+
+# The parser fingerprint's inputs from the environment, once read: each
+# tool's version by (executable, argument), and the grammar packages.
+_TOOL_VERSIONS: dict[tuple[str, str], str] = {}
+_GRAMMAR_VERSIONS: list[list[str]] = []
+
+
+@pytest.fixture
+def fingerprint_inputs_once_per_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    """What the parser fingerprint reads from the environment, read once per
+    test session (per xdist worker) for the tests that use this, which index
+    many small repositories. Each index asked every tool's version again,
+    since the probe's key holds the repository's directory and pin files
+    (`go version` a process apiece, slowest on Windows), and read every
+    installed distribution's metadata for the grammar packages' versions
+    (about 0.2 s an index). Nothing installs a tool or a grammar in a
+    session, and none of their repositories pins a toolchain, so every
+    answer is the same. Tests of the fingerprint itself read afresh by not
+    using this."""
+    from codebase_rag import parser_fingerprint
+
+    probe = parser_fingerprint._probe_version
+    grammars = parser_fingerprint._grammar_versions
+
+    def tool_version(
+        executable: str,
+        argument: str,
+        cwd: Path | None = None,
+        state_dir: Path | None = None,
+    ) -> str:
+        key = (executable, argument)
+        if key not in _TOOL_VERSIONS:
+            _TOOL_VERSIONS[key] = probe(executable, argument, cwd, state_dir)
+        return _TOOL_VERSIONS[key]
+
+    def grammar_versions() -> list[str]:
+        if not _GRAMMAR_VERSIONS:
+            _GRAMMAR_VERSIONS.append(grammars())
+        return list(_GRAMMAR_VERSIONS[0])
+
+    monkeypatch.setattr(parser_fingerprint, "_probe_version", tool_version)
+    monkeypatch.setattr(parser_fingerprint, "_grammar_versions", grammar_versions)
 
 
 # What `shutil.rmtree` passes to `onexc` besides the removals. None of these
@@ -633,7 +800,7 @@ def force_mtime_after_cache(repo: Path, source: Path) -> None:
     needs the rewrite re-hashed (issue #1640); the margin such a test gets
     otherwise is whatever the preceding run happened to cost.
     """
-    cache_mtime = (repo / rag_cs.HASH_CACHE_FILENAME).stat().st_mtime
+    cache_mtime = state_file(repo, rag_cs.HASH_CACHE_FILENAME).stat().st_mtime
     # Read back and advance until the STORED stamp is strictly later: a
     # filesystem with coarse mtime resolution can round the requested value
     # onto the cache's own tick, which is the collision this exists to
@@ -771,6 +938,13 @@ def create_and_run_updater(
         unignore_paths=unignore_paths,
         capture=capture,
     )
+    # The autouse `_skip_when_grammar_missing` wraps `run` per test, so a
+    # module-scoped fixture, set up before it, ran over a repo of a missing
+    # grammar on a base install and failed on an empty graph instead of
+    # skipping. The check is made here too, where every caller passes.
+    if missing := _grammars_missing_for(updater):
+        names = ", ".join(sorted(str(lang.value) for lang in missing))
+        pytest.skip(f"{names} parser not available")
     updater.run()
     _audit_recorded_graph(mock_ingestor)
     return updater
@@ -937,3 +1111,16 @@ def assert_fixture_covers(covered: set[str], required: set[str], *, what: str) -
         f"filter returned nothing proves little: {reason} (#1859). Add the "
         "missing values, or the test passes whatever the code does."
     )
+
+
+@pytest.fixture
+def mgclient_in_this_process(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the Memgraph probes in this process, where a patched mgclient is.
+
+    On Windows each probe runs mgclient in a child process (issue #2356),
+    which a patch of `mgclient.connect` made here never reaches. Everywhere
+    else the probes already run here, so this changes nothing there.
+    """
+    from codebase_rag.stack import health
+
+    monkeypatch.setattr(health, "_mgclient_own_c_runtime", lambda: None)

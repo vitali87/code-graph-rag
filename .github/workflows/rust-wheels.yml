@@ -1,0 +1,354 @@
+name: Rust Wheels
+
+# Builds cgr-graph-rs (rust/cgr_graph_rs) the way uv and ruff are shipped:
+# maturin wheels for every platform code-graph-rag installs it on, so no
+# user needs a Rust toolchain. Each wheel is abi3, so one per platform
+# serves every CPython from 3.12 on. Runs on PRs that touch the crate, and
+# from publish.yml, which uploads the wheels before code-graph-rag.
+
+on:
+  pull_request:
+    paths:
+      - "rust/cgr_graph_rs/**"
+      - ".github/workflows/rust-wheels.yml"
+      - "scripts/rust_wheel_parity.py"
+      - "scripts/generate_rust_licenses.py"
+  workflow_call:
+    inputs:
+      ref:
+        description: "The ref to build (publish.yml passes the release tag)"
+        required: false
+        type: string
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CRATE: rust/cgr_graph_rs
+
+jobs:
+  version:
+    name: Crate version bumped with its code
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # publish.yml uploads the crate only for a version PyPI lacks, so a
+      # change to the library that keeps its version would never reach users.
+      - name: Require a new version for a changed library
+        env:
+          BASE: origin/${{ github.base_ref }}
+        run: |
+          if ! git cat-file -e "$BASE:$CRATE/pyproject.toml" 2>/dev/null; then
+            echo "The crate is new on this branch."
+            exit 0
+          fi
+          if git diff --quiet "$BASE"...HEAD -- "$CRATE/src" "$CRATE/Cargo.toml" "$CRATE/Cargo.lock"; then
+            echo "The library is unchanged."
+            exit 0
+          fi
+          OLD=$(git show "$BASE:$CRATE/pyproject.toml" | grep -E '^version\s*=')
+          NEW=$(grep -E '^version\s*=' "$CRATE/pyproject.toml")
+          if [ "$OLD" = "$NEW" ]; then
+            echo "::error::$CRATE changed but its version did not; bump it in $CRATE/pyproject.toml and the cgr-graph-rs requirement in pyproject.toml"
+            exit 1
+          fi
+
+  linux:
+    name: Wheel ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            compatibility: manylinux2014
+          - target: aarch64-unknown-linux-gnu
+            compatibility: manylinux2014
+          - target: x86_64-unknown-linux-musl
+            compatibility: musllinux_1_2
+          - target: aarch64-unknown-linux-musl
+            compatibility: musllinux_1_2
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+
+      # The wheel goes to PyPI when publish.yml calls this workflow, so its
+      # build tools come from no cache another run could have written.
+      # setup-uv's default would cache a dispatched publish.
+      - name: Install uv
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          enable-cache: false
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      # zig links against the oldest glibc and musl the tags promise, so one
+      # runner builds every Linux wheel without a manylinux container.
+      - name: Install the target and the build tools
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          rustup target add "$TARGET"
+          uv sync --frozen --only-group rust-wheels
+
+      - name: Build the wheel
+        env:
+          TARGET: ${{ matrix.target }}
+          COMPATIBILITY: ${{ matrix.compatibility }}
+        run: |
+          # A Python extension on musl must not link the C runtime
+          # statically: the interpreter loading it already has one.
+          case "$TARGET" in
+            *-musl) export RUSTFLAGS="-C target-feature=-crt-static" ;;
+          esac
+          uv run --no-sync maturin build --release --strip --zig \
+            --manifest-path "$CRATE/Cargo.toml" \
+            --target "$TARGET" --compatibility "$COMPATIBILITY" --out dist
+
+      - name: Upload the wheel
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: cgr-graph-rs-${{ matrix.target }}
+          path: dist/*.whl
+          retention-days: 7
+
+  macos:
+    name: Wheel universal2-apple-darwin
+    runs-on: macos-14
+    timeout-minutes: 30
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "10.13"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+
+      # The wheel goes to PyPI when publish.yml calls this workflow, so its
+      # build tools come from no cache another run could have written.
+      # setup-uv's default would cache a dispatched publish.
+      - name: Install uv
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          enable-cache: false
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Install the targets and the build tools
+        run: |
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          uv sync --frozen --only-group rust-wheels
+
+      # One wheel for Apple silicon and Intel Macs alike.
+      - name: Build the wheel
+        run: |
+          uv run --no-sync maturin build --release --strip \
+            --manifest-path "$CRATE/Cargo.toml" \
+            --target universal2-apple-darwin --out dist
+
+      - name: Upload the wheel
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: cgr-graph-rs-universal2-apple-darwin
+          path: dist/*.whl
+          retention-days: 7
+
+  windows:
+    name: Wheel x86_64-pc-windows-msvc
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+
+      # The wheel goes to PyPI when publish.yml calls this workflow, so its
+      # build tools come from no cache another run could have written.
+      # setup-uv's default would cache a dispatched publish.
+      - name: Install uv
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          enable-cache: false
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Install the build tools
+        run: uv sync --frozen --only-group rust-wheels
+
+      - name: Build the wheel
+        shell: bash
+        run: |
+          uv run --no-sync maturin build --release --strip \
+            --manifest-path "$CRATE/Cargo.toml" --out dist
+
+      - name: Upload the wheel
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: cgr-graph-rs-x86_64-pc-windows-msvc
+          path: dist/*.whl
+          retention-days: 7
+
+  # Each wheel is installed in place of the source build and checked by the
+  # suites that compare every Rust path with its Python twin.
+  test:
+    name: Test ${{ matrix.wheel }} on ${{ matrix.os }}
+    needs: [linux, macos, windows]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            wheel: x86_64-unknown-linux-gnu
+          - os: ubuntu-24.04-arm
+            wheel: aarch64-unknown-linux-gnu
+          - os: macos-14
+            wheel: universal2-apple-darwin
+          - os: macos-15-intel
+            wheel: universal2-apple-darwin
+          - os: windows-latest
+            wheel: x86_64-pc-windows-msvc
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+
+      - name: Key the uv cache on dependencies, not the project version
+        shell: bash
+        run: |
+          awk 'skip && /^version = / { skip = 0; next }
+               { skip = /^name = "code-graph-rag"\r?$/; print }' \
+            uv.lock > "$RUNNER_TEMP/uv-deps.lock"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          # Only a pull request's run uses the cache: in publish.yml's run
+          # every job can upload an artifact that publish-rust then ships.
+          enable-cache: ${{ github.event_name == 'pull_request' }}
+          cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Download the wheel
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: cgr-graph-rs-${{ matrix.wheel }}
+          path: wheel
+
+      - name: Install code-graph-rag with the wheel
+        shell: bash
+        run: |
+          uv sync --frozen --extra test --group dev --no-install-package cgr-graph-rs
+          uv pip install wheel/*.whl
+
+      - name: Compare the Rust paths with Python
+        shell: bash
+        run: |
+          uv run --no-sync python -c "import cgr_graph_rs, sys; print(cgr_graph_rs.__file__)"
+          uv run --no-sync pytest --tb=short \
+            codebase_rag/tests/test_embedded_graph_rust.py \
+            codebase_rag/tests/test_embedded_graph_rust_parser.py \
+            codebase_rag/tests/test_embedded_graph_native.py
+
+  # No runner runs musl, so the musl wheels answer the same questions as the
+  # glibc wheel inside Alpine, with nothing installed beside them.
+  test-musl:
+    name: Test ${{ matrix.arch }}-unknown-linux-musl on Alpine
+    needs: linux
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: x86_64
+          - os: ubuntu-24.04-arm
+            arch: aarch64
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+
+      - name: Key the uv cache on dependencies, not the project version
+        shell: bash
+        run: |
+          awk 'skip && /^version = / { skip = 0; next }
+               { skip = /^name = "code-graph-rag"\r?$/; print }' \
+            uv.lock > "$RUNNER_TEMP/uv-deps.lock"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          # Only a pull request's run uses the cache: in publish.yml's run
+          # every job can upload an artifact that publish-rust then ships.
+          enable-cache: ${{ github.event_name == 'pull_request' }}
+          cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Download the glibc wheel
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: cgr-graph-rs-${{ matrix.arch }}-unknown-linux-gnu
+          path: wheel-gnu
+
+      - name: Download the musl wheel
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: cgr-graph-rs-${{ matrix.arch }}-unknown-linux-musl
+          path: wheel-musl
+
+      - name: Record the glibc wheel's answers
+        run: |
+          uv sync --frozen --no-dev --no-install-package cgr-graph-rs
+          uv pip install wheel-gnu/*.whl
+          uv run --no-sync python scripts/rust_wheel_parity.py record parity
+
+      # The root-user warning is silenced through the environment rather than
+      # --root-user-action=ignore: Scorecard counts a pip install of local
+      # wheels as pinned only while every other argument is a bare flag.
+      - name: Ask the musl wheel the same in Alpine
+        run: |
+          docker run --rm \
+            -e PIP_ROOT_USER_ACTION=ignore \
+            -v "$PWD/parity:/parity" -v "$PWD/wheel-musl:/wheel:ro" \
+            -v "$PWD/scripts:/scripts:ro" \
+            python:3.12-alpine@sha256:1b668429b3511ab407d8e00648891631b0b1a4d7e15e3ca70f38ab5b91ad4ab4 \
+            sh -c "pip install --quiet --no-index /wheel/*.whl && python /scripts/rust_wheel_parity.py check /parity"

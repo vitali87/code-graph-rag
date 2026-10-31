@@ -21,8 +21,11 @@ import ast
 import re
 import time
 from collections.abc import Callable, Iterable, Iterator
+from functools import lru_cache
 from pathlib import Path
 from typing import NamedTuple, TypedDict
+
+from tree_sitter import Node, Tree
 
 from . import constants as cs
 from . import cypher_queries as cq
@@ -35,7 +38,7 @@ from .dead_code import (
     _rust_test_modules_from_nodes,
 )
 from .duplicates import _jaccard
-from .graph_query import QueryFn, _prefix
+from .graph_query import QueryFn, _longer_project_prefixes, _opt_int, _prefix
 from .language_spec import get_language_for_extension
 from .types_defs import PropertyDict, ReingestReport, ResultRow
 
@@ -74,6 +77,8 @@ class CallSite(NamedTuple):
     arg_count: int | None
     kwarg_names: tuple[str, ...]
     star_args: bool
+    # `**opts` at the site: it may supply any keyword, required ones too.
+    star_kwargs: bool = False
 
 
 class ImportBinding(NamedTuple):
@@ -99,7 +104,9 @@ class Snapshot(NamedTuple):
 
     `definitions` are the symbols defined in the touched files; `callees`
     the definitions elsewhere that the touched files' sites resolve to;
-    `bindings` the by-name imports into and out of the touched files.
+    `bindings` the by-name imports into and out of the touched files;
+    `modules` the (qualified name, path) of each Module at a touched path,
+    and `module_bindings` every import of one of them.
     """
 
     paths: frozenset[str]
@@ -109,6 +116,8 @@ class Snapshot(NamedTuple):
     imports: dict[str, frozenset[str]]
     module_paths: dict[str, str]
     bindings: tuple[ImportBinding, ...] = ()
+    modules: frozenset[tuple[str, str]] = frozenset()
+    module_bindings: tuple[ImportBinding, ...] = ()
 
 
 class RenameFinding(TypedDict):
@@ -127,7 +136,8 @@ class DanglingCaller(TypedDict):
 
 
 class DanglingImporter(TypedDict):
-    """An import statement or `__all__` entry still naming a gone symbol."""
+    """An import statement or `__all__` entry still naming a gone symbol,
+    or an import statement still naming a gone module."""
 
     importer: str
     path: str
@@ -248,10 +258,6 @@ def _int(value: object, default: int = 0) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) else default
 
 
-def _opt_int(value: object) -> int | None:
-    return value if isinstance(value, int) and not isinstance(value, bool) else None
-
-
 def _strings(value: object) -> tuple[str, ...]:
     if isinstance(value, list):
         return tuple(str(item) for item in value)
@@ -304,6 +310,7 @@ def _site(row: ResultRow) -> CallSite:
         arg_count=_opt_int(row.get(cs.KEY_ARG_COUNT)),
         kwarg_names=_strings(row.get(cs.KEY_KWARG_NAMES)),
         star_args=row.get(cs.KEY_STAR_ARGS) is True,
+        star_kwargs=row.get(cs.KEY_STAR_KWARGS) is True,
     )
 
 
@@ -322,6 +329,30 @@ def _binding(row: ResultRow) -> ImportBinding:
     )
 
 
+def _touched_modules(
+    fetch_all: QueryFn, params: PropertyDict
+) -> frozenset[tuple[str, str]]:
+    """The (qualified name, path) of each Module at a touched path."""
+    return frozenset(
+        (qn, _text(row.get(cs.KEY_PATH)))
+        for row in fetch_all(cq.CYPHER_DELTA_MODULES, params)
+        if (qn := _text(row.get(cs.KEY_QUALIFIED_NAME)))
+    )
+
+
+def _module_import_bindings(
+    fetch_all: QueryFn, params: PropertyDict
+) -> tuple[ImportBinding, ...]:
+    """Every import of a Module at a touched path."""
+    return tuple(
+        binding
+        for binding in (
+            _binding(row) for row in fetch_all(cq.CYPHER_DELTA_MODULE_IMPORTERS, params)
+        )
+        if binding.importer and binding.module
+    )
+
+
 def _named_import_bindings(
     fetch_all: QueryFn, params: PropertyDict
 ) -> tuple[ImportBinding, ...]:
@@ -333,18 +364,6 @@ def _named_import_bindings(
         )
         if binding.importer and binding.module and binding.imported_name
     )
-
-
-def _longer_project_prefixes(fetch_all: QueryFn, project_name: str) -> tuple[str, ...]:
-    """Return registered project names that can own a longer qualified name."""
-    requested_prefix = f"{project_name}{cs.SEPARATOR_DOT}"
-    names = {
-        name
-        for row in fetch_all(cq.CYPHER_LIST_PROJECTS, None)
-        if isinstance(name := row.get(cs.KEY_NAME), str)
-        and name.startswith(requested_prefix)
-    }
-    return tuple(sorted(names))
 
 
 def _has_longer_project_owner(
@@ -418,6 +437,8 @@ def snapshot(
         imports={qn: frozenset(targets) for qn, targets in imports.items()},
         module_paths=module_paths,
         bindings=_named_import_bindings(fetch_all, params),
+        modules=_touched_modules(fetch_all, params),
+        module_bindings=_module_import_bindings(fetch_all, params),
     )
 
 
@@ -653,16 +674,86 @@ def _symbols(
 # --- dangling callers ---------------------------------------------------------
 
 
+# A site's line and column.
+_Position = tuple[int | None, int | None]
+
+
+def _held(sites: Iterable[CallSite]) -> dict[str, set[_Position]]:
+    """Where each symbol is taken as a value, by its qualified name."""
+    held: dict[str, set[_Position]] = {}
+    for site in sites:
+        if site.rel == cs.RelationshipType.REFERENCES:
+            held.setdefault(site.callee, set()).add((site.line, site.col))
+    return held
+
+
+def _named_only_as_itself(
+    site: CallSite, callee: Definition, held: dict[str, set[_Position]]
+) -> bool:
+    """Whether the call can only have been written as the callee's own name.
+
+    An import binds a function under any name (`from lib import helper as
+    h`, a default import, `const serialize = require('./ser')`), so only one
+    of the caller's own file qualifies. A method runs under names it does
+    not carry (`Widget(1)` calls `Widget.__init__`). A function taken as a
+    value anywhere but this site can be called through what holds it
+    (`h = helper; h(x)`).
+    """
+    return (
+        callee.label == cs.NodeLabel.FUNCTION
+        and callee.path == site.caller_path
+        and held.get(site.callee, set()) <= {(site.line, site.col)}
+    )
+
+
+def _still_names(
+    site: CallSite, callee: Definition, after: Snapshot, repo_root: Path | None
+) -> bool:
+    """Whether a re-parsed caller's new body still names `callee`.
+
+    A callback replaced by a loop, a named function expression swapped for
+    an arrow, a nested helper inlined: the edit removed the callee and the
+    caller's call to it together (issue #3246). An anonymous callee is never
+    named, so it went with the expression that held it. Where the body
+    cannot be read, the call is assumed to stand.
+    """
+    caller = after.definitions.get(site.caller)
+    if repo_root is None or caller is None or caller.start_line < 1:
+        return True
+    try:
+        lines = (repo_root / caller.path).read_text(encoding=cs.ENCODING_UTF8)
+    except (OSError, UnicodeDecodeError):
+        return True
+    body = "\n".join(
+        lines.splitlines()[caller.start_line - 1 : caller.end_line or None]
+    )
+    return re.search(_NAMED.format(name=re.escape(callee.name)), body) is not None
+
+
+# A name as a whole identifier: `$` is part of one in JavaScript.
+_NAMED = r"(?<![\w$]){name}(?![\w$])"
+
+
 def _dangling(
-    before: Snapshot, after: Snapshot, symbols: SymbolDelta
+    before: Snapshot,
+    after: Snapshot,
+    symbols: SymbolDelta,
+    repo_root: Path | None,
 ) -> list[DanglingCaller]:
     gone = set(symbols["removed"]) | {r["old"] for r in symbols["renamed"]}
     renamed_to = {r["old"]: r["new"] for r in symbols["renamed"]}
     after_pairs = {(site.caller, site.callee) for site in after.sites}
+    held = _held(before.sites)
     out: list[DanglingCaller] = []
     seen: set[tuple[str, str, int | None, int | None]] = set()
     for site in before.sites:
         if site.callee not in gone:
+            continue
+        callee = before.definitions[site.callee]
+        # Only a caller the edit touched is in the after-snapshot to read.
+        if _named_only_as_itself(site, callee, held) and not _still_names(
+            site, callee, after, repo_root
+        ):
             continue
         new_name = renamed_to.get(site.callee)
         # A caller re-parsed in this pass that now binds to the renamed
@@ -1207,6 +1298,217 @@ def _all_findings(
     return out
 
 
+def _gone_modules(
+    before: Snapshot, after: Snapshot, repo_root: Path | None
+) -> dict[str, str]:
+    """The modules at the touched paths the edit took away: qn -> old path.
+
+    A Python module turned into a package keeps its qualified name, so it is
+    not gone; nor is a package whose `__init__.py` went while its directory
+    stayed, which Python still imports as a namespace package (PEP 420).
+    """
+    now = {qn for qn, _path in after.modules}
+    return {
+        qn: path
+        for qn, path in before.modules
+        if qn not in now and not _namespace_package_left(repo_root, path)
+    }
+
+
+def _namespace_package_left(repo_root: Path | None, path: str) -> bool:
+    module = Path(path)
+    return (
+        repo_root is not None
+        and module.name == cs.INIT_PY
+        and (repo_root / module.parent).is_dir()
+    )
+
+
+def _index_took_over(qn: str, path: str, now: set[str]) -> bool:
+    """A JS/TS file turned into a directory whose `index` the same
+    extensionless specifier now resolves to (`./util` -> `util/index.ts`)."""
+    return (
+        _language(path) in cs.JS_TS_LANGUAGES
+        and f"{qn}{cs.SEPARATOR_DOT}{cs.JS_INDEX_STEM}" in now
+    )
+
+
+# The module specifier of the JS/TS statement a search starts at: `from
+# "./x"`, a bare `import "./x"`, `require("./x")` or `import("./x")`.
+_JS_SPECIFIER = re.compile(
+    r"""(?:\bfrom|\bimport|\brequire\s*\(|\bimport\s*\()\s*(['"])([^'"\n]*)\1"""
+)
+
+
+def _names_a_file(repo_root: Path | None, binding: ImportBinding) -> bool:
+    """Whether the JS/TS statement behind `binding` spells a file extension.
+
+    `"./util.js"` or `"./util.ts"` names the file alone, never a directory's
+    `index`, but the graph records it without the extension, so the
+    statement itself is read.
+    """
+    if repo_root is None or binding.line is None:
+        return False
+    try:
+        text = (repo_root / binding.importer_path).read_text(encoding=cs.ENCODING_UTF8)
+    except (OSError, UnicodeDecodeError):
+        return False
+    lines = text.splitlines(keepends=True)
+    if not 0 < binding.line <= len(lines):
+        return False
+    row = lines[binding.line - 1]
+    # The edge's column counts bytes.
+    col = len(
+        row.encode(cs.ENCODING_UTF8)[: binding.col or 0].decode(
+            cs.ENCODING_UTF8, errors="ignore"
+        )
+    )
+    start = sum(len(line) for line in lines[: binding.line - 1]) + col
+    match = _JS_SPECIFIER.search(text, start)
+    return match is not None and Path(match.group(2)).suffix in cs.JS_TS_ALL_EXTENSIONS
+
+
+def _package_still_binds(
+    binding: ImportBinding,
+    path: str,
+    still: _AfterBindings,
+    broken: set[tuple[str, str]],
+) -> bool:
+    """`from pkg import util` still works when `pkg` itself binds `util`.
+
+    Python takes the name from the package before it looks for the
+    submodule, so a package that re-exports the moved module (`from .text
+    import util`) keeps the import working. `import pkg.util` needs the
+    submodule itself. A package whose own import of the module is broken
+    binds nothing, whatever its source still says.
+    """
+    package, _dot, name = binding.module.rpartition(cs.SEPARATOR_DOT)
+    if (
+        not package
+        or binding.imported_name != name
+        or binding.importer == package
+        or (package, name) in broken
+        or _language(path) != cs.SupportedLanguage.PYTHON
+    ):
+        return False
+    module = Path(path)
+    directory = module.parent.parent if module.name == cs.INIT_PY else module.parent
+    return still.binds(package, (directory / cs.INIT_PY).as_posix(), name)
+
+
+def _modules_by_path(modules: frozenset[tuple[str, str]]) -> dict[str, set[str]]:
+    # A Rust file holds its inline `mod` blocks too, each a Module carrying
+    # the file's path.
+    out: dict[str, set[str]] = {}
+    for qn, path in modules:
+        out.setdefault(path, set()).add(qn)
+    return out
+
+
+def _owning_module(qn: str, modules: set[str]) -> str | None:
+    """The innermost of a file's modules that `qn` is defined in."""
+    owners = [m for m in modules if qn.startswith(f"{m}{cs.SEPARATOR_DOT}")]
+    if owners:
+        return max(owners, key=len)
+    return next(iter(modules)) if len(modules) == 1 else None
+
+
+def _module_destinations(
+    before: Snapshot, after: Snapshot, symbols: SymbolDelta, gone: dict[str, str]
+) -> dict[str, str]:
+    """Where each moved module went, when that is unambiguous.
+
+    The rename pass already paired the definitions that moved with it; a
+    module defining nothing (top-level statements only) is paired with the
+    one new module that has its file name, or, among a file's several
+    modules, the one with its own name.
+    """
+    module_before = _modules_by_path(before.modules)
+    module_after = _modules_by_path(after.modules)
+    targets: dict[str, set[str]] = {}
+    for renamed in symbols["renamed"]:
+        old = before.definitions.get(renamed["old"])
+        new = after.definitions.get(renamed["new"])
+        if old is None or new is None:
+            continue
+        source = _owning_module(renamed["old"], module_before.get(old.path, set()))
+        target = _owning_module(renamed["new"], module_after.get(new.path, set()))
+        if source in gone and target:
+            targets.setdefault(source, set()).add(target)
+    existing = {qn for qn, _path in before.modules}
+    added = [(path, qn) for qn, path in after.modules if qn not in existing]
+    out: dict[str, str] = {}
+    for qn, path in gone.items():
+        found = targets.get(qn) or {
+            new_qn
+            for new_path, new_qn in added
+            if Path(new_path).name == Path(path).name
+        }
+        if len(found) > 1:
+            own = qn.rpartition(cs.SEPARATOR_DOT)[2]
+            found = {f for f in found if f.rpartition(cs.SEPARATOR_DOT)[2] == own}
+        if len(found) == 1:
+            out[qn] = next(iter(found))
+    return out
+
+
+def _module_findings(
+    before: Snapshot,
+    after: Snapshot,
+    symbols: SymbolDelta,
+    found: list[DanglingImporter],
+    still: _AfterBindings,
+    repo_root: Path | None,
+) -> list[DanglingImporter]:
+    """Import statements naming a module the edit deleted or moved.
+
+    `import pkg.signals`, `from pkg import util`, `export * from "./util"`
+    and `import * as u` hold the module itself, not a name in it, so no
+    removed symbol leads to them (issue #3266). As with a symbol, an importer
+    the edit left alone still holds the statement the base graph recorded,
+    and one it touched is read after the edit. A statement already listed
+    for a gone name it imports is not listed again. An extensionless JS/TS
+    specifier the file's new directory `index` answers still resolves.
+    """
+    gone = _gone_modules(before, after, repo_root)
+    if not gone:
+        return []
+    now = {qn for qn, _path in after.modules}
+    moved_to = _module_destinations(before, after, symbols, gone)
+    listed = {
+        (d["path"], d["line"], d["col"])
+        for d in found
+        if d["kind"] == cs.DanglingImportKind.IMPORT
+    }
+    candidates = [
+        b
+        for b in (
+            *(b for b in before.module_bindings if b.importer_path not in after.paths),
+            *(b for b in after.module_bindings if b.importer_path in after.paths),
+        )
+        if b.module in gone and (b.importer_path, b.line, b.col) not in listed
+    ]
+    broken = {(b.importer, b.bound) for b in candidates}
+    return [
+        DanglingImporter(
+            importer=binding.importer,
+            path=binding.importer_path,
+            line=binding.line,
+            col=binding.col,
+            kind=cs.DanglingImportKind.MODULE,
+            name=binding.bound,
+            target=binding.module,
+            renamed_to=moved_to.get(binding.module),
+        )
+        for binding in candidates
+        if not (
+            _index_took_over(binding.module, gone[binding.module], now)
+            and not _names_a_file(repo_root, binding)
+        )
+        and not _package_still_binds(binding, gone[binding.module], still, broken)
+    ]
+
+
 def _dangling_importers(
     before: Snapshot,
     after: Snapshot,
@@ -1221,16 +1523,18 @@ def _dangling_importers(
     left the package failing at import time with nothing reported (issue
     #2516). The IMPORTS edge records the name it binds; an entry is listed
     when that name, or an `__all__` string exporting it, points at a symbol
-    the edit removed or renamed and nothing still binds it in its place.
+    the edit removed or renamed and nothing still binds it in its place. An
+    import of a module the edit deleted or moved is listed as well (#3266).
     """
     gone = set(symbols["removed"]) | {r["old"] for r in symbols["renamed"]}
-    if not gone:
-        return []
-    renamed_to = {r["old"]: r["new"] for r in symbols["renamed"]}
     still = _AfterBindings(after, gone, load, repo_root)
-    found = _import_findings(before, after, gone, renamed_to, still)
-    if repo_root is not None:
-        found.extend(_all_findings(before, after, gone, renamed_to, still))
+    found: list[DanglingImporter] = []
+    if gone:
+        renamed_to = {r["old"]: r["new"] for r in symbols["renamed"]}
+        found = _import_findings(before, after, gone, renamed_to, still)
+        if repo_root is not None:
+            found.extend(_all_findings(before, after, gone, renamed_to, still))
+    found.extend(_module_findings(before, after, symbols, found, still, repo_root))
     unique = {
         (d["kind"], d["path"], d["line"], d["col"], d["name"], d["target"]): d
         for d in found
@@ -1244,9 +1548,81 @@ def _dangling_importers(
 # --- signature changes --------------------------------------------------------
 
 
-# `*name` only: a bare `*` (keyword-only marker) accepts no extra positionals
-# and `**name` accepts keywords, not positionals.
-_VARIADIC = re.compile(r"(?<!\*)\*(?!\*)\s*[A-Za-z_]")
+# The receivers that bind a method: a call through anything else that passes
+# `self` itself is an unbound call through the class (issue #2899).
+_PY_BOUND_RECEIVERS = frozenset({cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS})
+
+
+@lru_cache(maxsize=cs.DELTA_PARSED_SOURCES_KEPT)
+def _python_tree(path: str, mtime_ns: int, size: int) -> Tree | None:
+    """One parse per version of a source file, shared by every site in it."""
+    # Local import: parser_loader pulls in the language grammars.
+    from .parser_loader import load_parsers
+
+    parser = load_parsers()[0].get(cs.SupportedLanguage.PYTHON)
+    if parser is None:
+        return None
+    try:
+        return parser.parse(Path(path).read_bytes())
+    except OSError:
+        return None
+
+
+def _python_source_tree(path: Path) -> Tree | None:
+    # A stub (`.pyi`) is Python source too: a call can resolve to a function
+    # only a stub defines (Greptile, PR #2946).
+    if path.suffix not in cs.PY_EXTENSIONS:
+        return None
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return _python_tree(str(path), stat.st_mtime_ns, stat.st_size)
+
+
+def _node_text(node: Node) -> str:
+    return (node.text or b"").decode(cs.ENCODING_UTF8, errors="replace")
+
+
+def _function_of(root: Node, name: str, start_line: int) -> Node | None:
+    """The def named `name` starting on `start_line` (its decorators' line,
+    for a decorated def)."""
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        if node.end_point[0] + 1 < start_line or node.start_point[0] + 1 > start_line:
+            continue
+        if node.type == cs.TS_PY_FUNCTION_DEFINITION:
+            name_node = node.child_by_field_name(cs.TS_FIELD_NAME)
+            parent = node.parent
+            starts = {node.start_point[0] + 1}
+            if parent is not None and parent.type == cs.TS_PY_DECORATED_DEFINITION:
+                starts.add(parent.start_point[0] + 1)
+            if (
+                name_node is not None
+                and _node_text(name_node) == name
+                and start_line in starts
+            ):
+                return node
+        stack.extend(node.named_children)
+    return None
+
+
+def _definition_node(definition: Definition, repo_root: Path) -> Node | None:
+    tree = _python_source_tree(repo_root / definition.path)
+    if tree is None:
+        return None
+    return _function_of(tree.root_node, definition.name, definition.start_line)
+
+
+def _is_star_args(parameter: Node) -> bool:
+    # `*rest` or `*rest: int`; a bare `*` is a keyword separator, and
+    # `**opts` takes keywords, not positionals.
+    if parameter.type == cs.TS_PY_LIST_SPLAT_PATTERN:
+        return True
+    return parameter.type == cs.TS_PY_TYPED_PARAMETER and any(
+        child.type == cs.TS_PY_LIST_SPLAT_PATTERN for child in parameter.named_children
+    )
 
 
 def _is_variadic(definition: Definition, repo_root: Path | None) -> bool:
@@ -1255,33 +1631,276 @@ def _is_variadic(definition: Definition, repo_root: Path | None) -> bool:
     `positional_params` ends at the star (CPython counts nothing after it),
     so the stored list alone cannot tell `f(a)` from `f(a, *rest)`; the
     header is read back so a variadic callee is never reported as
-    receiving too many arguments.
+    receiving too many arguments. Read from the syntax tree, not the text up
+    to the first `)`, which a default such as `b=dict()` closes early, so
+    `*rest` after it was never seen (issue #2899).
     """
     if repo_root is None or not definition.path or definition.start_line < 1:
         return False
-    try:
-        lines = (
-            (repo_root / definition.path)
-            .read_text(encoding=cs.ENCODING_UTF8)
-            .splitlines()
+    node = _definition_node(definition, repo_root)
+    parameters = (
+        node.child_by_field_name(cs.TS_FIELD_PARAMETERS) if node is not None else None
+    )
+    return parameters is not None and any(
+        _is_star_args(parameter) for parameter in parameters.named_children
+    )
+
+
+class _PySignature(NamedTuple):
+    """A Python def's header, as a caller must satisfy it (issues #2853, #2845)."""
+
+    positional: tuple[str, ...]
+    positional_only: frozenset[str]
+    keyword_only: tuple[str, ...]
+    required: frozenset[str]
+    var_positional: bool
+    var_keyword: bool
+    # Defined in a class and not a staticmethod: a bound call fills the
+    # first positional (`self` / `cls`) itself.
+    receiver: bool
+
+
+def _decorators(function: Node) -> list[str]:
+    parent = function.parent
+    if parent is None or parent.type != cs.TS_PY_DECORATED_DEFINITION:
+        return []
+    return [
+        _node_text(child).lstrip(cs.DECORATOR_AT).strip()
+        for child in parent.named_children
+        if child.type == cs.TS_PY_DECORATOR
+    ]
+
+
+def _parameter_name(parameter: Node) -> tuple[str, bool] | None:
+    """(name, has a default) of a plain parameter, or None for anything else."""
+    match parameter.type:
+        case cs.TS_PY_IDENTIFIER:
+            return _node_text(parameter), False
+        case cs.TS_PY_DEFAULT_PARAMETER | cs.TS_PY_TYPED_DEFAULT_PARAMETER:
+            name = parameter.child_by_field_name(cs.TS_FIELD_NAME)
+            return (_node_text(name), True) if name is not None else None
+        case cs.TS_PY_TYPED_PARAMETER:
+            name = next(
+                (c for c in parameter.named_children if c.type == cs.TS_PY_IDENTIFIER),
+                None,
+            )
+            return (_node_text(name), False) if name is not None else None
+    return None
+
+
+def _is_star_kwargs(parameter: Node) -> bool:
+    if parameter.type == cs.TS_PY_DICTIONARY_SPLAT_PATTERN:
+        return True
+    return parameter.type == cs.TS_PY_TYPED_PARAMETER and any(
+        child.type == cs.TS_PY_DICTIONARY_SPLAT_PATTERN
+        for child in parameter.named_children
+    )
+
+
+def _python_signature(
+    definition: Definition, repo_root: Path | None
+) -> _PySignature | None:
+    """The header of a Python def, read back from its syntax tree.
+
+    None when it cannot be read, or when a decorator other than the
+    signature-preserving ones wraps it: `@click.command`, `@overload` or a
+    fixture may stand between the call and the header, so judging the call
+    against the header would be a guess.
+    """
+    if repo_root is None or not definition.path or definition.start_line < 1:
+        return None
+    tree = _python_source_tree(repo_root / definition.path)
+    function = (
+        _function_of(tree.root_node, definition.name, definition.start_line)
+        if tree
+        else None
+    )
+    parameters = (
+        function.child_by_field_name(cs.TS_FIELD_PARAMETERS) if function else None
+    )
+    if function is None or parameters is None:
+        return None
+    decorators = _decorators(function)
+    if any(d not in cs.PY_SIGNATURE_PRESERVING_DECORATORS for d in decorators):
+        return None
+    return _signature_of(
+        parameters,
+        receiver=_defined_in_class(function) and cs.PY_STATICMETHOD not in decorators,
+    )
+
+
+def _defined_in_class(function: Node) -> bool:
+    """Whether the def sits directly in a class body (decorated or not)."""
+    container = function.parent
+    if container is not None and container.type == cs.TS_PY_DECORATED_DEFINITION:
+        container = container.parent
+    return (
+        container is not None
+        and container.type == cs.TS_PY_BLOCK
+        and container.parent is not None
+        and container.parent.type == cs.TS_PY_CLASS_DEFINITION
+    )
+
+
+def _signature_of(parameters: Node, receiver: bool) -> _PySignature:
+    """The `_PySignature` a def's `parameters` node spells out."""
+    positional: list[str] = []
+    keyword_only: list[str] = []
+    positional_only: set[str] = set()
+    required: set[str] = set()
+    var_positional = var_keyword = after_star = False
+    for parameter in parameters.named_children:
+        if parameter.type == cs.TS_PY_POSITIONAL_SEPARATOR:
+            positional_only.update(positional)
+        elif parameter.type == cs.TS_PY_KEYWORD_SEPARATOR:
+            after_star = True
+        elif _is_star_args(parameter):
+            var_positional = after_star = True
+        elif _is_star_kwargs(parameter):
+            var_keyword = True
+        elif (named := _parameter_name(parameter)) is not None:
+            name, has_default = named
+            (keyword_only if after_star else positional).append(name)
+            if not has_default:
+                required.add(name)
+    return _PySignature(
+        positional=tuple(positional),
+        positional_only=frozenset(positional_only),
+        keyword_only=tuple(keyword_only),
+        required=frozenset(required),
+        var_positional=var_positional,
+        var_keyword=var_keyword,
+        receiver=receiver,
+    )
+
+
+def _signature_verdict(
+    site: CallSite, signature: _PySignature, bound: bool
+) -> str | None:
+    """A definite verdict the header alone settles, or None.
+
+    `unexpected_keyword`: a keyword naming nothing the def accepts by
+    keyword (a positional-only name included), with no `**kwargs` to take
+    it, is a certain `TypeError` (issue #2853). `too_few`: a required
+    parameter no positional and no keyword fills is one too, unless a
+    `**opts` at the site may carry it, or a `*rest` a positional one (issue
+    #2845).
+    """
+    positional = (
+        signature.positional[1:]
+        if bound and signature.receiver and signature.positional
+        else signature.positional
+    )
+    by_keyword = {
+        name for name in positional if name not in signature.positional_only
+    } | set(signature.keyword_only)
+    if not signature.var_keyword and any(
+        name not in by_keyword for name in site.kwarg_names
+    ):
+        return cs.DELTA_ARITY_UNEXPECTED_KEYWORD
+    if site.star_kwargs or site.arg_count is None:
+        return None
+    written = site.arg_count - len(site.kwarg_names)
+    # Only a keyword the def accepts by name fills a parameter: one naming a
+    # positional-only parameter lands in `**kw` and leaves it unfilled
+    # (Greptile, PR #2947).
+    supplied = set(positional[:written]) | (set(site.kwarg_names) & by_keyword)
+    expected = (set(positional) | set(signature.keyword_only)) & signature.required
+    if site.star_args:
+        # A `*rest` may fill any positional, but never a keyword-only
+        # parameter (CodeRabbit, PR #2947).
+        expected &= set(signature.keyword_only)
+    return cs.DELTA_ARITY_TOO_FEW if expected - supplied else None
+
+
+def _call_starting_at(root: Node, row: int, col: int) -> Node | None:
+    # A member call's site starts at its name, `__init__` in
+    # `Base.__init__(self, a)`, not where the call node starts (issue #3166);
+    # a graph indexed before that recorded the node's start, so both name it.
+    # Local import: the parsers package pulls in every language processor.
+    from .parsers.utils import call_site_start
+
+    point = (row, col)
+    node: Node | None = root.descendant_for_point_range(point, point)
+    while node is not None:
+        if node.type == cs.TS_PY_CALL and point in (
+            node.start_point,
+            call_site_start(node),
+        ):
+            return node
+        node = node.parent
+    return None
+
+
+def _passes_self_explicitly(
+    site: CallSite, definition: Definition, repo_root: Path | None
+) -> bool:
+    """`Base.__init__(self, a)`: a method called through its class, with the
+    receiver written as the first argument rather than bound (issue #2899).
+
+    The site records only its counts, so the call is read back: a receiver
+    that names a class, and a first positional argument that is `self`. A
+    receiver names a class when it is the method's own class or is spelled
+    as one (CapWords); `tool.m(self, x)` through an instance binds `tool`
+    and passes `self` as well (Greptile, PR #2946).
+    """
+    if repo_root is None or site.line is None or site.col is None:
+        return False
+    tree = _python_source_tree(repo_root / site.caller_path)
+    if tree is None:
+        return False
+    call = _call_starting_at(tree.root_node, site.line - 1, site.col)
+    function = call.child_by_field_name(cs.TS_FIELD_FUNCTION) if call else None
+    if function is None or function.type != cs.TS_PY_ATTRIBUTE:
+        return False
+    receiver = function.child_by_field_name(cs.TS_FIELD_OBJECT)
+    if (
+        receiver is None
+        or receiver.type == cs.TS_PY_CALL
+        or _node_text(receiver) in _PY_BOUND_RECEIVERS
+    ):
+        return False
+    named = _node_text(receiver).rsplit(cs.SEPARATOR_DOT, 1)[-1]
+    owner = definition.qualified_name.rsplit(cs.SEPARATOR_DOT, 2)[-2:-1]
+    if not (named[:1].isupper() or named in owner):
+        return False
+    arguments = call.child_by_field_name(cs.TS_FIELD_ARGUMENTS) if call else None
+    first = next(
+        (
+            argument
+            for argument in (arguments.named_children if arguments else [])
+            if argument.type not in (cs.TS_PY_KEYWORD_ARGUMENT, cs.TS_COMMENT)
+        ),
+        None,
+    )
+    return (
+        first is not None
+        and first.type == cs.TS_PY_IDENTIFIER
+        and _node_text(first) == cs.PY_KEYWORD_SELF
+        and not _is_classmethod(definition, repo_root)
+    )
+
+
+def _is_classmethod(definition: Definition, repo_root: Path) -> bool:
+    # `@classmethod` binds `cls` even through the class, so `Base.m(self,
+    # x)` passes it on top of `self` (Greptile, PR #2946).
+    node = _definition_node(definition, repo_root)
+    decorated = node.parent if node is not None else None
+    return (
+        decorated is not None
+        and decorated.type == cs.TS_PY_DECORATED_DEFINITION
+        and any(
+            child.type == cs.TS_PY_DECORATOR
+            and _node_text(child)
+            .lstrip(cs.DECORATOR_AT)
+            .strip()
+            .rsplit(cs.SEPARATOR_DOT, 1)[-1]
+            in cs.CLASSMETHOD_DECORATORS
+            for child in decorated.children
         )
-    except (OSError, UnicodeDecodeError):
-        return False
-    header: list[str] = []
-    for line in lines[definition.start_line - 1 : definition.end_line or None]:
-        header.append(line)
-        if ")" in line:
-            break
-    text = "\n".join(header)
-    open_at = text.find("(")
-    close_at = text.find(")", open_at + 1)
-    if open_at < 0 or close_at < 0:
-        return False
-    return _VARIADIC.search(text[open_at:close_at]) is not None
+    )
 
 
-# The verdicts that name a call the language rejects; the rest are hints.
-_DEFINITE_VERDICTS = frozenset({cs.DELTA_ARITY_TOO_MANY, cs.DELTA_ARITY_TOO_FEW})
 # Bindings that name the function the call runs. Absent is the legacy exact.
 _DEFINITE_RESOLUTIONS = frozenset(
     {"", cs.EdgeResolution.EXACT.value, cs.EdgeResolution.TRACE_CONFIRMED.value}
@@ -1434,12 +2053,55 @@ def _arity_verdict(
 ) -> tuple[int, str]:
     if _language(definition.path) in cs.DECLARED_ARITY_LANGUAGES:
         return _declared_arity_verdict(site, definition)
+    declared_count, verdict = _python_count_verdict(site, definition, repo_root)
+    if verdict == cs.DELTA_ARITY_TOO_MANY:
+        return declared_count, verdict
+    # A guessed edge may lead to a same-named def the call never runs, whose
+    # header proves nothing about this call (CodeRabbit, PR #2947).
+    if site.resolution not in _DEFINITE_RESOLUTIONS:
+        return declared_count, verdict
+    signature = _python_signature(definition, repo_root)
+    if signature is None:
+        return declared_count, verdict
+    bound = definition.label in _METHOD_LABELS and not (
+        (
+            site.arg_count is not None
+            and site.arg_count > len(site.kwarg_names)
+            and _passes_self_explicitly(site, definition, repo_root)
+        )
+        or _passes_receiver_by_keyword(site, signature)
+    )
+    return declared_count, (_signature_verdict(site, signature, bound) or verdict)
+
+
+def _passes_receiver_by_keyword(site: CallSite, signature: _PySignature) -> bool:
+    """`Base.m(self=self, x=x)`: the receiver supplied by keyword.
+
+    A bound call naming its own receiver is a `TypeError` (multiple values
+    for it), so a site that names it is an unbound call through the class
+    (Greptile, PR #2947).
+    """
+    return (
+        signature.receiver
+        and bool(signature.positional)
+        and signature.positional[0] in site.kwarg_names
+    )
+
+
+def _python_count_verdict(
+    site: CallSite, definition: Definition, repo_root: Path | None
+) -> tuple[int, str]:
     declared = definition.positional_params
     if declared is None:
         return -1, cs.DELTA_ARITY_UNKNOWN
     if site.arg_count is None:
         return len(declared), cs.DELTA_ARITY_UNKNOWN
-    is_method = definition.label in _METHOD_LABELS
+    # An unbound call through the class supplies `self` itself, so it is
+    # judged as a plain function call against every declared parameter.
+    is_method = definition.label in _METHOD_LABELS and not (
+        site.arg_count > len(site.kwarg_names)
+        and _passes_self_explicitly(site, definition, repo_root)
+    )
     # `arg_count` counts keyword arguments too (issue #1522); only the
     # positionals plus the keywords naming a declared positional parameter
     # fill the declared list. A keyword naming nothing declared is neutral:
@@ -1510,7 +2172,7 @@ def _arity_findings(after: Snapshot, repo_root: Path | None) -> list[ArityAtSite
         ):
             continue
         finding = _site_finding(site, callee, repo_root)
-        if finding["verdict"] in _DEFINITE_VERDICTS:
+        if finding["verdict"] in cs.DELTA_ARITY_DEFINITE:
             out.append(finding)
     return sorted(out, key=_site_order)
 
@@ -1794,11 +2456,6 @@ def _cycles(graph: dict[str, frozenset[str]]) -> set[frozenset[str]]:
     }
 
 
-def import_cycles(graph: dict[str, frozenset[str]]) -> set[frozenset[str]]:
-    """The cyclic strongly connected components of a module import graph."""
-    return _cycles(graph)
-
-
 def _new_import_cycles(before: Snapshot, after: Snapshot) -> list[list[str]]:
     touched = {qn for qn, path in after.module_paths.items() if path in after.paths}
     touched |= {qn for qn, path in before.module_paths.items() if path in before.paths}
@@ -1984,7 +2641,7 @@ def structural_delta(
         affected=list(report.affected) if report else [],
         removed_files=list(report.removed) if report else [],
         symbols=symbols,
-        dangling_callers=_dangling(before, after, symbols),
+        dangling_callers=_dangling(before, after, symbols, repo_root),
         dangling_importers=_dangling_importers(
             before,
             after,
@@ -2127,12 +2784,13 @@ def has_findings(delta: StructuralDelta) -> bool:
         # An import of a removed name fails when the importing module loads,
         # with or without a call site to go with it (issue #2516).
         or delta["dangling_importers"]
-        # Only a definite verdict: the graph records no defaults, so a
-        # `possibly_missing` site (`send(msg)` becoming `send(msg,
-        # channel=None)`) is a hint the JSON keeps, not a finding (issue
-        # #2656, as structural-delta.md documents).
+        # Only a definite verdict: a `possibly_missing` site (`send(msg)`
+        # becoming `send(msg, channel=None)`) is a hint the JSON keeps, not
+        # a finding (issue #2656, as structural-delta.md documents). A
+        # declared signature settles `too_few` (#2517); a Python header read
+        # back settles `too_few` and `unexpected_keyword` (#2845, #2853).
         or any(
-            site["verdict"] in _DEFINITE_VERDICTS
+            site["verdict"] in cs.DELTA_ARITY_DEFINITE
             for change in delta["signature_changes"]
             for site in change["sites"]
         )

@@ -258,6 +258,12 @@ message GraphCodeIndex {
     // The file's own documentation (issue #1789): a Python module docstring,
     // a Rust `//!` block, a Go package comment, Javadoc/JSDoc, and so on.
     string docstring = 11;
+    // Graph properties the index used to drop (#3206). Numbered from 20 so
+    // fields other changes add below do not collide.
+    int32 start_line = 20;
+    int32 end_line = 21;
+    repeated string unresolved_specifiers = 22;
+    repeated string unresolved_references = 23;
   }
 
   message ExternalModule {
@@ -276,6 +282,9 @@ message GraphCodeIndex {
     string name = 2;
     string path = 3;
     string implements_module = 4;
+    // Graph properties the index used to drop (#3206). Numbered from 20 so
+    // fields other changes add below do not collide.
+    string module_type = 20;
   }
 
   // C++20 only
@@ -285,6 +294,9 @@ message GraphCodeIndex {
 
     string name = 2;
     string path = 3;
+    // Graph properties the index used to drop (#3206). Numbered from 20 so
+    // fields other changes add below do not collide.
+    string module_type = 20;
   }
 
   message ExternalPackage {
@@ -454,6 +466,8 @@ message GraphCodeIndex {
 
     string name = 2;
     string kind = 3;
+    // The serving project, on ENDPOINT resources only (#2536); "" elsewhere.
+    string project = 4;
   }
 
   // A heading in a document, and the prose beneath it. Sections nest by
@@ -491,6 +505,19 @@ message GraphCodeIndex {
     // A JS/TS object literal's function value (#2435): reached through its
     // object, never by its key alone, so a bare call must not bind to it.
     bool is_object_member = 13;
+    // A top-level Dart `main`, which `dart run` starts (#2527).
+    bool is_program_main = 14;
+    // Graph properties the index used to drop (#3206). Numbered from 20 so
+    // fields other changes add below do not collide.
+    string path = 20;
+    repeated string modifiers = 21;
+    int32 start_col = 22;
+    int32 name_start_line = 23;
+    int32 name_start_col = 24;
+    string anchor_hash = 25;
+    repeated string positional_params = 26;
+    bool is_body_scoped_name = 27;
+    bool is_macro = 28;
   }
 
   message Method {
@@ -509,6 +536,27 @@ message GraphCodeIndex {
     // Annotations as written (#1527); absent return_type is the empty string.
     string return_type = 10;
     repeated string param_types = 11;
+    // A C++ member's overload signature and whether its class body declares
+    // it (#2455). An incremental run reads both back to tell which overload
+    // a re-parsed out-of-class definition defines; absent signature is the
+    // empty string (not a C++ member).
+    string signature = 12;
+    bool declared_in_class = 13;
+    // The dead-code roots read both (#2527): whether the method is public
+    // API, and whether the JVM launcher starts it as `main`.
+    bool is_exported = 14;
+    bool is_program_main = 15;
+    // Graph properties the index used to drop (#3206). Numbered from 20 so
+    // fields other changes add below do not collide.
+    string path = 20;
+    repeated string modifiers = 21;
+    int32 start_col = 22;
+    int32 name_start_line = 23;
+    int32 name_start_col = 24;
+    string anchor_hash = 25;
+    repeated string positional_params = 26;
+    bool is_property = 27;
+    bool overrides_external = 28;
   }
 
   message Class {
@@ -523,6 +571,15 @@ message GraphCodeIndex {
     bool is_exported = 7;
     // The namespace a C# type is declared in (issue #1629).
     string namespace = 8;
+    // How many type parameters a generic C# type declares; 0 when it is
+    // not generic (issue #2579).
+    int32 generic_arity = 9;
+    // Graph properties the index used to drop (#3206). Numbered from 20 so
+    // fields other changes add below do not collide.
+    string path = 20;
+    repeated string modifiers = 21;
+    int32 start_col = 22;
+    string anchor_hash = 23;
   }
 
   message Interface {
@@ -533,6 +590,23 @@ message GraphCodeIndex {
     string path = 3;
     string absolute_path = 4;
     string namespace = 5;
+    // How many type parameters a generic C# interface declares; 0 when it
+    // is not generic (issue #2579).
+    int32 generic_arity = 6;
+    // Why cgr cannot tell which types implement a Go interface: "builds",
+    // "embeds" or "constraint"; empty when it can (#3360). A rename of a
+    // method of its name refuses.
+    string implementers_unknown = 7;
+    // Graph properties the index used to drop (#3206). Numbered from 20 so
+    // fields other changes add below do not collide.
+    string docstring = 20;
+    int32 start_line = 21;
+    int32 end_line = 22;
+    repeated string decorators = 23;
+    bool is_exported = 24;
+    repeated string modifiers = 25;
+    int32 start_col = 26;
+    string anchor_hash = 27;
   }
 
   message Enum {
@@ -543,6 +617,16 @@ message GraphCodeIndex {
     string path = 3;
     string absolute_path = 4;
     string namespace = 5;
+    // Graph properties the index used to drop (#3206). Numbered from 20 so
+    // fields other changes add below do not collide.
+    string docstring = 20;
+    int32 start_line = 21;
+    int32 end_line = 22;
+    repeated string decorators = 23;
+    bool is_exported = 24;
+    repeated string modifiers = 25;
+    int32 start_col = 26;
+    string anchor_hash = 27;
   }
 
   message Type {
@@ -550,6 +634,17 @@ message GraphCodeIndex {
     string qualified_name = 1;
 
     string name = 2;
+    // Graph properties the index used to drop (#3206). Numbered from 20 so
+    // fields other changes add below do not collide.
+    string docstring = 20;
+    int32 start_line = 21;
+    int32 end_line = 22;
+    repeated string decorators = 23;
+    bool is_exported = 24;
+    repeated string modifiers = 25;
+    int32 start_col = 26;
+    string anchor_hash = 27;
+    string path = 28;
   }
 
   message Union {
@@ -557,4 +652,15 @@ message GraphCodeIndex {
     string qualified_name = 1;
 
     string name = 2;
+    // Graph properties the index used to drop (#3206). Numbered from 20 so
+    // fields other changes add below do not collide.
+    string docstring = 20;
+    int32 start_line = 21;
+    int32 end_line = 22;
+    repeated string decorators = 23;
+    bool is_exported = 24;
+    repeated string modifiers = 25;
+    int32 start_col = 26;
+    string anchor_hash = 27;
+    string path = 28;
   }

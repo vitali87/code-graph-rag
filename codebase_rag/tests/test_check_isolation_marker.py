@@ -18,6 +18,7 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
+from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.structural_check import _measure_then_restore
 from codebase_rag.structural_delta import StructuralDelta
@@ -66,19 +67,19 @@ def _run(
 
 def test_the_marker_is_cleared_once_graph_and_cache_are_back(tmp_path: Path) -> None:
     store = _RecordingStore()
-    (tmp_path / cs.HASH_CACHE_FILENAME).write_text("{}")
+    state_file(tmp_path, cs.HASH_CACHE_FILENAME).write_text("{}")
 
     _run(tmp_path, store)
 
     assert store.writes == [
-        cq.CYPHER_MARK_PROJECT_INCOMPLETE,
+        cq.CYPHER_MARK_RUN_INCOMPLETE,
         cq.CYPHER_CLEAR_PROJECT_INCOMPLETE,
     ]
 
 
 def test_a_failed_cache_restore_leaves_the_project_marked(tmp_path: Path) -> None:
     store = _RecordingStore()
-    cache = tmp_path / cs.HASH_CACHE_FILENAME
+    cache = state_file(tmp_path, cs.HASH_CACHE_FILENAME)
     cache.write_text("{}")
 
     def block_the_cache() -> None:
@@ -89,4 +90,4 @@ def test_a_failed_cache_restore_leaves_the_project_marked(tmp_path: Path) -> Non
     with pytest.raises(OSError):
         _run(tmp_path, store, during=block_the_cache)
 
-    assert store.writes == [cq.CYPHER_MARK_PROJECT_INCOMPLETE]
+    assert store.writes == [cq.CYPHER_MARK_RUN_INCOMPLETE]

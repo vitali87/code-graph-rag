@@ -228,3 +228,21 @@ def memgraph_ingestor(
 
     ingestor._execute_query("MATCH (n) DETACH DELETE n")
     ingestor.__exit__(None, None, None)
+
+
+@pytest.fixture
+def sqlite_ingestor(tmp_path: Path) -> Generator[MemgraphIngestor, None, None]:
+    """The ingestor on the embedded engine, the default backend.
+
+    On a file, not in memory: only a file's walks run in the Rust extension,
+    as they do for a user's graph.
+    """
+    from codebase_rag.graph_dialects import DIALECT_SQLITE, get_dialect
+
+    with MemgraphIngestor(
+        host="unused",
+        port=0,
+        dialect=get_dialect(DIALECT_SQLITE),
+        sqlite_path=str(tmp_path / "graph.sqlite"),
+    ) as ingestor:
+        yield ingestor

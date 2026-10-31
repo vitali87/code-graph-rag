@@ -26,11 +26,11 @@ import typer
 from loguru import logger
 from typer.testing import CliRunner
 
-from codebase_rag import cgr_state
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag import exceptions as ex
 from codebase_rag import logs as ls
+from codebase_rag.checkout_state import state_file
 from codebase_rag.cli import _run_graph_sync, _start_update_graph, app
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
@@ -63,7 +63,7 @@ def cli_sync() -> Generator[_CliSync, None, None]:
     ingestor = MagicMock()
 
     def write(query: str, _params: PropertyParams | None = None) -> None:
-        if query == cq.CYPHER_MARK_PROJECT_INCOMPLETE:
+        if query == cq.CYPHER_MARK_CLI_SYNC_INCOMPLETE:
             events.append("mark")
         elif query == cq.CYPHER_CLEAR_PROJECT_INCOMPLETE:
             events.append("clear")
@@ -352,13 +352,13 @@ class TestTheSyncAfterAnInterruptedOne:
         self, py_project: Path, mock_ingestor: MagicMock
     ) -> None:
         _interrupted_run(py_project, mock_ingestor)
-        assert not (py_project / cs.PARSER_FINGERPRINT_FILENAME).exists()
+        assert not state_file(py_project, cs.PARSER_FINGERPRINT_FILENAME).exists()
 
         _updater(py_project, mock_ingestor).run()
 
-        hashes = json.loads((py_project / cs.HASH_CACHE_FILENAME).read_text())
+        hashes = json.loads(state_file(py_project, cs.HASH_CACHE_FILENAME).read_text())
         assert set(hashes) == {"module_a.py", "module_b.py"}
-        assert (py_project / cs.PARSER_FINGERPRINT_FILENAME).is_file()
+        assert state_file(py_project, cs.PARSER_FINGERPRINT_FILENAME).is_file()
 
 
 class TestWarningsThatMustStay:
@@ -371,7 +371,7 @@ class TestWarningsThatMustStay:
         # The graph WAS built by other parser inputs and the interrupted
         # re-index did not replace it, so the warning is still true.
         _updater(py_project, mock_ingestor).run()
-        stamp = py_project / cs.PARSER_FINGERPRINT_FILENAME
+        stamp = state_file(py_project, cs.PARSER_FINGERPRINT_FILENAME)
         stamp.write_text(STALE_FINGERPRINT, encoding="utf-8")
         _interrupted_run(py_project, mock_ingestor)
         log_sink.clear()
@@ -390,7 +390,7 @@ class TestWarningsThatMustStay:
         # Its cache names the files it parsed; only an EMPTY cache is the
         # placeholder of a build that never committed.
         _updater(py_project, mock_ingestor).run()
-        (py_project / cs.PARSER_FINGERPRINT_FILENAME).unlink()
+        state_file(py_project, cs.PARSER_FINGERPRINT_FILENAME).unlink()
         log_sink.clear()
 
         _updater(py_project, mock_ingestor).run()
@@ -422,7 +422,9 @@ class TestWarningsThatMustStay:
     ) -> None:
         # It publishes an empty cache too, but stamps the parser that built it.
         _updater(temp_repo, mock_ingestor).run()
-        assert json.loads((temp_repo / cs.HASH_CACHE_FILENAME).read_text()) == {}
+        assert (
+            json.loads(state_file(temp_repo, cs.HASH_CACHE_FILENAME).read_text()) == {}
+        )
         log_sink.clear()
 
         _updater(temp_repo, mock_ingestor).run()
@@ -446,7 +448,7 @@ def real_sync(mock_ingestor: MagicMock) -> Generator[MagicMock, None, None]:
 
 def _marker_events(ingestor: MagicMock) -> list[str]:
     names = {
-        cq.CYPHER_MARK_PROJECT_INCOMPLETE: "mark",
+        cq.CYPHER_MARK_CLI_SYNC_INCOMPLETE: "mark",
         cq.CYPHER_CLEAR_PROJECT_INCOMPLETE: "clear",
     }
     return [
@@ -454,6 +456,16 @@ def _marker_events(ingestor: MagicMock) -> list[str]:
         for call in ingestor.execute_write.call_args_list
         if call.args and call.args[0] in names
     ]
+
+
+def _recorded_sync(ingestor: MagicMock) -> bool:
+    # The sync time `cgr status` lists, stamped on the Project node (#2444).
+    return any(
+        call.args
+        and call.args[0] == cq.CYPHER_RECORD_PROJECT_SYNC
+        and call.args[1][cs.KEY_PROJECT_NAME] == PROJECT
+        for call in ingestor.execute_write.call_args_list
+    )
 
 
 def _interrupt_right_after_the_commit() -> AbstractContextManager[MagicMock]:
@@ -484,8 +496,8 @@ class TestAnInterruptAroundTheCommit:
         # Recorded and unmarked like any finished sync, so `cgr status` and
         # the MCP hydration guard do not take a whole graph for a partial one.
         assert _marker_events(real_sync) == ["mark", "clear"]
-        assert PROJECT in cgr_state.read_sync_timestamps()
-        assert (py_project / cs.PARSER_FINGERPRINT_FILENAME).is_file()
+        assert _recorded_sync(real_sync)
+        assert state_file(py_project, cs.PARSER_FINGERPRINT_FILENAME).is_file()
 
     def test_one_before_the_commit_is_still_called_incomplete(
         self, py_project: Path, real_sync: MagicMock
@@ -498,7 +510,7 @@ class TestAnInterruptAroundTheCommit:
         assert exit_code == 130, output
         assert len(_lines_calling_the_graph_incomplete(output)) == 1, output
         assert _marker_events(real_sync) == ["mark"]
-        assert PROJECT not in cgr_state.read_sync_timestamps()
+        assert not _recorded_sync(real_sync)
 
     def test_one_during_the_commit_is_still_called_incomplete(
         self, py_project: Path, real_sync: MagicMock

@@ -43,6 +43,33 @@ HELP_ARG = "help"
 CLI_ERR_OUTPUT_REQUIRES_UPDATE = (
     "Error: --output/-o option requires --update-graph to be specified."
 )
+CLI_OPT_CLEAN = "--clean"
+CLI_OPT_REPO_PATH = "--repo-path"
+CLI_OPT_OUTPUT = "--output"
+CLI_OPT_INTERACTIVE_SETUP = "--interactive-setup"
+CLI_ERR_WORKSPACE_UPDATE_OPTION = (
+    "Error: {option} applies to one repository and cannot be combined with "
+    "--workspace --update-graph. Run it with --repo-path <repository> instead."
+)
+CLI_ERR_WORKSPACE_UPDATE_NO_SYNC = (
+    "Error: --no-sync cannot be combined with --workspace --update-graph, "
+    "which syncs every repository in the workspace and then opens the "
+    "assistant. Drop --no-sync to sync first, or --update-graph to open the "
+    "assistant on the graph as it is."
+)
+CLI_ERR_START_EMPTY_WORKSPACE = (
+    "Error: workspace '{name}' has no repositories, so there is nothing to sync "
+    "or to scope the assistant to. Add one with `cgr workspace add-repo {name} "
+    "PATH`, or leave out --workspace."
+)
+CLI_ERR_SYNC_HOME_OR_ROOT = (
+    "Error: refusing to index {path}: it is your home directory or the "
+    "filesystem root, so every file under it would enter the graph. Pass "
+    "--repo-path <repository>, or --yes to index it anyway."
+)
+CLI_ERR_INVALID_SETTING = "Error: {problem}"
+# click's own exit status for a bad parameter value.
+CLI_EXIT_USAGE_ERROR = 2
 # `-o` checks, made before a graph is read or indexed (issue #2410).
 CLI_ERR_OUTPUT_IS_DIR = "Error: --output is a directory, not a file: {path}"
 CLI_ERR_OUTPUT_PARENT_NOT_DIR = (
@@ -51,11 +78,8 @@ CLI_ERR_OUTPUT_PARENT_NOT_DIR = (
 CLI_ERR_OUTPUT_NOT_WRITABLE = "Error: --output cannot be written here: {target}"
 # `cgr export` scope and retired options (issue #2410).
 CLI_EXPORT_SCOPE = "Scoped to: {projects}"
-CLI_ERR_EXPORT_UNKNOWN_PROJECTS = (
-    "Not indexed: {missing}. Indexed projects: {projects}."
-)
 CLI_ERR_EXPORT_EMPTY_SCOPE = (
-    "Error: --project-name/--workspace named no project. "
+    "Error: --project/--workspace named no project. "
     "Leave both out to export the whole graph."
 )
 CLI_WARN_EXPORT_BATCH_SIZE = (
@@ -76,6 +100,17 @@ CLI_ERR_JSON_REQUIRES_ASK_AGENT = (
 )
 CLI_ERR_PATH_NOT_EXISTS = "Error: --repo-path does not exist: {path}"
 CLI_ERR_PATH_NOT_DIR = "Error: --repo-path is not a directory: {path}"
+CLI_ERR_PROJECT_OWNED_ELSEWHERE = (
+    "Error: project '{project_name}' already indexes {root}. Choose another "
+    "--project-name, or pass --yes to replace it with this repository."
+)
+# An owner that cannot be read is not an absent one: syncing anyway would
+# replace the root that shows whose project it is (review of PR 2499).
+CLI_ERR_PROJECT_OWNER_UNREADABLE = (
+    "Error: could not read which repository project '{project_name}' indexes "
+    "({error}); nothing was changed. Retry once the graph answers, or pass "
+    "--yes to sync this repository into it regardless."
+)
 CLI_ERR_WORKSPACE_PROJECT_NAME = (
     "Error: workspace '{workspace}' cannot be synced. Repo {path}: {error} "
     "Re-add it with `cgr workspace remove-repo {workspace} {path}` and "
@@ -110,6 +145,13 @@ CLI_OPT_ASK_AGENT = "--ask-agent"
 CLI_OPT_OUTPUT_FORMAT_JSON = "--output-format json"
 CLI_OPT_NO_SYNC = "--no-sync"
 CLI_OPT_PROJECTS = "--projects"
+# The spellings `--project` replaced on the commands that read or delete one
+# project (issue #2415); still accepted, hidden from --help.
+CLI_OPT_PROJECT_NAME = "--project-name"
+CLI_OPT_NAME = "--name"
+CLI_ERR_PROJECT_GIVEN_TWICE = (
+    "--project {project} and {alias} {other} name different projects; pass one."
+)
 
 CLI_MSG_UPDATING_GRAPH = "Updating knowledge graph for: {path}"
 CLI_MSG_SYNCING_GRAPH = "Syncing knowledge graph for: {path} (use --no-sync to skip)"
@@ -128,6 +170,12 @@ MSG_SYNCING_WORKSPACE = (
 )
 CLI_MSG_SYNC_SKIPPED = "Knowledge graph already in sync for '{project}' ({elapsed:.2f}s, no changes detected)."
 CLI_MSG_SYNC_DONE = "Knowledge graph sync done for '{project}' in {elapsed:.2f}s."
+CLI_MSG_CALL_PASS_FAILURES = (
+    "Call analysis failed in {count} file(s); their CALLS edges may be "
+    "incomplete (see the errors above): {files}"
+)
+CLI_CALL_PASS_FAILURES_SHOWN = 10
+CLI_MSG_AND_MORE = "... {count} more"
 CLI_MSG_SYNC_INTERRUPTED = (
     "Interrupted: the graph for '{project}' is incomplete; re-run "
     "'cgr start --update-graph' with the same options to finish it."
@@ -143,14 +191,69 @@ CLI_MSG_CLEANING_DB = "Cleaning database..."
 # again. Sharing the id lets that run's run-scoped clear remove the marker the
 # interrupted one stranded, while MCP runs keep their own ids untouched.
 CLI_SYNC_RUN_ID = "cli-sync"
+# What tells two process tables apart beyond the hostname, which containers
+# with host networking share while each has its own pid namespace: the
+# kernel's boot id (per machine and boot) and this process's pid namespace.
+# Linux only; elsewhere the hostname stands alone.
+PROCESS_BOOT_ID_PATH = "/proc/sys/kernel/random/boot_id"
+PROCESS_PID_NAMESPACE_PATH = "/proc/self/ns/pid"
+PROCESS_HOST_SEPARATOR = "|"
+# Windows' process probe, which reads a process's exit code through a query
+# handle instead of signalling it: `os.kill` terminates the process there.
+WINDOWS_KERNEL32 = "kernel32"
+WINDOWS_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+# What OpenProcess fails with when no process has the pid.
+WINDOWS_ERROR_INVALID_PARAMETER = 87
+# GetExitCodeProcess' exit code while the process runs.
+WINDOWS_STILL_ACTIVE = 259
+# Windows pids are DWORDs; ctypes would truncate a larger one to another pid.
+WINDOWS_MAX_PID = 0xFFFFFFFF
 CLI_ERR_SYNC_MARKER_FAILED = (
     "Refusing to sync '{project}': the incomplete-run marker could not be "
     "written, so an interrupted sync would leave a partial graph that looks "
     "complete. Check the graph connection and retry."
 )
+# `cgr watch` ensures the graph's constraints before its first scan, under the
+# marker, as `cgr start` does (review of PR 3365).
+CLI_ERR_GRAPH_CONSTRAINTS_FAILED = (
+    "Error: could not ensure the graph's constraints and indexes before "
+    "watching '{project}' ({error}). Nothing was scanned, and the project stays "
+    "marked as an unfinished sync until one finishes. Check the graph "
+    "connection and retry."
+)
+# `cgr rename` and `cgr change-signature` plan their call sites from the graph,
+# so one a stopped run left partial hides callers the edit then never rewrites
+# (Greptile review, PR #2164).
+CLI_ERR_EDIT_GRAPH_PARTIAL = (
+    "Refusing to edit '{project}': a sync or re-ingest of its graph stopped "
+    "part-way, so call sites may be missing from it. Once no sync is running, "
+    "re-index it ('cgr start --update-graph', or update_repository on the MCP "
+    "server whose run stopped), then retry."
+)
+CLI_ERR_EDIT_MARKER_UNREADABLE = (
+    "Refusing to edit '{project}': could not read whether its last sync "
+    "finished ({error}). Check the graph connection and retry."
+)
+CLI_ERR_EDIT_MARKER_FAILED = (
+    "The graph for '{project}' may be partial after this edit, and the "
+    "incomplete-run marker that says so could not be written ({error}). Run "
+    "'cgr start --update-graph' before the next edit or MCP session."
+)
 CLI_STATUS_SYNC_INCOMPLETE = (
     "sync interrupted or in progress -- re-run if no sync is active"
 )
+# `cgr status` lists the projects of the graph it reports on (issue #2444).
+CLI_STATUS_SYNCS_HEADER = "syncs:"
+CLI_STATUS_SYNCS_NONE = "syncs:    (no projects in the graph at {endpoint})"
+CLI_STATUS_SYNCS_NEED_GRAPH = (
+    "syncs:    unknown -- sync times are kept in the graph, and Memgraph at "
+    "{endpoint} could not be read"
+)
+CLI_STATUS_SYNC_ROW = "  - {project}: {detail}"
+CLI_STATUS_SYNC_TIME = "last sync {time}"
+CLI_STATUS_SYNC_NOT_RECORDED = "last sync not recorded (the next sync records it)"
+CLI_STATUS_SYNC_MARKED = "({marker})"
+CLI_STATUS_SYNC_ROOT = "({root})"
 CLI_MSG_CLEANING_HASH_CACHE = "Removing hash cache: {path}"
 CLI_MSG_CLEAN_DONE = "Clean completed successfully!"
 CLI_WARN_CLEAN_OTHER_PROJECTS = (
@@ -171,11 +274,18 @@ CLI_ERR_CLEAN_UNKNOWN_PROJECTS = (
 CLI_MSG_CLEAN_ABORTED = "Aborted: the graph was left untouched."
 CLI_MSG_DELETING_PROJECT = "Deleting project '{project_name}' from the graph..."
 CLI_MSG_PROJECT_DELETED = "Project '{project_name}' deleted successfully."
-CLI_ERR_PROJECT_NOT_FOUND = (
-    "Project '{project_name}' not found. Available projects: {projects}"
+CLI_WARN_GLOSSES_NOT_PRUNED = (
+    "Warning: the notes (glosses) of project '{project_name}' could not be "
+    "removed and remain in the graph unattached; the log has the error."
 )
+CLI_WARN_DELETE_PROJECT_SHARED_ROOT = (
+    "Warning: project(s) {projects} were indexed from the same directory as "
+    "'{project_name}' ({root_path}). Only what '{project_name}' owns is "
+    "deleted; the Folder and File nodes they also hold are kept."
+)
+# Deleting never defaults to the current directory (issue #2415).
 CLI_ERR_PROJECT_NAME_REQUIRED = (
-    "Error: --name is required and must be a non-empty project name."
+    "Error: name the project with --project, or pass --repo-path."
 )
 CLI_ERR_DELETE_PROJECT_FAILED = "Failed to delete project '{project_name}': {error}"
 CLI_MSG_PRUNE_NO_CANDIDATES = "No indexed project has a missing root: nothing to prune."
@@ -207,7 +317,7 @@ CLI_ERR_PRUNE_FAILED = "Failed to prune project '{project_name}': {error}"
 CLI_ERR_PRUNE_RUN_FAILED = "Failed to prune: {error}"
 CLI_ERR_PRUNE_VERIFY_FAILED = (
     "Project '{project_name}' could not be verified as fully removed; it may "
-    "still be present in the graph. Inspect it with 'cgr delete-project -n "
+    "still be present in the graph. Inspect it with 'cgr delete-project -p "
     "{project_name}' before retrying."
 )
 CLI_PROMPT_PRUNE_CONFIRM = (
@@ -252,6 +362,13 @@ CREDITS_URL = "https://docs.code-graph-rag.com/credits/"
 CLI_MSG_CREDITS = "Third-party credits: {url}"
 CLI_MSG_CREDITS_NOTICES = "Third-party notices: {name}, beside this binary"
 THIRD_PARTY_NOTICES_SUFFIX = ".THIRD_PARTY_NOTICES.txt"
+# The project's GitHub Sponsors page, named beside the credits by `--version`
+# and, on a terminal, after most commands finish.
+SPONSOR_URL = "https://github.com/sponsors/vitali87"
+CLI_MSG_SPONSOR = "Sponsor development: {url}"
+CLI_MSG_SPONSOR_PLEDGE = (
+    "Find cgr useful? Pledge your support: {url} (CGR_SPONSOR_PLEDGE=false hides this)"
+)
 CLI_MSG_HINT_TARGET_REPO = (
     "\nHint: Make sure TARGET_REPO_PATH environment variable is set."
 )
@@ -271,15 +388,16 @@ CLI_STATS_PER_PROJECT_TITLE = "Per project:"
 CLI_STATS_PER_PROJECT_ROW = (
     "  {project}: {nodes:,} nodes / {relationships:,} relationships"
 )
-CLI_ERR_STATS_UNKNOWN_PROJECTS = "Not indexed: {missing}. Indexed projects: {projects}."
+# A `cgr stats`/`cgr export` scope naming projects the graph does not hold.
+CLI_ERR_PROJECTS_NOT_INDEXED = "Not indexed: {missing}."
 CLI_ERR_STATS_EMPTY_WORKSPACE = (
     "Workspace '{name}' has no repositories, so there is nothing to count. Add "
     "one with `cgr workspace add-repo {name} PATH`, or leave out --workspace to "
     "count every project."
 )
 CLI_ERR_STATS_EMPTY_PROJECT_NAME = (
-    "--project-name was given without a project name. Name a project, or leave "
-    "out -n to count every project."
+    "--project was given without a project name. Name a project, or leave "
+    "out -p to count every project."
 )
 # `cgr check` (issue #1525).
 CHECK_GIT_FAILED = "Cannot diff the working tree against {base}: {error}"
@@ -292,6 +410,11 @@ CHECK_SCOPE_OF_OTHER_PROJECT = (
     "The exclusion scope stamped in this repository belongs to project {other}, "
     "not {project}; re-index {project} (or check {other}) before running the check"
 )
+CHECK_SCOPE_OF_UNNAMED_RUN = (
+    "The exclusion scope stamped in this repository was written by a run that "
+    "named no project, so it cannot stand for project {project}; re-index with "
+    "--project-name {project}, or run the check without --project"
+)
 CHECK_NOT_INDEXED = (
     "Project {project} is not indexed; run 'cgr start --update-graph' at the "
     "base ref first."
@@ -302,8 +425,8 @@ CHECK_NOT_INDEXED = (
 # before rebuilding them from the edited tree, so those edges cannot be put
 # back. Refused rather than silently lost (greptile-local, #1718).
 CHECK_ISOLATED_GRAPH_HAS_IO = (
-    "--isolated cannot restore the IO resource links this graph already "
-    "holds ({groups}): cutting a changed file's subtree can leave a resource "
+    "--isolated cannot restore the IO resource links project {project}'s code "
+    "anchors ({groups}): cutting a changed file's subtree can leave a resource "
     "chain unanchored, and the re-ingest's repo-wide resource prune would "
     "delete it. Re-run without --isolated on a graph you can rebuild."
 )
@@ -335,21 +458,18 @@ CLI_DEADCODE_COL_LINES = "Lines"
 CLI_DEADCODE_LINE_RANGE = "{start}-{end}"
 CLI_DEADCODE_SUMMARY = "{count} candidate(s) for review."
 CLI_DEADCODE_NONE = "No unreachable functions or methods found."
+# Printed under a clean report, naming the root rule that produced it
+# (issue #2527).
+CLI_DEADCODE_RULE_PUBLIC_ROOTS = (
+    "(public symbols treated as roots; use --no-public-roots for application code)"
+)
+CLI_DEADCODE_RULE_NO_PUBLIC_ROOTS = "(public symbols not treated as roots)"
 CLI_DEADCODE_WRITTEN = "Wrote {count} candidate(s) to {path}"
 CLI_DEADCODE_STRUCTURAL_TIER_SKIPPED = (
     "{count} symbol(s) in structural-tier languages were not analyzed "
     "(no call graph for these languages)."
 )
 CLI_ERR_DEADCODE_FAILED = "Failed to scan for dead code: {error}"
-CLI_ERR_DEADCODE_NO_PROJECTS = (
-    "No projects found in the graph. Index a repository first with 'cgr start'."
-)
-CLI_ERR_DEADCODE_AMBIGUOUS_PROJECT = (
-    "Multiple projects found: {projects}. Specify which one with --project-name/-n."
-)
-CLI_ERR_DEADCODE_UNKNOWN_PROJECT = (
-    "Project '{project}' is not indexed. Indexed projects: {projects}."
-)
 
 CLI_DUPLICATES_CONNECTING = "Scanning for structurally duplicated functions..."
 CLI_DUPLICATES_TABLE_TITLE = "Duplicate Code Groups ({project_name})"
@@ -382,12 +502,10 @@ CLI_DUPLICATES_TRUNCATED_NOTICE = (
     "be missing. Raise --threshold or --min-size to narrow the scan."
 )
 CLI_ERR_DUPLICATES_FAILED = "Failed to scan for duplicates: {error}"
-CLI_ERR_DUPLICATES_UNKNOWN_PROJECT = (
-    "Project '{project}' is not indexed. Indexed projects: {projects}."
-)
 
 # `cgr graph` refuses a project or a name the graph does not hold (issue
-# #2461). Both used to answer `[]` with exit 0, the same as "exists, nothing
+# #2461); every command that reads one project refuses it the same way
+# (issue #2415). Both used to answer `[]` with exit 0, the same as "exists, nothing
 # matches", and scripts and agents act on that answer: a function nobody
 # calls is safe to delete, a change no test reaches needs no test run. The
 # statuses sit above click's 1 (error) and 2 (usage) so a caller can tell
@@ -485,8 +603,33 @@ CLI_MSG_AUTO_EXCLUDE = (
 UI_DIFF_FILE_HEADER = "[bold cyan]File: {path}[/bold cyan]"
 UI_NEW_FILE_HEADER = "[bold cyan]New file: {path}[/bold cyan]"
 UI_SHELL_COMMAND_HEADER = "[bold cyan]Shell command:[/bold cyan]"
+UI_SENSITIVE_READ_HEADER = (
+    "[bold cyan]Read a file that may hold credentials "
+    "(its content goes to the model provider):[/bold cyan]"
+)
 UI_TOOL_APPROVAL = "[bold yellow]⚠️  Tool '{tool_name}' requires approval:[/bold yellow]"
+# The repository's .cgr.md, shown before it may reach the system prompt
+# (issue #3456). The titles are plain text: the path is not markup.
+UI_INSTRUCTIONS_NEW = "{path}: project instructions, not approved yet"
+UI_INSTRUCTIONS_CHANGED = "{path}: changed since you approved it"
+UI_INSTRUCTIONS_PROMPT = (
+    "This file comes from the repository and goes into the agent's system "
+    "prompt. Load it"
+)
+UI_INSTRUCTIONS_SKIPPED = (
+    "Continuing without the repository's .cgr.md. You will be asked again next session."
+)
+# Control characters (ANSI escapes, bidi overrides) are shown escaped, so
+# what the user approves is what the model reads.
+UI_VISIBLE_WHITESPACE = "\n\t"
+UI_ESCAPED_CHAR = "\\u{code:04x}"
 UI_FEEDBACK_PROMPT = "Feedback (why rejected, or press Enter to skip)"
+# `cgr start -a` has no operator to ask: what the model is told when it asks
+# for an edit or a non-read-only command without --no-confirm (issue #2657).
+ASK_AGENT_APPROVAL_DENIED = (
+    "Edits and non-read-only commands are disabled in --ask-agent mode; "
+    "answer without them. The user can re-run with --no-confirm to allow them."
+)
 UI_OPTIMIZATION_START = (
     "[bold green]Starting {language} optimization session...[/bold green]"
 )
@@ -709,6 +852,15 @@ INTERACTIVE_BFS_MAX_DEPTH = 10
 INTERACTIVE_DEFAULT_GROUP = "."
 
 MSG_SURGICAL_SUCCESS = "Successfully applied surgical code replacement in: {path}"
+MSG_SURGICAL_AMBIGUOUS = (
+    "Failed to apply surgical replacement in {path}: the target code occurs "
+    "{count} times, starting on lines {lines}. The file was not changed; "
+    "include enough surrounding code for the target to match once."
+)
+# An empty or one-character target can match on every line; the refusal
+# names this many of them.
+SURGICAL_MATCH_LINES_SHOWN = 10
+SURGICAL_MORE_LINES = ", ..."
 # Appended to a chat write tool's result by its re-ingest (issue #2916).
 MSG_CHAT_GRAPH_UPDATED = (
     " The knowledge graph now reflects this change: re-ingested {files} "
@@ -730,6 +882,9 @@ PATCH_IDENTIFIER_MISMATCH = (
 )
 PATCH_NOT_AN_IDENTIFIER = "{path}:{line}:{col} is not a whole identifier"
 PATCH_PARSE_FAILED = "{path} no longer parses after the patch"
+PATCH_UNENCODABLE = (
+    "{path} declares the {codec} encoding, which cannot hold the new text"
+)
 PATCH_FORMAT_DRIFT = "{path} applied, but {tool} would reformat it"
 PATCH_OK = "{path}: {count} edit(s) applied"
 # `parses is None` means no grammar was available, so the patch was checked
@@ -798,8 +953,39 @@ RENAME_AMBIGUOUS = (
     "Refusing to rename {qn}: {count} site(s) were resolved heuristically, by overload "
     "fan-out, or only by a trace; pass {option} to rewrite through them"
 )
+RENAME_UNPLANNED = (
+    "Refusing to rename {qn}: {count} occurrence(s) of {name} in code have no site in "
+    "the graph ({locations}), so renaming only the sites it knows would leave them "
+    "under the old name. The index may have missed them, or they may belong to a "
+    "symbol it does not model; review them and pass {option} to rewrite them as "
+    "guessed sites"
+)
+RENAME_UNPLANNED_RECEIVER_UNKNOWN = (
+    ". {count} of them may name another symbol (a call through an object the source "
+    "does not show to be of its class, or a name an import may bring in from a module "
+    "it does not resolve), which {option} does not rewrite: check those by hand"
+)
+RENAME_RECEIVER_UNKNOWN = (
+    "Refusing to rename {qn}: {count} use(s) of {name} may name another symbol "
+    "({locations}), and the graph has no site for them: a call through an object the "
+    "source does not show to be of its class, or a name an import may bring in from a "
+    "module it does not resolve. {option} does not rewrite them: check them by hand"
+)
+RENAME_UNPLANNED_ALSO_GUESSED = (
+    ". {count} graph site(s) were also resolved heuristically, by overload fan-out, "
+    "or only by a trace"
+)
+# How many unplanned locations the refusal message spells out; the full list
+# is the refusal's `unplanned` sites.
+RENAME_UNPLANNED_SHOWN = 10
+RENAME_UNPLANNED_MORE = "{shown}, and {more} more"
 RENAME_CLI_ALLOW_HEURISTIC = "--allow-heuristic"
 RENAME_UNLOCATABLE_SITE = "{owner}: site cannot be located ({resolution})"
+RENAME_RESOLUTION_BAD_POSITION = "position outside its file"
+RENAME_RESOLUTION_CLASS_VIA_PARAM = (
+    "constructed through parameter {param}; where the class is passed is "
+    "not recorded against it"
+)
 RENAME_SITELESS = (
     "Cannot rename {qn}: {count} graph-known site(s) carry no rewrite location, "
     "so the rename would leave them under the old name"
@@ -808,9 +994,28 @@ RENAME_WRONG_ROOT = (
     "Project {project} was not indexed from this server's repository; "
     "rename it from the MCP server rooted at its source tree"
 )
+RENAME_GO_IMPLEMENTERS_UNKNOWN = (
+    "Refusing to rename {qn}: Go interface {interface} declares {name}, and cgr "
+    "cannot tell which types implement it ({why}). A type that satisfies it "
+    "through {name}, or the interface itself, could be left under the old name "
+    "and stop compiling. Rename it by hand and run `go build ./...` and "
+    "`go vet ./...` for each build"
+)
+RENAME_GO_IMPLEMENTERS_UNKNOWN_WHY = {
+    "builds": "its method set differs between builds in more ways than cgr tells apart",
+    "embeds": "it embeds an interface cgr cannot resolve",
+    "constraint": "whether a type implements it rests on a build constraint "
+    "cgr cannot read or decide",
+}
+RENAME_GO_IMPLEMENTERS_UNKNOWN_WHY_OTHER = "its implementers are unknown"
 RENAME_STRUCTURAL_UNLOCATABLE = (
     "Cannot rename {qn}: {count} structural edge(s) (inherits, accepts, returns) "
     "carry no rewrite site, so the rename would leave them pointing at the old name"
+)
+RENAME_TWIN_BOUND_IMPORT = (
+    "Cannot rename {qn}: the import of `{name}` in {paths} also binds the "
+    "same-named type, which that file uses; rewriting the import would leave "
+    "the type unbound"
 )
 RENAME_PLANNED = "{count} site(s) would be rewritten"
 RENAME_PARSE_FAILED = "Rename rolled back: {files} would no longer parse"
@@ -848,6 +1053,10 @@ RENAME_CONTRACT_UNMEASURED = (
 )
 # Change signature (issue #1533).
 SIGNATURE_PARAM_PROBE = "def _({text}): pass"
+SIGNATURE_CLI_WRONG_ROOT = (
+    "Project {project} was not indexed from {root}; "
+    "pass the --repo-path it was indexed from"
+)
 SIGNATURE_NOT_PYTHON = (
     "Cannot change the signature of {qn}: {path} is not Python, and only Python "
     "definitions are supported for now (issue #{issue})"
@@ -867,6 +1076,10 @@ SIGNATURE_UNUSUAL_RECEIVER = (
     "it to self or cls first"
 )
 SIGNATURE_STAGE_FAILED = "Cannot stage the signature change: {error}"
+SIGNATURE_SOURCE_CHANGED = (
+    "Cannot stage the signature change: {files} changed on disk after the "
+    "change was planned; retry once the tree is settled"
+)
 SIGNATURE_BAD_PARAM = (
     "Not a parameter: `{text}` (expected `name`, `name: type`, `name = default` "
     "or `name: type = default`)"
@@ -874,6 +1087,9 @@ SIGNATURE_BAD_PARAM = (
 SIGNATURE_DUPLICATE_NEW = "Parameter {name} is listed twice"
 SIGNATURE_REQUIRED_AFTER_DEFAULT = (
     "Parameter {name} has no default but comes after a defaulted parameter"
+)
+SIGNATURE_INVALID_HEADER = (
+    "The new parameter list of {qn} is not valid Python ({error}): `{text}`"
 )
 SIGNATURE_BODY_REBINDS = (
     "Cannot rename parameter {old} of {qn} to {new}: `{old}` is used inside a "
@@ -892,6 +1108,10 @@ SIGNATURE_DROPPED_STILL_READ = (
 SIGNATURE_BODY_NAME_TAKEN = (
     "Cannot rename parameter {old} of {qn} to {new}: `{new}` is already used "
     "in its body"
+)
+SIGNATURE_NEW_NAME_TAKEN = (
+    "Cannot add parameter {name} to {qn}: `{name}` is already used in its "
+    "body, which would start reading the parameter instead"
 )
 SIGNATURE_HIERARCHY_MISMATCH = (
     "Cannot change the signature of {qn}: its override {member} declares "
@@ -931,6 +1151,14 @@ SIGNATURE_SITE_TOO_MANY = (
 )
 SIGNATURE_SITE_NO_VALUE = "no value for `{name}`; map it or give it a default"
 SIGNATURE_SITE_OVERLAPS = "its arguments overlap another edit of this change"
+SIGNATURE_SITE_DROPS_EFFECT = (
+    "passes `{text}` for a dropped parameter, and leaving it out would skip "
+    "the code it runs"
+)
+SIGNATURE_SITE_EXPLICIT_RECEIVER = (
+    "reaches the method through its class and passes the receiver as an "
+    "argument (`{text}`); rewrite it by hand"
+)
 SIGNATURE_PLANNED = "{count} site(s) would be rewritten, {skipped} left unmapped"
 SIGNATURE_PARSE_FAILED = "Signature change rolled back: {files} would no longer parse"
 SIGNATURE_CONTRACT_FAILED = (
@@ -940,6 +1168,11 @@ SIGNATURE_ROLLBACK_REFUSED = (
     "Signature change kept: its postcondition failed ({reasons}) but a later "
     "edit was recorded on top of it, so it was not rolled back; undo the later "
     "edit and rerun"
+)
+SIGNATURE_ROLLBACK_FAILED = (
+    "Signature change failed its postcondition ({reasons}) and its rollback "
+    "raised ({error}); its files may remain modified, so check the working "
+    "tree and rebuild the graph before the next graph-backed operation"
 )
 SIGNATURE_ROLLBACK_UNMEASURED = (
     "Signature change rolled back after its postcondition failed ({reasons}), "
@@ -958,6 +1191,10 @@ CONTEXT_WHY_ACCEPTS = "type it accepts"
 CONTEXT_WHY_TEST = "test reaching it at depth {depth} through {through}"
 CONTEXT_WHY_DOC = "documentation section whose file links to it"
 CONTEXT_UNRESOLVED = "Nothing in the graph matches {target}"
+CONTEXT_TARGET_OVER_BUDGET = (
+    "The first line of {target} does not fit in {budget} tokens, so the slice "
+    "is empty; raise --budget"
+)
 # Postcondition contract (issue #1531).
 CONTRACT_OP_RENAME = "rename"
 CONTRACT_OP_CHANGE_SIGNATURE = "change_signature"
@@ -989,6 +1226,10 @@ DICT_KEY_APPLIED = "applied"
 DICT_KEY_SUCCESS = "success"
 DICT_KEY_QUERY_USED = "query_used"
 TIKTOKEN_ENCODING = "cl100k_base"
+# Without the encoding's BPE file, which tiktoken downloads on first use, a
+# token is estimated as this many bytes of UTF-8: about what cl100k_base
+# averages on code and JSON (issue #2914).
+TOKEN_ESTIMATE_BYTES_PER_TOKEN = 4
 QUERY_SUMMARY_SUCCESS = "Successfully retrieved {count} item(s) from the graph."
 QUERY_SUMMARY_TRUNCATED = (
     "Results truncated: showing {kept} of {total} items (~{tokens} tokens, limit {max_tokens}). "

@@ -11,7 +11,7 @@ handles security incidents, compromised releases and recovery communications.
 
 ## What the software does
 
-code-graph-rag parses codebases into a knowledge graph stored in a local Memgraph database, optionally embeds code for semantic search in a local Qdrant instance, and answers natural-language questions about the code, either through the interactive CLI agent or through the MCP server.
+code-graph-rag parses codebases into a knowledge graph stored in a local graph database (an embedded SQLite file by default, or Memgraph or Neo4j), optionally embeds code for semantic search in a local vector store (a SQLite file by default, or Qdrant or Milvus), and answers natural-language questions about the code, either through the interactive CLI agent or through the MCP server.
 
 ## Scope, assets and attacker assumptions
 
@@ -48,6 +48,7 @@ The controls and remaining risks are described below.
 3. The MCP server must not expose the graph or the tools to other hosts unauthenticated.
 4. Network paths carrying source code or queries must be documented so operators can choose permitted providers and restrict egress.
 5. File-tool path checks, command filtering and approval controls must limit unintended actions. These application-level checks are not an operating-system sandbox.
+6. Repository content must not reach the agent's system prompt, and files that look like credentials must not reach the model, without the user's consent.
 
 ## Trust boundaries and threat model
 
@@ -61,10 +62,10 @@ is a separate trust boundary between project changes and distributed artifacts.
 | --- | --- | --- |
 | Malicious input exploits a parser or corrupts analysis | Tree-sitter paths parse rather than run the analysed program; XML parsing uses `defusedxml`. | Parser bugs and incorrect results remain possible. Keep dependencies updated and verify security-sensitive conclusions. |
 | Repository build logic executes during indexing | C# defaults to Tree-sitter; Roslyn-backed modes require an explicit configuration choice. | Toolchain-backed analysis and preprocessing run with host privileges. Review the modes below and isolate untrusted workloads. |
-| Prompt injection steers the agent through repository or web content | CLI web research uses a separate agent with only the search tool; its summary is marked as untrusted data. | The main agent still interprets repository content and research summaries. These measures do not guarantee that it ignores malicious instructions; review proposed actions. |
+| Prompt injection steers the agent through repository or web content | CLI web research uses a separate agent with only the search tool; its summary is marked as untrusted data. A repository's `.cgr.md` reaches the system prompt only after the user approves its current content. | The main agent still interprets repository content and research summaries. These measures do not guarantee that it ignores malicious instructions; review proposed actions. |
 | Tool use modifies unintended files or executes unwanted commands | File tools validate project paths; default CLI shell execution uses command filtering and approval checks. | Commands are not OS-sandboxed, and YOLO mode relaxes checks. Keep approvals enabled and restrict the account's privileges. |
-| Source code, queries or credentials reach an unintended recipient | Provider configuration controls destinations; CLI research/search checks queries against recorded repository content. | Remote inference intentionally sends data, and text matching is not comprehensive data-loss prevention. Audit providers, MCP clients and tool egress; keep secrets out of inputs. |
-| Unauthorized access to graph data or privileged MCP tools | New database stacks bind loopback by default; HTTP MCP requires a bearer token for a non-loopback bind. | Old Compose files can remain exposed; loopback is not per-user isolation. Protect remote transport, tokens and host access. |
+| Source code, queries or credentials reach an unintended recipient | Provider configuration controls destinations; CLI research/search checks queries against recorded repository content. Reads that need no approval refuse files that look like credentials. | Remote inference intentionally sends data, and text matching is not comprehensive data-loss prevention. Audit providers, MCP clients and tool egress; keep secrets out of inputs. |
+| Unauthorized access to graph data or privileged MCP tools | New database stacks bind loopback by default; HTTP MCP requires a bearer token for a non-loopback bind. Every MCP tool says whether it writes, and `--read-only` serves only the readers. | Old Compose files can remain exposed; loopback is not per-user isolation. Protect remote transport, tokens and host access. |
 | Large inputs, queries or tool calls exhaust resources | Shell pipelines, search requests and several toolchain calls have timeouts. | These are not global CPU, memory, disk or request quotas. Apply resource limits and avoid exposing the service to untrusted workloads. |
 | Compromised dependencies or publishing access distribute malicious code | Dependency scanning, PyPI trusted publishing, and binary signing/provenance provide detection and traceability. | A compromised authorized build can still produce signed artifacts. Verify provenance and follow the incident response plan for suspect releases. |
 
@@ -184,6 +185,12 @@ protected transport and host/network restrictions appropriate to the data.
 Environment variables and `.env` configure credentials; they do not prevent
 secrets in source files, command output or logs from being exposed.
 
+Token counting, which bounds graph-query results and the agent's context,
+reads tiktoken's `cl100k_base` encoding, which tiktoken downloads on first use
+and caches. Without network access the counts are estimated from text length
+instead, with one warning; a copy of the encoding in the directory
+`TIKTOKEN_CACHE_DIR` names restores exact counts.
+
 ### MCP access
 
 The [HTTP MCP server](https://github.com/vitali87/code-graph-rag/blob/main/codebase_rag/mcp/server.py)
@@ -192,6 +199,14 @@ binds `127.0.0.1` by default and refuses a non-loopback bind without
 This is a shared bearer credential, not per-user authorization. Authorized
 clients can use privileged tools, including file modification and project
 deletion; treat client access accordingly.
+
+Every tool carries MCP annotations a client can key its own approval rules on:
+`readOnlyHint` on the tools that only read, `destructiveHint` on those that
+overwrite or delete files, a project or the database. A client that needs only
+queries should get a read-only server (`cgr mcp-server --read-only`, or
+`MCP_READ_ONLY=true`): the writers are then neither listed nor run, even when
+called by name. `read_file` refuses files that look like credentials in either
+mode (see below) unless `CGR_ALLOW_SENSITIVE_READS=true`.
 
 ![cgr mcp-server --transport http refusing --host 0.0.0.0 without MCP_HTTP_AUTH_TOKEN, then serving on 127.0.0.1 by default](../assets/demos/security-mcp-bind.gif)
 
@@ -220,6 +235,44 @@ but the driver documents that mode as routing rather than access control, so
 it is not relied on. For defence in depth on a shared or networked database,
 connect with a user that has no write privileges for querying. Ingestion and
 other built-in writes use fixed queries and are not affected.
+
+### Project instructions
+
+`~/.cgr.md` is the user's own and always loads. A repository's `.cgr.md` is
+written by whoever can commit to it, and it goes into the system prompt, so it
+loads only in the exact form the user approved: an interactive session
+(`cgr start`, `cgr optimize`) shows the file, with control characters escaped,
+and asks, defaulting to no. The approval is a SHA-256 of the content, kept in
+`$CGR_HOME/trusted_instructions.json` (owner-only; in `~/.cgr` when `CGR_HOME`
+comes from the working directory's `.env`, so a repository cannot ship its own
+store), and a changed file is shown again. Sessions with nobody to ask (`cgr start -a`, MCP `ask_agent`) load it
+only when its current content was approved before.
+`CGR_TRUST_PROJECT_INSTRUCTIONS=true` skips the question for every
+repository; use it only for CI on repositories you control. It counts only when
+exported in the environment cgr starts with: a `.env` in the working directory
+is usually the analysed repository's own file, so it cannot set this, nor
+`CGR_ALLOW_SENSITIVE_READS`. The prompt tells
+the model that these instructions cannot grant permissions or skip approvals,
+but approval of the file, not that wording, is the control: GHSA-2rr7-8xrw-gmhr
+was a `.cgr.md` that asked the agent to plant a git backdoor without asking.
+
+### Credential files
+
+Some reads run without approval: `read_file`, shell reads confined to the
+project (`cat`, `head`, `rg`, ...) and MCP `read_file`. What they return goes to
+the model provider. Files that look like credentials are therefore taken out of
+that set: `.env` and `.env.*` (not templates such as `.env.example`), private
+keys and certificates (`id_rsa`, `*.pem`, `*.key`, `*.p12`, ...), `.npmrc`,
+`.pypirc`, `.netrc`, `.git-credentials`, `.git/config`, `.aws/credentials`,
+`.docker/config.json`, `.kube/config`, Terraform state, and anything under
+`.ssh/` or `.gnupg/`, judged by a symlink's target as well as its name. The
+chat asks before reading one, and a run with nobody to ask is denied; a shell
+read that names one, or an `rg` with `--hidden`, `-.`, `-u`, `--unrestricted`
+or a `--no-ignore` switch, needs approval the same way. This is a name-based list, not
+secret scanning: a credential pasted into `settings.py` is read like any other
+source. A recursive `rg` (no path, or a directory) is checked against the files
+it would search, as `rg --files` lists them with the same roots, filters and
+`--no-*` switches.
 
 Commands run with the host user's privileges and inherited environment.
 Working-directory and argument checks are not an OS sandbox. Repository text,

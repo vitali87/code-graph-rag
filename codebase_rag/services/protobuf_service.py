@@ -49,8 +49,11 @@ NAME_BASED_LABELS = frozenset({cs.NodeLabel.EXTERNAL_PACKAGE, cs.NodeLabel.PROJE
 
 
 # Endpoints plus the site-keyed props (issue #1522) that make parallel edges
-# between one node pair distinct records, mirroring MERGE_KEY_PROPS_BY_REL.
-_RelKey = tuple[str, int, str, tuple[tuple[str, PropertyValue], ...]]
+# between one node pair distinct records, mirroring MERGE_KEY_PROPS_BY_REL,
+# then the endpoint labels: the graph matches an endpoint by label and id, and
+# a TS interface and class may share one qualified name (issue #2520). Last,
+# so they only break ties and the order of every other edge is unchanged.
+_RelKey = tuple[str, int, str, tuple[tuple[str, PropertyValue], ...], str, str]
 
 _REL_TYPE_CACHE: dict = {}
 _MSG_CLASS_CACHE: dict[str, type | None] = {}
@@ -158,6 +161,23 @@ class ProtobufFileIngestor:
             payload_message = getattr(node, payload_field_name)
             self._nodes[node_key] = node
 
+        self._assign_payload_fields(payload_message, properties)
+
+    def update_node_properties(self, label: str, properties: PropertyDict) -> None:
+        # A node already held takes the given keys; one never written stays
+        # absent, as a graph `MATCH ... SET` matches nothing, rather than
+        # appearing as a record that carries only these keys.
+        node_label = cs.NodeLabel(label)
+        payload_field_name = LABEL_TO_ONEOF_FIELD.get(node_label)
+        node = self._nodes.get((node_label, self._get_node_id(node_label, properties)))
+        if node is None or payload_field_name is None:
+            return
+        self._unflushed = True
+        self._assign_payload_fields(getattr(node, payload_field_name), properties)
+
+    def _assign_payload_fields(
+        self, payload_message: Message, properties: PropertyDict
+    ) -> None:
         for key, value in properties.items():
             if value is not None and hasattr(payload_message, key):
                 self._assign_payload_field(payload_message, key, value)
@@ -214,7 +234,14 @@ class ProtobufFileIngestor:
             for key in cs.MERGE_KEY_PROPS_BY_REL.get(rel_type, ())
             if properties and key in properties
         )
-        unique_key = (from_val, rel_type_enum, to_val, site_key)
+        unique_key = (
+            from_val,
+            rel_type_enum,
+            to_val,
+            site_key,
+            str(from_label),
+            str(to_label),
+        )
         if unique_key in self._relationships:
             if properties:
                 self._relationships[unique_key].properties.update(properties)
@@ -243,8 +270,8 @@ class ProtobufFileIngestor:
         return [node for _key, node in sorted(self._nodes.items())]
 
     def _sorted_relationships(self) -> list[pb.Relationship]:
-        # The map key IS (source_id, type, target_id): a deterministic total
-        # order with the type enum's integer as the middle tiebreak.
+        # The map key leads with (source_id, type, target_id): a deterministic
+        # total order with the type enum's integer as the middle tiebreak.
         return [rel for _key, rel in sorted(self._relationships.items())]
 
     def _write_layout(

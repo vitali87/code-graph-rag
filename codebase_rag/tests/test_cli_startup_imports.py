@@ -18,7 +18,7 @@ from codebase_rag import cli
 # Top-level packages that only the LLM-backed commands need.
 _LLM_PACKAGES = ("pydantic_ai", "anthropic", "openai", "google.genai")
 # Vector-store clients, needed only by commands that touch embeddings.
-_VECTOR_PACKAGES = ("qdrant_client", "pymilvus")
+_VECTOR_PACKAGES = ("qdrant_client", "pymilvus", "sqlite_vec")
 # Loaded at start-up only by accident: logfire through its pydantic plugin,
 # prompt_toolkit through a chat-UI style constant, and the parser stack
 # through subcommand modules that do not parse anything at import.

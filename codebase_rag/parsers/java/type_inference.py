@@ -16,10 +16,10 @@ from ...types_defs import (
 )
 from ..frontends.protocol import CallSiteKey, ResolvedCallSite
 from ..import_processor import ImportProcessor
-from ..semantic_call_join import call_site_key, declared_location
+from ..semantic_call_join import call_site_key, resolve_call_site
 from ..utils import safe_decode_text
 from .method_resolver import JavaMethodResolverMixin
-from .type_resolver import JavaTypeResolverMixin
+from .type_resolver import JavaClassHeaders, JavaTypeResolverMixin
 from .utils import find_package_start_index
 from .variable_analyzer import JavaVariableAnalyzerMixin
 
@@ -55,6 +55,7 @@ class JavaTypeInferenceEngine(
         "function_locations",
         "_rel_to_module",
         "_family_picks",
+        "_class_headers",
     )
 
     def __init__(
@@ -94,8 +95,14 @@ class JavaTypeInferenceEngine(
 
         self._lookup_cache: dict[str, str | None] = {}
         self._lookup_in_progress: set[str] = set()
+        self._class_headers: dict[Path, JavaClassHeaders] = {}
 
         self._fqn_to_module_qn: dict[str, list[str]] = self._build_fqn_lookup_map()
+
+    def reset_resolution_memos(self) -> None:
+        # A file re-parsed since the last call pass has a new tree to read
+        # its class headers from.
+        self._class_headers.clear()
 
     def resolve_java_call_site(
         self, call_node: ASTNode, module_qn: str
@@ -105,25 +112,18 @@ class JavaTypeInferenceEngine(
         # cannot), and the external sentinel is its proof that the call leaves
         # the repo. Any miss returns None so the caller falls back to the
         # tree-sitter heuristics.
-        if not (self.java_call_sites or self.java_external_sites):
-            return None
-        key = self._java_call_site_key(call_node, module_qn)
-        if key is None:
-            return None
-        fact = self.java_call_sites.get(key)
-        if fact is not None:
-            return declared_location(
-                fact.target_file,
-                fact.target_line,
-                fact.target_col,
-                self.function_locations,
-                self.module_qn_to_file_path,
-                self.repo_path,
-                self._rel_to_module,
-            )
-        if key in self.java_external_sites:
-            return JAVA_EXTERNAL_TARGET
-        return None
+        return resolve_call_site(
+            call_node,
+            module_qn,
+            self._java_call_site_key,
+            self.java_call_sites,
+            self.java_external_sites,
+            JAVA_EXTERNAL_TARGET,
+            self.function_locations,
+            self.module_qn_to_file_path,
+            self.repo_path,
+            self._rel_to_module,
+        )
 
     def _java_call_site_key(
         self, call_node: ASTNode, module_qn: str

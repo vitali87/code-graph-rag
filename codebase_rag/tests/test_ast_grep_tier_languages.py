@@ -272,6 +272,48 @@ def test_haskell_type_signature_is_not_a_function(tmp_path: Path) -> None:
     assert "String" not in names, names
 
 
+def test_haskell_operator_definitions(tmp_path: Path) -> None:
+    mock = _run(
+        tmp_path,
+        {
+            "Vec.hs": """module Vec where
+data Vec = V Double Double
+(<+>) :: Vec -> Vec -> Vec
+(V a b) <+> (V c d) = V (a+c) (b+d)
+(|*|) k (V a b) = V (k*a) (k*b)
+x `plus` y = x + y
+norm (V a b) = sqrt (a*a + b*b)
+""",
+            "Bind.hs": "(<+>) = mappend\n",
+            "Guard.hs": "x <+> y | x > 0 = x + y\n",
+            "Dots.hs": "x .+. y = x + y\n(.) f g x = f (g x)\n",
+            "Unnamed.hs": "(Just x) = Just 1\n",
+        },
+    )
+    assert _node_name_counts(mock, FUNCTION) == Counter(
+        {"<+>": 3, "|*|": 1, "plus": 1, "norm": 1, "․+․": 1, "․": 1}
+    )
+    functions = [
+        c.args[1]
+        for c in mock.ensure_node_batch.call_args_list
+        if str(c.args[0]) == FUNCTION
+    ]
+    for module, names in {
+        "Vec": ("<+>", "|*|", "plus", "norm"),
+        "Bind": ("<+>",),
+        "Guard": ("<+>",),
+        "Dots": ("․+․", "․"),
+    }.items():
+        for name in names:
+            qn = next(
+                qn for qn in _defined(mock) if qn.endswith(f".{module}_hs.{name}")
+            )
+            node = next(n for n in functions if n[cs.KEY_QUALIFIED_NAME] == qn)
+            assert qn.rsplit(".", 1)[1] == node[cs.KEY_NAME] == name
+            if module == "Vec" and name == "<+>":
+                assert node[cs.KEY_START_LINE] == node[cs.KEY_END_LINE] == 4
+
+
 def test_haskell_types_and_classes(tmp_path: Path) -> None:
     names = _node_names(_run(tmp_path, {"Greeter.hs": HASKELL}), CLASS)
     assert {"Shape", "Wrapper", "Alias", "Speaker"} <= names, names

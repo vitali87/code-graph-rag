@@ -53,6 +53,7 @@ NONINTERACTIVE_REDIRECT = "redirection is not available"
 NONINTERACTIVE_FOLLOW_SYMLINKS = "symlink-following traversal is not available"
 NONINTERACTIVE_FIND_MUTATES = "find's mutating actions are not available"
 NONINTERACTIVE_PATH_ESCAPES = "absolute and parent-traversal paths are not available"
+NONINTERACTIVE_SENSITIVE_FILE = "reading files that may hold credentials needs approval"
 NONINTERACTIVE_OPTION_CARRIED_INPUT = (
     "options that read file lists or run programs are not available"
 )
@@ -100,10 +101,6 @@ MCP_PATH_NOT_DIR = "Target repository path is not a directory: {path}"
 MCP_PROJECT_NOT_FOUND = (
     "Project '{project_name}' not found. Available projects: {projects}"
 )
-
-# CLI validation errors
-INVALID_POSITIVE_INT = "{value!r} is not a valid positive integer"
-INVALID_NON_NEGATIVE_FLOAT = "Value must be non-negative, got {value}"
 
 WEB_SEARCH_EMPTY_QUERY = "Error: The search query is empty."
 WEB_SEARCH_UNREACHABLE = "Error: The web search service could not be reached."

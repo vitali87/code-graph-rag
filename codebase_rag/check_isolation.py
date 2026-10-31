@@ -18,7 +18,7 @@ new finding, an ExternalModule for a new import) are removed, and the
 captured nodes and edges are re-emitted through the batch API the parsers
 write with. Every captured node that outlived the delete -- the File,
 Folder and Package nodes at the scope's paths, and the shared nodes the
-check can prune or re-grade (ExternalModule, Resource, Gloss, findings) --
+check can prune or re-grade (ExternalModule, Resource, Gloss) --
 then has its property set replaced by the captured one, because the batch
 write merges properties and would keep a key the check added (bot review,
 #1718).
@@ -45,7 +45,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Protocol, cast
+from typing import Protocol
 
 from . import constants as cs
 from . import cypher_queries as cq
@@ -138,7 +138,7 @@ def _props(raw: object) -> PropertyDict | None:
     scalars), but it is the graph's own property set read back, so it is
     written back as it was read.
     """
-    return cast(PropertyDict, dict(raw)) if isinstance(raw, dict) else None
+    return dict(raw) if isinstance(raw, dict) else None
 
 
 def _discard_pending(store: GraphStore) -> None:
@@ -333,7 +333,7 @@ class IsolationGuard:
         The re-emit above puts each captured value back, but the batch write
         merges (`SET n += props`), so a key the check ADDED to a surviving
         node -- a File at a scope path, an ExternalModule, a Resource, a
-        Gloss, a finding, a pre-existing shared node it re-emitted -- would
+        Gloss, a pre-existing shared node it re-emitted -- would
         persist (bot review, #1718). Those keys are read back and removed by
         name. Subtree nodes and swept orphans are recreated from the capture,
         so a fresh node has nothing extra.

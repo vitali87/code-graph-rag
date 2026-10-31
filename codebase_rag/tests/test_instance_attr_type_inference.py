@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
@@ -45,7 +47,7 @@ class App:
 
 class _Capture:
     def __init__(self) -> None:
-        self.rels: list[tuple[PropertyValue, str, PropertyValue]] = []
+        self.rels: list[tuple[PropertyValue, str, PropertyValue, PropertyDict]] = []
 
     def ensure_node_batch(self, label: str, properties: PropertyDict) -> None:
         return None
@@ -57,7 +59,7 @@ class _Capture:
         to_spec: tuple[str, str, PropertyValue],
         properties: PropertyDict | None = None,
     ) -> None:
-        self.rels.append((from_spec[2], str(rel_type), to_spec[2]))
+        self.rels.append((from_spec[2], str(rel_type), to_spec[2], properties or {}))
 
     def flush_all(self) -> None:
         return None
@@ -83,7 +85,7 @@ def _calls(tmp_path: Path) -> set[tuple[PropertyValue, PropertyValue]]:
         project_name=PROJECT,
     ).run(force=True)
     return {
-        (frm, to) for (frm, rel, to) in cap.rels if rel == cs.RelationshipType.CALLS
+        (frm, to) for (frm, rel, to, _) in cap.rels if rel == cs.RelationshipType.CALLS
     }
 
 
@@ -109,3 +111,87 @@ class TestInstanceAttrTypeInference:
     ) -> None:
         calls = _calls(tmp_path)
         assert ("proj.m.App.check", "proj.m.status") not in calls, calls
+
+
+@pytest.mark.parametrize("declaration", ["Store | None = None", "Store"])
+@pytest.mark.parametrize("reset", [False, True])
+def test_annotated_instance_calls_are_exact(
+    tmp_path: Path, declaration: str, reset: bool
+) -> None:
+    (tmp_path / "models.py").write_text(
+        "class Store:\n    def get(self): pass\nclass Cache:\n    def get(self): pass\n"
+    )
+    source = (
+        "from models import Store, Cache\n"
+        "class App:\n"
+        f"    def __init__(self):\n        self._s: {declaration}\n"
+        "    def read(self):\n        return self._s.get()\n"
+    )
+    if reset:
+        source += "    def reset(self):\n        self._s = Store()\n"
+    source += (
+        "class Other:\n"
+        "    def __init__(self):\n        self._s: Cache = None\n"
+        "    def read(self):\n        return self._s.get()\n"
+    )
+    (tmp_path / "app.py").write_text(source)
+    parsers, queries = load_parsers()
+    cap = _Capture()
+    GraphUpdater(
+        ingestor=cap,
+        repo_path=tmp_path,
+        parsers=parsers,
+        queries=queries,
+        project_name=PROJECT,
+    ).run(force=True)
+    calls = {
+        (frm, to, props.get("resolution"))
+        for frm, rel, to, props in cap.rels
+        if rel == cs.RelationshipType.CALLS
+        and frm in {"proj.app.App.read", "proj.app.Other.read"}
+    }
+    assert calls == {
+        ("proj.app.App.read", "proj.models.Store.get", "exact"),
+        ("proj.app.Other.read", "proj.models.Cache.get", "exact"),
+    }
+
+
+@pytest.mark.parametrize(
+    ("imports", "annotation"),
+    [
+        ("import models", "models.Store"),
+        ("import models as m", "m.Store"),
+        ("import models", "Optional[models.Store]"),
+        ("import models", '"models.Store"'),
+    ],
+)
+@pytest.mark.parametrize("initializer", ["", " = None", " = models_ctor()"])
+def test_module_qualified_annotation_calls_are_exact(
+    tmp_path: Path, imports: str, annotation: str, initializer: str
+) -> None:
+    (tmp_path / "models.py").write_text(
+        "class Store:\n    def get(self): pass\nclass Cache:\n    def get(self): pass\n"
+    )
+    module_alias = imports.rpartition(" ")[2]
+    initializer = initializer.replace("models_ctor", f"{module_alias}.Store")
+    (tmp_path / "app.py").write_text(
+        f"{imports}\nfrom typing import Optional\n"
+        "class App:\n"
+        f"    def __init__(self):\n        self._s: {annotation}{initializer}\n"
+        "    def read(self):\n        return self._s.get()\n"
+    )
+    parsers, queries = load_parsers()
+    cap = _Capture()
+    GraphUpdater(
+        ingestor=cap,
+        repo_path=tmp_path,
+        parsers=parsers,
+        queries=queries,
+        project_name=PROJECT,
+    ).run(force=True)
+    calls = {
+        (frm, to, props.get("resolution"))
+        for frm, rel, to, props in cap.rels
+        if rel == cs.RelationshipType.CALLS and frm == "proj.app.App.read"
+    }
+    assert calls == {("proj.app.App.read", "proj.models.Store.get", "exact")}

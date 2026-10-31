@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from evals.cgr_graph import _StatefulIngestor
@@ -76,7 +77,7 @@ def test_incremental_add_of_cross_language_sibling_does_not_collide(
 
     # Add the C++ sibling and mark it changed past the hash cache so the
     # incremental run re-parses it.
-    cache = temp_repo / cs.HASH_CACHE_FILENAME
+    cache = state_file(temp_repo, cs.HASH_CACHE_FILENAME)
     future = cache.stat().st_mtime + 10
     cpp = temp_repo / "shapes.cpp"
     cpp.write_text(_CPP, encoding="utf-8")
@@ -112,7 +113,7 @@ def test_incremental_delete_then_add_sibling_matches_clean_index(
     _index(store, temp_repo, force=False)
     assert _shapes_modules(store) == {"shapes.rs": "proj.shapes"}
 
-    cache = temp_repo / cs.HASH_CACHE_FILENAME
+    cache = state_file(temp_repo, cs.HASH_CACHE_FILENAME)
     future = cache.stat().st_mtime + 10
     (temp_repo / "shapes.rs").unlink()
     cpp = temp_repo / "shapes.cpp"

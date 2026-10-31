@@ -16,6 +16,7 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag import graph_updater as gu
+from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.frontends import go as go_fe
@@ -73,7 +74,7 @@ def _updater(
 
 
 def _bump(root: Path, rel: str) -> None:
-    cache_mtime = (root / cs.HASH_CACHE_FILENAME).stat().st_mtime
+    cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
     os.utime(root / rel, (cache_mtime + 1, cache_mtime + 1))
 
 
@@ -970,7 +971,9 @@ def test_a_reused_updater_joins_a_go_fact_against_the_renamed_module(
     holder = {"facts": _go_facts("b.go")}
     monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.GOTYPES)
     monkeypatch.setattr(go_fe, "go_frontend_available", lambda: True)
-    monkeypatch.setattr(go_fe, "run_go_frontend", lambda repo_path: holder["facts"])
+    monkeypatch.setattr(
+        go_fe, "run_go_frontend", lambda repo_path, ignored_dirs: holder["facts"]
+    )
 
     root = temp_repo / "proj"
     _materialise(root, GO_FACT_BEFORE)
@@ -1031,7 +1034,7 @@ def test_a_reused_updater_joins_a_java_fact_against_the_renamed_module(
     root = temp_repo / "proj"
     holder: dict[str, object] = {"target_file": "B.java"}
 
-    def facts(repo_path: Path) -> JavaSemanticFacts:
+    def facts(repo_path: Path, rescued_files: frozenset[str]) -> JavaSemanticFacts:
         updater = holder["updater"]
         assert isinstance(updater, GraphUpdater)
         target_file = str(holder["target_file"])

@@ -17,7 +17,7 @@ cgr start --repo-path /path/to/repo --update-graph -o my_graph.json
 ![cgr start --repo-path requests --update-graph -o my_graph.json syncing psf/requests and exporting only its project](../assets/demos/graph-export-start.gif)
 
 The file holds only that repository's project, scoped the way
-`cgr export --project-name` scopes it (below), even when the shared graph
+`cgr export --project` scopes it (below), even when the shared graph
 holds other projects.
 
 **Export the whole shared graph (every indexed project):**
@@ -31,8 +31,8 @@ cgr export -o my_graph.json
 **Export one project, several, or a workspace:**
 
 ```bash
-cgr export -o my_project.json --project-name my-project
-cgr export -o two.json -n api -n web
+cgr export -o my_project.json --project my-project
+cgr export -o two.json -p api -p web
 cgr export -o shop.json --workspace shop
 ```
 
@@ -43,8 +43,11 @@ cgr export -o shop.json --workspace shop
 A project's export holds what the project owns (its folders, files, modules
 and definitions), the relationships that start there, and the nodes those
 relationships reach, such as a shared external module, so every relationship
-in the file has both ends in it. The file lists its projects under
-`metadata.projects`.
+in the file has both ends in it. A shared `Resource` node is never owned, so
+the links that start at one, a client URL's `RESOLVES_TO` to an endpoint or
+an env var's `FLOWS_TO` into a URL, are added when both of their ends are in
+the file: export a client together with its server and the calls between
+them are kept. The file lists its projects under `metadata.projects`.
 
 ## Working with Exported Data
 

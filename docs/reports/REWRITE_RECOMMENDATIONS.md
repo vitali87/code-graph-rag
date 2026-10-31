@@ -304,7 +304,6 @@ These Python-level improvements should be implemented before any language rewrit
 | `bench_embedding_cache.py` | EmbeddingCache operations |
 | `bench_ast_cache.py` | BoundedASTCache operations |
 | `bench_graph_loader.py` | GraphLoader JSON parse + index build |
-| `bench_dropin_replacements.py` | Drop-in library comparisons |
 
 Run all benchmarks: `uv run python benchmarks/run_all.py`
 

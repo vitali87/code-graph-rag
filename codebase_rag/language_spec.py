@@ -10,8 +10,9 @@ from loguru import logger
 from . import constants as cs
 from .models import FQNSpec, LanguageSpec
 from .sql_names import normalize_sql_reference
+from .utils import path_utils
 from .utils.path_utils import module_extension, module_stem, should_skip_path
-from .utils.qn_markers import strip_dup_marker
+from .utils.qn_markers import strip_arity_marker, strip_dup_marker, with_leaf_arity
 
 if TYPE_CHECKING:
     from tree_sitter import Node
@@ -214,7 +215,11 @@ def _cpp_get_name(node: Node) -> str | None:
     if node.type in cs.CPP_NAME_NODE_TYPES:
         name_node = node.child_by_field_name(cs.FIELD_NAME)
         if name_node and name_node.text:
-            return decode_node_text(name_node.text)
+            # A specialization's `Box<T, int>` is rendered from its tokens,
+            # so it stays one line and free of `.` (issue #2434).
+            from .parsers.cpp import utils as cpp_utils
+
+            return cpp_utils.type_name_text(name_node)
     elif node.type == cs.TS_CPP_FUNCTION_DEFINITION:
         declarator = node.child_by_field_name(cs.FIELD_DECLARATOR)
         if declarator and declarator.type == cs.TS_CPP_FUNCTION_DECLARATOR:
@@ -292,31 +297,39 @@ def csharp_namespaced_from_graph(
     index is rebuilt for the rest from what the node stores: its qn, path
     and declared namespace. The fold is undone by the same directory rule
     `_csharp_fold_scopes` applied, and a duplicate-qn marker (`Bench@24`)
-    is dropped as the parsed form never carries it (bot review on #1999).
+    is dropped as the parsed form never carries it (bot review on #1999),
+    as is a generic twin's arity (`PB`1`, issue #2579): the declared form
+    is the written name, which both twins share.
     A module qn that is neither of the two path spellings is not guessed.
     """
     split = _csharp_graph_scope(qn, path, project_name)
     if split is None:
         return None
     directory, suffix = split
-    scoped = [strip_dup_marker(part) for part in suffix.split(cs.SEPARATOR_DOT)]
+    scoped = [
+        strip_arity_marker(strip_dup_marker(part))
+        for part in suffix.split(cs.SEPARATOR_DOT)
+    ]
     if namespace and directory.endswith(f"{cs.SEPARATOR_DOT}{namespace}"):
         scoped.insert(0, namespace)
     return cs.SEPARATOR_DOT.join(scoped)
 
 
-def csharp_partial_key_from_graph(qn: str, path: str, project_name: str) -> str | None:
+def csharp_partial_key_from_graph(
+    qn: str, path: str, project_name: str, arity: int
+) -> str | None:
     """The partial-group key parsing gives a C# type, for one read back from
     the graph: its declaring directory plus its declared name, marker
-    stripped. Whether the type was `partial` is not stored, so an unchanged
-    part must rejoin its siblings by this key or a declared name spanning
-    two unchanged parts reads as two projects (bot review on #1999).
+    stripped and generic arity spelled. Whether the type was `partial` is
+    not stored, so an unchanged part must rejoin its siblings by this key or
+    a declared name spanning two unchanged parts reads as two projects (bot
+    review on #1999).
     """
     split = _csharp_graph_scope(qn, path, project_name)
     if split is None:
         return None
     directory, suffix = split
-    return f"{directory}{cs.SEPARATOR_DOT}{strip_dup_marker(suffix)}"
+    return f"{directory}{cs.SEPARATOR_DOT}{with_leaf_arity(suffix, arity)}"
 
 
 def _csharp_graph_scope(
@@ -362,6 +375,13 @@ def _csharp_get_name(node: Node) -> str | None:
     # node is never a real definition, so drop it.
     if name in cs.CSHARP_RESERVED_KEYWORDS:
         return None
+    # `Foo<T>` beside a `Foo` is a different type (issue #2579); its segment
+    # is decided here so the graph, a nested type's scope walk and the
+    # source lookup by qualified name all spell it alike.
+    if name and node.type in cs.SPEC_CSHARP_CLASS_TYPES:
+        from .parsers.csharp import utils as csharp_utils
+
+        return csharp_utils.arity_qualified_name(node, name)
     return name
 
 
@@ -391,6 +411,49 @@ def _dart_get_name(node: Node) -> str | None:
     from .parsers.dart import utils as dart_utils
 
     return dart_utils.dart_get_name(node)
+
+
+def _julia_get_name(node: Node) -> str | None:
+    # The single implementation of function naming lives in
+    # parsers.julia.utils, which the call pass reaches directly; the import
+    # is deferred here because language_spec is imported from inside parsers.
+    from .parsers.julia import utils as julia_utils
+
+    if node.type in (
+        cs.TS_JULIA_FUNCTION_DEFINITION,
+        cs.TS_JULIA_MACRO_DEFINITION,
+        cs.TS_JULIA_ASSIGNMENT,
+    ):
+        return julia_utils.julia_function_head_name(node)
+    if node.type == cs.TS_JULIA_ARROW_FUNCTION_EXPRESSION:
+        return julia_utils.julia_arrow_assigned_name(node)
+    if node.type in cs.JULIA_TYPE_DEFINITION_TYPES:
+        # The name sits in a positional `type_head` child; with a `<:` base
+        # the head's first named child is a binary_expression whose own
+        # first named child is the type name (`struct Point <: Shape`).
+        type_head = next(
+            (c for c in node.children if c.type == cs.TS_JULIA_TYPE_HEAD), None
+        )
+        head = next(iter(type_head.named_children), None) if type_head else None
+        if head is not None and head.type == cs.TS_BINARY_EXPRESSION:
+            head = next(iter(head.named_children), None)
+        if head is not None and head.type == cs.TS_JULIA_PARAMETRIZED_TYPE_EXPRESSION:
+            # `struct Point{T}` wraps the name in a parametrized expression;
+            # the base name is its first named child (drop `{T}` from the qn).
+            head = next(iter(head.named_children), None)
+        if head is None or not head.text:
+            return None
+        name = decode_node_text(head.text)
+        # The same recovered-span refusal as the function path: a multi-line
+        # type head is a grammar error-recovery span, not a name.
+        if "\n" in name:
+            return None
+        return name
+    if node.type == cs.TS_JULIA_SOURCE_FILE:
+        # The file's own name comes from file_to_module_parts, not here.
+        return None
+    # module_definition (and anything else) names through a `name` field.
+    return _generic_get_name(node)
 
 
 PYTHON_FQN_SPEC = FQNSpec(
@@ -493,6 +556,13 @@ DART_FQN_SPEC = FQNSpec(
     file_to_module_parts=_generic_file_to_module,
 )
 
+JULIA_FQN_SPEC = FQNSpec(
+    scope_node_types=frozenset(cs.FQN_JULIA_SCOPE_TYPES),
+    function_node_types=frozenset(cs.FQN_JULIA_FUNCTION_TYPES),
+    get_name=_julia_get_name,
+    file_to_module_parts=_generic_file_to_module,
+)
+
 LANGUAGE_FQN_SPECS: dict[cs.SupportedLanguage, FQNSpec] = {
     cs.SupportedLanguage.PYTHON: PYTHON_FQN_SPEC,
     cs.SupportedLanguage.JS: JS_FQN_SPEC,
@@ -509,6 +579,7 @@ LANGUAGE_FQN_SPECS: dict[cs.SupportedLanguage, FQNSpec] = {
     cs.SupportedLanguage.CSHARP: CSHARP_FQN_SPEC,
     cs.SupportedLanguage.DART: DART_FQN_SPEC,
     cs.SupportedLanguage.SQL: SQL_FQN_SPEC,
+    cs.SupportedLanguage.JULIA: JULIA_FQN_SPEC,
 }
 
 
@@ -520,6 +591,20 @@ _TS_CLASS_NODE_TYPES = cs.JS_TS_CLASS_NODES + (
     cs.TS_INTERFACE_DECLARATION,
     cs.TS_TYPE_ALIAS_DECLARATION,
     cs.TS_INTERNAL_MODULE,
+)
+# Bodiless members are captured by POSITION, not by type (issue #2524): see
+# TS_METHOD_SIGNATURE for the class-overload and object-type spellings of the
+# same node that must not register. They stay out of function_node_types, whose
+# consumers treat a listed type as a scope that can hold calls and closures.
+_TS_FUNCTION_QUERY = " ".join(
+    [
+        *(
+            f"({node_type}) @{cs.CAPTURE_FUNCTION}"
+            for node_type in _TS_FUNCTION_NODE_TYPES
+        ),
+        f"({cs.TS_INTERFACE_BODY} ({cs.TS_METHOD_SIGNATURE}) @{cs.CAPTURE_FUNCTION})",
+        f"({cs.TS_CLASS_BODY} ({cs.TS_ABSTRACT_METHOD_SIGNATURE}) @{cs.CAPTURE_FUNCTION})",
+    ]
 )
 
 LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
@@ -548,6 +633,7 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
         language=cs.SupportedLanguage.TS,
         file_extensions=cs.TS_EXTENSIONS,
         function_node_types=_TS_FUNCTION_NODE_TYPES,
+        function_query=_TS_FUNCTION_QUERY,
         class_node_types=_TS_CLASS_NODE_TYPES,
         module_node_types=cs.SPEC_JS_MODULE_TYPES,
         call_node_types=cs.SPEC_JS_CALL_TYPES,
@@ -562,6 +648,7 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
         language=cs.SupportedLanguage.TSX,
         file_extensions=cs.TSX_EXTENSIONS,
         function_node_types=_TS_FUNCTION_NODE_TYPES,
+        function_query=_TS_FUNCTION_QUERY,
         class_node_types=_TS_CLASS_NODE_TYPES,
         module_node_types=cs.SPEC_JS_MODULE_TYPES,
         call_node_types=cs.SPEC_JS_CALL_TYPES,
@@ -620,6 +707,12 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
             (identifier) @name @call
             .
             (token_tree . "("))
+        (token_tree
+            (identifier) @name @call
+            .
+            "::"
+            .
+            "<")
         """,
     ),
     cs.SupportedLanguage.SQL: LanguageSpec(
@@ -791,6 +884,8 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
             (name) @name) @call
         (object_creation_expression
             (qualified_name) @name) @call
+        (object_creation_expression
+            (relative_name) @name) @call
         """,
     ),
     cs.SupportedLanguage.LUA: LanguageSpec(
@@ -851,6 +946,39 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
         call_query=cs.DART_CALL_QUERY,
         import_node_types=cs.SPEC_DART_IMPORT_TYPES,
         import_from_node_types=cs.SPEC_DART_IMPORT_TYPES,
+    ),
+    cs.SupportedLanguage.JULIA: LanguageSpec(
+        language=cs.SupportedLanguage.JULIA,
+        file_extensions=cs.JULIA_EXTENSIONS,
+        function_node_types=cs.SPEC_JULIA_FUNCTION_TYPES,
+        class_node_types=cs.SPEC_JULIA_CLASS_TYPES,
+        module_node_types=cs.SPEC_JULIA_MODULE_TYPES,
+        call_node_types=cs.SPEC_JULIA_CALL_TYPES,
+        import_node_types=cs.SPEC_JULIA_IMPORT_TYPES,
+        import_from_node_types=(),
+        # Bare captures (like C/C++/C#): no `name` field on function heads,
+        # and the concise method `f(x) = ...` is an `assignment` that must
+        # be constrained to its LEFT side (`.` first-child anchor) or every
+        # `x = f()` call site becomes a function.
+        function_query="""
+        (function_definition) @function
+        (macro_definition) @function
+        (arrow_function_expression) @function
+        (assignment . (call_expression)) @function
+        (assignment . (where_expression (call_expression))) @function
+        (assignment . (typed_expression (call_expression))) @function
+        (assignment . (where_expression (typed_expression (call_expression)))) @function
+        """,
+        class_query="""
+        (struct_definition) @class
+        (abstract_definition) @class
+        (primitive_definition) @class
+        """,
+        call_query="""
+        (call_expression) @call
+        (macrocall_expression) @call
+        (broadcast_call_expression) @call
+        """,
     ),
 }
 
@@ -940,6 +1068,9 @@ def has_other_language_sibling(
         ):
             continue
         candidate = path.parent / name
+        # A linked file is no sibling: the walk leaves links out (#2451).
+        if path_utils.is_symlink_entry(candidate):
+            continue
         if candidate.is_file() and not should_skip_path(
             candidate,
             repo_path,

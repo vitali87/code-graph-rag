@@ -7,6 +7,7 @@ from .base import BaseLanguageHandler
 from .cpp import CppHandler
 from .java import JavaHandler
 from .js_ts import JsTsHandler
+from .julia import JuliaHandler
 from .lua import LuaHandler
 from .php import PhpHandler
 from .protocol import LanguageHandler
@@ -21,6 +22,7 @@ _HANDLERS: dict[SupportedLanguage, type[BaseLanguageHandler]] = {
     SupportedLanguage.CPP: CppHandler,
     SupportedLanguage.RUST: RustHandler,
     SupportedLanguage.JAVA: JavaHandler,
+    SupportedLanguage.JULIA: JuliaHandler,
     SupportedLanguage.LUA: LuaHandler,
     SupportedLanguage.PHP: PhpHandler,
 }

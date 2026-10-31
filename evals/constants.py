@@ -133,82 +133,58 @@ GO_DEFAULT_TARGET = "."
 GO_SCORES_FILENAME = "go_scores.csv"
 GO_DIFF_FILENAME = "go_diff.json"
 
-# Multi-language retrieval (Go): file-level call localization for a second
-# language, cgr's Go CALLS vs go/ast call sites over the same name universe.
-# The go/ast oracle is independent of cgr's tree-sitter parser.
+# Multi-language retrieval (evals/retrieval_eval.py): file-level call
+# localization per language, cgr's CALLS edges vs an independent parser's call
+# sites over the same first-party name universe. The languages differ only in
+# the spec each one registers; outputs and labels derive from its stem.
 ORACLE_KEY_CALLS = "calls"
 ORACLE_KEY_COVERED = "covered"
-GO_RETRIEVAL_SCORES_FILENAME = "go_retrieval_scores.csv"
-GO_RETRIEVAL_DIFF_FILENAME = "go_retrieval_diff.json"
-GO_RETRIEVAL_DIFF_PREFIX = "go-retrieval:"
-GO_RETRIEVAL_LABEL = "graph"
-GO_RETRIEVAL_TITLE = "cgr multi-language retrieval: Go CALLS vs go/ast oracle"
-GO_CALL_EDGE_REPR = "{file} -> {name}"
+LANG_RETRIEVAL_DEFAULT_TARGET = "."
+LANG_RETRIEVAL_SCORES_FILENAME = "{lang}_retrieval_scores.csv"
+LANG_RETRIEVAL_DIFF_FILENAME = "{lang}_retrieval_diff.json"
+LANG_RETRIEVAL_DIFF_PREFIX = "{lang}-retrieval:"
+LANG_RETRIEVAL_TITLE = (
+    "cgr multi-language retrieval: {language} CALLS vs {oracle} oracle"
+)
+CALL_EDGE_REPR = "{file} -> {name}"
 
-RUST_DEFAULT_TARGET = "."
-RUST_RETRIEVAL_SCORES_FILENAME = "rust_retrieval_scores.csv"
-RUST_RETRIEVAL_DIFF_FILENAME = "rust_retrieval_diff.json"
-RUST_RETRIEVAL_DIFF_PREFIX = "rust-retrieval:"
-RUST_RETRIEVAL_LABEL = "graph"
-RUST_RETRIEVAL_TITLE = "cgr multi-language retrieval: Rust CALLS vs syn oracle"
-RUST_CALL_EDGE_REPR = "{file} -> {name}"
 
-JAVA_DEFAULT_TARGET = "."
-JAVA_RETRIEVAL_SCORES_FILENAME = "java_retrieval_scores.csv"
-JAVA_RETRIEVAL_DIFF_FILENAME = "java_retrieval_diff.json"
-JAVA_RETRIEVAL_DIFF_PREFIX = "java-retrieval:"
-JAVA_RETRIEVAL_LABEL = "graph"
-JAVA_RETRIEVAL_TITLE = "cgr multi-language retrieval: Java CALLS vs javac oracle"
-JAVA_CALL_EDGE_REPR = "{file} -> {name}"
+class RetrievalLanguage(StrEnum):
+    C = "c"
+    CPP = "cpp"
+    CSHARP = "csharp"
+    GO = "go"
+    JAVA = "java"
+    JS = "js"
+    LUA = "lua"
+    PHP = "php"
+    RUST = "rust"
+    SCALA = "scala"
+    TS = "ts"
 
-CSHARP_RETRIEVAL_SCORES_FILENAME = "csharp_retrieval_scores.csv"
-CSHARP_RETRIEVAL_DIFF_FILENAME = "csharp_retrieval_diff.json"
-CSHARP_RETRIEVAL_DIFF_PREFIX = "csharp-retrieval:"
-CSHARP_RETRIEVAL_LABEL = "graph"
-CSHARP_RETRIEVAL_TITLE = "cgr multi-language retrieval: C# CALLS vs Roslyn oracle"
-CSHARP_CALL_EDGE_REPR = "{file} -> {name}"
 
-SCALA_DEFAULT_TARGET = "."
-SCALA_RETRIEVAL_SCORES_FILENAME = "scala_retrieval_scores.csv"
-SCALA_RETRIEVAL_DIFF_FILENAME = "scala_retrieval_diff.json"
-SCALA_RETRIEVAL_DIFF_PREFIX = "scala-retrieval:"
-SCALA_RETRIEVAL_LABEL = "graph"
-SCALA_RETRIEVAL_TITLE = "cgr multi-language retrieval: Scala CALLS vs scalameta oracle"
-SCALA_CALL_EDGE_REPR = "{file} -> {name}"
+# Display names for the retrieval titles and log lines.
+C_LANGUAGE_NAME = "C"
+CPP_LANGUAGE_NAME = "C++"
+CSHARP_LANGUAGE_NAME = "C#"
+GO_LANGUAGE_NAME = "Go"
+JAVA_LANGUAGE_NAME = "Java"
+JS_LANGUAGE_NAME = "JavaScript"
+LUA_LANGUAGE_NAME = "Lua"
+PHP_LANGUAGE_NAME = "PHP"
+RUST_LANGUAGE_NAME = "Rust"
+SCALA_LANGUAGE_NAME = "Scala"
+TS_LANGUAGE_NAME = "TypeScript"
+GO_AST_ORACLE_NAME = "go/ast"
+JAVAC_ORACLE_NAME = "javac"
+LIBCLANG_ORACLE_NAME = "libclang"
+LUAPARSE_ORACLE_NAME = "luaparse"
+PHP_PARSER_ORACLE_NAME = "php-parser"
+ROSLYN_ORACLE_NAME = "Roslyn"
+SCALAMETA_ORACLE_NAME = "scalameta"
+SYN_ORACLE_NAME = "syn"
+TSC_ORACLE_NAME = "tsc"
 
-TS_DEFAULT_TARGET = "."
-TS_RETRIEVAL_SCORES_FILENAME = "ts_retrieval_scores.csv"
-TS_RETRIEVAL_DIFF_FILENAME = "ts_retrieval_diff.json"
-TS_RETRIEVAL_DIFF_PREFIX = "ts-retrieval:"
-TS_RETRIEVAL_LABEL = "graph"
-TS_RETRIEVAL_TITLE = "cgr multi-language retrieval: TypeScript CALLS vs tsc oracle"
-TS_CALL_EDGE_REPR = "{file} -> {name}"
-
-JS_DEFAULT_TARGET = "."
-JS_RETRIEVAL_SCORES_FILENAME = "js_retrieval_scores.csv"
-JS_RETRIEVAL_DIFF_FILENAME = "js_retrieval_diff.json"
-JS_RETRIEVAL_DIFF_PREFIX = "js-retrieval:"
-JS_RETRIEVAL_LABEL = "graph"
-JS_RETRIEVAL_TITLE = "cgr multi-language retrieval: JavaScript CALLS vs tsc oracle"
-JS_CALL_EDGE_REPR = "{file} -> {name}"
-
-PHP_DEFAULT_TARGET = "."
-PHP_RETRIEVAL_SCORES_FILENAME = "php_retrieval_scores.csv"
-PHP_RETRIEVAL_DIFF_FILENAME = "php_retrieval_diff.json"
-PHP_RETRIEVAL_DIFF_PREFIX = "php-retrieval:"
-PHP_RETRIEVAL_LABEL = "graph"
-PHP_RETRIEVAL_TITLE = "cgr multi-language retrieval: PHP CALLS vs php-parser oracle"
-PHP_CALL_EDGE_REPR = "{file} -> {name}"
-
-LUA_DEFAULT_TARGET = "."
-LUA_RETRIEVAL_SCORES_FILENAME = "lua_retrieval_scores.csv"
-LUA_RETRIEVAL_DIFF_FILENAME = "lua_retrieval_diff.json"
-LUA_RETRIEVAL_DIFF_PREFIX = "lua-retrieval:"
-LUA_RETRIEVAL_LABEL = "graph"
-LUA_RETRIEVAL_TITLE = "cgr multi-language retrieval: Lua CALLS vs luaparse oracle"
-LUA_CALL_EDGE_REPR = "{file} -> {name}"
-
-C_DEFAULT_TARGET = "."
 C_SOURCE_GLOB = "*.c"
 C_HEADER_GLOB = "*.h"
 C_SUFFIXES: tuple[str, ...] = (".c", ".h")
@@ -220,12 +196,6 @@ CLANG_INCLUDE_DIR = "include"
 CLANG_SEVERITY_ERROR = 3
 XCRUN_SDK_PATH_CMD: tuple[str, ...] = ("xcrun", "--show-sdk-path")
 CLANG_RESOURCE_DIR_CMD: tuple[str, ...] = ("clang", "-print-resource-dir")
-C_RETRIEVAL_SCORES_FILENAME = "c_retrieval_scores.csv"
-C_RETRIEVAL_DIFF_FILENAME = "c_retrieval_diff.json"
-C_RETRIEVAL_DIFF_PREFIX = "c-retrieval:"
-C_RETRIEVAL_LABEL = "graph"
-C_RETRIEVAL_TITLE = "cgr multi-language retrieval: C CALLS vs libclang oracle"
-C_CALL_EDGE_REPR = "{file} -> {name}"
 
 CPP_SOURCE_GLOBS: tuple[str, ...] = ("*.cc", "*.cpp", "*.cxx")
 CPP_HEADER_GLOBS: tuple[str, ...] = ("*.h", "*.hpp", "*.hh", "*.hxx")
@@ -242,12 +212,6 @@ LIBCLANG_CANDIDATES: tuple[str, ...] = (
 # libc++ headers live under <sdk>/usr/include/c++/v1 and MUST precede the clang
 # builtin resource headers, else libc++'s <cstddef> finds the C <stddef.h> first.
 CLANG_LIBCXX_SUBPATH = "usr/include/c++/v1"
-CPP_RETRIEVAL_SCORES_FILENAME = "cpp_retrieval_scores.csv"
-CPP_RETRIEVAL_DIFF_FILENAME = "cpp_retrieval_diff.json"
-CPP_RETRIEVAL_DIFF_PREFIX = "cpp-retrieval:"
-CPP_RETRIEVAL_LABEL = "graph"
-CPP_RETRIEVAL_TITLE = "cgr multi-language retrieval: C++ CALLS vs libclang oracle"
-CPP_CALL_EDGE_REPR = "{file} -> {name}"
 
 # Semantic-search relevance eval: does cgr's embedding ranking retrieve the
 # right function for a natural-language query? Uses cgr's own embedder over
@@ -422,6 +386,34 @@ NODE_SKIP_NO_BINARY = "{binary} is not on PATH"
 NODE_SKIP_INSTALL_FAILED = "npm install failed for this oracle: {stderr}"
 NODE_SKIP_CANNOT_REQUIRE = "this node cannot require({package}): {stderr}"
 SKIP_REASON_STDERR_CHARS = 400
+# A child forked from a process that holds a live gRPC client (the Milvus Lite
+# vector store opens one) inherits gRPC's fork handlers, which on macOS log
+# absl lines such as `I1003 10:37:31.866642   75998 ev_poll_posix.cc:587] FD
+# from fork parent still in poll list` to the child's stderr before it execs.
+# That is the PARENT's noise, and a few lines of it fill the budget above
+# before the child's own error.
+# A line is inherited only when its source is one of gRPC's fork-time files,
+# not merely when it has the absl format: the child may log in that format
+# too, and those lines are its own. The sources, from grpc v1.84.0:
+# - ev_poll_posix.cc: PollPoller::Work, "FD from fork parent still in poll
+#   list" (line 587, as in the #2550 macOS CI log);
+# - fork_posix.cc: grpc_prefork, "Other threads are currently calling into
+#   gRPC, skipping fork() handlers" (line 71, also in that log);
+# - ev_epoll1_linux.cc: Epoll1Poller::HandleForkInChild, "Post-fork grpc epoll
+#   fd" (the Linux poller's counterpart, logged under GRPC_TRACE).
+# util/fork.cc is left out: it logs nothing, and its name is not among the
+# source files compiled into grpcio's cygrpc module.
+GRPC_FORK_LOG_SOURCES: tuple[str, ...] = (
+    "ev_poll_posix.cc",
+    "fork_posix.cc",
+    "ev_epoll1_linux.cc",
+)
+# The whole absl prefix (severity, MMDD, time to the microsecond, thread id,
+# `file:line] `) so a node stack frame never matches.
+INHERITED_LOG_LINE_PATTERN = re.compile(
+    r"[IWEF][0-9]{4} [0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6} +[0-9]+ "
+    rf"(?:{'|'.join(map(re.escape, GRPC_FORK_LOG_SOURCES))}):[0-9]+\] "
+)
 # The oracle's own `require("pkg")` calls: the authoritative statement of what
 # it loads, and literally the call that fails on an incompatible Node. Builtins
 # are excluded because they load everywhere and would make the probe vacuous.
@@ -805,3 +797,75 @@ FIRST_TOOL_MISS = "no"
 # instead of every real sync (issue #2392).
 CYPHER_PARAM_PATTERN = r"\$([A-Za-z_][A-Za-z0-9_]*)"
 CYPHER_PARAMS_MISSING = "Parameter(s) {names} not provided for query:\n{query}"
+
+# --- graph backend parity (issue #386) ---------------------------------------
+# Every read query the package ships, run on two backends over one graph.
+PARITY_QUERY_PREFIX = "CYPHER_"
+PARITY_PACKAGE_PREFIX = "codebase_rag."
+PARITY_SKIP_MODULE = ".tests"
+PARITY_MAIN = "__main__"
+PARITY_WRITE_PATTERN = re.compile(
+    r"\b(MERGE|CREATE|SET|DELETE|REMOVE|FOREACH|DROP)\b", re.IGNORECASE
+)
+PARITY_PARAM_PATTERN = re.compile(r"\$([A-Za-z_]\w*)")
+PARITY_ORDER_BY_PATTERN = re.compile(r"\bORDER\s+BY\b", re.IGNORECASE)
+PARITY_LIMIT_PATTERN = re.compile(r"\bLIMIT\b", re.IGNORECASE)
+# Columns holding engine-assigned ids, which no two engines share.
+PARITY_ID_COLUMN_PATTERN = re.compile(r"(^|_)ids?$|^id\(|node_id|_id\b", re.IGNORECASE)
+# Read queries the audit formats from pieces, not runnable on their own.
+PARITY_FRAGMENTS = frozenset(
+    {"CYPHER_AUDIT_IS_NULL", "CYPHER_AUDIT_MISSING_REQUIRED", "CYPHER_AUDIT_OR"}
+)
+PARITY_PARAM_FALLBACK = "x"
+PARITY_FLOAT_DIGITS = 6
+PARITY_TAG_NODE = "node"
+PARITY_TAG_REL = "rel"
+PARITY_ID_MASK = "<id>"
+PARITY_MS_PER_S = 1000
+
+
+class ParityEngine(StrEnum):
+    MEMGRAPH = "memgraph"
+    SQLITE = "sqlite"
+
+
+PARITY_FORMAT_FIELD_PATTERN = re.compile(r"\{[a-z_]+\}")
+PARITY_READ_PATTERN = re.compile(r"\bRETURN\b", re.IGNORECASE)
+PARITY_DUMP_NODES = "MATCH (n) RETURN labels(n) AS labels, properties(n) AS props"
+PARITY_DUMP_RELS = (
+    "MATCH (a)-[r]->(b) RETURN labels(a)[0] AS from_label, properties(a) AS from_props, "
+    "type(r) AS type, properties(r) AS props, labels(b)[0] AS to_label, "
+    "properties(b) AS to_props"
+)
+PARITY_PROJECT_ROOT = "MATCH (p:Project {name: $name}) RETURN p.root_path AS root"
+PARITY_TOP_CALLEES = (
+    "MATCH (c)-[:CALLS]->(f) WHERE f.qualified_name STARTS WITH $prefix "
+    "AND (f:Function OR f:Method) RETURN f.qualified_name AS qn, f.name AS name, "
+    "f.start_line AS line, count(c) AS k ORDER BY k DESC, qn LIMIT 5"
+)
+PARITY_MODULES = (
+    "MATCH (m:Module) WHERE m.qualified_name STARTS WITH $prefix "
+    "RETURN m.qualified_name AS qn, m.name AS name ORDER BY qn LIMIT 5"
+)
+PARITY_FILES = (
+    "MATCH (f:File) WHERE f.absolute_path STARTS WITH $root "
+    "RETURN f.path AS path, f.absolute_path AS absolute_path ORDER BY path LIMIT 5"
+)
+
+# JARVIS micro-benchmark (arXiv 2305.05949): PyCG's programs plus JARVIS's own
+# context-manager and control-flow categories, each with a ground-truth call
+# graph, pinned to the commit the paper's artifact was published at.
+JARVIS_DATASET_URL = "https://github.com/pythonJaRvis/pythonJaRvis.github.io.git"
+JARVIS_DATASET_COMMIT = "8871b86494a1aec0095686ffa543994a7361af88"
+JARVIS_PROGRAMS_DIR = "Jarvis/dataset/micro_benchmark"
+JARVIS_TRUTH_DIR = "Jarvis/ground_truth/micro_benchmark"
+JARVIS_TRUTH_FILE = "callgraph.json"
+JARVIS_PROJECT = "bench"
+JARVIS_CACHE_DIR = "evals/results/corpora/jarvis"
+JARVIS_RESULTS_FILE = "evals/results/jarvis_micro.json"
+JARVIS_TABLE_TITLE = "cgr on the JARVIS micro-benchmark ({count} programs)"
+JARVIS_TOTAL_ROW = "TOTAL"
+JARVIS_COLUMNS = ("category", "precision", "recall", "tp", "fp", "fn")
+JARVIS_HELP_CACHE = "Checkout of the dataset."
+JARVIS_HELP_OUT = "Where to write scores and diffs."
+JARVIS_HELP_CATEGORY = "Score one category only."

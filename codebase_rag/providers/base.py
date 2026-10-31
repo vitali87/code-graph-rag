@@ -343,7 +343,7 @@ class MiniMaxProvider(ApiKeyProvider):
     def create_model(
         self, model_id: str, **kwargs: str | int | None
     ) -> OpenAIChatModel | AnthropicModel:
-        from pydantic_ai.models.anthropic import AnthropicModel
+        from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
         from pydantic_ai.models.openai import OpenAIChatModel
         from pydantic_ai.providers.anthropic import (
             AnthropicProvider as PydanticAnthropicProvider,
@@ -359,7 +359,16 @@ class MiniMaxProvider(ApiKeyProvider):
             anthropic_provider = PydanticAnthropicProvider(
                 api_key=self.api_key, base_url=self.endpoint
             )
-            return AnthropicModel(model_id, provider=anthropic_provider)
+            # The Messages protocol falls back to the provider default exactly
+            # as AnthropicProvider did before issue #1498, so the budget is set
+            # here too. The cache flags stay with AnthropicProvider: they ask
+            # for Anthropic's prompt caching, which a compatible endpoint need
+            # not implement.
+            return AnthropicModel(
+                model_id,
+                provider=anthropic_provider,
+                settings=AnthropicModelSettings(max_tokens=_output_budget(model_id)),
+            )
         provider = PydanticOpenAIProvider(api_key=self.api_key, base_url=self.endpoint)
         return OpenAIChatModel(model_id, provider=provider)
 
@@ -395,15 +404,30 @@ else:
     _litellm_available = False
 
 
+def unknown_provider_message(provider_name: str) -> str | None:
+    """Why `provider_name` cannot be served, or None when it can.
+
+    Looked up as written, as `get_provider` looks it up; the closest
+    registered name, if any is close, is suggested (issue #2897).
+    """
+    if provider_name in PROVIDER_REGISTRY:
+        return None
+    message = ex.UNKNOWN_PROVIDER.format(
+        provider=provider_name, available=", ".join(PROVIDER_REGISTRY.keys())
+    )
+    if close := difflib.get_close_matches(
+        provider_name.lower(), list(PROVIDER_REGISTRY), n=1
+    ):
+        message += ex.UNKNOWN_PROVIDER_SUGGESTION.format(suggestion=close[0])
+    return message
+
+
 def get_provider(
     provider_name: str | cs.Provider, **config: str | int | None
 ) -> ModelProvider:
     provider_key = str(provider_name)
-    if provider_key not in PROVIDER_REGISTRY:
-        available = ", ".join(PROVIDER_REGISTRY.keys())
-        raise ValueError(
-            ex.UNKNOWN_PROVIDER.format(provider=provider_name, available=available)
-        )
+    if (message := unknown_provider_message(provider_key)) is not None:
+        raise ex.UnknownProviderError(message)
 
     provider_class = PROVIDER_REGISTRY[provider_key]
     return provider_class(**config)

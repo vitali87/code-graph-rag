@@ -202,8 +202,8 @@ def test_a_generic_non_leaf_segment_keeps_the_leaf(tmp_path: Path) -> None:
 
 # After the bot review: a qualified type argument on the leaf
 # (`Lib.Helper<System.String>`) must keep the leaf's arity, so the generic
-# twin (declared second, so it carries the duplicate marker) is chosen
-# over the non-generic one that holds the natural qn.
+# twin (`Helper`1`, issue #2579) is chosen over the non-generic one that
+# holds the plain qn.
 QUALIFIED_TYPE_ARGUMENT = {
     "src/Lib.cs": (
         "namespace Lib\n{\n"
@@ -227,10 +227,7 @@ def test_a_qualified_type_argument_keeps_the_leaf_arity(tmp_path: Path) -> None:
     targets = {
         target for _kind, target in _edges(tmp_path / "proj", QUALIFIED_TYPE_ARGUMENT)
     }
-    assert any(
-        t.startswith("proj.src.Lib.Lib.Helper@") and t.endswith(".Run(string)")
-        for t in targets
-    ), sorted(targets)
+    assert "proj.src.Lib.Lib.Helper`1.Run(string)" in targets, sorted(targets)
     assert "proj.src.Lib.Lib.Helper.Run(string)" not in targets, sorted(targets)
 
 

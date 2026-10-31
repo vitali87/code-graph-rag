@@ -11,7 +11,7 @@ from watchdog.events import (
     FileModifiedEvent,
 )
 
-from realtime_updater import CodeChangeEventHandler
+from codebase_rag.watch import CodeChangeEventHandler
 
 
 @pytest.fixture

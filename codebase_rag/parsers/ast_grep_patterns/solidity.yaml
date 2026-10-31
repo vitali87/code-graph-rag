@@ -12,6 +12,13 @@ functions:
   - kind: function_definition
   - kind: constructor_definition
   - kind: modifier_definition
+  # `receive()` / `fallback()` run when the contract is paid or called with
+  # unknown calldata; the node has no `name` field, only the keyword token
+  # (issue #3205). Overloaded fallbacks stay distinct like any overload.
+  - kind: fallback_receive_definition
+    name_child: receive
+  - kind: fallback_receive_definition
+    name_child: fallback
 classes:
   - kind: contract_declaration
   - kind: interface_declaration

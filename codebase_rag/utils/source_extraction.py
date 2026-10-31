@@ -5,9 +5,10 @@ from pathlib import Path
 
 from loguru import logger
 
+from .. import constants as cs
 from .. import logs as ls
 from ..constants import ENCODING_UTF8, PY_EXTENSIONS
-from .source_encoding import decode_python_source
+from .source_encoding import decode_python_source, decode_wide_source
 
 
 def extract_source_lines(
@@ -21,14 +22,19 @@ def extract_source_lines(
         logger.warning(ls.SOURCE_INVALID_RANGE.format(start=start_line, end=end_line))
         return None
 
+    if file_path.suffix == cs.EXT_IPYNB:
+        return _notebook_source_lines(file_path, start_line, end_line)
+
     try:
         raw_bytes = file_path.read_bytes()
         # The indexer parsed a Python source in the encoding it declares, and
         # the lines it recorded are lines of that text (issue #2445).
+        # Any other UTF-16/32 source with a BOM was parsed as its decoded text
+        # too (issue #3153).
         declared = (
             decode_python_source(raw_bytes, file_path)
             if file_path.suffix in PY_EXTENSIONS
-            else None
+            else decode_wide_source(raw_bytes, file_path)
         )
         text = raw_bytes.decode(encoding) if declared is None else declared
         lines = text.splitlines(keepends=True)
@@ -92,3 +98,25 @@ def validate_source_location(
         return True, path_obj
     except Exception:
         return False, None
+
+
+def _notebook_source_lines(
+    file_path: Path, start_line: int, end_line: int
+) -> str | None:
+    """Lines of a notebook's Python source, which the indexer recorded its
+    lines against: the same lines of the JSON on disk would be JSON strings
+    (issue #2480)."""
+    # Imported here: the parsers package loads every processor, which a
+    # snippet read of any other kind of file must not pay for.
+    from ..parsers.notebook import notebook_source_text
+
+    try:
+        text = notebook_source_text(file_path.read_bytes())
+    except OSError as e:
+        logger.warning(ls.SOURCE_EXTRACT_FAILED.format(path=file_path, error=e))
+        return None
+    if text is None:
+        return None
+    # Split on newlines alone, as the parser counted them.
+    lines = text.split("\n")[start_line - 1 : end_line]
+    return "\n".join(lines).strip() or None

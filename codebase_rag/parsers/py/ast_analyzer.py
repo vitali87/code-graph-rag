@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import re
 from abc import abstractmethod
-from collections.abc import Iterator
+from collections import OrderedDict
+from collections.abc import Callable, Iterable, Iterator
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -10,14 +11,17 @@ from tree_sitter import Node, QueryCursor
 
 from ... import constants as cs
 from ... import logs as lg
-from ...types_defs import FunctionRegistryTrieProtocol, LanguageQueries, NodeType
+from ...types_defs import (
+    FunctionRegistryTrieProtocol,
+    LanguageQueries,
+    NativeScopeFacts,
+    NodeType,
+    ScopeFacts,
+)
+from .. import native_trees
 from ..js_ts.utils import find_method_in_ast as find_js_method_in_ast
 from ..utils import get_cached_query, safe_decode_text, sorted_captures
 from .with_analyzer import WithTarget
-
-_PY_SCOPE_TYPES = frozenset(
-    {cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_CLASS_DEFINITION, cs.TS_PY_MODULE}
-)
 
 _WITH_STMT_CAPTURE = "with_stmt"
 _PY_TRAVERSE_QUERY = (
@@ -52,41 +56,12 @@ def _split_top_level(inner: str, separator: str = cs.CHAR_COMMA) -> list[str]:
     return parts
 
 
-# Target shapes that bind plain names, and so are descended into for them:
-# `a, (b, c)`, `[a, b]`, `a, *rest`, and a with statement's `as` target,
-# which tree-sitter parses as a `tuple` / `list` EXPRESSION, not a pattern.
-# An attribute or subscript target (`self.x = ...`, `p[0] = ...`) binds no
-# local.
-_PY_BINDING_PATTERN_TYPES = cs.PY_UNPACKING_TARGET_TYPES | {
-    cs.TS_PY_LIST_SPLAT_PATTERN,
-    cs.TS_PY_AS_PATTERN_TARGET,
-    cs.TS_PY_TUPLE,
-    cs.TS_PY_LIST,
-}
-# Statements whose `left` field is the target they bind.
-_PY_LEFT_BINDERS = frozenset(
-    {cs.TS_PY_ASSIGNMENT, cs.TS_PY_AUGMENTED_ASSIGNMENT, cs.TS_PY_FOR_STATEMENT}
-)
-# Nodes whose `name` field is the one identifier they bind: a walrus, and a
-# def or class, whose NAME is the enclosing body's while its body is not.
-_PY_NAME_BINDERS = frozenset(
-    {cs.TS_PY_NAMED_EXPRESSION, cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_CLASS_DEFINITION}
-)
-_PY_IMPORT_TYPES = frozenset(
-    {cs.TS_PY_IMPORT_STATEMENT, cs.TS_PY_IMPORT_FROM_STATEMENT}
-)
-# A body of its own: what is bound inside it is not the enclosing body's.
-_PY_NESTED_SCOPE_TYPES = frozenset(
-    {cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_CLASS_DEFINITION, cs.TS_PY_LAMBDA}
-)
-
-
 def _identifiers_in(target: Node) -> Iterator[Node]:
     """The local names a binding target binds: itself, or every one inside a
     pattern; nothing for an attribute or subscript target."""
     if target.type == cs.TS_PY_IDENTIFIER:
         yield target
-    elif target.type in _PY_BINDING_PATTERN_TYPES:
+    elif target.type in cs.PY_BINDING_PATTERN_TYPES:
         for child in target.named_children:
             yield from _identifiers_in(child)
 
@@ -173,11 +148,11 @@ def _binding_targets(node: Node) -> Iterator[Node]:
     assignment, augmented assignment, `for`, `with ... as`, walrus,
     `except ... as`, `import`, a `case` capture, a nested def or class.
     Not modelled: `global` / `nonlocal` declarations and `del`."""
-    if node.type in _PY_LEFT_BINDERS:
+    if node.type in cs.PY_LEFT_BINDERS:
         left = node.child_by_field_name(cs.TS_FIELD_LEFT)
         if left is not None:
             yield left
-    elif node.type in _PY_NAME_BINDERS:
+    elif node.type in cs.PY_NAME_BINDERS:
         name = node.child_by_field_name(cs.FIELD_NAME)
         if name is not None:
             yield name
@@ -185,7 +160,7 @@ def _binding_targets(node: Node) -> Iterator[Node]:
         yield from _with_aliases(node)
     elif node.type == cs.TS_PY_EXCEPT_CLAUSE:
         yield from _except_aliases(node)
-    elif node.type in _PY_IMPORT_TYPES:
+    elif node.type in cs.PY_IMPORT_TYPES:
         yield from _import_targets(node)
     elif node.type == cs.TS_PY_CASE_PATTERN:
         yield from _capture_targets(node)
@@ -209,7 +184,7 @@ def _parameter_names(function: Node) -> Iterator[str]:
 def _scope_of(node: Node) -> int | None:
     """Id of the def, class or module whose body a node sits in directly."""
     current = node.parent
-    while current is not None and current.type not in _PY_SCOPE_TYPES:
+    while current is not None and current.type not in cs.PY_SCOPE_TYPES:
         current = current.parent
     return current.id if current is not None else None
 
@@ -224,7 +199,7 @@ def _bindings_in(scope: Node) -> Iterator[tuple[Node, Node]]:
         for target in _binding_targets(node):
             for identifier in _identifiers_in(target):
                 yield node, identifier
-        if node.type not in _PY_NESTED_SCOPE_TYPES:
+        if node.type not in cs.PY_NESTED_SCOPE_TYPES:
             stack.extend(node.children)
 
 
@@ -259,24 +234,23 @@ def _import_binding_path(statement: Node, name: str) -> str | None:
     return None
 
 
-def _reimports(binder: Node, name: str, import_map: dict[str, str]) -> bool:
-    """Whether a body-level import binds `name` to what the import map says
-    it is: then the name is a re-import the map resolves, not a shadow. The
-    map keeps a module-level entry over a body import it could not place
-    (`import os as helpers` under `from . import helpers`), so the two must
-    agree on the path, or the name means something the project does not
-    hold (CodeRabbit)."""
-    if binder.type not in _PY_IMPORT_TYPES:
+def _reimported(qn: str | None, paths: Iterable[str]) -> bool:
+    """Whether the import map's `qn` for a name is what one of `paths` binds
+    it to: then a body-level import of the name is a re-import the map
+    resolves, not a shadow. The map keeps a module-level entry over a body
+    import it could not place (`import os as helpers` under `from . import
+    helpers`), so the two must agree on the path, or the name means
+    something the project does not hold (CodeRabbit)."""
+    if not qn:
         return False
-    path = _import_binding_path(binder, name)
-    qn = import_map.get(name)
-    return bool(path and qn) and (qn == path or qn.endswith(cs.SEPARATOR_DOT + path))
+    return any(
+        path and (qn == path or qn.endswith(cs.SEPARATOR_DOT + path)) for path in paths
+    )
 
 
-def _guards_an_optional_import(
-    binder: Node, name: str, import_map: dict[str, str]
-) -> bool:
-    """Whether `binder` is the fallback of an optional-import idiom:
+def _guarded_try_body(binder: Node) -> Node | None:
+    """The `try` body `binder` is the fallback of in an optional-import
+    idiom, or None:
 
         try:
             from . import helpers
@@ -287,24 +261,39 @@ def _guards_an_optional_import(
     to anything the graph can reach, the `try` body's import bound it. The
     union over both branches would otherwise put the name back into the
     shadow set and drop a call edge the module genuinely has (issue #1907
-    review). Only a re-import the map already reflects counts, so a handler
-    guarding an import of something else still shadows.
+    review). Only a re-import the map already reflects counts
+    (`_reimported`), so a handler guarding an import of something else still
+    shadows.
     """
     node: Node | None = binder
     while node is not None and node.type != cs.TS_PY_FUNCTION_DEFINITION:
         if node.type == cs.TS_PY_EXCEPT_CLAUSE:
             try_statement = node.parent
             if try_statement is None:
-                return False
-            body = try_statement.child_by_field_name(cs.FIELD_BODY)
-            if body is None:
-                return False
-            return any(
-                _reimports(statement, name, import_map)
-                for statement in body.named_children
-            )
+                return None
+            return try_statement.child_by_field_name(cs.FIELD_BODY)
         node = node.parent
-    return False
+    return None
+
+
+def _excusing_paths(binder: Node, name: str) -> tuple[str, ...]:
+    """The import paths that make `binder`'s binding of `name` a re-import
+    when the import map holds one of them for the name: the path a
+    body-level import binds it to, and those the imports it is the fallback
+    of bind it to. Sorted, so equal facts compare equal."""
+    paths: set[str] = set()
+    if binder.type in cs.PY_IMPORT_TYPES and (
+        path := _import_binding_path(binder, name)
+    ):
+        paths.add(path)
+    if (body := _guarded_try_body(binder)) is not None:
+        paths.update(
+            path
+            for statement in body.named_children
+            if statement.type in cs.PY_IMPORT_TYPES
+            and (path := _import_binding_path(statement, name))
+        )
+    return tuple(sorted(paths))
 
 
 def _declared_non_local(scope: Node) -> set[str]:
@@ -321,7 +310,7 @@ def _declared_non_local(scope: Node) -> set[str]:
     while stack:
         node = stack.pop()
         for child in node.named_children:
-            if child.type in _PY_NESTED_SCOPE_TYPES:
+            if child.type in cs.PY_NESTED_SCOPE_TYPES:
                 # A nested scope's declarations bind in ITS scope, not here:
                 # `class C: global helpers` inside a function leaves that
                 # function's own `helpers = ...` an ordinary local. Uses the
@@ -341,6 +330,154 @@ def _declared_non_local(scope: Node) -> set[str]:
     return declared
 
 
+def _declared_names(statement: Node) -> Iterator[str]:
+    for identifier in statement.named_children:
+        if identifier.type == cs.TS_PY_IDENTIFIER and (
+            name := safe_decode_text(identifier)
+        ):
+            yield name
+
+
+def _nonlocal_declarations(scope: Node) -> Iterator[str]:
+    """The names `scope`'s own `nonlocal` statements declare: a nested def,
+    class or lambda declares for itself."""
+    stack: list[Node] = [scope]
+    while stack:
+        current = stack.pop()
+        for child in current.named_children:
+            if child.type in cs.PY_NESTED_SCOPE_TYPES:
+                continue
+            if child.type == cs.TS_PY_NONLOCAL_STATEMENT:
+                yield from _declared_names(child)
+            else:
+                stack.append(child)
+
+
+def python_scope_facts(scope: Node) -> ScopeFacts:
+    """`scope`'s facts as the Python walks find them: what runs without the
+    bridge, and the reference `TreeBridge.scope_facts` must match."""
+    plain: set[str] = set()
+    conditional: set[tuple[str, tuple[str, ...]]] = set()
+    for binder, identifier in _bindings_in(scope):
+        if not (name := safe_decode_text(identifier)):
+            continue
+        if paths := _excusing_paths(binder, name):
+            conditional.add((name, paths))
+        else:
+            plain.add(name)
+    return _scope_facts_record(
+        _parameter_names(scope),
+        plain,
+        sorted(conditional),
+        _declared_non_local(scope),
+        _nonlocal_declarations(scope),
+    )
+
+
+def scope_facts_from_native(native: NativeScopeFacts) -> ScopeFacts:
+    """`TreeBridge.scope_facts`'s answer as the record the walks read."""
+    params, plain, conditional, declared, nonlocals = native
+    return _scope_facts_record(
+        params,
+        plain,
+        ((name, tuple(paths)) for name, paths in conditional),
+        declared,
+        nonlocals,
+    )
+
+
+def _scope_facts_record(
+    params: Iterable[str],
+    plain: Iterable[str],
+    conditional: Iterable[tuple[str, tuple[str, ...]]],
+    declared: Iterable[str],
+    nonlocals: Iterable[str],
+) -> ScopeFacts:
+    plain_names = frozenset(plain)
+    pairs = tuple(conditional)
+    return ScopeFacts(
+        params=tuple(params),
+        bound=plain_names | {name for name, _paths in pairs},
+        plain=plain_names,
+        conditional=pairs,
+        declared=frozenset(declared),
+        nonlocals=frozenset(nonlocals),
+    )
+
+
+def _root_of(node: Node) -> Node:
+    while (parent := node.parent) is not None:
+        node = parent
+    return node
+
+
+class _TreeBoundedCache[T]:
+    """One walk's answer per node, kept for the trees read last.
+
+    A cached node keeps its whole tree alive where the AST cache's memory
+    cap (`CACHE_MAX_MEMORY_MB`) cannot see it: on a repository larger than
+    that cache, an entry would hold a tree the cache had evicted, or a
+    second copy of one it re-parsed. So the bound is on trees, not nodes:
+    the answers for the last `max_trees` trees read are kept, and letting go
+    of a tree drops all of them. Indexing asks about one file's scopes
+    together, so the repeated questions still find their answer.
+    """
+
+    __slots__ = ("_answers", "_max_trees", "_trees", "_walk")
+
+    def __init__(self, walk: Callable[[Node], T], max_trees: int) -> None:
+        self._walk = walk
+        self._max_trees = max_trees
+        self._answers: dict[Node, tuple[Node, T]] = {}
+        # Each tree's root, least recently read first, with the nodes whose
+        # answers it holds.
+        self._trees: OrderedDict[Node, list[Node]] = OrderedDict()
+
+    def __call__(self, node: Node) -> T:
+        if (cached := self._answers.get(node)) is not None:
+            root, answer = cached
+            self._trees.move_to_end(root)
+            return answer
+        answer = self._walk(node)
+        root = _root_of(node)
+        if (held := self._trees.get(root)) is None:
+            held = self._trees[root] = []
+            while len(self._trees) > self._max_trees:
+                for evicted in self._trees.popitem(last=False)[1]:
+                    del self._answers[evicted]
+        else:
+            self._trees.move_to_end(root)
+        held.append(node)
+        self._answers[node] = (root, answer)
+        return answer
+
+    @property
+    def trees(self) -> int:
+        return len(self._trees)
+
+    def clear(self) -> None:
+        self._answers.clear()
+        self._trees.clear()
+
+
+def _walk_scope_facts(scope: Node) -> ScopeFacts:
+    if (bridge := native_trees.scope_bridge()) is not None:
+        try:
+            return scope_facts_from_native(bridge.scope_facts(scope))
+        except native_trees.NotBorrowed:
+            pass
+    return python_scope_facts(scope)
+
+
+# What a scope's own body binds, walked once while its file is being read
+# (issue #3473). Call resolution asks about each function twice (its
+# shadowed imports and its locals), type inference asks about the scope of
+# every assignment it reads, and each enclosing def is asked about again for
+# every function inside it; each asking walked the body anew. The Rust
+# bridge walks it when it can.
+scope_facts = _TreeBoundedCache(_walk_scope_facts, cs.PY_SCOPE_CACHE_TREES)
+
+
 def _locally_bound_names(caller: Node, import_map: dict[str, str]) -> frozenset[str]:
     """Every name the caller's body reads as a local rather than as the
     module's: its parameters, whatever its own statements bind, and whatever
@@ -354,30 +491,17 @@ def _locally_bound_names(caller: Node, import_map: dict[str, str]) -> frozenset[
     scope: Node | None = caller
     while scope is not None:
         if scope.id == caller.id or scope.type == cs.TS_PY_FUNCTION_DEFINITION:
-            names.update(_parameter_names(scope))
-            declared = _declared_non_local(scope)
+            facts = scope_facts(scope)
+            names.update(facts.params)
+            names.update(facts.plain - facts.declared)
             names.update(
                 name
-                for binder, identifier in _bindings_in(scope)
-                if (name := safe_decode_text(identifier))
-                and name not in declared
-                and not _reimports(binder, name, import_map)
-                and not _guards_an_optional_import(binder, name, import_map)
+                for name, paths in facts.conditional
+                if name not in facts.declared
+                and not _reimported(import_map.get(name), paths)
             )
         scope = scope.parent
     return frozenset(names)
-
-
-# A comprehension is a scope of its own; a lambda is one too, but unlike a
-# def its calls are the enclosing function's (issue #2666).
-_PY_COMPREHENSION_TYPES = frozenset(
-    {
-        cs.TS_PY_LIST_COMPREHENSION,
-        cs.TS_PY_SET_COMPREHENSION,
-        cs.TS_PY_DICTIONARY_COMPREHENSION,
-        cs.TS_PY_GENERATOR_EXPRESSION,
-    }
-)
 
 
 def _inner_scope_bindings(scope: Node) -> set[str]:
@@ -413,7 +537,7 @@ def _is_name_read(identifier: Node) -> bool:
     return True
 
 
-def _inner_scope_only_names(caller: Node) -> frozenset[str]:
+def python_inner_scope_only_names(caller: Node) -> frozenset[str]:
     """Names a comprehension or lambda inside the caller binds, kept only
     when every read of the name in the caller sits inside a scope that binds
     it. `[Item(c) for c in values]` makes `c` the comprehension's own, but a
@@ -430,7 +554,7 @@ def _inner_scope_only_names(caller: Node) -> frozenset[str]:
         node, enclosing = stack.pop()
         if node.type in (cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_CLASS_DEFINITION):
             continue
-        if node.type in _PY_COMPREHENSION_TYPES or node.type == cs.TS_PY_LAMBDA:
+        if node.type in cs.PY_COMPREHENSION_TYPES or node.type == cs.TS_PY_LAMBDA:
             own = _inner_scope_bindings(node)
             bound.update(own)
             enclosing = enclosing | own
@@ -439,6 +563,62 @@ def _inner_scope_only_names(caller: Node) -> frozenset[str]:
                 read_outside.add(name)
         stack.extend((child, enclosing) for child in node.children)
     return frozenset(bound - read_outside)
+
+
+def _walk_inner_scope_only_names(caller: Node) -> frozenset[str]:
+    if (bridge := native_trees.scope_bridge()) is not None:
+        try:
+            return frozenset(bridge.inner_scope_only_names(caller))
+        except native_trees.NotBorrowed:
+            pass
+    return python_inner_scope_only_names(caller)
+
+
+# `python_inner_scope_only_names`, walked once per caller while its file is
+# being read, and in Rust when the bridge can.
+_inner_scope_only_names = _TreeBoundedCache(
+    _walk_inner_scope_only_names, cs.PY_SCOPE_CACHE_TREES
+)
+
+
+def clear_scope_facts() -> None:
+    """Drop the cached scope walks, and with them the trees their keys hold."""
+    scope_facts.clear()
+    _inner_scope_only_names.clear()
+
+
+def local_names(caller: Node, import_map: dict[str, str]) -> frozenset[str]:
+    """Every name a function's body reads as its own rather than the
+    module's or the class's: parameters, what its statements bind, what an
+    enclosing def binds, and what only its comprehensions and lambdas bind.
+    `apply(key, item)` calling `key(item)` calls the argument, not a module
+    function named `key` (issue #2666). The import map only tells a
+    body-level re-import from a shadow."""
+    return _locally_bound_names(caller, import_map) | _inner_scope_only_names(caller)
+
+
+def names_bound_within(node: Node) -> frozenset[str]:
+    """Every name anything under `node` binds: its statements' targets and,
+    unlike `local_names`, everything its nested defs, lambdas and
+    comprehensions bind, their parameters included."""
+    names: set[str] = set()
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        names.update(_names_bound_by(current))
+        stack.extend(current.children)
+    return frozenset(names)
+
+
+def _names_bound_by(node: Node) -> Iterator[str]:
+    for target in _binding_targets(node):
+        for identifier in _identifiers_in(target):
+            if name := safe_decode_text(identifier):
+                yield name
+    if node.type == cs.TS_PY_FUNCTION_DEFINITION:
+        yield from _parameter_names(node)
+    elif node.type == cs.TS_PY_LAMBDA or node.type in cs.PY_COMPREHENSION_TYPES:
+        yield from _inner_scope_bindings(node)
 
 
 def _call_bound_by(binder: Node) -> Node | None:
@@ -552,15 +732,15 @@ def _annotates(binder: Node) -> bool:
     )
 
 
-def _enclosing_functions(node: Node, stop: Node) -> Iterator[Node]:
-    """Function scopes ENCLOSING `node`'s own, innermost first, up to `stop`.
+def _enclosing_functions(own: Node, stop: Node) -> Iterator[Node]:
+    """Function scopes ENCLOSING the scope `own`, innermost first, up to
+    `stop`.
 
-    The scope `node` sits directly inside is skipped, whatever it is: a
-    `nonlocal` never binds in the scope that declares it, and a class body's
-    `nonlocal` binds the nearest enclosing FUNCTION (bot review).
+    `own` itself is skipped, whatever it is: a `nonlocal` never binds in the
+    scope that declares it, and a class body's `nonlocal` binds the nearest
+    enclosing FUNCTION (bot review).
     """
-    own = _own_scope(node)
-    current = own.parent if own is not None else None
+    current = own.parent
     while current is not None:
         if current.type == cs.TS_PY_FUNCTION_DEFINITION:
             yield current
@@ -569,18 +749,10 @@ def _enclosing_functions(node: Node, stop: Node) -> Iterator[Node]:
         current = current.parent
 
 
-def _binds_name(scope: Node, name: str) -> bool:
-    """Whether `scope`'s own body binds `name`, ignoring nested scopes."""
-    return any(
-        safe_decode_text(identifier) == name
-        for _node, identifier in _bindings_in(scope)
-    )
-
-
 def _own_scope(node: Node) -> Node | None:
     """The def, class or module whose body a node sits in directly."""
     current = node.parent
-    while current is not None and current.type not in _PY_SCOPE_TYPES:
+    while current is not None and current.type not in cs.PY_SCOPE_TYPES:
         current = current.parent
     return current
 
@@ -604,46 +776,28 @@ def _nonlocal_names(binding: Node, scope: Node) -> frozenset[str]:
     own = _own_scope(binding)
     if own is None or own.id == scope.id:
         return frozenset()
-    names: set[str] = set()
-    stack: list[Node] = [own]
-    while stack:
-        current = stack.pop()
-        for child in current.named_children:
-            if child.type in _PY_NESTED_SCOPE_TYPES:
-                continue
-            if child.type == cs.TS_PY_NONLOCAL_STATEMENT:
-                names.update(_names_owned_by(child, scope))
-            else:
-                stack.append(child)
-    return frozenset(names)
+    return frozenset(
+        name for name in scope_facts(own).nonlocals if _owned_by(own, name, scope)
+    )
 
 
-def _names_owned_by(declaration: Node, scope: Node) -> Iterator[str]:
-    """The names in one `nonlocal` statement that rebind `scope`'s own."""
-    for child in declaration.named_children:
-        if child.type != cs.TS_PY_IDENTIFIER:
-            continue
-        if not (text := safe_decode_text(child)):
-            continue
-        owner = next(
-            (
-                fn
-                for fn in _enclosing_functions(declaration, scope)
-                # A parameter is a binding too: `nonlocal v` inside a def
-                # nested in `middle(v)` names middle's parameter (bot review).
-                # A function that itself declares the name `nonlocal` (or
-                # `global`) forwards it rather than owning it, so the search
-                # continues outward past it (bot review).
-                if (_binds_name(fn, text) or text in set(_parameter_names(fn)))
-                and text not in _declared_non_local(fn)
-            ),
-            None,
-        )
-        # No enclosing binder found: the declaration is unresolved (or
-        # `scope` is the only candidate), so keep the previous behaviour
-        # and let `scope` own it.
-        if owner is None or owner.id == scope.id:
-            yield text
+def _owned_by(own: Node, name: str, scope: Node) -> bool:
+    """Whether a `nonlocal name` in the scope `own` rebinds `scope`'s own."""
+    for fn in _enclosing_functions(own, scope):
+        facts = scope_facts(fn)
+        # A parameter is a binding too: `nonlocal v` inside a def nested in
+        # `middle(v)` names middle's parameter (bot review). A function that
+        # itself declares the name `nonlocal` (or `global`) forwards it
+        # rather than owning it, so the search continues outward past it
+        # (bot review).
+        if (name in facts.bound or name in facts.params) and (
+            name not in facts.declared
+        ):
+            return fn.id == scope.id
+    # No enclosing binder found: the declaration is unresolved (or `scope`
+    # is the only candidate), so keep the previous behaviour and let `scope`
+    # own it.
+    return True
 
 
 def _rebinds_nonlocal(binding: Node, scope: Node) -> bool:
@@ -667,13 +821,8 @@ def _belongs_to(binding: Node, scope: Node) -> bool:
 
 def _own_bound_names(scope: Node) -> frozenset[str]:
     """Every name `scope`'s own body binds, parameters included."""
-    names = set(_parameter_names(scope))
-    names.update(
-        name
-        for _node, identifier in _bindings_in(scope)
-        if (name := safe_decode_text(identifier))
-    )
-    return frozenset(names)
+    facts = scope_facts(scope)
+    return facts.bound.union(facts.params)
 
 
 def _is_type_checking_guard(condition: Node | None) -> bool:
@@ -689,7 +838,7 @@ def _is_type_checking_guard(condition: Node | None) -> bool:
     )
 
 
-def _under_type_checking(node: Node) -> bool:
+def under_type_checking(node: Node) -> bool:
     """Whether `node` sits in the body of an `if TYPE_CHECKING:` block."""
     current = node.parent
     while current is not None:
@@ -709,14 +858,10 @@ def _function_binds(scope: Node, name: str) -> bool:
     does."""
     current: Node | None = scope
     while current is not None:
-        if current.type == cs.TS_PY_FUNCTION_DEFINITION and (
-            name in _parameter_names(current)
-            or any(
-                safe_decode_text(identifier) == name
-                for _binder, identifier in _bindings_in(current)
-            )
-        ):
-            return True
+        if current.type == cs.TS_PY_FUNCTION_DEFINITION:
+            facts = scope_facts(current)
+            if name in facts.params or name in facts.bound:
+                return True
         current = current.parent
     return False
 
@@ -844,15 +989,9 @@ class PythonAstAnalyzerMixin(_AstBase):
     __slots__ = ()
 
     def locally_bound_names(self, caller: Node, module_qn: str) -> frozenset[str]:
-        """Every name a function's body reads as its own rather than the
-        module's or the class's: parameters, what its statements bind, what
-        an enclosing def binds, and what only its comprehensions and lambdas
-        bind. `apply(key, item)` calling `key(item)` calls the argument, not
-        a module function named `key` (issue #2666)."""
+        """`local_names` under the caller's module's import map."""
         import_map = self.import_processor.import_mapping.get(module_qn) or {}
-        return _locally_bound_names(caller, import_map) | _inner_scope_only_names(
-            caller
-        )
+        return local_names(caller, import_map)
 
     def own_class_rebinds_import(
         self, module_qn: str, name: str, scope: Node | None = None
@@ -884,7 +1023,7 @@ class PythonAstAnalyzerMixin(_AstBase):
         for binder, identifier in _bindings_in(entry[0]):
             if (
                 safe_decode_text(identifier) == name
-                and not _under_type_checking(binder)
+                and not under_type_checking(binder)
                 and (last is None or identifier.start_byte > last[0])
             ):
                 last = (identifier.start_byte, binder.type)

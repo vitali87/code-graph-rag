@@ -61,5 +61,7 @@ def test_score_rust_retrieval_prf() -> None:
     result = score_rust_retrieval(
         {("a.rs", "f"), ("a.rs", "g")}, {("a.rs", "f"), ("b.rs", "h")}
     )
-    row = next(r for r in result.rows if r["label"] == ec.RUST_RETRIEVAL_LABEL)
+    row = next(
+        r for r in result.rows if r["label"] == ec.RetrievalCondition.GRAPH.value
+    )
     assert (row["tp"], row["fp"], row["fn"]) == (1, 1, 1)

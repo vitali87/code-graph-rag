@@ -4,6 +4,7 @@ from enum import StrEnum
 class CLICommandName(StrEnum):
     START = "start"
     INDEX = "index"
+    WATCH = "watch"
     EXPORT = "export"
     OPTIMIZE = "optimize"
     MCP_SERVER = "mcp-server"
@@ -22,7 +23,9 @@ class CLICommandName(StrEnum):
     GRAPH = "graph"
     CHECK = "check"
     RENAME = "rename"
+    CHANGE_SIGNATURE = "change-signature"
     CONTEXT = "context"
+    PORT = "port"
     STOP = "stop"
     STATUS = "status"
     HELP = "help"
@@ -43,6 +46,7 @@ PANEL_HELP = "Help"
 
 CMD_START = "Open the code assistant for a repository or workspace"
 CMD_INDEX = "Write an offline protobuf index for a repository"
+CMD_WATCH = "Keep a repository's graph in sync while you edit it"
 CMD_EXPORT = "Export the shared graph, or chosen projects, to JSON"
 CMD_OPTIMIZE = "Run a language-focused code optimisation session"
 CMD_MCP_SERVER = "Serve cgr tools over stdio or HTTP"
@@ -114,19 +118,26 @@ EXAMPLES_EDITS_UNDO = (
 )
 HELP_EDITS_COUNT = "How many transactions to show or undo."
 HELP_EDITS_REPO_PATH = (
-    "Repository root holding .cgr-edit-history.json (default: current directory)."
+    "Repository whose edit history to use (default: current directory)."
 )
 HELP_EDITS_DIFF = "Print each transaction's unified diff."
 CMD_GRAPH = "Deterministic graph queries (resolve, definition, callers, callees, implementors, overrides, importers, tests-reaching) as JSON, no LLM."
 CMD_GRAPH_GROUP = CMD_GRAPH
 CMD_GRAPH_RESOLVE = "Resolve a name, dotted suffix, or path:line to qualified names."
-CMD_GRAPH_DEFINITION = "File, span, docstring and source of one definition."
+CMD_GRAPH_DEFINITION = "File, span, decorators, docstring and source of one definition."
 CMD_GRAPH_CALLERS = "Call sites that invoke a qualified name, one row per site."
 CMD_GRAPH_CALLEES = "Call sites inside a qualified name, one row per site."
-CMD_GRAPH_IMPLEMENTORS = "Types that inherit from or implement a type."
-CMD_GRAPH_OVERRIDES = "Methods overriding a method, and the method it overrides."
+CMD_GRAPH_IMPLEMENTORS = (
+    "Types that inherit from or implement a type. "
+    "Direct subtypes only, unless --depth is above 1."
+)
+CMD_GRAPH_OVERRIDES = (
+    "Methods overriding a method, and the method it overrides. "
+    "Direct overrides only, unless --depth is above 1."
+)
 CMD_GRAPH_IMPORTERS = (
-    "Modules importing a module, with each import statement's location."
+    "Modules importing a module, with each import statement's location. "
+    "Direct importers only, unless --through-reexports."
 )
 CMD_GRAPH_TESTS_REACHING = (
     "Tests from which a qualified name is reachable, with distance."
@@ -142,6 +153,11 @@ HELP_GRAPH_REPO_PATH = (
     "Repository root the project name derives from and source is read from."
 )
 HELP_GRAPH_DEPTH = "How many hops to follow (1 to 5)."
+HELP_GRAPH_THROUGH_REEXPORTS = (
+    "Also list the modules that reach it through a re-export (a package "
+    "__init__.py, a Rust pub use, an index.ts barrel), each row with the "
+    "`via` import statements it came through."
+)
 CMD_CHECK = (
     "Report the structural delta of the working tree against a git ref: "
     "dangling callers and importers, arity findings, new duplicates, new "
@@ -156,8 +172,10 @@ HELP_CHECK_BASE = (
 )
 HELP_CHECK_FAIL_ON_FOUND = (
     "Exit with status 1 when the delta reports dangling callers, dangling "
-    "importers, calls with too many arguments, new duplicates or new import "
-    "cycles. A possibly_missing site is reported but does not fail the check."
+    "importers, calls with too many arguments, too few for a required "
+    "parameter or a keyword the callee does not accept, new duplicates or new "
+    "import cycles. A possibly_missing site is reported but does not fail the "
+    "check."
 )
 HELP_CHECK_ISOLATED = (
     "Measure the edit, then put the graph and the hash cache back so the "
@@ -167,7 +185,9 @@ HELP_CHECK_ISOLATED = (
 )
 CMD_RENAME = (
     "Rename a definition everywhere the graph references it (definition, call "
-    "and reference sites, imports, overrides, __all__); refuses on guessed sites."
+    "and reference sites, imports, overrides, __all__); refuses on guessed sites, "
+    "on occurrences the graph has no site for, and on a graph a stopped sync "
+    "left partial."
 )
 EXAMPLES_RENAME = (
     "Examples:\n  cgr rename myproj.pkg.util.helper assist --dry-run\n"
@@ -176,9 +196,36 @@ EXAMPLES_RENAME = (
 HELP_RENAME_QN = "Qualified name of the definition to rename."
 HELP_RENAME_NEW_NAME = "The new identifier."
 HELP_RENAME_ALLOW_HEURISTIC = (
-    "Rewrite through heuristic, overload and trace-only sites as well."
+    "Rewrite through heuristic, overload and trace-only sites, and through "
+    "occurrences of the old name the graph has no site for, as well."
 )
 HELP_RENAME_DRY_RUN = "Print the plan and diff without writing anything."
+CMD_CHANGE_SIGNATURE = (
+    "Change a Python definition's parameter list and rewrite every call site "
+    "the graph knows; sites the mapping cannot complete are listed, not touched; "
+    "refuses on a graph a stopped sync left partial."
+)
+EXAMPLES_CHANGE_SIGNATURE = (
+    "Examples:\n"
+    "  cgr change-signature myproj.pkg.util.helper a 'n: int' b --map n==1 --dry-run\n"
+    "  cgr change-signature myproj.pkg.util.helper b a\n"
+    "  cgr change-signature myproj.pkg.util.helper 'times: int' 'text: str' "
+    "--map times=0 --map text=1"
+)
+HELP_CHANGE_SIGNATURE_QN = "Qualified name of the function or method to change."
+HELP_CHANGE_SIGNATURE_PARAMS = (
+    "The new parameters in order: NAME, 'NAME: TYPE', 'NAME = DEFAULT' or "
+    "'NAME: TYPE = DEFAULT'; a bare old name carries it over unchanged."
+)
+HELP_CHANGE_SIGNATURE_MAP = (
+    "NEW=SOURCE, repeatable: SOURCE is an old parameter name, its 0-based "
+    "index, or =LITERAL to pass that text at every site (so NEW==1 inserts 1)."
+)
+HELP_CHANGE_SIGNATURE_ALLOW_HEURISTIC = (
+    "Rewrite sites the graph resolved heuristically, by overload fan-out or by "
+    "a trace as well, instead of listing them as unmapped."
+)
+HELP_CHANGE_SIGNATURE_DRY_RUN = "Print the plan and diff without writing anything."
 CMD_CONTEXT = (
     "Print a graph-ranked context slice for a symbol, location or task within "
     "a token budget: source, caller lines, callee signatures, types, tests, docs."
@@ -189,6 +236,43 @@ EXAMPLES_CONTEXT = (
 )
 HELP_CONTEXT_TARGET = "Qualified name, bare name, path:line, or a free-text task."
 HELP_CONTEXT_BUDGET = "Token budget for the slice."
+CMD_PORT = "Judge a port between languages: pair the functions of two implementations and compare their calls and arity, as JSON, no LLM."
+CMD_PORT_GROUP = CMD_PORT
+CMD_PORT_CHECK = (
+    "Pair the functions and methods under OLD_SCOPE with those under "
+    "NEW_SCOPE (paths relative to the repository root) and judge each pair "
+    "MATCH, DIFFERS or UNKNOWN on the first-party calls it makes and its "
+    "positional arity; unpaired and ambiguous definitions are listed."
+)
+EPILOG_PORT = "Run 'cgr help port COMMAND' for command-specific help."
+# `\b` opens a paragraph click prints as written instead of rewrapping it,
+# which keeps one example per line.
+EPILOG_PORT_CHECK = (
+    "\b\nExamples:\n  cgr port check src/legacy src/rewrite\n"
+    "  cgr port check codebase_rag/embedded_graph rust/cgr_graph_rs/src "
+    "--fail-on-found\n"
+    "  cgr port check py rs --pair py.lexer._lex=rs.lexer.tokenize\n\n"
+    "Exit status: 0 with the JSON report; 1 with --fail-on-found when a pair "
+    "DIFFERS; 2 when the scopes overlap or a --pair is malformed or repeated; "
+    "3 when a project is not indexed; 4 when a scope holds no function or "
+    "method, or a --pair names none or several."
+)
+HELP_PORT_NEW_PROJECT = (
+    "Project holding NEW_SCOPE, when the new implementation was indexed as a "
+    "project of its own (default: the project of OLD_SCOPE)."
+)
+HELP_PORT_PAIR = (
+    "Pair two definitions explicitly, OLD=NEW, each a qualified name or a "
+    "dotted suffix naming exactly one definition of its side. Repeatable."
+)
+HELP_PORT_INCLUDE_TESTS = (
+    "Pair test functions too; by default they are left out, classified as "
+    "tests-reaching classifies them."
+)
+HELP_PORT_FAIL_ON_FOUND = (
+    "Exit with status 1 when any pair DIFFERS. UNKNOWN pairs and unpaired "
+    "definitions do not fail the check."
+)
 CMD_TRACE_INGEST = "Resolve a trace file against a project and write dynamic edges"
 CMD_TRACE_CONVERT = "Convert a V8 .cpuprofile (node --cpu-prof) to a trace file"
 
@@ -202,10 +286,17 @@ EXAMPLES_START = (
     '  cgr start --ask-agent "Where is authentication handled?"'
 )
 EXAMPLES_INDEX = "EXAMPLE\n\n  cgr index --repo-path ./my-repo -o ./index-out"
+EXAMPLES_WATCH = (
+    "EXAMPLES\n\n"
+    "  cgr watch --repo-path ./my-repo\n\n"
+    "  cgr watch --repo-path ./my-repo --debounce 2 --max-wait 10\n\n"
+    "  MEMGRAPH_PORT=7688 cgr watch --project-name my-project"
+)
 EXAMPLES_EXPORT = (
     "EXAMPLES\n\n"
     "  cgr export -o graph.json\n\n"
-    "  cgr export -o my-project.json --project-name my-project\n\n"
+    "  cgr export -o my-project.json --project my-project\n\n"
+    "  cgr export -o this-repo.json --repo-path .\n\n"
     "  cgr export -o shop.json --workspace shop"
 )
 EXAMPLES_OPTIMIZE = "EXAMPLE\n\n  cgr optimize python --repo-path ./my-repo"
@@ -218,15 +309,33 @@ EXAMPLES_LANGUAGE_REMOVE = "EXAMPLE\n\n  cgr language remove-language ruby"
 EXAMPLES_STATS = (
     "EXAMPLES\n\n"
     "  cgr stats\n\n"
-    "  cgr stats --project-name my-project\n\n"
+    "  cgr stats --project my-project\n\n"
+    "  cgr stats --repo-path .\n\n"
     "  cgr stats --workspace my-workspace"
 )
 EXAMPLES_DEAD_CODE = (
-    "EXAMPLE\n\n  cgr dead-code --project-name my-project --format json"
+    "EXAMPLES\n\n  cgr dead-code\n\n  cgr dead-code --project my-project --format json"
+)
+# `cgr dead-code --help` states which symbols are roots: with public symbols
+# among them, a clean report on an application can just mean every function
+# is public (issue #2527). The commands table keeps the one-line CMD_DEAD_CODE.
+DESC_DEAD_CODE = (
+    f"{CMD_DEAD_CODE}.\n\n"
+    "Roots are program entry points (main, Main), module-level code such as an "
+    'if __name__ == "__main__" block, tests (unless --no-include-tests), '
+    "decorated handlers (routes, tasks, CLI commands), runtime hooks such as "
+    "dunder and lifecycle methods, type-checker declarations (typing.Protocol "
+    "classes and classes under if TYPE_CHECKING:, with their members), and "
+    "every --entry-point and --decorator-root.\n\n"
+    "By default every public or exported symbol is a root as well, which "
+    "suits a library whose API is called from outside the repository. In an "
+    "application or service that rule hides unused public code; pass "
+    "--no-public-roots to report it."
 )
 EXAMPLES_DUPLICATES = (
     "EXAMPLES\n\n"
-    "  cgr duplicates --project-name my-project\n\n"
+    "  cgr duplicates\n\n"
+    "  cgr duplicates --project my-project\n\n"
     "  cgr duplicates --threshold 0.9 --format json --fail-on-found"
 )
 # `cgr duplicates --help` spells out what a group is: its count drives
@@ -244,7 +353,11 @@ DESC_DUPLICATES = (
     "Members of a similar group that are exact copies of each other share a "
     "number in the Exact column (exact_subgroups in JSON)."
 )
-EXAMPLES_DELETE_PROJECT = "EXAMPLE\n\n  cgr delete-project --name my-project"
+EXAMPLES_DELETE_PROJECT = (
+    "EXAMPLES\n\n"
+    "  cgr delete-project --project my-project\n\n"
+    "  cgr delete-project --repo-path ."
+)
 EXAMPLES_HELP = "EXAMPLES\n\n  cgr help start\n\n  cgr help daemon logs"
 
 EPILOG_LANGUAGE = "Run 'cgr help language COMMAND' for command-specific help."
@@ -398,23 +511,32 @@ HELP_NO_INSTRUCTIONS = (
 HELP_REPO_PATH_RETRIEVAL = "Repository to open. Defaults to the current directory."
 HELP_REPO_PATH_INDEX = "Repository to index. Defaults to the current directory."
 HELP_REPO_PATH_OPTIMIZE = "Repository to optimise. Defaults to the current directory."
-HELP_REPO_PATH_WATCH = "Repository to watch."
+HELP_REPO_PATH_WATCH = "Repository to watch. Defaults to the current directory."
 HELP_PROJECT_NAME_WATCH = (
     "Project name to store in the graph. Defaults to the name "
-    "`cgr start --repo-path` gives the same repository, so both update one project."
+    "`cgr start --repo-path` gives the same repository, so both update one "
+    "project; if you passed `cgr start --project-name`, pass the same name here."
 )
 HELP_VERSION = "Show the version and exit."
 HELP_QUIET = "Suppress progress, banners, and informational logs."
 
-HELP_DEBOUNCE = "Debounce delay in seconds. Set to 0 to disable debouncing."
+HELP_DEBOUNCE = (
+    "Seconds to wait after a file's last change before updating the graph, so "
+    "a burst of saves becomes one update. 0 applies every change at once."
+)
 HELP_MAX_WAIT = (
-    "Maximum wait time in seconds before forcing an update during continuous edits."
+    "Longest a file that keeps changing waits before the graph is updated "
+    "anyway. Raised to --debounce when lower."
 )
 
 HELP_UPDATE_GRAPH = (
     "Parse the repository, sync its graph, then exit without starting the "
-    "assistant (cgr start already syncs before it starts). Cannot be combined "
-    "with --ask-agent, --no-sync or --projects."
+    "assistant (cgr start already syncs before it starts), so it cannot be "
+    "combined with --ask-agent, --output-format json or --projects. With "
+    "--workspace, sync each of the workspace's repositories instead, then "
+    "start the assistant scoped to the workspace, which takes --ask-agent, "
+    "--output-format and --projects as usual. Cannot be combined with "
+    "--no-sync in either case."
 )
 HELP_CLEAN_DB = (
     "DESTRUCTIVE: Delete every project from the shared graph and clear the selected "
@@ -425,17 +547,25 @@ HELP_ASSUME_YES = (
     "Answer yes to destructive confirmations, such as the one --clean asks before "
     "deleting other projects from the shared graph."
 )
+HELP_ASSUME_YES_WATCH = (
+    "Watch even a home directory or the filesystem root, and take over a "
+    "--project-name another repository already indexes, as cgr start --yes does."
+)
 HELP_OUTPUT_GRAPH = (
     "Write this repository's project graph to PATH as JSON. Requires "
     "--update-graph. Use cgr export for the whole shared graph."
 )
 HELP_OUTPUT_PATH = "Write the exported graph to PATH."
-HELP_EXPORT_PROJECT_NAME = (
+HELP_EXPORT_PROJECT = (
     "Export only this project: what it owns, the relationships that start "
-    "there and the nodes they reach. Repeatable; without it the whole shared "
+    "there, the nodes they reach, and the links between the resources it "
+    "holds (RESOLVES_TO, FLOWS_TO). Repeatable; without it the whole shared "
     "graph is exported."
 )
 HELP_EXPORT_WORKSPACE = "Export only the projects defined in workspace NAME."
+HELP_EXPORT_REPO_PATH = (
+    "Export the project this repository was indexed as, alongside any --project."
+)
 HELP_OUTPUT_PROTO_DIR = "Write protobuf index files under DIRECTORY."
 HELP_SPLIT_INDEX = "Write separate nodes.bin and relationships.bin files."
 HELP_LANGUAGE_ARG = "Language to optimise, such as python, java, javascript, or cpp."
@@ -456,9 +586,14 @@ HELP_LANGUAGE_LIST_VERBOSE = (
 )
 
 HELP_PROJECT_NAME = (
-    "Project name to store in the graph. Defaults to the directory name plus a "
-    "hash of its absolute path (e.g. myrepo__1a2b3c4d); cgr status lists the "
-    "names already stored."
+    "Project name to store in the graph. Defaults to the directory name plus an "
+    "8-hex hash of its absolute path (e.g. myrepo__1a2b3c4d), so two checkouts on "
+    "one machine get different names barring a rare hash collision; machines that "
+    "sync into one graph should each pass their own name, since the same path "
+    "hashes alike on every machine. cgr status lists the names already stored. A "
+    "chosen name has no "
+    "hash: syncing a repository under a name another repository already indexes "
+    "needs --yes and replaces that project."
 )
 HELP_EXCLUDE_PATTERNS = (
     "Exclude paths matching PATTERN from indexing. Repeat the option to add patterns."
@@ -482,6 +617,11 @@ HELP_QUERY_OUTPUT_FORMAT = "Format --ask-agent output as table or json."
 HELP_MCP_TRANSPORT = "Transport to serve: stdio or http."
 HELP_MCP_HTTP_HOST = "HTTP bind host. Used only with --transport http."
 HELP_MCP_HTTP_PORT = "HTTP bind port. Used only with --transport http."
+HELP_MCP_READ_ONLY = (
+    "Serve only the tools that read (graph queries, file reads, ask_agent); "
+    "write_file, the edit tools, indexing, annotate and the delete tools are "
+    "neither listed nor run. Also set by MCP_READ_ONLY=true."
+)
 HELP_MCP_WORKSPACE = (
     "Serve the projects of workspace NAME: `list_projects` shows them, a "
     "`project` argument, when given, must name one (omitted, the server "
@@ -490,13 +630,23 @@ HELP_MCP_WORKSPACE = (
     "MCP_WORKSPACE environment variable."
 )
 
-HELP_STATS_PROJECT_NAME = (
+HELP_STATS_PROJECT = (
     "Count only this project's nodes and relationships. Repeatable; without it "
     "the totals cover every project in the shared graph."
 )
 HELP_STATS_WORKSPACE = "Count only the projects defined in workspace NAME."
-HELP_DEADCODE_PROJECT_NAME = (
-    "Project to scan. If omitted, cgr uses the only indexed project."
+HELP_STATS_REPO_PATH = (
+    "Count the project this repository was indexed as, alongside any --project."
+)
+# `dead-code` and `duplicates` choose their project as `cgr graph` does
+# (issue #2415).
+HELP_SCAN_PROJECT = (
+    "Project to scan (default: the one --repo-path was indexed as; outside "
+    "any indexed checkout, the only indexed project)."
+)
+HELP_SCAN_REPO_PATH = (
+    "Repository whose project to scan when --project is not given "
+    "(default: the current directory)."
 )
 HELP_DEADCODE_ENTRY_POINT = (
     "Mark symbols ending with this qualified-name suffix as entry points. Repeatable."
@@ -535,10 +685,15 @@ HELP_DEADCODE_MIN_RESOLUTION = (
 HELP_DEADCODE_FAIL_ON_FOUND = (
     "Exit with status 1 when any candidate is found. Useful in CI."
 )
-
-HELP_DUPLICATES_PROJECT_NAME = (
-    "Project to scan. If omitted, cgr uses the only indexed project."
+HELP_DEADCODE_PUBLIC_ROOTS = (
+    "Treat every public or exported symbol as a root (default), as suits a "
+    "library whose API is called from outside the repository. With "
+    "--no-public-roots, for an application or service, a symbol is a root "
+    "only as an entry point, test, decorated handler or runtime hook, so "
+    "unused public code is reported. Symbols in structural-tier languages "
+    "stay roots, having no call graph."
 )
+
 HELP_DUPLICATES_THRESHOLD = (
     "Minimum branch-overlap similarity for a near-duplicate pair, 0-1."
 )
@@ -565,9 +720,10 @@ HELP_DUPLICATES_OPEN = (
     "(CGR_EDITOR picks the editor; CGR_DIFF_COMMAND overrides the command)."
 )
 
-HELP_DELETE_PROJECT_NAME = "Project name to delete from the graph."
+HELP_DELETE_PROJECT = "Project to delete from the graph."
 HELP_DELETE_PROJECT_REPO_PATH = (
-    "Optional repo path. If set, the local hash cache is removed too."
+    "Repository whose project to delete when --project is not given. Its "
+    "local hash cache is removed too."
 )
 HELP_PRUNE_DRY_RUN = "List the projects that would be pruned without deleting anything."
 HELP_PRUNE_YES = "Prune without asking for confirmation."
@@ -583,6 +739,7 @@ CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.OPTIMIZE: CMD_OPTIMIZE,
     CLICommandName.MCP_SERVER: CMD_MCP_SERVER,
     CLICommandName.INDEX: CMD_INDEX,
+    CLICommandName.WATCH: CMD_WATCH,
     CLICommandName.EXPORT: CMD_EXPORT,
     CLICommandName.GRAPH_LOADER: CMD_GRAPH_LOADER,
     CLICommandName.STATS: CMD_STATS,
@@ -597,7 +754,9 @@ CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.GRAPH: CMD_GRAPH,
     CLICommandName.CHECK: CMD_CHECK,
     CLICommandName.RENAME: CMD_RENAME,
+    CLICommandName.CHANGE_SIGNATURE: CMD_CHANGE_SIGNATURE,
     CLICommandName.CONTEXT: CMD_CONTEXT,
+    CLICommandName.PORT: CMD_PORT,
     CLICommandName.WORKSPACE: CMD_WORKSPACE,
     CLICommandName.STOP: CMD_STOP,
     CLICommandName.STATUS: CMD_STATUS,

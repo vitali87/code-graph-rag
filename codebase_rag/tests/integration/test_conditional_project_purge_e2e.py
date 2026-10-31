@@ -1,26 +1,30 @@
 """Integration tests for the conditional project purge (#2479 / PR #3221).
 
-`delete_project(name, expected_root=...)` makes the check and the delete one
-statement. The unit tests pin the routing and params; these run the real
-queries against both backends and pin the semantics that matter:
+`delete_project(name, expected_root=...)` puts the root check inside the
+delete statement. The unit tests pin the routing and params; these run the
+real queries against every backend and pin the semantics that matter:
 
 - mismatched expected_root does not delete anything (the repointed-root race
   Greptile's P1 caught);
-- a matching expected_root purges the project and its contained nodes;
+- a matching expected_root purges the project and its contained nodes, but
+  not a Folder another project over the same checkout still claims;
 - the residual count reads zero after a fired purge.
 
-Marked integration (Docker-backed Memgraph; Neo4j when configured).
+Marked integration (Docker-backed Memgraph; Neo4j when configured; the
+embedded engine needs neither).
 """
 
 from __future__ import annotations
 
 import pytest
 
+from codebase_rag import constants as cs
+from codebase_rag import cypher_queries as cq
 from codebase_rag.services.graph_service import MemgraphIngestor
 
 pytestmark = pytest.mark.integration
 
-BACKENDS = ("memgraph_ingestor", "neo4j_ingestor")
+BACKENDS = ("memgraph_ingestor", "neo4j_ingestor", "sqlite_ingestor")
 
 
 @pytest.fixture
@@ -67,6 +71,38 @@ class TestConditionalProjectPurge:
             "MATCH (n) WHERE n.name IN ['proj', 'mod', 'fn'] RETURN count(n) AS c"
         )
         assert residual[0]["c"] == 0
+
+    def test_the_residual_count_reads_zero_after_a_fired_purge(
+        self, ingestor: MemgraphIngestor
+    ) -> None:
+        self._seed_project(ingestor, "proj", "/repo")
+        params = {cs.KEY_PROJECT_NAME: "proj", cs.KEY_PROJECT_PREFIX: "proj."}
+
+        before = ingestor.fetch_all(cq.CYPHER_COUNT_PROJECT_NODES, params)
+        assert before[0][cs.KEY_RESIDUAL_NODES] == 2
+        assert ingestor.delete_project("proj", expected_root="/repo") is True
+        after = ingestor.fetch_all(cq.CYPHER_COUNT_PROJECT_NODES, params)
+        assert after[0][cs.KEY_RESIDUAL_NODES] == 0
+
+    def test_purge_keeps_a_folder_another_project_claims(
+        self, ingestor: MemgraphIngestor
+    ) -> None:
+        # One checkout indexed under two names shares its Folder (#2665):
+        # pruning one name must not take the other's tree with it.
+        self._seed_project(ingestor, "proj", "/repo")
+        self._seed_project(ingestor, "twin", "/repo")
+        ingestor._execute_query(
+            "MATCH (p:Project) WHERE p.name IN ['proj', 'twin'] "
+            "MERGE (f:Folder {absolute_path: '/repo/src'}) "
+            "CREATE (p)-[:CONTAINS_FOLDER]->(f)"
+        )
+
+        assert ingestor.delete_project("proj", expected_root="/repo") is True
+        assert ingestor.list_projects() == ["twin"]
+        kept = ingestor.fetch_all(
+            "MATCH (f:Folder {absolute_path: '/repo/src'}) RETURN count(f) AS c"
+        )
+        assert kept[0]["c"] == 1
 
     def test_purge_does_not_fire_on_a_mismatched_root(
         self, ingestor: MemgraphIngestor

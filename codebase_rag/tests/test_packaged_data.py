@@ -58,6 +58,18 @@ _INSTALLED_PROBE = (
     " manifest['codec_schema_sha256']]))\n"
 )
 
+# Issue #2433: the real-time watcher was `realtime_updater.py` at the top of
+# the checkout, outside every package, so no wheel carried it and an
+# installed cgr had nothing to run. Probed from the unpacked wheel, as above.
+_INSTALLED_WATCH_PROBE = (
+    "import json\n"
+    "import typer\n"
+    "from codebase_rag import watch\n"
+    "from codebase_rag.cli import app\n"
+    "commands = typer.main.get_group(app).commands\n"
+    "print(json.dumps([watch.__file__, 'watch' in commands]))\n"
+)
+
 
 def _runtime_data_files() -> list[Path]:
     """Every non-Python file the package reads from its own install directory.
@@ -215,3 +227,32 @@ def test_the_wheel_ships_no_data_the_package_does_not_read(
         and name not in _RUNTIME_WHEEL_PATHS
     )
     assert not stray
+
+
+def test_the_watcher_ships_in_the_wheel(wheel_names: frozenset[str]) -> None:
+    assert "codebase_rag/watch.py" in wheel_names
+    # The contributor shim stays in the checkout; nothing installed needs it.
+    assert "realtime_updater.py" not in wheel_names
+
+
+def test_an_installed_wheel_registers_cgr_watch(
+    built_wheel: Path, tmp_path: Path
+) -> None:
+    site = tmp_path / "site"
+    with zipfile.ZipFile(built_wheel) as archive:
+        archive.extractall(site)
+    env = {**os.environ, "PYTHONPATH": str(site)}
+    probe = subprocess.run(
+        [sys.executable, "-c", _INSTALLED_WATCH_PROBE],
+        cwd=tmp_path,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding=cs.ENCODING_UTF8,
+        timeout=300,
+    )
+    watch_file, registered = json.loads(probe.stdout.strip().splitlines()[-1])
+
+    assert Path(watch_file).is_relative_to(site)
+    assert registered is True

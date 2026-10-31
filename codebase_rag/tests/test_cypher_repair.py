@@ -16,6 +16,8 @@ import pytest
 from pydantic_ai import Tool
 from rich.console import Console
 
+from codebase_rag.constants import EG_MEMORY_PATH
+from codebase_rag.embedded_graph.connection import EmbeddedConnection
 from codebase_rag.prompts import build_cypher_repair_request
 from codebase_rag.services.graph_service import is_query_rejection
 from codebase_rag.services.llm import CypherGenerator
@@ -58,6 +60,22 @@ def test_an_engine_refusal_is_a_query_rejection(error: BaseException) -> None:
 )
 def test_other_failures_are_not_query_rejections(error: BaseException) -> None:
     assert not is_query_rejection(error)
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        # A syntax error, and a function the embedded engine does not compile.
+        "MATCH (n RETURN n",
+        "MATCH (n) RETURN nodes(n) AS path",
+    ],
+)
+def test_an_embedded_engine_refusal_is_a_query_rejection(query: str) -> None:
+    """Parse and compile errors from the default backend go to repair too."""
+    with EmbeddedConnection(EG_MEMORY_PATH) as conn:
+        with pytest.raises(ValueError) as refused:
+            conn.run(query)
+    assert is_query_rejection(refused.value)
 
 
 def test_neo4j_client_errors_are_rejections_but_access_failures_are_not() -> None:

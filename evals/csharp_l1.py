@@ -7,7 +7,11 @@ from . import constants as ec
 from . import logs as ls
 from .cgr_graph import extract_cgr_csharp_graph
 from .l1_eval import run_l1_eval
-from .oracles import csharp_oracle_available, run_csharp_oracle
+from .oracles import (
+    csharp_oracle_available,
+    csharp_oracle_skip_reason,
+    run_csharp_oracle,
+)
 
 _TITLE = "cgr L1 structure eval (C# vs Roslyn syntax API)"
 
@@ -28,6 +32,7 @@ def main(
         project_name,
         out_dir,
         available=csharp_oracle_available,
+        skip_reason=csharp_oracle_skip_reason,
         oracle_missing=ls.CSHARP_ORACLE_MISSING,
         extract_cgr=extract_cgr_csharp_graph,
         run_oracle=run_csharp_oracle,

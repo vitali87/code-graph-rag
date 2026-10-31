@@ -5,4 +5,4 @@ import scala.collection.mutable
 class Greeter { def greet(name: String): String = name }
 
 object Main { def main(args: Array[String]): Unit = new Greeter().greet("x") }
-
+

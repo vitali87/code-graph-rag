@@ -1,0 +1,78 @@
+name: CodeQL
+
+# Advanced setup rather than the settings-page default setup, because default
+# setup never analyses a pull request from a fork. The `main` ruleset requires
+# CodeQL results on every pull request, so a fork PR could not satisfy it and
+# could only be merged by bypassing the rule (#3345).
+#
+# The configuration reproduces what default setup generated for this
+# repository, so alert history carries over: the same five languages, each
+# with `build-mode: none`, the default query suite, the same
+# `/language:<language>` categories and the same `Analyze (<language>)` job
+# names. Go and Rust are not in that set; adding one is a separate decision.
+#
+# On a fork PR this job runs code the contributor controls, so:
+# - `pull_request`, never `pull_request_target`: the fork's run gets a
+#   read-only GITHUB_TOKEN and no repository secrets. Code scanning accepts
+#   that token's upload for the PR's own merge ref, so results still land.
+# - `build-mode: none` for every language: the extractors read source and
+#   nothing from the PR is built or executed.
+# - No `run:` step, so no event field ever reaches a shell.
+# - No `paths` filter: a PR it skipped would carry no CodeQL result and the
+#   ruleset would block it, which is the failure this file exists to remove.
+#
+# No base-branch filter on `pull_request` either. A PR merged into another
+# PR's branch (a stacked layer, or a fix aimed at one) reaches main through its
+# parent, and OpenSSF Scorecard's SAST check looks for a SAST result at the
+# head of the PR that merged each commit. Without a run of its own, every
+# commit such a PR carried counts as unscanned on main.
+# codebase_rag/tests/test_codeql_scans_every_pr.py holds both filters off.
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+  schedule:
+    - cron: '23 5 * * 1'
+
+permissions:
+  contents: read
+
+# A new push to the same PR supersedes the queued or running analysis of the
+# previous head; cancelling it keeps the runner queue for live heads.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || format('{0}-{1}-{2}', github.event_name, github.sha, github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write # SARIF upload; GitHub caps it at read on a fork PR
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [ actions, c-cpp, csharp, javascript-typescript, python ]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          # Off explicitly rather than by default: the analyses take minutes
+          # without a cache, so one would buy little and add a cache that
+          # fork-controlled runs write to.
+          dependency-caching: false
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          category: /language:${{ matrix.language }}

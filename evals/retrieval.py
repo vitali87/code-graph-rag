@@ -24,7 +24,7 @@ from . import logs as ls
 from .ast_oracle import _iter_py_files
 from .cgr_graph import _capture
 from .module_calls import _callee_name, _first_party_names, _is_dunder
-from .score import _name_edge_bucket, _prf
+from .score import _diff_bucket, _fmt_name_edge, _prf
 from .structure_report import render, write_outputs
 from .types_defs import (
     DiffBucket,
@@ -208,7 +208,9 @@ def score_retrieval(
         row = _prf(ec.Category.RETRIEVAL.value, label, retrieved, oracle)
         if row is not None:
             rows.append(row)
-        diff[ec.RETRIEVAL_DIFF_PREFIX + label] = _name_edge_bucket(retrieved, oracle)
+        diff[ec.RETRIEVAL_DIFF_PREFIX + label] = _diff_bucket(
+            retrieved, oracle, _fmt_name_edge
+        )
     return ScoreResult(rows=rows, location=_EMPTY_LOCATION, diff=diff)
 
 

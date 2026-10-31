@@ -7,7 +7,9 @@ on:
     branches: [main, master, develop]
   workflow_dispatch:
 
-permissions: read-all
+# Every job reads the code; a job that needs more grants it on itself.
+permissions:
+  contents: read
 
 concurrency:
   # PRs group by ref so rapid pushes cancel superseded runs (saves minutes).
@@ -26,15 +28,24 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Key the uv cache on dependencies, not the project version
+        shell: bash
+        run: |
+          awk 'skip && /^version = / { skip = 0; next }
+               { skip = /^name = "code-graph-rag"\r?$/; print }' \
+            uv.lock > "$RUNNER_TEMP/uv-deps.lock"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
-          cache-dependency-glob: "uv.lock"
+          cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
@@ -93,15 +104,24 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Key the uv cache on dependencies, not the project version
+        shell: bash
+        run: |
+          awk 'skip && /^version = / { skip = 0; next }
+               { skip = /^name = "code-graph-rag"\r?$/; print }' \
+            uv.lock > "$RUNNER_TEMP/uv-deps.lock"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
-          cache-dependency-glob: "uv.lock"
+          cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
@@ -109,9 +129,11 @@ jobs:
         run: |
           uv sync --extra treesitter-full --extra semantic --extra milvus --extra test --group dev
 
+      # evals/ too: the pre-commit hook checks it, so a type error there failed
+      # every local commit while this job stayed green (issue #3436).
       - name: Run type checking
         run: |
-          uv run ty check codebase_rag --exclude codebase_rag/tests/
+          uv run ty check codebase_rag evals --exclude codebase_rag/tests/
 
       # Again with the optional `neo4j` extra installed: its package types
       # every statement `LiteralString`, so a checkout with all extras saw
@@ -119,20 +141,24 @@ jobs:
       - name: Run type checking with the neo4j extra
         run: |
           uv sync --extra treesitter-full --extra semantic --extra milvus --extra test --extra neo4j --group dev
-          uv run ty check codebase_rag --exclude codebase_rag/tests/
+          uv run ty check codebase_rag evals --exclude codebase_rag/tests/
 
   test-unit:
-    name: Unit Tests (${{ matrix.os }}, py${{ matrix.python-version }})
+    name: Unit Tests (${{ matrix.os }}, py${{ matrix.python-version }}, shard ${{ matrix.shard }})
     runs-on: ${{ matrix.os }}
-    # The full -n auto suite now takes 25-30 min on Windows and on macOS with
-    # coverage, so a 30 min cap cancelled healthy runs mid-suite (a spurious
-    # CANCELLED); 45 min absorbs slow runners while still bounding a hang.
+    # The whole -n auto suite outgrew one job: it reached 38-43 min on Windows
+    # and 39 min on macOS with coverage, so the 45 min cap cancelled
+    # healthy runs at 99% and turned main red with no test failing. Raising
+    # the cap only moves the cliff as the suite grows, so each cell runs half
+    # of it (`--shard`, split by file in codebase_rag/tests/suite_shards.py);
+    # the cap stays to bound a hang.
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
         python-version: ["3.12", "3.13"]
+        shard: ["1/2", "2/2"]
 
     steps:
       - name: Checkout code
@@ -140,15 +166,31 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Go
+        # The go/types helper's tests build it with the Go on PATH, and the
+        # runner image's Go is older than the floor in gotypes/go.mod.
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ">=1.27.2"
+          cache-dependency-path: codebase_rag/parsers/go_frontend/gotypes/go.sum
+
+      - name: Key the uv cache on dependencies, not the project version
+        shell: bash
+        run: |
+          awk 'skip && /^version = / { skip = 0; next }
+               { skip = /^name = "code-graph-rag"\r?$/; print }' \
+            uv.lock > "$RUNNER_TEMP/uv-deps.lock"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
-          cache-dependency-glob: "uv.lock"
+          cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -195,12 +237,12 @@ jobs:
       - name: Run unit tests (parallel, with coverage)
         if: matrix.os == 'macos-latest' && matrix.python-version == '3.12'
         run: |
-          uv run --no-sync pytest -n auto -m "not integration" --tb=short --cov=codebase_rag --cov-report=xml --cov-report=term
+          uv run --no-sync pytest -n auto -m "not integration" --tb=short --shard ${{ matrix.shard }} --cov=codebase_rag --cov-report=xml --cov-report=term
 
       - name: Run unit tests (parallel, no coverage)
         if: matrix.os != 'macos-latest' || matrix.python-version != '3.12'
         run: |
-          uv run --no-sync pytest -n auto -m "not integration" --tb=short
+          uv run --no-sync pytest -n auto -m "not integration" --tb=short --shard ${{ matrix.shard }}
 
       - name: Upload coverage to Codecov
         if: always() && matrix.os == 'macos-latest' && matrix.python-version == '3.12'
@@ -230,14 +272,29 @@ jobs:
           # into the local Git config.
           persist-credentials: false
 
+      - name: Set up Go
+        # The go/types helper's tests build it with the Go on PATH, and the
+        # runner image's Go is older than the floor in gotypes/go.mod.
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ">=1.27.2"
+          cache-dependency-path: codebase_rag/parsers/go_frontend/gotypes/go.sum
+
+      - name: Key the uv cache on dependencies, not the project version
+        shell: bash
+        run: |
+          awk 'skip && /^version = / { skip = 0; next }
+               { skip = /^name = "code-graph-rag"\r?$/; print }' \
+            uv.lock > "$RUNNER_TEMP/uv-deps.lock"
+
       - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
-          cache-dependency-glob: "uv.lock"
+          cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
@@ -260,6 +317,7 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Start Memgraph
         run: |
@@ -274,14 +332,21 @@ jobs:
             sleep 2
           done
 
+      - name: Key the uv cache on dependencies, not the project version
+        shell: bash
+        run: |
+          awk 'skip && /^version = / { skip = 0; next }
+               { skip = /^name = "code-graph-rag"\r?$/; print }' \
+            uv.lock > "$RUNNER_TEMP/uv-deps.lock"
+
       - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
-          cache-dependency-glob: "uv.lock"
+          cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
@@ -323,21 +388,29 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
+          persist-credentials: false
+
+      - name: Key the uv cache on dependencies, not the project version
+        shell: bash
+        run: |
+          awk 'skip && /^version = / { skip = 0; next }
+               { skip = /^name = "code-graph-rag"\r?$/; print }' \
+            uv.lock > "$RUNNER_TEMP/uv-deps.lock"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
-          cache-dependency-glob: "uv.lock"
+          cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
       - name: Install dependencies
         run: |
-          uv sync --extra treesitter-full
+          uv sync --extra treesitter-full --extra memgraph
           uv add --dev pyinstaller
 
       - name: Build binary
@@ -366,22 +439,41 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
+      # cargo (under the crate's wheel build) and pip trust the system store,
+      # and the runner's ca-certificates may still carry distrusted eMudhra
+      # roots: deselect them before anything is fetched.
+      - name: Distrust the eMudhra roots
+        run: sudo bash scripts/distrust_ca_roots.sh
+
       - name: Build wheel
         run: uv build --wheel
+
+      # code-graph-rag requires cgr-graph-rs, which publish.yml uploads
+      # first; this commit's own build stands in for it, so the PR is
+      # tested against the crate it carries.
+      - name: Build the cgr-graph-rs wheel
+        run: uv build --wheel rust/cgr_graph_rs --out-dir dist-rust
 
       # Deliberately plain venv + pip: uv.lock must not participate.
       - name: Install the wheel with unlocked resolution
         run: |
           python -m venv .fresh-venv
-          ./.fresh-venv/bin/python -m pip install --upgrade pip
-          ./.fresh-venv/bin/python -m pip install dist/*.whl
+          # The venv's bundled pip may predate the emSign distrust (pip
+          # 26.2.2), so it fetches only pip itself, the release
+          # scripts/pip-requirements.txt pins by SHA-256 and Dependabot keeps
+          # current.
+          ./.fresh-venv/bin/python -m pip install --require-hashes -r scripts/pip-requirements.txt
+          # Both wheels are named, so pip has to take this build of the crate
+          # even when PyPI carries a newer one in range; everything else
+          # resolves unlocked.
+          ./.fresh-venv/bin/python -m pip install dist/*.whl dist-rust/*.whl
 
       - name: Record resolved dependency versions
         run: ./.fresh-venv/bin/python -m pip list
@@ -397,6 +489,9 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     timeout-minutes: 5
+    # The action reads the pull request's current title through the API.
+    permissions:
+      pull-requests: read
 
     steps:
       - name: Check PR title format
@@ -438,21 +533,29 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: ">=1.26.6"
+          go-version: ">=1.27.2"
           cache-dependency-path: codebase_rag/parsers/go_frontend/gotypes/go.sum
 
+      - name: Key the uv cache on dependencies, not the project version
+        shell: bash
+        run: |
+          awk 'skip && /^version = / { skip = 0; next }
+               { skip = /^name = "code-graph-rag"\r?$/; print }' \
+            uv.lock > "$RUNNER_TEMP/uv-deps.lock"
+
       - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
-          cache-dependency-glob: "uv.lock"
+          cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
@@ -473,6 +576,63 @@ jobs:
         run: |
           uv run --no-sync pytest codebase_rag/tests/test_go_frontend.py -v --tb=short
 
+  rust-graph-core:
+    name: Rust Graph Core
+    runs-on: ubuntu-latest
+    # rust/cgr_graph_rs (published as cgr-graph-rs, a default dependency on
+    # the platforms it has wheels for) runs the embedded graph's whole-graph
+    # procedures, its Cypher parser, the ingestor's batch writes and result
+    # decoding (issue #386), and the indexer's definition hashes on
+    # py-tree-sitter's own trees. Its own tests check the algorithms and the
+    # grammar; the Python tests check it returns and writes exactly what
+    # the Python implementations it replaces do, and run the engine's
+    # suites with it installed. rust-wheels.yml builds and tests the wheels.
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Key the uv cache on dependencies, not the project version
+        shell: bash
+        run: |
+          awk 'skip && /^version = / { skip = 0; next }
+               { skip = /^name = "code-graph-rag"\r?$/; print }' \
+            uv.lock > "$RUNNER_TEMP/uv-deps.lock"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          enable-cache: true
+          cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Test the crate
+        run: cargo test --release --manifest-path rust/cgr_graph_rs/Cargo.toml
+
+      # The checkout's crate is a path source, so the sync builds it.
+      - name: Install cgr with the extension
+        run: uv sync --extra test --group dev
+
+      # The wheel carries every linked crate's licence; a dependency change
+      # must regenerate the file before it can ship.
+      - name: Check the crates' licences are listed
+        run: uv run --no-sync python scripts/generate_rust_licenses.py --check
+
+      - name: Check it against the Python procedures and parser
+        run: |
+          uv run --no-sync pytest codebase_rag/tests/test_embedded_graph_rust.py codebase_rag/tests/test_embedded_graph_rust_parser.py codebase_rag/tests/test_embedded_graph_native.py codebase_rag/tests/test_native_trees.py --tb=short
+
+      - name: Run the engine's tests on the Rust parser
+        run: |
+          uv run --no-sync pytest codebase_rag/tests/test_embedded_graph_engine.py codebase_rag/tests/test_embedded_graph_memgraph_parity.py codebase_rag/tests/test_embedded_graph_default.py --tb=short
+
   sonar-gate:
     name: Sonar Zero Issues Gate
     runs-on: ubuntu-latest
@@ -487,8 +647,8 @@ jobs:
       && github.event.pull_request.head.repo.full_name == github.repository
     # The polling loop below does the waiting (it holds out for as long as
     # SonarCloud Analysis is queued or running); this cap only bounds a hang,
-    # and covers that job's 50 min cap, a late start and the publish window.
-    timeout-minutes: 90
+    # and covers that job's 70 min cap, a late start and the publish window.
+    timeout-minutes: 110
     permissions:
       # checks: read backs the check-runs API call that detects a failed
       # SonarCloud Analysis job, so the gate fails fast instead of waiting
@@ -598,6 +758,7 @@ jobs:
         binary-smoke,
         wheel-fresh-resolution,
         go-frontend,
+        rust-graph-core,
         sonar-gate,
       ]
     timeout-minutes: 5
@@ -612,6 +773,7 @@ jobs:
           echo "Binary Smoke: ${{ needs.binary-smoke.result }}"
           echo "Wheel Smoke: ${{ needs.wheel-fresh-resolution.result }}"
           echo "Go Frontend: ${{ needs.go-frontend.result }}"
+          echo "Rust Graph Core: ${{ needs.rust-graph-core.result }}"
 
           if [[ "${{ needs.lint.result }}" != "success" ]]; then
             echo "❌ Lint failed"
@@ -643,6 +805,10 @@ jobs:
           fi
           if [[ "${{ needs.go-frontend.result }}" != "success" ]]; then
             echo "❌ Go frontend job failed"
+            exit 1
+          fi
+          if [[ "${{ needs.rust-graph-core.result }}" != "success" ]]; then
+            echo "❌ Rust graph core job failed"
             exit 1
           fi
           # Same skip semantics: the gate is skipped on non-PR events and on

@@ -7,12 +7,14 @@ this join, so it lives here once (issue #1179)."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 from tree_sitter import Node
 
 from ..types_defs import FunctionLocation, FunctionSpanKey
 from ..utils.path_utils import cached_relative_path
+from .frontends.protocol import ResolvedCallSite
 
 # (rel_file, name_token_line, name_token_byte_col, simple_name).
 CallSiteKey = tuple[str, int, int, str]
@@ -77,3 +79,41 @@ def declared_location(
     if location is None:
         return None
     return location.label, location.qualified_name
+
+
+def resolve_call_site(
+    call_node: Node,
+    module_qn: str,
+    site_key: Callable[[Node, str], CallSiteKey | None],
+    call_sites: dict[CallSiteKey, ResolvedCallSite],
+    external_sites: set[CallSiteKey],
+    external_target: tuple[str, str],
+    function_locations: dict[FunctionSpanKey, FunctionLocation],
+    module_qn_to_file_path: dict[str, Path],
+    repo_path: Path,
+    rel_to_module: dict[str, str],
+) -> tuple[str, str] | None:
+    # A compiler fact for this call: the declaration it binds to, or the
+    # language's external sentinel when the compiler proved the call leaves
+    # the repo. Any miss returns None so the caller falls back to the
+    # tree-sitter heuristics. The empty-facts check runs before site_key so a
+    # build without the frontend never pays for the key.
+    if not (call_sites or external_sites):
+        return None
+    key = site_key(call_node, module_qn)
+    if key is None:
+        return None
+    fact = call_sites.get(key)
+    if fact is not None:
+        return declared_location(
+            fact.target_file,
+            fact.target_line,
+            fact.target_col,
+            function_locations,
+            module_qn_to_file_path,
+            repo_path,
+            rel_to_module,
+        )
+    if key in external_sites:
+        return external_target
+    return None

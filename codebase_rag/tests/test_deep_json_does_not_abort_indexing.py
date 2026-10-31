@@ -14,6 +14,7 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag import exceptions as ex
+from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import (
     _EMPTY_DELOMBOK_STATE,
     GraphUpdater,
@@ -85,9 +86,9 @@ def test_one_deep_manifest_does_not_stop_the_run(
 
 
 def test_deep_state_files_read_as_absent(temp_repo: Path) -> None:
-    cache = temp_repo / cs.HASH_CACHE_FILENAME
+    cache = state_file(temp_repo, cs.HASH_CACHE_FILENAME)
     cache.write_text(_DEEP, encoding="utf-8")
-    stamp = temp_repo / cs.EXCLUSION_STATE_FILENAME
+    stamp = state_file(temp_repo, cs.EXCLUSION_STATE_FILENAME)
     stamp.write_text(_DEEP, encoding="utf-8")
 
     assert _load_hash_cache(cache) == {}

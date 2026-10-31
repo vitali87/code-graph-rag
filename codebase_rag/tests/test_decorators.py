@@ -13,7 +13,6 @@ from codebase_rag.decorators import (
     log_operation,
     mcp_try_except,
     recursion_guard,
-    timing_decorator,
     validate_project_path,
 )
 
@@ -67,48 +66,6 @@ class TestEnsureLoaded:
                 pass
 
         assert MockLoader.my_method.__name__ == "my_method"
-
-
-class TestTimingDecorator:
-    def test_returns_correct_result(self) -> None:
-        @timing_decorator
-        def add(a: int, b: int) -> int:
-            return a + b
-
-        result = add(2, 3)
-        assert result == 5
-
-    def test_logs_timing_info(self) -> None:
-        with patch("codebase_rag.decorators.logger") as mock_logger:
-
-            @timing_decorator
-            def fast_func() -> str:
-                return "done"
-
-            result = fast_func()
-
-            assert result == "done"
-            mock_logger.info.assert_called_once()
-            log_message = mock_logger.info.call_args[0][0]
-            assert "fast_func" in log_message
-            assert "ms" in log_message
-
-    def test_handles_exceptions(self) -> None:
-        with patch("codebase_rag.decorators.logger"):
-
-            @timing_decorator
-            def failing_func() -> None:
-                raise ValueError("test error")
-
-            with pytest.raises(ValueError, match="test error"):
-                failing_func()
-
-    def test_preserves_function_metadata(self) -> None:
-        @timing_decorator
-        def named_function() -> None:
-            pass
-
-        assert named_function.__name__ == "named_function"
 
 
 class TestAsyncTimingDecorator:

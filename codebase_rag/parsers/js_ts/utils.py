@@ -21,6 +21,49 @@ def get_js_ts_language_obj(
     return lang_queries.get(cs.QUERY_LANGUAGE)
 
 
+# Callables that bind a `this` of their own; an arrow takes the one around it.
+_OWN_THIS_CALLABLES = frozenset(
+    {
+        cs.TS_FUNCTION_DECLARATION,
+        cs.TS_FUNCTION_EXPRESSION,
+        cs.TS_GENERATOR_FUNCTION,
+        cs.TS_GENERATOR_FUNCTION_DECLARATION,
+    }
+)
+# Class members whose `this` is the class when they are static.
+_CLASS_THIS_MEMBERS = frozenset(
+    {cs.TS_METHOD_DEFINITION, cs.TS_PUBLIC_FIELD_DEFINITION, cs.TS_JS_FIELD_DEFINITION}
+)
+
+
+def is_static_member(member: Node) -> bool:
+    # The `static` keyword is an anonymous token among the member's own
+    # children; a free function never has one.
+    return any(child.type == cs.TS_STATIC for child in member.children)
+
+
+def this_names_class_at(root: Node, point: int) -> bool | None:
+    """What `this` written at byte `point` is: the class itself (``True``,
+    inside a static method, field initialiser or static block), an instance
+    (``False``), or neither (``None``: a plain function's or an object
+    literal method's own `this`, or none at all). An arrow reads `this` from
+    where it is written."""
+    node = root.named_descendant_for_byte_range(point, point)
+    while node is not None:
+        if node.type == cs.TS_CLASS_STATIC_BLOCK:
+            return True
+        if node.type in _CLASS_THIS_MEMBERS:
+            # A shorthand method, getter or setter of an object literal binds
+            # `this` to that object; only a member of a class body is the
+            # class's, so the walk never climbs past it to the class around.
+            in_class = node.parent is not None and node.parent.type == cs.TS_CLASS_BODY
+            return is_static_member(node) if in_class else None
+        if node.type in _OWN_THIS_CALLABLES:
+            return None
+        node = node.parent
+    return None
+
+
 def _extract_class_qn(method_qn: str) -> str | None:
     qn_parts = method_qn.split(cs.SEPARATOR_DOT)
     return cs.SEPARATOR_DOT.join(qn_parts[:-1]) if len(qn_parts) >= 2 else None
@@ -52,6 +95,67 @@ def find_method_in_class_body(class_body_node: Node, method_name: str) -> Node |
                     return child
 
     return None
+
+
+def repeats_member_signature(member_node: Node, seen_names: set[str]) -> bool:
+    # An overloaded interface or abstract member is one signature per overload,
+    # but a single member: only the first names it, so a later one registering
+    # would mint an `@line` duplicate no call can bind and dead code reports.
+    # `seen_names` is the caller's per-body record of names already declared.
+    if member_node.type not in cs.TS_BODILESS_METHOD_TYPES:
+        return False
+    name = safe_decode_text(member_node.child_by_field_name(cs.FIELD_NAME))
+    if name is None:
+        return False
+    if name in seen_names:
+        return True
+    seen_names.add(name)
+    return False
+
+
+_ANNOTATED_PARAMETER_TYPES = frozenset(
+    {cs.TS_REQUIRED_PARAMETER, cs.TS_OPTIONAL_PARAMETER}
+)
+
+
+def annotated_parameter_types(function_node: Node) -> list[tuple[str, str]]:
+    """(name, written type name) for each plainly named, annotated parameter.
+
+    The type name is the one a member call can dispatch on: `Repo`, the head of
+    `Repo<T>`, or the one non-nullish member of `Repo | undefined`. A
+    destructured parameter, or any other type shape, is left out.
+    """
+    parameters = function_node.child_by_field_name(cs.FIELD_PARAMETERS)
+    if parameters is None:
+        return []
+    found: list[tuple[str, str]] = []
+    for parameter in parameters.named_children:
+        if parameter.type not in _ANNOTATED_PARAMETER_TYPES:
+            continue
+        pattern = parameter.child_by_field_name(cs.TS_FIELD_PATTERN)
+        annotation = parameter.child_by_field_name(cs.FIELD_TYPE)
+        if pattern is None or pattern.type != cs.TS_IDENTIFIER or annotation is None:
+            continue
+        name = safe_decode_text(pattern)
+        type_name = _dispatch_type_name(next(iter(annotation.named_children), None))
+        if name and type_name:
+            found.append((name, type_name))
+    return found
+
+
+def _dispatch_type_name(type_node: Node | None) -> str | None:
+    if type_node is not None and type_node.type == cs.TS_UNION_TYPE:
+        members = [
+            member
+            for member in type_node.named_children
+            if (safe_decode_text(member) or "") not in cs.TS_NULLISH_TYPE_TEXTS
+        ]
+        type_node = members[0] if len(members) == 1 else None
+    if type_node is not None and type_node.type == cs.TS_GENERIC_TYPE:
+        type_node = type_node.child_by_field_name(cs.FIELD_NAME)
+    if type_node is None or type_node.type != cs.TS_TYPE_IDENTIFIER:
+        return None
+    return safe_decode_text(type_node)
 
 
 _CLASS_BODY_CACHE: dict[str, Node | None] = {}
@@ -90,6 +194,163 @@ def find_method_in_ast(
     if body_node:
         return find_method_in_class_body(body_node, method_name)
     return None
+
+
+# Statements that wrap a declaration without opening a scope: `export`,
+# `export default`, `declare`, and the expression statement the grammar
+# parses a bare `namespace N {}` as.
+_DECLARATION_WRAPPERS = frozenset(
+    {cs.TS_EXPORT_STATEMENT, cs.TS_AMBIENT_DECLARATION, cs.TS_EXPRESSION_STATEMENT}
+)
+_CLASS_DECLARATIONS = frozenset(
+    {cs.TS_CLASS_DECLARATION, cs.TS_ABSTRACT_CLASS_DECLARATION}
+)
+# What may hold a class on its qn path: a namespace or `declare module`
+# block, a function, a class, or one of a class's methods.
+_CLASS_PATH_HOLDERS = _CLASS_DECLARATIONS | {
+    cs.TS_INTERNAL_MODULE,
+    cs.TS_MODULE,
+    cs.TS_FUNCTION_DECLARATION,
+    cs.TS_GENERATOR_FUNCTION_DECLARATION,
+    cs.TS_METHOD_DEFINITION,
+}
+
+
+def find_class_body_at(root_node: Node, path: list[str]) -> Node | None:
+    """The body of the class a qn names, `path` being its segments below
+    the module: each but the last names the namespace, function, class or
+    method declaring the next, read in that scope alone. A same-named class
+    declared anywhere else in the file is a different class and never
+    answers, so a function-local `Box` does not stand in for the module's.
+    """
+    scope: Node | None = root_node
+    for index, name in enumerate(path):
+        wanted = _CLASS_DECLARATIONS if index == len(path) - 1 else _CLASS_PATH_HOLDERS
+        member = _scope_member(scope, name, wanted) if scope is not None else None
+        scope = member.child_by_field_name(cs.FIELD_BODY) if member else None
+    return scope
+
+
+# A block also declares names through `const` / `let` / `var` statements.
+_BINDING_WRAPPERS = _DECLARATION_WRAPPERS | {
+    cs.TS_LEXICAL_DECLARATION,
+    cs.TS_VARIABLE_DECLARATION,
+}
+# What binds a name a type annotation or a `new` reads.
+# TypeScript keeps types and values in separate namespaces. In a type
+# position only a type declaration shadows (a class, interface, type alias or
+# enum; a type parameter, read separately); a namespace is no type, and a
+# `const` or plain `function` is a value. In a value position (`new X()`) any
+# value declaration shadows: a class, function, variable, enum or namespace.
+_TYPE_BINDINGS = _CLASS_DECLARATIONS | {
+    cs.TS_INTERFACE_DECLARATION,
+    cs.TS_TYPE_ALIAS_DECLARATION,
+    cs.TS_ENUM_DECLARATION,
+}
+_VALUE_BINDINGS = _CLASS_DECLARATIONS | {
+    cs.TS_FUNCTION_DECLARATION,
+    cs.TS_GENERATOR_FUNCTION_DECLARATION,
+    cs.TS_VARIABLE_DECLARATOR,
+    cs.TS_ENUM_DECLARATION,
+    cs.TS_INTERNAL_MODULE,
+}
+# Nodes a declaration's qn path passes through without a segment of its own.
+_PATH_TRANSPARENT = _DECLARATION_WRAPPERS | {cs.TS_STATEMENT_BLOCK, cs.TS_CLASS_BODY}
+
+
+def enclosing_type_declaration(site: Node, name: str) -> Node | None:
+    """The declaration a type name read at `site` binds to below module
+    level: the nearest enclosing block's own type declaration of it, or a
+    type parameter of an enclosing class, function or method. ``None`` when
+    only the module, an import, or nothing declares it."""
+    return _enclosing_binding(site, name, _TYPE_BINDINGS, type_parameters=True)
+
+
+def enclosing_value_declaration(site: Node, name: str) -> Node | None:
+    """The nearest enclosing block's own value declaration of `name`, read
+    at `site`, below module level. Parameters, hoisted `var`s and catch or
+    loop bindings are left to the callable's binding index."""
+    return _enclosing_binding(site, name, _VALUE_BINDINGS, type_parameters=False)
+
+
+def declaring_block(declaration: Node) -> Node | None:
+    """The block a declaration's name is bound in (past `export`/`const`)."""
+    node = declaration.parent
+    while node is not None and node.type != cs.TS_STATEMENT_BLOCK:
+        node = node.parent
+    return node
+
+
+def _enclosing_binding(
+    site: Node, name: str, kinds: frozenset[str], type_parameters: bool
+) -> Node | None:
+    node = site.parent
+    while node is not None and node.type != cs.TS_PROGRAM:
+        if node.type == cs.TS_STATEMENT_BLOCK and (
+            found := _scope_member(node, name, kinds, _BINDING_WRAPPERS)
+        ):
+            return found
+        if type_parameters and (param := _type_parameter(node, name)) is not None:
+            return param
+        node = node.parent
+    return None
+
+
+def _type_parameter(node: Node, name: str) -> Node | None:
+    type_params = node.child_by_field_name(cs.TS_FIELD_TYPE_PARAMETERS)
+    if type_params is None:
+        return None
+    return next(
+        (p for p in type_params.named_children if _declared_name(p) == name), None
+    )
+
+
+def class_qn_path(declaration: Node) -> list[str] | None:
+    """A class declaration's qn segments below its module, the inverse of
+    `find_class_body_at`; ``None`` for anything but a class, or when a scope
+    holding it has no name a qn can carry (an arrow, an `if` block)."""
+    if declaration.type not in _CLASS_DECLARATIONS:
+        return None
+    path: list[str] = []
+    node: Node | None = declaration
+    while node is not None and node.type != cs.TS_PROGRAM:
+        if node.type in _CLASS_PATH_HOLDERS:
+            if not (segment := _declared_name(node)):
+                return None
+            path.append(segment)
+        elif node.type not in _PATH_TRANSPARENT:
+            return None
+        node = node.parent
+    return path[::-1]
+
+
+def _scope_member(
+    scope: Node,
+    name: str,
+    wanted: frozenset[str],
+    wrappers: frozenset[str] = _DECLARATION_WRAPPERS,
+) -> Node | None:
+    # The first declaration of `name` among the scope's own statements.
+    stack = list(reversed(scope.named_children))
+    while stack:
+        node = stack.pop()
+        if node.type in wrappers:
+            stack.extend(reversed(node.named_children))
+        elif node.type in wanted and _declared_name(node) == name:
+            return node
+    return None
+
+
+def _declared_name(node: Node) -> str | None:
+    # `declare module "x"` names its block with a string literal.
+    name_node = node.child_by_field_name(cs.FIELD_NAME)
+    if name_node is None:
+        return None
+    fragment = next(
+        (c for c in name_node.named_children if c.type == cs.TS_STRING_FRAGMENT),
+        None,
+    )
+    return safe_decode_text(fragment or name_node)
 
 
 def _class_declaration_named(root_node: Node, class_name: str) -> Node | None:
@@ -132,11 +393,36 @@ def find_return_statements(
         stack.extend(reversed(current.children))
 
 
+_CONSTRUCTOR_WRAPPER_TYPES = cs.TS_CAST_WRAPPER_TYPES | {cs.TS_PARENTHESIZED_EXPRESSION}
+_NAMED_CONSTRUCTOR_TYPES = frozenset({cs.TS_IDENTIFIER, cs.TS_MEMBER_EXPRESSION})
+
+
+def constructor_of(new_expr_node: Node) -> Node | None:
+    """The constructor a `new` expression names, under any parentheses or casts.
+
+    `new (X)(...)`, `new (X as any)(...)`, `new (X satisfies T)(...)` and
+    `new (X!)(...)` all construct `X`, as `new X(...)` does; reading the
+    sub-expression as written named nothing (zod's
+    `new (Internals as any)(def)`, issue #2874). Unwrapping stops at a name
+    or a member path: `new (getCtor())()` or `new (flag ? A : B)()`
+    constructs a computed value, so the node is returned as written.
+    """
+    constructor_node = new_expr_node.child_by_field_name(cs.FIELD_CONSTRUCTOR)
+    current = constructor_node
+    while current is not None and current.type in _CONSTRUCTOR_WRAPPER_TYPES:
+        current = next(
+            (c for c in current.named_children if c.type != cs.TS_COMMENT), None
+        )
+    if current is not None and current.type in _NAMED_CONSTRUCTOR_TYPES:
+        return current
+    return constructor_node
+
+
 def extract_constructor_name(new_expr_node: Node) -> str | None:
     if new_expr_node.type != cs.TS_NEW_EXPRESSION:
         return None
 
-    constructor_node = new_expr_node.child_by_field_name(cs.FIELD_CONSTRUCTOR)
+    constructor_node = constructor_of(new_expr_node)
     if constructor_node and constructor_node.type == cs.TS_IDENTIFIER:
         constructor_text = constructor_node.text
         if constructor_text:

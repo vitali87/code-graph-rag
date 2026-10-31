@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 import pytest
 from watchdog.events import FileModifiedEvent
 
-import realtime_updater
+from codebase_rag import watch
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.tests.conftest import get_relationships
@@ -51,8 +51,8 @@ def _updater(project: Path, mock_ingestor: MagicMock) -> GraphUpdater:
     )
 
 
-def _watch(updater: GraphUpdater) -> realtime_updater.CodeChangeEventHandler:
-    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+def _watch(updater: GraphUpdater) -> watch.CodeChangeEventHandler:
+    handler = watch.CodeChangeEventHandler(updater, debounce_seconds=0)
     return handler
 
 

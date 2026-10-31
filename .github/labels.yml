@@ -54,9 +54,17 @@
   color: f9d0c4
   description: Performance improvements
 
+- name: accessibility
+  color: 0e8a16
+  description: A barrier for people using assistive technology or alternative settings
+
 - name: breaking change
   color: b60205
-  description: Breaking API or behavior change
+  description: Breaking API or behavior change; bumps the minor version (major from 1.0) and releases it
+
+- name: release now
+  color: 5319e7
+  description: "Maintainers only: release as soon as this pull request merges instead of waiting for the cadence"
 
 - name: language support
   color: 1d76db

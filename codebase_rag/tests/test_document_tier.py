@@ -555,10 +555,12 @@ class TestLinkExtraction:
         assert _link_targets(mock) == {(tmp_path / "api.md").resolve().as_posix()}
 
     def test_link_edge_starts_at_the_linking_module(self, tmp_path: Path) -> None:
+        # Above the first heading: a link under one starts at its Section
+        # instead (issue #2458, test_markdown_links_to.py).
         mock = _run(
             tmp_path,
             {
-                "guide.md": "# Guide\n\n[api](api.md)\n",
+                "guide.md": "[api](api.md)\n\n# Guide\n",
                 "api.md": "# API\n",
             },
         )
@@ -623,7 +625,10 @@ class TestLinkExtraction:
         )
         assert _link_targets(mock) == {(tmp_path / "mod.py").resolve().as_posix()}
 
-    def test_repeated_link_to_one_target_emits_one_edge(self, tmp_path: Path) -> None:
+    def test_repeated_link_to_one_target_emits_an_edge_per_link(
+        self, tmp_path: Path
+    ) -> None:
+        # Each link is its own edge, told apart by where it is (issue #2458).
         mock = _run(
             tmp_path,
             {
@@ -632,6 +637,12 @@ class TestLinkExtraction:
             },
         )
         assert len(_rels(mock, LINKS_TO)) == 1
+        sites = [
+            c.args[3][cs.KEY_COL]
+            for c in mock.ensure_relationship_batch.call_args_list
+            if str(c.args[1]) == LINKS_TO
+        ]
+        assert sorted(sites) == [0, len("[a](api.md) and again ")]
 
     def test_several_distinct_targets_all_emit(self, tmp_path: Path) -> None:
         """Guards the de-duplication above from collapsing distinct targets."""
@@ -703,11 +714,13 @@ class TestLinksThatAreNotFileReferences:
         )
         self._assert_only_control(mock, tmp_path)
 
-    def test_bare_fragment_is_not_a_file_link(self, tmp_path: Path) -> None:
+    def test_bare_hash_is_not_a_file_link(self, tmp_path: Path) -> None:
+        # `#section` names a heading of this document and is a link (issue
+        # #2458); `#` alone is the top of the page and names nothing.
         mock = _run(
             tmp_path,
             {
-                "guide.md": "# Guide\n\n[here](#section) [api](api.md)\n",
+                "guide.md": "# Guide\n\n[top](#) [api](api.md)\n",
                 "api.md": "# API\n",
             },
         )

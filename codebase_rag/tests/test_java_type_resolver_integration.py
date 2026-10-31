@@ -9,6 +9,7 @@ import pytest
 
 from codebase_rag.parsers.import_processor import ImportProcessor
 from codebase_rag.parsers.java.type_inference import JavaTypeInferenceEngine
+from codebase_rag.parsers.java.type_resolver import collect_java_class_headers
 
 if TYPE_CHECKING:
     from tree_sitter import Parser
@@ -319,10 +320,9 @@ public enum Status {
         result = type_inference_engine._get_current_class_name("com.example")
         assert result == "com.example.Status"
 
-    def test_traverse_for_class_declarations_multiple_in_file(
+    def test_collect_class_headers_multiple_in_file(
         self,
         java_parser: Parser,
-        type_inference_engine: JavaTypeInferenceEngine,
     ) -> None:
         java_code = b"""
 package com.example;
@@ -346,14 +346,9 @@ enum Type {
         tree = java_parser.parse(java_code)
         root_node = tree.root_node
 
-        class_names: list[str] = []
-        type_inference_engine._traverse_for_class_declarations(root_node, class_names)
+        class_names = collect_java_class_headers(root_node).type_names
 
-        assert "MainClass" in class_names
-        assert "Helper" in class_names
-        assert "Processor" in class_names
-        assert "Type" in class_names
-        assert len(class_names) == 4
+        assert class_names == ("MainClass", "Helper", "Processor", "Type")
 
     def test_class_with_extends_and_implements(
         self,
@@ -393,6 +388,7 @@ public class Employee extends Person implements Comparable<Employee>, Serializab
         self,
         java_parser: Parser,
         type_inference_engine: JavaTypeInferenceEngine,
+        mock_ast_cache: MagicMock,
     ) -> None:
         java_code = b"""
 package com.example;
@@ -406,12 +402,15 @@ public class Outer {
         tree = java_parser.parse(java_code)
         root_node = tree.root_node
 
-        result = type_inference_engine._find_superclass_using_ast(
-            root_node, "Inner", "com.example"
-        )
+        file_path = Path("/test/Outer.java")
+        type_inference_engine.module_qn_to_file_path = {"com.example": file_path}
+        mock_ast_cache.__contains__ = MagicMock(side_effect=lambda x: x == file_path)
+        mock_ast_cache.__getitem__ = MagicMock(return_value=(root_node, java_code))
+
+        result = type_inference_engine._get_superclass_name("com.example.Inner")
         assert result == "BaseInner"
 
-        interfaces = type_inference_engine._find_interfaces_using_ast(
-            root_node, "Inner", "com.example"
+        interfaces = type_inference_engine._get_implemented_interfaces(
+            "com.example.Inner"
         )
         assert "InnerInterface" in interfaces

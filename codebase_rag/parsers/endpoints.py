@@ -17,7 +17,7 @@ from .endpoint_prefixes import UNKNOWN_LEAD_SEGMENT
 from .endpoint_routes import METHOD_ANY
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterable
 
     from ..services import IngestorProtocol, QueryProtocol
     from ..types_defs import ResultRow, ResultValue
@@ -555,6 +555,38 @@ def _match_candidates(
         if mount is not None:
             mounts[endpoint_qn] = mount
     return exact, suffix, mounts
+
+
+def inferred_route_identities(
+    url: str, method: str, identities: Iterable[str], project: str
+) -> list[str]:
+    """The `project` routes a `method` request to `url` reaches only by the
+    linker's bounded inference: a proxy lead on the URL (`/api/cases` to
+    `GET /cases`, #911) or a router mount on the template (#923), with the
+    same tie rules, so a lookup names the route the linker linked."""
+    endpoints: dict[str, tuple[str, str | None]] = {}
+    suffix: dict[str, str] = {}
+    mounts: dict[str, str] = {}
+    for identity in identities:
+        route_method, _, template = identity.partition(" ")
+        template = template.strip()
+        if not (
+            template
+            and route_method.upper() in (method, METHOD_ANY)
+            and _has_literal_segment(template)
+        ):
+            continue
+        endpoints[identity] = (identity, project)
+        if (lead := url_suffix_match_lead(url, template)) is not None:
+            suffix[identity] = lead
+        elif (mount := template_mount_lead(url, template)) is not None:
+            mounts[identity] = mount
+    return sorted(
+        identity
+        for identity, _key, _lead in _resolve_inferred_matches(
+            suffix, mounts, endpoints
+        )
+    )
 
 
 def _resolve_inferred_matches(

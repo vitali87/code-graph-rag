@@ -19,12 +19,27 @@ rules:
       kind: call_expression
       has: { field: function, kind: identifier, regex: '^panic$' }
   - id: ignored_error_shortvar
+    # The LAST target must BE the blank identifier, a whole `identifier` node
+    # spelled `_`: testing the left side's text for a trailing `_` also caught
+    # names ending in one (`result_`, protobuf's `XXX_`), where nothing is
+    # discarded (issue #2871). A leading `_` (`_, err :=`) keeps the error.
     message: "Return value discarded with blank identifier in := declaration"
     rule:
       kind: short_var_declaration
-      has: { field: left, regex: '_\s*$' }
+      has:
+        field: left
+        has:
+          kind: identifier
+          regex: '^_$'
+          nthChild: { position: 1, reverse: true }
   - id: ignored_error_assign
+    # Same blank-identifier test as ignored_error_shortvar (issue #2871).
     message: "Return value discarded with blank identifier in = assignment"
     rule:
       kind: assignment_statement
-      has: { field: left, regex: '_\s*$' }
+      has:
+        field: left
+        has:
+          kind: identifier
+          regex: '^_$'
+          nthChild: { position: 1, reverse: true }

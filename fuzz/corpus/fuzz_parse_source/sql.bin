@@ -5,4 +5,4 @@ CREATE FUNCTION greet(name TEXT) RETURNS TEXT AS $$
 $$ LANGUAGE sql;
 
 SELECT greet(name) FROM users;
-
+

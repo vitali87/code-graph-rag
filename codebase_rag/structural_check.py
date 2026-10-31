@@ -33,17 +33,16 @@ from . import constants as cs
 from . import cypher_queries as cq
 from .capture import CaptureSelection, default_capture
 from .check_isolation import GraphStore, IsolationGuard
+from .checkout_state import state_file
 from .config import load_ignore_patterns
 from .graph_updater import GraphUpdater, _load_exclusion_state, _load_project_stamps
 from .services import QueryingIngestorProtocol
 from .structural_delta import StructuralDelta, normalise_paths, observe
+from .sync_guard import run_owner
 from .types_defs import LanguageQueries, PropertyDict, ReingestReport
-from .utils.path_utils import derive_project_name
+from .utils.path_utils import derive_project_name, should_skip_path
 
 _GIT_DELETED = "D"
-
-
-_CGR_STATE_PREFIX = ".cgr-"
 
 
 class CheckError(ValueError):
@@ -111,15 +110,31 @@ def changed_since(repo_root: Path, base: str) -> tuple[list[str], list[str]]:
     # `-z` output alternates status and path fields, each NUL-terminated.
     fields = [f for f in status.split("\0") if f]
     for code, path in zip(fields[0::2], fields[1::2], strict=False):
-        (deleted if code.startswith(_GIT_DELETED) else changed).add(path)
-    # cgr's own untracked state files (hash cache, directory mtimes, ...)
-    # are not source and must not be re-ingested or reported as reparsed.
+        if not _is_cgr_state(path):
+            (deleted if code.startswith(_GIT_DELETED) else changed).add(path)
     changed.update(
-        entry
-        for entry in untracked.split("\0")
-        if entry and not Path(entry).name.startswith(_CGR_STATE_PREFIX)
+        entry for entry in untracked.split("\0") if entry and not _is_cgr_state(entry)
     )
     return sorted(changed), sorted(deleted)
+
+
+def _is_cgr_state(path: str) -> bool:
+    """cgr's own state files (hash cache, directory mtimes, ...) are not
+    source: never re-ingested or reported as reparsed. That holds for a copy
+    a user committed with `git add -A` before cgr kept them out of the tree,
+    which every later sync rewrote, or the next one moves out (issue #2427),
+    and for the temp sibling an older cgr wrote one through.
+
+    By exact name, as the indexing walk skips them: a source file merely
+    named `.cgr-...` (a tracked `.cgr-custom.py`) is indexed, so its edits
+    and deletions are structural changes the check must report.
+    """
+    name = Path(path).name
+    if name in cs.CGR_STATE_FILENAMES:
+        return True
+    if not name.endswith(cs.TMP_EXTENSION):
+        return False
+    return any(name.startswith(f"{state}.") for state in cs.CGR_STATE_FILENAMES)
 
 
 def _stamp_is_named(stored: dict[str, list[str] | str]) -> bool:
@@ -140,10 +155,17 @@ def _stamp_belongs_to(
     owner = stored.get("project")
     if _stamp_is_named(stored):
         return owner == project_name
+    derived = derive_project_name(repo_root)
+    # `cgr start` without --project-name indexes under the derived name, which
+    # hashes this checkout's path: asking for it by name can only mean the
+    # graph that unnamed run wrote, so an explicit request is no reason to
+    # refuse (issue #2854). The bare directory name stays ambiguous below.
+    if owner == project_name == derived:
+        return True
     # The updater's default is the directory name, or the derived name for a
     # directory holding `.` (#2412); a stamp written before that still
     # carries the dotted name verbatim.
-    default_names = {derive_project_name(repo_root), repo_root.resolve().name}
+    default_names = {derived, repo_root.resolve().name}
     return not explicit and owner in default_names and project_name in default_names
 
 
@@ -189,7 +211,7 @@ def indexed_scope(
     the wrong project silently re-ingests files the index left out, or drops
     files it deliberately kept.
     """
-    state_path = repo_root / cs.EXCLUSION_STATE_FILENAME
+    state_path = state_file(repo_root, cs.EXCLUSION_STATE_FILENAME)
     stored = _load_exclusion_state(state_path)
     # Every project indexed from this tree keeps its own entry, so one that
     # a later project's run overwrote at the top level still has its scope
@@ -219,11 +241,16 @@ def indexed_scope(
         # had stamped, and its scope is simply gone rather than inferable.
         mine = _stamp_belongs_to(stored, repo_root, project_name, explicit)
         if isinstance(owner, str) and not mine:
-            raise CheckError(
-                cs.CHECK_SCOPE_OF_OTHER_PROJECT.format(
+            # The same string on both sides is an unnamed run's stamp asked
+            # for by name: "belongs to X, not X" told the user nothing.
+            message = (
+                cs.CHECK_SCOPE_OF_UNNAMED_RUN.format(project=project_name)
+                if owner == project_name
+                else cs.CHECK_SCOPE_OF_OTHER_PROJECT.format(
                     project=project_name, other=owner
                 )
             )
+            raise CheckError(message)
         exclude = stored.get("exclude") or []
         unignore = stored.get("unignore") or []
         return (
@@ -307,19 +334,29 @@ def _refuse_unrestorable_capture(capture: CaptureSelection) -> None:
         )
 
 
-def _refuse_graph_holding_io_links(ingestor: object) -> None:
-    """Refuse an isolated run over a graph that already holds IO links.
+def _refuse_project_holding_io_links(ingestor: object, project_name: str) -> None:
+    """Refuse an isolated run over IO links the checked project anchors.
 
     The capture check above covers what THIS run would write. A graph built
     earlier with IO enabled can hold resource chains of its own; deleting a
     changed file's subtree can leave one unanchored, and the re-ingest's
     repo-wide resource prune then deletes it, chain edges included, which
-    the capture cannot put back (bot review, #1718).
+    the capture cannot put back (bot review, #1718). Only a resource the
+    project's own nodes touch can be unanchored by the run, so another
+    project's links do not refuse it (issue #3188).
     """
-    rows = cast(GraphStore, ingestor).fetch_all(cq.CYPHER_CHECK_GRAPH_IO_LINKS)
+    rows = cast(GraphStore, ingestor).fetch_all(
+        cq.CYPHER_CHECK_PROJECT_IO_LINKS,
+        {
+            cs.KEY_PROJECT_PREFIX: project_name + cs.SEPARATOR_DOT,
+            cs.KEY_PROJECT_NAME: project_name,
+        },
+    )
     if rows:
         raise CheckError(
-            cs.CHECK_ISOLATED_GRAPH_HAS_IO.format(groups=rows[0].get(cs.KEY_REL))
+            cs.CHECK_ISOLATED_GRAPH_HAS_IO.format(
+                project=project_name, groups=rows[0].get(cs.KEY_REL)
+            )
         )
 
 
@@ -340,13 +377,12 @@ def _measure_then_restore(
     """
     store = cast(GraphStore, ingestor)
     guard = IsolationGuard(store, project_name, repo_root)
-    cache = _FileSnapshot(repo_root / cs.HASH_CACHE_FILENAME)
+    # The cache the re-ingest rewrites, in the checkout's state directory
+    # rather than the tree since #2427.
+    cache_path = state_file(repo_root, cs.HASH_CACHE_FILENAME)
+    cache = _FileSnapshot(cache_path)
     if cache.unrestorable:
-        raise CheckError(
-            cs.CHECK_ISOLATED_CACHE_UNREADABLE.format(
-                path=repo_root / cs.HASH_CACHE_FILENAME
-            )
-        )
+        raise CheckError(cs.CHECK_ISOLATED_CACHE_UNREADABLE.format(path=cache_path))
     # The restore deletes before it re-creates, and the store offers no
     # transaction around the two, so a failure between them leaves the graph
     # partial. The persistent incomplete-run marker every mutating path sets
@@ -358,7 +394,8 @@ def _measure_then_restore(
         cs.KEY_RUN_ID: uuid.uuid4().hex,
     }
     store.execute_write(
-        cq.CYPHER_MARK_PROJECT_INCOMPLETE, {**marker, cs.KEY_WRITING: True}
+        cq.CYPHER_MARK_RUN_INCOMPLETE,
+        {**marker, **run_owner(), cs.KEY_WRITING: True},
     )
     try:
         return measure(lambda: apply(lambda: guard.capture(updater.reingest_scope)))
@@ -394,8 +431,24 @@ def run_check(
     the re-ingest is measured and then undone (see `check_isolation`).
     """
     changed, deleted = changed_since(repo_root, base)
-    changed = normalise_paths(changed, repo_root)
-    deleted = normalise_paths(deleted, repo_root)
+
+    def indexed(rel: str) -> bool:
+        # git lists every untracked file `.gitignore` leaves in, and a new
+        # repo's `.venv` or `node_modules` is all of them: the files a sync
+        # would skip are not the edit (issue #3264). Skipped before anything
+        # resolves them, so an interpreter symlink leaving the repository
+        # cannot abort the check, and before the snapshots, whose path
+        # filters scale with the list.
+        return not should_skip_path(
+            repo_root / rel,
+            repo_root,
+            exclude_paths=exclude_paths,
+            unignore_paths=unignore_paths,
+            is_file=True,
+        )
+
+    changed = [p for p in normalise_paths(changed, repo_root) if indexed(p)]
+    deleted = [p for p in normalise_paths(deleted, repo_root) if indexed(p)]
     updater = GraphUpdater(
         ingestor=ingestor,
         repo_path=repo_root,
@@ -421,7 +474,7 @@ def run_check(
     if not isolated:
         return measure(lambda: updater.reingest(changed, deleted=deleted))
     _refuse_unrestorable_capture(capture or default_capture())
-    _refuse_graph_holding_io_links(ingestor)
+    _refuse_project_holding_io_links(ingestor, project_name)
     return _measure_then_restore(
         updater,
         ingestor,

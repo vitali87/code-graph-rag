@@ -1,0 +1,13 @@
+# BuildKit reads this file instead of the root .dockerignore when it builds
+# .oss-scanner/Dockerfile. The root one leaves out .github and docs, which the
+# scanner should audit, so this keeps them and drops only local build output.
+**/__pycache__
+**/*.py[oc]
+.venv
+.env
+.envrc
+.ruff_cache
+.mypy_cache
+.pytest_cache
+.coverage
+rust/**/target

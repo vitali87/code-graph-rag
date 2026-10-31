@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from ...constants.languages import SupportedLanguage
+from ...utils.path_utils import frontend_ignored_dirs
 from ..go_frontend import (
     GoSemanticFacts,
     find_go_module,
@@ -42,6 +43,9 @@ def _adapt_go_semantic_facts(facts: GoSemanticFacts) -> SemanticFacts:
             )
             for pair in facts.implements
         ],
+        analysed_roots=facts.analysed_modules,
+        checked_files=facts.checked_files,
+        compared_types=facts.compared_types,
     )
 
 
@@ -56,8 +60,20 @@ class GoFrontend:
     def applies(self, repo_path: Path) -> bool:
         return find_go_module(repo_path) is not None
 
-    def run(self, repo_path: Path, files: Sequence[Path]) -> SemanticFacts:
-        return _adapt_go_semantic_facts(run_go_frontend(repo_path))
+    def run(
+        self,
+        repo_path: Path,
+        files: Sequence[Path],
+        rescued_files: frozenset[str] = frozenset(),
+    ) -> SemanticFacts:
+        # The frontend loads the whole project in one run: a narrowed file
+        # list cannot bind calls whose targets live in the files it omits.
+        del files
+        return _adapt_go_semantic_facts(
+            run_go_frontend(
+                repo_path, ignored_dirs=frontend_ignored_dirs(rescued_files)
+            )
+        )
 
 
 register_frontend(GoFrontend())

@@ -15,6 +15,7 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag import graph_updater as gu
+from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from evals.cgr_graph import _StatefulIngestor
@@ -98,7 +99,7 @@ def test_a_file_that_becomes_unreadable_after_a_healthy_run_is_retried(
     _updater(root, store).run(force=True)
     assert _updater(root, store)._is_already_in_sync() is True
 
-    cache_mtime = (root / ".cgr-hash-cache.json").stat().st_mtime
+    cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
     edited = root / "pkg" / "b.py"
     edited.write_text("def b():\n    return 3\n")
     import os
@@ -142,7 +143,7 @@ def test_a_symbol_renamed_while_unreadable_leaves_no_stale_entity(
     project = next(uid for label, uid in store.nodes if label == "Project")
     assert ("Function", f"{project}.pkg.b.old_name") in store.nodes
 
-    cache_mtime = (root / cs.HASH_CACHE_FILENAME).stat().st_mtime
+    cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
     edited = root / "pkg" / "b.py"
     edited.write_text("def new_name():\n    return 2\n")
     os.utime(edited, (cache_mtime + 1, cache_mtime + 1))
@@ -153,7 +154,7 @@ def test_a_symbol_renamed_while_unreadable_leaves_no_stale_entity(
         lambda path: None if path.name == "b.py" else real(path),
     )
     _updater(root, store).run()
-    cache = json.loads((root / cs.HASH_CACHE_FILENAME).read_text())
+    cache = json.loads(state_file(root, cs.HASH_CACHE_FILENAME).read_text())
     assert cache["pkg/b.py"] == cs.HASH_CACHE_UNREADABLE
     monkeypatch.setattr(gu, "_hash_file_with_bytes", real)
 

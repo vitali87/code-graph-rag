@@ -48,3 +48,28 @@ def test_the_readers_agree_with_the_table(
 
     assert _natural_qualified_name(name) == end
     assert _qn_normalized(name) == every
+
+
+@pytest.mark.parametrize(("name", "end", "every", "line"), TABLE)
+def test_the_marker_position_names_the_same_line(
+    name: str, end: str, every: str, line: int | None
+) -> None:
+    position = qn_markers.marker_position(name)
+    assert (None if position is None else position[0]) == line
+
+
+@pytest.mark.parametrize(
+    ("name", "position"),
+    [
+        ("Box@12", (12, -1)),
+        ("Box@12_5", (12, 5)),
+        ("@event@12_4", (12, 4)),
+        ("proj.Lib@7.Helper", None),
+    ],
+)
+def test_a_plain_line_marker_sorts_before_its_column_twins(
+    name: str, position: tuple[int, int] | None
+) -> None:
+    # Registration hands the plain `@line` to the first twin on a line and
+    # `@line_col` to later ones, so ordering by this key is document order.
+    assert qn_markers.marker_position(name) == position

@@ -9,12 +9,11 @@ from codebase_rag import constants as cs
 
 from .. import constants as ec
 from .. import logs as ls
-from ..types_defs import GraphData, OraclePayload
-from ._common import is_ignored, payload_to_graph
+from ..types_defs import CallOracle, GraphData, OraclePayload
+from ._common import payload_call_edges, payload_to_graph
 
 _ORACLE_DIR = Path(__file__).parent / ec.SCALA_ORACLE_DIRNAME
 _SOURCE = _ORACLE_DIR / ec.SCALA_ORACLE_SOURCE
-_CALLABLE_KINDS = frozenset({cs.NodeLabel.FUNCTION.value, cs.NodeLabel.METHOD.value})
 
 
 def scala_available() -> bool:
@@ -53,27 +52,7 @@ def run_scala_oracle(target: Path) -> GraphData:
     return payload_to_graph(_run_scala_oracle_payload(target))
 
 
-def run_scala_call_oracle(
-    target: Path,
-) -> tuple[set[tuple[str, str]], frozenset[str], frozenset[str]]:
-    # File-level Scala call sites restricted to first-party callees (simple name
-    # is a declared def), with the declared-name universe and the set of
-    # cleanly-parsed files so the cgr side is held to the same files and names.
+def run_scala_call_oracle(target: Path) -> CallOracle:
     # scalameta silently skips files it cannot parse (e.g. Scala 3 syntax), so
-    # grading only covered files keeps those out of both sides. Mirrors
-    # run_cpp_call_oracle.
-    payload = _run_scala_oracle_payload(target)
-    declared = frozenset(
-        rec[ec.ORACLE_KEY_NAME]
-        for rec in payload.get(ec.ORACLE_KEY_NODES, [])
-        if rec.get(ec.ORACLE_KEY_KIND) in _CALLABLE_KINDS
-    )
-    covered = frozenset(
-        rel for rel in payload.get(ec.ORACLE_KEY_COVERED, []) if not is_ignored(rel)
-    )
-    edges = {
-        (call[ec.ORACLE_KEY_FILE], call[ec.ORACLE_KEY_NAME])
-        for call in payload.get(ec.ORACLE_KEY_CALLS, [])
-        if call[ec.ORACLE_KEY_NAME] in declared and call[ec.ORACLE_KEY_FILE] in covered
-    }
-    return edges, declared, covered
+    # grading is held to the files it reports as covered on both sides.
+    return payload_call_edges(_run_scala_oracle_payload(target), use_covered=True)

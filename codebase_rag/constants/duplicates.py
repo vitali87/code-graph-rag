@@ -127,18 +127,46 @@ DELTA_ARITY_TOO_MANY = "too_many"
 DELTA_ARITY_TOO_FEW = "too_few"
 DELTA_ARITY_POSSIBLY_MISSING = "possibly_missing"
 DELTA_ARITY_UNKNOWN = "unknown"
+# Definite only where the callee's header was read back (issues #2853,
+# #2845): a keyword the new signature does not accept, with no `**kwargs`,
+# and a required parameter no argument fills, with no splat to supply it.
+DELTA_ARITY_UNEXPECTED_KEYWORD = "unexpected_keyword"
+# The verdicts that fail `--fail-on-found`: each is a certain `TypeError`.
+DELTA_ARITY_DEFINITE = frozenset(
+    {DELTA_ARITY_TOO_MANY, DELTA_ARITY_UNEXPECTED_KEYWORD, DELTA_ARITY_TOO_FEW}
+)
+# Decorators that hand the call to the def as written; any other may change
+# what a caller must pass, so the header alone settles nothing.
+PY_STATICMETHOD = "staticmethod"
+PY_SIGNATURE_PRESERVING_DECORATORS = frozenset(
+    {
+        PY_STATICMETHOD,
+        "classmethod",
+        "abstractmethod",
+        "abc.abstractmethod",
+        "override",
+        "typing.override",
+        "typing_extensions.override",
+    }
+)
 
 
 # What still names a removed or renamed symbol in a structural delta's
 # `dangling_importers` (issue #2516): an import statement binding it, or a
-# Python `__all__` string entry exporting it.
+# Python `__all__` string entry exporting it. `module` is an import of a
+# module the edit deleted or moved (issue #3266): `import pkg.signals`,
+# `from pkg import util`, `export * from "./util"`.
 class DanglingImportKind(StrEnum):
     IMPORT = "import"
     ALL = "__all__"
+    MODULE = "module"
 
 
 # Hops the backward test-reach walk follows before giving up.
 DELTA_REACH_MAX_DEPTH = 12
+# Source files whose syntax tree the arity verdicts keep while judging one
+# delta's sites (issue #2899): one parse per file version, however many sites.
+DELTA_PARSED_SOURCES_KEPT = 64
 
 # Cypher return alias for the not-analyzed symbol count.
 KEY_SKIPPED = "skipped"

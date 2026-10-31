@@ -14,6 +14,11 @@ C_CPP_ENTRY_FUNCTION_NAMES: frozenset[str] = frozenset(
     {"main", "wmain", "WinMain", "wWinMain", "DllMain"}
 )
 
+# The `main` a launcher calls with no call site the graph sees: the
+# module-level function a console script or `dart run` names. The JVM's and
+# Dart's `main` are judged at parse time (KEY_IS_PROGRAM_MAIN).
+PROGRAM_MAIN_NAME = "main"
+
 # Decorators whose presence marks a function/method as an implicit entry point
 # (web routes, task/flow handlers, fixtures, CLI commands, event listeners, and
 # Pydantic validators/serializers the framework invokes by registration).
@@ -225,9 +230,23 @@ CSHARP_NULLABLE_MARKER = "?"
 
 # Base classes that mark a class as a structural interface: its method stubs
 # are never call targets themselves (callers resolve to the implementations),
-# so dead-code analysis roots every method the class defines.
-# ponytail: direct bases only; transitive Protocol subclassing is not chased.
+# so dead-code analysis roots the class and every method it defines. Direct
+# bases only, as typing reads them: a subclass of a protocol is one only when
+# it lists Protocol again, and otherwise it is an implementation.
 PROTOCOL_BASE_QNS: tuple[str, ...] = ("typing.Protocol", "typing_extensions.Protocol")
+
+# `ast.NodeVisitor.visit` looks its handler up by name, `getattr(self,
+# "visit_" + type(node).__name__, self.generic_visit)`, so a subclass's
+# handlers have no call site the graph sees. NodeTransformer is a
+# NodeVisitor; a first-party subclass of either inherits the dispatch.
+PY_AST_VISITOR_BASE_QNS: tuple[str, ...] = ("ast.NodeVisitor", "ast.NodeTransformer")
+PY_AST_VISIT_METHOD_PREFIX = "visit_"
+PY_AST_GENERIC_VISIT_METHOD = "generic_visit"
+
+# pytest (through pluggy) calls every `pytest_*` attribute of a registered
+# plugin by name: a conftest.py, a module named by a `pytest11` entry point,
+# `-p` or `pytest_plugins`, or an object passed to `pluginmanager.register`.
+PYTEST_HOOK_PREFIX = "pytest_"
 
 # What marks a repo-relative path as test code (path_filters.matches_test_path).
 # Judged on whole words of path segments, never raw substrings: `test_` as a

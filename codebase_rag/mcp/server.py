@@ -4,24 +4,36 @@ import contextlib
 import json
 import os
 import sys
-from collections.abc import Iterator
+from collections.abc import Generator
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import jsonschema
 from loguru import logger
-from mcp.server import Server
+from mcp.server import Server, ServerRequestContext
 from mcp.server.stdio import stdio_server
-from mcp.types import CallToolResult, TextContent, Tool
+from mcp.types import (
+    CallToolRequestParams,
+    CallToolResult,
+    ListToolsResult,
+    PaginatedRequestParams,
+    TextContent,
+    Tool,
+)
 
 from codebase_rag import constants as cs
 from codebase_rag import exceptions as ex
 from codebase_rag import logs as lg
 from codebase_rag import tool_errors as te
 from codebase_rag.config import settings
-from codebase_rag.mcp.tools import create_mcp_tools_registry
+from codebase_rag.mcp.tools import (
+    MCPToolsRegistry,
+    create_mcp_tools_registry,
+    tool_annotations,
+)
 from codebase_rag.services.graph_service import MemgraphIngestor
 from codebase_rag.services.llm import LazyCypherGenerator
-from codebase_rag.types_defs import MCPToolArguments
+from codebase_rag.types_defs import MCPHandlerType, MCPToolArguments
 from codebase_rag.utils.path_utils import derive_project_name
 from codebase_rag.vector_store import close_qdrant_client
 from codebase_rag.workspaces import WorkspaceConfig, WorkspaceError, load_workspace
@@ -147,37 +159,41 @@ def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngesto
 
     logger.info(lg.MCP_SERVER_INIT_SUCCESS)
 
-    server = Server(cs.MCP_SERVER_NAME)
-
     def _create_error_content(message: str) -> CallToolResult:
         return _failed_call(te.failure(message))
 
-    @server.list_tools()
-    async def list_tools() -> list[Tool]:
-        schemas = tools.get_tool_schemas()
-        return [
-            Tool(
-                name=schema.name,
-                description=schema.description,
-                inputSchema={**schema.inputSchema},
-            )
-            for schema in schemas
-        ]
+    async def list_tools(
+        ctx: ServerRequestContext, params: PaginatedRequestParams | None
+    ) -> ListToolsResult:
+        return ListToolsResult(
+            tools=[
+                Tool(
+                    name=schema.name,
+                    description=schema.description,
+                    input_schema={**schema.inputSchema},
+                    annotations=tool_annotations(schema.name),
+                )
+                for schema in tools.get_tool_schemas()
+            ]
+        )
 
-    @server.call_tool()
     async def call_tool(
-        name: str, arguments: MCPToolArguments
-    ) -> list[TextContent] | CallToolResult:
+        ctx: ServerRequestContext, params: CallToolRequestParams
+    ) -> CallToolResult:
+        name = params.name
+        arguments: MCPToolArguments = params.arguments or {}
         logger.info(lg.MCP_SERVER_CALLING_TOOL.format(name=name))
 
         try:
-            handler_info = tools.get_tool_handler(name)
-            if not handler_info:
-                error_msg = cs.MCP_UNKNOWN_TOOL_ERROR.format(name=name)
-                logger.error(lg.MCP_SERVER_UNKNOWN_TOOL.format(name=name))
-                return _create_error_content(error_msg)
+            handler_info = _callable_handler(tools, name)
+            if isinstance(handler_info, str):
+                return _create_error_content(handler_info)
 
             handler, returns_json = handler_info
+
+            invalid = _invalid_arguments(tools, name, arguments)
+            if invalid is not None:
+                return _failed_call(invalid)
 
             result = await handler(**arguments)
 
@@ -188,17 +204,52 @@ def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngesto
             else:
                 result_text = str(result)
 
-            content = [TextContent(type=cs.MCP_CONTENT_TYPE_TEXT, text=result_text)]
-            if returns_json and _reports_failure(result):
-                return CallToolResult(content=content, isError=True)
-            return content
+            return CallToolResult(
+                content=[TextContent(type=cs.MCP_CONTENT_TYPE_TEXT, text=result_text)],
+                is_error=returns_json and _reports_failure(result),
+            )
 
         except Exception as e:
             error_msg = cs.MCP_TOOL_EXEC_ERROR.format(name=name, error=e)
             logger.exception(lg.MCP_SERVER_TOOL_ERROR.format(name=name, error=e))
             return _create_error_content(error_msg)
 
+    server = Server(
+        cs.MCP_SERVER_NAME, on_list_tools=list_tools, on_call_tool=call_tool
+    )
     return server, ingestor
+
+
+def _callable_handler(
+    tools: MCPToolsRegistry, name: str
+) -> tuple[MCPHandlerType, bool] | str:
+    """Tool `name`'s handler and whether it returns JSON, or why it cannot
+    be called on this server."""
+    handler_info = tools.get_tool_handler(name)
+    if not handler_info:
+        logger.error(lg.MCP_SERVER_UNKNOWN_TOOL.format(name=name))
+        return cs.MCP_UNKNOWN_TOOL_ERROR.format(name=name)
+    # A client can call a tool it was never listed, so read-only mode
+    # refuses here too, before the handler runs (issue #3458).
+    if not tools.serves(name):
+        logger.warning(lg.MCP_SERVER_READ_ONLY_REFUSED.format(name=name))
+        return cs.MCP_READ_ONLY_REFUSED.format(name=name)
+    return handler_info
+
+
+def _invalid_arguments(
+    tools: MCPToolsRegistry, name: str, arguments: MCPToolArguments
+) -> str | None:
+    # mcp 1.x checked the arguments against the listed input schema before a
+    # handler ran; 2.x leaves that to the server, and the schemas' bounds
+    # (a non-negative `read_file` offset, say) are only enforced here.
+    for schema in tools.get_tool_schemas():
+        if schema.name == name:
+            try:
+                jsonschema.validate(instance=arguments, schema={**schema.inputSchema})
+            except jsonschema.ValidationError as e:
+                return cs.MCP_INPUT_VALIDATION_ERROR.format(error=e.message)
+    return None
 
 
 def _reports_failure(result: object) -> bool:
@@ -219,17 +270,16 @@ def _reports_failure(result: object) -> bool:
 
 
 def _failed_call(message: str) -> CallToolResult:
-    # A returned content list reaches the client as `isError: false`; a
-    # failure the server or a tool detected must say so in the protocol, not
-    # only in its prose (issue #2650).
+    # A failure the server or a tool detected must say so in the protocol
+    # with `isError: true`, not only in its prose (issue #2650).
     return CallToolResult(
         content=[TextContent(type=cs.MCP_CONTENT_TYPE_TEXT, text=message)],
-        isError=True,
+        is_error=True,
     )
 
 
 @contextlib.contextmanager
-def _service_lifecycle(ingestor: MemgraphIngestor) -> Iterator[None]:
+def _service_lifecycle(ingestor: MemgraphIngestor) -> Generator[None]:
     """Manage shared service lifetimes for the MCP server.
 
     Opens the Memgraph ingestor connection and releases the vector store client
@@ -343,10 +393,9 @@ async def serve_http(
 
     @contextlib.asynccontextmanager
     async def lifespan(app: Starlette):
-        with _service_lifecycle(ingestor):
-            async with session_manager.run():
-                logger.info(lg.MCP_HTTP_SERVER_READY.format(host=host, port=port))
-                yield
+        async with session_manager.run():
+            logger.info(lg.MCP_HTTP_SERVER_READY.format(host=host, port=port))
+            yield
 
     # With a token, bearer auth fronts the mount even on loopback
     # (defense in depth for shared hosts); without one the exposure
@@ -364,7 +413,11 @@ async def serve_http(
 
     config = uvicorn.Config(starlette_app, host=host, port=port, log_level="info")
     uvicorn_server = uvicorn.Server(config)
-    await uvicorn_server.serve()
+    # Connected before uvicorn starts, as stdio connects before its
+    # transport: uvicorn logs a failure inside the lifespan and returns, so
+    # the command exited 0 for a server that never started (PR 2504 review).
+    with _service_lifecycle(ingestor):
+        await uvicorn_server.serve()
 
 
 if __name__ == "__main__":

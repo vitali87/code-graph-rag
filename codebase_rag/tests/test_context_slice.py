@@ -5,9 +5,12 @@
 
 from __future__ import annotations
 
+import contextlib
+import json
 from pathlib import Path
 
 import pytest
+from typer.testing import CliRunner
 
 from codebase_rag import constants as cs
 from codebase_rag.context_slice import _doc_pieces, context
@@ -177,6 +180,80 @@ def test_token_count_never_exceeds_the_budget(
     assert tiny["truncated"]
     assert tiny["used_tokens"] <= 5
     assert tiny["omitted"][0].startswith(_qn("pkg.util.helper"))
+
+
+def _first_line_tokens(slice_: dict) -> int:
+    (target,) = _by_why(slice_)[cs.CONTEXT_WHY_TARGET]
+    return count_tokens(target["source"].split("\n")[0])
+
+
+def test_a_target_too_large_for_the_budget_leaves_the_slice_empty(
+    repo: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    """Neighbours without the target would read as context for it, so a
+    budget too small for its first line returns no pieces (issue #3005)."""
+    root, store, _updater = repo
+    full = context(store.fetch_all, PROJECT, _qn("pkg.util.helper"), 4000, root)
+    budget = _first_line_tokens(full) - 1
+    # The trigger: a neighbour small enough to take the space the target
+    # could not use.
+    assert any(
+        p["tokens"] <= budget
+        for p in full["pieces"]
+        if p["why_included"] != cs.CONTEXT_WHY_TARGET
+    )
+
+    slice_ = context(store.fetch_all, PROJECT, _qn("pkg.util.helper"), budget, root)
+
+    assert slice_["resolved"] == _qn("pkg.util.helper")
+    assert slice_["pieces"] == []
+    assert slice_["used_tokens"] == 0
+    assert slice_["truncated"]
+    assert slice_["omitted"] == [f"{_qn('pkg.util.helper')} ({cs.CONTEXT_WHY_TARGET})"]
+
+
+@pytest.mark.parametrize(("fits", "exit_code"), [(True, 0), (False, 1)])
+def test_cli_context_exits_nonzero_when_the_target_does_not_fit(
+    repo: tuple[Path, _StatefulIngestor, GraphUpdater],
+    monkeypatch: pytest.MonkeyPatch,
+    fits: bool,
+    exit_code: int,
+) -> None:
+    from codebase_rag import graph_cli
+    from codebase_rag.cli import app
+
+    root, store, _updater = repo
+    monkeypatch.setattr(
+        graph_cli,
+        "_project_and_fetch",
+        lambda project, repo_path: (PROJECT, store.fetch_all, contextlib.nullcontext()),
+    )
+    full = context(store.fetch_all, PROJECT, _qn("pkg.util.helper"), 4000, root)
+    budget = _first_line_tokens(full) - (0 if fits else 1)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "context",
+            _qn("pkg.util.helper"),
+            "--repo-path",
+            str(root),
+            "--budget",
+            str(budget),
+        ],
+    )
+
+    assert result.exit_code == exit_code, result.output
+    pieces = json.loads(result.stdout)["pieces"]
+    message = cs.CONTEXT_TARGET_OVER_BUDGET.format(
+        target=_qn("pkg.util.helper"), budget=budget
+    )
+    if fits:
+        assert pieces[0]["why_included"] == cs.CONTEXT_WHY_TARGET
+        assert message not in result.stderr
+    else:
+        assert pieces == []
+        assert message in result.stderr
 
 
 @_needs_markdown

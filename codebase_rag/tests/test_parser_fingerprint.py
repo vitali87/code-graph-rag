@@ -20,6 +20,7 @@ from codebase_rag import constants as cs
 from codebase_rag import graph_updater
 from codebase_rag import logs as ls
 from codebase_rag.capture import CaptureSelection, resolve_capture
+from codebase_rag.checkout_state import state_file
 from codebase_rag.cli import _delete_hash_cache
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_fingerprint import compute_parser_fingerprint
@@ -62,7 +63,7 @@ def _make_updater(
 
 
 def _fingerprint_path(repo: Path) -> Path:
-    return repo / cs.PARSER_FINGERPRINT_FILENAME
+    return state_file(repo, cs.PARSER_FINGERPRINT_FILENAME)
 
 
 class TestComputeParserFingerprint:
@@ -526,7 +527,7 @@ class TestFingerprintStamping:
         store = _StatefulIngestor()
         updater = _make_updater(py_project, store)  # type: ignore[arg-type]
         updater.run()
-        (py_project / cs.HASH_CACHE_FILENAME).write_text('{"module_a.py": "ab')
+        state_file(py_project, cs.HASH_CACHE_FILENAME).write_text('{"module_a.py": "ab')
         _fingerprint_path(py_project).write_text(STALE_FINGERPRINT, encoding="utf-8")
         updater.run()
 
@@ -553,7 +554,7 @@ class TestFingerprintStamping:
         (py_project / "module_b.py").write_text("def func_b():\n    pass\n")
         updater = _make_updater(py_project, store)  # type: ignore[arg-type]
         updater.run()
-        cache_path = py_project / cs.HASH_CACHE_FILENAME
+        cache_path = state_file(py_project, cs.HASH_CACHE_FILENAME)
         cache = json.loads(cache_path.read_text(encoding="utf-8"))
         del cache["module_b.py"]
         cache_path.write_text(json.dumps(cache), encoding="utf-8")
@@ -602,7 +603,7 @@ class TestFingerprintStamping:
 
         from codebase_rag.graph_updater import _load_hash_cache
 
-        hashes = _load_hash_cache(py_project / cs.HASH_CACHE_FILENAME)
+        hashes = _load_hash_cache(state_file(py_project, cs.HASH_CACHE_FILENAME))
         assert cs.PARSER_FINGERPRINT_FILENAME not in hashes
 
     def test_stamp_file_does_not_break_fast_path(
@@ -701,7 +702,7 @@ class TestStampIO:
         # abort the sync that just succeeded.
         from codebase_rag.graph_updater import _save_parser_fingerprint
 
-        stamp_dir = tmp_path / cs.PARSER_FINGERPRINT_FILENAME
+        stamp_dir = state_file(tmp_path, cs.PARSER_FINGERPRINT_FILENAME)
         stamp_dir.mkdir()
 
         _save_parser_fingerprint(stamp_dir, STALE_FINGERPRINT)
@@ -720,9 +721,9 @@ class TestCleanRemovesStamp:
 
         _delete_hash_cache(tmp_path)
 
-        assert not (tmp_path / cs.PARSER_FINGERPRINT_FILENAME).exists()
-        assert not (tmp_path / cs.HASH_CACHE_FILENAME).exists()
-        assert not (tmp_path / cs.DIR_MTIMES_FILENAME).exists()
+        assert not state_file(tmp_path, cs.PARSER_FINGERPRINT_FILENAME).exists()
+        assert not state_file(tmp_path, cs.HASH_CACHE_FILENAME).exists()
+        assert not state_file(tmp_path, cs.DIR_MTIMES_FILENAME).exists()
 
 
 def test_fingerprint_resolves_auto_to_effective_frontend(

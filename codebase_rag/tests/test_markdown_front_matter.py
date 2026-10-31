@@ -142,23 +142,29 @@ class TestParsing:
         }
 
     def test_a_key_opening_a_structure_is_skipped(self) -> None:
-        """`tags:` with no value opens a list, and is not an empty scalar.
+        """`meta:` with no value opens a map, and is not an empty scalar.
 
-        Recording `{"tags": ""}` asserts the author declared it empty, which
+        Recording `{"meta": ""}` asserts the author declared it empty, which
         is a different claim from declaring a structure this parser does not
         represent. The distinction matters because a consumer cannot tell the
-        two apart after the fact.
+        two apart after the fact. A list beneath the key is the one structure
+        that is read, as its items (issue #2458).
         """
-        assert parse_front_matter("---\ntags:\n  - a\n  - b\n---\n") == {}
+        assert parse_front_matter("---\nmeta:\n  owner: a\n---\n") == {}
+        assert parse_front_matter("---\ntags:\n---\n") == {}
+        assert parse_front_matter("---\ntags:\n  - a\n  - b\n---\n") == {
+            "tags": ("a", "b")
+        }
 
     def test_a_flow_collection_is_not_stored_as_a_scalar(self) -> None:
         """`[a, b]` and `{k: v}` are structures written on one line.
 
         Storing the source text makes a list indistinguishable from a string
         that happens to look like one, and no consumer can recover which was
-        meant. Reported on #1488.
+        meant. Reported on #1488. A list keeps its items instead (#2458); a
+        map has no flat spelling and is still skipped.
         """
-        assert parse_front_matter("---\ntags: [a, b]\n---\n") == {}
+        assert parse_front_matter("---\ntags: [a, b]\n---\n") == {"tags": ("a", "b")}
         assert parse_front_matter("---\nmeta: {k: v}\n---\n") == {}
 
     def test_a_block_scalar_marker_is_not_the_value(self) -> None:

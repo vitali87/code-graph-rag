@@ -96,6 +96,47 @@ def _decode(source: bytes, codec: str, path: Path) -> str | None:
         return None
 
 
+# Checked longest first: the UTF-32 LE mark begins with the UTF-16 LE one.
+# Each mark with the codec of the text after it and the BOM-aware codec a
+# reader opens the whole file with.
+_WIDE_BOMS = (
+    (codecs.BOM_UTF32_LE, cs.ENCODING_UTF32_LE, cs.ENCODING_UTF32),
+    (codecs.BOM_UTF32_BE, cs.ENCODING_UTF32_BE, cs.ENCODING_UTF32),
+    (codecs.BOM_UTF16_LE, cs.ENCODING_UTF16_LE, cs.ENCODING_UTF16),
+    (codecs.BOM_UTF16_BE, cs.ENCODING_UTF16_BE, cs.ENCODING_UTF16),
+)
+_WIDE_BOM_MAX = max(len(bom) for bom, _, _ in _WIDE_BOMS)
+
+
+def _wide_bom(source: bytes) -> tuple[bytes, str, str] | None:
+    return next((entry for entry in _WIDE_BOMS if source.startswith(entry[0])), None)
+
+
+def decode_wide_source(source: bytes, path: Path) -> str | None:
+    """The text of a UTF-16 or UTF-32 source marked by its BOM.
+
+    tree-sitter read such a file's NUL-interleaved bytes as UTF-8 and found no
+    declarations, so a UTF-16 `.cs`, `.java` or `.cpp` was indexed as an
+    empty module (issue #3153). The mark picks the byte order and is not part
+    of the text. Newlines decode to newlines, so the text has the file's
+    lines. None for any other file, or one that fails to decode.
+    """
+    if (wide := _wide_bom(source)) is None:
+        return None
+    bom, codec, _reader_codec = wide
+    return _decode(source[len(bom) :], codec, path)
+
+
+def encode_source(text: str, codec: str) -> bytes:
+    """`text` written back in the codec `python_source_view` reported.
+
+    A wide source gets the BOM it was read with in front again: the codec
+    names one byte order, and the mark is not part of the text.
+    """
+    bom = next((mark for mark, wide, _ in _WIDE_BOMS if wide == codec), b"")
+    return bom + text.encode(codec)
+
+
 def decode_python_source(source: bytes, path: Path) -> str | None:
     """The text of a Python source that declares its encoding, BOM included.
 
@@ -107,17 +148,76 @@ def decode_python_source(source: bytes, path: Path) -> str | None:
     return _decode(source, codec, path)
 
 
+def source_codec(path: Path) -> str:
+    """The codec to read `path` as text with (issue #2901).
+
+    A Python file's PEP 263 declaration (only its first two lines can hold
+    one), else UTF-8: every other reader of a source then sees the text the
+    indexer parsed.
+    """
+    python = path.suffix in cs.PY_EXTENSIONS
+    try:
+        with path.open("rb") as handle:
+            head = (
+                handle.readline() + handle.readline()
+                if python
+                else handle.read(_WIDE_BOM_MAX)
+            )
+    except OSError:
+        return cs.ENCODING_UTF8
+    if not python:
+        # A UTF-16/32 source was indexed as the text its BOM marks (#3153).
+        wide = _wide_bom(head)
+        return cs.ENCODING_UTF8 if wide is None else wide[2]
+    return _declared_codec(head, path) or cs.ENCODING_UTF8
+
+
+def decode_source(source: bytes, path: Path) -> str:
+    """`source` as text for display, in a Python file's declared encoding or
+    the one a wide source's BOM marks."""
+    declared = (
+        decode_python_source(source, path)
+        if path.suffix in cs.PY_EXTENSIONS
+        else decode_wide_source(source, path)
+    )
+    if declared is not None:
+        return declared
+    return source.decode(cs.ENCODING_UTF8, errors="replace")
+
+
+def python_source_view(
+    source: bytes, language: cs.SupportedLanguage | None, path: Path
+) -> tuple[bytes, str | None]:
+    """`source` as the UTF-8 bytes the grammar parsed, plus the codec to
+    write an edit of it back in (None when that is UTF-8 already).
+
+    The graph's byte columns address this view (issue #2901), so an editor
+    patches it and re-encodes only the result.
+    """
+    view = grammar_bytes(source, language, path)
+    if view is source:
+        return source, None
+    if language != cs.SupportedLanguage.PYTHON and (wide := _wide_bom(source)):
+        return view, wide[1]
+    return view, _declared_codec(source, path)
+
+
 def grammar_bytes(
     source: bytes, language: cs.SupportedLanguage | None, path: Path
 ) -> bytes:
     """The bytes to hand tree-sitter for `source`.
 
-    A Python source declaring a non-UTF-8 encoding comes back re-encoded as
+    A UTF-16 or UTF-32 source with a BOM in any language but Python, and a
+    Python source declaring a non-UTF-8 encoding, come back re-encoded as
     UTF-8. Everything else is returned as the same object: other languages
-    have no such declaration, and a UTF-8 file (BOM or not) is already what
-    the grammar reads.
+    have no encoding declaration, and a UTF-8 file (BOM or not) is already
+    what the grammar reads. CPython refuses a UTF-16/32 source, which is not
+    ASCII-compatible (the reason `_declared_codec` refuses a `utf-16`
+    cookie), so a wide `.py` is left as the bytes it was before (#3153 review).
     """
     if language != cs.SupportedLanguage.PYTHON:
+        if (wide := decode_wide_source(source, path)) is not None:
+            return wide.encode(cs.ENCODING_UTF8, errors="surrogatepass")
         return source
     codec = _declared_codec(source, path)
     if codec is None or _is_utf8(codec):

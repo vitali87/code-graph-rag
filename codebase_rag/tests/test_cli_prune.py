@@ -8,6 +8,7 @@ cannot be verified as complete is reported as a failure.
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable, Generator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -19,6 +20,7 @@ from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag.cli import app
 from codebase_rag.config import settings
+from codebase_rag.types_defs import PropertyParams, ResultRow
 
 runner = CliRunner()
 
@@ -59,20 +61,21 @@ def mock_memgraph_connect(
 
 
 def _fake_fetch_all(
-    residual: object,
-) -> Callable[[str, dict[str, object] | None], list[dict[str, object]]]:
+    residual: int | None,
+) -> Callable[[str, PropertyParams | None], list[ResultRow]]:
     """One fake for every fetch: node ids read normally, the residual
     count returning whatever the caller wants the verification to see —
     a row with the given count, or an empty read for None."""
 
-    def fetch_all(
-        query: str, params: dict[str, object] | None = None
-    ) -> list[dict[str, object]]:
+    def fetch_all(query: str, params: PropertyParams | None = None) -> list[ResultRow]:
         if query == cs.CYPHER_QUERY_PROJECT_NODE_IDS:
             return [{cs.KEY_NODE_ID: 1}]
         if query == cq.CYPHER_COUNT_PROJECT_NODES:
-            assert params is not None and set(params) == {cs.KEY_PROJECT_NAME}
-            assert isinstance(params[cs.KEY_PROJECT_NAME], str)
+            assert params is not None
+            assert set(params) == {cs.KEY_PROJECT_NAME, cs.KEY_PROJECT_PREFIX}
+            name = params[cs.KEY_PROJECT_NAME]
+            assert isinstance(name, str)
+            assert params[cs.KEY_PROJECT_PREFIX] == f"{name}{cs.SEPARATOR_DOT}"
             return [] if residual is None else [{cs.KEY_RESIDUAL_NODES: residual}]
         return []
 
@@ -156,6 +159,38 @@ class TestCandidateSelection:
         assert "nothing to prune" in result.output
         _ingestor(mock_memgraph_connect).delete_project.assert_not_called()
 
+    @pytest.mark.skipif(
+        sys.platform == "win32", reason="symlinks need privileges on Windows"
+    )
+    def test_a_looping_root_is_not_a_candidate(
+        self, tmp_path: Path, mock_memgraph_connect: MagicMock, roots: dict[str, str]
+    ) -> None:
+        # Resolving a symlink loop raises on Python 3.12; the listing must
+        # read it as undeterminable, hence live, rather than crash.
+        loop = tmp_path / "loop"
+        loop.symlink_to(loop)
+        _ingestor(mock_memgraph_connect).list_project_roots.side_effect = [
+            {**roots, "loop__66666666": str(loop)}
+        ]
+        result = runner.invoke(app, ["prune", "--dry-run"])
+
+        assert result.exit_code == 0, result.output
+        assert "dead__22222222" in result.output
+        assert "loop__66666666" not in result.output
+
+    def test_a_root_is_listed_as_written(
+        self, tmp_path: Path, mock_memgraph_connect: MagicMock
+    ) -> None:
+        # A route directory such as `[slug]` would read as console markup.
+        gone = str(tmp_path / "[slug]")
+        _ingestor(mock_memgraph_connect).list_project_roots.side_effect = [
+            {"web__55555555": gone}
+        ]
+        result = runner.invoke(app, ["prune", "--dry-run"])
+
+        assert result.exit_code == 0, result.output
+        assert gone in " ".join(result.output.split())
+
     def test_legacy_project_without_root_is_not_a_candidate(
         self, mock_memgraph_connect: MagicMock, roots: dict[str, str]
     ) -> None:
@@ -192,7 +227,26 @@ class TestPruneDeletion:
             result = runner.invoke(app, ["prune", "--yes"])
 
         assert result.exit_code == 0, result.output
-        mock_embeddings.assert_called_once_with("dead__22222222", [1])
+        mock_embeddings.assert_called_once_with("dead__22222222", [1], [])
+
+    def test_a_nested_project_keeps_its_vectors(
+        self, tmp_path: Path, mock_memgraph_connect: MagicMock, roots: dict[str, str]
+    ) -> None:
+        # `dead__22222222.v2` sits under the pruned name, so the prefix-scoped
+        # node-id read names its nodes too; the store is told to keep them.
+        nested = tmp_path / "v2"
+        nested.mkdir()
+        ingestor = _ingestor(mock_memgraph_connect)
+        ingestor.list_project_roots.side_effect = [
+            {**roots, "dead__22222222.v2": str(nested)}
+        ]
+        with patch("codebase_rag.cli.delete_project_embeddings") as mock_embeddings:
+            result = runner.invoke(app, ["prune", "--yes"])
+
+        assert result.exit_code == 0, result.output
+        mock_embeddings.assert_called_once_with(
+            "dead__22222222", [1], ["dead__22222222.v2"]
+        )
 
     def test_keeps_vectors_when_their_deletion_fails(
         self, mock_memgraph_connect: MagicMock
@@ -244,31 +298,69 @@ class TestPruneDeletion:
         )
 
 
-class TestPruneSyncRecord:
-    def test_forgets_the_sync_record_of_a_verified_purge(
-        self, mock_memgraph_connect: MagicMock, _isolated_cgr_home: Path
-    ) -> None:
-        from codebase_rag import cgr_state
+class TestPruneAftercare:
+    """What a proven purge takes after the graph, as `delete-project` does."""
 
-        cgr_state.record_sync("dead__22222222", home=_isolated_cgr_home)
-        result = runner.invoke(app, ["prune", "--yes"])
+    def test_a_verified_purge_sweeps_notes_and_markers(
+        self, mock_memgraph_connect: MagicMock
+    ) -> None:
+        with (
+            patch(
+                "codebase_rag.cli.prune_orphaned_glosses", return_value=True
+            ) as sweep,
+            patch("codebase_rag.cli._clear_deleted_project_markers") as clear,
+        ):
+            result = runner.invoke(app, ["prune", "--yes"])
 
         assert result.exit_code == 0, result.output
-        assert cgr_state.read_sync_timestamps(home=_isolated_cgr_home) == {}
+        ingestor = _ingestor(mock_memgraph_connect)
+        sweep.assert_called_once_with(ingestor, "dead__22222222")
+        # The marker would keep the project in `cgr status` as interrupted.
+        clear.assert_called_once_with(ingestor, "dead__22222222")
 
-    def test_keeps_the_sync_record_when_verification_fails(
-        self, mock_memgraph_connect: MagicMock, _isolated_cgr_home: Path
+    def test_a_failed_note_sweep_warns_and_the_prune_still_counts(
+        self, mock_memgraph_connect: MagicMock
     ) -> None:
-        from codebase_rag import cgr_state
+        with (
+            patch("codebase_rag.cli.prune_orphaned_glosses", return_value=False),
+            patch("codebase_rag.cli._clear_deleted_project_markers"),
+        ):
+            result = runner.invoke(app, ["prune", "--yes"])
 
-        cgr_state.record_sync("dead__22222222", home=_isolated_cgr_home)
+        assert result.exit_code == 0, result.output
+        assert "could not be removed" in " ".join(result.output.split())
+        assert "Pruned project 'dead__22222222'" in result.output
+
+    def test_an_unverified_purge_keeps_notes_and_markers(
+        self, mock_memgraph_connect: MagicMock
+    ) -> None:
         _ingestor(mock_memgraph_connect).fetch_all.side_effect = _fake_fetch_all(7)
-        result = runner.invoke(app, ["prune", "--yes"])
+        with (
+            patch("codebase_rag.cli.prune_orphaned_glosses") as sweep,
+            patch("codebase_rag.cli._clear_deleted_project_markers") as clear,
+        ):
+            result = runner.invoke(app, ["prune", "--yes"])
 
         assert result.exit_code == 1, result.output
-        assert set(cgr_state.read_sync_timestamps(home=_isolated_cgr_home)) == {
-            "dead__22222222"
-        }
+        sweep.assert_not_called()
+        clear.assert_not_called()
+
+    def test_a_delete_that_raises_is_a_failure_and_sweeps_if_gone(
+        self, mock_memgraph_connect: MagicMock
+    ) -> None:
+        ingestor = _ingestor(mock_memgraph_connect)
+        ingestor.delete_project.side_effect = RuntimeError("cleanup failed")
+        with (
+            patch("codebase_rag.cli._sweep_glosses_after_failed_delete") as sweep,
+            patch("codebase_rag.cli.delete_project_embeddings") as embeddings,
+        ):
+            result = runner.invoke(app, ["prune", "--yes"])
+
+        assert result.exit_code == 1, result.output
+        assert "Failed to prune project 'dead__22222222'" in result.output
+        assert "Pruned project" not in result.output
+        sweep.assert_called_once_with(ingestor, "dead__22222222")
+        embeddings.assert_not_called()
 
 
 class TestPruneVerification:

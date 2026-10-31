@@ -1111,6 +1111,12 @@ class TestNativeNotices:
             # A distro interpreter links the system Expat rather than the copy
             # CPython vendors; a local build on Ubuntu 24.04 bundled it.
             (("libexpat.so.1",), {"CPython", "Expat"}),
+            # The embedded graph's storage, as a distro and a Windows
+            # interpreter link it.
+            (("libsqlite3.so.0",), {"CPython", "SQLite"}),
+            (("sqlite3.dll",), {"CPython", "SQLite"}),
+            # Ubuntu 26.04's OpenSSL links libzstd, so it rides in beside it.
+            (("libcrypto.so.3", "libzstd.so.1"), {"CPython", "OpenSSL", "Zstandard"}),
             (
                 WINDOWS_RELEASE_LIBRARIES,
                 {
@@ -1156,9 +1162,9 @@ class TestNativeNotices:
 
     def test_an_unlisted_library_refuses_the_notice(self, notices: ModuleType) -> None:
         """A new library must get a licence entry, not ship unattributed."""
-        libraries = frozenset({"libsqlite3.so.0"})
+        libraries = frozenset({"libgomp.so.1"})
 
-        with pytest.raises(notices.NativeLicenseError, match="libsqlite3.so.0"):
+        with pytest.raises(notices.NativeLicenseError, match="libgomp.so.1"):
             notices.native_notices(libraries)
 
     @pytest.mark.parametrize("library", ["libssl.so.1.1", "libcrypto-1_1-x64.dll"])

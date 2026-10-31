@@ -926,20 +926,32 @@ def test_a_graph_row_keeps_only_a_string_call_qualifier(
     assert _site(row).call_qualifier == qualifier  # type: ignore[arg-type]
 
 
-def test_a_python_signature_change_is_reported_as_before(temp_repo: Path) -> None:
-    """Python keeps its rules: no defaults recorded, so fewer is a hint."""
+@pytest.mark.parametrize(
+    ("edited", "verdict"),
+    [
+        ("(msg, channel)", cs.DELTA_ARITY_TOO_FEW),
+        ("(msg, channel=None)", cs.DELTA_ARITY_POSSIBLY_MISSING),
+    ],
+    ids=["required-added", "optional-added"],
+)
+def test_a_python_signature_change_is_judged_from_its_header(
+    temp_repo: Path, edited: str, verdict: str
+) -> None:
+    """Python's defaults are read back from the def's header (issues #2845,
+    #2853): a required parameter added leaves `send("hi")` short, an
+    optional one is still only a hint."""
     files = {
         "lib.py": "def send(msg):\n    return msg\n",
         "app.py": 'from lib import send\n\n\ndef run():\n    return send("hi")\n',
     }
     delta = _delta(
-        temp_repo, files, {"lib.py": files["lib.py"].replace("(msg)", "(msg, channel)")}
+        temp_repo, files, {"lib.py": files["lib.py"].replace("(msg)", edited)}
     )
 
     change = _change(delta, ".lib.send")
     assert (change["before"], change["after"]) == (["msg"], ["msg", "channel"])
-    assert _verdicts(delta, ".lib.send") == [cs.DELTA_ARITY_POSSIBLY_MISSING]
-    assert not has_findings(delta)
+    assert _verdicts(delta, ".lib.send") == [verdict]
+    assert has_findings(delta) == (verdict == cs.DELTA_ARITY_TOO_FEW)
 
 
 def test_a_graph_indexed_before_the_lists_reports_no_phantom_change(

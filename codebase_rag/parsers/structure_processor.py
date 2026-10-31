@@ -13,6 +13,7 @@ from ..utils.path_utils import (
     cached_file_identity_posix,
     cached_relative_path,
     cached_resolve_posix,
+    is_symlink_entry,
     should_skip_path,
 )
 
@@ -106,7 +107,10 @@ class StructureProcessor:
         """
         directories = {self.repo_path}
         for path in self.repo_path.rglob(cs.GLOB_ALL):
-            if not path.is_dir():
+            # A linked directory is not walked (issue #2451), so it gets no
+            # container either: an in-repo one was an empty Package whose
+            # absolute path was its target's.
+            if not path.is_dir() or is_symlink_entry(path):
                 continue
             if only is not None and (
                 cached_relative_path(path, self.repo_path).as_posix() not in only

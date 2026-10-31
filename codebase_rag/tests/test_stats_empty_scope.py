@@ -78,7 +78,7 @@ def test_a_blank_project_name_is_not_the_whole_graph(names: list[str]) -> None:
     code, out = _run([arg for name in names for arg in ("-n", name)], mock)
 
     assert code == 1, out
-    assert "--project-name" in out
+    assert "--project" in out
     assert not _whole_graph_queried(mock)
 
 

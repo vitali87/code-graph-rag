@@ -18,6 +18,7 @@ from loguru import logger
 from tree_sitter import Parser
 
 from codebase_rag import constants as cs
+from codebase_rag.checkout_state import state_dir
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.types_defs import LanguageQueries
@@ -51,12 +52,14 @@ def snapshot(store: _StatefulIngestor) -> GraphState:
 
 
 def _purge_index_state(work: Path) -> None:
-    # A copied tree may carry cgr's own hash/dir-mtime caches. Left in place, a
-    # future-dated cache makes the baseline index skip every file, so remove
-    # such state before indexing.
+    # A copied tree may carry cgr's own hash/dir-mtime caches, and an earlier
+    # run of this eval left state for the same work path under CGR_HOME. Left
+    # in place, a future-dated cache makes the baseline index skip every file,
+    # so remove such state before indexing.
     for name in (cs.HASH_CACHE_FILENAME, cs.DIR_MTIMES_FILENAME):
         for stale in work.rglob(name):
             stale.unlink()
+    shutil.rmtree(state_dir(work), ignore_errors=True)
 
 
 def _index(
@@ -95,7 +98,7 @@ def run_neutral_edit_scenario(
 
     # The neutral edit must read as "changed": bump its mtime past the hash
     # cache so the in-sync fast path and per-file mtime gate both fire.
-    cache = work / cs.HASH_CACHE_FILENAME
+    cache = state_dir(work) / cs.HASH_CACHE_FILENAME
     future = cache.stat().st_mtime + ec.INCREMENTAL_MTIME_BUMP
     target = work / target_rel
     target.write_bytes(neutral_edit(target.read_bytes()))

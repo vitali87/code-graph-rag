@@ -331,36 +331,18 @@ class TestAnalyzeJavaLocalVariables:
 
 
 class TestAnalyzeJavaClassFields:
-    def test_class_field_extracted(
-        self, engine: JavaTypeInferenceEngine, mock_ast_cache: MagicMock
-    ) -> None:
-        class_name_node = create_mock_node(cs.TS_TYPE_IDENTIFIER, "MyClass")
-        field_name_node = create_mock_node(cs.TS_IDENTIFIER, "name")
-        field_declarator = create_mock_node(
-            cs.TS_VARIABLE_DECLARATOR,
-            fields={cs.FIELD_NAME: field_name_node},
-        )
-        field_type_node = create_mock_node(cs.TS_TYPE_IDENTIFIER, "String")
-        field_decl = create_mock_node(
-            cs.TS_FIELD_DECLARATION,
-            fields={
-                cs.FIELD_TYPE: field_type_node,
-                cs.FIELD_DECLARATOR: field_declarator,
-            },
-        )
-        class_body = create_mock_node("class_body", children=[field_decl])
-        class_node = create_mock_node(
-            cs.TS_CLASS_DECLARATION,
-            fields={cs.FIELD_NAME: class_name_node, cs.FIELD_BODY: class_body},
-            children=[class_body],
-        )
-        method_body = create_mock_node("block")
-        method_node = create_mock_node(
-            "method_declaration",
-            children=[method_body],
-        )
-        method_node.node_parent = class_node
-        method_body.node_parent = method_node
+    def test_class_field_extracted(self, engine: JavaTypeInferenceEngine) -> None:
+        # Parsed with the real grammar: the class's fields are cached on the
+        # class node (issue #2453), which a tree-sitter node can key and the
+        # value-compared MockNode cannot.
+        tsjava = pytest.importorskip("tree_sitter_java")
+        source = "class MyClass { private String name; void run() {} }"
+        tree = Parser(Language(tsjava.language())).parse(source.encode())
+        assert not tree.root_node.has_error
+        class_body = tree.root_node.named_children[0].child_by_field_name(cs.FIELD_BODY)
+        assert class_body is not None
+        method_body = class_body.named_children[1].child_by_field_name(cs.FIELD_BODY)
+        assert method_body is not None
 
         local_var_types: dict[str, str] = {}
 

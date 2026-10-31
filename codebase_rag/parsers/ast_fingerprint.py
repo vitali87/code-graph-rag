@@ -24,6 +24,7 @@ from tree_sitter import Node
 from .. import constants as cs
 from ..types_defs import AstFingerprintResult, PropertyDict
 from .dart.utils import dart_body_node
+from .native_trees import NotBorrowed, tree_bridge
 
 
 def fingerprint_props(func_node: Node) -> PropertyDict:
@@ -39,6 +40,20 @@ def fingerprint_props(func_node: Node) -> PropertyDict:
 
 
 def compute_ast_fingerprint(func_node: Node) -> AstFingerprintResult | None:
+    # Computed in Rust when the extension's tree bridge is on (`native_trees`),
+    # which returns what `python_ast_fingerprint` does.
+    if (bridge := tree_bridge()) is not None:
+        try:
+            native = bridge.ast_fingerprint(func_node)
+        except NotBorrowed:
+            pass
+        else:
+            return None if native is None else AstFingerprintResult(*native)
+    return python_ast_fingerprint(func_node)
+
+
+def python_ast_fingerprint(func_node: Node) -> AstFingerprintResult | None:
+    """`compute_ast_fingerprint` in Python, the reference for the Rust walk."""
     body = _resolve_body(func_node)
     if body is None:
         return None

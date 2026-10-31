@@ -69,6 +69,22 @@ def _has_importable_root_package(anchor: Path) -> bool:
     return False
 
 
+# A package clause follows only comments and build constraints, so a file's
+# head holds it; a generated file can run to megabytes.
+_PACKAGE_CLAUSE_SCAN_BYTES = 64 * 1024
+
+
+def read_package_clause(path: Path) -> str | None:
+    """The `package` clause of the Go file at `path`, read without a parse;
+    None when the file is unreadable or its head holds no clause."""
+    try:
+        with path.open("rb") as handle:
+            head = handle.read(_PACKAGE_CLAUSE_SCAN_BYTES)
+    except OSError:
+        return None
+    return _root_package_clause(head.decode(cs.ENCODING_UTF8, errors="replace"))
+
+
 def _root_package_clause(text: str) -> str | None:
     # The package clause is the first code in a valid .go file, so only
     # comments can precede it; strip line and block comments (which do not

@@ -45,9 +45,12 @@ def _run_io(tmp_path: Path, files: dict[str, str]) -> set[tuple[str, str, str]]:
 
 def _has(rels: set[tuple[str, str, str]], caller: str, rel: str, resource: str) -> bool:
     # Java method qns carry a parameter signature suffix (`A.fetch(String)`);
-    # match on the qn with any trailing `(...)` stripped.
+    # match on the qn with any trailing `(...)` stripped. `{project}` stands
+    # for the caller's project, which scopes a rootful URL (issue #3190).
     return any(
-        a.partition("(")[0].endswith(caller) and r == rel and b == resource
+        a.partition("(")[0].endswith(caller)
+        and r == rel
+        and b == resource.replace("{project}", a.split(".", 1)[0])
         for a, r, b in rels
     )
 
@@ -1386,7 +1389,7 @@ class TestTsGeneratedClientSinks:
             rels,
             "sdk.AuthClient.getRequestingUser",
             READS_FROM,
-            "resource::NETWORK::/auth/users/requesting",
+            "resource::NETWORK::{project}::/auth/users/requesting",
         ), rels
 
     def test_generated_post_emits_network_write(self, tmp_path: Path) -> None:
@@ -1406,7 +1409,7 @@ class TestTsGeneratedClientSinks:
             rels,
             "sdk.AuthClient.createUser",
             WRITES_TO,
-            "resource::NETWORK::/auth/users",
+            "resource::NETWORK::{project}::/auth/users",
         ), rels
 
     def test_plain_this_client_receiver_binds(self, tmp_path: Path) -> None:
@@ -1425,7 +1428,7 @@ class TestTsGeneratedClientSinks:
             rels,
             "sdk.AuthClient.del",
             WRITES_TO,
-            "resource::NETWORK::/auth/users/1",
+            "resource::NETWORK::{project}::/auth/users/1",
         ), rels
 
     def test_non_client_receiver_is_not_a_sink(self, tmp_path: Path) -> None:
@@ -1467,7 +1470,9 @@ class TestTsGeneratedClientSinks:
             ),
         }
         rels = _run_io(tmp_path, files)
-        assert _has(rels, "sdk.AuthClient.q", READS_FROM, "resource::NETWORK::/q"), rels
+        assert _has(
+            rels, "sdk.AuthClient.q", READS_FROM, "resource::NETWORK::{project}::/q"
+        ), rels
 
     def test_template_literal_url_binds(self, tmp_path: Path) -> None:
         # A template-literal url keeps fragments and renders substitutions as
@@ -1484,7 +1489,10 @@ class TestTsGeneratedClientSinks:
         }
         rels = _run_io(tmp_path, files)
         assert _has(
-            rels, "sdk.AuthClient.t", READS_FROM, "resource::NETWORK::/users/{id}"
+            rels,
+            "sdk.AuthClient.t",
+            READS_FROM,
+            "resource::NETWORK::{project}::/users/{id}",
         ), rels
 
     def test_empty_url_does_not_emit_degenerate_resource(self, tmp_path: Path) -> None:

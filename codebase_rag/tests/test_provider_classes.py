@@ -425,14 +425,20 @@ class TestMiniMaxProvider:
         mock_anthropic_provider.assert_called_once_with(
             api_key="mm-test-key", base_url=endpoint
         )
-        mock_anthropic_model.assert_called_once_with(
-            "MiniMax-M2.7", provider=mock_anthropic_provider.return_value
-        )
+        mock_anthropic_model.assert_called_once()
+        args, kwargs = mock_anthropic_model.call_args
+        assert args == ("MiniMax-M2.7",)
+        assert kwargs["provider"] is mock_anthropic_provider.return_value
+        assert kwargs["settings"]["max_tokens"] > 0
         assert result == mock_model
 
     @pytest.mark.parametrize(
         ("model_id", "context_window"),
-        [("MiniMax-M3", 1_000_000), ("MiniMax-M2.7", 204_800)],
+        [
+            ("MiniMax-M3.1-Flash", 1_000_000),
+            ("MiniMax-M3", 1_000_000),
+            ("MiniMax-M2.7", 204_800),
+        ],
     )
     def test_minimax_context_windows(self, model_id: str, context_window: int) -> None:
         assert MODEL_CONTEXT_WINDOWS[model_id] == context_window

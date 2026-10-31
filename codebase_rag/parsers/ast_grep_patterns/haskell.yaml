@@ -12,14 +12,22 @@ functions:
   # would be the type variable `a`, not a definition).
   - kind: function
     name_child: variable
+    name_paths:
+      - prefix_id/operator
+      - infix/infix_id/variable
+      - infix/operator
     has_child: match
   - kind: bind
     name_child: variable
+    name_paths:
+      - prefix_id/operator
+      - infix/infix_id/variable
+      - infix/operator
     has_child: match
 classes:
   - kind: data_type
   - kind: newtype
-  - kind: type_synomym
+  - kind: type_synonym
   - kind: class
 imports:
   - kind: import

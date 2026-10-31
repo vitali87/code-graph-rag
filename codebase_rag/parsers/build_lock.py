@@ -14,7 +14,7 @@ import shutil
 import subprocess
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 from ..constants import ENCODING_UTF8
@@ -154,6 +154,17 @@ def release_build_lock(handle: BuildLock | None) -> None:
         pass
     finally:
         os.close(handle.fd)
+
+
+def newest_source_mtime(src: Path, names: Iterable[str]) -> float:
+    """The newest mtime among a frontend's bundled tool sources."""
+    return max((src / name).stat().st_mtime for name in names)
+
+
+def artifact_fresh(artifact: Path, sources_mtime: Callable[[], float]) -> bool:
+    """Whether `artifact` exists and is no older than its newest source. The
+    sources are only read once the artifact exists."""
+    return artifact.is_file() and artifact.stat().st_mtime >= sources_mtime()
 
 
 def build_cached_artifact(

@@ -85,7 +85,7 @@ async def test_an_error_beside_other_fields_is_flagged(
 ) -> None:
     with patch.object(MCPToolsRegistry, method, AsyncMock(return_value=payload)):
         result = await _call(tool, arguments)
-    assert result.isError is True, _text(result)
+    assert result.is_error is True, _text(result)
     assert _ERROR in _text(result)
 
 
@@ -117,7 +117,7 @@ async def test_a_text_tool_refusal_is_flagged(
 ) -> None:
     pytest.importorskip("ast_grep_py")
     result = await _call(tool, arguments)
-    assert result.isError is True, _text(result)
+    assert result.is_error is True, _text(result)
     assert named in _text(result)
 
 
@@ -166,4 +166,4 @@ async def test_a_success_is_not_flagged(
 ) -> None:
     with patch.object(MCPToolsRegistry, method, AsyncMock(return_value=payload)):
         result = await _call(tool, arguments)
-    assert result.isError is False, _text(result)
+    assert result.is_error is False, _text(result)

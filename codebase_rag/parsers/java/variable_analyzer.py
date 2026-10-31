@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from collections.abc import Callable
+from functools import lru_cache
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -23,6 +24,37 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from ...types_defs import ASTCacheProtocol
+
+
+# Classes whose declared fields stay cached. Methods are analysed class by
+# class, so the classes in use at once are one file's nesting chain (anonymous
+# and inner classes included). Small, because every entry keeps its parse tree
+# alive.
+_CLASS_FIELDS_CACHE_SIZE = 16
+
+
+@lru_cache(maxsize=_CLASS_FIELDS_CACHE_SIZE)
+def _declared_fields(class_node: ASTNode) -> tuple[tuple[str, str], ...]:
+    """(name, declared type) of each field the class body declares, in order.
+
+    Every method's variable-type map reads its class's fields, and walking
+    the class body for them once per method made a class of N methods cost
+    O(N^2) (issue #2453). Read once per class instead, keyed on the class
+    node, which tree-sitter compares by tree, so a re-parsed file reads its
+    own.
+    """
+    if not (body_node := class_node.child_by_field_name(cs.FIELD_BODY)):
+        return ()
+    fields: list[tuple[str, str]] = []
+    for child in body_node.children:
+        if child.type != cs.TS_FIELD_DECLARATION:
+            continue
+        field_info = extract_field_info(child)
+        field_name = field_info.get(cs.FIELD_NAME)
+        field_type = field_info.get(cs.FIELD_TYPE)
+        if field_name and field_type:
+            fields.append((str(field_name), str(field_type)))
+    return tuple(fields)
 
 
 def _java_literal_type(expr_node: ASTNode) -> str | None:
@@ -82,10 +114,12 @@ class JavaVariableAnalyzerMixin:
     _lookup_in_progress: set[str]
     # Annotation only, never a def: this mixin precedes JavaMethodResolverMixin
     # in the MRO, so even an @abstractmethod stub here would SHADOW the real
-    # implementation and silently resolve every call to None.
+    # implementation and silently resolve every call to None. `...` because a
+    # Callable's parameters are positional-only, and ty rejects that as an
+    # override of the resolver's methods, whose parameters have names.
     _do_resolve_java_method_call: Callable[..., tuple[str, str] | None]
-    _declared_return_type_of: Callable[[str], str | None]
-    _resolve_java_method_return_type: Callable[[str, str], str | None]
+    _declared_return_type_of: Callable[..., str | None]
+    _resolve_java_method_return_type: Callable[..., str | None]
 
     @abstractmethod
     def _resolve_java_type_name(self, type_name: str, module_qn: str) -> str: ...
@@ -247,29 +281,14 @@ class JavaVariableAnalyzerMixin:
         if not (containing_class := self._find_containing_java_class(scope_node)):
             return
 
-        if not (body_node := containing_class.child_by_field_name(cs.FIELD_BODY)):
-            return
+        for field_name, field_type in _declared_fields(containing_class):
+            this_field_ref = f"{cs.JAVA_KEYWORD_THIS}{cs.SEPARATOR_DOT}{field_name}"
+            resolved_type = self._resolve_java_type_name(field_type, module_qn)
+            local_var_types[this_field_ref] = resolved_type
 
-        for child in body_node.children:
-            if child.type == cs.TS_FIELD_DECLARATION:
-                field_info = extract_field_info(child)
-                if field_info.get(cs.FIELD_NAME) and field_info.get(cs.FIELD_TYPE):
-                    field_name = field_info[cs.FIELD_NAME]
-                    field_type = field_info[cs.FIELD_TYPE]
-
-                    this_field_ref = (
-                        f"{cs.JAVA_KEYWORD_THIS}{cs.SEPARATOR_DOT}{field_name}"
-                    )
-                    resolved_type = self._resolve_java_type_name(
-                        str(field_type), module_qn
-                    )
-                    local_var_types[this_field_ref] = resolved_type
-
-                    if str(field_name) not in local_var_types:
-                        local_var_types[str(field_name)] = resolved_type
-                    logger.debug(
-                        ls.JAVA_CLASS_FIELD, name=field_name, type=resolved_type
-                    )
+            if field_name not in local_var_types:
+                local_var_types[field_name] = resolved_type
+            logger.debug(ls.JAVA_CLASS_FIELD, name=field_name, type=resolved_type)
 
     def _analyze_java_constructor_assignments(
         self, scope_node: ASTNode, local_var_types: dict[str, str], module_qn: str

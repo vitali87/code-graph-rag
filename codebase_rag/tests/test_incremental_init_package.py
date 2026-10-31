@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from evals.cgr_graph import _StatefulIngestor
@@ -106,7 +107,7 @@ def test_adding_init_py_turns_the_folder_into_a_package(temp_repo: Path) -> None
     _index(store, root, force=True)
     init = root / INIT
     init.write_text(FIXTURE[INIT], encoding="utf-8")
-    cache_mtime = (root / cs.HASH_CACHE_FILENAME).stat().st_mtime
+    cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
     os.utime(init, (cache_mtime + 1, cache_mtime + 1))
     _index(store, root, force=False)
     after = _snapshot(store, root)

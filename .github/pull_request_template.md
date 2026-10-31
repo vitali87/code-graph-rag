@@ -36,6 +36,7 @@
 ## Checklist
 
 - [ ] PR title follows [Conventional Commits](https://www.conventionalcommits.org/) format
+- [ ] A breaking change has `!` in the title and its release notes in `changes/breaking/<PR number>.md` (see [Breaking changes](https://github.com/vitali87/code-graph-rag/blob/main/CONTRIBUTING.md#breaking-changes))
 - [ ] All pre-commit checks pass (`make pre-commit`)
 - [ ] No hardcoded strings in non-config/non-constants files
 - [ ] No `# type: ignore`, `cast()`, `Any`, or `object` type hints

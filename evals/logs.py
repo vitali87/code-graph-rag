@@ -104,68 +104,25 @@ DUPLICATES_DONE = (
     "cgr reports {groups} duplicate group(s) covering {members} definition(s)"
     " ({skipped} skipped, truncated={truncated})"
 )
-GO_RETRIEVAL_ORACLE = "Running go/ast call oracle ({binary}) over {target}"
-GO_RETRIEVAL_ORACLE_DONE = "go/ast first-party call edges: {count}"
-GO_RETRIEVAL_CGR = "Building cgr Go CALLS edges for {target} (project={project})"
-GO_RETRIEVAL_CGR_DONE = "cgr Go call edges (first-party): {count}"
-RUST_ORACLE_MISSING = "Rust toolchain '{binary}' not found on PATH; cannot run oracle"
-RUST_RETRIEVAL_ORACLE = "Running syn call oracle ({binary}) over {target}"
-RUST_RETRIEVAL_ORACLE_DONE = "syn first-party call edges: {count}"
-RUST_RETRIEVAL_CGR = "Building cgr Rust CALLS edges for {target} (project={project})"
-RUST_RETRIEVAL_CGR_DONE = "cgr Rust call edges (first-party): {count}"
+LANG_RETRIEVAL_ORACLE = (
+    "Running {oracle} call oracle over the {language} sources in {target}"
+)
+LANG_RETRIEVAL_ORACLE_DONE = "{oracle} first-party {language} call edges: {count}"
+LANG_RETRIEVAL_COVERED = "cleanly-parsed {language} source files graded: {count}"
+LANG_RETRIEVAL_CGR = (
+    "Building cgr {language} CALLS edges for {target} (project={project})"
+)
+LANG_RETRIEVAL_CGR_DONE = "cgr {language} call edges (first-party): {count}"
 JAVA_ORACLE_MISSING = "Java toolchain '{binary}' not found on PATH; cannot run oracle"
-JAVA_RETRIEVAL_ORACLE = "Running javac call oracle ({binary}) over {target}"
-JAVA_RETRIEVAL_ORACLE_DONE = "javac first-party call edges: {count}"
-JAVA_RETRIEVAL_CGR = "Building cgr Java CALLS edges for {target} (project={project})"
-JAVA_RETRIEVAL_CGR_DONE = "cgr Java call edges (first-party): {count}"
-CSHARP_RETRIEVAL_ORACLE = "Running Roslyn call oracle ({binary}) over {target}"
-CSHARP_RETRIEVAL_ORACLE_DONE = "Roslyn first-party call edges: {count}"
-CSHARP_RETRIEVAL_CGR = "Building cgr C# CALLS edges for {target} (project={project})"
-CSHARP_RETRIEVAL_CGR_DONE = "cgr C# call edges (first-party): {count}"
 SCALA_ORACLE_MISSING = "Scala toolchain '{binary}' not found on PATH; cannot run oracle"
-SCALA_RETRIEVAL_ORACLE = "Running scalameta call oracle ({binary}) over {target}"
-SCALA_RETRIEVAL_ORACLE_DONE = "scalameta first-party call edges: {count}"
-SCALA_RETRIEVAL_COVERED = "scalameta cleanly-parsed Scala files: {count}"
-SCALA_RETRIEVAL_CGR = "Building cgr Scala CALLS edges for {target} (project={project})"
-SCALA_RETRIEVAL_CGR_DONE = "cgr Scala call edges (first-party): {count}"
 SCALA_ORACLE_DECODE_FAILED = "scala-cli oracle did not emit JSON on stdout.\nstderr:\n{stderr}\nstdout:\n{stdout}"
 TS_ORACLE_MISSING = "Node toolchain '{binary}' not found on PATH; cannot run oracle"
-TS_RETRIEVAL_ORACLE = "Running tsc call oracle ({binary}) over {target}"
-TS_RETRIEVAL_ORACLE_DONE = "tsc first-party call edges: {count}"
-TS_RETRIEVAL_CGR = (
-    "Building cgr TypeScript CALLS edges for {target} (project={project})"
-)
-TS_RETRIEVAL_CGR_DONE = "cgr TypeScript call edges (first-party): {count}"
-JS_RETRIEVAL_ORACLE = "Running tsc call oracle ({binary}) over {target} (.js/.jsx)"
-JS_RETRIEVAL_ORACLE_DONE = "tsc first-party JS call edges: {count}"
-JS_RETRIEVAL_CGR = (
-    "Building cgr JavaScript CALLS edges for {target} (project={project})"
-)
-JS_RETRIEVAL_CGR_DONE = "cgr JavaScript call edges (first-party): {count}"
 PHP_ORACLE_MISSING = "Node toolchain '{binary}' not found on PATH; cannot run oracle"
-PHP_RETRIEVAL_ORACLE = "Running php-parser call oracle ({binary}) over {target}"
-PHP_RETRIEVAL_ORACLE_DONE = "php-parser first-party call edges: {count}"
-PHP_RETRIEVAL_CGR = "Building cgr PHP CALLS edges for {target} (project={project})"
-PHP_RETRIEVAL_CGR_DONE = "cgr PHP call edges (first-party): {count}"
 LUA_ORACLE_MISSING = "Node toolchain '{binary}' not found on PATH; cannot run oracle"
-LUA_RETRIEVAL_ORACLE = "Running luaparse call oracle ({binary}) over {target}"
-LUA_RETRIEVAL_ORACLE_DONE = "luaparse first-party call edges: {count}"
-LUA_RETRIEVAL_CGR = "Building cgr Lua CALLS edges for {target} (project={project})"
-LUA_RETRIEVAL_CGR_DONE = "cgr Lua call edges (first-party): {count}"
 C_ORACLE_MISSING = "libclang (clang.cindex) not importable; cannot run the C oracle"
-C_RETRIEVAL_ORACLE = "Running libclang call oracle over {target}"
-C_RETRIEVAL_ORACLE_DONE = "libclang first-party call edges: {count}"
-C_RETRIEVAL_COVERED = "cleanly-parsed C source files graded: {count}"
-C_RETRIEVAL_CGR = "Building cgr C CALLS edges for {target} (project={project})"
-C_RETRIEVAL_CGR_DONE = "cgr C call edges (first-party): {count}"
 CPP_RETRIEVAL_ORACLE_MISSING = (
     "libclang (clang.cindex) not importable; cannot run the C++ oracle"
 )
-CPP_RETRIEVAL_ORACLE = "Running libclang C++ call oracle over {target}"
-CPP_RETRIEVAL_ORACLE_DONE = "libclang first-party C++ call edges: {count}"
-CPP_RETRIEVAL_COVERED = "cleanly-parsed C++ source files graded: {count}"
-CPP_RETRIEVAL_CGR = "Building cgr C++ CALLS edges for {target} (project={project})"
-CPP_RETRIEVAL_CGR_DONE = "cgr C++ call edges (first-party): {count}"
 SEMANTIC_MISSING = "semantic dependencies not installed; cannot run semantic eval"
 SEMANTIC_TARGET = "Semantic-search eval over {target} (project={project})"
 SEMANTIC_DONE = "recall@{k}: {hits}/{total} queries retrieved the expected function"
@@ -194,3 +151,15 @@ ORACLE_UNAVAILABLE = "Oracle unavailable: {reason}"
 FIRST_TOOL_SUMMARY = (
     "{graph_first}/{total} structural questions went to the graph first"
 )
+
+# --- graph backend parity (issue #386) ---------------------------------------
+PARITY_DUMPED = "Dumped {nodes} nodes and {rels} relationships (project {project})"
+PARITY_LOADED = "Loaded the dump into {engine} in {seconds:.1f}s"
+PARITY_RAN = "Ran {count} read queries on {engine}; wrote {path}"
+PARITY_SUMMARY = (
+    "{engine}: {same}/{total} queries return the same rows as {reference} "
+    "({differ} differ, {errors} error); query time {engine_s:.1f}s vs {reference_s:.1f}s"
+)
+PARITY_DIFFERS = "  differs: {name}"
+PARITY_ERRORS = "  error:   {name}: {error}"
+JARVIS_FETCHING = "Fetching the JARVIS micro-benchmark at {commit}"

@@ -5,8 +5,10 @@ import os
 import re
 import shlex
 import shutil
+import subprocess
 import sys
 import time
+from collections import deque
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -21,6 +23,7 @@ from .. import tool_errors as te
 from ..config import settings
 from ..decorators import async_timing_decorator
 from ..schemas import ShellCommandResult
+from ..sensitive_paths import is_sensitive_path
 from ..taint import ReadContentRecord
 from . import tool_descriptions as td
 
@@ -892,9 +895,7 @@ def _sed_script_skeleton(script: str) -> str:
             # the delimiters so the address still anchors the command.
             end = _delimited_end(script, index + 1, "/")
             if end < len(script):
-                out.append("/")
-                out.append(" " * (end - index - 1))
-                out.append("/")
+                out.extend(("/", " " * (end - index - 1), "/"))
                 index = end + 1
                 continue
         out.append(char)
@@ -2012,6 +2013,10 @@ class _ReadOption(NamedTuple):
     # None when SHELL_CONFINED_READ_OPTIONS does not list the option.
     kind: cs.ReadOptionKind | None
     value: str
+    # The arguments as written, so ripgrep can re-read the option its own
+    # way: it drops the `=` in `-g=*.pem`, where `value` keeps it (Greptile
+    # review on PR #3471).
+    spelling: tuple[str, ...] = ()
 
 
 def _confined_option_denial(parts: list[str], root: Path) -> str | None:
@@ -2063,6 +2068,7 @@ def _parse_long_option(
     rest: Iterator[str],
 ) -> _ReadOption:
     name, attached, value = arg.partition("=")
+    spelling = (arg,)
     kind = kinds.get(name)
     if (
         kind is None
@@ -2075,7 +2081,8 @@ def _parse_long_option(
         kind = None
     elif kind in _VALUED_OPTION_KINDS and not attached:
         value = next(rest, "")
-    return _ReadOption(name, kind, value)
+        spelling = (name, value)
+    return _ReadOption(name, kind, value, spelling)
 
 
 def _parse_short_option_cluster(
@@ -2085,9 +2092,13 @@ def _parse_short_option_cluster(
         name = f"-{arg[offset]}"
         kind = kinds.get(name)
         if kind in _VALUED_OPTION_KINDS:
-            yield _ReadOption(name, kind, arg[offset + 1 :] or next(rest, ""))
+            if attached := arg[offset + 1 :]:
+                yield _ReadOption(name, kind, attached, (name + attached,))
+            else:
+                value = next(rest, "")
+                yield _ReadOption(name, kind, value, (name, value))
             return
-        yield _ReadOption(name, kind, "")
+        yield _ReadOption(name, kind, "", (name,))
 
 
 def _parse_find_options(
@@ -2188,7 +2199,120 @@ def _noninteractive_segment_denial(
         )
     if reason := _confined_option_denial(parts, root):
         return te.COMMAND_NONINTERACTIVE_DENIED.format(command=segment, reason=reason)
+    if _reaches_sensitive_file(parts, root):
+        return te.COMMAND_NONINTERACTIVE_DENIED.format(
+            command=segment, reason=te.NONINTERACTIVE_SENSITIVE_FILE
+        )
     return None
+
+
+def _reaches_sensitive_file(parts: list[str], root: Path) -> bool:
+    """Whether this read would print a likely credential file: an operand or
+    path option naming one, or a ripgrep switch that searches the hidden and
+    ignored files such files live in. Confined reads run without approval, so
+    without this `cat .env` would reach the model unasked (issue #3457)."""
+    command = parts[0]
+    if command not in cs.SHELL_CONTENT_READS:
+        return False
+    kinds = _CONFINED_READ_OPTION_KINDS.get(command, {})
+    options = list(_parse_getopt_options(parts, kinds))
+    names = {option.name for option in options}
+    # Switches that widen what ripgrep searches are refused outright rather than
+    # mirrored into the file-list check below; `--no-ignore` reached an ignored
+    # `server.pem` (CodeRabbit review on PR #3471). Matched by prefix, so a
+    # newer `--no-ignore-*` counts too.
+    if command == cs.SHELL_CMD_RG and (
+        names & cs.SHELL_RG_HIDDEN_SWITCHES
+        or any(name.startswith(cs.SHELL_RG_NO_IGNORE_PREFIX) for name in names)
+    ):
+        return True
+    files = [
+        option.value.removeprefix("=")
+        for option in options
+        if option.kind == cs.ReadOptionKind.PATH and option.value
+    ]
+    operands = _read_operands(parts, kinds)
+    if command == cs.SHELL_CMD_RG and not names & cs.SHELL_RG_PATTERN_OPTIONS:
+        operands = operands[1:]
+    if any(is_sensitive_path(root / name) for name in files + operands):
+        return True
+    recurses = not operands or any((root / name).is_dir() for name in operands)
+    return (
+        command == cs.SHELL_CMD_RG
+        and cs.SHELL_RG_LIST_FILES not in names
+        and recurses
+        and _rg_searches_sensitive_file(options, operands, root)
+    )
+
+
+def _rg_searches_sensitive_file(
+    options: list[_ReadOption], roots: list[str], root: Path
+) -> bool:
+    """Whether a ripgrep recursing into `roots` would search a credential file.
+
+    Its file list is asked of ripgrep itself (`rg --files` over the same roots
+    and narrowing filters), so ignore files and globs leave out exactly what
+    the search leaves out: `rg KEY certs/` printed an unignored `server.pem`
+    that `cat certs/server.pem` could not (Codex review on PR #3471).
+    """
+    if (rg := shutil.which(cs.SHELL_CMD_RG)) is None:
+        # Without ripgrep the command cannot run, so it reads nothing.
+        return False
+    filters = [
+        token
+        for option in options
+        # A `--no-*` switch can undo what a ripgrep config set: `--no-config`
+        # searched a `server.pem` the config's `--glob=!*.pem` left out of the
+        # list (CodeRabbit review on PR #3471).
+        if option.name in cs.SHELL_RG_FILE_FILTERS
+        or option.name.startswith(cs.SHELL_NEGATION_PREFIX)
+        for token in option.spelling
+    ]
+    try:
+        listed = subprocess.run(
+            [
+                rg,
+                cs.SHELL_RG_LIST_FILES,
+                *filters,
+                "--",
+                *(roots or [cs.SHELL_RG_DEFAULT_ROOT]),
+            ],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            encoding=cs.ENCODING_UTF8,
+            # A file name that is not UTF-8 still maps back to the same path.
+            errors=cs.SHELL_RG_LIST_DECODE_ERRORS,
+            timeout=cs.SHELL_RG_LIST_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return True
+    # 1 is ripgrep's "nothing found"; anything else is a list we cannot trust.
+    if listed.returncode not in cs.SHELL_RG_LIST_OK_CODES:
+        return True
+    return any(is_sensitive_path(root / name) for name in listed.stdout.splitlines())
+
+
+def _read_operands(parts: list[str], kinds: dict[str, cs.ReadOptionKind]) -> list[str]:
+    # The arguments `_parse_getopt_options` passes over: it consumes each
+    # option's value from the same iterator, so what is left are operands.
+    operands: list[str] = []
+    rest = iter(parts[1:])
+    for arg in rest:
+        if arg == "--":
+            operands.extend(rest)
+            break
+        if not arg.startswith("-"):
+            operands.append(arg)
+        elif arg == cs.SHELL_STDIN_OPERAND:
+            continue
+        elif arg.startswith("--"):
+            _parse_long_option(parts[0], arg, kinds, rest)
+        elif not (parts[0] in cs.SHELL_NUMERIC_COUNT_READS and arg[1:].isdigit()):
+            # Drained only for the values it takes from `rest`.
+            deque(_parse_short_option_cluster(arg, kinds, rest), maxlen=0)
+    return operands
 
 
 def _noninteractive_path_escapes(parts: list[str], root: Path) -> bool:

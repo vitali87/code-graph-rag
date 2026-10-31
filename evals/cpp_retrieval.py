@@ -4,60 +4,47 @@
 # graded against call sites libclang extracts over the same name universe.
 # libclang resolves the true translation-unit call graph independent of cgr's
 # tree-sitter C++ frontend (CPP_FRONTEND=libclang is off), so this measures
-# cgr's cross-file C++ call resolution (mirrors evals/c_retrieval.py).
+# cgr's cross-file C++ call resolution.
+from functools import partial
 from pathlib import Path
 from typing import Annotated
 
 import typer
-from loguru import logger
 
 from . import constants as ec
-from . import logs as ls
-from .oracles import cpp_available, run_cpp_call_oracle
+from .oracles import run_cpp_call_oracle
 from .retrieval_eval import (
-    CallEdge,
+    RETRIEVAL_SPECS,
     cgr_call_edges,
+    run_retrieval_eval,
     score_retrieval,
 )
-from .structure_report import render, write_outputs
-from .types_defs import ScoreResult
+from .types_defs import CallEdge, CallOracle, ScoreResult
 
-console_target = Path(ec.CPP_DEFAULT_TARGET)
+_SPEC = RETRIEVAL_SPECS[ec.RetrievalLanguage.CPP]
 
 
 def oracle_cpp_call_edges(
     target: Path, extra_defines: tuple[str, ...] = ()
-) -> tuple[set[CallEdge], frozenset[str], frozenset[str]]:
+) -> CallOracle:
     return run_cpp_call_oracle(target, extra_defines)
 
 
 def cgr_cpp_call_edges(
     target: Path, project: str, declared: frozenset[str], covered: frozenset[str]
 ) -> set[CallEdge]:
-    return cgr_call_edges(
-        target,
-        project,
-        declared,
-        suffixes=ec.CPP_SUFFIXES,
-        covered=covered,
-    )
+    return cgr_call_edges(_SPEC, target, project, declared, covered)
 
 
 def score_cpp_retrieval(cgr: set[CallEdge], oracle: set[CallEdge]) -> ScoreResult:
-    return score_retrieval(
-        cgr,
-        oracle,
-        label=ec.CPP_RETRIEVAL_LABEL,
-        diff_prefix=ec.CPP_RETRIEVAL_DIFF_PREFIX,
-        edge_repr=ec.CPP_CALL_EDGE_REPR,
-    )
+    return score_retrieval(_SPEC, cgr, oracle)
 
 
 def main(
     target: Annotated[
         Path,
         typer.Option(help="Directory of C++ sources to evaluate call retrieval."),
-    ] = console_target,
+    ] = Path(ec.LANG_RETRIEVAL_DEFAULT_TARGET),
     project_name: Annotated[
         str, typer.Option(help="cgr project name; defaults to target dir name.")
     ] = "",
@@ -70,30 +57,12 @@ def main(
         typer.Option(help="Directory for cpp_retrieval_scores.csv and diff json."),
     ] = Path(ec.DEFAULT_OUT_DIR),
 ) -> None:
-    if not cpp_available():
-        logger.error(ls.CPP_RETRIEVAL_ORACLE_MISSING)
-        raise typer.Exit(code=1)
-
-    target = target.resolve()
-    project = project_name or target.name
-
-    logger.info(ls.CPP_RETRIEVAL_ORACLE.format(target=target))
-    oracle, declared, covered = oracle_cpp_call_edges(target, tuple(define))
-    logger.success(ls.CPP_RETRIEVAL_ORACLE_DONE.format(count=len(oracle)))
-    logger.info(ls.CPP_RETRIEVAL_COVERED.format(count=len(covered)))
-
-    logger.info(ls.CPP_RETRIEVAL_CGR.format(target=target, project=project))
-    cgr = cgr_cpp_call_edges(target, project, declared, covered)
-    logger.success(ls.CPP_RETRIEVAL_CGR_DONE.format(count=len(cgr)))
-
-    result = score_cpp_retrieval(cgr, oracle)
-    write_outputs(
-        result,
-        out_dir,
-        ec.CPP_RETRIEVAL_SCORES_FILENAME,
-        ec.CPP_RETRIEVAL_DIFF_FILENAME,
+    # The defines a build would supply reach only the oracle: cgr's tree-sitter
+    # frontend does not preprocess, so there is nothing to hand it.
+    run_oracle = partial(oracle_cpp_call_edges, extra_defines=tuple(define))
+    run_retrieval_eval(
+        _SPEC._replace(run_oracle=run_oracle), target, project_name, out_dir
     )
-    render(result, ec.CPP_RETRIEVAL_TITLE)
 
 
 if __name__ == "__main__":

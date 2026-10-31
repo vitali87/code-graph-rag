@@ -538,7 +538,9 @@ def test_an_unreadable_vector_list_keeps_the_old_project(
 def vector_client() -> Generator[MagicMock, None, None]:
     # The real vector-store path down to the backend client, which swallows a
     # failed delete into a warning; patched past the dependency check so the
-    # base install, which has no qdrant-client, runs it too.
+    # base install, which has no qdrant-client, runs it too. The store holds
+    # no points beyond those the node ids key: its scroll lookups (#2447)
+    # build qdrant-client filter models, which the base install lacks.
     from codebase_rag import vector_store
 
     client = MagicMock()
@@ -550,6 +552,8 @@ def vector_client() -> Generator[MagicMock, None, None]:
         ),
         patch.object(vector_store, "has_qdrant_client", return_value=True),
         patch.object(vector_store, "get_qdrant_client", return_value=client),
+        patch.object(vector_store, "_qdrant_keyed_points", return_value=()),
+        patch.object(vector_store, "_qdrant_legacy_points", return_value=[]),
     ):
         yield client
 

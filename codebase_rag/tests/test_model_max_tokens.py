@@ -118,6 +118,24 @@ class TestProviders:
         assert model.settings is not None
         assert model.settings.get("max_tokens") == AppConfig().MODEL_MAX_TOKENS
 
+    def test_minimax_anthropic_endpoint_settings_carry_max_tokens(self) -> None:
+        """MiniMax's Anthropic-compatible endpoint builds an AnthropicModel too.
+
+        It is the same Messages protocol as the provider from the report, so
+        without explicit settings it falls back to the same provider default
+        and the configured budget is silently ignored.
+        """
+        from codebase_rag import constants as cs
+        from codebase_rag.providers.base import MiniMaxProvider
+
+        endpoint = f"https://api.minimax.io{cs.MINIMAX_ANTHROPIC_SDK_PATH}"
+        model = MiniMaxProvider(api_key="k", endpoint=endpoint).create_model(
+            "MiniMax-M2"
+        )
+
+        assert model.settings is not None
+        assert model.settings.get("max_tokens") == AppConfig().MODEL_MAX_TOKENS
+
     def test_the_anthropic_cache_flags_are_preserved(self) -> None:
         """The control: adding the budget must not drop what was there.
 

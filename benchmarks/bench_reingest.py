@@ -26,6 +26,7 @@ from pathlib import Path
 from loguru import logger
 
 from codebase_rag import constants as cs
+from codebase_rag.checkout_state import state_dir
 
 NEUTRAL_EDIT = "# bench edit\n"
 DEFAULT_ITERATIONS = 20
@@ -82,7 +83,7 @@ def _toggle_edit(path: Path, iteration: int) -> None:
 def _bump_mtime(root: Path, path: Path) -> None:
     # The incremental run() skips a file whose mtime is not newer than the
     # hash cache, so a sub-second edit needs an explicit bump.
-    cache = root / cs.HASH_CACHE_FILENAME
+    cache = state_dir(root) / cs.HASH_CACHE_FILENAME
     if cache.is_file():
         future = cache.stat().st_mtime + 2
         os.utime(path, (future, future))
@@ -174,7 +175,7 @@ def measure_reingest(
         # the next mtime-gated update.
         os.utime(target, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
         for name in (cs.HASH_CACHE_FILENAME, cs.DIR_MTIMES_FILENAME):
-            stale = corpus / name
+            stale = state_dir(corpus) / name
             if stale.is_file():
                 stale.unlink()
 

@@ -1,5 +1,6 @@
 # Supported languages, file extensions, metadata, and grammar modules.
 
+import re
 from enum import StrEnum
 from typing import NamedTuple
 
@@ -54,6 +55,7 @@ EXT_LUA = ".lua"
 EXT_CS = ".cs"
 EXT_DART = ".dart"
 EXT_SQL = ".sql"
+EXT_JL = ".jl"
 # Data file extensions
 EXT_JSON = ".json"
 
@@ -105,6 +107,7 @@ LUA_EXTENSIONS = (EXT_LUA,)
 CS_EXTENSIONS = (EXT_CS,)
 DART_EXTENSIONS = (EXT_DART,)
 SQL_EXTENSIONS = (EXT_SQL,)
+JULIA_EXTENSIONS = (EXT_JL,)
 
 # Package indicator files
 PKG_INIT_PY = "__init__.py"
@@ -158,6 +161,17 @@ class GoFrontend(StrEnum):
     AUTO = "auto"
     TREESITTER = "treesitter"
     GOTYPES = "gotypes"
+
+
+# How long a failed build of the go/types helper is remembered (issue #2395).
+# Inside it, a sync skips the build and warns once instead of paying for
+# another `go build` that is likely to fail the same way. The marker lives in a
+# cache that later syncs and other repositories share, and most failures that
+# get past the Go version check come from the environment (no network, a module
+# proxy outage, a full disk). An hour bounds how long go/types facts stay off
+# after such a failure clears, while a lasting failure costs one build attempt
+# an hour (PR #2417 review).
+GO_FRONTEND_BUILD_FAILURE_TTL_S = 60 * 60
 
 
 # JS/TS import specifier schemes naming genuinely external code (node
@@ -275,6 +289,7 @@ class SupportedLanguage(StrEnum):
     CSHARP = "c_sharp"
     DART = "dart"
     SQL = "sql"
+    JULIA = "julia"
 
 
 # The languages the C/C++ frontends cover (issue #1524 re-runs them per file).
@@ -386,8 +401,13 @@ LANGUAGE_METADATA: dict[SupportedLanguage, LanguageMetadata] = {
     ),
     SupportedLanguage.SQL: LanguageMetadata(
         LanguageStatus.DEV,
-        "Stored functions (CREATE FUNCTION), schema-qualified names, invocations between routines. CREATE PROCEDURE and in-depth PL/pgSQL bodies await upstream grammar support: the published grammar parses plain SQL statements only",
+        "Stored functions (CREATE FUNCTION), each one a dead-code root, schema-qualified names, invocations between routines, and the DDL that runs a routine by name (trigger EXECUTE FUNCTION, aggregate SFUNC/FINALFUNC, cast WITH FUNCTION, operator FUNCTION, type INPUT/OUTPUT, HANDLER/VALIDATOR, SUPPORT). CREATE PROCEDURE and in-depth PL/pgSQL bodies await upstream grammar support: the published grammar parses plain SQL statements only",
         "SQL (PostgreSQL)",
+    ),
+    SupportedLanguage.JULIA: LanguageMetadata(
+        LanguageStatus.FULL,
+        "Modules, struct/abstract/primitive types with single-supertype <: inheritance (the grammar error-recovers a comma supertype list), concise methods, inner constructors, macros (separate @ namespace), arrow functions, using/import, broadcast calls",
+        "Julia",
     ),
 }
 
@@ -402,6 +422,11 @@ INDEX_LUA_INIT = "init"
 MODULE_INDEX_FILE_STEMS = frozenset(
     {INDEX_INIT, INDEX_INDEX, INDEX_MOD, INDEX_LUA_INIT}
 )
+# A Rust library crate's root, where its `pub use` facade lives.
+INDEX_RS_LIB = "lib"
+# Stems of the files a package exposes its internals through (issue #2573):
+# an import of the whole module, or of `*`, reaches what it imports.
+REEXPORT_FACADE_STEMS = MODULE_INDEX_FILE_STEMS | {INDEX_RS_LIB}
 
 # Parser loader paths and args
 GRAMMARS_DIR = "grammars"
@@ -432,12 +457,28 @@ class TreeSitterModule(StrEnum):
     CSHARP = "tree_sitter_c_sharp"
     DART = "tree_sitter_dart"
     SQL = "tree_sitter_sql"
+    JULIA = "tree_sitter_julia"
 
 
 # Directory names with a context-dependent ignore: `bin` is build output
 # everywhere EXCEPT Cargo's first-party src/bin/ binary layout.
 DIR_BIN = "bin"
 DIR_SRC = "src"
+
+# Default-excluded directory names that hold first-party, committed source as
+# often as build output: Dart's `bin/` entry point, npm and gem executables, a
+# Go package `out`, a JS `env` module. The files git tracks under a directory
+# with one of these names are indexed; untracked or ignored output under the
+# same name, even beside tracked files, is still skipped (issue #2406).
+TRACKED_SOURCE_DIR_NAMES = frozenset(
+    {"bin", "coverage", "env", "obj", "out", "target", "temp", "tmp"}
+)
+# gitwildmatch reads these as pattern syntax, so a tracked path holding them
+# cannot be rescued by its literal path. It also drops trailing whitespace,
+# which `_tracked_source_dirs` checks separately.
+TRACKED_PATH_PATTERN_CHARS = re.compile(r"[*?\[\]\\!]")
+GIT_LS_FILES_TIMEOUT_S = 30
+GIT_INDEX_FILENAME = "index"
 
 # Patterns detected at repo root and offered as exclude candidates (user picks which)
 IGNORE_PATTERNS = frozenset(
@@ -456,6 +497,9 @@ IGNORE_PATTERNS = frozenset(
         ".gradle",
         ".hg",
         ".idea",
+        # Jupyter's autosaved copy of each notebook beside it: indexing it
+        # would define every notebook function twice (issue #2480).
+        ".ipynb_checkpoints",
         ".maven",
         ".mypy_cache",
         ".nox",

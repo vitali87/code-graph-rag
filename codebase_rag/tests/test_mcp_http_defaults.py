@@ -19,5 +19,6 @@ def test_mcp_http_default_bind_is_loopback() -> None:
 
 
 def test_mcp_dependency_is_patched() -> None:
-    # 1.27.2 fixed CVE-2026-52869/52870; 1.28.1 fixed CVE-2026-59950
-    assert Version(version("mcp")) >= Version("1.28.1"), version("mcp")
+    # 1.27.2 fixed CVE-2026-52869/52870; 1.28.1 fixed CVE-2026-59950;
+    # 1.30.0 fixed CVE-2026-59951 (StreamableHTTP sessions never reclaimed)
+    assert Version(version("mcp")) >= Version("1.30.0"), version("mcp")

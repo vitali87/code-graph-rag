@@ -20,6 +20,7 @@ Run `cgr language list-languages` to see every language below, its tier, and whe
 | Go | Fully Supported | .go | ✓ | ✓ | ✓ | - | Receiver methods with cross-file binding, structs, interfaces, type declarations, function-local types |
 | Java | Fully Supported | .java | ✓ | ✓ | ✓ | - | Generics, annotations, modern features (records/sealed classes), concurrency, reflection |
 | JavaScript | Fully Supported | .js, .jsx, .mjs, .cjs | ✓ | ✓ | ✓ | - | ES6 modules, CommonJS, prototype methods, object methods, arrow functions |
+| Julia | Fully Supported | .jl | ✓ | ✓ | ✓ | - | Modules, struct/abstract/primitive types with single-supertype <: inheritance (the grammar error-recovers a comma supertype list), concise methods, inner constructors, macros (separate @ namespace), arrow functions, using/import, broadcast calls |
 | Lua | Fully Supported | .lua | ✓ | - | ✓ | - | Local/global functions, metatables, closures, coroutines |
 | PHP | Fully Supported | .php | ✓ | ✓ | ✓ | - | Classes, interfaces, traits, enums, namespaces, PHP 8 attributes |
 | Python | Fully Supported | .py, .pyi | ✓ | ✓ | ✓ | ✓ | Type inference, decorators, nested functions |
@@ -27,7 +28,7 @@ Run `cgr language list-languages` to see every language below, its tier, and whe
 | TypeScript (TSX) | Fully Supported | .tsx | ✓ | ✓ | ✓ | - | All TypeScript features plus JSX elements and components |
 | TypeScript | Fully Supported | .ts, .mts, .cts | ✓ | ✓ | ✓ | - | Interfaces, type aliases, enums, namespaces, ES6/CommonJS modules |
 | Scala | In Development | .scala, .sc | ✓ | ✓ | ✓ | - | Case classes, objects |
-| SQL (PostgreSQL) | In Development | .sql | ✓ | - | ✓ | - | Stored functions (CREATE FUNCTION), schema-qualified names, invocations between routines. CREATE PROCEDURE and in-depth PL/pgSQL bodies await upstream grammar support: the published grammar parses plain SQL statements only |
+| SQL (PostgreSQL) | In Development | .sql | ✓ | - | ✓ | - | Stored functions (CREATE FUNCTION), each one a dead-code root, schema-qualified names, invocations between routines, and the DDL that runs a routine by name (trigger EXECUTE FUNCTION, aggregate SFUNC/FINALFUNC, cast WITH FUNCTION, operator FUNCTION, type INPUT/OUTPUT, HANDLER/VALIDATOR, SUPPORT). CREATE PROCEDURE and in-depth PL/pgSQL bodies await upstream grammar support: the published grammar parses plain SQL statements only |
 <!-- /SECTION:supported_languages -->
 
 ## Python Stubs and Source Encodings
@@ -104,14 +105,26 @@ required: `--clean` on its own deletes the graph and returns without
 rebuilding. Note that it clears **every** project in a shared graph, so
 re-index the others afterwards.
 
+Haskell operator definitions keep their operator text as the stored name (for
+example, `<+>` or `|*|`); backtick definitions use the bare name (`plus`).
+Dots in operator names are stored as U+2024 (`․`) so the name remains one
+leaf in `<module>.<name>`. Type signatures do not emit functions.
+
+Without the `ast-grep` extra these files are still indexed, but only as
+`File` nodes. A sync that meets any of them ends with one warning giving the
+number of files per language and the install command; a repository with none
+of them gets no warning. Whether the extra is installed is part of the parser
+fingerprint, so the first sync after installing it re-parses those files
+without `--clean`.
+
 | Language | Extensions | Functions | Classes/Types | Imports |
 |---|---|---|---|---|
 | Ruby | .rb | methods, singleton methods | classes, modules | require, require_relative |
 | Kotlin | .kt, .kts | functions incl. suspend/private/override, companion members, extension functions | classes, interfaces, data classes, objects, enums | import |
 | Swift | .swift | functions, initializers, protocol requirements, extension members | classes, structs, enums, protocols | import |
 | Elixir | .ex, .exs | def, defp, defmacro incl. zero-arg and guarded | defmodule, defprotocol, defimpl | import, alias, require, use |
-| Haskell | .hs | equations and nullary binds | data, newtype, type, class | import |
-| Solidity | .sol | functions, constructors, modifiers | contracts, interfaces, libraries | import |
+| Haskell | .hs | equations and nullary binds, including operators and backtick names | data, newtype, type, class | import |
+| Solidity | .sol | functions, constructors, modifiers, `receive`/`fallback` | contracts, interfaces, libraries | import |
 | Bash | .sh, .bash | all three `function`/`()` spellings | - | source, . |
 | Nix | .nix | lambda bindings | - | import |
 
@@ -138,13 +151,31 @@ a child, so a parent's span contains its subsections.
 
 | Format | Extensions | Nodes | Edges |
 |---|---|---|---|
-| Markdown | .md, .markdown | Section (per heading) | CONTAINS_SECTION |
+| Markdown | .md, .markdown | Section (per heading) | CONTAINS_SECTION, LINKS_TO |
 
 Nesting follows heading **levels**, not the grammar's own `section` nodes:
 ATX headings (`## Heading`) nest in the parse tree, but setext headings
 (text underlined with `===` or `---`) are flat siblings, and only level
 arithmetic treats both alike. A skipped level nests naturally — an `h3`
 directly under an `h1` becomes that `h1`'s child.
+
+Relative links become `LINKS_TO` edges, one per link: from the innermost
+section the link sits in (or from the document's `Module` above its first
+heading) to the heading its anchor names (`guide.md#setup`, or `#usage` in
+the same document, matched the way GitHub renders heading anchors), or else
+to the linked file. Each edge records where the link is (`line`, `col`,
+`end_line`, `end_col`), its `text`, and its fragment as `anchor`. External
+URLs, links that leave the repository and links to directories produce no
+edge. A link whose path names nothing in the repository produces no edge
+either; the document's `Module` lists it in `broken_links` instead, and the
+sync logs how many there are. The
+[graph schema](graph-schema.md#document-links) has the full rules.
+
+YAML front matter becomes the document `Module`'s `front_matter` list of
+`key=value` entries. A list value is one entry with its items
+comma-joined: `tags: [a, b]`, or `- a` / `- b` lines beneath `tags:`, is
+stored as `tags=a,b`. Nested maps, and lists whose items are themselves
+structures, are skipped.
 
 Documents have no functions, classes, or calls, so they get neither of the
 code tiers above and are absent from call-graph analyses such as dead-code
@@ -185,6 +216,70 @@ stamps; every other project in the shared graph is untouched, and the run
 after parses nothing again (issues #1630 and #1977). The warning it logs says
 what such a re-parse cannot do: it removes only what a re-parsed module
 DEFINES, so a change that renames nodes still needs the wipe above.
+
+## Jupyter Notebooks
+
+The code cells of a Python notebook (`.ipynb`) are indexed as one Python
+module, so the functions and classes they define, and their imports and
+calls, are in the graph as a `.py` file's would be. A notebook that imports
+and calls `pkg.data.load` is one of the rows
+`cgr graph callers <project>.pkg.data.load` answers with, and a private
+helper that only a notebook calls is not reported by `cgr dead-code`.
+
+- **Module name.** The module keeps its extension:
+  `notebooks/analysis.ipynb` becomes `<project>.notebooks.analysis.ipynb`,
+  and a function `summarize` defined in it becomes
+  `<project>.notebooks.analysis.ipynb.summarize`. No import can load a
+  notebook, so the bare name always belongs to `analysis.py` or the package
+  `analysis/`, whether or not one exists beside the notebook.
+- **Cells.** Code cells are read in order, the way they run from top to
+  bottom. Markdown and raw cells are skipped, and outputs are never read, so
+  printed results, tables and images add nothing to the graph. Statements at
+  the top level of a cell are module-level code, as in a script: a call made
+  there is a `CALLS` edge from the notebook's `Module`, which is an entry
+  point for dead-code analysis.
+- **Lines.** Recorded lines are lines of the `.ipynb` file itself. Jupyter
+  writes each line of a cell's source as a separate JSON string on its own
+  line, and a definition's `start_line`, a call site's `line`, and `cgr graph`
+  output such as `analysis.ipynb:14` point at that line inside the cell.
+  Columns are counted in the code line, not in the JSON text around it. A
+  cell stored as one string, or a notebook written on a single line, is
+  still indexed, but its lines are numbered on from the line where the
+  cell's source starts, so they no longer match the file's lines exactly.
+- **IPython syntax.** Before parsing, a line that starts a statement with a
+  line magic (`%matplotlib inline`), a shell escape (`!pip install ...`,
+  `files = !ls`) or a help request (`?obj`) is replaced with `pass`, so it
+  hides nothing around it. The same text inside a string, inside brackets or
+  after a backslash continuation is Python, as it is to IPython, and is
+  parsed as written: a docstring line `%timeit f()` stays in the docstring,
+  and a continuation line `%divisor()` stays a modulo and a call. A cell
+  magic that runs its body as Python in the kernel (`%%time`, `%%timeit`,
+  `%%capture`, `%%prun`, `%%debug`, `%%python`) keeps that body. Any other
+  cell magic (`%%bash`, `%%html`, `%%sql`, `%%writefile`, ...) means the cell
+  is not Python, and the cell is skipped.
+- **Kernel language.** Only Python notebooks are parsed. The language comes
+  from `metadata.language_info.name`, or from `metadata.kernelspec.language`
+  when that is missing. A notebook that declares neither is read as Python,
+  the language of Jupyter's default kernel. An R, Julia or other notebook
+  keeps only its `File` node. So does a file that is not one valid nbformat
+  4 JSON document: one with a missing `nbformat` or a version other than 4,
+  or with anything but whitespace after the document (a merge-conflict
+  marker, a second object). A warning names it.
+- **Size and opting out.** Only the cells' `source` is decoded: outputs are
+  skipped without being decoded, so large embedded images cost a scan of
+  their bytes and nothing more. Jupyter's `.ipynb_checkpoints/` copies are
+  never indexed. To leave notebooks out entirely, add `*.ipynb` to
+  `.cgrignore`.
+- **Sync.** A notebook is hashed and re-parsed like any other file, so the
+  next `--update-graph` sync, the realtime watcher and the MCP `reingest`
+  tool all re-index an edited notebook. On a graph built before notebooks
+  were indexed, the first sync after upgrading re-parses every file once,
+  because the parser changed, and that indexes the notebooks the graph
+  already holds as files.
+- **Not covered yet.** The refactoring commands (`cgr rename` and the other
+  edit tools) do not rewrite notebook cells. The Jedi Python frontend
+  (`PythonFrontend.JEDI`) does not read notebooks, so their calls are
+  resolved by the tree-sitter rules.
 
 ## Language-Agnostic Design
 

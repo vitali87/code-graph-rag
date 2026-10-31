@@ -1,17 +1,19 @@
 from __future__ import annotations
 
 import importlib
+import sqlite3
 import threading
+import time
 import types
 from collections import defaultdict
-from collections.abc import Generator, Sequence
+from collections.abc import Callable, Generator, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime
+from functools import cache, partial
 from typing import TYPE_CHECKING, cast
 
 import click
-import mgclient
 import typer
 from loguru import logger
 
@@ -23,42 +25,50 @@ from .. import logs as ls
 from ..constants import (
     CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES,
     CYPHER_EXPLAIN_PREFIX,
+    EG_MEMORY_PATH,
     ERR_SUBSTR_ALREADY_EXISTS,
     ERR_SUBSTR_CONSTRAINT,
     FAILED_REL_ROWS_SHOWN,
     KEY_CREATED,
-    KEY_DELETED_COUNT,
     KEY_EXPECTED_ROOT,
     KEY_FROM_MISSING,
     KEY_FROM_VAL,
     KEY_NAME,
     KEY_PROJECT_NAME,
     KEY_PROJECT_NAMES,
+    KEY_PROJECT_PREFIX,
     KEY_PROPS,
     KEY_PURGED,
+    KEY_ROOT_PATH,
     KEY_TO_MISSING,
     KEY_TO_VAL,
     LEGACY_NODE_CONSTRAINTS,
     MERGE_KEY_PROPS_BY_REL,
+    MG_TRANSIENT_RETRY_ATTEMPTS,
+    MG_TRANSIENT_RETRY_BASE_DELAY_S,
     NEO4J_EXCEPTIONS_MODULE,
     NODE_NAME_INDEXES,
     NODE_UNIQUE_CONSTRAINTS,
     REL_ENDPOINT_JOINER,
     REL_ENDPOINT_SOURCE,
     REL_ENDPOINT_TARGET,
+    SEPARATOR_DOT,
 )
 from ..cypher_queries import (
     CYPHER_ANY_KEYLESS_STRUCTURE,
     CYPHER_ANY_SHARED_STRUCTURE,
     CYPHER_DELETE_ALL,
     CYPHER_DELETE_PROJECT,
+    CYPHER_DELETE_PROJECT_CUT_OFF_UNITS,
     CYPHER_DELETE_PROJECT_IF_ROOT,
     CYPHER_EXPORT_NODES,
     CYPHER_EXPORT_PROJECT_NODES,
     CYPHER_EXPORT_PROJECT_RELATIONSHIPS,
     CYPHER_EXPORT_RELATIONSHIPS,
     CYPHER_LIST_PROJECTS,
+    CYPHER_PROJECT_ROOT_PATH,
     CYPHER_PURGE_CROSS_PROJECT_STRUCTURE,
+    CYPHER_PURGE_CROSS_ROOT_STRUCTURE,
     CYPHER_PURGE_KEYLESS_STRUCTURE,
     build_create_node_query,
     build_create_relationship_query,
@@ -67,12 +77,20 @@ from ..cypher_queries import (
     build_missing_rel_endpoints_query,
     wrap_with_unwind,
 )
+from ..embedded_graph.connection import EmbeddedConnection
+from ..embedded_graph.expressions import CompileError
+from ..embedded_graph.lexer import CypherSyntaxError
+from ..embedded_graph.native import NativeGraph, RelMerge
+from ..embedded_graph.store import EmbeddedGraphUnsupported
 from ..graph_dialects import (
     DIALECT_MEMGRAPH,
     DIALECT_NEO4J,
+    DIALECT_SQLITE,
     GraphDialect,
     get_dialect,
 )
+from ..mgclient_compat import MGCLIENT_AVAILABLE, mgclient
+from ..stack.constants import MEMGRAPH_AUTH_FAILURE
 from ..types_defs import (
     BatchParams,
     BatchWrapper,
@@ -137,6 +155,18 @@ def _group_by_merge_keys(
     return by_keys
 
 
+def _native_graph(conn: ConnectionProtocol) -> NativeGraph | None:
+    """The Rust extension's handle on an embedded connection's file, if any."""
+    return conn.native if isinstance(conn, EmbeddedConnection) else None
+
+
+@cache
+def _note_memgraph_set_without_backend() -> None:
+    # Once per process: a server opens an ingestor per request, and the
+    # setting cannot change under it.
+    logger.warning(ls.MG_SET_WITHOUT_BACKEND.format(path=settings.graph_db_file))
+
+
 def _created_count(results: Sequence[ResultRow]) -> int:
     total = 0
     for r in results:
@@ -148,8 +178,11 @@ def _created_count(results: Sequence[ResultRow]) -> int:
 
 # pymgclient 1.6 re-exports its C extension through `import *`, which a type
 # checker cannot see into, so the exception types are bound once here.
-_MgclientDatabaseError: type[Exception] = mgclient.DatabaseError  # ty: ignore[unresolved-attribute]
-_MgclientOperationalError: type[Exception] = mgclient.OperationalError  # ty: ignore[unresolved-attribute]
+# TransientError first appears in 1.6.0, hence the `pymgclient>=1.6.0` floor.
+_MgclientError: type[Exception] = mgclient.Error
+_MgclientDatabaseError: type[Exception] = mgclient.DatabaseError
+_MgclientOperationalError: type[Exception] = mgclient.OperationalError
+_MgclientTransientError: type[Exception] = mgclient.TransientError
 
 
 def is_query_rejection(error: BaseException) -> bool:
@@ -160,8 +193,11 @@ def is_query_rejection(error: BaseException) -> bool:
     failed login or a missing permission cannot, so those must not trigger a
     regeneration. In mgclient, `OperationalError` (connection) subclasses
     `DatabaseError`; in neo4j, `AuthError` and `Forbidden` subclass
-    `ClientError` (issue #2361).
+    `ClientError` (issue #2361). The embedded engine raises its own errors
+    for a query it cannot parse or compile, and none for a connection.
     """
+    if isinstance(error, (CypherSyntaxError, CompileError)):
+        return True
     if isinstance(error, _MgclientDatabaseError):
         return not isinstance(error, _MgclientOperationalError)
     try:
@@ -182,6 +218,39 @@ def _missing_endpoints(row: ResultRow) -> str:
         )
         if row.get(key) is True
     )
+
+
+def _retry_transient[T](execute: Callable[[], T]) -> T:
+    """Run `execute`, again after a doubling wait while Memgraph reports a
+    transient conflict (issue #2441).
+
+    The connection autocommits, so a statement rejected with TransientError
+    changed nothing, and the error text itself asks for a retry once the
+    conflicting transaction is finished. Every other error is raised at once.
+    """
+    for attempt in range(1, MG_TRANSIENT_RETRY_ATTEMPTS):
+        try:
+            return execute()
+        except _MgclientTransientError as exc:
+            delay = MG_TRANSIENT_RETRY_BASE_DELAY_S * 2 ** (attempt - 1)
+            logger.warning(
+                ls.MG_TRANSIENT_RETRY.format(
+                    delay=delay,
+                    attempt=attempt,
+                    attempts=MG_TRANSIENT_RETRY_ATTEMPTS,
+                    error=exc,
+                )
+            )
+            time.sleep(delay)
+    return execute()
+
+
+class GraphUnavailableError(ConnectionError):
+    """The graph engine refused the connection or never answered it.
+
+    Raised at connect time with a message that says what to do, so every
+    command prints one line instead of mgclient's traceback (#2443).
+    """
 
 
 def _log_failed_relationships(
@@ -239,8 +308,11 @@ class MemgraphIngestor:
         "_dialect",
         "_driver",
         "_driver_lock",
+        "_read_conn",
+        "_read_lock",
         "_rel_count",
         "_rel_groups",
+        "_sqlite_path",
         "batch_size",
         "conn",
         "node_buffer",
@@ -255,13 +327,30 @@ class MemgraphIngestor:
         password: str | None = None,
         use_merge: bool = True,
         dialect: GraphDialect | None = None,
+        sqlite_path: str | None = None,
     ):
         # The engine is resolved once here rather than read from settings at
         # each call site, so a single ingestor cannot straddle two dialects
         # mid-run if configuration changes underneath it.
         self._dialect = dialect or get_dialect(settings.GRAPH_BACKEND)
+        # Only the engine the settings chose: a caller naming its own dialect
+        # or file picked it on purpose.
+        if (
+            dialect is None
+            and sqlite_path is None
+            and self._dialect.name == DIALECT_SQLITE
+            and settings.memgraph_set_without_backend
+        ):
+            _note_memgraph_set_without_backend()
         self._driver: object | None = None
         self._driver_lock = threading.Lock()
+        # The embedded engine's file; None reads SQLITE_GRAPH_PATH at connect.
+        self._sqlite_path = sqlite_path
+        self._read_conn: EmbeddedConnection | None = None
+        # Guards opening the read connection only: the connection serializes
+        # its own statements, so a slow generated query need not hold the
+        # lock every write takes.
+        self._read_lock = threading.Lock()
         self._host = host
         self._port = port
         self._username = username.strip() if username and username.strip() else None
@@ -292,6 +381,10 @@ class MemgraphIngestor:
         logger.debug(ls.MG_CONNECTING.format(host=self._host, port=self._port))
         try:
             self.conn = self._create_connection()
+        except GraphUnavailableError:
+            raise
+        except _MgclientError as e:
+            raise GraphUnavailableError(self._unavailable_message(e)) from e
         except Exception as e:
             # The driver's error does not say where it tried to connect, and
             # the line that did is DEBUG now (issue #2398).
@@ -299,9 +392,22 @@ class MemgraphIngestor:
                 ls.MG_CONNECT_FAILED.format(host=self._host, port=self._port, error=e)
             )
             raise
-        self._executor = ThreadPoolExecutor(max_workers=settings.FLUSH_THREAD_POOL_SIZE)
+        # One SQLite file takes one writer at a time: a worker per label
+        # would only queue on its lock, so the embedded engine flushes serially.
+        if self._dialect.name != DIALECT_SQLITE:
+            self._executor = ThreadPoolExecutor(
+                max_workers=settings.FLUSH_THREAD_POOL_SIZE
+            )
         logger.debug(ls.MG_CONNECTED)
         return self
+
+    def _unavailable_message(self, error: Exception) -> str:
+        # Memgraph refuses a login with the same exception type as a refused
+        # connection, so only the message tells the two apart.
+        address = f"{self._host}:{self._port}"
+        if MEMGRAPH_AUTH_FAILURE in str(error):
+            return ex.GRAPH_CREDENTIALS_REFUSED.format(address=address, error=error)
+        return ex.GRAPH_UNREACHABLE.format(address=address, error=error)
 
     def __exit__(
         self,
@@ -337,6 +443,9 @@ class MemgraphIngestor:
             if self._executor:
                 self._executor.shutdown(wait=True)
                 self._executor = None
+            if self._read_conn:
+                self._read_conn.close()
+                self._read_conn = None
             if self.conn:
                 self.conn.close()
                 logger.debug(ls.MG_DISCONNECTED)
@@ -386,7 +495,7 @@ class MemgraphIngestor:
         params = params or {}
         with self._get_cursor() as cursor:
             try:
-                cursor.execute(query, params)
+                _retry_transient(partial(cursor.execute, query, params))
                 return self._cursor_to_results(cursor)
             except Exception as e:
                 if (
@@ -408,6 +517,10 @@ class MemgraphIngestor:
         """
         if self._dialect.name == DIALECT_NEO4J:
             return self._neo4j_driver().connect()
+        if self._dialect.name == DIALECT_SQLITE:
+            return self._embedded_connection(read_only=False)
+        if not MGCLIENT_AVAILABLE:
+            raise GraphUnavailableError(ex.MGCLIENT_MISSING)
         if self._username is not None:
             conn = mgclient.connect(
                 host=self._host,
@@ -419,6 +532,20 @@ class MemgraphIngestor:
             conn = mgclient.connect(host=self._host, port=self._port)
         conn.autocommit = True
         return conn
+
+    def sqlite_graph_path(self) -> str:
+        return self._sqlite_path or str(settings.graph_db_file)
+
+    def _embedded_connection(
+        self, read_only: bool, heap_limit_mb: int | None = None
+    ) -> EmbeddedConnection:
+        path = self.sqlite_graph_path()
+        try:
+            return EmbeddedConnection(path, read_only, heap_limit_mb)
+        except (sqlite3.Error, OSError, EmbeddedGraphUnsupported) as e:
+            raise GraphUnavailableError(
+                ex.EMBEDDED_GRAPH_UNAVAILABLE.format(path=path, error=e)
+            ) from e
 
     def close_driver(self) -> None:
         """Release the Neo4j connection pool, if one was ever built.
@@ -466,7 +593,13 @@ class MemgraphIngestor:
         cursor = None
         try:
             cursor = conn.cursor()
-            cursor.execute(wrap_with_unwind(query), BatchWrapper(batch=params_list))
+            _retry_transient(
+                partial(
+                    cursor.execute,
+                    wrap_with_unwind(query),
+                    BatchWrapper(batch=params_list),
+                )
+            )
         except Exception as e:
             if ERR_SUBSTR_ALREADY_EXISTS not in str(e).lower():
                 logger.error(ls.MG_BATCH_ERROR.format(error=e))
@@ -495,7 +628,13 @@ class MemgraphIngestor:
         cursor = None
         try:
             cursor = conn.cursor()
-            cursor.execute(wrap_with_unwind(query), BatchWrapper(batch=params_list))
+            _retry_transient(
+                partial(
+                    cursor.execute,
+                    wrap_with_unwind(query),
+                    BatchWrapper(batch=params_list),
+                )
+            )
             return self._cursor_to_results(cursor)
         except Exception as e:
             logger.error(ls.MG_BATCH_ERROR.format(error=e))
@@ -521,33 +660,54 @@ class MemgraphIngestor:
         self, project_name: str, expected_root: str | None = None
     ) -> bool:
         """Delete one project; when `expected_root` is given, only if it still
-        names that root (issue #2479). The conditional form makes the check
-        and the delete one statement -- a concurrent sync repointing the
-        project's root cannot lose it between check and purge -- and returns
-        whether the project was actually deleted; the unconditional form
-        keeps returning True for every caller that ignores the answer."""
+        names that root (issue #2479).
+
+        The conditional form puts the root check inside the delete statement,
+        so a concurrent sync repointing the project's root between `cgr
+        prune`'s check and its purge leaves the project alone. It returns
+        whether the project was deleted: False when no project of that name
+        holds that root, or when one of that name is still there after the
+        delete. Only a delete that fired runs the cut-off sweep, which
+        matches by name and would otherwise take a live project's units. The
+        unconditional form keeps returning True for every caller that
+        ignores the answer.
+        """
         logger.info(ls.MG_DELETING_PROJECT.format(project_name=project_name))
+        name_params: dict[str, PropertyValue] = {KEY_PROJECT_NAME: project_name}
         if expected_root is None:
-            self._execute_query(CYPHER_DELETE_PROJECT, {KEY_PROJECT_NAME: project_name})
+            self._execute_query(CYPHER_DELETE_PROJECT, name_params)
         else:
-            rows = self.fetch_all(
-                CYPHER_DELETE_PROJECT_IF_ROOT,
-                {
-                    KEY_PROJECT_NAME: project_name,
-                    KEY_EXPECTED_ROOT: expected_root,
-                },
-            )
-            if not rows or rows[0].get(KEY_DELETED_COUNT) != 1:
-                # Unprovable reads as not deleted: the purge may not have
-                # fired, so the caller must not treat the project as gone.
+            if not self._project_has_root(project_name, expected_root):
                 logger.info(ls.MG_PROJECT_NOT_DELETED.format(project_name=project_name))
                 return False
+            self._execute_query(
+                CYPHER_DELETE_PROJECT_IF_ROOT,
+                {KEY_PROJECT_NAME: project_name, KEY_EXPECTED_ROOT: expected_root},
+            )
+            if self.fetch_all(CYPHER_PROJECT_ROOT_PATH, name_params):
+                # Repointed between the read above and the delete: the
+                # delete matched nothing, and the project is live.
+                logger.info(ls.MG_PROJECT_NOT_DELETED.format(project_name=project_name))
+                return False
+        self._execute_query(
+            CYPHER_DELETE_PROJECT_CUT_OFF_UNITS,
+            {
+                KEY_PROJECT_NAME: project_name,
+                KEY_PROJECT_PREFIX: f"{project_name}{SEPARATOR_DOT}",
+            },
+        )
         # Shared prefix-less nodes (Resources, ExternalModules) only lose
         # their edges above; drop the ones this project alone anchored.
         prune_unanchored_resources(self)
         self._execute_query(CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES)
         logger.info(ls.MG_PROJECT_DELETED.format(project_name=project_name))
         return True
+
+    def _project_has_root(self, project_name: str, root: str) -> bool:
+        rows = self.fetch_all(
+            CYPHER_PROJECT_ROOT_PATH, {KEY_PROJECT_NAME: project_name}
+        )
+        return any(row.get(KEY_ROOT_PATH) == root for row in rows)
 
     def ensure_constraints(self) -> None:
         logger.info(ls.MG_ENSURING_CONSTRAINTS)
@@ -590,16 +750,22 @@ class MemgraphIngestor:
             self._execute_query(
                 self._dialect.drop_constraint(label, prop, discovered_name)
             )
-        damaged = bool(self._execute_query(CYPHER_ANY_SHARED_STRUCTURE)) or bool(
-            self._execute_query(CYPHER_ANY_KEYLESS_STRUCTURE)
-        )
+        # With a legacy constraint in force no current sync has written here,
+        # so every shared node is the old key's merge. Without one, current
+        # data shares a node between projects over the same files, and only a
+        # node outside an owner's tree is legacy (issue #3025).
+        if legacy_present:
+            cross_project_purge = CYPHER_PURGE_CROSS_PROJECT_STRUCTURE
+            damaged = True
+        else:
+            cross_project_purge = CYPHER_PURGE_CROSS_ROOT_STRUCTURE
+            damaged = bool(self._execute_query(CYPHER_ANY_SHARED_STRUCTURE)) or bool(
+                self._execute_query(CYPHER_ANY_KEYLESS_STRUCTURE)
+            )
         if not damaged:
             return
         purged = 0
-        for purge_query in (
-            CYPHER_PURGE_CROSS_PROJECT_STRUCTURE,
-            CYPHER_PURGE_KEYLESS_STRUCTURE,
-        ):
+        for purge_query in (cross_project_purge, CYPHER_PURGE_KEYLESS_STRUCTURE):
             rows = self._execute_query(purge_query)
             if rows:
                 purged += int(str(rows[0][KEY_PURGED]))
@@ -691,8 +857,21 @@ class MemgraphIngestor:
             return 0, skipped + len(batch_rows)
         lock = self._conn_lock if conn is None else nullcontext()
         with lock:
-            self._execute_batch_on(target_conn, query, batch_rows)
+            self._write_node_rows(target_conn, label, id_key, query, batch_rows)
         return len(batch_rows), skipped
+
+    def _write_node_rows(
+        self,
+        conn: ConnectionProtocol,
+        label: str,
+        id_key: str,
+        query: str,
+        batch_rows: list[NodeBatchRow],
+    ) -> None:
+        # The Rust extension writes the same rows when it can (native.py).
+        native = _native_graph(conn) if self._use_merge else None
+        if native is None or not native.merge_nodes(label, id_key, batch_rows):
+            self._execute_batch_on(conn, query, batch_rows)
 
     def _flush_node_group_with_own_conn(
         self,
@@ -838,11 +1017,13 @@ class MemgraphIngestor:
                 has_props,
                 merge_key_props=merge_key_props,
             )
+            merge = RelMerge(merge_key_props, has_props)
         else:
             query = build_create_relationship_query(
                 from_label, from_key, rel_type, to_label, to_key, has_props
             )
-        return self._execute_rel_pattern_query(pattern, query, params_list, conn)
+            merge = None
+        return self._execute_rel_pattern_query(pattern, query, params_list, conn, merge)
 
     def _execute_rel_pattern_query(
         self,
@@ -850,6 +1031,7 @@ class MemgraphIngestor:
         query: str,
         params_list: list[RelBatchRow],
         conn: ConnectionProtocol | None,
+        merge: RelMerge | None = None,
     ) -> tuple[int, int]:
         target_conn = conn or self.conn
         if not target_conn:
@@ -860,8 +1042,20 @@ class MemgraphIngestor:
             RelBatchRow(**row, row_index=index) for index, row in enumerate(params_list)
         ]
         with lock:
-            results = self._execute_batch_with_return_on(target_conn, query, indexed)
-            batch_successful = _created_count(results)
+            # `merge` says what the MERGE query was built from, so the Rust
+            # extension can write the same rows (native.py).
+            native = _native_graph(target_conn) if merge is not None else None
+            created = (
+                native.merge_relationships(pattern, merge, indexed)
+                if native is not None and merge is not None
+                else None
+            )
+            if created is None:
+                results = self._execute_batch_with_return_on(
+                    target_conn, query, indexed
+                )
+                created = _created_count(results)
+            batch_successful = created
             failed_rows = (
                 self._missing_endpoint_rows(target_conn, pattern, params_list)
                 if batch_successful < len(params_list)
@@ -1015,7 +1209,33 @@ class MemgraphIngestor:
             ),
             query,
         )
+        if self._dialect.name == DIALECT_SQLITE:
+            return self._fetch_embedded_read_only(bounded_query)
         return self._execute_query(bounded_query)
+
+    def _fetch_embedded_read_only(self, query: str) -> list[ResultRow]:
+        """Run a checked query on a connection SQLite itself opened read-only.
+
+        Unlike Neo4j's READ session this is access control: the file is
+        opened `mode=ro`, so a write the plan check missed fails in SQLite.
+        An in-memory graph has no file to reopen and uses the main
+        connection, where the plan check is the guard.
+
+        The engine runs in this process, so the bounds the server enforces
+        for Memgraph are enforced here: the statement stops itself at
+        QUERY_TIMEOUT_S (the caller's own timeout only stops waiting), and
+        SQLite's heap is capped at QUERY_MEMORY_LIMIT_MB.
+        """
+        if self.sqlite_graph_path() == EG_MEMORY_PATH:
+            return self._execute_query(query)
+        with self._read_lock:
+            if self._read_conn is None:
+                self._read_conn = self._embedded_connection(
+                    read_only=True, heap_limit_mb=settings.QUERY_MEMORY_LIMIT_MB
+                )
+            read_conn = self._read_conn
+        result = read_conn.run(query, timeout_s=settings.QUERY_TIMEOUT_S)
+        return [dict[str, ResultValue](zip(result.columns, row)) for row in result.rows]
 
     def execute_write(self, query: str, params: PropertyParams | None = None) -> None:
         logger.debug(ls.MG_WRITE_QUERY, query=query, params=params)

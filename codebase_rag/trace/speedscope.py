@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 import math
-from typing import TYPE_CHECKING, TypeGuard, cast
+from typing import TYPE_CHECKING, cast
 
 from .. import constants as cs
 from .records import (
@@ -50,9 +50,11 @@ def _scoped_name(name: object, include: Sequence[str]) -> str | None:
     return None
 
 
-def _valid_index(value: object, count: int) -> TypeGuard[int]:
-    """A plain (non-bool) int that indexes the frame table."""
-    return isinstance(value, int) and not isinstance(value, bool) and 0 <= value < count
+def _frame_index(value: object, count: int) -> int | None:
+    """The value as a frame-table index: a plain (non-bool) int in range, else None."""
+    if isinstance(value, int) and not isinstance(value, bool) and 0 <= value < count:
+        return value
+    return None
 
 
 def _sample_weight(weights: list[object], position: int) -> float:
@@ -96,8 +98,9 @@ def _accumulate_stack(
     """One sampled stack, root first: each in-scope frame under the nearest
     in-scope ancestor adds `weight` to that edge. False on a bad frame index."""
     ancestor: str | None = None
-    for frame_index in stack:
-        if not _valid_index(frame_index, len(names)):
+    for frame in stack:
+        frame_index = _frame_index(frame, len(names))
+        if frame_index is None:
             return False
         current = names[frame_index]
         if current is None:
@@ -116,8 +119,8 @@ def _open_event(
     edges: dict[tuple[str, str], float],
 ) -> bool:
     """Replay one ``O`` event: validate the frame and count the in-scope edge."""
-    frame_index = event.get("frame")
-    if not _valid_index(frame_index, len(names)):
+    frame_index = _frame_index(event.get("frame"), len(names))
+    if frame_index is None:
         return False
     current = names[frame_index]
     if current is not None:

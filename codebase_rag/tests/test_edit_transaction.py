@@ -13,6 +13,7 @@ import pytest
 from click.testing import CliRunner
 
 from codebase_rag import constants as cs
+from codebase_rag.checkout_state import state_file
 from codebase_rag.editing import (
     EditTransaction,
     StagedTree,
@@ -76,7 +77,7 @@ def test_failed_verification_leaves_the_tree_byte_identical(repo: Path) -> None:
     assert "tests failed" in outcome.message
     assert outcome.files == ("pkg/a.py", "pkg/b.py", "pkg/new.py")
     assert _tree_digest(repo) == before
-    assert not (repo / cs.EDIT_HISTORY_FILENAME).exists()
+    assert not state_file(repo, cs.EDIT_HISTORY_FILENAME).exists()
 
 
 def test_successful_commit_applies_every_file_and_returns_the_diff(
@@ -166,7 +167,7 @@ def test_staging_the_current_content_is_not_an_edit(repo: Path) -> None:
     outcome = tx.commit()
     assert outcome.applied is False
     assert outcome.message == cs.EDIT_NOTHING_STAGED
-    assert not (repo / cs.EDIT_HISTORY_FILENAME).exists()
+    assert not state_file(repo, cs.EDIT_HISTORY_FILENAME).exists()
 
 
 def test_later_stage_of_the_same_file_wins_but_keeps_the_disk_baseline(
@@ -343,7 +344,7 @@ def test_history_is_capped(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         tx.commit()
     entries = load_history(repo)
     assert len(entries) == 2
-    raw = json.loads((repo / cs.EDIT_HISTORY_FILENAME).read_text())
+    raw = json.loads(state_file(repo, cs.EDIT_HISTORY_FILENAME).read_text())
     assert len(raw) == 2
 
 
@@ -433,7 +434,7 @@ def test_undo_rejects_history_paths_outside_the_repo(
 ) -> None:
     victim = tmp_path / "victim.txt"
     victim.write_bytes(b"keep\n")
-    history = repo / cs.EDIT_HISTORY_FILENAME
+    history = state_file(repo, cs.EDIT_HISTORY_FILENAME)
     history.write_text(
         json.dumps(
             [
@@ -468,7 +469,7 @@ def test_commit_holds_an_os_level_lock_file(repo: Path) -> None:
     seen: dict[str, bool] = {}
 
     def verify(tree: StagedTree) -> bool:
-        seen["lock_exists"] = (repo / cs.EDIT_LOCK_FILENAME).exists()
+        seen["lock_exists"] = state_file(repo, cs.EDIT_LOCK_FILENAME).exists()
         return True
 
     tx.commit(verify)
@@ -641,7 +642,7 @@ def test_undo_reads_the_history_under_the_lock(
 
 
 def test_undo_rejects_history_entries_naming_state_files(repo: Path) -> None:
-    history = repo / cs.EDIT_HISTORY_FILENAME
+    history = state_file(repo, cs.EDIT_HISTORY_FILENAME)
     history.write_bytes(
         json.dumps(
             [

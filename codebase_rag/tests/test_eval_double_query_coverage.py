@@ -182,6 +182,100 @@ class TestTheDoubleAnswersWithRealRows:
             cs.NodeLabel.TYPE.value,
         }
 
+    def test_implements_pairs_name_the_implementer_and_its_interface(self) -> None:
+        store = _StatefulIngestor()
+        store.ensure_node_batch(
+            cs.NodeLabel.CLASS.value, {cs.KEY_QUALIFIED_NAME: "proj.m.Upper"}
+        )
+        store.ensure_node_batch(
+            cs.NodeLabel.INTERFACE.value, {cs.KEY_QUALIFIED_NAME: "proj.m.Strategy"}
+        )
+        for target in ("proj.m.Strategy", "proj.m.Ghost"):
+            store.ensure_relationship_batch(
+                (cs.NodeLabel.CLASS.value, cs.KEY_QUALIFIED_NAME, "proj.m.Upper"),
+                cs.RelationshipType.IMPLEMENTS.value,
+                (cs.NodeLabel.INTERFACE.value, cs.KEY_QUALIFIED_NAME, target),
+            )
+
+        rows = store.fetch_all(cs.CYPHER_ALL_IMPLEMENTS, PREFIX)
+
+        # The edge to a node the store never saw is not matched, as in the
+        # real store; the double alone would keep it.
+        assert rows == [
+            {cs.KEY_CHILD_QN: "proj.m.Upper", cs.KEY_BASE_QN: "proj.m.Strategy"}
+        ]
+        other = {cs.KEY_PROJECT_PREFIX: "other."}
+        assert store.fetch_all(cs.CYPHER_ALL_IMPLEMENTS, other) == []
+
+    def test_rust_overrides_come_only_from_rust_methods(self) -> None:
+        store = _StatefulIngestor()
+        methods = {
+            "proj.errors.u64.half": "src/errors.rs",
+            "proj.errors.FloatErrors.half": "src/errors.rs",
+            "proj.app.Upper.m()": "src/app/Upper.java",
+            "proj.app.I.m()": "src/app/I.java",
+        }
+        for qn, path in methods.items():
+            store.ensure_node_batch(
+                cs.NodeLabel.METHOD.value,
+                {cs.KEY_QUALIFIED_NAME: qn, cs.KEY_PATH: path},
+            )
+        for source, target in (
+            ("proj.errors.u64.half", "proj.errors.FloatErrors.half"),
+            ("proj.app.Upper.m()", "proj.app.I.m()"),
+        ):
+            store.ensure_relationship_batch(
+                (cs.NodeLabel.METHOD.value, cs.KEY_QUALIFIED_NAME, source),
+                cs.RelationshipType.OVERRIDES.value,
+                (cs.NodeLabel.METHOD.value, cs.KEY_QUALIFIED_NAME, target),
+            )
+
+        rows = store.fetch_all(cs.CYPHER_ALL_RUST_OVERRIDES, PREFIX)
+
+        assert rows == [
+            {
+                cs.KEY_FROM_QN: "proj.errors.u64.half",
+                cs.KEY_TO_QN: "proj.errors.FloatErrors.half",
+            }
+        ]
+
+    def test_rust_traits_with_a_bodiless_method_are_listed(self) -> None:
+        store = _StatefulIngestor()
+        declared = {
+            "proj.lib.Closed": ("src/lib.rs", cs.NodeLabel.INTERFACE),
+            "proj.lib.Open": ("src/lib.rs", cs.NodeLabel.INTERFACE),
+            "proj.app.Iface": ("src/app/Iface.java", cs.NodeLabel.INTERFACE),
+        }
+        for qn, (path, label) in declared.items():
+            store.ensure_node_batch(
+                label.value, {cs.KEY_QUALIFIED_NAME: qn, cs.KEY_PATH: path}
+            )
+            method = f"{qn}.m"
+            # Only Open's method has a body, so only Open carries a fingerprint.
+            body = {cs.KEY_AST_FINGERPRINT: "f"} if qn == "proj.lib.Open" else {}
+            store.ensure_node_batch(
+                cs.NodeLabel.METHOD.value,
+                {cs.KEY_QUALIFIED_NAME: method, cs.KEY_PATH: path, **body},
+            )
+            store.ensure_relationship_batch(
+                (label.value, cs.KEY_QUALIFIED_NAME, qn),
+                cs.RelationshipType.DEFINES_METHOD.value,
+                (cs.NodeLabel.METHOD.value, cs.KEY_QUALIFIED_NAME, method),
+            )
+
+        rows = store.fetch_all(cs.CYPHER_RUST_TRAITS_WITH_REQUIRED_METHODS, PREFIX)
+
+        assert rows == [{cs.KEY_QUALIFIED_NAME: "proj.lib.Closed"}]
+
+    def test_definition_rows_carry_the_declared_name(
+        self, python_store: _StatefulIngestor
+    ) -> None:
+        rows = python_store.fetch_all(cs.CYPHER_ALL_DEFINITION_QNS, PREFIX)
+
+        names = {row[cs.KEY_QUALIFIED_NAME]: row[cs.KEY_NAME] for row in rows}
+        assert names["proj.util.helper"] == "helper"
+        assert names["proj.app.Widget.draw"] == "draw"
+
 
 class TestQueriesWhoseCallersSwallowExceptions:
     """Some readers catch the refusal, so for them emulation is not optional.

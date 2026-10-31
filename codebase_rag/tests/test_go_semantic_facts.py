@@ -17,6 +17,12 @@ from codebase_rag.parsers.frontends.protocol import ImplementsPair
 from codebase_rag.parsers.go_frontend import GoCallSite, GoImplements, GoSemanticFacts
 from codebase_rag.tests.conftest import get_relationships, run_updater
 
+# The tests that run the real go/types helper share its build, and the
+# fingerprint's tool and grammar versions are read once (conftest).
+pytestmark = pytest.mark.usefixtures(
+    "one_go_helper_per_session", "fingerprint_inputs_once_per_session"
+)
+
 SKIP = "go"
 
 
@@ -48,7 +54,7 @@ def _gotypes(monkeypatch: pytest.MonkeyPatch, facts: GoSemanticFacts) -> None:
 
     monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.GOTYPES)
     monkeypatch.setattr(go_fe, "go_frontend_available", lambda: True)
-    monkeypatch.setattr(go_fe, "run_go_frontend", lambda repo_path: facts)
+    monkeypatch.setattr(go_fe, "run_go_frontend", lambda repo_path, ignored_dirs: facts)
 
 
 _AMBIGUOUS_SRC = """package sample
@@ -169,6 +175,8 @@ def test_frontend_off_clears_stale_go_facts(
     )
     dp.go_external_sites.add(("stale.go", 3, 0, "Ext"))
     dp.go_implements.append(ImplementsPair("stale.go", 4, 0, "stale.go", 5, 0))
+    dp.go_analysed_roots.add(".")
+    dp.go_checked_files.add("stale.go")
     monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
 
     updater._run_go_frontend()
@@ -176,6 +184,8 @@ def test_frontend_off_clears_stale_go_facts(
     assert dp.go_call_sites == {}
     assert dp.go_external_sites == set()
     assert dp.go_implements == []
+    assert dp.go_analysed_roots == set()
+    assert dp.go_checked_files == set()
 
 
 def test_auto_without_toolchain_matches_frontend_off(
@@ -288,7 +298,20 @@ func Run(s Speaker) {
 
 
 def _impl_facts(implements: list[GoImplements]) -> GoSemanticFacts:
-    return GoSemanticFacts(call_sites={}, external_sites=set(), implements=implements)
+    # As the tool reports a run that analysed the root module: its pairs are
+    # then the whole answer there, and no name-and-arity match stands in for
+    # one it dropped (issue #2483).
+    return GoSemanticFacts(
+        call_sites={},
+        external_sites=set(),
+        implements=implements,
+        analysed_modules=(".",),
+        checked_files=frozenset({"sample.go"}),
+        compared_types=frozenset(
+            ("sample.go", *_byte_loc(_IMPLEMENTS_SRC, name))
+            for name in ("Speaker interface", "Dog struct")
+        ),
+    )
 
 
 def test_implements_fact_emits_edge_to_the_pass2_type_nodes(

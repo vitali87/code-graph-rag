@@ -342,6 +342,35 @@ class PythonTypeInferenceEngine(
             return []
         return [receiver]
 
+    def name_typed_parameters(
+        self, caller_node: Node, module_qn: str
+    ) -> dict[str, str]:
+        """The untyped parameters of `caller_node` typed only by their name.
+
+        `payload` typed as `Payload` is a guess about the receiver, so a call
+        through it is `heuristic`, never `exact` (issue #2608). A parameter
+        the body rebinds gets no guess at all: it holds what its bindings
+        give it (`payload = Payload()` binds exactly), and a binding of
+        unknown type (`payload = factory()`) leaves it untyped rather than
+        keep a guess no label would mark.
+        """
+        params_node = caller_node.child_by_field_name(cs.TS_FIELD_PARAMETERS)
+        if params_node is None:
+            return {}
+        guessed: dict[str, str] = {}
+        for param in params_node.named_children:
+            if (
+                param.type == cs.TS_PY_IDENTIFIER
+                and param.text is not None
+                and (name := param.text.decode(cs.ENCODING_UTF8))
+                and (
+                    class_name := self._infer_type_from_parameter_name(name, module_qn)
+                )
+                and not self._rebinds(caller_node, name)
+            ):
+                guessed[name] = class_name
+        return guessed
+
     def build_local_variable_type_map(
         self, caller_node: Node, module_qn: str, class_context: str | None = None
     ) -> dict[str, str]:
@@ -408,3 +437,19 @@ class PythonTypeInferenceEngine(
             logger.debug(lg.PY_BUILD_VAR_MAP_FAILED, error=e)
 
         return local_var_types
+
+    def expression_type(
+        self, value: Node, module_qn: str, local_var_types: dict[str, str]
+    ) -> str | None:
+        """The type one value expression gives the name it is bound to, by the
+        same rules the map's assignment passes apply: what a flow-sensitive
+        caller asks of each binding that reaches a call separately."""
+        try:
+            return self._infer_type_from_expression_simple(
+                value, module_qn
+            ) or self._infer_type_from_expression_complex(
+                value, module_qn, local_var_types
+            )
+        except Exception as e:
+            logger.debug(lg.PY_BUILD_VAR_MAP_FAILED, error=e)
+            return None

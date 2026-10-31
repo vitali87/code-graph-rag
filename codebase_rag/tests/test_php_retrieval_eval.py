@@ -85,5 +85,7 @@ def test_score_php_retrieval_prf() -> None:
     result = score_php_retrieval(
         {("a.php", "f"), ("a.php", "g")}, {("a.php", "f"), ("b.php", "h")}
     )
-    row = next(r for r in result.rows if r["label"] == ec.PHP_RETRIEVAL_LABEL)
+    row = next(
+        r for r in result.rows if r["label"] == ec.RetrievalCondition.GRAPH.value
+    )
     assert (row["tp"], row["fp"], row["fn"]) == (1, 1, 1)

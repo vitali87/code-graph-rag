@@ -68,5 +68,7 @@ def test_score_java_retrieval_prf() -> None:
     result = score_java_retrieval(
         {("A.java", "f"), ("A.java", "g")}, {("A.java", "f"), ("B.java", "h")}
     )
-    row = next(r for r in result.rows if r["label"] == ec.JAVA_RETRIEVAL_LABEL)
+    row = next(
+        r for r in result.rows if r["label"] == ec.RetrievalCondition.GRAPH.value
+    )
     assert (row["tp"], row["fp"], row["fn"]) == (1, 1, 1)

@@ -64,7 +64,9 @@ def _hybrid(monkeypatch: pytest.MonkeyPatch, facts: CSharpSemanticFacts) -> None
 
     monkeypatch.setattr(gu.settings, "CSHARP_FRONTEND", cs.CSharpFrontend.HYBRID)
     monkeypatch.setattr(csharp_fe, "csharp_frontend_available", lambda: True)
-    monkeypatch.setattr(csharp_fe, "run_csharp_frontend", lambda repo_path: facts)
+    monkeypatch.setattr(
+        csharp_fe, "run_csharp_frontend", lambda repo_path, ignored_dirs: facts
+    )
 
 
 def test_parse_payload_reads_semantic_fact_sections() -> None:

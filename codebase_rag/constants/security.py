@@ -853,6 +853,47 @@ SHELL_NEGATION_PREFIX = "--no-"
 # The obsolete `head -20` / `tail -5` spelling of a line count.
 SHELL_NUMERIC_COUNT_READS = frozenset({"head", "tail"})
 
+# Confined reads that print what a file holds; `ls`, `find` and `wc` show
+# names and counts only, so they may name a credential file freely (#3457).
+SHELL_CONTENT_READS = frozenset({"cat", "head", "tail", "sort", "uniq", "cut", "rg"})
+# ripgrep skips hidden and ignored files, which is where .env and keys live,
+# unless one of these switches tells it not to.
+SHELL_RG_HIDDEN_SWITCHES = frozenset({"-.", "-u", "--hidden", "--unrestricted"})
+# `--no-ignore`, `--no-ignore-vcs`, `--no-ignore-dot` and the rest: each makes
+# ripgrep search files its ignore rules would skip.
+SHELL_RG_NO_IGNORE_PREFIX = "--no-ignore"
+# With none of these, ripgrep's first operand is the pattern, not a file.
+SHELL_RG_PATTERN_OPTIONS = frozenset({"-e", "--regexp", "-f", "--file"})
+SHELL_CMD_RG = "rg"
+SHELL_STDIN_OPERAND = "-"
+# A recursive ripgrep is checked against the files it would search, listed by
+# `rg --files` with the options that narrow that list (#3457).
+SHELL_RG_LIST_FILES = "--files"
+SHELL_RG_DEFAULT_ROOT = "."
+SHELL_RG_FILE_FILTERS = frozenset(
+    {
+        "-g",
+        "--glob",
+        "--iglob",
+        "--glob-case-insensitive",
+        "-t",
+        "--type",
+        "-T",
+        "--type-not",
+        "--type-add",
+        "--type-clear",
+        "-d",
+        "--max-depth",
+        "--max-filesize",
+        "--ignore-file",
+        "--ignore-file-case-insensitive",
+        "--one-file-system",
+    }
+)
+SHELL_RG_LIST_TIMEOUT_SECONDS = 10
+SHELL_RG_LIST_DECODE_ERRORS = "surrogateescape"
+SHELL_RG_LIST_OK_CODES = frozenset({0, 1})
+
 
 # git subcommands that run a caller-supplied command. `filter-branch
 # --tree-filter 'cmd'` was verified executing in a scratch repo; `bisect run`
@@ -1240,3 +1281,62 @@ SHELL_DANGEROUS_PATTERNS_SEGMENT = (
     (r"xargs\s+-I.*sh", "xargs shell execution"),
     (r"xargs\s+.*bash", "xargs bash execution"),
 )
+
+# Files that commonly hold credentials, refused to the agent's approval-free
+# reads (the read_file tool, confined shell reads, MCP read_file): whatever
+# such a read returns goes to the model provider, and an instruction planted
+# in the repository can ask for it as easily as for source. Matched on the
+# lowercased file name, so a symlink is judged by both its own name and its
+# target's.
+SENSITIVE_FILE_NAMES = frozenset(
+    {
+        ".env",
+        ".netrc",
+        "_netrc",
+        ".npmrc",
+        ".pypirc",
+        ".pgpass",
+        ".git-credentials",
+        ".htpasswd",
+        ".vault-token",
+        "id_rsa",
+        "id_dsa",
+        "id_ecdsa",
+        "id_ed25519",
+        "id_ecdsa_sk",
+        "id_ed25519_sk",
+    }
+)
+SENSITIVE_FILE_SUFFIXES = frozenset(
+    {
+        ".pem",
+        ".key",
+        ".p12",
+        ".pfx",
+        ".jks",
+        ".keystore",
+        ".kdbx",
+        ".tfstate",
+        ".env",
+    }
+)
+# `.env.production` and friends are secrets; these are the conventional
+# names for a checked-in template that holds none.
+SENSITIVE_ENV_PREFIX = ".env."
+ENV_TEMPLATE_NAMES = frozenset(
+    {".env.example", ".env.sample", ".env.template", ".env.dist", ".env.defaults"}
+)
+# A state backup (`terraform.tfstate.backup`) carries the same secrets.
+SENSITIVE_NAME_INFIX = ".tfstate."
+# (parent directory, file name): config files that are only secret where
+# their tool keeps them. A remote URL in .git/config can carry a token.
+SENSITIVE_PARENT_FILES = frozenset(
+    {
+        (".git", "config"),
+        (".aws", "credentials"),
+        (".docker", "config.json"),
+        (".kube", "config"),
+    }
+)
+# Everything under these directories is key material.
+SENSITIVE_DIR_NAMES = frozenset({".ssh", ".gnupg"})

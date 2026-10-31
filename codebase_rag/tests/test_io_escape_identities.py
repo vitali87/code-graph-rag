@@ -49,8 +49,11 @@ def _edges(
 def _reads(tmp_path: Path, files: dict[str, str], caller: str, resource: str) -> bool:
     # Java method qns carry a parameter signature suffix; match on the qn with
     # any trailing `(...)` stripped.
+    # `{project}` stands for the caller's project, which scopes a rootful URL
+    # (issue #3190).
     return any(
-        src.partition("(")[0].endswith(caller) and tgt == resource
+        src.partition("(")[0].endswith(caller)
+        and tgt == resource.replace("{project}", src.split(".", 1)[0])
         for src, tgt in _edges(tmp_path, files, READS_FROM)
     )
 
@@ -61,7 +64,9 @@ def _endpoints(tmp_path: Path, files: dict[str, str]) -> set[str]:
 
 def test_js_string_keeps_escape(tmp_path: Path) -> None:
     files = {"app.js": "function load() {\n  fetch('/logs\\tdaily');\n}\n"}
-    assert _reads(tmp_path, files, "app.load", "resource::NETWORK::/logs\\tdaily")
+    assert _reads(
+        tmp_path, files, "app.load", "resource::NETWORK::{project}::/logs\\tdaily"
+    )
 
 
 def test_ts_template_literal_keeps_escape_beside_placeholder(tmp_path: Path) -> None:
@@ -70,7 +75,9 @@ def test_ts_template_literal_keeps_escape_beside_placeholder(tmp_path: Path) -> 
             "export function load(id: string) {\n  fetch(`/logs\\tdaily/${id}`);\n}\n"
         )
     }
-    assert _reads(tmp_path, files, "app.load", "resource::NETWORK::/logs\\tdaily/{id}")
+    assert _reads(
+        tmp_path, files, "app.load", "resource::NETWORK::{project}::/logs\\tdaily/{id}"
+    )
 
 
 def test_go_interpreted_string_keeps_escape(tmp_path: Path) -> None:

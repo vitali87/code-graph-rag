@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from functools import cache, partial
+from functools import cache, lru_cache, partial
+from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -10,7 +11,7 @@ from tree_sitter import Node, QueryCursor
 from ... import constants as cs
 from ... import logs as ls
 from ...types_defs import ASTNode, FunctionRegistryTrieProtocol, NodeType
-from ..utils import get_cached_query, safe_decode_text
+from ..utils import get_cached_query, safe_decode_text, unparenthesized
 from . import utils as ut
 
 # Callable node types whose bodies own their locals and returns; the shared
@@ -55,6 +56,12 @@ _JS_MODULE_STATEMENTS = frozenset({cs.TS_IMPORT_STATEMENT, cs.TS_EXPORT_STATEMEN
 # and nested declarations introduce, with the byte spans where they bind it.
 _JsBindingIndex = dict[str, list[tuple[int, int]]]
 
+# The signature node an overload of each implementation kind is written as.
+_OVERLOAD_SIGNATURE_TYPES = {
+    cs.TS_METHOD_DEFINITION: cs.TS_METHOD_SIGNATURE,
+    cs.TS_FUNCTION_DECLARATION: cs.TS_FUNCTION_SIGNATURE,
+}
+
 # Declarations of a name: (scope start_byte, scope end_byte, `new` value node
 # when the declarator's own initialiser constructs, else None). Assignments:
 # (site byte, `new` value node).
@@ -95,29 +102,154 @@ def _find_function_declaration(root: ASTNode, name: str) -> ASTNode | None:
     top-level one) cannot be attributed to a call site, so more than one
     match yields nothing rather than a possibly wrong binding.
     """
-    matches: list[ASTNode] = []
+    matches = _function_declarations(root).get(name, ())
+    return matches[0] if len(matches) == 1 else None
+
+
+@lru_cache(maxsize=1)
+def _function_declarations(root: ASTNode) -> Mapping[str, tuple[ASTNode, ...]]:
+    """Every free function of one tree by name, in document order.
+
+    Each `for (x of f())` looked `f` up by walking the whole module tree, and
+    the loop is typed once per enclosing function, so a file of N such loops
+    cost O(N^2): 830 s for 2,000 functions (issue #2453). The walk now runs
+    once per tree. One slot, because every lookup names the tree of the file
+    being processed; keyed on the root node, which tree-sitter compares by
+    tree, so a re-parsed file builds its own.
+    """
+    found: dict[str, list[ASTNode]] = {}
     stack: list[ASTNode] = [root]
     while stack:
         current = stack.pop()
-        if current.type in (
-            cs.TS_FUNCTION_DECLARATION,
-            cs.TS_GENERATOR_FUNCTION_DECLARATION,
-        ):
-            name_node = current.child_by_field_name("name")
-            if name_node is not None and safe_decode_text(name_node) == name:
-                matches.append(current)
-        elif current.type == cs.TS_VARIABLE_DECLARATOR:
-            name_node = current.child_by_field_name("name")
-            value_node = current.child_by_field_name("value")
-            if (
-                name_node is not None
-                and value_node is not None
-                and value_node.type == cs.TS_ARROW_FUNCTION
-                and safe_decode_text(name_node) == name
-            ):
-                matches.append(value_node)
+        if declared := _declared_function(current):
+            name, function = declared
+            found.setdefault(name, []).append(function)
         stack.extend(reversed(current.children))
-    return matches[0] if len(matches) == 1 else None
+    return MappingProxyType({name: tuple(nodes) for name, nodes in found.items()})
+
+
+def _declared_function(node: ASTNode) -> tuple[str, ASTNode] | None:
+    """The name and callable `node` declares as a free function, if any."""
+    if node.type in (
+        cs.TS_FUNCTION_DECLARATION,
+        cs.TS_GENERATOR_FUNCTION_DECLARATION,
+    ):
+        name_node = node.child_by_field_name(cs.FIELD_NAME)
+        name = safe_decode_text(name_node) if name_node is not None else None
+        return (name, node) if name else None
+    if node.type != cs.TS_VARIABLE_DECLARATOR:
+        return None
+    name_node = node.child_by_field_name(cs.FIELD_NAME)
+    value_node = node.child_by_field_name(cs.FIELD_VALUE)
+    if (
+        name_node is None
+        or value_node is None
+        or value_node.type != cs.TS_ARROW_FUNCTION
+    ):
+        return None
+    name = safe_decode_text(name_node)
+    return (name, value_node) if name else None
+
+
+def _own_return_values(callable_node: ASTNode) -> list[ASTNode | None]:
+    """What each of the callable's own returns hands back, parentheses
+    dropped; ``None`` for a bare `return;`. An arrow's expression body is
+    its one return value."""
+    body = callable_node.child_by_field_name(cs.FIELD_BODY)
+    if body is None:
+        return []
+    if body.type != cs.TS_STATEMENT_BLOCK:
+        return [unparenthesized(body)]
+    returns: list[ASTNode] = []
+    ut.find_return_statements(body, returns)
+    return [
+        unparenthesized(next(iter(node.named_children), None))
+        for node in returns
+        if JsTypeInferenceEngine._return_belongs_to(node, callable_node)
+    ]
+
+
+def _overload_signatures(callable_node: ASTNode) -> list[ASTNode]:
+    """The overload signatures written for this implementation beside it:
+    in its class body, or in its module or block (each may be exported).
+
+    A static and an instance method of one name are two members, each with
+    its own overloads, so only signatures of the same staticness count.
+    """
+    signature_type = _OVERLOAD_SIGNATURE_TYPES.get(callable_node.type)
+    static = ut.is_static_member(callable_node)
+    name = safe_decode_text(callable_node.child_by_field_name(cs.FIELD_NAME))
+    scope = callable_node.parent
+    if scope is not None and scope.type == cs.TS_EXPORT_STATEMENT:
+        scope = scope.parent
+    if signature_type is None or not name or scope is None:
+        return []
+    return [
+        member
+        for child in scope.named_children
+        if (member := _exported_declaration(child)).type == signature_type
+        and safe_decode_text(member.child_by_field_name(cs.FIELD_NAME)) == name
+        and ut.is_static_member(member) == static
+    ]
+
+
+def _method_in_body(
+    class_body: ASTNode, method_name: str, static: bool
+) -> ASTNode | None:
+    """The class's own `method_name` body with the wanted staticness: a
+    static and an instance method may share the name."""
+    return next(
+        (
+            member
+            for member in class_body.named_children
+            if member.type == cs.TS_METHOD_DEFINITION
+            and safe_decode_text(member.child_by_field_name(cs.FIELD_NAME))
+            == method_name
+            and ut.is_static_member(member) == static
+        ),
+        None,
+    )
+
+
+def _member_name(member: ASTNode) -> str | None:
+    # A TS class field keeps its key in `name`, a JS one in `property`.
+    key = member.child_by_field_name(cs.FIELD_NAME) or member.child_by_field_name(
+        cs.FIELD_PROPERTY
+    )
+    return safe_decode_text(key) if key is not None else None
+
+
+def _single_non_nullish_member(union: ASTNode) -> ASTNode | None:
+    members = [
+        child
+        for child in union.named_children
+        if (safe_decode_text(child) or "") not in cs.TS_NULLISH_TYPE_TEXTS
+    ]
+    return members[0] if len(members) == 1 else None
+
+
+def _exported_declaration(node: ASTNode) -> ASTNode:
+    if node.type == cs.TS_EXPORT_STATEMENT and (
+        declaration := node.child_by_field_name(cs.FIELD_DECLARATION)
+    ):
+        return declaration
+    return node
+
+
+def _this_value_of(callable_node: ASTNode) -> str | None:
+    # `this` in a class's instance method is an instance of the receiver's
+    # class; in a static one it is the receiver class itself (a subclass's
+    # when called through it). Only a class member's `this` is either.
+    parent = callable_node.parent
+    if (
+        callable_node.type != cs.TS_METHOD_DEFINITION
+        or parent is None
+        or parent.type != cs.TS_CLASS_BODY
+    ):
+        return None
+    if ut.is_static_member(callable_node):
+        return cs.JS_RECEIVER_CLASS
+    return cs.JS_RECEIVER_INSTANCE
 
 
 def _js_await_call(arguments: ASTNode) -> ASTNode | None:
@@ -196,6 +328,8 @@ class JsTypeInferenceEngine:
     ) -> dict[str, str]:
         local_var_types: dict[str, str] = {}
         declarator_count = 0
+        # Seeded first so a declarator that rebinds the name wins.
+        self._seed_interface_parameters(caller_node, local_var_types, module_qn)
 
         declarator_nodes = self._get_declarators_via_query(caller_node, language)
         if declarator_nodes is not None:
@@ -223,6 +357,41 @@ class JsTypeInferenceEngine:
             declarator_count=declarator_count,
         )
         return local_var_types
+
+    def _seed_interface_parameters(
+        self, caller_node: ASTNode, local_var_types: dict[str, str], module_qn: str
+    ) -> None:
+        # `use(r: Repo)` calling `r.find()` (issue #2524): the receiver's only
+        # type is its annotation, and without it the call fell to the name-only
+        # member gate, which cannot choose between the interface method and its
+        # implementations. Only a first-party INTERFACE is seeded: any other
+        # annotation keeps the untyped fallback it had, since a typed receiver
+        # the resolver cannot place is treated as external and dropped.
+        for name, type_name in ut.annotated_parameter_types(caller_node):
+            if interface_qn := self._first_party_interface_qn(type_name, module_qn):
+                local_var_types[name] = interface_qn
+
+    def _first_party_interface_qn(self, type_name: str, module_qn: str) -> str | None:
+        # An import names the symbol or its module, so both spellings are tried
+        # before a same-file declaration.
+        imported = self.import_processor.import_mapping.get(module_qn, {}).get(
+            type_name
+        )
+        candidates = [f"{module_qn}{cs.SEPARATOR_DOT}{type_name}"]
+        if imported:
+            candidates = [
+                imported,
+                f"{imported}{cs.SEPARATOR_DOT}{type_name}",
+                *candidates,
+            ]
+        return next(
+            (
+                qn
+                for qn in candidates
+                if self.function_registry.get(qn) == NodeType.INTERFACE
+            ),
+            None,
+        )
 
     def _record_declarator(
         self,
@@ -427,6 +596,201 @@ class JsTypeInferenceEngine:
     ) -> str | None:
         annotation = callable_node.child_by_field_name("return_type")
         return self._annotation_type(annotation, module_qn) if annotation else None
+
+    @staticmethod
+    def static_member(class_body: ASTNode, member_name: str) -> tuple[bool, int | None]:
+        """Whether the class declares a static `member_name` of its own, and
+        the line of its body when that member is a plain method.
+
+        Any own static of the name (a field, a getter or setter too) hides
+        a parent's, so a caller walking up `extends` stops at it; one with no
+        method body to read answers no line.
+        """
+        declared = False
+        for member in class_body.named_children:
+            if not ut.is_static_member(member) or _member_name(member) != member_name:
+                continue
+            declared = True
+            if member.type == cs.TS_METHOD_SIGNATURE:
+                continue
+            if member.type == cs.TS_METHOD_DEFINITION and not any(
+                child.type in cs.TS_ACCESSOR_KEYWORDS for child in member.children
+            ):
+                return True, member.start_point[0] + 1
+            return True, None
+        return declared, None
+
+    def visible_class(
+        self,
+        site: ASTNode,
+        name: str,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+    ) -> str | None:
+        """The class `name` written at `site` refers to: the module's own or
+        an imported one, unless a parameter, local or nested declaration
+        around `site` rebinds it. Nothing outside the module's own scope is
+        searched, so a name it does not bind names no class."""
+        if self._js_bound_by_enclosing_callable(site, name, language):
+            return None
+        return self._resolve_js_class_name(name, module_qn)
+
+    def callable_return_type(
+        self,
+        root: ASTNode,
+        path: list[str],
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        static: bool,
+    ) -> str | None:
+        """`path`: the callable's qn segments below its module, a method's
+        last one following its class's path, a function's alone. `static`:
+        the call reaches the class's static member of that name, not its
+        instance one."""
+        if len(path) == 1:
+            callable_node = _find_function_declaration(root, path[0])
+        else:
+            body = ut.find_class_body_at(root, path[:-1])
+            callable_node = _method_in_body(body, path[-1], static) if body else None
+        if callable_node is None:
+            return None
+        return self._chain_return_type(callable_node, module_qn, language)
+
+    def _chain_return_type(
+        self,
+        callable_node: ASTNode,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+    ) -> str | None:
+        """The class a call to this callable evaluates to, read in its own
+        module, so the next hop of a fluent chain can bind (issue #2468).
+
+        A declared return is the answer when it names one class; with none,
+        every return must hand back `this`, or every one construct the same
+        class. A `this` return (or `: this`) is answered with a receiver
+        marker the caller binds to the class it called through. Anything else
+        names no class, and the chain ends there rather than guess.
+        """
+        if any(
+            child.type in cs.TS_CHAIN_OPAQUE_CALLABLE_KEYWORDS
+            for child in callable_node.children
+        ):
+            return None
+        this_value = _this_value_of(callable_node)
+        if signatures := _overload_signatures(callable_node):
+            # A caller sees only the overloads, never the implementation's
+            # own signature; `pick(1)` may be a B where the body builds an A.
+            declared = {
+                self._declared_chain_type(annotation, this_value, module_qn)
+                if (annotation := sig.child_by_field_name(cs.FIELD_RETURN_TYPE))
+                else None
+                for sig in signatures
+            }
+            return declared.pop() if len(declared) == 1 else None
+        annotation = callable_node.child_by_field_name(cs.FIELD_RETURN_TYPE)
+        if annotation is not None:
+            return self._declared_chain_type(annotation, this_value, module_qn)
+        return self._evident_return_class(
+            callable_node, this_value, module_qn, language
+        )
+
+    def _declared_chain_type(
+        self, annotation: ASTNode, this_value: str | None, module_qn: str
+    ) -> str | None:
+        declared = next(iter(annotation.named_children), None)
+        return (
+            self._chain_type_of(declared, this_value, module_qn)
+            if declared is not None
+            else None
+        )
+
+    def _chain_type_of(
+        self, declared: ASTNode, this_value: str | None, module_qn: str
+    ) -> str | None:
+        if declared.type == cs.TS_THIS_TYPE:
+            # The `this` type names an instance; TS allows it in no static.
+            return this_value if this_value == cs.JS_RECEIVER_INSTANCE else None
+        if declared.type == cs.TS_UNION_TYPE:
+            # `Product | undefined` names its one class.
+            member = _single_non_nullish_member(declared)
+            return (
+                self._chain_type_of(member, this_value, module_qn)
+                if member is not None
+                else None
+            )
+        name_node = (
+            declared.child_by_field_name(cs.FIELD_NAME)
+            if declared.type == cs.TS_GENERIC_TYPE
+            else declared
+        )
+        if name_node is None or name_node.type != cs.TS_TYPE_IDENTIFIER:
+            return self._type_from_type_node(declared, module_qn)
+        # `Builder<T>` is a Builder; an array-shaped generic is a container,
+        # and `Promise<T>` names no first-party class.
+        name = safe_decode_text(name_node)
+        if not name or name in cs.TS_ARRAY_GENERIC_NAMES:
+            return None
+        return self._scoped_class(name_node, name, module_qn)
+
+    def _scoped_class(self, site: ASTNode, name: str, module_qn: str) -> str | None:
+        """The class `name` read at `site` is, innermost scope first: a class
+        declared in an enclosing function, method or namespace (by its own
+        qn), else the module's own or an imported one. A nearer binding that
+        is no class, or one a qn cannot name, answers nothing rather than
+        letting the module-level class of that name stand in."""
+        declaration = ut.enclosing_type_declaration(site, name)
+        if declaration is None:
+            return self._resolve_js_class_name(name, module_qn)
+        return self._declared_class_qn(declaration, module_qn)
+
+    @staticmethod
+    def _declared_class_qn(declaration: ASTNode, module_qn: str) -> str | None:
+        path = ut.class_qn_path(declaration)
+        return cs.SEPARATOR_DOT.join([module_qn, *path]) if path else None
+
+    def _constructed_class(
+        self, value: ASTNode, module_qn: str, language: cs.SupportedLanguage
+    ) -> str | None:
+        constructor = value.child_by_field_name(cs.FIELD_CONSTRUCTOR)
+        name = (
+            safe_decode_text(constructor)
+            if constructor is not None and constructor.type == cs.TS_IDENTIFIER
+            else None
+        )
+        if constructor is None or not name:
+            return self._infer_js_variable_type_from_value(value, module_qn, language)
+        # A value position: the nearest value binding of the name wins. The
+        # block walk finds the nearest declaration; a parameter, hoisted
+        # `var`, catch or loop binding in a callable between the call and
+        # that declaration is nearer still, and is no class.
+        declaration = ut.enclosing_value_declaration(constructor, name)
+        limit = ut.declaring_block(declaration) if declaration is not None else None
+        if self._js_bound_by_enclosing_callable(value, name, language, limit):
+            return None
+        if declaration is None:
+            return self._resolve_js_class_name(name, module_qn)
+        return self._declared_class_qn(declaration, module_qn)
+
+    def _evident_return_class(
+        self,
+        callable_node: ASTNode,
+        this_value: str | None,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+    ) -> str | None:
+        values = _own_return_values(callable_node)
+        if not values or None in values:
+            return None
+        if all(value.type == cs.TS_THIS for value in values if value is not None):
+            return this_value
+        constructed = {
+            self._constructed_class(value, module_qn, language)
+            if value.type == cs.TS_NEW_EXPRESSION
+            else None
+            for value in values
+            if value is not None
+        }
+        return constructed.pop() if len(constructed) == 1 else None
 
     def _infer_js_variable_type_from_value(
         self,
@@ -860,7 +1224,11 @@ class JsTypeInferenceEngine:
         return names
 
     def _js_bound_by_enclosing_callable(
-        self, site: ASTNode, name: str, language: cs.SupportedLanguage | None
+        self,
+        site: ASTNode,
+        name: str,
+        language: cs.SupportedLanguage | None,
+        limit: ASTNode | None = None,
     ) -> bool:
         # `new Box()` constructs whatever `Box` is in scope at the site. A
         # parameter, local, loop or catch binding, or a function or class
@@ -868,18 +1236,24 @@ class JsTypeInferenceEngine:
         # the module's class, often a constructor the caller is handed, and
         # typing the instance as the module class gave that class's methods
         # callers that never reach them (#2465). Only the module's own
-        # binding, which the class lookup resolves, may type it.
+        # binding, which the class lookup resolves, may type it. `limit`: a
+        # block that declares the name itself; only callables inside it can
+        # bind it nearer.
         callables: list[ASTNode] = []
         root = site
         current = site.parent
+        inside = True
         while current is not None:
-            if current.type in _JS_SELF_NAMED_EXPRESSIONS and (
-                self._js_declared_name(current) == name
+            inside = inside and (limit is None or current.id != limit.id)
+            if (
+                inside
+                and current.type in _JS_SELF_NAMED_EXPRESSIONS
+                and self._js_declared_name(current) == name
             ):
                 # A named function or class expression binds its own name
                 # inside itself only.
                 return True
-            if current.type in _JS_NESTED_CALLABLE_TYPES:
+            if inside and current.type in _JS_NESTED_CALLABLE_TYPES:
                 callables.append(current)
             root = current
             current = current.parent

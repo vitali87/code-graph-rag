@@ -1,9 +1,11 @@
-# A Python function whose qn carries a duplicate-variant suffix (click's
-# `command`: @t.overload stubs claim the natural qn, the REAL def registers as
-# `command@168`) calls its own nested `decorator`. The enclosing-scope walk
-# probed `command@168.decorator`, which never exists (the nested registers
+# A Python function whose qn carries a duplicate-variant suffix (an earlier
+# same-named def claims the natural qn, the later one registers as
+# `command@9`) calls its own nested `decorator`. The enclosing-scope walk
+# probed `command@9.decorator`, which never exists (the nested registers
 # under the NATURAL qn `command.decorator`), so resolution mis-bound to a
 # sibling's `argument.decorator`. The walk must also probe the stripped scope.
+# The redefinitions are plain on purpose: `@typing.overload` stubs no longer
+# take the natural qn (issue #2590), so they would not reach this path.
 from __future__ import annotations
 
 from pathlib import Path
@@ -18,15 +20,14 @@ def test_variant_caller_nested_call_binds_to_own_nested(
     root = temp_repo / "pyvar"
     root.mkdir(parents=True)
     (root / "decorators.py").write_text(
-        "import typing as t\n"
         "def argument(name):\n"
         "    def decorator(f):\n"
         "        return f\n"
         "    return decorator\n"
-        "@t.overload\n"
         "def command(name: str) -> int: ...\n"
-        "@t.overload\n"
+        "\n"
         "def command(name: None) -> int: ...\n"
+        "\n"
         "def command(name=None):\n"
         "    def decorator(f):\n"
         "        return f\n"

@@ -92,6 +92,7 @@ nav:
     - C/C++ Semantic Mode: guide/cpp-semantic-mode.md
     - MCP Server: guide/mcp-server.md
     - Multi-Project Graphs: guide/multi-project.md
+    - Porting Between Languages: guide/porting.md
   - Python SDK:
     - Overview: sdk/overview.md
     - Graph Loader: sdk/graph-loader.md
@@ -100,6 +101,7 @@ nav:
   - Architecture:
     - Overview: architecture/overview.md
     - Graph Schema: architecture/graph-schema.md
+    - Graph Backends: architecture/embedded-graph.md
     - I/O and Data-Flow Edges: architecture/data-flow-edges.md
     - Language Support: architecture/language-support.md
     - Structural Delta: architecture/structural-delta.md
@@ -109,6 +111,7 @@ nav:
     - Span-Preserving Patchers: architecture/patchers.md
     - Edit Transactions: architecture/edit-transactions.md
     - Rename Operation: architecture/rename.md
+    - Change Signature Operation: architecture/change-signature.md
     - Postcondition Contract: architecture/postcondition-contract.md
     - Context Slice: architecture/context-slice.md
   - Advanced:
