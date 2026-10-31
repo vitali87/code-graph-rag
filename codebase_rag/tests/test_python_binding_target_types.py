@@ -47,6 +47,8 @@ SOURCE = (
     "import contextlib\n"
     "from helpers import contextmanager as fake_contextmanager\n"
     "import helpers\n"
+    "from helpers import HBase\n"
+    "from helpers import Iterator as HIter\n"
     "from typing import AsyncGenerator, AsyncIterator, Generator, Iterator\n"
     "from typing import Iterator as It\n"
     "\n"
@@ -377,16 +379,61 @@ SOURCE = (
     "    match s:\n"
     "        case t:\n"
     "            return t.go()\n"
+    "\n"
+    "\n"
+    "class CrossSub(HBase):\n"
+    "    def use_cross_release(self):\n"
+    "        with self.release() as t:\n"
+    "            return t.go()\n"
+    "\n"
+    "\n"
+    "def matched_alias_then_unknown(shape):\n"
+    "    match shape:\n"
+    "        case Thing() as t:\n"
+    "            pass\n"
+    "        case Unknown() as t:\n"
+    "            pass\n"
+    "    return t.go()\n"
+    "\n"
+    "\n"
+    "def matched_bare_direct():\n"
+    "    match Thing():\n"
+    "        case t:\n"
+    "            return t.go()\n"
+    "\n"
+    "\n"
+    "@contextmanager\n"
+    "def weird_ann(x) -> HIter[Thing]:\n"
+    "    yield x\n"
+    "\n"
+    "\n"
+    "def weird_ann_with():\n"
+    "    with weird_ann(Thing()) as t:\n"
+    "        return t.go()\n"
 )
 
 HELPERS = (
+    "from contextlib import contextmanager as cm\n"
+    "from typing import Iterator\n"
+    "\n"
+    "\n"
     "def contextmanager(fn):\n"
     "    return fn\n"
+    "\n"
+    "\n"
+    "class Iterator:\n"
+    "    pass\n"
     "\n"
     "\n"
     "class HThing:\n"
     "    def go(self):\n"
     "        return 1\n"
+    "\n"
+    "\n"
+    "class HBase:\n"
+    "    @cm\n"
+    "    def release(self) -> Iterator[HThing]:\n"
+    "        yield HThing()\n"
 )
 
 
@@ -636,3 +683,26 @@ def test_qualified_class_pattern(tmp_path: Path) -> None:
 
 def test_bare_capture_takes_the_subject_type(tmp_path: Path) -> None:
     assert _calls(tmp_path)["matched_bare_typed"].get(THING_GO) == EXACT
+
+
+def test_cross_module_inherited_contextmanager_method(tmp_path: Path) -> None:
+    assert _calls(tmp_path)["use_cross_release"].get(HTHING_GO) == EXACT
+
+
+def test_later_untypable_alias_supersedes_an_earlier_typed_one(
+    tmp_path: Path,
+) -> None:
+    assert "t" not in _local_types(tmp_path, "matched_alias_then_unknown")
+    assert _calls(tmp_path).get("matched_alias_then_unknown", {}).get(THING_GO) != EXACT
+
+
+def test_bare_capture_on_a_direct_constructor_subject(
+    tmp_path: Path,
+) -> None:
+    assert _calls(tmp_path)["matched_bare_direct"].get(THING_GO) == EXACT
+
+
+def test_annotation_from_another_module_is_not_a_generator_annotation(
+    tmp_path: Path,
+) -> None:
+    assert _calls(tmp_path)["weird_ann_with"].get(THING_GO) != EXACT

@@ -320,7 +320,7 @@ class PythonWithBindingMixin(_WithBase):
             for owner in self._get_mro(enclosing):
                 method_qn = f"{owner}{cs.SEPARATOR_DOT}{parts[1]}"
                 if (definition := self._find_method_ast_node(method_qn)) is not None:
-                    return definition, module_qn
+                    return definition, owner.rsplit(cs.SEPARATOR_DOT, 1)[0]
             return None
         import_map = self.import_processor.import_mapping.get(module_qn, {})
         if parts and parts[0] in import_map:
@@ -371,10 +371,10 @@ class PythonWithBindingMixin(_WithBase):
                 continue
             else:
                 resolved = spelling
-            if resolved in (
-                f"{cs.PY_CONTEXTLIB_MODULE}{cs.SEPARATOR_DOT}contextmanager",
-                f"{cs.PY_CONTEXTLIB_MODULE}{cs.SEPARATOR_DOT}asynccontextmanager",
-            ):
+            if resolved in {
+                f"{cs.PY_CONTEXTLIB_MODULE}{cs.SEPARATOR_DOT}{name}"
+                for name in cs.CONTEXTMANAGER_DECORATORS
+            }:
                 return True
         return False
 
@@ -427,7 +427,13 @@ class PythonWithBindingMixin(_WithBase):
                 for module in cs.PY_GENERATOR_ANNOTATION_MODULES
                 for name in cs.PY_GENERATOR_ANNOTATIONS
             }
-        return parts[-1] in cs.PY_GENERATOR_ANNOTATIONS
+        if len(parts) == 1:
+            return parts[0] in cs.PY_GENERATOR_ANNOTATIONS
+        return base in {
+            f"{module}.{name}"
+            for module in cs.PY_GENERATOR_ANNOTATION_MODULES
+            for name in cs.PY_GENERATOR_ANNOTATIONS
+        }
 
     def _factory_local_types(
         self, definition: Node, factory_module_qn: str

@@ -207,6 +207,47 @@ def _capture_targets(pattern: Node) -> Iterator[Node]:
             yield child.named_children[0]
 
 
+def _pattern_aliases(pattern: Node) -> Iterator[Node]:
+    """The `as t` alias identifiers under a `case` pattern, at any depth:
+    an alias binds its name even when the class it matches cannot be
+    typed, so every binding census must see it or a later untypable
+    alias leaves a stale earlier type in place (#3340). Only alias
+    identifiers are yielded: class names inside a class pattern are
+    matched values, not bindings."""
+    stack = list(pattern.children)
+    while stack:
+        node = stack.pop()
+        if node.type == cs.TS_PY_AS_PATTERN:
+            children = node.named_children
+            if len(children) >= 2 and children[-1].type == cs.TS_PY_IDENTIFIER:
+                yield children[-1]
+        stack.extend(node.children)
+
+
+def _alias_positions(case_clauses: list[Node]) -> dict[str, int]:
+    """The latest byte at which each name is bound by a `case ... as t`
+    alias in `case_clauses`, for the last-binding rule. Kept out of
+    `_binding_targets` on purpose: that census feeds `scope_facts`,
+    which the native bridge must match, and the bridge does not count
+    pattern aliases there; these maps are local to the type passes."""
+    last: dict[str, int] = {}
+    for clause in case_clauses:
+        pattern = next(
+            (
+                child
+                for child in clause.named_children
+                if child.type == cs.TS_PY_CASE_PATTERN
+            ),
+            None,
+        )
+        if pattern is None:
+            continue
+        for alias in _pattern_aliases(pattern):
+            if name := safe_decode_text(alias):
+                last[name] = max(last.get(name, -1), alias.start_byte)
+    return last
+
+
 def _binding_targets(node: Node) -> Iterator[Node]:
     """The targets ONE statement or expression binds, without its body:
     assignment, augmented assignment, `for`, `with ... as`, walrus,
@@ -930,7 +971,9 @@ def _function_binds(scope: Node, name: str) -> bool:
     return False
 
 
-def _with_targets(scope: Node, statements: list[Node]) -> list[WithTarget]:
+def _with_targets(
+    scope: Node, statements: list[Node], case_clauses: list[Node]
+) -> list[WithTarget]:
     """The with targets `scope`'s own body binds, each only where no later
     binding in that body rebinds the name.
 
@@ -938,7 +981,9 @@ def _with_targets(scope: Node, statements: list[Node]) -> list[WithTarget]:
     `v = Other()` (or another `with ... as v`) describes the value from
     there on and keeps its type; the with target must not overwrite it,
     whichever pass happens to run first. An earlier binding is superseded by
-    the with target, which is written over it.
+    the with target, which is written over it. A later `case ... as v`
+    alias rebinds the name the same way, even when the class it matches
+    cannot be typed.
     """
     targets = [
         target
@@ -952,6 +997,8 @@ def _with_targets(scope: Node, statements: list[Node]) -> list[WithTarget]:
     for _binder, identifier in _bindings_in(scope):
         if name := safe_decode_text(identifier):
             last[name] = max(last.get(name, -1), identifier.start_byte)
+    for name, position in _alias_positions(case_clauses).items():
+        last[name] = max(last.get(name, -1), position)
     return [target for target in targets if last.get(target.name) == target.binds_at]
 
 
@@ -1216,7 +1263,7 @@ class PythonAstAnalyzerMixin(_AstBase):
         # manager, which the simple pass may have typed, and the complex pass
         # types `r = conn.send()` from the target. A manager only the complex
         # pass types is retried after it.
-        with_targets = _with_targets(node, with_statements)
+        with_targets = _with_targets(node, with_statements, case_clauses)
         pending = self._type_with_targets(with_targets, local_var_types, module_qn)
 
         for binder in sorted(
@@ -1491,6 +1538,8 @@ class PythonAstAnalyzerMixin(_AstBase):
         for _binder, identifier in _bindings_in(scope):
             if name := safe_decode_text(identifier):
                 last[name] = max(last.get(name, -1), identifier.start_byte)
+        for name, position in _alias_positions(case_clauses).items():
+            last[name] = max(last.get(name, -1), position)
         for clause in case_clauses:
             pattern = next(
                 (
@@ -1552,9 +1601,13 @@ class PythonAstAnalyzerMixin(_AstBase):
         )
         if subject is None:
             return
-        inferred = self._infer_type_from_expression_complex(
-            subject, module_qn, local_var_types
-        ) or _identifier_type(subject, local_var_types)
+        inferred = (
+            self._infer_type_from_expression_simple(subject, module_qn)
+            or self._infer_type_from_expression_complex(
+                subject, module_qn, local_var_types
+            )
+            or _identifier_type(subject, local_var_types)
+        )
         if inferred:
             local_var_types[name] = inferred
             logger.debug(lg.PY_TYPE_SIMPLE, var=name, type=inferred)

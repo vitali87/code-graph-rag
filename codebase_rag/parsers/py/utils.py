@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
-from ...constants import SEPARATOR_DOT
+from ...constants import CHAR_COMMA, SEPARATOR_DOT
 from ...types_defs import FunctionRegistryTrieProtocol, NodeType
 from ..utils import follow_reexports
 
@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from ..import_processor import ImportProcessor
 
 
-def split_top_level(inner: str, separator: str = ",") -> list[str]:
+def split_top_level(inner: str, separator: str = CHAR_COMMA) -> list[str]:
     """Split `A, dict[str, B], C` on the separators outside any brackets --
     the commas between positions, or the `|` between union members, which a
     plain `str.split` would also find INSIDE `tuple[Widget | None, Banner]`."""
