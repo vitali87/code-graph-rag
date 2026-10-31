@@ -1145,6 +1145,10 @@ SIGNATURE_JS_ACCESSOR = (
     "Cannot change the signature of {qn}: a getter or setter is read or "
     "assigned, never called with arguments"
 )
+SIGNATURE_JS_CALLS_EVAL = (
+    "Cannot add or drop a parameter of {qn}: its body uses `eval`, which can "
+    "read any parameter through a name written in a string"
+)
 SIGNATURE_JS_READS_ARGUMENTS = (
     "Cannot change the signature of {qn}: its body reads `arguments`, which "
     "sees every value by position"

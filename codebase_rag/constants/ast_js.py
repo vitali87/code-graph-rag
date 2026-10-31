@@ -542,3 +542,9 @@ TS_JS_NULL = "null"
 TS_JS_UNDEFINED = "undefined"
 TS_JS_ACCESSOR_KEYWORDS = frozenset({"get", "set"})
 JS_RECEIVER_METHODS = frozenset({"call", "apply"})
+# `\u0061` and `\u{61}` both spell the identifier `a`, and a parameter name
+# written with escapes is refused; a direct `eval` reads locals named in a
+# string. For change_signature (issue #1908).
+JS_IDENTIFIER_ESCAPE = r"\\u\{([0-9a-fA-F]+)\}|\\u([0-9a-fA-F]{4})"
+JS_ESCAPE_MARK = "\\"
+JS_EVAL_NAME = "eval"
