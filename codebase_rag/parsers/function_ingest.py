@@ -34,6 +34,7 @@ from . import export_detection
 from .anchor_hash import anchor_hash_props
 from .ast_fingerprint import fingerprint_props
 from .cpp import utils as cpp_utils
+from .cpp.function_values import c_definition_has_internal_linkage
 from .cpp.overloads import cpp_overload_signature
 from .dart import (
     dart_definition_end_point,
@@ -61,6 +62,7 @@ from .utils import (
     extract_modifiers_and_decorators,
     function_span_key,
     get_function_captures,
+    has_internal_linkage,
     ingest_method,
     is_method_node,
     mark_js_ts_module_private,
@@ -1487,6 +1489,9 @@ class FunctionIngestMixin:
             ls.FUNC_FOUND.format(name=resolution.name, qn=resolution.qualified_name)
         )
         self.ingestor.ensure_node_batch(cs.NodeLabel.FUNCTION, func_props)
+        self._mark_c_internal_linkage(
+            resolution.qualified_name, module_qn, language, func_props
+        )
         func_path = func_props.get(cs.KEY_PATH)
         queue_type_facts(
             self.pending_type_facts,
@@ -1594,6 +1599,18 @@ class FunctionIngestMixin:
             func_node, resolution, module_qn, language, lang_config
         )
 
+    def _mark_c_internal_linkage(
+        self,
+        qualified_name: str,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        func_props: PropertyDict,
+    ) -> None:
+        # Only its own translation unit can call a `static` function, so call
+        # resolution needs the module that defines it (#3154).
+        if language in cs.C_FAMILY_LANGUAGES and has_internal_linkage(func_props):
+            self.function_registry.mark_internal_linkage(qualified_name, module_qn)
+
     def _mark_js_ts_name_scope(
         self, func_node: Node, qualified_name: str, func_props: PropertyDict
     ) -> None:
@@ -1664,6 +1681,17 @@ class FunctionIngestMixin:
         modifiers, decorators = extract_modifiers_and_decorators(
             func_node, lang_queries
         )
+        # The C++ highlights query captures no storage class, and neither
+        # query sees a `static` the definition inherits from an earlier
+        # declaration, a wrapped template or an anonymous namespace, so the
+        # internal linkage went unrecorded (#3154). Recorded as `static`, the
+        # specifier that gives it, so an incremental run restores it too.
+        if (
+            language in cs.C_FAMILY_LANGUAGES
+            and cs.CPP_KEYWORD_STATIC not in modifiers
+            and c_definition_has_internal_linkage(func_node, language)
+        ):
+            modifiers.append(cs.CPP_KEYWORD_STATIC)
         props: PropertyDict = {
             cs.KEY_QUALIFIED_NAME: resolution.qualified_name,
             cs.KEY_NAME: resolution.name,

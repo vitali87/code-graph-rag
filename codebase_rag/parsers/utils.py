@@ -357,6 +357,16 @@ def _cached_decode_bytes(text_bytes: bytes) -> str:
     return decode_node_text(text_bytes)
 
 
+def has_internal_linkage(props: Mapping[str, object]) -> bool:
+    """A C/C++ function declared `static` at file scope (issue #3154).
+
+    Only its own translation unit can call it. Read from the node's
+    `modifiers`, so ingest and an incremental rehydration agree.
+    """
+    modifiers = props.get(cs.KEY_MODIFIERS)
+    return isinstance(modifiers, list) and cs.CPP_KEYWORD_STATIC in modifiers
+
+
 # The member-name fields a call's callee carries: JS/TS `property`, Python
 # `attribute`, Rust/Go/C++/Scala `field`.
 _MEMBER_NAME_FIELDS = (cs.FIELD_PROPERTY, cs.TS_PY_FIELD_ATTRIBUTE, cs.FIELD_FIELD)

@@ -113,7 +113,11 @@ from .parsers.parameter_nodes import PendingParameterType
 from .parsers.py.ast_analyzer import clear_scope_facts
 from .parsers.rs import utils as rs_utils
 from .parsers.structure_processor import StructureProcessor
-from .parsers.utils import mark_js_ts_module_private, sorted_captures
+from .parsers.utils import (
+    has_internal_linkage,
+    mark_js_ts_module_private,
+    sorted_captures,
+)
 from .path_filters import matches_test_path
 from .services import (
     FilteringIngestor,
@@ -4232,6 +4236,19 @@ class GraphUpdater:
         # only its own body can call by that name (issue #2402).
         if row.get(cs.KEY_IS_BODY_SCOPED_NAME):
             self.function_registry.mark_body_scoped_name(qn)
+        # Restore C/C++ internal linkage for unchanged files: a re-parsed
+        # file's bare call must not bind another file's `static` (#3154).
+        path = row.get(cs.KEY_PATH)
+        if (
+            node_type == NodeType.FUNCTION
+            and isinstance(path, str)
+            and get_language_for_extension(PurePosixPath(path).suffix)
+            in cs.C_FAMILY_LANGUAGES
+            and has_internal_linkage(row)
+        ):
+            self.function_registry.mark_internal_linkage(
+                qn, self._recorded_module_qn(path)
+            )
         # Restore a C# extension method's index entry for unchanged files, or
         # a re-parsed `b.Describe()` finds no extension and gets no edge
         # (issue #3275).
