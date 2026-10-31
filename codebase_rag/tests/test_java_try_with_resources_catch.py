@@ -401,3 +401,154 @@ def test_resource_shadows_field_inside_try_block(
     _assert_calls(
         _calls(mock_ingestor), ".Main.shadowed()", ".Res.read()", ".Other.read()"
     )
+
+
+def test_resource_factory_initializer_resolves(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A resource typed by a factory call's return type, not a constructor.
+    root = temp_repo / "jtwrfactory"
+    _write_pkg(
+        root,
+        {
+            "Res.java": _RES,
+            "Factory.java": (
+                "package com.example;\n"
+                "public class Factory {\n"
+                "  public Res make() { return new Res(); }\n"
+                "}\n"
+            ),
+            "Other.java": _OTHER,
+            "Main.java": (
+                "package com.example;\n"
+                "public class Main {\n"
+                "  int factoryMade() throws Exception {\n"
+                "    Factory f = new Factory();\n"
+                "    try (Res r = f.make()) {\n"
+                "      return r.read();\n"
+                "    }\n"
+                "  }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="java")
+    _assert_calls(
+        _calls(mock_ingestor), ".Main.factoryMade()", ".Res.read()", ".Other.read()"
+    )
+
+
+def test_catch_type_identity_follows_import(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Two first-party classes named AppError: the imported one wins over the
+    # same-package one, so the catch parameter binds the imported class.
+    root = temp_repo / "jimp"
+    _write_pkg(
+        root,
+        {
+            "AppError.java": _APP_ERROR,
+            "OtherError.java": _OTHER_ERROR,
+            "Main.java": (
+                "package com.example;\n"
+                "import other.AppError;\n"
+                "public class Main {\n"
+                "  String imported() {\n"
+                "    try {\n"
+                "      throw new AppError();\n"
+                "    } catch (AppError e) {\n"
+                "      return e.detail();\n"
+                "    }\n"
+                "  }\n"
+                "}\n"
+            ),
+        },
+    )
+    other_pkg = root / "other"
+    other_pkg.mkdir(parents=True)
+    (other_pkg / "AppError.java").write_text(
+        "package other;\n"
+        "public class AppError extends RuntimeException {\n"
+        '  public String detail() { return "ext"; }\n'
+        "}\n",
+        encoding="utf-8",
+    )
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="java")
+    calls = _calls(mock_ingestor)
+    targets = {
+        t
+        for f, t in calls
+        if f.endswith(".Main.imported()") and t.endswith(".detail()")
+    }
+    assert any(".other.AppError." in t for t in targets), sorted(targets)
+    assert not any(".example.AppError." in t for t in targets), sorted(targets)
+
+
+def test_nested_try_resources_both_typed(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    root = temp_repo / "jtwrnested"
+    _write_pkg(
+        root,
+        {
+            "Res.java": _RES,
+            "Other.java": _OTHER,
+            "Main.java": (
+                "package com.example;\n"
+                "public class Main {\n"
+                "  int nested() throws Exception {\n"
+                "    try (Res a = new Res()) {\n"
+                "      try (Res b = new Res()) {\n"
+                "        return a.read() + b.read();\n"
+                "      }\n"
+                "    }\n"
+                "  }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="java")
+    calls = _calls(mock_ingestor)
+    targets = {
+        t for f, t in calls if f.endswith(".Main.nested()") and t.endswith(".read()")
+    }
+    assert len(targets) == 1 and next(iter(targets)).endswith(".Res.read()"), sorted(
+        targets
+    )
+
+
+def test_two_catch_blocks_each_typed(temp_repo: Path, mock_ingestor: MagicMock) -> None:
+    root = temp_repo / "jtwocatch"
+    _write_pkg(
+        root,
+        {
+            "AppError.java": _APP_ERROR,
+            "OtherError.java": _OTHER_ERROR,
+            "ErrorDecoy.java": _ERROR_DECOY,
+            "Main.java": (
+                "package com.example;\n"
+                "public class Main {\n"
+                "  String first() {\n"
+                "    try {\n"
+                "      throw new AppError();\n"
+                "    } catch (AppError e) {\n"
+                "      return e.detail();\n"
+                "    }\n"
+                "  }\n"
+                "  String second() {\n"
+                "    try {\n"
+                "      throw new OtherError();\n"
+                "    } catch (OtherError e) {\n"
+                "      return e.detail();\n"
+                "    }\n"
+                "  }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="java")
+    calls = _calls(mock_ingestor)
+    _assert_calls(calls, ".Main.first()", ".AppError.detail()", ".ErrorDecoy.detail()")
+    _assert_calls(
+        calls, ".Main.second()", ".OtherError.detail()", ".ErrorDecoy.detail()"
+    )
