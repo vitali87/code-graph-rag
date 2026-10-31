@@ -103,35 +103,49 @@ class PyProjectTomlParser(DependencyParser):
 
     def _collect(self, file_path: Path, dependencies: list[Dependency]) -> None:
         data = _load_toml(file_path)
+        poetry = data.get(cs.DEP_KEY_TOOL, {}).get(cs.DEP_KEY_POETRY, {})
+        project = data.get(cs.DEP_KEY_PROJECT, {})
 
-        if poetry_deps := (
-            data.get(cs.DEP_KEY_TOOL, {})
-            .get(cs.DEP_KEY_POETRY, {})
-            .get(cs.DEP_KEY_DEPENDENCIES, {})
-        ):
-            dependencies.extend(
-                Dependency(dep_name, str(dep_spec))
-                for dep_name, dep_spec in poetry_deps.items()
-                if dep_name.lower() != cs.DEP_EXCLUDE_PYTHON
+        _collect_poetry_table(poetry.get(cs.DEP_KEY_DEPENDENCIES, {}), dependencies)
+        for group_name, group in poetry.get(cs.DEP_KEY_POETRY_GROUP, {}).items():
+            _collect_poetry_table(
+                group.get(cs.DEP_KEY_DEPENDENCIES, {}), dependencies, group_name
             )
-        if project_deps := data.get(cs.DEP_KEY_PROJECT, {}).get(
-            cs.DEP_KEY_DEPENDENCIES, []
-        ):
-            for dep_line in project_deps:
-                dep_name, _ = _extract_pep508_package_name(dep_line)
-                if dep_name:
-                    dependencies.append(Dependency(dep_name, dep_line))
 
-        optional_deps = data.get(cs.DEP_KEY_PROJECT, {}).get(
-            cs.DEP_KEY_OPTIONAL_DEPS, {}
-        )
-        for group_name, deps in optional_deps.items():
-            for dep_line in deps:
-                dep_name, _ = _extract_pep508_package_name(dep_line)
-                if dep_name:
-                    dependencies.append(
-                        Dependency(dep_name, dep_line, {cs.DEP_KEY_GROUP: group_name})
-                    )
+        _collect_pep508_lines(project.get(cs.DEP_KEY_DEPENDENCIES, []), dependencies)
+        for group_name, deps in project.get(cs.DEP_KEY_OPTIONAL_DEPS, {}).items():
+            _collect_pep508_lines(deps, dependencies, group_name)
+        for group_name, deps in data.get(cs.DEP_KEY_DEPENDENCY_GROUPS, {}).items():
+            _collect_pep508_lines(deps, dependencies, group_name)
+
+
+def _collect_pep508_lines(
+    lines: list[str | dict], dependencies: list[Dependency], group: str | None = None
+) -> None:
+    # The stored spec is the specifier alone, as requirements.txt records it;
+    # the package name is the node the edge points at.
+    properties = {cs.DEP_KEY_GROUP: group} if group is not None else {}
+    for dep_line in lines:
+        if not isinstance(dep_line, str):
+            # `{include-group = "..."}` names another group, already read.
+            continue
+        dep_name, spec = _extract_pep508_package_name(dep_line)
+        if dep_name:
+            dependencies.append(Dependency(dep_name, spec, dict(properties)))
+
+
+def _collect_poetry_table(
+    table: dict, dependencies: list[Dependency], group: str | None = None
+) -> None:
+    properties = {cs.DEP_KEY_GROUP: group} if group is not None else {}
+    for dep_name, dep_spec in table.items():
+        if dep_name.lower() == cs.DEP_EXCLUDE_PYTHON:
+            continue
+        if isinstance(dep_spec, dict):
+            # `{version = "^1.0", optional = true}`; a git or path source has
+            # no version to record.
+            dep_spec = dep_spec.get(cs.DEP_KEY_VERSION, "")
+        dependencies.append(Dependency(dep_name, str(dep_spec), dict(properties)))
 
 
 class RequirementsTxtParser(DependencyParser):
@@ -139,15 +153,54 @@ class RequirementsTxtParser(DependencyParser):
     failure_message = ls.DEP_PARSE_ERROR_REQUIREMENTS
 
     def _collect(self, file_path: Path, dependencies: list[Dependency]) -> None:
+        self._collect_file(file_path.resolve(), dependencies, set())
+
+    def _collect_file(
+        self, file_path: Path, dependencies: list[Dependency], seen: set[Path]
+    ) -> None:
+        # `seen` holds every file on the include chain so far: two files that
+        # `-r` each other would otherwise recurse forever.
+        seen.add(file_path)
         with open(file_path, encoding=cs.ENCODING_UTF8_SIG) as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#") or line.startswith("-"):
+            for raw in f:
+                line = raw.strip()
+                if not line or line.startswith(cs.REQUIREMENTS_COMMENT_PREFIX):
+                    continue
+                if line.startswith(cs.REQUIREMENTS_OPTION_PREFIX):
+                    included = _requirements_include(line, file_path)
+                    if included is not None and included not in seen:
+                        self._collect_file(included, dependencies, seen)
                     continue
 
                 dep_name, version_spec = _extract_pep508_package_name(line)
                 if dep_name:
                     dependencies.append(Dependency(dep_name, version_spec))
+
+
+def _requirements_include(line: str, file_path: Path) -> Path | None:
+    """The file a `-r other.txt` / `--requirement=other.txt` line pulls in,
+    resolved against the file that names it; None for any other option line
+    or when the named file does not exist (pip's error, not a dependency)."""
+    flag, _, target = line.partition("=")
+    if not target:
+        flag, _, target = line.partition(" ")
+    if flag not in cs.REQUIREMENTS_INCLUDE_FLAGS:
+        return None
+    included = (file_path.parent / target.strip()).resolve()
+    return included if included.is_file() else None
+
+
+def is_requirements_manifest(file_path: Path) -> bool:
+    """Whether `file_path` is a pip requirements file: `requirements.txt` and
+    its common variants (`requirements-dev.txt`, `dev-requirements.txt`,
+    `requirements/base.txt`), which projects split their pins into."""
+    name = file_path.name.lower()
+    if not name.endswith(cs.DEP_REQUIREMENTS_SUFFIX):
+        return False
+    return (
+        cs.DEP_REQUIREMENTS_STEM in name
+        or file_path.parent.name.lower() == cs.DEP_REQUIREMENTS_STEM
+    )
 
 
 class PackageJsonParser(DependencyParser):
@@ -164,6 +217,7 @@ class PackageJsonParser(DependencyParser):
                 cs.DEP_KEY_DEPENDENCIES,
                 cs.DEP_KEY_DEV_DEPS_JSON,
                 cs.DEP_KEY_PEER_DEPS,
+                cs.DEP_KEY_OPTIONAL_DEPS_JSON,
             )
             for dep_name, dep_spec in data.get(key, {}).items()
         )
@@ -176,23 +230,32 @@ class CargoTomlParser(DependencyParser):
     def _collect(self, file_path: Path, dependencies: list[Dependency]) -> None:
         data = _load_toml(file_path)
 
-        deps = data.get(cs.DEP_KEY_DEPENDENCIES, {})
-        for dep_name, dep_spec in deps.items():
-            version = (
-                dep_spec
-                if isinstance(dep_spec, str)
-                else dep_spec.get(cs.DEP_KEY_VERSION, "")
-            )
-            dependencies.append(Dependency(dep_name, version))
+        _collect_cargo_tables(data, dependencies)
+        # `[target.'cfg(unix)'.dependencies]` and friends: the same three
+        # tables again per platform, recorded with the cfg as their group.
+        for cfg, tables in data.get(cs.DEP_KEY_TARGET, {}).items():
+            _collect_cargo_tables(tables, dependencies, cfg)
 
-        dev_deps = data.get(cs.DEP_KEY_DEV_DEPENDENCIES, {})
-        for dep_name, dep_spec in dev_deps.items():
+
+_CARGO_DEPENDENCY_TABLES = (
+    cs.DEP_KEY_DEPENDENCIES,
+    cs.DEP_KEY_DEV_DEPENDENCIES,
+    cs.DEP_KEY_BUILD_DEPENDENCIES,
+)
+
+
+def _collect_cargo_tables(
+    tables: dict, dependencies: list[Dependency], group: str | None = None
+) -> None:
+    properties = {cs.DEP_KEY_GROUP: group} if group is not None else {}
+    for key in _CARGO_DEPENDENCY_TABLES:
+        for dep_name, dep_spec in tables.get(key, {}).items():
             version = (
                 dep_spec
                 if isinstance(dep_spec, str)
                 else dep_spec.get(cs.DEP_KEY_VERSION, "")
             )
-            dependencies.append(Dependency(dep_name, version))
+            dependencies.append(Dependency(dep_name, version, dict(properties)))
 
 
 class GoModParser(DependencyParser):
@@ -348,7 +411,7 @@ def _parser_for(file_path: Path) -> DependencyParser | None:
     match file_path.name.lower():
         case cs.DEP_FILE_PYPROJECT:
             return PyProjectTomlParser()
-        case cs.DEP_FILE_REQUIREMENTS:
+        case _ if is_requirements_manifest(file_path):
             return RequirementsTxtParser()
         case cs.DEP_FILE_PACKAGE_JSON:
             return PackageJsonParser()

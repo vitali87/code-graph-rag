@@ -16,6 +16,7 @@ from codebase_rag.parsers.dependency_parser import (
     PyProjectTomlParser,
     RequirementsTxtParser,
     _extract_pep508_package_name,
+    is_requirements_manifest,
     parse_dependencies,
 )
 
@@ -117,8 +118,8 @@ class TestPyProjectTomlParser:
         deps = parser.parse(pyproject)
 
         assert len(deps) == 2
-        assert Dependency("click", "click>=8.0") in deps
-        assert Dependency("pydantic", "pydantic>=1.9") in deps
+        assert Dependency("click", ">=8.0") in deps
+        assert Dependency("pydantic", ">=1.9") in deps
 
     def test_optional_dependencies(self, tmp_path: Path) -> None:
         pyproject = tmp_path / "pyproject.toml"
@@ -171,6 +172,69 @@ class TestPyProjectTomlParser:
         assert "requests" in dep_names
         assert "flask" in dep_names
 
+    def test_dependency_groups(self, tmp_path: Path) -> None:
+        # PEP 735 `[dependency-groups]`, what `uv add --dev` writes, was never
+        # read, so a project's dev and docs packages were missing (#3034).
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            "[project]\n"
+            'name = "my-project"\n'
+            'dependencies = ["httpx>=0.27"]\n'
+            "[dependency-groups]\n"
+            'dev = ["pytest>=8", "ruff"]\n'
+            'docs = ["sphinx"]\n'
+            'all = [{include-group = "dev"}, {include-group = "docs"}]\n'
+        )
+
+        deps = PyProjectTomlParser().parse(pyproject)
+
+        assert deps == [
+            Dependency("httpx", ">=0.27"),
+            Dependency("pytest", ">=8", {"group": "dev"}),
+            Dependency("ruff", "", {"group": "dev"}),
+            Dependency("sphinx", "", {"group": "docs"}),
+        ]
+
+    def test_poetry_groups(self, tmp_path: Path) -> None:
+        # Poetry >= 1.2 `[tool.poetry.group.<name>.dependencies]` (#3034).
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            "[tool.poetry.dependencies]\n"
+            'python = "^3.10"\n'
+            'requests = "^2.28"\n'
+            "[tool.poetry.group.lint.dependencies]\n"
+            'mypy = "^1.10"\n'
+            "[tool.poetry.group.test.dependencies]\n"
+            'pytest = { version = "^8", optional = true }\n'
+        )
+
+        deps = PyProjectTomlParser().parse(pyproject)
+
+        assert deps == [
+            Dependency("requests", "^2.28"),
+            Dependency("mypy", "^1.10", {"group": "lint"}),
+            Dependency("pytest", "^8", {"group": "test"}),
+        ]
+
+    def test_pep508_spec_excludes_package_name(self, tmp_path: Path) -> None:
+        # requirements.txt stored `==3.0` while pyproject stored the whole
+        # `flask==3.0` line as the version (#3034).
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            "[project]\n"
+            'dependencies = ["uvicorn[standard]>=0.20", "flask"]\n'
+            "[project.optional-dependencies]\n"
+            'cli = ["click>=8"]\n'
+        )
+
+        deps = PyProjectTomlParser().parse(pyproject)
+
+        assert deps == [
+            Dependency("uvicorn", ">=0.20"),
+            Dependency("flask", ""),
+            Dependency("click", ">=8", {"group": "cli"}),
+        ]
+
     def test_empty_dependencies(self, tmp_path: Path) -> None:
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text(tomli_w.dumps({"project": {"name": "my-project"}}))
@@ -202,7 +266,7 @@ class TestPyProjectTomlParser:
 
         deps = PyProjectTomlParser().parse(pyproject)
 
-        assert deps == [Dependency("requests", "requests>=2.28")]
+        assert deps == [Dependency("requests", ">=2.28")]
 
     def test_truncated_file_is_rejected_not_guessed(self, tmp_path: Path) -> None:
         # Negative test. An unterminated array is invalid TOML that pip and uv
@@ -264,16 +328,38 @@ class TestRequirementsTxtParser:
         assert len(deps) == 1
         assert deps[0].name == "flask"
 
-    def test_include_lines_ignored(self, tmp_path: Path) -> None:
+    def test_option_lines_ignored(self, tmp_path: Path) -> None:
         req_file = tmp_path / "requirements.txt"
         req_file.write_text(
-            "-r base.txt\n-e ./mypackage\nflask>=2.0\n--index-url url\n"
+            "-r missing.txt\n-e ./mypackage\nflask>=2.0\n--index-url url\n"
         )
         parser = RequirementsTxtParser()
         deps = parser.parse(req_file)
 
         assert len(deps) == 1
         assert deps[0].name == "flask"
+
+    def test_include_lines_followed(self, tmp_path: Path) -> None:
+        # `-r requirements/base.txt` was skipped with every other option line,
+        # so the packages pinned in the included file were missing (#3034).
+        (tmp_path / "requirements").mkdir()
+        (tmp_path / "requirements" / "base.txt").write_text(
+            "-r ../requirements.txt\nsqlalchemy==2.0\n"
+        )
+        (tmp_path / "requirements" / "dev.txt").write_text("black==24.1\n")
+        req_file = tmp_path / "requirements.txt"
+        req_file.write_text(
+            "-r requirements/base.txt\n--requirement=requirements/dev.txt\nflask==3.0\n"
+        )
+
+        deps = RequirementsTxtParser().parse(req_file)
+
+        # base.txt includes requirements.txt back; the cycle reads each once.
+        assert deps == [
+            Dependency("sqlalchemy", "==2.0"),
+            Dependency("black", "==24.1"),
+            Dependency("flask", "==3.0"),
+        ]
 
     def test_empty_lines_ignored(self, tmp_path: Path) -> None:
         req_file = tmp_path / "requirements.txt"
@@ -309,6 +395,25 @@ class TestRequirementsTxtParser:
 
 
 class TestPackageJsonParser:
+    def test_optional_dependencies(self, tmp_path: Path) -> None:
+        # `optionalDependencies` (fsevents on macOS) was never read (#3034).
+        pkg_json = tmp_path / "package.json"
+        pkg_json.write_text(
+            json.dumps(
+                {
+                    "dependencies": {"react": "^18.0.0"},
+                    "optionalDependencies": {"fsevents": "^2.3.0"},
+                }
+            )
+        )
+
+        deps = PackageJsonParser().parse(pkg_json)
+
+        assert deps == [
+            Dependency("react", "^18.0.0"),
+            Dependency("fsevents", "^2.3.0"),
+        ]
+
     def test_dependencies(self, tmp_path: Path) -> None:
         pkg_json = tmp_path / "package.json"
         pkg_json.write_text(
@@ -392,6 +497,35 @@ class TestPackageJsonParser:
 
 
 class TestCargoTomlParser:
+    def test_build_and_target_dependencies(self, tmp_path: Path) -> None:
+        # `[build-dependencies]` and the per-platform `[target.'cfg(...)']`
+        # tables, in both their forms, were never read (#3034).
+        cargo = tmp_path / "Cargo.toml"
+        cargo.write_text(
+            "[package]\n"
+            'name = "rs"\n'
+            "[dependencies]\n"
+            'serde = "1"\n'
+            "[build-dependencies]\n"
+            'cc = "1.0"\n'
+            "[target.'cfg(unix)'.dependencies]\n"
+            'libc = "0.2"\n'
+            "[target.'cfg(windows)'.dependencies.windows-sys]\n"
+            'version = "0.52"\n'
+            "[target.'cfg(windows)'.dev-dependencies]\n"
+            'winapi = "0.3"\n'
+        )
+
+        deps = CargoTomlParser().parse(cargo)
+
+        assert deps == [
+            Dependency("serde", "1"),
+            Dependency("cc", "1.0"),
+            Dependency("libc", "0.2", {"group": "cfg(unix)"}),
+            Dependency("windows-sys", "0.52", {"group": "cfg(windows)"}),
+            Dependency("winapi", "0.3", {"group": "cfg(windows)"}),
+        ]
+
     def test_simple_dependencies(self, tmp_path: Path) -> None:
         cargo = tmp_path / "Cargo.toml"
         cargo.write_text(
@@ -880,6 +1014,35 @@ class TestParseDependencies:
 
         assert len(deps) == 1
         assert deps[0].name == "flask"
+
+    @pytest.mark.parametrize(
+        "relative",
+        [
+            "requirements-dev.txt",
+            "dev-requirements.txt",
+            "requirements_test.txt",
+            "requirements/base.txt",
+        ],
+    )
+    def test_requirements_variants(self, tmp_path: Path, relative: str) -> None:
+        # Only the file named exactly `requirements.txt` was a manifest, so
+        # every `requirements-dev.txt` or `requirements/*.txt` was never
+        # parsed (#3034).
+        req = tmp_path / relative
+        req.parent.mkdir(parents=True, exist_ok=True)
+        req.write_text("black==24.1\n")
+
+        assert is_requirements_manifest(req)
+        assert parse_dependencies(req) == [Dependency("black", "==24.1")]
+
+    @pytest.mark.parametrize("relative", ["notes.txt", "docs/requirements.md"])
+    def test_not_a_requirements_file(self, tmp_path: Path, relative: str) -> None:
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("black==24.1\n")
+
+        assert not is_requirements_manifest(path)
+        assert parse_dependencies(path) == []
 
     def test_package_json(self, tmp_path: Path) -> None:
         pkg = tmp_path / "package.json"

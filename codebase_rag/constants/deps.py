@@ -18,12 +18,24 @@ CSPROJ_SUFFIX = ".csproj"
 
 DEP_KEY_TOOL = "tool"
 DEP_KEY_POETRY = "poetry"
+# Poetry >= 1.2 keeps dev/test/docs packages under
+# `[tool.poetry.group.<name>.dependencies]`.
+DEP_KEY_POETRY_GROUP = "group"
 DEP_KEY_DEPENDENCIES = "dependencies"
 DEP_KEY_DEV_DEPENDENCIES = "dev-dependencies"
+# Cargo's `[build-dependencies]` and the per-platform
+# `[target.'cfg(...)'.dependencies]` tables.
+DEP_KEY_BUILD_DEPENDENCIES = "build-dependencies"
+DEP_KEY_TARGET = "target"
 DEP_KEY_PROJECT = "project"
 DEP_KEY_OPTIONAL_DEPS = "optional-dependencies"
+# PEP 735 `[dependency-groups]`, what `uv add --dev` writes; an entry that is
+# a table `{include-group = "..."}` names another group, not a package.
+DEP_KEY_DEPENDENCY_GROUPS = "dependency-groups"
+DEP_KEY_INCLUDE_GROUP = "include-group"
 DEP_KEY_DEV_DEPS_JSON = "devDependencies"
 DEP_KEY_PEER_DEPS = "peerDependencies"
+DEP_KEY_OPTIONAL_DEPS_JSON = "optionalDependencies"
 DEP_KEY_REQUIRE = "require"
 DEP_KEY_REQUIRE_DEV = "require-dev"
 DEP_KEY_VERSION = "version"
@@ -38,6 +50,16 @@ DEP_EXCLUDE_PHP = "php"
 
 DEP_FILE_PYPROJECT = "pyproject.toml"
 DEP_FILE_REQUIREMENTS = "requirements.txt"
+# Any `*.txt` whose name contains this, or that sits in a directory of this
+# name, is a requirements file (`requirements-dev.txt`, `dev-requirements.txt`,
+# `requirements/base.txt`), not only the one named `requirements.txt`.
+DEP_REQUIREMENTS_STEM = "requirements"
+DEP_REQUIREMENTS_SUFFIX = ".txt"
+# `-r other.txt` / `--requirement other.txt` pulls another file in, relative
+# to the one being read.
+REQUIREMENTS_INCLUDE_FLAGS = frozenset({"-r", "--requirement"})
+REQUIREMENTS_OPTION_PREFIX = "-"
+REQUIREMENTS_COMMENT_PREFIX = "#"
 DEP_FILE_PACKAGE_JSON = "package.json"
 DEP_FILE_CARGO = "cargo.toml"
 DEP_FILE_GOMOD = "go.mod"

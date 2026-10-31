@@ -59,6 +59,7 @@ from .parsers.cpp_frontend import (
 from .parsers.csharp import utils as csharp_utils
 from .parsers.csharp_frontend import find_csharp_project
 from .parsers.definition_processor import DefinitionProcessor
+from .parsers.dependency_parser import is_requirements_manifest
 from .parsers.document_tier import DocumentTier, broken_link_keys
 from .parsers.endpoint_prefixes import (
     CYPHER_DELETE_HANDLER_EXPOSES,
@@ -2416,6 +2417,7 @@ class GraphUpdater:
         return (
             file_name.lower() in cs.DEPENDENCY_FILES
             or filepath.suffix.lower() == cs.CSPROJ_SUFFIX
+            or is_requirements_manifest(filepath)
         )
 
     def _resync_dependencies(
