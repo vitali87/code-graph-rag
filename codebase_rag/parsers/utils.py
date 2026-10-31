@@ -49,14 +49,32 @@ def follow_reexports(
     qn: str,
     import_mapping: dict[str, dict[str, str]],
     function_registry: FunctionRegistryTrieProtocol,
+    python_star_exports: Mapping[str, frozenset[str]] | None = None,
 ) -> str:
     # `from .pkg import sym` records the importer's name against the re-export
     # module (pkg.sym), not the real definition (pkg.mod.sym), so an unregistered
     # qn may be a re-export. Follow the module's import map one hop at a time
     # until a registered symbol is reached, guarding against cycles.
+    # `python_star_exports` (each Python module's literal `__all__`) gives
+    # `from mod import *` Python's own binding rules, which Python callers ask
+    # for by passing it.
     if qn in function_registry:
         return qn
-    return _ImportMapWalk(import_mapping, function_registry).follow(qn)[0]
+    return _ImportMapWalk(
+        import_mapping, function_registry, python_star_exports
+    ).follow(qn)[0]
+
+
+def _star_binds(
+    source: str, name: str, python_star_exports: Mapping[str, frozenset[str]]
+) -> bool | None:
+    """Whether `from source import *` binds `name`: True when `source`'s
+    `__all__` lists it, False when it leaves it out, and None when `source`
+    has no `__all__`, where a public name MAY be bound (if the module defines
+    or imports it) and a private one is not."""
+    if (exported := python_star_exports.get(source)) is not None:
+        return name in exported
+    return None if not name.startswith(cs.PY_PRIVATE_PREFIX) else False
 
 
 class _ImportMapWalk:
@@ -70,15 +88,17 @@ class _ImportMapWalk:
     still walked once.
     """
 
-    __slots__ = ("_imports", "_registry", "_path", "_settled")
+    __slots__ = ("_imports", "_registry", "_python_stars", "_path", "_settled")
 
     def __init__(
         self,
         import_mapping: Mapping[str, Mapping[str, str]],
         function_registry: FunctionRegistryTrieProtocol,
+        python_star_exports: Mapping[str, frozenset[str]] | None = None,
     ) -> None:
         self._imports = import_mapping
         self._registry = function_registry
+        self._python_stars = python_star_exports
         self._path: set[str] = set()
         self._settled: dict[str, str] = {}
 
@@ -109,6 +129,8 @@ class _ImportMapWalk:
 
     def _step(self, current: str) -> tuple[str | None, bool]:
         module_qn, _, name = current.rpartition(cs.SEPARATOR_DOT)
+        if self._python_stars is not None:
+            return self._python_latest_binding(module_qn, name, self._python_stars)
         if following := self._imports.get(module_qn, {}).get(name):
             return following, False
         return self._star_target(module_qn, name)
@@ -134,6 +156,35 @@ class _ImportMapWalk:
             ):
                 reached.add(target)
         return (reached.pop() if len(reached) == 1 else None), cut
+
+    def _python_latest_binding(
+        self,
+        module_qn: str,
+        name: str,
+        python_star_exports: Mapping[str, frozenset[str]],
+    ) -> tuple[str | None, bool]:
+        # `from ._client import *` is one wildcard entry, not a name per
+        # export, so `pkg.Client` matched nothing and httpx's
+        # `client = httpx.Client()` stayed untyped (issue #2928). Python keeps
+        # a name's LAST binding, named or star, so the module's bindings are
+        # read latest first (bot review on PR #2989): a named import is
+        # followed on, a star that binds the name is where it leads.
+        cut = False
+        for key, target in reversed(self._imports.get(module_qn, {}).items()):
+            if key == name:
+                return target, cut
+            if not key.startswith(cs.GLOB_ALL):
+                continue
+            binds = _star_binds(target, name, python_star_exports)
+            if binds is False:
+                continue
+            found, branch_cut = self.follow(f"{target}{cs.SEPARATOR_DOT}{name}")
+            cut = cut or branch_cut
+            if found in self._registry or binds:
+                # A name the source's `__all__` lists is bound by this
+                # star even when it leads outside the project.
+                return found, cut
+        return None, cut
 
 
 def mark_js_ts_module_private(

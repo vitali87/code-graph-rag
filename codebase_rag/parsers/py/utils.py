@@ -40,7 +40,10 @@ def resolve_dotted_class(
     )
     for base in bases:
         qn = follow_reexports(
-            f"{base}{SEPARATOR_DOT}{rest}", import_mapping, function_registry
+            f"{base}{SEPARATOR_DOT}{rest}",
+            import_mapping,
+            function_registry,
+            import_processor.python_module_all,
         )
         if function_registry.get(qn) == NodeType.CLASS:
             return qn
