@@ -4480,26 +4480,38 @@ class CallProcessor:
         # against it finds no registered member (a bare `Helper()` in a
         # no-constructor class would otherwise be swallowed: filtered
         # out of the module pass but unresolvable in the class pass).
-        # One explicit constructor owns the initializers when its
-        # semantics are unambiguous. No explicit constructor, and
-        # MULTIPLE overloaded constructors alike, fall back to the class
-        # node: `this()` delegation differs between Java and C#, so
-        # picking one overload as the owner would invent an execution
-        # path, and fanning one source site out over every overload
-        # would duplicate it. The class-level owner is the safe
-        # attribution until a frontend proves a canonical owner. The
-        # class qn is the definition pass's registered one: the
-        # structural build drops a C# namespace, which would dangle the
-        # edge off a phantom node.
+        # One explicit constructor owns the initializers. Overloads
+        # attribute to their single non-delegating sink only: a
+        # `this(...)`-chained constructor performs none of the field
+        # initializations (JLS 12.5 steps 2-4; C# ECMA-334 17.10.2),
+        # so the initializers run exactly once, in the sink, however
+        # long the chain — counting non-delegators needs no target
+        # resolution. Overloads with no single sink (no non-delegator,
+        # or several independent ones, or a delegation cycle, which is
+        # a compile error) fall back to the class node rather than
+        # guessing one of them, and fanning one source site out over
+        # every overload would duplicate it. The class qn is the
+        # definition pass's registered one: the structural build drops
+        # a C# namespace, which would dangle the edge off a phantom node.
         class_target = (
             self._registered_class_qn(class_node, class_name, class_qn, module_qn)
             if language == cs.SupportedLanguage.CSHARP
             else class_qn
         )
         ctor_nodes = self._class_constructor_nodes(body_node, language)
-        if len(ctor_nodes) != 1:
+        if len(ctor_nodes) == 1:
+            ctor_node = ctor_nodes[0]
+        elif ctor_nodes:
+            sinks = [
+                node
+                for node in ctor_nodes
+                if not self._constructor_delegates(node, language)
+            ]
+            if len(sinks) != 1:
+                return class_target, cs.NodeLabel.CLASS, class_target
+            ctor_node = sinks[0]
+        else:
             return class_target, cs.NodeLabel.CLASS, class_target
-        ctor_node = ctor_nodes[0]
         if loc := self._recorded_caller(ctor_node, module_qn):
             return loc.qualified_name, loc.label, class_target
         if language == cs.SupportedLanguage.CSHARP:
@@ -4587,6 +4599,34 @@ class CallProcessor:
                 )
             ]
         return []
+
+    @staticmethod
+    def _constructor_delegates(ctor_node: Node, language: cs.SupportedLanguage) -> bool:
+        # True when this constructor hands construction to a sibling via
+        # `this(...)`: Java's explicit constructor invocation as the first
+        # statement, or C#'s `: this(...)` initializer. A `super(...)` /
+        # `: base(...)` call constructs the base, not a sibling, so the
+        # constructor still runs its own field initializers.
+        if language == cs.SupportedLanguage.JAVA:
+            body = ctor_node.child_by_field_name(cs.FIELD_BODY)
+            if body is None or not body.named_children:
+                return False
+            first = body.named_children[0]
+            if first.type != cs.TS_EXPLICIT_CONSTRUCTOR_INVOCATION:
+                return False
+            return any(
+                safe_decode_text(child) == cs.TS_THIS for child in first.children
+            )
+        if language == cs.SupportedLanguage.CSHARP:
+            for child in ctor_node.children:
+                if child.type != cs.TS_CSHARP_CONSTRUCTOR_INITIALIZER:
+                    continue
+                return any(
+                    grandchild.type == cs.TS_CSHARP_THIS
+                    for grandchild in child.children
+                )
+            return False
+        return False
 
     def _is_instance_field_node(
         self, node: Node, language: cs.SupportedLanguage
