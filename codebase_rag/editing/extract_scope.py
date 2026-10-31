@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from typing import NamedTuple
 
 from tree_sitter import Node
@@ -58,9 +57,6 @@ _NAME_BINDING_SCOPES = frozenset(
 # Identifier positions that are names of things, not reads of variables.
 _NON_READ_FIELDS = frozenset({cs.TS_PY_FIELD_ATTRIBUTE, cs.FIELD_PROPERTY})
 _JS_DECLARATORS = frozenset({cs.TS_VARIABLE_DECLARATOR})
-# One string literal only: the body may hold escapes but no unescaped closing
-# quote, so `'a' + 'b'` is not read as one atom and keeps its parentheses.
-_SIMPLE_ARG = re.compile(r"^[\w.]+$|^-?\d+(\.\d+)?$|^(['\"])(?:\\.|(?!\2)[^\\\n])*\2$")
 _JS_PATTERNS = frozenset({cs.TS_OBJECT_PATTERN, cs.TS_ARRAY_PATTERN})
 # Target shapes that only group other targets: `a, b = ...`, `[a, *rest]`,
 # `{a, b}`; their parts are bound, not read.
@@ -574,15 +570,14 @@ def _dedent(text: str, indent: str, keep: frozenset[int] = frozenset()) -> str:
     """`text` less `indent` on every line but those numbered in `keep`."""
     out = []
     for number, line in enumerate(text.split("\n")):
-        out.append(
-            line
-            if number in keep
-            else line[len(indent) :]
-            if line.startswith(indent)
-            else line.lstrip()
-            if line.strip()
-            else ""
-        )
+        if number in keep:
+            out.append(line)
+        elif line.startswith(indent):
+            out.append(line[len(indent) :])
+        elif line.strip():
+            out.append(line.lstrip())
+        else:
+            out.append("")
     return "\n".join(out)
 
 

@@ -202,7 +202,7 @@ def _returned_expression(qn: str, definition: Node) -> Node:
         cs.TS_RETURN_STATEMENT,
     ):
         raise InlineRefused(cs.INLINE_NOT_SINGLE_RETURN.format(qn=qn))
-    returned = next((c for c in statements[0].named_children), None)
+    returned = next(iter(statements[0].named_children), None)
     if returned is None:
         raise InlineRefused(cs.INLINE_NOT_SINGLE_RETURN.format(qn=qn))
     return returned
@@ -270,7 +270,7 @@ class Inliner:
     def plan(self, qn: str) -> tuple[InlineReport, Patcher]:
         patcher = Patcher(self.repo_root)
         try:
-            path, node, language, source, label = self._extractor._locate(qn, patcher)
+            path, node, _language, source, label = self._extractor._locate(qn, patcher)
         except ExtractRefused as refused:
             raise InlineRefused(str(refused)) from refused
         returned = _returned_expression(qn, node)

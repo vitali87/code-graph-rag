@@ -327,25 +327,6 @@ def test_parameter_names_exclude_defaults_and_annotations(
     assert _parameter_names(definition) == expected
 
 
-@pytest.mark.parametrize(
-    ("text", "atomic"),
-    [
-        ("'a' + 'b'", False),
-        ('"a" if c else "b"', False),
-        ("'a', 'b'", False),
-        ("'it\\'s'", True),
-        ('"a"', True),
-        ("''", True),
-        ("x.y", True),
-        ("-1.5", True),
-    ],
-)
-def test_simple_arg_matches_one_literal_only(text: str, atomic: bool) -> None:
-    from codebase_rag.editing.extract_scope import _SIMPLE_ARG
-
-    assert bool(_SIMPLE_ARG.match(text)) is atomic
-
-
 def test_an_unmeasurable_graph_is_reported_not_raised(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
