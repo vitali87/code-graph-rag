@@ -34,8 +34,11 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = REPO_ROOT / "server.json"
 PYPROJECT = REPO_ROOT / "pyproject.toml"
 PYPI_RELEASE_URL = "https://pypi.org/pypi/{name}/{version}/json"
+# A deleted version still holds its number, and the registry hides it unless
+# asked, so a rerun would try to publish it again and fail.
 REGISTRY_VERSION_URL = (
     "https://registry.modelcontextprotocol.io/v0.1/servers/{name}/versions/{version}"
+    "?include_deleted=true"
 )
 TIMEOUT_S = 15
 MISSING = 2

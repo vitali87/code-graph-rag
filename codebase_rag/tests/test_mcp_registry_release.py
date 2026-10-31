@@ -191,7 +191,7 @@ class TestMain:
         monkeypatch.setattr(registry_check, lookup, unreachable)
         assert registry_check.main([service, _tag()]) == 1
 
-    def test_the_server_name_is_escaped_in_the_registry_url(
+    def test_the_registry_lookup_escapes_the_name_and_sees_deleted_versions(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         urls: list[str] = []
@@ -201,7 +201,7 @@ class TestMain:
         assert not registry_check.registry_lists("io.github.acme/widget", "1.2.3")
         assert urls == [
             "https://registry.modelcontextprotocol.io/v0.1/servers/"
-            "io.github.acme%2Fwidget/versions/1.2.3"
+            "io.github.acme%2Fwidget/versions/1.2.3?include_deleted=true"
         ]
 
 
