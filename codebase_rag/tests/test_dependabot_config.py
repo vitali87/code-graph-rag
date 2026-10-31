@@ -210,7 +210,7 @@ _GRAPH_RS_FUZZ = "/rust/cgr_graph_rs/fuzz"
 
 class _CargoUpdate(TypedDict, total=False):
     directories: list[str]
-    groups: dict[str, dict[str, str]]
+    groups: dict[str, dict[str, str | list[str]]]
 
 
 def _graph_rs_update() -> _CargoUpdate:
@@ -247,6 +247,15 @@ def test_the_crate_and_its_fuzz_targets_move_together() -> None:
     assert update.get("directories") == [_GRAPH_RS, _GRAPH_RS_FUZZ]
     groups = update.get("groups") or {}
     assert any(g.get("group-by") == "dependency-name" for g in groups.values())
+
+
+@pytest.mark.parametrize("crate", ["rusqlite", "libsqlite3-sys"])
+def test_a_sqlite_security_fix_moves_both_directories(crate: str) -> None:
+    # group-by covers version updates only, so a security fix that needs a new
+    # rusqlite would otherwise reach one directory and break the fuzz build.
+    groups = (_graph_rs_update().get("groups") or {}).values()
+    security = [g for g in groups if g.get("applies-to") == "security-updates"]
+    assert any(any(fnmatch(crate, p) for p in g.get("patterns", [])) for g in security)
 
 
 def test_the_fuzz_targets_pin_the_crates_rusqlite() -> None:

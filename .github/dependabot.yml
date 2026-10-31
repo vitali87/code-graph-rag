@@ -92,6 +92,14 @@ updates:
     groups:
       cgr-graph-rs:
         group-by: dependency-name
+      # group-by covers version updates only, so a security fix that moves
+      # rusqlite (or the SQLite it bundles) needs a group of its own to land
+      # in both directories at once.
+      cgr-graph-rs-sqlite-security:
+        applies-to: security-updates
+        patterns:
+          - "rusqlite"
+          - "libsqlite3-sys"
     ignore:
       # The tree walks read py-tree-sitter's trees in place, so the runtime
       # moves only with the py-tree-sitter pin, by hand (AGENTS.md), and the
