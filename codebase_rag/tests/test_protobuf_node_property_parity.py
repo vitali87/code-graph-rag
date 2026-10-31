@@ -84,11 +84,20 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     # graph round-tripped through protobuf has no stored fingerprint to
     # compare against, so a sync re-parses every dependent caller, as it did
     # before the property existed, and the re-parse writes it back.
+    # `js_exports` (issue #3274) is read back only by an incremental run's
+    # rehydration; absent reads as "no stored table", which is how every run
+    # behaved before #3274, and the next parse of the module rewrites it.
     # `php_namespace` (issue #3277) is read back only by an incremental run's
     # rehydration; absent reads as "no namespace recorded", as every run did
     # before #3277, until the file is next parsed.
     "Module": frozenset(
-        {"absolute_path", "broken_links", "interface_fingerprint", "php_namespace"}
+        {
+            "absolute_path",
+            "broken_links",
+            "interface_fingerprint",
+            "js_exports",
+            "php_namespace",
+        }
     ),
     # `decorated_start_line` (issue #2428): a graph round-tripped through
     # protobuf answers `definition` with the span below the decorators,

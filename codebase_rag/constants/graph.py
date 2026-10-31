@@ -209,6 +209,15 @@ KEY_UNRESOLVED_SPECIFIERS = "unresolved_specifiers"
 # so the modules that waited for it are re-parsed (issue #1568). Written
 # unconditionally on every parse so a resolved name clears.
 KEY_UNRESOLVED_REFERENCES = "unresolved_references"
+# What each name a JS/TS module exports stands for (`export default f`,
+# `export { trim as strip }`, `export { add as plus } from "./add"`), one
+# `name<TAB>target<TAB>local` entry per name. Only a parse of the module
+# records it, so an incremental run reads an unchanged exporter's table back
+# from here for the importers it re-parses (issue #3274).
+KEY_JS_EXPORTS = "js_exports"
+JS_EXPORT_FIELD_SEP = "\t"
+JS_EXPORT_LOCAL_FLAG = "1"
+JS_EXPORT_REEXPORT_FLAG = "0"
 # The dotted namespace a PHP file declares (`App.Util`), on its Module: a
 # `use function App\\Util\\slug` matches it, and only a parse of the file
 # gives it, so an incremental run reads it back from here (issue #3277).
@@ -1258,7 +1267,7 @@ CYPHER_ALL_MODULE_QNS = (
     "MATCH (n) WHERE (n:Module OR n:ModuleInterface) "
     "AND n.qualified_name STARTS WITH $project_prefix "
     "RETURN n.qualified_name AS qualified_name, head(labels(n)) AS label, "
-    "n.php_namespace AS php_namespace"
+    "n.js_exports AS js_exports, n.php_namespace AS php_namespace"
 )
 
 # Inbound reference edges (from unchanged files) into symbols defined in one
@@ -1496,6 +1505,12 @@ CYPHER_CLEAR_UNRESOLVED_REFERENCES = (
 )
 CYPHER_SET_UNRESOLVED_REFERENCES = (
     "MATCH (m:Module {qualified_name: $qn}) SET m.unresolved_references = $names"
+)
+# A JS/TS module's export table (issue #3274). Only a non-empty one is
+# written: re-parsing a module deletes and recreates its node, so a table
+# the file no longer has is already gone.
+CYPHER_SET_JS_EXPORTS = (
+    "MATCH (m:Module {qualified_name: $qn}) SET m.js_exports = $names"
 )
 CYPHER_ALL_INHERITS = (
     "MATCH (child)-[r:INHERITS]->(base) "
