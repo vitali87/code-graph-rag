@@ -120,6 +120,69 @@ def test_protocol_and_external_bases_produce_no_subclass_change() -> None:
     assert by_qn["proj.real.MyDict"].new_bases == ()
 
 
+def test_unresolved_import_base_invents_no_change() -> None:
+    # `from foo import Bar` names no class the graph, this run's scan,
+    # or the hierarchy holds, and the persisted edge spells the base
+    # `foo.Bar` where the scan guesses `proj.foo.Bar`: the same base
+    # under two spellings, so a comment-only edit reports no change.
+    scanned = _scanned(
+        "ext.py",
+        "proj.ext",
+        "from foo import Bar\n\nclass Child(Bar):\n    def get(self): ...\n",
+    )
+    changes = build_class_changes(
+        [scanned],
+        {"proj.ext.Child": "ext.py"},
+        {"proj.ext.Child": {"get"}},
+        {"proj.ext.Child": ["foo.Bar"]},
+        PROJECT,
+        changed_keys=["ext.py"],
+    )
+    assert changes == []
+
+
+def test_graph_backed_base_in_unchanged_file_is_kept() -> None:
+    # `Root` lives in an unchanged file with no hierarchy edges of its
+    # own, so only the graph-backed set names it: gaining it as a base
+    # must still be a change.
+    scanned = _scanned(
+        "child.py",
+        "proj.child",
+        "from root import Root\n\nclass Child(Root):\n    def m(self): ...\n",
+    )
+    changes = build_class_changes(
+        [scanned],
+        {"proj.child.Child": "child.py"},
+        {"proj.child.Child": {"m"}},
+        {},
+        PROJECT,
+        changed_keys=["child.py"],
+        graph_class_qns={"proj.root.Root"},
+    )
+    assert [change.new_bases for change in changes] == [("proj.root.Root",)]
+
+
+def test_base_added_by_another_file_this_run_is_kept() -> None:
+    # The base is defined by a file this run adds, so the graph does
+    # not hold it yet: the scan's own classes still vouch for it.
+    base = _scanned("base.py", "proj.base", "class Base:\n    def m(self): ...\n")
+    child = _scanned(
+        "child.py",
+        "proj.child",
+        "from base import Base\n\nclass Child(Base):\n    def m(self): ...\n",
+    )
+    changes = build_class_changes(
+        [base, child],
+        {},
+        {},
+        {},
+        PROJECT,
+        changed_keys=["base.py", "child.py"],
+    )
+    child_change = next(c for c in changes if c.qn == "proj.child.Child")
+    assert child_change.new_bases == ("proj.base.Base",)
+
+
 def test_no_change_when_scan_matches_the_graph() -> None:
     scanned = _scanned(
         "split.py",
@@ -391,6 +454,38 @@ def test_protocol_named_uniqueness_is_per_state() -> None:
     )
     assert "proj.a.Client.get" in prefixes
     assert "proj.b.Client.get" not in prefixes
+
+
+def test_method_union_covers_additions_removals_and_unchanged() -> None:
+    # A class present in both states, gaining `c` and losing `b` with
+    # bases unchanged: the target set names both directions, and the
+    # unchanged method `a` too, so no caller of any of them is missed.
+    hierarchy = {"proj.m.Child": ["proj.m.Base"]}
+    methods = {"proj.m.Base": {"a"}, "proj.m.Child": {"a", "b"}}
+    prefixes, _bases = dispatch_target_prefixes(
+        [
+            _change(
+                "proj.m.Child",
+                {"a", "b"},
+                {"a", "c"},
+                ("proj.m.Base",),
+                ("proj.m.Base",),
+            )
+        ],
+        hierarchy,
+        methods,
+        {},
+        PROJECT,
+    )
+    for target in (
+        "proj.m.Base.a",
+        "proj.m.Child.a",
+        "proj.m.Base.b",
+        "proj.m.Child.b",
+        "proj.m.Base.c",
+        "proj.m.Child.c",
+    ):
+        assert target in prefixes
 
 
 def test_protocol_conformance_completed_through_an_inherited_method() -> None:

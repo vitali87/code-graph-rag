@@ -278,6 +278,19 @@ def _simple_name(qualified_name: str) -> str:
     return qn_markers.strip_dup_marker(qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[-1])
 
 
+def _spelling_key(qualified_name: str, project_name: str) -> str:
+    # A base as the persisted hierarchy spells it, without the project
+    # prefix: the graph spells an external base `foo.Bar`, while a scan
+    # spells its project-prefixed guess `proj.foo.Bar`. The two spell
+    # the same base, and comparing them raw invents a base change.
+    prefix = project_name + cs.SEPARATOR_DOT
+    return (
+        qualified_name[len(prefix) :]
+        if qualified_name.startswith(prefix)
+        else qualified_name
+    )
+
+
 def build_class_changes(
     scanned_files: list[ScannedFile],
     old_classes: dict[str, str],
@@ -285,6 +298,7 @@ def build_class_changes(
     hierarchy: dict[str, list[str]],
     project_name: str,
     changed_keys: Collection[str] = (),
+    graph_class_qns: Collection[str] = (),
 ) -> list[ClassChange]:
     """The classes whose methods or bases moved, old state against new.
 
@@ -293,8 +307,14 @@ def build_class_changes(
     the method names the graph held for it; `hierarchy` is the old
     child-to-bases map. `changed_keys` names the files whose old classes
     may count as removed: a class the graph holds for any other file is
-    untouched by this run, whatever the scan says. A class present in
-    neither old nor new state, or identical in both, is not a change:
+    untouched by this run, whatever the scan says. `graph_class_qns`
+    names every class and interface node the graph holds: a resolved
+    base counts only when it names a class in the graph, in this run's
+    scan, in the hierarchy, or under the spelling the persisted
+    hierarchy already uses for it, so an import-resolved guess for an
+    external base cannot invent a change for a comment-only edit, while
+    a real base in an unchanged file is still detected. A class present
+    in neither old nor new state, or identical in both, is not a change:
     most edits are not dispatch changes, and this list is what keeps
     them from re-parsing callers.
     """
@@ -312,8 +332,12 @@ def build_class_changes(
     by_simple_name: dict[str, set[str]] = {}
     for qn in known_classes:
         by_simple_name.setdefault(_simple_name(qn), set()).add(qn)
+    existing_classes = known_classes | set(graph_class_qns)
     changes: list[ClassChange] = []
     for qn, (scanned, scan) in scanned_qns.items():
+        old_base_keys = {
+            _spelling_key(base, project_name) for base in hierarchy.get(qn, ())
+        }
         new_bases = tuple(
             sorted(
                 {
@@ -322,12 +346,21 @@ def build_class_changes(
                     for candidate in _candidate_base_qns(
                         written, scanned, project_name, known_classes, by_simple_name
                     )
+                    if candidate in existing_classes
+                    or _spelling_key(candidate, project_name) in old_base_keys
                 }
             )
         )
         old_method_set = frozenset(old_methods.get(qn, ()))
         new_method_set = scan.methods
         old_base_set = tuple(sorted(hierarchy.get(qn, ())))
+        if new_bases != old_base_set and {
+            _spelling_key(base, project_name) for base in new_bases
+        } == {_spelling_key(base, project_name) for base in old_base_set}:
+            # Same bases, different spellings: keep the persisted
+            # spelling, which is the one the graph will hold after
+            # the re-parse, so the merged state matches it.
+            new_bases = old_base_set
         if qn not in old_classes:
             if new_method_set or new_bases:
                 changes.append(

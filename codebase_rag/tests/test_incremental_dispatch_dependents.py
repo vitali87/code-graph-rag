@@ -666,3 +666,96 @@ def test_incremental_detached_subclass_prunes_dispatch_edge(
     assert not any(t.endswith("Leaf.m") for t in run_targets)
     assert _callees(snapshot, "Root.run") == run_targets
     assert snapshot == clean
+
+
+EXT_BEFORE = """from foo import Bar
+
+
+class Child(Bar):
+    def get(self, key):
+        return b"e"
+"""
+
+
+def test_comment_only_edit_on_external_base_queues_no_dispatch_callers(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A comment-only edit to a file whose class extends an
+    import-resolved external base: the persisted hierarchy holds no
+    edge to that base, so the scan's project-prefixed guess must not
+    re-queue the Protocol caller's file, and the graph must match a
+    fresh index of the commented bytes."""
+    from codebase_rag.graph_updater import GraphUpdater
+
+    before = {"lib.py": LIB, "tests/test_lib.py": MOCK, "ext.py": EXT_BEFORE}
+    root = temp_repo / "proj"
+    _materialise(root, before)
+    store = _StatefulIngestor()
+    keys = _reparsed_keys_spy(monkeypatch)
+    _index(store, root, cs.SupportedLanguage.PYTHON, force=True)
+    commented = EXT_BEFORE + "\n# trailing comment\n"
+    _add_after_cache(root, "ext.py", commented)
+    _index(store, root, cs.SupportedLanguage.PYTHON, force=False)
+    assert "lib.py" not in keys[-1]
+    clean, _clean_store = _clean_snapshot(temp_repo, {**before, "ext.py": commented})
+    assert _snapshot(store) == clean
+    probe = GraphUpdater(
+        ingestor=store,
+        repo_path=root,
+        parsers={},
+        queries={},
+        project_name="proj",
+    )
+    assert (
+        probe._dispatch_dependent_keys([], [("ext.py", commented.encode())], []) == []
+    )
+
+
+ROOT_B = """class Root:
+    def m(self):
+        return "root"
+
+    def run(self):
+        return self.m()
+"""
+
+CHILD_STANDALONE = """class Child:
+    def m(self):
+        return "child"
+"""
+
+CHILD_SUBCLASS = """from root import Root
+
+
+class Child(Root):
+    def m(self):
+        return "child"
+"""
+
+
+def test_inheritance_change_onto_unchanged_root_class_is_detected(
+    temp_repo: Path,
+) -> None:
+    """`Root` is an unchanged root class in an unchanged file, with no
+    hierarchy edges of its own: gaining it as a base must still be
+    detected, so the base file's caller gains the override edge and
+    the incremental index matches a fresh one."""
+    before = {"root.py": ROOT_B, "child.py": CHILD_STANDALONE}
+    root = temp_repo / "proj"
+    _materialise(root, before)
+    store = _StatefulIngestor()
+    _index(store, root, cs.SupportedLanguage.PYTHON, force=True)
+    assert not any(
+        t.endswith("Child.m") for t in _callees(_snapshot(store), "Root.run")
+    )
+    _add_after_cache(root, "child.py", CHILD_SUBCLASS)
+    _index(store, root, cs.SupportedLanguage.PYTHON, force=False)
+    snapshot = _snapshot(store)
+
+    clean, _clean_store = _clean_snapshot(
+        temp_repo, {**before, "child.py": CHILD_SUBCLASS}
+    )
+    run_targets = _callees(clean, "Root.run")
+    assert any(t.endswith("Child.m") for t in run_targets)
+    assert _callees(snapshot, "Root.run") == run_targets
+    assert snapshot == clean

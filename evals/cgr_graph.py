@@ -1719,6 +1719,17 @@ class _StatefulIngestor:
                     )
                 inherits.sort(key=lambda item: (item[0], item[1]))
                 return [row for _child, _index, row in inherits]
+            case cs.CYPHER_DISPATCH_CLASS_QNS:
+                # Mirrors CYPHER_DISPATCH_CLASS_QNS (issue #3338): every
+                # class and interface node the project owns.
+                prefix = _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
+                class_qns = {
+                    _str(props.get(cs.KEY_QUALIFIED_NAME))
+                    for (label, _uid), props in self.nodes.items()
+                    if label in (cs.NodeLabel.CLASS.value, cs.NodeLabel.INTERFACE.value)
+                    and _str(props.get(cs.KEY_QUALIFIED_NAME)).startswith(prefix)
+                }
+                return [{cs.KEY_QUALIFIED_NAME: _text(qn)} for qn in sorted(class_qns)]
             case cs.CYPHER_DISPATCH_PROTOCOL_METHODS:
                 # Mirrors CYPHER_DISPATCH_PROTOCOL_METHODS (issue #3338):
                 # the methods each Protocol-typed class declares.

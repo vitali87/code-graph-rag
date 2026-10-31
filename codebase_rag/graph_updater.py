@@ -5498,6 +5498,27 @@ class GraphUpdater:
             base = row.get(cs.KEY_BASE_QN)
             if isinstance(child, str) and isinstance(base, str):
                 hierarchy.setdefault(child, []).append(base)
+        # Every class and interface node the graph holds, so base
+        # resolution can tell a real base in an unchanged file from an
+        # import-resolved guess for an external base. A failed read
+        # falls back to the classes this run and the hierarchy name:
+        # the phantom guess is still dropped, and only a base in an
+        # unchanged file could then be missed for this run.
+        graph_class_qns: set[str] = set()
+        try:
+            class_qn_rows = self._owned_rows(
+                self._graph_rows(
+                    cs.CYPHER_DISPATCH_CLASS_QNS,
+                    {cs.KEY_PROJECT_PREFIX: prefix},
+                ),
+                cs.KEY_QUALIFIED_NAME,
+            )
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="dispatch class names")
+        else:
+            for row in class_qn_rows:
+                if isinstance(qn := row.get(cs.KEY_QUALIFIED_NAME), str):
+                    graph_class_qns.add(qn)
         changes = build_class_changes(
             scanned_files,
             old_classes,
@@ -5505,6 +5526,7 @@ class GraphUpdater:
             hierarchy,
             self.project_name,
             changed_keys,
+            graph_class_qns,
         )
         if not changes:
             return []

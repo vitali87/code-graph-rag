@@ -1512,8 +1512,19 @@ CYPHER_ALL_INHERITS = (
 # callers. These queries read the OLD graph, before the changed files'
 # subtrees are deleted: the hierarchy and method sets the new source is
 # judged against, and the CALLS edges whose targets the dispatch set
-# gained or lost. All four are emulated in evals/cgr_graph.py; a structural
+# gained or lost. All six are emulated in evals/cgr_graph.py; a structural
 # edit here without a matching case there fails closed in the unit suite.
+# Every class and interface node the project owns. Base resolution
+# trusts only a project-prefixed base guess that names a class here or
+# in this run's scan: an import-resolved guess for an external base has
+# no node, and comparing it with the persisted bases invents a change
+# for a comment-only edit (issue #3338).
+CYPHER_DISPATCH_CLASS_QNS = (
+    "MATCH (n) "
+    "WHERE n.qualified_name STARTS WITH $project_prefix "
+    "AND ANY(label IN labels(n) WHERE label IN ['Class', 'Interface']) "
+    "RETURN n.qualified_name AS qualified_name"
+)
 # The classes a Protocol declares, with the methods each declares: a
 # Protocol is a class whose direct base is named Protocol, the same test
 # CallResolver._protocol_classes applies to the rehydrated hierarchy.
