@@ -81,6 +81,24 @@ RETRIEVAL_GREP_DONE = "grep ({mode}) call edges: {count}"
 RETRIEVAL_RG_MISSING = (
     "ripgrep '{binary}' not found on PATH; cannot run the grep baseline"
 )
+RETRIEVAL_SAMPLED = (
+    "scoring every condition on {count} of {total} symbols (seed={seed})"
+)
+RETRIEVAL_COLGREP_MISSING = (
+    "'{binary}' not found on PATH; install ColGrep (lightonai/next-plaid) "
+    "or drop --colgrep"
+)
+RETRIEVAL_COLGREP_INDEXING = "Building the ColGrep index for {target}"
+RETRIEVAL_COLGREP_INDEXED = "ColGrep index ready in {seconds:.1f}s"
+RETRIEVAL_COLGREP_INDEX_FAILED = "ColGrep could not index {target}: {error}"
+RETRIEVAL_EXTRACTING_COLGREP = (
+    "Running ColGrep ({mode}, k={top_k}): {count} searches over {target}"
+)
+RETRIEVAL_COLGREP_QUERY_FAILED = "ColGrep search for '{name}' failed: {error}"
+RETRIEVAL_COLGREP_DONE = (
+    "colgrep ({mode}) call edges: {count} "
+    "({queries} searches in {seconds:.1f}s, {per_query:.2f}s each)"
+)
 INCREMENTAL_TARGET = "Incremental-update eval over {target} (project={project})"
 INCREMENTAL_SAMPLED = "probing {count} of {total} python files with a neutral edit"
 INCREMENTAL_NO_PY = "no python files found under {target}; nothing to probe"

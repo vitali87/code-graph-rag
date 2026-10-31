@@ -125,7 +125,8 @@ first-party symbol universe:
   cgr's property-as-call edges as false positives.
 
 Requires `rg` (ripgrep) on `PATH`; `evals.retrieval` exits cleanly if it is
-missing. Writes `evals/results/retrieval_scores.csv` and
+missing, and likewise if `--colgrep` is given without `colgrep` on `PATH`.
+Writes `evals/results/retrieval_scores.csv` and
 `evals/results/retrieval_diff.json`. The thesis and grep's two failure modes (a
 bare reference or import counts as a hit, and a definition site `def S(` is
 indistinguishable from a call) are pinned by
@@ -149,6 +150,44 @@ base-class edges); the recall tail is first-party names colliding with builtins
 (django's own `def super(self)` makes every builtin `super()` call look like a
 missed first-party edge), the same name-based limitation documented for the
 per-language retrieval evals below.
+
+### ColGrep conditions (optional)
+
+`--colgrep` adds two more conditions driven by
+[ColGrep](https://github.com/lightonai/next-plaid) (LightOn's grep-shaped Rust
+CLI that ranks code with the LateOn-Code late-interaction model, fused with an
+FTS5 trigram keyword search by reciprocal rank fusion). It asks the question a
+grep-like semantic tool has to answer to be worth shipping: when an agent
+searches for `S`, are the files it gets back the files that call `S`?
+
+```bash
+uv run python -m evals.retrieval --target codebase_rag --colgrep --sample 500
+```
+
+- **colgrep_name** (`retrieval.colgrep_call_edges`, `GrepMode.NAME`):
+  `colgrep search S`, the ranked keyword plus semantic search alone, the
+  counterpart of grep_name.
+- **colgrep_call** (`GrepMode.CALL`): `colgrep search -e '\bS\s*\(' S`, the
+  same call pattern grep_call uses narrowing the candidates, the model ranking
+  them.
+
+Each search returns the top `--colgrep-k` files (default 15, ColGrep's own
+default), so this is a ranked retriever with a fixed budget: a symbol with no
+callers still gets up to k files back, and one with more than k caller files
+cannot reach full recall. The arm builds the index once (`colgrep init -y`),
+then runs every search with `--no-update` and `--force-cpu`, and logs the
+index time and the time per search, so the CPU cost sits next to the scores.
+
+ColGrep answers one query per process, so the arm runs one search per symbol
+and mode. On `codebase_rag` (about 29,000 symbols) that is too many, hence
+`--sample N`: every condition, the graph and grep included, is then scored on
+the same seeded random sample of `N` symbols (`--seed`, default 0), so the
+rows stay comparable. `--sample` works without `--colgrep` too. ColGrep keeps
+its index under its own data directory (`~/.local/share/colgrep` on Linux),
+not in the repository. The flags follow the colgrep 1.8 command line; the
+command the arm sends and how it reads the answer are pinned in
+`codebase_rag/tests/test_retrieval_eval.py` against a stand-in binary, not
+the real model.
 
 ## Indexing-time benchmark — pinned corpora
 
