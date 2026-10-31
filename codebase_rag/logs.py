@@ -1013,6 +1013,7 @@ JAVA_FOUND_INSTANCE = "Found instance method: {result}"
 JAVA_INSTANCE_NOT_FOUND = "Instance method not found: {type}.{method}"
 JAVA_ENHANCED_FOR_VAR = "Enhanced for loop variable: {name} -> {type}"
 JAVA_ENHANCED_FOR_VAR_ALT = "Enhanced for loop variable (alt): {name} -> {type}"
+JAVA_CATCH_PARAMETER = "Catch parameter: {name} -> {type}"
 
 # JS type inference logs
 JS_VAR_DECLARATOR_FOUND = "Found variable declarator: {var_name} in {module_qn}"
