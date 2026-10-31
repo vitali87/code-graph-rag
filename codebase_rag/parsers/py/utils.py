@@ -11,6 +11,29 @@ if TYPE_CHECKING:
     from ..import_processor import ImportProcessor
 
 
+def split_top_level(inner: str, separator: str = ",") -> list[str]:
+    """Split `A, dict[str, B], C` on the separators outside any brackets --
+    the commas between positions, or the `|` between union members, which a
+    plain `str.split` would also find INSIDE `tuple[Widget | None, Banner]`."""
+    parts: list[str] = []
+    depth = 0
+    current: list[str] = []
+    for char in inner:
+        if char in "[(":
+            depth += 1
+        elif char in "])":
+            depth = max(0, depth - 1)
+        if char == separator and depth == 0:
+            parts.append("".join(current).strip())
+            current = []
+        else:
+            current.append(char)
+    tail = "".join(current).strip()
+    if tail:
+        parts.append(tail)
+    return parts
+
+
 def resolve_dotted_class(
     path: str,
     module_qn: str,
