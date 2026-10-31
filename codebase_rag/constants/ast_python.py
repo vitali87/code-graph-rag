@@ -427,6 +427,11 @@ CLASSMETHOD_DECORATORS: frozenset[str] = frozenset({"classmethod"})
 # contextlib's generator-based context manager factories: a `with` target
 # takes the generator's yield type, not the factory's return type (#3340).
 PY_CONTEXTLIB_MODULE = "contextlib"
+# Where generator annotations live: an aliased annotation base counts only
+# when the import map resolves it here (#3340).
+PY_GENERATOR_ANNOTATION_MODULES: frozenset[str] = frozenset(
+    {"typing", "collections.abc"}
+)
 CONTEXTMANAGER_DECORATORS: frozenset[str] = frozenset(
     {"contextmanager", "asynccontextmanager"}
 )

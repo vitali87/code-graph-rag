@@ -36,6 +36,7 @@ from evals.cgr_graph import _StatefulIngestor
 PROJECT = "proj"
 THING_GO = f"{PROJECT}.m.Thing.go"
 OTHER_GO = f"{PROJECT}.m.Other.go"
+HTHING_GO = f"{PROJECT}.helpers.HThing.go"
 THING = f"{PROJECT}.m.Thing"
 INNER = f"{PROJECT}.m.Inner"
 INNER_GO = f"{PROJECT}.m.Inner.go"
@@ -45,7 +46,9 @@ SOURCE = (
     "from contextlib import contextmanager as cm_alias\n"
     "import contextlib\n"
     "from helpers import contextmanager as fake_contextmanager\n"
+    "import helpers\n"
     "from typing import AsyncGenerator, AsyncIterator, Generator, Iterator\n"
+    "from typing import Iterator as It\n"
     "\n"
     "\n"
     "class Thing:\n"
@@ -340,9 +343,51 @@ SOURCE = (
     "            pass\n"
     "    t = Other()\n"
     "    return t.go()\n"
+    "\n"
+    "\n"
+    "@contextmanager\n"
+    "def aliased_ann() -> It[Thing]:\n"
+    "    yield Thing()\n"
+    "\n"
+    "\n"
+    "@contextmanager\n"
+    "def multi_same():\n"
+    "    yield Thing()\n"
+    "    yield Thing()\n"
+    "\n"
+    "\n"
+    "def aliased_ann_with():\n"
+    "    with aliased_ann() as t:\n"
+    "        return t.go()\n"
+    "\n"
+    "\n"
+    "def multi_same_with():\n"
+    "    with multi_same() as t:\n"
+    "        return t.go()\n"
+    "\n"
+    "\n"
+    "def matched_qualified(shape):\n"
+    "    match shape:\n"
+    "        case helpers.HThing() as t:\n"
+    "            return t.go()\n"
+    "\n"
+    "\n"
+    "def matched_bare_typed():\n"
+    "    s = Thing()\n"
+    "    match s:\n"
+    "        case t:\n"
+    "            return t.go()\n"
 )
 
-HELPERS = "def contextmanager(fn):\n    return fn\n"
+HELPERS = (
+    "def contextmanager(fn):\n"
+    "    return fn\n"
+    "\n"
+    "\n"
+    "class HThing:\n"
+    "    def go(self):\n"
+    "        return 1\n"
+)
 
 
 def _build(tmp_path: Path) -> GraphUpdater:
@@ -573,3 +618,21 @@ def test_walrus_reading_a_retried_with_target(tmp_path: Path) -> None:
 
 def test_match_alias_superseded_by_a_later_assignment(tmp_path: Path) -> None:
     assert _local_types(tmp_path, "matched_then_assign").get("t") == "Other"
+
+
+def test_aliased_generator_annotation(tmp_path: Path) -> None:
+    assert _calls(tmp_path)["aliased_ann_with"].get(THING_GO) == EXACT
+
+
+def test_unannotated_contextmanager_yielding_the_same_class_twice(
+    tmp_path: Path,
+) -> None:
+    assert _calls(tmp_path)["multi_same_with"].get(THING_GO) == EXACT
+
+
+def test_qualified_class_pattern(tmp_path: Path) -> None:
+    assert _calls(tmp_path)["matched_qualified"].get(HTHING_GO) == EXACT
+
+
+def test_bare_capture_takes_the_subject_type(tmp_path: Path) -> None:
+    assert _calls(tmp_path)["matched_bare_typed"].get(THING_GO) == EXACT

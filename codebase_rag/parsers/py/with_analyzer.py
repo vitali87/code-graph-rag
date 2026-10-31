@@ -394,19 +394,40 @@ class PythonWithBindingMixin(_WithBase):
     def _yield_annotation_type(self, text: str, module_qn: str) -> str | None:
         """The first type argument of a generator annotation, or None for
         any other annotation: only `Iterator[T]`, `Generator[T, ...]`,
-        `AsyncIterator[T]` and `AsyncGenerator[T, ...]` (qualified or
-        bare) name the yielded type."""
+        `AsyncIterator[T]` and `AsyncGenerator[T, ...]` name the yielded
+        type. The base name is resolved through the factory module's
+        import map, so an alias (`Iterator as It`) counts only when it
+        resolves to `typing` / `collections.abc`; a bare name with no
+        import entry keeps the spelling check, so star-imports work."""
         bracket = text.find("[")
         if bracket < 0 or not text.endswith("]"):
             return None
-        base = text[:bracket].rsplit(cs.SEPARATOR_DOT, 1)[-1].strip()
-        if base not in cs.PY_GENERATOR_ANNOTATIONS:
+        if not self._is_generator_annotation(text[:bracket].strip(), module_qn):
             return None
         parts = split_top_level(text[bracket + 1 : -1])
         first = parts[0].strip().strip("\"'") if parts else None
         if not first:
             return None
         return self._resolved_type(first, module_qn)
+
+    def _is_generator_annotation(self, base: str, module_qn: str) -> bool:
+        """Whether `base` names a generator annotation, resolved through
+        the factory module's import map when it has an entry for the
+        first segment: a same-named import from elsewhere is not one."""
+        parts = base.split(cs.SEPARATOR_DOT)
+        import_map = self.import_processor.import_mapping.get(module_qn, {})
+        if parts[0] in import_map:
+            resolved = import_map[parts[0]]
+            if len(parts) > 1:
+                resolved = (
+                    f"{resolved}{cs.SEPARATOR_DOT}{cs.SEPARATOR_DOT.join(parts[1:])}"
+                )
+            return resolved in {
+                f"{module}.{name}"
+                for module in cs.PY_GENERATOR_ANNOTATION_MODULES
+                for name in cs.PY_GENERATOR_ANNOTATIONS
+            }
+        return parts[-1] in cs.PY_GENERATOR_ANNOTATIONS
 
     def _factory_local_types(
         self, definition: Node, factory_module_qn: str

@@ -1480,12 +1480,13 @@ class PythonAstAnalyzerMixin(_AstBase):
         module_qn: str,
     ) -> None:
         """Type `case C(...) as t` aliases as `C`, resolved the way a
-        constructor name is (#3340). Only the alias is typed: narrowing
-        the matched subject, or a capture inside the pattern, is a
-        flow-sensitive question this flat map cannot answer, and a union
-        of different classes names no single class. An alias a later
-        binding of the same name supersedes is not typed: the map holds
-        one type per name, and a with target keeps the same rule."""
+        constructor name is, and a bare capture `case t:` as the matched
+        subject's type (#3340). Only the alias or capture is typed:
+        narrowing the matched subject, or a capture inside the pattern,
+        is a flow-sensitive question this flat map cannot answer, and a
+        union of different classes names no single class. A binding a
+        later binding of the same name supersedes is not typed: the map
+        holds one type per name, and a with target keeps the same rule."""
         last: dict[str, int] = {}
         for _binder, identifier in _bindings_in(scope):
             if name := safe_decode_text(identifier):
@@ -1516,6 +1517,47 @@ class PythonAstAnalyzerMixin(_AstBase):
                                 local_var_types[name] = typed
                                 logger.debug(lg.PY_TYPE_SIMPLE, var=name, type=typed)
                 stack.extend(node.named_children)
+            self._type_bare_capture(clause, pattern, last, local_var_types, module_qn)
+
+    def _type_bare_capture(
+        self,
+        clause: Node,
+        pattern: Node,
+        last: dict[str, int],
+        local_var_types: dict[str, str],
+        module_qn: str,
+    ) -> None:
+        """Type a bare capture `case t:` as the `match` subject's type:
+        the capture binds the subject itself, so it takes whatever type
+        the subject already has in the map. Only a whole-pattern single
+        identifier counts: a dotted name is a value pattern, `_` binds
+        nothing, and a capture inside a larger pattern is left to the
+        flow pass. An untyped subject leaves the capture untyped."""
+        children = pattern.named_children
+        if len(children) != 1 or children[0].type != cs.TS_PY_DOTTED_NAME:
+            return
+        parts = children[0].named_children
+        if len(parts) != 1 or parts[0].type != cs.TS_PY_IDENTIFIER:
+            return
+        name = safe_decode_text(parts[0])
+        if not name or last.get(name, -1) > parts[0].start_byte:
+            return
+        statement = clause.parent
+        while statement is not None and statement.type != cs.TS_PY_MATCH_STATEMENT:
+            statement = statement.parent
+        subject = (
+            statement.child_by_field_name(cs.FIELD_SUBJECT)
+            if statement is not None
+            else None
+        )
+        if subject is None:
+            return
+        inferred = self._infer_type_from_expression_complex(
+            subject, module_qn, local_var_types
+        ) or _identifier_type(subject, local_var_types)
+        if inferred:
+            local_var_types[name] = inferred
+            logger.debug(lg.PY_TYPE_SIMPLE, var=name, type=inferred)
 
     def _type_comprehension_walrus(
         self,
