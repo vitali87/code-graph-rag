@@ -4169,6 +4169,7 @@ class GraphUpdater:
         ):
             return False
         self.function_registry[qn] = node_type
+        self._rehydrate_php_class(node_type, qn, row)
         # A `@line` variant rejoins its natural qn's duplicate list: a call
         # into the name fans out to every same-named definition, and one read
         # back as a plain entry left the incremental graph with a single edge
@@ -4440,6 +4441,27 @@ class GraphUpdater:
             clause := read_package_clause(self.repo_path / path)
         ):
             clauses[module_qn] = clause
+
+    def _rehydrate_php_class(
+        self, node_type: NodeType, qn: str, row: ResultRow
+    ) -> None:
+        # Unchanged PHP files are not re-parsed, so the FQCN index built at
+        # class ingest would otherwise forget them and a re-parsed file's
+        # `App\\Resolver::m` would miss (issue #3117). Freshly parsed classes
+        # are already in the registry and never reach here.
+        if node_type not in (NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM):
+            return
+        path = row.get(cs.KEY_PATH)
+        if not isinstance(path, str) or not path.endswith(cs.EXT_PHP):
+            return
+        namespace = row.get(cs.KEY_NAMESPACE)
+        simple = qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        self.factory.import_processor.register_php_class(
+            namespace if isinstance(namespace, str) else None,
+            simple,
+            qn,
+            self._recorded_module_qn(path),
+        )
 
     def _rehydrate_csharp_declared_form(
         self, qn: str, path: str, row: ResultRow

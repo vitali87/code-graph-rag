@@ -797,18 +797,74 @@ def _cpp_include_local_name(include_path: str) -> str:
     return header_name
 
 
-def _php_use_clause_binding(clause: Node) -> tuple[str, str] | None:
-    """Return (imported dotted path, local name) for one `use` clause."""
+def _php_use_group(use_node: Node) -> tuple[str, list[Node]] | None:
+    """`(dotted prefix, clauses)` for `use App\\{Resolver as R}`, else None.
+
+    The clauses are children of the group, not of the declaration, and each
+    path is relative to the prefix. A plain `use Vendor\\Widget` has no group.
+    """
+    group = next(
+        (
+            child
+            for child in use_node.named_children
+            if child.type == cs.TS_PHP_NAMESPACE_USE_GROUP
+        ),
+        None,
+    )
+    if group is None:
+        return None
+    prefix_node = next(
+        (
+            child
+            for child in use_node.named_children
+            if child.type == cs.TS_PHP_NAMESPACE_NAME
+        ),
+        None,
+    )
+    prefix_text = safe_decode_with_fallback(prefix_node).lstrip("\\")
+    parts = [part for part in prefix_text.split(cs.PHP_NAMESPACE_SEPARATOR) if part]
+    clauses = [
+        child
+        for child in group.named_children
+        if child.type == cs.TS_PHP_NAMESPACE_USE_CLAUSE
+    ]
+    return cs.SEPARATOR_DOT.join(parts), clauses
+
+
+def _php_use_clause_binding(clause: Node, prefix: str = "") -> tuple[str, str] | None:
+    """Return (imported dotted path, local name) for one `use` clause.
+
+    `prefix` is the group head (`App` in `use App\\{Resolver as R}`). A bare
+    name is a class only under that prefix: a top-level `use Foo` has never
+    been bound.
+    """
     qn_node = next(
         (c for c in clause.named_children if c.type == cs.TS_PHP_QUALIFIED_NAME),
         None,
     )
-    if not qn_node:
+    if qn_node is not None:
+        imported_path = safe_decode_with_fallback(qn_node)
+        if not imported_path:
+            return None
+        imported_path = imported_path.replace("\\", cs.SEPARATOR_DOT)
+    elif prefix:
+        alias_node = clause.child_by_field_name(cs.FIELD_ALIAS)
+        alias_at = alias_node.start_byte if alias_node is not None else None
+        name_node = next(
+            (
+                child
+                for child in clause.named_children
+                if child.type == cs.TS_PHP_NAME and child.start_byte != alias_at
+            ),
+            None,
+        )
+        imported_path = safe_decode_with_fallback(name_node)
+        if not imported_path:
+            return None
+    else:
         return None
-    imported_path = safe_decode_with_fallback(qn_node)
-    if not imported_path:
-        return None
-    imported_path = imported_path.replace("\\", cs.SEPARATOR_DOT)
+    if prefix:
+        imported_path = f"{prefix}{cs.SEPARATOR_DOT}{imported_path}"
     alias_node = clause.child_by_field_name(cs.FIELD_ALIAS)
     if alias_node and alias_node.text:
         return imported_path, safe_decode_with_fallback(alias_node)
@@ -1086,7 +1142,11 @@ class ImportProcessor:
         "conditional_imports",
         "python_import_rebinds",
         "php_function_imports",
+        "php_const_imports",
+        "php_class_imports",
         "php_module_namespaces",
+        "php_class_index",
+        "php_class_module",
         "js_ts_bare_imports",
         "js_ts_package_imports",
         "js_path_aliases",
@@ -1481,6 +1541,14 @@ class ImportProcessor:
         # Collections/functions.php), so these must resolve by simple name via the
         # trie rather than being judged external-import and suppressed.
         self.php_function_imports: dict[str, set[str]] = {}
+        # Local names from `use const`. Constants share the import map with
+        # classes, but PHP keeps them in a different symbol table, so a
+        # class lookup must ignore these (issue #3117 review).
+        self.php_const_imports: dict[str, set[str]] = {}
+        # Class aliases only. A `use const` or `use function` of the same
+        # local name is legal and overwrites `import_mapping`, but it does
+        # not bind `new` (issue #3117 review).
+        self.php_class_imports: dict[str, dict[str, str]] = {}
         # The `namespace Vendor\Pkg` a PHP module declares, keyed by module qn,
         # stored dotted (`Vendor.Pkg`) to match how import targets are recorded.
         #
@@ -1492,6 +1560,14 @@ class ImportProcessor:
         # trie and binds to whichever same-named function it reaches first --
         # a WRONG edge rather than a missing one (issue #1185).
         self.php_module_namespaces: dict[str, str] = {}
+        # Folded PHP FQCN (`app.resolver`) -> class qns. Class qns follow the
+        # file path, so a `use` alias or a `Class::method` string cannot be
+        # joined to the registry by the namespace text alone (issue #3117).
+        self.php_class_index: dict[str, set[str]] = {}
+        # class qn -> the module that registered it. A path qn makes
+        # `proj.src.Foo` a prefix of `proj.src.Foo.Bar`, so the drop cannot
+        # use the prefix (issue #3117).
+        self.php_class_module: dict[str, str] = {}
         # Local names brought in by a JS/TS import with a NON-STANDARD scheme
         # (`ext:deno_node/y`; see _has_aliased_scheme), keyed by module. Such a
         # specifier aliases first-party code but does not resolve to a file-path
@@ -1773,6 +1849,51 @@ class ImportProcessor:
                 )
             )
 
+    def register_php_class(
+        self,
+        namespace: str | None,
+        class_name: str,
+        class_qn: str,
+        module_qn: str,
+    ) -> None:
+        # Anonymous classes are positional and have no FQCN a string or a
+        # `use` alias can name. A namespaced class is keyed by its declared
+        # namespace plus its simple name; a global one by the simple name
+        # alone, which is what `'Resolver::m'` means (the global class, not
+        # the current namespace).
+        if not class_name or class_name.startswith(cs.PREFIX_ANONYMOUS):
+            return
+        simple = class_name.rsplit("\\", 1)[-1].rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        if not simple or simple.startswith(cs.PREFIX_ANONYMOUS):
+            return
+        from .call_resolver import _php_fold
+
+        dotted = f"{namespace}.{simple}" if namespace else simple
+        self.php_class_index.setdefault(_php_fold(dotted), set()).add(class_qn)
+        self.php_class_module[class_qn] = module_qn
+
+    def drop_php_classes_for_module(self, module_qn: str) -> None:
+        # Only this module's classes. The qualified names were copied out
+        # first: updating a set while iterating it raises RuntimeError, and
+        # `parse_imports` turns that into a failed re-parse.
+        owned = [
+            class_qn
+            for class_qn, owner in self.php_class_module.items()
+            if owner == module_qn
+        ]
+        if not owned:
+            return
+        for class_qn in owned:
+            del self.php_class_module[class_qn]
+        owned_set = set(owned)
+        empty: list[str] = []
+        for key, class_qns in self.php_class_index.items():
+            class_qns.difference_update(owned_set)
+            if not class_qns:
+                empty.append(key)
+        for key in empty:
+            del self.php_class_index[key]
+
     def parse_imports(
         self,
         root_node: Node,
@@ -1810,9 +1931,15 @@ class ImportProcessor:
         # Reset per-module PHP use-function state too, so a re-index that drops a
         # `use function` import does not leave a stale exemption behind.
         self.php_function_imports.pop(module_qn, None)
+        self.php_const_imports.pop(module_qn, None)
+        self.php_class_imports.pop(module_qn, None)
         # A re-index that removes or edits the `namespace` declaration must not
         # leave the old namespace bound to this module.
         self.php_module_namespaces.pop(module_qn, None)
+        # The class index is filled as classes are ingested, which is after
+        # this clear. Drop the previous parse of this module first or a
+        # renamed class keeps answering `App\\Old::m`.
+        self.drop_php_classes_for_module(module_qn)
         self.js_ts_bare_imports.pop(module_qn, None)
         self.js_ts_package_imports.pop(module_qn, None)
         # A re-parse that drops a fallback import must not leave the binding
@@ -6613,10 +6740,22 @@ class ImportProcessor:
         # `use function A\B\c` / `use const A\B\C` carry the modifier on the
         # declaration (older grammar) or inside each clause (current grammar).
         decl_is_function = any(c.type == cs.TS_PHP_FUNCTION for c in use_node.children)
-        for child in use_node.named_children:
-            if child.type != cs.TS_PHP_NAMESPACE_USE_CLAUSE:
-                continue
-            binding = _php_use_clause_binding(child)
+        decl_is_const = any(c.type == cs.TS_PHP_CONST for c in use_node.children)
+        # A grouped `use` stores its clauses under the group. Reading only the
+        # declaration's children drops `use App\{Resolver as R}` and the
+        # callback resolves `R` as a class in the enclosing namespace.
+        grouped = _php_use_group(use_node)
+        if grouped is None:
+            prefix = ""
+            clauses = [
+                child
+                for child in use_node.named_children
+                if child.type == cs.TS_PHP_NAMESPACE_USE_CLAUSE
+            ]
+        else:
+            prefix, clauses = grouped
+        for child in clauses:
+            binding = _php_use_clause_binding(child, prefix)
             if binding is None:
                 continue
             imported_path, local_name = binding
@@ -6627,10 +6766,20 @@ class ImportProcessor:
                 use_node,
                 imported_path.split(cs.SEPARATOR_DOT)[-1],
             )
-            if decl_is_function or any(
+            clause_is_function = decl_is_function or any(
                 c.type == cs.TS_PHP_FUNCTION for c in child.children
-            ):
+            )
+            clause_is_const = decl_is_const or any(
+                c.type == cs.TS_PHP_CONST for c in child.children
+            )
+            if clause_is_function:
                 self.php_function_imports.setdefault(module_qn, set()).add(local_name)
+            elif clause_is_const:
+                self.php_const_imports.setdefault(module_qn, set()).add(local_name)
+            else:
+                self.php_class_imports.setdefault(module_qn, {})[local_name] = (
+                    imported_path
+                )
 
     def _handle_php_include_require(self, node: Node, module_qn: str) -> None:
         for child in node.children:
