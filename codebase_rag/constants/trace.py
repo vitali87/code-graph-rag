@@ -2,6 +2,8 @@
 
 from enum import StrEnum
 
+from .graph import KEY_RESOLUTION
+
 # Interchange format (one JSON object per line; first line is the header).
 TRACE_FORMAT_VERSION = 1
 TRACE_KIND_HEADER = "header"
@@ -182,6 +184,16 @@ TRACE_CARRIED_PROPS = (
     TRACE_PROP_WORKLOAD_COUNT,
     TRACE_PROP_RECEIVER_TYPES,
     TRACE_PROP_SAMPLED,
+)
+# What trace confirmation sets on every static site of an observed pair:
+# the observation, its staleness and how it was confirmed. The confirm
+# query names each one (issue #2879), so a key missing here never reaches
+# the edge; a test pins both writers' keys to this list.
+TRACE_CONFIRMED_PROPS = (
+    KEY_RESOLUTION,
+    TRACE_PROP_STATIC_MISSED,
+    TRACE_PROP_STALE,
+    *TRACE_CARRIED_PROPS,
 )
 
 

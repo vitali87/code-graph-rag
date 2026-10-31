@@ -13,7 +13,7 @@ from codebase_rag.cypher_queries import (
     CYPHER_TRACE_EXISTING_CALLS,
     build_trace_confirm_calls_query,
 )
-from codebase_rag.trace.ingest import ingest_trace
+from codebase_rag.trace.ingest import _edge_properties, _EdgeStats, ingest_trace
 from codebase_rag.trace.records import (
     CallRecord,
     FramePoint,
@@ -74,6 +74,19 @@ class _FakeGraph:
 
     def flush_all(self):
         self.flushed += 1
+
+    def observed(self):
+        # Each pair's observation wherever ingest wrote it: a runtime-only
+        # pair as its own relationship row, a confirmed one onto its static
+        # edges through the confirm write (issue #2879).
+        out = {(frm[2], to[2]): props for frm, _rel, to, props in self.edges}
+        for params in self.upgrades:
+            out[(params[cs.KEY_FROM_QN], params[cs.KEY_TO_QN])] = {
+                key: value
+                for key, value in params.items()
+                if key in cs.TRACE_CONFIRMED_PROPS and value is not None
+            }
+        return out
 
 
 def _callable_row(label, qualified_name, path, start_line, end_line):
@@ -183,7 +196,12 @@ def test_ingest_confirms_static_and_flags_missed_edges(tmp_path):
     assert summary.unresolved == 0
     assert graph.flushed == 1
 
-    by_pair = {(frm[2], to[2]): props for (frm, _rel, to, props) in graph.edges}
+    by_pair = graph.observed()
+    # The confirmed pair writes no relationship row of its own: one without
+    # a site would be a second, site-less edge beside its static ones.
+    assert [(frm[2], to[2]) for frm, _rel, to, _props in graph.edges] == [
+        (f"{_PROJECT}.pkg.registry.handle", f"{_PROJECT}.pkg.registry.greet")
+    ]
     confirmed = by_pair[
         (f"{_PROJECT}.pkg.entry.run_all", f"{_PROJECT}.pkg.registry.handle")
     ]
@@ -230,8 +248,9 @@ def test_ingest_marks_every_edge_fresh(tmp_path):
 
     ingest_trace(trace_path, graph, repo, _PROJECT)
 
-    assert len(graph.edges) == 2
-    for _frm, _rel, _to, props in graph.edges:
+    observed = graph.observed()
+    assert len(observed) == 2
+    for props in observed.values():
         assert props["dynamic_stale"] is False
 
 
@@ -291,9 +310,12 @@ def test_ingest_aggregates_same_edge_and_is_idempotent(tmp_path):
     second = ingest_trace(trace_path, graph, repo, _PROJECT)
 
     assert first.edges == second.edges == 1
-    assert graph.edges[0] == graph.edges[1]
-    (_frm, _rel, _to, props) = graph.edges[0]
-    assert props[cs.TRACE_PROP_CALL_COUNT] == 5
+    # A static pair: each ingest writes its observation onto the static
+    # edges, the same both times.
+    assert graph.edges == []
+    assert len(graph.upgrades) == 2
+    assert graph.upgrades[0] == graph.upgrades[1]
+    assert graph.upgrades[0][cs.TRACE_PROP_CALL_COUNT] == 5
 
 
 def test_reingest_preserves_runtime_only_classification(tmp_path):
@@ -584,3 +606,15 @@ def test_ingest_counts_unresolved_frames(tmp_path):
     assert summary.resolution.unresolved == {
         cs.TraceUnresolvedReason.SYNTHETIC.value: 1
     }
+
+
+def test_the_confirm_query_names_every_key_an_observation_carries() -> None:
+    # The confirm write names its properties one by one (issue #2879), so a
+    # key either writer adds and the list lacks would never reach the edge.
+    ingested = set(_edge_properties(_EdgeStats(count=1), sampled=False))
+    confirmed = set(cs.TRACE_CONFIRMED_PROPS)
+    assert ingested | {cs.TRACE_PROP_STATIC_MISSED, cs.KEY_RESOLUTION} <= confirmed
+    assert set(cs.TRACE_CARRIED_PROPS) <= confirmed
+    query = build_trace_confirm_calls_query("Function", "Function")
+    for key in confirmed:
+        assert f"r.{key} = coalesce(${key}, r.{key})" in query

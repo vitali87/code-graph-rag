@@ -249,10 +249,10 @@ def write_trace_edge(
     current body.
     """
     properties[cs.TRACE_PROP_STATIC_MISSED] = static_missed
-    if static_missed:
-        _mark_dynamic(properties, repo_root, caller_node, callee)
-    else:
+    if not static_missed:
         _confirm_static(ingestor, caller, callee, properties)
+        return
+    _mark_dynamic(properties, repo_root, caller_node, callee)
     ingestor.ensure_relationship_batch(
         (caller.label, cs.KEY_QUALIFIED_NAME, caller.qualified_name),
         cs.RelationshipType.CALLS,
@@ -296,14 +296,17 @@ def _confirm_static(
     callee: ResolvedFrame,
     properties: PropertyDict,
 ) -> None:
-    """Upgrade the pair's static edge(s) in place, on every site they have;
-    the trace decoration merges onto the site-less carrier as before."""
+    """Write the observation onto the pair's static edge(s) in place, on
+    every site they have. It goes through no relationship row: one
+    without a site lands on a site-less edge of its own beside the
+    located ones, never on them (issue #2879). A key the observation
+    lacks is passed as null and keeps the edge's value."""
     properties[cs.KEY_RESOLUTION] = cs.EdgeResolution.TRACE_CONFIRMED
     ingestor.execute_write(
         build_trace_confirm_calls_query(caller.label, callee.label),
         {
             cs.KEY_FROM_QN: caller.qualified_name,
             cs.KEY_TO_QN: callee.qualified_name,
-            cs.KEY_RESOLUTION: cs.EdgeResolution.TRACE_CONFIRMED,
+            **{key: properties.get(key) for key in cs.TRACE_CONFIRMED_PROPS},
         },
     )

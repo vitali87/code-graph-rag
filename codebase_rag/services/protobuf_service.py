@@ -228,7 +228,8 @@ class ProtobufFileIngestor:
 
         # Site-keyed edges (one CALLS per call site, one IMPORTS per bound
         # name; issue #1522) are distinct records, mirroring the graph sink's
-        # MERGE key; a row without a site still collapses on its endpoints.
+        # MERGE key; a pair's site-less rows share one record of their own,
+        # as they share one edge in the graph (issue #2879).
         site_key = tuple(
             (key, properties[key])
             for key in cs.MERGE_KEY_PROPS_BY_REL.get(rel_type, ())
