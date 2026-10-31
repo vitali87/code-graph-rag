@@ -761,8 +761,13 @@ class TestCreateMode:
         mock_cursor.fetchall.return_value = [(1,)]
         ingestor.conn = mock_conn
 
+        # A located row, as the import pass writes them; a row without a
+        # site takes its own path (issue #2879).
         ingestor.ensure_relationship_batch(
-            ("File", "path", "/a.py"), "IMPORTS", ("File", "path", "/b.py")
+            ("File", "path", "/a.py"),
+            "IMPORTS",
+            ("File", "path", "/b.py"),
+            {"line": 1, "col": 0, "alias": "b"},
         )
         ingestor.flush_relationships()
 

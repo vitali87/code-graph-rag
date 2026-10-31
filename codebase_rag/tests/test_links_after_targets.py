@@ -135,10 +135,14 @@ def _flush_links(created: int, attempted: int) -> list[str]:
     ingestor = MemgraphIngestor(host="localhost", port=7687, batch_size=10_000)
     ingestor.conn = _Connection(created)
     for i in range(attempted):
+        # Each link at its own site, as the document tier writes them, so the
+        # write is the MERGE whose count the fake cursor returns; a row
+        # without a site takes its own path (issue #2879).
         ingestor.ensure_relationship_batch(
             (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, "proj.guide_md"),
             cs.RelationshipType.LINKS_TO,
             (cs.NodeLabel.FILE, cs.KEY_ABSOLUTE_PATH, f"/repo/f{i}.py"),
+            {cs.KEY_LINE: i + 1, cs.KEY_COL: 0},
         )
     warnings: list[str] = []
     sink = logger.add(warnings.append, level="WARNING", format="{message}")

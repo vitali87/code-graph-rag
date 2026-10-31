@@ -9,7 +9,7 @@ import pytest
 from codebase_rag import cypher_queries as cq
 from codebase_rag.graph_dialects import DIALECT_MEMGRAPH, get_dialect
 from codebase_rag.services.graph_service import MemgraphIngestor
-from codebase_rag.types_defs import BatchWrapper, PropertyValue
+from codebase_rag.types_defs import BatchWrapper, PropertyDict, PropertyValue
 
 
 @pytest.fixture(params=[False, True], ids=["serial", "parallel"])
@@ -107,11 +107,15 @@ def test_relationship_auto_flush_retries_nodes_before_writing_edges(
     ingestor.ensure_node_batch("Module", {"qualified_name": "project.b"})
     source = ("Module", "qualified_name", "project.a")
     target = ("Module", "qualified_name", "project.b")
+    # Located rows, as the import pass writes them, so the write is the
+    # MERGE that ends in a count; a row without a site takes its own path
+    # (issue #2879).
+    site: PropertyDict = {"line": 1, "col": 0, "alias": "b"}
     for _ in range(2):
-        ingestor.ensure_relationship_batch(source, "IMPORTS", target)
+        ingestor.ensure_relationship_batch(source, "IMPORTS", target, dict(site))
 
     with pytest.raises(ConnectionError) as raised:
-        ingestor.ensure_relationship_batch(source, "IMPORTS", target)
+        ingestor.ensure_relationship_batch(source, "IMPORTS", target, dict(site))
 
     assert raised.value is failure
     assert cursor.execute.call_count == 1
