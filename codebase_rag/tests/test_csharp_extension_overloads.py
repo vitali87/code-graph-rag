@@ -41,11 +41,16 @@ internal class App
 """
 
 
+def _class_and_method(qn: str) -> str:
+    # Split off the signature first: a qualified parameter type
+    # (`Ext(N.Calc, int)`) has dots of its own.
+    base, _, signature = qn.partition("(")
+    return ".".join(base.rsplit(".", 2)[-2:]) + "(" + signature
+
+
 def _callees(mock_ingestor: MagicMock, caller_suffix: str) -> set[str]:
     return {
-        str(c.args[2][2]).rsplit(".", 2)[-2]
-        + "."
-        + str(c.args[2][2]).rsplit(".", 1)[-1]
+        _class_and_method(str(c.args[2][2]))
         for c in get_relationships(mock_ingestor, "CALLS")
         if str(c.args[0][2]).split("(", 1)[0].endswith(caller_suffix)
     }
@@ -122,5 +127,32 @@ internal class App { internal int CallExt(Calc c) { return c.Ext(5); } }
 
     assert _callees(mock_ingestor, ".App.CallExt") == {
         "Exts.Ext(Calc, int)",
+        "Exts.Ext(Calc, string)",
+    }
+
+
+def test_a_differently_spelled_receiver_stays_in_the_set(
+    project: Path, mock_ingestor: MagicMock
+) -> None:
+    # `this N.Calc` and `this Calc` declared in namespace N name the same
+    # type, so a `new N.Calc()` receiver matches both overloads. Comparing
+    # the receivers as written dropped the one `Ext(5)` actually runs.
+    (project / "Ext.cs").write_text(
+        """\
+namespace N;
+internal class Calc { }
+internal static class Exts
+{
+    internal static int Ext(this N.Calc c, int a) { return a; }
+    internal static int Ext(this Calc c, string a) { return 0; }
+}
+internal class App { internal int CallExt() { return new N.Calc().Ext(5); } }
+""",
+        encoding="utf-8",
+    )
+    run_updater(project, mock_ingestor, skip_if_missing=SKIP)
+
+    assert _callees(mock_ingestor, ".App.CallExt") == {
+        "Exts.Ext(N.Calc, int)",
         "Exts.Ext(Calc, string)",
     }

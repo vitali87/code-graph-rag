@@ -193,6 +193,14 @@ _IN_PROGRESS = _Sentinel()
 type _MemoEntry = tuple[str, str] | None | _Sentinel
 
 
+def _namespaced_receiver(recv_type: str, ext_namespace: str) -> str:
+    # A qualified `this` type is taken as written; an unqualified one names
+    # the type of that name in the extension's own namespace.
+    if cs.SEPARATOR_DOT in recv_type or not ext_namespace:
+        return recv_type
+    return f"{ext_namespace}{cs.SEPARATOR_DOT}{recv_type}"
+
+
 def _extension_receiver_matches(
     receiver_type_name: str,
     recv_type: str,
@@ -214,12 +222,7 @@ def _extension_receiver_matches(
     if recv_qualified and cand_qualified:
         return recv_type == receiver_type_name
     if recv_qualified:
-        cand_qualified_name = (
-            f"{ext_namespace}{cs.SEPARATOR_DOT}{recv_type}"
-            if ext_namespace
-            else recv_type
-        )
-        return cand_qualified_name == receiver_type_name
+        return _namespaced_receiver(recv_type, ext_namespace) == receiver_type_name
     if cand_qualified:
         return False
     return not ambiguous_unqualified
@@ -1514,15 +1517,20 @@ class CSharpTypeInferenceEngine:
         candidates = self.csharp_extension_methods.get(
             base.rsplit(cs.SEPARATOR_DOT, 1)[-1], []
         )
-        receiver = next((c[1] for c in candidates if c[0] == ext_qn), None)
+        # Receivers compare by the type they name, not as written: in
+        # namespace N, `this N.Calc` and `this Calc` are one receiver.
+        receiver = next(
+            (_namespaced_receiver(c[1], c[2]) for c in candidates if c[0] == ext_qn),
+            None,
+        )
         if receiver is None:
             return []
         arity = _arity(ext_qn)
         return [
             qn
-            for qn, recv_type, _namespace, _recv_arity in candidates
+            for qn, recv_type, namespace, _recv_arity in candidates
             if qn != ext_qn
-            and recv_type == receiver
+            and _namespaced_receiver(recv_type, namespace) == receiver
             and _method_base(qn) == base
             and _arity(qn) == arity
         ]
