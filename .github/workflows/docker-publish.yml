@@ -26,6 +26,8 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       # No image of a commit main's CI has not passed: a release created by
       # hand and a dispatch reach this job too, not only version-bump.yml's
@@ -66,8 +68,8 @@ jobs:
           # BuildKit scans each platform's final image (Debian and Python
           # packages) and pushes the SPDX SBOM as an attestation beside it.
           sbom: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # No cache-from/cache-to: a GitHub Actions cache entry can be
+          # written by any run on main, and this image is pushed.
 
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v2
         with:

@@ -64,6 +64,7 @@ from ..io_access.registry import (
     LIBC_STD_STREAMS,
 )
 from ..io_access.resource_names import resource_qn
+from ..py.patterns import case_always_matches
 from ..semantic_call_join import call_site_key
 from ..utils import (
     c_positional_parameter_slots,
@@ -632,18 +633,6 @@ def _is_plain_identifier(name: str) -> bool:
     )
 
 
-def _py_case_always_matches(arm: Node) -> bool:
-    # An UNGUARDED irrefutable pattern always matches; a guarded one can
-    # fail its guard, so it never removes the no-match path.
-    if arm.child_by_field_name(cs.TS_PY_FIELD_GUARD) is not None:
-        return False
-    pattern = next(
-        (child for child in arm.named_children if child.type == cs.TS_PY_CASE_PATTERN),
-        None,
-    )
-    return pattern is not None and _py_pattern_irrefutable(pattern)
-
-
 def _taint_transparent_receiver(call: Node, d: LanguageDescriptor) -> Node | None:
     # A method chain: the receiver passes through ONLY a taint-transparent
     # method -- Rust Result unwrapping (`std::env::var("X").unwrap()`) or a
@@ -666,48 +655,6 @@ def _taint_transparent_receiver(call: Node, d: LanguageDescriptor) -> Node | Non
     ):
         return None
     return receiver
-
-
-def _py_pattern_irrefutable(pattern: Node) -> bool:
-    # Irrefutable case patterns: `_` (empty case_pattern), a bare CAPTURE
-    # name (dotted_name with exactly one identifier; multi-part dotted
-    # names are value patterns that compare), and `<irrefutable> as x`.
-    children = pattern.named_children
-    if not children:
-        return True
-    if len(children) != 1:
-        return False
-    child = children[0]
-    if child.type == cs.TS_PY_DOTTED_NAME:
-        return child.named_child_count == 1
-    if child.type == cs.TS_PY_AS_PATTERN:
-        inner = next(
-            (c for c in child.named_children if c.type == cs.TS_PY_CASE_PATTERN),
-            None,
-        )
-        return inner is not None and _py_pattern_irrefutable(inner)
-    if child.type == cs.TS_PY_UNION_PATTERN:
-        return _py_union_pattern_irrefutable(child)
-    return False
-
-
-def _py_union_pattern_irrefutable(union: Node) -> bool:
-    # `1 | _` / `1 | other`: only the LAST alternative may legally be
-    # irrefutable, and a bare `_` alternative is an ANONYMOUS node, so
-    # inspect ALL children for the final non-separator one.
-    last = next(
-        (
-            c
-            for c in reversed(union.children)
-            if c.is_named or c.type == cs.TS_PY_WILDCARD_NODE
-        ),
-        None,
-    )
-    if last is None:
-        return False
-    if last.type == cs.TS_PY_WILDCARD_NODE:
-        return True
-    return last.type == cs.TS_PY_DOTTED_NAME and last.named_child_count == 1
 
 
 def _dart_formal_parameter_name(node: Node) -> str | None:
@@ -3621,7 +3568,7 @@ class FlowProcessor:
         for arm in body.named_children:
             if arm.type != cs.TS_PY_CASE_CLAUSE:
                 continue
-            has_wildcard = has_wildcard or _py_case_always_matches(arm)
+            has_wildcard = has_wildcard or case_always_matches(arm)
             arm_exits.append(self._walk_stmt(arm, dict(state), ctx))
         if not arm_exits:
             return state

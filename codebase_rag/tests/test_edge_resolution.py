@@ -78,6 +78,26 @@ def test_exact_and_heuristic_calls_are_tagged(
     assert by_callee["lonely"] == {cs.EdgeResolution.HEURISTIC}
 
 
+def test_a_call_through_a_rebound_local_carries_each_bindings_label(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `a()` reaches both functions `a` was bound to; each edge says how its
+    # own binding resolved, not how the last one did.
+    (temp_repo / "pkg").mkdir()
+    (temp_repo / "pkg" / "__init__.py").write_text("")
+    (temp_repo / "pkg" / "util.py").write_text(
+        "def helper():\n    return 1\n\n\ndef lonely():\n    return 2\n"
+    )
+    (temp_repo / "pkg" / "app.py").write_text(
+        "from pkg.util import helper\n\n\n"
+        "def run(flag):\n    a = helper\n    if flag:\n        a = lonely\n    a()\n"
+    )
+    create_and_run_updater(temp_repo, mock_ingestor)
+    by_callee = _resolutions(mock_ingestor, ".pkg.app.run")
+    assert by_callee["helper"] == {cs.EdgeResolution.EXACT}
+    assert by_callee["lonely"] == {cs.EdgeResolution.HEURISTIC}
+
+
 def test_an_engine_bound_call_does_not_inherit_the_previous_label(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
