@@ -319,6 +319,46 @@ def arity_qualified_name(type_node: Node, name: str) -> str:
     return type_ref(name, arity) if type_node.id in _arity_twin_ids(root) else name
 
 
+def _enclosing_type_nodes(node: Node) -> tuple[list[str], list[Node]]:
+    # (namespace segments, enclosing type declarations) of `node`,
+    # outermost first — the node form of `_enclosing_scopes`, so each
+    # enclosing type's own arity spelling can be read from it.
+    namespaces: list[str] = []
+    types: list[Node] = []
+    current = node.parent
+    while current is not None:
+        scope = _scope_of(current)
+        if scope is not None:
+            if scope[0]:
+                namespaces.append(scope[1])
+            else:
+                types.append(current)
+        current = current.parent
+    namespaces.reverse()
+    types.reverse()
+    return namespaces, types
+
+
+def arity_qualified_path(type_node: Node) -> str | None:
+    """`N1.Outer`1.Widget` for a type declaration: namespace, enclosing
+    types and own name, each type segment spelled as the definition pass
+    registers it (issue #2579). `namespace_qualified_name` spells every
+    segment plain, so a nested type inside a generic twin would resolve
+    to its non-generic namesake (issue #3339). None for a declaration
+    with no name: its enclosing path alone would be the key of the type
+    that encloses it (bot review)."""
+    own = _declared_name(type_node)
+    if not own:
+        return None
+    namespaces, enclosing = _enclosing_type_nodes(type_node)
+    segments = [
+        *namespaces,
+        *(arity_qualified_name(node, _declared_name(node) or "") for node in enclosing),
+        arity_qualified_name(type_node, own),
+    ]
+    return cs.SEPARATOR_DOT.join(segments)
+
+
 @lru_cache(maxsize=cs.CSHARP_ARITY_TWIN_CACHE_SIZE)
 def _arity_twin_ids(root: Node) -> frozenset[int]:
     # The generic type declarations of one file whose scope declares their
