@@ -6,6 +6,7 @@ must pass. Writing the new header and the call sites is in
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator, Sequence
 from itertools import product
 
@@ -38,6 +39,9 @@ _READS = frozenset(
 )
 
 
+_IDENTIFIER_ESCAPE = re.compile(cs.JS_IDENTIFIER_ESCAPE)
+
+
 def _parser() -> Parser:
     parsers, _queries = load_parsers()
     return parsers[cs.SupportedLanguage.JS]
@@ -59,15 +63,22 @@ def _find_definition(root: Node, name: str, start: int, end: int) -> Node | None
 
 
 def _param_spec(node: Node, source: bytes) -> ParamSpec | None:
-    """A name, or a name with a default; None for a pattern, a rest or a comment."""
-    text = _text(node, source)
-    if node.type == cs.TS_IDENTIFIER:
-        return ParamSpec(text, text, None, False)
-    left = node.child_by_field_name(cs.FIELD_LEFT)
-    if node.type == cs.TS_ASSIGNMENT_PATTERN and left is not None:
-        if left.type == cs.TS_IDENTIFIER:
-            return ParamSpec(_text(left, source), text, None, True)
-    return None
+    """A name, or a name with a default; None for a pattern, a rest or a comment.
+
+    Also None for a name spelled with escapes, `\\u0061`: its text is not the
+    name it binds, and every check here compares names.
+    """
+    left = (
+        node.child_by_field_name(cs.FIELD_LEFT)
+        if node.type == cs.TS_ASSIGNMENT_PATTERN
+        else node
+    )
+    if left is None or left.type != cs.TS_IDENTIFIER:
+        return None
+    name = _text(left, source)
+    if cs.JS_ESCAPE_MARK in name:
+        return None
+    return ParamSpec(name, _text(node, source), None, left is not node)
 
 
 def _params_of(params: Node, source: bytes, qn: str) -> list[ParamSpec]:
@@ -143,12 +154,21 @@ def _check_literal(spec: ParamSpec, literal: str) -> None:
         )
 
 
+def _unescape(match: re.Match[str]) -> str:
+    return chr(int(match.group(1) or match.group(2), 16))
+
+
+def _name_of(node: Node) -> str:
+    """The name an identifier spells: `\\u0061` and `\\u{61}` are both `a`."""
+    text = (node.text or b"").decode(cs.ENCODING_UTF8)
+    return _IDENTIFIER_ESCAPE.sub(_unescape, text)
+
+
 def _reads(node: Node, name: str) -> Iterator[Node]:
-    wanted = name.encode(cs.ENCODING_UTF8)
     stack = [node]
     while stack:
         current = stack.pop()
-        if current.type in _READS and current.text == wanted:
+        if current.type in _READS and _name_of(current) == name:
             yield current
         stack.extend(current.children)
 
@@ -212,6 +232,11 @@ def _refuse_body_conflicts(
     new_names = [spec.name for spec in new]
     dropped = [name for name in old_names if name not in new_names]
     added = [name for name in new_names if name not in old_names]
+    # A direct `eval('a')` reads `a` by a name no identifier spells, so no
+    # name check below can see it; a reorder keeps every name and is safe.
+    for header in headers:
+        if (dropped or added) and _uses(header, cs.JS_EVAL_NAME):
+            raise SignatureRefused(cs.SIGNATURE_JS_CALLS_EVAL.format(qn=header.qn))
     for header, name in product(headers, dropped):
         if _uses(header, name):
             raise SignatureRefused(
