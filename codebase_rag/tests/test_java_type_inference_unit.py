@@ -1,15 +1,17 @@
 from collections import defaultdict
+from collections.abc import ItemsView
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.function_registry import FunctionRegistryTrie
 from codebase_rag.parsers.import_processor import ImportProcessor
 from codebase_rag.parsers.java.type_inference import JavaTypeInferenceEngine
 from codebase_rag.parsers.java.type_resolver import collect_java_class_headers
 from codebase_rag.tests.conftest import create_mock_node
-from codebase_rag.types_defs import NodeType
+from codebase_rag.types_defs import NodeType, QualifiedName
 
 
 @pytest.fixture
@@ -57,6 +59,18 @@ def type_inference_engine(
         class_inheritance={},
         simple_name_lookup=defaultdict(set),
     )
+
+
+class _CountingRegistry(FunctionRegistryTrie):
+    """A real trie that counts how often the whole-registry scan is read."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.items_calls = 0
+
+    def items(self) -> ItemsView[QualifiedName, NodeType]:
+        self.items_calls += 1
+        return super().items()
 
 
 class TestJavaTypeResolverMixin:
@@ -258,21 +272,52 @@ class TestJavaTypeResolverMixin:
     def test_find_registry_entries_under_fallback_to_items(
         self,
         type_inference_engine: JavaTypeInferenceEngine,
-        mock_function_registry: MagicMock,
     ) -> None:
-        mock_function_registry.find_with_prefix = MagicMock(return_value=[])
-        mock_function_registry.items = MagicMock(
-            return_value=[
-                ("com.example.Helper.method1", NodeType.METHOD),
-                ("com.example.Helper.method2", NodeType.METHOD),
-                ("com.example.Other.method3", NodeType.METHOD),
-            ]
-        )
+        # A plain mapping has no find_with_prefix: the items() scan is
+        # its only way to answer, so it stays for registries like this.
+        type_inference_engine.function_registry = {
+            "com.example.Helper.method1": NodeType.METHOD,
+            "com.example.Helper.method2": NodeType.METHOD,
+            "com.example.Other.method3": NodeType.METHOD,
+        }
 
         result = list(
             type_inference_engine._find_registry_entries_under("com.example.Helper")
         )
         assert len(result) == 2
+
+    def test_find_registry_entries_under_trie_result_is_authoritative(
+        self,
+        type_inference_engine: JavaTypeInferenceEngine,
+    ) -> None:
+        registry = _CountingRegistry()
+        entries = [
+            ("com.example.Helper", NodeType.CLASS),
+            ("com.example.Helper.method1", NodeType.METHOD),
+            ("com.example.Helper.method2", NodeType.METHOD),
+            ("com.example.Helper.Inner", NodeType.CLASS),
+            ("com.example.Helper.Inner.run", NodeType.METHOD),
+            ("com.example.Helper2", NodeType.CLASS),
+            ("com.example.Other.method3", NodeType.METHOD),
+        ]
+        for qualified_name, node_type in entries:
+            registry.insert(qualified_name, node_type)
+        type_inference_engine.function_registry = registry
+
+        for prefix in (
+            "com.example.Helper",
+            "com.example",
+            "com.example.Helper2",
+            "java.lang.String",
+        ):
+            calls_before = registry.items_calls
+            result = list(type_inference_engine._find_registry_entries_under(prefix))
+            assert registry.items_calls == calls_before
+            assert sorted(result) == sorted(
+                (qualified_name, node_type)
+                for qualified_name, node_type in entries
+                if qualified_name == prefix or qualified_name.startswith(f"{prefix}.")
+            )
 
 
 class TestJavaMethodResolverMixin:
