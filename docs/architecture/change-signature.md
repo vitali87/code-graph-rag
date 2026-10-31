@@ -53,7 +53,11 @@ positionally:
 - Renaming a parameter refuses for now. A body that reads `arguments`
   refuses, and so does dropping a parameter the body or another default
   still mentions, or adding one under a name it already mentions. Nested
-  functions count, so a closure that binds the same name refuses too.
+  functions count, so a closure that binds the same name refuses too. A
+  name spelled with escapes (`\u0061`) counts as the name it spells, and a
+  parameter declared that way refuses. A body that uses `eval` refuses
+  adding or dropping a parameter, since `eval('a')` reads `a` through a
+  string; a reorder keeps every name and still goes through.
 - A new header in which a default reads its own parameter or a later one
   refuses: parameters bind left to right, so that default would throw
   ReferenceError. Reordering `(a = 1, b = a)` to `(b = a, a = 1)` is one.
