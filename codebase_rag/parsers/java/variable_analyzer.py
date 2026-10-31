@@ -524,16 +524,32 @@ class JavaVariableAnalyzerMixin:
         # its classes by are not always the same string: a resolved
         # same-package name can stay a simple name while the registry keys
         # the class under its doubled file-module form
-        # (`<module>.AppError.AppError`). Match on the simple name, and only
-        # when exactly one parsed class carries it, so a same-named class in
-        # another package can never stand in for this one.
+        # (`<module>.AppError.AppError`). An UNQUALIFIED name may therefore
+        # match on its simple name, and only when exactly one parsed class
+        # carries it (the same uniqueness rule `_resolve_java_type_name`
+        # applies to a nested type). A QUALIFIED name must prove its
+        # identity from its package path instead: an exact key, or a key
+        # that ends at the written path, in plain or doubled form. A
+        # same-named class in another package never stands in for a
+        # qualified name — in particular, `java.io.IOException` never
+        # resolves to a first-party `IOException`.
         if resolved_type in self.class_inheritance:
             return resolved_type
+        if cs.SEPARATOR_DOT not in resolved_type:
+            matches = [
+                qn
+                for qn in self.class_inheritance
+                if qn.rpartition(cs.SEPARATOR_DOT)[2] == resolved_type
+            ]
+            return matches[0] if len(matches) == 1 else None
         simple_name = resolved_type.rpartition(cs.SEPARATOR_DOT)[2]
         matches = [
             qn
             for qn in self.class_inheritance
-            if qn.rpartition(cs.SEPARATOR_DOT)[2] == simple_name
+            if qn.endswith(f"{cs.SEPARATOR_DOT}{resolved_type}")
+            or qn.endswith(
+                f"{cs.SEPARATOR_DOT}{resolved_type}{cs.SEPARATOR_DOT}{simple_name}"
+            )
         ]
         return matches[0] if len(matches) == 1 else None
 

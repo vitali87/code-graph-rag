@@ -1055,3 +1055,394 @@ class TestTryWithResourcesAndCatchParameters:
         result = engine.build_variable_type_map(method, "com.example")
 
         assert result["r"] == "Other"
+
+    def test_undeclared_bare_resource_binds_nothing(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        # Guard (passes with or without the fix): a bare `try (r)` with no
+        # declaration of `r` anywhere produces no entry at all. It proves
+        # the resource pass never invents a binding from a bare reference;
+        # it is not a fail-before regression test.
+        method = _parse_java_method("try (r) { int y = 2; }")
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        assert "r" not in result
+
+    def test_qualified_multi_catch_binds_first_party_lca(
+        self,
+        mock_import_processor: MagicMock,
+        mock_function_registry: MagicMock,
+        mock_ast_cache: MagicMock,
+    ) -> None:
+        # Qualified alternatives whose keys use the doubled file-module form
+        # still resolve: identity comes from the package path, not the
+        # simple name alone (case 5/9 of the #3341 case matrix).
+        engine = self._engine_with_inheritance(
+            mock_import_processor,
+            mock_function_registry,
+            mock_ast_cache,
+            {
+                "jX.com.example.AppError.AppError": [
+                    "jX.com.example.BaseError.BaseError"
+                ],
+                "jX.com.example.OtherError.OtherError": [
+                    "jX.com.example.BaseError.BaseError"
+                ],
+                "jX.com.example.BaseError.BaseError": ["java.lang.RuntimeException"],
+            },
+        )
+        method = _parse_java_method(
+            "try { int x = 1; } "
+            "catch (com.example.AppError | com.example.OtherError e) { int y = 2; }"
+        )
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        assert result["e"] == "jX.com.example.BaseError.BaseError"
+
+    def test_first_party_plus_jdk_alternative_stays_untyped(
+        self,
+        mock_import_processor: MagicMock,
+        mock_function_registry: MagicMock,
+        mock_ast_cache: MagicMock,
+    ) -> None:
+        # The JDK alternative contributes no chain: a same-named first-party
+        # IOException must not stand in for java.io.IOException (case 11).
+        engine = self._engine_with_inheritance(
+            mock_import_processor,
+            mock_function_registry,
+            mock_ast_cache,
+            {
+                "AppError": ["BaseError"],
+                "BaseError": ["java.lang.RuntimeException"],
+                "IOException": ["BaseError"],
+            },
+        )
+        method = _parse_java_method(
+            "try { int x = 1; } catch (AppError | java.io.IOException e) { int y = 2; }"
+        )
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        assert "e" not in result
+
+    def test_three_alternatives_bind_common_supertype(
+        self,
+        mock_import_processor: MagicMock,
+        mock_function_registry: MagicMock,
+        mock_ast_cache: MagicMock,
+    ) -> None:
+        engine = self._engine_with_inheritance(
+            mock_import_processor,
+            mock_function_registry,
+            mock_ast_cache,
+            {
+                "AppError": ["BaseError"],
+                "OtherError": ["BaseError"],
+                "ThirdError": ["BaseError"],
+                "BaseError": ["java.lang.RuntimeException"],
+            },
+        )
+        method = _parse_java_method(
+            "try { int x = 1; } "
+            "catch (AppError | OtherError | ThirdError e) { int y = 2; }"
+        )
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        assert result["e"] == "BaseError"
+
+    def test_duplicate_alternatives_dedupe_to_one_type(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        method = _parse_java_method(
+            "try { int x = 1; } catch (AppError | AppError e) { int y = 2; }"
+        )
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        assert result["e"] == "AppError"
+
+    def test_error_alternative_binds_nothing(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        # Annotations on union alternatives do not parse with this grammar:
+        # the catch_type carries an ERROR node, so nothing is bound.
+        tsjava = pytest.importorskip("tree_sitter_java")
+        source = (
+            "class Example { void run() { "
+            "try { int x = 1; } "
+            "catch (@A AppError | @B OtherError e) { int y = 2; } } }"
+        )
+        tree = Parser(Language(tsjava.language())).parse(source.encode())
+        assert tree.root_node.has_error
+        class_body = tree.root_node.named_children[0].child_by_field_name(cs.FIELD_BODY)
+        assert class_body is not None
+        method = class_body.named_children[0]
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        assert "e" not in result
+
+    def test_diamond_inheritance_binds_nearest_common_supertype(
+        self,
+        mock_import_processor: MagicMock,
+        mock_function_registry: MagicMock,
+        mock_ast_cache: MagicMock,
+    ) -> None:
+        engine = self._engine_with_inheritance(
+            mock_import_processor,
+            mock_function_registry,
+            mock_ast_cache,
+            {
+                "B": ["A"],
+                "C": ["A"],
+                "A": ["java.lang.Object"],
+            },
+        )
+        method = _parse_java_method("try { int x = 1; } catch (B | C e) { int y = 2; }")
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        assert result["e"] == "A"
+
+    def test_grandparent_supertype_binds(
+        self,
+        mock_import_processor: MagicMock,
+        mock_function_registry: MagicMock,
+        mock_ast_cache: MagicMock,
+    ) -> None:
+        engine = self._engine_with_inheritance(
+            mock_import_processor,
+            mock_function_registry,
+            mock_ast_cache,
+            {
+                "AppError": ["MidError"],
+                "MidError": ["BaseError"],
+                "BaseError": ["java.lang.RuntimeException"],
+                "OtherError": ["BaseError"],
+            },
+        )
+        method = _parse_java_method(
+            "try { int x = 1; } catch (AppError | OtherError e) { int y = 2; }"
+        )
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        assert result["e"] == "BaseError"
+
+    def test_chain_into_jdk_parent_stays_untyped(
+        self,
+        mock_import_processor: MagicMock,
+        mock_function_registry: MagicMock,
+        mock_ast_cache: MagicMock,
+    ) -> None:
+        engine = self._engine_with_inheritance(
+            mock_import_processor,
+            mock_function_registry,
+            mock_ast_cache,
+            {
+                "AppError": ["java.lang.RuntimeException"],
+                "OtherError": ["BaseError"],
+                "BaseError": ["java.lang.RuntimeException"],
+            },
+        )
+        method = _parse_java_method(
+            "try { int x = 1; } catch (AppError | OtherError e) { int y = 2; }"
+        )
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        assert "e" not in result
+
+    def test_inheritance_cycle_terminates(
+        self,
+        mock_import_processor: MagicMock,
+        mock_function_registry: MagicMock,
+        mock_ast_cache: MagicMock,
+    ) -> None:
+        engine = self._engine_with_inheritance(
+            mock_import_processor,
+            mock_function_registry,
+            mock_ast_cache,
+            {"A": ["B"], "B": ["A"]},
+        )
+        method = _parse_java_method("try { int x = 1; } catch (A | B e) { int y = 2; }")
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        # Both chains contain both classes; the tie breaks deterministically
+        # to the first alternative's nearest candidate. The point is that
+        # the walk terminates and binds one of them, never hangs.
+        assert result["e"] == "A"
+
+    def test_missing_parent_stays_untyped(
+        self,
+        mock_import_processor: MagicMock,
+        mock_function_registry: MagicMock,
+        mock_ast_cache: MagicMock,
+    ) -> None:
+        engine = self._engine_with_inheritance(
+            mock_import_processor,
+            mock_function_registry,
+            mock_ast_cache,
+            {"AppError": ["Missing"], "OtherError": ["BaseError"]},
+        )
+        method = _parse_java_method(
+            "try { int x = 1; } catch (AppError | OtherError e) { int y = 2; }"
+        )
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        assert "e" not in result
+
+    def test_single_qualified_jdk_catch_keeps_qualified_type(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        # Case 20: the single-catch path resolves through
+        # `_resolve_java_type_name`, which returns a dotted name verbatim, so
+        # a qualified JDK type is never re-identified as a first-party class.
+        method = _parse_java_method(
+            "try { int x = 1; } catch (java.io.IOException e) { int y = 2; }"
+        )
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        assert result["e"] == "java.io.IOException"
+
+    def test_untyped_multi_catch_leaves_outer_binding(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        # Case 22: with no common supertype, the catch pass writes nothing,
+        # so an outer variable of the same name keeps its type.
+        method = _parse_java_method(
+            "Other e = new Other(); "
+            "try { int x = 1; } catch (AppError | OtherError e) { int y = 2; }"
+        )
+
+        result = engine.build_variable_type_map(method, "com.example")
+
+        assert result["e"] == "Other"
+
+
+class TestInheritanceKeyFor:
+    # Direct contract tests for `_inheritance_key_for`, the lookup the
+    # Greptile P1 / CodeRabbit finding is about. Keys use the doubled
+    # file-module form the real registry produces.
+
+    def _key_for(self, engine: JavaTypeInferenceEngine, resolved: str) -> str | None:
+        return engine._inheritance_key_for(resolved)
+
+    def test_simple_name_resolves_doubled_key(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        engine.class_inheritance = {
+            "jX.com.example.AppError.AppError": ["jX.com.example.BaseError.BaseError"]
+        }
+
+        assert self._key_for(engine, "AppError") == "jX.com.example.AppError.AppError"
+
+    def test_simple_name_without_class_returns_none(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        engine.class_inheritance = {
+            "jX.com.example.AppError.AppError": ["jX.com.example.BaseError.BaseError"]
+        }
+
+        assert self._key_for(engine, "Nope") is None
+
+    def test_simple_name_shared_by_two_classes_returns_none(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        engine.class_inheritance = {
+            "jX.com.example.AppError.AppError": ["jX.com.example.BaseError.BaseError"],
+            "jX.other.AppError.AppError": ["jX.other.BaseError.BaseError"],
+        }
+
+        assert self._key_for(engine, "AppError") is None
+
+    def test_qualified_name_exact_key_resolves(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        engine.class_inheritance = {"com.example.AppError": ["com.example.BaseError"]}
+
+        assert self._key_for(engine, "com.example.AppError") == "com.example.AppError"
+
+    def test_qualified_name_doubled_key_resolves(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        engine.class_inheritance = {
+            "jX.com.example.AppError.AppError": ["jX.com.example.BaseError.BaseError"]
+        }
+
+        assert (
+            self._key_for(engine, "com.example.AppError")
+            == "jX.com.example.AppError.AppError"
+        )
+
+    def test_qualified_name_plain_key_suffix_resolves(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        engine.class_inheritance = {
+            "jX.com.example.AppError": ["jX.com.example.BaseError"]
+        }
+
+        assert (
+            self._key_for(engine, "com.example.AppError") == "jX.com.example.AppError"
+        )
+
+    def test_qualified_jdk_name_never_resolves_to_first_party(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        engine.class_inheritance = {
+            "jX.com.example.IOException.IOException": [
+                "jX.com.example.BaseError.BaseError"
+            ],
+            "jX.com.example.SQLException.SQLException": [
+                "jX.com.example.BaseError.BaseError"
+            ],
+            "jX.com.example.Exception.Exception": [
+                "jX.com.example.BaseError.BaseError"
+            ],
+        }
+
+        assert self._key_for(engine, "java.io.IOException") is None
+        assert self._key_for(engine, "java.sql.SQLException") is None
+        assert self._key_for(engine, "java.lang.Exception") is None
+
+    def test_qualified_unknown_package_returns_none(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        engine.class_inheritance = {
+            "jX.com.example.AppError.AppError": ["jX.com.example.BaseError.BaseError"]
+        }
+
+        assert self._key_for(engine, "foo.bar.Baz") is None
+
+    def test_nested_name_resolves_on_package_identity(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        engine.class_inheritance = {"com.example.Outer.Inner": ["com.example.Base"]}
+
+        assert self._key_for(engine, "Outer.Inner") == "com.example.Outer.Inner"
+
+        engine.class_inheritance = {
+            "jX.com.example.Outer.Inner.Inner": ["jX.com.example.Base.Base"]
+        }
+
+        assert (
+            self._key_for(engine, "Outer.Inner") == "jX.com.example.Outer.Inner.Inner"
+        )
+
+    def test_qualified_name_with_two_suffix_matches_returns_none(
+        self, engine: JavaTypeInferenceEngine
+    ) -> None:
+        # Two different packages both end in the written path: identity is
+        # ambiguous, so nothing is claimed.
+        engine.class_inheritance = {
+            "jX.com.example.AppError.AppError": ["jX.com.example.BaseError.BaseError"],
+            "jX.org.example.AppError.AppError": ["jX.org.example.BaseError.BaseError"],
+        }
+
+        assert self._key_for(engine, "example.AppError") is None
