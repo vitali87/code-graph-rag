@@ -75,6 +75,12 @@ def test_the_issue_flags_every_sink(tmp_path: Path) -> None:
         ('cur.execute("SELECT {}".format(req.args["id"]))', "sqli_format"),
         ('os.system(f"tar czf {name}.tgz " "data")', "os_system_fstring"),
         ('os.system("rm -rf {}".format(path.name))', "os_system_format"),
+        ('cur.execute("SELECT {}".format((u)))', "sqli_format"),
+        ('cur.execute(("SELECT {}").format(u))', "sqli_format"),
+        ('cur.execute("SELECT {id}".format(id=(u)))', "sqli_format"),
+        ('cur.execute((("SELECT {}")).format(((u))))', "sqli_format"),
+        ('os.system(("ping {}").format(name))', "os_system_format"),
+        ('os.system("ping {}".format((name)))', "os_system_format"),
     ],
 )
 def test_other_spellings_are_flagged(tmp_path: Path, statement: str, rule: str) -> None:
@@ -93,6 +99,10 @@ def test_other_spellings_are_flagged(tmp_path: Path, statement: str, rule: str) 
         'os.system(f"ping localhost")',
         'os.system(build("ping {}".format(u)))',
         'os.system("ping {}".format("localhost"))',
+        'cur.execute("SELECT {}".format((5)))',
+        'cur.execute("SELECT {id}".format(id=("x")))',
+        'os.system(("ping {}").format(("localhost")))',
+        'os.system((build("ping {}".format(u))))',
     ],
 )
 def test_constant_or_indirect_strings_stay_clean(

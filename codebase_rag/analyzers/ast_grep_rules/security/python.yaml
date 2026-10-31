@@ -43,7 +43,9 @@ rules:
     # (issue #2863). The query is execute's first argument, the receiver a
     # string literal, and at least one formatted value is not a constant, so
     # `.format(5)`, a value formatted into the bound parameters and a string
-    # built inside a nested call stay clean.
+    # built inside a nested call stay clean. Parentheses around the query, the
+    # receiver or a value build the same string, so each is read through them:
+    # `field` with `stopBy` looks through only one pair, hence the nesting.
     rule:
       kind: call
       all:
@@ -60,13 +62,21 @@ rules:
                     all:
                       - has:
                           field: object
-                          any: [{ kind: string }, { kind: concatenated_string }]
+                          any:
+                            - kind: string
+                            - kind: concatenated_string
+                            - kind: parenthesized_expression
+                              has:
+                                any: [{ kind: string }, { kind: concatenated_string }]
+                                stopBy:
+                                  not: { kind: parenthesized_expression }
                       - has: { field: attribute, regex: '^format$' }
                 - has:
                     field: arguments
                     has:
                       any:
                         - kind: identifier
+                          not: { inside: { kind: keyword_argument, field: name } }
                         - kind: attribute
                         - kind: subscript
                         - kind: call
@@ -74,18 +84,11 @@ rules:
                         - kind: conditional_expression
                         - kind: list_splat
                         - kind: dictionary_splat
-                        - kind: keyword_argument
-                          has:
-                            field: value
-                            any:
-                              - kind: identifier
-                              - kind: attribute
-                              - kind: subscript
-                              - kind: call
-                              - kind: binary_operator
-                              - kind: conditional_expression
-                              - kind: list_splat
-                              - kind: dictionary_splat
+                      stopBy:
+                        not:
+                          any:
+                            - kind: parenthesized_expression
+                            - kind: keyword_argument
               stopBy:
                 not: { kind: parenthesized_expression }
   - id: hardcoded_secret
@@ -161,13 +164,21 @@ rules:
                     all:
                       - has:
                           field: object
-                          any: [{ kind: string }, { kind: concatenated_string }]
+                          any:
+                            - kind: string
+                            - kind: concatenated_string
+                            - kind: parenthesized_expression
+                              has:
+                                any: [{ kind: string }, { kind: concatenated_string }]
+                                stopBy:
+                                  not: { kind: parenthesized_expression }
                       - has: { field: attribute, regex: '^format$' }
                 - has:
                     field: arguments
                     has:
                       any:
                         - kind: identifier
+                          not: { inside: { kind: keyword_argument, field: name } }
                         - kind: attribute
                         - kind: subscript
                         - kind: call
@@ -175,18 +186,11 @@ rules:
                         - kind: conditional_expression
                         - kind: list_splat
                         - kind: dictionary_splat
-                        - kind: keyword_argument
-                          has:
-                            field: value
-                            any:
-                              - kind: identifier
-                              - kind: attribute
-                              - kind: subscript
-                              - kind: call
-                              - kind: binary_operator
-                              - kind: conditional_expression
-                              - kind: list_splat
-                              - kind: dictionary_splat
+                      stopBy:
+                        not:
+                          any:
+                            - kind: parenthesized_expression
+                            - kind: keyword_argument
               stopBy:
                 not: { kind: parenthesized_expression }
   - id: subprocess_shell
