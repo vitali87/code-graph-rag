@@ -1874,18 +1874,22 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         RelationshipType.LINKS_TO,
         (NodeLabel.FILE, NodeLabel.SECTION),
     ),
+    # A class with no explicit constructor still runs its instance field
+    # initializers at construction time, so those calls are attributed to
+    # the class node itself (issue #3339); the class is therefore a CALLS
+    # / REFERENCES / INSTANTIATES source alongside the callable callers.
     RelationshipSchema(
-        (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD),
+        (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.CLASS),
         RelationshipType.CALLS,
         (NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.ENUM, NodeLabel.TYPE),
     ),
     RelationshipSchema(
-        (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD),
+        (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.CLASS),
         RelationshipType.REFERENCES,
         (NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.CLASS),
     ),
     RelationshipSchema(
-        (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD),
+        (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.CLASS),
         RelationshipType.INSTANTIATES,
         (NodeLabel.CLASS,),
     ),
