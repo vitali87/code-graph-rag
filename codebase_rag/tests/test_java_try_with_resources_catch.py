@@ -552,3 +552,174 @@ def test_two_catch_blocks_each_typed(temp_repo: Path, mock_ingestor: MagicMock) 
     _assert_calls(
         calls, ".Main.second()", ".OtherError.detail()", ".ErrorDecoy.detail()"
     )
+
+
+def test_qualified_jdk_multi_catch_never_binds_first_party(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The Greptile trap (case 12): qualified JDK alternatives must not be
+    # re-identified as the same-named first-party classes, even though those
+    # classes uniquely share the simple names and a common supertype.
+    root = temp_repo / "jgdktrap"
+    _write_pkg(
+        root,
+        {
+            "BaseError.java": (
+                "package com.example;\n"
+                "public class BaseError extends RuntimeException {\n"
+                '  public String detail() { return "base"; }\n'
+                "}\n"
+            ),
+            "IOException.java": (
+                "package com.example;\n"
+                "public class IOException extends BaseError {\n"
+                '  public String detail() { return "io"; }\n'
+                "}\n"
+            ),
+            "SQLException.java": (
+                "package com.example;\n"
+                "public class SQLException extends BaseError {\n"
+                '  public String detail() { return "sql"; }\n'
+                "}\n"
+            ),
+            "Main.java": (
+                "package com.example;\n"
+                "public class Main {\n"
+                "  String jdkPair() {\n"
+                "    try {\n"
+                "      throw new RuntimeException();\n"
+                "    } catch (java.io.IOException | java.sql.SQLException e) {\n"
+                "      return e.detail();\n"
+                "    }\n"
+                "  }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="java")
+    calls = _calls(mock_ingestor)
+    targets = {
+        t for f, t in calls if f.endswith(".Main.jdkPair()") and t.endswith(".detail()")
+    }
+    assert targets == set(), sorted(targets)
+
+
+def test_catch_parameter_shadows_field_inside_catch_block(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Case 23: a typed catch parameter overwrites the field binding in the
+    # flat map, so the call inside the catch block binds the catch type.
+    root = temp_repo / "jcatchshadow"
+    _write_pkg(
+        root,
+        {
+            "AppError.java": _APP_ERROR,
+            "OtherError.java": _OTHER_ERROR,
+            "Other.java": (
+                "package com.example;\n"
+                "public class Other {\n"
+                '  public String detail() { return "other"; }\n'
+                "}\n"
+            ),
+            "Main.java": (
+                "package com.example;\n"
+                "public class Main {\n"
+                "  Other e = new Other();\n"
+                "  String shadowedCatch() {\n"
+                "    try {\n"
+                "      throw new AppError();\n"
+                "    } catch (AppError e) {\n"
+                "      return e.detail();\n"
+                "    }\n"
+                "  }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="java")
+    _assert_calls(
+        _calls(mock_ingestor),
+        ".Main.shadowedCatch()",
+        ".AppError.detail()",
+        ".Other.detail()",
+    )
+
+
+def test_nested_resource_shadows_field(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Nested shadowing in a legal form: the inner try-resource shadows a
+    # FIELD of the same name (locals cannot shadow enclosing locals in
+    # compilable Java). The call binds the inner resource's type.
+    root = temp_repo / "jnestedshadow"
+    _write_pkg(
+        root,
+        {
+            "Res.java": _RES,
+            "Other.java": _OTHER,
+            "Main.java": (
+                "package com.example;\n"
+                "public class Main {\n"
+                "  Other r = new Other();\n"
+                "  int nestedShadowed() throws Exception {\n"
+                "    try (Res a = new Res()) {\n"
+                "      try (Res r = new Res()) {\n"
+                "        return r.read();\n"
+                "      }\n"
+                "    }\n"
+                "  }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="java")
+    _assert_calls(
+        _calls(mock_ingestor),
+        ".Main.nestedShadowed()",
+        ".Res.read()",
+        ".Other.read()",
+    )
+
+
+def test_inner_catch_parameter_shadows_field(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Nested shadowing in a legal form: an inner catch parameter shadows a
+    # FIELD of the same name, nested inside an outer try-with-resources.
+    root = temp_repo / "jnestedcatchshadow"
+    _write_pkg(
+        root,
+        {
+            "Res.java": _RES,
+            "AppError.java": _APP_ERROR,
+            "OtherError.java": _OTHER_ERROR,
+            "Other.java": (
+                "package com.example;\n"
+                "public class Other {\n"
+                '  public String detail() { return "other"; }\n'
+                "}\n"
+            ),
+            "Main.java": (
+                "package com.example;\n"
+                "public class Main {\n"
+                "  Other e = new Other();\n"
+                "  String nestedCatchShadowed() throws Exception {\n"
+                "    try (Res a = new Res()) {\n"
+                "      try {\n"
+                "        throw new AppError();\n"
+                "      } catch (AppError e) {\n"
+                "        return e.detail();\n"
+                "      }\n"
+                "    }\n"
+                "  }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="java")
+    _assert_calls(
+        _calls(mock_ingestor),
+        ".Main.nestedCatchShadowed()",
+        ".AppError.detail()",
+        ".Other.detail()",
+    )
