@@ -1244,11 +1244,17 @@ def call_site_properties(node: Node) -> PropertyDict:
     the callback passes read argument slots from it.
     """
     props = node_site_properties(node)
-    # A member call's node spans its receiver, so every hop of a chain began
-    # where the chain begins: callers showed the wrong line for a multi-line
-    # chain, and two `.put(...)` hops of one chain merged into one edge on
-    # their shared (line, col) (issue #3166). The site starts at the name.
-    row, col = call_site_start(node)
+    if node.type == cs.TS_DART_SELECTOR:
+        # A Dart call node is the argument-list selector alone; the site
+        # starts at the callee so a rename finds the name in it (#2769).
+        row, col = dart_utils.dart_call_site_start(node).start_point
+    else:
+        # A member call's node spans its receiver, so every hop of a chain
+        # began where the chain begins: callers showed the wrong line for a
+        # multi-line chain, and two `.put(...)` hops of one chain merged into
+        # one edge on their shared (line, col) (issue #3166). The site starts
+        # at the name.
+        row, col = call_site_start(node)
     props[cs.KEY_LINE] = row + 1
     props[cs.KEY_COL] = col
     args_node = _find_call_arguments_node(node)
