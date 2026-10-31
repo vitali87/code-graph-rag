@@ -686,6 +686,17 @@ def dispatch_target_prefixes(
             if _owns(qn, project_name, longer_project_prefixes)
         }
         | {change.qn for change in changes}
+        # The candidate pool for named-implementer uniqueness must
+        # cover every class either state holds, including a root base
+        # that appears only as a hierarchy value in the old or the
+        # merged hierarchy. The per-state sets below filter it; the
+        # pool itself must not hide a class from either judgement.
+        | {
+            base
+            for bases in (*hierarchy.values(), *merged_hierarchy.values())
+            for base in bases
+            if _owns(base, project_name, longer_project_prefixes)
+        }
     )
     new_override_methods = {
         change.qn: set(change.new_methods) for change in changes if change.present
@@ -704,7 +715,8 @@ def dispatch_target_prefixes(
     # named-implementer uniqueness, and omitting them lets a
     # same-named class look unique when it is not. A brand-new class
     # has an empty old shape and stays out of the old state; a removed
-    # class stays out of the new state.
+    # class stays out of the new state, even when it survives as a
+    # base spelling on a surviving class's merged entry.
     old_state_classes = {
         qn
         for qn in set(class_methods)
@@ -721,7 +733,7 @@ def dispatch_target_prefixes(
         | {base for bases in merged_hierarchy.values() for base in bases}
         | {change.qn for change in changes if change.present}
         if _owns(qn, project_name, longer_project_prefixes)
-    }
+    } - {change.qn for change in changes if not change.present}
     protocol_qns = set(protocols)
     prefixes: set[str] = set()
     base_qns: set[str] = set()

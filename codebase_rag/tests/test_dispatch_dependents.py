@@ -666,3 +666,100 @@ def test_base_added_this_run_beats_spelling_match() -> None:
     child_change = next(c for c in changes if c.qn == "proj.ext.Child")
     assert child_change.old_bases == ("foo.Bar",)
     assert child_change.new_bases == ("proj.foo.Bar",)
+
+
+def test_root_base_breaks_named_implementer_uniqueness() -> None:
+    # `proj.lib.Client` is a root base: it appears only as a hierarchy
+    # value, with no methods entry and no bases of its own. It still
+    # breaks the named-implementer uniqueness of `Client`, so the new
+    # partial `proj.real.Client` names no target. Without the root in
+    # the candidate pool it would look unique and name one.
+    hierarchy = {
+        "proj.lib.ClientProtocol": ["typing.Protocol"],
+        "proj.lib.Child": ["proj.lib.Client"],
+    }
+    methods = {
+        "proj.lib.ClientProtocol": {"get", "set"},
+        "proj.real.Client": {"get"},
+        "proj.lib.Child": {"get"},
+    }
+    protocols = {"proj.lib.ClientProtocol": {"get", "set"}}
+    prefixes, _bases = dispatch_target_prefixes(
+        [_change("proj.real.Client", set(), {"get"})],
+        hierarchy,
+        methods,
+        protocols,
+        PROJECT,
+    )
+    assert "proj.real.Client.get" not in prefixes
+
+    # Control: without the root base the same partial implementer is
+    # unique and names its target.
+    prefixes, _bases = dispatch_target_prefixes(
+        [_change("proj.real.Client", set(), {"get"})],
+        {"proj.lib.ClientProtocol": ["typing.Protocol"]},
+        {
+            "proj.lib.ClientProtocol": {"get", "set"},
+            "proj.real.Client": {"get"},
+        },
+        protocols,
+        PROJECT,
+    )
+    assert "proj.real.Client.get" in prefixes
+
+
+def test_modified_class_with_dropped_old_shape_breaks_old_uniqueness() -> None:
+    # The filtered method read dropped `proj.a.Client`'s old methods
+    # and it has no hierarchy entry: only its change record carries
+    # its old shape. The old state must still count it, so the old
+    # uniqueness judgement sees two `Client`s and names neither.
+    hierarchy = {"proj.lib.ClientProtocol": ["typing.Protocol"]}
+    methods = {
+        "proj.lib.ClientProtocol": {"get", "set"},
+        "proj.b.Client": {"get"},
+    }
+    prefixes, _bases = dispatch_target_prefixes(
+        [_change("proj.a.Client", {"get"}, {"get", "set"})],
+        hierarchy,
+        methods,
+        {"proj.lib.ClientProtocol": {"get", "set"}},
+        PROJECT,
+    )
+    assert "proj.b.Client.get" not in prefixes
+    assert "proj.a.Client.get" in prefixes
+    assert "proj.a.Client.set" in prefixes
+
+
+def test_removed_class_does_not_break_new_state_uniqueness() -> None:
+    # The removed class survives as a base spelling on an unchanged
+    # file, but it must stay out of the new state: the surviving
+    # partial `proj.other.Removed` is then the unique named
+    # implementer and names its target. The old full conformer still
+    # names its old target, proving the emission ran.
+    hierarchy = {
+        "proj.lib.RemovedProtocol": ["typing.Protocol"],
+        "proj.lib.Survivor": ["proj.lib.Removed"],
+    }
+    methods = {
+        "proj.lib.RemovedProtocol": {"get", "set"},
+        "proj.lib.Removed": {"get", "set"},
+        "proj.other.Removed": {"get"},
+        "proj.lib.Survivor": {"get"},
+    }
+    removed = ClassChange(
+        "proj.lib.Removed",
+        frozenset({"get", "set"}),
+        frozenset(),
+        (),
+        (),
+        present=False,
+    )
+    prefixes, _bases = dispatch_target_prefixes(
+        [removed],
+        hierarchy,
+        methods,
+        {"proj.lib.RemovedProtocol": {"get", "set"}},
+        PROJECT,
+    )
+    assert "proj.lib.Removed.get" in prefixes
+    assert "proj.other.Removed.get" in prefixes
