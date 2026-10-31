@@ -468,16 +468,21 @@ class PythonWithBindingMixin(_WithBase):
                     and name_node.type == cs.TS_PY_IDENTIFIER
                     and value_node is not None
                     and (name := safe_decode_text(name_node))
-                    and (
-                        inferred := self._infer_type_from_expression_simple(
-                            value_node, factory_module_qn
-                        )
-                        or self._infer_type_from_expression_complex(
-                            value_node, factory_module_qn, local_types
-                        )
-                    )
                 ):
-                    local_types[name] = inferred
+                    # A bare annotation (`t: Thing`) has no value: it
+                    # declares a type without rebinding, so it leaves
+                    # the map alone. A value that cannot be inferred is
+                    # a real rebinding to something unknown, and it
+                    # clears the stale type instead of keeping it.
+                    inferred = self._infer_type_from_expression_simple(
+                        value_node, factory_module_qn
+                    ) or self._infer_type_from_expression_complex(
+                        value_node, factory_module_qn, local_types
+                    )
+                    if inferred:
+                        local_types[name] = inferred
+                    else:
+                        local_types.pop(name, None)
                 continue
             if node.type in (
                 cs.TS_PY_FUNCTION_DEFINITION,

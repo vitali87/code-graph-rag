@@ -420,6 +420,30 @@ SOURCE = (
     "\n"
     "\n"
     "@contextmanager\n"
+    "def stale_rebind_factory():\n"
+    "    t = Thing()\n"
+    "    t = opaque()\n"
+    "    yield t\n"
+    "\n"
+    "\n"
+    "def stale_rebind_with():\n"
+    "    with stale_rebind_factory() as t:\n"
+    "        return t.go()\n"
+    "\n"
+    "\n"
+    "@contextmanager\n"
+    "def annotated_factory():\n"
+    "    t = Thing()\n"
+    "    t: Thing\n"
+    "    yield t\n"
+    "\n"
+    "\n"
+    "def annotated_factory_with():\n"
+    "    with annotated_factory() as t:\n"
+    "        return t.go()\n"
+    "\n"
+    "\n"
+    "@contextmanager\n"
     "def yield_before_binding():\n"
     "    yield t\n"
     "    t = Thing()\n"
@@ -438,6 +462,19 @@ SOURCE = (
     "def comprehension_walrus_shadow():\n"
     "    x = Other()\n"
     "    return [t.go() for x in [Thing()] if (t := x) is not None]\n"
+    "\n"
+    "\n"
+    "def comprehension_walrus_then_rebound():\n"
+    "    ys = [t.go() for x in [Thing()] if (t := x) is not None]\n"
+    "    t = Other()\n"
+    "    return t.go()\n"
+    "\n"
+    "\n"
+    "def comprehension_walrus_then_match_alias(shape):\n"
+    "    ys = [t.go() for x in [Thing()] if (t := x) is not None]\n"
+    "    match shape:\n"
+    "        case Other() as t:\n"
+    "            return t.go()\n"
 )
 
 CHILD = (
@@ -773,3 +810,55 @@ def test_child_module_inherited_contextmanager_without_its_own_import(
     tmp_path: Path,
 ) -> None:
     assert _calls(tmp_path)["use_child_release"].get(HTHING_GO) == EXACT
+
+
+def test_comprehension_walrus_yielded_to_a_later_rebinding(tmp_path: Path) -> None:
+    """A loop-derived walrus write must not clobber a later rebinding of
+    the same name: the comprehension pass runs after the assignment
+    passes, so `t = Other()` is already in the map when the deferred
+    write happens (CodeRabbit follow-up on #3528)."""
+    calls = _calls(tmp_path).get("comprehension_walrus_then_rebound", {})
+    assert calls.get(OTHER_GO) == EXACT
+    assert THING_GO not in calls
+    assert (
+        _local_types(tmp_path, "comprehension_walrus_then_rebound").get("t") == "Other"
+    )
+
+
+def test_unreadable_rebinding_clears_the_factory_local_type(
+    tmp_path: Path,
+) -> None:
+    """`t = Thing(); t = opaque(); yield t` yields an unknown value, not
+    Thing: the unreadable rebinding must clear the stale type instead
+    of leaving it in the factory's local map (CodeRabbit follow-up on
+    #3528)."""
+    calls = _calls(tmp_path).get("stale_rebind_with", {})
+    assert calls.get(THING_GO) != EXACT
+    assert calls.get(OTHER_GO) != EXACT
+    assert _local_types(tmp_path, "stale_rebind_with").get("t") is None
+
+
+def test_bare_annotation_does_not_clear_the_factory_local_type(
+    tmp_path: Path,
+) -> None:
+    """`t: Thing` declares a type without rebinding: it must not clear
+    the `Thing` a factory bound before it (Antigravity review of the
+    stale-rebinding fix)."""
+    calls = _calls(tmp_path).get("annotated_factory_with", {})
+    assert calls.get(THING_GO) == EXACT
+    assert calls.get(OTHER_GO) != EXACT
+
+
+def test_comprehension_walrus_yielded_to_a_later_match_alias(
+    tmp_path: Path,
+) -> None:
+    """A loop-derived walrus write must not clobber a later `case ... as`
+    alias either: pattern aliases are absent from `_bindings_in`, so
+    the last-binding census has to merge them (Antigravity review)."""
+    calls = _calls(tmp_path).get("comprehension_walrus_then_match_alias", {})
+    assert calls.get(OTHER_GO) == EXACT
+    assert THING_GO not in calls
+    assert (
+        _local_types(tmp_path, "comprehension_walrus_then_match_alias").get("t")
+        == f"{PROJECT}.m.Other"
+    )

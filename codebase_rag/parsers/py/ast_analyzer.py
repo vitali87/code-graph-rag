@@ -1448,10 +1448,33 @@ class PythonAstAnalyzerMixin(_AstBase):
         if not comprehensions:
             return
         own_names = _own_bound_names(scope)
+        # The last byte at which the body binds each name, the census
+        # `_type_match_aliases` builds: the comprehension pass runs after
+        # the assignment passes, so without it a loop-derived walrus
+        # write would clobber a later rebinding of the same name.
+        last: dict[str, int] = {}
+        for _binder, identifier in _bindings_in(scope):
+            if name := safe_decode_text(identifier):
+                last[name] = max(last.get(name, -1), identifier.start_byte)
+        # Pattern aliases are deliberately absent from that census (the
+        # native bridge's scope facts must match it), so merge them here
+        # the way `_type_match_aliases` does, or a walrus before a
+        # `case C() as t` would clobber the alias it binds later.
+        stack = list(scope.children)
+        while stack:
+            node = stack.pop()
+            if node.type == cs.TS_PY_CASE_PATTERN:
+                for alias in _pattern_aliases(node):
+                    if name := safe_decode_text(alias):
+                        last[name] = max(last.get(name, -1), alias.start_byte)
+            elif node.type not in cs.PY_NESTED_SCOPE_TYPES:
+                stack.extend(node.children)
         for comp in comprehensions:
             scratch = dict(local_var_types)
             self._analyze_comprehension(comp, scratch, module_qn)
-            self._type_comprehension_walrus(comp, scratch, local_var_types, module_qn)
+            self._type_comprehension_walrus(
+                comp, scratch, local_var_types, module_qn, last
+            )
             names = _comprehension_names(comp) - own_names
             if not names:
                 continue
@@ -1630,6 +1653,7 @@ class PythonAstAnalyzerMixin(_AstBase):
         scratch: dict[str, str],
         local_var_types: dict[str, str],
         module_qn: str,
+        last: dict[str, int],
     ) -> None:
         """Type walrus targets inside `comprehension` from `scratch`,
         which holds the comprehension's loop variables: a walrus leaks
@@ -1639,7 +1663,10 @@ class PythonAstAnalyzerMixin(_AstBase):
         value reads one of this comprehension's loop variables: the
         loop variable shadows the outer name inside the comprehension,
         so the enclosing-map type describes a different value and the
-        scratch type wins. Walruses run in document order, each seeing
+        scratch type wins. That win is only against the type the body
+        held when the walrus runs: a binding of the same name after
+        the walrus already typed the map, and the deferred write must
+        not replace it. Walruses run in document order, each seeing
         the ones before it."""
         loop_names = _comprehension_names(comprehension)
         view = dict(scratch)
@@ -1657,8 +1684,15 @@ class PythonAstAnalyzerMixin(_AstBase):
                 or _identifier_type(value_node, view)
             ):
                 view[name] = inferred
-                if name not in local_var_types or _references_any(
-                    value_node, loop_names
+                target = walrus.child_by_field_name(cs.FIELD_NAME)
+                if target is None and walrus.named_children:
+                    target = walrus.named_children[0]
+                target_start = (
+                    target.start_byte if target is not None else walrus.start_byte
+                )
+                if name not in local_var_types or (
+                    _references_any(value_node, loop_names)
+                    and last.get(name, -1) <= target_start
                 ):
                     local_var_types[name] = inferred
                     logger.debug(lg.PY_TYPE_COMPLEX, var=name, type=inferred)
