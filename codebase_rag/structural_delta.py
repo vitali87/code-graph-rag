@@ -123,6 +123,10 @@ class Snapshot(NamedTuple):
     sites: tuple[CallSite, ...]
     imports: dict[str, frozenset[str]]
     module_paths: dict[str, str]
+    # (importer, target, imported name) per import statement; "" for a
+    # whole-module import. Tells an import of a name the module still binds
+    # (a constant the graph has no node for) from one of a moved symbol.
+    imported: frozenset[tuple[str, str, str]] = frozenset()
     bindings: tuple[ImportBinding, ...] = ()
     callers: Mapping[str, Definition] = MappingProxyType({})
     modules: frozenset[tuple[str, str]] = frozenset()
@@ -471,12 +475,14 @@ def snapshot(
     callers = {qn: d for qn, d in found.items() if qn in missing_callers}
     imports: dict[str, set[str]] = {}
     module_paths: dict[str, str] = {}
+    imported: set[tuple[str, str, str]] = set()
     for row in fetch_all(cq.CYPHER_DELTA_MODULE_IMPORTS, params):
         source = _text(row.get(cs.KEY_FROM_QN))
         target = _text(row.get(cs.KEY_TO_QN))
         if not source or not target:
             continue
         imports.setdefault(source, set()).add(target)
+        imported.add((source, target, _text(row.get(cs.KEY_IMPORTED_NAME))))
         imports.setdefault(target, set())
         module_paths[source] = _text(row.get(cs.KEY_FROM_PATH))
     return Snapshot(
@@ -486,6 +492,7 @@ def snapshot(
         sites=sites,
         imports={qn: frozenset(targets) for qn, targets in imports.items()},
         module_paths=module_paths,
+        imported=frozenset(imported),
         bindings=_named_import_bindings(fetch_all, params),
         callers=callers,
         modules=_touched_modules(fetch_all, params),
@@ -641,6 +648,7 @@ def _renames(
     before: Snapshot,
     after: Snapshot,
     declared: frozenset[tuple[str, str]] = frozenset(),
+    reshaped: frozenset[tuple[str, str]] = frozenset(),
 ) -> list[RenameFinding]:
     # A rename keeps the body: the same whole-skeleton fingerprint under a
     # new name in the same file. Paired one-to-one in sorted order so a
@@ -675,6 +683,22 @@ def _renames(
             still_unpaired, renames, paired_new, added, before, after, declared
         )
     )
+    # Pass 5: a pair whose body the operation itself rewrote (a move that
+    # respelled a relative import for its new package) changed shape by
+    # design, so only the operation's word can pair it.
+    paired_old = {r["old"] for r in renames}
+    for old, new in sorted(reshaped):
+        if (
+            old in still_unpaired
+            and old not in paired_old
+            and new in added
+            and new not in paired_new
+            and before.definitions[old].label == after.definitions[new].label
+        ):
+            renames.append(
+                RenameFinding(old=old, new=new, path=before.definitions[old].path)
+            )
+            paired_new.add(new)
     return renames
 
 
@@ -732,10 +756,11 @@ def _symbols(
     before: Snapshot,
     after: Snapshot,
     declared: frozenset[tuple[str, str]] = frozenset(),
+    reshaped: frozenset[tuple[str, str]] = frozenset(),
 ) -> SymbolDelta:
     added = sorted(set(after.definitions) - set(before.definitions))
     removed = sorted(set(before.definitions) - set(after.definitions))
-    renamed = _renames(removed, added, before, after, declared)
+    renamed = _renames(removed, added, before, after, declared, reshaped)
     renamed_old = {r["old"] for r in renamed}
     renamed_new = {r["new"] for r in renamed}
     return SymbolDelta(
@@ -3113,6 +3138,14 @@ def _cycles(graph: dict[str, frozenset[str]]) -> set[frozenset[str]]:
     }
 
 
+def import_cycles(graph: dict[str, frozenset[str]]) -> set[frozenset[str]]:
+    """The cyclic strongly connected components of a module import graph.
+
+    `move` checks a planned move against these before touching a file.
+    """
+    return _cycles(graph)
+
+
 def _new_import_cycles(before: Snapshot, after: Snapshot) -> list[list[str]]:
     touched = {qn for qn, path in after.module_paths.items() if path in after.paths}
     touched |= {qn for qn, path in before.module_paths.items() if path in before.paths}
@@ -3270,12 +3303,15 @@ def structural_delta(
     declared_renames: frozenset[tuple[str, str]] = frozenset(),
     *,
     longer_project_prefixes: tuple[str, ...] | None = None,
+    reshaped_renames: frozenset[tuple[str, str]] = frozenset(),
 ) -> StructuralDelta:
     """Diff two snapshots of the same paths, then look up what they touch.
 
     `declared_renames` are pairs the CALLER applied and therefore knows. They
     are needed only where the snapshots cannot show identity -- an empty
     container -- and are empty for a plain write, which really is inferring.
+    `reshaped_renames` are pairs whose body the caller rewrote on purpose,
+    so their shapes no longer match.
     """
     started = time.perf_counter()
     longer_prefixes = (
@@ -3283,7 +3319,7 @@ def structural_delta(
         if longer_project_prefixes is None
         else longer_project_prefixes
     )
-    symbols = _symbols(before, after, declared_renames)
+    symbols = _symbols(before, after, declared_renames, reshaped_renames)
     # A decorator or modifier change leaves the body a duplicate is made of
     # as it was, so only a reshaped symbol can be a new duplicate.
     fresh = set(symbols["added"]) | {
@@ -3359,11 +3395,16 @@ def _stale_importers(after: Snapshot, symbols: SymbolDelta) -> list[StaleImporte
     report every importer of its remaining siblings.
     """
     vacated: set[str] = set()
+    moved_names: dict[str, set[str]] = {}
     for renamed in symbols["renamed"]:
-        old_module = _module_of(str(renamed["old"]))
+        old_qn = str(renamed["old"])
+        old_module = _module_of(old_qn)
         new_module = _module_of(str(renamed["new"]))
         if old_module and old_module != new_module:
             vacated.add(old_module)
+            moved_names.setdefault(old_module, set()).add(
+                old_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+            )
     if not vacated:
         return []
     # Anything the graph still defines under a vacated module means the module
@@ -3379,7 +3420,10 @@ def _stale_importers(after: Snapshot, symbols: SymbolDelta) -> list[StaleImporte
         # One entry per IMPORTER, not per stale target: the finding is that
         # this module still points at somewhere the move emptied, and naming
         # the same importer once per vacated target would repeat it.
-        if not targets & vacated:
+        if not any(
+            _imports_what_left(after, importer, target, moved_names[target])
+            for target in targets & vacated
+        ):
             continue
         stale.append(
             StaleImporter(
@@ -3391,6 +3435,34 @@ def _stale_importers(after: Snapshot, symbols: SymbolDelta) -> list[StaleImporte
     return sorted(stale, key=lambda entry: (entry["path"], entry["importer"]))
 
 
+def _imports_what_left(
+    after: Snapshot, importer: str, target: str, moved: set[str]
+) -> bool:
+    """Whether `importer`'s import of the vacated `target` can reach a moved name.
+
+    The graph has no node for a module constant, so a module left holding
+    only `TAX_RATE = 0.2` reads as vacated; the moved function's own
+    `from old import TAX_RATE` then failed the move it was carried for.
+    Only a named import of something that did NOT move is cleared; a
+    whole-module import, or one the graph recorded without names, may still
+    reach the moved symbol and stays stale. So does a wildcard (`from old
+    import *`, recorded as `*`), unless the vacated module imports every
+    moved name back for the star to carry. A `from pkg import util` binds
+    the module itself under its last segment, so `util.helper()` still
+    reaches the moved name through it and that import stays stale too
+    (bot review).
+    """
+    names = {
+        name for (src, dst, name) in after.imported if src == importer and dst == target
+    }
+    if cs.IMPORTED_NAME_WILDCARD in names:
+        kept = {name for (src, _dst, name) in after.imported if src == target}
+        if not moved <= kept:
+            return True
+    leaf = target.rpartition(cs.SEPARATOR_DOT)[2]
+    return not names or "" in names or leaf in names or bool(names & moved)
+
+
 def observe(
     fetch_all: QueryFn,
     project_name: str,
@@ -3398,6 +3470,7 @@ def observe(
     apply: Callable[[], ReingestReport],
     repo_root: Path | None = None,
     declared_renames: frozenset[tuple[str, str]] = frozenset(),
+    reshaped_renames: frozenset[tuple[str, str]] = frozenset(),
 ) -> StructuralDelta:
     """Snapshot `paths`, run `apply` (the scoped re-ingest), snapshot, diff.
 
@@ -3431,6 +3504,7 @@ def observe(
         repo_root,
         declared_renames=declared_renames,
         longer_project_prefixes=longer_prefixes,
+        reshaped_renames=reshaped_renames,
     )
     # The re-ingest's own clock covers only its inner work; the caller sees
     # the wall time of the whole apply step, and `delta_ms` is everything

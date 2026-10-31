@@ -48,6 +48,7 @@ Every top-level command, from the CLI's own help registry:
 | `cgr check` | Report the structural delta of the working tree against a git ref: dangling callers and importers, arity findings, new duplicates, new import cycles, tests reaching the edited symbols. |
 | `cgr rename` | Rename a definition everywhere the graph references it (definition, call and reference sites, imports, overrides, __all__); refuses on guessed sites, on occurrences the graph has no site for, and on a graph a stopped sync left partial. |
 | `cgr change-signature` | Change a Python definition's parameter list and rewrite every call site the graph knows; sites the mapping cannot complete are listed, not touched; refuses on a graph a stopped sync left partial. |
+| `cgr move` | Move a module-level definition to another module: importers rewritten, needed imports carried, refused when it would create an import cycle. |
 | `cgr context` | Print a graph-ranked context slice for a symbol, location or task within a token budget: source, caller lines, callee signatures, types, tests, docs. |
 | `cgr port` | Judge a port between languages: pair the functions of two implementations and compare their calls and arity, as JSON, no LLM. |
 | `cgr workspace` | Manage named groups of repositories |

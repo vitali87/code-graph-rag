@@ -28,6 +28,7 @@ class MCPToolName(StrEnum):
     # Graph-driven edit operations (issues #1532, #1533).
     RENAME = "rename"
     CHANGE_SIGNATURE = "change_signature"
+    MOVE = "move"
     CONTEXT = "context"
     QUERY_CODE_GRAPH = "query_code_graph"
     GET_CODE_SNIPPET = "get_code_snippet"
@@ -94,6 +95,7 @@ MCP_DESTRUCTIVE_TOOLS = frozenset(
         MCPToolName.INDEX_REPOSITORY,
         MCPToolName.RENAME,
         MCPToolName.CHANGE_SIGNATURE,
+        MCPToolName.MOVE,
         MCPToolName.SURGICAL_REPLACE_CODE,
         MCPToolName.WRITE_FILE,
         MCPToolName.STRUCTURAL_REPLACE,
@@ -192,6 +194,8 @@ class MCPParamName(StrEnum):
     ALLOW_HEURISTIC = "allow_heuristic"
     NEW_PARAMS = "new_params"
     MAPPING = "mapping"
+    TARGET_MODULE = "target_module"
+    KEEP_ALIAS = "keep_alias"
     BUDGET_TOKENS = "budget_tokens"
 
 
