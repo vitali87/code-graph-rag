@@ -84,6 +84,15 @@ def test_the_conditional_delete_is_the_delete_with_the_root_check() -> None:
     )
 
 
+def test_the_guarded_sweep_is_the_sweep_behind_a_recreation_check() -> None:
+    guarded = cq.CYPHER_DELETE_PROJECT_CUT_OFF_UNITS_IF_GONE
+    head, sweep = guarded.split("\nOPTIONAL MATCH (longer:Project)", 1)
+    assert "$project_name" in head
+    assert "\nOPTIONAL MATCH (longer:Project)" + sweep.replace(
+        "WITH recreated, collect", "WITH collect", 1
+    ) == (cq.CYPHER_DELETE_PROJECT_CUT_OFF_UNITS)
+
+
 def test_conditional_root_delete_fires_when_the_root_matches(
     stub: MemgraphIngestor, calls: _Calls
 ) -> None:
@@ -97,7 +106,8 @@ def test_conditional_root_delete_fires_when_the_root_matches(
         {cs.KEY_PROJECT_NAME: "proj__1", cs.KEY_EXPECTED_ROOT: "/repo"},
     )
     assert "$expected_root" in first[0]
-    assert cq.CYPHER_DELETE_PROJECT_CUT_OFF_UNITS in calls.queries
+    assert cq.CYPHER_DELETE_PROJECT_CUT_OFF_UNITS_IF_GONE in calls.queries
+    assert cq.CYPHER_DELETE_PROJECT_CUT_OFF_UNITS not in calls.queries
     assert cq.CYPHER_DELETE_PROJECT not in calls.queries
     assert calls.pruned_resources is True
 
@@ -150,6 +160,7 @@ def test_unconditional_delete_ignores_the_root(
         {cs.KEY_PROJECT_NAME: "proj__1"},
     )
     assert cq.CYPHER_DELETE_PROJECT_CUT_OFF_UNITS in calls.queries
+    assert cq.CYPHER_DELETE_PROJECT_CUT_OFF_UNITS_IF_GONE not in calls.queries
     assert calls.pruned_resources is True
 
 
@@ -266,3 +277,55 @@ def test_the_residual_count_sees_what_is_left(graph: MemgraphIngestor) -> None:
     # The Project, both Packages/Modules under `old.` but not under `old.v2.`.
     assert _residual(graph, "old") == 4
     assert _residual(graph, "ghost") == 0
+
+
+_SWEEP_PARAMS = {cs.KEY_PROJECT_NAME: "old", cs.KEY_PROJECT_PREFIX: "old."}
+_RECREATE = """
+CREATE (:Project {name: 'old', root_path: '/moved'})
+       -[:CONTAINS_MODULE]->(:Module {qualified_name: 'old.fresh'})
+"""
+
+
+def _purge_without_sweep(graph: MemgraphIngestor) -> None:
+    graph.execute_write(
+        cq.CYPHER_DELETE_PROJECT_IF_ROOT,
+        {cs.KEY_PROJECT_NAME: "old", cs.KEY_EXPECTED_ROOT: "/w"},
+    )
+
+
+def test_the_guarded_sweep_spares_a_project_recreated_since_the_delete(
+    graph: MemgraphIngestor,
+) -> None:
+    # A sync recreates `old` between the conditional delete and its sweep.
+    _purge_without_sweep(graph)
+    graph.execute_write(_RECREATE)
+
+    graph.execute_write(cq.CYPHER_DELETE_PROJECT_CUT_OFF_UNITS_IF_GONE, _SWEEP_PARAMS)
+
+    keys = _keys(graph)
+    assert "old.fresh" in keys
+    # The old project's cut-off module is left too: the sweep cannot tell it
+    # from the new project's, and leaving it is the safe side.
+    assert "old.cut_off" in keys
+
+
+def test_the_plain_sweep_would_take_the_recreated_projects_units(
+    graph: MemgraphIngestor,
+) -> None:
+    # Negative control: what the guard prevents.
+    _purge_without_sweep(graph)
+    graph.execute_write(_RECREATE)
+
+    graph.execute_write(cq.CYPHER_DELETE_PROJECT_CUT_OFF_UNITS, _SWEEP_PARAMS)
+
+    assert "old.fresh" not in _keys(graph)
+
+
+def test_the_guarded_sweep_runs_once_the_project_is_gone(
+    graph: MemgraphIngestor,
+) -> None:
+    _purge_without_sweep(graph)
+
+    graph.execute_write(cq.CYPHER_DELETE_PROJECT_CUT_OFF_UNITS_IF_GONE, _SWEEP_PARAMS)
+
+    assert _keys(graph) == _WITHOUT_OLD

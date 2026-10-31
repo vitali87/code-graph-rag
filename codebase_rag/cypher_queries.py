@@ -443,6 +443,7 @@ CYPHER_DELETE_PROJECT = _delete_project()
 # reads whether the project is gone afterwards.
 CYPHER_DELETE_PROJECT_IF_ROOT = _delete_project("\nWHERE p.root_path = $expected_root")
 
+
 # Run after CYPHER_DELETE_PROJECT: the project's Packages and Modules that no
 # containment path from it reached, such as a tree the #897 repair cut off
 # from its Project, go too rather than outliving it as orphans (issue
@@ -450,9 +451,10 @@ CYPHER_DELETE_PROJECT_IF_ROOT = _delete_project("\nWHERE p.root_path = $expected
 # CYPHER_DELETE_MODULE relies on. Glosses are keyed by qualified name as
 # well, but are neither label and hang off nothing this walks, so they
 # survive the rebuild they are meant to survive (issue #1828).
-CYPHER_DELETE_PROJECT_CUT_OFF_UNITS = f"""
+def _delete_cut_off_units(guard: str = "", carried: str = "") -> str:
+    return f"""{guard}
 OPTIONAL MATCH (longer:Project) WHERE longer.name STARTS WITH $project_prefix
-WITH collect(longer.name) AS nested
+WITH {carried}collect(longer.name) AS nested
 OPTIONAL MATCH (pkg:Package) WHERE {_belongs_to_named("pkg")}
 WITH nested, collect(pkg) AS packages
 OPTIONAL MATCH (mod:Module) WHERE {_belongs_to_named("mod")}
@@ -463,6 +465,21 @@ OPTIONAL MATCH (u)-[:{_DEFINITION_RELS}|CONTAINS_SECTION*]->(defined)
 WITH collect(DISTINCT u) + collect(DISTINCT defined) AS gone
 FOREACH (n IN gone | DETACH DELETE n)
 """
+
+
+CYPHER_DELETE_PROJECT_CUT_OFF_UNITS = _delete_cut_off_units()
+
+# The same sweep for `cgr prune` (#2479), run only while no project of the
+# name exists, checked in the same statement: the sweep matches by name, so
+# a sync that recreated the project after the conditional delete would
+# otherwise lose its units to it. `recreated` is carried as a grouping key
+# into the first aggregation, so a recreated project leaves no row to sweep
+# with rather than one with an empty `nested`.
+CYPHER_DELETE_PROJECT_CUT_OFF_UNITS_IF_GONE = _delete_cut_off_units(
+    "\nOPTIONAL MATCH (other:Project {name: $project_name})"
+    "\nWITH count(other) AS recreated WHERE recreated = 0",
+    "recreated, ",
+)
 
 # What of a project is left once the delete and the cut-off sweep above ran
 # (#2479): its Project node, and every Package and Module under its name but

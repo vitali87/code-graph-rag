@@ -60,6 +60,7 @@ from ..cypher_queries import (
     CYPHER_DELETE_ALL,
     CYPHER_DELETE_PROJECT,
     CYPHER_DELETE_PROJECT_CUT_OFF_UNITS,
+    CYPHER_DELETE_PROJECT_CUT_OFF_UNITS_IF_GONE,
     CYPHER_DELETE_PROJECT_IF_ROOT,
     CYPHER_EXPORT_NODES,
     CYPHER_EXPORT_PROJECT_NODES,
@@ -689,8 +690,13 @@ class MemgraphIngestor:
                 # delete matched nothing, and the project is live.
                 logger.info(ls.MG_PROJECT_NOT_DELETED.format(project_name=project_name))
                 return False
+        # The conditional form's sweep re-checks in its own statement that no
+        # project of the name exists, so one a sync recreated since the read
+        # above keeps its units.
         self._execute_query(
-            CYPHER_DELETE_PROJECT_CUT_OFF_UNITS,
+            CYPHER_DELETE_PROJECT_CUT_OFF_UNITS
+            if expected_root is None
+            else CYPHER_DELETE_PROJECT_CUT_OFF_UNITS_IF_GONE,
             {
                 KEY_PROJECT_NAME: project_name,
                 KEY_PROJECT_PREFIX: f"{project_name}{SEPARATOR_DOT}",
