@@ -209,7 +209,7 @@ class LuaTypeInferenceEngine:
         # A metatable IS the type, so a table whose members are all
         # dot-defined (`function T.push(self, v)`) qualifies too.
         table_qn = f"{module_qn}{cs.SEPARATOR_DOT}{name}"
-        return table_qn if self.function_registry.find_with_prefix(table_qn) else None
+        return table_qn if self.function_registry.has_prefix(table_qn) else None
 
     def _has_colon_methods(self, table_qn: str) -> bool:
         # `function T:m()` registers `T:m` as ONE qn segment, beside `T` in
