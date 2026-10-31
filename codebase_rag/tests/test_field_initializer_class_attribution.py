@@ -557,3 +557,112 @@ export class Svc {
     assert not any(s.endswith("svc") and t.endswith("Svc.make") for s, t in calls), (
         calls
     )
+
+
+def test_java_lambda_body_calls_are_not_constructor_calls(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Calls inside a lambda-valued field run when the lambda is invoked,
+    # not at construction: only the direct initializer call belongs to
+    # the constructor. The lambda body call must not gain a constructor
+    # edge (issue #3339, Greptile review).
+    project = temp_repo / "jlambda"
+    (project / "com" / "example").mkdir(parents=True)
+    (project / "com" / "example" / "M.java").write_text(
+        """
+package com.example;
+class Svc {
+  Runnable r = () -> helper();
+  int n = helper();
+  Svc() {}
+  int helper() { return 1; }
+}
+""",
+        encoding="utf-8",
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="java")
+
+    sites = [
+        site
+        for site in _sites(mock_ingestor, "CALLS")
+        if site[0].endswith("Svc.Svc()") and site[1].endswith("Svc.helper()")
+    ]
+    assert len(sites) == 1, sites
+    assert sites[0][2] == 5, sites
+
+
+def test_csharp_lambda_and_anonymous_method_bodies_are_not_constructor_calls(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Calls inside lambda and anonymous-method bodies run when invoked,
+    # not at construction: only the direct initializer call belongs to
+    # the constructor (issue #3339, Greptile review).
+    project = temp_repo / "cslambda"
+    project.mkdir()
+    (project / "App.cs").write_text(
+        """
+namespace N;
+public class Svc {
+  private System.Func<int> f = () => Helper();
+  private System.Func<int> g = delegate { return Helper(); };
+  private readonly int n = Helper();
+  public Svc() {}
+  public int Helper() { return 1; }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(project, mock_ingestor, skip_if_missing="c_sharp")
+
+    sites = [
+        site
+        for site in _sites(mock_ingestor, "CALLS")
+        if site[0].endswith("Svc.Svc") and site[1].endswith("Svc.Helper")
+    ]
+    assert len(sites) == 1, sites
+    assert sites[0][2] == 6, sites
+
+
+def test_csharp_static_constructor_does_not_own_field_initializers(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A static constructor runs once at type load, not per instance: it
+    # must never own instance field initializers. A class with only a
+    # static constructor falls back to the class node; a class with both
+    # attributes to the instance constructor. Static field initializers
+    # stay module-attributed (issue #3339, Greptile/CodeRabbit review).
+    project = temp_repo / "csstaticctor"
+    project.mkdir()
+    (project / "App.cs").write_text(
+        """
+namespace N;
+public class Factory { public Factory() {} }
+public class OnlyStatic {
+  private static Factory shared = new Factory();
+  private readonly Factory factory = new Factory();
+  static OnlyStatic() {}
+}
+public class Both {
+  private readonly Factory factory = new Factory();
+  static Both() {}
+  public Both() {}
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(project, mock_ingestor, skip_if_missing="c_sharp")
+
+    instantiates = _instantiates(mock_ingestor)
+    assert len(instantiates) == 3, instantiates
+    class_edges = [(s, t) for s, t in instantiates if s.endswith("N.OnlyStatic")]
+    assert len(class_edges) == 1, instantiates
+    ctor_edges = [
+        (s, t) for s, t in instantiates if s.endswith("Both.Both") or "Both.Both@" in s
+    ]
+    assert len(ctor_edges) == 1, instantiates
+    # The instance constructor owns it, not the Both class node (the
+    # registered ctor qn carries a `@offset` disambiguator beside the
+    # static constructor; the audit pins it to a registered node).
+    assert not any(s.endswith("N.Both") for s, _ in instantiates), instantiates
+    module_edges = [(s, t) for s, t in instantiates if s.endswith("App")]
+    assert len(module_edges) == 1, instantiates
