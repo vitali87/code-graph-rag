@@ -69,6 +69,24 @@ fn pagerank_is_a_distribution() {
     assert!((total - 1.0).abs() < 1e-9);
 }
 
+/// Python's `for _ in range(iterations)` runs any count until the ranks
+/// converge; a count past u32::MAX is no different.
+#[test]
+fn pagerank_runs_an_iteration_count_past_u32_max() {
+    let tight = |iterations: i64| {
+        let args = [Arg::Int(iterations), Arg::Float(0.85), Arg::Float(1e-12)];
+        run(&sample(), "pagerank.get", &args).expect("implemented")
+    };
+    assert_eq!(tight((1 << 32) + 1), tight(1000));
+}
+
+/// `range()` of a negative count is empty: the ranks stay uniform.
+#[test]
+fn pagerank_runs_no_iteration_for_a_negative_count() {
+    let records = run(&sample(), "pagerank.get", &[Arg::Int(-5)]).expect("implemented");
+    assert_eq!(column(&records, "rank"), vec![Value::Float(0.25); 4]);
+}
+
 #[test]
 fn procedures_left_to_python_are_declined() {
     assert!(run(&sample(), "nxalg.simple_cycles", &[]).is_none());

@@ -84,8 +84,13 @@ jobs:
           ref: ${{ inputs.ref || github.ref }}
           persist-credentials: false
 
+      # The wheel goes to PyPI when publish.yml calls this workflow, so its
+      # build tools come from no cache another run could have written.
+      # setup-uv's default would cache a dispatched publish.
       - name: Install uv
         uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          enable-cache: false
 
       - name: Set up Python
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -135,8 +140,13 @@ jobs:
           ref: ${{ inputs.ref || github.ref }}
           persist-credentials: false
 
+      # The wheel goes to PyPI when publish.yml calls this workflow, so its
+      # build tools come from no cache another run could have written.
+      # setup-uv's default would cache a dispatched publish.
       - name: Install uv
         uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          enable-cache: false
 
       - name: Set up Python
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -173,8 +183,13 @@ jobs:
           ref: ${{ inputs.ref || github.ref }}
           persist-credentials: false
 
+      # The wheel goes to PyPI when publish.yml calls this workflow, so its
+      # build tools come from no cache another run could have written.
+      # setup-uv's default would cache a dispatched publish.
       - name: Install uv
         uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          enable-cache: false
 
       - name: Set up Python
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -235,7 +250,9 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
-          enable-cache: true
+          # Only a pull request's run uses the cache: in publish.yml's run
+          # every job can upload an artifact that publish-rust then ships.
+          enable-cache: ${{ github.event_name == 'pull_request' }}
           cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
 
       - name: Set up Python
@@ -296,7 +313,9 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
-          enable-cache: true
+          # Only a pull request's run uses the cache: in publish.yml's run
+          # every job can upload an artifact that publish-rust then ships.
+          enable-cache: ${{ github.event_name == 'pull_request' }}
           cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
 
       - name: Set up Python

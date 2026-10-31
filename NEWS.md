@@ -11,10 +11,15 @@ the README. The release workflow prepends feature entries via
 (dropping non-feature themes), and moves the marker below the block it
 inserted; hand edits remain welcome between releases and render too.
 
+- **MiniMax Models Added**: Current MiniMax text models have been included.
+<!-- latest-release-end -->
+- **CLI and MCP Enhancements**: The `change_signature` operation is now accessible via the CLI and MCP, with improved handling for partial graphs and classification as a destructive writer.
+- **Fuzzing Improvements**: The Graph-RS project now includes additional fuzz targets for more comprehensive testing.
+- **Model Updates**: Current MiniMax text models have been added.
+- **MiniMax Models**: Current MiniMax text models have been added.
 - **Dependencies Updated**: Several dependencies have been updated to the latest versions, including neo4j, qdrant-client, and transformers, bringing in bug fixes and new features.
 - **CLI Improvements**: The `change_signature` operation is now accessible through the CLI and MCP, with updated documentation.
 - **Graph-RS Fuzzing**: Expanded fuzz testing for the graph-rs component with new targets for procedures, bulk writing, and input decoding.
-<!-- latest-release-end -->
 - **CLI and MCP Improvements**: The CLI and MCP now support the `change_signature` operation and include enhanced security features like repository approval and credential file handling.
 - **Fuzzing Targets Added**: New fuzzing targets have been added for both the graph-rs and the overall system, increasing robustness.
 - **Configuration Handling**: `.env` files are now ignored except for the example file, improving security and preventing accidental commits of sensitive information.

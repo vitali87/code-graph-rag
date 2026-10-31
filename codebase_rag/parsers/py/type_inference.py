@@ -437,3 +437,19 @@ class PythonTypeInferenceEngine(
             logger.debug(lg.PY_BUILD_VAR_MAP_FAILED, error=e)
 
         return local_var_types
+
+    def expression_type(
+        self, value: Node, module_qn: str, local_var_types: dict[str, str]
+    ) -> str | None:
+        """The type one value expression gives the name it is bound to, by the
+        same rules the map's assignment passes apply: what a flow-sensitive
+        caller asks of each binding that reaches a call separately."""
+        try:
+            return self._infer_type_from_expression_simple(
+                value, module_qn
+            ) or self._infer_type_from_expression_complex(
+                value, module_qn, local_var_types
+            )
+        except Exception as e:
+            logger.debug(lg.PY_BUILD_VAR_MAP_FAILED, error=e)
+            return None

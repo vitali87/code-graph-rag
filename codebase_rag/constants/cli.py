@@ -1199,6 +1199,10 @@ CONTEXT_WHY_ACCEPTS = "type it accepts"
 CONTEXT_WHY_TEST = "test reaching it at depth {depth} through {through}"
 CONTEXT_WHY_DOC = "documentation section whose file links to it"
 CONTEXT_UNRESOLVED = "Nothing in the graph matches {target}"
+CONTEXT_TARGET_OVER_BUDGET = (
+    "The first line of {target} does not fit in {budget} tokens, so the slice "
+    "is empty; raise --budget"
+)
 # Postcondition contract (issue #1531).
 CONTRACT_OP_RENAME = "rename"
 CONTRACT_OP_CHANGE_SIGNATURE = "change_signature"

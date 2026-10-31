@@ -1215,6 +1215,23 @@ CLI_SYNC_MARKER_NOT_CLEARED = (
     "The sync of {project} finished, but its incomplete-run marker could not "
     "be cleared: {error}. The graph is complete; the next sync clears it."
 )
+REBUILD_OVER_STRANDED_RUNS = (
+    "{count} earlier run(s) that wrote to project {project} stopped part-way, "
+    "so its graph may be partial. Re-indexing the whole repository instead of "
+    "only what changed."
+)
+STRANDED_RUNS_RETIRED = (
+    "Cleared {count} incomplete-run marker(s) the rebuild of {project} superseded."
+)
+STRANDED_RUNS_UNREADABLE = (
+    "Could not read which earlier runs left project {project} partial "
+    "({error}); their markers stay until a later full sync."
+)
+STRANDED_RUNS_NOT_RETIRED = (
+    "The rebuild of {project} finished, but the incomplete-run markers it "
+    "superseded could not be cleared: {error}. The graph is complete; the next "
+    "full sync clears them."
+)
 CLI_DELETE_MARKER_NOT_CLEARED = (
     "Project {project} was deleted, but its incomplete-run marker could not be "
     "cleared: {error}. cgr status may list it as interrupted until it is synced "

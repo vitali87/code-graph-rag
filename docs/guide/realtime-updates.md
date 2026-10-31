@@ -104,7 +104,19 @@ stopped part-way through a write therefore shows in `cgr status` as an
 unfinished sync, and the MCP server does not trust the partial graph, until
 the next sync of the project finishes. A change that arrives while another
 sync of the project has left its marker down re-indexes the whole repository
-instead of applying that change alone.
+instead of applying that change alone. A full sync (`cgr start
+--update-graph`, or the MCP server's `update_repository` and
+`index_repository`) also takes off the marker an MCP server's run left when
+it stopped part-way through a write, which nothing else clears: it rebuilds
+the whole repository first, then retires that marker with its own. It does so
+only once the process that wrote the marker has exited on this machine. A run
+still going, even one from another checkout under the same project name, keeps
+its marker, and so does a run on another machine or in another container. A
+marker an older release wrote names no process, so it stays too. The check
+needs a machine whose processes cannot be mistaken for another machine's:
+Linux, where the boot id and the pid namespace tell them apart. On macOS and
+Windows, which name the machine by its hostname alone, such a marker stays,
+as it did before.
 
 ### One sync of a checkout at a time
 

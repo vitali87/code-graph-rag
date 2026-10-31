@@ -851,3 +851,21 @@ PARITY_FILES = (
     "MATCH (f:File) WHERE f.absolute_path STARTS WITH $root "
     "RETURN f.path AS path, f.absolute_path AS absolute_path ORDER BY path LIMIT 5"
 )
+
+# JARVIS micro-benchmark (arXiv 2305.05949): PyCG's programs plus JARVIS's own
+# context-manager and control-flow categories, each with a ground-truth call
+# graph, pinned to the commit the paper's artifact was published at.
+JARVIS_DATASET_URL = "https://github.com/pythonJaRvis/pythonJaRvis.github.io.git"
+JARVIS_DATASET_COMMIT = "8871b86494a1aec0095686ffa543994a7361af88"
+JARVIS_PROGRAMS_DIR = "Jarvis/dataset/micro_benchmark"
+JARVIS_TRUTH_DIR = "Jarvis/ground_truth/micro_benchmark"
+JARVIS_TRUTH_FILE = "callgraph.json"
+JARVIS_PROJECT = "bench"
+JARVIS_CACHE_DIR = "evals/results/corpora/jarvis"
+JARVIS_RESULTS_FILE = "evals/results/jarvis_micro.json"
+JARVIS_TABLE_TITLE = "cgr on the JARVIS micro-benchmark ({count} programs)"
+JARVIS_TOTAL_ROW = "TOTAL"
+JARVIS_COLUMNS = ("category", "precision", "recall", "tp", "fp", "fn")
+JARVIS_HELP_CACHE = "Checkout of the dataset."
+JARVIS_HELP_OUT = "Where to write scores and diffs."
+JARVIS_HELP_CATEGORY = "Score one category only."

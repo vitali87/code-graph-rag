@@ -190,3 +190,75 @@ def test_self_method_callback_in_closure_is_traced(tmp_path: Path) -> None:
     )
     calls = _run_calls(tmp_path, {"m.py": src})
     assert _has(calls, "m.apply", "m.C._helper")
+
+
+# What a call through a returned function reaches (the JARVIS micro-benchmark's
+# returns/ and direct_calls/ programs). The call names no function, so the
+# edge comes from the producer's returns, known once every file is walked.
+RETURNS = (
+    "def target():\n    pass\n\n\n"
+    "def nested_maker():\n"
+    "    def inner():\n        pass\n"
+    "    return inner\n\n\n"
+    "def make():\n    return target\n\n\n"
+    "def make_maker():\n    return nested_maker\n\n\n"
+    "def relay():\n    return make()\n\n\n"
+    "def value():\n    return 1\n\n\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("use", "callee"),
+    [
+        # Bound first, called with no callback to hand over.
+        ("    f = make()\n    f()\n", "m.target"),
+        # Called where it is returned, one and two calls deep.
+        ("    make()()\n", "m.target"),
+        ("    make_maker()()()\n", "m.nested_maker.inner"),
+        # A function returning another's call result returns what it does.
+        ("    relay()()\n", "m.target"),
+    ],
+)
+def test_a_returned_function_is_called_where_its_value_is(
+    tmp_path: Path, use: str, callee: str
+) -> None:
+    calls = _run_calls(tmp_path, {"m.py": RETURNS + f"def use():\n{use}"})
+    assert _has(calls, ".m.use", callee)
+
+
+def test_a_returned_value_that_is_no_function_calls_nothing(tmp_path: Path) -> None:
+    calls = _run_calls(
+        tmp_path, {"m.py": RETURNS + "def use():\n    v = value()\n    v()\n"}
+    )
+    callees = {b for a, b in calls if a.endswith(".m.use")}
+    assert len(callees) == 1
+    assert _has(calls, ".m.use", ".m.value")
+
+
+PASSED = (
+    "def first():\n    pass\n\n\n"
+    "def second():\n    pass\n\n\n"
+    "def run(cb):\n    cb()\n\n\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("use", "reached"),
+    [
+        ("    b = first\n    run(b)\n", {"m.first"}),
+        ("    b = first\n    run(cb=b)\n", {"m.first"}),
+        # Each call hands over what the local holds there.
+        (
+            "    b = first\n    run(b)\n    b = second\n    run(b)\n",
+            {"m.first", "m.second"},
+        ),
+        ("    a = b = first\n    run(a)\n", {"m.first"}),
+    ],
+)
+def test_a_callback_passed_through_a_local_reaches_the_receiver(
+    tmp_path: Path, use: str, reached: set[str]
+) -> None:
+    calls = _run_calls(tmp_path, {"m.py": PASSED + f"def use():\n{use}"})
+    # Qualified names carry the temporary project's name; compare the tail.
+    got = {".".join(b.split(".")[-2:]) for a, b in calls if a.endswith(".m.run")}
+    assert got == reached

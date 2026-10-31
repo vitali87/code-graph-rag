@@ -20,11 +20,17 @@ name: CodeQL
 # - No `run:` step, so no event field ever reaches a shell.
 # - No `paths` filter: a PR it skipped would carry no CodeQL result and the
 #   ruleset would block it, which is the failure this file exists to remove.
+#
+# No base-branch filter on `pull_request` either. A PR merged into another
+# PR's branch (a stacked layer, or a fix aimed at one) reaches main through its
+# parent, and OpenSSF Scorecard's SAST check looks for a SAST result at the
+# head of the PR that merged each commit. Without a run of its own, every
+# commit such a PR carried counts as unscanned on main.
+# codebase_rag/tests/test_codeql_scans_every_pr.py holds both filters off.
 on:
   push:
     branches: [ "main" ]
   pull_request:
-    branches: [ "main" ]
   schedule:
     - cron: '23 5 * * 1'
 
