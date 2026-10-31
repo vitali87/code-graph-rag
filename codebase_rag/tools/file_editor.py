@@ -20,6 +20,7 @@ from ..models import LanguageSpec
 from ..parser_loader import load_parsers
 from ..schemas import EditResult
 from ..types_defs import AfterWrite, FunctionMatch
+from ..utils.source_encoding import source_codec
 from . import tool_descriptions as td
 
 _LINE_BREAK = re.compile(r"\r\n?")
@@ -172,6 +173,24 @@ def _select_function_match(
     return matches[0]
 
 
+def _write_atomic(
+    path: Path,
+    content: str,
+    *,
+    codec: str,
+    newline: str | None = None,
+) -> None:
+    """Encode content and write it atomically via a sibling temporary file."""
+    content.encode(codec)
+    tmp_path = path.with_name(f".{path.name}.tmp")
+    try:
+        with open(tmp_path, "w", encoding=codec, newline=newline) as f:
+            f.write(content)
+        tmp_path.replace(path)
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
 class FileEditor:
     __slots__ = ("project_root", "dmp", "parsers", "_write_lock")
 
@@ -261,7 +280,8 @@ class FileEditor:
 
     def apply_patch_to_file(self, file_path: str, patch_text: str) -> bool:
         try:
-            with open(file_path, encoding=cs.ENCODING_UTF8) as f:
+            codec = source_codec(Path(file_path))
+            with open(file_path, encoding=codec) as f:
                 original_content = f.read()
 
             patches = self.dmp.patch_fromText(patch_text)
@@ -272,8 +292,7 @@ class FileEditor:
                 logger.warning(ls.EDITOR_PATCH_FAILED.format(path=file_path))
                 return False
 
-            with open(file_path, "w", encoding=cs.ENCODING_UTF8) as f:
-                f.write(new_content)
+            _write_atomic(Path(file_path), new_content, codec=codec)
 
             logger.success(ls.EDITOR_PATCH_SUCCESS.format(path=file_path))
             return True
@@ -303,9 +322,8 @@ class FileEditor:
                 logger.error(ls.EDITOR_FILE_NOT_FOUND.format(path=file_path))
                 return failed
 
-            with open(
-                full_path, encoding=cs.ENCODING_UTF8, newline=cs.NEWLINE_UNTRANSLATED
-            ) as f:
+            codec = source_codec(full_path)
+            with open(full_path, encoding=codec, newline=cs.NEWLINE_UNTRANSLATED) as f:
                 text = _StoredText(f.read())
 
             target = _in_view(target_block)
@@ -353,13 +371,12 @@ class FileEditor:
                 logger.error(ls.EDITOR_SURGICAL_FAILED)
                 return failed
 
-            with open(
+            _write_atomic(
                 full_path,
-                "w",
-                encoding=cs.ENCODING_UTF8,
+                patched_content,
+                codec=codec,
                 newline=cs.NEWLINE_UNTRANSLATED,
-            ) as f:
-                f.write(patched_content)
+            )
 
             logger.success(ls.TOOL_FILE_EDIT_SURGICAL_SUCCESS.format(path=file_path))
             return EditResult(file_path=file_path)
@@ -391,9 +408,11 @@ class FileEditor:
                 logger.warning(ls.FILE_EDITOR_WARN.format(msg=error_msg))
                 return EditResult(file_path=str(file_path), error_message=error_msg)
 
+            codec = source_codec(file_path)
+            new_content.encode(codec)
             async with self._write_lock:
                 await asyncio.to_thread(
-                    file_path.write_text, new_content, encoding=cs.ENCODING_UTF8
+                    file_path.write_text, new_content, encoding=codec
                 )
 
             logger.success(ls.TOOL_FILE_EDIT_SUCCESS.format(path=file_path))
