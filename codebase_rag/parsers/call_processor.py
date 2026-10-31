@@ -4534,16 +4534,13 @@ class CallProcessor:
         # declares the name at another arity too (issue #2579): a plain
         # candidate would match the non-generic twin and misattribute a
         # generic twin's initializers to it, or dangle when there is no
-        # non-generic twin at all.
-        qualified = csharp_utils.namespace_qualified_name(class_node)
+        # non-generic twin at all. Every enclosing type segment carries
+        # its own arity spelling too, for the same reason: qualifying
+        # the leaf alone resolves a nested type inside a generic twin
+        # to its non-generic namesake.
+        qualified = csharp_utils.arity_qualified_path(class_node)
         if qualified is None:
             return class_qn
-        head, sep, own = qualified.rpartition(cs.SEPARATOR_DOT)
-        arity_name = csharp_utils.arity_qualified_name(class_node, own)
-        if sep:
-            qualified = f"{head}{sep}{arity_name}"
-        else:
-            qualified = arity_name
         candidate = f"{module_qn}{cs.SEPARATOR_DOT}{qualified}"
         if self._resolver.function_registry.get(candidate) == cs.NodeLabel.CLASS:
             return candidate
