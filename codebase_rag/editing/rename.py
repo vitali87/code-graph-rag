@@ -29,6 +29,7 @@ rewritten: prose is not a graph edge.
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Callable, Iterable
 from pathlib import Path, PurePosixPath
 from typing import NamedTuple
@@ -78,6 +79,53 @@ from .transaction import (
 QueryFn = Callable[[str, PropertyParams | None], list[ResultRow]]
 
 _IDENTIFIER_RE = r"(?<![\w])%s(?![\w])"
+
+# Reserved words a new name may not take, by the definition's language
+# (issue #3225); a language not listed is held to the identifier rule only.
+_RESERVED_WORDS: dict[cs.SupportedLanguage, frozenset[str]] = {
+    cs.SupportedLanguage.PYTHON: cs.PY_RESERVED_WORDS,
+    cs.SupportedLanguage.JS: cs.JS_RESERVED_WORDS,
+    cs.SupportedLanguage.TS: cs.JS_RESERVED_WORDS,
+    cs.SupportedLanguage.TSX: cs.JS_RESERVED_WORDS,
+    cs.SupportedLanguage.JAVA: cs.JAVA_RESERVED_WORDS,
+    cs.SupportedLanguage.GO: cs.GO_RESERVED_WORDS,
+    cs.SupportedLanguage.RUST: cs.RUST_RESERVED_WORDS,
+    cs.SupportedLanguage.C: cs.C_RESERVED_WORDS,
+    cs.SupportedLanguage.CPP: cs.CPP_RESERVED_WORDS,
+    cs.SupportedLanguage.CSHARP: cs.CSHARP_RESERVED_KEYWORDS,
+    cs.SupportedLanguage.LUA: cs.LUA_RESERVED_WORDS,
+}
+# Languages where a method's name is an IdentifierName, which a reserved
+# word may be: `class Store { delete() {} }` and `this.delete()` are valid.
+_RESERVED_METHOD_NAME_LANGUAGES = frozenset(
+    {cs.SupportedLanguage.JS, cs.SupportedLanguage.TS, cs.SupportedLanguage.TSX}
+)
+# Languages whose identifiers may contain `$` (`$emit`, jQuery's `$`).
+_DOLLAR_IDENTIFIER_LANGUAGES = frozenset(
+    {
+        cs.SupportedLanguage.JS,
+        cs.SupportedLanguage.TS,
+        cs.SupportedLanguage.TSX,
+        cs.SupportedLanguage.JAVA,
+        cs.SupportedLanguage.SCALA,
+        cs.SupportedLanguage.DART,
+    }
+)
+# Languages whose identifiers are ASCII alone: Lua's lexer reads letters and
+# digits as the C locale does, so `数据`, `Größe` and `x٣` do not load.
+_ASCII_IDENTIFIER_LANGUAGES = frozenset({cs.SupportedLanguage.LUA})
+
+
+def _is_go_identifier(name: str) -> bool:
+    # Go's letters are `_` and Unicode category L, its digits category Nd
+    # alone; `isidentifier` also admits `a·b`, a letter number (`Ⅻ`) and a
+    # combining mark.
+    return all(
+        char == cs.CHAR_UNDERSCORE
+        or unicodedata.category(char).startswith(cs.UNICODE_LETTER_CATEGORY_PREFIX)
+        or (index and unicodedata.category(char) == cs.UNICODE_DECIMAL_DIGIT_CATEGORY)
+        for index, char in enumerate(name)
+    )
 
 
 _STRUCTURAL = "structural"
@@ -1356,8 +1404,8 @@ class Renamer:
         self, qn: str, new_name: str, allow_heuristic: bool = False
     ) -> RenameReport:
         """Collect everything a rename touches; refuse on ambiguity."""
-        if not re.fullmatch(r"[A-Za-z_]\w*", new_name):
-            raise RenameRefused(cs.RENAME_BAD_NAME.format(name=new_name), [], [])
+        if (refusal := self._identifier_refusal(qn, new_name)) is not None:
+            raise RenameRefused(refusal, [], [])
         found = _hierarchy(self.fetch_all, self.project, qn, self.repo_root)
         members = found.members
         self._guessed_members = found.guessed
@@ -1484,6 +1532,40 @@ class Renamer:
             unplanned=tuple(unplanned),
             companions=companions,
         )
+
+    def _identifier_refusal(self, qn: str, new_name: str) -> str | None:
+        """Why `new_name` cannot name the definition, or None.
+
+        Held to the definition's language: Unicode identifiers (`Größe`,
+        `数据`) are valid nearly everywhere and `$` is valid in JS/TS, Java,
+        Scala and Dart, yet an ASCII-only first character refused both while
+        `aünï` passed; and a reserved word passed this check only to fail
+        the post-rewrite parse, if that parse failed at all (issue #3225).
+        """
+        found = graph_query.definition(self.fetch_all, self.project, qn, None)
+        path = found["path"]
+        language = get_language_for_extension(Path(path).suffix) if path else None
+        spelled = (
+            new_name.replace("$", "_")
+            if language in _DOLLAR_IDENTIFIER_LANGUAGES
+            else new_name
+        )
+        if (
+            not spelled.isidentifier()
+            or (language in _ASCII_IDENTIFIER_LANGUAGES and not new_name.isascii())
+            or (language == cs.SupportedLanguage.GO and not _is_go_identifier(new_name))
+        ):
+            return cs.RENAME_BAD_NAME.format(name=new_name)
+        if (
+            language is not None
+            and new_name in _RESERVED_WORDS.get(language, frozenset())
+            and not (
+                language in _RESERVED_METHOD_NAME_LANGUAGES
+                and found["label"] == cs.NodeLabel.METHOD.value
+            )
+        ):
+            return cs.RENAME_RESERVED_WORD.format(name=new_name, language=language)
+        return None
 
     def _unplanned(
         self,
