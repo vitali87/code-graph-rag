@@ -84,11 +84,14 @@ rules:
                         - kind: conditional_expression
                         - kind: list_splat
                         - kind: dictionary_splat
+                        - kind: string
+                          has: { kind: interpolation }
                       stopBy:
                         not:
                           any:
                             - kind: parenthesized_expression
                             - kind: keyword_argument
+                            - kind: concatenated_string
               stopBy:
                 not: { kind: parenthesized_expression }
   - id: hardcoded_secret
@@ -186,11 +189,14 @@ rules:
                         - kind: conditional_expression
                         - kind: list_splat
                         - kind: dictionary_splat
+                        - kind: string
+                          has: { kind: interpolation }
                       stopBy:
                         not:
                           any:
                             - kind: parenthesized_expression
                             - kind: keyword_argument
+                            - kind: concatenated_string
               stopBy:
                 not: { kind: parenthesized_expression }
   - id: subprocess_shell
