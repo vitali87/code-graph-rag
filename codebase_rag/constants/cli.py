@@ -38,6 +38,15 @@ class FileAction(StrEnum):
     EDIT = "edit"
 
 
+class PruneOutcome(StrEnum):
+    """What `cgr prune` did with one candidate (#2479)."""
+
+    PRUNED = "pruned"
+    FAILED = "failed"
+    # Its root came back, or the graph no longer names the root checked.
+    SKIPPED = "skipped"
+
+
 HELP_ARG = "help"
 
 CLI_ERR_OUTPUT_REQUIRES_UPDATE = (

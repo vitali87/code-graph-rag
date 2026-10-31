@@ -69,7 +69,7 @@ def stub(calls: _Calls) -> Iterator[MemgraphIngestor]:
             "codebase_rag.services.graph_service.prune_unanchored_resources",
             side_effect=_prune_resources,
         ),
-        patch.object(MemgraphIngestor, "__init__", lambda self: None),
+        patch.object(MemgraphIngestor, "__init__", return_value=None),
     ):
         yield MemgraphIngestor()
 

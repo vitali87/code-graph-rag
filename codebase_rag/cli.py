@@ -3947,114 +3947,121 @@ def _prune_projects(
 
     Returns the names verified as purged and the names whose removal could
     not be verified; the caller reports the second list as failures, never
-    as successes, and a root that came back is neither (it is skipped
-    without entering either). The delete is conditional on the project
-    still naming the root this run checked, inside the delete statement
-    itself, so a concurrent sync repointing the project's root_path is
-    skipped, not destroyed. A checkout recreated at the old path is still
-    only narrowed by the existence re-check. A purge that cannot be proven
-    complete -- the project still listed, or anything left under its name
-    -- is a failure, never a success. A proven purge then takes what
-    `delete-project` takes after its delete: the project's notes and its
-    incomplete-run markers, which would otherwise keep it in `cgr status`.
+    as successes, and a skipped candidate is in neither.
     """
     pruned: list[str] = []
     failures: list[str] = []
     for project_name, root in sorted(candidates.items()):
-        if not root_proven_missing(root):
-            app_context.console.print(
-                style(
-                    cs.CLI_WARN_PRUNE_ROOT_BACK.format(project_name=project_name),
-                    cs.Color.YELLOW,
-                )
-            )
-            continue
-        try:
-            # The vector ids are read while the project is still in the
-            # graph; embeddings go only when the conditional delete fires.
-            node_rows = ingestor.fetch_all(
-                cs.CYPHER_QUERY_PROJECT_NODE_IDS,
-                {cs.KEY_PROJECT_NAME: project_name},
-            )
-            _info(
-                style(
-                    cs.CLI_MSG_PRUNING_PROJECT.format(
-                        project_name=project_name, root=escape(root)
-                    ),
-                    cs.Color.YELLOW,
-                )
-            )
-            try:
-                fired = ingestor.delete_project(project_name, expected_root=root)
-            except Exception:
-                _sweep_glosses_after_failed_delete(ingestor, project_name)
-                raise
-        except GraphUnavailableError:
-            raise
-        except Exception as e:
-            _report_prune_failure(project_name, e)
+        outcome = _prune_one(ingestor, project_name, root, projects)
+        if outcome == cs.PruneOutcome.PRUNED:
+            pruned.append(project_name)
+        elif outcome == cs.PruneOutcome.FAILED:
             failures.append(project_name)
-            continue
-        if not fired:
-            app_context.console.print(
-                style(
-                    cs.CLI_WARN_PRUNE_ROOT_CHANGED.format(project_name=project_name),
-                    cs.Color.YELLOW,
-                )
-            )
-            continue
-        # The graph purge is proven either way; a vector deletion that
-        # fails or raises leaks vectors for dead node ids and is not
-        # recoverable by a retry, so it warns and the prune still counts.
-        try:
-            vectors_deleted = _cleanup_project_embeddings(
-                ingestor, project_name, projects, node_rows
-            )
-        except Exception as e:
-            logger.warning(
-                ls.CLI_PRUNE_VECTORS_FAILED.format(project=project_name, error=e)
-            )
-            vectors_deleted = False
-        if not vectors_deleted:
-            app_context.console.print(
-                style(
-                    cs.CLI_WARN_PRUNE_VECTORS_KEPT.format(project_name=project_name),
-                    cs.Color.YELLOW,
-                )
-            )
-        try:
-            verified = _purge_left_nothing(ingestor, project_name)
-        except GraphUnavailableError:
-            raise
-        except Exception as e:
-            _report_prune_failure(project_name, e)
-            failures.append(project_name)
-            continue
-        if not verified:
-            app_context.console.print(
-                style(
-                    cs.CLI_ERR_PRUNE_VERIFY_FAILED.format(project_name=project_name),
-                    cs.Color.RED,
-                )
-            )
-            failures.append(project_name)
-            continue
-        if not prune_orphaned_glosses(ingestor, project_name):
-            app_context.console.print(
-                style(
-                    cs.CLI_WARN_GLOSSES_NOT_PRUNED.format(project_name=project_name),
-                    cs.Color.YELLOW,
-                )
-            )
-        _clear_deleted_project_markers(ingestor, project_name)
-        app_context.console.print(
-            style(
-                cs.CLI_MSG_PROJECT_PRUNED.format(project_name=project_name),
-                cs.Color.GREEN,
-            )
-        )
-        pruned.append(project_name)
     return pruned, failures
+
+
+def _prune_one(
+    ingestor: MemgraphIngestor, project_name: str, root: str, projects: list[str]
+) -> cs.PruneOutcome:
+    """Prune one candidate (#2479).
+
+    The delete is conditional on the project still naming the root this run
+    checked, inside the delete statement itself, so a concurrent sync
+    repointing the project's root_path is skipped, not destroyed. A checkout
+    recreated at the old path is still only narrowed by the existence
+    re-check. A purge that cannot be proven complete -- the project still
+    listed, or anything left under its name -- is a failure, never a
+    success. A proven purge then takes what `delete-project` takes after its
+    delete: the project's notes and its incomplete-run markers, which would
+    otherwise keep it in `cgr status`.
+    """
+    if not root_proven_missing(root):
+        _say(cs.CLI_WARN_PRUNE_ROOT_BACK.format(project_name=project_name))
+        return cs.PruneOutcome.SKIPPED
+    try:
+        node_rows = _purge_if_root(ingestor, project_name, root)
+    except GraphUnavailableError:
+        raise
+    except Exception as e:
+        _report_prune_failure(project_name, e)
+        return cs.PruneOutcome.FAILED
+    if node_rows is None:
+        _say(cs.CLI_WARN_PRUNE_ROOT_CHANGED.format(project_name=project_name))
+        return cs.PruneOutcome.SKIPPED
+    _delete_pruned_vectors(ingestor, project_name, projects, node_rows)
+    try:
+        verified = _purge_left_nothing(ingestor, project_name)
+    except GraphUnavailableError:
+        raise
+    except Exception as e:
+        _report_prune_failure(project_name, e)
+        return cs.PruneOutcome.FAILED
+    if not verified:
+        _say(
+            cs.CLI_ERR_PRUNE_VERIFY_FAILED.format(project_name=project_name),
+            cs.Color.RED,
+        )
+        return cs.PruneOutcome.FAILED
+    if not prune_orphaned_glosses(ingestor, project_name):
+        _say(cs.CLI_WARN_GLOSSES_NOT_PRUNED.format(project_name=project_name))
+    _clear_deleted_project_markers(ingestor, project_name)
+    _say(cs.CLI_MSG_PROJECT_PRUNED.format(project_name=project_name), cs.Color.GREEN)
+    return cs.PruneOutcome.PRUNED
+
+
+def _say(message: str, color: cs.Color = cs.Color.YELLOW) -> None:
+    app_context.console.print(style(message, color))
+
+
+def _purge_if_root(
+    ingestor: MemgraphIngestor, project_name: str, root: str
+) -> list[ResultRow] | None:
+    """Run the conditional purge; the project's node-id rows when it fired.
+
+    The ids are read while the project is still in the graph: once it is
+    deleted no query can recover them, and its vectors go only when the
+    conditional delete fires. None when it did not fire.
+    """
+    node_rows = ingestor.fetch_all(
+        cs.CYPHER_QUERY_PROJECT_NODE_IDS,
+        {cs.KEY_PROJECT_NAME: project_name},
+    )
+    _info(
+        style(
+            cs.CLI_MSG_PRUNING_PROJECT.format(
+                project_name=project_name, root=escape(root)
+            ),
+            cs.Color.YELLOW,
+        )
+    )
+    try:
+        fired = ingestor.delete_project(project_name, expected_root=root)
+    except Exception:
+        _sweep_glosses_after_failed_delete(ingestor, project_name)
+        raise
+    return node_rows if fired else None
+
+
+def _delete_pruned_vectors(
+    ingestor: MemgraphIngestor,
+    project_name: str,
+    projects: list[str],
+    node_rows: list[ResultRow],
+) -> None:
+    # The graph purge is proven either way; a vector deletion that fails or
+    # raises leaks vectors for dead node ids and is not recoverable by a
+    # retry, so it warns and the prune still counts.
+    try:
+        deleted = _cleanup_project_embeddings(
+            ingestor, project_name, projects, node_rows
+        )
+    except Exception as e:
+        logger.warning(
+            ls.CLI_PRUNE_VECTORS_FAILED.format(project=project_name, error=e)
+        )
+        deleted = False
+    if not deleted:
+        _say(cs.CLI_WARN_PRUNE_VECTORS_KEPT.format(project_name=project_name))
 
 
 @app.command(
