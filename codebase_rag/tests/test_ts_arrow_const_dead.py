@@ -47,6 +47,7 @@ def test_the_issue_reports_the_arrow_consts(tmp_path: Path) -> None:
         ("m.js", "var unusedGen = function* () { yield 1; };", "unusedGen"),
         ("m.ts", "const typed: () => number = () => 1;", "typed"),
         ("m.tsx", "const Unused = () => <div />;", "Unused"),
+        ("m.js", "const same = function same() { return 1; };", "same"),
     ],
 )
 def test_every_inline_function_declarator_can_be_dead(
@@ -88,6 +89,25 @@ def test_an_arrow_const_that_is_used_stays_live(tmp_path: Path, name: str) -> No
         {"app.tsx": _LIVE_TSX, "bus.ts": "export function register(f: unknown) {}\n"},
     )
     assert f"app.{name}" not in _dead(graph)
+
+
+@pytest.mark.parametrize(
+    ("file_name", "declaration", "use"),
+    [
+        ("m.js", "const run = function worker() { return 1; };", "run()"),
+        ("m.ts", "const run = function worker() { return 1; };", "run()"),
+        ("m.js", "const gen = function* worker() { yield 1; };", "gen()"),
+        ("m.ts", "const cb = function worker(x: number) { return x; };", "[1].map(cb)"),
+        ("m.js", "const bound = (() => 1).bind(null);", "bound()"),
+    ],
+)
+def test_a_function_registered_under_another_name_stays_live(
+    tmp_path: Path, file_name: str, declaration: str, use: str
+) -> None:
+    # Negative: the function is registered as `worker` or as an anonymous
+    # function, so a use of the variable never resolves to it by name.
+    src = f"{declaration}\nexport function entry() {{ return {use}; }}\n"
+    assert _dead(_index(tmp_path, {file_name: src})) == set()
 
 
 @pytest.mark.parametrize(
