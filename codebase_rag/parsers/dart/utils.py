@@ -217,8 +217,12 @@ def dart_exposes_library(directive: Node) -> bool:
     `export 'x.dart';` re-exports x, and `part 'x.dart';` makes x part of the
     library itself; a plain `import` only brings x into this file's scope.
     """
-    if directive.type == cs.TS_DART_PART_DIRECTIVE:
-        return True
+    return directive.type == cs.TS_DART_PART_DIRECTIVE or dart_is_export(directive)
+
+
+def dart_is_export(directive: Node) -> bool:
+    """Is this an `export 'x.dart';` directive? It hands x to the library's
+    importers without bringing x's names into the library's own scope."""
     return any(
         child.type == cs.TS_DART_LIBRARY_EXPORT for child in directive.named_children
     )
