@@ -2830,6 +2830,15 @@ class CallResolver:
         # place is unknown rather than known, and keeps the trie.
         if path := _rust_assoc_path(call):
             object_path, item = path
+            # A path names one type, so a block written away from it counts
+            # only when its own self path names that type: by name alone,
+            # another same-named type's block won on import distance.
+            if (bound := self._rust_path_type_qn(object_path, call)) is not None:
+                result = self._rust_bound_type_method(
+                    bound, item, object_path[-1], call
+                )
+                self._remember_cacheable(cache_key, result)
+                return True, result
             owners = self._rust_qualifier_types(
                 object_path, call.module_qn, call.class_context
             )
@@ -2877,6 +2886,28 @@ class CallResolver:
         ):
             owners.add(type_qn)
         return frozenset(owners) or None
+
+    def _rust_path_type_qn(self, object_path: list[str], call: _CallSite) -> str | None:
+        # A qualifier written with its path (`grep_searcher::BinaryDetection`,
+        # `crate::searcher::BinaryDetection`) names one type, read where the
+        # call is written the way a receiver's declared path is: an inline
+        # mod's `self::` counts from the mod, and a head may be a module of
+        # the caller's own that re-exports the type. Handing the bare last
+        # segment to the class lookup dropped the path, and that lookup
+        # declines a name several types share (issue #2982).
+        if len(object_path) < 2:
+            return None
+        path = cs.SEPARATOR_DOUBLE_COLON.join(object_path)
+        type_qn = (
+            self._rust_inline_path_type(path, call.module_qn, call.caller_qn)
+            if call.caller_qn
+            else None
+        ) or self._rust_module_path_type(path, call.module_qn)
+        if type_qn is None or (
+            self.function_registry.get(type_qn) not in _RS_OWNER_NODE_TYPES
+        ):
+            return None
+        return type_qn
 
     def _rust_owned_method(
         self,
