@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import importlib
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -28,6 +29,7 @@ from codebase_rag import constants as cs
 from codebase_rag.editing.move import (
     _JS_LANGUAGES,
     _import_block_end,
+    _js_binding_key,
     _module_bound,
     _narrow_statement,
 )
@@ -116,7 +118,7 @@ def test_a_relative_from_import_is_respelled_for_the_destination(
 
 
 def test_the_respelled_relative_import_resolves_to_the_original_module(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The interpreter, not a string comparison, is the judge of `..`."""
     (tmp_path / "pkg" / "sub").mkdir(parents=True)
@@ -130,13 +132,39 @@ def test_the_respelled_relative_import_resolves_to_the_original_module(
     )
     assert line is not None
     (tmp_path / "pkg" / "core.py").write_text(line + "\n")
-    sys.path.insert(0, str(tmp_path))
+    monkeypatch.syspath_prepend(str(tmp_path))
     try:
         assert importlib.import_module("pkg.core").X == "sub.deps"
     finally:
-        sys.path.remove(str(tmp_path))
         for name in [m for m in sys.modules if m == "pkg" or m.startswith("pkg.")]:
             del sys.modules[name]
+
+
+def test_a_long_whitespace_run_before_from_is_scanned_in_linear_time() -> None:
+    """The `from` pattern opened with `\\s+`, so every space in a run
+    restarted the scan: 100 000 spaces took about ten seconds."""
+    statement = "import" + " " * 100_000 + "x from './m'"
+
+    started = time.perf_counter()
+    narrowed = _narrow_statement(statement, "x", JS, "src/a.js", "src/b.js")
+
+    assert time.perf_counter() - started < 1.0
+    assert narrowed == statement
+
+
+def test_narrowing_keeps_the_whitespace_before_from() -> None:
+    narrowed = _narrow_statement(
+        "import { a, b }   from './m'", "a", JS, "src/a.js", "src/b.js"
+    )
+
+    assert narrowed == "import { a }   from './m'"
+
+
+def test_from_with_no_whitespace_before_it_is_not_a_from_clause() -> None:
+    statement = "import { a, b }from './m'"
+
+    assert _narrow_statement(statement, "a", JS, "src/a.js", "src/b.js") == statement
+    assert _js_binding_key(statement, "a", "src/a.js") is None
 
 
 @pytest.mark.parametrize(

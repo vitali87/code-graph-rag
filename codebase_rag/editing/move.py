@@ -91,8 +91,10 @@ _PINNED_COMMENT_LINES = 2
 # What a cut that ends mid-line swallows after the definition.
 _INLINE_SPACE = (b" ", b"\t")
 # `import D, * as ns, { a } from ...`: the clause between the keyword and
-# `from`, and the one-binding clauses it is split into.
-_JS_FROM = re.compile(r"\s+from\s+(?=['\"])")
+# `from`, and the one-binding clauses it is split into. Matched at `from`
+# itself: a leading `\s+` restarted at every space of a long run, so the
+# whitespace before it is found by `_js_from_start` instead.
+_JS_FROM = re.compile(r"(?<=\s)from\s++(?=['\"])")
 _JS_NAMESPACE = re.compile(r"\*\s*as\s+(?P<name>[\w$]+)")
 # A TS inline type-only entry (`{ type Foo }`) binds `Foo`; the modifier
 # must be set aside before comparing, but `{ type }` alone is a real name.
@@ -1294,11 +1296,12 @@ class Mover:
     ) -> None:
         """Append `paste` to an existing destination, and enable the
         `futures` it lacks at its head."""
-        sep = (
-            ""
-            if not existing.strip()
-            else ("\n" if existing.endswith(b"\n\n") else "\n\n")
-        )
+        if not existing.strip():
+            sep = ""
+        elif existing.endswith(b"\n\n"):
+            sep = "\n"
+        else:
+            sep = "\n\n"
         if existing and not existing.endswith(b"\n"):
             sep = "\n" + sep
         have = set(cls._future_features(existing))
@@ -2081,17 +2084,29 @@ class Mover:
             end = line_col_to_byte(
                 source, row["end_line"] or line, row["end_col"] or col
             )
-            at = source.find(old_attr, start, end)
-            if at < 0:
-                # A member call's site starts at its name (#3166), past the
-                # module path it is reached through.
-                at = start + len(name.encode(cs.ENCODING_UTF8)) - len(old_attr)
-                if at < 0 or source[at : at + len(old_attr)] != old_attr:
-                    continue
+            at = self._qualified_use_at(source, start, end, old_attr, name)
+            if at is None:
+                continue
             patcher.replace_span(path, (at, at + len(old_attr)), new_attr)
             if path not in touched:
                 touched.add(path)
                 self._import_module(patcher, path, source, new_spelled)
+
+    @staticmethod
+    def _qualified_use_at(
+        source: bytes, start: int, end: int, old_attr: bytes, name: str
+    ) -> int | None:
+        """Where the call site spanning `start`..`end` spells `old_attr`
+        (`pkg.util.helper`), or None when it does not."""
+        at = source.find(old_attr, start, end)
+        if at >= 0:
+            return at
+        # A member call's site starts at its name (#3166), past the
+        # module path it is reached through.
+        at = start + len(name.encode(cs.ENCODING_UTF8)) - len(old_attr)
+        if at < 0 or source[at : at + len(old_attr)] != old_attr:
+            return None
+        return at
 
     def _import_module(
         self, patcher: Patcher, path: str, source: bytes, module: str
@@ -2432,6 +2447,13 @@ def _js_entry_local(entry: str) -> str:
     return _local_name(_TS_INLINE_TYPE.sub("", entry, count=1))
 
 
+def _js_from_start(text: str) -> int | None:
+    """Where the whitespace before a JS/TS import's `from` begins, or None
+    when the statement has no `from` clause."""
+    found = _JS_FROM.search(text)
+    return None if found is None else len(text[: found.start()].rstrip())
+
+
 def _narrow_js(statement: str, alias: str, old_path: str, new_path: str) -> str | None:
     """A JS/TS import reduced to the one clause that binds `alias`.
 
@@ -2452,12 +2474,12 @@ def _narrow_js(statement: str, alias: str, old_path: str, new_path: str) -> str 
             + statement[spec.end("spec") :]
         )
     keyword = _JS_KEYWORD.match(text)
-    source_at = _JS_FROM.search(text)
-    if keyword is None or source_at is None or source_at.start() < keyword.end():
+    source_at = _js_from_start(text)
+    if keyword is None or source_at is None or source_at < keyword.end():
         # A side-effect import (`import './x'`) binds nothing to narrow.
         return text.strip()
-    clause = text[keyword.end() : source_at.start()].strip()
-    tail = text[source_at.start() :]
+    clause = text[keyword.end() : source_at].strip()
+    tail = text[source_at:]
     named = _JS_NAMED.search(clause)
     if named is not None:
         entries = [e.strip() for e in named.group("names").split(",") if e.strip()]
