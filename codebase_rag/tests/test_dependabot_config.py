@@ -5,7 +5,7 @@ from __future__ import annotations
 import tomllib
 from fnmatch import fnmatch
 from pathlib import Path
-from typing import Any
+from typing import TypedDict
 
 import pytest
 import yaml
@@ -208,7 +208,12 @@ _GRAPH_RS = "/rust/cgr_graph_rs"
 _GRAPH_RS_FUZZ = "/rust/cgr_graph_rs/fuzz"
 
 
-def _graph_rs_update() -> dict[str, Any]:
+class _CargoUpdate(TypedDict, total=False):
+    directories: list[str]
+    groups: dict[str, dict[str, str]]
+
+
+def _graph_rs_update() -> _CargoUpdate:
     config = yaml.safe_load(
         (REPO_ROOT / ".github" / "dependabot.yml").read_text(encoding=cs.ENCODING_UTF8)
     )
@@ -247,7 +252,7 @@ def test_the_crate_and_its_fuzz_targets_move_together() -> None:
 def test_the_fuzz_targets_pin_the_crates_rusqlite() -> None:
     # What the grouping keeps true: the fuzz workspace asks for the same
     # rusqlite the crate does.
-    def rusqlite(directory: str) -> object:
+    def rusqlite(directory: str) -> dict[str, str | list[str]]:
         with (REPO_ROOT / directory.lstrip("/") / "Cargo.toml").open("rb") as f:
             return tomllib.load(f)["dependencies"]["rusqlite"]
 
