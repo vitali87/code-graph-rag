@@ -69,6 +69,14 @@ _CtorDecls = dict[str, list[tuple[int, int, "ASTNode | None"]]]
 _CtorAssigns = dict[str, list[tuple[int, "ASTNode"]]]
 _CtorBindingIndex = tuple[_CtorDecls, _CtorAssigns]
 
+# A function's own variables by the byte span each holds in, a name mapped
+# to None declared there without a type; what each typed binding falls back
+# to when a write disagrees; and one plain write: (name, site byte, type of
+# the value written).
+_OwnScopes = dict[tuple[int, int], dict[str, str | None]]
+_OwnAnnotations = dict[tuple[tuple[int, int], str], str | None]
+_PlainWrite = tuple[str, int, str | None]
+
 if TYPE_CHECKING:
     from ...types_defs import LanguageQueries
     from ..import_processor import ImportProcessor
@@ -357,6 +365,146 @@ class JsTypeInferenceEngine:
             declarator_count=declarator_count,
         )
         return local_var_types
+
+    def own_scope_variable_types(
+        self,
+        func_node: ASTNode,
+        module_qn: str,
+        language: cs.SupportedLanguage | None = None,
+    ) -> _OwnScopes:
+        """The variables a function declares itself, the ones a nested
+        function captures (issue #3200), by the byte span each holds in: a
+        `let` or `const` holds in its block, where a same-named one in a
+        sibling block is another variable. A name mapped to None is declared
+        there without a type, and still hides a same-named one further out.
+        Unlike the caller map, a nested function's own declarations are left
+        out: a same-named local there is a different variable.
+
+        A binding keeps its type only while every plain write to it agrees:
+        the nested function may run after `r = new Other()`, so a write of
+        another or an unknown type leaves the declared annotation, if any
+        (Greptile on #3331). A write in a nested function counts unless that
+        function declares the name itself."""
+        root = func_node
+        while root.parent is not None:
+            root = root.parent
+        scopes: _OwnScopes = {}
+        for name, spans in self._js_binding_index(func_node, root, language).items():
+            for span in spans:
+                scopes.setdefault(span, {})[name] = None
+        annotated: _OwnAnnotations = {}
+        # A first-party interface parameter types as it does in the
+        # function's own map (#2524); a `var` redeclaring it wins below.
+        parameters: dict[str, str] = {}
+        self._seed_interface_parameters(func_node, parameters, module_qn)
+        if parameters:
+            whole = (func_node.start_byte, func_node.end_byte)
+            scopes.setdefault(whole, {}).update(parameters)
+            annotated.update(((whole, name), qn) for name, qn in parameters.items())
+        writes = self._walk_own_scope(func_node, scopes, annotated, module_qn, language)
+        self._apply_own_scope_writes(scopes, annotated, writes)
+        return scopes
+
+    def _walk_own_scope(
+        self,
+        func_node: ASTNode,
+        scopes: _OwnScopes,
+        annotated: _OwnAnnotations,
+        module_qn: str,
+        language: cs.SupportedLanguage | None,
+    ) -> list[_PlainWrite]:
+        # Records the function's own typed declarators and returns the plain
+        # writes to names it may hold: its own, and its nested functions'
+        # writes to names they do not declare.
+        writes: list[_PlainWrite] = []
+        body = func_node.child_by_field_name(cs.FIELD_BODY)
+        # Each node with the names the nested functions around it declare,
+        # None while still in this function's own body.
+        stack: list[tuple[ASTNode, frozenset[str] | None]] = (
+            [(child, None) for child in reversed(body.children)] if body else []
+        )
+        while stack:
+            current, declared = stack.pop()
+            if current.type in cs.JS_TS_FUNCTION_NODES:
+                own = ut.js_ts_own_scope_names(current, assigned=False)
+                declared = own if declared is None else declared | own
+            elif declared is None and current.type == cs.TS_VARIABLE_DECLARATOR:
+                self._record_own_declarator(
+                    current, func_node, scopes, annotated, module_qn, language
+                )
+            elif write := self._js_plain_write(current, declared, module_qn, language):
+                writes.append(write)
+            stack.extend((child, declared) for child in reversed(current.children))
+        return writes
+
+    @staticmethod
+    def _apply_own_scope_writes(
+        scopes: _OwnScopes, annotated: _OwnAnnotations, writes: list[_PlainWrite]
+    ) -> None:
+        for name, pos, value_type in writes:
+            around = [
+                span
+                for span, names in scopes.items()
+                if name in names and span[0] <= pos < span[1]
+            ]
+            if not around:
+                continue
+            # Nested spans: the innermost starts latest.
+            span = max(around, key=lambda s: (s[0], -s[1]))
+            held = scopes[span][name]
+            if held is not None and value_type != held:
+                scopes[span][name] = annotated.get((span, name))
+
+    def _record_own_declarator(
+        self,
+        declarator: ASTNode,
+        func_node: ASTNode,
+        scopes: _OwnScopes,
+        annotated: _OwnAnnotations,
+        module_qn: str,
+        language: cs.SupportedLanguage | None,
+    ) -> None:
+        typed: dict[str, str] = {}
+        self._record_declarator(declarator, typed, module_qn, language)
+        if not typed:
+            return
+        span = self._js_declarator_span(declarator, func_node)
+        scopes.setdefault(span, {}).update(typed)
+        type_node = declarator.child_by_field_name("type")
+        annotation = (
+            self._annotation_type(type_node, module_qn)
+            if type_node is not None
+            else None
+        )
+        annotated.update(((span, name), annotation) for name in typed)
+
+    def _js_plain_write(
+        self,
+        node: ASTNode,
+        declared: frozenset[str] | None,
+        module_qn: str,
+        language: cs.SupportedLanguage | None,
+    ) -> _PlainWrite | None:
+        # `r = v` or `r ??= v`, unless a nested function around it declares
+        # `r`: the name written, where, and v's type.
+        if node.type not in (
+            cs.TS_JS_ASSIGNMENT_EXPRESSION,
+            cs.TS_JS_AUGMENTED_ASSIGNMENT_EXPRESSION,
+        ):
+            return None
+        left = node.child_by_field_name(cs.FIELD_LEFT)
+        if left is None or left.type != cs.TS_IDENTIFIER:
+            return None
+        name = safe_decode_text(left)
+        if not name or (declared is not None and name in declared):
+            return None
+        value = node.child_by_field_name(cs.TS_FIELD_RIGHT)
+        value_type = (
+            self._infer_js_variable_type_from_value(value, module_qn, language)
+            if value is not None
+            else None
+        )
+        return name, node.start_byte, value_type
 
     def _seed_interface_parameters(
         self, caller_node: ASTNode, local_var_types: dict[str, str], module_qn: str

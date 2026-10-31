@@ -504,6 +504,17 @@ def _locally_bound_names(caller: Node, import_map: dict[str, str]) -> frozenset[
     return frozenset(names)
 
 
+def own_scope_names(function: Node) -> frozenset[str]:
+    """Every name a def binds itself, and so does not read from the def
+    around it: its parameters, whatever its own statements bind, and what it
+    declares `global` or `nonlocal` (a name it may rebind, whose type is no
+    longer the enclosing one's to lend). Unlike `_locally_bound_names`, the
+    enclosing defs' names are not included: they are what a closure
+    captures (issue #3200)."""
+    facts = scope_facts(function)
+    return frozenset((*facts.params, *facts.bound, *facts.declared))
+
+
 def _inner_scope_bindings(scope: Node) -> set[str]:
     """The names a comprehension's `for` targets or a lambda's parameters
     bind."""
