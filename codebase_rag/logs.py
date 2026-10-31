@@ -1583,6 +1583,10 @@ JAVA_FRONTEND_UNAVAILABLE = (
 JAVA_FRONTEND_FACTS = (
     "javac facts: {calls} resolved call sites, {externals} external sites"
 )
+TSCONFIG_UNPARSEABLE = (
+    "Could not read {path} as JSONC; its `paths` and `baseUrl` are ignored, "
+    "so its alias imports resolve as packages"
+)
 
 # Sync lock (issue #2441)
 SYNC_LOCK_WAITING = "Waiting for the running sync of {repo} ({holder}) to finish"
