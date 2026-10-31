@@ -77,6 +77,28 @@ updates:
     schedule:
       interval: "monthly"
 
+  # cgr-graph-rs, the native extension cgr installs by default, and its
+  # cargo-fuzz targets. The fuzz workspace pins the crate's own rusqlite, and
+  # the bundled SQLite can be linked only once per build, so each bump lands
+  # in both directories in one pull request. Every change here ships as a new
+  # cgr-graph-rs release, so monthly is enough; security updates arrive
+  # regardless of the schedule.
+  - package-ecosystem: "cargo"
+    directories:
+      - "/rust/cgr_graph_rs"
+      - "/rust/cgr_graph_rs/fuzz"
+    schedule:
+      interval: "monthly"
+    groups:
+      cgr-graph-rs:
+        group-by: dependency-name
+    ignore:
+      # The tree walks read py-tree-sitter's trees in place, so the runtime
+      # moves only with the py-tree-sitter pin, by hand (AGENTS.md), and the
+      # grammar the crate's tests parse with must be one that runtime loads.
+      - dependency-name: "tree-sitter"
+      - dependency-name: "tree-sitter-python"
+
   - package-ecosystem: "gomod"
     directory: "/codebase_rag/parsers/go_frontend/gotypes"
     schedule:
