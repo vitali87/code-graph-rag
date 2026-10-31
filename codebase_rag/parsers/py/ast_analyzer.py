@@ -634,6 +634,53 @@ def _call_bound_by(binder: Node) -> Node | None:
     return value if value is not None and value.type == cs.TS_PY_CALL else None
 
 
+def sole_bound_call(name: Node) -> Node | None:
+    """The call the name read at `name` holds, if it holds anything: the def
+    the read sits in binds it once, by a plain `name = call()`, annotated or
+    not. A read before that binding raises rather than reading another
+    value, so where the one binding sits does not matter.
+
+    None for a parameter, a name a `global` or `nonlocal` declares (in a
+    nested def too, which rebinds it from there), one a lambda or
+    comprehension around the read binds for itself, a second binding of any
+    kind, or a name the def does not bind.
+    """
+    text = safe_decode_text(name)
+    scope = _own_scope(name)
+    if not text or scope is None or scope.type != cs.TS_PY_FUNCTION_DEFINITION:
+        return None
+    current = name.parent
+    while current is not None and current.id != scope.id:
+        if (
+            current.type == cs.TS_PY_LAMBDA or current.type in cs.PY_COMPREHENSION_TYPES
+        ) and text in _inner_scope_bindings(current):
+            return None
+        current = current.parent
+    if text in _parameter_names(scope) or text in _declared_anywhere_in(scope):
+        return None
+    binders = [
+        binder
+        for binder, identifier in _bindings_in(scope)
+        if safe_decode_text(identifier) == text
+    ]
+    return _call_bound_by(binders[0]) if len(binders) == 1 else None
+
+
+def _declared_anywhere_in(scope: Node) -> set[str]:
+    """Every name a `global` or `nonlocal` under `scope` declares, its nested
+    defs' included: unlike `_declared_non_local`, which keeps to the scope's
+    own body."""
+    declared: set[str] = set()
+    stack = [scope]
+    while stack:
+        node = stack.pop()
+        if node.type in cs.PY_DECLARATION_TYPES:
+            declared.update(_declared_names(node))
+        else:
+            stack.extend(node.named_children)
+    return declared
+
+
 def _binding_events(
     name: str, before: int, caller: Node
 ) -> list[tuple[int, Node | None]]:

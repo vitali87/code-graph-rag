@@ -20,12 +20,13 @@ from __future__ import annotations
 import ast
 import re
 import time
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from functools import lru_cache
 from pathlib import Path
+from types import MappingProxyType
 from typing import NamedTuple, TypedDict
 
-from tree_sitter import Node, Tree
+from tree_sitter import Node, Parser, Tree
 
 from . import constants as cs
 from . import cypher_queries as cq
@@ -40,7 +41,9 @@ from .dead_code import (
 from .duplicates import _jaccard
 from .graph_query import QueryFn, _longer_project_prefixes, _opt_int, _prefix
 from .language_spec import get_language_for_extension
+from .parser_loader import load_parsers
 from .types_defs import PropertyDict, ReingestReport, ResultRow
+from .utils.source_encoding import grammar_bytes
 
 _METHOD_LABELS = frozenset({cs.NodeLabel.METHOD.value})
 
@@ -56,6 +59,10 @@ class Definition(NamedTuple):
     fingerprint: str
     fingerprint_nodes: int
     branches: frozenset[str]
+    # None where the node records none: the graph predates them, or a
+    # hand-built row leaves them out.
+    decorators: tuple[str, ...] | None = None
+    modifiers: tuple[str, ...] | None = None
 
 
 class CallSite(NamedTuple):
@@ -105,6 +112,7 @@ class Snapshot(NamedTuple):
     `definitions` are the symbols defined in the touched files; `callees`
     the definitions elsewhere that the touched files' sites resolve to;
     `bindings` the by-name imports into and out of the touched files;
+    `callers` the definitions elsewhere that make sites into them;
     `modules` the (qualified name, path) of each Module at a touched path,
     and `module_bindings` every import of one of them.
     """
@@ -116,6 +124,7 @@ class Snapshot(NamedTuple):
     imports: dict[str, frozenset[str]]
     module_paths: dict[str, str]
     bindings: tuple[ImportBinding, ...] = ()
+    callers: Mapping[str, Definition] = MappingProxyType({})
     modules: frozenset[tuple[str, str]] = frozenset()
     module_bindings: tuple[ImportBinding, ...] = ()
 
@@ -182,6 +191,26 @@ class SignatureChange(TypedDict):
     remote_callers: list[RemoteCaller]
 
 
+class ConventionAtSite(TypedDict):
+    caller: str
+    path: str
+    line: int | None
+    col: int | None
+    verdict: str
+
+
+class ConventionChange(TypedDict):
+    """A definition whose decorators or modifiers changed how it is called
+    (issue #3259), with every call site and a verdict each."""
+
+    qualified_name: str
+    path: str
+    before: list[str]
+    after: list[str]
+    changes: list[str]
+    sites: list[ConventionAtSite]
+
+
 class DuplicateOriginal(TypedDict):
     qualified_name: str
     path: str
@@ -235,6 +264,7 @@ class StructuralDelta(TypedDict):
     dangling_callers: list[DanglingCaller]
     dangling_importers: list[DanglingImporter]
     signature_changes: list[SignatureChange]
+    convention_changes: list[ConventionChange]
     arity_findings: list[ArityAtSite]
     new_duplicates: list[NewDuplicate]
     new_import_cycles: list[list[str]]
@@ -264,6 +294,10 @@ def _strings(value: object) -> tuple[str, ...]:
     return ()
 
 
+def _recorded(value: object) -> tuple[str, ...] | None:
+    return _strings(value) if isinstance(value, list) else None
+
+
 def normalise_paths(paths: Iterable[Path | str], repo_root: Path | None) -> list[str]:
     """Repo-relative POSIX paths, the form the graph stores in `path`."""
     out: set[str] = set()
@@ -291,6 +325,8 @@ def _definition(row: ResultRow) -> Definition:
         fingerprint=_text(row.get(cs.KEY_AST_FINGERPRINT)),
         fingerprint_nodes=_int(row.get(cs.KEY_AST_FINGERPRINT_NODES)),
         branches=frozenset(_strings(row.get(cs.KEY_AST_BRANCH_FINGERPRINTS))),
+        decorators=_recorded(row.get(cs.KEY_DECORATORS)),
+        modifiers=_recorded(row.get(cs.KEY_MODIFIERS)),
     )
 
 
@@ -376,6 +412,26 @@ def _has_longer_project_owner(
     )
 
 
+def _definitions_by_qn(
+    fetch_all: QueryFn,
+    qns: list[str],
+    project_name: str,
+    longer_prefixes: tuple[str, ...],
+) -> dict[str, Definition]:
+    """The definitions of `qns`, read by qualified name wherever they are."""
+    if not qns:
+        return {}
+    rows = fetch_all(
+        cq.CYPHER_DELTA_DEFINITIONS_BY_QN,
+        {
+            cs.KEY_QNS: qns,
+            cs.KEY_PROJECT_PREFIX: _prefix(project_name),
+            cs.KEY_LONGER_PROJECT_PREFIXES: list(longer_prefixes),
+        },
+    )
+    return {d.qualified_name: d for d in map(_definition, rows)}
+
+
 def snapshot(
     fetch_all: QueryFn,
     project_name: str,
@@ -405,20 +461,14 @@ def snapshot(
         for site in (_site(row) for row in fetch_all(cq.CYPHER_DELTA_SITES, params))
         if site.caller and site.callee
     )
-    missing = sorted({s.callee for s in sites} - set(definitions))
-    callees: dict[str, Definition] = {}
-    if missing:
-        for row in fetch_all(
-            cq.CYPHER_DELTA_DEFINITIONS_BY_QN,
-            {
-                cs.KEY_QNS: missing,
-                cs.KEY_PROJECT_PREFIX: _prefix(project_name),
-                cs.KEY_LONGER_PROJECT_PREFIXES: list(longer_prefixes),
-            },
-        ):
-            definition = _definition(row)
-            if definition.qualified_name:
-                callees[definition.qualified_name] = definition
+    # A caller in another file is read too: what `this` is in it decides
+    # how its call into a touched file binds (bot review on PR #3311).
+    missing_callees = {s.callee for s in sites} - set(definitions)
+    missing_callers = {s.caller for s in sites} - set(definitions)
+    missing = sorted(missing_callees | missing_callers)
+    found = _definitions_by_qn(fetch_all, missing, project_name, longer_prefixes)
+    callees = {qn: d for qn, d in found.items() if qn in missing_callees}
+    callers = {qn: d for qn, d in found.items() if qn in missing_callers}
     imports: dict[str, set[str]] = {}
     module_paths: dict[str, str] = {}
     for row in fetch_all(cq.CYPHER_DELTA_MODULE_IMPORTS, params):
@@ -437,6 +487,7 @@ def snapshot(
         imports={qn: frozenset(targets) for qn, targets in imports.items()},
         module_paths=module_paths,
         bindings=_named_import_bindings(fetch_all, params),
+        callers=callers,
         modules=_touched_modules(fetch_all, params),
         module_bindings=_module_import_bindings(fetch_all, params),
     )
@@ -644,11 +695,35 @@ def _params_moved(old: Definition, new: Definition) -> bool:
     return old.positional_params is not None and new.positional_params is not None
 
 
+def _reshaped(old: Definition, new: Definition) -> bool:
+    """Whether the skeleton or the declared parameters moved."""
+    return old.fingerprint != new.fingerprint or _params_moved(old, new)
+
+
+def _attributes_moved(old: Definition, new: Definition) -> bool:
+    """Whether the decorators or modifiers differ (issue #3259).
+
+    The fingerprint covers neither: a Python decorator sits outside the
+    function node, and the skeleton drops modifier keywords. A side that
+    recorded none is not compared, as for the parameter lists.
+    """
+    decorators = (
+        old.decorators is not None
+        and new.decorators is not None
+        and old.decorators != new.decorators
+    )
+    return decorators or (
+        old.modifiers is not None
+        and new.modifiers is not None
+        and frozenset(old.modifiers) != frozenset(new.modifiers)
+    )
+
+
 def _changed(before: Snapshot, after: Snapshot) -> list[str]:
     changed: list[str] = []
     for qn in sorted(set(before.definitions) & set(after.definitions)):
         old, new = before.definitions[qn], after.definitions[qn]
-        if old.fingerprint != new.fingerprint or _params_moved(old, new):
+        if _reshaped(old, new) or _attributes_moved(old, new):
             changed.append(qn)
     return changed
 
@@ -1580,8 +1655,10 @@ def _python_source_tree(path: Path) -> Tree | None:
     return _python_tree(str(path), stat.st_mtime_ns, stat.st_size)
 
 
-def _node_text(node: Node) -> str:
-    return (node.text or b"").decode(cs.ENCODING_UTF8, errors="replace")
+def _node_text(node: Node | None) -> str:
+    if node is None or node.text is None:
+        return ""
+    return node.text.decode(cs.ENCODING_UTF8, errors="replace")
 
 
 def _function_of(root: Node, name: str, start_line: int) -> Node | None:
@@ -1901,6 +1978,18 @@ def _is_classmethod(definition: Definition, repo_root: Path) -> bool:
     )
 
 
+# A call site written for the calling convention a definition left
+# (issue #3259); `ok` and `unknown` are no finding.
+_CONVENTION_FINDINGS = frozenset(
+    {
+        cs.DELTA_CONVENTION_CALLS_ACCESSOR,
+        cs.DELTA_CONVENTION_READS_METHOD,
+        cs.DELTA_CONVENTION_NEEDS_INSTANCE,
+        cs.DELTA_CONVENTION_NEEDS_CLASS,
+        cs.DELTA_CONVENTION_REBOUND,
+        cs.DELTA_CONVENTION_INACCESSIBLE,
+    }
+)
 # Bindings that name the function the call runs. Absent is the legacy exact.
 _DEFINITE_RESOLUTIONS = frozenset(
     {"", cs.EdgeResolution.EXACT.value, cs.EdgeResolution.TRACE_CONFIRMED.value}
@@ -2254,6 +2343,574 @@ def _signature_changes(
                 after=list(new.positional_params) if new.positional_params else None,
                 sites=sorted(sites, key=_site_order),
                 remote_callers=remote.get(qn, []),
+            )
+        )
+    return out
+
+
+# --- calling conventions ------------------------------------------------------
+
+
+class _Convention(NamedTuple):
+    """How a method is called, as its decorators and modifiers say."""
+
+    accessor: bool
+    # The receiver a call binds: an instance (a plain method), the class (a
+    # Python class method) or none (a static method).
+    binds: str
+    visibility: int | None
+
+
+def _decorator_names(decorators: Iterable[str]) -> frozenset[str]:
+    # `@functools.cached_property` and `@property` both name `..property`.
+    return frozenset(
+        decorator.lstrip(cs.DECORATOR_AT)
+        .split(cs.CHAR_PAREN_OPEN, 1)[0]
+        .rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        .strip()
+        for decorator in decorators
+    )
+
+
+def _convention(definition: Definition) -> _Convention | None:
+    """A definition's calling convention; None where nothing records it."""
+    language = _language(definition.path)
+    if (
+        language not in cs.CONVENTION_LANGUAGES
+        or definition.decorators is None
+        or definition.modifiers is None
+    ):
+        return None
+    if language == cs.SupportedLanguage.PYTHON:
+        names = _decorator_names(definition.decorators)
+        if names & cs.STATIC_DECORATORS:
+            binds = cs.DELTA_RECEIVER_NONE
+        elif names & cs.CLASSMETHOD_DECORATORS:
+            binds = cs.DELTA_RECEIVER_CLASS
+        else:
+            binds = cs.DELTA_RECEIVER_INSTANCE
+        return _Convention(bool(names & cs.PROPERTY_DECORATORS), binds, None)
+    modifiers = frozenset(definition.modifiers)
+    ranks = cs.VISIBILITY_RANKS.get(language, {})
+    ranked = [ranks[modifier] for modifier in modifiers if modifier in ranks]
+    return _Convention(
+        accessor=bool(
+            modifiers & {cs.TS_GET_ACCESSOR_KEYWORD, cs.TS_SET_ACCESSOR_KEYWORD}
+        ),
+        binds=cs.DELTA_RECEIVER_NONE
+        if cs.TS_STATIC in modifiers
+        else cs.DELTA_RECEIVER_INSTANCE,
+        visibility=min(ranked) if ranked else cs.VISIBILITY_DEFAULT.get(language),
+    )
+
+
+def _convention_moves(old: _Convention, new: _Convention) -> list[str]:
+    moves: list[str] = []
+    if old.accessor != new.accessor:
+        moves.append(
+            cs.DELTA_CONVENTION_BECAME_ACCESSOR
+            if new.accessor
+            else cs.DELTA_CONVENTION_NO_LONGER_ACCESSOR
+        )
+    if old.binds != new.binds:
+        if old.binds == cs.DELTA_RECEIVER_NONE:
+            moves.append(cs.DELTA_CONVENTION_NO_LONGER_STATIC)
+        if old.binds == cs.DELTA_RECEIVER_CLASS:
+            moves.append(cs.DELTA_CONVENTION_NO_LONGER_CLASSMETHOD)
+        if new.binds == cs.DELTA_RECEIVER_NONE:
+            moves.append(cs.DELTA_CONVENTION_BECAME_STATIC)
+        if new.binds == cs.DELTA_RECEIVER_CLASS:
+            moves.append(cs.DELTA_CONVENTION_BECAME_CLASSMETHOD)
+    if (
+        old.visibility is not None
+        and new.visibility is not None
+        and new.visibility < old.visibility
+    ):
+        moves.append(cs.DELTA_CONVENTION_VISIBILITY_NARROWED)
+    return moves
+
+
+class _SiteForm(NamedTuple):
+    """How a call site is written: whether it calls the member, and the
+    receiver it names (None where that cannot be read)."""
+
+    called: bool
+    receiver: str | None
+
+
+class _SourceTrees:
+    """Each caller's file parsed once, as it stands in the working tree."""
+
+    def __init__(self, repo_root: Path | None) -> None:
+        self._repo_root = repo_root
+        self._parsers: Mapping[cs.SupportedLanguage, Parser] | None = None
+        self._roots: dict[str, Node | None] = {}
+
+    def root(self, path: str) -> Node | None:
+        if path not in self._roots:
+            self._roots[path] = self._parse(path)
+        return self._roots[path]
+
+    def _parse(self, path: str) -> Node | None:
+        language = _language(path)
+        if self._repo_root is None or language is None:
+            return None
+        parsers = self._parsers
+        if parsers is None:
+            parsers, _queries = load_parsers()
+            self._parsers = parsers
+        parser = parsers.get(language)
+        if parser is None:
+            return None
+        try:
+            source = (self._repo_root / path).read_bytes()
+        except OSError:
+            return None
+        return parser.parse(
+            grammar_bytes(source, language, self._repo_root / path)
+        ).root_node
+
+
+# The member access `receiver.member` per language, by the node type and the
+# field naming the member. A Java method invocation is the call itself.
+_MEMBER_FIELDS: dict[cs.SupportedLanguage, dict[str, str]] = {
+    cs.SupportedLanguage.PYTHON: {cs.TS_PY_ATTRIBUTE: cs.TS_PY_FIELD_ATTRIBUTE},
+    cs.SupportedLanguage.JS: {cs.TS_MEMBER_EXPRESSION: cs.FIELD_PROPERTY},
+    cs.SupportedLanguage.TS: {cs.TS_MEMBER_EXPRESSION: cs.FIELD_PROPERTY},
+    cs.SupportedLanguage.TSX: {cs.TS_MEMBER_EXPRESSION: cs.FIELD_PROPERTY},
+    cs.SupportedLanguage.JAVA: {
+        cs.TS_METHOD_INVOCATION: cs.FIELD_NAME,
+        cs.TS_FIELD_ACCESS: cs.FIELD_FIELD,
+    },
+}
+_CALL_TYPES = frozenset({cs.TS_PY_CALL, cs.TS_CALL_EXPRESSION})
+_CONSTRUCTION_TYPES = frozenset(
+    {cs.TS_NEW_EXPRESSION, cs.TS_OBJECT_CREATION_EXPRESSION}
+)
+
+
+def _member_access(
+    root: Node, site: CallSite, name: str, fields: dict[str, str]
+) -> Node | None:
+    """The one access to `name` the site's recorded position starts.
+
+    A member call is recorded at its name (issue #3166): the access whose
+    member starts there. A graph indexed before that recorded the call's
+    first character, which every enclosing link of a chain shares
+    (`Cart().total()`), so the access is also found among the nodes
+    starting there; two such accesses to the same name are ambiguous.
+    """
+    assert site.line is not None
+    assert site.col is not None
+    point = (site.line - 1, site.col)
+    node: Node | None = root.descendant_for_point_range(point, point)
+    found: list[Node] = []
+    while node is not None:
+        field = fields.get(node.type)
+        member = node.child_by_field_name(field) if field is not None else None
+        if (
+            member is not None
+            and _node_text(member) == name
+            and point in (node.start_point, member.start_point)
+        ):
+            found.append(node)
+        node = node.parent
+    return found[0] if len(found) == 1 else None
+
+
+def _is_called(access: Node) -> bool:
+    if access.type == cs.TS_METHOD_INVOCATION:
+        return True
+    # A call's only child that can be a member access is its callee.
+    parent = access.parent
+    return parent is not None and parent.type in _CALL_TYPES
+
+
+def _own_receiver(caller: Definition | None) -> str | None:
+    """What Java's `this`, or its implicit receiver, is inside `caller`: the
+    class in a static method (where Java has no `this`), an instance in any
+    other."""
+    convention = _convention(caller) if caller is not None else None
+    if convention is None:
+        return None
+    if convention.binds == cs.DELTA_RECEIVER_NONE:
+        return cs.DELTA_RECEIVER_CLASS
+    return cs.DELTA_RECEIVER_INSTANCE
+
+
+def _js_this(root: Node, this: Node) -> str | None:
+    # An arrow takes `this` from where it is written, though the graph makes
+    # it a definition of its own: in a static method it is the class (bot
+    # review on PR #3311). A plain function's own `this` is neither. The
+    # parsers package is deferred: the CLI imports this module at startup.
+    from .parsers.js_ts.utils import this_names_class_at
+
+    names_class = this_names_class_at(root, this.start_byte)
+    if names_class is None:
+        return None
+    return cs.DELTA_RECEIVER_CLASS if names_class else cs.DELTA_RECEIVER_INSTANCE
+
+
+def _constructs(call: Node, class_name: str) -> bool:
+    # `Cart()` builds an instance of the class it names.
+    return _node_text(call.child_by_field_name(cs.FIELD_FUNCTION)) == class_name
+
+
+def _python_local(name: Node, class_name: str) -> str | None:
+    # `c = Cart()` then `c.tax(3)`: a name its def binds once, from the
+    # class's own construction, holds an instance wherever it is read (PR
+    # #3311 review). The parsers package is deferred, as for `_js_this`.
+    from .parsers.py.ast_analyzer import sole_bound_call
+
+    call = sole_bound_call(name)
+    if call is not None and _constructs(call, class_name):
+        return cs.DELTA_RECEIVER_INSTANCE
+    return None
+
+
+def _receiver(
+    access: Node,
+    root: Node,
+    class_name: str,
+    language: cs.SupportedLanguage,
+    caller: Definition | None,
+) -> str | None:
+    """The receiver the access names; None where it cannot be told apart,
+    such as a variable that may hold an instance or an alias of the class."""
+    target = access.child_by_field_name(cs.FIELD_OBJECT)
+    if target is None:
+        # `total()` inside a Java class: the implicit receiver.
+        if language == cs.SupportedLanguage.JAVA:
+            return _own_receiver(caller)
+        return None
+    text = _node_text(target)
+    if target.type == cs.TS_IDENTIFIER:
+        if text == class_name:
+            return cs.DELTA_RECEIVER_CLASS
+        if language == cs.SupportedLanguage.PYTHON:
+            return {
+                cs.PY_KEYWORD_SELF: cs.DELTA_RECEIVER_INSTANCE,
+                cs.PY_KEYWORD_CLS: cs.DELTA_RECEIVER_CLASS,
+            }.get(text) or _python_local(target, class_name)
+        return None
+    if target.type == cs.TS_THIS:
+        if language in cs.JS_TS_LANGUAGES:
+            return _js_this(root, target)
+        return _own_receiver(caller)
+    if target.type in _CONSTRUCTION_TYPES:
+        return cs.DELTA_RECEIVER_INSTANCE
+    if target.type == cs.TS_PY_CALL and _constructs(target, class_name):
+        return cs.DELTA_RECEIVER_INSTANCE
+    return None
+
+
+def _site_form(
+    trees: _SourceTrees, site: CallSite, definition: Definition, after: Snapshot
+) -> _SiteForm | None:
+    language = _language(site.caller_path)
+    fields = _MEMBER_FIELDS.get(language) if language is not None else None
+    if fields is None or language is None or site.line is None or site.col is None:
+        return None
+    root = trees.root(site.caller_path)
+    if root is None:
+        return None
+    access = _member_access(root, site, definition.name, fields)
+    if access is None:
+        return None
+    return _SiteForm(
+        called=_is_called(access),
+        receiver=_receiver(
+            access,
+            root,
+            _declaring_type(definition),
+            language,
+            after.definitions.get(site.caller) or after.callers.get(site.caller),
+        ),
+    )
+
+
+def _accessor_verdict(
+    old: _Convention, new: _Convention, form: _SiteForm | None
+) -> str:
+    if old.accessor == new.accessor:
+        return cs.DELTA_ARITY_OK
+    if form is None:
+        return cs.DELTA_ARITY_UNKNOWN
+    # A read of what was a method may be a callback handed on, and a call
+    # of what was a property calls whatever it returned: neither is read.
+    if new.accessor:
+        return (
+            cs.DELTA_CONVENTION_CALLS_ACCESSOR
+            if form.called
+            else cs.DELTA_ARITY_UNKNOWN
+        )
+    return cs.DELTA_ARITY_UNKNOWN if form.called else cs.DELTA_CONVENTION_READS_METHOD
+
+
+def _bound(binds: str, receiver: str) -> bool:
+    """Whether a Python call through `receiver` passes one: a class method
+    always binds, a static method never, a plain method only through an
+    instance (through the class it is a plain function)."""
+    if binds == cs.DELTA_RECEIVER_INSTANCE:
+        return receiver == cs.DELTA_RECEIVER_INSTANCE
+    return binds == cs.DELTA_RECEIVER_CLASS
+
+
+def _passed_params(params: tuple[str, ...], bound: bool) -> tuple[str, ...] | None:
+    # The parameters the call's own arguments fill; None if a bound
+    # receiver finds no parameter to take it.
+    if not bound:
+        return params
+    return params[1:] if params else None
+
+
+def _python_binding_verdict(
+    old_def: Definition,
+    new_def: Definition,
+    old: _Convention,
+    new: _Convention,
+    form: _SiteForm | None,
+) -> str:
+    """A receiver bound where it was not, or no longer bound, moves every
+    argument one parameter over, which breaks or silently changes the call.
+    A refactor that drops `self` as it adds `@staticmethod` keeps the
+    parameters the arguments fill, and the call with them."""
+    receiver = form.receiver if form is not None else None
+    if (
+        receiver is None
+        or old_def.positional_params is None
+        or new_def.positional_params is None
+    ):
+        return cs.DELTA_ARITY_UNKNOWN
+    before = _passed_params(old_def.positional_params, _bound(old.binds, receiver))
+    after = _passed_params(new_def.positional_params, _bound(new.binds, receiver))
+    if before == after:
+        return cs.DELTA_ARITY_OK
+    if old_def.positional_params == new_def.positional_params:
+        return cs.DELTA_CONVENTION_REBOUND
+    # The parameters moved as well: `signature_changes` judges the count.
+    return cs.DELTA_ARITY_UNKNOWN
+
+
+def _binding_verdict(
+    old_def: Definition,
+    new_def: Definition,
+    old: _Convention,
+    new: _Convention,
+    form: _SiteForm | None,
+) -> str:
+    if old.binds == new.binds:
+        return cs.DELTA_ARITY_OK
+    language = _language(new_def.path)
+    if language == cs.SupportedLanguage.PYTHON:
+        return _python_binding_verdict(old_def, new_def, old, new, form)
+    receiver = form.receiver if form is not None else None
+    if new.binds == cs.DELTA_RECEIVER_NONE:
+        if language not in cs.STATIC_REJECTS_INSTANCE_CALL:
+            return cs.DELTA_ARITY_OK
+        if receiver is None:
+            return cs.DELTA_ARITY_UNKNOWN
+        return (
+            cs.DELTA_CONVENTION_NEEDS_CLASS
+            if receiver == cs.DELTA_RECEIVER_INSTANCE
+            else cs.DELTA_ARITY_OK
+        )
+    if receiver is None:
+        return cs.DELTA_ARITY_UNKNOWN
+    return (
+        cs.DELTA_CONVENTION_NEEDS_INSTANCE
+        if receiver == cs.DELTA_RECEIVER_CLASS
+        else cs.DELTA_ARITY_OK
+    )
+
+
+def _owner(definition: Definition) -> str:
+    return definition.qualified_name.partition(cs.CHAR_PAREN_OPEN)[0].rpartition(
+        cs.SEPARATOR_DOT
+    )[0]
+
+
+def _visibility_verdict(
+    site: CallSite, definition: Definition, old: _Convention, new: _Convention
+) -> str:
+    if old.visibility is None or new.visibility is None:
+        return cs.DELTA_ARITY_OK
+    if new.visibility >= old.visibility:
+        return cs.DELTA_ARITY_OK
+    owner = _owner(definition) + cs.SEPARATOR_DOT
+    if site.caller.partition(cs.CHAR_PAREN_OPEN)[0].startswith(owner):
+        return cs.DELTA_ARITY_OK
+    if new.visibility > cs.VISIBILITY_PRIVATE:
+        # `protected` still reaches a subclass, and in Java the package.
+        return cs.DELTA_ARITY_UNKNOWN
+    if (
+        _language(definition.path) == cs.SupportedLanguage.JAVA
+        and site.caller_path == definition.path
+    ):
+        # Another class nested in the same top-level class keeps access.
+        return cs.DELTA_ARITY_UNKNOWN
+    return cs.DELTA_CONVENTION_INACCESSIBLE
+
+
+def _convention_verdict(
+    site: CallSite,
+    old_def: Definition,
+    new_def: Definition,
+    old: _Convention,
+    new: _Convention,
+    form: _SiteForm | None,
+) -> str:
+    # Bound by name alone, the edge may lead to a same-named method the
+    # call never runs.
+    if site.resolution not in _DEFINITE_RESOLUTIONS:
+        return cs.DELTA_ARITY_UNKNOWN
+    verdicts = (
+        _accessor_verdict(old, new, form),
+        _binding_verdict(old_def, new_def, old, new, form),
+        _visibility_verdict(site, new_def, old, new),
+    )
+    for verdict in verdicts:
+        if verdict in _CONVENTION_FINDINGS:
+            return verdict
+    if cs.DELTA_ARITY_UNKNOWN in verdicts:
+        return cs.DELTA_ARITY_UNKNOWN
+    return cs.DELTA_ARITY_OK
+
+
+def _attributes(definition: Definition) -> list[str]:
+    return [*(definition.decorators or ()), *(definition.modifiers or ())]
+
+
+def _moved_site(
+    site: CallSite,
+    name: str,
+    before: Snapshot,
+    after: Snapshot,
+    trees: _SourceTrees,
+) -> CallSite | None:
+    """A site drawn before the edit of its file, where it now stands.
+
+    Its caller kept its shape, so the site moved with the caller's first
+    line; it still stands only if the edited source accesses `name` there.
+    """
+    old_caller = before.definitions.get(site.caller)
+    new_caller = after.definitions.get(site.caller)
+    language = _language(site.caller_path)
+    fields = _MEMBER_FIELDS.get(language) if language is not None else None
+    if (
+        old_caller is None
+        or new_caller is None
+        or old_caller.fingerprint != new_caller.fingerprint
+        or fields is None
+        or site.line is None
+        or site.col is None
+    ):
+        return None
+    moved = site._replace(
+        line=site.line + new_caller.start_line - old_caller.start_line
+    )
+    root = trees.root(site.caller_path)
+    if root is None or _member_access(root, moved, name, fields) is None:
+        return None
+    return moved
+
+
+def _reaches(site: CallSite, qn: str, accessor: bool) -> bool:
+    # A JS/TS getter read is a REFERENCES edge: the read runs the getter but
+    # is no call, and the edit breaks it all the same (bot review on PR #3311).
+    if site.callee != qn:
+        return False
+    return site.rel == cs.RelationshipType.CALLS.value or (
+        accessor and site.rel == cs.RelationshipType.REFERENCES.value
+    )
+
+
+def _calls_into(
+    qn: str,
+    before: Snapshot,
+    after: Snapshot,
+    trees: _SourceTrees,
+    accessor: tuple[bool, bool],
+) -> list[CallSite]:
+    """The call sites of `qn`, after the edit and before it.
+
+    A caller still makes the call it made, though the re-bound graph may no
+    longer draw it: a Python property read is a call edge only while it is
+    a property, a getter read a reference only while it is a getter. A site
+    in an edited file is recorded where it stood before the edit, so it is
+    moved to where it stands now, also in the file that defines `qn` (bot
+    review on PR #3311). `accessor` says whether `qn` was one before the
+    edit and after it.
+    """
+    was_accessor, is_accessor = accessor
+    drawn = [site for site in after.sites if _reaches(site, qn, is_accessor)]
+    name = after.definitions[qn].name
+    for site in before.sites:
+        if not _reaches(site, qn, was_accessor):
+            continue
+        current = (
+            _moved_site(site, name, before, after, trees)
+            if site.caller_path in after.paths
+            else site
+        )
+        if current is not None:
+            drawn.append(current)
+    # One site per position: a call the edit left alone is drawn before and
+    # after it, and a Python property read as a call and a reference both;
+    # the call edge is the one judged.
+    drawn.sort(key=lambda site: site.rel != cs.RelationshipType.CALLS.value)
+    sites: dict[tuple[str, str, int | None, int | None], CallSite] = {}
+    for site in drawn:
+        sites.setdefault((site.caller, site.caller_path, site.line, site.col), site)
+    return list(sites.values())
+
+
+def _convention_changes(
+    before: Snapshot,
+    after: Snapshot,
+    symbols: SymbolDelta,
+    repo_root: Path | None,
+) -> list[ConventionChange]:
+    """Changed methods whose decorators or modifiers changed how they are
+    called, with a verdict per call site (issue #3259)."""
+    trees = _SourceTrees(repo_root)
+    out: list[ConventionChange] = []
+    for qn in symbols["changed"]:
+        old_def, new_def = before.definitions[qn], after.definitions[qn]
+        old, new = _convention(old_def), _convention(new_def)
+        moves = _convention_moves(old, new) if old and new else []
+        if old is None or new is None or not moves:
+            continue
+        sites = [
+            ConventionAtSite(
+                caller=site.caller,
+                path=site.caller_path,
+                line=site.line,
+                col=site.col,
+                verdict=_convention_verdict(
+                    site,
+                    old_def,
+                    new_def,
+                    old,
+                    new,
+                    _site_form(trees, site, new_def, after),
+                ),
+            )
+            for site in _calls_into(
+                qn, before, after, trees, (old.accessor, new.accessor)
+            )
+        ]
+        out.append(
+            ConventionChange(
+                qualified_name=qn,
+                path=new_def.path,
+                before=_attributes(old_def),
+                after=_attributes(new_def),
+                changes=moves,
+                sites=sorted(
+                    sites,
+                    key=lambda s: (s["path"], s["line"] or 0, s["col"] or 0),
+                ),
             )
         )
     return out
@@ -2627,7 +3284,13 @@ def structural_delta(
         else longer_project_prefixes
     )
     symbols = _symbols(before, after, declared_renames)
-    fresh = set(symbols["added"]) | set(symbols["changed"])
+    # A decorator or modifier change leaves the body a duplicate is made of
+    # as it was, so only a reshaped symbol can be a new duplicate.
+    fresh = set(symbols["added"]) | {
+        qn
+        for qn in symbols["changed"]
+        if _reshaped(before.definitions[qn], after.definitions[qn])
+    }
     fresh |= {r["new"] for r in symbols["renamed"]}
     # A re-parsed file was edited: every symbol it defines may behave
     # differently even when its skeleton and signature did not move, so
@@ -2658,6 +3321,7 @@ def structural_delta(
         signature_changes=_signature_changes(
             before, after, symbols, repo_root, fetch_all, project_name
         ),
+        convention_changes=_convention_changes(before, after, symbols, repo_root),
         arity_findings=_arity_findings(after, repo_root),
         new_duplicates=_new_duplicates(fetch_all, project_name, fresh, longer_prefixes),
         new_import_cycles=_new_import_cycles(before, after),
@@ -2797,6 +3461,14 @@ def has_findings(delta: StructuralDelta) -> bool:
         # A changed handler reached from another service is a contract
         # change no local CALLS edge shows (issue #1603).
         or any(change["remote_callers"] for change in delta["signature_changes"])
+        # A call written for the calling convention its callee left: a
+        # property called, a static method reached through an instance
+        # (issue #3259).
+        or any(
+            site["verdict"] in _CONVENTION_FINDINGS
+            for change in delta["convention_changes"]
+            for site in change["sites"]
+        )
         or delta["arity_findings"]
         or delta["new_duplicates"]
         or delta["new_import_cycles"]
