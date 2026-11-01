@@ -1,20 +1,27 @@
 #!/usr/bin/env python3
-"""Fail a pull request whose head commit Greptile did not score 5/5.
+"""Fail a pull request whose head commit Greptile scored below 5/5.
 
 Greptile's review ends in a confidence score, and nothing read it: a PR
 scored 3/5 with an open security finding showed every check green. This
-gate waits for Greptile's review of the exact head commit and passes only
-on 5/5. A score of an older commit is not a score of the code about to
-merge, so it neither passes nor fails the gate: the gate keeps waiting for
-the review of the head, and fails if none arrives in time.
+gate waits for Greptile's review of the exact head commit and fails when
+that score is below 5/5.
+
+It applies only when Greptile scores the head. Greptile can be absent for
+reasons that say nothing about the code (the account out of credits, the
+app paused), and a gate that failed then would block every merge on a
+billing state. So when Greptile does not start a review of the head within
+a grace period, or reviews it without posting a score, the gate passes with
+a warning. A score of an older commit is not a score of the code about to
+merge, so it counts as no score of the head.
 
 Only a comment written by Greptile's own app account counts. Anyone can
 type the score marker into a comment of their own.
 
 Usage:  python3 scripts/greptile_gate.py <pr-number> <head-sha>
-Reads GH_TOKEN (or GITHUB_TOKEN) and GITHUB_REPOSITORY. Exit 0 on a 5/5
-review of the head, 1 otherwise. Standard library only, so CI runs it
-without syncing the project environment.
+Reads GH_TOKEN (or GITHUB_TOKEN) and GITHUB_REPOSITORY. Exit 1 when
+Greptile scored the head below 5/5 or GitHub could not be read, 0
+otherwise. Standard library only, so CI runs it without syncing the
+project environment.
 """
 
 from __future__ import annotations
@@ -28,7 +35,7 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import quote
 
@@ -38,10 +45,16 @@ TIMEOUT_S = 30
 ATTEMPTS = 3
 RETRY_WAIT_S = 10
 PAGE_SIZE = 100
-# Greptile posts its review a few minutes after a push; a large PR takes
-# longer. The job's own timeout in ci.yml sits above this.
+# Greptile opens its review check run seconds after a push and posts its
+# review a few minutes later; a large PR takes longer. The job's own
+# timeout in ci.yml sits above WAIT_S.
 WAIT_S = 45 * 60
+# How long to wait for Greptile to start at all before calling it absent.
+GRACE_S = 10 * 60
 POLL_S = 60
+# Greptile closes its run a few seconds before it edits the summary, so a
+# run that just closed with no newer summary is still finishing.
+SETTLE = timedelta(minutes=3)
 
 REQUIRED_SCORE = 5
 MAX_SCORE = 5
@@ -66,7 +79,14 @@ SHA_PATTERN = re.compile(r"[0-9a-f]{40}")
 
 PASS = "pass"
 FAIL = "fail"
-WAIT = "wait"
+# Greptile did not score the head: the gate does not apply. Exits 0.
+SKIP = "skip"
+# Still deciding: Greptile is reviewing the head, has not started, or
+# GitHub could not be read.
+REVIEWING = "reviewing"
+ABSENT = "absent"
+UNREAD = "unread"
+FINAL = frozenset({PASS, FAIL, SKIP})
 
 USAGE = "usage: greptile_gate.py <pr-number> <head-sha>"
 PASSED = "Greptile scored {sha} {score}/{max}: {url}"
@@ -78,20 +98,22 @@ LOW_SCORE = (
     "started. Review: {url}"
 )
 NO_SCORE = (
-    "Greptile reviewed {sha} but its summary carries no confidence score, so "
-    "the gate cannot read one. Review: {url}"
+    "Greptile reviewed {sha} but posted no confidence score, so the gate does "
+    "not apply. Review: {url}"
 )
-NO_REVIEW = "Greptile has not reviewed this pull request yet."
-REVIEWING = "Greptile is reviewing {sha}. Waiting for its score."
-STALE = (
-    "Greptile's latest review is of {reviewed}, not the head {sha}. Waiting "
-    "for its review of the head."
+NO_REVIEW = "Greptile has not reviewed this pull request."
+IS_REVIEWING = "Greptile is reviewing {sha}. Waiting for its score."
+STALE = "Greptile's latest review is of {reviewed}, not the head {sha}."
+ABSENT_SKIP = (
+    "Greptile did not start a review of {sha} within {minutes} min, so the "
+    "gate does not apply (Greptile out of credits, paused or not installed). "
+    "{state} To have it apply, comment `@greptile review` and re-run this job."
 )
-GAVE_UP = (
-    "No Greptile review of {sha} within {minutes} min. {state} If Greptile "
-    "did not start, comment `@greptile review` on the pull request to ask for a "
-    "review, then re-run this job."
+UNFINISHED = (
+    "Greptile started reviewing {sha} but posted no score within {minutes} "
+    "min, so the gate does not apply. Re-run this job once Greptile posts."
 )
+UNREADABLE = "Could not read GitHub for {minutes} min: {state}"
 
 Fetch = Callable[[str], Any]
 
@@ -140,14 +162,18 @@ def _moment(stamp: object) -> datetime | None:
         return None
 
 
-def review_in_flight(runs: Sequence[Any], summary: dict[str, Any] | None) -> bool:
+def review_in_flight(
+    runs: Sequence[Any], summary: dict[str, Any] | None, now: datetime
+) -> bool:
     """Whether Greptile is still producing the score of the head.
 
     A re-review of the same commit (`@greptile review` without a push) leaves
     the old score of that very commit in place until it finishes, and the
     run closes a few seconds before the summary is edited. So a run still
-    open, or one that started after the summary last changed, means the
-    summary is about to change and its score is not the answer yet.
+    open, or one that closed moments ago and is newer than the summary,
+    means the summary is about to change and its score is not the answer
+    yet. A run long closed with no newer summary finished without posting
+    one, which is the out-of-credits case, and holds nothing back.
     """
     edited = _moment(_updated(summary)) if summary else None
     for run in runs:
@@ -156,12 +182,20 @@ def review_in_flight(runs: Sequence[Any], summary: dict[str, Any] | None) -> boo
         if run.get("status") != COMPLETED:
             return True
         started = _moment(run.get("started_at"))
-        if summary and (started is None or edited is None or started > edited):
+        if edited is not None and started is not None and started <= edited:
+            continue
+        finished = _moment(run.get("completed_at"))
+        if finished is None or now - finished < SETTLE:
             return True
     return False
 
 
-def verdict(comments: list[Any], head: str, runs: Sequence[Any] = ()) -> Verdict:
+def verdict(
+    comments: list[Any],
+    head: str,
+    runs: Sequence[Any] = (),
+    now: datetime | None = None,
+) -> Verdict:
     """What Greptile's comments say about `head`.
 
     Greptile edits one summary comment in place as it re-reviews, so the
@@ -170,23 +204,24 @@ def verdict(comments: list[Any], head: str, runs: Sequence[Any] = ()) -> Verdict
     head). A summary that names another commit says nothing about this one.
     """
     head = head.lower()
+    now = now or datetime.now(UTC)
     summaries = sorted(
         (c for c in comments if isinstance(c, dict) and is_greptile_summary(c)),
         key=_updated,
     )
-    if not summaries:
-        return Verdict(WAIT, NO_REVIEW)
     of_head = [c for c in summaries if reviewed_commit(c["body"]) == head]
-    if not of_head:
+    latest = of_head[-1] if of_head else None
+    if review_in_flight(runs, latest, now):
+        return Verdict(REVIEWING, IS_REVIEWING.format(sha=head[:8]))
+    if latest is None:
+        if not summaries:
+            return Verdict(ABSENT, NO_REVIEW)
         reviewed = reviewed_commit(summaries[-1]["body"]) or "an unnamed commit"
-        return Verdict(WAIT, STALE.format(reviewed=reviewed[:8], sha=head[:8]))
-    latest = of_head[-1]
-    if review_in_flight(runs, latest):
-        return Verdict(WAIT, REVIEWING.format(sha=head[:8]))
+        return Verdict(ABSENT, STALE.format(reviewed=reviewed[:8], sha=head[:8]))
     url = latest.get("html_url", "")
     found = score(latest["body"])
     if found is None:
-        return Verdict(FAIL, NO_SCORE.format(sha=head[:8], url=url))
+        return Verdict(SKIP, NO_SCORE.format(sha=head[:8], url=url))
     fields = {"sha": head[:8], "score": found, "max": MAX_SCORE, "url": url}
     if found == REQUIRED_SCORE:
         return Verdict(PASS, PASSED.format(**fields))
@@ -233,30 +268,37 @@ def wait_for_verdict(
     head: str,
     *,
     wait_s: float = WAIT_S,
+    grace_s: float = GRACE_S,
     poll_s: float = POLL_S,
     clock: Callable[[], float] = time.monotonic,
+    wall: Callable[[], datetime] = lambda: datetime.now(UTC),
     sleep: Callable[[float], None] = time.sleep,
 ) -> Verdict:
-    deadline = clock() + wait_s
+    start = clock()
     while True:
         try:
             # Runs first: a review that finishes between the two reads then
             # shows as a run newer than the summary, never as a stale score.
             runs = review_runs(fetch, repo, head)
-            current = verdict(pr_comments(fetch, repo, pr), head, runs)
+            current = verdict(pr_comments(fetch, repo, pr), head, runs, wall())
         except (GateError, urllib.error.URLError, TimeoutError) as error:
             # A failed read is not an answer either way; ask again.
-            current = Verdict(WAIT, f"Could not read the comments ({error}).")
-        if current.state != WAIT:
+            current = Verdict(UNREAD, f"Could not read GitHub ({error}).")
+        if current.state in FINAL:
             return current
-        if clock() >= deadline:
+        elapsed = clock() - start
+        fields = {"sha": head[:8], "state": current.message}
+        if current.state == ABSENT and elapsed >= grace_s:
             return Verdict(
-                FAIL,
-                GAVE_UP.format(
-                    sha=head[:8], minutes=round(wait_s / 60), state=current.message
-                ),
+                SKIP, ABSENT_SKIP.format(minutes=round(grace_s / 60), **fields)
             )
-        _report(current.message, error=False)
+        if elapsed >= wait_s:
+            minutes = round(wait_s / 60)
+            if current.state == UNREAD:
+                # Not knowing whether Greptile scored is not Greptile absent.
+                return Verdict(FAIL, UNREADABLE.format(minutes=minutes, **fields))
+            return Verdict(SKIP, UNFINISHED.format(minutes=minutes, **fields))
+        _report(current.message)
         sleep(poll_s)
 
 
@@ -286,10 +328,10 @@ def github_fetch(token: str | None) -> Fetch:
     return fetch
 
 
-def _report(message: str, *, error: bool) -> None:
-    if error and os.environ.get("GITHUB_ACTIONS") == "true":
-        message = f"::error::{message}"
-    print(message, file=sys.stderr if error else sys.stdout, flush=True)  # noqa: T201
+def _report(message: str, level: str = "") -> None:
+    if level and os.environ.get("GITHUB_ACTIONS") == "true":
+        message = f"::{level}::{message}"
+    print(message, file=sys.stderr if level else sys.stdout, flush=True)  # noqa: T201
 
 
 def main(argv: list[str], fetch: Fetch | None = None, **wait: Any) -> int:
@@ -298,7 +340,7 @@ def main(argv: list[str], fetch: Fetch | None = None, **wait: Any) -> int:
         or not argv[1].isdigit()
         or not SHA_PATTERN.fullmatch(argv[2].lower())
     ):
-        _report(USAGE, error=True)
+        _report(USAGE, "error")
         return 1
     pr, head = int(argv[1]), argv[2].lower()
     repo = os.environ.get("GITHUB_REPOSITORY") or DEFAULT_REPO
@@ -307,8 +349,9 @@ def main(argv: list[str], fetch: Fetch | None = None, **wait: Any) -> int:
             os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
         )
     result = wait_for_verdict(fetch, repo, pr, head, **wait)
-    _report(result.message, error=result.state != PASS)
-    return 0 if result.state == PASS else 1
+    level = {PASS: "", SKIP: "warning"}.get(result.state, "error")
+    _report(result.message, level)
+    return 0 if result.state in (PASS, SKIP) else 1
 
 
 if __name__ == "__main__":

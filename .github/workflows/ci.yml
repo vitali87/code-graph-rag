@@ -637,11 +637,12 @@ jobs:
     name: Greptile 5/5 Gate
     runs-on: ubuntu-latest
     # Every pull request: Greptile reviews forks, Dependabot and every base,
-    # and greptile.json has it review each push, so the head always gets a
-    # score to wait for.
+    # and greptile.json has it review each push and draft. The gate fails
+    # only on a score below 5/5; with Greptile absent (out of credits,
+    # paused) it passes with a warning, so billing never blocks a merge.
     if: github.event_name == 'pull_request'
-    # The script waits up to 45 min for Greptile's review of the head; this
-    # cap only bounds a hang.
+    # The script waits up to 10 min for Greptile to start and up to 45 min
+    # for a review in progress to post its score; this cap only bounds a hang.
     timeout-minutes: 55
     permissions:
       contents: read
@@ -656,7 +657,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Require Greptile to score the head commit 5/5
+      - name: Fail if Greptile scores the head commit below 5/5
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
@@ -854,7 +855,7 @@ jobs:
           # on every pull request anything but success blocks the merge.
           if [[ "${{ needs.greptile-gate.result }}" != "success" \
              && "${{ needs.greptile-gate.result }}" != "skipped" ]]; then
-            echo "❌ Greptile gate failed: Greptile must score the head commit 5/5"
+            echo "❌ Greptile gate failed: Greptile scored the head commit below 5/5"
             exit 1
           fi
           echo "✅ All checks passed!"

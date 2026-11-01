@@ -1,9 +1,11 @@
 # Greptile scored a pull request 3/5 with an open security finding and every
-# check stayed green, because nothing read the score. The gate now requires
-# Greptile's review of the exact head commit to be 5/5.
+# check stayed green, because nothing read the score. The gate now fails when
+# Greptile scores the exact head commit below 5/5, and only then: Greptile
+# absent (out of credits, paused) or not scoring passes with a warning.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +18,8 @@ _REPO = Path(__file__).resolve().parents[2]
 _CI = _REPO / ".github" / "workflows" / "ci.yml"
 _HEAD = "5218d78ab933e8d1deb58e018f96c9b9390831a7"
 _OLD = "86db96085b4a0a1b6b9409d9399de056f36d6b79"
+# Well after every fixture timestamp, so a closed run has settled.
+_NOW = datetime(2026, 11, 1, 18, tzinfo=UTC)
 
 
 def _summary(sha: str, score: int | None, reviews: int = 1) -> str:
@@ -52,11 +56,15 @@ def _run(
     status: str = gg.COMPLETED,
     started: str | None = "2026-11-01T13:55:50Z",
     slug: str = gg.GREPTILE_APP,
+    completed: str | None = None,
 ) -> dict[str, Any]:
+    if completed is None and status == gg.COMPLETED and started:
+        completed = started.replace("13:55:50", "13:59:18")
     return {
         "name": gg.REVIEW_CHECK,
         "status": status,
         "started_at": started,
+        "completed_at": completed,
         "app": {"slug": slug},
     }
 
@@ -80,33 +88,38 @@ def test_the_score_is_read_from_the_heading_when_the_marker_is_gone() -> None:
     assert gg.verdict([_comment(body)], _HEAD).state == gg.FAIL
 
 
-def test_a_review_of_the_head_without_a_score_fails_closed() -> None:
+def test_a_review_of_the_head_without_a_score_does_not_apply() -> None:
+    # The gate applies only when Greptile scores.
     result = gg.verdict([_comment(_summary(_HEAD, None))], _HEAD)
-    assert result.state == gg.FAIL
+    assert result.state == gg.SKIP
     assert "no confidence score" in result.message
 
 
 def test_a_5_of_5_review_of_an_older_commit_does_not_pass() -> None:
     # A score of the code before the last push says nothing about the head.
     result = gg.verdict([_comment(_summary(_OLD, 5))], _HEAD)
-    assert result.state == gg.WAIT
+    assert result.state == gg.ABSENT
     assert _OLD[:8] in result.message
 
 
-def test_no_greptile_review_waits() -> None:
-    assert gg.verdict([], _HEAD).state == gg.WAIT
+def test_a_3_of_5_review_of_an_older_commit_does_not_fail() -> None:
+    assert gg.verdict([_comment(_summary(_OLD, 3))], _HEAD).state == gg.ABSENT
+
+
+def test_no_greptile_review_is_absent() -> None:
+    assert gg.verdict([], _HEAD).state == gg.ABSENT
 
 
 def test_the_trex_progress_comment_is_not_a_review() -> None:
     trex = "<!-- greptile_trex_summary -->\n\nTREX is testing this pull request"
-    assert gg.verdict([_comment(trex)], _HEAD).state == gg.WAIT
+    assert gg.verdict([_comment(trex)], _HEAD).state == gg.ABSENT
 
 
 @pytest.mark.parametrize("login", ["vitali87", "greptile-apps", "greptileai"])
 def test_a_score_written_by_anyone_but_greptiles_app_is_ignored(login: str) -> None:
     # The marker is plain text: the author could post a 5/5 of their own.
     forged = _comment(_summary(_HEAD, 5), login=login)
-    assert gg.verdict([forged], _HEAD).state == gg.WAIT
+    assert gg.verdict([forged], _HEAD).state == gg.ABSENT
 
 
 def test_a_forged_5_does_not_outvote_greptiles_3() -> None:
@@ -131,7 +144,7 @@ def test_an_uppercase_head_matches() -> None:
 
 def test_a_finished_review_run_lets_the_score_stand() -> None:
     # The run that produced the summary started before the summary was edited.
-    result = gg.verdict([_comment(_summary(_HEAD, 3))], _HEAD, [_run()])
+    result = gg.verdict([_comment(_summary(_HEAD, 3))], _HEAD, [_run()], _NOW)
     assert result.state == gg.FAIL
 
 
@@ -139,21 +152,36 @@ def test_an_open_review_run_waits_instead_of_failing_on_the_old_score() -> None:
     # `@greptile review` without a push: the summary still holds the old 3/5
     # of this very commit while Greptile re-scores it.
     runs = [_run(), _run(status="in_progress", started="2026-11-01T15:00:00Z")]
-    result = gg.verdict([_comment(_summary(_HEAD, 3))], _HEAD, runs)
-    assert result.state == gg.WAIT
+    result = gg.verdict([_comment(_summary(_HEAD, 3))], _HEAD, runs, _NOW)
+    assert result.state == gg.REVIEWING
     assert "reviewing" in result.message
 
 
 def test_an_open_review_run_holds_back_a_pass_too() -> None:
     runs = [_run(status="queued", started=None)]
-    assert gg.verdict([_comment(_summary(_HEAD, 5))], _HEAD, runs).state == gg.WAIT
+    result = gg.verdict([_comment(_summary(_HEAD, 5))], _HEAD, runs, _NOW)
+    assert result.state == gg.REVIEWING
+
+
+def test_an_open_review_run_of_an_unreviewed_head_is_reviewing() -> None:
+    runs = [_run(status="in_progress", started="2026-11-01T15:00:00Z")]
+    result = gg.verdict([_comment(_summary(_OLD, 5))], _HEAD, runs, _NOW)
+    assert result.state == gg.REVIEWING
 
 
 def test_a_run_closed_before_the_summary_is_edited_waits() -> None:
     # Greptile closes its run a few seconds before it edits the summary.
-    runs = [_run(started="2026-11-01T15:00:00Z")]
-    result = gg.verdict([_comment(_summary(_HEAD, 3))], _HEAD, runs)
-    assert result.state == gg.WAIT
+    runs = [_run(started="2026-11-01T15:00:00Z", completed="2026-11-01T15:02:00Z")]
+    moments_later = datetime(2026, 11, 1, 15, 2, 3, tzinfo=UTC)
+    result = gg.verdict([_comment(_summary(_HEAD, 3))], _HEAD, runs, moments_later)
+    assert result.state == gg.REVIEWING
+
+
+def test_a_run_long_closed_without_a_score_is_absent() -> None:
+    # Out of credits: the run closes and no summary of the head ever comes.
+    runs = [_run(started="2026-11-01T15:00:00Z", completed="2026-11-01T15:00:05Z")]
+    result = gg.verdict([_comment(_summary(_OLD, 3))], _HEAD, runs, _NOW)
+    assert result.state == gg.ABSENT
 
 
 def test_comments_are_read_across_pages() -> None:
@@ -180,18 +208,26 @@ class _Clock:
     def __call__(self) -> float:
         return self.now
 
+    def wall(self) -> datetime:
+        return datetime(2026, 11, 1, 15, tzinfo=UTC) + timedelta(seconds=self.now)
+
     def sleep(self, seconds: float) -> None:
         self.now += seconds
 
 
-def _wait(replies: list[Any], wait_s: float = 300) -> tuple[gg.Verdict, int]:
+def _wait(
+    replies: list[Any],
+    runs: list[Any] | None = None,
+    wait_s: float = 600,
+    grace_s: float = 300,
+) -> tuple[gg.Verdict, int]:
     clock = _Clock()
     calls = 0
 
     def fetch(path: str) -> Any:
         nonlocal calls
         if "/check-runs?" in path:
-            return {"check_runs": []}
+            return {"check_runs": runs or []}
         reply = replies[min(calls, len(replies) - 1)]
         calls += 1
         if isinstance(reply, Exception):
@@ -199,7 +235,16 @@ def _wait(replies: list[Any], wait_s: float = 300) -> tuple[gg.Verdict, int]:
         return reply
 
     result = gg.wait_for_verdict(
-        fetch, "o/r", 7, _HEAD, wait_s=wait_s, poll_s=60, clock=clock, sleep=clock.sleep
+        fetch,
+        "o/r",
+        7,
+        _HEAD,
+        wait_s=wait_s,
+        grace_s=grace_s,
+        poll_s=60,
+        clock=clock,
+        wall=clock.wall,
+        sleep=clock.sleep,
     )
     return result, calls
 
@@ -211,15 +256,36 @@ def test_the_gate_waits_for_the_review_of_the_head_to_land() -> None:
     assert calls == 3
 
 
-def test_the_gate_fails_when_no_review_of_the_head_arrives() -> None:
-    result, _ = _wait([[_comment(_summary(_OLD, 5))]])
-    assert result.state == gg.FAIL
-    assert "No Greptile review" in result.message
+def test_a_late_low_score_within_the_grace_period_still_fails() -> None:
+    replies = [[], [], [_comment(_summary(_HEAD, 3))]]
+    assert _wait(replies)[0].state == gg.FAIL
+
+
+def test_the_gate_passes_with_a_warning_when_greptile_never_reviews() -> None:
+    # Greptile out of credits: no review of the head, so the gate does not apply.
+    result, calls = _wait([[_comment(_summary(_OLD, 3))]])
+    assert result.state == gg.SKIP
+    assert "does not apply" in result.message
+    assert calls == 6  # read at 0, 60, ... 300 s: the grace period, not the full wait
+
+
+def test_a_review_that_never_posts_a_score_does_not_block() -> None:
+    runs = [_run(status="in_progress", started="2026-11-01T15:00:00Z")]
+    result, _ = _wait([[]], runs=runs)
+    assert result.state == gg.SKIP
+    assert "posted no score" in result.message
 
 
 def test_an_unreadable_reply_is_retried_not_passed() -> None:
     replies = [gg.GateError("boom"), {"message": "odd"}, [_comment(_summary(_HEAD, 5))]]
     assert _wait(replies)[0].state == gg.PASS
+
+
+def test_github_unreadable_for_the_whole_wait_fails() -> None:
+    # Not knowing whether Greptile scored is not Greptile being absent.
+    result, _ = _wait([gg.GateError("boom")])
+    assert result.state == gg.FAIL
+    assert "Could not read GitHub" in result.message
 
 
 def _routed(comments: list[Any], runs: list[Any]) -> Any:
@@ -240,6 +306,15 @@ def test_main_exits_by_the_verdict() -> None:
     assert gg.main(["greptile_gate.py", "7", _HEAD], fetch=low) == 1
     top = _routed([_comment(_summary(_HEAD, 5))], [_run()])
     assert gg.main(["greptile_gate.py", "7", _HEAD], fetch=top) == 0
+    unscored = _routed([_comment(_summary(_HEAD, None))], [_run()])
+    assert gg.main(["greptile_gate.py", "7", _HEAD], fetch=unscored) == 0
+
+
+def test_main_passes_when_greptile_is_absent() -> None:
+    clock = _Clock()
+    argv = ["greptile_gate.py", "7", _HEAD]
+    absent = _routed([], [])
+    assert gg.main(argv, fetch=absent, clock=clock, sleep=clock.sleep) == 0
 
 
 def test_only_greptiles_own_review_run_counts() -> None:
@@ -278,6 +353,7 @@ def test_the_gate_waits_out_a_same_head_re_review() -> None:
         fetch, "o/r", 7, _HEAD, wait_s=300, poll_s=60, clock=clock, sleep=clock.sleep
     )
     assert result.state == gg.PASS
+    assert clock.now == 60
 
 
 def test_the_required_summary_job_fails_unless_the_gate_passes() -> None:

@@ -80,7 +80,7 @@ All pull requests are validated by CI, which runs in parallel:
 3. **Unit Tests**: Parallel execution with `pytest-xdist` and coverage reporting
 4. **Integration Tests**: Full stack testing with Memgraph
 5. **PR Title Validation**: Conventional Commits format check
-6. **Greptile 5/5 Gate**: fails unless Greptile scores the PR's latest commit 5/5
+6. **Greptile 5/5 Gate**: fails when Greptile scores the PR's latest commit below 5/5; passes with a warning when Greptile doesn't score it
 
 ### Which number a merge bumps
 
@@ -153,7 +153,7 @@ the workflow run rather than assuming the cadence explains it.
 
 ### Automated Code Review
 
-This project uses automated code review bots (**Greptile** and **Gemini Code Assist**). Before requesting a human review, address all bot comments by either implementing suggestions or replying with a clear justification for why a suggestion doesn't apply. Greptile reviews every push, and the **Greptile 5/5 Gate** check blocks the merge until it scores the latest commit 5/5. To ask for a fresh review without pushing, comment `@greptile review`, then re-run the check once the **Greptile Review** check has started.
+This project uses automated code review bots (**Greptile** and **Gemini Code Assist**). Before requesting a human review, address all bot comments by either implementing suggestions or replying with a clear justification for why a suggestion doesn't apply. Greptile reviews every push, and when it scores the latest commit below 5/5 the **Greptile 5/5 Gate** check blocks the merge. If Greptile doesn't score it (out of credits, paused), the check passes with a warning. To ask for a fresh review without pushing, comment `@greptile review`, then re-run the check once the **Greptile Review** check has started.
 
 A green check list does not by itself mean a PR was verified: a review bot's *skip* notice is a comment with a non-empty body, and a PR based on a branch other than the default is covered by no ruleset, so nothing is required of it. Run `uv run python scripts/check_pr_gated.py <pr-number>` before merging; it reports every reason a PR is not verifiably gated rather than only the first.
 
