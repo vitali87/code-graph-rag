@@ -402,6 +402,31 @@ def test_a_waiver_in_the_working_directorys_dotenv_is_ignored(
 
 
 @pytest.mark.parametrize(
+    ("variable", "field"),
+    [
+        ("CGR_TRUST_PROJECT_INSTRUCTIONS", "TRUST_PROJECT_INSTRUCTIONS"),
+        ("CGR_ALLOW_SENSITIVE_READS", "ALLOW_SENSITIVE_READS"),
+        ("CGR_ALLOW_SENSITIVE_WRITES", "ALLOW_SENSITIVE_WRITES"),
+    ],
+)
+def test_an_empty_exported_waiver_leaves_dotenv_no_say(
+    variable: str, field: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Settings skip an empty variable and read `.env` instead, so an
+    exported `VAR=` let the repository's file turn the waiver on."""
+    dotenv = tmp_path / ".env"
+    dotenv.write_text(f"{variable}=true\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    with patch.dict(os.environ, {variable: ""}):
+        inherited = frozenset(os.environ)
+        refused = cgr_config.merge_dotenv(dotenv)
+        loaded, _ = cgr_config.load_settings(inherited, refused)
+
+    assert getattr(loaded, field) is False
+
+
+@pytest.mark.parametrize(
     "variable",
     [
         "CGR_TRUST_PROJECT_INSTRUCTIONS",

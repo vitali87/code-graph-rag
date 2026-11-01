@@ -792,7 +792,10 @@ def load_settings(
     # when the user exported it: `.env` in the working directory is usually the
     # analysed repository's file, and could approve its own .cgr.md (Codex
     # review on PR #3471). Held at its default, silently, like an unset one.
-    exported = {name.upper() for name in inherited_env}
+    # An empty one counts as unset: settings skip an empty variable
+    # (env_ignore_empty) and read `.env` in its place, so it let the
+    # repository's file decide.
+    exported = {name.upper() for name in inherited_env if os.environ.get(name)}
     waivers = {
         name for name in cs.ENVIRONMENT_ONLY_SETTINGS if name.upper() not in exported
     }
