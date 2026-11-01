@@ -66,6 +66,9 @@ positionally:
   would call `g` first, and `(a = (n = 1), b = n)` to `(b = n, a = (n = 1))`
   would read the old `n`. A default counts as running code unless it is one
   of the values above that may move at a site.
+- A new header with a default refuses when the body opens with a
+  `'use strict'` directive: JavaScript will not load a function that pairs
+  the directive with a default parameter.
 
 ## The new parameter list
 

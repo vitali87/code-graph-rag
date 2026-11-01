@@ -150,6 +150,21 @@ def test_a_dropped_parameter_the_body_still_reads_refuses(temp_repo: Path) -> No
     assert _read(root, UTIL) == UTIL_SOURCE
 
 
+def test_a_default_beside_use_strict_refuses(temp_repo: Path) -> None:
+    # `function helper(a, n = 0) { 'use strict'; ... }` is a SyntaxError.
+    util = (
+        "function helper(a) {\n  'use strict';\n  return a;\n}\n"
+        "module.exports = { helper };\n"
+    )
+    app = "const { helper } = require('./util');\nfunction run() {\n  return helper(1);\n}\n"
+    root = _indexed(temp_repo, util=util, app=app)
+
+    with pytest.raises(SignatureRefused, match="'use strict' directive"):
+        _change(root, HELPER, ["a", "n = 0"])
+    assert _read(root, UTIL) == util
+    assert _read(root, APP) == app
+
+
 @pytest.mark.parametrize(
     ("params", "reason"),
     [
