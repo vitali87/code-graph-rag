@@ -633,6 +633,34 @@ jobs:
         run: |
           uv run --no-sync pytest codebase_rag/tests/test_embedded_graph_engine.py codebase_rag/tests/test_embedded_graph_memgraph_parity.py codebase_rag/tests/test_embedded_graph_default.py --tb=short
 
+  greptile-gate:
+    name: Greptile 5/5 Gate
+    runs-on: ubuntu-latest
+    # Every pull request: Greptile reviews forks, Dependabot and every base,
+    # and greptile.json has it review each push, so the head always gets a
+    # score to wait for.
+    if: github.event_name == 'pull_request'
+    # The script waits up to 45 min for Greptile's review of the head; this
+    # cap only bounds a hang.
+    timeout-minutes: 55
+    permissions:
+      contents: read
+      # Greptile's score is in its summary comment on the pull request.
+      pull-requests: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Require Greptile to score the head commit 5/5
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 scripts/greptile_gate.py "$PR" "$HEAD_SHA"
+
   sonar-gate:
     name: Sonar Zero Issues Gate
     runs-on: ubuntu-latest
@@ -760,6 +788,7 @@ jobs:
         go-frontend,
         rust-graph-core,
         sonar-gate,
+        greptile-gate,
       ]
     timeout-minutes: 5
 
@@ -817,6 +846,13 @@ jobs:
           if [[ "${{ needs.sonar-gate.result }}" != "success" \
              && "${{ needs.sonar-gate.result }}" != "skipped" ]]; then
             echo "❌ Sonar gate failed: zero open SonarCloud issues on the head commit are required"
+            exit 1
+          fi
+          # Skipped only outside a pull request (a push to main, a dispatch);
+          # on every pull request anything but success blocks the merge.
+          if [[ "${{ needs.greptile-gate.result }}" != "success" \
+             && "${{ needs.greptile-gate.result }}" != "skipped" ]]; then
+            echo "❌ Greptile gate failed: Greptile must score the head commit 5/5"
             exit 1
           fi
           echo "✅ All checks passed!"

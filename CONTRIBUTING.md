@@ -121,6 +121,8 @@ All pull requests are automatically validated by our CI workflow, which runs in 
 
 5. **PR Title Validation** - Conventional Commits format check
 
+6. **Greptile 5/5 Gate** - Greptile reviews every push, and the check fails unless its confidence score for the PR's latest commit is 5/5
+
 All checks run in parallel and must pass before a PR can be merged. A summary job verifies all checks succeeded.
 
 **Run checks locally before pushing:**
@@ -159,7 +161,7 @@ This project uses automated code review bots (**Greptile** and **Gemini Code Ass
 2. **Accept or push back**: For each bot suggestion, either:
    - **Accept**: Implement the suggestion and resolve the comment
    - **Push back**: Reply inline with a clear justification for why the suggestion doesn't apply
-3. **Iterate as needed**: Continue addressing new bot comments through multiple review rounds until all are resolved
+3. **Iterate as needed**: Continue addressing new bot comments through multiple review rounds until all are resolved. Greptile must score the PR's latest commit 5/5, or the **Greptile 5/5 Gate** check fails and blocks the merge. It reviews each push on its own; to ask it again without pushing (after answering a finding it got wrong), comment `@greptile review`, then re-run the check
 4. **Then request human review**: Only after all bot comments are cleared, assign the PR to core maintainers for human review
 
 This process ensures that human reviewers focus on high-level design and logic rather than style and common issues that bots can catch.
