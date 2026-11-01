@@ -551,3 +551,6 @@ JS_EVAL_NAME = "eval"
 # The argument passed for a default a call skips: undefined even where the
 # caller has bound the name `undefined` to something else.
 JS_SKIPPED_ARGUMENT = "void 0"
+# A function body opening with either of these, exactly as written, runs in
+# strict mode, and JavaScript then refuses a default among its parameters.
+JS_USE_STRICT_DIRECTIVES = frozenset({"'use strict'", '"use strict"'})
