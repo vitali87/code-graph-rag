@@ -3988,7 +3988,6 @@ def _prune_one(
     if node_rows is None:
         _say(cs.CLI_WARN_PRUNE_ROOT_CHANGED.format(project_name=project_name))
         return cs.PruneOutcome.SKIPPED
-    _delete_pruned_vectors(ingestor, project_name, projects, node_rows)
     try:
         verified = _purge_left_nothing(ingestor, project_name)
     except GraphUnavailableError:
@@ -4002,6 +4001,7 @@ def _prune_one(
             cs.Color.RED,
         )
         return cs.PruneOutcome.FAILED
+    _delete_pruned_vectors(ingestor, project_name, projects, node_rows)
     if not prune_orphaned_glosses(ingestor, project_name):
         _say(cs.CLI_WARN_GLOSSES_NOT_PRUNED.format(project_name=project_name))
     _clear_deleted_project_markers(ingestor, project_name)
@@ -4048,9 +4048,12 @@ def _delete_pruned_vectors(
     projects: list[str],
     node_rows: list[ResultRow],
 ) -> None:
-    # The graph purge is proven either way; a vector deletion that fails or
-    # raises leaks vectors for dead node ids and is not recoverable by a
-    # retry, so it warns and the prune still counts.
+    # Run only once the purge is verified: the store finds a project's
+    # points by its name, so a project a sync recreated under that name
+    # since the delete would lose its vectors, and verification has just
+    # read that none exists. The graph purge is proven either way; a vector
+    # deletion that fails or raises leaks vectors for dead node ids and is
+    # not recoverable by a retry, so it warns and the prune still counts.
     try:
         deleted = _cleanup_project_embeddings(
             ingestor, project_name, projects, node_rows

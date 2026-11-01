@@ -331,19 +331,55 @@ class TestPruneAftercare:
         assert "could not be removed" in " ".join(result.output.split())
         assert "Pruned project 'dead__22222222'" in result.output
 
-    def test_an_unverified_purge_keeps_notes_and_markers(
+    def test_an_unverified_purge_keeps_notes_markers_and_vectors(
         self, mock_memgraph_connect: MagicMock
     ) -> None:
+        # The store finds a project's vectors by its name: a purge that
+        # cannot be proven may mean a sync recreated the project, whose
+        # vectors those now are.
         _ingestor(mock_memgraph_connect).fetch_all.side_effect = _fake_fetch_all(7)
         with (
             patch("codebase_rag.cli.prune_orphaned_glosses") as sweep,
             patch("codebase_rag.cli._clear_deleted_project_markers") as clear,
+            patch("codebase_rag.cli.delete_project_embeddings") as embeddings,
         ):
             result = runner.invoke(app, ["prune", "--yes"])
 
         assert result.exit_code == 1, result.output
         sweep.assert_not_called()
         clear.assert_not_called()
+        embeddings.assert_not_called()
+
+    def test_a_recreated_project_keeps_its_vectors(
+        self, mock_memgraph_connect: MagicMock
+    ) -> None:
+        # The delete fired, then a sync recreated the project under the same
+        # name before the verification read.
+        ingestor = _ingestor(mock_memgraph_connect)
+        ingestor.list_projects.side_effect = [["live__11111111", "dead__22222222"]]
+        with patch("codebase_rag.cli.delete_project_embeddings") as embeddings:
+            result = runner.invoke(app, ["prune", "--yes"])
+
+        assert result.exit_code == 1, result.output
+        assert "could not be verified" in result.output
+        embeddings.assert_not_called()
+
+    def test_vectors_go_only_after_the_purge_is_verified(
+        self, mock_memgraph_connect: MagicMock
+    ) -> None:
+        ingestor = _ingestor(mock_memgraph_connect)
+        order: list[str] = []
+        ingestor.list_projects.side_effect = lambda: (
+            order.append("verify") or ["live__11111111"]
+        )
+        with patch(
+            "codebase_rag.cli.delete_project_embeddings",
+            side_effect=lambda *a: order.append("vectors") or True,
+        ):
+            result = runner.invoke(app, ["prune", "--yes"])
+
+        assert result.exit_code == 0, result.output
+        assert order == ["verify", "vectors"]
 
     def test_a_delete_that_raises_is_a_failure_and_sweeps_if_gone(
         self, mock_memgraph_connect: MagicMock
