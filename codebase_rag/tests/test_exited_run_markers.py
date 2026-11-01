@@ -190,13 +190,9 @@ def test_nothing_to_take_over_writes_nothing() -> None:
 def test_a_failed_mark_retires_nothing() -> None:
     store = Store([])
     store.ingestor.execute_write.side_effect = RuntimeError("connection reset")
+    runs = [StrandedRun("mcp-dead", process_host(), _gone_pid())]
 
     with pytest.raises(RuntimeError):
-        take_over_runs(
-            store.ingestor,
-            "gone",
-            "prune-1",
-            [StrandedRun("mcp-dead", process_host(), _gone_pid())],
-        )
+        take_over_runs(store.ingestor, "gone", "prune-1", runs)
 
     assert store.ingestor.execute_write.call_count == 1

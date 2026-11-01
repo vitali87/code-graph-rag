@@ -276,7 +276,8 @@ def _residual(graph: MemgraphIngestor, name: str) -> ResultValue:
         {cs.KEY_PROJECT_NAME: name, cs.KEY_PROJECT_PREFIX: f"{name}."},
     )
     counts = [row[cs.KEY_RESIDUAL_NODES] for row in rows]
-    assert counts and all(isinstance(count, int) for count in counts), rows
+    assert counts, rows
+    assert all(isinstance(count, int) for count in counts), rows
     return sum(count for count in counts if isinstance(count, int))
 
 
