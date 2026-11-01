@@ -87,26 +87,6 @@ cgr_trace = "codebase_rag.trace.pytest_plugin"
 
 [tool.uv]
 package = true
-# semgrep (dev group) pins pyjwt~=2.13.0, which holds the single locked PyJWT
-# below the 2.14.0 fix for GHSA-ffc3-869f-jxw9 and its sibling advisories.
-# Drop this once a semgrep release accepts pyjwt>=2.14.0.
-# semgrep also pins mcp==1.29.0, below both the 1.30.0 fix for
-# GHSA-84m7-p3x7-pcfv (StreamableHTTP sessions never reclaimed) and the 2.x
-# SDK the server is written for. Its own CLI imports the 1.x FastMCP, so
-# `semgrep` cannot start in this environment until a release accepts mcp 2.
-# Drop that entry once one does.
-# semgrep also pins opentelemetry-api, -sdk and -exporter-otlp-proto-http
-# ~=1.37.0, which holds the locked API below the 1.45.1 fix for
-# GHSA-xcq7-p3pf-p88h (quadratic tracestate parsing). The SDK and exporter pin
-# the API exactly, so all three move together. Drop these entries once a
-# semgrep release accepts opentelemetry-api>=1.45.1.
-override-dependencies = [
-    "pyjwt[crypto]>=2.14.0",
-    "mcp>=2.3.0,<3",
-    "opentelemetry-api>=1.45.1,<2",
-    "opentelemetry-sdk>=1.45.1,<2",
-    "opentelemetry-exporter-otlp-proto-http>=1.45.1,<2",
-]
 
 # Patched grammars: upstream tree-sitter-c drops declarations after a
 # #define whose value embeds a block comment (issue #555). Our forks carry
@@ -342,7 +322,6 @@ dev = [
     # ty resolves the Memgraph driver's types where the code names them.
     "pymgclient>=1.6.0",
     "ruff>=0.5.5",
-    "semgrep>=1.79.0",
     "ty>=0.0.7",
     "types-protobuf>=5.0.0",
 ]
