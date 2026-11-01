@@ -114,6 +114,10 @@ UNFINISHED = (
     "min, so the gate does not apply. Re-run this job once Greptile posts."
 )
 UNREADABLE = "Could not read GitHub for {minutes} min: {state}"
+STUCK = (
+    "Greptile's re-review of {sha} did not post within {minutes} min, so the "
+    "score it last gave {sha} stands."
+)
 
 Fetch = Callable[[str], Any]
 
@@ -275,12 +279,14 @@ def wait_for_verdict(
     sleep: Callable[[float], None] = time.sleep,
 ) -> Verdict:
     start = clock()
+    comments: list[Any] = []
     while True:
         try:
             # Runs first: a review that finishes between the two reads then
             # shows as a run newer than the summary, never as a stale score.
             runs = review_runs(fetch, repo, head)
-            current = verdict(pr_comments(fetch, repo, pr), head, runs, wall())
+            comments = pr_comments(fetch, repo, pr)
+            current = verdict(comments, head, runs, wall())
         except (GateError, urllib.error.URLError, TimeoutError) as error:
             # A failed read is not an answer either way; ask again.
             current = Verdict(UNREAD, f"Could not read GitHub ({error}).")
@@ -297,6 +303,12 @@ def wait_for_verdict(
             if current.state == UNREAD:
                 # Not knowing whether Greptile scored is not Greptile absent.
                 return Verdict(FAIL, UNREADABLE.format(minutes=minutes, **fields))
+            # A re-review that never finishes leaves the score Greptile last
+            # gave the head standing: a known 3/5 must not expire into a pass.
+            standing = verdict(comments, head, (), wall())
+            if standing.state in (PASS, FAIL):
+                note = STUCK.format(sha=head[:8], minutes=minutes)
+                return Verdict(standing.state, f"{note} {standing.message}")
             return Verdict(SKIP, UNFINISHED.format(minutes=minutes, **fields))
         _report(current.message)
         sleep(poll_s)

@@ -276,6 +276,18 @@ def test_a_review_that_never_posts_a_score_does_not_block() -> None:
     assert "posted no score" in result.message
 
 
+@pytest.mark.parametrize(("known", "state"), [(3, gg.FAIL), (5, gg.PASS)])
+def test_a_stuck_re_review_leaves_the_known_score_of_the_head(
+    known: int, state: str
+) -> None:
+    # A known 3/5 must not expire into a pass because a re-review never ends.
+    runs = [_run(), _run(status="in_progress", started="2026-11-01T15:00:00Z")]
+    result, _ = _wait([[_comment(_summary(_HEAD, known))]], runs=runs)
+    assert result.state == state
+    assert f"{known}/5" in result.message
+    assert "stands" in result.message
+
+
 def test_an_unreadable_reply_is_retried_not_passed() -> None:
     replies = [gg.GateError("boom"), {"message": "odd"}, [_comment(_summary(_HEAD, 5))]]
     assert _wait(replies)[0].state == gg.PASS
