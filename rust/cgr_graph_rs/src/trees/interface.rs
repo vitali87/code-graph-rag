@@ -191,6 +191,20 @@ pub fn interface_fingerprint(
     hex(&digest.finalize())
 }
 
+/// `callable_parameter_indices(func_node, language)` in
+/// `codebase_rag/parsers/utils.py`, as (name, index) pairs in parameter
+/// order, for the languages whose scan these rules carry (Python's and the
+/// JS/TS one); None for the others, whose scan the Python twin keeps.
+pub fn callable_parameter_indices(
+    func: Node,
+    source: &[u8],
+    language: &LanguageRules,
+    rules: &InterfaceRules,
+    scopes: &ScopeRules,
+) -> Option<Vec<(String, usize)>> {
+    Walk { source, rules, language, scopes }.callable_parameter_indices(func)
+}
+
 /// `_token(kind, text)`: length-prefixed, so no leaf text can imitate a
 /// token boundary. tree-sitter's byte offsets are 32-bit, so every length
 /// fits the 4-byte big-endian prefix `python::interface_rules_from` checks.
@@ -648,21 +662,65 @@ impl<'a> Walk<'a> {
     /// Whether `callable_parameter_indices(func, language)` is non-empty:
     /// the function calls one of its own parameters.
     fn invokes_a_parameter(&self, func: Node<'a>) -> bool {
+        let Some((_, body, scan)) = self.scan_inputs(func) else {
+            return false;
+        };
+        let mut invoked = HashSet::new();
+        self.scan_invoked(body.0, &body.1, scan, &mut invoked, true)
+    }
+
+    /// `callable_parameter_indices(func, language)`: each parameter the
+    /// function calls by bare name, with its index among the parameters, in
+    /// parameter order. None for a language whose scan the twin keeps.
+    fn callable_parameter_indices(&self, func: Node<'a>) -> Option<Vec<(String, usize)>> {
+        if self.language.flavor == Flavor::Other {
+            return None;
+        }
+        let Some((names, body, scan)) = self.scan_inputs(func) else {
+            return Some(Vec::new());
+        };
+        let mut invoked = HashSet::new();
+        self.scan_invoked(body.0, &body.1, scan, &mut invoked, false);
+        Some(
+            names
+                .into_iter()
+                .enumerate()
+                .filter(|(_, name)| invoked.contains(name))
+                .map(|(index, name)| (name, index))
+                .collect(),
+        )
+    }
+
+    /// `_callable_scan_inputs`: the ordered parameters, the body with them
+    /// as the candidates, and the language's scan; None without a body or
+    /// parameters, or for a language the scan does not cover.
+    #[allow(clippy::type_complexity)]
+    fn scan_inputs(&self, func: Node<'a>) -> Option<(Vec<String>, (Node<'a>, HashSet<String>), &'a ScanRules)> {
         let rules = self.rules;
         let (names, scan) = match self.language.flavor {
             Flavor::Python => (self.python_parameter_names(func), &rules.python_scan),
             Flavor::Js => (self.js_parameter_names(func), &rules.js_scan),
-            Flavor::Other => return false,
+            Flavor::Other => return None,
         };
-        let Some(body) = func.child_by_field_name(&rules.body_field) else {
-            return false;
-        };
-        let candidates: HashSet<String> = names.into_iter().collect();
-        self.scan_invoked(body, &candidates, scan)
+        let body = func.child_by_field_name(&rules.body_field)?;
+        if names.is_empty() {
+            return None;
+        }
+        let candidates = names.iter().cloned().collect();
+        Some((names, (body, candidates), scan))
     }
 
-    /// `_scan_invoked_parameters`, stopping at the first invocation.
-    fn scan_invoked(&self, scope: Node<'a>, candidates: &HashSet<String>, scan: &ScanRules) -> bool {
+    /// `_scan_invoked_parameters`: adds to `invoked` each candidate called
+    /// by bare name in `scope`. With `first_only` it stops at the first
+    /// and returns true; it returns false otherwise.
+    fn scan_invoked(
+        &self,
+        scope: Node<'a>,
+        candidates: &HashSet<String>,
+        scan: &ScanRules,
+        invoked: &mut HashSet<String>,
+        first_only: bool,
+    ) -> bool {
         if candidates.is_empty() {
             return false;
         }
@@ -670,15 +728,18 @@ impl<'a> Walk<'a> {
         // The scope's own node is not one of its calls; its children are.
         nodes.next();
         while let Some(child) = nodes.next() {
-            if self.bare_call_name(child, scan).is_some_and(|name| candidates.contains(name.as_ref())) {
-                return true;
+            if let Some(name) = self.bare_call_name(child, scan).filter(|name| candidates.contains(name.as_ref())) {
+                invoked.insert(name.into_owned());
+                if first_only {
+                    return true;
+                }
             }
             let child_type = kind(child);
             if scan.closures.contains(child_type) {
                 nodes.skip_children();
                 let bound = self.scope_bound_names(child);
                 let inner: HashSet<String> = candidates.iter().filter(|name| !bound.contains(*name)).cloned().collect();
-                if self.scan_invoked(child, &inner, scan) {
+                if self.scan_invoked(child, &inner, scan, invoked, first_only) {
                     return true;
                 }
             } else if scan.opaque.contains(child_type) {
