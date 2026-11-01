@@ -91,7 +91,8 @@ KEY_END_LINE = "end_line"
 # MERGE_KEY_PROPS_BY_REL), so a caller invoking one callee twice carries two
 # parallel edges. Edges emitted without a site (libclang macro uses, Roslyn
 # facts, dynamic-trace write-back, inferred C# namespace imports) carry none of
-# these keys and keep collapsing on their endpoints.
+# these keys: a pair's site-less rows share one site-less edge beside its
+# located ones, and never write onto those (issue #2879).
 KEY_LINE = "line"
 # Fixed-Cypher parameter names for the deterministic graph queries (#1523).
 KEY_QN = "qn"
@@ -1755,7 +1756,7 @@ REL_ENDPOINT_JOINER = " and "
 MERGE_KEY_PROPS_BY_REL: dict[str, tuple[str, ...]] = {
     RelationshipType.FLOWS_TO.value: ("via", "kind"),
     # One edge per call/reference/instantiation site (issue #1522); a row
-    # without a site still merges on its endpoints alone.
+    # without a site lands on the pair's site-less edge (issue #2879).
     RelationshipType.CALLS.value: (KEY_LINE, KEY_COL),
     RelationshipType.REFERENCES.value: (KEY_LINE, KEY_COL),
     RelationshipType.INSTANTIATES.value: (KEY_LINE, KEY_COL),

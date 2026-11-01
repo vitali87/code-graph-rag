@@ -210,17 +210,14 @@ def test_carry_confirms_a_pair_the_reparse_gave_a_static_edge(tmp_path: Path) ->
     summary = carry_trace_edges(store, _capture(store), tmp_path)
 
     assert (summary.carried, summary.newly_stale, summary.dropped) == (1, 0, 0)
-    assert store.writes == [
-        (
-            build_trace_confirm_calls_query(_FUNCTION, _FUNCTION),
-            {
-                cs.KEY_FROM_QN: _CALLER,
-                cs.KEY_TO_QN: _CALLEE,
-                cs.KEY_RESOLUTION: cs.EdgeResolution.TRACE_CONFIRMED,
-            },
-        )
-    ]
-    props = _written(store)
+    ((query, params),) = store.writes
+    assert query == build_trace_confirm_calls_query(_FUNCTION, _FUNCTION)
+    assert (params[cs.KEY_FROM_QN], params[cs.KEY_TO_QN]) == (_CALLER, _CALLEE)
+    # The observation goes onto the static edges with the confirmation, and
+    # no relationship row: one without a site would be a second, site-less
+    # edge beside them (issue #2879).
+    assert store.edges == []
+    props = params
     assert props[cs.KEY_RESOLUTION] == cs.EdgeResolution.TRACE_CONFIRMED
     assert props[cs.TRACE_PROP_STATIC_MISSED] is False
     assert props[cs.TRACE_PROP_CALL_COUNT] == 3

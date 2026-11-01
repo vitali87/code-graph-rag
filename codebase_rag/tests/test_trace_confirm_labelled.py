@@ -53,11 +53,8 @@ def test_a_confirmation_matches_both_endpoints_by_label(
         "MATCH (a:Function {qualified_name: $from_qn})"
         f"-[r:CALLS]->(b:{callee_label} {{qualified_name: $to_qn}})"
     ), query
-    assert params == {
-        cs.KEY_FROM_QN: RUN,
-        cs.KEY_TO_QN: KNOWN,
-        cs.KEY_RESOLUTION: cs.EdgeResolution.TRACE_CONFIRMED,
-    }
+    assert (params[cs.KEY_FROM_QN], params[cs.KEY_TO_QN]) == (RUN, KNOWN)
+    assert params[cs.KEY_RESOLUTION] == cs.EdgeResolution.TRACE_CONFIRMED
 
 
 def test_a_confirmation_still_leaves_trace_only_edges_alone(tmp_path: Path) -> None:

@@ -9,6 +9,11 @@ from loguru import logger
 
 from codebase_rag.services.graph_service import MemgraphIngestor
 
+# Real CALLS and IMPORTS rows carry their site, so these take the MERGE path
+# whose per-batch count the mocks below stand in for. Rows without a site
+# take their own path (issue #2879), covered in test_siteless_rel_rows.py.
+_SITE = {"line": 1, "col": 0}
+
 
 @pytest.fixture
 def graph_service() -> MemgraphIngestor:
@@ -43,16 +48,19 @@ def test_calls_failure_logging_single_batch(
         ("Method", "qualified_name", "project.module.ClassA.methodA()"),
         "CALLS",
         ("Method", "qualified_name", "project.module.ClassB.methodB()"),
+        dict(_SITE),
     )
     graph_service.ensure_relationship_batch(
         ("Method", "qualified_name", "project.module.ClassA.methodA()"),
         "CALLS",
         ("Method", "qualified_name", "project.module.NonExistent.missing()"),
+        dict(_SITE),
     )
     graph_service.ensure_relationship_batch(
         ("Method", "qualified_name", "project.module.ClassC.methodC()"),
         "CALLS",
         ("Method", "qualified_name", "project.module.AlsoMissing.gone()"),
+        dict(_SITE),
     )
 
     with patch.object(
@@ -75,22 +83,26 @@ def test_calls_failure_logging_multiple_batches(
         ("Method", "qualified_name", "project.module.ClassA.methodA()"),
         "CALLS",
         ("Method", "qualified_name", "project.module.ClassB.methodB()"),
+        dict(_SITE),
     )
     graph_service.ensure_relationship_batch(
         ("Method", "qualified_name", "project.module.ClassA.methodA()"),
         "CALLS",
         ("Method", "qualified_name", "project.module.Missing1.missing1()"),
+        dict(_SITE),
     )
 
     graph_service.ensure_relationship_batch(
         ("Function", "qualified_name", "project.module.funcA"),
         "CALLS",
         ("Function", "qualified_name", "project.module.funcB"),
+        dict(_SITE),
     )
     graph_service.ensure_relationship_batch(
         ("Function", "qualified_name", "project.module.funcA"),
         "CALLS",
         ("Function", "qualified_name", "project.module.missing2"),
+        dict(_SITE),
     )
 
     call_count = 0
@@ -125,11 +137,13 @@ def test_calls_success_no_failure_logging(
         ("Method", "qualified_name", "project.module.ClassA.methodA()"),
         "CALLS",
         ("Method", "qualified_name", "project.module.ClassB.methodB()"),
+        dict(_SITE),
     )
     graph_service.ensure_relationship_batch(
         ("Method", "qualified_name", "project.module.ClassC.methodC()"),
         "CALLS",
         ("Method", "qualified_name", "project.module.ClassD.methodD()"),
+        dict(_SITE),
     )
 
     with patch.object(
@@ -151,11 +165,13 @@ def test_non_calls_relationship_failures_are_reported(
         ("Module", "qualified_name", "project.moduleA"),
         "IMPORTS",
         ("Module", "qualified_name", "project.moduleB"),
+        dict(_SITE),
     )
     graph_service.ensure_relationship_batch(
         ("Module", "qualified_name", "project.moduleA"),
         "IMPORTS",
         ("Module", "qualified_name", "project.missing"),
+        dict(_SITE),
     )
 
     with patch.object(

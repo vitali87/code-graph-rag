@@ -110,10 +110,14 @@ def _flush(
     ingestor = MemgraphIngestor(host="localhost", port=7687, batch_size=10_000)
     ingestor.conn = graph
     for source, target in rows:
+        # Located rows, as the passes write them, so the write is the MERGE
+        # this fake answers; a row without a site takes its own path
+        # (issue #2879).
         ingestor.ensure_relationship_batch(
             (from_label, cs.KEY_QUALIFIED_NAME, source),
             rel_type,
             (to_label, cs.KEY_QUALIFIED_NAME, target),
+            {cs.KEY_LINE: 1, cs.KEY_COL: 0},
         )
     ingestor.flush_relationships()
 

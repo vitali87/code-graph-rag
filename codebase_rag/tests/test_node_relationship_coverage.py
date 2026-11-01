@@ -9,6 +9,7 @@ from codebase_rag.constants import (
     KEY_NAME,
     KEY_PATH,
     KEY_QUALIFIED_NAME,
+    MERGE_KEY_PROPS_BY_REL,
     NODE_NAME_INDEXES,
     NODE_UNIQUE_CONSTRAINTS,
     NodeLabel,
@@ -137,14 +138,45 @@ class TestFlushRelationshipsForAllTypes:
 
         ingestor.conn = mock_conn
 
+        # The row carries its type's merge keys, as the passes write them, so
+        # every type flushes as one MERGE.
         ingestor.ensure_relationship_batch(
             (NodeLabel.MODULE.value, KEY_QUALIFIED_NAME, "module.test"),
             rel_type.value,
             (NodeLabel.FUNCTION.value, KEY_QUALIFIED_NAME, "module.test.func"),
+            {key: 1 for key in MERGE_KEY_PROPS_BY_REL.get(rel_type.value, ())},
         )
         ingestor.flush_relationships()
 
         mock_cursor.execute.assert_called_once()
+        assert ingestor._rel_count == 0
+
+    @pytest.mark.parametrize("rel_type", sorted(MERGE_KEY_PROPS_BY_REL))
+    def test_a_row_without_a_site_flushes_in_two_queries(self, rel_type: str) -> None:
+        # Update the pair's site-less edge, then create it where there was
+        # none; it never merges onto a located one (issue #2879).
+        ingestor = MemgraphIngestor(host="localhost", port=7687, batch_size=10)
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_conn.cursor.return_value = mock_cursor
+        # No site-less edge to update yet, so the create writes row 0.
+        mock_cursor.fetchall.side_effect = [[], [(0,)]]
+        col = MagicMock()
+        col.name = "row_index"
+        mock_cursor.description = [col]
+        ingestor.conn = mock_conn
+
+        ingestor.ensure_relationship_batch(
+            (NodeLabel.MODULE.value, KEY_QUALIFIED_NAME, "module.test"),
+            rel_type,
+            (NodeLabel.FUNCTION.value, KEY_QUALIFIED_NAME, "module.test.func"),
+        )
+        ingestor.flush_relationships()
+
+        queries = [c.args[0] for c in mock_cursor.execute.call_args_list]
+        assert len(queries) == 2, queries
+        assert not any("MERGE" in q for q in queries), queries
+        assert "IS NULL" in queries[0] and "CREATE" in queries[1], queries
         assert ingestor._rel_count == 0
 
 

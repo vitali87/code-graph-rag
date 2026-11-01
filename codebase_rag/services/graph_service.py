@@ -38,6 +38,7 @@ from ..constants import (
     KEY_PROJECT_PREFIX,
     KEY_PROPS,
     KEY_PURGED,
+    KEY_ROW_INDEX,
     KEY_TO_MISSING,
     KEY_TO_VAL,
     LEGACY_NODE_CONSTRAINTS,
@@ -68,9 +69,11 @@ from ..cypher_queries import (
     CYPHER_PURGE_KEYLESS_STRUCTURE,
     build_create_node_query,
     build_create_relationship_query,
+    build_create_site_less_relationship_query,
     build_merge_node_query,
     build_merge_relationship_query,
     build_missing_rel_endpoints_query,
+    build_update_site_less_relationship_query,
     wrap_with_unwind,
 )
 from ..embedded_graph.connection import EmbeddedConnection
@@ -161,6 +164,10 @@ def _note_memgraph_set_without_backend() -> None:
     # Once per process: a server opens an ingestor per request, and the
     # setting cannot change under it.
     logger.warning(ls.MG_SET_WITHOUT_BACKEND.format(path=settings.graph_db_file))
+
+
+def _row_indexes(results: Sequence[ResultRow]) -> set[int]:
+    return {i for r in results if isinstance(i := r.get(KEY_ROW_INDEX), int)}
 
 
 def _created_count(results: Sequence[ResultRow]) -> int:
@@ -967,6 +974,9 @@ class MemgraphIngestor:
                 ]
                 return sum(t for t, _ in totals), sum(s for _, s in totals)
             merge_key_props = next(iter(by_keys), ())
+            site_keys = MERGE_KEY_PROPS_BY_REL.get(rel_type, ())
+            if site_keys and not merge_key_props:
+                return self._merge_site_less_rows(pattern, site_keys, params_list, conn)
             query = build_merge_relationship_query(
                 from_label,
                 from_key,
@@ -1026,6 +1036,80 @@ class MemgraphIngestor:
         )
 
         return len(params_list), batch_successful
+
+    def _merge_site_less_rows(
+        self,
+        pattern: tuple[str, str, str, str, str],
+        site_keys: tuple[str, ...],
+        params_list: list[RelBatchRow],
+        conn: ConnectionProtocol | None,
+    ) -> tuple[int, int]:
+        # Rows without the site keys land on the pair's site-less edge, made
+        # when there is none, and never on a located one: a MERGE on the
+        # endpoints alone set their properties, `resolution` among them, on
+        # every site of the pair (issue #2879). index.bin keys them the same
+        # way. The Rust extension does not take this case, so it runs Cypher.
+        target_conn = conn or self.conn
+        if not target_conn:
+            logger.warning(ls.MG_NO_CONN_RELS.format(pattern=pattern))
+            return len(params_list), 0
+        from_label, from_key, rel_type, to_label, to_key = pattern
+        lock = self._conn_lock if conn is None else nullcontext()
+        indexed = [
+            RelBatchRow(**row, row_index=index) for index, row in enumerate(params_list)
+        ]
+        with lock:
+            updated = _row_indexes(
+                self._execute_batch_with_return_on(
+                    target_conn,
+                    build_update_site_less_relationship_query(
+                        from_label, from_key, rel_type, to_label, to_key, site_keys
+                    ),
+                    indexed,
+                )
+            )
+            # One new edge per pair, carrying each of its rows' properties
+            # with the later one winning, as repeated writes to an edge do.
+            new_edges: dict[tuple[str, str], RelBatchRow] = {}
+            rows_per_pair: defaultdict[tuple[str, str], int] = defaultdict(int)
+            for index, row in enumerate(params_list):
+                if index in updated:
+                    continue
+                pair = (str(row[KEY_FROM_VAL]), str(row[KEY_TO_VAL]))
+                rows_per_pair[pair] += 1
+                first = new_edges.get(pair)
+                new_edges[pair] = (
+                    RelBatchRow(**row, row_index=index)
+                    if first is None
+                    else RelBatchRow(
+                        from_val=first[KEY_FROM_VAL],
+                        to_val=first[KEY_TO_VAL],
+                        props={**first[KEY_PROPS], **row[KEY_PROPS]},
+                        row_index=first.get(KEY_ROW_INDEX, index),
+                    )
+                )
+            created = _row_indexes(
+                self._execute_batch_with_return_on(
+                    target_conn,
+                    build_create_site_less_relationship_query(
+                        from_label, from_key, rel_type, to_label, to_key
+                    ),
+                    list(new_edges.values()),
+                )
+            )
+            written = len(updated) + sum(
+                rows_per_pair[pair]
+                for pair, row in new_edges.items()
+                if row.get(KEY_ROW_INDEX) in created
+            )
+            failed_rows = (
+                self._missing_endpoint_rows(target_conn, pattern, params_list)
+                if written < len(params_list)
+                else []
+            )
+
+        _log_failed_relationships(pattern, len(params_list), written, failed_rows)
+        return len(params_list), written
 
     def _missing_endpoint_rows(
         self,

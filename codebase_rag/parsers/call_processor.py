@@ -11329,8 +11329,8 @@ class CallProcessor:
     ) -> tuple[PropertyDict, ...]:
         # A receiver whose walk recorded no invocation still invokes the
         # parameter (the registry says so): keep the edge, without a site and
-        # so without `via_param`, since a site-less row merges on its endpoints
-        # alone and would stamp it on a direct call joining the same pair.
+        # so without `via_param`, which names the parameter at a recorded
+        # invocation.
         return invocations.get((func_qn, param_name)) or ({},)
 
     def _emit_passed_callbacks(

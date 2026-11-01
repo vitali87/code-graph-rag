@@ -427,19 +427,19 @@ def test_trace_upgrades_observed_edges_and_tags_dynamic_ones(tmp_path: Path) -> 
     assert summary.confirmed_static == 1
     assert summary.static_missed == 3
 
-    # The observed static edge is upgraded in place, on every site.
-    assert graph.writes == [
-        (
-            build_trace_confirm_calls_query("Function", "Function"),
-            {
-                cs.KEY_FROM_QN: f"{PROJECT}.pkg.app.run",
-                cs.KEY_TO_QN: f"{PROJECT}.pkg.svc.known",
-                cs.KEY_RESOLUTION: "trace_confirmed",
-            },
-        )
-    ]
+    # The observed static edge is upgraded in place, on every site, with the
+    # whole observation, and gets no relationship row of its own: one
+    # without a site would be a second, site-less edge (issue #2879).
+    ((query, params),) = graph.writes
+    assert query == build_trace_confirm_calls_query("Function", "Function")
+    assert (params[cs.KEY_FROM_QN], params[cs.KEY_TO_QN]) == (
+        f"{PROJECT}.pkg.app.run",
+        f"{PROJECT}.pkg.svc.known",
+    )
+    confirmed = params
+    assert confirmed[cs.KEY_RESOLUTION] == "trace_confirmed"
     by_callee = {dst.rsplit(".", 1)[-1]: props for _src, dst, props in graph.edges}
-    assert by_callee["known"][cs.KEY_RESOLUTION] == "trace_confirmed"
+    assert "known" not in by_callee
     # getattr(obj, "hidden"): the literal's site is recorded.
     hidden = by_callee["hidden"]
     assert hidden[cs.KEY_RESOLUTION] == "dynamic"
