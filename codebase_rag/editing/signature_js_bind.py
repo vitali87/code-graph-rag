@@ -100,7 +100,48 @@ def _definition_edits(
         )
     _refuse_forward_defaults(header.qn, *probed)
     _refuse_reordered_defaults(header, *probed)
+    _refuse_strict_defaults(header, probed[0])
     return [_Edit(header.path, header.span, params)]
+
+
+def _refuse_strict_defaults(header: _Header, params: Node) -> None:
+    """Refuse a default in a function whose body declares 'use strict'.
+
+    JavaScript will not load such a function: a list with a default is not
+    simple, and only a simple list may stand before that directive. The new
+    list is probed with an empty body, so the real body is read here.
+    """
+    if not any(
+        child.type == cs.TS_ASSIGNMENT_PATTERN for child in params.named_children
+    ):
+        return
+    if _declares_use_strict(header.function, header.source):
+        raise SignatureRefused(cs.SIGNATURE_JS_STRICT_DEFAULTS.format(qn=header.qn))
+
+
+def _declares_use_strict(function: Node, source: bytes) -> bool:
+    """Whether the body's directive prologue holds `'use strict'`.
+
+    The prologue is the run of bare string statements that opens the body,
+    comments aside. Only the two exact spellings count: `('use strict')`,
+    `'use strict'.length` or an escaped `'use\\x20strict'` is no directive.
+    """
+    body = function.child_by_field_name(cs.FIELD_BODY)
+    for statement in body.named_children if body is not None else []:
+        if statement.type == cs.TS_COMMENT:
+            continue
+        values = [
+            child for child in statement.named_children if child.type != cs.TS_COMMENT
+        ]
+        if (
+            statement.type != cs.TS_EXPRESSION_STATEMENT
+            or len(values) != 1
+            or values[0].type != cs.TS_STRING
+        ):
+            return False
+        if _text(values[0], source) in cs.JS_USE_STRICT_DIRECTIVES:
+            return True
+    return False
 
 
 def _refuse_reordered_defaults(header: _Header, params: Node, source: bytes) -> None:

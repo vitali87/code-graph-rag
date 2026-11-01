@@ -1176,6 +1176,11 @@ SIGNATURE_JS_DEFAULT_READS_LATER = (
     "which is not bound yet when that default runs, so a call leaving {name} "
     "out would throw ReferenceError"
 )
+SIGNATURE_JS_STRICT_DEFAULTS = (
+    "Cannot change the signature of {qn}: its body opens with a 'use strict' "
+    "directive, and JavaScript refuses that directive in a function with a "
+    "default parameter, so the new header would not load"
+)
 SIGNATURE_PLANNED = "{count} site(s) would be rewritten, {skipped} left unmapped"
 SIGNATURE_PARSE_FAILED = "Signature change rolled back: {files} would no longer parse"
 SIGNATURE_CONTRACT_FAILED = (

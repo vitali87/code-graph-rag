@@ -213,3 +213,68 @@ def test_defaults_that_still_run_in_written_order_pass(
     specs = [own.get(name) or ParamSpec(name, name, None, False) for name in new]
 
     assert _definition_edits(header, specs, set(own) & set(new), [])
+
+
+@pytest.mark.parametrize(
+    ("body", "new"),
+    [
+        ("'use strict';\n  return a;", ["a", "n = 0"]),
+        ("// strict\n  'a';\n  \"use strict\"\n  return a;", ["a", "n = 0"]),
+        ("'use strict' /* on */;\n  return a;", ["a", "n = 0"]),
+    ],
+    ids=["single-quoted", "after-another-directive", "comment-inside"],
+)
+def test_a_default_in_a_function_that_declares_use_strict_refuses(
+    body: str, new: list[str]
+) -> None:
+    header = _header(f"function helper(a) {{\n  {body}\n}}\n")
+    specs = [_parse_new_param(text, {"a": header.params[0]}) for text in new]
+
+    with pytest.raises(SignatureRefused, match="'use strict' directive"):
+        _definition_edits(header, specs, {"a"}, [])
+
+
+def test_a_method_that_declares_use_strict_refuses_a_default() -> None:
+    header = _header("class C {\n  helper(a) { 'use strict'; }\n}\n")
+    specs = [header.params[0], _parse_new_param("n = 0", {})]
+
+    with pytest.raises(SignatureRefused, match="'use strict' directive"):
+        _definition_edits(header, specs, {"a"}, [])
+
+
+def test_a_kept_default_beside_use_strict_refuses_too() -> None:
+    header = _header("function helper(a, b = 1) {\n  'use strict';\n}\n")
+    swapped = [header.params[1], header.params[0]]
+
+    with pytest.raises(SignatureRefused, match="'use strict' directive"):
+        _definition_edits(header, swapped, {"a", "b"}, [])
+
+
+@pytest.mark.parametrize(
+    ("body", "new"),
+    [
+        ("'use strict';\n  return a;", ["a", "n"]),
+        ("('use strict');\n  return a;", ["a", "n = 0"]),
+        ("'use strict'.length;\n  return a;", ["a", "n = 0"]),
+        ("'use\\x20strict';\n  return a;", ["a", "n = 0"]),
+        ("`use strict`;\n  return a;", ["a", "n = 0"]),
+        ("go();\n  'use strict';", ["a", "n = 0"]),
+        ("return function () { 'use strict'; };", ["a", "n = 0"]),
+    ],
+    ids=[
+        "no-default",
+        "parenthesized",
+        "member",
+        "escaped",
+        "template",
+        "after-a-statement",
+        "nested-function",
+    ],
+)
+def test_a_default_beside_no_use_strict_directive_passes(
+    body: str, new: list[str]
+) -> None:
+    header = _header(f"function helper(a) {{\n  {body}\n}}\n")
+    specs = [_parse_new_param(text, {"a": header.params[0]}) for text in new]
+
+    assert _definition_edits(header, specs, {"a"}, [])
