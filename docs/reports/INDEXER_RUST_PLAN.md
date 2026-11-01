@@ -321,14 +321,38 @@ Every step is its own PR, re-measured with `benchmarks/index_profile.py`
 before the next starts. The Python fixes come first where they are larger:
 they are cheaper, and they change the shares the Rust steps are sized by.
 
-### 1. Python: index definitions once per tree (about 15%)
+### 1. Python: index definitions once per tree
 
-`_find_python_method_in_ast`, `_find_function_ast_node` and
-`_find_class_node` rerun the class or function query over a whole file every
-time a call's return type needs a definition node. Build one map per tree on
-first use (class name to its methods by name, top-level function name to
-node), kept beside the cached AST and dropped with it. This is the largest
-single item in the profile and needs no Rust.
+Landed. `_find_python_method_in_ast`, `_find_function_ast_node` and
+`_find_class_node` reran the class or function query over a whole file every
+time a call's return type needed a definition node: 13,709 lookups, 36.7 s of
+a 184.5 s run on code-graph-rag's own tree. Nothing in their
+history chose that: no cache was ever tried or reverted, and #3364, which
+indexed the other languages' per-lookup scans, did not touch them.
+
+`parsers/py/definition_index.py` now runs each query once per tree, with the
+same query, source order and name and nesting rules, and keeps what it found
+by name. The indexes are keyed by the tree's root node, so a file the AST
+cache evicted and parsed again gets a new one; they are bounded by trees (8,
+`PY_DEFINITION_INDEX_TREES`), as the scope walks are, since an index keeps
+its tree alive outside the AST cache's cap, and cleared with the engine's
+other caches at the start of every run and reingest. Lookups cluster by file:
+8 trees answer 83% of them from an index, every tree kept would answer 89%.
+
+**Parity.** `test_python_definition_index.py` compares the index with the
+old scans, kept there verbatim, on a sample written for the scans' quirks and
+on every file of `parsers/py`: every class and function name, every class and
+method name pair, and names that match nothing. Indexing code-graph-rag with
+the old and the new code gave the same graph, nodes, edges and properties
+(42,482 and 183,640); the few call edges that differ between runs differ
+between runs of the old code too.
+
+**Speed**, without embeddings, wall time of `cgr start --update-graph`:
+
+| Repository | `main` | Step 1 | Gain |
+|---|---|---|---|
+| rich, median of 5 alternating runs | 12.3 s | 10.3 s | 1.20x |
+| code-graph-rag, mean of 3 alternating runs | 183 s | 151 s | 1.22x |
 
 ### 2. Python: lazy agent imports (up to 9% of a small repository's run)
 
@@ -394,7 +418,8 @@ at 6x per ported walk:
 | Stage 2 (landed) | 214 s to 224 s, measured |
 | Stage 3's `main`, in a container about 1.6x slower | 335 s to 358 s, measured |
 | Stage 3 (landed) | 300 s to 312 s, measured |
-| Step 1 (Python lookups, 22.6% of stage 3's run) | about 235 s |
+| Step 1's `main`, a later tree in another container | 179 s to 190 s, measured |
+| Step 1 (landed) | 150 s to 152 s, measured |
 | Step 7 (Java registry scan, 9.5%) | about 210 s |
 | Step 4 (call sites, 2% to 5%) | about 200 s |
 
