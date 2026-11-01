@@ -314,8 +314,13 @@ CLI_WARN_PRUNE_ROOT_BACK = (
     "a prune candidate."
 )
 CLI_WARN_PRUNE_ROOT_CHANGED = (
-    "Root of '{project_name}' has changed -- skipping, the graph no longer "
-    "names the root this run checked."
+    "'{project_name}' changed while it was being pruned -- its root moved or "
+    "a sync of it began writing -- skipping it."
+)
+CLI_WARN_PRUNE_RUN_WRITING = (
+    "A sync of '{project_name}' may still be writing the graph (its "
+    "incomplete-run marker is up) -- skipping it. Re-run prune once that sync "
+    "has finished."
 )
 CLI_WARN_PRUNE_VECTORS_KEPT = (
     "Vectors of '{project_name}' could not be deleted and remain in the "

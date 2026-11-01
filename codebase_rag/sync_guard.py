@@ -364,6 +364,23 @@ def retire_stranded_runs(
     """
     if not runs:
         return
+    if (error := _retire_markers(ingestor, project_name, runs)) is not None:
+        logger.warning(
+            ls.STRANDED_RUNS_NOT_RETIRED.format(project=project_name, error=error)
+        )
+        return
+    logger.info(ls.STRANDED_RUNS_RETIRED.format(project=project_name, count=len(runs)))
+
+
+def _retire_markers(
+    ingestor: QueryProtocol, project_name: str, runs: list[StrandedRun]
+) -> Exception | None:
+    """Delete each run's marker while it still names the exited process.
+
+    The CLI sync's run id is shared, so a CLI writer that started since has
+    marked the node under its own process and keeps it. Returns the error
+    that stopped it, if any.
+    """
     try:
         for run in runs:
             ingestor.execute_write(
@@ -376,8 +393,60 @@ def retire_stranded_runs(
                 },
             )
     except Exception as exc:
+        return exc
+    return None
+
+
+def exited_runs(ingestor: QueryProtocol, project_name: str) -> list[StrandedRun]:
+    """The runs of the project that may be writing but whose process exited.
+
+    For a project being deleted or pruned (#2479), which has no rebuild of
+    its own to leave out, as `stranded_runs` does. Only a process this host
+    can check counts (`_stopped_run`): a run elsewhere, or one from before
+    markers named their process, may still be writing. A store that cannot
+    answer yields none.
+    """
+    try:
+        rows = ingestor.fetch_all(
+            cq.CYPHER_WRITING_RUN_OWNERS, {cs.KEY_PROJECT_NAME: project_name}
+        )
+    except Exception as exc:
         logger.warning(
-            ls.STRANDED_RUNS_NOT_RETIRED.format(project=project_name, error=exc)
+            ls.EXITED_RUNS_UNREADABLE.format(project=project_name, error=exc)
+        )
+        return []
+    return [run for row in rows if (run := _stopped_run(row)) is not None]
+
+
+def retire_exited_runs(ingestor: QueryProtocol, project_name: str) -> None:
+    """Take off the markers `exited_runs` names for a deleted or pruned project.
+
+    A marker sits on its own node, out of the delete's reach, so one whose
+    run died mid-write kept the project in `cgr status` as interrupted for
+    good once its checkout was gone (#2479). Never raises: a marker that
+    stays only keeps that line in `cgr status`.
+    """
+    runs = exited_runs(ingestor, project_name)
+    if not runs:
+        return
+    if (error := _retire_markers(ingestor, project_name, runs)) is not None:
+        logger.warning(
+            ls.EXITED_RUNS_NOT_RETIRED.format(project=project_name, error=error)
         )
         return
-    logger.info(ls.STRANDED_RUNS_RETIRED.format(project=project_name, count=len(runs)))
+    logger.info(ls.EXITED_RUNS_RETIRED.format(project=project_name, count=len(runs)))
+
+
+def run_may_be_writing(ingestor: QueryProtocol, project_name: str) -> bool:
+    """Whether a run of the project may be writing the graph (#2479).
+
+    The marker reads as `partial_graph_refusal` reads it: one past its first
+    write, or one from before the phase existed. Raises when the store
+    cannot answer, as "cannot tell" is not "no".
+    """
+    rows = ingestor.fetch_all(
+        cq.CYPHER_PROJECT_IS_INCOMPLETE, {cs.KEY_PROJECT_NAME: project_name}
+    )
+    return any(
+        row.get(cs.KEY_RUN_INCOMPLETE) and row.get(cs.KEY_WRITING, True) for row in rows
+    )

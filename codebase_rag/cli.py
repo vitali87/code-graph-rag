@@ -82,7 +82,9 @@ from .sync_guard import SyncRefusedError, mark_sync_incomplete, release_project_
 from .sync_guard import clear_sync_incomplete as _clear_sync_incomplete
 from .sync_guard import partial_graph_refusal as _partial_graph_refusal
 from .sync_guard import project_owner_refusal as _project_owner_refusal
+from .sync_guard import retire_exited_runs as _retire_exited_runs
 from .sync_guard import retire_stranded_runs as _retire_stranded_runs
+from .sync_guard import run_may_be_writing as _run_may_be_writing
 from .sync_guard import stranded_runs as _stranded_runs
 from .sync_guard import sync_marker_params as _sync_marker_params
 from .sync_guard import sync_owner as _sync_owner
@@ -1068,13 +1070,15 @@ def _clear_deleted_project_markers(
     a sync that failed before the delete keeps the project in `cgr status`
     as interrupted. A marker goes only when its run cannot still be writing:
     the CLI sync's once that sync provably stopped (PR #2532 review: a sync
-    still running would otherwise write on unguarded), and any run's that
-    never wrote the graph. A run that had begun writing owns its marker
-    (#1709). Best effort, like `_clear_sync_incomplete`: the project is
-    deleted.
+    still running would otherwise write on unguarded), any run's whose
+    process provably exited (#2479), and any run's that never wrote the
+    graph. A run that had begun writing and may still be alive owns its
+    marker (#1709). Best effort, like `_clear_sync_incomplete`: the project
+    is deleted.
     """
     try:
         kept = _clear_stopped_sync_marker(ingestor, project_name)
+        _retire_exited_runs(ingestor, project_name)
         ingestor.execute_write(
             cq.CYPHER_RECOVER_PROJECT_INCOMPLETE,
             {cs.KEY_PROJECT_NAME: project_name},
@@ -3926,9 +3930,14 @@ def _report_prune_failure(project_name: str, error: Exception) -> None:
 def _purge_left_nothing(ingestor: MemgraphIngestor, project_name: str) -> bool:
     """Whether a fresh read finds nothing of the project left (#2479).
 
-    Raises when the graph cannot be read; an empty count reads as not proven.
+    Nothing left means no Project, nothing under its name, and no run of it
+    writing: a sync that began writing since the delete may own what the
+    vector cleanup that follows would take. Raises when the graph cannot be
+    read; an empty count reads as not proven.
     """
     if project_name in ingestor.list_projects():
+        return False
+    if _run_may_be_writing(ingestor, project_name):
         return False
     rows = ingestor.fetch_all(
         cq.CYPHER_COUNT_PROJECT_NODES,
@@ -3937,7 +3946,8 @@ def _purge_left_nothing(ingestor: MemgraphIngestor, project_name: str) -> bool:
             cs.KEY_PROJECT_PREFIX: f"{project_name}{cs.SEPARATOR_DOT}",
         },
     )
-    return bool(rows) and rows[0].get(cs.KEY_RESIDUAL_NODES) == 0
+    counts = [row.get(cs.KEY_RESIDUAL_NODES) for row in rows]
+    return bool(counts) and all(count == 0 for count in counts)
 
 
 def _prune_projects(
@@ -3966,8 +3976,9 @@ def _prune_one(
     """Prune one candidate (#2479).
 
     The delete is conditional on the project still naming the root this run
-    checked, inside the delete statement itself, so a concurrent sync
-    repointing the project's root_path is skipped, not destroyed. A checkout
+    checked, and on no run of it writing, inside the delete statement
+    itself, so a concurrent sync repointing the project's root_path, or one
+    starting to write it, is skipped, not destroyed. A checkout
     recreated at the old path is still only narrowed by the existence
     re-check. A purge that cannot be proven complete -- the project still
     listed, or anything left under its name -- is a failure, never a
@@ -3979,6 +3990,14 @@ def _prune_one(
         _say(cs.CLI_WARN_PRUNE_ROOT_BACK.format(project_name=project_name))
         return cs.PruneOutcome.SKIPPED
     try:
+        # A run of the same name may be writing from another checkout or
+        # machine: its marker is the one signal it gives. Markers of runs
+        # whose process provably exited go first, so a sync that died with
+        # its checkout does not hold the project forever.
+        _retire_exited_runs(ingestor, project_name)
+        if _run_may_be_writing(ingestor, project_name):
+            _say(cs.CLI_WARN_PRUNE_RUN_WRITING.format(project_name=project_name))
+            return cs.PruneOutcome.SKIPPED
         node_rows = _purge_if_root(ingestor, project_name, root)
     except GraphUnavailableError:
         raise

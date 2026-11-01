@@ -22,7 +22,12 @@ from codebase_rag.graph_dialects import DIALECT_SQLITE, get_dialect
 from codebase_rag.services.graph_service import MemgraphIngestor
 from codebase_rag.types_defs import PropertyParams, ResultRow, ResultValue
 
-_ROOT_CHECK = "\nWHERE p.root_path = $expected_root"
+_ROOT_CHECK = (
+    "\nWHERE p.root_path = $expected_root\n"
+    "OPTIONAL MATCH (writer:IncompleteRun {project: $project_name})\n"
+    "WHERE coalesce(writer.writing, true)\n"
+    "WITH p, count(writer) AS writers\nWHERE writers = 0"
+)
 
 
 @dataclass
@@ -87,10 +92,28 @@ def test_the_conditional_delete_is_the_delete_with_the_root_check() -> None:
 def test_the_guarded_sweep_is_the_sweep_behind_a_recreation_check() -> None:
     guarded = cq.CYPHER_DELETE_PROJECT_CUT_OFF_UNITS_IF_GONE
     head, sweep = guarded.split("\nOPTIONAL MATCH (longer:Project)", 1)
-    assert "$project_name" in head
+    assert "(other:Project {name: $project_name})" in head
+    assert "IncompleteRun" in head
     assert "\nOPTIONAL MATCH (longer:Project)" + sweep.replace(
-        "WITH recreated, collect", "WITH collect", 1
+        "WITH recreated, writers, collect", "WITH collect", 1
     ) == (cq.CYPHER_DELETE_PROJECT_CUT_OFF_UNITS)
+
+
+def test_every_qualified_name_label_is_decided_for_the_sweep() -> None:
+    # The sweep deletes by name, so a label added later must be placed on
+    # one side on purpose: swept, a node no project owns would go with the
+    # first project whose name prefixes it.
+    keyed = {
+        label
+        for label in cs.NodeLabel
+        if cs.NODE_UNIQUE_CONSTRAINTS.get(label.value)
+        == cs.UniqueKeyType.QUALIFIED_NAME.value
+    }
+    swept = set(cq._DETACHABLE_LABELS)
+    assert swept.isdisjoint(cq._NEVER_SWEPT_LABELS)
+    assert keyed == swept | cq._NEVER_SWEPT_LABELS
+    for label in (cs.NodeLabel.GLOSS, cs.NodeLabel.EXTERNAL_MODULE):
+        assert f"(d:{label.value})" not in cq.CYPHER_DELETE_PROJECT_CUT_OFF_UNITS
 
 
 def test_conditional_root_delete_fires_when_the_root_matches(
@@ -179,6 +202,10 @@ CREATE (shop:Project {name: 'shop', root_path: '/w'}),
        (vm:Module {qualified_name: 'old.v2.app'}),
        (cut:Module {qualified_name: 'old.cut_off'}),
        (price:Function {qualified_name: 'old.src.cart.price'}),
+       (:Function {qualified_name: 'old.src.cart.stray'}),
+       (:Parameter {qualified_name: 'old.src.cart.stray.0'}),
+       (:Function {qualified_name: 'old.v2.app.loose'}),
+       (:Gloss {qualified_name: 'old.src.cart.price#note'}),
        (shop)-[:CONTAINS_FOLDER]->(src), (old)-[:CONTAINS_FOLDER]->(src),
        (src)-[:CONTAINS_PACKAGE]->(sp), (src)-[:CONTAINS_PACKAGE]->(op),
        (sp)-[:CONTAINS_FILE]->(cart), (op)-[:CONTAINS_FILE]->(cart),
@@ -186,8 +213,8 @@ CREATE (shop:Project {name: 'shop', root_path: '/w'}),
        (om)-[:DEFINES]->(price), (v2)-[:CONTAINS_MODULE]->(vm)
 """
 _KEYS = (
-    "MATCH (n) RETURN coalesce(n.qualified_name, n.absolute_path, n.name) AS k "
-    "ORDER BY k"
+    "MATCH (n) WHERE NOT n:IncompleteRun "
+    "RETURN coalesce(n.qualified_name, n.absolute_path, n.name) AS k ORDER BY k"
 )
 _EVERYTHING = [
     "/w/src",
@@ -197,17 +224,25 @@ _EVERYTHING = [
     "old.src",
     "old.src.cart",
     "old.src.cart.price",
+    "old.src.cart.price#note",
+    "old.src.cart.stray",
+    "old.src.cart.stray.0",
     "old.v2",
     "old.v2.app",
+    "old.v2.app.loose",
     "shop",
     "shop.src",
     "shop.src.cart",
 ]
+# The shared Folder and File stay with `shop`, `old.v2` keeps its own nodes,
+# attached or not, and the note survives for the gloss sweep to judge.
 _WITHOUT_OLD = [
     "/w/src",
     "/w/src/cart.py",
+    "old.src.cart.price#note",
     "old.v2",
     "old.v2.app",
+    "old.v2.app.loose",
     "shop",
     "shop.src",
     "shop.src.cart",
@@ -235,15 +270,16 @@ def _residual(graph: MemgraphIngestor, name: str) -> ResultValue:
         cq.CYPHER_COUNT_PROJECT_NODES,
         {cs.KEY_PROJECT_NAME: name, cs.KEY_PROJECT_PREFIX: f"{name}."},
     )
-    assert len(rows) == 1, rows
-    return rows[0][cs.KEY_RESIDUAL_NODES]
+    counts = [row[cs.KEY_RESIDUAL_NODES] for row in rows]
+    assert counts and all(isinstance(count, int) for count in counts), rows
+    return sum(count for count in counts if isinstance(count, int))
 
 
 def test_a_matching_root_purges_what_the_project_owns(graph: MemgraphIngestor) -> None:
     assert graph.delete_project("old", expected_root="/w") is True
 
-    # The shared Folder and File stay with `shop`, `old.v2` keeps its own
-    # module, and the cut-off module under `old`'s name goes with it.
+    # The cut-off module and the definitions left with no edge to their
+    # module go with `old`, by name.
     assert _keys(graph) == _WITHOUT_OLD
     assert _residual(graph, "old") == 0
 
@@ -274,8 +310,9 @@ def test_the_conditional_query_itself_skips_a_repointed_project(
 
 
 def test_the_residual_count_sees_what_is_left(graph: MemgraphIngestor) -> None:
-    # The Project, both Packages/Modules under `old.` but not under `old.v2.`.
-    assert _residual(graph, "old") == 4
+    # The Project, its Package, both Modules and three definitions (one
+    # attached, two not) under `old.` but not under `old.v2.`; not the note.
+    assert _residual(graph, "old") == 7
     assert _residual(graph, "ghost") == 0
 
 
@@ -329,3 +366,54 @@ def test_the_guarded_sweep_runs_once_the_project_is_gone(
     graph.execute_write(cq.CYPHER_DELETE_PROJECT_CUT_OFF_UNITS_IF_GONE, _SWEEP_PARAMS)
 
     assert _keys(graph) == _WITHOUT_OLD
+
+
+def _mark(graph: MemgraphIngestor, writing: bool | None) -> None:
+    phase = "" if writing is None else f", writing: {str(writing).lower()}"
+    graph.execute_write(
+        f"CREATE (:IncompleteRun {{project: 'old', run_id: 'r1'{phase}}})"
+    )
+
+
+@pytest.mark.parametrize("writing", [True, None], ids=["writing", "legacy"])
+def test_a_run_that_may_be_writing_stops_the_purge(
+    graph: MemgraphIngestor, writing: bool | None
+) -> None:
+    # A same-name sync from another checkout marks before its first write;
+    # one from before the phase existed reads as writing (#1705).
+    _mark(graph, writing)
+
+    assert graph.delete_project("old", expected_root="/w") is False
+    assert _keys(graph) == _EVERYTHING
+
+
+def test_a_run_still_in_its_prologue_does_not_stop_the_purge(
+    graph: MemgraphIngestor,
+) -> None:
+    _mark(graph, False)
+
+    assert graph.delete_project("old", expected_root="/w") is True
+    assert _keys(graph) == _WITHOUT_OLD
+
+
+def test_the_guarded_sweep_spares_a_run_that_began_writing(
+    graph: MemgraphIngestor,
+) -> None:
+    # It may have written units, under the project's name, before its
+    # Project node.
+    _purge_without_sweep(graph)
+    _mark(graph, True)
+
+    graph.execute_write(cq.CYPHER_DELETE_PROJECT_CUT_OFF_UNITS_IF_GONE, _SWEEP_PARAMS)
+
+    assert "old.cut_off" in _keys(graph)
+    assert "old.src.cart.stray" in _keys(graph)
+
+
+def test_delete_project_takes_the_detached_definitions_too(
+    graph: MemgraphIngestor,
+) -> None:
+    assert graph.delete_project("old") is True
+
+    assert _keys(graph) == _WITHOUT_OLD
+    assert _residual(graph, "old") == 0

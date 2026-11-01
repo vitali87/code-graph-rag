@@ -78,11 +78,14 @@ class TestConditionalProjectPurge:
         self._seed_project(ingestor, "proj", "/repo")
         params = {cs.KEY_PROJECT_NAME: "proj", cs.KEY_PROJECT_PREFIX: "proj."}
 
-        before = ingestor.fetch_all(cq.CYPHER_COUNT_PROJECT_NODES, params)
-        assert before[0][cs.KEY_RESIDUAL_NODES] == 2
+        def residual() -> int:
+            rows = ingestor.fetch_all(cq.CYPHER_COUNT_PROJECT_NODES, params)
+            return sum(int(row[cs.KEY_RESIDUAL_NODES]) for row in rows)
+
+        # The Project, its Module and the Function it defines.
+        assert residual() == 3
         assert ingestor.delete_project("proj", expected_root="/repo") is True
-        after = ingestor.fetch_all(cq.CYPHER_COUNT_PROJECT_NODES, params)
-        assert after[0][cs.KEY_RESIDUAL_NODES] == 0
+        assert residual() == 0
 
     def test_purge_keeps_a_folder_another_project_claims(
         self, ingestor: MemgraphIngestor
@@ -103,6 +106,39 @@ class TestConditionalProjectPurge:
             "MATCH (f:Folder {absolute_path: '/repo/src'}) RETURN count(f) AS c"
         )
         assert kept[0]["c"] == 1
+
+    def test_purge_takes_definitions_left_with_no_edge(
+        self, ingestor: MemgraphIngestor
+    ) -> None:
+        # An interrupted sync can commit a definition before the edge to its
+        # module; no walk reaches it, so it goes by name.
+        self._seed_project(ingestor, "proj", "/repo")
+        ingestor.ensure_node_batch(
+            "Function", {"qualified_name": "proj.mod.stray", "name": "stray"}
+        )
+        ingestor.flush_all()
+
+        assert ingestor.delete_project("proj", expected_root="/repo") is True
+        left = ingestor.fetch_all(
+            "MATCH (f:Function {qualified_name: 'proj.mod.stray'}) RETURN count(f) AS c"
+        )
+        assert left[0]["c"] == 0
+
+    def test_purge_does_not_fire_while_a_run_is_writing(
+        self, ingestor: MemgraphIngestor
+    ) -> None:
+        self._seed_project(ingestor, "proj", "/repo")
+        ingestor._execute_query(
+            cq.CYPHER_MARK_PROJECT_INCOMPLETE,
+            {
+                cs.KEY_PROJECT_NAME: "proj",
+                cs.KEY_RUN_ID: "elsewhere",
+                cs.KEY_WRITING: True,
+            },
+        )
+
+        assert ingestor.delete_project("proj", expected_root="/repo") is False
+        assert "proj" in ingestor.list_projects()
 
     def test_purge_does_not_fire_on_a_mismatched_root(
         self, ingestor: MemgraphIngestor

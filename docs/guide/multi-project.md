@@ -181,7 +181,10 @@ cgr delete-project --project user-service__a1b2c3d4
 Deleting a project also removes its embeddings from the vector store and
 its notes (glosses written with the MCP `annotate` tool), the same as the
 MCP `delete_project` tool, so indexing the checkout again starts with no
-notes.
+notes. Definitions an interrupted sync left with no link to their module
+go too, found by the project's name. So does the marker of a sync that
+was interrupted on this machine and whose process has since exited, which
+would otherwise keep the deleted project in `cgr status` as interrupted.
 
 A checkout that was moved, renamed or deleted leaves its project behind with a
 `root_path` that no longer exists; `cgr status` marks those `(missing)`. Sweep
@@ -203,6 +206,13 @@ purge itself is conditional on the project still naming the root that was
 checked, so a concurrent sync repointing the project is skipped, not
 destroyed. A pruned project loses what `delete-project` takes: its graph,
 its embeddings and its notes.
+
+Prune also leaves a project alone while a sync of the same name may be
+writing it, from any checkout or machine: every sync marks the project in
+the graph before its first write, and prune checks for that mark before
+and during the purge. A mark left by a sync whose process has exited on
+this machine is cleared first. One from a sync on another machine stays,
+and the project is skipped until that sync has finished.
 
 Prune judges `root_path`s on the machine it runs on: a shared graph whose
 projects were indexed inside containers or on other hosts reads those roots

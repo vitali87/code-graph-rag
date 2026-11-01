@@ -1230,6 +1230,17 @@ STRANDED_RUNS_UNREADABLE = (
     "Could not read which earlier runs left project {project} partial "
     "({error}); their markers stay until a later full sync."
 )
+EXITED_RUNS_RETIRED = (
+    "Cleared {count} incomplete-run marker(s) of {project} left by runs whose "
+    "process has exited."
+)
+EXITED_RUNS_UNREADABLE = (
+    "Could not read which runs of {project} left markers ({error}); those markers stay."
+)
+EXITED_RUNS_NOT_RETIRED = (
+    "The incomplete-run markers of {project} left by exited runs could not be "
+    "cleared: {error}. cgr status may list it as interrupted."
+)
 STRANDED_RUNS_NOT_RETIRED = (
     "The rebuild of {project} finished, but the incomplete-run markers it "
     "superseded could not be cleared: {error}. The graph is complete; the next "
