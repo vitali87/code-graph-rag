@@ -390,6 +390,27 @@ def _isolate_cgr_home(
     return home
 
 
+@pytest.fixture
+def cgr_checkout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A code-graph-rag checkout the grammar loader runs from, under tmp_path.
+
+    The loader reads submodule grammars from cgr's own checkout only, so a
+    test that plants one does it here, not in the working directory.
+    """
+    root = tmp_path / "cgr-checkout"
+    package = root / "codebase_rag"
+    package.mkdir(parents=True)
+    (package / "language_spec.py").write_text("LANGUAGE_SPECS = {}\n", encoding="utf-8")
+    (root / ".git").mkdir()
+    (root / "pyproject.toml").write_text(
+        f'[project]\nname = "{rag_cs.PACKAGE_NAME}"\n', encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        "codebase_rag.parser_loader._package_dir", lambda: package, raising=False
+    )
+    return root
+
+
 def shared_session_dir(tmp_path_factory: pytest.TempPathFactory, name: str) -> Path:
     """A directory every xdist worker of this test session shares (the
     session's own base temp without xdist)."""
