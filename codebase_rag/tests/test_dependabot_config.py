@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import tomllib
 from fnmatch import fnmatch
 from pathlib import Path
+from typing import TypedDict
 
 import pytest
 import yaml
@@ -24,6 +26,8 @@ _WATCHED_MANIFESTS = [
     ("npm", "/evals/oracles/ruby_oracle"),
     ("npm", "/evals/oracles/ts_oracle"),
     ("cargo", "/evals/oracles/rs_oracle"),
+    ("cargo", "/rust/cgr_graph_rs"),
+    ("cargo", "/rust/cgr_graph_rs/fuzz"),
     ("gomod", "/codebase_rag/parsers/go_frontend/gotypes"),
     ("nuget", "/codebase_rag/parsers/csharp_frontend/roslyn"),
 ]
@@ -82,6 +86,33 @@ def test_typescript_6_updates_still_reach_the_ts_oracle() -> None:
     typescript = [i for i in ignores if i.get("dependency-name") == "typescript"]
     assert all(i.get("versions") == [">=7"] for i in typescript)
     assert all("update-types" not in i for i in typescript)
+
+
+def test_the_scanner_image_stays_on_python_3_12() -> None:
+    # The image pins UV_PYTHON=python3.12 with downloads off, so the 3.15 base
+    # Dependabot proposed (#3461) left `uv sync` no interpreter to build with.
+    ignores = _ignores_for("docker", "/.oss-scanner")
+    assert {
+        "dependency-name": "python",
+        "update-types": [
+            "version-update:semver-minor",
+            "version-update:semver-major",
+        ],
+    } in ignores
+
+
+def test_the_production_image_still_gets_python_updates() -> None:
+    # Negative: the hold is the scanner image's alone, so the production
+    # image's python base keeps moving.
+    ignores = _ignores_for("docker", "/")
+    assert not any(i.get("dependency-name") == "python" for i in ignores)
+
+
+@pytest.mark.parametrize("image", ["golang", "eclipse-temurin"])
+def test_the_scanner_images_other_bases_are_not_held(image: str) -> None:
+    # Negative: Go and the JDK are copied in whole, so their bumps still land.
+    ignores = _ignores_for("docker", "/.oss-scanner")
+    assert not any(i.get("dependency-name") == image for i in ignores)
 
 
 def test_the_fuzz_image_keeps_the_pyinstaller_oss_fuzz_pins() -> None:
@@ -171,3 +202,67 @@ def test_the_msbuild_locator_is_not_held() -> None:
     assert not any(
         i.get("dependency-name") == "Microsoft.Build.Locator" for i in ignores
     )
+
+
+_GRAPH_RS = "/rust/cgr_graph_rs"
+_GRAPH_RS_FUZZ = "/rust/cgr_graph_rs/fuzz"
+
+
+class _CargoUpdate(TypedDict, total=False):
+    directories: list[str]
+    groups: dict[str, dict[str, str | list[str]]]
+
+
+def _graph_rs_update() -> _CargoUpdate:
+    config = yaml.safe_load(
+        (REPO_ROOT / ".github" / "dependabot.yml").read_text(encoding=cs.ENCODING_UTF8)
+    )
+    return next(
+        u
+        for u in config["updates"]
+        if u["package-ecosystem"] == "cargo"
+        and _GRAPH_RS in (u.get("directories") or [u.get("directory")])
+    )
+
+
+@pytest.mark.parametrize("crate", ["tree-sitter", "tree-sitter-python"])
+def test_the_tree_sitter_pins_move_only_by_hand(crate: str) -> None:
+    # The tree walks read py-tree-sitter's trees in place, so the runtime
+    # moves with the py-tree-sitter pin in one pull request (AGENTS.md).
+    for directory in (_GRAPH_RS, _GRAPH_RS_FUZZ):
+        assert {"dependency-name": crate} in _ignores_for("cargo", directory)
+
+
+@pytest.mark.parametrize("crate", ["pyo3", "rusqlite", "blake2", "sha2"])
+def test_the_crates_other_dependencies_still_get_updates(crate: str) -> None:
+    # Negative: the hold is on the tree-sitter pair alone.
+    ignores = _ignores_for("cargo", _GRAPH_RS)
+    assert not any(fnmatch(crate, str(i.get("dependency-name"))) for i in ignores)
+
+
+def test_the_crate_and_its_fuzz_targets_move_together() -> None:
+    # The bundled SQLite links once per build, so a rusqlite bump to the crate
+    # alone leaves the fuzz workspace two copies it cannot resolve.
+    update = _graph_rs_update()
+    assert update.get("directories") == [_GRAPH_RS, _GRAPH_RS_FUZZ]
+    groups = update.get("groups") or {}
+    assert any(g.get("group-by") == "dependency-name" for g in groups.values())
+
+
+@pytest.mark.parametrize("crate", ["rusqlite", "libsqlite3-sys"])
+def test_a_sqlite_security_fix_moves_both_directories(crate: str) -> None:
+    # group-by covers version updates only, so a security fix that needs a new
+    # rusqlite would otherwise reach one directory and break the fuzz build.
+    groups = (_graph_rs_update().get("groups") or {}).values()
+    security = [g for g in groups if g.get("applies-to") == "security-updates"]
+    assert any(any(fnmatch(crate, p) for p in g.get("patterns", [])) for g in security)
+
+
+def test_the_fuzz_targets_pin_the_crates_rusqlite() -> None:
+    # What the grouping keeps true: the fuzz workspace asks for the same
+    # rusqlite the crate does.
+    def rusqlite(directory: str) -> dict[str, str | list[str]]:
+        with (REPO_ROOT / directory.lstrip("/") / "Cargo.toml").open("rb") as f:
+            return tomllib.load(f)["dependencies"]["rusqlite"]
+
+    assert rusqlite(_GRAPH_RS_FUZZ) == rusqlite(_GRAPH_RS)

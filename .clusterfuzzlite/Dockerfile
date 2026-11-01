@@ -52,10 +52,12 @@ RUN uv python install 3.12
 # wrapper but no toolchain behind it, so install one where the wrapper looks
 # (/rust/bin), checked against the SHA-256 rustup publishes, as uv is above.
 # That wrapper sits at /usr/local/bin/cargo, which rustup-init would otherwise
-# take for another Rust install.
+# take for another Rust install. cargo refuses a toolchain older than any
+# locked dependency's rust-version; tree-sitter-language, which the tree-sitter
+# crate pulls in, needs 1.90.
 ARG RUSTUP_VERSION=1.28.2
 ARG RUSTUP_SHA256=20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43c
-ARG RUST_TOOLCHAIN=1.85.0
+ARG RUST_TOOLCHAIN=1.97.0
 ENV CARGO_HOME=/rust RUSTUP_HOME=/rust/rustup PATH=$PATH:/rust/bin
 RUN curl -fsSLO "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/x86_64-unknown-linux-gnu/rustup-init" && \
     echo "${RUSTUP_SHA256}  rustup-init" | sha256sum -c - && \
@@ -64,6 +66,22 @@ RUN curl -fsSLO "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/x
         --default-toolchain "${RUST_TOOLCHAIN}" && \
     rm rustup-init && \
     cargo --version
+
+# The graph-rs fuzz targets (rust/cgr_graph_rs/fuzz) are cargo-fuzz targets,
+# built by the `language: rust` job. OSS-Fuzz's compile hands Rust builds
+# -Zsanitizer through RUSTFLAGS, which only a nightly accepts, so they get the
+# nightly and the cargo-fuzz release base-builder-rust pins, the pair OSS-Fuzz
+# builds against this image's clang. The nightly must be new enough for the
+# crate's dependencies, as RUST_TOOLCHAIN above must. A rust build also copies
+# the DEFAULT toolchain's std sources (for coverage reports) and stops if they
+# are missing, so the stable toolchain carries rust-src.
+ARG CARGO_FUZZ_VERSION=0.13.2
+ENV RUST_FUZZ_TOOLCHAIN=nightly-2025-09-05
+RUN rustup toolchain install "${RUST_FUZZ_TOOLCHAIN}" --profile minimal && \
+    rustup component add rust-src --toolchain "${RUST_TOOLCHAIN}" && \
+    cargo install cargo-fuzz --locked --version "${CARGO_FUZZ_VERSION}" && \
+    rm -rf /rust/registry && \
+    cargo fuzz --version
 
 # Make that interpreter the default `python3` so compile_python_fuzzer and
 # build.sh use it without either knowing where it came from.

@@ -7,7 +7,9 @@ on:
     branches: [main, master, develop]
   workflow_dispatch:
 
-permissions: read-all
+# Every job reads the code; a job that needs more grants it on itself.
+permissions:
+  contents: read
 
 concurrency:
   # PRs group by ref so rapid pushes cancel superseded runs (saves minutes).
@@ -26,6 +28,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Key the uv cache on dependencies, not the project version
         shell: bash
@@ -35,7 +39,7 @@ jobs:
             uv.lock > "$RUNNER_TEMP/uv-deps.lock"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
           cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
@@ -100,6 +104,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Key the uv cache on dependencies, not the project version
         shell: bash
@@ -109,7 +115,7 @@ jobs:
             uv.lock > "$RUNNER_TEMP/uv-deps.lock"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
           cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
@@ -160,6 +166,7 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up Go
         # The go/types helper's tests build it with the Go on PATH, and the
@@ -177,7 +184,7 @@ jobs:
             uv.lock > "$RUNNER_TEMP/uv-deps.lock"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
           cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
@@ -281,7 +288,7 @@ jobs:
             uv.lock > "$RUNNER_TEMP/uv-deps.lock"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
           cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
@@ -310,6 +317,7 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Start Memgraph
         run: |
@@ -332,7 +340,7 @@ jobs:
             uv.lock > "$RUNNER_TEMP/uv-deps.lock"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
           cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
@@ -380,6 +388,7 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Key the uv cache on dependencies, not the project version
         shell: bash
@@ -389,7 +398,7 @@ jobs:
             uv.lock > "$RUNNER_TEMP/uv-deps.lock"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
           cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
@@ -430,7 +439,7 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
 
       - name: Set up Python
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -480,6 +489,9 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     timeout-minutes: 5
+    # The action reads the pull request's current title through the API.
+    permissions:
+      pull-requests: read
 
     steps:
       - name: Check PR title format
@@ -521,6 +533,7 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -536,7 +549,7 @@ jobs:
             uv.lock > "$RUNNER_TEMP/uv-deps.lock"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
           cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
@@ -569,7 +582,8 @@ jobs:
     # rust/cgr_graph_rs (published as cgr-graph-rs, a default dependency on
     # the platforms it has wheels for) runs the embedded graph's whole-graph
     # procedures, its Cypher parser, the ingestor's batch writes and result
-    # decoding (issue #386). Its own tests check the algorithms and the
+    # decoding (issue #386), and the indexer's definition hashes on
+    # py-tree-sitter's own trees. Its own tests check the algorithms and the
     # grammar; the Python tests check it returns and writes exactly what
     # the Python implementations it replaces do, and run the engine's
     # suites with it installed. rust-wheels.yml builds and tests the wheels.
@@ -589,7 +603,7 @@ jobs:
             uv.lock > "$RUNNER_TEMP/uv-deps.lock"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
           cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
@@ -613,7 +627,7 @@ jobs:
 
       - name: Check it against the Python procedures and parser
         run: |
-          uv run --no-sync pytest codebase_rag/tests/test_embedded_graph_rust.py codebase_rag/tests/test_embedded_graph_rust_parser.py codebase_rag/tests/test_embedded_graph_native.py --tb=short
+          uv run --no-sync pytest codebase_rag/tests/test_embedded_graph_rust.py codebase_rag/tests/test_embedded_graph_rust_parser.py codebase_rag/tests/test_embedded_graph_native.py codebase_rag/tests/test_native_trees.py --tb=short
 
       - name: Run the engine's tests on the Rust parser
         run: |

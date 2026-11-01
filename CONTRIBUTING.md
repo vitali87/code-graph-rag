@@ -250,6 +250,24 @@ When fuzzing finds a crash: add a regression test under `codebase_rag/tests/`
 that fails without the fix, commit the reproducer into the harness' corpus
 directory, and only then fix the bug.
 
+The Rust extension has cargo-fuzz targets of its own, in
+`rust/cgr_graph_rs/fuzz/fuzz_targets/`, and both workflows run them in a
+separate `rust` job with the same budgets. Each target's header says what it
+drives and checks:
+
+| Target | What it drives |
+| --- | --- |
+| `cypher_parse` | the Cypher lexer and parser on any query text |
+| `json_string` | `json_text::push_string`, against Python's `json.dumps` |
+| `graph_algorithms` | the graph procedures and `run` on a graph and arguments the input chooses |
+| `sqlite_graph` | the bulk writer, the variable-length walk and `Graph::load`, against a model of the graph |
+
+To run one locally, with a nightly toolchain and `cargo install cargo-fuzz`:
+
+```bash
+cd rust/cgr_graph_rs && cargo +nightly fuzz run cypher_parse -- -max_total_time=60
+```
+
 ## Coding Standards
 
 ### Tooling

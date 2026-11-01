@@ -38,6 +38,15 @@ class FileAction(StrEnum):
     EDIT = "edit"
 
 
+class PruneOutcome(StrEnum):
+    """What `cgr prune` did with one candidate (#2479)."""
+
+    PRUNED = "pruned"
+    FAILED = "failed"
+    # Its root came back, or the graph no longer names the root checked.
+    SKIPPED = "skipped"
+
+
 HELP_ARG = "help"
 
 CLI_ERR_OUTPUT_REQUIRES_UPDATE = (
@@ -221,6 +230,24 @@ CLI_ERR_GRAPH_CONSTRAINTS_FAILED = (
     "marked as an unfinished sync until one finishes. Check the graph "
     "connection and retry."
 )
+# `cgr rename` and `cgr change-signature` plan their call sites from the graph,
+# so one a stopped run left partial hides callers the edit then never rewrites
+# (Greptile review, PR #2164).
+CLI_ERR_EDIT_GRAPH_PARTIAL = (
+    "Refusing to edit '{project}': a sync or re-ingest of its graph stopped "
+    "part-way, so call sites may be missing from it. Once no sync is running, "
+    "re-index it ('cgr start --update-graph', or update_repository on the MCP "
+    "server whose run stopped), then retry."
+)
+CLI_ERR_EDIT_MARKER_UNREADABLE = (
+    "Refusing to edit '{project}': could not read whether its last sync "
+    "finished ({error}). Check the graph connection and retry."
+)
+CLI_ERR_EDIT_MARKER_FAILED = (
+    "The graph for '{project}' may be partial after this edit, and the "
+    "incomplete-run marker that says so could not be written ({error}). Run "
+    "'cgr start --update-graph' before the next edit or MCP session."
+)
 CLI_STATUS_SYNC_INCOMPLETE = (
     "sync interrupted or in progress -- re-run if no sync is active"
 )
@@ -235,6 +262,7 @@ CLI_STATUS_SYNC_ROW = "  - {project}: {detail}"
 CLI_STATUS_SYNC_TIME = "last sync {time}"
 CLI_STATUS_SYNC_NOT_RECORDED = "last sync not recorded (the next sync records it)"
 CLI_STATUS_SYNC_MARKED = "({marker})"
+CLI_STATUS_SYNC_ROOT = "({root})"
 CLI_MSG_CLEANING_HASH_CACHE = "Removing hash cache: {path}"
 CLI_MSG_CLEAN_DONE = "Clean completed successfully!"
 CLI_WARN_CLEAN_OTHER_PROJECTS = (
@@ -269,6 +297,55 @@ CLI_ERR_PROJECT_NAME_REQUIRED = (
     "Error: name the project with --project, or pass --repo-path."
 )
 CLI_ERR_DELETE_PROJECT_FAILED = "Failed to delete project '{project_name}': {error}"
+CLI_MSG_PRUNE_NO_CANDIDATES = "No indexed project has a missing root: nothing to prune."
+CLI_MSG_PRUNE_CANDIDATES = "Projects whose root no longer exists:"
+CLI_MSG_PRUNE_CANDIDATE = "  - {project_name}: {root}"
+CLI_MSG_PRUNE_DRY_RUN = (
+    "Dry run: {count} project(s) would be pruned. "
+    "Run cgr prune without --dry-run to remove them."
+)
+CLI_MSG_PRUNING_PROJECT = (
+    "Pruning project '{project_name}': root {root} no longer exists..."
+)
+CLI_MSG_PROJECT_PRUNED = "Pruned project '{project_name}'."
+CLI_MSG_PRUNE_DONE = "Pruned {count} project(s)."
+CLI_WARN_PRUNE_ROOT_BACK = (
+    "Root of '{project_name}' is reachable again -- skipping, it is no longer "
+    "a prune candidate."
+)
+CLI_WARN_PRUNE_ROOT_CHANGED = (
+    "'{project_name}' changed while it was being pruned -- its root moved or "
+    "a sync of it began writing -- skipping it."
+)
+# `cgr prune`'s own incomplete-run marker, put down only when it takes over
+# from exited runs' markers (#2479).
+PRUNE_RUN_ID_PREFIX = "prune-"
+CLI_WARN_PRUNE_RUN_WRITING = (
+    "A sync of '{project_name}' may still be writing the graph (its "
+    "incomplete-run marker is up) -- skipping it. Re-run prune once that sync "
+    "has finished."
+)
+CLI_WARN_PRUNE_VECTORS_KEPT = (
+    "Vectors of '{project_name}' could not be deleted and remain in the "
+    "vector store -- the graph purge stands; clear the store if the orphans "
+    "matter."
+)
+CLI_ERR_PRUNE_FAILED = "Failed to prune project '{project_name}': {error}"
+CLI_ERR_PRUNE_RUN_FAILED = "Failed to prune: {error}"
+CLI_ERR_PRUNE_VERIFY_FAILED = (
+    "Project '{project_name}' could not be verified as fully removed; it may "
+    "still be present in the graph. Inspect it with 'cgr delete-project -p "
+    "{project_name}' before retrying."
+)
+CLI_PROMPT_PRUNE_CONFIRM = (
+    "Prune {count} project(s) whose root no longer exists from the graph?"
+)
+CLI_ERR_PRUNE_NEEDS_CONFIRMATION = (
+    "Refusing to prune without a terminal to confirm on. Re-run with --yes "
+    "to prune without asking."
+)
+CLI_MSG_PRUNE_ABORTED = "Aborted: the graph was left untouched."
+CLI_STATUS_ROOT_MISSING = "(missing)"
 CLI_MSG_EXPORTING_TO = "Exporting project '{project}' to: {path}"
 CLI_MSG_GRAPH_UPDATED = "Graph update completed!"
 CLI_MSG_APP_TERMINATED = "\nApplication terminated by user."
@@ -543,7 +620,26 @@ CLI_MSG_AUTO_EXCLUDE = (
 UI_DIFF_FILE_HEADER = "[bold cyan]File: {path}[/bold cyan]"
 UI_NEW_FILE_HEADER = "[bold cyan]New file: {path}[/bold cyan]"
 UI_SHELL_COMMAND_HEADER = "[bold cyan]Shell command:[/bold cyan]"
+UI_SENSITIVE_READ_HEADER = (
+    "[bold cyan]Read a file that may hold credentials "
+    "(its content goes to the model provider):[/bold cyan]"
+)
 UI_TOOL_APPROVAL = "[bold yellow]⚠️  Tool '{tool_name}' requires approval:[/bold yellow]"
+# The repository's .cgr.md, shown before it may reach the system prompt
+# (issue #3456). The titles are plain text: the path is not markup.
+UI_INSTRUCTIONS_NEW = "{path}: project instructions, not approved yet"
+UI_INSTRUCTIONS_CHANGED = "{path}: changed since you approved it"
+UI_INSTRUCTIONS_PROMPT = (
+    "This file comes from the repository and goes into the agent's system "
+    "prompt. Load it"
+)
+UI_INSTRUCTIONS_SKIPPED = (
+    "Continuing without the repository's .cgr.md. You will be asked again next session."
+)
+# Control characters (ANSI escapes, bidi overrides) are shown escaped, so
+# what the user approves is what the model reads.
+UI_VISIBLE_WHITESPACE = "\n\t"
+UI_ESCAPED_CHAR = "\\u{code:04x}"
 UI_FEEDBACK_PROMPT = "Feedback (why rejected, or press Enter to skip)"
 # `cgr start -a` has no operator to ask: what the model is told when it asks
 # for an edit or a non-read-only command without --no-confirm (issue #2657).
@@ -974,6 +1070,10 @@ RENAME_CONTRACT_UNMEASURED = (
 )
 # Change signature (issue #1533).
 SIGNATURE_PARAM_PROBE = "def _({text}): pass"
+SIGNATURE_CLI_WRONG_ROOT = (
+    "Project {project} was not indexed from {root}; "
+    "pass the --repo-path it was indexed from"
+)
 SIGNATURE_NOT_PYTHON = (
     "Cannot change the signature of {qn}: {path} is not Python, and only Python "
     "definitions are supported for now (issue #{issue})"
@@ -993,6 +1093,10 @@ SIGNATURE_UNUSUAL_RECEIVER = (
     "it to self or cls first"
 )
 SIGNATURE_STAGE_FAILED = "Cannot stage the signature change: {error}"
+SIGNATURE_SOURCE_CHANGED = (
+    "Cannot stage the signature change: {files} changed on disk after the "
+    "change was planned; retry once the tree is settled"
+)
 SIGNATURE_BAD_PARAM = (
     "Not a parameter: `{text}` (expected `name`, `name: type`, `name = default` "
     "or `name: type = default`)"
@@ -1000,6 +1104,9 @@ SIGNATURE_BAD_PARAM = (
 SIGNATURE_DUPLICATE_NEW = "Parameter {name} is listed twice"
 SIGNATURE_REQUIRED_AFTER_DEFAULT = (
     "Parameter {name} has no default but comes after a defaulted parameter"
+)
+SIGNATURE_INVALID_HEADER = (
+    "The new parameter list of {qn} is not valid Python ({error}): `{text}`"
 )
 SIGNATURE_BODY_REBINDS = (
     "Cannot rename parameter {old} of {qn} to {new}: `{old}` is used inside a "
@@ -1018,6 +1125,10 @@ SIGNATURE_DROPPED_STILL_READ = (
 SIGNATURE_BODY_NAME_TAKEN = (
     "Cannot rename parameter {old} of {qn} to {new}: `{new}` is already used "
     "in its body"
+)
+SIGNATURE_NEW_NAME_TAKEN = (
+    "Cannot add parameter {name} to {qn}: `{name}` is already used in its "
+    "body, which would start reading the parameter instead"
 )
 SIGNATURE_HIERARCHY_MISMATCH = (
     "Cannot change the signature of {qn}: its override {member} declares "
@@ -1057,6 +1168,14 @@ SIGNATURE_SITE_TOO_MANY = (
 )
 SIGNATURE_SITE_NO_VALUE = "no value for `{name}`; map it or give it a default"
 SIGNATURE_SITE_OVERLAPS = "its arguments overlap another edit of this change"
+SIGNATURE_SITE_DROPS_EFFECT = (
+    "passes `{text}` for a dropped parameter, and leaving it out would skip "
+    "the code it runs"
+)
+SIGNATURE_SITE_EXPLICIT_RECEIVER = (
+    "reaches the method through its class and passes the receiver as an "
+    "argument (`{text}`); rewrite it by hand"
+)
 SIGNATURE_PLANNED = "{count} site(s) would be rewritten, {skipped} left unmapped"
 SIGNATURE_PARSE_FAILED = "Signature change rolled back: {files} would no longer parse"
 SIGNATURE_CONTRACT_FAILED = (
@@ -1089,6 +1208,10 @@ CONTEXT_WHY_ACCEPTS = "type it accepts"
 CONTEXT_WHY_TEST = "test reaching it at depth {depth} through {through}"
 CONTEXT_WHY_DOC = "documentation section whose file links to it"
 CONTEXT_UNRESOLVED = "Nothing in the graph matches {target}"
+CONTEXT_TARGET_OVER_BUDGET = (
+    "The first line of {target} does not fit in {budget} tokens, so the slice "
+    "is empty; raise --budget"
+)
 # Postcondition contract (issue #1531).
 CONTRACT_OP_RENAME = "rename"
 CONTRACT_OP_CHANGE_SIGNATURE = "change_signature"

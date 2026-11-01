@@ -15,9 +15,20 @@ updates:
     directories:
       - "/"
       - "/.clusterfuzzlite"
-      - "/.oss-scanner"
     schedule:
       interval: "weekly"
+
+  # The OSS Scanner image mirrors CI's Linux unit-test job on the Python 3.12
+  # floor: UV_PYTHON names python3.12 and downloads are off, so a newer python
+  # base leaves `uv sync` no interpreter and the image cannot build. Digest
+  # updates to 3.12 still arrive; the tag moves when the floor does.
+  - package-ecosystem: "docker"
+    directory: "/.oss-scanner"
+    schedule:
+      interval: "weekly"
+    ignore:
+      - dependency-name: "python"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
 
   # The hash-pinned requirements the build images and the unlocked-resolution
   # CI job install with --require-hashes: pip's own bootstrap, and the fuzz
@@ -65,6 +76,36 @@ updates:
     directory: "/evals/oracles/rs_oracle"
     schedule:
       interval: "monthly"
+
+  # cgr-graph-rs, the native extension cgr installs by default, and its
+  # cargo-fuzz targets. The fuzz workspace pins the crate's own rusqlite, and
+  # the bundled SQLite can be linked only once per build, so each bump lands
+  # in both directories in one pull request. Every change here ships as a new
+  # cgr-graph-rs release, so monthly is enough; security updates arrive
+  # regardless of the schedule.
+  - package-ecosystem: "cargo"
+    directories:
+      - "/rust/cgr_graph_rs"
+      - "/rust/cgr_graph_rs/fuzz"
+    schedule:
+      interval: "monthly"
+    groups:
+      cgr-graph-rs:
+        group-by: dependency-name
+      # group-by covers version updates only, so a security fix that moves
+      # rusqlite (or the SQLite it bundles) needs a group of its own to land
+      # in both directories at once.
+      cgr-graph-rs-sqlite-security:
+        applies-to: security-updates
+        patterns:
+          - "rusqlite"
+          - "libsqlite3-sys"
+    ignore:
+      # The tree walks read py-tree-sitter's trees in place, so the runtime
+      # moves only with the py-tree-sitter pin, by hand (AGENTS.md), and the
+      # grammar the crate's tests parse with must be one that runtime loads.
+      - dependency-name: "tree-sitter"
+      - dependency-name: "tree-sitter-python"
 
   - package-ecosystem: "gomod"
     directory: "/codebase_rag/parsers/go_frontend/gotypes"

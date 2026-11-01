@@ -2,6 +2,7 @@
 
 from .ast_nodes import (
     TS_CALL_EXPRESSION,
+    TS_CLASS_DECLARATION,
     TS_IDENTIFIER,
     TS_INTERFACE_DECLARATION,
     TS_MEMBER_EXPRESSION,
@@ -109,6 +110,7 @@ TS_FUNCTION_EXPRESSION = "function_expression"
 # (`get thing() {...}`); its presence marks the method as a property whose
 # reads are member accesses, not invocations.
 TS_GET_ACCESSOR_KEYWORD = "get"
+TS_SET_ACCESSOR_KEYWORD = "set"
 TS_ARROW_FUNCTION = "arrow_function"
 TS_REQUIRED_PARAMETER = "required_parameter"
 TS_OPTIONAL_PARAMETER = "optional_parameter"
@@ -437,6 +439,16 @@ TS_FIELD_INDEX = "index"
 TS_FUNCTION_DECLARATION = "function_declaration"
 TS_GENERATOR_FUNCTION_DECLARATION = "generator_function_declaration"
 TS_GENERATOR_FUNCTION = "generator_function"
+
+# The callable-parameter scan (`parsers/utils.py`, and the tree bridge's port
+# of it for the interface fingerprint): the scopes that capture an enclosing
+# function's parameters, and the ones it never enters.
+JS_TS_CALLABLE_CLOSURE_TYPES = frozenset(
+    {TS_ARROW_FUNCTION, TS_FUNCTION_EXPRESSION, TS_FUNCTION_DECLARATION}
+)
+JS_TS_CALLABLE_OPAQUE_TYPES = frozenset({TS_CLASS_DECLARATION})
+# A TypeScript parameter, whose name sits in its `pattern` field.
+JS_TS_TYPED_PARAMETER_TYPES = frozenset({TS_REQUIRED_PARAMETER, TS_OPTIONAL_PARAMETER})
 
 # Tree-sitter field names for module system
 FIELD_FUNCTION = "function"

@@ -162,3 +162,4 @@ PARITY_SUMMARY = (
 )
 PARITY_DIFFERS = "  differs: {name}"
 PARITY_ERRORS = "  error:   {name}: {error}"
+JARVIS_FETCHING = "Fetching the JARVIS micro-benchmark at {commit}"
