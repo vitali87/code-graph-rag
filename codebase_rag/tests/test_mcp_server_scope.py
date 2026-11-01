@@ -79,6 +79,26 @@ class TestProjectRoot:
 
         assert srv.get_project_root() == (home / "project").resolve()
 
+    @pytest.mark.parametrize("named", ["home", "above home"])
+    def test_a_broad_host_project_is_no_rescue(
+        self, named: str, home: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(home)
+        host_root = home if named == "home" else home.parent
+        monkeypatch.setenv("CLAUDE_PROJECT_ROOT", str(host_root))
+
+        with pytest.raises(ex.RepoPathError):
+            srv.get_project_root()
+
+    def test_an_empty_target_falls_back_to_the_host_but_not_to_home(
+        self, home: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(srv.settings, "TARGET_REPO_PATH", "")
+        monkeypatch.setenv("CLAUDE_PROJECT_ROOT", str(home))
+
+        with pytest.raises(ex.RepoPathError):
+            srv.get_project_root()
+
     def test_a_narrower_launch_directory_stays_the_root(
         self, home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

@@ -48,8 +48,12 @@ def merge_dotenv(path: Path) -> dict[str, str]:
     # value, and a reference to it in the file reads that value too.
     values = DotEnv(path, encoding=cs.ENCODING_UTF8, override=False).dict()
     refused: dict[str, str] = {}
+    # The file may not set a waiver in any spelling: settings match names
+    # without regard to case, so `cgr_allow_sensitive_reads=true` beside an
+    # exported `CGR_ALLOW_SENSITIVE_READS=false` won (see load_settings).
+    environment_only = {name.upper() for name in cs.ENVIRONMENT_ONLY_SETTINGS}
     for name, value in values.items():
-        if value is None or name in os.environ:
+        if value is None or name in os.environ or name.upper() in environment_only:
             continue
         try:
             os.environ[name] = value

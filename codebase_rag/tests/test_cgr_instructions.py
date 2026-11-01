@@ -402,6 +402,32 @@ def test_a_waiver_in_the_working_directorys_dotenv_is_ignored(
 
 
 @pytest.mark.parametrize(
+    "variable",
+    [
+        "CGR_TRUST_PROJECT_INSTRUCTIONS",
+        "CGR_ALLOW_SENSITIVE_READS",
+        "CGR_ALLOW_SENSITIVE_WRITES",
+    ],
+)
+def test_a_dotenv_waiver_in_another_case_does_not_override_an_exported_one(
+    variable: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Settings match names without regard to case, so the repository's
+    `cgr_allow_sensitive_reads=true` beat an exported `...=false`."""
+    dotenv = tmp_path / ".env"
+    dotenv.write_text(f"{variable.lower()}=true\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    with patch.dict(os.environ, {variable: "false"}):
+        inherited = frozenset(os.environ)
+        refused = cgr_config.merge_dotenv(dotenv)
+        loaded, _ = cgr_config.load_settings(inherited, refused)
+    field = cgr_config.AppConfig.model_fields
+    name = next(key for key, info in field.items() if info.validation_alias == variable)
+    assert getattr(loaded, name) is False
+
+
+@pytest.mark.parametrize(
     ("variable", "field"),
     [
         ("CGR_TRUST_PROJECT_INSTRUCTIONS", "TRUST_PROJECT_INSTRUCTIONS"),

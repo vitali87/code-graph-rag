@@ -220,7 +220,8 @@ The server serves the directory `TARGET_REPO_PATH` names. Without it, it serves
 the directory its client started it in, which the client chooses and can be
 `/`, so it refuses to start when that directory holds the
 user's home directory or is a disk root, unless the client names its project
-in `CLAUDE_PROJECT_ROOT`, which is then served instead. Naming such a directory
+in `CLAUDE_PROJECT_ROOT` and that directory is narrower, which is then served
+instead. Naming such a directory
 in `TARGET_REPO_PATH` serves it, with a warning.
 
 ![cgr mcp-server --transport http refusing --host 0.0.0.0 without MCP_HTTP_AUTH_TOKEN, then serving on 127.0.0.1 by default](../assets/demos/security-mcp-bind.gif)

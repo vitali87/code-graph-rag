@@ -81,7 +81,6 @@ def get_project_root() -> Path:
 
     if not repo_path:
         repo_path = host_root or os.environ.get(cs.MCPEnvVar.PWD)
-        chosen = bool(host_root)
 
         if repo_path:
             logger.info(lg.MCP_SERVER_INFERRED_ROOT.format(path=repo_path))
@@ -93,17 +92,17 @@ def get_project_root() -> Path:
 
     # A client launches the server in whatever directory it likes, `/` or
     # the home directory included, and every file tool then reached all of
-    # it. Only a root someone named is served when it is that broad, as
-    # `cgr start` syncs one only with `--yes` (#2418). A host that names its
-    # project in CLAUDE_PROJECT_ROOT has named one, so that project is served
-    # instead; a narrower launch directory stays the root, as it always was.
-    if _is_home_or_above(project_root) and not chosen and host_root:
-        logger.info(lg.MCP_SERVER_INFERRED_ROOT.format(path=host_root))
-        project_root = _existing_dir(host_root)
-        chosen = True
-    if _is_home_or_above(project_root):
-        if not chosen:
+    # it. Only a root named in TARGET_REPO_PATH is served when it is that
+    # broad, as `cgr start` syncs one only with `--yes` (#2418). A project a
+    # host names in CLAUDE_PROJECT_ROOT is served instead when it is narrower;
+    # a narrower launch directory stays the root, as it always was.
+    if _is_home_or_above(project_root) and not chosen:
+        rescue = _existing_dir(host_root) if host_root else None
+        if rescue is None or _is_home_or_above(rescue):
             raise ex.RepoPathError(te.MCP_ROOT_TOO_BROAD.format(path=project_root))
+        logger.info(lg.MCP_SERVER_INFERRED_ROOT.format(path=rescue))
+        project_root = rescue
+    elif _is_home_or_above(project_root):
         logger.warning(lg.MCP_SERVER_BROAD_ROOT.format(path=project_root))
 
     logger.info(lg.MCP_SERVER_ROOT_RESOLVED.format(path=project_root))
