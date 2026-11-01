@@ -383,6 +383,7 @@ class TestInteractiveApproval:
     [
         ("CGR_TRUST_PROJECT_INSTRUCTIONS", "TRUST_PROJECT_INSTRUCTIONS"),
         ("CGR_ALLOW_SENSITIVE_READS", "ALLOW_SENSITIVE_READS"),
+        ("CGR_ALLOW_SENSITIVE_WRITES", "ALLOW_SENSITIVE_WRITES"),
     ],
 )
 def test_a_waiver_in_the_working_directorys_dotenv_is_ignored(
@@ -405,6 +406,7 @@ def test_a_waiver_in_the_working_directorys_dotenv_is_ignored(
     [
         ("CGR_TRUST_PROJECT_INSTRUCTIONS", "TRUST_PROJECT_INSTRUCTIONS"),
         ("CGR_ALLOW_SENSITIVE_READS", "ALLOW_SENSITIVE_READS"),
+        ("CGR_ALLOW_SENSITIVE_WRITES", "ALLOW_SENSITIVE_WRITES"),
     ],
 )
 def test_an_exported_waiver_is_honoured(

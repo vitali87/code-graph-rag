@@ -55,10 +55,19 @@ def setup_logging() -> None:
     )
 
 
+def _is_home_or_above(path: Path) -> bool:
+    """Whether `path` is the home directory, a directory above it, or a disk
+    root: serving it hands the client every file the user has."""
+    home = Path.home().resolve()
+    return path == path.parent or home.is_relative_to(path)
+
+
 def get_project_root() -> Path:
     repo_path: str | None = (
         os.environ.get(cs.MCPEnvVar.TARGET_REPO_PATH) or settings.TARGET_REPO_PATH
     )
+    # "." is the setting's default, so it names no folder anyone chose.
+    chosen = bool(repo_path) and repo_path != cs.ROOT_DIR_KEY
 
     if not repo_path:
         repo_path = os.environ.get(cs.MCPEnvVar.CLAUDE_PROJECT_ROOT) or os.environ.get(
@@ -78,6 +87,16 @@ def get_project_root() -> Path:
 
     if not project_root.is_dir():
         raise ex.RepoPathError(te.MCP_PATH_NOT_DIR.format(path=project_root))
+
+    # A client launches the server in whatever directory it likes, `/` or
+    # the home directory included, and every file tool then reached all of
+    # it. Only a
+    # root someone named is served when it is that broad, as `cgr start`
+    # syncs one only with `--yes` (#2418).
+    if _is_home_or_above(project_root):
+        if not chosen:
+            raise ex.RepoPathError(te.MCP_ROOT_TOO_BROAD.format(path=project_root))
+        logger.warning(lg.MCP_SERVER_BROAD_ROOT.format(path=project_root))
 
     logger.info(lg.MCP_SERVER_ROOT_RESOLVED.format(path=project_root))
     return project_root
@@ -318,6 +337,24 @@ async def serve_stdio(workspace: str | None = None) -> None:
 
 
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+# The names a local client reaches a loopback bind by, as they appear in a
+# Host header (an IPv6 literal in brackets).
+_LOOPBACK_HOST_HEADERS = ("127.0.0.1", "localhost", "[::1]")
+
+
+def _loopback_only_headers(port: int) -> tuple[list[str], list[str]]:
+    """The Host and Origin values a request to a loopback bind on `port` may
+    carry: those of this server, so a web page cannot reach it.
+
+    Binding 127.0.0.1 keeps other machines out, not the browser on this one.
+    A page the user opens can point its own domain at 127.0.0.1 (DNS
+    rebinding) and call the tools; its requests then name that domain.
+    """
+    hosts = [f"{name}:{port}" for name in _LOOPBACK_HOST_HEADERS]
+    if port == cs.HTTP_DEFAULT_PORT:
+        hosts += list(_LOOPBACK_HOST_HEADERS)
+    origins = [f"{cs.HTTP_SCHEME}://{host}" for host in hosts]
+    return hosts, origins
 
 
 def _validate_http_exposure(host: str, auth_token: str | None) -> None:
@@ -375,6 +412,7 @@ async def serve_http(
 ) -> None:
     import uvicorn
     from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+    from mcp.server.transport_security import TransportSecuritySettings
     from starlette.applications import Starlette
     from starlette.routing import Mount
 
@@ -385,10 +423,24 @@ async def serve_http(
 
     server, ingestor = create_server(workspace)
 
+    # Without a token the bind is loopback (see _validate_http_exposure) and
+    # nothing else tells a local client from a web page, so the Host and
+    # Origin headers must be this server's. A token already keeps a page
+    # out, and a proxy in front of a remote server names its own host.
+    security = None
+    if not auth_token:
+        allowed_hosts, allowed_origins = _loopback_only_headers(port)
+        security = TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=allowed_hosts,
+            allowed_origins=allowed_origins,
+        )
+
     session_manager = StreamableHTTPSessionManager(
         app=server,
         json_response=False,
         stateless=False,
+        security_settings=security,
     )
 
     @contextlib.asynccontextmanager

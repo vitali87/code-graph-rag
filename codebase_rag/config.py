@@ -620,6 +620,14 @@ class AppConfig(BaseSettings):
         False, validation_alias="CGR_ALLOW_SENSITIVE_READS"
     )
 
+    # MCP write_file and surgical_replace_code refuse the same files: an
+    # overwrite destroys the secret, and an edit's refusals ("target not
+    # found", the lines of each match) let the client guess one character
+    # at a time. The CLI agent asks before every write instead.
+    ALLOW_SENSITIVE_WRITES: bool = Field(
+        False, validation_alias="CGR_ALLOW_SENSITIVE_WRITES"
+    )
+
     # A repository's .cgr.md loads only once the user approved its content
     # (issue #3456). True trusts every repository's file without asking:
     # for CI on repositories you control, never for code you did not write.

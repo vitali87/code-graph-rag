@@ -39,3 +39,19 @@ def _is_sensitive_name(path: Path) -> bool:
         or cs.SENSITIVE_NAME_INFIX in name
         or any(name.endswith(suffix) for suffix in cs.SENSITIVE_FILE_SUFFIXES)
     )
+
+
+def is_git_internal(path: Path, root: Path) -> bool:
+    """Whether `path`, resolved and inside `root`, is a `.git` entry or lies
+    inside one.
+
+    Git reads its config and hooks from there and runs the commands they name
+    (`core.fsmonitor`, a hook), and cgr runs git after every write to refresh
+    the graph, so one write there ran code on the user's machine. No tool has
+    a reason to write there. The match ignores case and the name endings
+    Windows drops, which macOS and Windows filesystems resolve to `.git`.
+    """
+    return any(
+        part.lower().rstrip(cs.WINDOWS_IGNORED_NAME_TAIL) == cs.GIT_DIR_NAME
+        for part in path.relative_to(root).parts
+    )

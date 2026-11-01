@@ -1340,3 +1340,5 @@ SENSITIVE_PARENT_FILES = frozenset(
 )
 # Everything under these directories is key material.
 SENSITIVE_DIR_NAMES = frozenset({".ssh", ".gnupg"})
+# Windows drops trailing dots and spaces from a name, so `.git.` opens `.git`.
+WINDOWS_IGNORED_NAME_TAIL = ". "
