@@ -62,17 +62,26 @@ def _is_home_or_above(path: Path) -> bool:
     return path == path.parent or home.is_relative_to(path)
 
 
+def _existing_dir(repo_path: str) -> Path:
+    project_root = Path(repo_path).resolve()
+    if not project_root.exists():
+        raise ex.RepoPathError(te.MCP_PATH_NOT_EXISTS.format(path=project_root))
+    if not project_root.is_dir():
+        raise ex.RepoPathError(te.MCP_PATH_NOT_DIR.format(path=project_root))
+    return project_root
+
+
 def get_project_root() -> Path:
     repo_path: str | None = (
         os.environ.get(cs.MCPEnvVar.TARGET_REPO_PATH) or settings.TARGET_REPO_PATH
     )
     # "." is the setting's default, so it names no folder anyone chose.
     chosen = bool(repo_path) and repo_path != cs.ROOT_DIR_KEY
+    host_root = os.environ.get(cs.MCPEnvVar.CLAUDE_PROJECT_ROOT)
 
     if not repo_path:
-        repo_path = os.environ.get(cs.MCPEnvVar.CLAUDE_PROJECT_ROOT) or os.environ.get(
-            cs.MCPEnvVar.PWD
-        )
+        repo_path = host_root or os.environ.get(cs.MCPEnvVar.PWD)
+        chosen = bool(host_root)
 
         if repo_path:
             logger.info(lg.MCP_SERVER_INFERRED_ROOT.format(path=repo_path))
@@ -80,19 +89,18 @@ def get_project_root() -> Path:
             repo_path = str(Path.cwd())
             logger.info(lg.MCP_SERVER_NO_ROOT.format(path=repo_path))
 
-    project_root = Path(repo_path).resolve()
-
-    if not project_root.exists():
-        raise ex.RepoPathError(te.MCP_PATH_NOT_EXISTS.format(path=project_root))
-
-    if not project_root.is_dir():
-        raise ex.RepoPathError(te.MCP_PATH_NOT_DIR.format(path=project_root))
+    project_root = _existing_dir(repo_path)
 
     # A client launches the server in whatever directory it likes, `/` or
     # the home directory included, and every file tool then reached all of
-    # it. Only a
-    # root someone named is served when it is that broad, as `cgr start`
-    # syncs one only with `--yes` (#2418).
+    # it. Only a root someone named is served when it is that broad, as
+    # `cgr start` syncs one only with `--yes` (#2418). A host that names its
+    # project in CLAUDE_PROJECT_ROOT has named one, so that project is served
+    # instead; a narrower launch directory stays the root, as it always was.
+    if _is_home_or_above(project_root) and not chosen and host_root:
+        logger.info(lg.MCP_SERVER_INFERRED_ROOT.format(path=host_root))
+        project_root = _existing_dir(host_root)
+        chosen = True
     if _is_home_or_above(project_root):
         if not chosen:
             raise ex.RepoPathError(te.MCP_ROOT_TOO_BROAD.format(path=project_root))

@@ -33,6 +33,7 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     (fake_home / "project").mkdir(parents=True)
     monkeypatch.setattr(srv.Path, "home", lambda: fake_home)
     monkeypatch.delenv("TARGET_REPO_PATH", raising=False)
+    monkeypatch.delenv("CLAUDE_PROJECT_ROOT", raising=False)
     monkeypatch.setattr(srv.settings, "TARGET_REPO_PATH", ".")
     return fake_home
 
@@ -67,6 +68,24 @@ class TestProjectRoot:
 
         with pytest.raises(ex.RepoPathError):
             srv.get_project_root()
+
+    def test_the_hosts_project_is_served_instead(
+        self, home: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A host that names its project in CLAUDE_PROJECT_ROOT has chosen
+        one, even when it launched the server in the home directory."""
+        monkeypatch.chdir(home)
+        monkeypatch.setenv("CLAUDE_PROJECT_ROOT", str(home / "project"))
+
+        assert srv.get_project_root() == (home / "project").resolve()
+
+    def test_a_narrower_launch_directory_stays_the_root(
+        self, home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(home / "project")
+        monkeypatch.setenv("CLAUDE_PROJECT_ROOT", str(tmp_path))
+
+        assert srv.get_project_root() == (home / "project").resolve()
 
     def test_a_named_home_is_served(
         self, home: Path, monkeypatch: pytest.MonkeyPatch
