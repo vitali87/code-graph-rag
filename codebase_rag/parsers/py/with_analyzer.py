@@ -410,15 +410,20 @@ class PythonWithBindingMixin(_WithBase):
     def _is_generator_annotation(self, base: str, module_qn: str) -> bool:
         """Whether `base` names a generator annotation, resolved through
         the factory module's import map when it has an entry for the
-        first segment: a same-named import from elsewhere is not one."""
+        first segment: a same-named import from elsewhere is not one.
+        A mapped value that already holds the following segments is
+        not extended with them again: `import collections.abc` maps
+        `collections` to `collections.abc`, so `collections.abc.Iterator`
+        resolves to `collections.abc.Iterator`, not `collections.abc.abc.Iterator`."""
         parts = base.split(cs.SEPARATOR_DOT)
         import_map = self.import_processor.import_mapping.get(module_qn, {})
         if parts[0] in import_map:
             resolved = import_map[parts[0]]
-            if len(parts) > 1:
-                resolved = (
-                    f"{resolved}{cs.SEPARATOR_DOT}{cs.SEPARATOR_DOT.join(parts[1:])}"
-                )
+            rest = parts[1:]
+            while rest and resolved.endswith(f"{cs.SEPARATOR_DOT}{rest[0]}"):
+                rest = rest[1:]
+            if rest:
+                resolved = f"{resolved}{cs.SEPARATOR_DOT}{cs.SEPARATOR_DOT.join(rest)}"
             return resolved in cs.PY_GENERATOR_ANNOTATION_QNS
         if len(parts) == 1:
             return parts[0] in cs.PY_GENERATOR_ANNOTATIONS

@@ -51,6 +51,9 @@ SOURCE = (
     "from helpers import Iterator as HIter\n"
     "from typing import AsyncGenerator, AsyncIterator, Generator, Iterator\n"
     "from typing import Iterator as It\n"
+    "import collections.abc\n"
+    "import collections.abc as cabc\n"
+    "import typing\n"
     "\n"
     "\n"
     "class Thing:\n"
@@ -475,6 +478,55 @@ SOURCE = (
     "    match shape:\n"
     "        case Other() as t:\n"
     "            return t.go()\n"
+    "\n"
+    "\n"
+    "def matched_bare_subject_rebound_after_match():\n"
+    "    s = Thing()\n"
+    "    match s:\n"
+    "        case t:\n"
+    "            pass\n"
+    "    s = Other()\n"
+    "    return t.go()\n"
+    "\n"
+    "\n"
+    "@contextmanager\n"
+    "def dotted_abc_iterator(x) -> collections.abc.Iterator[Thing]:\n"
+    "    yield x\n"
+    "\n"
+    "\n"
+    "def dotted_abc_iterator_with():\n"
+    "    with dotted_abc_iterator(Thing()) as t:\n"
+    "        return t.go()\n"
+    "\n"
+    "\n"
+    "@contextmanager\n"
+    "def typing_iterator(x) -> typing.Iterator[Thing]:\n"
+    "    yield x\n"
+    "\n"
+    "\n"
+    "def typing_iterator_with():\n"
+    "    with typing_iterator(Thing()) as t:\n"
+    "        return t.go()\n"
+    "\n"
+    "\n"
+    "@asynccontextmanager\n"
+    "async def dotted_abc_async_iterator(x) -> collections.abc.AsyncIterator[Thing]:\n"
+    "    yield x\n"
+    "\n"
+    "\n"
+    "async def dotted_abc_async_iterator_with():\n"
+    "    async with dotted_abc_async_iterator(Thing()) as t:\n"
+    "        return t.go()\n"
+    "\n"
+    "\n"
+    "@contextmanager\n"
+    "def aliased_abc_iterator(x) -> cabc.Iterator[Thing]:\n"
+    "    yield x\n"
+    "\n"
+    "\n"
+    "def aliased_abc_iterator_with():\n"
+    "    with aliased_abc_iterator(Thing()) as t:\n"
+    "        return t.go()\n"
 )
 
 CHILD = (
@@ -862,3 +914,60 @@ def test_comprehension_walrus_yielded_to_a_later_match_alias(
         _local_types(tmp_path, "comprehension_walrus_then_match_alias").get("t")
         == f"{PROJECT}.m.Other"
     )
+
+
+def test_bare_capture_subject_rebound_after_match_stays_untyped(
+    tmp_path: Path,
+) -> None:
+    """Greptile P1 on #3528: `s` is rebound after the `match`, so the
+    flat map already holds the later type when the capture is typed.
+    The capture stays untyped rather than taking the later type: the
+    map holds one type per name and this pass runs after all the
+    assignment passes, so the type at the `match` cannot be recovered
+    from it, and a wrong exact edge is worse than none."""
+    calls = _calls(tmp_path).get("matched_bare_subject_rebound_after_match", {})
+    assert calls.get(THING_GO) != EXACT
+    assert calls.get(OTHER_GO) != EXACT
+    assert (
+        _local_types(tmp_path, "matched_bare_subject_rebound_after_match").get("t")
+        is None
+    )
+
+
+def test_dotted_collections_abc_iterator_annotation(tmp_path: Path) -> None:
+    """Greptile P1 on #3528: `import collections.abc` maps `collections`
+    to `collections.abc`, so `collections.abc.Iterator[Thing]` must
+    resolve to the generator annotation, not `collections.abc.abc.Iterator`.
+    The factory yields a parameter, so the annotation is the only type
+    source: rejecting it leaves the target untyped."""
+    calls = _calls(tmp_path)["dotted_abc_iterator_with"]
+    assert calls.get(THING_GO) == EXACT
+    assert OTHER_GO not in calls
+
+
+def test_qualified_typing_iterator_annotation(tmp_path: Path) -> None:
+    """`typing.Iterator[Thing]` with `import typing` keeps resolving:
+    the dotted-import normalization must not break the plain qualified
+    spelling."""
+    calls = _calls(tmp_path)["typing_iterator_with"]
+    assert calls.get(THING_GO) == EXACT
+    assert OTHER_GO not in calls
+
+
+def test_dotted_collections_abc_async_iterator_annotation(
+    tmp_path: Path,
+) -> None:
+    """`collections.abc.AsyncIterator[Thing]` resolves the same way as
+    the `Iterator` spelling."""
+    calls = _calls(tmp_path)["dotted_abc_async_iterator_with"]
+    assert calls.get(THING_GO) == EXACT
+    assert OTHER_GO not in calls
+
+
+def test_aliased_collections_abc_iterator_annotation(tmp_path: Path) -> None:
+    """`import collections.abc as cabc` plus `cabc.Iterator[Thing]`
+    keeps resolving: the alias maps straight to the module, with no
+    duplicated segment to strip."""
+    calls = _calls(tmp_path)["aliased_abc_iterator_with"]
+    assert calls.get(THING_GO) == EXACT
+    assert OTHER_GO not in calls

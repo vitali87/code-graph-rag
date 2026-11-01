@@ -1616,7 +1616,10 @@ class PythonAstAnalyzerMixin(_AstBase):
         the subject already has in the map. Only a whole-pattern single
         identifier counts: a dotted name is a value pattern, `_` binds
         nothing, and a capture inside a larger pattern is left to the
-        flow pass. An untyped subject leaves the capture untyped."""
+        flow pass. An untyped subject leaves the capture untyped, and
+        so does a subject rebound after the `match`: the map holds the
+        later type, and this pass runs after the assignment passes, so
+        the type at the `match` is not recoverable from it."""
         children = pattern.named_children
         if len(children) != 1 or children[0].type != cs.TS_PY_DOTTED_NAME:
             return
@@ -1634,7 +1637,18 @@ class PythonAstAnalyzerMixin(_AstBase):
             if statement is not None
             else None
         )
-        if subject is None:
+        if subject is None or statement is None:
+            return
+        if (
+            subject.type == cs.TS_PY_IDENTIFIER
+            and (subject_name := safe_decode_text(subject))
+            and last.get(subject_name, -1) > subject.end_byte
+        ):
+            # The subject is rebound after the `match` statement's
+            # subject: the map already holds the later type, which is
+            # not the value the capture binds, so it stays untyped. A
+            # walrus inside the subject itself binds before its end, so
+            # it does not trigger the skip.
             return
         inferred = (
             self._infer_type_from_expression_simple(subject, module_qn)
