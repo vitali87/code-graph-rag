@@ -284,6 +284,28 @@ class InterfaceRules(TypedDict):
     js_scan: CallableScanRules
 
 
+class AliasRules(TypedDict):
+    """The constants `python_local_aliases` in parsers/py/variable_analyzer.py
+    reads, under the names `alias_rules_from` in
+    rust/cgr_graph_rs/src/trees/python.rs reads."""
+
+    boundaries: list[str]
+    assignment: str
+    identifier: str
+    attribute: str
+    call: str
+    binary_operator: str
+    boolean_operator: str
+    conditional_expression: str
+    parenthesized_expression: str
+    left_field: str
+    right_field: str
+    operator_field: str
+    and_operator: str
+    dunders: dict[str, str]
+    max_depth: int
+
+
 class TreeRules(TypedDict):
     """The classification constants the Rust tree bridge applies, under the
     names `rules_from` in rust/cgr_graph_rs/src/trees/python.rs reads."""
@@ -312,6 +334,7 @@ class TreeRules(TypedDict):
     dart_function_body: str
     scopes: ScopeRules
     interface: InterfaceRules
+    aliases: AliasRules
 
 
 class ScopeFacts(NamedTuple):
@@ -339,6 +362,12 @@ class ScopeFacts(NamedTuple):
 type NativeScopeFacts = tuple[
     list[str], list[str], list[tuple[str, list[str]]], list[str], list[str]
 ]
+
+
+# `TreeBridge.local_aliases` as Rust returns one alias: the local, its
+# candidate leaves, its dunder and its reflected leaves, each leaf as its
+# descendant index under the scope (`TreeCursor.goto_descendant`).
+type NativeAlias = tuple[str, list[int], str | None, list[int]]
 
 
 # One node as the tree bridge's probe compares it: symbol, type, named flag,

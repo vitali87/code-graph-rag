@@ -205,6 +205,36 @@ def both_interface_walks(
     clear_scope_facts()
 
 
+@pytest.fixture(params=[True, False], ids=["rust_aliases", "python_aliases"])
+def both_alias_walks(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> Generator[None, None, None]:
+    """Runs a test once on the Rust alias walk and once on its Python twin,
+    so each alias form type inference reads holds on both. A build without
+    the walk skips the Rust run."""
+    if request.param and native_trees.alias_bridge() is None:
+        pytest.skip("cgr_graph_rs without the alias walk is installed")
+    monkeypatch.setattr(native_trees, "ENABLED", request.param)
+    clear_scope_facts()
+    yield
+    clear_scope_facts()
+
+
+@pytest.fixture(params=[True, False], ids=["rust_callables", "python_callables"])
+def both_callable_scans(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> Generator[None, None, None]:
+    """Runs a test once on the Rust callable-parameter scan and once on its
+    Python twin, so each way a parameter is called holds on both. A build
+    without the scan skips the Rust run."""
+    if request.param and native_trees.callable_bridge() is None:
+        pytest.skip("cgr_graph_rs without the callable-parameter scan is installed")
+    monkeypatch.setattr(native_trees, "ENABLED", request.param)
+    clear_scope_facts()
+    yield
+    clear_scope_facts()
+
+
 @pytest.fixture(autouse=True)
 def _disable_stack_autostart() -> Generator[None, None, None]:
     from unittest.mock import patch

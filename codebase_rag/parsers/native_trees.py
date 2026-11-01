@@ -2,11 +2,14 @@
 
 The definitions pass hashes every definition it ingests twice over, once
 for its anchor (`anchor_hash.py`) and once for its clone-detection skeleton
-(`ast_fingerprint.py`), and every module once for its interface
-(`interface_fingerprint.py`); call resolution and type inference ask which
-names each Python function binds (`py/ast_analyzer.py`). Each walks the
-subtree node by node through py-tree-sitter: every `node.children`,
-`node.type` and `node.text` crosses into C and builds a Python object.
+(`ast_fingerprint.py`), every module once for its interface
+(`interface_fingerprint.py`), and every function for the parameters it
+calls (`callable_parameter_indices` in `utils.py`); call resolution and type
+inference ask which names each Python function binds (`py/ast_analyzer.py`)
+and what each of its locals was assigned (`py/variable_analyzer.py`). Each
+walks the subtree node by node through py-tree-sitter: every
+`node.children`, `node.type` and `node.text` crosses into C and builds a
+Python object.
 `TreeBridge` (rust/cgr_graph_rs/src/trees) walks the same subtree in Rust. It is handed the Python `Node` itself and
 reads the C node inside it, so nothing is parsed twice and no grammar is
 compiled into the extension; its tree-sitter runtime is the very C code
@@ -35,8 +38,10 @@ from .. import exceptions as ex
 from .. import logs as ls
 from ..embedded_graph.extension import rust_extension
 from ..types_defs import (
+    AliasRules,
     DescribedNode,
     InterfaceRules,
+    NativeAlias,
     NativeScopeFacts,
     ScopeRules,
     TreeRules,
@@ -64,6 +69,12 @@ class TreeBridge(Protocol):
     def inner_scope_only_names(self, caller: Node) -> list[str]: ...
 
     def interface_fingerprint(self, root_node: Node, language: str) -> str | None: ...
+
+    def callable_parameter_indices(
+        self, func_node: Node, language: str
+    ) -> list[tuple[str, int]] | None: ...
+
+    def local_aliases(self, caller: Node) -> list[NativeAlias]: ...
 
 
 NotBorrowed: type[Exception] = getattr(
@@ -98,6 +109,7 @@ def rules() -> TreeRules:
         dart_function_body=cs.TS_DART_FUNCTION_BODY,
         scopes=_scope_rules(),
         interface=_interface_rules(),
+        aliases=_alias_rules(),
     )
 
 
@@ -144,6 +156,13 @@ def _interface_rules() -> InterfaceRules:
     return bridge_rules()
 
 
+def _alias_rules() -> AliasRules:
+    # Imported here: the alias walk asks this module for the bridge.
+    from .py.variable_analyzer import alias_rules
+
+    return alias_rules()
+
+
 def tree_bridge() -> TreeBridge | None:
     """The bridge, or None when the Python twins must walk the trees."""
     return _bridge() if ENABLED and not _checking else None
@@ -161,6 +180,20 @@ def interface_bridge() -> TreeBridge | None:
     build from before them does not, or None."""
     bridge = tree_bridge()
     return bridge if hasattr(bridge, cs.EG_RUST_INTERFACE_FINGERPRINT) else None
+
+
+def callable_bridge() -> TreeBridge | None:
+    """The bridge when it also scans for called parameters, which a build
+    from before the scan does not, or None."""
+    bridge = tree_bridge()
+    return bridge if hasattr(bridge, cs.EG_RUST_CALLABLE_PARAMETER_INDICES) else None
+
+
+def alias_bridge() -> TreeBridge | None:
+    """The bridge when it also walks local aliases, which a build from
+    before the walk does not, or None."""
+    bridge = tree_bridge()
+    return bridge if hasattr(bridge, cs.EG_RUST_LOCAL_ALIASES) else None
 
 
 @cache
@@ -269,4 +302,24 @@ def _node_disagreement(bridge: TreeBridge, node: Node) -> cs.TreeBridgeCheck | N
         python_inner_scope_only_names(node)
     ):
         return cs.TreeBridgeCheck.INNER_SCOPE_NAMES
+    return _walk_disagreement(bridge, node)
+
+
+def _walk_disagreement(bridge: TreeBridge, node: Node) -> cs.TreeBridgeCheck | None:
+    """`_node_disagreement` for the walks type inference asks, each checked
+    when this build has it."""
+    from .py.variable_analyzer import aliases_from_native, python_local_aliases
+    from .utils import python_callable_parameter_indices
+
+    python = cs.SupportedLanguage.PYTHON
+    if hasattr(bridge, cs.EG_RUST_CALLABLE_PARAMETER_INDICES):
+        native = bridge.callable_parameter_indices(node, python)
+        if (None if native is None else dict(native)) != (
+            python_callable_parameter_indices(node, python)
+        ):
+            return cs.TreeBridgeCheck.CALLABLE_PARAMETERS
+    if hasattr(bridge, cs.EG_RUST_LOCAL_ALIASES) and aliases_from_native(
+        node, bridge.local_aliases(node)
+    ) != python_local_aliases(node):
+        return cs.TreeBridgeCheck.LOCAL_ALIASES
     return None
