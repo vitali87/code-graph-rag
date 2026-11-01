@@ -82,7 +82,7 @@ jobs:
           - os: macos-15-intel
             platform: darwin
             arch: amd64
-          - os: macos-14
+          - os: macos-15
             platform: darwin
             arch: arm64
 

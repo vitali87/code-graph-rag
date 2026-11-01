@@ -1,5 +1,12 @@
 FROM ghcr.io/astral-sh/uv:0.13.6@sha256:af22a52f5eafef3d78e551599d405c02df61919d18028f0cea8eda93bc9986d0 AS uv
 
+# The crate the project depends on, cgr-graph-rs, is built from rust/ during
+# uv sync. Debian's cargo trails its locked dependencies (trixie ships rustc
+# 1.85; tree-sitter-language needs 1.90), so the toolchain comes from here,
+# no older than RUST_TOOLCHAIN in .clusterfuzzlite/Dockerfile, which the fuzz
+# build proves the crate with on every pull request.
+FROM rust:1.97.0-slim-trixie@sha256:686a437ead83701e8f871e66e838c3ec55f46b5fc235b025756396ac823bdc51 AS rust
+
 FROM python:3.15-slim@sha256:94d3426f1def7db4a106a232ac121bfd975393e5dfd40a619b955fae45fe7913 AS builder
 
 COPY --from=uv /uv /uvx /bin/
@@ -11,9 +18,13 @@ COPY --chmod=755 scripts/distrust_ca_roots.sh /usr/local/sbin/
 # still ships are then deselected. cargo fetches through this store.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        ca-certificates cmake build-essential git libssl-dev zlib1g-dev libzstd-dev cargo && \
+        ca-certificates cmake build-essential git libssl-dev zlib1g-dev libzstd-dev && \
     rm -rf /var/lib/apt/lists/* && \
     distrust_ca_roots.sh
+
+COPY --from=rust /usr/local/rustup /usr/local/rustup
+COPY --from=rust /usr/local/cargo /usr/local/cargo
+ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo PATH=/usr/local/cargo/bin:$PATH
 
 WORKDIR /app
 
