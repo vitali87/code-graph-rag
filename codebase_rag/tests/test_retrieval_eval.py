@@ -316,7 +316,8 @@ def test_colgrep_edges_keep_only_graded_files(
         _edge("pkg/uses.py", "helper"),
     }
     assert by_call.edges == {_edge("pkg/core.py", "helper")}
-    assert by_name.failure is None and by_call.failure is None
+    assert by_name.failure is None
+    assert by_call.failure is None
 
 
 def test_colgrep_failed_search_stops_the_arm(
@@ -342,7 +343,7 @@ def test_colgrep_failed_search_stops_the_arm(
 @needs_rg
 def test_main_stops_on_a_failed_colgrep_search(
     repo: Path,
-    tmp_path_factory: pytest.TempPathFactory,
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(subprocess, "run", _FakeColGrep({}, fail=frozenset({"run"})))
@@ -352,7 +353,7 @@ def test_main_stops_on_a_failed_colgrep_search(
         return cmd if cmd == ec.COLGREP_BIN else real_which(cmd, mode, path)
 
     monkeypatch.setattr(shutil, "which", which)
-    out_dir = tmp_path_factory.mktemp("out")
+    out_dir = tmp_path / "out"
 
     with pytest.raises(typer.Exit):
         main(
@@ -398,7 +399,7 @@ def test_sample_symbols_is_seeded_subset() -> None:
 @needs_rg
 def test_main_scores_colgrep_arms_on_the_sample(
     repo: Path,
-    tmp_path_factory: pytest.TempPathFactory,
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     every = ["pkg/core.py", "pkg/uses.py"]
@@ -416,7 +417,7 @@ def test_main_scores_colgrep_arms_on_the_sample(
         return cmd if cmd == ec.COLGREP_BIN else real_which(cmd, mode, path)
 
     monkeypatch.setattr(shutil, "which", which)
-    out_dir = tmp_path_factory.mktemp("out")
+    out_dir = tmp_path / "out"
 
     main(
         target=repo,
@@ -448,16 +449,15 @@ def test_main_scores_colgrep_arms_on_the_sample(
 
 
 @needs_rg
-def test_main_stops_when_nothing_is_called(
-    tmp_path: Path, tmp_path_factory: pytest.TempPathFactory
-) -> None:
+def test_main_stops_when_nothing_is_called(tmp_path: Path) -> None:
     (tmp_path / "lonely.py").write_text("def lonely():\n    return 1\n", "utf-8")
+    out_dir = tmp_path / "out"
 
     with pytest.raises(typer.Exit):
         main(
             target=tmp_path,
             project_name="",
-            out_dir=tmp_path_factory.mktemp("out"),
+            out_dir=out_dir,
             sample=0,
             seed=0,
             colgrep=False,
