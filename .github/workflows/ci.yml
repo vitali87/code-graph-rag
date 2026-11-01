@@ -645,8 +645,10 @@ jobs:
     timeout-minutes: 55
     permissions:
       contents: read
-      # Greptile's score is in its summary comment on the pull request.
+      # Greptile's score is in its summary comment on the pull request, and
+      # its "Greptile Review" check run shows whether a review is in flight.
       pull-requests: read
+      checks: read
 
     steps:
       - name: Checkout code

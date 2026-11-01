@@ -48,6 +48,19 @@ def _comment(
     }
 
 
+def _run(
+    status: str = gg.COMPLETED,
+    started: str | None = "2026-11-01T13:55:50Z",
+    slug: str = gg.GREPTILE_APP,
+) -> dict[str, Any]:
+    return {
+        "name": gg.REVIEW_CHECK,
+        "status": status,
+        "started_at": started,
+        "app": {"slug": slug},
+    }
+
+
 def test_a_5_of_5_review_of_the_head_passes() -> None:
     result = gg.verdict([_comment(_summary(_HEAD, 5))], _HEAD)
     assert result.state == gg.PASS
@@ -116,6 +129,33 @@ def test_an_uppercase_head_matches() -> None:
     assert gg.verdict([_comment(_summary(_HEAD, 5))], _HEAD.upper()).state == gg.PASS
 
 
+def test_a_finished_review_run_lets_the_score_stand() -> None:
+    # The run that produced the summary started before the summary was edited.
+    result = gg.verdict([_comment(_summary(_HEAD, 3))], _HEAD, [_run()])
+    assert result.state == gg.FAIL
+
+
+def test_an_open_review_run_waits_instead_of_failing_on_the_old_score() -> None:
+    # `@greptile review` without a push: the summary still holds the old 3/5
+    # of this very commit while Greptile re-scores it.
+    runs = [_run(), _run(status="in_progress", started="2026-11-01T15:00:00Z")]
+    result = gg.verdict([_comment(_summary(_HEAD, 3))], _HEAD, runs)
+    assert result.state == gg.WAIT
+    assert "reviewing" in result.message
+
+
+def test_an_open_review_run_holds_back_a_pass_too() -> None:
+    runs = [_run(status="queued", started=None)]
+    assert gg.verdict([_comment(_summary(_HEAD, 5))], _HEAD, runs).state == gg.WAIT
+
+
+def test_a_run_closed_before_the_summary_is_edited_waits() -> None:
+    # Greptile closes its run a few seconds before it edits the summary.
+    runs = [_run(started="2026-11-01T15:00:00Z")]
+    result = gg.verdict([_comment(_summary(_HEAD, 3))], _HEAD, runs)
+    assert result.state == gg.WAIT
+
+
 def test_comments_are_read_across_pages() -> None:
     filler = [_comment("ordinary comment", login="someone")] * gg.PAGE_SIZE
     pages = {1: filler, 2: [_comment(_summary(_HEAD, 5))]}
@@ -150,6 +190,8 @@ def _wait(replies: list[Any], wait_s: float = 300) -> tuple[gg.Verdict, int]:
 
     def fetch(path: str) -> Any:
         nonlocal calls
+        if "/check-runs?" in path:
+            return {"check_runs": []}
         reply = replies[min(calls, len(replies) - 1)]
         calls += 1
         if isinstance(reply, Exception):
@@ -180,20 +222,62 @@ def test_an_unreadable_reply_is_retried_not_passed() -> None:
     assert _wait(replies)[0].state == gg.PASS
 
 
+def _routed(comments: list[Any], runs: list[Any]) -> Any:
+    def fetch(path: str) -> Any:
+        if "/check-runs?" in path:
+            return {"total_count": len(runs), "check_runs": runs}
+        return comments
+
+    return fetch
+
+
 def test_main_rejects_a_bad_head() -> None:
-    assert gg.main(["greptile_gate.py", "7", "not-a-sha"], fetch=lambda _: []) == 1
+    assert gg.main(["greptile_gate.py", "7", "not-a-sha"], fetch=_routed([], [])) == 1
 
 
 def test_main_exits_by_the_verdict() -> None:
-    def fetch(_: str) -> Any:
-        return [_comment(_summary(_HEAD, 3))]
+    low = _routed([_comment(_summary(_HEAD, 3))], [_run()])
+    assert gg.main(["greptile_gate.py", "7", _HEAD], fetch=low) == 1
+    top = _routed([_comment(_summary(_HEAD, 5))], [_run()])
+    assert gg.main(["greptile_gate.py", "7", _HEAD], fetch=top) == 0
 
-    assert gg.main(["greptile_gate.py", "7", _HEAD], fetch=fetch) == 1
 
-    def fetch5(_: str) -> Any:
-        return [_comment(_summary(_HEAD, 5))]
+def test_only_greptiles_own_review_run_counts() -> None:
+    # A workflow job named "Greptile Review" is not Greptile reviewing.
+    runs = [_run(status="in_progress", slug="github-actions"), _run()]
+    seen: list[str] = []
 
-    assert gg.main(["greptile_gate.py", "7", _HEAD], fetch=fetch5) == 0
+    def fetch(path: str) -> Any:
+        seen.append(path)
+        return {"check_runs": runs}
+
+    assert gg.review_runs(fetch, "o/r", _HEAD) == [_run()]
+    assert seen == [
+        f"/repos/o/r/commits/{_HEAD}/check-runs?check_name=Greptile%20Review&per_page=100"
+    ]
+
+
+def test_the_gate_waits_out_a_same_head_re_review() -> None:
+    clock = _Clock()
+    replies = iter(
+        [
+            ([_run(status="in_progress", started="2026-11-01T15:00:00Z")], 3),
+            ([_run(started="2026-11-01T15:00:00Z")], 5),
+        ]
+    )
+    state: dict[str, Any] = {}
+
+    def fetch(path: str) -> Any:
+        if "/check-runs?" in path:
+            state["runs"], state["score"] = next(replies)
+            return {"check_runs": state["runs"]}
+        stamp = "2026-11-01T14:00:00Z" if state["score"] == 3 else "2026-11-01T15:03Z"
+        return [_comment(_summary(_HEAD, state["score"]), updated=stamp)]
+
+    result = gg.wait_for_verdict(
+        fetch, "o/r", 7, _HEAD, wait_s=300, poll_s=60, clock=clock, sleep=clock.sleep
+    )
+    assert result.state == gg.PASS
 
 
 def test_the_required_summary_job_fails_unless_the_gate_passes() -> None:

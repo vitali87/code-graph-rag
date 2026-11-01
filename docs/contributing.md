@@ -153,7 +153,7 @@ the workflow run rather than assuming the cadence explains it.
 
 ### Automated Code Review
 
-This project uses automated code review bots (**Greptile** and **Gemini Code Assist**). Before requesting a human review, address all bot comments by either implementing suggestions or replying with a clear justification for why a suggestion doesn't apply. Greptile reviews every push, and the **Greptile 5/5 Gate** check blocks the merge until it scores the latest commit 5/5. To ask for a fresh review without pushing, comment `@greptile review`, then re-run the check.
+This project uses automated code review bots (**Greptile** and **Gemini Code Assist**). Before requesting a human review, address all bot comments by either implementing suggestions or replying with a clear justification for why a suggestion doesn't apply. Greptile reviews every push, and the **Greptile 5/5 Gate** check blocks the merge until it scores the latest commit 5/5. To ask for a fresh review without pushing, comment `@greptile review`, then re-run the check once the **Greptile Review** check has started.
 
 A green check list does not by itself mean a PR was verified: a review bot's *skip* notice is a comment with a non-empty body, and a PR based on a branch other than the default is covered by no ruleset, so nothing is required of it. Run `uv run python scripts/check_pr_gated.py <pr-number>` before merging; it reports every reason a PR is not verifiably gated rather than only the first.
 

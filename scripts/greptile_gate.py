@@ -26,9 +26,11 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
+from urllib.parse import quote
 
 API = "https://api.github.com"
 DEFAULT_REPO = "vitali87/code-graph-rag"
@@ -47,6 +49,12 @@ MAX_SCORE = 5
 # Greptile's app and nobody else.
 GREPTILE_LOGIN = "greptile-apps[bot]"
 SUMMARY_MARKER = "<!-- greptile_summary -->"
+# Greptile opens this check run when a review starts and closes it just
+# before it edits the summary, so it tells a review in flight from a
+# finished one. The app's slug is its bot login without `[bot]`.
+REVIEW_CHECK = "Greptile Review"
+GREPTILE_APP = "greptile-apps"
+COMPLETED = "completed"
 SCORE_PATTERNS = (
     re.compile(r"<!--\s*greptile_confidence_score:\s*(\d+)\s*-->"),
     re.compile(r"Confidence Score:\s*(\d+)\s*/\s*5", re.I),
@@ -66,13 +74,15 @@ LOW_SCORE = (
     "Greptile scored {sha} {score}/{max}; {required}/{max} is required. "
     "Fix its findings and push, and Greptile reviews the new head. If a "
     "finding is wrong, answer it in its thread, comment `@greptile review` to ask "
-    "for a re-review, then re-run this job. Review: {url}"
+    "for a re-review, and re-run this job once the Greptile Review check has "
+    "started. Review: {url}"
 )
 NO_SCORE = (
     "Greptile reviewed {sha} but its summary carries no confidence score, so "
     "the gate cannot read one. Review: {url}"
 )
 NO_REVIEW = "Greptile has not reviewed this pull request yet."
+REVIEWING = "Greptile is reviewing {sha}. Waiting for its score."
 STALE = (
     "Greptile's latest review is of {reviewed}, not the head {sha}. Waiting "
     "for its review of the head."
@@ -121,12 +131,43 @@ def _updated(comment: dict[str, Any]) -> str:
     return stamp if isinstance(stamp, str) else ""
 
 
-def verdict(comments: list[Any], head: str) -> Verdict:
+def _moment(stamp: object) -> datetime | None:
+    if not isinstance(stamp, str):
+        return None
+    try:
+        return datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def review_in_flight(runs: Sequence[Any], summary: dict[str, Any] | None) -> bool:
+    """Whether Greptile is still producing the score of the head.
+
+    A re-review of the same commit (`@greptile review` without a push) leaves
+    the old score of that very commit in place until it finishes, and the
+    run closes a few seconds before the summary is edited. So a run still
+    open, or one that started after the summary last changed, means the
+    summary is about to change and its score is not the answer yet.
+    """
+    edited = _moment(_updated(summary)) if summary else None
+    for run in runs:
+        if not isinstance(run, dict):
+            continue
+        if run.get("status") != COMPLETED:
+            return True
+        started = _moment(run.get("started_at"))
+        if summary and (started is None or edited is None or started > edited):
+            return True
+    return False
+
+
+def verdict(comments: list[Any], head: str, runs: Sequence[Any] = ()) -> Verdict:
     """What Greptile's comments say about `head`.
 
     Greptile edits one summary comment in place as it re-reviews, so the
-    newest summary naming the head is the score of the head. A summary that
-    names another commit says nothing about this one.
+    newest summary naming the head is the score of the head, once no review
+    of the head is in flight (`runs` are Greptile's review check runs on the
+    head). A summary that names another commit says nothing about this one.
     """
     head = head.lower()
     summaries = sorted(
@@ -140,6 +181,8 @@ def verdict(comments: list[Any], head: str) -> Verdict:
         reviewed = reviewed_commit(summaries[-1]["body"]) or "an unnamed commit"
         return Verdict(WAIT, STALE.format(reviewed=reviewed[:8], sha=head[:8]))
     latest = of_head[-1]
+    if review_in_flight(runs, latest):
+        return Verdict(WAIT, REVIEWING.format(sha=head[:8]))
     url = latest.get("html_url", "")
     found = score(latest["body"])
     if found is None:
@@ -165,6 +208,24 @@ def pr_comments(fetch: Fetch, repo: str, pr: int) -> list[Any]:
         page += 1
 
 
+def review_runs(fetch: Fetch, repo: str, head: str) -> list[Any]:
+    reply = fetch(
+        f"/repos/{repo}/commits/{head}/check-runs"
+        f"?check_name={quote(REVIEW_CHECK)}&per_page={PAGE_SIZE}"
+    )
+    runs = reply.get("check_runs") if isinstance(reply, dict) else None
+    if not isinstance(runs, list):
+        raise GateError("unreadable check runs")
+    # Any workflow can name a job "Greptile Review"; only Greptile's app counts.
+    return [
+        run
+        for run in runs
+        if isinstance(run, dict)
+        and isinstance(run.get("app"), dict)
+        and run["app"].get("slug") == GREPTILE_APP
+    ]
+
+
 def wait_for_verdict(
     fetch: Fetch,
     repo: str,
@@ -179,7 +240,10 @@ def wait_for_verdict(
     deadline = clock() + wait_s
     while True:
         try:
-            current = verdict(pr_comments(fetch, repo, pr), head)
+            # Runs first: a review that finishes between the two reads then
+            # shows as a run newer than the summary, never as a stale score.
+            runs = review_runs(fetch, repo, head)
+            current = verdict(pr_comments(fetch, repo, pr), head, runs)
         except (GateError, urllib.error.URLError, TimeoutError) as error:
             # A failed read is not an answer either way; ask again.
             current = Verdict(WAIT, f"Could not read the comments ({error}).")
