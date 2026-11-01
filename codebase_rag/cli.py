@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from collections.abc import Callable, Coroutine, Generator, Iterable
 from contextlib import ExitStack, contextmanager
 from fnmatch import fnmatch
@@ -84,10 +85,11 @@ from .sync_guard import partial_graph_refusal as _partial_graph_refusal
 from .sync_guard import project_owner_refusal as _project_owner_refusal
 from .sync_guard import retire_exited_runs as _retire_exited_runs
 from .sync_guard import retire_stranded_runs as _retire_stranded_runs
-from .sync_guard import run_may_be_writing as _run_may_be_writing
 from .sync_guard import stranded_runs as _stranded_runs
 from .sync_guard import sync_marker_params as _sync_marker_params
 from .sync_guard import sync_owner as _sync_owner
+from .sync_guard import take_over_runs as _take_over_runs
+from .sync_guard import writing_runs as _writing_runs
 from .sync_lock import SyncLockError, repo_sync_lock
 from .tools.health_checker import HealthChecker
 from .tools.language import cli as language_cli
@@ -3927,7 +3929,26 @@ def _report_prune_failure(project_name: str, error: Exception) -> None:
     logger.exception(message)
 
 
-def _purge_left_nothing(ingestor: MemgraphIngestor, project_name: str) -> bool:
+def _clear_own_marker(
+    ingestor: MemgraphIngestor, project_name: str, run_id: str
+) -> None:
+    # Only a verified purge takes prune's marker off: one that failed keeps
+    # it, standing for the exited runs' markers it replaced. Best effort, as
+    # the purge is done.
+    try:
+        ingestor.execute_write(
+            cq.CYPHER_CLEAR_PROJECT_INCOMPLETE,
+            {cs.KEY_PROJECT_NAME: project_name, cs.KEY_RUN_ID: run_id},
+        )
+    except Exception as exc:
+        logger.warning(
+            ls.CLI_DELETE_MARKER_NOT_CLEARED.format(project=project_name, error=exc)
+        )
+
+
+def _purge_left_nothing(
+    ingestor: MemgraphIngestor, project_name: str, run_id: str
+) -> bool:
     """Whether a fresh read finds nothing of the project left (#2479).
 
     Nothing left means no Project, nothing under its name, and no run of it
@@ -3937,7 +3958,7 @@ def _purge_left_nothing(ingestor: MemgraphIngestor, project_name: str) -> bool:
     """
     if project_name in ingestor.list_projects():
         return False
-    if _run_may_be_writing(ingestor, project_name):
+    if _writing_runs(ingestor, project_name, run_id).live:
         return False
     rows = ingestor.fetch_all(
         cq.CYPHER_COUNT_PROJECT_NODES,
@@ -3989,16 +4010,18 @@ def _prune_one(
     if not root_proven_missing(root):
         _say(cs.CLI_WARN_PRUNE_ROOT_BACK.format(project_name=project_name))
         return cs.PruneOutcome.SKIPPED
+    run_id = f"{cs.PRUNE_RUN_ID_PREFIX}{uuid.uuid4().hex}"
     try:
         # A run of the same name may be writing from another checkout or
-        # machine: its marker is the one signal it gives. Markers of runs
-        # whose process provably exited go first, so a sync that died with
-        # its checkout does not hold the project forever.
-        _retire_exited_runs(ingestor, project_name)
-        if _run_may_be_writing(ingestor, project_name):
+        # machine: its marker is the one signal it gives. One whose process
+        # provably exited does not hold the project: prune takes its place,
+        # so a sync that died with its checkout is not a reason to keep it.
+        runs = _writing_runs(ingestor, project_name, run_id)
+        if runs.live:
             _say(cs.CLI_WARN_PRUNE_RUN_WRITING.format(project_name=project_name))
             return cs.PruneOutcome.SKIPPED
-        node_rows = _purge_if_root(ingestor, project_name, root)
+        _take_over_runs(ingestor, project_name, run_id, runs.exited)
+        node_rows = _purge_if_root(ingestor, project_name, root, run_id)
     except GraphUnavailableError:
         raise
     except Exception as e:
@@ -4008,7 +4031,7 @@ def _prune_one(
         _say(cs.CLI_WARN_PRUNE_ROOT_CHANGED.format(project_name=project_name))
         return cs.PruneOutcome.SKIPPED
     try:
-        verified = _purge_left_nothing(ingestor, project_name)
+        verified = _purge_left_nothing(ingestor, project_name, run_id)
     except GraphUnavailableError:
         raise
     except Exception as e:
@@ -4023,6 +4046,7 @@ def _prune_one(
     _delete_pruned_vectors(ingestor, project_name, projects, node_rows)
     if not prune_orphaned_glosses(ingestor, project_name):
         _say(cs.CLI_WARN_GLOSSES_NOT_PRUNED.format(project_name=project_name))
+    _clear_own_marker(ingestor, project_name, run_id)
     _clear_deleted_project_markers(ingestor, project_name)
     _say(cs.CLI_MSG_PROJECT_PRUNED.format(project_name=project_name), cs.Color.GREEN)
     return cs.PruneOutcome.PRUNED
@@ -4033,7 +4057,7 @@ def _say(message: str, color: cs.Color = cs.Color.YELLOW) -> None:
 
 
 def _purge_if_root(
-    ingestor: MemgraphIngestor, project_name: str, root: str
+    ingestor: MemgraphIngestor, project_name: str, root: str, run_id: str
 ) -> list[ResultRow] | None:
     """Run the conditional purge; the project's node-id rows when it fired.
 
@@ -4054,7 +4078,9 @@ def _purge_if_root(
         )
     )
     try:
-        fired = ingestor.delete_project(project_name, expected_root=root)
+        fired = ingestor.delete_project(
+            project_name, expected_root=root, own_run_id=run_id
+        )
     except Exception:
         _sweep_glosses_after_failed_delete(ingestor, project_name)
         raise

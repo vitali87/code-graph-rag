@@ -21,9 +21,11 @@ from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag.sync_guard import (
     StrandedRun,
+    WritingRuns,
     exited_runs,
     retire_exited_runs,
-    run_may_be_writing,
+    take_over_runs,
+    writing_runs,
 )
 from codebase_rag.types_defs import PropertyDict, ResultRow
 from codebase_rag.utils.process_owner import process_host
@@ -60,7 +62,7 @@ class Store:
     def fetch_all(
         self, query: str, params: PropertyDict | None = None
     ) -> list[ResultRow]:
-        assert query == cq.CYPHER_WRITING_RUN_OWNERS, query
+        assert query == cq.CYPHER_WRITING_RUNS, query
         assert params == {cs.KEY_PROJECT_NAME: "gone"}
         return self.owners
 
@@ -118,26 +120,38 @@ def test_a_failed_retire_does_not_raise() -> None:
     retire_exited_runs(store.ingestor, "gone")
 
 
-@pytest.mark.parametrize(
-    ("rows", "writing"),
-    [
-        ([], False),
-        ([{cs.KEY_RUN_INCOMPLETE: True, cs.KEY_WRITING: False}], False),
-        ([{cs.KEY_RUN_INCOMPLETE: True, cs.KEY_WRITING: True}], True),
-        # A marker from before the phase existed reads as writing.
-        ([{cs.KEY_RUN_INCOMPLETE: True}], True),
-    ],
-    ids=["none", "prologue", "writing", "legacy"],
-)
-def test_a_run_may_be_writing_reads_as_the_edit_guard_does(
-    rows: list[ResultRow], writing: bool
-) -> None:
-    ingestor = MagicMock()
-    ingestor.fetch_all.return_value = rows
+def test_a_marker_that_names_no_process_is_never_exited() -> None:
+    # From before markers named their process: it may still be writing.
+    store = Store(
+        [{cs.KEY_RUN_ID: None, cs.KEY_OWNER_HOST: None, cs.KEY_OWNER_PID: None}]
+    )
 
-    assert run_may_be_writing(ingestor, "gone") is writing
-    ingestor.fetch_all.assert_called_once_with(
-        cq.CYPHER_PROJECT_IS_INCOMPLETE, {cs.KEY_PROJECT_NAME: "gone"}
+    assert writing_runs(store.ingestor, "gone", own_run_id="prune-1") == WritingRuns(
+        live=True, exited=[]
+    )
+    assert exited_runs(store.ingestor, "gone") == []
+
+
+def test_writing_runs_split_live_from_exited_and_skip_the_callers_own() -> None:
+    dead = _gone_pid()
+    store = Store(
+        [
+            _owner("prune-1", os.getpid()),
+            _owner("mcp-dead", dead),
+            _owner("elsewhere", dead, host="another-host"),
+        ]
+    )
+
+    assert writing_runs(store.ingestor, "gone", own_run_id="prune-1") == WritingRuns(
+        live=True, exited=[StrandedRun("mcp-dead", process_host(), dead)]
+    )
+
+
+def test_writing_runs_with_only_its_own_marker_finds_no_writer() -> None:
+    store = Store([_owner("prune-1", os.getpid())])
+
+    assert writing_runs(store.ingestor, "gone", own_run_id="prune-1") == WritingRuns(
+        live=False, exited=[]
     )
 
 
@@ -146,4 +160,43 @@ def test_cannot_tell_is_not_no() -> None:
     ingestor.fetch_all.side_effect = RuntimeError("store down")
 
     with pytest.raises(RuntimeError):
-        run_may_be_writing(ingestor, "gone")
+        writing_runs(ingestor, "gone", own_run_id="prune-1")
+
+
+def test_taking_over_marks_before_it_retires() -> None:
+    dead = _gone_pid()
+    store = Store([])
+    run = StrandedRun("mcp-dead", process_host(), dead)
+
+    take_over_runs(store.ingestor, "gone", "prune-1", [run])
+
+    (mark, mark_params), (retire, retire_params) = store.writes
+    assert mark == cq.CYPHER_MARK_RUN_INCOMPLETE
+    assert mark_params[cs.KEY_RUN_ID] == "prune-1"
+    assert mark_params[cs.KEY_WRITING] is True
+    assert mark_params[cs.KEY_OWNER_PID] == os.getpid()
+    assert retire == cq.CYPHER_RETIRE_STRANDED_RUN
+    assert retire_params[cs.KEY_RUN_ID] == "mcp-dead"
+
+
+def test_nothing_to_take_over_writes_nothing() -> None:
+    store = Store([])
+
+    take_over_runs(store.ingestor, "gone", "prune-1", [])
+
+    assert store.writes == []
+
+
+def test_a_failed_mark_retires_nothing() -> None:
+    store = Store([])
+    store.ingestor.execute_write.side_effect = RuntimeError("connection reset")
+
+    with pytest.raises(RuntimeError):
+        take_over_runs(
+            store.ingestor,
+            "gone",
+            "prune-1",
+            [StrandedRun("mcp-dead", process_host(), _gone_pid())],
+        )
+
+    assert store.ingestor.execute_write.call_count == 1

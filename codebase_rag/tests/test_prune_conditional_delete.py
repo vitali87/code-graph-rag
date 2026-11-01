@@ -25,7 +25,8 @@ from codebase_rag.types_defs import PropertyParams, ResultRow, ResultValue
 _ROOT_CHECK = (
     "\nWHERE p.root_path = $expected_root\n"
     "OPTIONAL MATCH (writer:IncompleteRun {project: $project_name})\n"
-    "WHERE coalesce(writer.writing, true)\n"
+    "WHERE coalesce(writer.writing, true) "
+    "AND (writer.run_id IS NULL OR writer.run_id <> $run_id)\n"
     "WITH p, count(writer) AS writers\nWHERE writers = 0"
 )
 
@@ -126,7 +127,11 @@ def test_conditional_root_delete_fires_when_the_root_matches(
     first, *_ = calls.executed
     assert first == (
         cq.CYPHER_DELETE_PROJECT_IF_ROOT,
-        {cs.KEY_PROJECT_NAME: "proj__1", cs.KEY_EXPECTED_ROOT: "/repo"},
+        {
+            cs.KEY_PROJECT_NAME: "proj__1",
+            cs.KEY_EXPECTED_ROOT: "/repo",
+            cs.KEY_RUN_ID: "",
+        },
     )
     assert "$expected_root" in first[0]
     assert cq.CYPHER_DELETE_PROJECT_CUT_OFF_UNITS_IF_GONE in calls.queries
@@ -303,7 +308,7 @@ def test_the_conditional_query_itself_skips_a_repointed_project(
     # the caller made still stops the purge.
     graph.execute_write(
         cq.CYPHER_DELETE_PROJECT_IF_ROOT,
-        {cs.KEY_PROJECT_NAME: "old", cs.KEY_EXPECTED_ROOT: "/gone"},
+        {cs.KEY_PROJECT_NAME: "old", cs.KEY_EXPECTED_ROOT: "/gone", cs.KEY_RUN_ID: ""},
     )
 
     assert _keys(graph) == _EVERYTHING
@@ -316,7 +321,11 @@ def test_the_residual_count_sees_what_is_left(graph: MemgraphIngestor) -> None:
     assert _residual(graph, "ghost") == 0
 
 
-_SWEEP_PARAMS = {cs.KEY_PROJECT_NAME: "old", cs.KEY_PROJECT_PREFIX: "old."}
+_SWEEP_PARAMS = {
+    cs.KEY_PROJECT_NAME: "old",
+    cs.KEY_PROJECT_PREFIX: "old.",
+    cs.KEY_RUN_ID: "",
+}
 _RECREATE = """
 CREATE (:Project {name: 'old', root_path: '/moved'})
        -[:CONTAINS_MODULE]->(:Module {qualified_name: 'old.fresh'})
@@ -326,7 +335,7 @@ CREATE (:Project {name: 'old', root_path: '/moved'})
 def _purge_without_sweep(graph: MemgraphIngestor) -> None:
     graph.execute_write(
         cq.CYPHER_DELETE_PROJECT_IF_ROOT,
-        {cs.KEY_PROJECT_NAME: "old", cs.KEY_EXPECTED_ROOT: "/w"},
+        {cs.KEY_PROJECT_NAME: "old", cs.KEY_EXPECTED_ROOT: "/w", cs.KEY_RUN_ID: ""},
     )
 
 
@@ -368,10 +377,10 @@ def test_the_guarded_sweep_runs_once_the_project_is_gone(
     assert _keys(graph) == _WITHOUT_OLD
 
 
-def _mark(graph: MemgraphIngestor, writing: bool | None) -> None:
+def _mark(graph: MemgraphIngestor, writing: bool | None, run_id: str = "r1") -> None:
     phase = "" if writing is None else f", writing: {str(writing).lower()}"
     graph.execute_write(
-        f"CREATE (:IncompleteRun {{project: 'old', run_id: 'r1'{phase}}})"
+        f"CREATE (:IncompleteRun {{project: 'old', run_id: '{run_id}'{phase}}})"
     )
 
 
@@ -417,3 +426,14 @@ def test_delete_project_takes_the_detached_definitions_too(
 
     assert _keys(graph) == _WITHOUT_OLD
     assert _residual(graph, "old") == 0
+
+
+def test_the_callers_own_marker_does_not_stop_the_purge(
+    graph: MemgraphIngestor,
+) -> None:
+    # Prune marks the project before it retires exited runs' markers; its
+    # own marker is not another writer.
+    _mark(graph, True, run_id="prune-own")
+
+    assert graph.delete_project("old", expected_root="/w", own_run_id="prune-own")
+    assert _keys(graph) == _WITHOUT_OLD

@@ -317,6 +317,9 @@ CLI_WARN_PRUNE_ROOT_CHANGED = (
     "'{project_name}' changed while it was being pruned -- its root moved or "
     "a sync of it began writing -- skipping it."
 )
+# `cgr prune`'s own incomplete-run marker, put down only when it takes over
+# from exited runs' markers (#2479).
+PRUNE_RUN_ID_PREFIX = "prune-"
 CLI_WARN_PRUNE_RUN_WRITING = (
     "A sync of '{project_name}' may still be writing the graph (its "
     "incomplete-run marker is up) -- skipping it. Re-run prune once that sync "

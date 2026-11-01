@@ -11,7 +11,7 @@ from __future__ import annotations
 import sys
 from collections.abc import Callable, Generator
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 from typer.testing import CliRunner
@@ -20,9 +20,12 @@ from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag.cli import app
 from codebase_rag.config import settings
+from codebase_rag.sync_guard import StrandedRun, WritingRuns
 from codebase_rag.types_defs import PropertyParams, ResultRow
 
 runner = CliRunner()
+
+_EXITED = StrandedRun("mcp-dead", "this-host", 4242)
 
 
 @pytest.fixture
@@ -203,7 +206,9 @@ class TestCandidateSelection:
         assert result.exit_code == 0, result.output
         ingestor = _ingestor(mock_memgraph_connect)
         ingestor.delete_project.assert_called_once_with(
-            "dead__22222222", expected_root=roots["dead__22222222"]
+            "dead__22222222",
+            expected_root=roots["dead__22222222"],
+            own_run_id=ANY,
         )
 
 
@@ -216,7 +221,9 @@ class TestPruneDeletion:
         assert result.exit_code == 0, result.output
         ingestor = _ingestor(mock_memgraph_connect)
         ingestor.delete_project.assert_called_once_with(
-            "dead__22222222", expected_root=roots["dead__22222222"]
+            "dead__22222222",
+            expected_root=roots["dead__22222222"],
+            own_run_id=ANY,
         )
         assert "Pruned project 'dead__22222222'" in result.output
 
@@ -294,7 +301,9 @@ class TestPruneDeletion:
         assert "changed while it was being pruned" in " ".join(result.output.split())
         assert "Pruned" not in result.output
         ingestor.delete_project.assert_called_once_with(
-            "dead__22222222", expected_root=roots["dead__22222222"]
+            "dead__22222222",
+            expected_root=roots["dead__22222222"],
+            own_run_id=ANY,
         )
 
 
@@ -305,8 +314,11 @@ class TestPruneRunCoordination:
         self, mock_memgraph_connect: MagicMock
     ) -> None:
         with (
-            patch("codebase_rag.cli._retire_exited_runs"),
-            patch("codebase_rag.cli._run_may_be_writing", return_value=True),
+            patch(
+                "codebase_rag.cli._writing_runs",
+                return_value=WritingRuns(live=True, exited=[_EXITED]),
+            ),
+            patch("codebase_rag.cli._take_over_runs") as take_over,
         ):
             result = runner.invoke(app, ["prune", "--yes"])
 
@@ -314,35 +326,74 @@ class TestPruneRunCoordination:
         assert "may still be writing" in " ".join(result.output.split())
         assert "Pruned" not in result.output
         _ingestor(mock_memgraph_connect).delete_project.assert_not_called()
+        # Nothing is retired for a project prune leaves alone.
+        take_over.assert_not_called()
 
-    def test_markers_of_exited_runs_go_before_the_check(
+    def test_exited_runs_are_taken_over_before_the_purge(
         self, mock_memgraph_connect: MagicMock
     ) -> None:
-        order: list[str] = []
+        ingestor = _ingestor(mock_memgraph_connect)
         with (
             patch(
-                "codebase_rag.cli._retire_exited_runs",
-                side_effect=lambda *a: order.append("retire"),
+                "codebase_rag.cli._writing_runs",
+                side_effect=[
+                    WritingRuns(live=False, exited=[_EXITED]),
+                    WritingRuns(live=False, exited=[]),
+                ],
             ),
-            patch(
-                "codebase_rag.cli._run_may_be_writing",
-                side_effect=lambda *a: order.append("check") or False,
-            ),
+            patch("codebase_rag.cli._take_over_runs") as take_over,
         ):
             result = runner.invoke(app, ["prune", "--yes"])
 
         assert result.exit_code == 0, result.output
-        # Retired before the check, then again in the aftercare; checked
-        # before the purge and again in its verification.
-        assert order[:2] == ["retire", "check"]
+        (_, project, run_id, runs), _ = take_over.call_args
+        assert (project, runs) == ("dead__22222222", [_EXITED])
+        assert run_id.startswith(cs.PRUNE_RUN_ID_PREFIX)
+        # The purge excludes prune's own marker by that same id.
+        assert ingestor.delete_project.call_args.kwargs["own_run_id"] == run_id
         assert "Pruned project 'dead__22222222'" in result.output
+
+    def test_a_verified_purge_takes_prunes_own_marker_off(
+        self, mock_memgraph_connect: MagicMock
+    ) -> None:
+        result = runner.invoke(app, ["prune", "--yes"])
+
+        assert result.exit_code == 0, result.output
+        ingestor = _ingestor(mock_memgraph_connect)
+        run_id = ingestor.delete_project.call_args.kwargs["own_run_id"]
+        ingestor.execute_write.assert_any_call(
+            cq.CYPHER_CLEAR_PROJECT_INCOMPLETE,
+            {cs.KEY_PROJECT_NAME: "dead__22222222", cs.KEY_RUN_ID: run_id},
+        )
+
+    def test_an_unverified_purge_keeps_prunes_own_marker(
+        self, mock_memgraph_connect: MagicMock
+    ) -> None:
+        # It stands for the exited runs' markers it replaced: the graph may
+        # be partial, and a later run must still know to rebuild it.
+        ingestor = _ingestor(mock_memgraph_connect)
+        ingestor.fetch_all.side_effect = _fake_fetch_all(7)
+        result = runner.invoke(app, ["prune", "--yes"])
+
+        assert result.exit_code == 1, result.output
+        cleared = [
+            c
+            for c in ingestor.execute_write.call_args_list
+            if c.args and c.args[0] == cq.CYPHER_CLEAR_PROJECT_INCOMPLETE
+        ]
+        assert cleared == []
 
     def test_a_run_that_began_writing_after_the_delete_fails_verification(
         self, mock_memgraph_connect: MagicMock
     ) -> None:
         with (
-            patch("codebase_rag.cli._retire_exited_runs"),
-            patch("codebase_rag.cli._run_may_be_writing", side_effect=[False, True]),
+            patch(
+                "codebase_rag.cli._writing_runs",
+                side_effect=[
+                    WritingRuns(live=False, exited=[]),
+                    WritingRuns(live=True, exited=[]),
+                ],
+            ),
             patch("codebase_rag.cli.delete_project_embeddings") as embeddings,
         ):
             result = runner.invoke(app, ["prune", "--yes"])
@@ -354,12 +405,8 @@ class TestPruneRunCoordination:
     def test_an_unreadable_marker_is_a_failure_not_a_purge(
         self, mock_memgraph_connect: MagicMock
     ) -> None:
-        with (
-            patch("codebase_rag.cli._retire_exited_runs"),
-            patch(
-                "codebase_rag.cli._run_may_be_writing",
-                side_effect=RuntimeError("store down"),
-            ),
+        with patch(
+            "codebase_rag.cli._writing_runs", side_effect=RuntimeError("store down")
         ):
             result = runner.invoke(app, ["prune", "--yes"])
 
@@ -536,6 +583,8 @@ class TestPruneConfirmation:
 
         assert result.exit_code == 0, result.output
         _ingestor(mock_memgraph_connect).delete_project.assert_called_once_with(
-            "dead__22222222", expected_root=roots["dead__22222222"]
+            "dead__22222222",
+            expected_root=roots["dead__22222222"],
+            own_run_id=ANY,
         )
         assert "Pruned 1 project(s)" in result.output

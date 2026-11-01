@@ -287,12 +287,12 @@ CYPHER_STRANDED_RUN_IDS = (
 # the marker still names the exited process: the CLI sync's run id is shared,
 # so a CLI writer that started since has marked it under its own.
 # Every run of the project that may be writing, with the process it names,
-# whichever run it is: a deleted or pruned project has no rebuild of its own
-# to exclude (#2479). `sync_guard.exited_runs` keeps those whose process
-# provably exited.
-CYPHER_WRITING_RUN_OWNERS = (
+# whichever run it is, a marker from before run ids included: a deleted or
+# pruned project has no rebuild of its own to exclude (#2479).
+# `sync_guard` keeps as stopped only those whose process provably exited.
+CYPHER_WRITING_RUNS = (
     "MATCH (m:IncompleteRun {project: $project_name}) "
-    "WHERE m.run_id IS NOT NULL AND coalesce(m.writing, true) "
+    "WHERE coalesce(m.writing, true) "
     "RETURN m.run_id AS run_id, m.owner_host AS owner_host, "
     "m.owner_pid AS owner_pid"
 )
@@ -451,10 +451,12 @@ CYPHER_DELETE_PROJECT = _delete_project()
 # (#1705). Every writer marks before its first graph write, whichever
 # checkout or CGR_HOME it runs from, so the marker is the one signal a
 # same-name sync elsewhere gives `cgr prune` (#2479). A run still in its
-# read-only prologue (`writing=false`) has written nothing to lose.
+# read-only prologue (`writing=false`) has written nothing to lose, and
+# prune's own marker, `$run_id`, is not another writer.
 _WRITING_RUN = (
     "OPTIONAL MATCH (writer:IncompleteRun {project: $project_name})\n"
-    "WHERE coalesce(writer.writing, true)\n"
+    "WHERE coalesce(writer.writing, true) "
+    "AND (writer.run_id IS NULL OR writer.run_id <> $run_id)\n"
 )
 
 # The same delete, made conditional on the project still naming the root the
