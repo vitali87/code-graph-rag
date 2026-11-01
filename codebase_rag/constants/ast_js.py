@@ -7,6 +7,7 @@ from .ast_nodes import (
     TS_INTERFACE_DECLARATION,
     TS_MEMBER_EXPRESSION,
     TS_NEW_EXPRESSION,
+    TS_PARENTHESIZED_EXPRESSION,
     TS_TYPE_ALIAS_DECLARATION,
 )
 
@@ -99,6 +100,22 @@ TS_OBJECT = "object"
 TS_TEMPLATE_STRING = "template_string"
 TS_TEMPLATE_SUBSTITUTION = "template_substitution"
 TS_ARRAY = "array"
+# Literal values no call can run on (`export default { ... }`), as Python's
+# `name = None` is.
+JS_LITERAL_VALUE_TYPES = frozenset(
+    {
+        TS_OBJECT,
+        TS_ARRAY,
+        TS_TEMPLATE_STRING,
+        "string",
+        "number",
+        "regex",
+        "true",
+        "false",
+        "null",
+        "undefined",
+    }
+)
 
 # When a variable_declarator's value is one of these, the variable binds the
 # call/construction RESULT, not a function, so an arrow inside its arguments
@@ -534,3 +551,29 @@ CAPTURE_MODULE_OBJ = "module_obj"
 CAPTURE_EXPORTS_PROP = "exports_prop"
 CAPTURE_EXPORT_NAME = "export_name"
 CAPTURE_EXPORT_FUNCTION = "export_function"
+
+# How the structural check reads an `export default` value (#3312). An
+# expression that evaluates to one of its operands, by that operand's index:
+# the first for `(x)`, `x as T`, `x satisfies T`, `x!` and `f<T>`, the last
+# for `<T>x`, `(a, x)` and `y = x`.
+TS_TYPE_ASSERTION = "type_assertion"
+TS_SEQUENCE_EXPRESSION = "sequence_expression"
+TS_INSTANTIATION_EXPRESSION = "instantiation_expression"
+JS_VALUE_WRAPPER_OPERAND: dict[str, int] = {
+    TS_PARENTHESIZED_EXPRESSION: 0,
+    TS_AS_EXPRESSION: 0,
+    TS_SATISFIES_EXPRESSION: 0,
+    TS_NON_NULL_EXPRESSION: 0,
+    TS_INSTANTIATION_EXPRESSION: 0,
+    TS_TYPE_ASSERTION: -1,
+    TS_SEQUENCE_EXPRESSION: -1,
+    TS_JS_ASSIGNMENT_EXPRESSION: -1,
+}
+# Values no call can run on: a literal, or the primitive a unary or update
+# operator yields.
+JS_INERT_VALUE_TYPES = JS_LITERAL_VALUE_TYPES | {
+    TS_JS_UNARY_EXPRESSION,
+    TS_JS_UPDATE_EXPRESSION,
+}
+# The binary operators that yield one of their operands, not a primitive.
+JS_OPERAND_OPERATORS = frozenset({"&&", "||", "??"})
