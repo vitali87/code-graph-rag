@@ -3,12 +3,35 @@ from __future__ import annotations
 from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
-from ...constants import SEPARATOR_DOT
+from ...constants import CHAR_COMMA, SEPARATOR_DOT
 from ...types_defs import FunctionRegistryTrieProtocol, NodeType
 from ..utils import follow_reexports
 
 if TYPE_CHECKING:
     from ..import_processor import ImportProcessor
+
+
+def split_top_level(inner: str, separator: str = CHAR_COMMA) -> list[str]:
+    """Split `A, dict[str, B], C` on the separators outside any brackets --
+    the commas between positions, or the `|` between union members, which a
+    plain `str.split` would also find INSIDE `tuple[Widget | None, Banner]`."""
+    parts: list[str] = []
+    depth = 0
+    current: list[str] = []
+    for char in inner:
+        if char in "[(":
+            depth += 1
+        elif char in "])":
+            depth = max(0, depth - 1)
+        if char == separator and depth == 0:
+            parts.append("".join(current).strip())
+            current = []
+        else:
+            current.append(char)
+    tail = "".join(current).strip()
+    if tail:
+        parts.append(tail)
+    return parts
 
 
 def resolve_dotted_class(

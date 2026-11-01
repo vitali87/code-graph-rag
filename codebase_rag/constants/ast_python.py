@@ -129,6 +129,8 @@ TS_PY_UNION_PATTERN = "union_pattern"
 # `Foo(x=<pattern>)`, `*rest` / `**rest` inside a case pattern.
 TS_PY_KEYWORD_PATTERN = "keyword_pattern"
 TS_PY_SPLAT_PATTERN = "splat_pattern"
+# `Foo(...)` in a case pattern: the class whose instances the arm matches.
+TS_PY_CLASS_PATTERN = "class_pattern"
 # `import x as y` / `from m import x as y`; the alias is a local binding.
 TS_PY_ALIASED_IMPORT = "aliased_import"
 TS_PY_WILDCARD_NODE = "_"
@@ -422,6 +424,32 @@ ABSTRACT_DECORATORS: frozenset[str] = frozenset({"abstractmethod", "abstractprop
 STATIC_DECORATORS: frozenset[str] = frozenset({"staticmethod"})
 # A class method binds `cls` even when called through its class.
 CLASSMETHOD_DECORATORS: frozenset[str] = frozenset({"classmethod"})
+# contextlib's generator-based context manager factories: a `with` target
+# takes the generator's yield type, not the factory's return type (#3340).
+PY_CONTEXTLIB_MODULE = "contextlib"
+# Where generator annotations live: an aliased annotation base counts only
+# when the import map resolves it here (#3340).
+PY_GENERATOR_ANNOTATION_MODULES: frozenset[str] = frozenset(
+    {"typing", "typing_extensions", "collections.abc"}
+)
+CONTEXTMANAGER_DECORATORS: frozenset[str] = frozenset(
+    {"contextmanager", "asynccontextmanager"}
+)
+# The return annotations a contextmanager factory carries, each yielding
+# its first type argument.
+PY_GENERATOR_ANNOTATIONS: frozenset[str] = frozenset(
+    {"Iterator", "Generator", "AsyncIterator", "AsyncGenerator"}
+)
+# The fully qualified spellings, precomputed once: the decorator and
+# yield-type checks rebuilt these sets on every call (#3340).
+PY_CONTEXTMANAGER_DECORATOR_QNS: frozenset[str] = frozenset(
+    f"{PY_CONTEXTLIB_MODULE}.{name}" for name in CONTEXTMANAGER_DECORATORS
+)
+PY_GENERATOR_ANNOTATION_QNS: frozenset[str] = frozenset(
+    f"{module}.{name}"
+    for module in PY_GENERATOR_ANNOTATION_MODULES
+    for name in PY_GENERATOR_ANNOTATIONS
+)
 
 # Eager builtins that invoke a callable argument synchronously in the caller's
 # stack frame, so the trace attributes the call to the enclosing function (no
