@@ -112,7 +112,6 @@ def test_test_pieces_normalises_the_source_it_reads(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from codebase_rag import context_slice as cs_mod
-    from codebase_rag.utils.source_extraction import extract_source_lines
 
     (tmp_path / "test_app.py").write_bytes(
         b"def test_run():\r\n    assert run() == 6\r\n"
@@ -134,26 +133,20 @@ def test_test_pieces_normalises_the_source_it_reads(
                 }
             ]
 
-    def _definition(
-        _fetch: object, _project: str, _qn: str, _root: Path | None
-    ) -> dict[str, object]:
-        return {
-            "qualified_name": "p.test_app.test_run",
-            "path": "test_app.py",
-            "start_line": 1,
-            "end_line": 2,
-            "source": extract_source_lines(tmp_path / "test_app.py", 1, 2),
-        }
+        @staticmethod
+        def span(_qn: str) -> tuple[int, int]:
+            # The reach index carries each test's span, so the source is
+            # read from disk without a definition query (issue #3243).
+            return 1, 2
 
     monkeypatch.setattr(cs_mod, "ReachIndex", _Reach)
-    monkeypatch.setattr(cs_mod.graph_query, "definition", _definition)
 
     pieces = cs_mod._test_pieces(lambda *a, **k: [], "p", "p.app.run", tmp_path)
 
     assert len(pieces) == 1, repr(pieces)
-    assert pieces[0].source == "def test_run():\n    assert run() == 6", repr(
-        pieces[0].source
-    )
+    loader = pieces[0].loader
+    assert loader is not None
+    assert loader() == "def test_run():\n    assert run() == 6", repr(loader())
 
 
 # The indexer writes absolute_path through `cached_resolve_posix`, so the lookup
