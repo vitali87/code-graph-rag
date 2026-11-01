@@ -1342,3 +1342,5 @@ SENSITIVE_PARENT_FILES = frozenset(
 SENSITIVE_DIR_NAMES = frozenset({".ssh", ".gnupg"})
 # Windows drops trailing dots and spaces from a name, so `.git.` opens `.git`.
 WINDOWS_IGNORED_NAME_TAIL = ". "
+# A worktree's git directory names the shared one, which holds the config.
+GIT_COMMONDIR_FILENAME = "commondir"

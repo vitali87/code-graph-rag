@@ -42,16 +42,56 @@ def _is_sensitive_name(path: Path) -> bool:
 
 
 def is_git_internal(path: Path, root: Path) -> bool:
-    """Whether `path`, resolved and inside `root`, is a `.git` entry or lies
-    inside one.
+    """Whether `path`, resolved and inside `root`, is a `.git` entry, lies
+    inside one, or lies inside the git directory `root/.git` points to.
 
     Git reads its config and hooks from there and runs the commands they name
     (`core.fsmonitor`, a hook), and cgr runs git after every write to refresh
     the graph, so one write there ran code on the user's machine. No tool has
-    a reason to write there. The match ignores case and the name endings
+    a reason to write there. The name match ignores case and the name endings
     Windows drops, which macOS and Windows filesystems resolve to `.git`.
     """
-    return any(
+    if any(
         part.lower().rstrip(cs.WINDOWS_IGNORED_NAME_TAIL) == cs.GIT_DIR_NAME
         for part in path.relative_to(root).parts
-    )
+    ):
+        return True
+    return any(_within(path, git_dir) for git_dir in _linked_git_dirs(root))
+
+
+def _linked_git_dirs(root: Path) -> list[Path]:
+    """The git directories a `.git` file at `root` points git to.
+
+    `git init --separate-git-dir=meta` and `git worktree add` leave a file
+    there, `gitdir: <path>`, and git keeps the config and hooks in that
+    directory, or in the one its `commondir` names, under any name.
+    """
+    try:
+        text = (root / cs.GIT_DIR_NAME).read_text(encoding=cs.ENCODING_UTF8)
+    except (OSError, UnicodeDecodeError):
+        return []
+    if not text.startswith(cs.LANG_GITFILE_PREFIX):
+        return []
+    git_dir = root / text.removeprefix(cs.LANG_GITFILE_PREFIX).strip()
+    found = [git_dir.resolve()]
+    try:
+        common = (git_dir / cs.GIT_COMMONDIR_FILENAME).read_text(
+            encoding=cs.ENCODING_UTF8
+        )
+    except (OSError, UnicodeDecodeError):
+        return found
+    found.append((git_dir / common.strip()).resolve())
+    return found
+
+
+def _within(path: Path, directory: Path) -> bool:
+    # By file identity, not spelling: on a case-insensitive filesystem
+    # `META/config` opens `meta/config`, and a path that does not exist yet
+    # is judged by the nearest directory above it that does.
+    for candidate in (path, *path.parents):
+        try:
+            if candidate.samefile(directory):
+                return True
+        except OSError:
+            continue
+    return False

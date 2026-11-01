@@ -171,3 +171,83 @@ class TestMcpWriteToGitConfig:
         cgr_config.load_ignore_patterns(repo)
 
         assert not (repo / MARKER).exists()
+
+
+class TestRelocatedGitDirectory:
+    """`git init --separate-git-dir=meta` and `git worktree add` put a
+    `.git` file at the root and keep the config and hooks elsewhere, under a
+    name the `.git` check never sees."""
+
+    @pytest.fixture
+    def separated(self, tmp_path: Path) -> Path:
+        (tmp_path / "git-meta" / "hooks").mkdir(parents=True)
+        (tmp_path / "git-meta" / "config").write_text(ORIGINAL_CONFIG, encoding="utf-8")
+        (tmp_path / ".git").write_text(
+            f"gitdir: {tmp_path / 'git-meta'}\n", encoding="utf-8"
+        )
+        return tmp_path
+
+    @pytest.mark.parametrize(
+        "relative", ["git-meta", "git-meta/config", "git-meta/hooks/pre-commit"]
+    )
+    def test_its_files_are_git_internals(self, relative: str, separated: Path) -> None:
+        assert is_git_internal(separated / relative, separated)
+
+    def test_a_relative_gitdir_counts_too(self, separated: Path) -> None:
+        (separated / ".git").write_text("gitdir: git-meta\n", encoding="utf-8")
+
+        assert is_git_internal(separated / "git-meta" / "config", separated)
+
+    def test_a_worktrees_shared_git_directory_counts(self, tmp_path: Path) -> None:
+        shared = tmp_path / "meta"
+        own = shared / "worktrees" / "wt"
+        own.mkdir(parents=True)
+        (own / "commondir").write_text("../..\n", encoding="utf-8")
+        (tmp_path / ".git").write_text(f"gitdir: {own}\n", encoding="utf-8")
+
+        assert is_git_internal(shared / "config", tmp_path)
+        assert is_git_internal(own / "HEAD", tmp_path)
+
+    def test_the_rest_of_the_checkout_is_not(self, separated: Path) -> None:
+        assert not is_git_internal(separated / "git-metadata.txt", separated)
+        assert not is_git_internal(separated / "src" / "app.py", separated)
+
+    def test_mcp_will_not_plant_a_command_there(
+        self, separated: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(cgr_config.settings, "ALLOW_SENSITIVE_WRITES", True)
+        registry = MCPToolsRegistry(
+            project_root=str(separated), ingestor=MagicMock(), cypher_gen=MagicMock()
+        )
+
+        result = asyncio.run(
+            registry.write_file("git-meta/config", _payload(separated))
+        )
+
+        assert ".git" in result
+        assert (separated / "git-meta" / "config").read_text(
+            encoding="utf-8"
+        ) == ORIGINAL_CONFIG
+
+    @pytest.mark.skipif(
+        shutil.which("git") is None or os.name == "nt", reason="needs git and sh"
+    )
+    def test_with_a_real_separate_git_dir(self, tmp_path: Path) -> None:
+        repo = tmp_path / "checkout"
+        repo.mkdir()
+        # Relative to the working directory, so the git directory lands
+        # inside the checkout, where a file tool can reach it.
+        subprocess.run(
+            ["git", "init", "-q", "--separate-git-dir=git-meta", "."],  # noqa: S607
+            check=True,
+            cwd=repo,
+        )
+        assert (repo / "git-meta" / "config").is_file()
+        registry = MCPToolsRegistry(
+            project_root=str(repo), ingestor=MagicMock(), cypher_gen=MagicMock()
+        )
+
+        asyncio.run(registry.write_file("git-meta/config", _payload(repo)))
+        cgr_config.load_ignore_patterns(repo)
+
+        assert not (repo / MARKER).exists()
