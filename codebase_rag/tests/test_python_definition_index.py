@@ -302,7 +302,8 @@ def test_a_reparsed_tree_gets_its_own_index() -> None:
     found_second = indexes(second).class_node("Widget", CLASS_QUERY)
 
     assert indexes(first) is not indexes(second)
-    assert found_first is not None and found_second is not None
+    assert found_first is not None
+    assert found_second is not None
     assert found_first.byte_range == found_second.byte_range
     # Same place, different tree: a node of the old tree is never served for
     # the new one, which compares unequal to it.
