@@ -14,7 +14,8 @@ import sys
 import threading
 import uuid
 from collections import deque
-from collections.abc import Callable, Coroutine, Sequence
+from collections.abc import Callable, Coroutine, Iterable, Sequence
+from typing import IO
 from contextlib import contextmanager
 from dataclasses import replace
 from decimal import Decimal
@@ -1782,16 +1783,50 @@ def update_model_settings(
         _update_single_model_setting(cs.ModelRole.CYPHER, cypher)
 
 
+def _stream_rows(f: IO[str], rows: Iterable[dict]) -> int:
+    """Write *rows* as compact JSON array elements; return how many there were."""
+    count = 0
+    for row in rows:
+        if count:
+            f.write(", ")
+        f.write(json.dumps(row, ensure_ascii=False))
+        count += 1
+    return count
+
+
 def _write_graph_json(
     ingestor: MemgraphIngestor, output_path: Path, project_names: Sequence[str]
-) -> GraphData:
-    graph_data: GraphData = ingestor.export_graph_to_dict(project_names)
+) -> GraphMetadata:
+    """Write the export one id-range page at a time (issue #3149).
+
+    The file keeps the same shape ``graph_loader`` and the SDK snippet read
+    ({"nodes": [...], "relationships": [...], "metadata": {...}}); the rows
+    stream from the ingestor in bounded pages instead of being collected in
+    memory first, and the metadata — whose totals are only known once every
+    row is written — closes the object.
+    """
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = output_path.with_name(f".{output_path.name}.tmp")
+    try:
+        with open(tmp_path, "w", encoding=cs.ENCODING_UTF8) as f:
+            f.write('{"nodes": [')
+            total_nodes = _stream_rows(f, ingestor.iter_export_nodes(project_names))
+            f.write('], "relationships": [')
+            total_relationships = _stream_rows(
+                f, ingestor.iter_export_relationships(project_names)
+            )
+            metadata = ingestor.export_graph_metadata(
+                project_names, total_nodes, total_relationships
+            )
+            f.write('], "metadata": ')
+            f.write(json.dumps(metadata, ensure_ascii=False))
+            f.write("}")
+        tmp_path.replace(output_path)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
 
-    with open(output_path, "w", encoding=cs.ENCODING_UTF8) as f:
-        json.dump(graph_data, f, indent=cs.JSON_INDENT, ensure_ascii=False)
-
-    return graph_data
+    return metadata
 
 
 def export_graph_to_file(
@@ -1800,8 +1835,7 @@ def export_graph_to_file(
     output_path = Path(output)
 
     try:
-        graph_data = _write_graph_json(ingestor, output_path, project_names)
-        metadata = graph_data[cs.KEY_METADATA]
+        metadata = _write_graph_json(ingestor, output_path, project_names)
         app_context.console.print(
             cs.UI_GRAPH_EXPORT_SUCCESS.format(path=output_path.absolute())
         )

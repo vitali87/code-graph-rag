@@ -59,10 +59,16 @@ from ..cypher_queries import (
     CYPHER_DELETE_PROJECT,
     CYPHER_DELETE_PROJECT_CUT_OFF_UNITS,
     CYPHER_EXPORT_NODES,
+    CYPHER_EXPORT_NODES_PAGE,
     CYPHER_EXPORT_PROJECT_NODES,
+    CYPHER_EXPORT_PROJECT_NODES_PAGE,
     CYPHER_EXPORT_PROJECT_RELATIONSHIPS,
+    CYPHER_EXPORT_PROJECT_RELATIONSHIPS_PAGE,
     CYPHER_EXPORT_RELATIONSHIPS,
+    CYPHER_EXPORT_RELATIONSHIPS_PAGE,
     CYPHER_LIST_PROJECTS,
+    CYPHER_MAX_NODE_ID,
+    CYPHER_MAX_RELATIONSHIP_ID,
     CYPHER_PURGE_CROSS_PROJECT_STRUCTURE,
     CYPHER_PURGE_CROSS_ROOT_STRUCTURE,
     CYPHER_PURGE_KEYLESS_STRUCTURE,
@@ -289,6 +295,30 @@ def _log_failed_relationships(
         )
     if named and failed > len(named):
         logger.warning(ls.MG_RELS_FAILED_MORE.format(count=failed - len(named)))
+
+
+#: Rows fetched at once while streaming an export (issue #3149).
+EXPORT_PAGE_SIZE = 200_000
+
+
+def _iter_id_paged(
+    fetch: Callable[[str, PropertyParams | None], list[ResultRow]],
+    page_query: str,
+    params: PropertyParams,
+    max_id: int,
+    page_size: int = EXPORT_PAGE_SIZE,
+) -> Generator[ResultRow, None, None]:
+    """Yield *page_query* rows in id-range windows of ``$lo <= id < $hi``.
+
+    Internal ids are not dense, so a window can be empty; each window is a
+    cheap range scan, and every id from 0 to *max_id* is covered exactly once.
+    """
+    lo = 0
+    while lo <= max_id:
+        page_params: PropertyParams = dict(params or {})
+        page_params.update({"lo": lo, "hi": lo + page_size})
+        yield from fetch(page_query, page_params)
+        lo += page_size
 
 
 class MemgraphIngestor:
@@ -1199,6 +1229,62 @@ class MemgraphIngestor:
     def execute_write(self, query: str, params: PropertyParams | None = None) -> None:
         logger.debug(ls.MG_WRITE_QUERY, query=query, params=params)
         self._execute_query(query, dict(params) if params is not None else None)
+
+    def iter_export_nodes(
+        self, project_names: Sequence[str] = ()
+    ) -> Generator[ResultRow, None, None]:
+        """Stream the export's node rows one id-range page at a time (#3149).
+
+        The rows are exactly what :meth:`export_graph_to_dict` collects in
+        memory; only bounded pages are ever fetched.
+        """
+        params: PropertyParams = {}
+        if project_names:
+            params = {KEY_PROJECT_NAMES: list(project_names)}
+            query = CYPHER_EXPORT_PROJECT_NODES_PAGE
+        else:
+            query = CYPHER_EXPORT_NODES_PAGE
+        max_rows = self.fetch_all(CYPHER_MAX_NODE_ID)
+        max_id = max_rows[0]["max_id"] if max_rows else None
+        if max_id is None:
+            return
+        yield from _iter_id_paged(
+            self.fetch_all, query, params, max_id, page_size=EXPORT_PAGE_SIZE
+        )
+
+    def iter_export_relationships(
+        self, project_names: Sequence[str] = ()
+    ) -> Generator[ResultRow, None, None]:
+        """Stream the export's relationship rows one id-range page at a time."""
+        params: PropertyParams = {}
+        if project_names:
+            params = {KEY_PROJECT_NAMES: list(project_names)}
+            query = CYPHER_EXPORT_PROJECT_RELATIONSHIPS_PAGE
+        else:
+            query = CYPHER_EXPORT_RELATIONSHIPS_PAGE
+        max_rows = self.fetch_all(CYPHER_MAX_RELATIONSHIP_ID)
+        max_id = max_rows[0]["max_id"] if max_rows else None
+        if max_id is None:
+            return
+        yield from _iter_id_paged(
+            self.fetch_all, query, params, max_id, page_size=EXPORT_PAGE_SIZE
+        )
+
+    def export_graph_metadata(
+        self,
+        project_names: Sequence[str],
+        total_nodes: int,
+        total_relationships: int,
+    ) -> GraphMetadata:
+        """The metadata a streamed export writes after counting its rows."""
+        metadata = GraphMetadata(
+            total_nodes=total_nodes,
+            total_relationships=total_relationships,
+            exported_at=self._get_current_timestamp(),
+        )
+        if project_names:
+            metadata["projects"] = list(project_names)
+        return metadata
 
     def export_graph_to_dict(self, project_names: Sequence[str] = ()) -> GraphData:
         """The whole shared graph, or what `project_names` own when given.
