@@ -10,9 +10,12 @@ project file in, say, windows-1251 reads exactly as it did through Python.
 Kept: every codec whose lower half is ASCII (a UTF-8 or ASCII alias keeps
 only ASCII, as it does in expat). Left out: EBCDIC codecs, whose XML
 declaration expat could not have read, and codecs whose single bytes decode
-to more or fewer than 256 characters, which pyexpat refuses. Run it again (stdlib only) when a Python release changes
-its codecs; codebase_rag/tests/test_safe_xml.py checks the result against
-the Python running the suite.
+to more or fewer than 256 characters, which pyexpat refuses.
+
+Run it (stdlib only) with the newest Python cgr supports, so the tables carry
+its corrections: Python 3.13 mapped palmos 0x9B to U+203A, which 3.12 left
+as U+009B. codebase_rag/tests/test_safe_xml.py checks the result against the
+Python running the suite, allowing only that known older mapping.
 """
 
 from __future__ import annotations

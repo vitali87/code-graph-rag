@@ -11,6 +11,7 @@ codecs of the Python running the suite.
 
 from __future__ import annotations
 
+import codecs
 import random
 import re
 from pathlib import Path
@@ -396,13 +397,31 @@ def test_every_carried_encoding_reads_as_pythons_codec_reads_it() -> None:
     for name in names:
         if not re.fullmatch(r"[A-Za-z][A-Za-z0-9._-]*", name):
             continue  # not an encoding name XML lets a declaration use
+        try:
+            codec = codecs.lookup(name).name
+        except LookupError:
+            continue  # an alias a newer Python added; the tables carry it
         high = bytes(
             b
             for b in range(0x80, 0x100)
             if bytes([b]).decode(name, "replace") != "\ufffd"
+            and not _older_palmos_byte(codec, b)
         )
         doc = f"<?xml version='1.0' encoding='{name}'?><r v='".encode() + high + b"'/>"
         assert _rust(doc, "r") == _oracle(doc, "r"), name
+
+
+def _older_palmos_byte(codec: str, b: int) -> bool:
+    # Python 3.13 mapped palmos 0x9B to U+203A, which 3.12 left as U+009B; the
+    # tables carry the newer mapping (scripts/generate_xml_charsets.py).
+    return codec == "palmos" and b == 0x9B and bytes([b]).decode(codec) == "\x9b"
+
+
+def test_the_tables_carry_the_newest_pythons_corrections() -> None:
+    doc = "<?xml version='1.0' encoding='palmos'?><r v='\x9b'/>".encode("latin-1")
+    assert find_all_in(doc, "r") == [{"v": "\u203a"}]
+    doc = b"<?xml version='1.0' encoding='windows-874'?><r v='\xa1'/>"
+    assert find_all_in(doc, "r") == [{"v": "\u0e01"}]
 
 
 def test_an_encoding_no_codec_names_is_an_error() -> None:
