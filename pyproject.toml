@@ -327,7 +327,7 @@ dev = [
 ]
 docs = [
     # Exact pin while Zensical is pre-1.0.
-    "zensical==0.0.72",
+    "zensical==0.0.73",
 ]
 fuzz = [
     "atheris>=2.3.0",
