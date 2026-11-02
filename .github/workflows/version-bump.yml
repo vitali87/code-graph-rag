@@ -420,9 +420,7 @@ jobs:
           # version without a merge of its own. A dispatched minor or major
           # bump counts one step, as its tag will on every later run, so the
           # release does not depend on which run crossed RELEASE_EVERY. A
-          # batch that takes the count past RELEASE_EVERY ships whole; one
-          # whose CI is not proven yet is deferred, and the release stays due
-          # on every later bump.
+          # batch that takes the count past RELEASE_EVERY ships whole.
           STEP=$(( MERGED > 0 ? MERGED : 1 ))
           if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] &&
               [ "$DISPATCH_BUMP_TYPE" != patch ]; then
@@ -444,9 +442,12 @@ jobs:
                   seen { major = v[1] + 0; minor = v[2] + 0; patch = v[3] + 0 }
                   END { print count + 0 }')
           fi
+          # A release deferred for unproven CI stays due on every later bump
+          # until one is published, whatever the count now reads: a step the
+          # count reads differently once tagged must not cancel it.
           RELEASE=false
           if [ "$SECURITY" = "true" ] || [ "$UNRELEASED_BREAKING" = "true" ] ||
-              [ "$RELEASE_NOW" = "true" ]; then
+              [ "$RELEASE_NOW" = "true" ] || [ "$DEFERRED" != " " ]; then
             RELEASE=true
           elif [ -n "$LATEST" ] && [ $((SINCE + STEP)) -ge "$RELEASE_EVERY" ]; then
             RELEASE=true

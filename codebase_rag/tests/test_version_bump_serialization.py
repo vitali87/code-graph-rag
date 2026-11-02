@@ -1401,3 +1401,29 @@ def test_a_dispatched_minor_or_major_bump_counts_one_step(
         DISPATCH_BUMP_TYPE=dispatched,
     )
     assert out["release"] == release
+
+
+def _after_a_deferral(tmp_path: Path, message: str) -> dict[str, str]:
+    # v0.1.0 was cut after the latest release, v0.0.1, and v0.1.1 since: the
+    # count reads three versions, far below RELEASE_EVERY.
+    _commits(tmp_path, {SHA: "Merge pull request #2"})
+    tags = (
+        f"{OLDER}\\trefs/tags/v0.0.1\\n"
+        + _annotated(tmp_path, "v0.1.0", message, "1" * 40)
+        + f"{NEWER}\\trefs/tags/v0.1.1\\n"
+    )
+    result, out = _decide_run(tmp_path, f"{SHA}\\n", CURRENT="0.1.1", TAG_LIST=tags)
+    assert result.returncode == 0, result.stderr
+    return out
+
+
+def test_a_deferred_release_stays_due_whatever_the_count(tmp_path: Path) -> None:
+    out = _after_a_deferral(tmp_path, f"{MARKER}: CI is not proven for {OLDER}")
+    assert out["release"] == "true"
+    assert out["security"] == "false"
+
+
+def test_an_annotated_tag_that_deferred_nothing_keeps_nothing_due(
+    tmp_path: Path,
+) -> None:
+    assert _after_a_deferral(tmp_path, "v0.1.0")["release"] == "false"
