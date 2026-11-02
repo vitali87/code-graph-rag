@@ -298,7 +298,6 @@ This checks that all required dependencies and services are available.
 - **pydantic-settings**: Settings management using Pydantic
 - **python-dotenv**: Read key-value pairs from a .env file and set them as environment variables
 - **tiktoken**: tiktoken is a fast BPE tokeniser for use with OpenAI's models
-- **tomli-w**: A lil' TOML writer
 - **tree-sitter-python**: Python grammar for tree-sitter
 - **tree-sitter**: Python bindings to the Tree-sitter parsing library
 - **watchdog**: Filesystem events monitoring
@@ -308,7 +307,6 @@ This checks that all required dependencies and services are available.
 - **diff-match-patch**: Repackaging of Google's Diff Match and Patch libraries.
 - **click**: Composable command line interface toolkit
 - **protobuf**
-- **defusedxml**: XML bomb protection for Python stdlib modules
 - **pyyaml**: YAML parser and emitter for Python
 - **pathspec**: Utility library for gitignore style pattern matching of file paths.
 - **pygments**: Pygments is a syntax highlighting package written in Python.

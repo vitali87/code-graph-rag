@@ -66,6 +66,14 @@ def test_the_default_install_does_not_pull_the_hugging_face_hub() -> None:
     assert not pulled, pulled
 
 
+def test_the_default_install_does_not_pull_the_replaced_formats() -> None:
+    # Negative test. cgr reads XML project files and writes workspace TOML
+    # itself (rust/cgr_graph_rs/src/formats and codebase_rag/utils), so the
+    # two packages it used for them are gone.
+    pulled = {"defusedxml", "tomli-w"} & _runtime_closure()
+    assert not pulled, pulled
+
+
 def test_the_semantic_extra_still_pulls_the_hugging_face_hub() -> None:
     assert {"huggingface-hub", "hf-xet"} <= _runtime_closure("semantic")
 

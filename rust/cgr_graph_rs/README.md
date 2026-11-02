@@ -17,7 +17,10 @@ It provides:
 - decoding of query results;
 - the indexer's definition hashes, Python scope walks, interface
   fingerprints, callable-parameter scans and Python local-alias walks,
-  computed on the trees py-tree-sitter parsed.
+  computed on the trees py-tree-sitter parsed;
+- a strict reader for the XML project files it indexes, which never expands
+  an entity a document declares, and the TOML writer for its workspace files
+  (`src/formats`, written without any third-party crate).
 
 It is not meant to be used on its own. See
 [Graph Backends](https://github.com/vitali87/code-graph-rag/blob/main/docs/architecture/embedded-graph.md)

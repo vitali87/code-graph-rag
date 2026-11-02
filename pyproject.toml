@@ -49,7 +49,6 @@ dependencies = [
     "pydantic-settings>=2.12.0",
     "python-dotenv>=1.2.1",
     "tiktoken>=0.12.0",
-    "tomli-w>=1.2.0",
     "tree-sitter-python>=0.25.0",
     "tree-sitter==0.26.0",
     "watchdog>=6.0.0",
@@ -59,7 +58,6 @@ dependencies = [
     "diff-match-patch>=20241021",
     "click>=8.3.3",
     "protobuf>=6.33.5",
-    "defusedxml>=0.7.1",
     # codebase_rag/stack/manager.py reads docker-compose files with it, and
     # the CLI imports that module on every run.
     "pyyaml>=6.0",
@@ -77,7 +75,7 @@ dependencies = [
     # abi3 wheels for exactly these platforms; elsewhere the engine runs its
     # Python twin of every part. The floor is the crate version this code
     # was written against, raised with each crate release.
-    "cgr-graph-rs>=0.1.5,<0.2; platform_python_implementation == 'CPython' and ((sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')) or sys_platform == 'darwin' or (sys_platform == 'win32' and platform_machine == 'AMD64'))",
+    "cgr-graph-rs>=0.1.6,<0.2; platform_python_implementation == 'CPython' and ((sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')) or sys_platform == 'darwin' or (sys_platform == 'win32' and platform_machine == 'AMD64'))",
 ]
 
 [project.scripts]

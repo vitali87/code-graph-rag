@@ -490,6 +490,10 @@ EG_RUST_SCOPE_FACTS = "scope_facts"
 EG_RUST_INTERFACE_FINGERPRINT = "interface_fingerprint"
 EG_RUST_CALLABLE_PARAMETER_INDICES = "callable_parameter_indices"
 EG_RUST_LOCAL_ALIASES = "local_aliases"
+# The file formats it reads and writes (utils/safe_xml.py,
+# utils/toml_writer.py), which a build from before them lacks.
+EG_RUST_XML_FIND_ALL = "xml_find_all"
+EG_RUST_TOML_DUMPS = "toml_dumps"
 
 
 class TreeBridgeCheck(StrEnum):
