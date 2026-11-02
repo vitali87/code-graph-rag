@@ -1344,3 +1344,17 @@ SENSITIVE_DIR_NAMES = frozenset({".ssh", ".gnupg"})
 WINDOWS_IGNORED_NAME_TAIL = ". "
 # A worktree's git directory names the shared one, which holds the config.
 GIT_COMMONDIR_FILENAME = "commondir"
+# Asks git which git directory, and which shared one, it uses for a folder.
+# `rev-parse` runs nothing a config names, and fsmonitor is switched off on
+# top. Needs git 2.31 for `--path-format`; an older git falls back to the
+# `.git`-file rules.
+GIT_LOCATE_DIR_ARGS = (
+    "-c",
+    "core.fsmonitor=false",
+    "rev-parse",
+    "--path-format=absolute",
+    "--git-dir",
+    "--git-common-dir",
+)
+GIT_LOCATE_DIR_TIMEOUT_S = 5
+GIT_CEILING_DIRECTORIES_ENV = "GIT_CEILING_DIRECTORIES"
