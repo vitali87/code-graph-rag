@@ -53,10 +53,14 @@ def is_git_internal(path: Path, root: Path) -> bool:
     a reason to write there. The name match ignores case and the name endings
     Windows drops, which macOS and Windows filesystems resolve to `.git`.
     """
+    parts = path.relative_to(root).parts
     if any(
         part.lower().rstrip(cs.WINDOWS_IGNORED_NAME_TAIL) == cs.GIT_DIR_NAME
-        for part in path.relative_to(root).parts
+        for part in parts
     ):
+        return True
+    # From the folder written into up to the root itself.
+    if any(_laid_out_as_git_dir(folder) for folder in path.parents[: len(parts)]):
         return True
     git_dirs = [*_linked_git_dirs(root), *_git_reported_dirs(path, root)]
     return any(_within(path, git_dir) for git_dir in git_dirs)
@@ -101,7 +105,24 @@ def _git_reported_dirs(path: Path, root: Path) -> list[Path]:
         return []
     if answer.returncode != 0:
         return []
-    return [Path(line) for line in answer.stdout.splitlines() if line]
+    # An older git prints its answer relative to the folder it ran in.
+    return [folder / line for line in answer.stdout.splitlines() if line]
+
+
+def _laid_out_as_git_dir(folder: Path) -> bool:
+    """Whether git would take `folder` for a git directory: a HEAD file
+    beside `objects` and `refs`, or beside the `commondir` file a worktree's
+    has.
+
+    Read without git, so a nested repository's moved git directory stays
+    protected where git cannot be asked: git missing, older than 2.31, or too
+    slow to answer (review of PR 3557).
+    """
+    if not os.path.isfile(folder / cs.GIT_HEAD_FILENAME):
+        return False
+    return os.path.isfile(folder / cs.GIT_COMMONDIR_FILENAME) or all(
+        os.path.isdir(folder / name) for name in cs.GIT_DIR_SUBDIRS
+    )
 
 
 def _linked_git_dirs(root: Path) -> list[Path]:

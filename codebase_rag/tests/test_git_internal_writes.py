@@ -389,3 +389,89 @@ def test_without_git_the_root_rules_still_hold(
     assert is_git_internal(tmp_path / ".git" / "config", tmp_path)
     assert is_git_internal(tmp_path / "git-meta" / "config", tmp_path)
     assert not is_git_internal(tmp_path / "src" / "app.py", tmp_path)
+
+
+class TestWithoutAskingGit:
+    """Where git cannot be asked (missing, older than 2.31, too slow), a
+    folder laid out the way git recognizes a git directory still counts, so
+    a nested repository's moved one stays protected (review of PR 3557)."""
+
+    @pytest.fixture
+    def no_git(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("PATH", str(tmp_path / "no-git-here"))
+
+    @needs_git
+    @pytest.mark.parametrize(
+        "relative",
+        ["meta-lib/config", "meta-lib/hooks/pre-commit", "meta-lib/info/new/x"],
+    )
+    def test_a_nested_repositorys_moved_git_directory_is_protected(
+        self, relative: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root = tmp_path / "project"
+        lib = root / "vendor" / "lib"
+        lib.mkdir(parents=True)
+        _git("init", "-q", "--separate-git-dir=../../meta-lib", ".", cwd=lib)
+        monkeypatch.setenv("PATH", str(tmp_path / "no-git-here"))
+
+        assert is_git_internal(root / relative, root)
+        assert not is_git_internal(lib / "app.py", root)
+        assert not is_git_internal(root / "meta-lib-notes.txt", root)
+
+    @pytest.mark.usefixtures("no_git")
+    def test_a_worktrees_own_git_directory_counts(self, tmp_path: Path) -> None:
+        own = tmp_path / "wt-meta"
+        own.mkdir()
+        (own / "HEAD").write_text("ref: refs/heads/topic\n", encoding="utf-8")
+        (own / "commondir").write_text("../../elsewhere\n", encoding="utf-8")
+
+        assert is_git_internal(own / "config.worktree", tmp_path)
+
+    @pytest.mark.usefixtures("no_git")
+    def test_a_head_file_alone_is_not_one(self, tmp_path: Path) -> None:
+        notes = tmp_path / "docs"
+        (notes / "refs").mkdir(parents=True)
+        (notes / "HEAD").write_text("what HEAD means\n", encoding="utf-8")
+
+        assert not is_git_internal(notes / "guide.md", tmp_path)
+
+    @pytest.mark.usefixtures("no_git")
+    def test_mcp_will_not_plant_a_command_there(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(cgr_config.settings, "ALLOW_SENSITIVE_WRITES", True)
+        meta = tmp_path / "meta-lib"
+        for name in ("objects", "refs"):
+            (meta / name).mkdir(parents=True)
+        (meta / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+        (meta / "config").write_text(ORIGINAL_CONFIG, encoding="utf-8")
+        registry = MCPToolsRegistry(
+            project_root=str(tmp_path), ingestor=MagicMock(), cypher_gen=MagicMock()
+        )
+
+        result = asyncio.run(registry.write_file("meta-lib/config", _payload(tmp_path)))
+
+        assert ".git" in result
+        assert (meta / "config").read_text(encoding="utf-8") == ORIGINAL_CONFIG
+
+    @pytest.mark.skipif(os.name == "nt", reason="needs sh")
+    def test_an_older_gits_relative_answer_is_read_from_its_folder(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Git before 2.31 echoes the `--path-format` it does not know, and
+        # answers relative to the folder it ran in: "." inside a git directory.
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        old_git = bin_dir / "git"
+        old_git.write_text(
+            "#!/bin/sh\necho --path-format=absolute\necho .\necho .\n",
+            encoding="utf-8",
+        )
+        old_git.chmod(0o755)
+        monkeypatch.setenv("PATH", str(bin_dir))
+        meta = tmp_path / "meta"
+        meta.mkdir()
+
+        found = sensitive_paths._git_reported_dirs(meta / "config", tmp_path)
+
+        assert meta in found
