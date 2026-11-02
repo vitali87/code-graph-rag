@@ -128,6 +128,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CURRENT: ${{ steps.get_version.outputs.current }}
+          DISPATCH_BUMP_TYPE: ${{ github.event.inputs.bump_type }}
         run: |
           LATEST=$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name 2>/dev/null || echo "")
           # A security patch must ship immediately rather than waiting for the
@@ -416,10 +417,17 @@ jobs:
           # new minor or major line counts once, as a tag did. The bump this
           # run is about to make counts too, with at least one step: a
           # dispatched run, or one tagging a version set by hand, adds a
-          # version without a merge of its own. A batch that takes the count
-          # past RELEASE_EVERY ships whole; one whose CI is not proven yet is
-          # deferred, and the release stays due on every later bump.
+          # version without a merge of its own. A dispatched minor or major
+          # bump counts one step, as its tag will on every later run, so the
+          # release does not depend on which run crossed RELEASE_EVERY. A
+          # batch that takes the count past RELEASE_EVERY ships whole; one
+          # whose CI is not proven yet is deferred, and the release stays due
+          # on every later bump.
           STEP=$(( MERGED > 0 ? MERGED : 1 ))
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] &&
+              [ "$DISPATCH_BUMP_TYPE" != patch ]; then
+            STEP=1
+          fi
           SINCE=0
           if [ -n "$LATEST" ]; then
             SINCE=$(printf '%s\n' "$TAGS" | awk -F'refs/tags/' 'NF > 1 {print $2}' \

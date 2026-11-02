@@ -432,6 +432,10 @@ def _decide_run(
             "CURRENT": "0.0.1",
             "RANGE": range_,
             "RELEASE_EVERY": "50",
+            # Not inherited from the CI run executing these tests, which may
+            # itself be a dispatch.
+            "GITHUB_EVENT_NAME": "push",
+            "DISPATCH_BUMP_TYPE": "",
             "LS_REMOTE_EXIT": "0",
             "COMPARE_FAILS": "false",
             "PULLS_FAIL": "false",
@@ -1324,14 +1328,20 @@ def test_without_any_release_tag_the_triggering_merge_counts_once(
     assert out["merged"] == "1"
 
 
-def _cadence(tmp_path: Path, tags: list[str], merges: int) -> dict[str, str]:
+def _cadence(
+    tmp_path: Path, tags: list[str], merges: int, **env: str
+) -> dict[str, str]:
     """A run bumping `merges` merges, `tags` cut since v0.0.1, the latest release."""
     range_ = [*MERGES[: merges - 1], SHA]
     _commits(tmp_path, dict.fromkeys(range_, "Merge pull request"))
     tag_list = "".join(f"{OLDER}\\trefs/tags/{tag}\\n" for tag in ["v0.0.1", *tags])
     current = (tags[-1] if tags else "v0.0.1").removeprefix("v")
     result, out = _decide_run(
-        tmp_path, "\\n".join(range_) + "\\n", CURRENT=current, TAG_LIST=tag_list
+        tmp_path,
+        "\\n".join(range_) + "\\n",
+        CURRENT=current,
+        TAG_LIST=tag_list,
+        **env,
     )
     assert result.returncode == 0, result.stderr
     assert out["merged"] == str(merges)
@@ -1367,3 +1377,27 @@ def test_the_run_summary_shows_the_merge_count(tmp_path: Path) -> None:
     _cadence(tmp_path, ["v0.0.40"], 3)
     summary = (tmp_path / "summary").read_text(encoding="utf-8")
     assert "3 merge(s) in this bump, 42 of 50 since v0.0.1" in summary
+
+
+@pytest.mark.parametrize(
+    ("event", "dispatched", "release"),
+    [
+        ("push", "", "true"),
+        ("workflow_dispatch", "patch", "true"),
+        # A new minor or major line counts once when later runs read its tag,
+        # so the run that makes it counts it once too.
+        ("workflow_dispatch", "minor", "false"),
+        ("workflow_dispatch", "major", "false"),
+    ],
+)
+def test_a_dispatched_minor_or_major_bump_counts_one_step(
+    tmp_path: Path, event: str, dispatched: str, release: str
+) -> None:
+    out = _cadence(
+        tmp_path,
+        ["v0.0.40"],
+        11,
+        GITHUB_EVENT_NAME=event,
+        DISPATCH_BUMP_TYPE=dispatched,
+    )
+    assert out["release"] == release
