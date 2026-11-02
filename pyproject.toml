@@ -335,7 +335,7 @@ fuzz = [
 # Builds the cgr-graph-rs wheels (.github/workflows/rust-wheels.yml): zig
 # links each Linux wheel against the oldest glibc or musl its tag promises.
 rust-wheels = [
-    "maturin==1.15.0",
+    "maturin==1.16.0",
     # Only the Linux wheels are linked with zig, and it ships no Windows build.
     "ziglang==0.17.0; sys_platform == 'linux'",
 ]
