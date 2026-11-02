@@ -311,6 +311,41 @@ class TestAskingGit:
         assert ".git" in result
         assert (nested / "meta-lib" / "config").read_text(encoding="utf-8") == before
 
+    @pytest.mark.parametrize(
+        "steer",
+        [
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_CONFIG_PARAMETERS",
+            "XDG_CONFIG_HOME",
+        ],
+    )
+    def test_settings_the_project_can_reach_do_not_turn_it_off(
+        self,
+        steer: str,
+        nested: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The project's `.env` reaches the environment: a `GIT_DIR` there
+        pointed git elsewhere, a broken `GIT_CONFIG_PARAMETERS` made it fail,
+        and a user config it names could refuse bare repositories. Any of
+        them left the nested git directory writable."""
+        user_config = tmp_path / "xdg" / "git"
+        user_config.mkdir(parents=True)
+        (user_config / "config").write_text(
+            "[safe]\n\tbareRepository = explicit\n", encoding="utf-8"
+        )
+        value = {
+            "GIT_DIR": str(tmp_path / "does-not-exist"),
+            "GIT_WORK_TREE": str(tmp_path),
+            "GIT_CONFIG_PARAMETERS": "not a config",
+            "XDG_CONFIG_HOME": str(tmp_path / "xdg"),
+        }[steer]
+        monkeypatch.setenv(steer, value)
+
+        assert is_git_internal(nested / "meta-lib" / "config", nested)
+
     def test_asking_runs_no_command_the_config_names(self, tmp_path: Path) -> None:
         _git("init", "-q", ".", cwd=tmp_path)
         _git(

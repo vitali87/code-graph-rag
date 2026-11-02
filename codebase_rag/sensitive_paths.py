@@ -69,11 +69,23 @@ def _git_reported_dirs(path: Path, root: Path) -> list[Path]:
     Git knows every layout it supports, a nested repository whose git
     directory was moved and named anything included, where the `.git`-file
     rules see only the root's. The search stops at `root`, so a repository
-    above the project is not asked about. Empty when git is missing, too old,
-    refuses the folder, or finds no repository: the other rules still hold.
+    above the project is not asked about. Git gets none of this process's
+    `GIT_*` variables and reads no system or user config, since the
+    project's `.env` can set either: a `GIT_DIR` there pointed git elsewhere,
+    and a git that fails answers nothing (review of PR 3569). Empty when git
+    is missing, too old, or finds no repository: the other rules still hold.
     """
     folder = next(p for p in (path, *path.parents) if p.is_dir())
-    environment = {**os.environ, cs.GIT_CEILING_DIRECTORIES_ENV: str(root.parent)}
+    environment = {
+        name: value
+        for name, value in os.environ.items()
+        if not name.upper().startswith(cs.GIT_ENV_PREFIX)
+    }
+    environment |= {
+        cs.GIT_CEILING_DIRECTORIES_ENV: str(root.parent),
+        cs.GIT_CONFIG_NOSYSTEM_ENV: cs.GIT_ENV_ON,
+        cs.GIT_CONFIG_GLOBAL_ENV: os.devnull,
+    }
     try:
         answer = subprocess.run(
             [cs.SHELL_CMD_GIT, *cs.GIT_LOCATE_DIR_ARGS],
