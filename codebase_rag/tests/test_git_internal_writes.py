@@ -18,6 +18,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag import config as cgr_config
+from codebase_rag import sensitive_paths
 from codebase_rag.editing.transaction import EditTransaction, TransactionError
 from codebase_rag.mcp.tools import MCPToolsRegistry
 from codebase_rag.sensitive_paths import is_git_internal
@@ -251,3 +252,129 @@ class TestRelocatedGitDirectory:
         cgr_config.load_ignore_patterns(repo)
 
         assert not (repo / MARKER).exists()
+
+
+needs_git = pytest.mark.skipif(
+    shutil.which("git") is None or os.name == "nt", reason="needs git and sh"
+)
+
+
+def _git(*args: str, cwd: Path) -> None:
+    subprocess.run(["git", *args], check=True, cwd=cwd, capture_output=True)  # noqa: S607
+
+
+@needs_git
+class TestAskingGit:
+    """Git itself is asked which git directory it uses for the folder being
+    written, so every layout it supports is covered, not only the ones the
+    `.git`-file rules know."""
+
+    @pytest.fixture
+    def nested(self, tmp_path: Path) -> Path:
+        # A project whose vendored dependency is its own repository, with its
+        # git directory moved beside it under another name.
+        root = tmp_path / "project"
+        root.mkdir()
+        _git("init", "-q", ".", cwd=root)
+        lib = root / "vendor" / "lib"
+        lib.mkdir(parents=True)
+        _git("init", "-q", "--separate-git-dir=../../meta-lib", ".", cwd=lib)
+        assert (root / "meta-lib" / "config").is_file()
+        return root
+
+    @pytest.mark.parametrize(
+        "relative",
+        ["meta-lib/config", "meta-lib/hooks/pre-commit", "meta-lib/info/new/x"],
+    )
+    def test_a_nested_repositorys_moved_git_directory_is_protected(
+        self, relative: str, nested: Path
+    ) -> None:
+        assert is_git_internal(nested / relative, nested)
+
+    @pytest.mark.parametrize(
+        "relative", ["vendor/lib/app.py", "src/app.py", "meta-lib-notes.txt"]
+    )
+    def test_the_files_around_it_are_not(self, relative: str, nested: Path) -> None:
+        assert not is_git_internal(nested / relative, nested)
+
+    def test_mcp_will_not_plant_a_command_there(
+        self, nested: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(cgr_config.settings, "ALLOW_SENSITIVE_WRITES", True)
+        before = (nested / "meta-lib" / "config").read_text(encoding="utf-8")
+        registry = MCPToolsRegistry(
+            project_root=str(nested), ingestor=MagicMock(), cypher_gen=MagicMock()
+        )
+
+        result = asyncio.run(registry.write_file("meta-lib/config", _payload(nested)))
+
+        assert ".git" in result
+        assert (nested / "meta-lib" / "config").read_text(encoding="utf-8") == before
+
+    @pytest.mark.parametrize(
+        "steer",
+        [
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_CONFIG_PARAMETERS",
+            "XDG_CONFIG_HOME",
+        ],
+    )
+    def test_settings_the_project_can_reach_do_not_turn_it_off(
+        self,
+        steer: str,
+        nested: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The project's `.env` reaches the environment: a `GIT_DIR` there
+        pointed git elsewhere, a broken `GIT_CONFIG_PARAMETERS` made it fail,
+        and a user config it names could refuse bare repositories. Any of
+        them left the nested git directory writable."""
+        user_config = tmp_path / "xdg" / "git"
+        user_config.mkdir(parents=True)
+        (user_config / "config").write_text(
+            "[safe]\n\tbareRepository = explicit\n", encoding="utf-8"
+        )
+        value = {
+            "GIT_DIR": str(tmp_path / "does-not-exist"),
+            "GIT_WORK_TREE": str(tmp_path),
+            "GIT_CONFIG_PARAMETERS": "not a config",
+            "XDG_CONFIG_HOME": str(tmp_path / "xdg"),
+        }[steer]
+        monkeypatch.setenv(steer, value)
+
+        assert is_git_internal(nested / "meta-lib" / "config", nested)
+
+    def test_asking_runs_no_command_the_config_names(self, tmp_path: Path) -> None:
+        _git("init", "-q", ".", cwd=tmp_path)
+        _git(
+            "config",
+            "core.fsmonitor",
+            f"touch {tmp_path / MARKER}; false",
+            cwd=tmp_path,
+        )
+
+        assert not is_git_internal(tmp_path / "src" / "app.py", tmp_path)
+        assert not (tmp_path / MARKER).exists()
+
+    def test_a_repository_above_the_project_is_not_asked_about(
+        self, tmp_path: Path
+    ) -> None:
+        _git("init", "-q", ".", cwd=tmp_path)
+        project = tmp_path / "project"
+        project.mkdir()
+
+        assert sensitive_paths._git_reported_dirs(project / "app.py", project) == []
+
+
+def test_without_git_the_root_rules_still_hold(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PATH", str(tmp_path / "no-git-here"))
+    (tmp_path / "git-meta").mkdir()
+    (tmp_path / ".git").write_text("gitdir: git-meta\n", encoding="utf-8")
+
+    assert is_git_internal(tmp_path / ".git" / "config", tmp_path)
+    assert is_git_internal(tmp_path / "git-meta" / "config", tmp_path)
+    assert not is_git_internal(tmp_path / "src" / "app.py", tmp_path)

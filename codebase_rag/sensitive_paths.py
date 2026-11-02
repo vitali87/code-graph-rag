@@ -4,6 +4,8 @@
 # easily as for source, and whatever such a read returns goes to the model
 # provider (issue #3457).
 
+import os
+import subprocess
 from pathlib import Path
 
 from . import constants as cs
@@ -43,7 +45,7 @@ def _is_sensitive_name(path: Path) -> bool:
 
 def is_git_internal(path: Path, root: Path) -> bool:
     """Whether `path`, resolved and inside `root`, is a `.git` entry, lies
-    inside one, or lies inside the git directory `root/.git` points to.
+    inside one, or lies inside a git directory git uses for it.
 
     Git reads its config and hooks from there and runs the commands they name
     (`core.fsmonitor`, a hook), and cgr runs git after every write to refresh
@@ -56,11 +58,55 @@ def is_git_internal(path: Path, root: Path) -> bool:
         for part in path.relative_to(root).parts
     ):
         return True
-    return any(_within(path, git_dir) for git_dir in _linked_git_dirs(root))
+    git_dirs = [*_linked_git_dirs(root), *_git_reported_dirs(path, root)]
+    return any(_within(path, git_dir) for git_dir in git_dirs)
+
+
+def _git_reported_dirs(path: Path, root: Path) -> list[Path]:
+    """The git directory, and the shared one, that git itself uses for the
+    folder `path` is in.
+
+    Git knows every layout it supports, a nested repository whose git
+    directory was moved and named anything included, where the `.git`-file
+    rules see only the root's. The search stops at `root`, so a repository
+    above the project is not asked about. Git gets none of this process's
+    `GIT_*` variables and reads no system or user config, since the
+    project's `.env` can set either: a `GIT_DIR` there pointed git elsewhere,
+    and a git that fails answers nothing (review of PR 3569). Empty when git
+    is missing, too old, or finds no repository: the other rules still hold.
+    """
+    folder = next(p for p in (path, *path.parents) if p.is_dir())
+    environment = {
+        name: value
+        for name, value in os.environ.items()
+        if not name.upper().startswith(cs.GIT_ENV_PREFIX)
+    }
+    environment |= {
+        cs.GIT_CEILING_DIRECTORIES_ENV: str(root.parent),
+        cs.GIT_CONFIG_NOSYSTEM_ENV: cs.GIT_ENV_ON,
+        cs.GIT_CONFIG_GLOBAL_ENV: os.devnull,
+    }
+    try:
+        answer = subprocess.run(
+            [cs.SHELL_CMD_GIT, *cs.GIT_LOCATE_DIR_ARGS],
+            cwd=folder,
+            env=environment,
+            capture_output=True,
+            encoding=cs.ENCODING_UTF8,
+            errors="replace",
+            check=False,
+            timeout=cs.GIT_LOCATE_DIR_TIMEOUT_S,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if answer.returncode != 0:
+        return []
+    return [Path(line) for line in answer.stdout.splitlines() if line]
 
 
 def _linked_git_dirs(root: Path) -> list[Path]:
-    """The git directories a `.git` file at `root` points git to.
+    """The git directories a `.git` file at `root` points git to, read
+    without git, so they hold where git cannot be asked.
 
     `git init --separate-git-dir=meta` and `git worktree add` leave a file
     there, `gitdir: <path>`, and git keeps the config and hooks in that

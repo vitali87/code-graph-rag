@@ -238,8 +238,10 @@ The CLI can run commands and edit files. Default shell execution uses an
 allowlist, dangerous-pattern checks and approval checks; file tools validate
 paths against the target project root. No file tool, in the CLI or over MCP,
 writes inside a `.git` directory (any case, at any depth, through a symlink
-too), or inside the git directory a `.git` file at the root points to
-(`git init --separate-git-dir`, a worktree): git runs the commands its config (`core.fsmonitor`) and hooks name, and
+too), or inside any other git directory git reports for the folder being
+written, such as one moved with `git init --separate-git-dir`, a worktree's,
+or a nested repository's (git is asked; without git, the root's `.git` file
+is read instead): git runs the commands its config (`core.fsmonitor`) and hooks name, and
 the graph refresh after every write runs git, so a write there ran code on the
 user's machine. YOLO mode relaxes approval and allowlist
 checks, while destructive-path screening remains.
