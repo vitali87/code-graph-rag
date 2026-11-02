@@ -276,7 +276,8 @@ def test_it_looks_again_every_hour() -> None:
     (schedule,) = triggers.get("schedule", [])
     minute, *rest = schedule["cron"].split()
 
-    assert minute.isdigit() and int(minute) < 60
+    assert minute.isdigit()
+    assert int(minute) < 60
     assert rest == ["*", "*", "*", "*"]
     assert "github.event_name == 'schedule'" in workflow["jobs"]["publish"]["if"]
 
