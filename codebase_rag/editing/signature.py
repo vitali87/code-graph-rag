@@ -59,7 +59,6 @@ from .signature_js_bind import JAVASCRIPT
 from .signature_spec import (
     _CALL,
     _DEFINITION,
-    _IDENTIFIER_RE,
     LANGUAGES_ISSUE,
     ParamSpec,
     SignatureDialect,
@@ -149,11 +148,10 @@ class SignatureChanger:
         # that happens to match the primary compared equal and counted as
         # carried -- leaving an override declaring `a: str` un-annotated,
         # which is the opposite of what was asked (Copilot, PR #1533).
-        carried = {
-            text.strip()
-            for text in new_params
-            if _IDENTIFIER_RE.fullmatch(text.strip()) and text.strip() in old_names
-        }
+        #
+        # An old name is a name in every dialect, so membership is the test:
+        # a Python identifier pattern would miss JavaScript's `$a`.
+        carried = {text.strip() for text in new_params if text.strip() in old_names}
         # An old parameter fed to a new one of another name is renamed, and
         # the body must follow or the definition would be broken.
         renamed = [

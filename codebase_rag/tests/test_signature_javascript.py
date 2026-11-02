@@ -92,6 +92,29 @@ def test_a_method_takes_a_new_trailing_parameter(temp_repo: Path) -> None:
     assert "new Shape().area(1, 2, 'em')" in _read(root, APP)
 
 
+def test_an_override_keeps_its_own_default_for_a_dollar_name(temp_repo: Path) -> None:
+    # `$a` is a JavaScript name but not a Python identifier; carried by its
+    # bare name, each override keeps the default it wrote.
+    util = (
+        "class Base {\n  f($a = 1) {\n    return $a;\n  }\n}\n\n"
+        "class Sub extends Base {\n  f($a = 2) {\n    return $a * 2;\n  }\n}\n\n"
+        "module.exports = { Base, Sub };\n"
+    )
+    app = (
+        "const { Base, Sub } = require('./util');\n\n"
+        "function run() {\n  return new Base().f() + new Sub().f();\n}\n"
+    )
+    root = _indexed(temp_repo, util=util, app=app)
+
+    report = _change(root, f"{PROJECT}.lib.util.Base.f", ["$a", "n = 0"])
+
+    assert report.applied, report.message
+    assert len(report.hierarchy) == 2
+    text = _read(root, UTIL)
+    assert "  f($a = 1, n = 0) {\n    return $a;" in text
+    assert "  f($a = 2, n = 0) {\n    return $a * 2;" in text
+
+
 def test_reordered_names_swap_places_at_every_site(temp_repo: Path) -> None:
     root = _indexed(
         temp_repo,
