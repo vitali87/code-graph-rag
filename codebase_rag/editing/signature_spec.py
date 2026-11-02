@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import ast
-import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import NamedTuple
 
@@ -17,7 +16,6 @@ from .contract import Verdict
 # Issue tracking support for definitions in other languages.
 LANGUAGES_ISSUE = 1908
 
-_IDENTIFIER_RE = re.compile(r"[A-Za-z_]\w*")
 _LITERAL_PREFIX = "="
 _DEFINITION = "definition"
 _CALL = "call"
@@ -260,9 +258,12 @@ def _parse_new_param(text: str, old: Mapping[str, ParamSpec]) -> ParamSpec:
     A bare identifier naming an old parameter carries that parameter over
     with its annotation and default; anything else must parse as exactly
     one plain positional-or-keyword parameter.
+
+    The old names are identifiers already, so membership alone decides:
+    an ASCII pattern would miss `élan` and drop its default.
     """
     text = text.strip()
-    if _IDENTIFIER_RE.fullmatch(text) and text in old:
+    if text in old:
         return old[text]
     probe = cs.SIGNATURE_PARAM_PROBE.format(text=text)
     try:
