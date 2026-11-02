@@ -1253,7 +1253,7 @@ def test_the_label_query_marks_each_pull_request(
 # Merges that land while an earlier bump or its CI is running share one bump
 # run. The run counts them along main's first-parent line, back to the last
 # bump commit, and the patch number moves once for each.
-MERGES = [f"{n:040x}" for n in range(101, 121)]
+MERGES = [f"{n:040x}" for n in range(101, 106)]
 
 
 def test_every_merge_since_the_last_bump_is_counted(tmp_path: Path) -> None:
@@ -1354,12 +1354,14 @@ def _cadence(
         # Tags from when every merge had a bump of its own count one each.
         ([f"v0.0.{n}" for n in range(2, 50)], 1, "false"),
         ([f"v0.0.{n}" for n in range(2, 51)], 1, "true"),
-        # One tag that carried 39 merges counts 39, not one, and this run's
-        # own merges count before the tag that will hold them exists.
-        (["v0.0.40"], 10, "false"),
-        (["v0.0.40"], 11, "true"),
+        # One tag that carried 46 merges counts 46, not one, and this run's
+        # own merges count before the tag that will hold them exists. Few
+        # merges per case: each costs several process starts, which Git Bash
+        # on Windows makes slow enough to pass the step's timeout.
+        (["v0.0.47"], 3, "false"),
+        (["v0.0.47"], 4, "true"),
         # A batch that carries the count past RELEASE_EVERY ships whole.
-        (["v0.0.45"], 20, "true"),
+        (["v0.0.48"], 5, "true"),
         # Still due after a release that never went out.
         (["v0.0.60"], 1, "true"),
         # A step into a new minor line counts once, as its tag did.
@@ -1395,8 +1397,8 @@ def test_a_dispatched_minor_or_major_bump_counts_one_step(
 ) -> None:
     out = _cadence(
         tmp_path,
-        ["v0.0.40"],
-        11,
+        ["v0.0.47"],
+        4,
         GITHUB_EVENT_NAME=event,
         DISPATCH_BUMP_TYPE=dispatched,
     )
