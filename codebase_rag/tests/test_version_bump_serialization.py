@@ -1427,3 +1427,28 @@ def test_an_annotated_tag_that_deferred_nothing_keeps_nothing_due(
     tmp_path: Path,
 ) -> None:
     assert _after_a_deferral(tmp_path, "v0.1.0")["release"] == "false"
+
+
+@pytest.mark.parametrize(
+    ("stray", "release"),
+    [
+        # Main holds 0.0.40: a higher tag cut elsewhere is not counted.
+        ("v0.0.80", "false"),
+        ("v0.1.0", "false"),
+        ("v1.0.0", "false"),
+        # Below main's version, within one line, it moves nothing.
+        ("v0.0.20", "false"),
+    ],
+)
+def test_a_tag_main_never_reached_does_not_count(
+    tmp_path: Path, stray: str, release: str
+) -> None:
+    _commits(tmp_path, {SHA: "Merge pull request #2"})
+    tags = "".join(
+        f"{OLDER}\\trefs/tags/{tag}\\n" for tag in ["v0.0.1", "v0.0.40", stray]
+    )
+    result, out = _decide_run(tmp_path, f"{SHA}\\n", CURRENT="0.0.40", TAG_LIST=tags)
+    assert result.returncode == 0, result.stderr
+    assert out["release"] == release
+    summary = (tmp_path / "summary").read_text(encoding="utf-8")
+    assert "40 of 50 since v0.0.1" in summary

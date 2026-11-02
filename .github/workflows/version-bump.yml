@@ -414,7 +414,11 @@ jobs:
           # than RELEASE_EVERY. Each bump moves the patch number once per
           # merge, so the distance it has moved since the latest release is
           # the count, read from the tags with no further call. A step into a
-          # new minor or major line counts once, as a tag did. The bump this
+          # new minor or major line counts once, as a tag did. Tags above the
+          # version main holds are not main's, so the count stops there: a
+          # stray higher tag elsewhere would otherwise read as dozens of
+          # merges, and within one line the distance cannot be moved by a
+          # stray tag below it. The bump this
           # run is about to make counts too, with at least one step: a
           # dispatched run, or one tagging a version set by hand, adds a
           # version without a merge of its own. A dispatched minor or major
@@ -430,8 +434,12 @@ jobs:
           if [ -n "$LATEST" ]; then
             SINCE=$(printf '%s\n' "$TAGS" | awk -F'refs/tags/' 'NF > 1 {print $2}' \
               | grep -xE 'v[0-9]+\.[0-9]+\.[0-9]+' | sort -uV \
-              | awk -v latest="$LATEST" '
+              | awk -v latest="$LATEST" -v current="$CURRENT" '
+                  BEGIN { split(current, c, ".") }
                   { split(substr($0, 2), v, ".") }
+                  v[1] + 0 > c[1] + 0 ||
+                      (v[1] + 0 == c[1] + 0 && (v[2] + 0 > c[2] + 0 ||
+                      (v[2] + 0 == c[2] + 0 && v[3] + 0 > c[3] + 0))) { exit }
                   seen {
                     if (v[1] + 0 == major && v[2] + 0 == minor && v[3] + 0 > patch)
                       count += v[3] - patch
