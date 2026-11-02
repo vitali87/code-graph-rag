@@ -18,6 +18,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag import config as cgr_config
+from codebase_rag import constants as cs
 from codebase_rag import sensitive_paths
 from codebase_rag.editing.transaction import EditTransaction, TransactionError
 from codebase_rag.mcp.tools import MCPToolsRegistry
@@ -27,6 +28,24 @@ from codebase_rag.tools.file_writer import FileWriter
 
 ORIGINAL_CONFIG = "[core]\n\tbare = false\n"
 MARKER = "fsmonitor-ran"
+
+
+def _git(*args: str, cwd: Path) -> None:
+    # A GIT_DIR or GIT_WORK_TREE left in the shell that runs pytest makes git
+    # ignore cwd, and the fsmonitor test would then plant its command in the
+    # developer's own repository.
+    environment = {
+        name: value
+        for name, value in os.environ.items()
+        if not name.upper().startswith(cs.GIT_ENV_PREFIX)
+    }
+    subprocess.run(  # noqa: S603
+        [cs.SHELL_CMD_GIT, *args],
+        check=True,
+        cwd=cwd,
+        env=environment,
+        capture_output=True,
+    )
 
 
 def _payload(root: Path) -> str:
@@ -163,7 +182,7 @@ class TestMcpWriteToGitConfig:
     )
     def test_the_refresh_runs_no_planted_command(self, tmp_path: Path) -> None:
         repo = tmp_path / "checkout"
-        subprocess.run(["git", "init", "-q", str(repo)], check=True)  # noqa: S607
+        _git("init", "-q", str(repo), cwd=tmp_path)
         registry = MCPToolsRegistry(
             project_root=str(repo), ingestor=MagicMock(), cypher_gen=MagicMock()
         )
@@ -238,11 +257,7 @@ class TestRelocatedGitDirectory:
         repo.mkdir()
         # Relative to the working directory, so the git directory lands
         # inside the checkout, where a file tool can reach it.
-        subprocess.run(
-            ["git", "init", "-q", "--separate-git-dir=git-meta", "."],  # noqa: S607
-            check=True,
-            cwd=repo,
-        )
+        _git("init", "-q", "--separate-git-dir=git-meta", ".", cwd=repo)
         assert (repo / "git-meta" / "config").is_file()
         registry = MCPToolsRegistry(
             project_root=str(repo), ingestor=MagicMock(), cypher_gen=MagicMock()
@@ -257,10 +272,6 @@ class TestRelocatedGitDirectory:
 needs_git = pytest.mark.skipif(
     shutil.which("git") is None or os.name == "nt", reason="needs git and sh"
 )
-
-
-def _git(*args: str, cwd: Path) -> None:
-    subprocess.run(["git", *args], check=True, cwd=cwd, capture_output=True)  # noqa: S607
 
 
 @needs_git
