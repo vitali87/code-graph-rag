@@ -56,11 +56,14 @@ description: "Install Code-Graph-RAG and choose a graph backend for multi-langua
 
 ### Older system interpreters
 
-The wheel is pure Python (`py3-none-any`), so it installs on any platform, but the
-interpreter floor is strict. Some distributions ship a Python below it: Debian
-Bookworm, and therefore Raspberry Pi OS Bookworm, ships Python 3.11. This is also why
-the [piwheels](https://www.piwheels.org/project/code-graph-rag/) Bookworm build shows
-as failed; it is the interpreter version, not a problem with the package.
+The wheel is pure Python (`py3-none-any`), but it requires `cgr-graph-rs`, the native
+extension that does the work behind it, which ships for CPython 3.12 or newer on Linux
+(x86_64, aarch64), macOS and Windows x64. cgr does not run without it, so it installs
+on those platforms only, and the interpreter floor is strict. Some distributions ship a
+Python below it: Debian Bookworm, and therefore Raspberry Pi OS Bookworm, ships Python
+3.11. This is also why the [piwheels](https://www.piwheels.org/project/code-graph-rag/)
+Bookworm build shows as failed; it is the interpreter version, not a problem with the
+package.
 
 Pin the interpreter explicitly on those systems. For a tool install, `uv` downloads
 Python 3.12 itself:

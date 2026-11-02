@@ -145,7 +145,7 @@ To upgrade an existing install, run `uv tool upgrade code-graph-rag` (with pipx,
 You also need Python 3.12+ and `ripgrep`. The graph lives in an embedded SQLite file by default, so there is no database server to run: no Docker and no `cmake`. Memgraph and Neo4j remain available as opt-in backends ([Graph Backends](docs/architecture/embedded-graph.md)). Full prerequisites, source installs, and environment setup are in the [Installation](docs/getting-started/installation.md) guide.
 
 > [!NOTE]
-> The wheel is pure Python (`py3-none-any`), so it installs on any platform with Python 3.12 or newer. Older system interpreters (Debian Bookworm ships 3.11) need the interpreter pinned explicitly; see [Installation](docs/getting-started/installation.md#older-system-interpreters) for the commands.
+> cgr requires its native extension, `cgr-graph-rs`, which ships for CPython 3.12 or newer on Linux (x86_64, aarch64), macOS and Windows x64, so it installs on those platforms only. Older system interpreters (Debian Bookworm ships 3.11) need the interpreter pinned explicitly; see [Installation](docs/getting-started/installation.md#older-system-interpreters) for the commands.
 
 ## Quick Start
 
