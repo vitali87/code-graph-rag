@@ -11,6 +11,7 @@ from __future__ import annotations
 import subprocess
 import sys
 
+from codebase_rag import constants as cs
 from codebase_rag import exceptions as ex
 
 
@@ -31,6 +32,7 @@ def test_importing_cgr_without_the_extension_stops_and_says_why() -> None:
         [sys.executable, "-c", script],
         capture_output=True,
         text=True,
+        encoding=cs.ENCODING_UTF8,
         check=True,
         timeout=60,
     )
