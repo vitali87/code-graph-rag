@@ -395,7 +395,7 @@ version = "0.4.23"
 source = { editable = "." }
 dependencies = [
     { name = "certifi" },
-    { name = "cgr-graph-rs", marker = "(platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'AMD64' and platform_python_implementation == 'CPython' and sys_platform == 'win32') or (platform_python_implementation == 'CPython' and sys_platform == 'darwin')" },
+    { name = "cgr-graph-rs" },
     { name = "click" },
     { name = "diff-match-patch" },
     { name = "jsonschema" },
@@ -512,7 +512,7 @@ requires-dist = [
     { name = "ast-grep-py", marker = "extra == 'ast-grep'", specifier = ">=0.51.0" },
     { name = "ast-grep-py", marker = "extra == 'test'", specifier = ">=0.51.0" },
     { name = "certifi", specifier = ">=2026.10.23" },
-    { name = "cgr-graph-rs", marker = "(platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'AMD64' and platform_python_implementation == 'CPython' and sys_platform == 'win32') or (platform_python_implementation == 'CPython' and sys_platform == 'darwin')", directory = "rust/cgr_graph_rs" },
+    { name = "cgr-graph-rs", directory = "rust/cgr_graph_rs" },
     { name = "click", specifier = ">=8.3.3" },
     { name = "diff-match-patch", specifier = ">=20241021" },
     { name = "filelock", marker = "extra == 'test'", specifier = ">=3.12" },

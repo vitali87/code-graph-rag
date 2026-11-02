@@ -71,11 +71,13 @@ dependencies = [
     # backtracking pattern stops at the query's deadline. tiktoken already
     # installs it.
     "regex>=2024.11.6",
-    # The embedded graph's Rust acceleration (rust/cgr_graph_rs), shipped as
-    # abi3 wheels for exactly these platforms; elsewhere the engine runs its
-    # Python twin of every part. The floor is the crate version this code
-    # was written against, raised with each crate release.
-    "cgr-graph-rs>=0.1.6,<0.2; platform_python_implementation == 'CPython' and ((sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')) or sys_platform == 'darwin' or (sys_platform == 'win32' and platform_machine == 'AMD64'))",
+    # The Rust half that does the work behind the Python interface
+    # (rust/cgr_graph_rs), required everywhere: cgr does not run without it.
+    # It ships as abi3 wheels for CPython on Linux x86_64/aarch64, macOS and
+    # Windows x64, and has no sdist, so other platforms cannot install cgr.
+    # The floor is the crate version this code was written against, raised
+    # with each crate release.
+    "cgr-graph-rs>=0.1.6,<0.2",
 ]
 
 [project.scripts]

@@ -4,9 +4,10 @@ Native acceleration for [code-graph-rag](https://github.com/vitali87/code-graph-
 embedded graph, written in Rust with [PyO3](https://pyo3.rs) and built with
 [maturin](https://www.maturin.rs).
 
-code-graph-rag installs it for you on Linux (x86_64 and aarch64, glibc and
-musl), macOS and Windows x64. Every part has a Python twin that gives the same
-answers, so on any other platform code-graph-rag runs without it.
+code-graph-rag requires it, and installs it for you on Linux (x86_64 and
+aarch64, glibc and musl), macOS and Windows x64. It has no pure-Python
+stand-in: code-graph-rag does not run without it, so it does not install on
+other platforms.
 
 It provides:
 

@@ -1,28 +1,35 @@
-"""XML project files, read by the Rust reader and by the reference parser.
+"""XML project files, read by the Rust extension.
 
-`safe_xml.find_all` takes the Rust extension's answer
-(rust/cgr_graph_rs/src/formats/xml.rs) whenever it gives one, so a reader
-that drifted from the reference would change which packages and projects
-cgr finds for those users alone. The Rust reader may decline any document
-(returning None) and the reference then answers; when it does answer, its
-answer must be the reference's, and the reference must not have refused the
-document. Every case here runs both ways, over hand-written documents and
-seeded mutations of them.
+`safe_xml.find_all` is the Rust reader (rust/cgr_graph_rs/src/formats/xml.rs),
+which replaced defusedxml with no Python fallback, so it must read every
+document as defusedxml did. The oracle here is the parser defusedxml wrapped:
+Python's own expat, with the entity declarations it refused refused. Every
+case runs both ways, over hand-written documents and seeded mutations; the
+name and encoding tables the reader carries are checked against the expat and
+codecs of the Python running the suite.
 """
 
 from __future__ import annotations
 
 import random
-import sys
+import re
 from pathlib import Path
 from xml.etree import ElementTree
+from xml.parsers import expat
 
 import pytest
 
-from codebase_rag import exceptions as ex
 from codebase_rag.utils import safe_xml
-from codebase_rag.utils.safe_xml import find_all, find_all_python
+from codebase_rag.utils.safe_xml import (
+    XML_CONTENT_ERRORS,
+    XmlEntityError,
+    XmlSyntaxError,
+    find_all,
+    find_all_in,
+)
 
+_REPO = Path(__file__).resolve().parents[2]
+_CHARSETS = _REPO / "rust" / "cgr_graph_rs" / "src" / "formats" / "charsets.rs"
 _FUZZ_SEED = 2026
 _MUTATIONS_PER_SEED = 300
 
@@ -117,49 +124,77 @@ _FRAGMENTS = (
     "5",
     " p:5='1'",
     " xmlns:5='urn:5'",
+    "<!ELEMENT r ANY>",
+    "<!ATTLIST r q CDATA 'v'>",
+    "%x;",
+    " standalone='yes'",
 )
 
-rust = pytest.importorskip("cgr_graph_rs")
-if not hasattr(rust, "xml_find_all"):
-    pytest.skip(
-        "this cgr_graph_rs build predates its XML reader, so cgr reads XML in "
-        "Python; reinstall ./rust/cgr_graph_rs to test it",
-        allow_module_level=True,
-    )
+
+class _Refused(Exception):
+    pass
 
 
-def _reference(doc: bytes, name: str) -> tuple[str, list[dict[str, str]]]:
+def _refuse(*_: object) -> None:
+    raise _Refused
+
+
+def _oracle(doc: bytes, name: str) -> tuple[str, list[dict[str, str]]]:
+    """What defusedxml answered: expat, refusing any entity declaration."""
+    # expat stops at whichever comes first, an entity declaration or an
+    # error, so this pass settles a refusal; ElementTree then reads the tree.
+    probe = expat.ParserCreate(None, "}")
+    probe.EntityDeclHandler = _refuse
+    probe.UnparsedEntityDeclHandler = _refuse
     try:
-        return "parsed", find_all_python(doc, name)
-    except ElementTree.ParseError:
-        return "malformed", []
-    except ex.XmlEntityRefusedError:
+        probe.Parse(doc, True)
+    except _Refused:
         return "refused", []
-    except LookupError:
-        # An encoding Python has no codec for, as defusedxml raised too.
-        return "unknown-encoding", []
+    except (expat.ExpatError, LookupError, ValueError):
+        return "malformed", []
+    try:
+        root = ElementTree.fromstring(doc)
+    except (ElementTree.ParseError, LookupError, ValueError):
+        return "malformed", []
+    return "parsed", [dict(element.attrib) for element in root.iter(name)]
 
 
-def _assert_agree(doc: bytes) -> bool:
-    """Whether the Rust reader answered; raises if it answered wrongly."""
-    answered = False
+def _rust(doc: bytes, name: str) -> tuple[str, list[dict[str, str]]]:
+    try:
+        return "parsed", find_all_in(doc, name)
+    except XmlEntityError:
+        return "refused", []
+    except XmlSyntaxError:
+        return "malformed", []
+
+
+_VERSION = re.compile(rb"""^(?:\xef\xbb\xbf)?<\?xml\s+version\s*=\s*['"]([^'"]*)['"]""")
+
+
+def _odd_version(doc: bytes) -> bool:
+    # expat before 2.7 took any version number; the reader requires 1.x, as
+    # expat does now, so an older suite Python may accept what it refuses.
+    found = _VERSION.match(doc)
+    return bool(found) and not re.fullmatch(rb"1\.[0-9]+", found[1])
+
+
+def _assert_agree(doc: bytes) -> None:
     for name in _NAMES:
-        found = rust.xml_find_all(doc, name)
-        if found is None:
-            continue
-        answered = True
-        assert _reference(doc, name) == ("parsed", found), (doc, name)
-    return answered
+        expected, got = _oracle(doc, name), _rust(doc, name)
+        if expected[0] == "parsed" and got[0] == "malformed" and _odd_version(doc):
+            return
+        assert got == expected, (doc, name)
 
 
 @pytest.mark.parametrize("seed", list(_SEEDS))
-def test_the_rust_reader_answers_the_seeds_as_the_reference_does(seed: str) -> None:
+def test_the_seeds_read_as_expat_reads_them(seed: str) -> None:
     doc = _SEEDS[seed].encode()
-    assert _assert_agree(doc)
+    assert _oracle(doc, "r")[0] == "parsed"
+    _assert_agree(doc)
 
 
 def test_package_references_come_back_in_document_order() -> None:
-    assert rust.xml_find_all(_SDK_CSPROJ.encode(), "PackageReference") == [
+    assert find_all_in(_SDK_CSPROJ.encode(), "PackageReference") == [
         {"Include": "Newtonsoft.Json", "Version": "13.0.3"},
         {"Include": "Serilog"},
         {"Include": "Polly", "Version": "8.*", "PrivateAssets": "all"},
@@ -169,9 +204,7 @@ def test_package_references_come_back_in_document_order() -> None:
 def test_a_namespaced_project_has_no_plain_package_references() -> None:
     # ElementTree matches expanded names, so a legacy project's
     # `PackageReference` is `{msbuild-uri}PackageReference`, as before.
-    doc = _LEGACY_CSPROJ.encode()
-    assert rust.xml_find_all(doc, "PackageReference") == []
-    assert find_all_python(doc, "PackageReference") == []
+    assert find_all_in(_LEGACY_CSPROJ.encode(), "PackageReference") == []
 
 
 def _mutate(rng: random.Random, doc: bytes) -> bytes:
@@ -188,24 +221,48 @@ def _mutate(rng: random.Random, doc: bytes) -> bytes:
             return doc[:at] + bytes([rng.randrange(256)]) + doc[at + 1 :]
 
 
-def test_mutated_documents_get_the_reference_answer_or_none() -> None:
+def test_mutated_documents_read_as_expat_reads_them() -> None:
     rng = random.Random(_FUZZ_SEED)
-    answered = well_formed = 0
     for seed in _SEEDS.values():
         for _ in range(_MUTATIONS_PER_SEED):
             doc = seed.encode()
             for _ in range(rng.randint(1, 3)):
                 doc = _mutate(rng, doc)
-            agreed = _assert_agree(doc)
-            if b"<!DOCTYPE" not in doc and _reference(doc, "r")[0] == "parsed":
-                well_formed += 1
-                answered += agreed
-    # Most mutants are malformed; the ones that stay well-formed (a changed
-    # value, a moved space) must mostly be answered, or the reader could
-    # decline its way past this test. It declines the odd few on purpose: a
-    # non-ASCII name, version "1.-0", encoding "UTF8".
-    assert well_formed > 100
-    assert answered >= well_formed * 9 // 10, (answered, well_formed)
+            _assert_agree(doc)
+
+
+@pytest.mark.parametrize(
+    "doc",
+    [
+        '<!DOCTYPE r [<!ATTLIST r a CDATA "d" b NMTOKEN "  x  y ">]><r b=" p  q "/>',
+        '<!DOCTYPE r [<!ATTLIST r xmlns CDATA "urn:d" xmlns:p CDATA "urn:p" p:a CDATA "v">]><r><s/></r>',
+        '<!DOCTYPE r [<!ELEMENT r (s|t)*><!NOTATION n PUBLIC "-//n//EN">]><r/>',
+        '<!DOCTYPE r SYSTEM "r.dtd"><r a="x&foo;y"/>',
+        '<!DOCTYPE r [%p;<!ENTITY e "x"><!ATTLIST r a CDATA "d">]><r/>',
+        "<?xml version='1.0' encoding='windows-1251'?><r v='\xcf\xf0\xe8'/>",
+        "<?xml version='1.0' encoding='ISO-8859-1'?><r\xba/>",
+        "\ufeff<?xml version='1.0' encoding='UTF-16'?><r v='\xe9'/>",
+    ],
+    ids=[
+        "attribute-defaults",
+        "defaulted-namespaces",
+        "element-and-notation",
+        "external-subset",
+        "parameter-entity",
+        "windows-1251",
+        "latin-1-letter",
+        "utf-16",
+    ],
+)
+def test_dtds_and_encodings_read_as_expat_reads_them(doc: str) -> None:
+    if doc.startswith("\ufeff"):
+        data = doc.encode("utf-16-le")
+    elif "windows-1251" in doc or "ISO-8859-1" in doc:
+        data = doc.encode("latin-1")
+    else:
+        data = doc.encode()
+    assert _rust(data, "r") == _oracle(data, "r")
+    assert _rust(data, "s") == _oracle(data, "s")
 
 
 @pytest.mark.parametrize(
@@ -227,6 +284,9 @@ def test_mutated_documents_get_the_reference_answer_or_none() -> None:
             '<!DOCTYPE r [<!ENTITY % p SYSTEM "http://example.invalid/x">]><r/>',
             id="parameter-entity",
         ),
+        pytest.param(
+            '<!DOCTYPE r [<!ENTITY e SYSTEM "u" NDATA n>]><r/>', id="unparsed-entity"
+        ),
     ],
 )
 def test_entity_declarations_are_refused_however_declared(
@@ -234,50 +294,80 @@ def test_entity_declarations_are_refused_however_declared(
 ) -> None:
     path = tmp_path / "Repo.csproj"
     path.write_text(doc, encoding="utf-8")
-    assert rust.xml_find_all(doc.encode(), "r") is None
-    with pytest.raises(ex.XmlEntityRefusedError):
+    assert _oracle(doc.encode(), "r")[0] == "refused"
+    with pytest.raises(XmlEntityError):
         find_all(path, "r")
 
 
-def test_a_dtd_without_entities_is_read_by_the_reference(tmp_path: Path) -> None:
-    path = tmp_path / "Repo.slnx"
-    path.write_text(
-        '<!DOCTYPE Solution><Solution><Project Path="a"/></Solution>', encoding="utf-8"
-    )
-    assert find_all(path, "Project") == [{"Path": "a"}]
-
-
-def test_a_declined_encoding_is_read_by_the_reference(tmp_path: Path) -> None:
-    doc = "<?xml version='1.0' encoding='latin-1'?><r><a v='caf\xe9'/></r>"
-    path = tmp_path / "Repo.csproj"
-    path.write_bytes(doc.encode("latin-1"))
-    assert rust.xml_find_all(path.read_bytes(), "a") is None
-    assert find_all(path, "a") == [{"v": "café"}]
-
-
-def test_without_the_extension_the_reference_answers(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    path = tmp_path / "Repo.csproj"
-    path.write_text(_SDK_CSPROJ, encoding="utf-8")
-    monkeypatch.setattr(safe_xml, "rust_extension", lambda: None)
-    assert [ref["Include"] for ref in find_all(path, "PackageReference")] == [
-        "Newtonsoft.Json",
-        "Serilog",
-        "Polly",
-    ]
-
-
-def test_malformed_xml_raises_the_parse_error_callers_catch(tmp_path: Path) -> None:
+def test_both_errors_are_content_errors_callers_catch(tmp_path: Path) -> None:
     path = tmp_path / "Repo.csproj"
     path.write_text("<Project><ItemGroup></Project>", encoding="utf-8")
-    with pytest.raises(ElementTree.ParseError):
+    with pytest.raises(XML_CONTENT_ERRORS):
         find_all(path, "PackageReference")
+    assert issubclass(XmlSyntaxError, ValueError)
+    assert issubclass(XmlEntityError, ValueError)
+    with pytest.raises(OSError):
+        find_all(tmp_path / "missing.csproj", "PackageReference")
 
 
-def test_loading_the_reference_leaves_elementtree_accelerated() -> None:
-    import _elementtree
+def _legal(code: int) -> bool:
+    return code in (0x9, 0xA, 0xD) or 0x20 <= code <= 0xD7FF or 0xE000 <= code <= 0xFFFD
 
-    assert sys.modules["xml.etree.ElementTree"] is ElementTree
-    assert sys.modules["_elementtree"] is _elementtree
-    assert ElementTree.XMLParser is _elementtree.XMLParser
+
+def test_name_characters_are_expats_in_every_encoding() -> None:
+    mismatches = []
+    for code in range(0x10000):
+        if not _legal(code) or chr(code) in ": \t\r\n":
+            continue
+        c = chr(code)
+        for doc in (f"<{c}/>", f"<a{c}/>"):
+            data = doc.encode()
+            if _rust(data, "")[0] != _oracle(data, "")[0]:
+                mismatches.append(hex(code))
+    # expat's Latin-1 table counts three more letters than its Unicode one.
+    for c in "\xaa\xb5\xba":
+        for data in (
+            f"\ufeff<{c}/>".encode("utf-16-le"),
+            f"<?xml version='1.0' encoding='ISO-8859-1'?><a{c}/>".encode("latin-1"),
+            f"<?xml version='1.0' encoding='latin-1'?><a{c}/>".encode("latin-1"),
+        ):
+            if _rust(data, "")[0] != _oracle(data, "")[0]:
+                mismatches.append(repr(data))
+    assert not mismatches, mismatches[:20]
+
+
+def _carried_codec_names() -> list[str]:
+    return re.findall(r'^    \("([^"]+)", \d+\),$', _CHARSETS.read_text(), re.MULTILINE)
+
+
+# Python's unicode_escape codec warns about the backslash among the bytes.
+@pytest.mark.filterwarnings("ignore:invalid escape sequence:DeprecationWarning")
+def test_every_carried_encoding_reads_as_pythons_codec_reads_it() -> None:
+    names = _carried_codec_names()
+    assert {"cp1251", "koi8_r", "latin_1", "windows_1252", "utf8"} <= set(names)
+    for name in names:
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9._-]*", name):
+            continue  # not an encoding name XML lets a declaration use
+        high = bytes(
+            b
+            for b in range(0x80, 0x100)
+            if bytes([b]).decode(name, "replace") != "\ufffd"
+        )
+        doc = f"<?xml version='1.0' encoding='{name}'?><r v='".encode() + high + b"'/>"
+        assert _rust(doc, "r") == _oracle(doc, "r"), name
+
+
+def test_an_encoding_no_codec_names_is_an_error() -> None:
+    doc = b"<?xml version='1.0' encoding='x-no-such-codec'?><r/>"
+    assert _rust(doc, "r") == ("malformed", [])
+
+
+def test_find_all_reads_the_file(tmp_path: Path) -> None:
+    path = tmp_path / "Repo.slnx"
+    path.write_text(_SLNX, encoding="utf-8")
+    assert [p["Path"] for p in find_all(path, "Project")] == [
+        "src\\Main\\Main.csproj",
+        "src/Lib/Lib.csproj",
+        "bench/Bench.csproj",
+    ]
+    assert safe_xml.find_all is find_all

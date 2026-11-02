@@ -40,13 +40,13 @@ SEMANTIC_EXTRA = "Semantic search requires 'semantic' extra: uv sync --extra sem
 # Input errors
 JSON_TOO_DEEP = "JSON nesting exceeds the decoder's recursion limit"
 
-# XML documents (utils/safe_xml.py), which never expand what they declare
-XML_ENTITY_DECLARED = "XML entity declarations are refused: {name}"
-XML_EXTERNAL_ENTITY = "XML external entity references are refused: {system_id}"
-
-# TOML text (utils/toml_writer.py)
-TOML_UNSUPPORTED_VALUE = "Object of type '{type}' is not TOML serializable"
-TOML_KEY_NOT_STR = "Invalid mapping key '{key}' of type '{type}'. A string is required."
+# The Rust extension (rust/cgr_graph_rs), which cgr does not run without
+RUST_EXTENSION_MISSING = (
+    "code-graph-rag needs its Rust extension, cgr-graph-rs, and cannot import "
+    "it ({error}). It ships as wheels for CPython 3.12+ on Linux (x86_64, "
+    "aarch64), macOS and Windows x64; reinstall code-graph-rag there, or, in a "
+    "checkout, run `uv sync` with a Rust toolchain on PATH to build it."
+)
 
 # OpenAI-compatible embedding errors
 OPENAI_EMBEDDING_HTTP_ERROR = (
@@ -230,14 +230,6 @@ NO_DESCENDANT = "no node at descendant index {index}"
 class NoTreeBridge(Exception):
     """Stands in for the Rust extension's `NotBorrowed` when it has no tree
     bridge, so callers always have a class to catch; nothing raises it."""
-
-
-class XmlEntityRefusedError(ValueError):
-    """An XML document declared an entity or referenced an external one.
-
-    Expanding either is how XML bombs and external-entity reads work, so the
-    document is refused as a whole, as defusedxml refused it before.
-    """
 
 
 class UnknownProviderError(ValueError):

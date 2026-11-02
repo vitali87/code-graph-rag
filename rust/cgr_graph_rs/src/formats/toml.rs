@@ -1,6 +1,7 @@
 //! TOML text exactly as `tomli_w.dumps` writes it with its defaults (four
-//! space indent, no multi-line strings), for the values cgr's workspace files
-//! hold: strings, booleans, integers, arrays and tables.
+//! space indent, no multi-line strings): strings, booleans, numbers, arrays
+//! and tables. A number arrives already spelled (`str()` of the Python
+//! value, as tomli-w writes it), so no float formatting is reimplemented.
 //!
 //! The layout follows tomli-w's: a table's plain values first, then its
 //! sub-tables; an array of tables stays inline (`[\n    { ... },\n]`)
@@ -14,7 +15,8 @@ const MAX_LINE_LENGTH: usize = 100;
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
     Bool(bool),
-    Int(i64),
+    /// An integer or float, spelled as it is to be written.
+    Number(String),
     Str(String),
     Array(Vec<Value>),
     Table(Vec<(String, Value)>),
@@ -91,7 +93,7 @@ fn fits_inline(item: &Value) -> bool {
 fn push_literal(out: &mut String, value: &Value, nest_level: usize) {
     match value {
         Value::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
-        Value::Int(i) => out.push_str(&i.to_string()),
+        Value::Number(text) => out.push_str(text),
         Value::Str(s) => push_string(out, s),
         Value::Array(items) if items.is_empty() => out.push_str("[]"),
         Value::Array(items) => {

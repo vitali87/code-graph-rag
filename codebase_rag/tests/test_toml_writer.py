@@ -1,11 +1,10 @@
-"""Workspace TOML, written by the Rust writer and by the reference writer.
+"""Workspace TOML, written by the Rust extension.
 
-`toml_writer.dumps` takes the Rust extension's text
-(rust/cgr_graph_rs/src/formats/toml.rs) whenever it gives one, so both must
-write the same characters; the Rust writer declines (None) any value it does
-not handle, and the reference then writes it. Both must also keep writing
-what tomli-w wrote, so a workspace file saved before cgr dropped tomli-w
-is rewritten unchanged: the pinned texts below are tomli-w 1.2.0's.
+`toml_writer.dumps` is the Rust writer (rust/cgr_graph_rs/src/formats/toml.rs),
+which replaced tomli-w with no Python fallback, so it must keep writing what
+tomli-w wrote: a workspace file saved before is rewritten unchanged. The
+pinned texts below are tomli-w 1.2.0's, and every random table must read
+back through the standard library's `tomllib` as the table it was.
 """
 
 from __future__ import annotations
@@ -14,11 +13,11 @@ import random
 import string
 import tomllib
 from pathlib import Path
+from types import MappingProxyType
 
 import pytest
 
-from codebase_rag.utils import toml_writer
-from codebase_rag.utils.toml_writer import dumps, dumps_python
+from codebase_rag.utils.toml_writer import dumps
 from codebase_rag.workspaces.models import WorkspaceConfig, WorkspaceRepo
 from codebase_rag.workspaces.storage import load_workspace, save_workspace
 
@@ -74,20 +73,39 @@ _PINNED = {
         '"a b" = 1\n"" = -2\nok-key_1 = [\n    1,\n    [\n        2,\n'
         "        3,\n    ],\n    {},\n]\n\n[nested.t]\nx = true\n",
     ),
+    "numbers-tuples-mappings": (
+        {
+            "f": 0.5,
+            "big": 2**64,
+            "e": 1e16,
+            "t": ("a", 1),
+            "m": MappingProxyType({"k": "v"}),
+        },
+        'f = 0.5\nbig = 18446744073709551616\ne = 1e+16\nt = [\n    "a",\n    1,\n]\n\n'
+        '[m]\nk = "v"\n',
+    ),
 }
 
 
 @pytest.mark.parametrize("case", list(_PINNED))
-def test_the_reference_writes_what_tomli_w_wrote(case: str) -> None:
+def test_it_writes_what_tomli_w_wrote(case: str) -> None:
     table, expected = _PINNED[case]
-    assert dumps_python(table) == expected
+    assert dumps(table) == expected
 
 
-def test_unsupported_values_and_keys_raise_type_error() -> None:
-    with pytest.raises(TypeError):
-        dumps_python({"when": object()})
-    with pytest.raises(TypeError):
-        dumps_python({1: "x"})  # type: ignore[dict-item]
+@pytest.mark.parametrize(
+    ("table", "message"),
+    [
+        ({"when": object()}, "Object of type 'object' is not TOML serializable"),
+        ({1: "x"}, "Invalid mapping key '1' of type 'int'. A string is required."),
+        ({"s": {1, 2}}, "Object of type 'set' is not TOML serializable"),
+    ],
+)
+def test_what_tomli_w_refused_raises_the_same_type_error(
+    table: dict, message: str
+) -> None:
+    with pytest.raises(TypeError, match=message):
+        dumps(table)
 
 
 def _text(rng: random.Random) -> str:
@@ -100,19 +118,20 @@ def _text(rng: random.Random) -> str:
 
 
 def _value(rng: random.Random, depth: int) -> object:
-    kind = rng.randrange(7 if depth < 3 else 4)
-    match kind:
+    match rng.randrange(8 if depth < 3 else 5):
         case 0:
             return _text(rng)
         case 1:
             return rng.choice((True, False))
         case 2:
-            return rng.choice((0, -1, 7, 2**63 - 1, -(2**63)))
+            return rng.choice((0, -1, 7, 2**63 - 1, -(2**63), 2**80))
         case 3:
-            return rng.choice((_text(rng), rng.randrange(100)))
+            return rng.choice((0.0, -1.5, 1e300, 3.14159))
         case 4:
-            return [_value(rng, depth + 1) for _ in range(rng.randrange(4))]
+            return rng.choice((_text(rng), rng.randrange(100)))
         case 5:
+            return [_value(rng, depth + 1) for _ in range(rng.randrange(4))]
+        case 6:
             return [_table(rng, depth + 1) for _ in range(rng.randint(1, 3))]
         case _:
             return _table(rng, depth + 1)
@@ -122,57 +141,11 @@ def _table(rng: random.Random, depth: int) -> dict[str, object]:
     return {_text(rng): _value(rng, depth) for _ in range(rng.randrange(4))}
 
 
-def test_random_tables_get_the_same_text_both_ways_and_read_back() -> None:
-    rust = pytest.importorskip("cgr_graph_rs")
-    if not hasattr(rust, "toml_dumps"):
-        pytest.skip("this cgr_graph_rs build predates its TOML writer")
+def test_random_tables_read_back_as_written() -> None:
     rng = random.Random(_FUZZ_SEED)
     for _ in range(_FUZZ_CASES):
         table = _table(rng, 0)
-        expected = dumps_python(table)
-        assert rust.toml_dumps(table) == expected, table
-        assert tomllib.loads(expected) == table
-
-
-@pytest.mark.parametrize("case", list(_PINNED))
-def test_the_rust_writer_writes_the_pinned_text(case: str) -> None:
-    rust = pytest.importorskip("cgr_graph_rs")
-    if not hasattr(rust, "toml_dumps"):
-        pytest.skip("this cgr_graph_rs build predates its TOML writer")
-    table, expected = _PINNED[case]
-    assert rust.toml_dumps(table) == expected
-
-
-@pytest.mark.parametrize(
-    "table",
-    [
-        pytest.param({"x": 1.5}, id="float"),
-        pytest.param({"x": 2**64}, id="int-past-64-bits"),
-        pytest.param({"x": ("a", 1.0)}, id="float-in-tuple"),
-        pytest.param({1: "x"}, id="non-str-key"),
-        pytest.param({"x": object()}, id="unsupported"),
-    ],
-)
-def test_the_rust_writer_declines_what_it_does_not_write(table: dict) -> None:
-    rust = pytest.importorskip("cgr_graph_rs")
-    if not hasattr(rust, "toml_dumps"):
-        pytest.skip("this cgr_graph_rs build predates its TOML writer")
-    assert rust.toml_dumps(table) is None
-
-
-def test_a_declined_table_is_written_by_the_reference() -> None:
-    assert (
-        dumps({"ratio": 0.5, "big": 2**64})
-        == "ratio = 0.5\nbig = 18446744073709551616\n"
-    )
-
-
-def test_without_the_extension_the_reference_writes(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    table, expected = _PINNED["inline-repos"]
-    monkeypatch.setattr(toml_writer, "rust_extension", lambda: None)
-    assert dumps(table) == expected
+        assert tomllib.loads(dumps(table)) == table, table
 
 
 def test_a_saved_workspace_loads_back(tmp_path: Path) -> None:
@@ -186,6 +159,4 @@ def test_a_saved_workspace_loads_back(tmp_path: Path) -> None:
     )
     path = save_workspace(config, home=tmp_path)
     assert load_workspace("demo", home=tmp_path) == config
-    assert path.read_text(encoding="utf-8") == dumps_python(
-        {"workspace": config.model_dump()}
-    )
+    assert path.read_text(encoding="utf-8") == dumps({"workspace": config.model_dump()})
