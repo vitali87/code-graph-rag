@@ -307,6 +307,30 @@ fn encodings_follow_expat_and_pythons_codec_names() {
     );
     // A UTF-8 alias expat does not know reads ASCII only.
     assert!(xml::elements(b"<?xml version='1.0' encoding='U8'?><a v='x'/>").is_ok());
+    // UTF-16 with neither a byte-order mark nor a declaration, detected
+    // from its first two bytes as expat detects it.
+    let bare = " <Project><PackageReference Include=\"A\"/></Project>";
+    for doc in [
+        bare.encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect::<Vec<u8>>(),
+        bare.encode_utf16()
+            .flat_map(u16::to_be_bytes)
+            .collect::<Vec<u8>>(),
+        bare[1..]
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect::<Vec<u8>>(),
+        bare[1..]
+            .encode_utf16()
+            .flat_map(u16::to_be_bytes)
+            .collect::<Vec<u8>>(),
+    ] {
+        assert_eq!(
+            xml::find_all(&doc, "PackageReference").unwrap(),
+            vec![attrs(&[("Include", "A")])]
+        );
+    }
     // UTF-16 may name its own byte order, not the other one.
     let text = "<?xml version='1.0' encoding='UTF-16LE'?><a/>";
     let le: Vec<u8> = [0xFF, 0xFE]

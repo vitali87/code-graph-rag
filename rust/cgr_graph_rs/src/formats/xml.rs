@@ -190,10 +190,13 @@ fn decode(doc: &[u8]) -> Result<(Cow<'_, str>, bool), Undecodable<'_>> {
         (Some(Encoding::Utf16Le), rest)
     } else if let Some(rest) = doc.strip_prefix(b"\xFE\xFF") {
         (Some(Encoding::Utf16Be), rest)
-    } else if doc.starts_with(b"<\x00?\x00") {
-        (Some(Encoding::Utf16Le), doc)
-    } else if doc.starts_with(b"\x00<\x00?") {
+    } else if doc.len() >= 2 && doc[0] == 0 {
+        // As expat detects it: a document starts with an ASCII character,
+        // so a zero byte first is big-endian UTF-16, a zero byte second
+        // little-endian, with or without an XML declaration.
         (Some(Encoding::Utf16Be), doc)
+    } else if doc.len() >= 2 && doc[1] == 0 {
+        (Some(Encoding::Utf16Le), doc)
     } else {
         (None, doc)
     };
@@ -352,6 +355,9 @@ fn declared_encoding(doc: &[u8]) -> Option<String> {
     String::from_utf8(rest[1..1 + len].to_vec()).ok()
 }
 
+/// Strict UTF-16, as expat decodes it since 2.7: an unpaired surrogate is
+/// not a character (older expat paired a high surrogate with whatever unit
+/// followed it).
 fn utf16(body: &[u8], unit: fn([u8; 2]) -> u16) -> Result<Cow<'static, str>, Undecodable<'static>> {
     let units = body.chunks_exact(2).map(|pair| unit([pair[0], pair[1]]));
     let mut text = String::with_capacity(body.len() / 2);

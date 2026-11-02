@@ -171,17 +171,37 @@ def _rust(doc: bytes, name: str) -> tuple[str, list[dict[str, str]]]:
 _VERSION = re.compile(rb"""^(?:\xef\xbb\xbf)?<\?xml\s+version\s*=\s*['"]([^'"]*)['"]""")
 
 
-def _odd_version(doc: bytes) -> bool:
-    # expat before 2.7 took any version number; the reader requires 1.x, as
-    # expat does now, so an older suite Python may accept what it refuses.
+def _older_expat_accepts(doc: bytes) -> bool:
+    """A document only expat before 2.7 read, which the reader refuses as
+    expat does now: an XML declaration whose version is not 1.x, or UTF-16
+    with an unpaired surrogate (older expat paired it with the next unit)."""
     found = _VERSION.match(doc)
-    return bool(found) and not re.fullmatch(rb"1\.[0-9]+", found[1])
+    if found and not re.fullmatch(rb"1\.[0-9]+", found[1]):
+        return True
+    codec = None
+    if doc[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        codec = "utf-16"
+    elif len(doc) >= 2 and doc[0] == 0:
+        codec = "utf-16-be"
+    elif len(doc) >= 2 and doc[1] == 0:
+        codec = "utf-16-le"
+    if codec is None:
+        return False
+    try:
+        doc[: len(doc) - len(doc) % 2].decode(codec)
+    except UnicodeDecodeError:
+        return True
+    return False
 
 
 def _assert_agree(doc: bytes) -> None:
     for name in _NAMES:
         expected, got = _oracle(doc, name), _rust(doc, name)
-        if expected[0] == "parsed" and got[0] == "malformed" and _odd_version(doc):
+        if (
+            expected[0] == "parsed"
+            and got[0] == "malformed"
+            and _older_expat_accepts(doc)
+        ):
             return
         assert got == expected, (doc, name)
 
@@ -219,6 +239,34 @@ def _mutate(rng: random.Random, doc: bytes) -> bytes:
             return doc[:end] + doc[at:end] + doc[end:]
         case _:
             return doc[:at] + bytes([rng.randrange(256)]) + doc[at + 1 :]
+
+
+# UTF-16 with and without a byte-order mark or a declaration: expat detects
+# the byte order from the first two bytes.
+_UTF16_SEEDS = {
+    f"{order}-{form}": (bom + text).encode(codec)
+    for order, codec, bom in (("le", "utf-16-le", ""), ("be", "utf-16-be", ""))
+    for form, text in (
+        ("bare", _SDK_CSPROJ.split("\n", 1)[1]),
+        ("spaced", " \n" + _SLNX),
+        ("bom", "\ufeff" + _SLNX),
+        ("declared", "<?xml version='1.0' encoding='UTF-16'?>" + _SLNX),
+    )
+}
+
+
+@pytest.mark.parametrize("seed", list(_UTF16_SEEDS))
+def test_utf16_documents_read_as_expat_reads_them(seed: str) -> None:
+    doc = _UTF16_SEEDS[seed]
+    assert _oracle(doc, "Project")[0] == "parsed"
+    for name in ("PackageReference", "Project"):
+        assert _rust(doc, name) == _oracle(doc, name), name
+    rng = random.Random(_FUZZ_SEED)
+    for _ in range(_MUTATIONS_PER_SEED // 3):
+        mutant = doc
+        for _ in range(rng.randint(1, 3)):
+            mutant = _mutate(rng, mutant)
+        _assert_agree(mutant)
 
 
 def test_mutated_documents_read_as_expat_reads_them() -> None:
