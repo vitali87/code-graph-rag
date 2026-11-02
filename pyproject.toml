@@ -60,7 +60,9 @@ dependencies = [
     "click>=8.3.3",
     "protobuf>=6.33.5",
     "defusedxml>=0.7.1",
-    "huggingface-hub[hf-xet]>=1.7.2",
+    # codebase_rag/stack/manager.py reads docker-compose files with it, and
+    # the CLI imports that module on every run.
+    "pyyaml>=6.0",
     "pathspec>=1.0.4",
     "pygments>=2.20.0",
     # certifi is the CA bundle httpx and requests verify against; 2026.10.23
@@ -194,6 +196,10 @@ semantic = [
     "sqlite-vec>=0.1.9; (sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')) or sys_platform == 'darwin' or (sys_platform == 'win32' and platform_machine == 'AMD64')",
     "torch>=2.6.0",
     "transformers>=5.0.0",
+    # transformers downloads the UniXcoder model through it, and nothing
+    # outside this extra imports it, so a default install leaves it out with
+    # the five packages it brings (hf-xet, fsspec, tqdm, filelock, packaging).
+    "huggingface-hub[hf-xet]>=1.7.2",
 ]
 
 milvus = [
