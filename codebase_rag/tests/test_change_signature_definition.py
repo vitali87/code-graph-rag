@@ -106,6 +106,40 @@ def test_a_kept_parameter_spelled_anew_takes_the_new_spelling(
         )
 
 
+def test_a_non_ascii_parameter_listed_by_name_keeps_its_default(
+    temp_repo: Path,
+) -> None:
+    # Read without its default, `élan` left `helper()` unmapped and refused
+    # moving after `b` as a required parameter following a default.
+    root = _project(
+        temp_repo,
+        {
+            "pkg/__init__.py": "",
+            "pkg/util.py": (
+                "def helper(élan: int = 1, b: str = 'x') -> str:\n    return b * élan\n"
+            ),
+            "pkg/app.py": "from pkg.util import helper\n\n\ndef run():\n    return helper()\n",
+        },
+    )
+    store, _updater = _index(root)
+
+    kept = change_signature(
+        root,
+        store.fetch_all,
+        PROJECT,
+        HELPER,
+        ["élan", "b", "n: int = 0"],
+        dry_run=True,
+    )
+    moved = change_signature(
+        root, store.fetch_all, PROJECT, HELPER, ["b", "élan"], dry_run=True
+    )
+
+    assert kept.unmapped == ()
+    assert moved.unmapped == ()
+    assert "+def helper(b: str = 'x', élan: int = 1) -> str:" in moved.diff
+
+
 def test_a_required_parameter_after_a_default_is_refused(
     repo: tuple[Path, _StatefulIngestor, GraphUpdater],
 ) -> None:
