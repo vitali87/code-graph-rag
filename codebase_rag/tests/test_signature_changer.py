@@ -192,11 +192,14 @@ def test_unknown_definition_is_refused(
         change_signature(root, store.fetch_all, PROJECT, qn, ["a"])
 
 
-def test_non_python_definition_is_refused(temp_repo: Path) -> None:
+def test_definition_in_an_unsupported_language_is_refused(temp_repo: Path) -> None:
     root, store, _updater = _indexed(
-        temp_repo, {"web/lib.js": "function helper(a, b) {\n  return a + b;\n}\n"}
+        temp_repo,
+        {
+            "web/lib.go": "package web\n\nfunc helper(a int, b int) int {\n\treturn a + b\n}\n"
+        },
     )
-    with pytest.raises(SignatureRefused, match="is not Python"):
+    with pytest.raises(SignatureRefused, match="does not support yet"):
         change_signature(
             root, store.fetch_all, PROJECT, f"{PROJECT}.web.lib.helper", ["b", "a"]
         )
@@ -475,7 +478,7 @@ def _function_header(changer: SignatureChanger, patcher: Patcher) -> _Header:
     [
         ({"line": None, "resolution": None}, "site carries no location (dynamic)"),
         ({"resolution": "heuristic"}, "site was resolved by heuristic"),
-        ({"path": "web/app.js"}, "web/app.js is not Python"),
+        ({"path": "web/app.js"}, "web/app.js is not in the definition's language"),
         ({"path": "pkg/gone.py"}, "file cannot be read"),
         ({"line": 4, "col": 0}, "no call found at the recorded position"),
         ({"end_col": 99}, "no call found at the recorded position"),

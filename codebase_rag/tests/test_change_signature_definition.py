@@ -150,16 +150,15 @@ def test_a_definition_with_special_parameters_is_refused(
         )
 
 
-def test_a_non_python_definition_is_refused(temp_repo: Path) -> None:
+def test_a_definition_in_an_unsupported_language_is_refused(temp_repo: Path) -> None:
+    # JavaScript is supported now (issue #1908, test_signature_javascript.py);
+    # Go is not yet.
     root = _project(
         temp_repo,
-        {
-            "lib/tool.js": "export function helper(a) { return a; }\n",
-            "lib/app.js": "import { helper } from './tool.js';\nexport const run = () => helper(1);\n",
-        },
+        {"lib/tool.go": "package lib\n\nfunc helper(a int) int {\n\treturn a\n}\n"},
     )
     store, _updater = _index(root)
-    with pytest.raises(SignatureRefused, match=r"Python"):
+    with pytest.raises(SignatureRefused, match=r"does not support yet"):
         change_signature(
             root, store.fetch_all, PROJECT, f"{PROJECT}.lib.tool.helper", ["a", "n"]
         )
