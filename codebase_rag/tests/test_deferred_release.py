@@ -35,9 +35,17 @@ PUSHED = (
 PUBLISHED = (
     f"gh api -X PATCH repos/{REPO}/releases/9 -F draft=false -f make_latest=true"
 )
+# Each call the step makes that GitHub can refuse, as the gh stub names it.
+REFUSABLE_CALLS = [
+    "GET releases/latest",
+    "GET releases?per_page=100",
+    f"GET git/tags/{TAG_OBJECT}",
+    "PATCH releases/9",
+]
 
 # gh answers from JSON fixtures through the real jq, so the filters the
-# workflow passes are exercised too. Every call lands in `calls`.
+# workflow passes are exercised too. Every call lands in `calls`, and the one
+# GH_REFUSE names fails the way a refused call does.
 STUBS = r"""
 gh() {
   printf 'gh %s\n' "$*" >> calls
@@ -47,10 +55,15 @@ gh() {
       --jq) filter="$arg" ;;
       -X) method="$arg" ;;
     esac
-    case "$arg" in repos/*) url="${arg#repos/"$GITHUB_REPOSITORY"/}" ;; esac
+    case "$arg" in
+      repos/*) url="${arg#repos/"$GITHUB_REPOSITORY"/}" ;;
+      rate_limit) url="$arg" ;;
+    esac
     previous="$arg"
   done
+  [ "$method $url" != "${GH_REFUSE:-}" ] || return 1
   case "$method $url" in
+    "GET rate_limit") fixture=rate_limit.json ;;
     "GET releases/latest") fixture=latest.json ;;
     "GET releases?per_page=100") fixture=releases.json ;;
     "GET git/tags/"*) fixture=annotation.json ;;
@@ -133,6 +146,7 @@ def _publish(
     releases: list | None = None,
     latest: str | None = LATEST,
     annotation: str | None = f"{MARKER}: CI is not proven for {'c' * 40}",
+    allowance: int | None = None,
     **env: str,
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     files = {
@@ -145,6 +159,10 @@ def _publish(
         files["latest.json"] = json.dumps({"tag_name": latest})
     if annotation is not None:
         files["annotation.json"] = json.dumps({"message": annotation})
+    if allowance is not None:
+        files["rate_limit.json"] = json.dumps(
+            {"resources": {"core": {"remaining": allowance, "reset": 1_793_635_200}}}
+        )
     script = _step(WORKFLOW, "publish", "Publish the deferred release")["run"]
     return _run(tmp_path, script, files, **env)
 
@@ -217,6 +235,51 @@ def test_state_that_cannot_be_read_publishes_nothing(
 
     assert result.returncode != 0
     _assert_nothing_published(calls)
+
+
+@pytest.mark.parametrize("refused", REFUSABLE_CALLS)
+def test_a_spent_api_allowance_stops_the_look_without_failing(
+    tmp_path: Path, refused: str
+) -> None:
+    # Every workflow in the repository shares the allowance: CI runs that
+    # finish together spent it, and seven looks with nothing to publish
+    # turned main red.
+    result, calls = _publish(tmp_path, allowance=0, GH_REFUSE=refused)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "::warning::" in result.stdout, result.stdout
+    assert "2026-11-02T16:00:00Z" in result.stdout, result.stdout
+    assert "::error::" not in result.stdout + result.stderr
+    assert not (tmp_path / "summary").exists()
+    if refused != "PATCH releases/9":
+        _assert_nothing_published(calls)
+
+
+@pytest.mark.parametrize("refused", REFUSABLE_CALLS)
+def test_a_refused_call_with_allowance_left_still_fails(
+    tmp_path: Path, refused: str
+) -> None:
+    result, calls = _publish(tmp_path, allowance=4_999, GH_REFUSE=refused)
+
+    assert result.returncode != 0
+    assert "::error::" in result.stdout, result.stdout
+    assert not (tmp_path / "summary").exists()
+    if refused != "PATCH releases/9":
+        _assert_nothing_published(calls)
+
+
+def test_it_looks_again_every_hour() -> None:
+    # The look a spent allowance stopped is taken up again even when no
+    # further merge starts one.
+    workflow = _workflow(WORKFLOW)
+    triggers = workflow.get("on", workflow.get(True, {}))
+    (schedule,) = triggers.get("schedule", [])
+    minute, *rest = schedule["cron"].split()
+
+    assert minute.isdigit()
+    assert int(minute) < 60
+    assert rest == ["*", "*", "*", "*"]
+    assert "github.event_name == 'schedule'" in workflow["jobs"]["publish"]["if"]
 
 
 def test_only_a_green_ci_run_for_a_push_to_main_starts_it() -> None:
