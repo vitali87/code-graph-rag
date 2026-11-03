@@ -144,7 +144,9 @@ cgr mcp-server --read-only    # or MCP_READ_ONLY=true
 error with `isError: true`. In either mode `read_file` refuses files that look
 like credentials (`.env`, private keys, `.git/config`, ...); export
 `CGR_ALLOW_SENSITIVE_READS=true` in the server's environment to serve them (a
-`.env` in its working directory cannot set it).
+`.env` in its working directory cannot set it). `write_file` and
+`surgical_replace_code` refuse to change the same files unless
+`CGR_ALLOW_SENSITIVE_WRITES=true`, and never write inside `.git`.
 
 ![A Python MCP client over stdio listing the server's tools and calling list_projects, resolve, callers, get_code_snippet and find_duplicate_code on pallets/itsdangerous](../assets/demos/mcp-server-tools.gif)
 
@@ -231,6 +233,7 @@ A workspace server lists the workspace's indexed projects, refuses a `project` a
 |-------|----------|
 | Can't find uv/code-graph-rag | Use absolute paths from `which uv` |
 | Wrong repository analysed | Set `TARGET_REPO_PATH` to an absolute path |
+| `Configuration Error: The MCP server was started in ...` | The client started the server in your home directory or `/` and `TARGET_REPO_PATH` is not set. Set it to the project's directory |
 | Memgraph connection failed | Ensure `docker ps` shows Memgraph running |
 | Tools not showing | Run `claude mcp list` to verify installation |
 

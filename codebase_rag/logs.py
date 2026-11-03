@@ -1177,6 +1177,10 @@ MCP_SERVER_NO_ROOT = (
     "[GraphCode MCP] No project root configured, using current directory: {path}"
 )
 MCP_SERVER_ROOT_RESOLVED = "[GraphCode MCP] Project root resolved to: {path}"
+MCP_SERVER_BROAD_ROOT = (
+    "[GraphCode MCP] TARGET_REPO_PATH is {path}, which holds your home "
+    "directory: every file tool can reach every file under it."
+)
 MCP_SERVER_USING_ROOT = "[GraphCode MCP] Using project root: {path}"
 MCP_SERVER_WORKSPACE = "MCP server scoped to workspace {name!r} ({count} repos)"
 MCP_SERVER_CONFIG_ERROR = "[GraphCode MCP] Configuration error: {error}"

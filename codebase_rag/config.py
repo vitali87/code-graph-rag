@@ -48,8 +48,12 @@ def merge_dotenv(path: Path) -> dict[str, str]:
     # value, and a reference to it in the file reads that value too.
     values = DotEnv(path, encoding=cs.ENCODING_UTF8, override=False).dict()
     refused: dict[str, str] = {}
+    # The file may not set a waiver in any spelling: settings match names
+    # without regard to case, so `cgr_allow_sensitive_reads=true` beside an
+    # exported `CGR_ALLOW_SENSITIVE_READS=false` won (see load_settings).
+    environment_only = {name.upper() for name in cs.ENVIRONMENT_ONLY_SETTINGS}
     for name, value in values.items():
-        if value is None or name in os.environ:
+        if value is None or name in os.environ or name.upper() in environment_only:
             continue
         try:
             os.environ[name] = value
@@ -620,6 +624,14 @@ class AppConfig(BaseSettings):
         False, validation_alias="CGR_ALLOW_SENSITIVE_READS"
     )
 
+    # MCP write_file and surgical_replace_code refuse the same files: an
+    # overwrite destroys the secret, and an edit's refusals ("target not
+    # found", the lines of each match) let the client guess one character
+    # at a time. The CLI agent asks before every write instead.
+    ALLOW_SENSITIVE_WRITES: bool = Field(
+        False, validation_alias="CGR_ALLOW_SENSITIVE_WRITES"
+    )
+
     # A repository's .cgr.md loads only once the user approved its content
     # (issue #3456). True trusts every repository's file without asking:
     # for CI on repositories you control, never for code you did not write.
@@ -780,7 +792,10 @@ def load_settings(
     # when the user exported it: `.env` in the working directory is usually the
     # analysed repository's file, and could approve its own .cgr.md (Codex
     # review on PR #3471). Held at its default, silently, like an unset one.
-    exported = {name.upper() for name in inherited_env}
+    # An empty one counts as unset: settings skip an empty variable
+    # (env_ignore_empty) and read `.env` in its place, so it let the
+    # repository's file decide.
+    exported = {name.upper() for name in inherited_env if os.environ.get(name)}
     waivers = {
         name for name in cs.ENVIRONMENT_ONLY_SETTINGS if name.upper() not in exported
     }
