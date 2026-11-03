@@ -11,11 +11,14 @@ the README. The release workflow prepends feature entries via
 (dropping non-feature themes), and moves the marker below the block it
 inserted; hand edits remain welcome between releases and render too.
 
+- **Rust Upgrade**: Updated Rust to version 1.99.1-slim-trixie.
+- **Signature Functionality**: Added support for reading and writing JavaScript headers for change signatures, including the ability to change the signature of JavaScript functions or methods.
+- **macOS Compatibility**: The build now leaves macOS-14 support.
+<!-- latest-release-end -->
 - **Quiet Mode Enhancement**: The `--quiet` flag for the CLI now suppresses the scanning line for dead code and duplicates, providing a cleaner output.
 - **Context Budget Fix**: The system now correctly handles cases where a target doesn't fit within the allocated budget, preventing unexpected behaviour.
 - **Code Quality**: Changes have been made to report decorator and modifier changes that affect method calls and to ensure submodule grammars are loaded correctly.
 - **CGR Prune Feature**: A new `cgr prune` functionality has been added to remove projects where the root no longer exists.
-<!-- latest-release-end -->
 - **MiniMax Models Added**: Current MiniMax text models have been included.
 - **CLI and MCP Enhancements**: The `change_signature` operation is now accessible via the CLI and MCP, with improved handling for partial graphs and classification as a destructive writer.
 - **Fuzzing Improvements**: The Graph-RS project now includes additional fuzz targets for more comprehensive testing.

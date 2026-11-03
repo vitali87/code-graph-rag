@@ -61,10 +61,9 @@ Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by c
 ## Latest News 🔥
 
 <!-- SECTION:latest_news -->
-- **Quiet Mode Enhancement**: The `--quiet` flag for the CLI now suppresses the scanning line for dead code and duplicates, providing a cleaner output.
-- **Context Budget Fix**: The system now correctly handles cases where a target doesn't fit within the allocated budget, preventing unexpected behaviour.
-- **Code Quality**: Changes have been made to report decorator and modifier changes that affect method calls and to ensure submodule grammars are loaded correctly.
-- **CGR Prune Feature**: A new `cgr prune` functionality has been added to remove projects where the root no longer exists.
+- **Rust Upgrade**: Updated Rust to version 1.99.1-slim-trixie.
+- **Signature Functionality**: Added support for reading and writing JavaScript headers for change signatures, including the ability to change the signature of JavaScript functions or methods.
+- **macOS Compatibility**: The build now leaves macOS-14 support.
 <!-- /SECTION:latest_news -->
 
 See [NEWS.md](NEWS.md) for the full history.
