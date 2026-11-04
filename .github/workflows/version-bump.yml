@@ -21,7 +21,7 @@ permissions: read-all
 env:
   RELEASE_EVERY: 50
   DEFERRED_RELEASE_MARKER: release-deferred
-  VERSION_SET_BY_HAND_MARKER: version-set-by-hand
+  MERGE_COUNT_MARKER: merge-count
 
 jobs:
   bump-version:
@@ -172,9 +172,9 @@ jobs:
           # A tag that cannot be read fails the run: skipping it could leave a
           # security fix unreleased.
           DEFERRED=" "
-          # The same annotations carry the merge count of a bump that holds a
-          # version set by hand ("Create git tag"), which the cadence below
-          # counts instead of the numbers that version skipped.
+          # The same annotations carry the merge count of a tag whose version
+          # its number cannot be trusted to show ("Create git tag"), which the
+          # cadence below counts instead of that tag's distance.
           COUNTED=""
           for TAG in $(printf '%s\n' "$TAGS" \
               | awk -F'refs/tags/' 'NF > 1 { n = index($2, "^{}"); if (n) print substr($2, 1, n - 1) }' \
@@ -192,7 +192,7 @@ jobs:
             case "$TAG_MESSAGE" in
               "${DEFERRED_RELEASE_MARKER}:"*) DEFERRED="${DEFERRED}${TAG} " ;;
             esac
-            COUNT=$(printf '%s\n' "$TAG_MESSAGE" | awk -v marker="${VERSION_SET_BY_HAND_MARKER}: " '
+            COUNT=$(printf '%s\n' "$TAG_MESSAGE" | awk -v marker="${MERGE_COUNT_MARKER}: " '
                 index($0, marker) == 1 {
                   n = substr($0, length(marker) + 1)
                   if (n ~ /^[1-9][0-9]*$/) { print n; exit }
@@ -212,6 +212,10 @@ jobs:
               esac
             fi
           done
+          # Every commit a tag points at (annotated tags peeled): the newest
+          # one in the walk below is where the merges a new tag stands for
+          # begin. Read from the listing above, with no further call.
+          TAGGED=" $(printf '%s\n' "$TAGS" | awk -F'\t' '$1 ~ /^[0-9a-f]+$/ {print $1}' | paste -sd ' ' -) "
           if [ "$TAG_STATUS" -eq 0 ] && [[ "$DEFERRED" != *" v${CURRENT} "* ]]; then
             BASE_TAG="v${CURRENT}"
           else
@@ -304,19 +308,17 @@ jobs:
           # which is how far the patch number moves: merges that landed while
           # an earlier bump or its CI was running share this run's bump, and
           # each of them is still one version (and one step of RELEASE_EVERY).
-          # A version set by hand ends that count, as its number accounts for
-          # the merges up to it, but not the batch: BATCH runs on to the
-          # newest bump commit, so the merges a hand-set number skipped past
-          # are counted as the merges they are, not as the numbers skipped.
+          # BATCH counts on past both of that count's boundaries, to the
+          # newest tagged commit: every merge the tag this run cuts stands
+          # for, for when main's version has no tag of its own (below).
           BREAKING=false
           UNRELEASED_BREAKING=false
           BREAKING_PRS=""
           RELEASE_NOW=false
           COUNTING=true
           MERGED=0
-          SINCE_BUMP=true
+          SINCE_TAG=true
           BATCH=0
-          HAND_SET_SEEN=false
           # The pull requests in $PULLS labelled "breaking change", which the
           # release names when they added no notes (issue #3431).
           breaking_prs() {
@@ -343,7 +345,8 @@ jobs:
               exit 1
             fi
             PARENT=""
-            if [ "$SINCE_BUMP" = "true" ]; then
+            BUMP_COMMIT=false
+            if [ "$COUNTING" = "true" ] || [ "$SINCE_TAG" = "true" ]; then
               if [ -n "$RANGE" ]; then
                 SUBJECT=$(printf '%s\n' "$RANGE" \
                   | jq -r --arg sha "$SHA" 'select(.sha == $sha) | .message' | head -n 1)
@@ -358,8 +361,8 @@ jobs:
               case "$SUBJECT" in
                 "chore: bump version to "*)
                   if ! printf '%s\n' "$PULLS" | grep -qxF '#pull-request'; then
+                    BUMP_COMMIT=true
                     COUNTING=false
-                    SINCE_BUMP=false
                   fi
                   ;;
               esac
@@ -375,13 +378,19 @@ jobs:
                 | grep -m1 -E '^version\s*=' | sed 's/version = "\(.*\)"/\1/')
               if [ "$PARENT_VERSION" != "$CURRENT" ]; then
                 COUNTING=false
-                HAND_SET_SEEN=true
               fi
             fi
             if [ "$COUNTING" = "true" ]; then
               MERGED=$((MERGED + 1))
             fi
-            if [ "$SINCE_BUMP" = "true" ]; then
+            # A tagged commit ends BATCH; a bump commit whose tag never landed
+            # does not, and is no merge itself.
+            if [ "$SINCE_TAG" = "true" ]; then
+              case "$TAGGED" in
+                *" ${SHA} "*) SINCE_TAG=false ;;
+              esac
+            fi
+            if [ "$SINCE_TAG" = "true" ] && [ "$BUMP_COMMIT" = "false" ]; then
               BATCH=$((BATCH + 1))
             fi
             if [ "$SETTLED" = "true" ]; then
@@ -454,11 +463,9 @@ jobs:
           # version main holds are not main's, so the count stops there: a
           # stray higher tag elsewhere would otherwise read as dozens of
           # merges, and within one line the distance cannot be moved by a
-          # stray tag below it. A version set by hand can skip numbers that
-          # no merge made, so a bump that carries one counts the merges of
-          # its batch, and its tag records that count for every later run
-          # (issue #3573); tags from before that change count their distance.
-          # The bump this run is about to make counts too, with at least one
+          # stray tag below it. A tag that records its merge count is counted
+          # by that instead (see below). The bump this run is about to make
+          # counts too, with at least one
           # step: a dispatched run adds a version without a merge of its own.
           # A dispatched minor or major bump counts one step, as its tag will
           # on every later run, so the release does not depend on which run
@@ -469,11 +476,19 @@ jobs:
               [ "$DISPATCH_BUMP_TYPE" != patch ]; then
             STEP=1
           fi
-          HAND_SET_COUNT=""
+          # When main's version has no tag of its own, its number cannot tell
+          # how many merges it took: a version set by hand can skip numbers no
+          # merge made, and a bump whose tag never landed leaves its merges to
+          # the next one. This bump then counts every merge since the newest
+          # tag, and its tag records that count for every later run (issue
+          # #3573), a dispatched minor or major bump's included, so the count
+          # reads the same before and after the tag exists. Tags from before
+          # that change count their distance.
+          MERGE_COUNT=""
           IN_BUMP="$MERGED"
-          if [ "$HAND_SET_SEEN" = "true" ]; then
+          if [ "$TAG_STATUS" -eq 2 ]; then
             STEP=$(( BATCH > 0 ? BATCH : 1 ))
-            HAND_SET_COUNT="$STEP"
+            MERGE_COUNT="$STEP"
             IN_BUMP="$BATCH"
           fi
           SINCE=0
@@ -523,7 +538,7 @@ jobs:
           {
             echo "release=$RELEASE"
             echo "merged=$MERGED"
-            echo "hand_set_count=$HAND_SET_COUNT"
+            echo "merge_count=$MERGE_COUNT"
             echo "latest=$LATEST"
             echo "security=$SECURITY"
             echo "breaking=$BREAKING"
@@ -1087,7 +1102,7 @@ jobs:
           NEW_VERSION: ${{ steps.bump_version.outputs.new }}
           RELEASE: ${{ steps.decide.outputs.release }}
           CI_GATE: ${{ steps.ci_gate.outcome }}
-          HAND_SET_COUNT: ${{ steps.decide.outputs.hand_set_count }}
+          MERGE_COUNT: ${{ steps.decide.outputs.merge_count }}
         run: |
           if [ "$RELEASE" = "true" ] && [ "$CI_GATE" != "success" ]; then
             # Annotated with DEFERRED_RELEASE_MARKER so the next run's
@@ -1097,17 +1112,18 @@ jobs:
             git tag -a "v${NEW_VERSION}" -m "${DEFERRED_RELEASE_MARKER}: CI is not proven for ${GITHUB_SHA}"
             echo "::warning::CI is not proven for ${GITHUB_SHA}; v${NEW_VERSION} is tagged without a release, which moves to the next bump"
             echo "- **Release:** deferred, CI is not proven for ${GITHUB_SHA}; v${NEW_VERSION} is tagged without publishing" >> "$GITHUB_STEP_SUMMARY"
-          elif [ "$RELEASE" != "true" ] && [ -n "$HAND_SET_COUNT" ]; then
-            # This bump carries a version set by hand, whose number can skip
-            # versions no merge made. The annotation tells later runs how
-            # many merges the tag stands for, so RELEASE_EVERY counts those
-            # instead of the distance. A release's tag needs none: the next
-            # count starts after it. Nor does a deferred one, which keeps its
-            # release due whatever the count reads.
-            if [[ "$HAND_SET_COUNT" =~ ^[1-9][0-9]*$ ]]; then
-              git tag -a "v${NEW_VERSION}" -m "${VERSION_SET_BY_HAND_MARKER}: ${HAND_SET_COUNT}"
+          elif [ "$RELEASE" != "true" ] && [ -n "$MERGE_COUNT" ]; then
+            # This bump's version had no tag of its own, so its number may not
+            # tell how many merges it took (a version set by hand, or a bump
+            # whose tag never landed). The annotation tells later runs, so
+            # RELEASE_EVERY counts those instead of the distance. A release's
+            # tag needs none: the next count starts after it. Nor does a
+            # deferred one, which keeps its release due whatever the count
+            # reads.
+            if [[ "$MERGE_COUNT" =~ ^[1-9][0-9]*$ ]]; then
+              git tag -a "v${NEW_VERSION}" -m "${MERGE_COUNT_MARKER}: ${MERGE_COUNT}"
             else
-              echo "::warning::refusing malformed merge count '${HAND_SET_COUNT}'; v${NEW_VERSION} is tagged without it, so its version distance counts toward RELEASE_EVERY"
+              echo "::warning::refusing malformed merge count '${MERGE_COUNT}'; v${NEW_VERSION} is tagged without it, so its version distance counts toward RELEASE_EVERY"
               git tag "v${NEW_VERSION}"
             fi
           else
