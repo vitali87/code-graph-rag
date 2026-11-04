@@ -8,7 +8,8 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Callable, Coroutine, Iterable, Iterator
+import uuid
+from collections.abc import Callable, Coroutine, Generator, Iterable
 from contextlib import ExitStack, contextmanager
 from fnmatch import fnmatch
 from functools import partial, wraps
@@ -20,6 +21,7 @@ import click
 import typer
 from loguru import logger
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
@@ -79,9 +81,15 @@ from .sync_guard import RUNNING_SYNC_TOKENS as _RUNNING_SYNC_TOKENS
 from .sync_guard import OwnerCheck as _OwnerCheck
 from .sync_guard import SyncRefusedError, mark_sync_incomplete, release_project_claim
 from .sync_guard import clear_sync_incomplete as _clear_sync_incomplete
+from .sync_guard import partial_graph_refusal as _partial_graph_refusal
 from .sync_guard import project_owner_refusal as _project_owner_refusal
+from .sync_guard import retire_exited_runs as _retire_exited_runs
+from .sync_guard import retire_stranded_runs as _retire_stranded_runs
+from .sync_guard import stranded_runs as _stranded_runs
 from .sync_guard import sync_marker_params as _sync_marker_params
 from .sync_guard import sync_owner as _sync_owner
+from .sync_guard import take_over_runs as _take_over_runs
+from .sync_guard import writing_runs as _writing_runs
 from .sync_lock import SyncLockError, repo_sync_lock
 from .tools.health_checker import HealthChecker
 from .tools.language import cli as language_cli
@@ -95,6 +103,7 @@ from .types_defs import (
     DuplicatesReport,
     ProjectSync,
     PropertyValue,
+    ReingestReport,
     ResultRow,
     ResultValue,
 )
@@ -106,6 +115,7 @@ from .utils.path_utils import (
     project_roots_from_rows,
     projects_sharing_root,
     resolve_repo_path,
+    root_proven_missing,
     unwritable_output_reason,
 )
 from .utils.process_owner import pid_may_be_running, process_host
@@ -115,6 +125,7 @@ from .workspaces.cli import cli as workspace_cli
 
 if TYPE_CHECKING:
     from .graph_updater import GraphUpdater
+    from .watch import WriteMarker
 
 
 def _vendored_click_exception() -> type[click.ClickException]:
@@ -571,7 +582,7 @@ def _start_active_projects(
 
 
 @contextmanager
-def _console_on_stderr() -> Iterator[None]:
+def _console_on_stderr() -> Generator[None]:
     console = app_context.console
     app_context.console = terminal_aware_console(stderr=True)
     try:
@@ -943,7 +954,7 @@ def _release_project_claim(batch_size: int, project_name: str, repo: Path) -> No
 @contextmanager
 def _project_claim(
     batch_size: int, project_name: str, repo: Path, *, clean: bool, assume_yes: bool
-) -> Iterator[list[str] | None]:
+) -> Generator[list[str] | None]:
     """Hold this sync's claim on its project name while the sync runs (#2411).
 
     Yields the roots `_mark_sync_incomplete` must still find on the Project.
@@ -981,7 +992,7 @@ def _mark_sync_incomplete(
 
 
 @contextmanager
-def _sync_lock_or_exit(repo: Path, project_name: str) -> Iterator[None]:
+def _sync_lock_or_exit(repo: Path, project_name: str) -> Generator[None]:
     """Hold the checkout's sync lock for the whole sync, or stop first (#2441).
 
     Taken before the `--clean` wipe and the `:IncompleteRun` marker, so a
@@ -1061,13 +1072,15 @@ def _clear_deleted_project_markers(
     a sync that failed before the delete keeps the project in `cgr status`
     as interrupted. A marker goes only when its run cannot still be writing:
     the CLI sync's once that sync provably stopped (PR #2532 review: a sync
-    still running would otherwise write on unguarded), and any run's that
-    never wrote the graph. A run that had begun writing owns its marker
-    (#1709). Best effort, like `_clear_sync_incomplete`: the project is
-    deleted.
+    still running would otherwise write on unguarded), any run's whose
+    process provably exited (#2479), and any run's that never wrote the
+    graph. A run that had begun writing and may still be alive owns its
+    marker (#1709). Best effort, like `_clear_sync_incomplete`: the project
+    is deleted.
     """
     try:
         kept = _clear_stopped_sync_marker(ingestor, project_name)
+        _retire_exited_runs(ingestor, project_name)
         ingestor.execute_write(
             cq.CYPHER_RECOVER_PROJECT_INCOMPLETE,
             {cs.KEY_PROJECT_NAME: project_name},
@@ -1104,16 +1117,17 @@ def _sweep_glosses_after_failed_delete(
 
 
 def _run_updater_deferring_interrupt(
-    updater: "GraphUpdater",
+    updater: "GraphUpdater", *, rebuild: bool = False
 ) -> KeyboardInterrupt | None:
     """Run the sync's graph update; return a Ctrl+C that landed after its commit.
 
     The run stamps the sync time as part of its commit (#2444), and the
     caller clears its marker before re-raising what this returns; a Ctrl+C
-    before the commit raises `SyncInterrupted` instead.
+    before the commit raises `SyncInterrupted` instead. `rebuild` forces a
+    full re-index over runs another writer left part-way.
     """
     try:
-        updater.run()
+        updater.run(force=rebuild)
     except ex.EmbeddingsInterrupted as stop:
         # Raised only after the run committed, so the graph is whole and
         # the sync is recorded like any other; the interrupt then ends
@@ -1183,6 +1197,15 @@ def _run_graph_sync(
             # hits and can map onto unrelated nodes in the rebuilt graph.
             clear_all_embeddings()
 
+        # Read before this sync marks: the runs whose markers its rebuild
+        # supersedes (review of PR #3493).
+        stranded = _stranded_runs(ingestor, project_name, cs.CLI_SYNC_RUN_ID)
+        if stranded:
+            logger.warning(
+                ls.REBUILD_OVER_STRANDED_RUNS.format(
+                    project=project_name, count=len(stranded)
+                )
+            )
         # After the wipe, which would delete the marker with everything else,
         # and before `ensure_constraints`, whose migration can already purge.
         _mark_sync_incomplete(ingestor, project_name, owner, owned_roots)
@@ -1202,8 +1225,9 @@ def _run_graph_sync(
             capture=_capture_selection(capture),
             skip_embeddings=skip_embeddings,
         )
-        interrupted = _run_updater_deferring_interrupt(updater)
+        interrupted = _run_updater_deferring_interrupt(updater, rebuild=bool(stranded))
         _clear_sync_incomplete(ingestor, project_name)
+        _retire_stranded_runs(ingestor, project_name, stranded)
         # Taken before the export: counting it made a no-op sync of a small
         # repo report the time to dump the whole shared graph (issue #2440).
         elapsed = time.monotonic() - elapsed
@@ -1320,20 +1344,30 @@ def _resolve_and_validate_repo(repo_path: str | None) -> Path:
 
 
 def _cleanup_project_embeddings(
-    ingestor: MemgraphIngestor, project_name: str, projects: Iterable[str]
-) -> None:
-    rows = ingestor.fetch_all(
-        cs.CYPHER_QUERY_PROJECT_NODE_IDS,
-        {cs.KEY_PROJECT_NAME: project_name},
-    )
+    ingestor: MemgraphIngestor,
+    project_name: str,
+    projects: Iterable[str],
+    node_rows: list[ResultRow] | None = None,
+) -> bool:
+    """Delete the project's vectors; False when the store reports a miss.
+
+    The rows may be supplied pre-fetched: prune reads the ids before the
+    conditional purge fires, because once the graph is deleted no query can
+    recover them.
+    """
+    if node_rows is None:
+        node_rows = ingestor.fetch_all(
+            cs.CYPHER_QUERY_PROJECT_NODE_IDS,
+            {cs.KEY_PROJECT_NAME: project_name},
+        )
     node_ids: list[int] = []
-    for row in rows:
+    for row in node_rows:
         node_id = row.get(cs.KEY_NODE_ID)
         if isinstance(node_id, int):
             node_ids.append(node_id)
     # A project nested under this one (`svc.v2` under `svc`) keeps its
     # vectors, which the prefix-scoped node-id read also names.
-    delete_project_embeddings(
+    return delete_project_embeddings(
         project_name, node_ids, nested_project_names(project_name, projects)
     )
 
@@ -2003,7 +2037,12 @@ def mcp_server(
     workspace: str | None = typer.Option(
         None, "--workspace", help=ch.HELP_MCP_WORKSPACE
     ),
+    read_only: bool = typer.Option(False, "--read-only", help=ch.HELP_MCP_READ_ONLY),
 ) -> None:
+    # `is True`: typer passes a bool, while a direct call that omits the
+    # flag passes the truthy OptionInfo default, which must not turn the
+    # setting on.
+    settings.MCP_READ_ONLY = settings.MCP_READ_ONLY or read_only is True
     try:
         if transport == cs.MCPTransport.HTTP:
             from codebase_rag.mcp import serve_http
@@ -2248,6 +2287,75 @@ def check_command(
         raise typer.Exit(code=1)
 
 
+EditReingest = Callable[[list[str]], ReingestReport]
+
+
+@contextmanager
+def _guarded_edit_reingest(
+    ingestor: MemgraphIngestor, updater: "GraphUpdater", project_name: str, repo: Path
+) -> Generator[tuple[EditReingest, "WriteMarker"]]:
+    """The re-ingest an applied edit is measured through, behind the marker.
+
+    Refuses before anything is planned when a run left the project's graph
+    partial: the plan reads its call sites from the graph, so a caller a
+    stopped sync deleted would be neither rewritten nor reported (Greptile
+    review, PR #2164). The MCP tools refuse the same graph through
+    `_guarded_rename_reingest`.
+
+    The checkout's sync lock is held for the whole edit, from that check to
+    the marker's clear: a sync taking the checkout between the check and the
+    plan would leave the plan reading a graph it is rewriting (Greptile
+    review, PR #3493). It waits behind a running sync, as a scoped re-ingest
+    does, and the re-ingest re-enters it.
+
+    The callback is `cgr watch`'s scoped re-ingest. The marker goes down from
+    `before_write`, where the read-only prologue ends, and comes off once the
+    re-ingest returned. A failure after the first write leaves it down, so
+    the next edit, `cgr status` and the MCP server know the graph is partial;
+    the edit's `graph_incomplete` alone would not outlive this process.
+    """
+    held = ExitStack()
+    try:
+        held.enter_context(repo_sync_lock(repo, project_name, wait=True))
+    except SyncLockError as refused:
+        typer.echo(str(refused), err=True)
+        raise typer.Exit(code=1) from None
+    with held:
+        if (refusal := _partial_graph_refusal(ingestor, project_name)) is not None:
+            typer.echo(refusal, err=True)
+            raise typer.Exit(code=1)
+        from .watch import WriteMarker
+
+        with _sync_owner() as owner:
+            marker = WriteMarker(ingestor, project_name, owner, None)
+
+            def reingest(paths: list[str]) -> ReingestReport:
+                report = updater.reingest(paths, before_write=marker.mark_scoped)
+                if updater.reingest_mutated:
+                    marker.clear()
+                return report
+
+            yield reingest, marker
+
+
+def _mark_edit_partial(marker: "WriteMarker", project_name: str) -> str | None:
+    """Mark the graph partial after an edit reported `graph_incomplete`.
+
+    The edit's report decides, as in the MCP tools: a rollback whose
+    re-ingest stopped before its first write put no marker down, yet left
+    the graph describing files the rollback has since restored. Returns the
+    error to print after the edit's JSON when the marker cannot go down, so
+    the report of what changed is not lost.
+    """
+    try:
+        marker.mark()
+    except SyncRefusedError as refused:
+        return cs.CLI_ERR_EDIT_MARKER_FAILED.format(
+            project=project_name, error=refused.__cause__ or refused
+        )
+    return None
+
+
 @app.command(
     name=ch.CLICommandName.RENAME,
     help=ch.CMD_RENAME,
@@ -2288,31 +2396,141 @@ def rename_command(
             queries=queries,
             project_name=name,
         )
-        try:
-            report = rename(
-                repo_path.resolve(),
-                fetch_all,
-                name,
-                qualified_name,
-                new_name,
-                allow_heuristic=allow_heuristic,
-                dry_run=dry_run,
-                reingest=updater.reingest,
-                heuristic_opt_in=cs.RENAME_CLI_ALLOW_HEURISTIC,
+        with _guarded_edit_reingest(ingestor, updater, name, repo_path.resolve()) as (
+            reingest,
+            marker,
+        ):
+            try:
+                report = rename(
+                    repo_path.resolve(),
+                    fetch_all,
+                    name,
+                    qualified_name,
+                    new_name,
+                    allow_heuristic=allow_heuristic,
+                    dry_run=dry_run,
+                    reingest=reingest,
+                    heuristic_opt_in=cs.RENAME_CLI_ALLOW_HEURISTIC,
+                )
+            except RenameRefused as refused:
+                typer.echo(str(refused), err=True)
+                for site in sites_for([*refused.ambiguous, *refused.unplanned]):
+                    typer.echo(f"  {site}", err=True)
+                for entry in refused.unlocatable:
+                    typer.echo(f"  {entry}", err=True)
+                raise typer.Exit(code=1) from refused
+            marker_error = (
+                _mark_edit_partial(marker, name) if report.graph_incomplete else None
             )
-        except RenameRefused as refused:
-            typer.echo(str(refused), err=True)
-            for site in sites_for([*refused.ambiguous, *refused.unplanned]):
-                typer.echo(f"  {site}", err=True)
-            for entry in refused.unlocatable:
-                typer.echo(f"  {entry}", err=True)
-            raise typer.Exit(code=1) from refused
     payload = dict(report._asdict())
     payload[cs.KEY_SITES] = sites_for(report.sites)
     payload[cs.KEY_AMBIGUOUS] = sites_for(report.ambiguous)
     payload[cs.KEY_UNPLANNED] = sites_for(report.unplanned)
     payload["verdict"] = report.verdict._asdict() if report.verdict else None
     typer.echo(json.dumps(payload, indent=cs.MCP_JSON_INDENT, sort_keys=True))
+    if marker_error is not None:
+        typer.echo(marker_error, err=True)
+        raise typer.Exit(code=1)
+    if not report.applied and not dry_run:
+        raise typer.Exit(code=1)
+
+
+@app.command(
+    name=ch.CLICommandName.CHANGE_SIGNATURE,
+    help=ch.CMD_CHANGE_SIGNATURE,
+    short_help=ch.CMD_CHANGE_SIGNATURE,
+    epilog=ch.EXAMPLES_CHANGE_SIGNATURE,
+    rich_help_panel=ch.PANEL_USE,
+)
+def change_signature_command(
+    qualified_name: str = typer.Argument(..., help=ch.HELP_CHANGE_SIGNATURE_QN),
+    new_params: list[str] = typer.Argument(..., help=ch.HELP_CHANGE_SIGNATURE_PARAMS),
+    repo_path: Path = typer.Option(
+        Path(cs.MCP_DEFAULT_DIRECTORY),
+        "--repo-path",
+        exists=True,
+        file_okay=False,
+        help=ch.HELP_GRAPH_REPO_PATH,
+    ),
+    project: str | None = typer.Option(None, "--project", help=ch.HELP_GRAPH_PROJECT),
+    mapping: list[str] | None = typer.Option(
+        None, "--map", help=ch.HELP_CHANGE_SIGNATURE_MAP
+    ),
+    allow_heuristic: bool = typer.Option(
+        False, "--allow-heuristic", help=ch.HELP_CHANGE_SIGNATURE_ALLOW_HEURISTIC
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help=ch.HELP_CHANGE_SIGNATURE_DRY_RUN
+    ),
+) -> None:
+    from .editing.signature import change_signature
+    from .editing.signature_spec import (
+        SignatureRefused,
+        parse_mapping,
+        sites_for,
+        unmapped_for,
+    )
+    from .graph_cli import _project_and_fetch
+    from .graph_query import source_root_for
+
+    try:
+        parsed = parse_mapping(mapping or [])
+    except SignatureRefused as refused:
+        typer.echo(str(refused), err=True)
+        raise typer.Exit(code=1) from refused
+    name, fetch_all, ingestor = _project_and_fetch(project, repo_path)
+    with ingestor:
+        # An explicit --project may name a graph indexed from another
+        # checkout; its repo-relative paths must not be edited under this
+        # one. The MCP handler refuses the same mismatch.
+        if source_root_for(fetch_all, name, repo_path) is None:
+            typer.echo(
+                cs.SIGNATURE_CLI_WRONG_ROOT.format(
+                    project=name, root=repo_path.resolve()
+                ),
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        parsers, queries = load_parsers()
+        from .graph_updater import GraphUpdater
+
+        updater = GraphUpdater(
+            ingestor=ingestor,
+            repo_path=repo_path.resolve(),
+            parsers=parsers,
+            queries=queries,
+            project_name=name,
+        )
+        with _guarded_edit_reingest(ingestor, updater, name, repo_path.resolve()) as (
+            reingest,
+            marker,
+        ):
+            try:
+                report = change_signature(
+                    repo_path.resolve(),
+                    fetch_all,
+                    name,
+                    qualified_name,
+                    new_params,
+                    parsed,
+                    allow_heuristic=allow_heuristic,
+                    dry_run=dry_run,
+                    reingest=reingest,
+                )
+            except SignatureRefused as refused:
+                typer.echo(str(refused), err=True)
+                raise typer.Exit(code=1) from refused
+            marker_error = (
+                _mark_edit_partial(marker, name) if report.graph_incomplete else None
+            )
+    payload = dict(report._asdict())
+    payload[cs.KEY_SITES] = sites_for(report.sites)
+    payload[cs.KEY_UNMAPPED] = unmapped_for(report.unmapped)
+    payload[cs.KEY_VERDICT] = report.verdict._asdict() if report.verdict else None
+    typer.echo(json.dumps(payload, indent=cs.MCP_JSON_INDENT, sort_keys=True))
+    if marker_error is not None:
+        typer.echo(marker_error, err=True)
+        raise typer.Exit(code=1)
     if not report.applied and not dry_run:
         raise typer.Exit(code=1)
 
@@ -2400,9 +2618,10 @@ def status_command() -> None:
             cs.CLI_STATUS_SYNCS_NONE.format(endpoint=status.memgraph_endpoint)
         )
         return
+    missing = _missing_root_candidates({sync.name: sync.root_path for sync in syncs})
     app_context.console.print(cs.CLI_STATUS_SYNCS_HEADER)
     for sync in syncs:
-        app_context.console.print(_sync_row(sync))
+        app_context.console.print(_sync_row(sync, sync.name in missing))
 
 
 def _stamp_text(stamp: ResultValue | None) -> str | None:
@@ -2431,23 +2650,29 @@ def _project_syncs() -> list[ProjectSync] | None:
         for row in projects
         if row.get(cs.KEY_NAME)
     }
+    roots = project_roots_from_rows(projects)
     interrupted = {str(row["project"]) for row in markers if row.get("project")}
     return [
         ProjectSync(
             name=name,
             last_synced_at=_stamp_text(synced_at.get(name)),
             interrupted=name in interrupted,
+            root_path=roots.get(name),
         )
         for name in sorted(synced_at.keys() | interrupted)
     ]
 
 
-def _sync_row(sync: ProjectSync) -> str:
+def _sync_row(sync: ProjectSync, root_missing: bool = False) -> str:
     details: list[str] = []
     if sync.last_synced_at:
         details.append(cs.CLI_STATUS_SYNC_TIME.format(time=sync.last_synced_at))
     elif not sync.interrupted:
         details.append(cs.CLI_STATUS_SYNC_NOT_RECORDED)
+    if sync.root_path:
+        details.append(cs.CLI_STATUS_SYNC_ROOT.format(root=escape(sync.root_path)))
+    if root_missing:
+        details.append(style(cs.CLI_STATUS_ROOT_MISSING, cs.Color.RED))
     if sync.interrupted:
         details.append(
             cs.CLI_STATUS_SYNC_MARKED.format(marker=cs.CLI_STATUS_SYNC_INCOMPLETE)
@@ -2587,6 +2812,16 @@ def context_command(
     typer.echo(json.dumps(payload, indent=cs.MCP_JSON_INDENT))
     if payload["resolved"] is None:
         typer.echo(cs.CONTEXT_UNRESOLVED.format(target=target), err=True)
+        raise typer.Exit(code=1)
+    # Only the target's own trim marks a slice truncated, so truncated and
+    # empty means not even its first line fitted.
+    if payload["truncated"] and not payload["pieces"]:
+        typer.echo(
+            cs.CONTEXT_TARGET_OVER_BUDGET.format(
+                target=payload["resolved"], budget=budget
+            ),
+            err=True,
+        )
         raise typer.Exit(code=1)
 
 
@@ -2972,7 +3207,8 @@ def _emit_dead_code(
 def _notice_single_project_endpoint_roots(show_progress: bool) -> None:
     """Endpoint roots off on a graph holding one project: every endpoint
     reads as uncalled. Stdout carries the JSON payload when that format is
-    chosen (local review P1), so the notice goes to stderr then."""
+    chosen (local review P1), and only the table under --quiet, so the
+    notice goes to stderr then."""
     if show_progress:
         app_context.console.print(
             style(cs.CLI_DEADCODE_SINGLE_PROJECT_ENDPOINTS, cs.Color.YELLOW)
@@ -3044,7 +3280,11 @@ def dead_code(
     from .dead_code import collect_dead_code_with_coverage
 
     chosen = _scan_project_option(project, project_name)
-    show_progress = output_format == cs.DeadCodeFormat.TABLE and output is None
+    show_progress = (
+        output_format == cs.DeadCodeFormat.TABLE
+        and output is None
+        and not settings.QUIET
+    )
     if show_progress:
         app_context.console.print(style(cs.CLI_DEADCODE_CONNECTING, cs.Color.CYAN))
 
@@ -3457,7 +3697,11 @@ def duplicates(
     from .duplicates import collect_duplicates_with_coverage
 
     chosen = _scan_project_option(project, project_name)
-    show_progress = output_format == cs.DuplicatesFormat.TABLE and output is None
+    show_progress = (
+        output_format == cs.DuplicatesFormat.TABLE
+        and output is None
+        and not settings.QUIET
+    )
     if show_progress:
         app_context.console.print(style(cs.CLI_DUPLICATES_CONNECTING, cs.Color.CYAN))
 
@@ -3636,6 +3880,300 @@ def delete_project(
             cs.Color.GREEN,
         )
     )
+
+
+def _missing_root_candidates(roots: dict[str, str | None]) -> dict[str, str]:
+    """Projects whose recorded root is provably gone (issue #2479).
+
+    The checkout cgr itself runs from is never a candidate, whatever the
+    stat says. A shell can survive its own directory being deleted, so a
+    dead cwd reads as an unknown, not as an exemption: the question is
+    undeterminable and nothing is a candidate.
+    """
+    try:
+        cwd = Path.cwd().resolve()
+    except OSError:
+        return {}
+    missing: dict[str, str] = {}
+    for project_name, root in roots.items():
+        if not root:
+            continue
+        try:
+            here = Path(root).resolve() == cwd
+        except (OSError, RuntimeError):
+            # A symlink loop cannot be resolved: undeterminable, so live.
+            continue
+        if here:
+            continue
+        if root_proven_missing(root):
+            missing[project_name] = root
+    return missing
+
+
+def _report_prune_candidates(candidates: dict[str, str]) -> None:
+    if not candidates:
+        app_context.console.print(style(cs.CLI_MSG_PRUNE_NO_CANDIDATES, cs.Color.GREEN))
+        return
+    app_context.console.print(cs.CLI_MSG_PRUNE_CANDIDATES)
+    for project_name, root in sorted(candidates.items()):
+        app_context.console.print(
+            cs.CLI_MSG_PRUNE_CANDIDATE.format(
+                project_name=project_name, root=escape(root)
+            )
+        )
+
+
+def _report_prune_failure(project_name: str, error: Exception) -> None:
+    message = cs.CLI_ERR_PRUNE_FAILED.format(project_name=project_name, error=error)
+    app_context.console.print(style(message, cs.Color.RED))
+    logger.exception(message)
+
+
+def _clear_own_marker(
+    ingestor: MemgraphIngestor, project_name: str, run_id: str
+) -> None:
+    # Only a verified purge takes prune's marker off: one that failed keeps
+    # it, standing for the exited runs' markers it replaced. Best effort, as
+    # the purge is done.
+    try:
+        ingestor.execute_write(
+            cq.CYPHER_CLEAR_PROJECT_INCOMPLETE,
+            {cs.KEY_PROJECT_NAME: project_name, cs.KEY_RUN_ID: run_id},
+        )
+    except Exception as exc:
+        logger.warning(
+            ls.CLI_DELETE_MARKER_NOT_CLEARED.format(project=project_name, error=exc)
+        )
+
+
+def _purge_left_nothing(
+    ingestor: MemgraphIngestor, project_name: str, run_id: str
+) -> bool:
+    """Whether a fresh read finds nothing of the project left (#2479).
+
+    Nothing left means no Project, nothing under its name, and no run of it
+    writing: a sync that began writing since the delete may own what the
+    vector cleanup that follows would take. Raises when the graph cannot be
+    read; an empty count reads as not proven.
+    """
+    if project_name in ingestor.list_projects():
+        return False
+    if _writing_runs(ingestor, project_name, run_id).live:
+        return False
+    rows = ingestor.fetch_all(
+        cq.CYPHER_COUNT_PROJECT_NODES,
+        {
+            cs.KEY_PROJECT_NAME: project_name,
+            cs.KEY_PROJECT_PREFIX: f"{project_name}{cs.SEPARATOR_DOT}",
+        },
+    )
+    counts = [row.get(cs.KEY_RESIDUAL_NODES) for row in rows]
+    return bool(counts) and all(count == 0 for count in counts)
+
+
+def _prune_projects(
+    ingestor: MemgraphIngestor, candidates: dict[str, str], projects: list[str]
+) -> tuple[list[str], list[str]]:
+    """Prune each candidate and verify the purge against a fresh graph read.
+
+    Returns the names verified as purged and the names whose removal could
+    not be verified; the caller reports the second list as failures, never
+    as successes, and a skipped candidate is in neither.
+    """
+    pruned: list[str] = []
+    failures: list[str] = []
+    for project_name, root in sorted(candidates.items()):
+        outcome = _prune_one(ingestor, project_name, root, projects)
+        if outcome == cs.PruneOutcome.PRUNED:
+            pruned.append(project_name)
+        elif outcome == cs.PruneOutcome.FAILED:
+            failures.append(project_name)
+    return pruned, failures
+
+
+def _prune_one(
+    ingestor: MemgraphIngestor, project_name: str, root: str, projects: list[str]
+) -> cs.PruneOutcome:
+    """Prune one candidate (#2479).
+
+    The delete is conditional on the project still naming the root this run
+    checked, and on no run of it writing, inside the delete statement
+    itself, so a concurrent sync repointing the project's root_path, or one
+    starting to write it, is skipped, not destroyed. A checkout
+    recreated at the old path is still only narrowed by the existence
+    re-check. A purge that cannot be proven complete -- the project still
+    listed, or anything left under its name -- is a failure, never a
+    success. A proven purge then takes what `delete-project` takes after its
+    delete: the project's notes and its incomplete-run markers, which would
+    otherwise keep it in `cgr status`.
+    """
+    if not root_proven_missing(root):
+        _say(cs.CLI_WARN_PRUNE_ROOT_BACK.format(project_name=project_name))
+        return cs.PruneOutcome.SKIPPED
+    run_id = f"{cs.PRUNE_RUN_ID_PREFIX}{uuid.uuid4().hex}"
+    try:
+        # A run of the same name may be writing from another checkout or
+        # machine: its marker is the one signal it gives. One whose process
+        # provably exited does not hold the project: prune takes its place,
+        # so a sync that died with its checkout is not a reason to keep it.
+        runs = _writing_runs(ingestor, project_name, run_id)
+        if runs.live:
+            _say(cs.CLI_WARN_PRUNE_RUN_WRITING.format(project_name=project_name))
+            return cs.PruneOutcome.SKIPPED
+        _take_over_runs(ingestor, project_name, run_id, runs.exited)
+        node_rows = _purge_if_root(ingestor, project_name, root, run_id)
+    except GraphUnavailableError:
+        raise
+    except Exception as e:
+        _report_prune_failure(project_name, e)
+        return cs.PruneOutcome.FAILED
+    if node_rows is None:
+        _say(cs.CLI_WARN_PRUNE_ROOT_CHANGED.format(project_name=project_name))
+        return cs.PruneOutcome.SKIPPED
+    try:
+        verified = _purge_left_nothing(ingestor, project_name, run_id)
+    except GraphUnavailableError:
+        raise
+    except Exception as e:
+        _report_prune_failure(project_name, e)
+        return cs.PruneOutcome.FAILED
+    if not verified:
+        _say(
+            cs.CLI_ERR_PRUNE_VERIFY_FAILED.format(project_name=project_name),
+            cs.Color.RED,
+        )
+        return cs.PruneOutcome.FAILED
+    _delete_pruned_vectors(ingestor, project_name, projects, node_rows)
+    if not prune_orphaned_glosses(ingestor, project_name):
+        _say(cs.CLI_WARN_GLOSSES_NOT_PRUNED.format(project_name=project_name))
+    _clear_own_marker(ingestor, project_name, run_id)
+    _clear_deleted_project_markers(ingestor, project_name)
+    _say(cs.CLI_MSG_PROJECT_PRUNED.format(project_name=project_name), cs.Color.GREEN)
+    return cs.PruneOutcome.PRUNED
+
+
+def _say(message: str, color: cs.Color = cs.Color.YELLOW) -> None:
+    app_context.console.print(style(message, color))
+
+
+def _purge_if_root(
+    ingestor: MemgraphIngestor, project_name: str, root: str, run_id: str
+) -> list[ResultRow] | None:
+    """Run the conditional purge; the project's node-id rows when it fired.
+
+    The ids are read while the project is still in the graph: once it is
+    deleted no query can recover them, and its vectors go only when the
+    conditional delete fires. None when it did not fire.
+    """
+    node_rows = ingestor.fetch_all(
+        cs.CYPHER_QUERY_PROJECT_NODE_IDS,
+        {cs.KEY_PROJECT_NAME: project_name},
+    )
+    _info(
+        style(
+            cs.CLI_MSG_PRUNING_PROJECT.format(
+                project_name=project_name, root=escape(root)
+            ),
+            cs.Color.YELLOW,
+        )
+    )
+    try:
+        fired = ingestor.delete_project(
+            project_name, expected_root=root, own_run_id=run_id
+        )
+    except Exception:
+        _sweep_glosses_after_failed_delete(ingestor, project_name)
+        raise
+    return node_rows if fired else None
+
+
+def _delete_pruned_vectors(
+    ingestor: MemgraphIngestor,
+    project_name: str,
+    projects: list[str],
+    node_rows: list[ResultRow],
+) -> None:
+    # Run only once the purge is verified: the store finds a project's
+    # points by its name, so a project a sync recreated under that name
+    # since the delete would lose its vectors, and verification has just
+    # read that none exists. The graph purge is proven either way; a vector
+    # deletion that fails or raises leaks vectors for dead node ids and is
+    # not recoverable by a retry, so it warns and the prune still counts.
+    try:
+        deleted = _cleanup_project_embeddings(
+            ingestor, project_name, projects, node_rows
+        )
+    except Exception as e:
+        logger.warning(
+            ls.CLI_PRUNE_VECTORS_FAILED.format(project=project_name, error=e)
+        )
+        deleted = False
+    if not deleted:
+        _say(cs.CLI_WARN_PRUNE_VECTORS_KEPT.format(project_name=project_name))
+
+
+@app.command(
+    name=ch.CLICommandName.PRUNE,
+    help=ch.CMD_PRUNE,
+    short_help=ch.CMD_PRUNE,
+    epilog=ch.EXAMPLES_PRUNE,
+    rich_help_panel=ch.PANEL_MANAGE,
+)
+def prune(
+    dry_run: bool = typer.Option(False, "--dry-run", help=ch.HELP_PRUNE_DRY_RUN),
+    yes: bool = typer.Option(False, "--yes", "-y", help=ch.HELP_PRUNE_YES),
+) -> None:
+    effective_batch_size = settings.resolve_batch_size(None)
+
+    try:
+        with connect_memgraph(effective_batch_size) as ingestor:
+            roots = ingestor.list_project_roots()
+            candidates = _missing_root_candidates(roots)
+            _report_prune_candidates(candidates)
+            if not candidates or dry_run:
+                if dry_run and candidates:
+                    _info(
+                        style(
+                            cs.CLI_MSG_PRUNE_DRY_RUN.format(count=len(candidates)),
+                            cs.Color.CYAN,
+                        )
+                    )
+                return
+            if not yes:
+                if not _stdin_is_interactive():
+                    app_context.console.print(
+                        style(cs.CLI_ERR_PRUNE_NEEDS_CONFIRMATION, cs.Color.RED)
+                    )
+                    raise typer.Exit(1)
+                confirmed = typer.confirm(
+                    cs.CLI_PROMPT_PRUNE_CONFIRM.format(count=len(candidates)),
+                    default=False,
+                )
+                if not confirmed:
+                    app_context.console.print(
+                        style(cs.CLI_MSG_PRUNE_ABORTED, cs.Color.CYAN)
+                    )
+                    raise typer.Exit(1)
+            pruned, failures = _prune_projects(ingestor, candidates, list(roots))
+            if pruned:
+                _info(
+                    style(
+                        cs.CLI_MSG_PRUNE_DONE.format(count=len(pruned)),
+                        cs.Color.GREEN,
+                    )
+                )
+            if failures:
+                raise typer.Exit(1)
+    except typer.Exit:
+        raise
+    except GraphUnavailableError:
+        raise
+    except Exception as e:
+        app_context.console.print(
+            style(cs.CLI_ERR_PRUNE_RUN_FAILED.format(error=e), cs.Color.RED)
+        )
+        logger.exception(cs.CLI_ERR_PRUNE_RUN_FAILED.format(error=e))
+        raise typer.Exit(1) from e
 
 
 if __name__ == "__main__":

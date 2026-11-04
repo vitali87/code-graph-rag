@@ -432,6 +432,10 @@ def _decide_run(
             "CURRENT": "0.0.1",
             "RANGE": range_,
             "RELEASE_EVERY": "50",
+            # Not inherited from the CI run executing these tests, which may
+            # itself be a dispatch.
+            "GITHUB_EVENT_NAME": "push",
+            "DISPATCH_BUMP_TYPE": "",
             "LS_REMOTE_EXIT": "0",
             "COMPARE_FAILS": "false",
             "PULLS_FAIL": "false",
@@ -1244,3 +1248,209 @@ def test_the_label_query_marks_each_pull_request(
         check=True,
     )
     assert result.stdout.splitlines() == expected
+
+
+# Merges that land while an earlier bump or its CI is running share one bump
+# run. The run counts them along main's first-parent line, back to the last
+# bump commit, and the patch number moves once for each.
+MERGES = [f"{n:040x}" for n in range(101, 106)]
+
+
+def test_every_merge_since_the_last_bump_is_counted(tmp_path: Path) -> None:
+    _commits(
+        tmp_path,
+        {
+            OLDER: "Merge pull request #1",
+            NEWER: "Merge pull request #2",
+            SHA: "Merge pull request #3",
+        },
+    )
+    assert _decide(tmp_path, f"{OLDER}\\n{NEWER}\\n{SHA}\\n")["merged"] == "3"
+
+
+def test_the_merge_count_follows_mains_first_parent_line_only(tmp_path: Path) -> None:
+    # A pull request's own commits are not merges of their own.
+    _commits(
+        tmp_path,
+        {OLDER: "fix: a", SHA: "Merge pull request #2"}
+        | dict.fromkeys(BRANCH_COMMITS, "wip"),
+        parents={OLDER: OUTSIDE, SHA: OLDER, **dict.fromkeys(BRANCH_COMMITS, OUTSIDE)},
+    )
+    range_ = "\\n".join([OLDER, *BRANCH_COMMITS, SHA]) + "\\n"
+    assert _decide(tmp_path, range_)["merged"] == "2"
+
+
+def test_the_merge_count_stops_at_the_last_bump_commit(tmp_path: Path) -> None:
+    # The range reaches back behind a deferred tag, past the bump that
+    # already counted the merge before it.
+    assert _deferred_breaking_bump(tmp_path, {})["merged"] == "1"
+
+
+def test_a_settled_security_release_still_counts_every_merge(tmp_path: Path) -> None:
+    assert _security_release_with_two_breaking_changes(tmp_path)["merged"] == "2"
+
+
+def test_a_settled_security_release_stops_counting_at_the_last_bump(
+    tmp_path: Path,
+) -> None:
+    out = _deferred_breaking_bump(tmp_path, {SHA: "security\nbreaking change"})
+    assert out["security"] == "true"
+    assert out["merged"] == "1"
+
+
+def test_a_version_set_by_hand_counts_only_the_merges_after_it(
+    tmp_path: Path,
+) -> None:
+    assert _hand_set_version(tmp_path, {})["merged"] == "1"
+
+
+def test_the_merge_that_sets_a_version_by_hand_is_not_counted(tmp_path: Path) -> None:
+    # Its number already accounts for it; the bump type is "none" anyway.
+    _commits(tmp_path, {SHA: "Merge pull request #1"}, parents={SHA: OUTSIDE})
+    _versions(tmp_path, {OUTSIDE: "0.1.89"})
+    result, out = _decide_run(
+        tmp_path,
+        f"{SHA}\\n",
+        CURRENT="0.2.0",
+        LS_REMOTE_EXIT="2",
+        TAG_LIST=f"{OLDER}\\trefs/tags/v0.1.89\\n",
+    )
+    assert result.returncode == 0, result.stderr
+    assert out["merged"] == "0"
+
+
+def test_without_any_release_tag_the_triggering_merge_counts_once(
+    tmp_path: Path,
+) -> None:
+    _commits(tmp_path, {SHA: "feat: y"})
+    result, out = _decide_run(tmp_path, "", LS_REMOTE_EXIT="2")
+    assert result.returncode == 0, result.stderr
+    assert out["merged"] == "1"
+
+
+def _cadence(
+    tmp_path: Path, tags: list[str], merges: int, **env: str
+) -> dict[str, str]:
+    """A run bumping `merges` merges, `tags` cut since v0.0.1, the latest release."""
+    range_ = [*MERGES[: merges - 1], SHA]
+    _commits(tmp_path, dict.fromkeys(range_, "Merge pull request"))
+    tag_list = "".join(f"{OLDER}\\trefs/tags/{tag}\\n" for tag in ["v0.0.1", *tags])
+    current = (tags[-1] if tags else "v0.0.1").removeprefix("v")
+    result, out = _decide_run(
+        tmp_path,
+        "\\n".join(range_) + "\\n",
+        CURRENT=current,
+        TAG_LIST=tag_list,
+        **env,
+    )
+    assert result.returncode == 0, result.stderr
+    assert out["merged"] == str(merges)
+    return out
+
+
+@pytest.mark.parametrize(
+    ("tags", "merges", "release"),
+    [
+        # Tags from when every merge had a bump of its own count one each.
+        ([f"v0.0.{n}" for n in range(2, 50)], 1, "false"),
+        ([f"v0.0.{n}" for n in range(2, 51)], 1, "true"),
+        # One tag that carried 46 merges counts 46, not one, and this run's
+        # own merges count before the tag that will hold them exists. Few
+        # merges per case: each costs several process starts, which Git Bash
+        # on Windows makes slow enough to pass the step's timeout.
+        (["v0.0.47"], 3, "false"),
+        (["v0.0.47"], 4, "true"),
+        # A batch that carries the count past RELEASE_EVERY ships whole.
+        (["v0.0.48"], 5, "true"),
+        # Still due after a release that never went out.
+        (["v0.0.60"], 1, "true"),
+        # A step into a new minor line counts once, as its tag did.
+        (["v0.1.0", "v0.1.47"], 1, "false"),
+        (["v0.1.0", "v0.1.48"], 1, "true"),
+    ],
+)
+def test_the_release_cadence_counts_merges_not_tags(
+    tmp_path: Path, tags: list[str], merges: int, release: str
+) -> None:
+    assert _cadence(tmp_path, tags, merges)["release"] == release
+
+
+def test_the_run_summary_shows_the_merge_count(tmp_path: Path) -> None:
+    _cadence(tmp_path, ["v0.0.40"], 3)
+    summary = (tmp_path / "summary").read_text(encoding="utf-8")
+    assert "3 merge(s) in this bump, 42 of 50 since v0.0.1" in summary
+
+
+@pytest.mark.parametrize(
+    ("event", "dispatched", "release"),
+    [
+        ("push", "", "true"),
+        ("workflow_dispatch", "patch", "true"),
+        # A new minor or major line counts once when later runs read its tag,
+        # so the run that makes it counts it once too.
+        ("workflow_dispatch", "minor", "false"),
+        ("workflow_dispatch", "major", "false"),
+    ],
+)
+def test_a_dispatched_minor_or_major_bump_counts_one_step(
+    tmp_path: Path, event: str, dispatched: str, release: str
+) -> None:
+    out = _cadence(
+        tmp_path,
+        ["v0.0.47"],
+        4,
+        GITHUB_EVENT_NAME=event,
+        DISPATCH_BUMP_TYPE=dispatched,
+    )
+    assert out["release"] == release
+
+
+def _after_a_deferral(tmp_path: Path, message: str) -> dict[str, str]:
+    # v0.1.0 was cut after the latest release, v0.0.1, and v0.1.1 since: the
+    # count reads three versions, far below RELEASE_EVERY.
+    _commits(tmp_path, {SHA: "Merge pull request #2"})
+    tags = (
+        f"{OLDER}\\trefs/tags/v0.0.1\\n"
+        + _annotated(tmp_path, "v0.1.0", message, "1" * 40)
+        + f"{NEWER}\\trefs/tags/v0.1.1\\n"
+    )
+    result, out = _decide_run(tmp_path, f"{SHA}\\n", CURRENT="0.1.1", TAG_LIST=tags)
+    assert result.returncode == 0, result.stderr
+    return out
+
+
+def test_a_deferred_release_stays_due_whatever_the_count(tmp_path: Path) -> None:
+    out = _after_a_deferral(tmp_path, f"{MARKER}: CI is not proven for {OLDER}")
+    assert out["release"] == "true"
+    assert out["security"] == "false"
+
+
+def test_an_annotated_tag_that_deferred_nothing_keeps_nothing_due(
+    tmp_path: Path,
+) -> None:
+    assert _after_a_deferral(tmp_path, "v0.1.0")["release"] == "false"
+
+
+@pytest.mark.parametrize(
+    ("stray", "release"),
+    [
+        # Main holds 0.0.40: a higher tag cut elsewhere is not counted.
+        ("v0.0.80", "false"),
+        ("v0.1.0", "false"),
+        ("v1.0.0", "false"),
+        # Below main's version, within one line, it moves nothing.
+        ("v0.0.20", "false"),
+    ],
+)
+def test_a_tag_main_never_reached_does_not_count(
+    tmp_path: Path, stray: str, release: str
+) -> None:
+    _commits(tmp_path, {SHA: "Merge pull request #2"})
+    tags = "".join(
+        f"{OLDER}\\trefs/tags/{tag}\\n" for tag in ["v0.0.1", "v0.0.40", stray]
+    )
+    result, out = _decide_run(tmp_path, f"{SHA}\\n", CURRENT="0.0.40", TAG_LIST=tags)
+    assert result.returncode == 0, result.stderr
+    assert out["release"] == release
+    summary = (tmp_path / "summary").read_text(encoding="utf-8")
+    assert "40 of 50 since v0.0.1" in summary
