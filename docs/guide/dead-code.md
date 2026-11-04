@@ -230,7 +230,9 @@ so no name or path is cut to fit 80 columns.
      Access labels inside `#if` / `#ifdef` blocks count, and a member counts
      unless it is private in every build. An out-of-line member definition (`int Box::f() {}`) or class
      (`struct Outer::Inner {}`) takes its access from a class declaration in
-     another file, so it is not counted.
+     another file, so it is not counted. A class template specialization at
+     namespace scope (`template <> struct std::hash<Foo> {...}`, or a partial
+     one) is counted: the library it specializes calls its members.
    - **Scala:** a member or top-level `def` that is not `private` or
      `private[pkg]`, in no `private` object or class.
 2. **Reachability**: a breadth-first walk over `CALLS` and `REFERENCES` edges

@@ -702,3 +702,121 @@ public:
     config = default_dead_code_config(include_tests=True, include_classes=False)
 
     assert collect_dead_code(_Graph(graph), graph.project, config) == []
+
+
+# A library template specialized for this code (`std::hash`, `fmt::formatter`)
+# is called by that library, so its members are API, though its qualifier is
+# no namespace of the file. A plain out-of-line nested class is not.
+SPECIALIZED_CPP = """\
+struct Foo { int v; };
+template <class T> struct Box { T v; };
+
+template <> struct std::hash<Foo> {
+    unsigned long full_spec(const Foo& f) const { return f.v; }
+};
+
+template <class T> struct std::hash<Box<T>> {
+    unsigned long partial_spec(const Box<T>& b) const { return 0; }
+};
+
+template <> struct fmt::formatter<Foo> {
+    int format_foo(const Foo& f) const { return f.v; }
+private:
+    int private_in_spec() const { return 0; }
+};
+
+template <> struct nlohmann::adl_serializer<Foo> {
+    static void to_json_foo(int& j, const Foo& f) { j = f.v; }
+};
+
+template <> struct lib::detail::trait<Foo> {
+    static int deep_trait() { return 1; }
+};
+
+#ifdef WITH_FMT
+template <> struct fmt::formatter<Box<int>> {
+    int guarded_spec() const { return 1; }
+};
+#endif
+
+class Outer {
+    struct PrivateNested;
+};
+struct Outer::PrivateNested { void private_nested() {} };
+
+struct ext::Thing { void ext_thing() {} };
+"""
+STD_INSIDE_CPP = """\
+struct Bar { int v; };
+
+namespace std {
+template <> struct hash<Bar> {
+    unsigned long inside_std(const Bar& b) const { return b.v; }
+};
+}
+"""
+
+
+@pytest.fixture
+def specialized(tmp_path: Path) -> dict[str, bool]:
+    return _run(tmp_path, {"spec.cpp": SPECIALIZED_CPP, "inside.cpp": STD_INSIDE_CPP})
+
+
+@pytest.mark.parametrize(
+    "symbol",
+    [
+        "full_spec",
+        "partial_spec",
+        "format_foo",
+        "to_json_foo",
+        "deep_trait",
+        "guarded_spec",
+        "inside_std",
+    ],
+    ids=[
+        "full-specialization-qualified-by-std",
+        "partial-specialization-qualified-by-std",
+        "fmt-formatter-specialization",
+        "static-member-of-an-adl-serializer-specialization",
+        "specialization-qualified-by-two-namespaces",
+        "specialization-inside-an-ifdef",
+        "specialization-written-inside-namespace-std",
+    ],
+)
+def test_a_library_specialization_member_is_exported(
+    specialized: dict[str, bool], symbol: str
+) -> None:
+    assert _one(specialized, f".{symbol}") is True
+
+
+@pytest.mark.parametrize(
+    "symbol",
+    ["private_in_spec", "private_nested", "ext_thing"],
+    ids=[
+        "private-member-of-a-specialization",
+        "private-nested-class-defined-out-of-line",
+        "non-template-class-defined-out-of-line",
+    ],
+)
+def test_out_of_line_classes_that_are_no_specialization_stay_private(
+    specialized: dict[str, bool], symbol: str
+) -> None:
+    assert _one(specialized, f".{symbol}") is False
+
+
+def test_a_formatter_specialization_and_its_helper_are_not_dead(
+    tmp_path: Path,
+) -> None:
+    source = """\
+struct Foo { int v; };
+
+static int render(int v) { return v * 31; }
+
+template <> struct fmt::formatter<Foo> {
+    int format(const Foo& f) const { return render(f.v); }
+};
+"""
+    graph = _indexed(tmp_path, {"formatter.cpp": source})
+    config = default_dead_code_config(include_tests=True, include_classes=False)
+
+    assert collect_dead_code(_Graph(graph), graph.project, config) == []

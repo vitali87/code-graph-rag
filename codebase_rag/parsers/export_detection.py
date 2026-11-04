@@ -866,28 +866,27 @@ def _cpp_public_api(node: Node) -> bool:
     definition = _cpp_function_definition(node)
     if definition is None:
         return False
-    member = definition
-    while member.parent is not None and (
-        member.parent.type == cs.TS_CPP_TEMPLATE_DECLARATION
-        or member.parent.type in cs.CPP_PREPROC_CONDITIONAL_TYPES
-    ):
-        member = member.parent
-    scope = member.parent
+    scope = _cpp_enclosing_scope(definition)
     if scope is None or _cpp_local_or_anonymous(scope):
         return False
     if scope.type == cs.TS_FIELD_DECLARATION_LIST:
         return _cpp_reachable_member(definition)
     return (
-        scope.type
-        in (
-            cs.TS_CPP_TRANSLATION_UNIT,
-            cs.TS_CPP_DECLARATION_LIST,
-            cs.TS_CPP_LINKAGE_SPECIFICATION,
-        )
+        scope.type in cs.CPP_NAMESPACE_SCOPE_TYPES
         and not _cpp_static(definition)
         and not _declared_static_before(definition, cpp=True)
         and not _cpp_defined_out_of_line(definition)
     )
+
+
+def _cpp_enclosing_scope(node: Node) -> Node | None:
+    current = node
+    while current.parent is not None and (
+        current.parent.type == cs.TS_CPP_TEMPLATE_DECLARATION
+        or current.parent.type in cs.CPP_PREPROC_CONDITIONAL_TYPES
+    ):
+        current = current.parent
+    return current.parent
 
 
 def _cpp_function_definition(node: Node) -> Node | None:
@@ -935,6 +934,7 @@ def _cpp_reachable_member(member: Node) -> bool:
             owner = body.parent
             if _cpp_private_member(member, body) or (
                 owner is not None
+                and not _cpp_library_specialization(owner)
                 and _cpp_qualified_by_class(
                     owner.child_by_field_name(cs.FIELD_NAME), owner
                 )
@@ -942,6 +942,23 @@ def _cpp_reachable_member(member: Node) -> bool:
                 return False
         body = body.parent
     return True
+
+
+def _cpp_library_specialization(owner: Node) -> bool:
+    # `template <> struct std::hash<Foo> {}` (or a partial one) specializes
+    # another library's template for this code, and that library calls its
+    # members, so they are API though `std` is no namespace of this file. A
+    # plain `struct X::Y {}` is still an out-of-line nested class.
+    name = owner.child_by_field_name(cs.FIELD_NAME)
+    while name is not None and name.type == cs.TS_CPP_QUALIFIED_IDENTIFIER:
+        name = name.child_by_field_name(cs.FIELD_NAME)
+    scope = _cpp_enclosing_scope(owner)
+    return (
+        name is not None
+        and name.type == cs.TS_TEMPLATE_TYPE
+        and scope is not None
+        and scope.type in cs.CPP_NAMESPACE_SCOPE_TYPES
+    )
 
 
 def _cpp_private_member(node: Node, body: Node) -> bool:

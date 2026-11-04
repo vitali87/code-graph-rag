@@ -272,6 +272,9 @@ TS_CPP_TRANSLATION_UNIT = "translation_unit"
 TS_CPP_LINKAGE_SPECIFICATION = "linkage_specification"
 # The body of a namespace or an `extern "C++" { }` block.
 TS_CPP_DECLARATION_LIST = "declaration_list"
+CPP_NAMESPACE_SCOPE_TYPES = frozenset(
+    {TS_CPP_TRANSLATION_UNIT, TS_CPP_DECLARATION_LIST, TS_CPP_LINKAGE_SPECIFICATION}
+)
 TS_CPP_CALL_EXPRESSION = "call_expression"
 TS_CPP_FIELD_EXPRESSION = "field_expression"
 TS_CPP_SUBSCRIPT_EXPRESSION = "subscript_expression"
