@@ -1176,19 +1176,23 @@ def _file_module_holding(name: str, module_paths: Mapping[str, Path]) -> str | N
     return holder
 
 
-def _module_reached_by(target: str, module_paths: Mapping[str, Path]) -> str | None:
-    """The module whose imports an import of `target` needs restored.
+def _js_entry_modules(
+    targets: Iterable[str], module_paths: Mapping[str, Path]
+) -> list[str]:
+    """The JS/TS modules import `targets` name, a directory's `index` included.
 
-    A JS/TS import of a directory names `worker` or `worker.default`, while
-    the module is `worker/index.ts`, which no prefix of `target` spells.
+    `require("./worker")` names `worker` and `import run from "./worker"`
+    names `worker.default`, while the module is `worker/index.ts`, which no
+    prefix of either spells. A `worker/default.ts` beside it is a module
+    under that second qn, so the index is a target of its own rather than a
+    fallback for when nothing holds the name.
     """
-    holder = _file_module_holding(target, module_paths)
-    if holder is not None:
-        return holder
-    parent = target.rpartition(cs.SEPARATOR_DOT)[0]
-    return js_ts_module_qn(target, module_paths) or js_ts_module_qn(
-        parent, module_paths
-    )
+    return [
+        module_qn
+        for target in targets
+        for name in (target, target.rpartition(cs.SEPARATOR_DOT)[0])
+        if (module_qn := js_ts_module_qn(name, module_paths)) is not None
+    ]
 
 
 def _project_root_for_single_file(target: Path) -> Path:
@@ -2679,8 +2683,9 @@ class GraphUpdater:
                 *mapping.get(scope, {}).values(),
                 *import_processor.rust_mod_scope_targets(scope),
             ]
+            targets += _js_entry_modules(targets, module_paths)
             for target in targets:
-                holder = _module_reached_by(target, module_paths)
+                holder = _file_module_holding(target, module_paths)
                 if holder is None or holder in walked:
                     continue
                 walked.add(holder)

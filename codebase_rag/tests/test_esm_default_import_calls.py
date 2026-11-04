@@ -54,6 +54,10 @@ FILES = {
     "src/mjsdir/index.mjs": DEFAULT_FN,
     "src/tsxdir/index.tsx": DEFAULT_FN,
     "src/cjsdir/index.js": "module.exports = function () {\n  return 1;\n};\n",
+    # `dual/default.ts` is a module under the qn `import x from "./dual"`
+    # names (`dual.default`); the default export is still `dual/index.ts`'s.
+    "src/dual/index.ts": DEFAULT_FN,
+    "src/dual/default.ts": "export function other(): number {\n  return 3;\n}\n",
     # `both.ts` is what `./both` names, as on disk, not `both/index.ts`.
     "src/both.ts": DEFAULT_FN,
     "src/both/index.ts": DEFAULT_FN,
@@ -79,6 +83,7 @@ FILES = {
         'import mjsdir from "./mjsdir";\n'
         'import tsxdir from "./tsxdir";\n'
         'import both from "./both";\n'
+        'import dual from "./dual";\n'
         'import nothing from "./plain";\n'
         'const cjs = require("./cjs");\n'
         'const cjsdir = require("./cjsdir");\n'
@@ -88,7 +93,8 @@ FILES = {
         "  return [\n"
         "    anon(1), named(2), arrow(3), ident(4), padded(5), paren(), nested(),\n"
         "    cast(), satisfied(), asserted(), nonnull(), identcast(6), namedexpr(),\n"
-        "    worker(), jsdir(), mjsdir(), tsxdir(), both(), cjs(7), cjsdir(), nothing(8),\n"
+        "    worker(), jsdir(), mjsdir(), tsxdir(), both(), dual(), cjs(7), cjsdir(),\n"
+        "    nothing(8),\n"
         "  ];\n"
         "}\n"
     ),
@@ -114,6 +120,7 @@ DEFAULT_EXPORTERS = [
     "jsdir",
     "mjsdir",
     "tsxdir",
+    "dual",
 ]
 
 
@@ -210,7 +217,7 @@ def test_the_targets_are_the_exported_definitions(callees: dict[str, str]) -> No
 
 
 def test_a_directory_import_reaches_its_index_module(callees: dict[str, str]) -> None:
-    for directory in ("worker", "jsdir", "mjsdir", "tsxdir"):
+    for directory in ("worker", "jsdir", "mjsdir", "tsxdir", "dual"):
         assert [qn for qn in callees if f".src.{directory}.index." in qn], callees
 
 
