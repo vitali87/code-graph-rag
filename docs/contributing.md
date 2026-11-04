@@ -134,8 +134,12 @@ A release happens every 50 versions, which is every 50 merges however they
 were batched into bumps: the count is how far the patch number has moved since
 the latest release, plus the merges of the bump being made. A bump that takes
 the count past 50 releases all of its merges, so a release can hold a few more
-than 50 when merges land faster than bumps. A release also happens
-immediately when the `decide` step sees a security fix (a GHSA id in the
+than 50 when merges land faster than bumps. A version set by hand counts the
+merges that brought it, not the numbers it skips: setting 0.0.1 to 0.0.50 in a
+pull request counts as one merge, or more when other merges share its bump.
+Version numbers alone cannot show that, so the bump records the count on its
+tag (`version-set-by-hand: <n>`) and every later run reads it. A release also
+happens immediately when the `decide` step sees a security fix (a GHSA id in the
 commit message, an explicit `[security]` marker, or an associated PR labelled
 `security`) or a PR labelled
 `breaking change`, so the version that announces a breaking change is one

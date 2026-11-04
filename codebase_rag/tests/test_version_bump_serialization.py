@@ -42,6 +42,7 @@ def _workflow() -> dict:
 
 
 MARKER = _workflow()["env"]["DEFERRED_RELEASE_MARKER"]
+HAND_SET_MARKER = _workflow()["env"]["VERSION_SET_BY_HAND_MARKER"]
 
 
 def _step(name: str) -> Step:
@@ -446,6 +447,7 @@ def _decide_run(
             "EVENTS_FAIL": "false",
             "ROLE_FAIL": "false",
             "DEFERRED_RELEASE_MARKER": MARKER,
+            "VERSION_SET_BY_HAND_MARKER": HAND_SET_MARKER,
             "GITHUB_STEP_SUMMARY": str(tmp_path / "summary"),
             **env,
         },
@@ -1452,5 +1454,160 @@ def test_a_tag_main_never_reached_does_not_count(
     result, out = _decide_run(tmp_path, f"{SHA}\\n", CURRENT="0.0.40", TAG_LIST=tags)
     assert result.returncode == 0, result.stderr
     assert out["release"] == release
+    summary = (tmp_path / "summary").read_text(encoding="utf-8")
+    assert "40 of 50 since v0.0.1" in summary
+
+
+# A version set by hand can skip numbers no merge made (issue #3573). The bump
+# that carries one counts the merges of its batch instead, back to the newest
+# bump commit, and its tag records that count for every later run.
+
+
+def test_a_bump_carrying_a_version_set_by_hand_counts_its_batch(
+    tmp_path: Path,
+) -> None:
+    # HAND_SET's own run stood down, so this run tags both it and SHA.
+    out = _hand_set_version(tmp_path, {})
+    assert out["merged"] == "1"
+    assert out["hand_set_count"] == "2"
+
+
+def test_the_merge_that_sets_a_version_by_hand_counts_the_merges_before_it(
+    tmp_path: Path,
+) -> None:
+    # OLDER and NEWER landed after the last bump, while SHA, which sets the
+    # version by hand, was on its way: all three share this run's tag.
+    _commits(
+        tmp_path,
+        {
+            OLDER: "Merge pull request #1",
+            NEWER: "Merge pull request #2",
+            SHA: "Merge pull request #3",
+        },
+        parents={OLDER: OUTSIDE, NEWER: OLDER, SHA: NEWER},
+    )
+    _versions(tmp_path, {NEWER: "0.1.89"})
+    result, out = _decide_run(
+        tmp_path,
+        f"{OLDER}\\n{NEWER}\\n{SHA}\\n",
+        CURRENT="0.2.0",
+        LS_REMOTE_EXIT="2",
+        TAG_LIST=f"{OUTSIDE}\\trefs/tags/v0.1.89\\n",
+    )
+    assert result.returncode == 0, result.stderr
+    assert out["merged"] == "0"
+    assert out["hand_set_count"] == "3"
+    # Counting past the version set by hand reads no further version.
+    assert _lines(tmp_path / "contents_calls") == [NEWER]
+    summary = (tmp_path / "summary").read_text(encoding="utf-8")
+    assert "3 merge(s) in this bump" in summary
+
+
+def test_an_ordinary_bump_records_no_count(tmp_path: Path) -> None:
+    _commits(tmp_path, {OLDER: "Merge pull request #1", SHA: "Merge pull request #2"})
+    assert _decide(tmp_path, f"{OLDER}\\n{SHA}\\n")["hand_set_count"] == ""
+
+
+def test_an_untagged_bump_is_not_a_version_set_by_hand(tmp_path: Path) -> None:
+    # The run that pushed BUMP_COMMIT failed before its tag: its version is
+    # untagged, but nothing set it by hand, so the distance still counts.
+    _commits(
+        tmp_path,
+        {BUMP_COMMIT: "chore: bump version to 0.1.90", SHA: "Merge pull request #2"},
+        parents={BUMP_COMMIT: OUTSIDE, SHA: BUMP_COMMIT},
+    )
+    _versions(tmp_path, {BUMP_COMMIT: "0.1.90"})
+    result, out = _decide_run(
+        tmp_path,
+        f"{BUMP_COMMIT}\\n{SHA}\\n",
+        CURRENT="0.1.90",
+        LS_REMOTE_EXIT="2",
+        TAG_LIST=f"{OUTSIDE}\\trefs/tags/v0.1.89\\n",
+    )
+    assert result.returncode == 0, result.stderr
+    assert out["merged"] == "1"
+    assert out["hand_set_count"] == ""
+
+
+def _after_a_tag_set_by_hand(tmp_path: Path, message: str) -> dict[str, str]:
+    """One merge after v0.0.50, which a merge set by hand straight from v0.0.1,
+    the latest release; the tag says how many merges it stands for."""
+    _commits(tmp_path, {SHA: "Merge pull request #2"})
+    tags = f"{OLDER}\\trefs/tags/v0.0.1\\n" + _annotated(
+        tmp_path, "v0.0.50", message, "1" * 40
+    )
+    result, out = _decide_run(tmp_path, f"{SHA}\\n", CURRENT="0.0.50", TAG_LIST=tags)
+    assert result.returncode == 0, result.stderr
+    return out
+
+
+def test_a_tag_set_by_hand_counts_its_merges_not_the_numbers_it_skipped(
+    tmp_path: Path,
+) -> None:
+    # The 49 numbers the hand-set version skipped would release here.
+    out = _after_a_tag_set_by_hand(tmp_path, f"{HAND_SET_MARKER}: 1")
+    assert out["release"] == "false"
+    summary = (tmp_path / "summary").read_text(encoding="utf-8")
+    assert "2 of 50 since v0.0.1" in summary
+
+
+def test_a_deferred_tag_set_by_hand_stays_due(tmp_path: Path) -> None:
+    out = _after_a_tag_set_by_hand(
+        tmp_path, f"{MARKER}: CI is not proven for {OLDER}\n{HAND_SET_MARKER}: 1"
+    )
+    assert out["release"] == "true"
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        f"{HAND_SET_MARKER}: 0",
+        f"{HAND_SET_MARKER}: x",
+        f"{HAND_SET_MARKER}: 3; touch pwned",
+        f"{HAND_SET_MARKER}:3",
+        f"note: {HAND_SET_MARKER}: 1",
+    ],
+)
+def test_a_malformed_count_is_ignored_for_the_distance(
+    tmp_path: Path, message: str
+) -> None:
+    out = _after_a_tag_set_by_hand(tmp_path, message)
+    # 49 numbers plus this merge: the distance counts, as before the change.
+    assert out["release"] == "true"
+    assert not (tmp_path / "pwned").exists()
+
+
+def test_the_versions_after_a_tag_set_by_hand_count_from_it(tmp_path: Path) -> None:
+    # v0.0.90 was set by hand from v0.0.40 and carried 2 merges; three more
+    # merges since moved it to v0.0.93. 39 + 2 + 3, then this run's one.
+    _commits(tmp_path, {SHA: "Merge pull request #9"})
+    tags = (
+        f"{OLDER}\\trefs/tags/v0.0.1\\n{OLDER}\\trefs/tags/v0.0.40\\n"
+        + _annotated(tmp_path, "v0.0.90", f"{HAND_SET_MARKER}: 2", "1" * 40)
+        + f"{OLDER}\\trefs/tags/v0.0.93\\n"
+    )
+    result, out = _decide_run(tmp_path, f"{SHA}\\n", CURRENT="0.0.93", TAG_LIST=tags)
+    assert result.returncode == 0, result.stderr
+    assert out["release"] == "false"
+    summary = (tmp_path / "summary").read_text(encoding="utf-8")
+    assert "45 of 50 since v0.0.1" in summary
+
+
+def test_the_run_that_tags_a_version_set_by_hand_counts_as_its_tag_will(
+    tmp_path: Path,
+) -> None:
+    # The run counts its batch now, and the tag it cuts records that count,
+    # so the release point does not move once the tag exists.
+    _commits(tmp_path, {SHA: "Merge pull request #1"}, parents={SHA: OUTSIDE})
+    _versions(tmp_path, {OUTSIDE: "0.0.40"})
+    result, out = _decide_run(
+        tmp_path,
+        f"{SHA}\\n",
+        CURRENT="0.0.90",
+        LS_REMOTE_EXIT="2",
+        TAG_LIST=f"{OLDER}\\trefs/tags/v0.0.1\\n{OUTSIDE}\\trefs/tags/v0.0.40\\n",
+    )
+    assert result.returncode == 0, result.stderr
+    assert out["hand_set_count"] == "1"
     summary = (tmp_path / "summary").read_text(encoding="utf-8")
     assert "40 of 50 since v0.0.1" in summary
