@@ -197,8 +197,19 @@ jobs:
                   n = substr($0, length(marker) + 1)
                   if (n ~ /^[1-9][0-9]*$/) { print n; exit }
                 }')
+            # A count replaces the tag's distance, so a tag cut off main would
+            # move the total, where a plain stray tag below the version main
+            # holds cannot. Such tags are rare, so each costs one call.
             if [ -n "$COUNT" ]; then
-              COUNTED="${COUNTED} ${TAG}=${COUNT}"
+              if ! ON_MAIN=$(gh api \
+                  "repos/${GITHUB_REPOSITORY}/compare/${TAG}...${GITHUB_SHA}?per_page=1" \
+                  --jq .status); then
+                echo "::error::could not compare ${TAG} with ${GITHUB_SHA}; refusing to decide the release"
+                exit 1
+              fi
+              case "$ON_MAIN" in
+                ahead|identical) COUNTED="${COUNTED} ${TAG}=${COUNT}" ;;
+              esac
             fi
           done
           if [ "$TAG_STATUS" -eq 0 ] && [[ "$DEFERRED" != *" v${CURRENT} "* ]]; then

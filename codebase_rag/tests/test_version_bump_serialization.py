@@ -1611,3 +1611,47 @@ def test_the_run_that_tags_a_version_set_by_hand_counts_as_its_tag_will(
     assert out["hand_set_count"] == "1"
     summary = (tmp_path / "summary").read_text(encoding="utf-8")
     assert "40 of 50 since v0.0.1" in summary
+
+
+def _stray_count(
+    tmp_path: Path, status: str, **env: str
+) -> tuple[subprocess.CompletedProcess[str], dict[str, str]]:
+    """Main holds v0.0.40; v0.0.20 carries a count of 1 but may lie off main."""
+    _commits(tmp_path, {SHA: "Merge pull request #2"})
+    (tmp_path / "status").mkdir()
+    (tmp_path / "status" / "v0.0.20").write_text(status + "\n", encoding="utf-8")
+    tags = (
+        f"{OLDER}\\trefs/tags/v0.0.1\\n"
+        + _annotated(tmp_path, "v0.0.20", f"{HAND_SET_MARKER}: 1", "1" * 40)
+        + f"{OLDER}\\trefs/tags/v0.0.40\\n"
+    )
+    return _decide_run(tmp_path, f"{SHA}\\n", CURRENT="0.0.40", TAG_LIST=tags, **env)
+
+
+@pytest.mark.parametrize(
+    ("status", "total"),
+    [
+        # Off main, the count is ignored and the distances telescope: 39 + 1.
+        ("diverged", "40"),
+        ("behind", "40"),
+        # On main it counts: 1 for v0.0.20, 20 to v0.0.40, then this run's 1.
+        ("ahead", "22"),
+    ],
+)
+def test_a_count_counts_only_on_a_tag_main_holds(
+    tmp_path: Path, status: str, total: str
+) -> None:
+    result, out = _stray_count(tmp_path, status)
+    assert result.returncode == 0, result.stderr
+    summary = (tmp_path / "summary").read_text(encoding="utf-8")
+    assert f"{total} of 50 since v0.0.1" in summary
+    assert _lines(tmp_path / "status_calls") == [
+        f"repos/vitali87/code-graph-rag/compare/v0.0.20...{SHA}?per_page=1"
+    ]
+
+
+def test_an_unreadable_ancestry_fails_instead_of_miscounting(tmp_path: Path) -> None:
+    result, out = _stray_count(tmp_path, "ahead", STATUS_FAILS="true")
+    assert result.returncode != 0
+    assert "could not compare v0.0.20" in result.stdout
+    assert "release" not in out
