@@ -41,10 +41,10 @@ jobs:
     # the pending one: admission order is not guaranteed, so a delayed older
     # run could otherwise displace the newest one and then stand down at the
     # tip check, leaving nothing to bump. Older runs still stand down; the
-    # newest bumps once for all, as "Decide" scans every commit since the
-    # last release tag. version-bump-supersede.yml cancels the waiting ones,
-    # and only those whose commit a newer merge contains, so it never removes
-    # the run that has to bump.
+    # newest bumps for all, one patch number per merge, as "Decide" scans
+    # every commit since the last release tag. version-bump-supersede.yml
+    # cancels the waiting ones, and only those whose commit a newer merge
+    # contains, so it never removes the run that has to bump.
     concurrency:
       group: version-bump-main
       cancel-in-progress: false
@@ -128,6 +128,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CURRENT: ${{ steps.get_version.outputs.current }}
+          DISPATCH_BUMP_TYPE: ${{ github.event.inputs.bump_type }}
         run: |
           LATEST=$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name 2>/dev/null || echo "")
           # A security patch must ship immediately rather than waiting for the
@@ -275,11 +276,16 @@ jobs:
           # Its release is another matter: nothing in this range has been
           # released, so a breaking change anywhere in it is still owed one,
           # even behind the newest bump, whose release may have been deferred.
+          # The same walk counts the merges since the version last changed,
+          # which is how far the patch number moves: merges that landed while
+          # an earlier bump or its CI was running share this run's bump, and
+          # each of them is still one version (and one step of RELEASE_EVERY).
           BREAKING=false
           UNRELEASED_BREAKING=false
           BREAKING_PRS=""
           RELEASE_NOW=false
           COUNTING=true
+          MERGED=0
           # The pull requests in $PULLS labelled "breaking change", which the
           # release names when they added no notes (issue #3431).
           breaking_prs() {
@@ -291,7 +297,8 @@ jobs:
           for SHA in $COMMITS; do
             # A security release ships whatever else the range holds, so once
             # its bump is settled the rest of the range is read only for the
-            # pull requests the release names.
+            # pull requests the release names, and for where the count of
+            # merges ends.
             SETTLED=false
             if [ "$SECURITY" = "true" ] &&
                 { [ "$BREAKING" = "true" ] || [ "$COUNTING" = "false" ]; }; then
@@ -303,10 +310,6 @@ jobs:
                 --jq '.[] | "#pull-request", "#\(.number)", .labels[].name'); then
               echo "::error::could not read the pull request labels of ${SHA}; refusing to decide the release"
               exit 1
-            fi
-            if [ "$SETTLED" = "true" ]; then
-              BREAKING_PRS="${BREAKING_PRS} $(breaking_prs)"
-              continue
             fi
             PARENT=""
             if [ "$COUNTING" = "true" ]; then
@@ -341,6 +344,13 @@ jobs:
               if [ "$PARENT_VERSION" != "$CURRENT" ]; then
                 COUNTING=false
               fi
+            fi
+            if [ "$COUNTING" = "true" ]; then
+              MERGED=$((MERGED + 1))
+            fi
+            if [ "$SETTLED" = "true" ]; then
+              BREAKING_PRS="${BREAKING_PRS} $(breaking_prs)"
+              continue
             fi
             if printf '%s\n' "$PULLS" | grep -qx security; then
               SECURITY=true
@@ -399,22 +409,65 @@ jobs:
           # "release now" ships at once too, without the security notice: a
           # fix users should not wait for need not be a vulnerability, and
           # borrowing the security label would announce one that is not there.
+          # RELEASE_EVERY counts merges, not tags: a tag can stand for many
+          # merges, and counting tags let a release hold several times more
+          # than RELEASE_EVERY. Each bump moves the patch number once per
+          # merge, so the distance it has moved since the latest release is
+          # the count, read from the tags with no further call. A step into a
+          # new minor or major line counts once, as a tag did. Tags above the
+          # version main holds are not main's, so the count stops there: a
+          # stray higher tag elsewhere would otherwise read as dozens of
+          # merges, and within one line the distance cannot be moved by a
+          # stray tag below it. The bump this
+          # run is about to make counts too, with at least one step: a
+          # dispatched run, or one tagging a version set by hand, adds a
+          # version without a merge of its own. A dispatched minor or major
+          # bump counts one step, as its tag will on every later run, so the
+          # release does not depend on which run crossed RELEASE_EVERY. A
+          # batch that takes the count past RELEASE_EVERY ships whole.
+          STEP=$(( MERGED > 0 ? MERGED : 1 ))
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] &&
+              [ "$DISPATCH_BUMP_TYPE" != patch ]; then
+            STEP=1
+          fi
+          SINCE=0
+          if [ -n "$LATEST" ]; then
+            SINCE=$(printf '%s\n' "$TAGS" | awk -F'refs/tags/' 'NF > 1 {print $2}' \
+              | grep -xE 'v[0-9]+\.[0-9]+\.[0-9]+' | sort -uV \
+              | awk -v latest="$LATEST" -v current="$CURRENT" '
+                  BEGIN { split(current, c, ".") }
+                  { split(substr($0, 2), v, ".") }
+                  v[1] + 0 > c[1] + 0 ||
+                      (v[1] + 0 == c[1] + 0 && (v[2] + 0 > c[2] + 0 ||
+                      (v[2] + 0 == c[2] + 0 && v[3] + 0 > c[3] + 0))) { exit }
+                  seen {
+                    if (v[1] + 0 == major && v[2] + 0 == minor && v[3] + 0 > patch)
+                      count += v[3] - patch
+                    else
+                      count++
+                  }
+                  $0 == latest { seen = 1 }
+                  seen { major = v[1] + 0; minor = v[2] + 0; patch = v[3] + 0 }
+                  END { print count + 0 }')
+          fi
+          # A release deferred for unproven CI stays due on every later bump
+          # until one is published, whatever the count now reads: a step the
+          # count reads differently once tagged must not cancel it.
           RELEASE=false
           if [ "$SECURITY" = "true" ] || [ "$UNRELEASED_BREAKING" = "true" ] ||
-              [ "$RELEASE_NOW" = "true" ]; then
+              [ "$RELEASE_NOW" = "true" ] || [ "$DEFERRED" != " " ]; then
             RELEASE=true
-          elif [ -n "$LATEST" ]; then
-            TAGS_SINCE=$(git ls-remote --tags origin "refs/tags/v*" \
-              | awk -F'refs/tags/' '{print $2}' \
-              | grep -v '\^{}' \
-              | sort -V \
-              | awk -v latest="$LATEST" 'seen {count++} $0 == latest {seen=1} END {print count + 0}')
-            if [ $((TAGS_SINCE + 1)) -ge "$RELEASE_EVERY" ]; then
-              RELEASE=true
-            fi
+          elif [ -n "$LATEST" ] && [ $((SINCE + STEP)) -ge "$RELEASE_EVERY" ]; then
+            RELEASE=true
           fi
+          CADENCE="- **Cadence:** ${MERGED} merge(s) in this bump"
+          if [ -n "$LATEST" ]; then
+            CADENCE="${CADENCE}, $((SINCE + STEP)) of ${RELEASE_EVERY} since ${LATEST}"
+          fi
+          echo "$CADENCE" >> "$GITHUB_STEP_SUMMARY"
           {
             echo "release=$RELEASE"
+            echo "merged=$MERGED"
             echo "latest=$LATEST"
             echo "security=$SECURITY"
             echo "breaking=$BREAKING"
@@ -453,12 +506,24 @@ jobs:
         env:
           CURRENT: ${{ steps.get_version.outputs.current }}
           BUMP_TYPE: ${{ steps.bump_type.outputs.type }}
+          MERGED: ${{ steps.decide.outputs.merged }}
         run: |
           # Validated BEFORE any arithmetic: bash evaluates `$(( ))` operands
           # as expressions, so a crafted component could run commands there.
           if [[ ! "$CURRENT" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::refusing malformed version '$CURRENT' from pyproject.toml"
             exit 1
+          fi
+          # A patch bump moves once per merge it carries, so merges that
+          # shared one run each still get a number. At least one: a
+          # dispatched run on the bump commit carries no merge.
+          if [[ ! "${MERGED:-1}" =~ ^[0-9]+$ ]]; then
+            echo "::error::refusing malformed merge count '$MERGED'"
+            exit 1
+          fi
+          STEP=$((10#${MERGED:-1}))
+          if (( STEP < 1 )); then
+            STEP=1
           fi
           IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
           MAJOR=$((10#$MAJOR)); MINOR=$((10#$MINOR)); PATCH=$((10#$PATCH))
@@ -471,7 +536,7 @@ jobs:
               MINOR=$((MINOR + 1)); PATCH=0
               ;;
             patch)
-              PATCH=$((PATCH + 1))
+              PATCH=$((PATCH + STEP))
               ;;
             breaking)
               # Below 1.0 the minor number is the one that signals a
