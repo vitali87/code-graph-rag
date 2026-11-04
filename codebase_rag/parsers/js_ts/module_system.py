@@ -57,6 +57,23 @@ def _default_alias_spec(statement: ASTNode) -> ASTNode | None:
     return None
 
 
+_LEADING_VALUE_WRAPPERS = cs.TS_CAST_WRAPPER_TYPES | {cs.TS_PARENTHESIZED_EXPRESSION}
+
+
+def _exported_value(node: ASTNode) -> ASTNode:
+    # `export default (() => 1)`, `... as Fn`, `... satisfies Fn`, `<Fn>...`
+    # and `f!` export the value they wrap, but only the inner node is a
+    # registered definition's span or a name.
+    while True:
+        values = [c for c in node.named_children if c.type != cs.TS_COMMENT]
+        if node.type in _LEADING_VALUE_WRAPPERS and values:
+            node = values[0]
+        elif node.type == cs.TS_TYPE_ASSERTION and values:
+            node = values[-1]
+        else:
+            return node
+
+
 class JsTsModuleSystemMixin:
     __slots__ = ("_processed_imports", "_pending_direct_module_exports")
     ingestor: IngestorProtocol
@@ -488,6 +505,7 @@ class JsTsModuleSystemMixin:
         return None
 
     def _esm_exported_qn(self, exported: ASTNode, module_qn: str) -> str | None:
+        exported = _exported_value(exported)
         if exported.type == cs.TS_IDENTIFIER:
             return self._esm_named_qn(safe_decode_text(exported), module_qn)
         loc = self.function_locations.get(function_span_key(module_qn, exported))

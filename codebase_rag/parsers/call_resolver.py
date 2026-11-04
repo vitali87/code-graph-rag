@@ -22,6 +22,7 @@ from .go.interfaces import GoMethodSpec
 from .go.link_state import GoLinkState
 from .import_processor import ImportProcessor
 from .js_ts import utils as js_ts_utils
+from .js_ts.reexports import js_ts_module_qn
 from .lua import utils as lua_utils
 from .parameter_nodes import c_family_parameter_list
 from .php import class_names as php_class_names
@@ -4083,7 +4084,9 @@ class CallResolver:
         # maps to the MODULE qn; when that module's entire export is one
         # function (`module.exports = function ... `), the call is a call to
         # that function (issue #991, fastify's error-serializer).
-        direct = self.import_processor.commonjs_direct_exports.get(imported_qn)
+        direct = self.import_processor.commonjs_direct_exports.get(
+            self._js_module_key(imported_qn)
+        )
         if direct is not None:
             yield direct
         # An ES-module default import maps to `<module>.default`, which no
@@ -4091,10 +4094,17 @@ class CallResolver:
         # the definition the call reaches (issue #2724).
         if imported_qn.endswith(cs.IMPORT_DEFAULT_SUFFIX):
             default = self.import_processor.esm_default_exports.get(
-                imported_qn[: -len(cs.IMPORT_DEFAULT_SUFFIX)]
+                self._js_module_key(imported_qn[: -len(cs.IMPORT_DEFAULT_SUFFIX)])
             )
             if default is not None:
                 yield default
+
+    def _js_module_key(self, module_qn: str) -> str:
+        # `require("./worker")` and `import run from "./worker"` name the
+        # directory, while the module both export maps key on is
+        # `worker/index.ts`; `worker.ts` wins when both exist, as on disk.
+        found = js_ts_module_qn(module_qn, self.type_inference.module_qn_to_file_path)
+        return found or module_qn
 
     def _try_resolve_qualified_call(
         self,

@@ -91,6 +91,9 @@ TS_NON_NULL_EXPRESSION = "non_null_expression"
 TS_CAST_WRAPPER_TYPES = frozenset(
     {TS_AS_EXPRESSION, TS_SATISFIES_EXPRESSION, TS_NON_NULL_EXPRESSION}
 )
+# The angle-bracket cast `<T>x`: transparent too, but its value is its LAST
+# named child (the first is the type).
+TS_TYPE_ASSERTION = "type_assertion"
 
 # JS/TS ingest node types
 TS_PAIR = "pair"

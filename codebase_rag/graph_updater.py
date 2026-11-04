@@ -108,6 +108,7 @@ from .parsers.java_lombok import (
     current_lombok_identity,
     overlay_identity,
 )
+from .parsers.js_ts.reexports import js_ts_module_qn
 from .parsers.notebook import NotebookSkipped, is_notebook_path, read_notebook
 from .parsers.parameter_nodes import PendingParameterType
 from .parsers.rs import utils as rs_utils
@@ -1173,6 +1174,21 @@ def _file_module_holding(name: str, module_paths: Mapping[str, Path]) -> str | N
         if module_paths.get(prefix) == path:
             return prefix
     return holder
+
+
+def _module_reached_by(target: str, module_paths: Mapping[str, Path]) -> str | None:
+    """The module whose imports an import of `target` needs restored.
+
+    A JS/TS import of a directory names `worker` or `worker.default`, while
+    the module is `worker/index.ts`, which no prefix of `target` spells.
+    """
+    holder = _file_module_holding(target, module_paths)
+    if holder is not None:
+        return holder
+    parent = target.rpartition(cs.SEPARATOR_DOT)[0]
+    return js_ts_module_qn(target, module_paths) or js_ts_module_qn(
+        parent, module_paths
+    )
 
 
 def _project_root_for_single_file(target: Path) -> Path:
@@ -2664,7 +2680,7 @@ class GraphUpdater:
                 *import_processor.rust_mod_scope_targets(scope),
             ]
             for target in targets:
-                holder = _file_module_holding(target, module_paths)
+                holder = _module_reached_by(target, module_paths)
                 if holder is None or holder in walked:
                     continue
                 walked.add(holder)
