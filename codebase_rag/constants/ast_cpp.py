@@ -531,6 +531,10 @@ CPP_OP_ADDRESS_OF = "&"
 CPP_PREPROC_CONDITIONAL_TYPES = frozenset(
     {"preproc_if", "preproc_ifdef", "preproc_else", "preproc_elif", "preproc_elifdef"}
 )
+# The head of an `#if` chain; its `#elif` / `#else` branches hang off it as
+# the `alternative` field, and only an `#else` makes some branch certain.
+CPP_PREPROC_IF_TYPES = frozenset({"preproc_if", "preproc_ifdef"})
+TS_CPP_PREPROC_ELSE = "preproc_else"
 # Nodes that hold file-scope declarations without opening a scope of their
 # own: preprocessor conditionals and an `extern "C" { ... }` block.
 C_FILE_SCOPE_CONTAINER_TYPES = frozenset(

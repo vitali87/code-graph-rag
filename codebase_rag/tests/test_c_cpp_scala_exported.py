@@ -562,3 +562,143 @@ private:
     dead = collect_dead_code(_Graph(graph), graph.project, config)
 
     assert {row["name"] for row in dead} >= {"helper", "unused_callee"}
+
+
+# Greptile on PR #2952: an access label inside a preprocessor block governs
+# what follows it, and a member is private only when private in every build.
+PREPROC_CPP = """\
+class SameBlockNested {
+#ifdef FEATURE
+public:
+    struct Inner { void same_block_nested() {} };
+#endif
+};
+class SameBlockMember {
+#ifdef FEATURE
+public:
+    void same_block_member() {}
+#endif
+};
+class EarlierBlock {
+#ifdef FEATURE
+public:
+#endif
+    void after_earlier_block() {}
+};
+class NestedBlocks {
+#ifdef A
+#ifdef B
+public:
+    void nested_blocks() {}
+#endif
+#endif
+};
+class Branches {
+#if A
+public:
+#else
+private:
+#endif
+    void after_branches() {}
+#ifdef C
+private:
+    void inside_private_branch() {}
+#elif D
+    void elif_inherits() {}
+#else
+public:
+    void else_public() {}
+#endif
+};
+struct Debug {
+#ifdef DEBUG
+private:
+    void debug_only() {}
+#endif
+    void after_maybe_private() {}
+};
+class BothPrivate {
+#ifdef A
+private:
+#else
+private:
+#endif
+    void private_both_ways() {}
+};
+void ::global_qualified() {}
+static void global_static();
+void ::global_static() {}
+"""
+
+
+@pytest.fixture
+def preproc(tmp_path: Path) -> dict[str, bool]:
+    return _run(tmp_path, {"pp.cpp": PREPROC_CPP})
+
+
+@pytest.mark.parametrize(
+    "symbol",
+    [
+        "Inner.same_block_nested",
+        "same_block_member",
+        "after_earlier_block",
+        "nested_blocks",
+        "after_branches",
+        "elif_inherits",
+        "else_public",
+        "after_maybe_private",
+        "global_qualified",
+    ],
+    ids=[
+        "label-and-nested-class-in-one-ifdef",
+        "label-and-member-in-one-ifdef",
+        "label-in-an-earlier-ifdef",
+        "label-in-nested-ifdefs",
+        "public-in-one-branch-private-in-the-other",
+        "elif-branch-inherits-the-access-before-it",
+        "else-branch-with-its-own-label",
+        "after-an-ifdef-that-may-make-it-private",
+        "function-qualified-by-the-global-namespace",
+    ],
+)
+def test_public_in_some_build_is_exported(
+    preproc: dict[str, bool], symbol: str
+) -> None:
+    matches = [qn for qn in preproc if qn.endswith(f".{symbol}")]
+    assert matches, symbol
+    assert any(preproc[qn] for qn in matches), symbol
+
+
+@pytest.mark.parametrize(
+    "symbol",
+    ["debug_only", "inside_private_branch", "private_both_ways", "global_static"],
+    ids=[
+        "private-label-inside-an-ifdef-of-a-struct",
+        "inside-a-private-branch",
+        "private-in-every-branch",
+        "static-declared-before-a-global-qualified-definition",
+    ],
+)
+def test_private_in_every_build_stays_private(
+    preproc: dict[str, bool], symbol: str
+) -> None:
+    matches = [qn for qn in preproc if qn.endswith(f".{symbol}")]
+    assert matches, symbol
+    assert not any(preproc[qn] for qn in matches), symbol
+
+
+def test_a_public_method_behind_an_ifdef_label_is_not_dead(tmp_path: Path) -> None:
+    source = """\
+static int helper() { return 1; }
+
+class Outer {
+#ifdef FEATURE
+public:
+    struct Inner { int api() { return helper(); } };
+#endif
+};
+"""
+    graph = _indexed(tmp_path, {"guarded.cpp": source})
+    config = default_dead_code_config(include_tests=True, include_classes=False)
+
+    assert collect_dead_code(_Graph(graph), graph.project, config) == []

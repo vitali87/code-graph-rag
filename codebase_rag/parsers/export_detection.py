@@ -745,11 +745,11 @@ def _declared_static_before(definition: Node, *, cpp: bool = False) -> bool:
     namespace = _cpp_namespace_path(definition) if cpp else ()
     if cpp:
         # `void N::helper() {}` defines `helper` of namespace `N` (Greptile,
-        # PR #2952).
+        # PR #2952); the empty qualifier of `::helper` is the global one.
         *qualifier, name = (
             part.strip() for part in name.split(cs.SEPARATOR_DOUBLE_COLON)
         )
-        namespace += tuple(qualifier)
+        namespace += tuple(part for part in qualifier if part)
     parameters = _cpp_parameter_types(definition) if cpp else ()
     root = definition
     while root.parent is not None:
@@ -876,7 +876,7 @@ def _cpp_public_api(node: Node) -> bool:
     if scope is None or _cpp_local_or_anonymous(scope):
         return False
     if scope.type == cs.TS_FIELD_DECLARATION_LIST:
-        return _cpp_reachable_member(member)
+        return _cpp_reachable_member(definition)
     return (
         scope.type
         in (
@@ -929,37 +929,77 @@ def _cpp_reachable_member(member: Node) -> bool:
     # defined out of line (`struct Outer::Hidden {}`) takes its access from
     # `Outer`, usually in another file, so it is left alone like an
     # out-of-line member (Greptile, PR #2952).
-    current = member
-    while current.parent is not None:
-        body = current.parent
+    body = member.parent
+    while body is not None:
         if body.type == cs.TS_FIELD_DECLARATION_LIST:
             owner = body.parent
-            if _cpp_member_access(current, body) == cs.CPP_ACCESS_PRIVATE or (
+            if _cpp_private_member(member, body) or (
                 owner is not None
                 and _cpp_qualified_by_class(
                     owner.child_by_field_name(cs.FIELD_NAME), owner
                 )
             ):
                 return False
-        current = body
+        body = body.parent
     return True
 
 
-def _cpp_member_access(member: Node, body: Node) -> str:
-    # The access a member falls under: the last `public:` / `protected:` /
-    # `private:` label before it, else its class kind's default.
-    access: str | None = None
-    for child in body.children:
-        if child.id == member.id:
-            break
-        if child.type == cs.TS_ACCESS_SPECIFIER and child.text is not None:
-            access = child.text.decode(cs.ENCODING_UTF8).strip()
-    if access is not None:
-        return access
+def _cpp_private_member(node: Node, body: Node) -> bool:
+    # Private only when private in every build: a label inside `#ifdef`
+    # still governs what follows it, and after `#if X public: #else
+    # private: #endif` a member is public in one build (Greptile, PR #2952).
+    # `node` is any node inside the member.
     owner = body.parent
-    if owner is not None and owner.type in cs.CPP_PRIVATE_BY_DEFAULT:
-        return cs.CPP_ACCESS_PRIVATE
-    return cs.CPP_ACCESS_PUBLIC
+    default = (
+        cs.CPP_ACCESS_PRIVATE
+        if owner is not None and owner.type in cs.CPP_PRIVATE_BY_DEFAULT
+        else cs.CPP_ACCESS_PUBLIC
+    )
+    accesses, _ = _cpp_accesses_at(body, node, frozenset({default}))
+    return accesses == {cs.CPP_ACCESS_PRIVATE}
+
+
+def _cpp_accesses_at(
+    block: Node, node: Node, entry: frozenset[str]
+) -> tuple[frozenset[str], bool]:
+    # The accesses that may hold where `node` sits in `block`, or at its end
+    # when `node` is not in it (then the flag is False), given `entry` at
+    # its start.
+    accesses = entry
+    alternative = block.child_by_field_name(cs.FIELD_ALTERNATIVE)
+    for item in block.children:
+        if alternative is not None and item.id == alternative.id:
+            continue
+        if item.type in cs.CPP_PREPROC_IF_TYPES:
+            accesses, found = _cpp_accesses_through(item, node, accesses)
+            if found:
+                return accesses, True
+        elif item.start_byte <= node.start_byte and node.end_byte <= item.end_byte:
+            return accesses, True
+        elif item.type == cs.TS_ACCESS_SPECIFIER and item.text is not None:
+            accesses = frozenset({item.text.decode(cs.ENCODING_UTF8).strip()})
+    return accesses, False
+
+
+def _cpp_accesses_through(
+    conditional: Node, node: Node, entry: frozenset[str]
+) -> tuple[frozenset[str], bool]:
+    # Every branch starts from the accesses before `#if`; after `#endif` any
+    # branch's end may hold, and so may `entry` unless an `#else` makes some
+    # branch certain.
+    after: set[str] = set()
+    branch: Node | None = conditional
+    certain = False
+    while branch is not None:
+        accesses, found = _cpp_accesses_at(branch, node, entry)
+        if found:
+            return accesses, True
+        after |= accesses
+        certain = branch.type == cs.TS_CPP_PREPROC_ELSE
+        branch = branch.child_by_field_name(cs.FIELD_ALTERNATIVE)
+    if not certain:
+        after |= entry
+    return frozenset(after), False
 
 
 def _cpp_defined_out_of_line(node: Node) -> bool:
@@ -988,6 +1028,9 @@ def _cpp_qualified_by_class(name: Node | None, context: Node) -> bool:
     while inner is not None and inner.type == cs.TS_CPP_QUALIFIED_IDENTIFIER:
         owner = inner.child_by_field_name(cs.FIELD_SCOPE)
         inner = inner.child_by_field_name(cs.FIELD_NAME)
+    if owner is None:
+        # `::f` names `f` of the global namespace.
+        return False
     scope = safe_decode_text(owner) or ""
     namespaces, classes = _cpp_file_scope_names(context)
     return not (scope in namespaces and scope not in classes)

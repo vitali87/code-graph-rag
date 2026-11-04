@@ -227,7 +227,8 @@ so no name or path is cut to fit 80 columns.
        `struct` starts public, a `class` private), unless the class is local
        to a function or private in a class around it.
 
-     An out-of-line member definition (`int Box::f() {}`) or class
+     Access labels inside `#if` / `#ifdef` blocks count, and a member counts
+     unless it is private in every build. An out-of-line member definition (`int Box::f() {}`) or class
      (`struct Outer::Inner {}`) takes its access from a class declaration in
      another file, so it is not counted.
    - **Scala:** a member or top-level `def` that is not `private` or
