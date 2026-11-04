@@ -138,15 +138,67 @@ FUNCTIONS = {
     # target's parts do.
     "local_annotation": 'x: print(os.getenv("PB_LOCALANN")) = 1',
     "local_annotated_subscript": 'd = {}\nd[print(os.getenv("PB_LOCALTARGET"))]: int',
+    # Fourth bot review on PR #2764: each operand is read where Python
+    # evaluates it, after the walrus bindings before it and not after the
+    # ones that follow, in a call's arguments, a returned value, `+=` and an
+    # assignment alike.
+    "walrus_read_later_in_call": 'print(len(t := os.getenv("PB_ARGREAD")), t)',
+    "call_arg_before_walrus": 't = os.getenv("PB_ARGBEFORE")\nprint(t, (t := "safe"))',
+    "walrus_rebinds_before_call_arg": (
+        't = os.getenv("PB_ARGSTALE")\nprint((t := "safe"), t)'
+    ),
+    "returns_walrus_read_later": 'return str(len(t := os.getenv("PB_RETREAD"))) + t',
+    "prints_walrus_read_later": "print(returns_walrus_read_later())",
+    "returns_rebound_name": 't = os.getenv("PB_RETSTALE")\nreturn (t := "safe") + t',
+    "prints_rebound_name": "print(returns_rebound_name())",
+    "walrus_read_later_in_augmented": (
+        'x = ""\nx += str(len(t := os.getenv("PB_AUGREAD"))) + t\nprint(x)'
+    ),
+    "augmented_target_read_first": (
+        'x = os.getenv("PB_AUGLHS")\nx += (x := "safe")\nprint(x)'
+    ),
+    "walrus_rebinds_before_operand": (
+        't = os.getenv("PB_STALE")\nx = (t := "safe") + t\nprint(x)'
+    ),
+    # A starred comprehension target binds its names, and a filter sees only
+    # the `for` clauses before it.
+    "starred_comprehension_target": (
+        'pairs = os.getenv("PB_STARFOR")\n'
+        "out = [(last := rest) for *rest, tail in pairs]\nprint(last)"
+    ),
+    "walrus_between_for_clauses": (
+        's = os.getenv("PB_COMPORDER")\n'
+        "out = [0 for c in [s] if (last := c) for c in [1]]\nprint(last)"
+    ),
 }
 
-# Module-level annotations run, after the target is bound.
+# Module-level annotations run, after the target is bound, and so do a
+# def's parameter annotations; a string annotation, one under `if
+# TYPE_CHECKING:` and a `type` alias's value never do.
 MODULE_LEVEL = (
     'bare: print(os.getenv("PB_MODANN"))\n'
     'valued: print(os.getenv("PB_MODANNV")) = 1\n'
     'late: print(late) = os.getenv("PB_MODLATE")\n'
     "table = {}\n"
     'table[print(os.getenv("PB_MODTARGET"))]: int\n'
+    'def annotated(a: print(os.getenv("PB_PARAMANN"))):\n    pass\n'
+    "quoted: \"print(os.getenv('PB_STRANN'))\" = 1\n"
+    "from typing import TYPE_CHECKING\n"
+    'if TYPE_CHECKING:\n    checked: print(os.getenv("PB_TCANN"))\n'
+    'type Alias = print(os.getenv("PB_ALIAS"))\n'
+)
+
+# Under `from __future__ import annotations` (PEP 563) no annotation runs;
+# a default value still does.
+DEFERRED_MODULE = (
+    '"""Annotations stay strings here."""\n'
+    "from __future__ import annotations\n\n"
+    "import os\n\n"
+    'lazy: print(os.getenv("PB_FUTANN")) = 1\n\n\n'
+    "def typed(\n"
+    '    a: print(os.getenv("PB_FUTPARAM")) = print(os.getenv("PB_FUTDEFAULT")),\n'
+    ') -> print(os.getenv("PB_FUTRET")):\n'
+    "    pass\n"
 )
 
 
@@ -163,6 +215,7 @@ def _source(functions: dict[str, str], module_level: str) -> str:
 def flows(tmp_path_factory: pytest.TempPathFactory) -> set[tuple[str, str]]:
     root = tmp_path_factory.mktemp("pybind")
     (root / "binds.py").write_text(_source(FUNCTIONS, MODULE_LEVEL), encoding="utf-8")
+    (root / "deferred.py").write_text(DEFERRED_MODULE, encoding="utf-8")
     parsers, queries = load_parsers()
     mock = MagicMock()
     GraphUpdater(
@@ -221,6 +274,13 @@ def _leaks(flows: set[tuple[str, str]], var: str) -> bool:
         "PB_GUARDKEEP",
         "PB_DEF",
         "PB_LDSHORT",
+        "PB_ARGREAD",
+        "PB_ARGBEFORE",
+        "PB_RETREAD",
+        "PB_AUGREAD",
+        "PB_AUGLHS",
+        "PB_STARFOR",
+        "PB_COMPORDER",
     ],
 )
 def test_a_name_bound_by_unpacking_or_walrus_carries_its_value(
@@ -240,6 +300,9 @@ def test_a_name_bound_by_unpacking_or_walrus_carries_its_value(
         "PB_COMPCLEAN",
         "PB_CMPKILL",
         "PB_DEFKILL",
+        "PB_ARGSTALE",
+        "PB_RETSTALE",
+        "PB_STALE",
     ],
 )
 def test_a_name_rebound_to_a_clean_value_is_clean(
@@ -249,7 +312,16 @@ def test_a_name_rebound_to_a_clean_value_is_clean(
 
 
 @pytest.mark.parametrize(
-    "var", ["PB_MODANN", "PB_MODANNV", "PB_MODLATE", "PB_MODTARGET", "PB_LOCALTARGET"]
+    "var",
+    [
+        "PB_MODANN",
+        "PB_MODANNV",
+        "PB_MODLATE",
+        "PB_MODTARGET",
+        "PB_LOCALTARGET",
+        "PB_PARAMANN",
+        "PB_FUTDEFAULT",
+    ],
 )
 def test_an_annotated_assignment_runs_its_annotation_and_target(
     flows: set[tuple[str, str]], var: str
@@ -257,10 +329,22 @@ def test_an_annotated_assignment_runs_its_annotation_and_target(
     assert _leaks(flows, var)
 
 
-def test_a_local_variable_annotation_never_runs(
-    flows: set[tuple[str, str]],
+@pytest.mark.parametrize(
+    "var",
+    [
+        "PB_LOCALANN",
+        "PB_STRANN",
+        "PB_TCANN",
+        "PB_ALIAS",
+        "PB_FUTANN",
+        "PB_FUTPARAM",
+        "PB_FUTRET",
+    ],
+)
+def test_an_annotation_python_never_runs_does_not_flow(
+    flows: set[tuple[str, str]], var: str
 ) -> None:
-    assert not _leaks(flows, "PB_LOCALANN")
+    assert not _leaks(flows, var)
 
 
 # Negative: what must not change.

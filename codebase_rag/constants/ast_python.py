@@ -69,9 +69,10 @@ TS_PY_LIST_SPLAT = "list_splat"
 TS_PY_DICTIONARY_SPLAT = "dictionary_splat"
 TS_PY_DEFAULT_PARAMETER = "default_parameter"
 TS_PY_LIST_SPLAT_PATTERN = "list_splat_pattern"
-# `*xs` inside a value (`a, b = *xs, 1`): the elements it supplies are
-# unknown, so an unpacking assignment cannot pair targets with them.
-TS_PY_LIST_SPLAT = "list_splat"
+# `from __future__ import annotations` (PEP 563) keeps every annotation in
+# its module as a string that never runs.
+TS_PY_FUTURE_IMPORT_STATEMENT = "future_import_statement"
+PY_FUTURE_ANNOTATIONS = "annotations"
 # The literal sequence values an unpacking assignment pairs its targets with
 # by position (`a, b = x, y`, `(a, b) = (x, y)`, `[a, b] = [x, y]`).
 PY_UNPACKING_VALUE_TYPES = frozenset({"expression_list", "tuple", "list"})
