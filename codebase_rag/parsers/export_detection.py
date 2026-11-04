@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from itertools import product
+from typing import NamedTuple
 
 from tree_sitter import Node
 
@@ -950,34 +952,67 @@ def _cpp_library_specialization(owner: Node) -> bool:
     # members, so they are API though `std` is no namespace of this file. A
     # plain `struct X::Y {}` is still an out-of-line nested class.
     name = owner.child_by_field_name(cs.FIELD_NAME)
-    while name is not None and name.type == cs.TS_CPP_QUALIFIED_IDENTIFIER:
-        name = name.child_by_field_name(cs.FIELD_NAME)
+    if name is None or name.type != cs.TS_CPP_QUALIFIED_IDENTIFIER:
+        return False
+    qualifier, inner = _cpp_split_qualified(name)
     scope = _cpp_enclosing_scope(owner)
-    return (
-        name is not None
-        and name.type == cs.TS_TEMPLATE_TYPE
-        and scope is not None
-        and scope.type in cs.CPP_NAMESPACE_SCOPE_TYPES
+    if (
+        inner is None
+        or inner.type != cs.TS_TEMPLATE_TYPE
+        or scope is None
+        or scope.type not in cs.CPP_NAMESPACE_SCOPE_TYPES
+    ):
+        return False
+    # `template <> struct Outer::Hidden<int> {}` specializes a member
+    # template of a class, so that class's access to it decides (Greptile,
+    # PR #2952).
+    return qualifier is None or (
+        qualifier.type != cs.TS_TEMPLATE_TYPE
+        and safe_decode_text(qualifier) not in _cpp_file_scope_names(owner)[1]
     )
+
+
+class _PreprocFlag(NamedTuple):
+    # What a preprocessor branch tests: whether `text` is defined, or the
+    # value of the expression `text`.
+    defined: bool
+    text: str
+
+
+type _PreprocBuild = dict[_PreprocFlag, bool]
 
 
 def _cpp_private_member(node: Node, body: Node) -> bool:
     # Private only when private in every build: a label inside `#ifdef`
     # still governs what follows it, and after `#if X public: #else
-    # private: #endif` a member is public in one build (Greptile, PR #2952).
-    # `node` is any node inside the member.
+    # private: #endif` a member is public in one build. Blocks that test the
+    # same flag are in or out together, so `#ifdef F public: #endif #ifdef F
+    # private: #endif` leaves no public build (Greptile, PR #2952). `node`
+    # is any node inside the member.
     owner = body.parent
     default = (
         cs.CPP_ACCESS_PRIVATE
         if owner is not None and owner.type in cs.CPP_PRIVATE_BY_DEFAULT
         else cs.CPP_ACCESS_PUBLIC
     )
-    accesses, _ = _cpp_accesses_at(body, node, frozenset({default}))
-    return accesses == {cs.CPP_ACCESS_PRIVATE}
+    flags = sorted(_cpp_preproc_flags(body))
+    builds: list[_PreprocBuild | None] = (
+        [
+            dict(zip(flags, values, strict=True))
+            for values in product((False, True), repeat=len(flags))
+        ]
+        if len(flags) <= cs.CPP_MAX_CORRELATED_CONDITIONS
+        else [None]
+    )
+    for build in builds:
+        accesses, found = _cpp_accesses_at(body, node, frozenset({default}), build)
+        if found and accesses != {cs.CPP_ACCESS_PRIVATE}:
+            return False
+    return True
 
 
 def _cpp_accesses_at(
-    block: Node, node: Node, entry: frozenset[str]
+    block: Node, node: Node, entry: frozenset[str], build: _PreprocBuild | None
 ) -> tuple[frozenset[str], bool]:
     # The accesses that may hold where `node` sits in `block`, or at its end
     # when `node` is not in it (then the flag is False), given `entry` at
@@ -988,7 +1023,7 @@ def _cpp_accesses_at(
         if alternative is not None and item.id == alternative.id:
             continue
         if item.type in cs.CPP_PREPROC_IF_TYPES:
-            accesses, found = _cpp_accesses_through(item, node, accesses)
+            accesses, found = _cpp_accesses_through(item, node, accesses, build)
             if found:
                 return accesses, True
         elif item.start_byte <= node.start_byte and node.end_byte <= item.end_byte:
@@ -999,24 +1034,87 @@ def _cpp_accesses_at(
 
 
 def _cpp_accesses_through(
-    conditional: Node, node: Node, entry: frozenset[str]
+    conditional: Node, node: Node, entry: frozenset[str], build: _PreprocBuild | None
 ) -> tuple[frozenset[str], bool]:
-    # Every branch starts from the accesses before `#if`; after `#endif` any
-    # branch's end may hold, and so may `entry` unless an `#else` makes some
-    # branch certain.
+    # In a known build only the first branch whose test holds is compiled.
+    # Without one, every branch starts from the accesses before `#if`; after
+    # `#endif` any branch's end may hold, and so may `entry` unless an
+    # `#else` makes some branch certain.
+    branches: list[Node] = []
+    current: Node | None = conditional
+    while current is not None:
+        branches.append(current)
+        current = current.child_by_field_name(cs.FIELD_ALTERNATIVE)
+    if build is not None:
+        taken = next(
+            (branch for branch in branches if _cpp_branch_taken(branch, build)), None
+        )
+        if taken is None:
+            return entry, False
+        return _cpp_accesses_at(taken, node, entry, build)
     after: set[str] = set()
-    branch: Node | None = conditional
-    certain = False
-    while branch is not None:
-        accesses, found = _cpp_accesses_at(branch, node, entry)
+    for branch in branches:
+        accesses, found = _cpp_accesses_at(branch, node, entry, None)
         if found:
             return accesses, True
         after |= accesses
-        certain = branch.type == cs.TS_CPP_PREPROC_ELSE
-        branch = branch.child_by_field_name(cs.FIELD_ALTERNATIVE)
-    if not certain:
+    if branches[-1].type != cs.TS_CPP_PREPROC_ELSE:
         after |= entry
     return frozenset(after), False
+
+
+def _cpp_branch_taken(branch: Node, build: _PreprocBuild) -> bool:
+    if branch.type == cs.TS_CPP_PREPROC_ELSE:
+        return True
+    flag, negated = _cpp_preproc_test(branch)
+    return build.get(flag, False) != negated
+
+
+def _cpp_preproc_flags(block: Node) -> set[_PreprocFlag]:
+    flags: set[_PreprocFlag] = set()
+    for item in block.children:
+        if item.type not in cs.CPP_PREPROC_IF_TYPES:
+            continue
+        branch: Node | None = item
+        while branch is not None:
+            if branch.type != cs.TS_CPP_PREPROC_ELSE:
+                flags.add(_cpp_preproc_test(branch)[0])
+            flags |= _cpp_preproc_flags(branch)
+            branch = branch.child_by_field_name(cs.FIELD_ALTERNATIVE)
+    return flags
+
+
+def _cpp_preproc_test(branch: Node) -> tuple[_PreprocFlag, bool]:
+    # The flag a branch tests and whether it is negated: `#ifdef F`, `#if
+    # defined(F)` and `#ifndef F` all test whether `F` is defined, so they
+    # agree in every build.
+    name = branch.child_by_field_name(cs.FIELD_NAME)
+    if name is not None:
+        negated = branch.children[0].type in cs.CPP_PREPROC_NEGATED_DIRECTIVES
+        return _PreprocFlag(True, safe_decode_text(name) or ""), negated
+    condition = branch.child_by_field_name(cs.TS_FIELD_CONDITION)
+    negated = False
+    while condition is not None and (
+        condition.type == cs.TS_PARENTHESIZED_EXPRESSION
+        or (
+            condition.type == cs.TS_CPP_UNARY_EXPRESSION
+            and safe_decode_text(condition.child_by_field_name(cs.FIELD_OPERATOR))
+            == cs.CPP_OP_NOT
+        )
+    ):
+        if condition.type == cs.TS_CPP_UNARY_EXPRESSION:
+            negated = not negated
+            condition = condition.child_by_field_name(cs.CPP_FIELD_ARGUMENT)
+        else:
+            condition = next(iter(condition.named_children), None)
+    if condition is not None and condition.type == cs.TS_CPP_PREPROC_DEFINED:
+        defined = next(
+            (c for c in condition.named_children if c.type == cs.TS_CPP_IDENTIFIER),
+            None,
+        )
+        return _PreprocFlag(True, safe_decode_text(defined) or ""), negated
+    text = safe_decode_text(condition) or ""
+    return _PreprocFlag(False, "".join(text.split())), negated
 
 
 def _cpp_defined_out_of_line(node: Node) -> bool:
@@ -1040,17 +1138,23 @@ def _cpp_qualified_by_class(name: Node | None, context: Node) -> bool:
     # #2952). Any qualifier that is no namespace of the file is a class.
     if name is None or name.type != cs.TS_CPP_QUALIFIED_IDENTIFIER:
         return False
-    owner = name.child_by_field_name(cs.FIELD_SCOPE)
-    inner = name.child_by_field_name(cs.FIELD_NAME)
-    while inner is not None and inner.type == cs.TS_CPP_QUALIFIED_IDENTIFIER:
-        owner = inner.child_by_field_name(cs.FIELD_SCOPE)
-        inner = inner.child_by_field_name(cs.FIELD_NAME)
+    owner, _ = _cpp_split_qualified(name)
     if owner is None:
         # `::f` names `f` of the global namespace.
         return False
     scope = safe_decode_text(owner) or ""
     namespaces, classes = _cpp_file_scope_names(context)
     return not (scope in namespaces and scope not in classes)
+
+
+def _cpp_split_qualified(name: Node) -> tuple[Node | None, Node | None]:
+    # A qualified name's innermost qualifier and the plain name after it.
+    qualifier = name.child_by_field_name(cs.FIELD_SCOPE)
+    inner = name.child_by_field_name(cs.FIELD_NAME)
+    while inner is not None and inner.type == cs.TS_CPP_QUALIFIED_IDENTIFIER:
+        qualifier = inner.child_by_field_name(cs.FIELD_SCOPE)
+        inner = inner.child_by_field_name(cs.FIELD_NAME)
+    return qualifier, inner
 
 
 def _cpp_file_scope_names(node: Node) -> tuple[set[str], set[str]]:

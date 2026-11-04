@@ -538,6 +538,14 @@ CPP_PREPROC_CONDITIONAL_TYPES = frozenset(
 # the `alternative` field, and only an `#else` makes some branch certain.
 CPP_PREPROC_IF_TYPES = frozenset({"preproc_if", "preproc_ifdef"})
 TS_CPP_PREPROC_ELSE = "preproc_else"
+TS_CPP_PREPROC_DEFINED = "preproc_defined"
+# `#ifndef X` and `#elifndef X` hold when `X` is not defined.
+CPP_PREPROC_NEGATED_DIRECTIVES = frozenset({"#ifndef", "#elifndef"})
+CPP_OP_NOT = "!"
+# Up to this many distinct conditions in one class body every build is
+# tried, so two blocks testing the same flag agree; past it each branch is
+# taken or not on its own, which can only make a member look public.
+CPP_MAX_CORRELATED_CONDITIONS = 6
 # Nodes that hold file-scope declarations without opening a scope of their
 # own: preprocessor conditionals and an `extern "C" { ... }` block.
 C_FILE_SCOPE_CONTAINER_TYPES = frozenset(

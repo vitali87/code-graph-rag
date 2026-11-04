@@ -820,3 +820,121 @@ template <> struct fmt::formatter<Foo> {
     config = default_dead_code_config(include_tests=True, include_classes=False)
 
     assert collect_dead_code(_Graph(graph), graph.project, config) == []
+
+
+# Greptile on PR #2952: blocks that test the same flag are in or out
+# together, and a specialization of a class's member template takes that
+# class's access.
+CORRELATED_CPP = """\
+class SameFlag {
+#ifdef FEATURE
+public:
+#endif
+#ifdef FEATURE
+private:
+#endif
+    void same_flag() {}
+};
+class SameExpression {
+#if LEVEL > 1
+public:
+#endif
+#if LEVEL > 1
+private:
+#endif
+    void same_expression() {}
+};
+class OnlyWithoutLabel {
+#ifdef FEATURE
+public:
+#endif
+#ifndef FEATURE
+    void only_without_label() {}
+#endif
+};
+class DefinedSpellings {
+#ifdef FEATURE
+public:
+#endif
+#if !defined(FEATURE)
+    void defined_spellings() {}
+#endif
+};
+class OnlyWithLabel {
+#ifdef FEATURE
+public:
+#endif
+#if defined FEATURE
+    void only_with_label() {}
+#endif
+};
+class OtherFlags {
+#ifdef A
+public:
+#endif
+#ifdef B
+private:
+#endif
+    void other_flags() {}
+};
+"""
+MEMBER_TEMPLATE_CPP = """\
+class Outer { template <class T> struct Hidden; };
+template <> struct Outer::Hidden<int> { void member_template_spec() {} };
+"""
+
+
+@pytest.fixture
+def correlated(tmp_path: Path) -> dict[str, bool]:
+    return _run(
+        tmp_path, {"flags.cpp": CORRELATED_CPP, "member.cpp": MEMBER_TEMPLATE_CPP}
+    )
+
+
+@pytest.mark.parametrize(
+    ("symbol", "is_exported"),
+    [
+        ("same_flag", False),
+        ("same_expression", False),
+        ("only_without_label", False),
+        ("defined_spellings", False),
+        ("member_template_spec", False),
+        ("only_with_label", True),
+        ("other_flags", True),
+    ],
+    ids=[
+        "public-then-private-under-one-flag",
+        "public-then-private-under-one-expression",
+        "compiled-only-without-the-public-label",
+        "ifdef-and-not-defined-are-one-flag",
+        "specialized-private-member-template-of-a-class",
+        "compiled-only-with-the-public-label",
+        "different-flags-stay-independent",
+    ],
+)
+def test_blocks_on_one_flag_agree(
+    correlated: dict[str, bool], symbol: str, is_exported: bool
+) -> None:
+    assert _one(correlated, f".{symbol}") is is_exported
+
+
+def test_a_method_private_in_every_build_is_dead(tmp_path: Path) -> None:
+    source = """\
+static int callee() { return 1; }
+
+class Box {
+#ifdef FEATURE
+public:
+#endif
+#ifdef FEATURE
+private:
+#endif
+    int unused() { return callee(); }
+};
+"""
+    graph = _indexed(tmp_path, {"box.cpp": source})
+    config = default_dead_code_config(include_tests=True, include_classes=False)
+
+    dead = collect_dead_code(_Graph(graph), graph.project, config)
+
+    assert {row["name"] for row in dead} >= {"unused", "callee"}

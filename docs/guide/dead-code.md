@@ -232,7 +232,10 @@ so no name or path is cut to fit 80 columns.
      (`struct Outer::Inner {}`) takes its access from a class declaration in
      another file, so it is not counted. A class template specialization at
      namespace scope (`template <> struct std::hash<Foo> {...}`, or a partial
-     one) is counted: the library it specializes calls its members.
+     one) is counted: the library it specializes calls its members. A
+     specialization of a member template of a class in the same file
+     (`template <> struct Outer::Hidden<int> {...}`) is an out-of-line nested
+     class, so it is not counted.
    - **Scala:** a member or top-level `def` that is not `private` or
      `private[pkg]`, in no `private` object or class.
 2. **Reachability**: a breadth-first walk over `CALLS` and `REFERENCES` edges
