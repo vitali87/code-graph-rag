@@ -5,8 +5,7 @@
 from __future__ import annotations
 
 import ast
-import re
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import NamedTuple
 
 from tree_sitter import Node
@@ -17,7 +16,6 @@ from .contract import Verdict
 # Issue tracking support for definitions in other languages.
 LANGUAGES_ISSUE = 1908
 
-_IDENTIFIER_RE = re.compile(r"[A-Za-z_]\w*")
 _LITERAL_PREFIX = "="
 _DEFINITION = "definition"
 _CALL = "call"
@@ -102,6 +100,7 @@ class _Header(NamedTuple):
     params: list[ParamSpec]
     function: Node  # the `function_definition`, for its body
     source: bytes
+    language: cs.SupportedLanguage = cs.SupportedLanguage.PYTHON
 
 
 class _Binding(NamedTuple):
@@ -129,6 +128,42 @@ class _Candidate(NamedTuple):
 
 class _Unmapped(Exception):
     """A call site the mapping cannot rewrite; carries the reason."""
+
+
+class SignatureDialect(NamedTuple):
+    """How one language writes headers and argument lists (issue #1908).
+
+    The graph side of the operation is language-neutral; these are the parts
+    that read or write syntax, chosen by the definition's language.
+    """
+
+    find_definition: Callable[[Node, str, int, int], Node | None]
+    params_of: Callable[[Node, bytes, str], list[ParamSpec]]
+    take_receiver: Callable[[str, object, list[ParamSpec], Node, bytes], str | None]
+    parse_new_param: Callable[[str, Mapping[str, ParamSpec]], ParamSpec]
+    check_literal: Callable[[ParamSpec, str], None]
+    refuse_body_conflicts: Callable[
+        [
+            Sequence[_Header],
+            Sequence[str],
+            Sequence[ParamSpec],
+            Sequence[tuple[str, str]],
+        ],
+        None,
+    ]
+    definition_edits: Callable[
+        [_Header, Sequence[ParamSpec], set[str], Sequence[tuple[str, str]]],
+        list[_Edit],
+    ]
+    # The call's argument list, or `_Unmapped` when the site cannot be read.
+    site_arguments: Callable[[_Header, Node, bytes], Node]
+    bind_arguments: Callable[[Node, bytes, Sequence[ParamSpec]], dict[int, _Binding]]
+    render_arguments: Callable[
+        [Sequence[ParamSpec], Sequence[_Source | None], Mapping[int, _Binding]], str
+    ]
+    # Python refuses a required parameter after a defaulted one; JavaScript
+    # allows it, and a site that leaves such a parameter out stays unmapped.
+    defaults_last: bool = True
 
 
 # --- the mapping ------------------------------------------------------------------
@@ -223,9 +258,12 @@ def _parse_new_param(text: str, old: Mapping[str, ParamSpec]) -> ParamSpec:
     A bare identifier naming an old parameter carries that parameter over
     with its annotation and default; anything else must parse as exactly
     one plain positional-or-keyword parameter.
+
+    The old names are identifiers already, so membership alone decides:
+    an ASCII pattern would miss `élan` and drop its default.
     """
     text = text.strip()
-    if _IDENTIFIER_RE.fullmatch(text) and text in old:
+    if text in old:
         return old[text]
     probe = cs.SIGNATURE_PARAM_PROBE.format(text=text)
     try:
@@ -315,9 +353,14 @@ def _check_literal(spec: ParamSpec, literal: str) -> None:
         )
 
 
-def _new_specs(new_params: Sequence[str], old: Sequence[ParamSpec]) -> list[ParamSpec]:
+def _new_specs(
+    new_params: Sequence[str],
+    old: Sequence[ParamSpec],
+    parse: Callable[[str, Mapping[str, ParamSpec]], ParamSpec] = _parse_new_param,
+    defaults_last: bool = True,
+) -> list[ParamSpec]:
     by_name = {spec.name: spec for spec in old}
-    specs = [_parse_new_param(text, by_name) for text in new_params]
+    specs = [parse(text, by_name) for text in new_params]
     seen: set[str] = set()
     defaulted = False
     for spec in specs:
@@ -326,7 +369,7 @@ def _new_specs(new_params: Sequence[str], old: Sequence[ParamSpec]) -> list[Para
         seen.add(spec.name)
         if spec.has_default:
             defaulted = True
-        elif defaulted:
+        elif defaulted and defaults_last:
             raise SignatureRefused(
                 cs.SIGNATURE_REQUIRED_AFTER_DEFAULT.format(name=spec.name)
             )

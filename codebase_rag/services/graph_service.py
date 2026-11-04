@@ -30,6 +30,7 @@ from ..constants import (
     ERR_SUBSTR_CONSTRAINT,
     FAILED_REL_ROWS_SHOWN,
     KEY_CREATED,
+    KEY_EXPECTED_ROOT,
     KEY_FROM_MISSING,
     KEY_FROM_VAL,
     KEY_NAME,
@@ -38,6 +39,8 @@ from ..constants import (
     KEY_PROJECT_PREFIX,
     KEY_PROPS,
     KEY_PURGED,
+    KEY_ROOT_PATH,
+    KEY_RUN_ID,
     KEY_TO_MISSING,
     KEY_TO_VAL,
     LEGACY_NODE_CONSTRAINTS,
@@ -58,11 +61,14 @@ from ..cypher_queries import (
     CYPHER_DELETE_ALL,
     CYPHER_DELETE_PROJECT,
     CYPHER_DELETE_PROJECT_CUT_OFF_UNITS,
+    CYPHER_DELETE_PROJECT_CUT_OFF_UNITS_IF_GONE,
+    CYPHER_DELETE_PROJECT_IF_ROOT,
     CYPHER_EXPORT_NODES,
     CYPHER_EXPORT_PROJECT_NODES,
     CYPHER_EXPORT_PROJECT_RELATIONSHIPS,
     CYPHER_EXPORT_RELATIONSHIPS,
     CYPHER_LIST_PROJECTS,
+    CYPHER_PROJECT_ROOT_PATH,
     CYPHER_PURGE_CROSS_PROJECT_STRUCTURE,
     CYPHER_PURGE_CROSS_ROOT_STRUCTURE,
     CYPHER_PURGE_KEYLESS_STRUCTURE,
@@ -652,21 +658,74 @@ class MemgraphIngestor:
     def list_project_roots(self) -> dict[str, str | None]:
         return project_roots_from_rows(self.fetch_all(CYPHER_LIST_PROJECTS))
 
-    def delete_project(self, project_name: str) -> None:
+    def delete_project(
+        self,
+        project_name: str,
+        expected_root: str | None = None,
+        own_run_id: str = "",
+    ) -> bool:
+        """Delete one project; when `expected_root` is given, only if it still
+        names that root (issue #2479).
+
+        The conditional form puts the root check inside the delete statement,
+        so a concurrent sync repointing the project's root between `cgr
+        prune`'s check and its purge leaves the project alone. It returns
+        whether the project was deleted: False when no project of that name
+        holds that root, or when one of that name is still there after the
+        delete, which is what a run of it that began writing leaves (the
+        statement checks for one, all but `own_run_id`, the caller's own
+        marker). Only a delete that fired runs the cut-off sweep, which
+        matches by name and would otherwise take a live project's units. The
+        unconditional form keeps returning True for every caller that
+        ignores the answer.
+        """
         logger.info(ls.MG_DELETING_PROJECT.format(project_name=project_name))
-        self._execute_query(CYPHER_DELETE_PROJECT, {KEY_PROJECT_NAME: project_name})
-        self._execute_query(
-            CYPHER_DELETE_PROJECT_CUT_OFF_UNITS,
-            {
-                KEY_PROJECT_NAME: project_name,
-                KEY_PROJECT_PREFIX: f"{project_name}{SEPARATOR_DOT}",
-            },
-        )
+        name_params: dict[str, PropertyValue] = {KEY_PROJECT_NAME: project_name}
+        if expected_root is None:
+            self._execute_query(CYPHER_DELETE_PROJECT, name_params)
+        else:
+            if not self._project_has_root(project_name, expected_root):
+                logger.info(ls.MG_PROJECT_NOT_DELETED.format(project_name=project_name))
+                return False
+            self._execute_query(
+                CYPHER_DELETE_PROJECT_IF_ROOT,
+                {
+                    KEY_PROJECT_NAME: project_name,
+                    KEY_EXPECTED_ROOT: expected_root,
+                    KEY_RUN_ID: own_run_id,
+                },
+            )
+            if self.fetch_all(CYPHER_PROJECT_ROOT_PATH, name_params):
+                # Repointed between the read above and the delete: the
+                # delete matched nothing, and the project is live.
+                logger.info(ls.MG_PROJECT_NOT_DELETED.format(project_name=project_name))
+                return False
+        # The conditional form's sweep re-checks in its own statement that no
+        # project of the name exists, so one a sync recreated since the read
+        # above keeps its units.
+        sweep_params: dict[str, PropertyValue] = {
+            KEY_PROJECT_NAME: project_name,
+            KEY_PROJECT_PREFIX: f"{project_name}{SEPARATOR_DOT}",
+        }
+        if expected_root is None:
+            self._execute_query(CYPHER_DELETE_PROJECT_CUT_OFF_UNITS, sweep_params)
+        else:
+            self._execute_query(
+                CYPHER_DELETE_PROJECT_CUT_OFF_UNITS_IF_GONE,
+                sweep_params | {KEY_RUN_ID: own_run_id},
+            )
         # Shared prefix-less nodes (Resources, ExternalModules) only lose
         # their edges above; drop the ones this project alone anchored.
         prune_unanchored_resources(self)
         self._execute_query(CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES)
         logger.info(ls.MG_PROJECT_DELETED.format(project_name=project_name))
+        return True
+
+    def _project_has_root(self, project_name: str, root: str) -> bool:
+        rows = self.fetch_all(
+            CYPHER_PROJECT_ROOT_PATH, {KEY_PROJECT_NAME: project_name}
+        )
+        return any(row.get(KEY_ROOT_PATH) == root for row in rows)
 
     def ensure_constraints(self) -> None:
         logger.info(ls.MG_ENSURING_CONSTRAINTS)
