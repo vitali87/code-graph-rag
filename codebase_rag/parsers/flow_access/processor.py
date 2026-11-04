@@ -1116,6 +1116,9 @@ class FlowProcessor:
         # What each identifier held when the walk reached it, by node id,
         # while a Python value is evaluated in order; None otherwise.
         self._py_reads: dict[int, Taint | None] | None = None
+        # The comprehension loop variables in scope where a value is read,
+        # whose reads come from the comprehension's scope, not that record.
+        self._py_shadowed: frozenset[str] = frozenset()
 
     def process_flow_for_caller(
         self,
@@ -3736,6 +3739,10 @@ class FlowProcessor:
             return self._walk_py_assignment(node, state, ctx)
         if node_type == cs.TS_PY_NAMED_EXPRESSION:
             return self._walk_py_named_expression(node, state, ctx)
+        if node_type == cs.TS_PY_CONDITIONAL_EXPRESSION:
+            return self._walk_py_conditional(node, state, ctx)
+        if node_type in _PY_COMPREHENSIONS:
+            return self._walk_py_comprehension(node, state, ctx)
         if node_type == cs.TS_PY_IDENTIFIER:
             if self._py_reads is not None and node.text is not None:
                 self._py_reads[node.id] = state.get(node.text.decode(cs.ENCODING_UTF8))
@@ -3789,23 +3796,57 @@ class FlowProcessor:
             self._acc_returns_taint = True
             self._acc_return_taint = _merge_taint(self._acc_return_taint, returned)
 
+    def _walk_py_conditional(
+        self, node: Node, state: _TaintMap, ctx: _FlowCtx
+    ) -> _TaintMap:
+        # `a if c else b` runs `c` first and then one arm (bot review on PR
+        # #2764): the result of `t if (t := secret()) else ""` reads what the
+        # condition bound.
+        values = [c for c in node.named_children if c.type != cs.TS_COMMENT]
+        if len(values) != 3:
+            for child in node.children:
+                state = self._walk_stmt(child, state, ctx)
+            return state
+        consequence, condition, alternative = values
+        state = self._walk_stmt(condition, state, ctx)
+        return self._merge(
+            [
+                self._walk_stmt(consequence, dict(state), ctx),
+                self._walk_stmt(alternative, dict(state), ctx),
+            ]
+        )
+
+    def _walk_py_comprehension(
+        self, node: Node, state: _TaintMap, ctx: _FlowCtx
+    ) -> _TaintMap:
+        # A comprehension runs its clauses before its body, which reads what
+        # they bound (`[t for c in s if (t := c)]`).
+        body = node.child_by_field_name(cs.FIELD_BODY)
+        for child in node.children:
+            if body is None or child.id != body.id:
+                state = self._walk_stmt(child, state, ctx)
+        return self._walk_stmt(body, state, ctx) if body is not None else state
+
     def _py_read(self, node: Node, name: str, tainted: _TaintMap) -> Taint | None:
         # What the identifier `node` holds where Python reads it: what the
         # walk recorded while evaluating its value in order, else `tainted`.
         reads = self._py_reads
-        if reads is not None and node.id in reads:
+        if reads is not None and name not in self._py_shadowed and node.id in reads:
             return reads[node.id]
         return tainted.get(name)
 
     @contextmanager
-    def _py_own_scope_reads(self) -> Generator[None]:
-        # A comprehension reads its own loop variables, which the walk's
-        # record of the enclosing scope's reads does not hold.
-        reads, self._py_reads = self._py_reads, None
+    def _py_comprehension_locals(self, names: frozenset[str]) -> Generator[None]:
+        # A comprehension's loop variables are its own, so their reads come
+        # from its scope; every other name keeps what the walk recorded where
+        # the comprehension runs (bot review on PR #2764): in `out, _ = [c
+        # for c in s], (s := "")` the iterable still reads the secret.
+        shadowed = self._py_shadowed
+        self._py_shadowed = shadowed | names
         try:
             yield
         finally:
-            self._py_reads = reads
+            self._py_shadowed = shadowed
 
     def _walk_py_match(self, node: Node, state: _TaintMap, ctx: _FlowCtx) -> _TaintMap:
         # match arms are EXCLUSIVE: each case_clause walks against a copy
@@ -4066,11 +4107,12 @@ class FlowProcessor:
             return state
         bound = name.text.decode(cs.ENCODING_UTF8)
         taint = taints[value.id]
-        if (scope := self._py_comprehension_scope(node, state, ctx)) is not None:
+        if (found := self._py_comprehension_scope(node, state, ctx)) is not None:
             # A walrus in a comprehension reads its loop variables and binds
             # in the enclosing scope: after `[(last := c) for c in secret]`,
             # `last` holds part of the secret (bot review on PR #2764).
-            with self._py_own_scope_reads():
+            scope, local = found
+            with self._py_comprehension_locals(local):
                 taint = self._py_value_taint(value, scope, ctx)
         if _py_walrus_may_not_run(node):
             # Only the path that runs it rebinds the name (bot review on PR
@@ -4170,36 +4212,46 @@ class FlowProcessor:
         # `[len(c) for c in secret]` does not; an `if` filter only decides
         # which elements survive and never becomes one.
         scope = dict(tainted)
+        local = self._py_bind_comprehension_targets(node, scope, ctx)
         body = node.child_by_field_name(cs.FIELD_BODY)
-        with self._py_own_scope_reads():
-            self._py_bind_comprehension_targets(node, scope, ctx)
-            return self._py_value_taint(body, scope, ctx) if body is not None else None
+        if body is None:
+            return None
+        with self._py_comprehension_locals(local):
+            return self._py_value_taint(body, scope, ctx)
 
     def _py_bind_comprehension_targets(
         self, node: Node, scope: _TaintMap, ctx: _FlowCtx, before: int | None = None
-    ) -> None:
+    ) -> frozenset[str]:
+        # The first iterable runs where the comprehension stands; each later
+        # one reads the loop variables bound before it.
+        local: frozenset[str] = frozenset()
         for clause in node.named_children:
             if clause.type != cs.TS_PY_FOR_IN_CLAUSE:
                 continue
             if before is not None and clause.start_byte >= before:
                 break
             iterable = clause.child_by_field_name(cs.TS_FIELD_RIGHT)
-            taint = (
-                self._py_value_taint(iterable, scope, ctx)
-                if iterable is not None
-                else None
-            )
-            for name in _py_target_names(clause.child_by_field_name(cs.TS_FIELD_LEFT)):
+            with self._py_comprehension_locals(local):
+                taint = (
+                    self._py_value_taint(iterable, scope, ctx)
+                    if iterable is not None
+                    else None
+                )
+            names = _py_target_names(clause.child_by_field_name(cs.TS_FIELD_LEFT))
+            for name in names:
                 if taint is None:
                     scope.pop(name, None)
                 else:
                     scope[name] = taint
+            local |= frozenset(names)
+        return local
 
     def _py_comprehension_scope(
         self, node: Node, state: _TaintMap, ctx: _FlowCtx
-    ) -> _TaintMap | None:
+    ) -> tuple[_TaintMap, frozenset[str]] | None:
         # What `node` reads inside the comprehensions around it: each one's
-        # `for` targets, outermost first, over `state`. None outside any.
+        # `for` targets, outermost first, over `state`, and their names. None
+        # outside any.
         comprehensions: list[Node] = []
         parent = node.parent
         while parent is not None and parent.type not in _PY_WALRUS_SCOPE_STOPS:
@@ -4209,21 +4261,21 @@ class FlowProcessor:
         if not comprehensions:
             return None
         scope = dict(state)
-        with self._py_own_scope_reads():
-            for comprehension in reversed(comprehensions):
-                # The body runs after every clause, but a filter or a later
-                # iterable sees only the clauses before it (bot review on PR
-                # #2764): in `[0 for c in [s] if (t := c) for c in [1]]`, `t`
-                # holds `s`.
-                body = comprehension.child_by_field_name(cs.FIELD_BODY)
-                in_body = (
-                    body is not None
-                    and body.start_byte <= node.start_byte < body.end_byte
-                )
-                self._py_bind_comprehension_targets(
+        local: frozenset[str] = frozenset()
+        for comprehension in reversed(comprehensions):
+            # The body runs after every clause, but a filter or a later
+            # iterable sees only the clauses before it (bot review on PR
+            # #2764): in `[0 for c in [s] if (t := c) for c in [1]]`, `t`
+            # holds `s`.
+            body = comprehension.child_by_field_name(cs.FIELD_BODY)
+            in_body = (
+                body is not None and body.start_byte <= node.start_byte < body.end_byte
+            )
+            with self._py_comprehension_locals(local):
+                local |= self._py_bind_comprehension_targets(
                     comprehension, scope, ctx, None if in_body else node.start_byte
                 )
-        return scope
+        return scope, local
 
     def _py_call_step(
         self, node: Node, raw: str, ctx: _FlowCtx
@@ -4690,25 +4742,28 @@ class FlowProcessor:
         # target carries the parameters its iterable does, so `return
         # redact([c for c in p])` still hands `p` to redact.
         scope = dict(tainted)
-        body = node.child_by_field_name(cs.FIELD_BODY)
-        with self._py_own_scope_reads():
-            for clause in node.named_children:
-                if clause.type != cs.TS_PY_FOR_IN_CLAUSE:
-                    continue
-                iterable = clause.child_by_field_name(cs.TS_FIELD_RIGHT)
+        local: frozenset[str] = frozenset()
+        for clause in node.named_children:
+            if clause.type != cs.TS_PY_FOR_IN_CLAUSE:
+                continue
+            iterable = clause.child_by_field_name(cs.TS_FIELD_RIGHT)
+            with self._py_comprehension_locals(local):
                 params = (
                     self._value_params(iterable, scope, ctx)
                     if iterable is not None
                     else frozenset()
                 )
-                target = clause.child_by_field_name(cs.TS_FIELD_LEFT)
-                for name in _py_target_names(target):
-                    if params:
-                        scope[name] = Taint(frozenset(), frozenset(), params)
-                    else:
-                        scope.pop(name, None)
-            if body is None:
-                return frozenset()
+            names = _py_target_names(clause.child_by_field_name(cs.TS_FIELD_LEFT))
+            for name in names:
+                if params:
+                    scope[name] = Taint(frozenset(), frozenset(), params)
+                else:
+                    scope.pop(name, None)
+            local |= frozenset(names)
+        body = node.child_by_field_name(cs.FIELD_BODY)
+        if body is None:
+            return frozenset()
+        with self._py_comprehension_locals(local):
             return self._value_params(body, scope, ctx)
 
     def _py_param_call_operands(self, node: Node, ctx: _FlowCtx) -> list[Node]:

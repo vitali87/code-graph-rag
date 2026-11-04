@@ -170,6 +170,28 @@ FUNCTIONS = {
         's = os.getenv("PB_COMPORDER")\n'
         "out = [0 for c in [s] if (last := c) for c in [1]]\nprint(last)"
     ),
+    # Fifth bot review on PR #2764: `a if c else b` runs `c` first, and a
+    # comprehension runs where it stands, its clauses before its body, so a
+    # walrus later in the statement does not change what it read.
+    "walrus_in_condition_read_by_arm": (
+        'x = t if (t := os.getenv("PB_COND")) else ""\nprint(x)'
+    ),
+    "walrus_in_condition_read_in_call": (
+        'print(t if (t := os.getenv("PB_CONDCALL")) else "")'
+    ),
+    "walrus_in_condition_kills_arm": (
+        't = os.getenv("PB_CONDKILL")\nx = t if (t := "safe") else ""\nprint(x)'
+    ),
+    "comprehension_iterable_before_walrus": (
+        's = os.getenv("PB_SAVED")\nout, unused = [c for c in s], (s := "")\nprint(out)'
+    ),
+    "comprehension_body_before_walrus": (
+        't = os.getenv("PB_COMPOUTER")\nout, unused = [t for c in "ab"], (t := "")\n'
+        "print(out)"
+    ),
+    "comprehension_filter_before_body": (
+        's = os.getenv("PB_FILTERBODY")\nout = [t for c in s if (t := c)]\nprint(out)'
+    ),
 }
 
 # Module-level annotations run, after the target is bound, and so do a
@@ -281,6 +303,11 @@ def _leaks(flows: set[tuple[str, str]], var: str) -> bool:
         "PB_AUGLHS",
         "PB_STARFOR",
         "PB_COMPORDER",
+        "PB_COND",
+        "PB_CONDCALL",
+        "PB_SAVED",
+        "PB_COMPOUTER",
+        "PB_FILTERBODY",
     ],
 )
 def test_a_name_bound_by_unpacking_or_walrus_carries_its_value(
@@ -303,6 +330,7 @@ def test_a_name_bound_by_unpacking_or_walrus_carries_its_value(
         "PB_ARGSTALE",
         "PB_RETSTALE",
         "PB_STALE",
+        "PB_CONDKILL",
     ],
 )
 def test_a_name_rebound_to_a_clean_value_is_clean(
