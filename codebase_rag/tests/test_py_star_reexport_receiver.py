@@ -354,7 +354,16 @@ def all_graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
         ("via_recomputed", "recomputed._b.Client.send"),
         ("via_untouched", "untouched._b.Client.send"),
         ("via_later_named", "later_named._impl.Client.send"),
-        ("via_bare_with", "pooled._pool.Connection.execute"),
+        (
+            "via_bare_with",
+            frozenset(
+                {
+                    "pooled._pool.Connection.execute",
+                    "pooled._pool.Pool.__enter__",
+                    "pooled._pool.Pool.__exit__",
+                }
+            ),
+        ),
     ],
     ids=[
         "append-lists-it",
@@ -373,7 +382,9 @@ def all_graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
     ],
 )
 def test_the_all_a_module_builds_decides_what_its_star_binds(
-    all_graph: RecordedGraph, caller: str, callee: str
+    all_graph: RecordedGraph, caller: str, callee: str | frozenset[str]
 ) -> None:
+    # A `with` statement also calls its manager's `__enter__` and `__exit__`.
+    expected = {callee} if isinstance(callee, str) else set(callee)
     callees = _callees(all_graph, caller)
-    assert callees == {callee}, callees
+    assert callees == expected, callees
