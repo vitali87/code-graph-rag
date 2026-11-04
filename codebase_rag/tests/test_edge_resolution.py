@@ -86,11 +86,11 @@ def test_a_call_through_a_rebound_local_carries_each_bindings_label(
     # own binding resolved, not how the last one did.
     (temp_repo / "pkg").mkdir()
     (temp_repo / "pkg" / "__init__.py").write_text("")
-    (temp_repo / "pkg" / "util.py").write_text(
-        "def helper():\n    return 1\n\n\ndef lonely():\n    return 2\n"
-    )
+    (temp_repo / "pkg" / "util.py").write_text("def helper():\n    return 1\n")
+    # Through a star import, `lonely` binds by name alone.
+    (temp_repo / "pkg" / "more.py").write_text("def lonely():\n    return 2\n")
     (temp_repo / "pkg" / "app.py").write_text(
-        "from pkg.util import helper\n\n\n"
+        "from pkg.util import helper\nfrom pkg.more import *\n\n\n"
         "def run(flag):\n    a = helper\n    if flag:\n        a = lonely\n    a()\n"
     )
     create_and_run_updater(temp_repo, mock_ingestor)
