@@ -228,14 +228,20 @@ def _publishes_on(bind: str, family: int, address: str) -> bool:
 
 
 def _takes_connections(family: int, address: _SocketAddress) -> bool:
-    """Whether a server accepts connections at `address`. One that does not
-    answer in time may well, so it counts as one that does."""
+    """Whether a server accepts connections at `address`.
+
+    One that does not answer in time may well, so it counts as one that
+    does, unless the address is this machine's: a server here accepts at
+    once, while Windows reports a refused connection only after retrying it
+    for about two seconds, so `localhost` as `::1` with nothing listening
+    there outlasts the probe and the client goes on to `127.0.0.1`.
+    """
     try:
         with socket.socket(family, socket.SOCK_STREAM) as probe:
             probe.settimeout(cs.MEMGRAPH_ADDRESS_PROBE_TIMEOUT_S)
             probe.connect(address)
     except TimeoutError:
-        return True
+        return not _is_local_address(str(address[0]))
     except OSError:
         return False
     return True

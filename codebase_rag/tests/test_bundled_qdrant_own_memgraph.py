@@ -246,6 +246,98 @@ def test_the_stack_memgraph_behind_every_address_tried_shares_the_qdrant(
     assert _client_kwargs() == _bundled(open_qdrant.port)
 
 
+class _SlowRefusal:
+    """A connection probe on Windows, which retries a refused connection for
+    about two seconds before it reports the refusal: wherever nothing
+    listens, the probe's timeout runs out first."""
+
+    def __init__(self, listening: set[str]) -> None:
+        self._listening = listening
+
+    def __enter__(self) -> _SlowRefusal:
+        return self
+
+    def __exit__(self, *_exc: BaseException | type[BaseException] | None) -> None:
+        return None
+
+    def settimeout(self, _timeout: float) -> None:
+        return None
+
+    def connect(self, address: tuple[str, int] | tuple[str, int, int, int]) -> None:
+        if address[0] not in self._listening:
+            raise TimeoutError
+
+
+class _WindowsSockets:
+    """`socket` as the stack manager probes with it, on Windows."""
+
+    AF_INET = socket.AF_INET
+    AF_INET6 = socket.AF_INET6
+    SOCK_STREAM = socket.SOCK_STREAM
+
+    def __init__(self, listening: set[str]) -> None:
+        self._listening = listening
+
+    def socket(self, _family: int, _type: int) -> _SlowRefusal:
+        return _SlowRefusal(self._listening)
+
+
+_REMOTE = (socket.AF_INET, ("10.255.255.1", 7687))
+
+
+def _windows(
+    monkeypatch: pytest.MonkeyPatch,
+    order: list[tuple[int, tuple[str, int] | tuple[str, int, int, int]]],
+    listening: set[str],
+) -> None:
+    # MEMGRAPH_HOST resolving in `order`, with the real probe, on Windows.
+    monkeypatch.setattr(manager, "_addresses_to_try", lambda _host, _port: order)
+    monkeypatch.setattr(
+        manager, "_is_local_address", lambda host: host in {"::1", "127.0.0.1"}
+    )
+    monkeypatch.setattr(manager, "socket", _WindowsSockets(listening))
+    monkeypatch.setattr(settings, "MEMGRAPH_HOST", "localhost")
+    monkeypatch.setattr(settings, "MEMGRAPH_PORT", 7687)
+
+
+@pytest.mark.usefixtures("stack_home", "stack_memgraph_on_7687")
+def test_a_refusal_windows_reports_late_does_not_hide_the_stack_memgraph(
+    open_qdrant: _Server, compose: _Compose, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Windows resolves `localhost` to `::1` first, where nothing listens, and
+    # reports that refusal after the probe gave up; the client then connects
+    # to the stack's `127.0.0.1` (CI on Windows, PR #3051).
+    _stack_on(open_qdrant.port, compose, monkeypatch)
+    _windows(monkeypatch, [_V6, _V4], listening=set())
+
+    assert _client_kwargs() == _bundled(open_qdrant.port)
+
+
+@pytest.mark.usefixtures("stack_home", "stack_memgraph_on_7687")
+@pytest.mark.parametrize(
+    ("order", "listening"),
+    [
+        # Another server on `::1` still answers at once.
+        pytest.param([_V6, _V4], {"::1"}, id="other-server-on-v6"),
+        # Silence from another machine may be a slow server: the client
+        # would keep it.
+        pytest.param([_REMOTE, _V4], set(), id="silent-remote-address"),
+    ],
+)
+def test_an_address_ahead_of_the_stack_that_may_answer_keeps_it_out(
+    open_qdrant: _Server,
+    compose: _Compose,
+    monkeypatch: pytest.MonkeyPatch,
+    order: list[tuple[int, tuple[str, int] | tuple[str, int, int, int]]],
+    listening: set[str],
+) -> None:
+    # Negative: only a local address's timeout reads as a refusal.
+    _stack_on(open_qdrant.port, compose, monkeypatch)
+    _windows(monkeypatch, order, listening)
+
+    assert _client_kwargs() == _embedded()
+
+
 def test_the_compose_file_takes_the_port_from_the_caller() -> None:
     # Why the check asks Docker: the port mapping interpolates MEMGRAPH_PORT,
     # so Compose's resolved configuration follows the caller's own setting
