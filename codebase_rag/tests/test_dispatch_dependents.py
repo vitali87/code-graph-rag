@@ -143,6 +143,72 @@ def test_unresolved_import_base_invents_no_change() -> None:
     assert changes == []
 
 
+def test_reexport_spelling_base_reports_no_change() -> None:
+    # `from pkg import Client` spells the base `proj.pkg.Client`;
+    # the graph spells the class where `pkg/__init__.py` re-exports
+    # it from, `proj.pkg._client.Client`. The same base under two
+    # spellings, so a comment-only edit reports no change instead of
+    # inventing a base removal that re-parses the defining file.
+    scanned = _scanned(
+        "tests/test_client.py",
+        "proj.tests.test_client",
+        "from pkg import Client\n\nclass Child(Client):\n    pass\n",
+    )
+    changes = build_class_changes(
+        [scanned],
+        {"proj.tests.test_client.Child": "tests/test_client.py"},
+        {},
+        {"proj.tests.test_client.Child": ["proj.pkg._client.Client"]},
+        PROJECT,
+        changed_keys=["tests/test_client.py"],
+        graph_class_qns={"proj.pkg._client.Client"},
+    )
+    assert changes == []
+
+
+def test_ambiguous_reexport_spelling_reports_a_change() -> None:
+    # Two classes differ from the re-export spelling by one module
+    # segment, so the spelling names neither: guessing would hide a
+    # change, and the change is reported instead.
+    scanned = _scanned(
+        "tests/test_client.py",
+        "proj.tests.test_client",
+        "from pkg import Client\n\nclass Child(Client):\n    pass\n",
+    )
+    changes = build_class_changes(
+        [scanned],
+        {"proj.tests.test_client.Child": "tests/test_client.py"},
+        {},
+        {"proj.tests.test_client.Child": ["proj.pkg._client.Client"]},
+        PROJECT,
+        changed_keys=["tests/test_client.py"],
+        graph_class_qns={"proj.pkg._client.Client", "proj.pkg._api.Client"},
+    )
+    assert len(changes) == 1, changes
+    assert changes[0].new_bases == ()
+
+
+def test_reexport_spelling_new_subclass_names_defining_base() -> None:
+    # A new subclass of a re-exported base names the defining class,
+    # so its dispatch targets are the ones the resolver recorded.
+    scanned = _scanned(
+        "tests/test_client.py",
+        "proj.tests.test_client",
+        "from pkg import Client\n\nclass Child(Client):\n    def get(self): ...\n",
+    )
+    changes = build_class_changes(
+        [scanned],
+        {},
+        {},
+        {},
+        PROJECT,
+        changed_keys=["tests/test_client.py"],
+        graph_class_qns={"proj.pkg._client.Client"},
+    )
+    assert len(changes) == 1, changes
+    assert changes[0].new_bases == ("proj.pkg._client.Client",)
+
+
 def test_graph_backed_base_in_unchanged_file_is_kept() -> None:
     # `Root` lives in an unchanged file with no hierarchy edges of its
     # own, so only the graph-backed set names it: gaining it as a base

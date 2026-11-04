@@ -291,6 +291,41 @@ def _spelling_key(qualified_name: str, project_name: str) -> str:
     )
 
 
+def _reexport_defining_qn(
+    candidate: str,
+    backed_qns: Collection[str],
+    backed_by_simple_name: dict[str, set[str]],
+) -> str:
+    """The class a re-export spelling names, or the spelling itself.
+
+    The scan spells a base through the import that names it (`from
+    pkg import Client` -> `proj.pkg.Client`); the graph spells the
+    class where it is defined (`proj.pkg._client.Client`, through
+    `pkg/__init__.py`'s re-export), and the persisted hierarchy
+    spells it that way too. The scan has no import map to resolve
+    through, so comparing the two spellings invents a base removal
+    and re-parses the defining file's callers for nothing. Name the
+    defining class when exactly one backed class differs from the
+    candidate by one module segment before the leaf. More than one,
+    or none, keeps the spelling, so a guess never hides a change.
+    """
+    if candidate in backed_qns:
+        return candidate
+    head, sep, _leaf = candidate.rpartition(cs.SEPARATOR_DOT)
+    if not sep:
+        return candidate
+    matches = set()
+    for qn in backed_by_simple_name.get(_simple_name(candidate), ()):
+        if qn not in backed_qns:
+            continue
+        qhead, _, _ = qn.rpartition(cs.SEPARATOR_DOT)
+        if not qhead.startswith(head + cs.SEPARATOR_DOT):
+            continue
+        if cs.SEPARATOR_DOT not in qhead[len(head) + 1 :]:
+            matches.add(qn)
+    return matches.pop() if len(matches) == 1 else candidate
+
+
 def build_class_changes(
     scanned_files: list[ScannedFile],
     old_classes: dict[str, str],
@@ -340,19 +375,26 @@ def build_class_changes(
     # unresolved external guess, not a class, so a comment-only edit
     # on an external base still reports no change.
     graph_backed_qns = set(graph_class_qns) | set(scanned_qns) | set(hierarchy)
+    backed_by_simple_name: dict[str, set[str]] = {}
+    for backed_qn in graph_backed_qns:
+        backed_by_simple_name.setdefault(_simple_name(backed_qn), set()).add(backed_qn)
     changes: list[ClassChange] = []
     for qn, (scanned, scan) in scanned_qns.items():
         old_base_keys = {
             _spelling_key(base, project_name) for base in hierarchy.get(qn, ())
         }
+        resolved_bases = {
+            _reexport_defining_qn(candidate, graph_backed_qns, backed_by_simple_name)
+            for written in scan.bases
+            for candidate in _candidate_base_qns(
+                written, scanned, project_name, known_classes, by_simple_name
+            )
+        }
         new_bases = tuple(
             sorted(
                 {
                     candidate
-                    for written in scan.bases
-                    for candidate in _candidate_base_qns(
-                        written, scanned, project_name, known_classes, by_simple_name
-                    )
+                    for candidate in resolved_bases
                     if candidate in existing_classes
                     or _spelling_key(candidate, project_name) in old_base_keys
                 }
