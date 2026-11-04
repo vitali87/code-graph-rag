@@ -1005,21 +1005,21 @@ class TypeInferenceEngine:
                 continue
             if scopes is None:
                 scopes = self._rust_inline_mod_scopes(caller_node, module_qn)
-            if return_type := self._infer_rust_call_return_type(
+            return_type = self._infer_rust_call_return_type(
                 segments, module_qn, var_types, call_point, scopes
-            ):
-                var_types[name] = return_type
-                if len(segments) == 2 and segments[0] == cs.KEYWORD_SELF:
-                    # A `let m = self.get()` callee lives in the caller's own
-                    # impl, whose header generics a method cannot shadow
-                    # (E0403): a generic return spells the CALLER's own
-                    # parameter, so its bound applies. Any other callee's
-                    # generic return stays uncaptured (issue #1047).
-                    if bounds is None:
-                        bounds = self.rust_type_inference.collect_generic_bounds(
-                            caller_node
-                        )
-                    self._apply_rust_generic_bound(bounds, module_qn, var_types, name)
+            )
+            if not return_type:
+                continue
+            var_types[name] = return_type
+            # A `let m = self.get()` callee lives in the caller's own impl,
+            # whose header generics a method cannot shadow (E0403): a generic
+            # return spells the CALLER's own parameter, so its bound applies.
+            # Any other callee's generic return stays uncaptured (issue #1047).
+            if len(segments) != 2 or segments[0] != cs.KEYWORD_SELF:
+                continue
+            if bounds is None:
+                bounds = self.rust_type_inference.collect_generic_bounds(caller_node)
+            self._apply_rust_generic_bound(bounds, module_qn, var_types, name)
 
     @staticmethod
     def _rust_inline_mod_scopes(caller_node: ASTNode, module_qn: str) -> list[str]:
