@@ -29,7 +29,10 @@ namespace Acme
     {
         public void Emit(string message) { }
         public string Name() { return ""; }
+        public IEnumerable<Other> GetItems() { return null; }
     }
+
+    public class Source { public IEnumerable<Other> GetItems() { return null; } }
 
     public class OtherError : Exception { public void Emit(string message) { } }
 
@@ -236,6 +239,34 @@ namespace Acme
         bool TryOther(out Other other) { other = new Other(); return true; }
         (Other, int) PairOne() { return (new Other(), 0); }
 
+        // Bot review on PR #2990: a query variable is not in scope in its
+        // own clause, nor past a continuation, where `feed` is the field.
+        readonly Source feed;
+        public void FromSourceReadsField()
+        {
+            var names = from Other feed in feed.GetItems() select feed.Name();
+        }
+        public void SecondFromSourceReadsField(IEnumerable<Other> others)
+        {
+            var names = from o in others from Other feed in feed.GetItems() select feed.Name();
+        }
+        public void LetValueReadsField(IEnumerable<Other> others)
+        {
+            var names = from o in others let feed = feed.GetItems() select o;
+        }
+        public void JoinSourceReadsField(IEnumerable<Other> others)
+        {
+            var names = from o in others join Other feed in feed.GetItems() on o equals feed select feed.Name();
+        }
+        public void ContinuationEndsTheScope(IEnumerable<Other> others)
+        {
+            var names = from Other feed in others select feed into g select feed.GetItems();
+        }
+        public void JoinIntoEndsTheScope(IEnumerable<Other> others)
+        {
+            var names = from o in others join Other feed in others on o equals feed into g select feed.GetItems();
+        }
+
         // Bot review on PR #2990: an array's element type is read whatever
         // project type it names.
         public void GenericArray(Widget<int>[] widgets) { foreach (var w in widgets) w.Run(); }
@@ -252,6 +283,8 @@ OTHER_EMIT = "src.Sinks.Acme.Other.Emit(string)"
 OTHER_ERROR_EMIT = "src.Sinks.Acme.OtherError.Emit(string)"
 OTHER_NAME = "src.Sinks.Acme.Other.Name"
 WIDGET_RUN = "src.Sinks.Acme.Widget.Run"
+SOURCE_GET_ITEMS = "src.Sinks.Acme.Source.GetItems"
+OTHER_GET_ITEMS = "src.Sinks.Acme.Other.GetItems"
 
 EMIT = "src.Sinks.Acme.ISink.Emit(string)"
 NAME = "src.Sinks.Acme.ISink.Name"
@@ -396,6 +429,27 @@ def test_a_receiver_takes_the_type_of_its_binder_in_scope(
     if target != EMIT:
         assert EMIT not in callees
         assert NAME not in callees
+
+
+@pytest.mark.parametrize(
+    "caller",
+    [
+        "FromSourceReadsField",
+        "SecondFromSourceReadsField",
+        "LetValueReadsField",
+        "JoinSourceReadsField",
+        "ContinuationEndsTheScope",
+        "JoinIntoEndsTheScope",
+    ],
+)
+def test_a_query_variable_out_of_scope_leaves_the_field(
+    graph: RecordedGraph, caller: str
+) -> None:
+    # `feed.GetItems()` there reads the `Source feed` field, not the query's
+    # `Other feed` variable.
+    callees = _callees(graph, caller)
+    assert callees.get(SOURCE_GET_ITEMS) == "exact", callees
+    assert OTHER_GET_ITEMS not in callees
 
 
 @pytest.mark.parametrize(

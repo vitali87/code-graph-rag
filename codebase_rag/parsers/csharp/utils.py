@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from functools import lru_cache
 from types import MappingProxyType
+from typing import NamedTuple
 
 from tree_sitter import Node
 
@@ -704,6 +705,21 @@ _EMBEDDING_STATEMENTS = frozenset(
 )
 # The scans hold a few trees' nodes at most: one file is parsed at a time.
 _SCOPE_CACHE_SIZE = 64
+# Query clauses that declare a range variable of their own.
+_QUERY_CLAUSES = frozenset(
+    {cs.TS_CSHARP_FROM_CLAUSE, cs.TS_CSHARP_LET_CLAUSE, cs.TS_CSHARP_JOIN_CLAUSE}
+)
+# `join z in zs on x equals z`: past its variable, a join holds its source,
+# then the outer and the inner key; any other count is a malformed parse.
+_JOIN_PARTS = 3
+
+
+class _Binder(NamedTuple):
+    """A binder of a value name and the bytes its name is in scope over."""
+
+    node: Node
+    start: int
+    end: int
 
 
 def _text(node: Node | None) -> str | None:
@@ -742,15 +758,16 @@ def _binds_as_name(node: Node, parent: Node) -> bool:
 
 
 @lru_cache(maxsize=_SCOPE_CACHE_SIZE)
-def _member_binders(member: Node) -> Mapping[str, tuple[tuple[Node, Node], ...]]:
+def _member_binders(member: Node) -> Mapping[str, tuple[_Binder, ...]]:
     """Every value name bound inside one type member, nested types aside:
-    each binder of it, with the scope nearest that binder."""
-    binders: dict[str, list[tuple[Node, Node]]] = {}
+    each binder of it, with the bytes of the scope nearest that binder."""
+    binders: dict[str, list[_Binder]] = {}
     stack = [(member, member)]
     while stack:
         node, scope = stack.pop()
         if (name := _binding(node)) is not None:
-            binders.setdefault(name, []).append((node, scope))
+            start, end = _query_span(node) or (scope.start_byte, scope.end_byte)
+            binders.setdefault(name, []).append(_Binder(node, start, end))
         inner = node if node.type in _VALUE_SCOPES else scope
         stack.extend(
             (child, _child_scope(node, child, inner))
@@ -788,14 +805,66 @@ def _child_scope(node: Node, child: Node, inner: Node) -> Node:
     return inner
 
 
-def _holds(scope: Node, site: Node) -> bool:
-    return scope.start_byte <= site.start_byte and site.end_byte <= scope.end_byte
+def _query_clause(binder: Node) -> Node | None:
+    """The child of its query that declares the range variable `binder`."""
+    parent = binder.parent
+    if parent is None:
+        return None
+    if parent.type == cs.TS_CSHARP_QUERY_EXPRESSION:
+        return binder
+    if parent.type == cs.TS_CSHARP_JOIN_INTO_CLAUSE:
+        return parent.parent
+    return parent if parent.type in _QUERY_CLAUSES else None
+
+
+def _join_inner_key(join: Node, binder: Node) -> Node | None:
+    written = join.child_by_field_name(cs.FIELD_TYPE)
+    parts = [
+        c
+        for c in join.named_children
+        if c not in (written, binder) and c.type != cs.TS_CSHARP_JOIN_INTO_CLAUSE
+    ]
+    return parts[-1] if len(parts) == _JOIN_PARTS else None
+
+
+def _query_span(binder: Node) -> tuple[int, int] | None:
+    """The bytes a query's range variable is in scope over: the clauses
+    after the one declaring it, up to the next continuation (`... into g`),
+    which starts afresh. The declaring clause itself is not, so the source
+    of `from x in x.All()` still reads the outer `x` (bot review on PR
+    #2990). A `join` variable is in scope from its `equals` key on, and only
+    there when the join ends `into` a group."""
+    clause = _query_clause(binder)
+    query = clause.parent if clause is not None else None
+    if clause is None or query is None or query.type != cs.TS_CSHARP_QUERY_EXPRESSION:
+        return None
+    start = clause.end_byte
+    if clause.type == cs.TS_CSHARP_JOIN_CLAUSE and binder.parent == clause:
+        key = _join_inner_key(clause, binder)
+        if key is not None:
+            if _first_named_child(clause, cs.TS_CSHARP_JOIN_INTO_CLAUSE) is not None:
+                return key.start_byte, key.end_byte
+            start = key.start_byte
+    end = next(
+        (
+            c.start_byte
+            for c in query.named_children
+            if c.type == cs.TS_CSHARP_IDENTIFIER and c.start_byte >= clause.end_byte
+        ),
+        query.end_byte,
+    )
+    return start, end
+
+
+def _holds(start: int, end: int, site: Node) -> bool:
+    return start <= site.start_byte and site.end_byte <= end
 
 
 def _member_binds(member: Node, name: str, site: Node) -> bool:
     """Whether a binder of `name` in `member` is in scope at `site`."""
     return any(
-        _holds(scope, site) for _binder, scope in _member_binders(member).get(name, ())
+        _holds(binder.start, binder.end, site)
+        for binder in _member_binders(member).get(name, ())
     )
 
 
@@ -816,13 +885,15 @@ def _value_member(site: Node) -> Node | None:
     return child
 
 
-def _innermost(found: tuple[tuple[Node, Node], ...], site: Node) -> Node | None:
-    binder: Node | None = None
-    nearest: Node | None = None
-    for candidate, scope in found:
-        if _holds(scope, site) and (nearest is None or _holds(nearest, scope)):
-            binder, nearest = candidate, scope
-    return binder
+def _innermost(found: tuple[_Binder, ...], site: Node) -> Node | None:
+    nearest: _Binder | None = None
+    for candidate in found:
+        if _holds(candidate.start, candidate.end, site) and (
+            nearest is None
+            or (nearest.start <= candidate.start and candidate.end <= nearest.end)
+        ):
+            nearest = candidate
+    return nearest.node if nearest is not None else None
 
 
 def value_binders_at(site: Node) -> dict[str, Node]:
