@@ -337,6 +337,201 @@ mod tests {
     assert walks == {f"{base}.util.TempDir.path": cs.EdgeResolution.EXACT}, walks
 
 
+def test_uses_in_bodies_and_blocks_shadow_module_level_bindings(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Each caller reaches util's `tmpdir` through a `use` in a fn body or
+    # block around the call, which shadows the file's own `tmpdir` and its
+    # `util` alias for the decoy module: the caller's own body, an inner
+    # block of it, an enclosing fn's body, a const initializer around the
+    # fn, and an aliased body `use` under an inline module's alias.
+    base = _index(
+        temp_repo,
+        mock_ingestor,
+        "rs_modfn_bodyuse",
+        """\
+use crate::aaa::Ignore;
+
+mod wrong {
+    pub fn tmpdir() -> crate::aaa::Ignore { crate::aaa::Ignore }
+}
+
+use self::wrong as util;
+
+fn tmpdir() -> Ignore { Ignore }
+
+pub fn bare() -> u8 {
+    use crate::util::tmpdir;
+    let td = tmpdir();
+    td.path()
+}
+
+pub fn qualified() -> u8 {
+    use crate::util;
+    let td = util::tmpdir();
+    td.path()
+}
+
+pub fn inner_block() -> u8 {
+    {
+        use crate::util::tmpdir;
+        let td = tmpdir();
+        td.path()
+    }
+}
+
+pub fn outer() -> u8 {
+    use crate::util;
+    fn nested() -> u8 {
+        let td = util::tmpdir();
+        td.path()
+    }
+    nested()
+}
+
+pub const IN_CONST: fn() -> u8 = {
+    use crate::util;
+    fn in_const() -> u8 {
+        let td = util::tmpdir();
+        td.path()
+    }
+    in_const
+};
+
+pub mod tests {
+    use super::wrong as util;
+
+    pub fn aliased() -> u8 {
+        use crate::util as util;
+        let td = util::tmpdir();
+        td.path()
+    }
+}
+""",
+    )
+    temp_path = {f"{base}.util.TempDir.path": cs.EdgeResolution.EXACT}
+    for caller in (
+        "bare",
+        "qualified",
+        "inner_block",
+        "nested",
+        "in_const",
+        "tests.aliased",
+    ):
+        targets = _path_targets(mock_ingestor, f"{base}.walk.{caller}")
+        assert targets == temp_path, (caller, targets)
+
+
+def test_nested_function_looks_names_up_in_its_enclosing_module(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A fn declared in another fn's body is still in `tests`: `self::`, a
+    # bare name and a child module count from there, and `super::` from the
+    # file, whose own `make` returns the decoy.
+    base = _index(
+        temp_repo,
+        mock_ingestor,
+        "rs_modfn_nested",
+        """\
+use crate::aaa::Ignore;
+
+fn make() -> Ignore { Ignore }
+
+pub mod tests {
+    pub struct Maker;
+    impl Maker {
+        pub fn path(&self) -> u8 { 2 }
+    }
+    pub fn make() -> Maker { Maker }
+
+    pub mod inner {
+        pub fn make() -> super::Maker { super::Maker }
+    }
+
+    pub fn outer() -> u8 {
+        fn via_self() -> u8 {
+            let m = self::make();
+            m.path()
+        }
+        fn bare() -> u8 {
+            let m = make();
+            m.path()
+        }
+        fn child() -> u8 {
+            let m = inner::make();
+            m.path()
+        }
+        fn via_super() -> u8 {
+            let m = super::make();
+            m.path()
+        }
+        via_self() + bare() + child() + via_super()
+    }
+}
+""",
+    )
+    maker_path = {f"{base}.walk.tests.Maker.path": cs.EdgeResolution.EXACT}
+    for caller in ("via_self", "bare", "child"):
+        targets = _path_targets(mock_ingestor, f"{base}.walk.tests.{caller}")
+        assert targets == maker_path, (caller, targets)
+    targets = _path_targets(mock_ingestor, f"{base}.walk.tests.via_super")
+    assert targets == {f"{base}.aaa.Ignore.path": cs.EdgeResolution.EXACT}, targets
+
+
+def test_inner_helper_with_no_return_type_still_shadows_an_outer_one(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The test module's own `tmpdir` returns `()`, so it records no return
+    # type; the file's `tmpdir` returning the decoy must not stand in for
+    # it, whether the call names it bare or through a module path.
+    base = _index(
+        temp_repo,
+        mock_ingestor,
+        "rs_modfn_unit",
+        """\
+use crate::aaa::Ignore;
+
+fn tmpdir() -> Ignore { Ignore }
+
+mod here {
+    pub fn tmpdir() -> crate::aaa::Ignore { crate::aaa::Ignore }
+}
+
+pub trait Pathy {
+    fn path(&self) -> u8;
+}
+
+impl Pathy for () {
+    fn path(&self) -> u8 { 5 }
+}
+
+pub mod tests {
+    use super::Pathy;
+
+    fn tmpdir() {}
+
+    mod here {
+        pub fn tmpdir() {}
+    }
+
+    pub fn bare() -> u8 {
+        let td = tmpdir();
+        td.path()
+    }
+
+    pub fn qualified() -> u8 {
+        let td = here::tmpdir();
+        td.path()
+    }
+}
+""",
+    )
+    decoy = f"{base}.aaa.Ignore.path"
+    for caller in ("bare", "qualified"):
+        targets = _path_targets(mock_ingestor, f"{base}.walk.tests.{caller}")
+        assert targets.get(decoy) != cs.EdgeResolution.EXACT, (caller, targets)
+
+
 def test_external_module_call_leaves_the_local_untyped(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
