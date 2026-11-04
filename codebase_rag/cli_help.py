@@ -15,6 +15,7 @@ class CLICommandName(StrEnum):
     DEAD_CODE = "dead-code"
     DUPLICATES = "duplicates"
     DELETE_PROJECT = "delete-project"
+    PRUNE = "prune"
     DAEMON = "daemon"
     WORKSPACE = "workspace"
     TRACE = "trace"
@@ -22,6 +23,7 @@ class CLICommandName(StrEnum):
     GRAPH = "graph"
     CHECK = "check"
     RENAME = "rename"
+    CHANGE_SIGNATURE = "change-signature"
     CONTEXT = "context"
     PORT = "port"
     STOP = "stop"
@@ -183,8 +185,9 @@ HELP_CHECK_ISOLATED = (
 )
 CMD_RENAME = (
     "Rename a definition everywhere the graph references it (definition, call "
-    "and reference sites, imports, overrides, __all__); refuses on guessed sites "
-    "and on occurrences the graph has no site for."
+    "and reference sites, imports, overrides, __all__); refuses on guessed sites, "
+    "on occurrences the graph has no site for, and on a graph a stopped sync "
+    "left partial."
 )
 EXAMPLES_RENAME = (
     "Examples:\n  cgr rename myproj.pkg.util.helper assist --dry-run\n"
@@ -197,6 +200,33 @@ HELP_RENAME_ALLOW_HEURISTIC = (
     "occurrences of the old name the graph has no site for, as well."
 )
 HELP_RENAME_DRY_RUN = "Print the plan and diff without writing anything."
+CMD_CHANGE_SIGNATURE = (
+    "Change a Python or JavaScript definition's parameter list and rewrite "
+    "every call site "
+    "the graph knows; sites the mapping cannot complete are listed, not touched; "
+    "refuses on a graph a stopped sync left partial."
+)
+EXAMPLES_CHANGE_SIGNATURE = (
+    "Examples:\n"
+    "  cgr change-signature myproj.pkg.util.helper a 'n: int' b --map n==1 --dry-run\n"
+    "  cgr change-signature myproj.pkg.util.helper b a\n"
+    "  cgr change-signature myproj.pkg.util.helper 'times: int' 'text: str' "
+    "--map times=0 --map text=1"
+)
+HELP_CHANGE_SIGNATURE_QN = "Qualified name of the function or method to change."
+HELP_CHANGE_SIGNATURE_PARAMS = (
+    "The new parameters in order: NAME, 'NAME: TYPE', 'NAME = DEFAULT' or "
+    "'NAME: TYPE = DEFAULT'; a bare old name carries it over unchanged."
+)
+HELP_CHANGE_SIGNATURE_MAP = (
+    "NEW=SOURCE, repeatable: SOURCE is an old parameter name, its 0-based "
+    "index, or =LITERAL to pass that text at every site (so NEW==1 inserts 1)."
+)
+HELP_CHANGE_SIGNATURE_ALLOW_HEURISTIC = (
+    "Rewrite sites the graph resolved heuristically, by overload fan-out or by "
+    "a trace as well, instead of listing them as unmapped."
+)
+HELP_CHANGE_SIGNATURE_DRY_RUN = "Print the plan and diff without writing anything."
 CMD_CONTEXT = (
     "Print a graph-ranked context slice for a symbol, location or task within "
     "a token budget: source, caller lines, callee signatures, types, tests, docs."
@@ -588,6 +618,11 @@ HELP_QUERY_OUTPUT_FORMAT = "Format --ask-agent output as table or json."
 HELP_MCP_TRANSPORT = "Transport to serve: stdio or http."
 HELP_MCP_HTTP_HOST = "HTTP bind host. Used only with --transport http."
 HELP_MCP_HTTP_PORT = "HTTP bind port. Used only with --transport http."
+HELP_MCP_READ_ONLY = (
+    "Serve only the tools that read (graph queries, file reads, ask_agent); "
+    "write_file, the edit tools, indexing, annotate and the delete tools are "
+    "neither listed nor run. Also set by MCP_READ_ONLY=true."
+)
 HELP_MCP_WORKSPACE = (
     "Serve the projects of workspace NAME: `list_projects` shows them, a "
     "`project` argument, when given, must name one (omitted, the server "
@@ -692,6 +727,10 @@ HELP_DELETE_PROJECT_REPO_PATH = (
     "Repository whose project to delete when --project is not given. Its "
     "local hash cache is removed too."
 )
+HELP_PRUNE_DRY_RUN = "List the projects that would be pruned without deleting anything."
+HELP_PRUNE_YES = "Prune without asking for confirmation."
+CMD_PRUNE = "Prune projects whose repository root no longer exists"
+EXAMPLES_PRUNE = "EXAMPLE\n\n  cgr prune --dry-run\n\n  cgr prune --yes"
 HELP_COMMAND = "Command path to document, such as 'start' or 'daemon logs'."
 
 CMD_VERIFY_INDEX = "Verify a protobuf index against its provenance manifest"
@@ -709,6 +748,7 @@ CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.DEAD_CODE: CMD_DEAD_CODE,
     CLICommandName.DUPLICATES: CMD_DUPLICATES,
     CLICommandName.DELETE_PROJECT: CMD_DELETE_PROJECT,
+    CLICommandName.PRUNE: CMD_PRUNE,
     CLICommandName.LANGUAGE: CMD_LANGUAGE,
     CLICommandName.DAEMON: CMD_DAEMON,
     CLICommandName.TRACE: CMD_TRACE,
@@ -716,6 +756,7 @@ CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.GRAPH: CMD_GRAPH,
     CLICommandName.CHECK: CMD_CHECK,
     CLICommandName.RENAME: CMD_RENAME,
+    CLICommandName.CHANGE_SIGNATURE: CMD_CHANGE_SIGNATURE,
     CLICommandName.CONTEXT: CMD_CONTEXT,
     CLICommandName.PORT: CMD_PORT,
     CLICommandName.WORKSPACE: CMD_WORKSPACE,

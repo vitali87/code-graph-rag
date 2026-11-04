@@ -221,7 +221,7 @@ async def test_an_option_the_rules_do_not_know_asks(
         "rg foo pkg/",
         "rg -n -i --type py -g '*.py' run pkg",
         "rg -nC2 -e run --no-heading pkg",
-        "rg -l --hidden --max-count=3 run",
+        "rg -l --max-count=3 run",
         "head -n 5 README.md",
         "tail -20 README.md",
         "cut -d/ -f2 README.md",

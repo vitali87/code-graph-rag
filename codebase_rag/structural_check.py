@@ -38,6 +38,7 @@ from .config import load_ignore_patterns
 from .graph_updater import GraphUpdater, _load_exclusion_state, _load_project_stamps
 from .services import QueryingIngestorProtocol
 from .structural_delta import StructuralDelta, normalise_paths, observe
+from .sync_guard import run_owner
 from .types_defs import LanguageQueries, PropertyDict, ReingestReport
 from .utils.path_utils import derive_project_name, should_skip_path
 
@@ -393,7 +394,8 @@ def _measure_then_restore(
         cs.KEY_RUN_ID: uuid.uuid4().hex,
     }
     store.execute_write(
-        cq.CYPHER_MARK_PROJECT_INCOMPLETE, {**marker, cs.KEY_WRITING: True}
+        cq.CYPHER_MARK_RUN_INCOMPLETE,
+        {**marker, **run_owner(), cs.KEY_WRITING: True},
     )
     try:
         return measure(lambda: apply(lambda: guard.capture(updater.reingest_scope)))

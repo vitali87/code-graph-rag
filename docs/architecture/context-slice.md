@@ -48,9 +48,11 @@ embedding similarity for a free-text task, then name. Tokens are counted
 with the same encoder the query tools use, and pieces are taken in order
 while they fit: the total never exceeds `budget_tokens`. The target is
 special: when it alone exceeds the budget it is trimmed line by line to
-fit and the slice is marked `truncated`; a budget too small for even its
-first line names it in `omitted` instead. Every piece that did not fit is
-listed in `omitted` with the reason it would have been included.
+fit and the slice is marked `truncated`. A budget too small for even its
+first line returns no pieces at all: the slice is marked `truncated`, names
+the target in `omitted`, and `cgr context` exits 1. A slice never holds
+neighbours without its target. Every piece that did not fit is listed in
+`omitted` with the reason it would have been included.
 
 ## Output
 
