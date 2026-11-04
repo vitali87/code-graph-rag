@@ -72,6 +72,7 @@ value elsewhere (`h = helper; h(x)`).
      "target": "proj.pkg.util.helper", "renamed_to": "proj.pkg.util.assist"}
   ],
   "signature_changes": [],
+  "convention_changes": [],
   "arity_findings": [],
   "new_duplicates": [],
   "new_import_cycles": [],
@@ -88,10 +89,11 @@ value elsewhere (`h = helper; h(x)`).
 | Field                | Meaning                                                                                           |
 |----------------------|---------------------------------------------------------------------------------------------------|
 | `symbols.renamed`    | A symbol that disappeared while one with the same whole-skeleton fingerprint appeared in the same file. Paired one-to-one. |
-| `symbols.changed`    | A symbol whose skeleton fingerprint or declared positional parameters moved. A change to a literal alone does not register here. |
+| `symbols.changed`    | A symbol whose skeleton fingerprint, declared positional parameters, decorators or modifiers moved (`@property` added, `static` dropped, a route's `methods=` changed). A change to a literal alone does not register here. |
 | `dangling_callers`   | Call sites of a removed or renamed symbol that still name it: every caller in a file that was not part of the edit, and callers in edited files that did not re-bind to the new name. The `line`/`col` are the site's recorded position. |
 | `dangling_importers` | Import statements and Python `__all__` entries that still name a removed or renamed symbol (issue #2516): a package `__init__` re-exporting it, say, with no call site to go with the import. `kind` is `import` (the statement's position; `name` is the imported name) or `__all__` (the string entry's position; `name` is the name the module exported it under). An importer the edit did not touch is always listed; one it touched only if it still names the symbol. Nothing is listed while the old module still binds the name, as it does after a move that leaves `from new_home import name` behind. A replacement import is followed to its target, into modules the edit did not touch as well, so one naming nothing there does not count, while a wildcard import of a module that defines the name does; a Python module's assignments are read from its source, and a target outside the project is taken at its word. A string in a comment inside `__all__` exports nothing. An import of a **module** the edit deleted or moved (issue #3266) is listed with `kind` `module`: `import pkg.signals`, `from pkg import util`, `import pkg.util as pu`, an ES `export * from "./util"` or `import * as u from "./util"`. `target` is the module, `name` what the statement binds (`*` for a re-export), and `renamed_to` the module it moved to, taken from the definitions that moved with it or, for a module defining nothing, the one new module with its file name. A Python module turned into a package, or a JS/TS file turned into a directory whose `index` the same specifier resolves to, is not gone. A statement already listed for a removed name it imports is listed once. |
 | `signature_changes`  | Symbols whose positional parameters changed, with every call site and a verdict each, and `remote_callers`: call sites in any project that reach an endpoint the symbol exposes, through a network resource or directly for an RPC or dispatch resource (issue #1603). |
+| `convention_changes` | Methods whose decorators or modifiers changed how they are called, with what changed and every call site with a verdict each (issue #3259); see [calling conventions](#calling-conventions). |
 | `arity_findings`     | Call sites in the edited files the callee certainly rejects: more positional arguments than it declares (`too_many`); a required parameter nothing fills (`too_few`), where the signature declares which parameters are optional (see [signatures outside Python](#signatures-outside-python)) or, for Python, from the header read back; or a keyword it does not accept (`unexpected_keyword`, Python). |
 | `new_duplicates`     | New or changed functions whose fingerprint (`exact`) or branch set (`similar`, Jaccard at the duplicates threshold) matches an existing function; `original` is the older one. The duplicate detector's minimum size applies. |
 | `new_import_cycles`  | Strongly connected components of the module import graph that contain an edited module and did not exist before the edit. |
@@ -183,6 +185,56 @@ and is not compared; the first sync after upgrading re-parses every file,
 since the parser changed, and records the lists and every site's
 `spread_args`.
 
+### Calling conventions
+
+A decorator or modifier can change how every caller must call a method
+while its body and parameters stay as they were (issue #3259). Python's
+`@property` and `@cached_property`, `@staticmethod` and `@classmethod`; the
+JavaScript and TypeScript `get`, `set` and `static`; Java's `static`; and a
+TypeScript or Java visibility narrowed below what a caller had. Each such
+change is listed in `changes` (`became_accessor`, `no_longer_accessor`,
+`became_static`, `no_longer_static`, `became_classmethod`,
+`no_longer_classmethod`, `visibility_narrowed`), with `before` and `after`
+holding the decorators and modifiers.
+
+Each call site is read back from the caller's source at its recorded
+position: whether it calls the member, and what it calls it through. An
+instance is `Cart()`, `new Cart()`, Python's `self` or `this` in an instance
+method; the class is its own name, Python's `cls`, or `this` in a static
+method (and a Java call with no receiver there). A Python name its function
+binds once, by `c = Cart()` (annotated or not), is an instance too: it is
+not a parameter, no `global` or `nonlocal` declares it, and no lambda or
+comprehension around the call binds it for itself. Any other variable, a
+parameter or a factory's result may hold either, so a site written through
+one is `unknown`. JavaScript and TypeScript `this` is read from where it is
+written: an arrow takes the `this` around it, so one in a static field or
+method names the class, and a plain function's own `this` is `unknown`.
+Java's `this` is read from the caller's definition, also in a file the
+edit did not touch. A caller is judged from the call it makes, whether the
+re-bound graph still draws it or not: a Python property read is a call
+edge only while it is a property. A JavaScript or TypeScript getter read
+is a reference edge, judged like a call while it reads a getter. A site
+the graph drew before the edit of its own file is moved with its caller,
+when the caller kept its shape and the edited source still accesses the
+member there.
+
+| Verdict          | When |
+|------------------|------|
+| `calls_accessor` | A call of what is now a property or getter (`Cart().total()`): Python calls the value it returns, TypeScript rejects it (TS6234). |
+| `reads_method`   | A read of what was a property or getter and is now a method: it yields the method instead of the value, which TypeScript rejects where a value is expected (TS2322). |
+| `needs_instance` | A call through the class of what is now an instance method (`Cart.tax(3)`): TypeScript rejects it (TS2339), JavaScript finds no such member, Java rejects a non-static method from a static context. |
+| `needs_class`    | A call through an instance of what is now static, in JavaScript and TypeScript (TS2576). Java allows it, so it reads `ok` there. |
+| `rebound`        | A Python call whose receiver is bound where it was not, or no longer bound where it was: `Cart().tax(3)`, or `c.tax(3)` after `c = Cart()`, once `@staticmethod` is gone passes the instance as `x`, and `Cart.make()` once `@classmethod` is gone passes nothing for `cls`. A call through the class of a plain method binds nothing, so `Cart.tax(3)` reads `ok`, and a refactor that drops `self` as it adds `@staticmethod` keeps what each argument fills. |
+| `inaccessible`   | A caller outside the class of a member made `private`: in TypeScript any caller outside the class body, in Java a caller in another file. |
+| `ok`             | The call is written the way the new convention takes it. |
+| `unknown`        | The call's form cannot be read (a receiver held in a variable other than one bound once from the class, a method handed on as a value, two calls of the same name starting where the site does), the parameters moved as well (`signature_changes` judges the count), a member was made `protected` (a subclass keeps it) or Java-`private` with the caller in the same file (a nested class keeps it), or the edge was bound by name alone. |
+
+Every verdict but `ok` and `unknown` is a finding and trips
+`--fail-on-found`. A Java member with no visibility modifier is
+package-private in a class but public in an interface, which the node does
+not say, so it is not compared; neither is a decorator or modifier a node
+recorded before they were read back.
+
 ## `cgr check`
 
 ```bash
@@ -198,7 +250,8 @@ that differ between the base and the working tree, untracked files
 included, are re-ingested and the delta printed as JSON. With
 `--fail-on-found` the command exits 1 when the delta reports dangling
 callers, dangling importers, `too_many`, `too_few` or `unexpected_keyword`
-arity findings, new duplicates or new import cycles.
+arity findings, a call site written for a calling convention its callee
+left, new duplicates or new import cycles.
 A project that is not indexed is refused: a scoped re-ingest completes a
 graph, it cannot stand in for the first index.
 

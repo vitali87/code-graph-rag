@@ -10,6 +10,7 @@ from .. import logs as ls
 from .. import tool_errors as te
 from ..decorators import validate_project_path
 from ..schemas import FileCreationResult
+from ..sensitive_paths import is_git_internal
 from ..types_defs import AfterWrite
 from . import tool_descriptions as td
 
@@ -29,6 +30,10 @@ class FileWriter:
     async def _create_validated(
         self, file_path: Path, content: str
     ) -> FileCreationResult:
+        if is_git_internal(file_path, self.project_root):
+            err_msg = te.GIT_INTERNAL_WRITE_REFUSED.format(path=file_path)
+            logger.warning(err_msg)
+            return FileCreationResult(file_path=str(file_path), error_message=err_msg)
         try:
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text(content, encoding=cs.ENCODING_UTF8)
