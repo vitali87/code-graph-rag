@@ -108,6 +108,7 @@ from .parsers.java_lombok import (
     current_lombok_identity,
     overlay_identity,
 )
+from .parsers.js_ts.reexports import js_ts_module_qn
 from .parsers.notebook import NotebookSkipped, is_notebook_path, read_notebook
 from .parsers.parameter_nodes import PendingParameterType
 from .parsers.py.ast_analyzer import clear_scope_facts
@@ -1174,6 +1175,25 @@ def _file_module_holding(name: str, module_paths: Mapping[str, Path]) -> str | N
         if module_paths.get(prefix) == path:
             return prefix
     return holder
+
+
+def _js_entry_modules(
+    targets: Iterable[str], module_paths: Mapping[str, Path]
+) -> list[str]:
+    """The JS/TS modules import `targets` name, a directory's `index` included.
+
+    `require("./worker")` names `worker` and `import run from "./worker"`
+    names `worker.default`, while the module is `worker/index.ts`, which no
+    prefix of either spells. A `worker/default.ts` beside it is a module
+    under that second qn, so the index is a target of its own rather than a
+    fallback for when nothing holds the name.
+    """
+    return [
+        module_qn
+        for target in targets
+        for name in (target, target.rpartition(cs.SEPARATOR_DOT)[0])
+        if (module_qn := js_ts_module_qn(name, module_paths)) is not None
+    ]
 
 
 def _project_root_for_single_file(target: Path) -> Path:
@@ -2664,6 +2684,7 @@ class GraphUpdater:
                 *mapping.get(scope, {}).values(),
                 *import_processor.rust_mod_scope_targets(scope),
             ]
+            targets += _js_entry_modules(targets, module_paths)
             for target in targets:
                 holder = _file_module_holding(target, module_paths)
                 if holder is None or holder in walked:
@@ -2716,6 +2737,13 @@ class GraphUpdater:
             self.queries,
             self.factory.definition_processor.function_locations,
         )
+        if language in cs.JS_TS_LANGUAGES:
+            # A default import resolves through its module's recorded
+            # `export default`, which only Pass 2 records; an unchanged
+            # exporter has its definitions read back from the graph by now.
+            self.factory.definition_processor.record_esm_default_export(
+                entry[0], module_qn
+            )
         return True
 
     @property
@@ -6051,6 +6079,7 @@ class GraphUpdater:
         """Drop the import-side state a removed file's module qns recorded."""
         for prefix in module_qn_prefixes:
             self.factory.import_processor.commonjs_direct_exports.pop(prefix, None)
+            self.factory.import_processor.esm_default_exports.pop(prefix, None)
         if file_path.suffix in (*cs.C_EXTENSIONS, *cs.CPP_EXTENSIONS):
             for qn in recorded_qns:
                 self.factory.import_processor.drop_cpp_module_import_state(qn)

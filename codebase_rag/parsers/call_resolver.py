@@ -22,6 +22,7 @@ from .go.interfaces import GoMethodSpec
 from .go.link_state import GoLinkState
 from .import_processor import ImportProcessor
 from .js_ts import utils as js_ts_utils
+from .js_ts.reexports import js_ts_module_qn
 from .lua import utils as lua_utils
 from .parameter_nodes import c_family_parameter_list
 from .php import class_names as php_class_names
@@ -4055,25 +4056,55 @@ class CallResolver:
         if imported_qn in self.function_registry:
             logger.debug(ls.CALL_DIRECT_IMPORT, call_name=call_name, qn=imported_qn)
             return self.function_registry[imported_qn], imported_qn
+        for target in self._module_import_targets(imported_qn, call_name, language):
+            if target in self.function_registry:
+                logger.debug(ls.CALL_DIRECT_IMPORT, call_name=call_name, qn=target)
+                return self.function_registry[target], target
+        return None
+
+    def _module_import_targets(
+        self,
+        imported_qn: str,
+        call_name: str,
+        language: cs.SupportedLanguage | None,
+    ) -> Iterator[str]:
+        """The definitions an import that names no definition stands for.
+
+        In the order the call should try them; the caller keeps the first
+        one that is registered.
+        """
         if language == cs.SupportedLanguage.JULIA:
             # A Julia selected import (`using .api: alpha`) binds the local
             # name to the source MODULE; resolve the member exactly before
             # the name trie, or a same-named function soaks the edge.
-            for member in self.import_processor.julia_member_qn_candidates(
+            yield from self.import_processor.julia_member_qn_candidates(
                 imported_qn, call_name
-            ):
-                if member in self.function_registry:
-                    logger.debug(ls.CALL_DIRECT_IMPORT, call_name=call_name, qn=member)
-                    return self.function_registry[member], member
+            )
         # A whole-module require alias (`const f = require('./m'); f(x)`)
         # maps to the MODULE qn; when that module's entire export is one
         # function (`module.exports = function ... `), the call is a call to
         # that function (issue #991, fastify's error-serializer).
-        direct = self.import_processor.commonjs_direct_exports.get(imported_qn)
-        if direct is not None and direct in self.function_registry:
-            logger.debug(ls.CALL_DIRECT_IMPORT, call_name=call_name, qn=direct)
-            return self.function_registry[direct], direct
-        return None
+        direct = self.import_processor.commonjs_direct_exports.get(
+            self._js_module_key(imported_qn)
+        )
+        if direct is not None:
+            yield direct
+        # An ES-module default import maps to `<module>.default`, which no
+        # definition is registered under; the module's `export default` names
+        # the definition the call reaches (issue #2724).
+        if imported_qn.endswith(cs.IMPORT_DEFAULT_SUFFIX):
+            default = self.import_processor.esm_default_exports.get(
+                self._js_module_key(imported_qn[: -len(cs.IMPORT_DEFAULT_SUFFIX)])
+            )
+            if default is not None:
+                yield default
+
+    def _js_module_key(self, module_qn: str) -> str:
+        # `require("./worker")` and `import run from "./worker"` name the
+        # directory, while the module both export maps key on is
+        # `worker/index.ts`; `worker.ts` wins when both exist, as on disk.
+        found = js_ts_module_qn(module_qn, self.type_inference.module_qn_to_file_path)
+        return found or module_qn
 
     def _try_resolve_qualified_call(
         self,
