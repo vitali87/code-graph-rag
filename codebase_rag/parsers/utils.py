@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Collection, Mapping
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
@@ -46,24 +46,31 @@ def _member_name_start_point(node: Node) -> tuple[int, int]:
     return anchor.start_point[0] + 1, anchor.start_point[1]
 
 
+class PythonStarRules(NamedTuple):
+    """What a Python `from mod import *` binds, by Python's rules: each
+    module's literal `__all__` (`exports`), and, where it differs from the
+    import map's own order, the order each module's import-map keys were
+    last bound in (`binding_order`)."""
+
+    exports: Mapping[str, frozenset[str]]
+    binding_order: Mapping[str, Sequence[str]]
+
+
 def follow_reexports(
     qn: str,
     import_mapping: dict[str, dict[str, str]],
     function_registry: FunctionRegistryTrieProtocol,
-    python_star_exports: Mapping[str, frozenset[str]] | None = None,
+    python_stars: PythonStarRules | None = None,
 ) -> str:
     # `from .pkg import sym` records the importer's name against the re-export
     # module (pkg.sym), not the real definition (pkg.mod.sym), so an unregistered
     # qn may be a re-export. Follow the module's import map one hop at a time
     # until a registered symbol is reached, guarding against cycles.
-    # `python_star_exports` (each Python module's literal `__all__`) gives
-    # `from mod import *` Python's own binding rules, which Python callers ask
-    # for by passing it.
+    # `python_stars` gives `from mod import *` Python's own binding rules,
+    # which Python callers ask for by passing it.
     if qn in function_registry:
         return qn
-    return _ImportMapWalk(
-        import_mapping, function_registry, python_star_exports
-    ).follow(qn)[0]
+    return _ImportMapWalk(import_mapping, function_registry, python_stars).follow(qn)[0]
 
 
 def _star_binds(
@@ -76,6 +83,17 @@ def _star_binds(
     if (exported := python_star_exports.get(source)) is not None:
         return name in exported
     return None if not name.startswith(cs.PY_PRIVATE_PREFIX) else False
+
+
+def _latest_first(
+    imports: Mapping[str, str], order: Sequence[str] | None
+) -> Iterator[tuple[str, str]]:
+    """`imports`' entries, the last bound first. The map keeps a re-bound key
+    where it was first bound, so `order` gives the binding order when that
+    differs."""
+    for key in reversed(order or tuple(imports)):
+        if (target := imports.get(key)) is not None:
+            yield key, target
 
 
 class _ImportMapWalk:
@@ -95,11 +113,11 @@ class _ImportMapWalk:
         self,
         import_mapping: Mapping[str, Mapping[str, str]],
         function_registry: FunctionRegistryTrieProtocol,
-        python_star_exports: Mapping[str, frozenset[str]] | None = None,
+        python_stars: PythonStarRules | None = None,
     ) -> None:
         self._imports = import_mapping
         self._registry = function_registry
-        self._python_stars = python_star_exports
+        self._python_stars = python_stars
         self._path: set[str] = set()
         self._settled: dict[str, str] = {}
 
@@ -159,10 +177,7 @@ class _ImportMapWalk:
         return (reached.pop() if len(reached) == 1 else None), cut
 
     def _python_latest_binding(
-        self,
-        module_qn: str,
-        name: str,
-        python_star_exports: Mapping[str, frozenset[str]],
+        self, module_qn: str, name: str, python_stars: PythonStarRules
     ) -> tuple[str | None, bool]:
         # `from ._client import *` is one wildcard entry, not a name per
         # export, so `pkg.Client` matched nothing and httpx's
@@ -171,19 +186,27 @@ class _ImportMapWalk:
         # read latest first (bot review on PR #2989): a named import is
         # followed on, a star that binds the name is where it leads.
         cut = False
-        for key, target in reversed(self._imports.get(module_qn, {}).items()):
+        for key, target in _latest_first(
+            self._imports.get(module_qn, {}), python_stars.binding_order.get(module_qn)
+        ):
             if key == name:
                 return target, cut
             if not key.startswith(cs.GLOB_ALL):
                 continue
-            binds = _star_binds(target, name, python_star_exports)
+            binds = _star_binds(target, name, python_stars.exports)
             if binds is False:
                 continue
-            found, branch_cut = self.follow(f"{target}{cs.SEPARATOR_DOT}{name}")
+            source_name = f"{target}{cs.SEPARATOR_DOT}{name}"
+            found, branch_cut = self.follow(source_name)
             cut = cut or branch_cut
-            if found in self._registry or binds:
-                # A name the source's `__all__` lists is bound by this
-                # star even when it leads outside the project.
+            # A name the source's `__all__` lists, or one the source binds
+            # (the walk left it), is this star's even when it leads outside
+            # the project.
+            if (
+                binds
+                or found in self._registry
+                or (found != source_name and not branch_cut)
+            ):
                 return found, cut
         return None, cut
 

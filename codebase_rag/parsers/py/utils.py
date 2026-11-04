@@ -43,7 +43,7 @@ def resolve_dotted_class(
             f"{base}{SEPARATOR_DOT}{rest}",
             import_mapping,
             function_registry,
-            import_processor.python_module_all,
+            import_processor.python_star_rules,
         )
         if function_registry.get(qn) == NodeType.CLASS:
             return qn

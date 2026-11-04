@@ -271,7 +271,7 @@ class PythonWithBindingMixin(_WithBase):
                 type_name,
                 import_mapping,
                 self.function_registry,
-                self.import_processor.python_module_all,
+                self.import_processor.python_star_rules,
             )
             if self.function_registry.get(qn) == NodeType.CLASS:
                 return qn
@@ -293,6 +293,6 @@ class PythonWithBindingMixin(_WithBase):
             qn,
             import_mapping,
             self.function_registry,
-            self.import_processor.python_module_all,
+            self.import_processor.python_star_rules,
         )
         return qn if self.function_registry.get(qn) == NodeType.CLASS else None

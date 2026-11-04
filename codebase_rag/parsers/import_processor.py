@@ -90,6 +90,7 @@ from .stdlib_extractor import (
     save_persistent_cache,
 )
 from .utils import (
+    PythonStarRules,
     follow_reexports,
     get_query_cursor,
     node_site_properties,
@@ -1069,6 +1070,13 @@ def _import_site_props(
     return site
 
 
+def _site_start(site: PropertyDict | None) -> tuple[int, int]:
+    """Where a recorded import site starts; (0, 0) when none was recorded."""
+    line = site.get(cs.KEY_LINE) if site else None
+    col = site.get(cs.KEY_COL) if site else None
+    return (line, col) if isinstance(line, int) and isinstance(col, int) else (0, 0)
+
+
 def _python_string_literal(node: Node) -> str | None:
     if node.type != cs.TS_PY_STRING or node.text is None:
         return None
@@ -1132,10 +1140,112 @@ class _UnreadableDunderAll(Exception):
     """`__all__` is set in a way the source does not spell out."""
 
 
+class _LateDunderAll(_UnreadableDunderAll):
+    """`__all__` is changed in a def or lambda body, which can run after any
+    later statement, so no later literal settles what it holds."""
+
+
 def _readable(names: list[str] | None) -> list[str]:
     if names is None:
         raise _UnreadableDunderAll
     return names
+
+
+# Where a name is written rather than read: the field of these nodes that
+# holds the target, or anywhere under these statements.
+_PY_TARGET_FIELDS = {
+    **dict.fromkeys(cs.PY_LEFT_BINDERS | {cs.TS_PY_FOR_IN_CLAUSE}, cs.TS_FIELD_LEFT),
+    **dict.fromkeys(cs.PY_NAME_BINDERS, cs.FIELD_NAME),
+    cs.TS_PY_AS_PATTERN: cs.FIELD_ALIAS,
+}
+_PY_WRITING_STATEMENTS = (
+    cs.PY_IMPORT_TYPES
+    | cs.PY_DECLARATION_TYPES
+    | {cs.TS_PY_DELETE_STATEMENT, cs.TS_PY_CASE_PATTERN}
+)
+
+
+def _is_field(node: Node, field: str, child: Node) -> bool:
+    found = node.child_by_field_name(field)
+    return found is not None and found.id == child.id
+
+
+def _python_writes_name(identifier: Node) -> bool:
+    """Whether the statement holding `identifier` rebinds or mutates that
+    name rather than reads it: an assignment, `for`, walrus, `as`, def or
+    class target, an import, `del`, `global`, a `case` pattern, or a call of
+    one of its methods (`__all__.append(...)`)."""
+    child, node = identifier, identifier.parent
+    while (
+        node is not None
+        and node.type == cs.TS_PY_ATTRIBUTE
+        and _is_field(node, cs.FIELD_OBJECT, child)
+    ):
+        child, node = node, node.parent
+        if (
+            node is not None
+            and node.type == cs.TS_PY_CALL
+            and _is_field(node, cs.TS_FIELD_FUNCTION, child)
+        ):
+            return True
+    while node is not None:
+        if node.type in _PY_WRITING_STATEMENTS:
+            return True
+        field = _PY_TARGET_FIELDS.get(node.type)
+        if field is not None and _is_field(node, field, child):
+            return True
+        child, node = node, node.parent
+    return False
+
+
+def _runs_later(node: Node, statement: Node) -> bool:
+    """Whether `node` sits in a def or lambda body inside `statement`, which
+    runs whenever it is called rather than where it is written."""
+    child, current = node, node.parent
+    while current is not None and child.id != statement.id:
+        if current.type == cs.TS_PY_LAMBDA or (
+            current.type == cs.TS_PY_FUNCTION_DEFINITION
+            and _is_field(current, cs.FIELD_BODY, child)
+        ):
+            return True
+        child, current = current, current.parent
+    return False
+
+
+def _python_dunder_all_writes(statement: Node) -> Iterator[Node]:
+    """Each `__all__` the statement rebinds or mutates, at any depth. Another
+    object's `__all__` (`ns.__all__ = ...`) is not the module's."""
+    if statement.text is None or cs.PY_DUNDER_ALL.encode() not in statement.text:
+        return
+    stack = [statement]
+    while stack:
+        node = stack.pop()
+        stack.extend(node.children)
+        if node.type != cs.TS_PY_IDENTIFIER or node.text != cs.PY_DUNDER_ALL.encode():
+            continue
+        owner = node.parent
+        if owner is not None and _is_field(owner, cs.TS_PY_FIELD_ATTRIBUTE, node):
+            continue
+        if _python_writes_name(node):
+            yield node
+
+
+def _python_dunder_all_change(statement: Node) -> list[str] | None:
+    """What one top-level statement adds to `__all__`, as
+    _python_dunder_all_part reads it; None when it leaves `__all__` alone.
+    A change the literals do not spell (inside a block, by a function,
+    through `del` or an import) raises _UnreadableDunderAll, or
+    _LateDunderAll when it runs in a def or lambda."""
+    if statement.type == cs.TS_PY_EXPRESSION_STATEMENT and (
+        (part := _python_dunder_all_part(statement)) is not None
+    ):
+        return part
+    writes = list(_python_dunder_all_writes(statement))
+    if any(_runs_later(write, statement) for write in writes):
+        raise _LateDunderAll
+    if writes:
+        raise _UnreadableDunderAll
+    return None
 
 
 def _python_dunder_all(root: Node) -> frozenset[str] | None:
@@ -1150,10 +1260,10 @@ def _python_dunder_all(root: Node) -> frozenset[str] | None:
     names: list[str] | None = []
     defined = False
     for statement in root.named_children:
-        if statement.type != cs.TS_PY_EXPRESSION_STATEMENT:
-            continue
         try:
-            part = _python_dunder_all_part(statement)
+            part = _python_dunder_all_change(statement)
+        except _LateDunderAll:
+            return None
         except _UnreadableDunderAll:
             defined, names = True, None
             continue
@@ -1186,6 +1296,7 @@ class ImportProcessor:
         "conditional_imports",
         "python_import_rebinds",
         "python_module_all",
+        "python_binding_order",
         "php_function_imports",
         "php_module_namespaces",
         "js_ts_bare_imports",
@@ -1328,6 +1439,11 @@ class ImportProcessor:
         # #2928). A module without one, or with one built at run time, is
         # absent: its star binds every public name.
         self.python_module_all: dict[str, frozenset[str]] = {}
+        # A Python module's import-map keys in the order they were LAST
+        # bound, kept only where the map's own order differs: the map keeps
+        # a re-bound key where it was first bound, and records plain imports
+        # before from-imports, while Python keeps a name's last binding.
+        self.python_binding_order: dict[str, tuple[str, ...]] = {}
         # Lazy: replayed walk of every eligible repo file, built on the first C++
         # include so non-C++ projects never pay for it.
         self._cpp_module_qn_map: dict[str, str] | None = None
@@ -1925,6 +2041,7 @@ class ImportProcessor:
         # it removed standing beside the one that remains.
         self.python_import_rebinds.pop(module_qn, None)
         self.python_module_all.pop(module_qn, None)
+        self.python_binding_order.pop(module_qn, None)
         if language == cs.SupportedLanguage.PYTHON and (
             (exported := _python_dunder_all(root_node)) is not None
         ):
@@ -3184,6 +3301,19 @@ class ImportProcessor:
                         new_names
                     )
             self._record_python_rebinds(module_qn, before)
+        self._record_python_binding_order(module_qn)
+
+    def _record_python_binding_order(self, module_qn: str) -> None:
+        # Each key's import site is the statement that bound it last.
+        mapping = self.import_mapping[module_qn]
+        sites = self._import_sites.get(module_qn, {})
+        order = tuple(sorted(mapping, key=lambda key: _site_start(sites.get(key))))
+        if order != tuple(mapping):
+            self.python_binding_order[module_qn] = order
+
+    @property
+    def python_star_rules(self) -> PythonStarRules:
+        return PythonStarRules(self.python_module_all, self.python_binding_order)
 
     def _record_python_rebinds(self, module_qn: str, before: dict[str, str]) -> None:
         mapping = self.import_mapping[module_qn]

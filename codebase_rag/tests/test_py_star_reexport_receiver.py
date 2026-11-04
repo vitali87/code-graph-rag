@@ -157,7 +157,58 @@ def via_excluded_only():
 def via_listed():
     client = listed.Client()
     client.send(1)
+
+
+def via_repeated_star():
+    client = repeated_star.Client()
+    client.send(1)
+
+
+def via_named_rebound_past_a_star():
+    client = named_rebound_past_a_star.Client()
+    client.send(1)
+
+
+def via_star_repeated_past_a_named():
+    client = star_repeated_past_a_named.Client()
+    client.send(1)
+
+
+def via_plain_import_after_star():
+    client = plain_import_after_star.Client()
+    client.send(1)
+
+
+def via_external_later_star():
+    client = external_later_star.Client()
+    client.send(1)
+
+
+def via_later_star_without_it():
+    client = later_star_without_it.Client()
+    client.send(1)
 """
+
+# Python keeps a name's last binding in source order, but the import map
+# keeps a re-bound key where it was first bound and records plain imports
+# before from-imports. A later star whose module binds the name to
+# something outside the project still takes it (CodeRabbit, PR #2989).
+LATER_ORDER_PACKAGES = {
+    "repeated_star": "from ._a import *\nfrom ._b import *\nfrom ._a import *\n",
+    "named_rebound_past_a_star": (
+        "from ._a import Client\nfrom ._b import *\nfrom ._c import Client\n"
+    ),
+    "star_repeated_past_a_named": (
+        "from ._a import *\nfrom ._b import Client\nfrom ._a import *\n"
+    ),
+    "plain_import_after_star": "from ._a import *\nimport httpx as Client\n",
+    "external_later_star": "from ._a import *\nfrom ._b import *\n",
+    "later_star_without_it": "from ._a import *\nfrom ._b import *\n",
+}
+LATER_ORDER_B = {
+    "external_later_star": "from httpx import Client\n",
+    "later_star_without_it": "from httpx import Other\n",
+}
 
 
 @pytest.fixture(scope="module")
@@ -183,7 +234,17 @@ def order_graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
     _write(root, "excluded_only/__init__.py", "from ._a import *\n")
     _write(root, "listed/_impl.py", LISTED)
     _write(root, "listed/__init__.py", "from ._impl import *\n")
-    _write(root, "app.py", ORDER_APP)
+    for package, init in LATER_ORDER_PACKAGES.items():
+        for module in ("_a", "_b", "_c"):
+            _write(root, f"{package}/{module}.py", KLASS)
+        if package in LATER_ORDER_B:
+            _write(root, f"{package}/_b.py", LATER_ORDER_B[package])
+        _write(root, f"{package}/__init__.py", init)
+    _write(
+        root,
+        "app.py",
+        "".join(f"import {package}\n" for package in LATER_ORDER_PACKAGES) + ORDER_APP,
+    )
     return _index(root, MagicMock())
 
 
@@ -195,6 +256,10 @@ def order_graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
         ("via_named_after_star", "named_after_star._a.Client.send"),
         ("via_excluded", "excluded._b.Client.send"),
         ("via_listed", "listed._impl.Client.send"),
+        ("via_repeated_star", "repeated_star._a.Client.send"),
+        ("via_named_rebound_past_a_star", "named_rebound_past_a_star._c.Client.send"),
+        ("via_star_repeated_past_a_named", "star_repeated_past_a_named._a.Client.send"),
+        ("via_later_star_without_it", "later_star_without_it._a.Client.send"),
     ],
     ids=[
         "the-later-star-wins",
@@ -202,6 +267,10 @@ def order_graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
         "a-named-import-after-a-star-wins",
         "a-star-whose-all-leaves-it-out-binds-nothing",
         "a-star-whose-all-lists-it-binds-it",
+        "a-star-repeated-after-another-wins-again",
+        "a-named-import-rebound-after-a-star-wins",
+        "a-star-repeated-after-a-named-import-wins",
+        "a-later-star-whose-module-lacks-it-keeps-the-earlier",
     ],
 )
 def test_the_binding_python_keeps_types_the_receiver(
@@ -219,6 +288,23 @@ def test_a_star_whose_all_leaves_the_name_out_binds_nothing(
     assert "excluded_only._a.Client.send" not in _callees(
         order_graph, "via_excluded_only"
     )
+
+
+@pytest.mark.parametrize(
+    "package",
+    ["plain_import_after_star", "external_later_star"],
+    ids=[
+        "a-plain-import-after-a-star-wins",
+        "a-later-star-binding-it-outside-the-project-wins",
+    ],
+)
+def test_a_later_binding_outside_the_project_leaves_the_receiver_untyped(
+    order_graph: RecordedGraph, package: str
+) -> None:
+    # `Client` is last bound to httpx's, which the project does not hold,
+    # so no edge may reach the earlier star's `_a.Client`.
+    callees = _callees(order_graph, f"via_{package}")
+    assert f"{package}._a.Client.send" not in callees, callees
 
 
 # Negative: what must not change.
@@ -262,6 +348,64 @@ ALL_FORMS = {
         'warnings.filterwarnings("ignore")\n'
         "callable(LIMIT)\n"
         '__all__ = ["Other"]\n'
+    ),
+    # Changed anywhere the literal reader does not read (Greptile and
+    # CodeRabbit, PR #2989): inside a block, by a function, or rebound some
+    # other way. Each falls back to every public name.
+    "appended_in_if": '__all__ = ["Other"]\nif True:\n    __all__.append("Client")\n',
+    "extended_in_try": (
+        '__all__ = ["Other"]\ntry:\n    __all__.extend(["Client"])\n'
+        "except ImportError:\n    pass\n"
+    ),
+    "appended_in_with": (
+        'import contextlib\n\n__all__ = ["Other"]\n'
+        "with contextlib.suppress(ImportError):\n"
+        '    __all__.append("Client")\n'
+    ),
+    "appended_in_for": (
+        '__all__ = ["Other"]\nfor _name in ("Client",):\n    __all__.append(_name)\n'
+    ),
+    "grown_in_while": (
+        '__all__ = ["Other"]\nwhile "Client" not in __all__:\n'
+        '    __all__ += ["Client"]\n'
+    ),
+    "appended_in_match": (
+        '__all__ = ["Other"]\nmatch "Client":\n    case str(_name):\n'
+        "        __all__.append(_name)\n"
+    ),
+    "reassigned_in_nested_blocks": (
+        '__all__ = ["Other"]\nif True:\n    for _ in range(1):\n        try:\n'
+        '            __all__ = ["Other", "Client"]\n        finally:\n'
+        "            pass\n"
+    ),
+    "appended_by_a_function": (
+        "def _export(name):\n    __all__.append(name)\n\n\n"
+        '__all__ = ["Other"]\n_export("Client")\n'
+    ),
+    "appended_in_a_comprehension": (
+        '__all__ = ["Other"]\n[__all__.append(_n) for _n in ("Client",)]\n'
+    ),
+    "item_assigned": '__all__ = ["Other", "Placeholder"]\n__all__[1] = "Client"\n',
+    "tuple_assigned": (
+        '__all__ = ["Other"]\n__all__, _rest = ["Other", "Client"], None\n'
+    ),
+    "walrus": '__all__ = ["Other"]\n(__all__ := ["Other", "Client"])\n',
+    "deleted": '__all__ = ["Other"]\ndel __all__\n',
+    "imported_all": 'from ._base import __all__\n\n__all__ += ["Other"]\n',
+    # Reads leave it readable, as does a later top-level reassignment, and
+    # another object's `__all__` is not this module's.
+    "read_in_blocks": (
+        '__all__ = ["Other"]\nfor _name in __all__:\n    assert _name\n'
+        'if "Client" in __all__:\n    pass\n\n\n'
+        "def __dir__():\n    return list(__all__)\n"
+    ),
+    "reset_after_a_block": (
+        '__all__ = ["Other"]\nif True:\n    __all__.append("Client")\n'
+        '__all__ = ["Other"]\n'
+    ),
+    "another_objects_all": (
+        'import types\n\n__all__ = ["Other"]\n_ns = types.SimpleNamespace()\n'
+        '_ns.__all__ = ["Other", "Client"]\n'
     ),
 }
 
@@ -324,6 +468,7 @@ def all_graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
         _write(root, f"{package}/_a.py", f"{dunder_all}\n\n{OTHER}{KLASS}")
         _write(root, f"{package}/_b.py", KLASS)
         _write(root, f"{package}/__init__.py", "from ._b import *\nfrom ._a import *\n")
+    _write(root, "imported_all/_base.py", '__all__ = ["Client"]\n')
     # A by-name import of another name after the star leaves `Client` to it.
     _write(root, "later_named/_impl.py", LISTED)
     _write(root, "later_named/_other.py", OTHER)
@@ -353,6 +498,29 @@ def all_graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
         ("via_reassigned", "reassigned._b.Client.send"),
         ("via_recomputed", "recomputed._b.Client.send"),
         ("via_untouched", "untouched._b.Client.send"),
+        ("via_appended_in_if", "appended_in_if._a.Client.send"),
+        ("via_extended_in_try", "extended_in_try._a.Client.send"),
+        ("via_appended_in_with", "appended_in_with._a.Client.send"),
+        ("via_appended_in_for", "appended_in_for._a.Client.send"),
+        ("via_grown_in_while", "grown_in_while._a.Client.send"),
+        ("via_appended_in_match", "appended_in_match._a.Client.send"),
+        (
+            "via_reassigned_in_nested_blocks",
+            "reassigned_in_nested_blocks._a.Client.send",
+        ),
+        ("via_appended_by_a_function", "appended_by_a_function._a.Client.send"),
+        (
+            "via_appended_in_a_comprehension",
+            "appended_in_a_comprehension._a.Client.send",
+        ),
+        ("via_item_assigned", "item_assigned._a.Client.send"),
+        ("via_tuple_assigned", "tuple_assigned._a.Client.send"),
+        ("via_walrus", "walrus._a.Client.send"),
+        ("via_deleted", "deleted._a.Client.send"),
+        ("via_imported_all", "imported_all._a.Client.send"),
+        ("via_read_in_blocks", "read_in_blocks._b.Client.send"),
+        ("via_reset_after_a_block", "reset_after_a_block._b.Client.send"),
+        ("via_another_objects_all", "another_objects_all._b.Client.send"),
         ("via_later_named", "later_named._impl.Client.send"),
         (
             "via_bare_with",
@@ -377,6 +545,23 @@ def all_graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
         "a-reassignment-replaces-the-earlier-list",
         "a-literal-reassignment-replaces-a-computed-all",
         "unrelated-statements-keep-all-readable",
+        "an-append-in-an-if-falls-back",
+        "an-extend-in-a-try-falls-back",
+        "an-append-in-a-with-falls-back",
+        "an-append-in-a-for-falls-back",
+        "a-plus-equals-in-a-while-falls-back",
+        "an-append-in-a-match-falls-back",
+        "a-reassignment-in-nested-blocks-falls-back",
+        "an-append-by-a-function-defined-first-falls-back",
+        "an-append-in-a-comprehension-falls-back",
+        "an-item-assignment-falls-back",
+        "a-tuple-assignment-falls-back",
+        "a-walrus-falls-back",
+        "a-del-falls-back",
+        "an-imported-all-falls-back",
+        "reads-in-blocks-keep-all-readable",
+        "a-later-reassignment-replaces-a-block-change",
+        "another-objects-all-is-not-the-modules",
         "a-later-by-name-import-of-another-name-keeps-the-star",
         "with-on-a-bare-name-imported-through-a-star",
     ],
