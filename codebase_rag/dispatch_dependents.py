@@ -336,30 +336,31 @@ def _reexport_defining_qn(
     return matches.pop() if len(matches) == 1 else candidate
 
 
-def _has_backed_namesake(
+def _backed_namesakes(
     candidate: str,
     backed_qns: Collection[str],
     backed_by_simple_name: dict[str, set[str]],
-) -> bool:
-    """Whether a backed class of the same name sits under the spelling's package.
+) -> set[str]:
+    """The backed classes of the same name under the spelling's package.
 
-    A spelling the resolver could not name (`proj.pkg.Client` with
-    only `proj.pkg.deep.impl.Client` backed, or two one-segment
-    rivals) is still evidence of a base the graph holds somewhere
-    under that package. A spelling with no backed namesake at all
-    names an external or otherwise unknown base, and keeping it
-    would invent a change for a comment-only edit.
+    Every same-named class the graph holds somewhere under the
+    package the spelling names, at any depth: when the resolver
+    could not name which one a re-export spelling exports, each of
+    them is a possible defining class, and naming all of them
+    over-queues their files for re-parse rather than losing the
+    one that holds the self-dispatch call. An empty set means the
+    spelling names an external or otherwise unknown base, and
+    nothing is retained for it.
     """
     head, sep, _leaf = candidate.rpartition(cs.SEPARATOR_DOT)
     if not sep:
-        return False
-    for qn in backed_by_simple_name.get(_simple_name(candidate), ()):
-        if qn not in backed_qns:
-            continue
-        qhead, _, _ = qn.rpartition(cs.SEPARATOR_DOT)
-        if qhead.startswith(head + cs.SEPARATOR_DOT):
-            return True
-    return False
+        return set()
+    return {
+        qn
+        for qn in backed_by_simple_name.get(_simple_name(candidate), ())
+        if qn in backed_qns
+        and qn.rpartition(cs.SEPARATOR_DOT)[0].startswith(head + cs.SEPARATOR_DOT)
+    }
 
 
 def build_class_changes(
@@ -466,18 +467,26 @@ def build_class_changes(
             # stay stale until a full re-index. Only spellings with
             # a backed namesake under the same package are kept: the
             # spelling is then evidence of a graph-held base, not a
-            # guess at an external one. The spelling is used only to
+            # guess at an external one. The spelling alone names no
+            # graph node -- the caller and base lookups match exact
+            # qualified names -- so the possible defining classes
+            # are kept alongside it: when a deeper namesake may be
+            # the class the package exports, the defining file's
+            # self-dispatch call is re-derived only if its class is
+            # among the retained bases. Keeping every namesake
+            # over-queues their files; choosing one would hide a
+            # real base change. The retained bases are used only to
             # compute dispatch targets in this run; the re-parse
             # writes the hierarchy the graph actually holds.
-            retained = tuple(
-                sorted(
-                    candidate
-                    for candidate in resolved_bases
-                    if _has_backed_namesake(
-                        candidate, graph_backed_qns, backed_by_simple_name
-                    )
+            retained_set: set[str] = set()
+            for candidate in resolved_bases:
+                namesakes = _backed_namesakes(
+                    candidate, graph_backed_qns, backed_by_simple_name
                 )
-            )
+                if namesakes:
+                    retained_set.add(candidate)
+                    retained_set.update(namesakes)
+            retained = tuple(sorted(retained_set))
             if retained:
                 new_bases = retained
         if qn not in old_classes:

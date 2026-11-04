@@ -213,8 +213,9 @@ def test_deeper_rival_reexport_spelling_reports_a_change() -> None:
 def test_deeper_reexport_spelling_new_subclass_retains_spelling() -> None:
     # A new subclass whose base is spelled through a re-export the
     # resolver cannot name (only the deeper defining class is
-    # backed) still reports a change, keeping the spelling so the
-    # dispatch targets name the new subclass's callers.
+    # backed) still reports a change, keeping the spelling and the
+    # possible defining class so the dispatch targets name the new
+    # subclass's callers: the spelling alone matches no graph node.
     scanned = _scanned(
         "tests/test_client.py",
         "proj.tests.test_client",
@@ -230,12 +231,14 @@ def test_deeper_reexport_spelling_new_subclass_retains_spelling() -> None:
         graph_class_qns={"proj.pkg.deep.impl.Client"},
     )
     assert len(changes) == 1, changes
-    assert changes[0].new_bases == ("proj.pkg.Client",)
+    assert changes[0].new_bases == ("proj.pkg.Client", "proj.pkg.deep.impl.Client")
 
 
 def test_ambiguous_reexport_spelling_new_subclass_retains_spelling() -> None:
     # Two one-segment rivals: the spelling names neither, but a new
-    # subclass still reports a change keeping the spelling.
+    # subclass still reports a change keeping the spelling and both
+    # possible defining classes, so neither defining file's
+    # self-dispatch callers are lost.
     scanned = _scanned(
         "tests/test_client.py",
         "proj.tests.test_client",
@@ -251,7 +254,50 @@ def test_ambiguous_reexport_spelling_new_subclass_retains_spelling() -> None:
         graph_class_qns={"proj.pkg._client.Client", "proj.pkg._api.Client"},
     )
     assert len(changes) == 1, changes
-    assert changes[0].new_bases == ("proj.pkg.Client",)
+    assert changes[0].new_bases == (
+        "proj.pkg.Client",
+        "proj.pkg._api.Client",
+        "proj.pkg._client.Client",
+    )
+
+
+def test_deeper_rival_new_subclass_names_defining_base_targets() -> None:
+    # `pkg` re-exports `proj.pkg._client.Client`, which defines `m`
+    # and calls `self.m()`; an unrelated `proj.pkg.deep.impl.Client`
+    # also exists, so the resolver cannot name the export. Adding
+    # `Child(Client)` with an override of `m` must name the defining
+    # class in both the dispatch prefixes and the base qns: the
+    # caller and base lookups match exact qualified names, so the
+    # retained spelling alone would leave the defining file
+    # un-re-parsed and the override edge missing.
+    scanned = _scanned(
+        "tests/test_client.py",
+        "proj.tests.test_client",
+        "from pkg import Client\n\nclass Child(Client):\n    def m(self): ...\n",
+    )
+    changes = build_class_changes(
+        [scanned],
+        {},
+        {"proj.pkg._client.Client": {"m"}},
+        {"proj.pkg._client.Client": []},
+        PROJECT,
+        changed_keys=["tests/test_client.py"],
+        graph_class_qns={"proj.pkg._client.Client", "proj.pkg.deep.impl.Client"},
+    )
+    assert len(changes) == 1, changes
+    assert "proj.pkg._client.Client" in changes[0].new_bases
+    prefixes, base_qns = dispatch_target_prefixes(
+        changes,
+        {"proj.pkg._client.Client": []},
+        {
+            "proj.pkg._client.Client": {"m"},
+            "proj.pkg.deep.impl.Client": {"other"},
+        },
+        {},
+        PROJECT,
+    )
+    assert "proj.pkg._client.Client.m" in prefixes, prefixes
+    assert "proj.pkg._client.Client" in base_qns, base_qns
 
 
 def test_unbacked_base_new_subclass_reports_no_change() -> None:
