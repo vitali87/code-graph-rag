@@ -5074,13 +5074,14 @@ class CallResolver:
             # Another module's function is no closer: only an import binds
             # it, so with none naming the call (and no star import) the name
             # is a builtin or a local, not that function (issue #2929).
+            places = self._python_binding_places(call_name, module_qn)
             possible_matches = [
                 qn
                 for qn in possible_matches
                 if self._in_python_module(qn, module_qn)
                 or (
                     self.function_registry[qn] != cs.NodeLabel.METHOD.value
-                    and self._python_import_may_bind(call_name, module_qn, qn)
+                    and any(_place_may_bind(qn, call_name, place) for place in places)
                 )
             ]
         if not possible_matches:
@@ -5111,27 +5112,24 @@ class CallResolver:
             for depth in range(1, len(rest))
         )
 
-    def _python_import_may_bind(self, call_name: str, module_qn: str, qn: str) -> bool:
-        # An import binds the name only to what it names (bot review on PR
-        # #2968): its target, or a function under the target's package that
-        # the package may re-export; through `from m import *`, a function of
-        # `m` or of a module under it. An external package's `get` leaves a
-        # project `get` out.
-        import_map = self.import_processor.import_mapping.get(module_qn, {})
-        if (target := import_map.get(call_name)) is not None:
-            owner, _, imported_name = target.rpartition(cs.SEPARATOR_DOT)
-            # A re-export keeps its function's name, so under an alias
-            # (`from lib import _wrap as shout`) a `lib.shout` only shares the
-            # local name and is a sibling the import never names.
-            return (
-                qn == target
-                or _qn_under(qn, target)
-                or (imported_name == call_name and _qn_within(qn, owner))
-            )
-        return any(
-            key.startswith(cs.IMPORTED_NAME_WILDCARD) and _qn_within(qn, module)
-            for key, module in import_map.items()
-        )
+    def _python_binding_places(self, call_name: str, module_qn: str) -> list[str]:
+        # Every qn the caller's name may stand for, hop by hop through the
+        # modules that pass it on: `from api import *` names `api.helper`,
+        # which api's own `from impl import helper` turns into `impl.helper`.
+        # Judging only the first hop dropped a call whose function sits
+        # outside the module the caller imports from (bot review on PR #2968).
+        imports = self.import_processor.import_mapping
+        places: dict[str, None] = {}
+        queue = deque(_python_import_sources(imports.get(module_qn, {}), call_name))
+        while queue:
+            place = queue.popleft()
+            if place in places:
+                continue
+            places[place] = None
+            if place not in self.function_registry:
+                owner, _, name = place.rpartition(cs.SEPARATOR_DOT)
+                queue.extend(_python_import_sources(imports.get(owner, {}), name))
+        return list(places)
 
     def _best_trie_candidate(self, possible_matches: list[str], module_qn: str) -> str:
         if len(possible_matches) == 1:
@@ -7741,3 +7739,30 @@ def _qn_within(qn: str, module: str) -> bool:
 def _qn_under(qn: str, target: str) -> bool:
     # `qn` is `target` written with the project prefix.
     return qn.endswith(f"{cs.SEPARATOR_DOT}{target}")
+
+
+def _python_import_sources(import_map: Mapping[str, str], name: str) -> list[str]:
+    # What a module's imports bind `name` to: a named or aliased import's
+    # target, else the same name in each module it star-imports.
+    if (target := import_map.get(name)) is not None:
+        return [target]
+    return [
+        f"{source}{cs.SEPARATOR_DOT}{name}"
+        for key, source in import_map.items()
+        if key.startswith(cs.IMPORTED_NAME_WILDCARD)
+    ]
+
+
+def _place_may_bind(qn: str, call_name: str, place: str) -> bool:
+    # A place binds its own definition, or a function under its module that
+    # the module may hand out at run time (`log = _make_logger()`). An
+    # external package's `get` leaves a project `get` out. A re-export keeps
+    # its function's name, so under an alias (`from lib import _wrap as
+    # shout`) a `lib.shout` only shares the local name and is a sibling the
+    # import never names.
+    owner, _, name = place.rpartition(cs.SEPARATOR_DOT)
+    return (
+        qn == place
+        or _qn_under(qn, place)
+        or (name == call_name and _qn_within(qn, owner))
+    )

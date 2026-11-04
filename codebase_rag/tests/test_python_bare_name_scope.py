@@ -11,6 +11,7 @@ to rename it.
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -232,3 +233,158 @@ def test_an_aliased_import_names_no_sibling_sharing_the_alias(
     graph: RecordedGraph,
 ) -> None:
     assert "lib.shout" not in _targets(graph, "aliased_reexport.wrapped")
+
+
+# A name a module passes on (bot review on PR #2968): each hop of the chain
+# is a module the name really comes from, so a call through it binds the
+# definition at its end, wherever that sits, and a name no hop binds stays
+# unbound. The name search finds it, so the edge is heuristic; a re-export
+# that renames the function is left to the Jedi frontend
+# (test_python_frontend.py).
+
+IMPL = "def helper():\n    return 1\n"
+
+OTHER_API = "def other():\n    return 2\n"
+
+# `log` is bound at run time to the closure the factory returns.
+BUILD = """\
+def _make_logger():
+    def log(msg):
+        return msg
+
+    return log
+
+
+log = _make_logger()
+"""
+
+
+def _app(imports: str, call: str) -> str:
+    return f"{imports}\n\n\ndef main():\n    return {call}\n"
+
+
+def _index_files(root: Path, files: dict[str, str]) -> RecordedGraph:
+    for rel, text in files.items():
+        _write(root, rel, text)
+    return _index(root, MagicMock())
+
+
+@pytest.mark.parametrize(
+    ("files", "target"),
+    [
+        (
+            {
+                "impl.py": IMPL,
+                "api.py": "from impl import helper\n",
+                "app.py": _app("from api import *", "helper()"),
+            },
+            "impl.helper",
+        ),
+        (
+            {
+                "impl.py": IMPL,
+                "api.py": "from impl import *\n",
+                "app.py": _app("from api import *", "helper()"),
+            },
+            "impl.helper",
+        ),
+        (
+            {
+                "impl.py": IMPL,
+                "api.py": "from impl import helper\n",
+                "app.py": _app("from api import helper", "helper()"),
+            },
+            "impl.helper",
+        ),
+        (
+            {
+                "impl.py": IMPL,
+                "api.py": "from impl import *\n",
+                "app.py": _app("from api import helper", "helper()"),
+            },
+            "impl.helper",
+        ),
+        (
+            {
+                "impl.py": IMPL,
+                "mid.py": "from impl import helper\n",
+                "api.py": "from mid import *\n",
+                "app.py": _app("from api import helper", "helper()"),
+            },
+            "impl.helper",
+        ),
+        (
+            {
+                "pkg/__init__.py": "from .sub import helper\n",
+                "pkg/sub/__init__.py": "from .impl import helper\n",
+                "pkg/sub/impl.py": IMPL,
+                "app.py": _app("from pkg import helper", "helper()"),
+            },
+            "pkg.sub.impl.helper",
+        ),
+        (
+            {
+                "pkg/__init__.py": "from .sub import *\n",
+                "pkg/sub/__init__.py": "from .impl import *\n",
+                "pkg/sub/impl.py": IMPL,
+                "app.py": _app("from pkg import *", "helper()"),
+            },
+            "pkg.sub.impl.helper",
+        ),
+        (
+            {
+                "build.py": BUILD,
+                "api.py": "from build import log\n",
+                "app.py": _app("from api import log", "log('x')"),
+            },
+            "build._make_logger.log",
+        ),
+    ],
+    ids=[
+        "star-then-named",
+        "star-then-star",
+        "named-then-named",
+        "named-then-star",
+        "named-then-star-then-named",
+        "nested-packages",
+        "nested-packages-through-stars",
+        "run-time-binding-passed-on",
+    ],
+)
+def test_a_name_passed_on_binds_the_definition_it_reaches(
+    tmp_path: Path, files: dict[str, str], target: str
+) -> None:
+    graph = _index_files(tmp_path / "rx", files)
+    assert _targets(graph, "app.main") == {target: "heuristic"}
+
+
+@pytest.mark.parametrize(
+    "files",
+    [
+        {
+            "impl.py": IMPL,
+            "api.py": OTHER_API,
+            "app.py": _app("from api import *", "helper()"),
+        },
+        {
+            "impl.py": IMPL,
+            "api.py": f"from impl import helper\n\n\n{OTHER_API}",
+            "app.py": _app("from api import other", "helper()"),
+        },
+        {
+            "impl.py": IMPL,
+            "api.py": "from impl import helper as h\n",
+            "app.py": _app("from api import *", "helper()"),
+        },
+    ],
+    ids=[
+        "star-of-a-module-that-never-imports-it",
+        "named-import-of-another-name",
+        "passed-on-under-another-name",
+    ],
+)
+def test_a_name_no_hop_binds_stays_unbound(
+    tmp_path: Path, files: dict[str, str]
+) -> None:
+    graph = _index_files(tmp_path / "rx", files)
+    assert _targets(graph, "app.main") == {}
