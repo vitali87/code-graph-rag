@@ -1,0 +1,67 @@
+name: Accessibility barrier
+description: Report something in cgr, its MCP server or its documentation that is hard or impossible to use with your setup.
+title: "[Accessibility]: "
+labels:
+  - accessibility
+  - needs triage
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for telling us. You do not need to say anything about
+        yourself or any disability. Do not include secrets, API keys,
+        passwords, or private source code.
+
+  - type: textarea
+    id: goal
+    attributes:
+      label: What were you trying to do?
+      description: For example, read the results of a command, follow an installation step, or navigate a documentation page.
+    validations:
+      required: true
+
+  - type: textarea
+    id: barrier
+    attributes:
+      label: What got in the way?
+      description: Describe what happened, and what you expected to happen instead.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Where did it happen?
+      options:
+        - Command output in the terminal
+        - Interactive session (cgr start)
+        - MCP server, through an AI client
+        - Documentation site
+        - Somewhere else
+    validations:
+      required: true
+
+  - type: input
+    id: location
+    attributes:
+      label: Command or page
+      description: The command and flags you ran, or the address of the documentation page.
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Your operating system, terminal or browser, and the cgr version from `cgr --version`, if you have it.
+
+  - type: input
+    id: assistive_technology
+    attributes:
+      label: Assistive technology or settings (optional)
+      description: For example a screen reader, screen magnifier, braille display, voice control, high contrast or custom colours, or keyboard-only use.
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else (optional)
+      description: A workaround you found, or anything else that would help.

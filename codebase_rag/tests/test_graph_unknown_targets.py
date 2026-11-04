@@ -18,7 +18,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
-from mcp import types
+from mcp import Client, types
 from typer.testing import CliRunner as TyperRunner
 
 from codebase_rag import constants as cs
@@ -595,17 +595,10 @@ def _server_with(
         patch.object(type(mcp_server.settings), "active_cypher_config", MagicMock()),
     ):
         server, _ = mcp_server.create_server()
-    request_handler = server.request_handlers[types.CallToolRequest]
 
     async def call(name: str) -> types.CallToolResult:
-        response = await request_handler(
-            types.CallToolRequest(
-                method="tools/call",
-                params=types.CallToolRequestParams(name=name, arguments={}),
-            )
-        )
-        assert isinstance(response.root, types.CallToolResult)
-        return response.root
+        async with Client(server, mode="legacy") as client:
+            return await client.call_tool(name, {})
 
     return call
 
@@ -625,7 +618,7 @@ class TestMcpIsError:
 
         result = await _server_with(refuse, tmp_path, monkeypatch)("resolve")
 
-        assert result.isError is True
+        assert result.is_error is True
         assert json.loads(_text(result)) == {
             cs.DICT_KEY_ERROR: "Unknown project 'gq__e7a07870'."
         }
@@ -638,7 +631,7 @@ class TestMcpIsError:
 
         result = await _server_with(boom, tmp_path, monkeypatch)("callers")
 
-        assert result.isError is True
+        assert result.is_error is True
         assert "down" in _text(result)
 
     async def test_an_unknown_tool_is_an_error_result(
@@ -646,7 +639,7 @@ class TestMcpIsError:
     ) -> None:
         result = await _server_with(None, tmp_path, monkeypatch)("no_such_tool")
 
-        assert result.isError is True
+        assert result.is_error is True
 
     async def test_an_empty_answer_is_not_an_error(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -657,7 +650,7 @@ class TestMcpIsError:
 
         result = await _server_with(empty, tmp_path, monkeypatch)("callers")
 
-        assert result.isError is False
+        assert result.is_error is False
         assert json.loads(_text(result)) == []
 
     async def test_a_payload_that_carries_an_error_field_is_not_an_error(
@@ -670,4 +663,4 @@ class TestMcpIsError:
 
         result = await _server_with(applied, tmp_path, monkeypatch)("rename")
 
-        assert result.isError is False
+        assert result.is_error is False
