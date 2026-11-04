@@ -135,7 +135,6 @@ CSHARP_OBJECT_VIRTUALS = frozenset(
 )
 TS_CSHARP_LAMBDA_EXPRESSION = "lambda_expression"
 TS_CSHARP_BLOCK = "block"
-TS_CSHARP_LOCAL_DECLARATION_STATEMENT = "local_declaration_statement"
 TS_CSHARP_PRIMARY_CONSTRUCTOR_BASE_TYPE = "primary_constructor_base_type"
 TS_CSHARP_PREDEFINED_TYPE = "predefined_type"
 
@@ -263,6 +262,9 @@ TS_CSHARP_STATIC = "static"
 TS_CSHARP_GLOBAL = "global"
 # A `params T[]` tail parameter is an array type in the method signature.
 CSHARP_ARRAY_SUFFIX = "[]"
+# An array type's rank specifier: `T[]`, `T[,]`.
+CSHARP_ARRAY_RANK_OPEN = "["
+CSHARP_ARRAY_RANK_CLOSE = "]"
 
 # The name node inside a using directive: a dotted `qualified_name` or a bare
 # `identifier` (both the imported path and, in the alias form, the alias).
@@ -412,6 +414,12 @@ TS_CSHARP_DECLARATION_PATTERN = "declaration_pattern"
 TS_CSHARP_CATCH_DECLARATION = "catch_declaration"
 TS_CSHARP_FROM_CLAUSE = "from_clause"
 TS_CSHARP_LET_CLAUSE = "let_clause"
+# `o is Other[] { Length: 1 } items`, `join z in zs ...`, `... into g`, and a
+# lambda written with `delegate`.
+TS_CSHARP_RECURSIVE_PATTERN = "recursive_pattern"
+TS_CSHARP_JOIN_CLAUSE = "join_clause"
+TS_CSHARP_JOIN_INTO_CLAUSE = "join_into_clause"
+TS_CSHARP_ANONYMOUS_METHOD_EXPRESSION = "anonymous_method_expression"
 TS_CSHARP_EVENT_FIELD_DECLARATION = "event_field_declaration"
 # A top-level statement (C# 9); its locals are in scope across the file.
 TS_CSHARP_GLOBAL_STATEMENT = "global_statement"

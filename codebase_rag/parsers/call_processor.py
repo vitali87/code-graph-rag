@@ -6731,11 +6731,17 @@ class CallProcessor:
             # An untyped C# MEMBER call retains the generic fallback. A
             # bare call has already exhausted C#'s legitimate scopes
             # (local function, enclosing type, and static import), so a
-            # miss is external rather than a name-wide guess (#2005).
+            # miss is external rather than a name-wide guess (#2005). It
+            # reads the method's types as this call sees them, as the C#
+            # resolver did: a pattern, out or lambda variable named like a
+            # field never takes the field's type (bot review on PR #2990).
+            engine = self._resolver.type_inference.csharp_type_inference
             callee_info = ctx.resolve_func(
                 call_name,
                 ctx.module_qn,
-                call_var_types,
+                None
+                if call_var_types is None
+                else engine.site_types(call_node, call_var_types),
                 ctx.class_context,
                 ctx.caller_qn,
                 ctx.language,
