@@ -18,7 +18,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from mcp.shared.memory import create_connected_server_and_client_session
+from mcp import Client
 from mcp.types import CallToolResult, TextContent
 
 from codebase_rag import constants as cs
@@ -55,7 +55,7 @@ def no_llm() -> Iterator[None]:
 
 async def _call(name: str, arguments: dict[str, object]) -> CallToolResult:
     server, _ingestor = mcp_server.create_server()
-    async with create_connected_server_and_client_session(server) as client:
+    async with Client(server, mode="legacy") as client:
         return await client.call_tool(name, arguments)
 
 
@@ -113,7 +113,7 @@ async def test_a_failed_call_is_flagged_as_an_error(
 ) -> None:
     result = await _call(tool, arguments)
 
-    assert result.isError is True, _text(result)
+    assert result.is_error is True, _text(result)
     assert named in _text(result)
 
 
@@ -140,8 +140,30 @@ async def test_a_handler_that_raises_is_flagged_as_an_error(
     with patch.object(MCPToolsRegistry, "list_directory", boom):
         result = await _call(cs.MCPToolName.LIST_DIRECTORY, {})
 
-    assert result.isError is True
+    assert result.is_error is True
     assert "boom" in _text(result)
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        pytest.param({"file_path": "lib.py", "offset": -1}, id="below-minimum"),
+        pytest.param({"offset": 0}, id="missing-required"),
+        pytest.param({"file_path": 5}, id="wrong-type"),
+    ],
+)
+async def test_arguments_outside_the_schema_never_reach_the_handler(
+    repo: Path, no_llm: None, arguments: dict[str, object]
+) -> None:
+    # mcp 1.x checked arguments against the listed schema before calling the
+    # server's handler; 2.x does not, so the server has to.
+    read_file = AsyncMock(return_value=LIB)
+    with patch.object(MCPToolsRegistry, "read_file", read_file):
+        result = await _call(cs.MCPToolName.READ_FILE, arguments)
+
+    assert result.is_error is True
+    assert _text(result).startswith("Input validation error: "), _text(result)
+    read_file.assert_not_awaited()
 
 
 # Negative: what must not change.
@@ -150,12 +172,12 @@ async def test_a_handler_that_raises_is_flagged_as_an_error(
 async def test_reading_a_file_is_no_error(repo: Path, no_llm: None) -> None:
     result = await _call(cs.MCPToolName.READ_FILE, {"file_path": "lib.py"})
 
-    assert result.isError is False
+    assert result.is_error is False
     assert _text(result) == LIB
 
 
 async def test_listing_the_root_is_no_error(repo: Path, no_llm: None) -> None:
     result = await _call(cs.MCPToolName.LIST_DIRECTORY, {})
 
-    assert result.isError is False
+    assert result.is_error is False
     assert "lib.py" in _text(result)

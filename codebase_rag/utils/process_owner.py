@@ -96,6 +96,20 @@ def process_host() -> str:
     )
 
 
+@cache
+def process_table_identified() -> bool:
+    """Whether `process_host` names this process table and no other.
+
+    Only where both the boot id and the pid namespace can be read, as on
+    Linux. Elsewhere, or in a container that hides them, the name is the
+    hostname alone, which another machine can carry too, so a pid recorded
+    under it may be a process this table has never had (review of PR #3496).
+    """
+    return bool(_read_text(cs.PROCESS_BOOT_ID_PATH)) and bool(
+        _read_link(cs.PROCESS_PID_NAMESPACE_PATH)
+    )
+
+
 def pid_may_be_running(pid: int) -> bool:
     """False only when no process with this pid exists in this process table.
 
