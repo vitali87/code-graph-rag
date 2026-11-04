@@ -194,8 +194,9 @@ jobs:
             esac
             COUNT=$(printf '%s\n' "$TAG_MESSAGE" | awk -v marker="${MERGE_COUNT_MARKER}: " '
                 index($0, marker) == 1 {
-                  n = substr($0, length(marker) + 1)
-                  if (n ~ /^[1-9][0-9]*$/) { print n; exit }
+                  k = split(substr($0, length(marker) + 1), f, " ")
+                  if (k == 3 && f[1] ~ /^[1-9][0-9]*$/ && f[2] == "since" &&
+                      f[3] ~ /^v[0-9]+\.[0-9]+\.[0-9]+$/) { print f[1] "@" f[3]; exit }
                 }')
             # A count replaces the tag's distance, so a tag cut off main would
             # move the total, where a plain stray tag below the version main
@@ -319,6 +320,7 @@ jobs:
           MERGED=0
           SINCE_TAG=true
           BATCH=0
+          STOP_SHA=""
           # The pull requests in $PULLS labelled "breaking change", which the
           # release names when they added no notes (issue #3431).
           breaking_prs() {
@@ -387,7 +389,7 @@ jobs:
             # does not, and is no merge itself.
             if [ "$SINCE_TAG" = "true" ]; then
               case "$TAGGED" in
-                *" ${SHA} "*) SINCE_TAG=false ;;
+                *" ${SHA} "*) SINCE_TAG=false; STOP_SHA="$SHA" ;;
               esac
             fi
             if [ "$SINCE_TAG" = "true" ] && [ "$BUMP_COMMIT" = "false" ]; then
@@ -483,25 +485,45 @@ jobs:
           # tag, and its tag records that count for every later run (issue
           # #3573), a dispatched minor or major bump's included, so the count
           # reads the same before and after the tag exists. Tags from before
-          # that change count their distance.
+          # that change count their distance. The count starts at the tag
+          # the walk stopped at, or at the scan's base when it ran out first,
+          # and the tag records that too: the total is then the total at that
+          # tag plus the count, so a stray tag between them adds nothing.
           MERGE_COUNT=""
+          COUNT_FROM=""
           IN_BUMP="$MERGED"
           if [ "$TAG_STATUS" -eq 2 ]; then
             STEP=$(( BATCH > 0 ? BATCH : 1 ))
-            MERGE_COUNT="$STEP"
             IN_BUMP="$BATCH"
+            if [ -n "$STOP_SHA" ]; then
+              COUNT_FROM=$(printf '%s\n' "$TAGS" | awk -F'\t' -v sha="$STOP_SHA" '
+                  $1 == sha {
+                    t = substr($2, length("refs/tags/") + 1)
+                    n = index(t, "^{}")
+                    if (n) t = substr(t, 1, n - 1)
+                    print t
+                  }' | grep -xE 'v[0-9]+\.[0-9]+\.[0-9]+' | sort -V | tail -n 1 || true)
+            else
+              COUNT_FROM="$BASE_TAG"
+            fi
+            if [ -n "$COUNT_FROM" ]; then
+              MERGE_COUNT="$STEP"
+            fi
           fi
           SINCE=0
           if [ -n "$LATEST" ]; then
             SINCE=$(printf '%s\n' "$TAGS" | awk -F'refs/tags/' 'NF > 1 {print $2}' \
               | grep -xE 'v[0-9]+\.[0-9]+\.[0-9]+' | sort -uV \
-              | awk -v latest="$LATEST" -v current="$CURRENT" -v counted="$COUNTED" '
+              | awk -v latest="$LATEST" -v current="$CURRENT" -v counted="$COUNTED" \
+                  -v upto="$COUNT_FROM" '
                   BEGIN {
                     split(current, c, ".")
                     n = split(counted, pairs, " ")
                     for (i = 1; i <= n; i++) {
                       split(pairs[i], kv, "=")
-                      fixed[kv[1]] = kv[2] + 0
+                      split(kv[2], nb, "@")
+                      fixed[kv[1]] = nb[1] + 0
+                      from[kv[1]] = nb[2]
                     }
                   }
                   { split(substr($0, 2), v, ".") }
@@ -509,16 +531,16 @@ jobs:
                       (v[1] + 0 == c[1] + 0 && (v[2] + 0 > c[2] + 0 ||
                       (v[2] + 0 == c[2] + 0 && v[3] + 0 > c[3] + 0))) { exit }
                   seen {
-                    if ($0 in fixed)
-                      count += fixed[$0]
+                    if (($0 in fixed) && (from[$0] in at))
+                      count = at[from[$0]] + fixed[$0]
                     else if (v[1] + 0 == major && v[2] + 0 == minor && v[3] + 0 > patch)
                       count += v[3] - patch
                     else
                       count++
                   }
                   $0 == latest { seen = 1 }
-                  seen { major = v[1] + 0; minor = v[2] + 0; patch = v[3] + 0 }
-                  END { print count + 0 }')
+                  seen { at[$0] = count; major = v[1] + 0; minor = v[2] + 0; patch = v[3] + 0 }
+                  END { if (upto in at) print at[upto] + 0; else print count + 0 }')
           fi
           # A release deferred for unproven CI stays due on every later bump
           # until one is published, whatever the count now reads: a step the
@@ -539,6 +561,7 @@ jobs:
             echo "release=$RELEASE"
             echo "merged=$MERGED"
             echo "merge_count=$MERGE_COUNT"
+            echo "merge_count_from=$COUNT_FROM"
             echo "latest=$LATEST"
             echo "security=$SECURITY"
             echo "breaking=$BREAKING"
@@ -1103,6 +1126,7 @@ jobs:
           RELEASE: ${{ steps.decide.outputs.release }}
           CI_GATE: ${{ steps.ci_gate.outcome }}
           MERGE_COUNT: ${{ steps.decide.outputs.merge_count }}
+          MERGE_COUNT_FROM: ${{ steps.decide.outputs.merge_count_from }}
         run: |
           if [ "$RELEASE" = "true" ] && [ "$CI_GATE" != "success" ]; then
             # Annotated with DEFERRED_RELEASE_MARKER so the next run's
@@ -1119,11 +1143,14 @@ jobs:
             # RELEASE_EVERY counts those instead of the distance. A release's
             # tag needs none: the next count starts after it. Nor does a
             # deferred one, which keeps its release due whatever the count
-            # reads.
-            if [[ "$MERGE_COUNT" =~ ^[1-9][0-9]*$ ]]; then
-              git tag -a "v${NEW_VERSION}" -m "${MERGE_COUNT_MARKER}: ${MERGE_COUNT}"
+            # reads. The tag the count starts at goes with it, so later runs
+            # add it to the total at that tag, not to whatever tag sorts just
+            # before this one.
+            if [[ "$MERGE_COUNT" =~ ^[1-9][0-9]*$ &&
+                  "$MERGE_COUNT_FROM" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              git tag -a "v${NEW_VERSION}" -m "${MERGE_COUNT_MARKER}: ${MERGE_COUNT} since ${MERGE_COUNT_FROM}"
             else
-              echo "::warning::refusing malformed merge count '${MERGE_COUNT}'; v${NEW_VERSION} is tagged without it, so its version distance counts toward RELEASE_EVERY"
+              echo "::warning::refusing malformed merge count '${MERGE_COUNT}' since '${MERGE_COUNT_FROM}'; v${NEW_VERSION} is tagged without it, so its version distance counts toward RELEASE_EVERY"
               git tag "v${NEW_VERSION}"
             fi
           else

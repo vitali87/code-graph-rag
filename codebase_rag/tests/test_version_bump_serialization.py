@@ -1470,6 +1470,7 @@ def test_a_bump_carrying_a_version_set_by_hand_counts_its_batch(
     out = _hand_set_version(tmp_path, {})
     assert out["merged"] == "1"
     assert out["merge_count"] == "2"
+    assert out["merge_count_from"] == "v0.1.89"
 
 
 def test_the_merge_that_sets_a_version_by_hand_counts_the_merges_before_it(
@@ -1497,6 +1498,7 @@ def test_the_merge_that_sets_a_version_by_hand_counts_the_merges_before_it(
     assert result.returncode == 0, result.stderr
     assert out["merged"] == "0"
     assert out["merge_count"] == "3"
+    assert out["merge_count_from"] == "v0.1.89"
     # Counting past the version set by hand reads no further version.
     assert _lines(tmp_path / "contents_calls") == [NEWER]
     summary = (tmp_path / "summary").read_text(encoding="utf-8")
@@ -1505,7 +1507,9 @@ def test_the_merge_that_sets_a_version_by_hand_counts_the_merges_before_it(
 
 def test_an_ordinary_bump_records_no_count(tmp_path: Path) -> None:
     _commits(tmp_path, {OLDER: "Merge pull request #1", SHA: "Merge pull request #2"})
-    assert _decide(tmp_path, f"{OLDER}\\n{SHA}\\n")["merge_count"] == ""
+    out = _decide(tmp_path, f"{OLDER}\\n{SHA}\\n")
+    assert out["merge_count"] == ""
+    assert out["merge_count_from"] == ""
 
 
 def test_a_bump_whose_tag_never_landed_is_counted_by_the_next(
@@ -1572,6 +1576,7 @@ def test_the_merge_count_stops_at_the_newest_tag(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     assert out["merged"] == "1"
     assert out["merge_count"] == "2"
+    assert out["merge_count_from"] == "v0.2.0"
     # The deferred release is still due.
     assert out["release"] == "true"
 
@@ -1592,7 +1597,7 @@ def test_a_tag_set_by_hand_counts_its_merges_not_the_numbers_it_skipped(
     tmp_path: Path,
 ) -> None:
     # The 49 numbers the hand-set version skipped would release here.
-    out = _after_a_tag_set_by_hand(tmp_path, f"{COUNT_MARKER}: 1")
+    out = _after_a_tag_set_by_hand(tmp_path, f"{COUNT_MARKER}: 1 since v0.0.1")
     assert out["release"] == "false"
     summary = (tmp_path / "summary").read_text(encoding="utf-8")
     assert "2 of 50 since v0.0.1" in summary
@@ -1600,7 +1605,8 @@ def test_a_tag_set_by_hand_counts_its_merges_not_the_numbers_it_skipped(
 
 def test_a_deferred_tag_set_by_hand_stays_due(tmp_path: Path) -> None:
     out = _after_a_tag_set_by_hand(
-        tmp_path, f"{MARKER}: CI is not proven for {OLDER}\n{COUNT_MARKER}: 1"
+        tmp_path,
+        f"{MARKER}: CI is not proven for {OLDER}\n{COUNT_MARKER}: 1 since v0.0.1",
     )
     assert out["release"] == "true"
 
@@ -1608,11 +1614,15 @@ def test_a_deferred_tag_set_by_hand_stays_due(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "message",
     [
-        f"{COUNT_MARKER}: 0",
-        f"{COUNT_MARKER}: x",
+        f"{COUNT_MARKER}: 0 since v0.0.1",
+        f"{COUNT_MARKER}: x since v0.0.1",
         f"{COUNT_MARKER}: 3; touch pwned",
-        f"{COUNT_MARKER}:3",
-        f"note: {COUNT_MARKER}: 1",
+        f"{COUNT_MARKER}:3 since v0.0.1",
+        f"note: {COUNT_MARKER}: 1 since v0.0.1",
+        # A count without the tag it starts at is no count.
+        f"{COUNT_MARKER}: 1",
+        f"{COUNT_MARKER}: 1 since main",
+        f"{COUNT_MARKER}: 1 since v0.0.1 and more",
     ],
 )
 def test_a_malformed_count_is_ignored_for_the_distance(
@@ -1630,7 +1640,7 @@ def test_the_versions_after_a_tag_set_by_hand_count_from_it(tmp_path: Path) -> N
     _commits(tmp_path, {SHA: "Merge pull request #9"})
     tags = (
         f"{OLDER}\\trefs/tags/v0.0.1\\n{OLDER}\\trefs/tags/v0.0.40\\n"
-        + _annotated(tmp_path, "v0.0.90", f"{COUNT_MARKER}: 2", "1" * 40)
+        + _annotated(tmp_path, "v0.0.90", f"{COUNT_MARKER}: 2 since v0.0.40", "1" * 40)
         + f"{OLDER}\\trefs/tags/v0.0.93\\n"
     )
     result, out = _decide_run(tmp_path, f"{SHA}\\n", CURRENT="0.0.93", TAG_LIST=tags)
@@ -1669,7 +1679,7 @@ def _stray_count(
     (tmp_path / "status" / "v0.0.20").write_text(status + "\n", encoding="utf-8")
     tags = (
         f"{OLDER}\\trefs/tags/v0.0.1\\n"
-        + _annotated(tmp_path, "v0.0.20", f"{COUNT_MARKER}: 1", "1" * 40)
+        + _annotated(tmp_path, "v0.0.20", f"{COUNT_MARKER}: 1 since v0.0.1", "1" * 40)
         + f"{OLDER}\\trefs/tags/v0.0.40\\n"
     )
     return _decide_run(tmp_path, f"{SHA}\\n", CURRENT="0.0.40", TAG_LIST=tags, **env)
@@ -1702,3 +1712,45 @@ def test_an_unreadable_ancestry_fails_instead_of_miscounting(tmp_path: Path) -> 
     assert result.returncode != 0
     assert "could not compare v0.0.20" in result.stdout
     assert "release" not in out
+
+
+def test_a_stray_tag_before_a_counted_one_adds_nothing(tmp_path: Path) -> None:
+    # v0.0.49 was cut off main; main's v0.0.50 records 1 merge since v0.0.1.
+    # The count starts at v0.0.1, so the stray tag's 48 never reach the total.
+    _commits(tmp_path, {SHA: "Merge pull request #2"})
+    tags = (
+        f"{OLDER}\\trefs/tags/v0.0.1\\n{OUTSIDE}\\trefs/tags/v0.0.49\\n"
+        + _annotated(tmp_path, "v0.0.50", f"{COUNT_MARKER}: 1 since v0.0.1", "1" * 40)
+    )
+    result, out = _decide_run(tmp_path, f"{SHA}\\n", CURRENT="0.0.50", TAG_LIST=tags)
+    assert result.returncode == 0, result.stderr
+    assert out["release"] == "false"
+    summary = (tmp_path / "summary").read_text(encoding="utf-8")
+    assert "2 of 50 since v0.0.1" in summary
+
+
+def test_the_run_that_cuts_a_counted_tag_skips_a_stray_one_too(
+    tmp_path: Path,
+) -> None:
+    # Main's last tag is v0.0.40; v0.0.45 was cut off main; SHA sets 0.0.90 by
+    # hand. The count starts at v0.0.40 and so does this run's total: 39 + 1,
+    # as the tag it cuts will read once it exists.
+    _commits(tmp_path, {SHA: "Merge pull request #1"}, parents={SHA: OUTSIDE})
+    _versions(tmp_path, {OUTSIDE: "0.0.40"})
+    (tmp_path / "status").mkdir()
+    (tmp_path / "status" / "v0.0.45").write_text("diverged\n", encoding="utf-8")
+    result, out = _decide_run(
+        tmp_path,
+        f"{SHA}\\n",
+        CURRENT="0.0.90",
+        LS_REMOTE_EXIT="2",
+        TAG_LIST=(
+            f"{OLDER}\\trefs/tags/v0.0.1\\n{OUTSIDE}\\trefs/tags/v0.0.40\\n"
+            f"{NEWER}\\trefs/tags/v0.0.45\\n"
+        ),
+    )
+    assert result.returncode == 0, result.stderr
+    assert out["merge_count"] == "1"
+    assert out["merge_count_from"] == "v0.0.40"
+    summary = (tmp_path / "summary").read_text(encoding="utf-8")
+    assert "40 of 50 since v0.0.1" in summary
