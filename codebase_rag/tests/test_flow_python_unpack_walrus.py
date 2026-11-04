@@ -92,21 +92,77 @@ FUNCTIONS = {
     "comprehension_clean_walrus": (
         's = os.getenv("PB_COMPCLEAN")\nout = [(last := 1) for c in s]\nprint(last)'
     ),
+    # Third bot review on PR #2764: every place Python may skip a walrus
+    # keeps the old value too. A chained comparison stops at its first false
+    # link, an assert's message runs only when the test fails, and a failed
+    # guard leaves what it bound to the arms after it. The first two
+    # comparison operands and a def's default always run.
+    "walrus_late_comparison": (
+        'token = os.getenv("PB_CMP")\n0 > 1 > (token := "safe")\nprint(token)'
+    ),
+    "walrus_after_not_in": (
+        'token = os.getenv("PB_CMPIN")\n0 in [] not in (token := "safe")\nprint(token)'
+    ),
+    "walrus_first_comparison_link": (
+        'token = os.getenv("PB_CMPKILL")\n0 < (token := "safe") < 1\nprint(token)'
+    ),
+    "walrus_in_comprehension_filter": (
+        'last = os.getenv("PB_COMPIF")\nout = [c for c in "" if (last := "safe")]\n'
+        "print(last)"
+    ),
+    "walrus_in_assert": (
+        'token = os.getenv("PB_ASSERT")\nassert len("") == 0, (token := "safe")\n'
+        "print(token)"
+    ),
+    "walrus_in_failed_guard": (
+        'match len(""):\n    case 0 if (t := os.getenv("PB_GUARD")) == "":\n'
+        "        pass\n    case _:\n        print(t)"
+    ),
+    "walrus_in_skipped_guard": (
+        'token = os.getenv("PB_GUARDKEEP")\nmatch len(""):\n'
+        '    case 1 if (token := "safe"):\n        pass\n    case _:\n        pass\n'
+        "print(token)"
+    ),
+    "walrus_in_def_default": (
+        'def g(a=(t := os.getenv("PB_DEF"))):\n    pass\nprint(t)'
+    ),
+    "walrus_kill_in_def_default": (
+        'token = os.getenv("PB_DEFKILL")\ndef g(a=(token := "safe")):\n    pass\n'
+        "print(token)"
+    ),
+    "walrus_in_skipped_lambda_default": (
+        'token = os.getenv("PB_LDSHORT")\n'
+        'f = len("") and (lambda a=(token := "safe"): a)\nprint(token)'
+    ),
+    # A local variable's annotation never runs, but an annotated subscript
+    # target's parts do.
+    "local_annotation": 'x: print(os.getenv("PB_LOCALANN")) = 1',
+    "local_annotated_subscript": 'd = {}\nd[print(os.getenv("PB_LOCALTARGET"))]: int',
 }
 
+# Module-level annotations run, after the target is bound.
+MODULE_LEVEL = (
+    'bare: print(os.getenv("PB_MODANN"))\n'
+    'valued: print(os.getenv("PB_MODANNV")) = 1\n'
+    'late: print(late) = os.getenv("PB_MODLATE")\n'
+    "table = {}\n"
+    'table[print(os.getenv("PB_MODTARGET"))]: int\n'
+)
 
-def _source(functions: dict[str, str]) -> str:
+
+def _source(functions: dict[str, str], module_level: str) -> str:
     out = ["import os", ""]
     for name, body in functions.items():
         indented = "\n".join(f"    {line}" for line in body.splitlines())
         out += ["", f"def {name}():", indented, ""]
+    out += ["", module_level]
     return "\n".join(out)
 
 
 @pytest.fixture(scope="module")
 def flows(tmp_path_factory: pytest.TempPathFactory) -> set[tuple[str, str]]:
     root = tmp_path_factory.mktemp("pybind")
-    (root / "binds.py").write_text(_source(FUNCTIONS), encoding="utf-8")
+    (root / "binds.py").write_text(_source(FUNCTIONS, MODULE_LEVEL), encoding="utf-8")
     parsers, queries = load_parsers()
     mock = MagicMock()
     GraphUpdater(
@@ -157,6 +213,14 @@ def _leaks(flows: set[tuple[str, str]], var: str) -> bool:
         "PB_COMP",
         "PB_LAMBDA",
         "PB_LDEFAULT",
+        "PB_CMP",
+        "PB_CMPIN",
+        "PB_COMPIF",
+        "PB_ASSERT",
+        "PB_GUARD",
+        "PB_GUARDKEEP",
+        "PB_DEF",
+        "PB_LDSHORT",
     ],
 )
 def test_a_name_bound_by_unpacking_or_walrus_carries_its_value(
@@ -167,12 +231,36 @@ def test_a_name_bound_by_unpacking_or_walrus_carries_its_value(
 
 @pytest.mark.parametrize(
     "var",
-    ["PB_KILL", "PB_WKILL", "PB_SWAPK", "PB_LEFTOP", "PB_WAFTER", "PB_COMPCLEAN"],
+    [
+        "PB_KILL",
+        "PB_WKILL",
+        "PB_SWAPK",
+        "PB_LEFTOP",
+        "PB_WAFTER",
+        "PB_COMPCLEAN",
+        "PB_CMPKILL",
+        "PB_DEFKILL",
+    ],
 )
 def test_a_name_rebound_to_a_clean_value_is_clean(
     flows: set[tuple[str, str]], var: str
 ) -> None:
     assert not _leaks(flows, var)
+
+
+@pytest.mark.parametrize(
+    "var", ["PB_MODANN", "PB_MODANNV", "PB_MODLATE", "PB_MODTARGET", "PB_LOCALTARGET"]
+)
+def test_an_annotated_assignment_runs_its_annotation_and_target(
+    flows: set[tuple[str, str]], var: str
+) -> None:
+    assert _leaks(flows, var)
+
+
+def test_a_local_variable_annotation_never_runs(
+    flows: set[tuple[str, str]],
+) -> None:
+    assert not _leaks(flows, "PB_LOCALANN")
 
 
 # Negative: what must not change.

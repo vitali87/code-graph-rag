@@ -283,6 +283,9 @@ Within a function body, taint moves and disappears by these rules:
   not a literal sequence (`a, b = pair`) gives every name the whole value's
   taint. Every target of `a = b = value` is bound, and a walrus
   (`if (tok := getenv("K")):`) binds `tok` for the code the condition guards.
+  A walrus Python may skip (the right of `and`/`or`, a conditional arm, a
+  chained comparison past its first link, a comprehension, an assert, a
+  `case` guard) leaves the name's old taint in place as well.
 - **Transform.** A value built from a tainted one is still tainted, with the
   union of its operands' origins. In Python this covers a builtin or library
   call (`float(raw)`, `json.dumps(cfg)`), a method on the value
