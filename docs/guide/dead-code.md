@@ -217,7 +217,27 @@ so no name or path is cut to fit 80 columns.
 1. **Roots**: exported/public symbols (unless `--no-public-roots`), tests (unless `--no-include-tests`),
    decorated handlers, dunder/lifecycle methods, program entry points (`main`
    in C, C++, Go and Rust; a `static Main` in C#, whatever its accessibility),
-   plus any `--entry-point` and `--decorator-root` you add.
+   plus any `--entry-point` and `--decorator-root` you add. Each language's
+   own visibility rule decides what is public:
+   - **C:** a function without `static`, outside another function's body.
+   - **C++:** besides a C++20 module `export`:
+     - a non-`static` function at namespace scope, outside an anonymous
+       namespace;
+     - a member defined inside a class under `public:` or `protected:` (a
+       `struct` starts public, a `class` private), unless the class is local
+       to a function or private in a class around it.
+
+     Access labels inside `#if` / `#ifdef` blocks count, and a member counts
+     unless it is private in every build. An out-of-line member definition (`int Box::f() {}`) or class
+     (`struct Outer::Inner {}`) takes its access from a class declaration in
+     another file, so it is not counted. A class template specialization at
+     namespace scope (`template <> struct std::hash<Foo> {...}`, or a partial
+     one) is counted: the library it specializes calls its members. A
+     specialization of a member template of a class in the same file
+     (`template <> struct Outer::Hidden<int> {...}`) is an out-of-line nested
+     class, so it is not counted.
+   - **Scala:** a member or top-level `def` that is not `private` or
+     `private[pkg]`, in no `private` object or class.
 2. **Reachability**: a breadth-first walk over `CALLS` and `REFERENCES` edges
    from every root. With `--classes` the walk also follows `INSTANTIATES` and
    `INHERITS`, so a class counts as reachable when a reachable class

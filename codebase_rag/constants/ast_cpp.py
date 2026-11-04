@@ -150,6 +150,12 @@ CPP_KEYWORD_STRUCT = "struct"
 # `static` storage on a declaration: internal linkage, TU-local symbol.
 CPP_KEYWORD_STATIC = "static"
 TS_CPP_STORAGE_CLASS_SPECIFIER = "storage_class_specifier"
+# A class member's access when no `access_specifier` precedes it: a `class`
+# starts private, a `struct` or `union` public (issue #2707).
+CPP_PRIVATE_BY_DEFAULT = frozenset({"class_specifier"})
+CPP_ACCESS_PRIVATE = "private"
+CPP_ACCESS_PUBLIC = "public"
+TS_FIELD_DECLARATION_LIST = "field_declaration_list"
 TS_CPP_TYPE_QUALIFIER = "type_qualifier"
 CPP_EXPORTED_CLASS_KEYWORDS = frozenset({CPP_KEYWORD_CLASS, CPP_KEYWORD_STRUCT})
 
@@ -266,6 +272,9 @@ TS_CPP_TRANSLATION_UNIT = "translation_unit"
 TS_CPP_LINKAGE_SPECIFICATION = "linkage_specification"
 # The body of a namespace or an `extern "C++" { }` block.
 TS_CPP_DECLARATION_LIST = "declaration_list"
+CPP_NAMESPACE_SCOPE_TYPES = frozenset(
+    {TS_CPP_TRANSLATION_UNIT, TS_CPP_DECLARATION_LIST, TS_CPP_LINKAGE_SPECIFICATION}
+)
 TS_CPP_CALL_EXPRESSION = "call_expression"
 TS_CPP_FIELD_EXPRESSION = "field_expression"
 TS_CPP_SUBSCRIPT_EXPRESSION = "subscript_expression"
@@ -342,6 +351,8 @@ TS_CPP_INIT_DECLARATOR = "init_declarator"
 TS_CPP_PARAMETER_DECLARATION = "parameter_declaration"
 TS_CPP_IDENTIFIER = "identifier"
 TS_CPP_QUALIFIED_IDENTIFIER = "qualified_identifier"
+# An optional parameter's default (`int x = 0`).
+TS_CPP_FIELD_DEFAULT_VALUE = "default_value"
 # `Reader<T>(...)` as a call target: the callee wraps name + template args.
 TS_CPP_TEMPLATE_FUNCTION = "template_function"
 # `&fn` / `*p`: the unary address-of or dereference, told apart by its
@@ -518,6 +529,23 @@ TS_CPP_POINTER_EXPRESSION = "pointer_expression"
 TS_CPP_CAST_EXPRESSION = "cast_expression"
 TS_CPP_CONDITIONAL_EXPRESSION = "conditional_expression"
 CPP_OP_ADDRESS_OF = "&"
+# Preprocessor conditionals: they wrap declarations without opening a scope,
+# so what they hold belongs to the scope around them (PR #2952).
+CPP_PREPROC_CONDITIONAL_TYPES = frozenset(
+    {"preproc_if", "preproc_ifdef", "preproc_else", "preproc_elif", "preproc_elifdef"}
+)
+# The head of an `#if` chain; its `#elif` / `#else` branches hang off it as
+# the `alternative` field, and only an `#else` makes some branch certain.
+CPP_PREPROC_IF_TYPES = frozenset({"preproc_if", "preproc_ifdef"})
+TS_CPP_PREPROC_ELSE = "preproc_else"
+TS_CPP_PREPROC_DEFINED = "preproc_defined"
+# `#ifndef X` and `#elifndef X` hold when `X` is not defined.
+CPP_PREPROC_NEGATED_DIRECTIVES = frozenset({"#ifndef", "#elifndef"})
+CPP_OP_NOT = "!"
+# Up to this many distinct conditions in one class body every build is
+# tried, so two blocks testing the same flag agree; past it each branch is
+# taken or not on its own, which can only make a member look public.
+CPP_MAX_CORRELATED_CONDITIONS = 6
 # Nodes that hold file-scope declarations without opening a scope of their
 # own: preprocessor conditionals and an `extern "C" { ... }` block.
 C_FILE_SCOPE_CONTAINER_TYPES = frozenset(

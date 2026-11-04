@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from itertools import product
+from typing import NamedTuple
 
 from tree_sitter import Node
 
@@ -95,8 +97,13 @@ def is_exported(node: Node, name: str, language: cs.SupportedLanguage) -> bool:
             return _csharp_exported(node)
         case cs.SupportedLanguage.RUST:
             return _rust_exported(node)
+        case cs.SupportedLanguage.C:
+            return _c_exported(node)
         case cs.SupportedLanguage.CPP:
-            return cpp_utils.is_exported(node)
+            # A C++20 module `export`, or ordinary code's public API.
+            return cpp_utils.is_exported(node) or _cpp_public_api(node)
+        case cs.SupportedLanguage.SCALA:
+            return _scala_exported(node)
         case cs.SupportedLanguage.DART:
             return _dart_exported(node, name)
         case cs.SupportedLanguage.LUA:
@@ -712,6 +719,497 @@ def _rust_macro_exported(node: Node) -> bool:
             return True
         prev = prev.prev_named_sibling
     return False
+
+
+def _c_exported(node: Node) -> bool:
+    # A C function without `static` has external linkage: any translation
+    # unit may call it, so it is the library's API (issue #2707). A `static`
+    # declaration earlier in the file gives the definition internal linkage
+    # though it does not repeat the keyword (Greptile, PR #2952). A GCC
+    # nested function, defined in another function's body, has no linkage
+    # at all.
+    return (
+        node.type == cs.TS_CPP_FUNCTION_DEFINITION
+        and not _cpp_local_or_anonymous(node)
+        and not _cpp_static(node)
+        and not _declared_static_before(node)
+    )
+
+
+def _declared_static_before(definition: Node, *, cpp: bool = False) -> bool:
+    # A C++ declaration names the same function only in the same namespace
+    # (reopened blocks included) and with the same parameter types: `static
+    # void process(int)` leaves `process(double)` external (bot review on PR
+    # #2952). C has one namespace and no overloads.
+    name = _cpp_declared_name(definition)
+    if name is None:
+        return False
+    namespace = _cpp_namespace_path(definition) if cpp else ()
+    if cpp:
+        # `void N::helper() {}` defines `helper` of namespace `N` (Greptile,
+        # PR #2952); the empty qualifier of `::helper` is the global one.
+        *qualifier, name = (
+            part.strip() for part in name.split(cs.SEPARATOR_DOUBLE_COLON)
+        )
+        namespace += tuple(part for part in qualifier if part)
+    parameters = _cpp_parameter_types(definition) if cpp else ()
+    root = definition
+    while root.parent is not None:
+        root = root.parent
+    pending = list(reversed(root.children))
+    while pending:
+        node = pending.pop()
+        if node.start_byte >= definition.start_byte:
+            return False
+        if node.type in cs.C_FILE_SCOPE_CONTAINER_TYPES or (
+            cpp and node.type == cs.TS_NAMESPACE_DEFINITION
+        ):
+            pending.extend(reversed(node.children))
+        elif (
+            node.type == cs.TS_CPP_DECLARATION
+            and _cpp_static(node)
+            and _cpp_declared_name(node) == name
+            and (
+                not cpp
+                or (
+                    _cpp_namespace_path(node) == namespace
+                    and _cpp_parameter_types(node) == parameters
+                )
+            )
+        ):
+            return True
+    return False
+
+
+def _cpp_namespace_path(node: Node) -> tuple[str, ...]:
+    # The names of the namespaces around a node, outermost first.
+    path: list[str] = []
+    current = node.parent
+    while current is not None:
+        if current.type == cs.TS_NAMESPACE_DEFINITION:
+            named = safe_decode_text(current.child_by_field_name(cs.FIELD_NAME))
+            path[:0] = (named or "").split(cs.SEPARATOR_DOUBLE_COLON)
+        current = current.parent
+    return tuple(path)
+
+
+def _cpp_parameter_types(node: Node) -> tuple[str, ...]:
+    # Each parameter's type as written, without its name or default value,
+    # whitespace dropped; `(void)` is `()`.
+    declarator = node.child_by_field_name(cs.FIELD_DECLARATOR)
+    while declarator is not None and declarator.type != cs.TS_CPP_FUNCTION_DECLARATOR:
+        declarator = declarator.child_by_field_name(cs.FIELD_DECLARATOR)
+    parameters = (
+        declarator.child_by_field_name(cs.FIELD_PARAMETERS)
+        if declarator is not None
+        else None
+    )
+    if parameters is None:
+        return ()
+    types: list[str] = []
+    for parameter in parameters.named_children:
+        if parameter.text is None or parameter.type == cs.TS_COMMENT:
+            continue
+        types.append(_cpp_written_parameter_type(parameter, parameter.text))
+    return () if types == ["void"] else tuple(types)
+
+
+def _cpp_written_parameter_type(parameter: Node, text: bytes) -> str:
+    # One parameter's type as written (`text` is the parameter's source):
+    # its name and default value cut out, whitespace dropped.
+    end = len(text)
+    default = parameter.child_by_field_name(cs.TS_CPP_FIELD_DEFAULT_VALUE)
+    if default is not None:
+        end = default.start_byte - parameter.start_byte
+    named = parameter.child_by_field_name(cs.FIELD_DECLARATOR)
+    while named is not None and named.type != cs.TS_CPP_IDENTIFIER:
+        named = named.child_by_field_name(cs.FIELD_DECLARATOR)
+    written = text[:end]
+    if named is not None and named.end_byte - parameter.start_byte <= end:
+        start = named.start_byte - parameter.start_byte
+        written = written[:start] + written[named.end_byte - parameter.start_byte :]
+    return "".join(written.decode(cs.ENCODING_UTF8).split()).rstrip("=")
+
+
+def _cpp_declared_name(node: Node) -> str | None:
+    # The plain name a function definition or declaration declares.
+    declarator = node.child_by_field_name(cs.FIELD_DECLARATOR)
+    while declarator is not None and declarator.type != cs.TS_CPP_FUNCTION_DECLARATOR:
+        declarator = declarator.child_by_field_name(cs.FIELD_DECLARATOR)
+    name = (
+        declarator.child_by_field_name(cs.FIELD_DECLARATOR)
+        if declarator is not None
+        else None
+    )
+    return safe_decode_text(name) if name is not None else None
+
+
+def _cpp_static(node: Node) -> bool:
+    return any(
+        child.type == cs.TS_CPP_STORAGE_CLASS_SPECIFIER
+        and child.text == cs.CPP_KEYWORD_STATIC.encode()
+        for child in node.children
+    )
+
+
+def _cpp_public_api(node: Node) -> bool:
+    # Outside a module, a C++ function is API when another translation unit
+    # can call it: a non-`static` namespace-scope function outside an
+    # anonymous namespace, or a non-`private` member of a class that is not
+    # local to a function (issue #2707). An out-of-line member definition
+    # (`int Box::f() {}`) is left alone: its access is in the class, which is
+    # usually in another file.
+    #
+    # A function template is registered as its `template_declaration`, so
+    # the definition is read inside it; template and preprocessor wrappers
+    # open no scope, so the scope is the one around them. `static` makes a
+    # namespace-scope function file-private, but a member `static` only
+    # means it needs no instance (bot review, PR #2952).
+    definition = _cpp_function_definition(node)
+    if definition is None:
+        return False
+    scope = _cpp_enclosing_scope(definition)
+    if scope is None or _cpp_local_or_anonymous(scope):
+        return False
+    if scope.type == cs.TS_FIELD_DECLARATION_LIST:
+        return _cpp_reachable_member(definition)
+    return (
+        scope.type in cs.CPP_NAMESPACE_SCOPE_TYPES
+        and not _cpp_static(definition)
+        and not _declared_static_before(definition, cpp=True)
+        and not _cpp_defined_out_of_line(definition)
+    )
+
+
+def _cpp_enclosing_scope(node: Node) -> Node | None:
+    current = node
+    while current.parent is not None and (
+        current.parent.type == cs.TS_CPP_TEMPLATE_DECLARATION
+        or current.parent.type in cs.CPP_PREPROC_CONDITIONAL_TYPES
+    ):
+        current = current.parent
+    return current.parent
+
+
+def _cpp_function_definition(node: Node) -> Node | None:
+    current: Node | None = node
+    while current is not None and current.type == cs.TS_CPP_TEMPLATE_DECLARATION:
+        current = next(
+            (
+                child
+                for child in current.named_children
+                if child.type
+                in (cs.TS_CPP_FUNCTION_DEFINITION, cs.TS_CPP_TEMPLATE_DECLARATION)
+            ),
+            None,
+        )
+    if current is None or current.type != cs.TS_CPP_FUNCTION_DEFINITION:
+        return None
+    return current
+
+
+def _cpp_local_or_anonymous(scope: Node) -> bool:
+    # Inside a function body (a local class) or an unnamed namespace: no
+    # other translation unit can name it.
+    current: Node | None = scope
+    while current is not None:
+        if current.type in (cs.TS_CPP_COMPOUND_STATEMENT, cs.TS_CPP_LAMBDA_EXPRESSION):
+            return True
+        if (
+            current.type == cs.CppNodeType.NAMESPACE_DEFINITION
+            and current.child_by_field_name(cs.FIELD_NAME) is None
+        ):
+            return True
+        current = current.parent
+    return False
+
+
+def _cpp_reachable_member(member: Node) -> bool:
+    # A member is only as visible as every class around it: a `public:`
+    # member of a `private` nested class is as hidden as that class. A class
+    # defined out of line (`struct Outer::Hidden {}`) takes its access from
+    # `Outer`, usually in another file, so it is left alone like an
+    # out-of-line member (Greptile, PR #2952).
+    body = member.parent
+    while body is not None:
+        if body.type == cs.TS_FIELD_DECLARATION_LIST:
+            owner = body.parent
+            if _cpp_private_member(member, body) or (
+                owner is not None
+                and not _cpp_library_specialization(owner)
+                and _cpp_qualified_by_class(
+                    owner.child_by_field_name(cs.FIELD_NAME), owner
+                )
+            ):
+                return False
+        body = body.parent
+    return True
+
+
+def _cpp_library_specialization(owner: Node) -> bool:
+    # `template <> struct std::hash<Foo> {}` (or a partial one) specializes
+    # another library's template for this code, and that library calls its
+    # members, so they are API though `std` is no namespace of this file. A
+    # plain `struct X::Y {}` is still an out-of-line nested class.
+    name = owner.child_by_field_name(cs.FIELD_NAME)
+    if name is None or name.type != cs.TS_CPP_QUALIFIED_IDENTIFIER:
+        return False
+    qualifier, inner = _cpp_split_qualified(name)
+    scope = _cpp_enclosing_scope(owner)
+    if (
+        inner is None
+        or inner.type != cs.TS_TEMPLATE_TYPE
+        or scope is None
+        or scope.type not in cs.CPP_NAMESPACE_SCOPE_TYPES
+    ):
+        return False
+    # `template <> struct Outer::Hidden<int> {}` specializes a member
+    # template of a class, so that class's access to it decides (Greptile,
+    # PR #2952).
+    return qualifier is None or (
+        qualifier.type != cs.TS_TEMPLATE_TYPE
+        and safe_decode_text(qualifier) not in _cpp_file_scope_names(owner)[1]
+    )
+
+
+class _PreprocFlag(NamedTuple):
+    # What a preprocessor branch tests: whether `text` is defined, or the
+    # value of the expression `text`.
+    defined: bool
+    text: str
+
+
+type _PreprocBuild = dict[_PreprocFlag, bool]
+
+
+def _cpp_private_member(node: Node, body: Node) -> bool:
+    # Private only when private in every build: a label inside `#ifdef`
+    # still governs what follows it, and after `#if X public: #else
+    # private: #endif` a member is public in one build. Blocks that test the
+    # same flag are in or out together, so `#ifdef F public: #endif #ifdef F
+    # private: #endif` leaves no public build (Greptile, PR #2952). `node`
+    # is any node inside the member.
+    owner = body.parent
+    default = (
+        cs.CPP_ACCESS_PRIVATE
+        if owner is not None and owner.type in cs.CPP_PRIVATE_BY_DEFAULT
+        else cs.CPP_ACCESS_PUBLIC
+    )
+    flags = sorted(_cpp_preproc_flags(body))
+    builds: list[_PreprocBuild | None] = (
+        [
+            dict(zip(flags, values, strict=True))
+            for values in product((False, True), repeat=len(flags))
+        ]
+        if len(flags) <= cs.CPP_MAX_CORRELATED_CONDITIONS
+        else [None]
+    )
+    for build in builds:
+        accesses, found = _cpp_accesses_at(body, node, frozenset({default}), build)
+        if found and accesses != {cs.CPP_ACCESS_PRIVATE}:
+            return False
+    return True
+
+
+def _cpp_accesses_at(
+    block: Node, node: Node, entry: frozenset[str], build: _PreprocBuild | None
+) -> tuple[frozenset[str], bool]:
+    # The accesses that may hold where `node` sits in `block`, or at its end
+    # when `node` is not in it (then the flag is False), given `entry` at
+    # its start.
+    accesses = entry
+    alternative = block.child_by_field_name(cs.FIELD_ALTERNATIVE)
+    for item in block.children:
+        if alternative is not None and item.id == alternative.id:
+            continue
+        if item.type in cs.CPP_PREPROC_IF_TYPES:
+            accesses, found = _cpp_accesses_through(item, node, accesses, build)
+            if found:
+                return accesses, True
+        elif item.start_byte <= node.start_byte and node.end_byte <= item.end_byte:
+            return accesses, True
+        elif item.type == cs.TS_ACCESS_SPECIFIER and item.text is not None:
+            accesses = frozenset({item.text.decode(cs.ENCODING_UTF8).strip()})
+    return accesses, False
+
+
+def _cpp_accesses_through(
+    conditional: Node, node: Node, entry: frozenset[str], build: _PreprocBuild | None
+) -> tuple[frozenset[str], bool]:
+    # In a known build only the first branch whose test holds is compiled.
+    # Without one, every branch starts from the accesses before `#if`; after
+    # `#endif` any branch's end may hold, and so may `entry` unless an
+    # `#else` makes some branch certain.
+    branches: list[Node] = []
+    current: Node | None = conditional
+    while current is not None:
+        branches.append(current)
+        current = current.child_by_field_name(cs.FIELD_ALTERNATIVE)
+    if build is not None:
+        taken = next(
+            (branch for branch in branches if _cpp_branch_taken(branch, build)), None
+        )
+        if taken is None:
+            return entry, False
+        return _cpp_accesses_at(taken, node, entry, build)
+    after: set[str] = set()
+    for branch in branches:
+        accesses, found = _cpp_accesses_at(branch, node, entry, None)
+        if found:
+            return accesses, True
+        after |= accesses
+    if branches[-1].type != cs.TS_CPP_PREPROC_ELSE:
+        after |= entry
+    return frozenset(after), False
+
+
+def _cpp_branch_taken(branch: Node, build: _PreprocBuild) -> bool:
+    if branch.type == cs.TS_CPP_PREPROC_ELSE:
+        return True
+    flag, negated = _cpp_preproc_test(branch)
+    return build.get(flag, False) != negated
+
+
+def _cpp_preproc_flags(block: Node) -> set[_PreprocFlag]:
+    flags: set[_PreprocFlag] = set()
+    for item in block.children:
+        if item.type not in cs.CPP_PREPROC_IF_TYPES:
+            continue
+        branch: Node | None = item
+        while branch is not None:
+            if branch.type != cs.TS_CPP_PREPROC_ELSE:
+                flags.add(_cpp_preproc_test(branch)[0])
+            flags |= _cpp_preproc_flags(branch)
+            branch = branch.child_by_field_name(cs.FIELD_ALTERNATIVE)
+    return flags
+
+
+def _cpp_preproc_test(branch: Node) -> tuple[_PreprocFlag, bool]:
+    # The flag a branch tests and whether it is negated: `#ifdef F`, `#if
+    # defined(F)` and `#ifndef F` all test whether `F` is defined, so they
+    # agree in every build.
+    name = branch.child_by_field_name(cs.FIELD_NAME)
+    if name is not None:
+        negated = branch.children[0].type in cs.CPP_PREPROC_NEGATED_DIRECTIVES
+        return _PreprocFlag(True, safe_decode_text(name) or ""), negated
+    condition = branch.child_by_field_name(cs.TS_FIELD_CONDITION)
+    negated = False
+    while condition is not None and (
+        condition.type == cs.TS_PARENTHESIZED_EXPRESSION
+        or (
+            condition.type == cs.TS_CPP_UNARY_EXPRESSION
+            and safe_decode_text(condition.child_by_field_name(cs.FIELD_OPERATOR))
+            == cs.CPP_OP_NOT
+        )
+    ):
+        if condition.type == cs.TS_CPP_UNARY_EXPRESSION:
+            negated = not negated
+            condition = condition.child_by_field_name(cs.CPP_FIELD_ARGUMENT)
+        else:
+            condition = next(iter(condition.named_children), None)
+    if condition is not None and condition.type == cs.TS_CPP_PREPROC_DEFINED:
+        defined = next(
+            (c for c in condition.named_children if c.type == cs.TS_CPP_IDENTIFIER),
+            None,
+        )
+        return _PreprocFlag(True, safe_decode_text(defined) or ""), negated
+    text = safe_decode_text(condition) or ""
+    return _PreprocFlag(False, "".join(text.split())), negated
+
+
+def _cpp_defined_out_of_line(node: Node) -> bool:
+    # `int Box::f() {}` defines a class member outside its class; `void
+    # V::f() {}` with `V` a namespace of the file is a namespace function
+    # and keeps its linkage (bot review on PR #2952).
+    declarator = node.child_by_field_name(cs.FIELD_DECLARATOR)
+    while declarator is not None and declarator.type != cs.TS_CPP_FUNCTION_DECLARATOR:
+        declarator = declarator.child_by_field_name(cs.FIELD_DECLARATOR)
+    name = (
+        declarator.child_by_field_name(cs.FIELD_DECLARATOR)
+        if declarator is not None
+        else None
+    )
+    return _cpp_qualified_by_class(name, node)
+
+
+def _cpp_qualified_by_class(name: Node | None, context: Node) -> bool:
+    # The innermost qualifier decides: `ns::Box::f` names a member of class
+    # `Box` though its outermost qualifier `ns` is a namespace (Greptile, PR
+    # #2952). Any qualifier that is no namespace of the file is a class.
+    if name is None or name.type != cs.TS_CPP_QUALIFIED_IDENTIFIER:
+        return False
+    owner, _ = _cpp_split_qualified(name)
+    if owner is None:
+        # `::f` names `f` of the global namespace.
+        return False
+    scope = safe_decode_text(owner) or ""
+    namespaces, classes = _cpp_file_scope_names(context)
+    return not (scope in namespaces and scope not in classes)
+
+
+def _cpp_split_qualified(name: Node) -> tuple[Node | None, Node | None]:
+    # A qualified name's innermost qualifier and the plain name after it.
+    qualifier = name.child_by_field_name(cs.FIELD_SCOPE)
+    inner = name.child_by_field_name(cs.FIELD_NAME)
+    while inner is not None and inner.type == cs.TS_CPP_QUALIFIED_IDENTIFIER:
+        qualifier = inner.child_by_field_name(cs.FIELD_SCOPE)
+        inner = inner.child_by_field_name(cs.FIELD_NAME)
+    return qualifier, inner
+
+
+def _cpp_file_scope_names(node: Node) -> tuple[set[str], set[str]]:
+    # The namespace names and class names a file defines.
+    root = node
+    while root.parent is not None:
+        root = root.parent
+    namespaces: set[str] = set()
+    classes: set[str] = set()
+    stack = [root]
+    while stack:
+        current = stack.pop()
+        if current.type == cs.TS_NAMESPACE_DEFINITION:
+            named = safe_decode_text(current.child_by_field_name(cs.FIELD_NAME))
+            namespaces.update((named or "").split(cs.SEPARATOR_DOUBLE_COLON))
+        elif current.type in cs.CPP_CLASS_TYPES:
+            named = safe_decode_text(current.child_by_field_name(cs.FIELD_NAME))
+            if named:
+                classes.add(named)
+        if current.type not in (cs.TS_CPP_FUNCTION_DEFINITION,):
+            stack.extend(current.named_children)
+    return namespaces, classes
+
+
+def _scala_exported(node: Node) -> bool:
+    # A Scala member or top-level definition is public unless declared
+    # `private` (or `private[pkg]`, visible in that package alone);
+    # `protected` stays API, as it does for Java. A def local to another
+    # def's body is no API at all (issue #2707).
+    parent = node.parent
+    if parent is None or parent.type not in cs.SCALA_API_SCOPES:
+        return False
+    # Nor is a member of an object or class declared inside a def's body, or
+    # of a `private` one: nothing outside its owner can name it (Greptile,
+    # PR #2952).
+    ancestor = parent.parent
+    while ancestor is not None:
+        if ancestor.type in (
+            cs.TS_SCALA_FUNCTION_DEFINITION,
+            cs.TS_SCALA_BLOCK,
+        ) or _scala_private(ancestor):
+            return False
+        ancestor = ancestor.parent
+    return not _scala_private(node)
+
+
+def _scala_private(node: Node) -> bool:
+    modifiers = next(
+        (c for c in node.children if c.type == cs.TS_SCALA_MODIFIERS), None
+    )
+    return modifiers is not None and any(
+        access.type == cs.TS_SCALA_ACCESS_MODIFIER
+        and any(c.type == cs.TS_SCALA_PRIVATE for c in access.children)
+        for access in modifiers.children
+    )
 
 
 _LUA_FUNCTION_TYPES = frozenset(cs.SPEC_LUA_FUNCTION_TYPES)
