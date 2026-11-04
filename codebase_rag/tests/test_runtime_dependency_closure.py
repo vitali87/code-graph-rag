@@ -37,9 +37,7 @@ def _runtime_closure() -> set[str]:
 
 def test_the_default_install_does_not_pull_logfire() -> None:
     # Negative test. Nothing here imports logfire (the binary build already
-    # excludes it), yet the `pydantic-ai` meta-package installed it, and its
-    # OpenTelemetry floor is what kept semgrep, and through it Zensical, from
-    # resolving in the same lock.
+    # excludes it), yet the `pydantic-ai` meta-package installed it.
     assert "logfire" not in _runtime_closure()
 
 
