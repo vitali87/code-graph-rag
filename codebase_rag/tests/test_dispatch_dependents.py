@@ -188,6 +188,92 @@ def test_ambiguous_reexport_spelling_reports_a_change() -> None:
     assert changes[0].new_bases == ()
 
 
+def test_deeper_rival_reexport_spelling_reports_a_change() -> None:
+    # A deeper same-named class may be the one `pkg/__init__.py`
+    # actually exports, so the shallower one-segment match must not
+    # name the base: the change is reported instead of hidden.
+    scanned = _scanned(
+        "tests/test_client.py",
+        "proj.tests.test_client",
+        "from pkg import Client\n\nclass Child(Client):\n    pass\n",
+    )
+    changes = build_class_changes(
+        [scanned],
+        {"proj.tests.test_client.Child": "tests/test_client.py"},
+        {},
+        {"proj.tests.test_client.Child": ["proj.pkg._client.Client"]},
+        PROJECT,
+        changed_keys=["tests/test_client.py"],
+        graph_class_qns={"proj.pkg._client.Client", "proj.pkg.deep.impl.Client"},
+    )
+    assert len(changes) == 1, changes
+    assert changes[0].new_bases == ()
+
+
+def test_deeper_reexport_spelling_new_subclass_retains_spelling() -> None:
+    # A new subclass whose base is spelled through a re-export the
+    # resolver cannot name (only the deeper defining class is
+    # backed) still reports a change, keeping the spelling so the
+    # dispatch targets name the new subclass's callers.
+    scanned = _scanned(
+        "tests/test_client.py",
+        "proj.tests.test_client",
+        "from pkg import Client\n\nclass Child(Client):\n    pass\n",
+    )
+    changes = build_class_changes(
+        [scanned],
+        {},
+        {},
+        {},
+        PROJECT,
+        changed_keys=["tests/test_client.py"],
+        graph_class_qns={"proj.pkg.deep.impl.Client"},
+    )
+    assert len(changes) == 1, changes
+    assert changes[0].new_bases == ("proj.pkg.Client",)
+
+
+def test_ambiguous_reexport_spelling_new_subclass_retains_spelling() -> None:
+    # Two one-segment rivals: the spelling names neither, but a new
+    # subclass still reports a change keeping the spelling.
+    scanned = _scanned(
+        "tests/test_client.py",
+        "proj.tests.test_client",
+        "from pkg import Client\n\nclass Child(Client):\n    pass\n",
+    )
+    changes = build_class_changes(
+        [scanned],
+        {},
+        {},
+        {},
+        PROJECT,
+        changed_keys=["tests/test_client.py"],
+        graph_class_qns={"proj.pkg._client.Client", "proj.pkg._api.Client"},
+    )
+    assert len(changes) == 1, changes
+    assert changes[0].new_bases == ("proj.pkg.Client",)
+
+
+def test_unbacked_base_new_subclass_reports_no_change() -> None:
+    # A new subclass of a base no backed class names keeps reporting
+    # no change: the spelling is a guess at an external base, not
+    # evidence of a graph-held one.
+    scanned = _scanned(
+        "tests/test_client.py",
+        "proj.tests.test_client",
+        "from foo import Bar\n\nclass Child(Bar):\n    pass\n",
+    )
+    changes = build_class_changes(
+        [scanned],
+        {},
+        {},
+        {},
+        PROJECT,
+        changed_keys=["tests/test_client.py"],
+    )
+    assert changes == []
+
+
 def test_reexport_spelling_new_subclass_names_defining_base() -> None:
     # A new subclass of a re-exported base names the defining class,
     # so its dispatch targets are the ones the resolver recorded.

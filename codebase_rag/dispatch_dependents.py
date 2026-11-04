@@ -306,8 +306,13 @@ def _reexport_defining_qn(
     through, so comparing the two spellings invents a base removal
     and re-parses the defining file's callers for nothing. Name the
     defining class when exactly one backed class differs from the
-    candidate by one module segment before the leaf. More than one,
-    or none, keeps the spelling, so a guess never hides a change.
+    candidate by one module segment before the leaf, and no other
+    backed class of the same name sits anywhere deeper under the
+    same package: a deeper namesake (`proj.pkg.deep.impl.Client`)
+    may be the class the package actually exports, and naming the
+    shallower one would hide a real base change. More than one
+    one-segment match, a deeper namesake, or none, keeps the
+    spelling, so a guess never hides a change.
     """
     if candidate in backed_qns:
         return candidate
@@ -315,6 +320,7 @@ def _reexport_defining_qn(
     if not sep:
         return candidate
     matches = set()
+    deeper_namesake = False
     for qn in backed_by_simple_name.get(_simple_name(candidate), ()):
         if qn not in backed_qns:
             continue
@@ -323,7 +329,37 @@ def _reexport_defining_qn(
             continue
         if cs.SEPARATOR_DOT not in qhead[len(head) + 1 :]:
             matches.add(qn)
+        else:
+            deeper_namesake = True
+    if deeper_namesake:
+        return candidate
     return matches.pop() if len(matches) == 1 else candidate
+
+
+def _has_backed_namesake(
+    candidate: str,
+    backed_qns: Collection[str],
+    backed_by_simple_name: dict[str, set[str]],
+) -> bool:
+    """Whether a backed class of the same name sits under the spelling's package.
+
+    A spelling the resolver could not name (`proj.pkg.Client` with
+    only `proj.pkg.deep.impl.Client` backed, or two one-segment
+    rivals) is still evidence of a base the graph holds somewhere
+    under that package. A spelling with no backed namesake at all
+    names an external or otherwise unknown base, and keeping it
+    would invent a change for a comment-only edit.
+    """
+    head, sep, _leaf = candidate.rpartition(cs.SEPARATOR_DOT)
+    if not sep:
+        return False
+    for qn in backed_by_simple_name.get(_simple_name(candidate), ()):
+        if qn not in backed_qns:
+            continue
+        qhead, _, _ = qn.rpartition(cs.SEPARATOR_DOT)
+        if qhead.startswith(head + cs.SEPARATOR_DOT):
+            return True
+    return False
 
 
 def build_class_changes(
@@ -421,6 +457,29 @@ def build_class_changes(
             # persisted spelling, which is the one the graph will hold
             # after the re-parse, so the merged state matches it.
             new_bases = old_base_set
+        if qn not in old_classes and not new_bases and resolved_bases:
+            # A brand-new subclass of a base the resolver could not
+            # name: keeping the spelling is what queues the re-parse
+            # that names the callers of the base's self-dispatch
+            # methods. Without it, a subclass with no methods of its
+            # own reports no change at all, and its override edges
+            # stay stale until a full re-index. Only spellings with
+            # a backed namesake under the same package are kept: the
+            # spelling is then evidence of a graph-held base, not a
+            # guess at an external one. The spelling is used only to
+            # compute dispatch targets in this run; the re-parse
+            # writes the hierarchy the graph actually holds.
+            retained = tuple(
+                sorted(
+                    candidate
+                    for candidate in resolved_bases
+                    if _has_backed_namesake(
+                        candidate, graph_backed_qns, backed_by_simple_name
+                    )
+                )
+            )
+            if retained:
+                new_bases = retained
         if qn not in old_classes:
             if new_method_set or new_bases:
                 changes.append(
