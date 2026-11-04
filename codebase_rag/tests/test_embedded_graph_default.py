@@ -25,7 +25,12 @@ from codebase_rag.constants import (
     SETTING_QDRANT_DB_PATH,
     VectorStoreBackend,
 )
-from codebase_rag.graph_dialects import DIALECT_MEMGRAPH, DIALECT_SQLITE, get_dialect
+from codebase_rag.graph_dialects import (
+    DIALECT_MEMGRAPH,
+    DIALECT_NEO4J,
+    DIALECT_SQLITE,
+    get_dialect,
+)
 from codebase_rag.mgclient_compat import _absent_driver
 from codebase_rag.schemas import HealthCheckResult
 from codebase_rag.services import graph_service
@@ -56,8 +61,8 @@ def test_no_stack_is_started_for_the_embedded_graph(embedded) -> None:
 
 
 def test_the_stack_starts_when_it_holds_the_vectors(embedded) -> None:
-    """A QDRANT_URL naming the bundled Qdrant, or a stack set up here with
-    no vector location chosen, still needs the stack (review of #3377)."""
+    """A QDRANT_URL naming the bundled Qdrant still needs the stack (review
+    of #3377)."""
     with patch.object(cli, "StackManager") as manager:
         manager.return_value.serves_vectors.return_value = True
         manager.return_value.status.return_value.state = None
@@ -144,6 +149,25 @@ def test_serves_vectors_follows_the_vector_settings(
     if compose_exists:
         manager.compose_file.write_text("services: {}\n")
     assert manager.serves_vectors() is expected
+
+
+@pytest.mark.parametrize("backend", [DIALECT_SQLITE, DIALECT_NEO4J])
+def test_a_stack_set_up_here_holds_no_vectors_of_another_engine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, backend: str
+) -> None:
+    """The stack's Qdrant keeps its own Memgraph's vectors, so the app does
+    not use it for this graph and `cgr start` need not start it (#2878)."""
+    monkeypatch.setattr(settings, "GRAPH_BACKEND", backend)
+    monkeypatch.setattr(settings, "QDRANT_URL", None)
+    monkeypatch.setattr(
+        settings,
+        "__pydantic_fields_set__",
+        settings.model_fields_set - {SETTING_QDRANT_DB_PATH},
+    )
+    monkeypatch.setattr(manager_module.shutil, "which", lambda _: None)
+    manager = StackManager(home=tmp_path)
+    manager.compose_file.write_text("services: {}\n")
+    assert manager.serves_vectors() is False
 
 
 def _published_on(port: str) -> dict[str, JsonValue]:

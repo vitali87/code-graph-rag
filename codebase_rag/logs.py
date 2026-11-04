@@ -320,6 +320,12 @@ QDRANT_BUNDLED_OTHER_MEMGRAPH = (
     "stay in the embedded store at '{path}'. Set QDRANT_URL={url} to share the "
     "stack's Qdrant on purpose"
 )
+QDRANT_BUNDLED_OTHER_GRAPH = (
+    "The cgr stack's Qdrant holds the embeddings of the stack's own Memgraph, "
+    "and the graph in use is not in Memgraph (GRAPH_BACKEND={backend}), so "
+    "embeddings stay in the embedded store at '{path}'. Set QDRANT_URL to the "
+    "stack's Qdrant to share it on purpose"
+)
 QDRANT_BUNDLED_UNVERIFIED = (
     "Could not confirm through Docker Compose that the cgr stack's Qdrant is "
     "running ({detail}), so embeddings stay in the embedded store at '{path}'"

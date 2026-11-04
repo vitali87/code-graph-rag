@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from codebase_rag.config import settings
+from codebase_rag.graph_dialects import DIALECT_NEO4J, DIALECT_SQLITE
 from codebase_rag.stack import constants as stack_cs
 from codebase_rag.stack import manager
 from codebase_rag.tests.test_bundled_qdrant_default import (
@@ -70,6 +71,47 @@ def test_another_memgraph_keeps_its_embeddings_out_of_the_stack(
     said = " ".join(messages)
     assert f"{host}:{port}" in said, messages
     assert "QDRANT_URL" in said, messages
+
+
+@pytest.mark.usefixtures("stack_home", "stack_memgraph_on_7687")
+@pytest.mark.parametrize("backend", [DIALECT_SQLITE, DIALECT_NEO4J])
+def test_a_graph_in_another_engine_keeps_its_embeddings_out_of_the_stack(
+    open_qdrant: _Server,
+    compose: _Compose,
+    monkeypatch: pytest.MonkeyPatch,
+    backend: str,
+) -> None:
+    # The Memgraph settings, left at their defaults, name the stack's
+    # Memgraph, but the app's graph is not in it (Greptile on #3051).
+    _stack_on(open_qdrant.port, compose, monkeypatch)
+    monkeypatch.setattr(settings, "GRAPH_BACKEND", backend)
+    monkeypatch.setattr(settings, "MEMGRAPH_HOST", "localhost")
+    monkeypatch.setattr(settings, "MEMGRAPH_PORT", 7687)
+
+    kwargs, messages = _client_kwargs_logged("INFO")
+
+    assert kwargs == _embedded()
+    assert open_qdrant.paths == []
+    # No Docker either: nothing it could say would change the answer.
+    assert compose.calls == []
+    said = " ".join(messages)
+    assert f"GRAPH_BACKEND={backend}" in said, messages
+    assert "QDRANT_URL" in said, messages
+
+
+@pytest.mark.usefixtures("stack_home", "stack_memgraph_on_7687")
+@pytest.mark.parametrize("backend", [DIALECT_SQLITE, DIALECT_NEO4J])
+def test_another_engine_still_shares_the_stack_qdrant_on_purpose(
+    open_qdrant: _Server,
+    compose: _Compose,
+    monkeypatch: pytest.MonkeyPatch,
+    backend: str,
+) -> None:
+    # Negative: QDRANT_URL naming the stack's Qdrant is the user's choice.
+    _stack_on(open_qdrant.port, compose, monkeypatch)
+    monkeypatch.setattr(settings, "GRAPH_BACKEND", backend)
+    monkeypatch.setattr(settings, "QDRANT_URL", _bundled(open_qdrant.port)["url"])
+    assert _client_kwargs() == _bundled(open_qdrant.port)
 
 
 @pytest.mark.usefixtures("stack_home")

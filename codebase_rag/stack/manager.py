@@ -18,6 +18,7 @@ from loguru import logger
 from .. import constants as root_cs
 from .. import logs as ls
 from ..config import settings
+from ..graph_dialects import DIALECT_MEMGRAPH
 from ..types_defs import JsonValue
 from . import constants as cs
 from .health import (
@@ -595,9 +596,10 @@ class StackManager:
         """Whether the app's embeddings go to this stack's Qdrant.
 
         The choice `vector_store` makes: a QDRANT_URL naming where Compose
-        publishes Qdrant, or, with neither QDRANT_URL nor QDRANT_DB_PATH
-        chosen, a stack set up here. Then `cgr start` starts the stack even
-        for a graph backend that needs nothing from it.
+        publishes Qdrant, for which `cgr start` starts the stack even for a
+        graph backend that needs nothing else from it, or, with neither
+        QDRANT_URL nor QDRANT_DB_PATH chosen, a stack set up here when the
+        graph is in Memgraph.
         """
         if settings.VECTOR_STORE_BACKEND != root_cs.VectorStoreBackend.QDRANT:
             return False
@@ -610,7 +612,8 @@ class StackManager:
                 settings.QDRANT_URL, self._qdrant_bind, self.qdrant_port
             )
         return (
-            root_cs.SETTING_QDRANT_DB_PATH not in settings.model_fields_set
+            settings.GRAPH_BACKEND == DIALECT_MEMGRAPH
+            and root_cs.SETTING_QDRANT_DB_PATH not in settings.model_fields_set
             and self.compose_file.exists()
         )
 
@@ -1290,12 +1293,13 @@ def daemon_restart() -> StackStatus:
 def bundled_qdrant_url(home: Path | None = None) -> str | None:
     """Where the Qdrant `cgr daemon up` runs, when it takes the app's writes.
 
-    None unless the stack was set up here (its compose file exists), Docker
-    Compose reports this project's Qdrant container running, and what
-    answers where Compose publishes it identifies as Qdrant and takes a
-    data request without a key. The embeddings carry the indexed code, so
-    an endpoint whose owner is not proven gets none of them: with the stack
-    stopped, any process can answer on its port (CWE-200). QDRANT_API_KEY is
+    None unless the stack was set up here (its compose file exists), the
+    app's graph is the stack's own Memgraph, Docker Compose reports this
+    project's Qdrant container running, and what answers where Compose
+    publishes it identifies as Qdrant and takes a data request without a
+    key. The embeddings carry the indexed code, so an endpoint whose owner
+    is not proven gets none of them: with the stack stopped, any process
+    can answer on its port (CWE-200). QDRANT_API_KEY is
     never offered: it belongs to the server QDRANT_URL names, and the stack
     only configures its Qdrant with it when QDRANT_URL points there. A Qdrant
     that refuses anonymous requests is logged and left alone, since every
@@ -1305,6 +1309,17 @@ def bundled_qdrant_url(home: Path | None = None) -> str | None:
     if not manager.compose_file.exists():
         return None
     path = settings.QDRANT_DB_PATH
+    # The stack's Qdrant holds its own Memgraph's vectors, keyed by that
+    # graph's node ids: any other graph, in another engine or another
+    # Memgraph, would mix its own in, and its `--clean` would drop the stack
+    # graph's collection (issue #2878). The engine needs no word from Docker.
+    if settings.GRAPH_BACKEND != DIALECT_MEMGRAPH:
+        logger.info(
+            ls.QDRANT_BUNDLED_OTHER_GRAPH.format(
+                backend=settings.GRAPH_BACKEND, path=path
+            )
+        )
+        return None
     try:
         running = manager.locate_running_qdrant()
     except (StackError, subprocess.TimeoutExpired, OSError) as e:
@@ -1315,9 +1330,6 @@ def bundled_qdrant_url(home: Path | None = None) -> str | None:
         return None
     host, port = manager.qdrant_host, manager.qdrant_port
     url = qdrant_base_url(host, port)
-    # The stack's Qdrant holds its own graph's vectors, keyed by that graph's
-    # node ids: another Memgraph's sync would mix its vectors in, and its
-    # `--clean` would drop the stack graph's collection (issue #2878).
     try:
         same_graph = manager.runs_configured_memgraph()
     except (StackError, subprocess.TimeoutExpired) as e:
