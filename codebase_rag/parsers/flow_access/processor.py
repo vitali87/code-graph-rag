@@ -412,34 +412,64 @@ def _py_target_bindings(
     return bindings
 
 
+class _PyAssignmentChain(NamedTuple):
+    # `a = b = value` nests each further assignment as the value of the one
+    # before; `value` is None for `x: int`, which binds nothing.
+    targets: list[Node]
+    annotations: list[Node]
+    value: Node | None
+
+
+def _py_assignment_chain(node: Node) -> _PyAssignmentChain:
+    targets: list[Node] = []
+    annotations: list[Node] = []
+    value: Node | None = node
+    while value is not None and value.type == cs.TS_PY_ASSIGNMENT:
+        if (left := value.child_by_field_name(cs.TS_FIELD_LEFT)) is not None:
+            targets.append(left)
+        if (annotation := value.child_by_field_name(cs.FIELD_TYPE)) is not None:
+            annotations.append(annotation)
+        value = value.child_by_field_name(cs.TS_FIELD_RIGHT)
+    return _PyAssignmentChain(targets, annotations, value)
+
+
+def _py_bind_names(state: _TaintMap, bindings: list[tuple[str, Taint | None]]) -> None:
+    for name, taint in bindings:
+        if taint is not None:
+            state[name] = taint
+        else:
+            state.pop(name, None)
+
+
 def _py_walrus_may_not_run(node: Node) -> bool:
     # A walrus in the right operand of `and`/`or`, an arm of `x if c else
     # y`, a comprehension, a chained comparison past its first link or an
     # assert runs only on some paths of its statement.
     child, parent = node, node.parent
     while parent is not None and parent.type not in _PY_WALRUS_SCOPE_STOPS:
-        if parent.type == cs.TS_PY_BOOLEAN_OPERATOR:
-            right = parent.child_by_field_name(cs.TS_FIELD_RIGHT)
-            if right is not None and right.id == child.id:
-                return True
-        elif parent.type == cs.TS_PY_CONDITIONAL_EXPRESSION:
-            # Named children are [consequence, condition, alternative].
-            values = parent.named_children
-            if len(values) > 1 and values[1].id != child.id:
-                return True
-        elif parent.type == cs.TS_PY_COMPARISON_OPERATOR:
-            # `a < b < (t := c)` stops at the first false link, so only the
-            # first two operands always run.
-            links = parent.children_by_field_name(cs.TS_FIELD_OPERATORS)
-            if sum(op.start_byte < child.start_byte for op in links) > 1:
-                return True
-        elif parent.type in _PY_COMPREHENSIONS:
-            return True
-        elif parent.type == cs.TS_PY_ASSERT_STATEMENT:
-            # An assert's message runs only when its test fails, and
-            # `python -O` drops the whole statement.
+        if _py_may_skip_operand(parent, child):
             return True
         child, parent = parent, parent.parent
+    return False
+
+
+def _py_may_skip_operand(parent: Node, child: Node) -> bool:
+    if parent.type in _PY_COMPREHENSIONS or parent.type == cs.TS_PY_ASSERT_STATEMENT:
+        # An assert's message runs only when its test fails, and `python -O`
+        # drops the whole statement.
+        return True
+    if parent.type == cs.TS_PY_BOOLEAN_OPERATOR:
+        right = parent.child_by_field_name(cs.TS_FIELD_RIGHT)
+        return right is not None and right.id == child.id
+    if parent.type == cs.TS_PY_CONDITIONAL_EXPRESSION:
+        # Named children are [consequence, condition, alternative].
+        values = parent.named_children
+        return len(values) > 1 and values[1].id != child.id
+    if parent.type == cs.TS_PY_COMPARISON_OPERATOR:
+        # `a < b < (t := c)` stops at the first false link, so only the
+        # first two operands always run.
+        links = parent.children_by_field_name(cs.TS_FIELD_OPERATORS)
+        return sum(op.start_byte < child.start_byte for op in links) > 1
     return False
 
 
@@ -479,26 +509,34 @@ def _py_defers_annotations(node: Node) -> bool:
     while root.parent is not None:
         root = root.parent
     for statement in root.named_children:
-        docstring = statement.type == cs.TS_PY_EXPRESSION_STATEMENT and [
-            c.type for c in statement.named_children
-        ] == [cs.TS_PY_STRING]
-        if statement.type == cs.TS_COMMENT or docstring:
+        if statement.type == cs.TS_COMMENT or _py_is_docstring(statement):
             continue
         if statement.type != cs.TS_PY_FUTURE_IMPORT_STATEMENT:
             return False
-        for feature in statement.children_by_field_name(cs.TS_FIELD_NAME):
-            name = (
-                feature.child_by_field_name(cs.TS_FIELD_NAME)
-                if feature.type == cs.TS_PY_ALIASED_IMPORT
-                else feature
-            )
-            if (
-                name is not None
-                and name.text is not None
-                and name.text.decode(cs.ENCODING_UTF8) == cs.PY_FUTURE_ANNOTATIONS
-            ):
-                return True
+        if cs.PY_FUTURE_ANNOTATIONS in _py_future_features(statement):
+            return True
     return False
+
+
+def _py_is_docstring(statement: Node) -> bool:
+    return statement.type == cs.TS_PY_EXPRESSION_STATEMENT and [
+        c.type for c in statement.named_children
+    ] == [cs.TS_PY_STRING]
+
+
+def _py_future_features(statement: Node) -> list[str]:
+    # The features a `from __future__ import ...` names, `as` aliases
+    # included.
+    features: list[str] = []
+    for feature in statement.children_by_field_name(cs.TS_FIELD_NAME):
+        name = (
+            feature.child_by_field_name(cs.TS_FIELD_NAME)
+            if feature.type == cs.TS_PY_ALIASED_IMPORT
+            else feature
+        )
+        if name is not None and name.text is not None:
+            features.append(name.text.decode(cs.ENCODING_UTF8))
+    return features
 
 
 def _py_in_lambda_body(node: Node) -> bool:
@@ -3720,13 +3758,7 @@ class FlowProcessor:
     def _walk_stmt(self, node: Node, state: _TaintMap, ctx: _FlowCtx) -> _TaintMap:
         node_type = node.type
         if node_type in PY_SCOPE_BOUNDARIES:
-            # Nested def/class: only its header executes in this scope. Record any
-            # enclosing taint its body captures BEFORE walking the header, using
-            # the def-site state (issue #1197); the body is left to its own pass.
-            self._record_captures(node, state, ctx)
-            for header in definition_header_nodes(node):
-                state = self._walk_stmt(header, state, ctx)
-            return state
+            return self._walk_py_definition_header(node, state, ctx)
         if node_type == cs.TS_PY_IF_STATEMENT:
             return self._walk_if(node, state, ctx)
         if node_type in (cs.TS_PY_FOR_STATEMENT, cs.TS_PY_WHILE_STATEMENT):
@@ -3744,16 +3776,38 @@ class FlowProcessor:
         if node_type in _PY_COMPREHENSIONS:
             return self._walk_py_comprehension(node, state, ctx)
         if node_type == cs.TS_PY_IDENTIFIER:
-            if self._py_reads is not None and node.text is not None:
-                self._py_reads[node.id] = state.get(node.text.decode(cs.ENCODING_UTF8))
-            return state
-        if node_type == cs.TS_PY_TYPE and not _py_annotation_runs(
-            node, ctx.py_annotations_deferred
-        ):
-            return state
+            return self._record_py_read(node, state)
+        if node_type == cs.TS_PY_TYPE:
+            return self._walk_py_annotation(node, state, ctx)
         if node_type in _PY_USES_AFTER_OPERANDS:
             return self._walk_py_use(node, state, ctx)
-        # Descend into children in source order.
+        # Descend into children in source order, in this frame: a generated
+        # `a + b + ...` is as deep as it is long.
+        for child in node.children:
+            state = self._walk_stmt(child, state, ctx)
+        return state
+
+    def _walk_py_definition_header(
+        self, node: Node, state: _TaintMap, ctx: _FlowCtx
+    ) -> _TaintMap:
+        # Nested def/class: only its header executes in this scope. Record any
+        # enclosing taint its body captures BEFORE walking the header, using
+        # the def-site state (issue #1197); the body is left to its own pass.
+        self._record_captures(node, state, ctx)
+        for header in definition_header_nodes(node):
+            state = self._walk_stmt(header, state, ctx)
+        return state
+
+    def _record_py_read(self, node: Node, state: _TaintMap) -> _TaintMap:
+        if self._py_reads is not None and node.text is not None:
+            self._py_reads[node.id] = state.get(node.text.decode(cs.ENCODING_UTF8))
+        return state
+
+    def _walk_py_annotation(
+        self, node: Node, state: _TaintMap, ctx: _FlowCtx
+    ) -> _TaintMap:
+        if not _py_annotation_runs(node, ctx.py_annotations_deferred):
+            return state
         for child in node.children:
             state = self._walk_stmt(child, state, ctx)
         return state
@@ -4011,36 +4065,25 @@ class FlowProcessor:
         # b, a`), and `x = print(x)` prints what `x` held. A name bound to a
         # value with no taint (a literal, an unresolved call) is clean from
         # here on.
-        targets: list[Node] = []
-        annotations: list[Node] = []
-        value: Node | None = node
-        while value is not None and value.type == cs.TS_PY_ASSIGNMENT:
-            if (left := value.child_by_field_name(cs.TS_FIELD_LEFT)) is not None:
-                targets.append(left)
-            if (annotation := value.child_by_field_name(cs.FIELD_TYPE)) is not None:
-                annotations.append(annotation)
-            value = value.child_by_field_name(cs.TS_FIELD_RIGHT)
+        chain = _py_assignment_chain(node)
+        value = chain.value
         if value is None:
             # `x: int` declares without binding a value, but `d[f()]: int`
             # still runs its target's parts.
-            for target in targets:
+            for target in chain.targets:
                 state = self._walk_stmt(target, state, ctx)
         else:
             taints: dict[int, Taint | None] = {}
             state = self._py_eval_in_order(value, state, ctx, taints)
-            for target in targets:
+            for target in chain.targets:
                 # A subscript or attribute target's own parts run after the
                 # value.
                 state = self._walk_stmt(target, state, ctx)
-                for name, taint in _py_target_bindings(target, value, taints):
-                    if taint is not None:
-                        state[name] = taint
-                    else:
-                        state.pop(name, None)
+                _py_bind_names(state, _py_target_bindings(target, value, taints))
         # The annotation comes last, after the target is bound (bot review on
         # PR #2764): `x: print(x) = secret()` prints the secret where the
         # annotation runs at all, which the walk of a `type` node decides.
-        for annotation in annotations:
+        for annotation in chain.annotations:
             state = self._walk_stmt(annotation, state, ctx)
         return state
 
