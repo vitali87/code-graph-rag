@@ -407,6 +407,72 @@ ALL_FORMS = {
         'import types\n\n__all__ = ["Other"]\n_ns = types.SimpleNamespace()\n'
         '_ns.__all__ = ["Other", "Client"]\n'
     ),
+    # An `__all__` a def, class body, lambda or comprehension binds as its
+    # own is not the module's (Greptile, PR #2989), so the module's list
+    # stays readable...
+    "local_in_a_function": (
+        '__all__ = ["Other"]\n\n\ndef _helper():\n    __all__ = []\n'
+        '    __all__.append("Client")\n    return __all__\n\n\n_helper()\n'
+    ),
+    "parameter": (
+        '__all__ = ["Other"]\n\n\ndef _helper(__all__):\n'
+        '    __all__.append("Client")\n\n\n_helper([])\n'
+    ),
+    "typed_default_parameter": (
+        '__all__ = ["Other"]\n\n\ndef _helper(__all__: list = []):\n'
+        '    __all__.append("Client")\n\n\n_helper()\n'
+    ),
+    "star_parameter": (
+        '__all__ = ["Other"]\n\n\ndef _helper(*__all__):\n'
+        '    __all__ += ("Client",)\n\n\n_helper()\n'
+    ),
+    "class_attribute": (
+        '__all__ = ["Other"]\n\n\nclass _Registry:\n    __all__ = ["Client"]\n'
+    ),
+    "comprehension_target": (
+        '__all__ = ["Other"]\n_names = [__all__ for __all__ in ("Client",)]\n'
+    ),
+    "lambda_parameter": (
+        '__all__ = ["Other"]\n_add = lambda __all__: __all__.append("Client")\n'
+        "_add([])\n"
+    ),
+    "lambda_walrus": (
+        '__all__ = ["Other"]\n_make = lambda: (__all__ := ["Client"])\n_make()\n'
+    ),
+    "nonlocal_in_a_closure": (
+        '__all__ = ["Other"]\n\n\ndef _outer():\n    __all__ = []\n\n'
+        "    def _inner():\n        nonlocal __all__\n"
+        '        __all__ = ["Client"]\n\n    _inner()\n    return __all__\n\n\n'
+        "_outer()\n"
+    ),
+    "closure_over_a_local": (
+        '__all__ = ["Other"]\n\n\ndef _outer():\n    __all__ = []\n\n'
+        '    def _inner():\n        __all__.append("Client")\n\n'
+        "    _inner()\n    return __all__\n\n\n_outer()\n"
+    ),
+    # ...while one that reaches the module's still falls back: a method skips
+    # its class body, `global` names the module's, and a walrus in a
+    # comprehension binds the scope around it.
+    "method_skips_its_class": (
+        '__all__ = ["Other"]\n\n\nclass _Registry:\n    __all__ = []\n\n'
+        '    def add(self):\n        __all__.append("Client")\n\n\n'
+        "_Registry().add()\n"
+    ),
+    "global_in_a_function": (
+        '__all__ = ["Other"]\n\n\ndef _export():\n    global __all__\n'
+        '    __all__ = ["Other", "Client"]\n\n\n_export()\n'
+    ),
+    "global_in_a_class_body": (
+        '__all__ = ["Other"]\n\n\nclass _Exports:\n    global __all__\n'
+        '    __all__ = ["Other", "Client"]\n'
+    ),
+    "item_assigned_in_a_function": (
+        '__all__ = ["Other", "Placeholder"]\n\n\ndef _fill():\n'
+        '    __all__[1] = "Client"\n\n\n_fill()\n'
+    ),
+    "walrus_in_a_comprehension": (
+        '__all__ = ["Other"]\n[(__all__ := ["Other", "Client"]) for _ in (1,)]\n'
+    ),
 }
 
 # `Pool.__enter__` hands back a `Connection`, so typing `with Pool() as c`
@@ -521,6 +587,27 @@ def all_graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
         ("via_read_in_blocks", "read_in_blocks._b.Client.send"),
         ("via_reset_after_a_block", "reset_after_a_block._b.Client.send"),
         ("via_another_objects_all", "another_objects_all._b.Client.send"),
+        ("via_local_in_a_function", "local_in_a_function._b.Client.send"),
+        ("via_parameter", "parameter._b.Client.send"),
+        ("via_typed_default_parameter", "typed_default_parameter._b.Client.send"),
+        ("via_star_parameter", "star_parameter._b.Client.send"),
+        ("via_class_attribute", "class_attribute._b.Client.send"),
+        ("via_comprehension_target", "comprehension_target._b.Client.send"),
+        ("via_lambda_parameter", "lambda_parameter._b.Client.send"),
+        ("via_lambda_walrus", "lambda_walrus._b.Client.send"),
+        ("via_nonlocal_in_a_closure", "nonlocal_in_a_closure._b.Client.send"),
+        ("via_closure_over_a_local", "closure_over_a_local._b.Client.send"),
+        ("via_method_skips_its_class", "method_skips_its_class._a.Client.send"),
+        ("via_global_in_a_function", "global_in_a_function._a.Client.send"),
+        ("via_global_in_a_class_body", "global_in_a_class_body._a.Client.send"),
+        (
+            "via_item_assigned_in_a_function",
+            "item_assigned_in_a_function._a.Client.send",
+        ),
+        (
+            "via_walrus_in_a_comprehension",
+            "walrus_in_a_comprehension._a.Client.send",
+        ),
         ("via_later_named", "later_named._impl.Client.send"),
         (
             "via_bare_with",
@@ -562,6 +649,21 @@ def all_graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
         "reads-in-blocks-keep-all-readable",
         "a-later-reassignment-replaces-a-block-change",
         "another-objects-all-is-not-the-modules",
+        "a-functions-local-is-not-the-modules",
+        "a-parameter-is-not-the-modules",
+        "a-typed-default-parameter-is-not-the-modules",
+        "a-star-parameter-is-not-the-modules",
+        "a-class-attribute-is-not-the-modules",
+        "a-comprehension-target-is-not-the-modules",
+        "a-lambda-parameter-is-not-the-modules",
+        "a-lambdas-walrus-is-not-the-modules",
+        "a-nonlocal-is-the-enclosing-defs",
+        "a-closure-reads-its-enclosing-defs-local",
+        "a-method-skips-its-class-body-and-falls-back",
+        "a-global-in-a-def-falls-back",
+        "a-global-in-a-class-body-falls-back",
+        "an-item-assignment-in-a-def-falls-back",
+        "a-walrus-in-a-comprehension-falls-back",
         "a-later-by-name-import-of-another-name-keeps-the-star",
         "with-on-a-bare-name-imported-through-a-star",
     ],

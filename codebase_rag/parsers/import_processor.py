@@ -3,6 +3,7 @@ import posixpath
 import re
 import tomllib
 from collections.abc import Iterator, Mapping, Sequence
+from enum import Enum, auto
 from functools import lru_cache
 from pathlib import Path
 from typing import NamedTuple
@@ -1151,18 +1152,46 @@ def _readable(names: list[str] | None) -> list[str]:
     return names
 
 
-# Where a name is written rather than read: the field of these nodes that
-# holds the target, or anywhere under these statements.
+class _NameUse(Enum):
+    """How one occurrence of a name uses it."""
+
+    BIND = auto()
+    MUTATE = auto()
+    GLOBAL = auto()
+    READ = auto()
+
+
+# The field of these nodes that holds what they bind.
 _PY_TARGET_FIELDS = {
     **dict.fromkeys(cs.PY_LEFT_BINDERS | {cs.TS_PY_FOR_IN_CLAUSE}, cs.TS_FIELD_LEFT),
-    **dict.fromkeys(cs.PY_NAME_BINDERS, cs.FIELD_NAME),
+    **dict.fromkeys(
+        cs.PY_NAME_BINDERS
+        | {cs.TS_PY_DEFAULT_PARAMETER, cs.TS_PY_TYPED_DEFAULT_PARAMETER},
+        cs.FIELD_NAME,
+    ),
     cs.TS_PY_AS_PATTERN: cs.FIELD_ALIAS,
+    cs.TS_PY_ALIASED_IMPORT: cs.FIELD_ALIAS,
 }
-_PY_WRITING_STATEMENTS = (
-    cs.PY_IMPORT_TYPES
-    | cs.PY_DECLARATION_TYPES
-    | {cs.TS_PY_DELETE_STATEMENT, cs.TS_PY_CASE_PATTERN}
+# Nodes that bind every name they hold.
+_PY_BINDING_HOLDERS = frozenset(
+    {
+        cs.TS_PY_PARAMETERS,
+        cs.TS_PY_LAMBDA_PARAMETERS,
+        cs.TS_PY_DELETE_STATEMENT,
+        cs.TS_PY_CASE_PATTERN,
+        cs.TS_PY_KEYWORD_PATTERN,
+        cs.TS_PY_SPLAT_PATTERN,
+    }
 )
+# The shapes a target is spelled in, climbed to reach what binds it:
+# `a, *b`, `(a)`, `del a, b`, `from m import a`, `*a: int`, `**a`.
+_PY_TARGET_SHAPES = cs.PY_BINDING_PATTERN_TYPES | {
+    cs.TS_PY_PARENTHESIZED_EXPRESSION,
+    cs.TS_PY_EXPRESSION_LIST,
+    cs.TS_PY_DOTTED_NAME,
+    cs.TS_PY_TYPED_PARAMETER,
+    cs.TS_PY_DICTIONARY_SPLAT_PATTERN,
+}
 
 
 def _is_field(node: Node, field: str, child: Node) -> bool:
@@ -1170,32 +1199,88 @@ def _is_field(node: Node, field: str, child: Node) -> bool:
     return found is not None and found.id == child.id
 
 
-def _python_writes_name(identifier: Node) -> bool:
-    """Whether the statement holding `identifier` rebinds or mutates that
-    name rather than reads it: an assignment, `for`, walrus, `as`, def or
-    class target, an import, `del`, `global`, a `case` pattern, or a call of
-    one of its methods (`__all__.append(...)`)."""
+def _python_name_use(identifier: Node) -> _NameUse:
+    """How one occurrence uses its name: binds it (an assignment, `for`,
+    `as`, walrus, def or class name, parameter, import, `del` or `case`
+    capture), mutates what it holds (a method call, or an item or attribute
+    of it as a target), declares it `global`, or reads it. A `nonlocal`
+    names a binding of an enclosing def, which that def's own uses show."""
     child, node = identifier, identifier.parent
-    while (
-        node is not None
-        and node.type == cs.TS_PY_ATTRIBUTE
-        and _is_field(node, cs.FIELD_OBJECT, child)
-    ):
-        child, node = node, node.parent
-        if (
-            node is not None
-            and node.type == cs.TS_PY_CALL
-            and _is_field(node, cs.TS_FIELD_FUNCTION, child)
-        ):
-            return True
+    held = False
     while node is not None:
-        if node.type in _PY_WRITING_STATEMENTS:
-            return True
-        field = _PY_TARGET_FIELDS.get(node.type)
-        if field is not None and _is_field(node, field, child):
-            return True
+        if node.type == cs.TS_PY_ATTRIBUTE and _is_field(node, cs.FIELD_OBJECT, child):
+            call = node.parent
+            if (
+                call is not None
+                and call.type == cs.TS_PY_CALL
+                and _is_field(call, cs.TS_FIELD_FUNCTION, node)
+            ):
+                return _NameUse.MUTATE
+            held = True
+        elif node.type == cs.TS_PY_SUBSCRIPT and _is_field(node, cs.FIELD_VALUE, child):
+            held = True
+        elif node.type not in _PY_TARGET_SHAPES:
+            break
         child, node = node, node.parent
-    return False
+    use = _python_binding_use(node, child) if node is not None else _NameUse.READ
+    return _NameUse.MUTATE if held and use is _NameUse.BIND else use
+
+
+def _python_binding_use(node: Node, child: Node) -> _NameUse:
+    """How `node` uses the target shape `child` it holds."""
+    if node.type == cs.TS_PY_GLOBAL_STATEMENT:
+        return _NameUse.GLOBAL
+    if node.type in _PY_BINDING_HOLDERS or (
+        node.type in cs.PY_IMPORT_TYPES
+        and not _is_field(node, cs.FIELD_MODULE_NAME, child)
+    ):
+        return _NameUse.BIND
+    field = _PY_TARGET_FIELDS.get(node.type)
+    if field is not None and _is_field(node, field, child):
+        return _NameUse.BIND
+    return _NameUse.READ
+
+
+def _python_name_scope(node: Node, walrus: bool = False) -> Node:
+    """The def, class body, lambda or comprehension whose names `node` is
+    one of, else the module. A def's or class's own name, decorators and
+    bases are the enclosing scope's, and a walrus target is the scope's
+    around its comprehension, as Python binds them."""
+    child, current = node, node.parent
+    while current is not None and current.parent is not None:
+        if (
+            current.type == cs.TS_PY_LAMBDA
+            or (current.type in cs.PY_COMPREHENSION_TYPES and not walrus)
+            or (
+                current.type == cs.TS_PY_FUNCTION_DEFINITION
+                and not _is_field(current, cs.FIELD_NAME, child)
+            )
+            or (
+                current.type == cs.TS_PY_CLASS_DEFINITION
+                and _is_field(current, cs.FIELD_BODY, child)
+            )
+        ):
+            return current
+        child, current = current, current.parent
+    return current if current is not None else node
+
+
+def _python_module_owns(scope: Node, uses: Mapping[int, set[_NameUse]]) -> bool:
+    """Whether the name `scope` reads is the module's, by Python's scope
+    rules: the first scope out that declares it `global` makes it the
+    module's, one that binds it keeps it its own, and a class body is passed
+    over from the scopes inside it."""
+    from_inner = False
+    while scope.parent is not None:
+        if not (from_inner and scope.type == cs.TS_PY_CLASS_DEFINITION):
+            seen = uses.get(scope.id, set())
+            if _NameUse.GLOBAL in seen:
+                return True
+            if _NameUse.BIND in seen:
+                return False
+        from_inner = from_inner or scope.type != cs.TS_PY_CLASS_DEFINITION
+        scope = _python_name_scope(scope)
+    return True
 
 
 def _runs_later(node: Node, statement: Node) -> bool:
@@ -1212,9 +1297,9 @@ def _runs_later(node: Node, statement: Node) -> bool:
     return False
 
 
-def _python_dunder_all_writes(statement: Node) -> Iterator[Node]:
-    """Each `__all__` the statement rebinds or mutates, at any depth. Another
-    object's `__all__` (`ns.__all__ = ...`) is not the module's."""
+def _python_dunder_all_names(statement: Node) -> Iterator[Node]:
+    """Each `__all__` name the statement holds, at any depth; another
+    object's `__all__` (`ns.__all__ = ...`) is not one."""
     if statement.text is None or cs.PY_DUNDER_ALL.encode() not in statement.text:
         return
     stack = [statement]
@@ -1224,10 +1309,27 @@ def _python_dunder_all_writes(statement: Node) -> Iterator[Node]:
         if node.type != cs.TS_PY_IDENTIFIER or node.text != cs.PY_DUNDER_ALL.encode():
             continue
         owner = node.parent
-        if owner is not None and _is_field(owner, cs.TS_PY_FIELD_ATTRIBUTE, node):
-            continue
-        if _python_writes_name(node):
+        if owner is None or not _is_field(owner, cs.TS_PY_FIELD_ATTRIBUTE, node):
             yield node
+
+
+def _python_dunder_all_writes(statement: Node) -> Iterator[Node]:
+    """Each `__all__` the statement rebinds or mutates that is the module's.
+    One a def, class body, lambda or comprehension binds as its own is not,
+    so a helper's local `__all__` leaves the module's list alone."""
+    found = []
+    uses: dict[int, set[_NameUse]] = {}
+    for name in _python_dunder_all_names(statement):
+        use = _python_name_use(name)
+        walrus = (
+            name.parent is not None and name.parent.type == cs.TS_PY_NAMED_EXPRESSION
+        )
+        scope = _python_name_scope(name, walrus=walrus and use is _NameUse.BIND)
+        uses.setdefault(scope.id, set()).add(use)
+        found.append((name, use, scope))
+    for name, use, scope in found:
+        if use in (_NameUse.BIND, _NameUse.MUTATE) and _python_module_owns(scope, uses):
+            yield name
 
 
 def _python_dunder_all_change(statement: Node) -> list[str] | None:
