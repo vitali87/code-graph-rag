@@ -436,3 +436,129 @@ def test_cpp_linkage_that_must_not_change(
     linkage: dict[str, bool], symbol: str, is_exported: bool
 ) -> None:
     assert _one(linkage, f".{symbol}") is is_exported
+
+
+# Greptile on PR #2952: a member is only as visible as every class around
+# it, and a C nested function has no linkage.
+NESTED_CPP = """\
+class Outer {
+private:
+    struct Hidden {
+        static int helper() { return 1; }
+        struct Below { void below_hidden() {} };
+    };
+    struct Fwd;
+    template <class T> struct Tmpl { void tmpl_hidden() {} };
+public:
+    class Open {
+        struct Deep { void deep_default() {} };
+    public:
+        struct Inner { void inner_public() {} };
+    private:
+        class Closed { public: void closed_public() {} };
+    };
+protected:
+    struct Prot { void prot_public() {} };
+};
+
+class Plain { struct ByDefault { void by_default() {} }; };
+struct Pub { struct Nested { void nested_public() {} }; };
+
+struct Outer::Fwd { void fwd_member() {} };
+
+namespace ns {
+namespace { struct Anon { void anon_member() {} }; }
+class Box { int qualified_member(); };
+namespace in { void qualified_free(); }
+}
+int ns::Box::qualified_member() { return 2; }
+void ns::in::qualified_free() {}
+"""
+NESTED_C = """\
+int outer(void) {
+    int nested(int x) { return x; }
+    return nested(1);
+}
+"""
+
+
+@pytest.fixture
+def nested(tmp_path: Path) -> dict[str, bool]:
+    return _run(tmp_path, {"nest.cpp": NESTED_CPP, "gnu.c": NESTED_C})
+
+
+@pytest.mark.parametrize(
+    "symbol",
+    [
+        "Hidden.helper",
+        "Below.below_hidden",
+        "Tmpl.tmpl_hidden",
+        "Deep.deep_default",
+        "Closed.closed_public",
+        "ByDefault.by_default",
+        "fwd_member",
+        "Anon.anon_member",
+        "Box.qualified_member",
+        "gnu.nested",
+    ],
+    ids=[
+        "cpp-member-of-a-private-nested-struct",
+        "cpp-public-class-inside-a-private-one",
+        "cpp-member-of-a-private-nested-template",
+        "cpp-member-of-a-default-private-nested-struct",
+        "cpp-member-of-a-private-class-two-levels-down",
+        "cpp-nested-struct-of-a-class-before-any-label",
+        "cpp-member-of-a-nested-class-defined-out-of-line",
+        "cpp-member-of-a-class-in-an-anonymous-namespace",
+        "cpp-out-of-line-member-qualified-through-a-namespace",
+        "c-gnu-nested-function",
+    ],
+)
+def test_a_member_of_a_hidden_class_stays_private(
+    nested: dict[str, bool], symbol: str
+) -> None:
+    matches = [qn for qn in nested if qn.endswith(f".{symbol}")]
+    assert matches, symbol
+    assert not any(nested[qn] for qn in matches), symbol
+
+
+@pytest.mark.parametrize(
+    "symbol",
+    [
+        "Inner.inner_public",
+        "Prot.prot_public",
+        "Nested.nested_public",
+        "in.qualified_free",
+        "gnu.outer",
+    ],
+    ids=[
+        "cpp-public-nested-class-of-a-public-class",
+        "cpp-protected-nested-struct-subclasses-reach",
+        "cpp-struct-nested-in-a-struct",
+        "cpp-function-qualified-by-two-namespaces",
+        "c-function-around-a-nested-one",
+    ],
+)
+def test_a_member_of_a_reachable_class_stays_exported(
+    nested: dict[str, bool], symbol: str
+) -> None:
+    matches = [qn for qn in nested if qn.endswith(f".{symbol}")]
+    assert matches, symbol
+    assert any(nested[qn] for qn in matches), symbol
+
+
+def test_an_unused_member_of_a_private_nested_struct_is_dead(tmp_path: Path) -> None:
+    source = """\
+static int unused_callee() { return 1; }
+
+class Outer {
+private:
+    struct Hidden { static int helper() { return unused_callee(); } };
+};
+"""
+    graph = _indexed(tmp_path, {"hidden.cpp": source})
+    config = default_dead_code_config(include_tests=True, include_classes=False)
+
+    dead = collect_dead_code(_Graph(graph), graph.project, config)
+
+    assert {row["name"] for row in dead} >= {"helper", "unused_callee"}

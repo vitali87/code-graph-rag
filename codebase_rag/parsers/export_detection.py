@@ -723,9 +723,12 @@ def _c_exported(node: Node) -> bool:
     # A C function without `static` has external linkage: any translation
     # unit may call it, so it is the library's API (issue #2707). A `static`
     # declaration earlier in the file gives the definition internal linkage
-    # though it does not repeat the keyword (Greptile, PR #2952).
+    # though it does not repeat the keyword (Greptile, PR #2952). A GCC
+    # nested function, defined in another function's body, has no linkage
+    # at all.
     return (
         node.type == cs.TS_CPP_FUNCTION_DEFINITION
+        and not _cpp_local_or_anonymous(node)
         and not _cpp_static(node)
         and not _declared_static_before(node)
     )
@@ -873,7 +876,7 @@ def _cpp_public_api(node: Node) -> bool:
     if scope is None or _cpp_local_or_anonymous(scope):
         return False
     if scope.type == cs.TS_FIELD_DECLARATION_LIST:
-        return _cpp_member_access(member, scope) != cs.CPP_ACCESS_PRIVATE
+        return _cpp_reachable_member(member)
     return (
         scope.type
         in (
@@ -920,6 +923,28 @@ def _cpp_local_or_anonymous(scope: Node) -> bool:
     return False
 
 
+def _cpp_reachable_member(member: Node) -> bool:
+    # A member is only as visible as every class around it: a `public:`
+    # member of a `private` nested class is as hidden as that class. A class
+    # defined out of line (`struct Outer::Hidden {}`) takes its access from
+    # `Outer`, usually in another file, so it is left alone like an
+    # out-of-line member (Greptile, PR #2952).
+    current = member
+    while current.parent is not None:
+        body = current.parent
+        if body.type == cs.TS_FIELD_DECLARATION_LIST:
+            owner = body.parent
+            if _cpp_member_access(current, body) == cs.CPP_ACCESS_PRIVATE or (
+                owner is not None
+                and _cpp_qualified_by_class(
+                    owner.child_by_field_name(cs.FIELD_NAME), owner
+                )
+            ):
+                return False
+        current = body
+    return True
+
+
 def _cpp_member_access(member: Node, body: Node) -> str:
     # The access a member falls under: the last `public:` / `protected:` /
     # `private:` label before it, else its class kind's default.
@@ -949,12 +974,23 @@ def _cpp_defined_out_of_line(node: Node) -> bool:
         if declarator is not None
         else None
     )
+    return _cpp_qualified_by_class(name, node)
+
+
+def _cpp_qualified_by_class(name: Node | None, context: Node) -> bool:
+    # The innermost qualifier decides: `ns::Box::f` names a member of class
+    # `Box` though its outermost qualifier `ns` is a namespace (Greptile, PR
+    # #2952). Any qualifier that is no namespace of the file is a class.
     if name is None or name.type != cs.TS_CPP_QUALIFIED_IDENTIFIER:
         return False
-    scope = safe_decode_text(name.child_by_field_name(cs.FIELD_SCOPE)) or ""
-    owner = scope.rsplit(cs.SEPARATOR_DOUBLE_COLON, 1)[-1]
-    namespaces, classes = _cpp_file_scope_names(node)
-    return not (owner in namespaces and owner not in classes)
+    owner = name.child_by_field_name(cs.FIELD_SCOPE)
+    inner = name.child_by_field_name(cs.FIELD_NAME)
+    while inner is not None and inner.type == cs.TS_CPP_QUALIFIED_IDENTIFIER:
+        owner = inner.child_by_field_name(cs.FIELD_SCOPE)
+        inner = inner.child_by_field_name(cs.FIELD_NAME)
+    scope = safe_decode_text(owner) or ""
+    namespaces, classes = _cpp_file_scope_names(context)
+    return not (scope in namespaces and scope not in classes)
 
 
 def _cpp_file_scope_names(node: Node) -> tuple[set[str], set[str]]:
