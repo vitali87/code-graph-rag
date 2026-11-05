@@ -621,14 +621,12 @@ def _java_exported(node: Node) -> bool:
             return False
         if any(c.type in _JAVA_PUBLIC_MODIFIERS for c in modifiers.children):
             return True
-    # Interface methods are public without a visibility modifier (JLS 9.4).
+    # An interface's (or annotation type's) member is implicitly public unless
+    # declared `private` (Java 9+), and is written without the keyword, so its
+    # abstract, `default` and `static` methods are the interface's API
+    # (JLS 9.4, 9.6; issues #2847, #2701).
     parent = node.parent
-    return (
-        parent is not None
-        and parent.type == cs.TS_JAVA_INTERFACE_BODY
-        and parent.parent is not None
-        and parent.parent.type == cs.TS_INTERFACE_DECLARATION
-    )
+    return parent is not None and parent.type in cs.JAVA_IMPLICITLY_PUBLIC_BODIES
 
 
 def _csharp_exported(node: Node) -> bool:

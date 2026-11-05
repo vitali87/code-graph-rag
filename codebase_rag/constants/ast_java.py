@@ -11,6 +11,10 @@ from .core import ENTITY_FUNCTION, ENTITY_METHOD
 TS_JAVA_METHOD_INVOCATION = "method_invocation"
 TS_JAVA_ANNOTATION_TYPE_DECLARATION = "annotation_type_declaration"
 TS_JAVA_INTERFACE_BODY = "interface_body"
+# The bodies whose members are implicitly public (JLS 9.4, 9.6).
+JAVA_IMPLICITLY_PUBLIC_BODIES = frozenset(
+    {TS_JAVA_INTERFACE_BODY, "annotation_type_body"}
+)
 
 # Java interface `extends A, B` clause (tree-sitter-java); holds a type_list.
 TS_JAVA_EXTENDS_INTERFACES = "extends_interfaces"
