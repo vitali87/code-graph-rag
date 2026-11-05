@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Generator
+from collections.abc import Generator, Iterator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -15,6 +15,14 @@ from codebase_rag.config import (
 )
 from codebase_rag.main import prompt_for_unignored_directories
 from codebase_rag.types_defs import CgrignorePatterns
+
+
+@pytest.fixture(autouse=True)
+def _decline_saving_keeps() -> Iterator[None]:
+    # These tests are about the candidates and the merged selection; saving
+    # the choice to .cgrignore is asked separately (#2448) and declined here.
+    with patch("codebase_rag.main.Confirm.ask", return_value=False):
+        yield
 
 
 def test_returns_empty_when_no_file(temp_repo: Path) -> None:
