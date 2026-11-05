@@ -4,7 +4,7 @@ import re
 from collections import defaultdict, deque
 from collections.abc import Collection, Iterable, Iterator, Mapping
 from pathlib import Path, PurePath
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
 from loguru import logger
 from tree_sitter import Node
@@ -15,6 +15,16 @@ from ..language_spec import get_language_for_extension
 from ..types_defs import CppOperatorSignature, FunctionRegistryTrieProtocol, NodeType
 from ..utils import qn_markers
 from .cpp import utils as cpp_utils
+from .csharp import utils as csharp_utils
+from .csharp.overloads import (
+    DeclaredTypes,
+    Scope,
+    TypeScopes,
+    spells_interface,
+    spells_member,
+    unshadowed,
+    written_bindings,
+)
 from .go import interfaces as go_ifaces
 from .go import utils as go_utils
 from .go.builds import ALWAYS, Expr, all_of, holds_wherever, possible
@@ -32,6 +42,9 @@ from .rs import utils as rs_utils
 from .semantic_call_join import call_site_key, declared_location
 from .type_inference import TypeInferenceEngine
 from .utils import safe_decode_text
+
+if TYPE_CHECKING:
+    from .csharp.type_inference import CSharpTypeInferenceEngine
 
 _SEPARATOR_PATTERN = re.compile(r"[.:]|::")
 # One initializer block's scope record, as held per module by
@@ -688,7 +701,7 @@ class CallResolver:
         # PRIVATE attribute so a project with no C# does not build an engine
         # just to clear an empty dict.
         if (csharp := self.type_inference._csharp_type_inference) is not None:
-            csharp._call_memo.clear()
+            csharp.clear_call_memo()
         # The Java class headers (issue #2470) were read off the trees the
         # last pass saw; a re-parsed superclass must be walked again.
         if (java := self.type_inference._java_type_inference) is not None:
@@ -1821,12 +1834,32 @@ class CallResolver:
             ):
                 for interface_qn, implementers in source.items():
                     implementers_of.setdefault(interface_qn, set()).update(implementers)
+            # A C# base list naming an interface its `I` guess reads as a
+            # class, an alias among them, implements it too (PR 2814 review).
+            for interface_qn, class_qn in self._csharp_inherited_interfaces():
+                implementers_of.setdefault(interface_qn, set()).add(class_qn)
             self._interface_impl_cache = {
                 interface_qn: next(iter(implementers))
                 for interface_qn, implementers in implementers_of.items()
                 if len(implementers) == 1
             }
         return self._interface_impl_cache
+
+    def _csharp_inherited_interfaces(self) -> Iterator[tuple[str, str]]:
+        # (interface, class) for each C# class whose base list names an
+        # interface its spelling hid, an alias (`using Run = N.IRun;`) or a
+        # name the `I` prefix guess reads as a class: the base resolves to a
+        # registered interface, so the class implements it, as C# reads it
+        # (PR 2814 review). An interface's own bases are no implementations.
+        registry = self.function_registry
+        for class_qn, bases in self.class_inheritance.items():
+            if registry.get(class_qn) == NodeType.INTERFACE:
+                continue
+            for base in bases:
+                if registry.get(base) == NodeType.INTERFACE and (
+                    self._module_language(class_qn) == cs.SupportedLanguage.CSHARP
+                ):
+                    yield base, class_qn
 
     def interface_sole_impl_targets(self, callee_qn: str) -> set[tuple[str, str]]:
         # A callee that IS an interface/trait method (the receiver was typed to
@@ -1835,16 +1868,119 @@ class CallResolver:
         # it for an additional CALLS edge. REPLACING the interface edge instead
         # (the pre-#665-era redirect) orphaned the interface stub: OVERRIDES
         # expansion only walks interface -> impl, so the stub's declaration
-        # (gson's FieldNamingStrategy.translateName) reported dead.
-        class_qn, sep, method_name = callee_qn.rpartition(cs.SEPARATOR_DOT)
-        if not sep:
+        # (gson's FieldNamingStrategy.translateName) reported dead. The
+        # member is split off before its parameter list, whose qualified
+        # types (`Go(List<System.String>)`) hold dots too (PR 2814 review).
+        class_qn, method_name = qn_markers.owner_and_member(callee_qn)
+        if not class_qn:
             return set()
         impl_qn = self._interface_impl_map().get(class_qn)
         if impl_qn is None:
             return set()
+        # A C# class that implements the member explicitly runs that body for
+        # an interface-typed call, even beside a public same-signature one.
+        if result := self._explicit_implementation(impl_qn, class_qn, method_name):
+            return {result}
         if result := self._try_resolve_method(impl_qn, method_name):
             return {result}
         return set()
+
+    def _explicit_implementation(
+        self, impl_qn: str, interface_qn: str, method_name: str
+    ) -> tuple[str, str] | None:
+        # A C# implementer that implements the member EXPLICITLY registers it
+        # as `IValidator#Validate(Ctx)` (issue #2619), and that body is the one
+        # an interface-typed call runs. Its spelling must name this interface,
+        # so `A.IRun.Go` and `B.IRun.Go` on one class stay apart, and spells a
+        # generic one's type parameters as its arguments: `IValidator<Person>
+        # #Validate(Person)` is `IValidator<T>`'s `Validate(T)`.
+        if self._module_language(impl_qn) != cs.SupportedLanguage.CSHARP:
+            return None
+        inference = self.type_inference
+        types = DeclaredTypes(
+            inference.csharp_class_namespaced, inference.csharp_class_generic_arity
+        )
+        shape = inference.csharp_generic_shapes.get(interface_qn)
+        declared = self._csharp_declared_type_parameters(
+            f"{interface_qn}{cs.SEPARATOR_DOT}{method_name}"
+        )
+        # Each side's types resolve once, in its own file, so an interface's
+        # bare `Widget` is never an implementer's other `Widget`, and the
+        # interface spelling binds in the implementer's file (PR 2814 review).
+        engine = inference.csharp_type_inference
+        spelled_in = engine.scope_of(impl_qn)
+        wanted = engine.scope_of(
+            interface_qn,
+            declared,
+            engine.member_lifts(f"{interface_qn}{cs.SEPARATOR_DOT}{method_name}"),
+        )
+        # A type parameter the member declares itself is not the interface's,
+        # so the spelling's argument never reaches it.
+        found = [
+            (node_type, qn)
+            for qn, node_type, written, member in self._explicit_members(
+                impl_qn, method_name
+            )
+            if spells_interface(written, interface_qn, spelled_in, types)
+            and spells_member(
+                member,
+                method_name,
+                unshadowed(written_bindings(written, shape, spelled_in), declared),
+                self._explicit_scopes(engine, impl_qn, qn, wanted),
+                (
+                    self._csharp_own_parameters(qn),
+                    self._csharp_own_parameters(
+                        f"{interface_qn}{cs.SEPARATOR_DOT}{method_name}"
+                    ),
+                ),
+            )
+        ]
+        # Two closings of one generic interface (`IRun<int>`, `IRun<string>`)
+        # each implement the member, and which body runs depends on the
+        # receiver's type arguments, which this lookup is not given: neither
+        # is guessed (PR 2814 review). A `#if` twin is the same body.
+        bodies = {qn_markers.strip_dup_marker(qn) for _, qn in found}
+        return found[0] if len(bodies) == 1 else None
+
+    def _explicit_scopes(
+        self,
+        engine: CSharpTypeInferenceEngine,
+        impl_qn: str,
+        member_qn: str,
+        wanted: Scope | None,
+    ) -> TypeScopes | None:
+        # The explicit member's file, its own type parameters in scope, and
+        # the interface member's.
+        given = engine.scope_of(
+            impl_qn,
+            self._csharp_declared_type_parameters(member_qn),
+            engine.member_lifts(member_qn),
+        )
+        return TypeScopes(given, wanted) if given and wanted else None
+
+    def _explicit_members(
+        self, impl_qn: str, method_name: str
+    ) -> Iterator[tuple[str, str, str, str]]:
+        # (qn, label, interface as written, member) for each explicit
+        # interface implementation `impl_qn` declares of `method_name`'s
+        # member, read off the class's method index rather than its every
+        # member per call (issue #2453).
+        prefix = f"{impl_qn}{cs.SEPARATOR_DOT}"
+        engine = self.type_inference.csharp_type_inference
+        member = method_name.split(cs.CHAR_PAREN_OPEN, 1)[0]
+        for qn in engine.explicit_methods(impl_qn, member):
+            if explicit := csharp_utils.split_explicit_member(qn[len(prefix) :]):
+                yield qn, NodeType.METHOD, explicit[0], explicit[1]
+
+    def _csharp_declared_type_parameters(self, method_qn: str) -> tuple[str, ...]:
+        # `M<T, U>` -> ("T", "U"): the type parameters a C# method declares.
+        return self._csharp_own_parameters(method_qn) or ()
+
+    def _csharp_own_parameters(self, method_qn: str) -> tuple[str, ...] | None:
+        # A C# method's own type parameters, () for none; None when its
+        # shape is not known, which leaves them unmatched by position.
+        shape = self.type_inference.csharp_call_shapes.get(method_qn)
+        return shape.type_parameters if shape is not None else None
 
     def interface_dispatch_targets(
         self, callee_qn: str

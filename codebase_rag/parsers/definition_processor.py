@@ -15,6 +15,7 @@ from ..types_defs import (
     ASTNode,
     CppDefinitionSpan,
     CSharpCallShape,
+    CSharpGenericShape,
     DeferredCppInherit,
     DeferredInherit,
     FunctionLocations,
@@ -248,8 +249,19 @@ class DefinitionProcessor(
         # `proj/Core.cs` with `namespace Util` yields
         # `proj.Core.Util.Helper`, which sits under the SIBLING module
         # `proj.Core.Util`. No prefix rule on the qn can recover the
-        # declarer, so the prune reads this map (#1769).
+        # declarer, so the prune reads this map (#1769), and overload ranking
+        # resolves a member's `where` bounds and an `implicit operator`'s
+        # types in it (PR 2814 review). Every C# type has an entry.
         self.csharp_class_owner_module: dict[str, str] = {}
+        # {class qn: its type parameters and the arguments it passes to each
+        # generic base}, so a call on `PersonValidator : Inline<Person>`
+        # ranks `Validator<T>.Validate(T)` as taking a Person (issue #2619).
+        # Only types that take or pass a type argument are recorded.
+        self.csharp_generic_shapes: dict[str, CSharpGenericShape] = {}
+        # {class qn: (source, target) of each `implicit operator` it declares,
+        # as written}, so `M(new Source())` can bind `M(Target)` through
+        # `implicit operator Target(Source s)` (PR 2814 review).
+        self.csharp_implicit_conversions: dict[str, list[tuple[str, str]]] = {}
         # {class qn: namespace-qualified name (`N1.Outer.Widget`)} for every
         # C# type, read from the declaration at ingest: the qn leaves out a
         # namespace the module's directory already spells (issue #1629), so

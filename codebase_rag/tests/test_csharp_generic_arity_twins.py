@@ -258,14 +258,15 @@ class TestEachReferenceBindsItsWrittenArity:
     ) -> None:
         store, plain, generic = indexed
         rel = cs.RelationshipType.CALLS
+        # A signature keeps its parameter types' arguments (issue #2619).
         assert _targets(store, rel, "Explicit.NonGeneric") == {
-            f"{plain}.PB(System.Func)"
+            f"{plain}.PB(System.Func<System.Exception, System.Exception?>)"
         }
         assert _targets(store, rel, "Explicit.GenericInt") == {
-            f"{generic}.PB(System.Func)"
+            f"{generic}.PB(System.Func<TResult, bool>)"
         }
         assert _targets(store, rel, "Explicit.TargetTyped") == {
-            f"{generic}.PB(System.Func)"
+            f"{generic}.PB(System.Func<TResult, bool>)"
         }
 
     def test_a_static_call_binds_the_written_arity(

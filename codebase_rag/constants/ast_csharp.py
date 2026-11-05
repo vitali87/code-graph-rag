@@ -15,6 +15,21 @@ TS_CSHARP_FILE_SCOPED_NAMESPACE_DECLARATION = "file_scoped_namespace_declaration
 # or member (default `private`) for export detection.
 TS_CSHARP_DECLARATION_LIST = "declaration_list"
 TS_CSHARP_EXPLICIT_INTERFACE_SPECIFIER = "explicit_interface_specifier"
+# An explicit interface implementation (`int IValidator.Validate(Ctx)`) is
+# reachable only through an `IValidator` receiver, so it registers under its
+# own leaf, `IValidator#Validate(Ctx)`: the documentation-ID spelling, where a
+# dot of the interface path becomes `#` so the leaf stays one qn segment
+# (issue #2619).
+CSHARP_EXPLICIT_IMPL_SEPARATOR = "#"
+# Inside generic arguments a space next to one of these is noise, so a
+# signature drops it and `Map< K ,V >` and `Map<K, V>` spell one overload.
+CSHARP_SIGNATURE_TIGHT_CHARS = "<>,"
+# A simple name in a type, not one a dot qualifies: what a type parameter
+# looks like where a signature spells it (`T` in `Ctx<T>`, not in `N.T`).
+CSHARP_TYPE_IDENTIFIER_PATTERN = r"(?<![\w.@!])[A-Za-z_]\w*"
+# Brackets a type argument may contain, whose commas are not its own.
+CSHARP_NESTED_OPEN = "(["
+CSHARP_NESTED_CLOSE = ")]"
 
 # Type declarations -> Class nodes.
 TS_CSHARP_CLASS_DECLARATION = "class_declaration"
@@ -54,8 +69,27 @@ TS_CSHARP_METHOD_DECLARATION = "method_declaration"
 TS_CSHARP_CONSTRUCTOR_DECLARATION = "constructor_declaration"
 TS_CSHARP_DESTRUCTOR_DECLARATION = "destructor_declaration"
 TS_CSHARP_LOCAL_FUNCTION_STATEMENT = "local_function_statement"
+# The type declarations that may declare type parameters.
+CSHARP_GENERIC_TYPE_DECLARATIONS = frozenset(
+    {
+        TS_CSHARP_CLASS_DECLARATION,
+        TS_CSHARP_STRUCT_DECLARATION,
+        TS_CSHARP_RECORD_DECLARATION,
+        TS_CSHARP_INTERFACE_DECLARATION,
+    }
+)
+# The declarations whose type parameters are in scope in what they hold: a
+# type's members, a method's or local function's body.
+CSHARP_GENERIC_DECLARATIONS = frozenset(
+    {
+        *CSHARP_GENERIC_TYPE_DECLARATIONS,
+        TS_CSHARP_METHOD_DECLARATION,
+        TS_CSHARP_LOCAL_FUNCTION_STATEMENT,
+    }
+)
 TS_CSHARP_OPERATOR_DECLARATION = "operator_declaration"
 TS_CSHARP_CONVERSION_OPERATOR_DECLARATION = "conversion_operator_declaration"
+TS_CSHARP_IMPLICIT_KEYWORD = "implicit"
 TS_CSHARP_PROPERTY_DECLARATION = "property_declaration"
 
 # The scopes a local function can be declared in (and be call-visible from):
@@ -110,10 +144,67 @@ TS_CSHARP_BASE_LIST = "base_list"
 # or a `predefined_type` (an enum's underlying integral type -> not a base).
 TS_CSHARP_GENERIC_NAME = "generic_name"
 TS_CSHARP_CAST_EXPRESSION = "cast_expression"
+TS_CSHARP_AS_EXPRESSION = "as_expression"
 TS_CSHARP_POSTFIX_UNARY_EXPRESSION = "postfix_unary_expression"
 TS_CSHARP_IMPLICIT_PARAMETER = "implicit_parameter"
 TS_CSHARP_FIELD_TYPE_PARAMETERS = "type_parameters"
 TS_CSHARP_TYPE_PARAMETER_LIST = "type_parameter_list"
+# `where T : Shape, new()`: one clause per constrained type parameter.
+TS_CSHARP_TYPE_PARAMETER_CONSTRAINTS_CLAUSE = "type_parameter_constraints_clause"
+TS_CSHARP_TYPE_PARAMETER_CONSTRAINT = "type_parameter_constraint"
+TS_CSHARP_CONSTRUCTOR_CONSTRAINT = "constructor_constraint"
+# Constraints that name no type: `notnull` and `unmanaged` parse as names.
+CSHARP_KEYWORD_CONSTRAINTS = frozenset(
+    {"class", "struct", "notnull", "unmanaged", "default"}
+)
+# Of those, the ones a type's kind meets or breaks (PR 2814 review): a value
+# type alone meets `struct` and `unmanaged`, a reference type alone `class`
+# (`class?` too). Kept as the bound they write, `T:struct`.
+CSHARP_STRUCT_CONSTRAINT = "struct"
+CSHARP_CLASS_CONSTRAINT = "class"
+CSHARP_UNMANAGED_CONSTRAINT = "unmanaged"
+# A method's own type parameter named by its declaration position when two
+# members' signatures are compared, `!!0` for the first: no C# type is
+# spelled so (Greptile review of PR 2814).
+CSHARP_METHOD_TYPE_PARAMETER_MARK = "!!"
+# A call site's type parameter, as every type resolved there spells it: an
+# argument's, a receiver's type argument, an explicit method type argument,
+# a `where` bound. It is one type, itself, never one of its name (`String`
+# of a `Go<String>` is no `string`; Greptile review of PR 2814).
+CSHARP_TYPE_PARAMETER_MARK = "!"
+# Between a call site's type parameter's name and the declaration declaring
+# it, in its token: `!T@412`.
+CSHARP_TYPE_PARAMETER_SCOPE_SEPARATOR = "@"
+# A token as it appears inside a type: `!T@412` in `Box<!T@412>`.
+CSHARP_TYPE_PARAMETER_TOKEN_PATTERN = r"!+[A-Za-z_]\w*(?:@\d+)?"
+# `where T : default`, which only an override or an explicit implementation
+# writes: a `T?` there annotates T (C# 9). Every type meets it.
+CSHARP_DEFAULT_CONSTRAINT = "default"
+CSHARP_KIND_CONSTRAINTS = frozenset(
+    {
+        CSHARP_STRUCT_CONSTRAINT,
+        CSHARP_CLASS_CONSTRAINT,
+        CSHARP_UNMANAGED_CONSTRAINT,
+        CSHARP_DEFAULT_CONSTRAINT,
+    }
+)
+# The kinds that make a `T?` `Nullable<T>`, and those that keep it an
+# annotation in an override or an explicit implementation, where C# 9 reads
+# an unconstrained one as `Nullable<T>`.
+CSHARP_LIFTING_CONSTRAINTS = frozenset(
+    {CSHARP_STRUCT_CONSTRAINT, CSHARP_UNMANAGED_CONSTRAINT}
+)
+CSHARP_ANNOTATING_CONSTRAINTS = frozenset(
+    {CSHARP_CLASS_CONSTRAINT, CSHARP_DEFAULT_CONSTRAINT}
+)
+# `where T : System.Enum` is met by an enum alone, and `System.ValueType`
+# (a type parameter fixed to it) by a value type alone.
+CSHARP_ENUM_BASE_TYPE = "Enum"
+CSHARP_VALUE_TYPE_BASE = "ValueType"
+# A record implements `IEquatable<>` of itself, which its base list does not
+# write; it is recorded among the bases it writes so its interfaces are not
+# taken as known.
+CSHARP_RECORD_EQUATABLE = "System.IEquatable"
 # The `base` receiver keyword parses as a bare "base" node in this
 # grammar version (not "base_expression").
 TS_CSHARP_BASE_EXPRESSION = "base"
@@ -144,6 +235,15 @@ TS_CSHARP_PREDEFINED_TYPE = "predefined_type"
 TS_CSHARP_MODIFIER = "modifier"
 TS_CSHARP_MODIFIER_OVERRIDE = "override"
 TS_CSHARP_MODIFIER_STATIC = "static"
+# How an argument is passed: a parameter's `ref`, `out`, `in` or `ref
+# readonly` modifiers, and the `ref`, `out` or `in` written before an
+# argument. A `ref` or `out` parameter takes only an argument passed the same
+# way, and an argument so passed only a parameter of the same mode (PR 2814).
+CSHARP_MODE_REF = "ref"
+CSHARP_MODE_OUT = "out"
+CSHARP_MODE_IN = "in"
+CSHARP_MODE_REF_READONLY = "ref readonly"
+CSHARP_PASSING_MODIFIERS = frozenset({"ref", "out", "in", "readonly"})
 # A type split across files carries `partial` on every part; parts with the
 # same namespace-qualified name are one logical type, unified for member and
 # base resolution (see csharp_partial_groups).
@@ -217,10 +317,22 @@ TS_CSHARP_NESTED_SCOPE_TYPES = (
 
 # Import form: `using System;`, `using X = Y;`, `global using System.Linq;`.
 TS_CSHARP_USING_DIRECTIVE = "using_directive"
+# Where a `using` directive can stand: the file, a namespace (block or
+# file-scoped), its body, and a conditional-compilation branch.
+CSHARP_USING_HOLDERS = frozenset(
+    {
+        TS_CSHARP_NAMESPACE_DECLARATION,
+        TS_CSHARP_FILE_SCOPED_NAMESPACE_DECLARATION,
+        *CSHARP_TYPE_DECLARATION_HOLDERS,
+    }
+)
 TS_CSHARP_STATIC = "static"
 TS_CSHARP_GLOBAL = "global"
 # A `params T[]` tail parameter is an array type in the method signature.
 CSHARP_ARRAY_SUFFIX = "[]"
+# What opens each array rank in a type's shape: `int[][,]` has two.
+CSHARP_ARRAY_RANK_OPEN = "["
+CSHARP_ARRAY_RANK_CLOSE = "]"
 
 # The name node inside a using directive: a dotted `qualified_name` or a bare
 # `identifier` (both the imported path and, in the alias form, the alias).
@@ -232,6 +344,21 @@ TS_CSHARP_IDENTIFIER = "identifier"
 TS_CSHARP_ARROW_EXPRESSION_CLAUSE = "arrow_expression_clause"
 # `public T this[int i] { ... }`: return-typed via `type` like a property.
 TS_CSHARP_INDEXER_DECLARATION = "indexer_declaration"
+TS_CSHARP_BRACKETED_ARGUMENT_LIST = "bracketed_argument_list"
+# An element access's index (`xs[b: "s", a: 0]`), which binds an indexer as
+# a call's arguments bind a method.
+TS_CSHARP_FIELD_SUBSCRIPT = "subscript"
+# A stored indexer parameter's name, marked as a method's positional
+# parameters are: `...xs` a `params` tail, `b?` a defaulted one.
+CSHARP_STORED_PARAMETER_NAME_PATTERN = r"(?:\.\.\.)?@?[^\W\d]\w*\??"
+# A simple name a `?` follows (`U?`): on a type parameter, an annotation or
+# a `Nullable<U>` by its constraint.
+CSHARP_ANNOTATED_NAME_PATTERN = r"(?<![\w.])([^\W\d]\w*)\?"
+# Between the two halves of a pair a C# type node stores: an indexer's
+# return type and parameters, a field's name and type.
+CSHARP_STORED_PAIR_SEPARATOR = "=>"
+# The name an indexer is declared under, as its signature is read.
+CSHARP_INDEXER_NAME = "this"
 # Some grammar versions wrap a declarator's `= value` initializer in an
 # equals_value_clause node (the pinned grammar hangs the value directly off
 # the declarator); the target-typed-new walk skips it either way, mirroring
@@ -371,6 +498,8 @@ TS_CSHARP_CATCH_DECLARATION = "catch_declaration"
 TS_CSHARP_FROM_CLAUSE = "from_clause"
 TS_CSHARP_LET_CLAUSE = "let_clause"
 TS_CSHARP_EVENT_FIELD_DECLARATION = "event_field_declaration"
+# An event with accessors, named by its `name` (PR 2814 review).
+TS_CSHARP_EVENT_DECLARATION = "event_declaration"
 # A top-level statement (C# 9); its locals are in scope across the file.
 TS_CSHARP_GLOBAL_STATEMENT = "global_statement"
 # Nodes that bound the scope of the value names declared inside them.
@@ -408,122 +537,26 @@ CSHARP_LITERAL_ARG_TYPES: dict[str, str] = {
     "raw_string_literal": "string",
     "interpolated_string_expression": "string",
 }
-# The parameter types each literal type converts to implicitly. A parameter
-# type outside every set (a user type, a generic parameter) is not judged.
-CSHARP_LITERAL_ACCEPTS: dict[str, frozenset[str]] = {
-    # A constant int converts to every integral type it fits, so the
-    # narrower integral types are accepted too.
-    "int": frozenset(
-        {
-            "int",
-            "long",
-            "short",
-            "ushort",
-            "uint",
-            "ulong",
-            "byte",
-            "sbyte",
-            "nint",
-            "nuint",
-            "float",
-            "double",
-            "decimal",
-            "object",
-            "Int16",
-            "Int32",
-            "Int64",
-            "UInt16",
-            "UInt32",
-            "UInt64",
-            "Byte",
-            "SByte",
-            "Single",
-            "Double",
-            "Decimal",
-            "Object",
-        }
-    ),
-    "long": frozenset(
-        {
-            "long",
-            "float",
-            "double",
-            "decimal",
-            "object",
-            "Int64",
-            "Single",
-            "Double",
-            "Decimal",
-            "Object",
-        }
-    ),
-    "uint": frozenset(
-        {
-            "uint",
-            "long",
-            "ulong",
-            "float",
-            "double",
-            "decimal",
-            "object",
-            "UInt32",
-            "Int64",
-            "UInt64",
-            "Single",
-            "Double",
-            "Decimal",
-            "Object",
-        }
-    ),
-    "ulong": frozenset(
-        {
-            "ulong",
-            "float",
-            "double",
-            "decimal",
-            "object",
-            "UInt64",
-            "Single",
-            "Double",
-            "Decimal",
-            "Object",
-        }
-    ),
-    "float": frozenset({"float", "double", "object", "Single", "Double", "Object"}),
-    "decimal": frozenset({"decimal", "object", "Decimal", "Object"}),
-    "double": frozenset({"double", "object", "Double", "Object"}),
-    "bool": frozenset({"bool", "object", "Boolean", "Object"}),
-    "char": frozenset(
-        {
-            "char",
-            "int",
-            "long",
-            "float",
-            "double",
-            "decimal",
-            "object",
-            "Char",
-            "Int32",
-            "Int64",
-            "Single",
-            "Double",
-            "Decimal",
-            "Object",
-        }
-    ),
-    "string": frozenset({"string", "object", "String", "Object"}),
-}
-# A numeric literal's type comes from its suffix (`1L` is long, `1.0m` is
-# decimal), so the two numeric node types are typed from their text; an
-# unsuffixed integer too large for int is left unjudged (CodeRabbit, PR #2036).
+# A numeric literal's type comes from its suffix and value (`1L` is long,
+# `1.0m` decimal, `3000000000` uint), so the two numeric node types are typed
+# from their text (CodeRabbit, PR #2036; PR 2814 review).
 TS_CSHARP_INTEGER_LITERAL = "integer_literal"
 TS_CSHARP_REAL_LITERAL = "real_literal"
-CSHARP_INTEGER_SUFFIX_TYPES: dict[str, str] = {
-    "": "int",
-    "l": "long",
-    "u": "uint",
-    "ul": "ulong",
-    "lu": "ulong",
+# The types an integer literal may have by its suffix, the first its value
+# fits taken: `300` is an int, `3000000000` a uint, `300u` a uint, `300L` a
+# long, `300UL` a ulong (C# spec, integer literals).
+CSHARP_INTEGER_SUFFIX_CANDIDATES: dict[str, tuple[str, ...]] = {
+    "": ("int", "uint", "long", "ulong"),
+    "u": ("uint", "ulong"),
+    "l": ("long", "ulong"),
+    "ul": ("ulong",),
+    "lu": ("ulong",),
+}
+CSHARP_INTEGRAL_MAX: dict[str, int] = {
+    "int": 2**31 - 1,
+    "uint": 2**32 - 1,
+    "long": 2**63 - 1,
+    "ulong": 2**64 - 1,
 }
 CSHARP_INTEGER_SUFFIX_CHARS = "ul"
 CSHARP_REAL_SUFFIX_TYPES: dict[str, str] = {
@@ -535,9 +568,377 @@ CSHARP_REAL_SUFFIX_TYPES: dict[str, str] = {
 CSHARP_DIGIT_SEPARATOR = "_"
 CSHARP_INTEGER_BASE_PREFIXES: dict[str, int] = {"0x": 16, "0b": 2}
 CSHARP_DECIMAL_BASE = 10
-CSHARP_INT_MAX = 2**31 - 1
-CSHARP_JUDGED_PARAM_TYPES: frozenset[str] = frozenset().union(
-    *CSHARP_LITERAL_ACCEPTS.values()
+# A unary minus or plus written on a literal (`-1`) folds into the constant.
+TS_CSHARP_PREFIX_UNARY_EXPRESSION = "prefix_unary_expression"
+CSHARP_UNARY_MINUS = "-"
+# The modifier that makes a local a constant, whose value C#'s constant
+# conversions read: `const int k = 5`.
+CSHARP_CONST_MODIFIER = "const"
+CSHARP_UNARY_PLUS = "+"
+# The two unsuffixed decimal literals a minus makes the least int and long:
+# `-2147483648` is an int, though `2147483648` alone is a uint.
+CSHARP_NEGATED_MINIMUM_TYPES: dict[int, str] = {2**31: "int", 2**63: "long"}
+# A negated literal's type, by the type of the literal: a uint is widened to
+# a long first; a ulong has no negation (C# spec, unary minus operator).
+CSHARP_NEGATED_TYPES: dict[str, str] = {"int": "int", "uint": "long", "long": "long"}
+# The implicit constant expression conversions (C# spec): an int constant
+# to a narrower integral type, and a long constant to ulong, each only for
+# a value in the target's range: `M(300)` cannot bind `M(byte)`.
+CSHARP_CONSTANT_CONVERSIONS: dict[tuple[str, str], tuple[int, int]] = {
+    ("int", "sbyte"): (-(2**7), 2**7 - 1),
+    ("int", "byte"): (0, 2**8 - 1),
+    ("int", "short"): (-(2**15), 2**15 - 1),
+    ("int", "ushort"): (0, 2**16 - 1),
+    ("int", "uint"): (0, 2**32 - 1),
+    ("int", "ulong"): (0, 2**64 - 1),
+    ("int", "nuint"): (0, 2**32 - 1),
+    ("long", "ulong"): (0, 2**64 - 1),
+}
+# C#'s better conversion target between two integral types neither converts
+# to: the signed one, so `M(5)` binds `M(sbyte)` over `M(byte)`.
+CSHARP_SIGNED_OVER_UNSIGNED: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("sbyte", "byte"),
+        ("sbyte", "ushort"),
+        ("sbyte", "uint"),
+        ("sbyte", "ulong"),
+        ("short", "ushort"),
+        ("short", "uint"),
+        ("short", "ulong"),
+        ("int", "uint"),
+        ("int", "ulong"),
+        ("long", "ulong"),
+    }
 )
 CSHARP_SYSTEM_PREFIX = "System."
+# What a type name resolved in the file that wrote it is spelled as: its qn
+# behind a leading dot (`.proj.A.Widget`). No source spelling starts with a
+# dot, so a resolved name is never taken for a written one and resolved
+# again, and no simple-name pattern matches inside it.
+CSHARP_RESOLVED_PREFIX = "."
+# The shape built on a type after its name: array ranks (`[]`, `[,]`,
+# jagged `[][]`), nullable `?` and pointer `*` marks: `List<T>[]?`, `int*`.
+CSHARP_TYPE_SUFFIX_PATTERN = r"(?:\s*(?:\[[,\s]*\]|\?|\*))+$"
+# Parameter modifiers a type's text may lead with: `ref Widget`.
+CSHARP_TYPE_MODIFIER_PATTERN = r"^(?:(?:scoped|ref|readonly|out|in|params)\s+)+"
+# A tuple element's name after its type: `(Widget w, int n)`.
+CSHARP_TUPLE_ELEMENT_NAME_PATTERN = r"\s+@?[A-Za-z_]\w*$"
+# What nests inside a signature's parameter list: generics, tuples, arrays.
+CSHARP_SIGNATURE_OPENERS = "<(["
+CSHARP_SIGNATURE_CLOSERS = ">)]"
 CSHARP_NULLABLE_SUFFIX = "?"
+# Each C# predefined type keyword and the framework type it names, so
+# `Target<System.Int32>` closes `Target<int>`.
+CSHARP_PREDEFINED_TYPE_NAMES: dict[str, str] = {
+    "bool": "Boolean",
+    "byte": "Byte",
+    "sbyte": "SByte",
+    "char": "Char",
+    "decimal": "Decimal",
+    "double": "Double",
+    "float": "Single",
+    "int": "Int32",
+    "uint": "UInt32",
+    "nint": "IntPtr",
+    "nuint": "UIntPtr",
+    "long": "Int64",
+    "ulong": "UInt64",
+    "short": "Int16",
+    "ushort": "UInt16",
+    "object": "Object",
+    "string": "String",
+}
+# The keyword each of those framework types is spelled with: `Int32` -> `int`.
+CSHARP_PREDEFINED_TYPE_KEYWORDS: dict[str, str] = {
+    framework: keyword for keyword, framework in CSHARP_PREDEFINED_TYPE_NAMES.items()
+}
+# Every type converts to it implicitly, and it to nothing else but `dynamic`.
+CSHARP_OBJECT_KEYWORD = "object"
+CSHARP_DYNAMIC_KEYWORD = "dynamic"
+CSHARP_STRING_KEYWORD = "string"
+CSHARP_CHAR_KEYWORD = "char"
+CSHARP_BOOL_KEYWORD = "bool"
+CSHARP_INT_KEYWORD = "int"
+# C#'s binary numeric promotion (an operator's operands of two predefined
+# numeric types are taken to one): the types an operand of which wins, in
+# order; for each, the other operand types it clashes with (no common
+# type), and those it widens to another type (`uint` with `int` is `long`).
+CSHARP_NUMERIC_KEYWORDS = frozenset(
+    {
+        "decimal",
+        "double",
+        "float",
+        "ulong",
+        "long",
+        "uint",
+        "int",
+        "ushort",
+        "short",
+        "byte",
+        "sbyte",
+        "char",
+    }
+)
+CSHARP_PROMOTION_ORDER = ("decimal", "double", "float", "ulong", "long", "uint")
+CSHARP_PROMOTION_CLASHES: dict[str, frozenset[str]] = {
+    "decimal": frozenset({"double", "float"}),
+    "ulong": frozenset({"sbyte", "short", "int", "long"}),
+}
+CSHARP_PROMOTION_WIDENS: dict[str, dict[str, str]] = {
+    "uint": {"sbyte": "long", "short": "long", "int": "long"},
+}
+CSHARP_BITWISE_OPERATORS = frozenset({"&", "|", "^"})
+CSHARP_COALESCE_OPERATOR = "??"
+CSHARP_SHIFT_OPERATORS = frozenset({"<<", ">>", ">>>"})
+# A shift's result: its left operand's unary promotion; its count converts
+# to int.
+CSHARP_SHIFTED: dict[str, str] = {
+    "int": "int",
+    "uint": "uint",
+    "long": "long",
+    "ulong": "ulong",
+    "sbyte": "int",
+    "byte": "int",
+    "short": "int",
+    "ushort": "int",
+    "char": "int",
+}
+CSHARP_SHIFT_COUNTS = frozenset({"int", "sbyte", "byte", "short", "ushort", "char"})
+# The constant types an unsigned type holds a non-negative value of.
+CSHARP_UNSIGNED_CONSTANT_SOURCES: dict[str, frozenset[str]] = {
+    "uint": frozenset({"int"}),
+    "ulong": frozenset({"int", "long"}),
+}
+CSHARP_COMPARISON_OPERATORS = frozenset({"<", ">", "<=", ">=", "==", "!=", "&&", "||"})
+# The user-defined operator a conditional logical operator runs through:
+# `a && b` on a type declaring `operator &` (and `true`/`false`) is `&`'s.
+CSHARP_CONDITIONAL_OPERATORS: dict[str, str] = {"&&": "&", "||": "|"}
+# The prefix operators a type may declare an `operator` for (`-s`, `!s`).
+CSHARP_OVERLOADABLE_UNARY_OPERATORS = frozenset({"-", "+", "!", "~"})
+CHAR_PLUS = "+"
+# The predefined types that are reference types; every other is a value type.
+CSHARP_REFERENCE_KEYWORDS = frozenset({"object", "string"})
+# The framework interfaces each of these predefined types implements, so a
+# `where` clause naming one is met (PR 2814 review): `IComparable` and
+# `IConvertible`, and `IComparable<>` and `IEquatable<>` of the type itself.
+# Only what they implement is listed; of any other, nothing is known.
+CSHARP_SELF_INTERFACE_KEYWORDS = frozenset(
+    {
+        "bool",
+        "byte",
+        "sbyte",
+        "char",
+        "decimal",
+        "double",
+        "float",
+        "int",
+        "uint",
+        "long",
+        "ulong",
+        "short",
+        "ushort",
+        "string",
+    }
+)
+CSHARP_PREDEFINED_INTERFACES = frozenset({"IComparable", "IConvertible"})
+CSHARP_PREDEFINED_SELF_INTERFACES = frozenset({"IComparable", "IEquatable"})
+# A type parameter's declared variance, the token before its name in a
+# `type_parameter`: `interface IBox<out T>`, `delegate void F<in T>(T x)`.
+CSHARP_VARIANCE_OUT = "out"
+CSHARP_VARIANCE_IN = "in"
+CSHARP_VARIANCES = frozenset({CSHARP_VARIANCE_OUT, CSHARP_VARIANCE_IN})
+# The keyword a `record struct` declaration carries after `record`.
+TS_CSHARP_STRUCT_KEYWORD = "struct"
+# The framework's common generic types, by simple name and type-argument
+# count: (namespace, whether it is a reference type, each type parameter's
+# variance). A spelling names one only bare or qualified by that namespace.
+# Classes and structs are invariant; the variant interfaces and delegates
+# are why it exists: an `IEnumerable<Employee>` is an `IEnumerable<Person>`.
+# A generic type in neither this table nor the project has no known kind.
+_GENERIC_COLLECTIONS = "System.Collections.Generic"
+_LINQ = "System.Linq"
+_SYSTEM = "System"
+_TASKS = "System.Threading.Tasks"
+CSHARP_FRAMEWORK_GENERICS: dict[tuple[str, int], tuple[str, bool, tuple[str, ...]]] = {
+    ("IEnumerable", 1): (_GENERIC_COLLECTIONS, True, (CSHARP_VARIANCE_OUT,)),
+    ("IEnumerator", 1): (_GENERIC_COLLECTIONS, True, (CSHARP_VARIANCE_OUT,)),
+    ("IReadOnlyCollection", 1): (_GENERIC_COLLECTIONS, True, (CSHARP_VARIANCE_OUT,)),
+    ("IReadOnlyList", 1): (_GENERIC_COLLECTIONS, True, (CSHARP_VARIANCE_OUT,)),
+    ("IAsyncEnumerable", 1): (_GENERIC_COLLECTIONS, True, (CSHARP_VARIANCE_OUT,)),
+    ("IAsyncEnumerator", 1): (_GENERIC_COLLECTIONS, True, (CSHARP_VARIANCE_OUT,)),
+    ("IComparer", 1): (_GENERIC_COLLECTIONS, True, (CSHARP_VARIANCE_IN,)),
+    ("IEqualityComparer", 1): (_GENERIC_COLLECTIONS, True, (CSHARP_VARIANCE_IN,)),
+    ("ICollection", 1): (_GENERIC_COLLECTIONS, True, ("",)),
+    ("IList", 1): (_GENERIC_COLLECTIONS, True, ("",)),
+    ("ISet", 1): (_GENERIC_COLLECTIONS, True, ("",)),
+    ("IReadOnlySet", 1): (_GENERIC_COLLECTIONS, True, ("",)),
+    ("IDictionary", 2): (_GENERIC_COLLECTIONS, True, ("", "")),
+    ("IReadOnlyDictionary", 2): (_GENERIC_COLLECTIONS, True, ("", "")),
+    ("List", 1): (_GENERIC_COLLECTIONS, True, ("",)),
+    ("HashSet", 1): (_GENERIC_COLLECTIONS, True, ("",)),
+    ("Queue", 1): (_GENERIC_COLLECTIONS, True, ("",)),
+    ("Stack", 1): (_GENERIC_COLLECTIONS, True, ("",)),
+    ("LinkedList", 1): (_GENERIC_COLLECTIONS, True, ("",)),
+    ("SortedSet", 1): (_GENERIC_COLLECTIONS, True, ("",)),
+    ("Dictionary", 2): (_GENERIC_COLLECTIONS, True, ("", "")),
+    ("SortedDictionary", 2): (_GENERIC_COLLECTIONS, True, ("", "")),
+    ("SortedList", 2): (_GENERIC_COLLECTIONS, True, ("", "")),
+    ("KeyValuePair", 2): (_GENERIC_COLLECTIONS, False, ("", "")),
+    ("IQueryable", 1): (_LINQ, True, (CSHARP_VARIANCE_OUT,)),
+    ("IOrderedQueryable", 1): (_LINQ, True, (CSHARP_VARIANCE_OUT,)),
+    ("IOrderedEnumerable", 1): (_LINQ, True, (CSHARP_VARIANCE_OUT,)),
+    ("IGrouping", 2): (_LINQ, True, (CSHARP_VARIANCE_OUT, CSHARP_VARIANCE_OUT)),
+    ("ILookup", 2): (_LINQ, True, ("", "")),
+    ("IObservable", 1): (_SYSTEM, True, (CSHARP_VARIANCE_OUT,)),
+    ("IObserver", 1): (_SYSTEM, True, (CSHARP_VARIANCE_IN,)),
+    ("IComparable", 1): (_SYSTEM, True, (CSHARP_VARIANCE_IN,)),
+    ("IProgress", 1): (_SYSTEM, True, (CSHARP_VARIANCE_IN,)),
+    ("IEquatable", 1): (_SYSTEM, True, ("",)),
+    ("Predicate", 1): (_SYSTEM, True, (CSHARP_VARIANCE_IN,)),
+    ("Comparison", 1): (_SYSTEM, True, (CSHARP_VARIANCE_IN,)),
+    ("Converter", 2): (_SYSTEM, True, (CSHARP_VARIANCE_IN, CSHARP_VARIANCE_OUT)),
+    ("Lazy", 1): (_SYSTEM, True, ("",)),
+    ("Nullable", 1): (_SYSTEM, False, ("",)),
+    ("Task", 1): (_TASKS, True, ("",)),
+    ("ValueTask", 1): (_TASKS, False, ("",)),
+    # `Func<in T1, ..., out TResult>` and `Action<in T1, ...>`, every arity.
+    **{
+        ("Func", count + 1): (
+            _SYSTEM,
+            True,
+            (CSHARP_VARIANCE_IN,) * count + (CSHARP_VARIANCE_OUT,),
+        )
+        for count in range(17)
+    },
+    **{
+        ("Action", count): (_SYSTEM, True, (CSHARP_VARIANCE_IN,) * count)
+        for count in range(1, 17)
+    },
+    # `Tuple<...>` is a class and `ValueTuple<...>` a struct, every arity.
+    **{("Tuple", count): (_SYSTEM, True, ("",) * count) for count in range(1, 9)},
+    **{("ValueTuple", count): (_SYSTEM, False, ("",) * count) for count in range(1, 9)},
+}
+# The generic collection interfaces of `CSHARP_FRAMEWORK_GENERICS` each of
+# its one-parameter collections implements over its element (`List<int?>`
+# is an `IEnumerable<int?>`), and an array implements over its own: what C#
+# converts it to and infers a type parameter through (`IEnumerable<T?>`
+# from `List<int?>` is T := int; Greptile review of PR 2814).
+_LIST_INTERFACES = (
+    "IList",
+    "ICollection",
+    "IEnumerable",
+    "IReadOnlyList",
+    "IReadOnlyCollection",
+)
+_SET_INTERFACES = (
+    "ISet",
+    "ICollection",
+    "IEnumerable",
+    "IReadOnlyCollection",
+    "IReadOnlySet",
+)
+CSHARP_FRAMEWORK_ELEMENT_INTERFACES: dict[str, tuple[str, ...]] = {
+    "List": _LIST_INTERFACES,
+    "HashSet": _SET_INTERFACES,
+    "SortedSet": _SET_INTERFACES,
+    "Queue": ("IEnumerable", "IReadOnlyCollection"),
+    "Stack": ("IEnumerable", "IReadOnlyCollection"),
+    "LinkedList": ("ICollection", "IEnumerable", "IReadOnlyCollection"),
+    "IList": ("ICollection", "IEnumerable"),
+    "ICollection": ("IEnumerable",),
+    "ISet": ("ICollection", "IEnumerable"),
+    "IReadOnlyList": ("IReadOnlyCollection", "IEnumerable"),
+    "IReadOnlyCollection": ("IEnumerable",),
+    "IReadOnlySet": ("IReadOnlyCollection", "IEnumerable"),
+}
+CSHARP_ARRAY_ELEMENT_INTERFACES = _LIST_INTERFACES
+# A framework collection's indexer: its namespace and the type argument its
+# element is. Only a spelling that names the framework's type reads so.
+_OBJECT_MODEL = "System.Collections.ObjectModel"
+_CONCURRENT = "System.Collections.Concurrent"
+CSHARP_INDEXED_ELEMENT: dict[str, tuple[str, int]] = {
+    "List": (_GENERIC_COLLECTIONS, 0),
+    "IList": (_GENERIC_COLLECTIONS, 0),
+    "IReadOnlyList": (_GENERIC_COLLECTIONS, 0),
+    "Collection": (_OBJECT_MODEL, 0),
+    "ReadOnlyCollection": (_OBJECT_MODEL, 0),
+    "Span": (_SYSTEM, 0),
+    "ReadOnlySpan": (_SYSTEM, 0),
+    "Dictionary": (_GENERIC_COLLECTIONS, 1),
+    "IDictionary": (_GENERIC_COLLECTIONS, 1),
+    "IReadOnlyDictionary": (_GENERIC_COLLECTIONS, 1),
+    "SortedDictionary": (_GENERIC_COLLECTIONS, 1),
+    "SortedList": (_GENERIC_COLLECTIONS, 1),
+    "ConcurrentDictionary": (_CONCURRENT, 1),
+}
+# The implicit numeric conversions, by keyword: what each predefined type
+# converts to besides itself and `object`. Fixing a type parameter needs
+# them: `M<T>(T, Box<T>)` takes `(1, Box<long>)`, never `(1, Box<string>)`.
+CSHARP_IMPLICIT_NUMERIC_CONVERSIONS: dict[str, frozenset[str]] = {
+    "sbyte": frozenset({"short", "int", "long", "float", "double", "decimal", "nint"}),
+    "byte": frozenset(
+        {
+            "short",
+            "ushort",
+            "int",
+            "uint",
+            "long",
+            "ulong",
+            "float",
+            "double",
+            "decimal",
+            "nint",
+            "nuint",
+        }
+    ),
+    "short": frozenset({"int", "long", "float", "double", "decimal", "nint"}),
+    "ushort": frozenset(
+        {"int", "uint", "long", "ulong", "float", "double", "decimal", "nint", "nuint"}
+    ),
+    "int": frozenset({"long", "float", "double", "decimal", "nint"}),
+    "uint": frozenset({"long", "ulong", "float", "double", "decimal", "nuint"}),
+    "long": frozenset({"float", "double", "decimal"}),
+    "ulong": frozenset({"float", "double", "decimal"}),
+    "char": frozenset(
+        {
+            "ushort",
+            "int",
+            "uint",
+            "long",
+            "ulong",
+            "float",
+            "double",
+            "decimal",
+            "nint",
+            "nuint",
+        }
+    ),
+    "float": frozenset({"double"}),
+    "nint": frozenset({"long", "float", "double", "decimal"}),
+    "nuint": frozenset({"ulong", "float", "double", "decimal"}),
+}
+# Value types a signature can tell from their nullable form: `F(int)` and
+# `F(int?)` are two overloads, since `int?` is `Nullable<int>`, where a `?`
+# on a reference type is only an annotation. A first-party struct is not
+# known to be one when its declaring file is parsed, so it is not listed.
+CSHARP_NULLABLE_VALUE_TYPES = frozenset(
+    {
+        *(
+            keyword
+            for keyword, framework in CSHARP_PREDEFINED_TYPE_NAMES.items()
+            if framework not in {"Object", "String"}
+        ),
+        *(
+            framework
+            for framework in CSHARP_PREDEFINED_TYPE_NAMES.values()
+            if framework not in {"Object", "String"}
+        ),
+        "DateTime",
+        "DateTimeOffset",
+        "DateOnly",
+        "TimeOnly",
+        "TimeSpan",
+        "Guid",
+        "Half",
+    }
+)

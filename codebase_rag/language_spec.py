@@ -315,6 +315,17 @@ def csharp_namespaced_from_graph(
     return cs.SEPARATOR_DOT.join(scoped)
 
 
+def csharp_module_qn_from_graph(qn: str, path: str, project_name: str) -> str | None:
+    """The module qn of the file a C# type read back from the graph was
+    declared in: the qn's prefix that spells that file. None when neither
+    path spelling prefixes the qn."""
+    split = _csharp_graph_scope(qn, path, project_name)
+    if split is None:
+        return None
+    _directory, suffix = split
+    return qn[: len(qn) - len(suffix) - 1]
+
+
 def csharp_partial_key_from_graph(
     qn: str, path: str, project_name: str, arity: int
 ) -> str | None:

@@ -116,7 +116,7 @@ public class C : IThing {
     def flag(suffix: str) -> bool:
         return next(v for qn, v in exported.items() if qn.endswith(suffix))
 
-    assert flag("N.C.WithKey(string)") is True
+    assert flag("N.C.IThing#WithKey(string)") is True
     # A plain modifier-less class member stays private.
     assert flag("N.C.Plain") is False
 
