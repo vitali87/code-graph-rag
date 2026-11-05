@@ -2617,7 +2617,7 @@ class ImportProcessor:
             if own is not None:
                 return f"{own}{name[len(prefix) :]}"
             if holder is not None:
-                return name
+                return "unresolved"
         return name
 
     @staticmethod
@@ -3010,14 +3010,19 @@ class ImportProcessor:
         language: cs.SupportedLanguage,
         siblings: StemSiblingModules | None = None,
     ) -> str | None:
+        family = language_family(language)
         if siblings:
             module_path = self._own_language_target(
-                module_path, language_family(language), known_module_paths, siblings
+                module_path, family, known_module_paths, siblings
             )
         if module_path in known_module_paths:
-            return module_path
+            if self._reachable_module(known_module_paths[module_path], family):
+                return module_path
+            return None
         if alias := module_aliases.get(module_path):
-            return alias
+            if self._reachable_module(known_module_paths.get(alias, ""), family):
+                return alias
+            return None
         # A path resolved from the wrong root (`use crate::utils` written outside
         # src/) still names a unique real module; a whole-segment suffix match
         # recovers it. Ambiguity means no edge, not a guess.
@@ -3028,9 +3033,17 @@ class ImportProcessor:
         if not tail:
             return None
         suffix = f"{cs.SEPARATOR_DOT}{tail}"
-        matches = {qn for qn in known_module_paths if qn.endswith(suffix)}
+        matches = {
+            qn
+            for qn in known_module_paths
+            if qn.endswith(suffix)
+            and self._reachable_module(known_module_paths.get(qn, ""), family)
+        }
         matches.update(
-            real for base, real in module_aliases.items() if base.endswith(suffix)
+            real
+            for base, real in module_aliases.items()
+            if base.endswith(suffix)
+            and self._reachable_module(known_module_paths.get(real, ""), family)
         )
         if len(matches) > 1:
             # A polyglot repo can hold same-named modules in several
