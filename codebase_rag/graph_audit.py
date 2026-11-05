@@ -95,8 +95,17 @@ def find_orphans(
         # A repo with no indexable content is just its Project root, so a
         # zero-degree Project is valid rather than a construction failure.
         if node.label != cs.NodeLabel.PROJECT.value
+        and not _is_unattached_gloss(node)
         and (node.label, _node_key(node)) not in connected
     ]
+
+
+def _is_unattached_gloss(node: GraphNodeRecord) -> bool:
+    # Retained with no ANNOTATES edge by design (issue #2652).
+    return (
+        node.label == cs.NodeLabel.GLOSS.value
+        and node.properties.get(cs.KEY_ANCHOR_STATE) in cs.GLOSS_UNATTACHED_STATES
+    )
 
 
 def find_dangling_relationships(
