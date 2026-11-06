@@ -28,6 +28,7 @@ class BoundedASTCache:
         "loader",
         "max_entries",
         "max_memory_bytes",
+        "on_evict",
         "total_bytes",
     )
 
@@ -37,6 +38,7 @@ class BoundedASTCache:
         max_memory_mb: int | None = None,
         loader: Callable[[Path], tuple[Node, cs.SupportedLanguage] | None]
         | None = None,
+        on_evict: Callable[[Path], None] | None = None,
     ):
         self.cache: OrderedDict[Path, tuple[Node, cs.SupportedLanguage]] = OrderedDict()
         # Sizes are recorded at insert so eviction and the running total never
@@ -51,6 +53,10 @@ class BoundedASTCache:
             max_memory_mb if max_memory_mb is not None else settings.CACHE_MAX_MEMORY_MB
         )
         self.max_memory_bytes = max_mem * cs.BYTES_PER_MB
+        # Told the key of each LRU eviction, so a structure holding nodes of
+        # that tree can let go of them too: a `Node` keeps its whole tree
+        # alive, so anything still holding one defeats the bound (issue #2926).
+        self.on_evict = on_evict
 
     def load(self, key: Path) -> tuple[Node, cs.SupportedLanguage] | None:
         # Cache read that survives eviction: a miss re-parses from disk via the
@@ -100,6 +106,8 @@ class BoundedASTCache:
     def _evict_oldest(self) -> None:
         key, _ = self.cache.popitem(last=False)
         self.total_bytes -= self.entry_sizes.pop(key)
+        if self.on_evict is not None:
+            self.on_evict(key)
 
     def _enforce_limits(self) -> None:
         # Evict LRU entries until both caps hold. The newest entry is kept even
