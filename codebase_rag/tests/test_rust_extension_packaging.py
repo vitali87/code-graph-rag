@@ -9,6 +9,7 @@ licences and bundling that go with a compiled dependency.
 
 from __future__ import annotations
 
+import re
 import tomllib
 from pathlib import Path
 
@@ -27,16 +28,18 @@ DIST_NAME = "cgr-graph-rs"
 MODULE_NAME = "cgr_graph_rs"
 RELEASE_SCRIPT = REPO_ROOT / "scripts" / "release.sh"
 PUBLISH_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "publish.yml"
+PRODUCTION_IMAGE = REPO_ROOT / "Dockerfile"
+FUZZ_IMAGE = REPO_ROOT / ".clusterfuzzlite" / "Dockerfile"
 # What maturin names each wheel rust-wheels.yml builds, plus the sdist a
 # release could also carry.
 PUBLISHED_FILES = [
-    "cgr_graph_rs-0.1.0-cp312-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
-    "cgr_graph_rs-0.1.0-cp312-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl",
-    "cgr_graph_rs-0.1.0-cp312-abi3-musllinux_1_2_x86_64.whl",
-    "cgr_graph_rs-0.1.0-cp312-abi3-musllinux_1_2_aarch64.whl",
-    "cgr_graph_rs-0.1.0-cp312-abi3-macosx_10_13_x86_64.macosx_11_0_arm64.macosx_10_13_universal2.whl",
-    "cgr_graph_rs-0.1.0-cp312-abi3-win_amd64.whl",
-    "cgr_graph_rs-0.1.0.tar.gz",
+    "cgr_graph_rs-0.1.5-cp312-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+    "cgr_graph_rs-0.1.5-cp312-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl",
+    "cgr_graph_rs-0.1.5-cp312-abi3-musllinux_1_2_x86_64.whl",
+    "cgr_graph_rs-0.1.5-cp312-abi3-musllinux_1_2_aarch64.whl",
+    "cgr_graph_rs-0.1.5-cp312-abi3-macosx_10_13_x86_64.macosx_11_0_arm64.macosx_10_13_universal2.whl",
+    "cgr_graph_rs-0.1.5-cp312-abi3-win_amd64.whl",
+    "cgr_graph_rs-0.1.5.tar.gz",
 ]
 
 # What a Python on each wheel's platform reports to environment markers.
@@ -299,3 +302,112 @@ def test_the_fuzz_image_has_a_checked_rust_toolchain() -> None:
     assert "CARGO_HOME=/rust" in image
     assert "RUSTUP_SHA256=" in image
     assert "sha256sum -c -" in image.split("rustup-init", 1)[1]
+
+
+# The production image builds the crate during `uv sync`. Debian's cargo
+# lags the crate's locked dependencies (trixie ships rustc 1.85, and
+# tree-sitter-language needs 1.90), so the toolchain comes from a pinned rust
+# image instead, no older than the one the fuzz build proves the crate with.
+RUST_STAGE = re.compile(
+    r"(?m)^FROM rust:(?P<version>\d+\.\d+\.\d+)-slim-[a-z]+@sha256:[0-9a-f]{64} AS rust$"
+)
+FUZZ_TOOLCHAIN = re.compile(r"(?m)^ARG RUST_TOOLCHAIN=(?P<version>\d+\.\d+\.\d+)$")
+DISTRO_RUST = re.compile(r"(?<![\w.+-])(?:cargo|rustc)(?![\w.+-])")
+TOOLCHAIN_COPIES = (
+    "COPY --from=rust /usr/local/rustup /usr/local/rustup",
+    "COPY --from=rust /usr/local/cargo /usr/local/cargo",
+)
+TOOLCHAIN_ENV = "ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo PATH=/usr/local/cargo/bin:$PATH"
+
+
+def _version(text: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in text.split("."))
+
+
+def _image_toolchain_problems(dockerfile: str, floor: str) -> list[str]:
+    problems: list[str] = []
+    for line in dockerfile.replace("\\\n", " ").splitlines():
+        if "apt-get install" in line and DISTRO_RUST.search(line):
+            problems.append("installs the distribution's Rust toolchain")
+    stage = RUST_STAGE.search(dockerfile)
+    if stage is None:
+        problems.append("has no digest-pinned rust stage")
+    elif _version(stage["version"]) < _version(floor):
+        problems.append(f"takes rust {stage['version']}, older than {floor}")
+    problems.extend(
+        f"lacks `{line}`"
+        for line in (*TOOLCHAIN_COPIES, TOOLCHAIN_ENV)
+        if line not in dockerfile.splitlines()
+    )
+    return problems
+
+
+RUST_DIGEST = "sha256:" + "a" * 64
+GOOD_IMAGE = (
+    f"FROM rust:1.97.0-slim-trixie@{RUST_DIGEST} AS rust\n"
+    "FROM python:3.15-slim AS builder\n"
+    "RUN apt-get update && \\\n"
+    "    apt-get install -y --no-install-recommends \\\n"
+    "        ca-certificates cmake build-essential git && \\\n"
+    "    rm -rf /var/lib/apt/lists/*\n"
+    f"{TOOLCHAIN_COPIES[0]}\n"
+    f"{TOOLCHAIN_COPIES[1]}\n"
+    f"{TOOLCHAIN_ENV}\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("dockerfile", "problem"),
+    [
+        (
+            GOOD_IMAGE.replace("build-essential git", "build-essential git cargo"),
+            "distribution's Rust",
+        ),
+        (
+            GOOD_IMAGE.replace("ca-certificates cmake", "ca-certificates rustc cmake"),
+            "distribution's Rust",
+        ),
+        (GOOD_IMAGE.replace("rust:1.97.0", "rust:1.96.0"), "rust 1.96.0, older"),
+        (GOOD_IMAGE.replace(f"@{RUST_DIGEST}", ""), "no digest-pinned"),
+        (GOOD_IMAGE.replace(f"{TOOLCHAIN_COPIES[0]}\n", ""), "/usr/local/rustup"),
+        (GOOD_IMAGE.replace(f"{TOOLCHAIN_ENV}\n", ""), "PATH=/usr/local/cargo/bin"),
+    ],
+    ids=["apt-cargo", "apt-rustc", "below-floor", "no-digest", "no-rustup", "no-path"],
+)
+def test_an_image_without_a_current_pinned_toolchain_is_rejected(
+    dockerfile: str, problem: str
+) -> None:
+    problems = _image_toolchain_problems(dockerfile, "1.97.0")
+    assert len(problems) == 1, problems
+    assert problem in problems[0]
+
+
+def test_the_distro_cargo_shape_is_rejected() -> None:
+    """The shape v0.4.19 shipped: apt's cargo and no rust stage."""
+    dockerfile = (
+        "FROM python:3.15-slim AS builder\n"
+        "RUN apt-get update && \\\n"
+        "    apt-get install -y --no-install-recommends \\\n"
+        "        ca-certificates cmake libzstd-dev cargo && \\\n"
+        "    rm -rf /var/lib/apt/lists/*\n"
+    )
+    problems = " | ".join(_image_toolchain_problems(dockerfile, "1.97.0"))
+    assert "distribution's Rust" in problems
+    assert "no digest-pinned rust stage" in problems
+
+
+@pytest.mark.parametrize("version", ["1.97.0", "1.99.0"])
+def test_a_pinned_toolchain_at_or_above_the_floor_is_accepted(version: str) -> None:
+    dockerfile = GOOD_IMAGE.replace("rust:1.97.0", f"rust:{version}")
+    assert _image_toolchain_problems(dockerfile, "1.97.0") == []
+
+
+def test_the_production_image_rust_is_no_older_than_the_fuzz_toolchain() -> None:
+    """The fuzz build compiles the crate on every pull request with
+    RUST_TOOLCHAIN, so that pin is the one a dependency bump has to clear.
+    The production image only builds on a release tag, too late to learn its
+    toolchain is too old."""
+    floor = FUZZ_TOOLCHAIN.search(FUZZ_IMAGE.read_text(encoding="utf-8"))
+    assert floor is not None
+    production = PRODUCTION_IMAGE.read_text(encoding="utf-8")
+    assert _image_toolchain_problems(production, floor["version"]) == []
