@@ -17,7 +17,12 @@ from ..config import PROVIDER_ENV_KEYS, ModelConfig, settings
 from ..graph_dialects import DIALECT_MEMGRAPH, DIALECT_NEO4J, DIALECT_SQLITE
 from ..mgclient_compat import mgclient
 from ..schemas import HealthCheckResult
-from ..services.graph_service import GraphUnavailableError, MemgraphIngestor
+from ..services.graph_service import (
+    GraphUnavailableError,
+    MemgraphIngestor,
+    memgraph_version,
+    unsupported_memgraph_version,
+)
 from ..types_defs import ConnectionProtocol, CursorProtocol, ResultRow
 from ..utils.endpoints import join_endpoint_path, strip_v1_suffix
 
@@ -201,7 +206,24 @@ class HealthChecker:
                 cursor = conn.cursor()
                 cursor.execute(cs.HEALTH_CHECK_MEMGRAPH_QUERY)
                 list(cursor.fetchall())
+                version = (
+                    memgraph_version(conn)
+                    if settings.GRAPH_BACKEND == DIALECT_MEMGRAPH
+                    else None
+                )
 
+            if version is not None and unsupported_memgraph_version(version):
+                # Connected is not usable: a 2.x server rejects Cypher cgr
+                # writes for 3.x, such as generated queries' label
+                # alternation (issue #2906).
+                return HealthCheckResult(
+                    name=cs.HEALTH_CHECK_MEMGRAPH_UNSUPPORTED.format(version=version),
+                    passed=False,
+                    message=cs.HEALTH_CHECK_MEMGRAPH_UNSUPPORTED_MSG,
+                    error=cs.HEALTH_CHECK_MEMGRAPH_UNSUPPORTED_ERROR.format(
+                        major=cs.MEMGRAPH_MIN_MAJOR_VERSION
+                    ),
+                )
             return HealthCheckResult(
                 name=cs.HEALTH_CHECK_GRAPH_SUCCESSFUL.format(
                     engine=_backend_engine_name()

@@ -372,8 +372,9 @@ class TestReachabilityNeedsAQuery:
 
         assert result.passed
         # The probe must actually round-trip a statement: opening the
-        # connection is not evidence a Neo4j server is reachable.
-        assert sent == [cs.HEALTH_CHECK_MEMGRAPH_QUERY]
+        # connection is not evidence a Neo4j server is reachable. Memgraph
+        # then has its version read, to name a 2.x server (issue #2906).
+        assert sent == [cs.HEALTH_CHECK_MEMGRAPH_QUERY, cs.CYPHER_SHOW_VERSION]
 
     def test_the_probe_query_is_trivial(self) -> None:
         # It must exercise the round trip without depending on any data.
