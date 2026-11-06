@@ -507,6 +507,9 @@ message GraphCodeIndex {
     bool is_object_member = 13;
     // A top-level Dart `main`, which `dart run` starts (#2527).
     bool is_program_main = 14;
+    // The binding its object literal is assigned to (`const api = {...}` ->
+    // `<module>.api`), so `api.fetchUser()` finds it (issue #2763).
+    string object_binding = 15;
     // Graph properties the index used to drop (#3206). Numbered from 20 so
     // fields other changes add below do not collide.
     string path = 20;

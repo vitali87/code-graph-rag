@@ -300,6 +300,7 @@ class CallResolver:
         "python_name_typed_params",
         "python_shadowed_imports",
         "go_local_scopes",
+        "js_local_scopes",
         "python_local_names",
         "function_registry",
         "import_processor",
@@ -319,6 +320,7 @@ class CallResolver:
         "_interface_impl_cache",
         "_simple_resolution_cache",
         "last_resolution",
+        "last_bound_member",
         "_resolution_labels",
         "_wildcard_cache",
         "_protocol_impl_cache",
@@ -372,6 +374,11 @@ class CallResolver:
         # call processor before the caller's calls resolve: a bare call to
         # one of them inside its span calls that value (#2571).
         self.go_local_scopes: dict[str, go_utils.GoLocalScopes] = {}
+        # JS/TS caller qn -> the names it and each function around it
+        # introduce, filled by the call processor before the caller's calls
+        # resolve: `api.run()` on one of them is that local's, never the
+        # module's or an import's `api` (#2763 review).
+        self.js_local_scopes: dict[str, js_ts_utils.JsLocalIntros] = {}
         # caller qn -> every name that Python function binds itself (#2666);
         # filled alongside python_shadowed_imports.
         self.python_local_names: dict[str, frozenset[str]] = {}
@@ -427,6 +434,10 @@ class CallResolver:
         # The branch that produced the last answer (issue #1526), memoised
         # beside the cache so a hit reports the same confidence as the miss.
         self.last_resolution: str = cs.EdgeResolution.EXACT
+        # The object member the last call named through its literal's binding
+        # (`a.go()` -> a's `go`, issue #2763): that one member, not the
+        # same-key members of other objects that share its `@line` group.
+        self.last_bound_member: str | None = None
         self._resolution_labels: dict[tuple[str, str, bool], str] = {}
         self._wildcard_cache: dict[int, list[tuple[str, str]]] = {}
         self._protocol_impl_cache: dict[str, str] | None = None
@@ -709,6 +720,7 @@ class CallResolver:
         names a TYPE and the simple-name fallback must not offer a method or
         function that merely shares the name."""
         self.last_resolution = cs.EdgeResolution.EXACT
+        self.last_bound_member = None
         result = self._reject_class_via_value_receiver(
             self._redirect_protocol_method(
                 self._resolve_function_call(
@@ -2230,6 +2242,7 @@ class CallResolver:
             self._resolve_receiver_shadow,
             self._resolve_rust_block_scope,
             self._resolve_caller_scope,
+            self._resolve_js_object_member,
         ):
             handled, result = stage(call)
             if handled:
@@ -2395,6 +2408,97 @@ class CallResolver:
             return False
         point = call.call_point
         return point is None or any(start <= point < end for start, end in spans)
+
+    def _js_object_member_call(self, call: _CallSite) -> tuple[str, str, str] | None:
+        # `<receiver>.<key>(...)` split as (head, rest of the receiver, key)
+        # for a JS/TS call when some object literal is bound to a name; None
+        # otherwise. A receiver the type map holds is a typed value, which
+        # the typed paths own.
+        if (
+            call.language not in cs.JS_TS_LANGUAGES
+            or not self.function_registry.has_object_bindings()
+        ):
+            return None
+        receiver, sep, key = call.call_name.rpartition(cs.SEPARATOR_DOT)
+        if not sep or not receiver:
+            return None
+        head, _, rest = receiver.partition(cs.SEPARATOR_DOT)
+        if call.local_var_types and head in call.local_var_types:
+            return None
+        return head, rest, key
+
+    def _object_member_result(
+        self, binding_qn: str, key: str
+    ) -> tuple[str, str] | None:
+        member = self.function_registry.object_binding_member(binding_qn, key)
+        if member is None or member not in self.function_registry:
+            return None
+        return self.function_registry[member].value, member
+
+    def _js_local_receiver(
+        self, call: _CallSite, head: str
+    ) -> js_ts_utils.JsLocalIntro | None:
+        # The innermost introduction of `head` around the call by the calling
+        # function or one enclosing it; None when only the module or an
+        # import binds the name there.
+        if not call.caller_qn:
+            return None
+        intros = self.js_local_scopes.get(call.caller_qn, {}).get(head, ())
+        point = call.call_point
+        enclosing = [i for i in intros if point is None or i.start <= point < i.end]
+        if not enclosing:
+            return None
+        return max(enclosing, key=lambda intro: intro.start)
+
+    def _resolve_js_object_member(
+        self, call: _CallSite
+    ) -> tuple[bool, tuple[str, str] | None]:
+        # `api.fetchUser()` on a name an object literal is bound to: that
+        # literal's member (issue #2763). Caller-specific, as a parameter or
+        # other local of the receiver's name shadows the module's or an
+        # import's `api` (#2763 review), so ahead of the cache.
+        parts = self._js_object_member_call(call)
+        if parts is None:
+            return False, None
+        head, rest, key = parts
+        local = self._js_local_receiver(call, head)
+        if local is None:
+            result = self._js_module_object_member(call, head, rest, key)
+        elif local.object_literal and not rest:
+            result = self._js_local_object_member(call, head, key)
+        else:
+            result = None
+        if result is None:
+            return False, None
+        self.last_bound_member = result[1]
+        return True, result
+
+    def _js_local_object_member(
+        self, call: _CallSite, head: str, key: str
+    ) -> tuple[str, str] | None:
+        # `tools.build()` where `const tools = { build: () => 2 }` is written
+        # in the calling function or one enclosing it.
+        scope = call.caller_qn
+        while scope and scope != call.module_qn:
+            if result := self._object_member_result(
+                f"{scope}{cs.SEPARATOR_DOT}{head}", key
+            ):
+                return result
+            scope = scope.rpartition(cs.SEPARATOR_DOT)[0]
+        return None
+
+    def _js_module_object_member(
+        self, call: _CallSite, head: str, rest: str, key: str
+    ) -> tuple[str, str] | None:
+        # An object literal bound at module level, here or in the module an
+        # import names (`import { api }`, `import * as ns` + `ns.api.f()`, a
+        # CommonJS destructure, or `import api` of an `export default
+        # { ... }`): its member registers under its module without the
+        # object's name.
+        import_map = self.import_processor.import_mapping.get(call.module_qn, {})
+        base = import_map.get(head) or f"{call.module_qn}{cs.SEPARATOR_DOT}{head}"
+        binding_qn = f"{base}{cs.SEPARATOR_DOT}{rest}" if rest else base
+        return self._object_member_result(binding_qn, key)
 
     def _resolution_cache_key(self, call: _CallSite) -> tuple[str, str, bool] | None:
         module_qn, caller_qn = call.module_qn, call.caller_qn
