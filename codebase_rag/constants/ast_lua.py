@@ -92,3 +92,8 @@ LUA_RESERVED_WORDS = frozenset(
         "while",
     }
 )
+
+
+# A `repeat` loop: the locals of its body stay in scope through the `until`
+# condition, which sits outside the body's block (issue #2925).
+TS_LUA_REPEAT_STATEMENT = "repeat_statement"
