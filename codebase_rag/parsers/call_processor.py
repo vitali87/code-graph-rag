@@ -368,6 +368,33 @@ _JS_FIELD_WRITE_TYPES = frozenset(
         cs.TS_JS_UPDATE_EXPRESSION,
     }
 )
+# Languages whose instance field initializers run at construction time, so
+# their calls belong to the enclosing class's constructor (issue #3339).
+_FIELD_INITIALIZER_LANGUAGES = frozenset(
+    {
+        cs.SupportedLanguage.JS,
+        cs.SupportedLanguage.TS,
+        cs.SupportedLanguage.TSX,
+        cs.SupportedLanguage.JAVA,
+        cs.SupportedLanguage.CSHARP,
+    }
+)
+# Callable-valued expressions whose bodies run when invoked, not at
+# construction: a Java/C# lambda or a C# anonymous method assigned to a
+# field. They are not in those languages' `function_node_types`, so the
+# initializer-value walk must name them explicitly, or their bodies'
+# calls would be attributed to the constructor (Greptile review).
+_INITIALIZER_DEFERRED_NODE_TYPES = frozenset(
+    {
+        cs.TS_JAVA_LAMBDA_EXPRESSION,
+        cs.TS_CSHARP_LAMBDA_EXPRESSION,
+        cs.TS_CSHARP_ANONYMOUS_METHOD_EXPRESSION,
+    }
+)
+# The class-body member type holding a field initializer, per language.
+_JS_TS_FIELD_NODE_TYPES = frozenset(
+    {cs.TS_PUBLIC_FIELD_DEFINITION, cs.TS_JS_FIELD_DEFINITION}
+)
 
 
 class _ReceiverDeclaration(NamedTuple):
@@ -3098,7 +3125,7 @@ class CallProcessor:
                 # when the class pass runs (issue #970); these passes run per
                 # caller inside class processing, so they proceed.
                 return
-            self._process_calls_in_classes(
+            field_initializer_starts = self._process_calls_in_classes(
                 root_node,
                 module_qn,
                 language,
@@ -3113,6 +3140,14 @@ class CallProcessor:
             module_calls = self._module_level_calls(
                 all_call_nodes, call_starts, sorted_func_nodes, language, module_qn
             )
+            if field_initializer_starts:
+                # Field-initializer calls already attributed to a
+                # constructor/class must not also reach the Module.
+                module_calls = [
+                    call
+                    for call in module_calls
+                    if call.start_byte not in field_initializer_starts
+                ]
             self._ingest_function_calls(
                 root_node,
                 module_qn,
@@ -4305,13 +4340,17 @@ class CallProcessor:
         combined_captures: dict[str, list] | None = None,
         sorted_func_nodes: list[Node] | None = None,
         func_node_starts: list[int] | None = None,
-    ) -> None:
+    ) -> set[int]:
+        # Returns the start bytes of the field-initializer calls attributed
+        # to a constructor/class below, so the module pass does not also
+        # attribute them to the file's Module (issue #3339).
+        attributed: set[int] = set()
         if combined_captures is not None:
             class_nodes = combined_captures.get(cs.CAPTURE_CLASS, [])
         else:
             query = queries[language][cs.QUERY_CLASSES]
             if not query:
-                return
+                return attributed
             cursor = QueryCursor(query)
             captures = sorted_captures(cursor, root_node)
             class_nodes = captures.get(cs.CAPTURE_CLASS, [])
@@ -4342,6 +4381,360 @@ class CallProcessor:
                     sorted_func_nodes=sorted_func_nodes,
                     func_node_starts=func_node_starts,
                 )
+                attributed.update(
+                    self._process_field_initializers_in_class(
+                        body_node,
+                        class_node,
+                        class_name,
+                        class_qn,
+                        module_qn,
+                        language,
+                        queries,
+                        all_call_nodes,
+                        call_starts,
+                        call_name_cache=call_name_cache,
+                    )
+                )
+        return attributed
+
+    def _process_field_initializers_in_class(
+        self,
+        body_node: Node,
+        class_node: Node,
+        class_name: str,
+        class_qn: str,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
+        all_call_nodes: list[Node] | None = None,
+        call_starts: list[int] | None = None,
+        call_name_cache: dict[int, str | None] | None = None,
+    ) -> set[int]:
+        # An instance field initializer runs when an object is constructed,
+        # so its calls/instantiations belong to the constructor (or the
+        # class node when there is no single constructor to own them), not
+        # to the file's Module (issue #3339). A static initializer runs at
+        # definition time and stays module-attributed, so it is skipped
+        # here and left for the module pass. Only the initializer VALUE is
+        # walked: a decorator or computed key on the field runs at
+        # definition time too, and calls inside a nested function (an
+        # arrow-valued field) belong to that function, which already gets
+        # its own caller pass. Returns the attributed calls' start bytes.
+        if language not in _FIELD_INITIALIZER_LANGUAGES:
+            return set()
+        if all_call_nodes is None or call_starts is None:
+            return set()
+        lang_config = queries[language][cs.QUERY_CONFIG]
+        target = self._field_initializer_target(
+            body_node,
+            class_node,
+            class_name,
+            class_qn,
+            module_qn,
+            language,
+            lang_config,
+        )
+        caller_qn, caller_label, class_context = target
+        attributed: set[int] = set()
+        for field_node in body_node.children:
+            if not self._is_instance_field_node(field_node, language):
+                continue
+            for value_node in self._field_initializer_values(field_node, language):
+                calls = self._initializer_calls(
+                    value_node, all_call_nodes, call_starts, lang_config
+                )
+                if not calls:
+                    continue
+                attributed.update(call.start_byte for call in calls)
+                try:
+                    self._ingest_function_calls(
+                        field_node,
+                        caller_qn,
+                        caller_label,
+                        module_qn,
+                        language,
+                        queries,
+                        class_context,
+                        call_nodes=calls,
+                        call_name_cache=call_name_cache,
+                    )
+                except Exception as e:
+                    # Contained to this field, as for a single method (#3173).
+                    self._record_caller_failure(ls.CALLER_CALLS_FAILED, caller_qn, e)
+        return attributed
+
+    def _field_initializer_target(
+        self,
+        body_node: Node,
+        class_node: Node,
+        class_name: str,
+        class_qn: str,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        lang_config: LanguageSpec,
+    ) -> tuple[str, str, str]:
+        # (caller qn, caller label, class-context qn). The class-context
+        # qn is the scope bare calls resolve in: for C# it is the
+        # registered class qn, not the structural one, because the
+        # structural build drops the namespace and bare-call scoping
+        # against it finds no registered member (a bare `Helper()` in a
+        # no-constructor class would otherwise be swallowed: filtered
+        # out of the module pass but unresolvable in the class pass).
+        # One explicit constructor owns the initializers. Overloads
+        # attribute to their single non-delegating sink only: a
+        # `this(...)`-chained constructor performs none of the field
+        # initializations (JLS 12.5 steps 2-4; C# ECMA-334 17.10.2),
+        # so the initializers run exactly once, in the sink, however
+        # long the chain — counting non-delegators needs no target
+        # resolution. Overloads with no single sink (no non-delegator,
+        # or several independent ones, or a delegation cycle, which is
+        # a compile error) fall back to the class node rather than
+        # guessing one of them, and fanning one source site out over
+        # every overload would duplicate it. The class qn is the
+        # definition pass's registered one: the structural build drops
+        # a C# namespace, which would dangle the edge off a phantom node.
+        class_target = (
+            self._registered_class_qn(class_node, class_name, class_qn, module_qn)
+            if language == cs.SupportedLanguage.CSHARP
+            else class_qn
+        )
+        ctor_nodes = self._class_constructor_nodes(body_node, language)
+        if len(ctor_nodes) == 1:
+            ctor_node = ctor_nodes[0]
+        elif ctor_nodes:
+            sinks = [
+                node
+                for node in ctor_nodes
+                if not self._constructor_delegates(node, language)
+            ]
+            if len(sinks) != 1:
+                return class_target, cs.NodeLabel.CLASS, class_target
+            ctor_node = sinks[0]
+        else:
+            return class_target, cs.NodeLabel.CLASS, class_target
+        if loc := self._recorded_caller(ctor_node, module_qn):
+            return loc.qualified_name, loc.label, class_target
+        if language == cs.SupportedLanguage.CSHARP:
+            # A C# constructor's registered qn carries its parameter
+            # signature; rebuilding it here risks a phantom caller, so an
+            # unrecorded constructor falls back to the class node.
+            return class_target, cs.NodeLabel.CLASS, class_target
+        ctor_name = (
+            cs.KEYWORD_CONSTRUCTOR
+            if language in _JS_TS_LANGUAGES
+            else self._get_node_name(ctor_node)
+        )
+        if not ctor_name:
+            return class_target, cs.NodeLabel.CLASS, class_target
+        member_qn, member_label = self._class_member_qn_and_label(
+            ctor_node, class_qn, ctor_name, lang_config, language
+        )
+        return member_qn, member_label, class_target
+
+    def _registered_class_qn(
+        self, class_node: Node, class_name: str, class_qn: str, module_qn: str
+    ) -> str:
+        # A C# class's registered qn inserts its namespace (and any
+        # enclosing types) between the module and the class name, which
+        # the structural build omits. Rebuild from the declaration's
+        # namespace-qualified name and accept it only when the
+        # definition pass registered exactly that qn as a Class, so a
+        # misread can never invent a caller. When the directory already
+        # spells the namespace the registered qn drops it (issue #1629),
+        # so the candidate misses and the structural qn is correct.
+        # The own name carries its CLR arity spelling when the file
+        # declares the name at another arity too (issue #2579): a plain
+        # candidate would match the non-generic twin and misattribute a
+        # generic twin's initializers to it, or dangle when there is no
+        # non-generic twin at all. Every enclosing type segment carries
+        # its own arity spelling too, for the same reason: qualifying
+        # the leaf alone resolves a nested type inside a generic twin
+        # to its non-generic namesake.
+        qualified = csharp_utils.arity_qualified_path(class_node)
+        if qualified is None:
+            return class_qn
+        candidate = f"{module_qn}{cs.SEPARATOR_DOT}{qualified}"
+        if self._resolver.function_registry.get(candidate) == cs.NodeLabel.CLASS:
+            return candidate
+        return class_qn
+
+    @staticmethod
+    def _class_constructor_nodes(
+        body_node: Node, language: cs.SupportedLanguage
+    ) -> list[Node]:
+        # Only direct members count: a nested class's constructors belong
+        # to that class and are collected when it is iterated. A TS
+        # overload signature (`method_signature`) is not an implementation
+        # and never owns the initializer.
+        if language in _JS_TS_LANGUAGES:
+            return [
+                child
+                for child in body_node.children
+                if child.type == cs.TS_METHOD_DEFINITION
+                and safe_decode_text(child.child_by_field_name(cs.FIELD_NAME))
+                == cs.KEYWORD_CONSTRUCTOR
+            ]
+        if language == cs.SupportedLanguage.JAVA:
+            return [
+                child
+                for child in body_node.children
+                if child.type == cs.TS_CONSTRUCTOR_DECLARATION
+            ]
+        if language == cs.SupportedLanguage.CSHARP:
+            # A static constructor runs once at type load, not per
+            # instance, so it never owns instance field initializers:
+            # exclude it, or a static-only class would attribute to it
+            # and a class with both would fall back to the class node
+            # instead of the instance constructor (Greptile/CodeRabbit
+            # review). The `static` modifier is a direct `modifier`
+            # child, as for fields in `_is_instance_field_node`.
+            return [
+                child
+                for child in body_node.children
+                if child.type == cs.TS_CSHARP_CONSTRUCTOR_DECLARATION
+                and not any(
+                    grandchild.type == cs.TS_CSHARP_MODIFIER
+                    and safe_decode_text(grandchild) == cs.TS_STATIC
+                    for grandchild in child.children
+                )
+            ]
+        return []
+
+    @staticmethod
+    def _constructor_delegates(ctor_node: Node, language: cs.SupportedLanguage) -> bool:
+        # True when this constructor hands construction to a sibling via
+        # `this(...)`: Java's explicit constructor invocation as the first
+        # statement, or C#'s `: this(...)` initializer. A `super(...)` /
+        # `: base(...)` call constructs the base, not a sibling, so the
+        # constructor still runs its own field initializers.
+        if language == cs.SupportedLanguage.JAVA:
+            body = ctor_node.child_by_field_name(cs.FIELD_BODY)
+            if body is None or not body.named_children:
+                return False
+            # Comments are named children in tree-sitter-java, so a
+            # leading comment must not hide the invocation behind it.
+            statements = [
+                child
+                for child in body.named_children
+                if child.type not in (cs.TS_LINE_COMMENT, cs.TS_BLOCK_COMMENT)
+            ]
+            if not statements:
+                return False
+            first = statements[0]
+            if first.type != cs.TS_EXPLICIT_CONSTRUCTOR_INVOCATION:
+                return False
+            return any(
+                safe_decode_text(child) == cs.TS_THIS for child in first.children
+            )
+        if language == cs.SupportedLanguage.CSHARP:
+            for child in ctor_node.children:
+                if child.type != cs.TS_CSHARP_CONSTRUCTOR_INITIALIZER:
+                    continue
+                return any(
+                    grandchild.type == cs.TS_CSHARP_THIS
+                    for grandchild in child.children
+                )
+            return False
+        return False
+
+    def _is_instance_field_node(
+        self, node: Node, language: cs.SupportedLanguage
+    ) -> bool:
+        if language in _JS_TS_LANGUAGES:
+            if node.type not in _JS_TS_FIELD_NODE_TYPES:
+                return False
+            # `static` is a direct keyword child of the field node.
+            return not any(child.type == cs.TS_STATIC for child in node.children)
+        if language == cs.SupportedLanguage.JAVA:
+            if node.type != cs.TS_FIELD_DECLARATION:
+                return False
+            for child in node.children:
+                if child.type == cs.TS_MODIFIERS:
+                    return not any(
+                        safe_decode_text(grandchild) == cs.TS_STATIC
+                        for grandchild in child.children
+                    )
+            return True
+        if language == cs.SupportedLanguage.CSHARP:
+            if node.type != cs.TS_CSHARP_FIELD_DECLARATION:
+                return False
+            return not any(
+                child.type == cs.TS_CSHARP_MODIFIER
+                and safe_decode_text(child) == cs.TS_STATIC
+                for child in node.children
+            )
+        return False
+
+    @staticmethod
+    def _field_initializer_values(
+        field_node: Node, language: cs.SupportedLanguage
+    ) -> list[Node]:
+        if language in _JS_TS_LANGUAGES:
+            value = field_node.child_by_field_name(cs.FIELD_VALUE)
+            return [value] if value is not None else []
+        if language == cs.SupportedLanguage.JAVA:
+            values: list[Node] = []
+            for declarator in field_node.children_by_field_name(cs.FIELD_DECLARATOR):
+                value = declarator.child_by_field_name(cs.FIELD_VALUE)
+                if value is not None:
+                    values.append(value)
+            return values
+        # C#: a variable_declarator carries no `value` field; its value is
+        # the named child after the `=` token.
+        values = []
+        for child in field_node.children:
+            if child.type != cs.TS_CSHARP_VARIABLE_DECLARATION:
+                continue
+            for declarator in child.children:
+                if declarator.type != cs.TS_CSHARP_VARIABLE_DECLARATOR:
+                    continue
+                seen_equals = False
+                for part in declarator.children:
+                    if part.type == cs.CHAR_EQUALS:
+                        seen_equals = True
+                    elif seen_equals and part.is_named:
+                        values.append(part)
+                        break
+        return values
+
+    def _initializer_calls(
+        self,
+        value_node: Node,
+        all_call_nodes: list[Node],
+        call_starts: list[int],
+        lang_config: LanguageSpec,
+    ) -> list[Node]:
+        calls = self._filter_calls_in_node(all_call_nodes, call_starts, value_node)
+        if not calls:
+            return calls
+        # Calls owned by a function or class nested inside the value (an
+        # arrow-valued field, an anonymous class's method) run when that
+        # nested callable runs, not at construction; they already get
+        # their own caller pass. A call that CONTAINS the nested node (an
+        # immediately-invoked arrow) still runs at construction time.
+        nested_spans: list[tuple[int, int]] = []
+        stack = [value_node]
+        while stack:
+            node = stack.pop()
+            if (
+                node.type in lang_config.function_node_types
+                or node.type in lang_config.class_node_types
+                or node.type in _INITIALIZER_DEFERRED_NODE_TYPES
+            ):
+                nested_spans.append((node.start_byte, node.end_byte))
+            stack.extend(node.children)
+        if not nested_spans:
+            return calls
+        return [
+            call
+            for call in calls
+            if not any(
+                start <= call.start_byte
+                and call.end_byte <= end
+                and (call.start_byte > start or call.end_byte < end)
+                for start, end in nested_spans
+            )
+        ]
 
     def _span_bindings(
         self,

@@ -52,6 +52,7 @@ CSHARP_ARITY_TWIN_CACHE_SIZE = 4
 # Member declarations -> Function/Method nodes.
 TS_CSHARP_METHOD_DECLARATION = "method_declaration"
 TS_CSHARP_CONSTRUCTOR_DECLARATION = "constructor_declaration"
+TS_CSHARP_CONSTRUCTOR_INITIALIZER = "constructor_initializer"
 TS_CSHARP_DESTRUCTOR_DECLARATION = "destructor_declaration"
 TS_CSHARP_LOCAL_FUNCTION_STATEMENT = "local_function_statement"
 TS_CSHARP_OPERATOR_DECLARATION = "operator_declaration"
@@ -134,6 +135,7 @@ CSHARP_OBJECT_VIRTUALS = frozenset(
     }
 )
 TS_CSHARP_LAMBDA_EXPRESSION = "lambda_expression"
+TS_CSHARP_ANONYMOUS_METHOD_EXPRESSION = "anonymous_method_expression"
 TS_CSHARP_BLOCK = "block"
 TS_CSHARP_PRIMARY_CONSTRUCTOR_BASE_TYPE = "primary_constructor_base_type"
 TS_CSHARP_PREDEFINED_TYPE = "predefined_type"
