@@ -20,6 +20,7 @@ from ..config import load_ignore_patterns
 from ..language_spec import get_language_for_extension
 from ..types_defs import StructuralReplaceChange, StructuralSearchMatch
 from ..utils.path_utils import is_symlink_entry, should_skip_path
+from ..utils.source_encoding import decode_python_source, source_codec
 
 if TYPE_CHECKING:
     from ast_grep_py import SgNode
@@ -156,8 +157,19 @@ class AstGrepService:
     @staticmethod
     def _read(path: Path) -> str | None:
         try:
-            return path.read_text(encoding=cs.ENCODING_UTF8)
-        except (OSError, UnicodeDecodeError):
+            source = path.read_bytes()
+        except OSError:
+            return None
+        if path.suffix in cs.PY_EXTENSIONS:
+            # A Python file that declares its encoding decodes as CPython
+            # decodes it; the indexer already honours the declaration
+            # (#2445), and so does this reader (#3334).
+            declared = decode_python_source(source, path)
+            if declared is not None:
+                return declared
+        try:
+            return source.decode(cs.ENCODING_UTF8)
+        except UnicodeDecodeError:
             return None
 
     @staticmethod
@@ -258,7 +270,21 @@ class AstGrepService:
                 )
             )
             if not dry_run:
-                abs_path.write_text(new_source, encoding=cs.ENCODING_UTF8)
+                codec = source_codec(abs_path)
+                try:
+                    new_source.encode(codec)
+                except UnicodeEncodeError as exc:
+                    logger.warning(
+                        f"Skipping {rel}: cannot encode rewrite in declared encoding {codec}: {exc}"
+                    )
+                    continue
+                tmp_path = abs_path.with_name(f".{abs_path.name}.tmp")
+                try:
+                    with open(tmp_path, "w", encoding=codec) as f:
+                        f.write(new_source)
+                    tmp_path.replace(abs_path)
+                finally:
+                    tmp_path.unlink(missing_ok=True)
             changes.append(
                 StructuralReplaceChange(
                     file=rel,
