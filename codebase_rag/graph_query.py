@@ -67,6 +67,10 @@ class SymbolRow(TypedDict):
 
 
 class DefinitionRow(SymbolRow):
+    # Where the definition starts on its line: two definitions can share a
+    # line span, and only the column tells them apart (bot review on PR
+    # #2895).
+    start_col: int | None
     # `start_line` and `source` open at the first decorator, as
     # `inspect.getsource` does; `name_line` is the line of the definition's
     # name, its `def`/`class` line, or the node's own start where the graph
@@ -598,6 +602,7 @@ def definition(
             path=None,
             start_line=None,
             end_line=None,
+            start_col=None,
             name_line=None,
             decorators=[],
             name=None,
@@ -620,6 +625,7 @@ def definition(
         path=path,
         start_line=start,
         end_line=end,
+        start_col=_opt_int(row.get(cs.KEY_START_COL)),
         name_line=_opt_int(row.get(cs.KEY_NAME_START_LINE)) or own_start,
         decorators=_as_str_list(row.get(cs.KEY_DECORATORS)),
         name=_opt_str(row.get(cs.KEY_NAME)),

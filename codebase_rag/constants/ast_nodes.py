@@ -214,6 +214,12 @@ RENAME_SCOPE_MARKERS = (
 )
 RENAME_CLASS_MARKER = "class"
 RENAME_NOT_SCOPE_MARKERS = ("call", "invocation", "type", "signature")
+# The C/C++ declarators that hold a parameter list. Their parameters bind in
+# the body of the function or lambda the declarator declares, not in the
+# declarator itself; a prototype's bind nowhere past its own list.
+RENAME_C_FUNCTION_DECLARATORS = frozenset(
+    {"function_declarator", "abstract_function_declarator"}
+)
 RENAME_MEMBER_ACCESS = (".", "->")
 # `->` reaches a member only in these languages; elsewhere it marks a return
 # type (`def make() -> Widget`, `fn new() -> Parse`) or a lambda's body.
