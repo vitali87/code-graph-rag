@@ -5078,6 +5078,8 @@ class CallResolver:
                 if self.function_registry[qn] != cs.NodeLabel.METHOD.value
                 or qn.startswith(own_module)
             ]
+        if language in cs.C_FAMILY_LANGUAGES:
+            possible_matches = self._linkable_from(possible_matches, module_qn)
         if not possible_matches:
             logger.debug(ls.CALL_UNRESOLVED, call_name=call_name)
             return None
@@ -5090,6 +5092,46 @@ class CallResolver:
         logger.debug(ls.CALL_TRIE_FALLBACK, call_name=call_name, qn=best_candidate_qn)
         self.last_resolution = cs.EdgeResolution.HEURISTIC
         return self.function_registry[best_candidate_qn], best_candidate_qn
+
+    def _linkable_from(self, candidates: list[str], module_qn: str) -> list[str]:
+        # A `static` C/C++ function has internal linkage: only its own
+        # translation unit can call it, i.e. its own file or one that
+        # `#include`s it, directly or through other headers. A bare `now()` in
+        # main.c bound a.c's private `static now()` over the extern one it
+        # links against (redis: every cross-file `mstime()` landed on
+        # quicklist.c's static copy, issue #3154). Compared by defining
+        # module, not by qn prefix: `proj.main.h.helper` and `proj.a.b.now`
+        # both start with another file's module (`proj.main`, `proj.a`).
+        registry = self.function_registry
+        private = {
+            qn: unit
+            for qn in candidates
+            if (unit := registry.internal_linkage_module(qn)) is not None
+            and unit != module_qn
+        }
+        if not private:
+            return candidates
+        units = self._include_closure(module_qn)
+        return [qn for qn in candidates if private.get(qn, module_qn) in units]
+
+    def _include_closure(self, module_qn: str) -> set[str]:
+        imports = self.import_processor
+        import_mapping = imports.import_mapping
+        # A header a later include displaced from its local name (`a/util.h`
+        # then `b/util.h`) is still included, so its statics are reachable.
+        displaced = imports.displaced_include_targets()
+        seen = {module_qn}
+        pending = [module_qn]
+        while pending:
+            current = pending.pop()
+            for target in (
+                *(import_mapping.get(current) or {}).values(),
+                *displaced.get(current, ()),
+            ):
+                if target not in seen:
+                    seen.add(target)
+                    pending.append(target)
+        return seen
 
     def _best_trie_candidate(self, possible_matches: list[str], module_qn: str) -> str:
         if len(possible_matches) == 1:
