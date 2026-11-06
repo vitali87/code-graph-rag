@@ -17,6 +17,10 @@ rules:
         field: function
         regex: '^(strcpy|strcat|sprintf|gets|scanf|strncpy)$'
   - id: hardcoded_secret
+    # The credential word must END the name, optionally followed by key
+    # words and digits (SECRET_KEY, secret_key_base, AWS_SECRET_ACCESS_KEY,
+    # password2): `tokenizer`, `token_count` and `password_prompt` only
+    # contain one, and name no credential (issue #2870).
     # Security rule: favour recall. Value must be a non-trivial string literal
     # (>=10 chars incl. quotes) that is not a format/message template (a
     # printf %s/%d specifier or a {..} placeholder). Braces and % conversions
@@ -29,7 +33,7 @@ rules:
       any:
         - kind: init_declarator
           all:
-            - has: { field: declarator, regex: '(?i)(password|secret|api_key|token)' }
+            - has: { field: declarator, regex: '(?i)(password|passwd|secret|api_?key|access_?key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
             - has:
                 field: value
                 all:
@@ -41,7 +45,7 @@ rules:
                         - regex: '%[sdrifeEgGxXoc(]'
         - kind: assignment_expression
           all:
-            - has: { field: left, regex: '(?i)(password|secret|api_key|token)' }
+            - has: { field: left, regex: '(?i)(password|passwd|secret|api_?key|access_?key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
             - has:
                 field: right
                 all:

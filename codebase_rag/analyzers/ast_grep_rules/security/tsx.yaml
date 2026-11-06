@@ -42,6 +42,10 @@ rules:
                   - kind: template_string
                     not: { has: { kind: template_substitution } }
   - id: hardcoded_secret
+    # The credential word must END the name, optionally followed by key
+    # words and digits (SECRET_KEY, secret_key_base, AWS_SECRET_ACCESS_KEY,
+    # password2): `tokenizer`, `token_count` and `password_prompt` only
+    # contain one, and name no credential (issue #2870).
     # A name is bound to a literal by a declarator, an assignment to a
     # variable, member or subscript (the member's own name decides:
     # `token.value = ...` sets a value), an object property or a class
@@ -52,7 +56,7 @@ rules:
       any:
         - kind: variable_declarator
           all:
-            - has: { field: name, regex: '(?i)(password|secret|api_key|token)' }
+            - has: { field: name, regex: '(?i)(password|passwd|secret|api_?key|access_?key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
             - has:
                 field: value
                 all:
@@ -72,11 +76,11 @@ rules:
             - has:
                 field: left
                 any:
-                  - { kind: identifier, regex: '(?i)(password|secret|api_key|token)' }
+                  - { kind: identifier, regex: '(?i)(password|passwd|secret|api_?key|access_?key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
                   - kind: member_expression
-                    has: { field: property, regex: '(?i)(password|secret|api_key|token)' }
+                    has: { field: property, regex: '(?i)(password|passwd|secret|api_?key|access_?key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
                   - kind: subscript_expression
-                    has: { field: index, regex: '(?i)(password|secret|api_key|token)' }
+                    has: { field: index, regex: '(?i)(password|passwd|secret|api_?key|access_?key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
             - has:
                 field: right
                 all:
@@ -93,7 +97,7 @@ rules:
                         - regex: '%[sdrifeEgGxXoc(]'
         - kind: pair
           all:
-            - has: { field: key, regex: '(?i)(password|secret|api_key|token)' }
+            - has: { field: key, regex: '(?i)(password|passwd|secret|api_?key|access_?key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
             - has:
                 field: value
                 all:
@@ -110,7 +114,7 @@ rules:
                         - regex: '%[sdrifeEgGxXoc(]'
         - kind: public_field_definition
           all:
-            - has: { field: name, regex: '(?i)(password|secret|api_key|token)' }
+            - has: { field: name, regex: '(?i)(password|passwd|secret|api_?key|access_?key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
             - has:
                 field: value
                 all:

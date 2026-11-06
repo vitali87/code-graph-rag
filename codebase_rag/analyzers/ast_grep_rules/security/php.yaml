@@ -37,6 +37,10 @@ rules:
             - has: { field: name, regex: '(?i)^query$' }
             - has: { kind: binary_expression, stopBy: end }
   - id: hardcoded_secret
+    # The credential word must END the name, optionally followed by key
+    # words and digits (SECRET_KEY, secret_key_base, AWS_SECRET_ACCESS_KEY,
+    # password2): `tokenizer`, `token_count` and `password_prompt` only
+    # contain one, and name no credential (issue #2870).
     # Security rule: favour recall. Value must be a non-trivial literal (>=10
     # chars) that is not a format/message template (a {..} placeholder or a
     # printf-style %s/%d specifier). Those two exclusions are the only ones, so
@@ -52,7 +56,7 @@ rules:
       any:
         - kind: assignment_expression
           all:
-            - has: { field: left, regex: '(?i)(password|secret|api_key|token)' }
+            - has: { field: left, regex: '(?i)(password|passwd|secret|api_?key|access_?key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
             - has:
                 field: right
                 all:
@@ -77,7 +81,7 @@ rules:
                         any:
                           - kind: encapsed_string
                           - kind: string
-                        regex: '(?i)(password|secret|api_key|token)'
+                        regex: '(?i)(password|passwd|secret|api_?key|access_?key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)'
                   - has:
                       kind: argument
                       nthChild: 2
@@ -93,7 +97,7 @@ rules:
                                 - regex: '%[sdrifeEgGxXoc(]'
         - kind: const_element
           all:
-            - has: { kind: name, regex: '(?i)(password|secret|api_key|token)' }
+            - has: { kind: name, regex: '(?i)(password|passwd|secret|api_?key|access_?key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
             - has:
                 all:
                   - any:
