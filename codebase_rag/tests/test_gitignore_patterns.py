@@ -7,6 +7,7 @@ from codebase_rag.config import (
     GITIGNORE_FILENAME,
     load_ignore_patterns,
 )
+from codebase_rag.utils.path_utils import matches_ignore_patterns
 
 
 def test_gitignore_excludes_are_loaded(tmp_path: Path) -> None:
@@ -37,15 +38,17 @@ def test_gitignore_exact_negation_cancels_its_exclude(tmp_path: Path) -> None:
 
 def test_gitignore_finer_negation_stays_an_unignore(tmp_path: Path) -> None:
     # A finer-grained negation (`!dist/keep.py` under an excluded `dist/`)
-    # cannot cancel by string match; it flows to unignore, where it rescues
-    # from built-in ignores only (documented ceiling in config.py).
+    # cannot re-include the file: git never re-includes a path whose parent
+    # directory is excluded. It still flows to unignore, where it rescues
+    # from built-in ignores.
     (tmp_path / GITIGNORE_FILENAME).write_text(
         "dist/\n!dist/keep.py\n", encoding="utf-8"
     )
 
     result = load_ignore_patterns(tmp_path)
 
-    assert "dist/" in result.exclude
+    assert matches_ignore_patterns("dist/", result.exclude)
+    assert matches_ignore_patterns("dist/keep.py", result.exclude)
     assert "dist/keep.py" in result.unignore
 
 
