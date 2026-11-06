@@ -25,9 +25,8 @@ from .utils import get_js_ts_language_obj
 if TYPE_CHECKING:
     from ...services import IngestorProtocol
     from ...types_defs import (
-        FunctionLocation,
+        FunctionLocations,
         FunctionRegistryTrieProtocol,
-        FunctionSpanKey,
         LanguageQueries,
         SimpleNameLookup,
     )
@@ -54,7 +53,7 @@ class JsTsModuleSystemMixin:
     simple_name_lookup: SimpleNameLookup
     module_qn_to_file_path: dict[str, Path]
     import_processor: ImportProcessor
-    function_locations: dict[FunctionSpanKey, FunctionLocation]
+    function_locations: FunctionLocations
     _processed_imports: set[str]
 
     @abstractmethod
