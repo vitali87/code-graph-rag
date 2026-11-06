@@ -2744,12 +2744,15 @@ class CallResolver:
             ):
                 return True, result
             result = self._resolve_js_member_call_unique(call_name, module_qn)
-            if result is not None and language in cs.JS_TS_LANGUAGES:
+            if language in cs.JS_TS_LANGUAGES:
                 # Chosen because no other visible class defines the name, not
                 # because anything says the receiver is that class (issue
                 # #2609). Only the call site's AST can say that, so the call
                 # processor confirms or drops the pick from the receiver's
-                # declaration; this caller-independent verdict is what caches.
+                # declaration, and picks again with the declared class in
+                # view, which an imported alias of it may alone name (issue
+                # #3276), so no pick is judged too; this caller-independent
+                # verdict is what caches.
                 self.last_resolution = cs.EdgeResolution.HEURISTIC
             self._remember_cacheable(cache_key, result)
             return True, result
@@ -3175,9 +3178,33 @@ class CallResolver:
             stack.extend(self.class_inheritance.get(current, ()))
         return False
 
+    def ts_type_alias(self, module_qn: str, name: str) -> Node | None:
+        """The module's top-level `type <name> = ...` declaration, if any."""
+        file_path = self.type_inference.module_qn_to_file_path.get(module_qn)
+        entry = self.type_inference.ast_cache.load(file_path) if file_path else None
+        if not entry:
+            return None
+        root, _language = entry
+        for child in root.named_children:
+            declaration = (
+                child.child_by_field_name(cs.TS_DECLARATION)
+                if child.type == cs.TS_EXPORT_STATEMENT
+                else child
+            )
+            if (
+                declaration is not None
+                and declaration.type == cs.TS_TYPE_ALIAS_DECLARATION
+                and safe_decode_text(declaration.child_by_field_name(cs.FIELD_NAME))
+                == name
+            ):
+                return declaration
+        return None
+
     def _resolve_js_member_call_unique(
-        self, call_name: str, module_qn: str
+        self, call_name: str, module_qn: str, in_view: str | None = None
     ) -> tuple[str, str] | None:
+        """`in_view`: a class the call site's receiver is declared as, in view
+        for that call as an imported one is (issue #3276)."""
         method_name = call_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
         candidates: list[str] = []
         for qn in self.function_registry.find_ending_with(method_name):
@@ -3209,6 +3236,8 @@ class CallResolver:
             )
             for value in imported
         }
+        if in_view is not None:
+            imported.add(in_view)
         visible = [
             qn
             for qn in candidates
@@ -6393,6 +6422,7 @@ class CallResolver:
         # The callee of the chain's first hop, bound exactly or not at all: a
         # callee bound only by name is a guess, and typing the rest of the
         # chain from its return would build every later hop on that guess.
+        chain_verdict = self.last_resolution
         resolved = self.resolve_function_call(
             call.call_name,
             call.module_qn,
@@ -6402,10 +6432,14 @@ class CallResolver:
             call.language,
             call.call_point,
         )
+        hop_exact = self.last_resolution == cs.EdgeResolution.EXACT
+        # The hop's verdict is read here and goes no further. `this.make` in
+        # an arrow misses by name, which is a heuristic verdict, and the
+        # class-anchored hop below types it exactly; left behind, that miss
+        # labelled the exact `this.make().done()` heuristic (issue #3276).
+        self.last_resolution = chain_verdict
         if resolved is not None:
-            return (
-                resolved[1] if self.last_resolution == cs.EdgeResolution.EXACT else None
-            )
+            return resolved[1] if hop_exact else None
         # `this.m()` in an arrow: name resolution climbs from the arrow to its
         # method, not the class, so the call processor anchors such a call on
         # the enclosing class instead (#971). The hop is typed the same way.
