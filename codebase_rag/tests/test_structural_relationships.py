@@ -861,6 +861,96 @@ def test_depends_on_external_csproj(
         )
 
 
+def test_depends_on_external_secondary_manifest_sections(
+    tmp_path: Path, mock_ingestor: MagicMock
+) -> None:
+    """The repro of issue #3034: 16 packages across pyproject groups, included
+    and secondary requirements files, optionalDependencies and Cargo
+    build/target tables; 6 of them reached the graph."""
+    project_path = tmp_path / "depsdemo"
+    for sub in ("requirements", "web", "rs/src", "pyapp"):
+        (project_path / sub).mkdir(parents=True)
+    (project_path / "pyapp" / "pyproject.toml").write_text(
+        "[project]\n"
+        'name = "pyapp"\n'
+        'dependencies = ["httpx>=0.27"]\n'
+        "[project.optional-dependencies]\n"
+        'cli = ["click>=8"]\n'
+        "[dependency-groups]\n"
+        'dev = ["pytest>=8", "ruff"]\n'
+        'docs = ["sphinx"]\n'
+        "[tool.poetry.group.lint.dependencies]\n"
+        'mypy = "^1.10"\n'
+    )
+    (project_path / "pyapp" / "app.py").write_text("def main():\n    pass\n")
+    (project_path / "requirements.txt").write_text(
+        "-r requirements/base.txt\nflask==3.0\n"
+    )
+    (project_path / "requirements" / "base.txt").write_text("sqlalchemy==2.0\n")
+    (project_path / "requirements-dev.txt").write_text("black==24.1\n")
+    (project_path / "web" / "package.json").write_text(
+        json.dumps(
+            {
+                "name": "web",
+                "dependencies": {"react": "^18.0.0"},
+                "devDependencies": {"vitest": "^1.0.0"},
+                "optionalDependencies": {"fsevents": "^2.3.0"},
+            }
+        )
+    )
+    (project_path / "web" / "index.js").write_text("export const x = 1;\n")
+    (project_path / "rs" / "Cargo.toml").write_text(
+        "[package]\n"
+        'name = "rs"\n'
+        'version = "0.1.0"\n'
+        "[dependencies]\n"
+        'serde = "1"\n'
+        "[build-dependencies]\n"
+        'cc = "1.0"\n'
+        "[target.'cfg(unix)'.dependencies]\n"
+        'libc = "0.2"\n'
+        "[target.'cfg(windows)'.dependencies.windows-sys]\n"
+        'version = "0.52"\n'
+    )
+    (project_path / "rs" / "src" / "main.rs").write_text("fn main() {}\n")
+
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(
+        ingestor=mock_ingestor,
+        repo_path=project_path,
+        parsers=parsers,
+        queries=queries,
+    )
+    updater.run()
+
+    found = {
+        call[0][2][2]: call[1].get("properties", {})
+        for call in mock_ingestor.ensure_relationship_batch.call_args_list
+        if len(call[0]) >= 3
+        and call[0][1] == "DEPENDS_ON_EXTERNAL"
+        and call[0][0] == ("Project", "name", "depsdemo")
+    }
+
+    assert found == {
+        "httpx": {"version_spec": ">=0.27"},
+        "click": {"version_spec": ">=8", "group": "cli"},
+        "pytest": {"version_spec": ">=8", "group": "dev"},
+        "ruff": {"group": "dev"},
+        "sphinx": {"group": "docs"},
+        "mypy": {"version_spec": "^1.10", "group": "lint"},
+        "flask": {"version_spec": "==3.0"},
+        "sqlalchemy": {"version_spec": "==2.0"},
+        "black": {"version_spec": "==24.1"},
+        "react": {"version_spec": "^18.0.0"},
+        "vitest": {"version_spec": "^1.0.0"},
+        "fsevents": {"version_spec": "^2.3.0"},
+        "serde": {"version_spec": "1"},
+        "cc": {"version_spec": "1.0"},
+        "libc": {"version_spec": "0.2", "group": "cfg(unix)"},
+        "windows-sys": {"version_spec": "0.52", "group": "cfg(windows)"},
+    }
+
+
 def test_mixed_structure_and_dependencies(
     complex_project: Path, mock_ingestor: MagicMock
 ) -> None:
