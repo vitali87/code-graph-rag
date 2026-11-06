@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
+from contextlib import contextmanager
 from pathlib import Path
 from typing import NamedTuple
 
@@ -34,6 +35,7 @@ from .extract import (
     first_token_arg_string,
     format_call_target,
     head_is_genuine_module,
+    is_inline_callback,
     is_require_alias,
     iter_token_tree_calls,
     literal_target,
@@ -120,6 +122,10 @@ def _pattern_children(node: Node, descriptor: LanguageDescriptor) -> list[Node]:
     return []
 
 
+def _always_own_pass(_node: Node) -> bool:
+    return True
+
+
 class _LeanHandles(NamedTuple):
     # Per-caller handle state for the lean non-Python walk (issue #714): the
     # per-language constructor/wrapper/method tables plus the mutable
@@ -142,6 +148,28 @@ class _LeanHandles(NamedTuple):
     # (`userClient userv1connect.UserServiceClient`): field name -> stem.
     # Injected clients are called through these, not through a local binding.
     rpc_fields: dict[str, str]
+
+
+@contextmanager
+def _child_handle_scope(
+    lean_handles: _LeanHandles | None, unbound: Iterable[str] = ()
+) -> Iterator[None]:
+    # A nested block or an inline callback walked within its caller is a child
+    # lexical scope for handles too: what it binds (`const out = {}`) is out of
+    # scope afterwards, so it must not leak to, kill or replace the enclosing
+    # bindings, and a name it binds anew (a callback parameter `out`) is not the
+    # enclosing handle inside it (mirrors the in_scope shadow set, by value).
+    if lean_handles is None:
+        yield
+        return
+    snapshot = dict(lean_handles.bindings)
+    for name in unbound:
+        lean_handles.bindings.pop(name, None)
+    try:
+        yield
+    finally:
+        lean_handles.bindings.clear()
+        lean_handles.bindings.update(snapshot)
 
 
 # The connect-go constructor: `New<Stem>Client`, qualified by a generated
@@ -348,6 +376,9 @@ class IOAccessProcessor:
         # when a long-lived processor (realtime updater) re-parses ANY file
         # of the package: a re-parsed file gets a new root id.
         self._rpc_field_cache: dict[tuple[str, tuple[int, ...]], dict[str, str]] = {}
+        # Whether a nested inline callable gets a caller pass of its own; set
+        # per caller by process_io_for_caller (issue #2772).
+        self._has_own_pass: Callable[[Node], bool] = _always_own_pass
         # The module-level string constants of the module last asked about
         # (issue #2521). Callers arrive module by module, so one entry is
         # enough; holding the root keeps its tree alive, so a re-parsed
@@ -360,9 +391,14 @@ class IOAccessProcessor:
         caller_spec: tuple[str, str, str],
         module_qn: str,
         language: cs.SupportedLanguage,
+        has_own_pass: Callable[[Node], bool] | None = None,
     ) -> None:
         if not self._enabled:
             return
+        # An inline callback (`items.forEach(x => console.log(x))`) the call
+        # pass does not walk as its own caller runs as part of this one; without
+        # the predicate every nested callable is assumed to be walked alone.
+        self._has_own_pass = has_own_pass or _always_own_pass
         sinks = IO_SINKS.get(language, ())
         constructors = IO_HANDLE_CONSTRUCTORS.get(language, ())
         if not sinks and not constructors:
@@ -578,6 +614,7 @@ class IOAccessProcessor:
         member_reads: tuple[tuple[str, ResourceKind], ...],
         descriptor: LanguageDescriptor,
         lean_handles: _LeanHandles | None,
+        inherited: frozenset[str] = frozenset(),
     ) -> None:
         # Lean non-Python walk (issue #714): find call sinks in the caller body,
         # crediting I/O to the scope that runs it. No handle/stream tracking yet.
@@ -599,7 +636,9 @@ class IOAccessProcessor:
             statements = [body]
         # Parameters are visible in every block of the function body and always
         # shadow a same-named builtin (a parameter is never an import alias).
-        params = self._param_names(caller_node, descriptor)
+        # An inline callback walked within its enclosing caller also sees the
+        # names in scope where it is written (`inherited`).
+        params = inherited | self._param_names(caller_node, descriptor)
         if descriptor.enclosing_scope_shadows:
             params |= self._enclosing_scope_names(caller_node, descriptor)
         self._walk_scope(
@@ -801,8 +840,26 @@ class IOAccessProcessor:
         stack = [stmt]
         while stack:
             node = stack.pop()
-            # Nested function/method: its own caller, walked separately.
+            # Nested function/method: its own caller, walked separately. An
+            # inline callback the call pass never walks alone runs here, as a
+            # Python lambda does, so its I/O lands on this caller (#2772).
             if node.type in descriptor.nested_scope_types:
+                if is_inline_callback(node, descriptor, self._has_own_pass):
+                    with _child_handle_scope(
+                        lean_handles, self._param_names(node, descriptor)
+                    ):
+                        self._emit_direct_sinks(
+                            node,
+                            caller_spec,
+                            import_map,
+                            sink_by_name,
+                            macro_sinks,
+                            stream_sinks,
+                            member_reads,
+                            descriptor,
+                            lean_handles,
+                            inherited=in_scope | body_extra,
+                        )
                 continue
             if node.type == descriptor.block_scope_type:
                 self._walk_nested_block(
@@ -850,24 +907,20 @@ class IOAccessProcessor:
         lean_handles: _LeanHandles | None,
     ) -> None:
         # A nested block is a child lexical scope for handles too: a handle declared
-        # inside it is out of scope after the block, so its binding must not leak to
-        # later statements (mirrors the in_scope shadow set, passed by value).
-        snapshot = dict(lean_handles.bindings) if lean_handles is not None else None
-        self._walk_scope(
-            list(node.named_children),
-            in_scope,
-            caller_spec,
-            import_map,
-            sink_by_name,
-            macro_sinks,
-            stream_sinks,
-            member_reads,
-            descriptor,
-            lean_handles,
-        )
-        if lean_handles is not None and snapshot is not None:
-            lean_handles.bindings.clear()
-            lean_handles.bindings.update(snapshot)
+        # inside it is out of scope after the block (_child_handle_scope).
+        with _child_handle_scope(lean_handles):
+            self._walk_scope(
+                list(node.named_children),
+                in_scope,
+                caller_spec,
+                import_map,
+                sink_by_name,
+                macro_sinks,
+                stream_sinks,
+                member_reads,
+                descriptor,
+                lean_handles,
+            )
 
     def _emit_node_sinks(
         self,
@@ -1214,10 +1267,23 @@ class IOAccessProcessor:
         # unwrapping the TS wrapper first.
         names: set[str] = set()
         params = caller_node.child_by_field_name(descriptor.params_field)
-        if params is not None:
+        if params is not None and params.type in (
+            descriptor.identifier_type,
+            cs.TS_CSHARP_IMPLICIT_PARAMETER,
+        ):
+            # A lone lambda parameter is the field itself: Java `x -> ...`,
+            # C# `x => ...`.
+            if params.text:
+                names.add(params.text.decode(cs.ENCODING_UTF8))
+        elif params is not None:
             for child in params.named_children:
                 target = child.child_by_field_name(cs.TS_FIELD_PATTERN) or child
                 self._pattern_names(target, descriptor, names)
+        # A JS arrow's lone parameter has a field of its own: `x => ...`.
+        if (
+            single := caller_node.child_by_field_name(cs.TS_FIELD_PARAMETER)
+        ) is not None:
+            self._pattern_names(single, descriptor, names)
         return names
 
     def _enclosing_scope_names(
