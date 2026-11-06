@@ -230,6 +230,11 @@ class CallableNode:
 class ResolvedFrame:
     label: str
     qualified_name: str
+    # The frame has no node of its own (a lambda body, an anonymous function
+    # or class, a closure) and was folded into the node whose span holds it,
+    # so a call from that node into this frame happens inside one node
+    # (issue #2709). Not part of the frame's identity.
+    folded: bool = field(default=False, compare=False)
 
 
 @dataclass(slots=True)
@@ -304,7 +309,11 @@ class FrameResolver:
         if chosen is None:
             stats.record(cs.TraceUnresolvedReason.NO_MATCH)
             return None
-        return ResolvedFrame(label=chosen.label, qualified_name=chosen.qualified_name)
+        return ResolvedFrame(
+            label=chosen.label,
+            qualified_name=chosen.qualified_name,
+            folded=not by_name and parts[-1:] != [_node_leaf(chosen)],
+        )
 
     @staticmethod
     def _innermost_span_containing_line(
@@ -395,6 +404,13 @@ def _named_by(candidates: list[CallableNode], parts: list[str]) -> list[Callable
     ]
 
 
+def _node_leaf(node: CallableNode) -> str:
+    # The last segment of a node's name, as a runtime frame spells it.
+    return _signatureless(_natural_qualified_name(node.qualified_name)).rsplit(
+        cs.SEPARATOR_DOT, 1
+    )[-1]
+
+
 def _innermost_span_containing_line(
     candidates: list[CallableNode], line: int
 ) -> CallableNode | None:
@@ -482,7 +498,15 @@ class JsFrameResolver:
         if chosen is None:
             stats.record(cs.TraceUnresolvedReason.NO_MATCH)
             return None
-        return ResolvedFrame(label=chosen.label, qualified_name=chosen.qualified_name)
+        # Only a nameless frame folds into the function holding it. A named one
+        # that matches no leaf (V8's inferred `exports.walk`) still lands on its
+        # own node by span, so its recursion is real (#2709 review). Start lines
+        # cannot tell the two apart: pprof frames may carry sampled lines.
+        return ResolvedFrame(
+            label=chosen.label,
+            qualified_name=chosen.qualified_name,
+            folded=frame.qualname.startswith(cs.TRACE_SYNTHETIC_PREFIX),
+        )
 
 
 _DOTNET_ARITY = re.compile(r"`\d+")
@@ -516,7 +540,7 @@ class PhpFrameResolver:
     ) -> ResolvedFrame | None:
         closure = _PHP_CLOSURE.match(frame.qualname)
         if closure:
-            return self._resolve_position(
+            return self._resolve_closure(
                 closure.group("path"), int(closure.group("start")), stats
             )
         if frame.path:
@@ -541,9 +565,33 @@ class PhpFrameResolver:
             return None
         return ResolvedFrame(label=module.label, qualified_name=module.qualified_name)
 
+    def _resolve_closure(
+        self, path: str, start: int, stats: ResolutionStats
+    ) -> ResolvedFrame | None:
+        # A closure is named by its own position. The static tier indexes it
+        # as a node starting there (`outer.anonymous_3_9`), which its own
+        # frame resolves to; only one it did not index folds into the
+        # function that defines it (#2709 review).
+        node = self._node_at(path, start, stats)
+        if node is None:
+            return None
+        return ResolvedFrame(
+            label=node.label,
+            qualified_name=node.qualified_name,
+            folded=node.start_line != start,
+        )
+
     def _resolve_position(
         self, path: str, line: int, stats: ResolutionStats
     ) -> ResolvedFrame | None:
+        chosen = self._node_at(path, line, stats)
+        if chosen is None:
+            return None
+        return ResolvedFrame(label=chosen.label, qualified_name=chosen.qualified_name)
+
+    def _node_at(
+        self, path: str, line: int, stats: ResolutionStats
+    ) -> CallableNode | None:
         rel_path = self._relative(path)
         if rel_path is None:
             stats.record(cs.TraceUnresolvedReason.OUTSIDE_REPO)
@@ -555,8 +603,7 @@ class PhpFrameResolver:
         chosen = _innermost_span_containing_line(candidates, line)
         if chosen is None:
             stats.record(cs.TraceUnresolvedReason.NO_MATCH)
-            return None
-        return ResolvedFrame(label=chosen.label, qualified_name=chosen.qualified_name)
+        return chosen
 
     def _resolve_by_name_tail(
         self, qualname: str, stats: ResolutionStats
@@ -624,6 +671,24 @@ def _owner_chain(owner: str) -> tuple[list[str], str | None]:
             continue
         chain.append(part)
     return chain, state_machine_method
+
+
+def _dotnet_lambda_body(name: str) -> bool:
+    """Whether a CLR frame is a lambda body, which demangles to its host.
+
+    The body is a ``<Host>b__N_M`` method, usually on a display class
+    (``<>c``, ``<>c__DisplayClass0_0``); a local function keeps a source name
+    of its own and is not one.
+    """
+    owner, _, method = name.rpartition(cs.SEPARATOR_DOT)
+    # A captured local function sits on the display class too, yet resolves
+    # to a node of its own (#2709 review).
+    if _DOTNET_LOCAL_FUNCTION.match(method):
+        return False
+    return bool(_DOTNET_LAMBDA_BODY.match(method)) or any(
+        _DOTNET_DISPLAY_CLASS.match(part)
+        for part in owner.split(cs.TRACE_DOTNET_NESTED_MARKER)
+    )
 
 
 def _local_function_target(host: str, local: str) -> str:
@@ -712,7 +777,11 @@ class DotnetFrameResolver:
         if chosen is None:
             stats.record(cs.TraceUnresolvedReason.NO_MATCH)
             return None
-        return ResolvedFrame(label=chosen.label, qualified_name=chosen.qualified_name)
+        return ResolvedFrame(
+            label=chosen.label,
+            qualified_name=chosen.qualified_name,
+            folded=_dotnet_lambda_body(frame.qualname),
+        )
 
     def _match(self, demangled: str) -> CallableNode | None:
         suffix = cs.SEPARATOR_DOT + demangled
@@ -788,7 +857,15 @@ class JvmFrameResolver:
         if chosen is None:
             stats.record(cs.TraceUnresolvedReason.NO_MATCH)
             return None
-        return ResolvedFrame(label=chosen.label, qualified_name=chosen.qualified_name)
+        # Span-resolved onto a node of the frame's own name (an anonymous
+        # class's `run`, indexed under the method declaring the class) is the
+        # frame's own node, not a fold into its host, so `run -> run` is real
+        # recursion (#2709 review).
+        return ResolvedFrame(
+            label=chosen.label,
+            qualified_name=chosen.qualified_name,
+            folded=not by_name and _node_leaf(chosen) != method,
+        )
 
     @staticmethod
     def _split_qualname(qualname: str) -> tuple[list[str], str]:
