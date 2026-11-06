@@ -13,7 +13,7 @@ live here.
 
 import os
 import uuid
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import NamedTuple
@@ -24,8 +24,12 @@ from . import constants as cs
 from . import cypher_queries as cq
 from . import logs as ls
 from .services import QueryProtocol
-from .types_defs import PropertyValue
-from .utils.process_owner import process_host
+from .types_defs import PropertyValue, ResultRow
+from .utils.process_owner import (
+    pid_has_exited,
+    process_host,
+    process_table_identified,
+)
 
 
 class SyncRefusedError(RuntimeError):
@@ -119,7 +123,7 @@ def release_project_claim(
 @contextmanager
 def project_claim(
     ingestor: QueryProtocol, project_name: str, repo: Path, *, assume_yes: bool
-) -> Iterator[list[str] | None]:
+) -> Generator[list[str] | None]:
     """Claim the project on `ingestor` for as long as the writer runs (#2411).
 
     Raises `SyncRefusedError`, before anything is written, when the name is
@@ -151,7 +155,7 @@ RUNNING_SYNC_TOKENS: set[str] = set()
 
 
 @contextmanager
-def sync_owner() -> Iterator[dict[str, PropertyValue]]:
+def sync_owner() -> Generator[dict[str, PropertyValue]]:
     """Who this sync is, for its marker; registered as running while held."""
     token = uuid.uuid4().hex
     RUNNING_SYNC_TOKENS.add(token)
@@ -259,3 +263,238 @@ def sync_marker_down(ingestor: QueryProtocol, project_name: str) -> bool:
             cq.CYPHER_CLI_SYNC_MARKER_OWNER, sync_marker_params(project_name)
         )
     )
+
+
+def partial_graph_refusal(ingestor: QueryProtocol, project_name: str) -> str | None:
+    """Why a CLI edit may not plan from the project's graph, or None if it may.
+
+    Any run's marker counts, the MCP server's as well as a CLI writer's. One
+    whose run reached its first write may sit over a graph that lost
+    definitions and calls. One that stopped before writing (`writing=false`)
+    left the graph as it was, so it does not refuse; the MCP server clears it.
+    A store that cannot answer refuses, as the MCP server's
+    `_persisted_incomplete` does: "cannot tell" is not "finished".
+    """
+    try:
+        rows = ingestor.fetch_all(
+            cq.CYPHER_PROJECT_IS_INCOMPLETE, {cs.KEY_PROJECT_NAME: project_name}
+        )
+    except Exception as exc:
+        return cs.CLI_ERR_EDIT_MARKER_UNREADABLE.format(project=project_name, error=exc)
+    if any(
+        row.get(cs.KEY_RUN_INCOMPLETE) and row.get(cs.KEY_WRITING, True) for row in rows
+    ):
+        return cs.CLI_ERR_EDIT_GRAPH_PARTIAL.format(project=project_name)
+    return None
+
+
+class StrandedRun(NamedTuple):
+    """A run whose marker a full rebuild retires, and the exited process it names."""
+
+    run_id: str
+    owner_host: str
+    owner_pid: int
+
+
+def run_owner() -> dict[str, PropertyValue]:
+    """The process an MCP or `cgr check` run's marker names (review of PR #3496)."""
+    return {cs.KEY_OWNER_HOST: process_host(), cs.KEY_OWNER_PID: os.getpid()}
+
+
+def _stopped_run(row: ResultRow) -> StrandedRun | None:
+    """The run a marker names if its process provably exited.
+
+    Only a process in this process table can be checked, and only where the
+    host's name tells this table from every other (`process_table_identified`):
+    a hostname alone may be another machine's, whose pid is no process here.
+    A marker from another host, from a live process (this one included), or
+    from before markers named their process is kept: it may guard a graph its
+    run is still writing, as `cli._stopped_sync_token` reasons.
+    """
+    run_id = row.get(cs.KEY_RUN_ID)
+    pid = row.get(cs.KEY_OWNER_PID)
+    here = process_host()
+    if (
+        not isinstance(run_id, str)
+        or not process_table_identified()
+        or row.get(cs.KEY_OWNER_HOST) != here
+        or not isinstance(pid, int)
+        or pid == os.getpid()
+        or not pid_has_exited(pid)
+    ):
+        return None
+    return StrandedRun(run_id, here, pid)
+
+
+def stranded_runs(
+    ingestor: QueryProtocol, project_name: str, own_run_id: str
+) -> list[StrandedRun]:
+    """The other runs whose markers a full rebuild of the project supersedes.
+
+    Asked before the rebuild marks. A run counts only once its process has
+    exited, whichever checkout it wrote from: the checkout's sync lock keeps
+    out only the writers of this checkout under this CGR_HOME, and a run of
+    the same project elsewhere may still be writing (review of PR #3496). The
+    rebuild must then be forced: a stopped re-ingest may have deleted an
+    unchanged dependent's definitions, which an incremental run skips by its
+    saved hash, as `cgr watch`'s `_marked_run` says. A store that cannot
+    answer yields none, so the rebuild runs as before and those markers stay
+    for the next one.
+    """
+    try:
+        rows = ingestor.fetch_all(
+            cq.CYPHER_STRANDED_RUN_IDS,
+            {cs.KEY_PROJECT_NAME: project_name, cs.KEY_RUN_ID: own_run_id},
+        )
+    except Exception as exc:
+        logger.warning(
+            ls.STRANDED_RUNS_UNREADABLE.format(project=project_name, error=exc)
+        )
+        return []
+    return [run for row in rows if (run := _stopped_run(row)) is not None]
+
+
+def retire_stranded_runs(
+    ingestor: QueryProtocol, project_name: str, runs: list[StrandedRun]
+) -> None:
+    """Take off the markers of `runs` once a forced rebuild committed.
+
+    Never fails the rebuild, which is complete by now: a marker that stays
+    only refuses until the next full sync retires it.
+    """
+    if not runs:
+        return
+    if (error := _retire_markers(ingestor, project_name, runs)) is not None:
+        logger.warning(
+            ls.STRANDED_RUNS_NOT_RETIRED.format(project=project_name, error=error)
+        )
+        return
+    logger.info(ls.STRANDED_RUNS_RETIRED.format(project=project_name, count=len(runs)))
+
+
+def _retire_markers(
+    ingestor: QueryProtocol, project_name: str, runs: list[StrandedRun]
+) -> Exception | None:
+    """Delete each run's marker while it still names the exited process.
+
+    The CLI sync's run id is shared, so a CLI writer that started since has
+    marked the node under its own process and keeps it. Returns the error
+    that stopped it, if any.
+    """
+    try:
+        for run in runs:
+            ingestor.execute_write(
+                cq.CYPHER_RETIRE_STRANDED_RUN,
+                {
+                    cs.KEY_PROJECT_NAME: project_name,
+                    cs.KEY_RUN_ID: run.run_id,
+                    cs.KEY_OWNER_HOST: run.owner_host,
+                    cs.KEY_OWNER_PID: run.owner_pid,
+                },
+            )
+    except Exception as exc:
+        return exc
+    return None
+
+
+class WritingRuns(NamedTuple):
+    """The other runs of a project that may be writing it (#2479)."""
+
+    # Whether one of them may still be alive: a run elsewhere, a live
+    # process, or a marker that names none.
+    live: bool
+    # The ones whose process provably exited.
+    exited: list[StrandedRun]
+
+
+def writing_runs(
+    ingestor: QueryProtocol, project_name: str, own_run_id: str
+) -> WritingRuns:
+    """Split the runs that may be writing the project, all but `own_run_id`.
+
+    Only a process this host can check counts as exited (`_stopped_run`).
+    Raises when the store cannot answer, as "cannot tell" is not "no".
+    """
+    rows = ingestor.fetch_all(
+        cq.CYPHER_WRITING_RUNS, {cs.KEY_PROJECT_NAME: project_name}
+    )
+    live = False
+    exited: list[StrandedRun] = []
+    for row in rows:
+        if row.get(cs.KEY_RUN_ID) == own_run_id:
+            continue
+        if (run := _stopped_run(row)) is None:
+            live = True
+        else:
+            exited.append(run)
+    return WritingRuns(live, exited)
+
+
+def exited_runs(ingestor: QueryProtocol, project_name: str) -> list[StrandedRun]:
+    """The runs of the project that may be writing but whose process exited.
+
+    For a deleted project (#2479), which has no rebuild of its own to leave
+    out, as `stranded_runs` does. A store that cannot answer yields none.
+    """
+    try:
+        return writing_runs(ingestor, project_name, own_run_id="").exited
+    except Exception as exc:
+        logger.warning(
+            ls.EXITED_RUNS_UNREADABLE.format(project=project_name, error=exc)
+        )
+        return []
+
+
+def retire_runs(
+    ingestor: QueryProtocol, project_name: str, runs: list[StrandedRun]
+) -> None:
+    """Take off the markers of exited `runs`; never raises.
+
+    A marker that stays only keeps the project in `cgr status` as
+    interrupted, and keeps `cgr prune` off it.
+    """
+    if not runs:
+        return
+    if (error := _retire_markers(ingestor, project_name, runs)) is not None:
+        logger.warning(
+            ls.EXITED_RUNS_NOT_RETIRED.format(project=project_name, error=error)
+        )
+        return
+    logger.info(ls.EXITED_RUNS_RETIRED.format(project=project_name, count=len(runs)))
+
+
+def retire_exited_runs(ingestor: QueryProtocol, project_name: str) -> None:
+    """Take off the markers `exited_runs` names, once the project is deleted.
+
+    A marker sits on its own node, out of the delete's reach, so one whose
+    run died mid-write kept the project in `cgr status` as interrupted for
+    good once its checkout was gone (#2479).
+    """
+    retire_runs(ingestor, project_name, exited_runs(ingestor, project_name))
+
+
+def take_over_runs(
+    ingestor: QueryProtocol,
+    project_name: str,
+    own_run_id: str,
+    runs: list[StrandedRun],
+) -> None:
+    """Mark the project as `own_run_id`'s, then retire the exited `runs`.
+
+    For `cgr prune`, which retires them before its purge (#2479): its own
+    marker goes down first, so a purge that then fails leaves the project
+    marked as partial, as their markers did, and a later run still knows
+    to rebuild it. Raises if the mark fails, and then retires nothing.
+    """
+    if not runs:
+        return
+    ingestor.execute_write(
+        cq.CYPHER_MARK_RUN_INCOMPLETE,
+        {
+            cs.KEY_PROJECT_NAME: project_name,
+            cs.KEY_RUN_ID: own_run_id,
+            cs.KEY_WRITING: True,
+            **run_owner(),
+        },
+    )
+    retire_runs(ingestor, project_name, runs)
