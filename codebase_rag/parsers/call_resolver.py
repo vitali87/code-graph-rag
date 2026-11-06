@@ -3696,7 +3696,9 @@ class CallResolver:
         ):
             return result
 
-        return self._try_resolve_wildcard_imports(call_name, import_map)
+        return self._try_resolve_wildcard_imports(
+            call_name, import_map, language, module_qn
+        )
 
     def _php_target_for_namespace_import(
         self, imported_path: str, kind: NodeType | None = None
@@ -4233,7 +4235,11 @@ class CallResolver:
         return cs.SEPARATOR_DOT
 
     def _try_resolve_wildcard_imports(
-        self, call_name: str, import_map: dict[str, str]
+        self,
+        call_name: str,
+        import_map: dict[str, str],
+        language: cs.SupportedLanguage | None = None,
+        module_qn: str | None = None,
     ) -> tuple[str, str] | None:
         map_id = id(import_map)
         if map_id not in self._wildcard_cache:
@@ -4245,11 +4251,56 @@ class CallResolver:
         wildcards = self._wildcard_cache[map_id]
         if not wildcards:
             return None
+        if language == cs.SupportedLanguage.RUST:
+            return self._try_rust_globs(call_name, wildcards, module_qn)
         for _, imported_qn in wildcards:
             if result := self._try_wildcard_qns(call_name, imported_qn):
                 self.last_resolution = cs.EdgeResolution.HEURISTIC
                 return result
         return None
+
+    def _try_rust_globs(
+        self,
+        call_name: str,
+        wildcards: list[tuple[str, str]],
+        module_qn: str | None,
+    ) -> tuple[str, str] | None:
+        # rustc resolves a glob at compile time, as it does a named `use`;
+        # only Python's `import *` can hang on a run-time `__all__` (issue
+        # #3172). Two globs supplying the name are told apart by the items'
+        # visibility, which the registry does not hold, so neither is
+        # claimed exact.
+        direct: list[tuple[str, str]] = []
+        through: list[tuple[str, str]] = []
+        for _, imported_qn in wildcards:
+            if hit := self._try_wildcard_qns(call_name, imported_qn):
+                direct.append(hit)
+            elif hit := self._rust_glob_reexport(call_name, imported_qn, module_qn):
+                through.append(hit)
+        found = list(dict.fromkeys((*direct, *through)))
+        if not found:
+            return None
+        self.last_resolution = (
+            cs.EdgeResolution.EXACT if len(found) == 1 else cs.EdgeResolution.HEURISTIC
+        )
+        return found[0]
+
+    def _rust_glob_reexport(
+        self, call_name: str, imported_qn: str, module_qn: str | None
+    ) -> tuple[str, str] | None:
+        # A globbed module may hold the function only through its own
+        # `pub use self::inner::*;` or `pub use inner::helper;`. Types already
+        # followed those hops; a function missed them, fell to the
+        # project-wide name search and bound a same-named decoy (#3172). The
+        # glob is the caller's module's, so a private `use` in the globbed
+        # module, which binds its name there alone, is not followed.
+        if cs.SEPARATOR_DOUBLE_COLON in imported_qn:
+            return None
+        target = f"{imported_qn}{cs.SEPARATOR_DOT}{call_name}"
+        hit, _unknown = self._follow_rust_scope_item(
+            target, {target}, via_glob_from=module_qn
+        )
+        return hit if hit is not None and hit[0] == NodeType.FUNCTION else None
 
     def _try_wildcard_qns(
         self, call_name: str, imported_qn: str
