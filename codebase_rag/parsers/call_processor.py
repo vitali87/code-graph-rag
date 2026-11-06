@@ -1974,6 +1974,61 @@ def _go_asserted_receiver_call_name(selector: Node) -> str | None:
     return f"{type_name}{cs.SEPARATOR_DOT}{decode_node_text(method.text)}"
 
 
+def _ts_cast_receiver_call_name(member: Node) -> str | None:
+    # `(s as Service).handle()` and `(<Service>s).handle()` name the
+    # receiver's type at the call site, so the call is `Service.handle`, which
+    # the resolver binds as it binds a typed receiver; the cast's own text was
+    # a call name it could not read (issue #2890). A cast to no named type
+    # (`as any`, a union, an object type) names no class.
+    receiver = member.child_by_field_name(cs.FIELD_OBJECT)
+    method = member.child_by_field_name(cs.FIELD_PROPERTY)
+    while receiver is not None and receiver.type in cs.TS_TYPE_KEEPING_WRAPPERS:
+        receiver = receiver.named_child(0)
+    if receiver is None or method is None or method.text is None:
+        return None
+    target: Node | None = None
+    if receiver.type == cs.TS_AS_EXPRESSION and receiver.named_children:
+        target = receiver.named_children[-1]
+    elif receiver.type == cs.TS_TYPE_ASSERTION and (
+        (arguments := receiver.named_child(0)) is not None
+        and arguments.type == cs.TS_TYPE_ARGUMENTS
+    ):
+        target = arguments.named_child(0)
+    if target is not None and target.type == cs.TS_GENERIC_TYPE:
+        target = target.named_child(0)
+    if (
+        target is None
+        or target.type not in (cs.TS_TYPE_IDENTIFIER, cs.TS_NESTED_TYPE_IDENTIFIER)
+        or target.text is None
+    ):
+        return None
+    return (
+        f"{decode_node_text(target.text)}{cs.SEPARATOR_DOT}"
+        f"{decode_node_text(method.text)}"
+    )
+
+
+def _without_cast_type_value(
+    call_node: Node,
+    language: cs.SupportedLanguage | None,
+    var_types: dict[str, str] | None,
+) -> dict[str, str] | None:
+    # `(s as Real).run()` is named `Real.run`, where `Real` is a TYPE: a local
+    # value of that name (`const Real = new Fake()`) lives in TypeScript's
+    # other namespace, so it must not type the receiver (Greptile, PR #2959).
+    if language not in _JS_TS_LANGUAGES or not var_types:
+        return var_types
+    member = call_node.child_by_field_name(cs.FIELD_FUNCTION)
+    if member is None or member.type != cs.TS_MEMBER_EXPRESSION:
+        return var_types
+    if not (cast_call := _ts_cast_receiver_call_name(member)):
+        return var_types
+    type_root = cast_call.split(cs.SEPARATOR_DOT, 1)[0]
+    if type_root not in var_types:
+        return var_types
+    return {name: kind for name, kind in var_types.items() if name != type_root}
+
+
 def _peel_ts_getter_receiver(recv: Node | None) -> tuple[Node | None, str | None]:
     """Peel type-transparent wrappers off a getter read's receiver.
 
@@ -4643,6 +4698,10 @@ class CallProcessor:
                 asserted_call := _go_asserted_receiver_call_name(func_child)
             ):
                 return asserted_call
+            case cs.TS_MEMBER_EXPRESSION if language in _JS_TS_LANGUAGES and (
+                cast_call := _ts_cast_receiver_call_name(func_child)
+            ):
+                return cast_call
             case (
                 cs.TS_IDENTIFIER
                 | cs.TS_ATTRIBUTE
@@ -6145,6 +6204,9 @@ class CallProcessor:
                 for name, var_type in call_var_types.items()
                 if name != receiver
             }
+        call_var_types = _without_cast_type_value(
+            call_node, ctx.language, call_var_types
+        )
 
         if ctx.is_cpp:
             self._emit_cpp_template_dispatch(ctx, call_name, call_var_types)
