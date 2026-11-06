@@ -72,6 +72,17 @@ JS_TS_IMPORT_NODES = (
 JS_TS_LANGUAGES = frozenset(
     {SupportedLanguage.JS, SupportedLanguage.TS, SupportedLanguage.TSX}
 )
+# Languages whose functions `callable_parameter_indices` can find invoking
+# a parameter, and so whose callable-argument edges an incremental run must
+# re-derive from the passing files (issue #2911).
+CALLABLE_FLOW_LANGUAGES = frozenset(
+    {
+        SupportedLanguage.PYTHON,
+        SupportedLanguage.GO,
+        SupportedLanguage.CPP,
+        *JS_TS_LANGUAGES,
+    }
+)
 # Sets of languages whose sources reach each other directly: the JS family
 # compiles to one runtime, C++ calls C, and Scala calls Java on the JVM. A
 # call may cross between them, and their same-stem files (a C source and its
