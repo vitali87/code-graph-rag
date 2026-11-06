@@ -198,6 +198,21 @@ def test_delete_project_sweeps_the_projects_glosses_after_the_delete(
 
 
 @patch("codebase_rag.cli.delete_project_embeddings")
+def test_delete_project_retires_the_markers_of_exited_runs(
+    mock_delete_embeddings: MagicMock,
+    mock_memgraph_connect: MagicMock,
+) -> None:
+    # A run that died mid-write left a marker no delete reaches; once its
+    # process provably exited, the deleted project stops showing in
+    # `cgr status` as interrupted (#2479).
+    with patch("codebase_rag.cli._retire_exited_runs") as retire:
+        result = runner.invoke(app, ["delete-project", "--name", "platform"])
+
+    assert result.exit_code == 0, result.output
+    retire.assert_called_once_with(_get_ingestor(mock_memgraph_connect), "platform")
+
+
+@patch("codebase_rag.cli.delete_project_embeddings")
 def test_a_failed_gloss_sweep_warns_and_keeps_the_completed_delete(
     mock_delete_embeddings: MagicMock,
     mock_memgraph_connect: MagicMock,
