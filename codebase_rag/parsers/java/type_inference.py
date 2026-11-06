@@ -56,6 +56,7 @@ class JavaTypeInferenceEngine(
         "_rel_to_module",
         "_family_picks",
         "_class_headers",
+        "_supertype_walks",
     )
 
     def __init__(
@@ -96,13 +97,15 @@ class JavaTypeInferenceEngine(
         self._lookup_cache: dict[str, str | None] = {}
         self._lookup_in_progress: set[str] = set()
         self._class_headers: dict[Path, JavaClassHeaders] = {}
+        self._supertype_walks: dict[str, tuple[str, ...]] = {}
 
         self._fqn_to_module_qn: dict[str, list[str]] = self._build_fqn_lookup_map()
 
     def reset_resolution_memos(self) -> None:
         # A file re-parsed since the last call pass has a new tree to read
-        # its class headers from.
+        # its class headers and implemented interfaces from.
         self._class_headers.clear()
+        self._supertype_walks.clear()
 
     def resolve_java_call_site(
         self, call_node: ASTNode, module_qn: str
