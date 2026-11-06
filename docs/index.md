@@ -45,7 +45,7 @@ Code-Graph-RAG is an accurate Retrieval-Augmented Generation (RAG) system that a
 ## Quick Start
 
 ```bash
-pip install code-graph-rag
+pip install 'code-graph-rag[treesitter-full]'
 cgr daemon up
 cgr start --repo-path ./my-project --update-graph
 ```
