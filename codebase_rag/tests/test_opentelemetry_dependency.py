@@ -3,8 +3,7 @@
 # tabs not followed by a comma, and never length-checked the header first, so
 # one request through propagate.extract() could burn CPU. 1.45.1 parses in
 # linear time and drops combined tracestate headers over 8192 characters.
-# pydantic-ai-slim pulls the API into the runtime closure; semgrep (dev group)
-# pins it ~=1.37.0, which the override in pyproject.toml lifts.
+# pydantic-ai-slim and mcp pull the API into the runtime closure.
 from __future__ import annotations
 
 from importlib.metadata import version
