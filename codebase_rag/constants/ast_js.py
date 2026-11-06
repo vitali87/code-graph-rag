@@ -2,6 +2,7 @@
 
 from .ast_nodes import (
     TS_CALL_EXPRESSION,
+    TS_CLASS_DECLARATION,
     TS_IDENTIFIER,
     TS_INTERFACE_DECLARATION,
     TS_MEMBER_EXPRESSION,
@@ -109,6 +110,7 @@ TS_FUNCTION_EXPRESSION = "function_expression"
 # (`get thing() {...}`); its presence marks the method as a property whose
 # reads are member accesses, not invocations.
 TS_GET_ACCESSOR_KEYWORD = "get"
+TS_SET_ACCESSOR_KEYWORD = "set"
 TS_ARROW_FUNCTION = "arrow_function"
 TS_REQUIRED_PARAMETER = "required_parameter"
 TS_OPTIONAL_PARAMETER = "optional_parameter"
@@ -438,6 +440,16 @@ TS_FUNCTION_DECLARATION = "function_declaration"
 TS_GENERATOR_FUNCTION_DECLARATION = "generator_function_declaration"
 TS_GENERATOR_FUNCTION = "generator_function"
 
+# The callable-parameter scan (`parsers/utils.py`, and the tree bridge's port
+# of it for the interface fingerprint): the scopes that capture an enclosing
+# function's parameters, and the ones it never enters.
+JS_TS_CALLABLE_CLOSURE_TYPES = frozenset(
+    {TS_ARROW_FUNCTION, TS_FUNCTION_EXPRESSION, TS_FUNCTION_DECLARATION}
+)
+JS_TS_CALLABLE_OPAQUE_TYPES = frozenset({TS_CLASS_DECLARATION})
+# A TypeScript parameter, whose name sits in its `pattern` field.
+JS_TS_TYPED_PARAMETER_TYPES = frozenset({TS_REQUIRED_PARAMETER, TS_OPTIONAL_PARAMETER})
+
 # Tree-sitter field names for module system
 FIELD_FUNCTION = "function"
 FIELD_KEY = "key"
@@ -522,3 +534,24 @@ CAPTURE_MODULE_OBJ = "module_obj"
 CAPTURE_EXPORTS_PROP = "exports_prop"
 CAPTURE_EXPORT_NAME = "export_name"
 CAPTURE_EXPORT_FUNCTION = "export_function"
+
+# Value nodes a call argument can be without running code, and the methods
+# through which a function is called with an explicit receiver, for
+# change_signature (issue #1908).
+TS_JS_NUMBER = "number"
+TS_JS_NULL = "null"
+TS_JS_UNDEFINED = "undefined"
+TS_JS_ACCESSOR_KEYWORDS = frozenset({"get", "set"})
+JS_RECEIVER_METHODS = frozenset({"call", "apply"})
+# `\u0061` and `\u{61}` both spell the identifier `a`, and a parameter name
+# written with escapes is refused; a direct `eval` reads locals named in a
+# string. For change_signature (issue #1908).
+JS_IDENTIFIER_ESCAPE = r"\\u\{([0-9a-fA-F]+)\}|\\u([0-9a-fA-F]{4})"
+JS_ESCAPE_MARK = "\\"
+JS_EVAL_NAME = "eval"
+# The argument passed for a default a call skips: undefined even where the
+# caller has bound the name `undefined` to something else.
+JS_SKIPPED_ARGUMENT = "void 0"
+# A function body opening with either of these, exactly as written, runs in
+# strict mode, and JavaScript then refuses a default among its parameters.
+JS_USE_STRICT_DIRECTIVES = frozenset({"'use strict'", '"use strict"'})
