@@ -83,6 +83,7 @@ TS_PY_KEYWORD_SEPARATOR = "keyword_separator"
 # carry (`f(*args)`, `f(**opts)`); the `_pattern` forms above are the
 # definition-side spellings.
 TS_PY_PARAMETERS = "parameters"
+TS_PY_LAMBDA_PARAMETERS = "lambda_parameters"
 TS_PY_LIST_SPLAT = "list_splat"
 TS_PY_DICTIONARY_SPLAT = "dictionary_splat"
 # Scopes nested in a function body, where a parameter's name may be re-bound

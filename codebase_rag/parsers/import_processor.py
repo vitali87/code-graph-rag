@@ -3,6 +3,7 @@ import posixpath
 import re
 import tomllib
 from collections.abc import Iterator, Mapping, Sequence
+from enum import Enum, auto
 from functools import lru_cache
 from pathlib import Path
 from typing import NamedTuple
@@ -90,6 +91,7 @@ from .stdlib_extractor import (
     save_persistent_cache,
 )
 from .utils import (
+    PythonStarRules,
     follow_reexports,
     get_query_cursor,
     node_site_properties,
@@ -1069,6 +1071,316 @@ def _import_site_props(
     return site
 
 
+def _site_start(site: PropertyDict | None) -> tuple[int, int]:
+    """Where a recorded import site starts; (0, 0) when none was recorded."""
+    line = site.get(cs.KEY_LINE) if site else None
+    col = site.get(cs.KEY_COL) if site else None
+    return (line, col) if isinstance(line, int) and isinstance(col, int) else (0, 0)
+
+
+def _python_string_literal(node: Node) -> str | None:
+    if node.type != cs.TS_PY_STRING or node.text is None:
+        return None
+    match = re.fullmatch(
+        cs.PY_DUNDER_ALL_ENTRY_PATTERN, node.text.decode(cs.ENCODING_UTF8)
+    )
+    return match.group(cs.KEY_NAME) if match else None
+
+
+def _python_literal_names(node: Node | None) -> list[str] | None:
+    # The names a `__all__` list or tuple literal spells, None for anything
+    # computed (`base.__all__ + [...]`), whose entries cannot be read here.
+    if node is None or node.type not in (cs.TS_PY_LIST, cs.TS_PY_TUPLE):
+        return None
+    names = [_python_string_literal(c) for c in node.named_children]
+    return None if None in names else [n for n in names if n is not None]
+
+
+def _python_dunder_all_part(statement: Node) -> list[str] | None:
+    """What one module-level statement adds to `__all__`: its assignment, an
+    `+=`, an `.extend([...])` or an `.append("x")`. None when it does not
+    touch `__all__`; raises _UnreadableDunderAll when it sets it to something
+    the source does not spell out."""
+    expression = next(iter(statement.named_children), None)
+    if expression is None:
+        return None
+    if expression.type in (cs.TS_PY_ASSIGNMENT, cs.TS_PY_AUGMENTED_ASSIGNMENT):
+        left = expression.child_by_field_name(cs.TS_FIELD_LEFT)
+        if left is None or left.text != cs.PY_DUNDER_ALL.encode():
+            return None
+        return _readable(
+            _python_literal_names(expression.child_by_field_name(cs.TS_FIELD_RIGHT))
+        )
+    if expression.type != cs.TS_PY_CALL:
+        return None
+    return _python_dunder_all_call_part(expression)
+
+
+def _python_dunder_all_call_part(call: Node) -> list[str] | None:
+    """What an `__all__.extend([...])` or `__all__.append("x")` call adds;
+    None when the call is not on `__all__`, raising _UnreadableDunderAll as
+    _python_dunder_all_part does."""
+    func = call.child_by_field_name(cs.TS_FIELD_FUNCTION)
+    if func is None or func.type != cs.TS_PY_ATTRIBUTE:
+        return None
+    owner = func.child_by_field_name(cs.FIELD_OBJECT)
+    method = func.child_by_field_name(cs.TS_PY_FIELD_ATTRIBUTE)
+    if owner is None or owner.text != cs.PY_DUNDER_ALL.encode() or method is None:
+        return None
+    args = call.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
+    arg = next(iter(args.named_children), None) if args is not None else None
+    if method.text == cs.PY_LIST_APPEND.encode() and arg is not None:
+        name = _python_string_literal(arg)
+        return _readable(None if name is None else [name])
+    if method.text == cs.PY_LIST_EXTEND.encode():
+        return _readable(_python_literal_names(arg))
+    raise _UnreadableDunderAll
+
+
+class _UnreadableDunderAll(Exception):
+    """`__all__` is set in a way the source does not spell out."""
+
+
+class _LateDunderAll(_UnreadableDunderAll):
+    """`__all__` is changed in a def or lambda body, which can run after any
+    later statement, so no later literal settles what it holds."""
+
+
+def _readable(names: list[str] | None) -> list[str]:
+    if names is None:
+        raise _UnreadableDunderAll
+    return names
+
+
+class _NameUse(Enum):
+    """How one occurrence of a name uses it."""
+
+    BIND = auto()
+    MUTATE = auto()
+    GLOBAL = auto()
+    READ = auto()
+
+
+# The field of these nodes that holds what they bind.
+_PY_TARGET_FIELDS = {
+    **dict.fromkeys(cs.PY_LEFT_BINDERS | {cs.TS_PY_FOR_IN_CLAUSE}, cs.TS_FIELD_LEFT),
+    **dict.fromkeys(
+        cs.PY_NAME_BINDERS
+        | {cs.TS_PY_DEFAULT_PARAMETER, cs.TS_PY_TYPED_DEFAULT_PARAMETER},
+        cs.FIELD_NAME,
+    ),
+    cs.TS_PY_AS_PATTERN: cs.FIELD_ALIAS,
+    cs.TS_PY_ALIASED_IMPORT: cs.FIELD_ALIAS,
+}
+# Nodes that bind every name they hold.
+_PY_BINDING_HOLDERS = frozenset(
+    {
+        cs.TS_PY_PARAMETERS,
+        cs.TS_PY_LAMBDA_PARAMETERS,
+        cs.TS_PY_DELETE_STATEMENT,
+        cs.TS_PY_CASE_PATTERN,
+        cs.TS_PY_KEYWORD_PATTERN,
+        cs.TS_PY_SPLAT_PATTERN,
+    }
+)
+# The shapes a target is spelled in, climbed to reach what binds it:
+# `a, *b`, `(a)`, `del a, b`, `from m import a`, `*a: int`, `**a`.
+_PY_TARGET_SHAPES = cs.PY_BINDING_PATTERN_TYPES | {
+    cs.TS_PY_PARENTHESIZED_EXPRESSION,
+    cs.TS_PY_EXPRESSION_LIST,
+    cs.TS_PY_DOTTED_NAME,
+    cs.TS_PY_TYPED_PARAMETER,
+    cs.TS_PY_DICTIONARY_SPLAT_PATTERN,
+}
+
+
+def _is_field(node: Node, field: str, child: Node) -> bool:
+    found = node.child_by_field_name(field)
+    return found is not None and found.id == child.id
+
+
+def _python_name_use(identifier: Node) -> _NameUse:
+    """How one occurrence uses its name: binds it (an assignment, `for`,
+    `as`, walrus, def or class name, parameter, import, `del` or `case`
+    capture), mutates what it holds (a method call, or an item or attribute
+    of it as a target), declares it `global`, or reads it. A `nonlocal`
+    names a binding of an enclosing def, which that def's own uses show."""
+    child, node = identifier, identifier.parent
+    held = False
+    while node is not None:
+        if node.type == cs.TS_PY_ATTRIBUTE and _is_field(node, cs.FIELD_OBJECT, child):
+            call = node.parent
+            if (
+                call is not None
+                and call.type == cs.TS_PY_CALL
+                and _is_field(call, cs.TS_FIELD_FUNCTION, node)
+            ):
+                return _NameUse.MUTATE
+            held = True
+        elif node.type == cs.TS_PY_SUBSCRIPT and _is_field(node, cs.FIELD_VALUE, child):
+            held = True
+        elif node.type not in _PY_TARGET_SHAPES:
+            break
+        child, node = node, node.parent
+    use = _python_binding_use(node, child) if node is not None else _NameUse.READ
+    return _NameUse.MUTATE if held and use is _NameUse.BIND else use
+
+
+def _python_binding_use(node: Node, child: Node) -> _NameUse:
+    """How `node` uses the target shape `child` it holds."""
+    if node.type == cs.TS_PY_GLOBAL_STATEMENT:
+        return _NameUse.GLOBAL
+    if node.type in _PY_BINDING_HOLDERS or (
+        node.type in cs.PY_IMPORT_TYPES
+        and not _is_field(node, cs.FIELD_MODULE_NAME, child)
+    ):
+        return _NameUse.BIND
+    field = _PY_TARGET_FIELDS.get(node.type)
+    if field is not None and _is_field(node, field, child):
+        return _NameUse.BIND
+    return _NameUse.READ
+
+
+def _python_name_scope(node: Node, walrus: bool = False) -> Node:
+    """The def, class body, lambda or comprehension whose names `node` is
+    one of, else the module. A def's or class's own name, decorators and
+    bases are the enclosing scope's, and a walrus target is the scope's
+    around its comprehension, as Python binds them."""
+    child, current = node, node.parent
+    while current is not None and current.parent is not None:
+        if (
+            current.type == cs.TS_PY_LAMBDA
+            or (current.type in cs.PY_COMPREHENSION_TYPES and not walrus)
+            or (
+                current.type == cs.TS_PY_FUNCTION_DEFINITION
+                and not _is_field(current, cs.FIELD_NAME, child)
+            )
+            or (
+                current.type == cs.TS_PY_CLASS_DEFINITION
+                and _is_field(current, cs.FIELD_BODY, child)
+            )
+        ):
+            return current
+        child, current = current, current.parent
+    return current if current is not None else node
+
+
+def _python_module_owns(scope: Node, uses: Mapping[int, set[_NameUse]]) -> bool:
+    """Whether the name `scope` reads is the module's, by Python's scope
+    rules: the first scope out that declares it `global` makes it the
+    module's, one that binds it keeps it its own, and a class body is passed
+    over from the scopes inside it."""
+    from_inner = False
+    while scope.parent is not None:
+        if not (from_inner and scope.type == cs.TS_PY_CLASS_DEFINITION):
+            seen = uses.get(scope.id, set())
+            if _NameUse.GLOBAL in seen:
+                return True
+            if _NameUse.BIND in seen:
+                return False
+        from_inner = from_inner or scope.type != cs.TS_PY_CLASS_DEFINITION
+        scope = _python_name_scope(scope)
+    return True
+
+
+def _runs_later(node: Node, statement: Node) -> bool:
+    """Whether `node` sits in a def or lambda body inside `statement`, which
+    runs whenever it is called rather than where it is written."""
+    child, current = node, node.parent
+    while current is not None and child.id != statement.id:
+        if current.type == cs.TS_PY_LAMBDA or (
+            current.type == cs.TS_PY_FUNCTION_DEFINITION
+            and _is_field(current, cs.FIELD_BODY, child)
+        ):
+            return True
+        child, current = current, current.parent
+    return False
+
+
+def _python_dunder_all_names(statement: Node) -> Iterator[Node]:
+    """Each `__all__` name the statement holds, at any depth; another
+    object's `__all__` (`ns.__all__ = ...`) is not one."""
+    if statement.text is None or cs.PY_DUNDER_ALL.encode() not in statement.text:
+        return
+    stack = [statement]
+    while stack:
+        node = stack.pop()
+        stack.extend(node.children)
+        if node.type != cs.TS_PY_IDENTIFIER or node.text != cs.PY_DUNDER_ALL.encode():
+            continue
+        owner = node.parent
+        if owner is None or not _is_field(owner, cs.TS_PY_FIELD_ATTRIBUTE, node):
+            yield node
+
+
+def _python_dunder_all_writes(statement: Node) -> Iterator[Node]:
+    """Each `__all__` the statement rebinds or mutates that is the module's.
+    One a def, class body, lambda or comprehension binds as its own is not,
+    so a helper's local `__all__` leaves the module's list alone."""
+    found = []
+    uses: dict[int, set[_NameUse]] = {}
+    for name in _python_dunder_all_names(statement):
+        use = _python_name_use(name)
+        walrus = (
+            name.parent is not None and name.parent.type == cs.TS_PY_NAMED_EXPRESSION
+        )
+        scope = _python_name_scope(name, walrus=walrus and use is _NameUse.BIND)
+        uses.setdefault(scope.id, set()).add(use)
+        found.append((name, use, scope))
+    for name, use, scope in found:
+        if use in (_NameUse.BIND, _NameUse.MUTATE) and _python_module_owns(scope, uses):
+            yield name
+
+
+def _python_dunder_all_change(statement: Node) -> list[str] | None:
+    """What one top-level statement adds to `__all__`, as
+    _python_dunder_all_part reads it; None when it leaves `__all__` alone.
+    A change the literals do not spell (inside a block, by a function,
+    through `del` or an import) raises _UnreadableDunderAll, or
+    _LateDunderAll when it runs in a def or lambda."""
+    if statement.type == cs.TS_PY_EXPRESSION_STATEMENT and (
+        (part := _python_dunder_all_part(statement)) is not None
+    ):
+        return part
+    writes = list(_python_dunder_all_writes(statement))
+    if any(_runs_later(write, statement) for write in writes):
+        raise _LateDunderAll
+    if writes:
+        raise _UnreadableDunderAll
+    return None
+
+
+def _python_dunder_all(root: Node) -> frozenset[str] | None:
+    """The names a Python module's `__all__` lists, read from its literal.
+
+    None when the module sets none at its top level, or builds it in a way
+    the source does not spell out; a star import then binds every public
+    name, as it does for a module without one. An empty `__all__` binds
+    nothing.
+    """
+    # None once the source no longer spells what `__all__` holds.
+    names: list[str] | None = []
+    defined = False
+    for statement in root.named_children:
+        try:
+            part = _python_dunder_all_change(statement)
+        except _LateDunderAll:
+            return None
+        except _UnreadableDunderAll:
+            defined, names = True, None
+            continue
+        if part is None:
+            continue
+        defined = True
+        # A plain assignment replaces what earlier statements listed; only
+        # `+=`, `.append` and `.extend` add to it (Greptile, PR #2989).
+        if statement.named_children[0].type == cs.TS_PY_ASSIGNMENT:
+            names = list(part)
+        elif names is not None:
+            names += part
+    return frozenset(names) if defined and names is not None else None
+
+
 class ImportProcessor:
     __slots__ = (
         "repo_path",
@@ -1085,6 +1397,8 @@ class ImportProcessor:
         "commonjs_direct_exports",
         "conditional_imports",
         "python_import_rebinds",
+        "python_module_all",
+        "python_binding_order",
         "php_function_imports",
         "php_module_namespaces",
         "js_ts_bare_imports",
@@ -1222,6 +1536,16 @@ class ImportProcessor:
         # module that is external on every path from one a branch binds to
         # first-party code (issue #2360).
         self.python_import_rebinds: dict[str, dict[str, set[str]]] = {}
+        # A Python module's literal `__all__`, which is every name a
+        # `from module import *` binds when the module defines one (issue
+        # #2928). A module without one, or with one built at run time, is
+        # absent: its star binds every public name.
+        self.python_module_all: dict[str, frozenset[str]] = {}
+        # A Python module's import-map keys in the order they were LAST
+        # bound, kept only where the map's own order differs: the map keeps
+        # a re-bound key where it was first bound, and records plain imports
+        # before from-imports, while Python keeps a name's last binding.
+        self.python_binding_order: dict[str, tuple[str, ...]] = {}
         # Lazy: replayed walk of every eligible repo file, built on the first C++
         # include so non-C++ projects never pay for it.
         self._cpp_module_qn_map: dict[str, str] | None = None
@@ -1818,6 +2142,12 @@ class ImportProcessor:
         # A re-parse that drops a fallback import must not leave the binding
         # it removed standing beside the one that remains.
         self.python_import_rebinds.pop(module_qn, None)
+        self.python_module_all.pop(module_qn, None)
+        self.python_binding_order.pop(module_qn, None)
+        if language == cs.SupportedLanguage.PYTHON and (
+            (exported := _python_dunder_all(root_node)) is not None
+        ):
+            self.python_module_all[module_qn] = exported
         # A re-parse re-derives these from the current source, so the previous
         # run's specifiers must not survive: an import the edit removed, or one
         # whose target now exists, would otherwise keep nominating this file
@@ -3073,6 +3403,19 @@ class ImportProcessor:
                         new_names
                     )
             self._record_python_rebinds(module_qn, before)
+        self._record_python_binding_order(module_qn)
+
+    def _record_python_binding_order(self, module_qn: str) -> None:
+        # Each key's import site is the statement that bound it last.
+        mapping = self.import_mapping[module_qn]
+        sites = self._import_sites.get(module_qn, {})
+        order = tuple(sorted(mapping, key=lambda key: _site_start(sites.get(key))))
+        if order != tuple(mapping):
+            self.python_binding_order[module_qn] = order
+
+    @property
+    def python_star_rules(self) -> PythonStarRules:
+        return PythonStarRules(self.python_module_all, self.python_binding_order)
 
     def _record_python_rebinds(self, module_qn: str, before: dict[str, str]) -> None:
         mapping = self.import_mapping[module_qn]
