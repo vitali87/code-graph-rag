@@ -1,14 +1,18 @@
 from .package_paths import discover_dart_packages
 from .utils import (
+    DartBareImport,
+    DartCombinator,
     dart_binding_spans,
     dart_body_node,
     dart_call_name,
+    dart_combinators,
     dart_definition_end_byte,
     dart_definition_end_point,
     dart_exposes_library,
     dart_extract_uri,
     dart_get_name,
     dart_import_prefix,
+    dart_is_export,
     dart_is_top_level_main,
     dart_local_name,
     dart_resolve_import,
@@ -16,9 +20,12 @@ from .utils import (
 )
 
 __all__ = [
+    "DartBareImport",
+    "DartCombinator",
     "dart_binding_spans",
     "dart_body_node",
     "dart_call_name",
+    "dart_combinators",
     "dart_definition_end_byte",
     "dart_definition_end_point",
     "discover_dart_packages",
@@ -26,6 +33,7 @@ __all__ = [
     "dart_extract_uri",
     "dart_get_name",
     "dart_import_prefix",
+    "dart_is_export",
     "dart_is_top_level_main",
     "dart_local_name",
     "dart_resolve_import",
