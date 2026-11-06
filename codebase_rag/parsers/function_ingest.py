@@ -220,6 +220,7 @@ class _DeferredMethod(NamedTuple):
     start_line: int
     start_col: int
     end_line: int
+    end_col: int
     lang_queries: LanguageQueries | None = None
     # Read while the tree is alive: the definition is matched to the overload
     # its class declares only once that class is known (issue #2455).
@@ -942,6 +943,7 @@ class FunctionIngestMixin:
                 start_line=func_node.start_point[0] + 1,
                 start_col=func_node.start_point[1],
                 end_line=func_node.end_point[0] + 1,
+                end_col=func_node.end_point[1],
                 lang_queries=lang_queries,
                 signature=cpp_overload_signature(func_node),
             )
@@ -991,6 +993,8 @@ class FunctionIngestMixin:
                         entry.end_line,
                         cs.NodeLabel.METHOD.value,
                         method_qn,
+                        entry.start_col,
+                        entry.end_col,
                     )
                 )
 

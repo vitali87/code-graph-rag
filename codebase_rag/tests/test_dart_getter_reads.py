@@ -819,6 +819,7 @@ def test_a_reparse_drops_the_dart_prefix_state(tmp_path: Path) -> None:
     # target to importers too (issue #2482).
     processor.dart_exposed_libraries = {"m": ["m.lib"]}
     processor._cpp_shadowed_include_targets = set()
+    processor._cpp_shadowed_include_sites = {}
     processor._cpp_declaration_mappings = set()
     processor.csharp_static_imports = {}
     processor.csharp_global_static_imports = {}

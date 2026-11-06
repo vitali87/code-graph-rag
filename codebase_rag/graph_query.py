@@ -8,7 +8,7 @@ sorted, so the same graph always yields the same JSON (issue #1523).
 
 `callers` and `callees` return one row per call SITE: the CALLS edges carry
 the site location from issue #1522, so an agent can jump to, check, or
-rewrite each call. Edges written without a site (libclang macro uses,
+rewrite each call. Edges written without a site (pure-libclang macro uses,
 Roslyn facts, trace write-back) return `null` positions. In both directions
 `path` is the file the site sits in (its caller's), so `path:line` is always
 the call; `callee_path` is where the invoked symbol is defined (issue #2460).

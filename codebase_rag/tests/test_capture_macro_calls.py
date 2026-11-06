@@ -14,7 +14,13 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.types_defs import PendingMacroCall
 
 _CALL = PendingMacroCall(
-    rel_path="a.c", line=5, callee_qn="proj.a.MACRO", fallback_module_qn="proj.a"
+    rel_path="a.c",
+    line=5,
+    col=4,
+    end_line=5,
+    end_col=9,
+    callee_qn="proj.a.MACRO",
+    fallback_module_qn="proj.a",
 )
 
 
