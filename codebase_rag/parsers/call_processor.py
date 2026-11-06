@@ -468,6 +468,58 @@ def _is_cpp_dereference(operand: Node) -> bool:
     )
 
 
+def _calls_own_member(language: cs.SupportedLanguage | None, call_node: Node) -> bool:
+    """Whether the call reaches a member of the caller's own object: with no
+    receiver (`label()`) or through `this` (`this->label()`, `$this->label()`).
+
+    PHP, C++ and Scala name a call on any other receiver by its bare method
+    too (`$other->label()`, `a.b.label()`, `xs label y`), so only the call's
+    shape tells the resolver which ones may reach an inherited method.
+    """
+    match language:
+        case cs.SupportedLanguage.DART:
+            # dart_call_name keeps every receiver but `this` / `super`.
+            return True
+        case cs.SupportedLanguage.PHP:
+            # A bare PHP `label()` is a function call, never a method.
+            receiver = call_node.child_by_field_name(cs.FIELD_OBJECT)
+            return (
+                call_node.type in cs.PHP_MEMBER_CALL_TYPES
+                and receiver is not None
+                and receiver.type == cs.TS_PHP_VARIABLE_NAME
+                and safe_decode_text(receiver) == cs.PHP_THIS_VARIABLE
+            )
+        case cs.SupportedLanguage.CPP | cs.SupportedLanguage.SCALA:
+            # A Scala infix call has no `function` field: its receiver is
+            # the left operand.
+            callee = call_node.child_by_field_name(cs.TS_FIELD_FUNCTION)
+            return callee is not None and (
+                callee.type == cs.TS_IDENTIFIER
+                or (
+                    callee.type == cs.TS_CPP_FIELD_EXPRESSION
+                    and _is_this_receiver(language, callee)
+                )
+            )
+    return False
+
+
+def _is_this_receiver(language: cs.SupportedLanguage, member: Node) -> bool:
+    """Whether a member access is `this->m` / `(*this).m` (C++) or `this.m` (Scala)."""
+    if language == cs.SupportedLanguage.SCALA:
+        value = member.child_by_field_name(cs.FIELD_VALUE)
+        return (
+            value is not None
+            and value.type == cs.TS_IDENTIFIER
+            and safe_decode_text(value) == cs.SCALA_THIS
+        )
+    receiver = _cpp_without_parentheses(
+        member.child_by_field_name(cs.TS_FIELD_ARGUMENT)
+    )
+    if receiver is not None and _is_cpp_dereference(receiver):
+        receiver = receiver.child_by_field_name(cs.TS_FIELD_ARGUMENT)
+    return receiver is not None and receiver.type == cs.CppNodeType.THIS
+
+
 def _exceeds_receiver_chain_cap(call_node: Node) -> bool:
     """Whether `call_node` ends a receiver chain of too many calls (#2262).
 
@@ -6555,6 +6607,8 @@ class CallProcessor:
             # A Java/C#/Scala `new X(...)` names a type, never a method.
             constructing=ctx.language in _NEW_CONSTRUCTS_LANGUAGES
             and call_node.type in _OBJECT_CREATION_NODE_TYPES,
+            # `$this->label()` and `$other->label()` reach the resolver alike.
+            implicit_receiver=_calls_own_member(ctx.language, call_node),
         )
         return self._judge_resolved_callee(ctx, call_node, call_name, callee_info)
 

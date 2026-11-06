@@ -98,6 +98,26 @@ _RS_OWNER_NODE_TYPES = frozenset(
     {NodeType.CLASS, NodeType.ENUM, NodeType.UNION, NodeType.INTERFACE}
 )
 _PY_SELF_RECEIVERS = frozenset({cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS})
+# Languages whose `label()` / `this->label()` / `$this->label()` inside a method
+# reach the resolver as a bare name with the class as context (issue #3169).
+_INHERITED_BARE_CALL_LANGUAGES = frozenset(
+    {
+        cs.SupportedLanguage.CPP,
+        cs.SupportedLanguage.SCALA,
+        cs.SupportedLanguage.DART,
+        cs.SupportedLanguage.PHP,
+    }
+)
+# Of those, the ones where a top-level function the module can see wins over
+# an inherited member: Dart looks a bare name up lexically first. A PHP bare
+# `label()` is a function call, never a method, and is kept out altogether.
+_LEXICAL_FIRST_LANGUAGES = frozenset({cs.SupportedLanguage.DART})
+# And the ones whose trait or mixin overrides the superclass: Dart and Scala
+# look the last `with` type up first, and a PHP class takes a used trait's
+# method over its parent's, while their bases are recorded superclass first.
+_LINEARIZED_LANGUAGES = frozenset(
+    {cs.SupportedLanguage.DART, cs.SupportedLanguage.SCALA, cs.SupportedLanguage.PHP}
+)
 
 
 class _PhpCasedIndex(NamedTuple):
@@ -120,6 +140,9 @@ class _CallSite(NamedTuple):
     language: cs.SupportedLanguage | None
     call_point: int | None
     constructing: bool
+    # The call is on the caller's own object (`label()`, `this->label()`,
+    # `$this->label()`), not on another receiver its bare name hides.
+    implicit_receiver: bool = False
 
 
 def _rust_assoc_path(call: _CallSite) -> tuple[list[str], str] | None:
@@ -704,10 +727,14 @@ class CallResolver:
         language: cs.SupportedLanguage | None = None,
         call_point: int | None = None,
         constructing: bool = False,
+        implicit_receiver: bool = False,
     ) -> tuple[str, str] | None:
         """`constructing`: the call is a Java/C# `new X(...)`, so `call_name`
         names a TYPE and the simple-name fallback must not offer a method or
-        function that merely shares the name."""
+        function that merely shares the name. `implicit_receiver`: the call is
+        on the caller's own object, so it may reach a method its class
+        inherits; a PHP function call or a call on another receiver never
+        does, though its name can be just as bare."""
         self.last_resolution = cs.EdgeResolution.EXACT
         result = self._reject_class_via_value_receiver(
             self._redirect_protocol_method(
@@ -720,6 +747,7 @@ class CallResolver:
                     language,
                     call_point,
                     constructing,
+                    implicit_receiver,
                 )
             ),
             call_name,
@@ -2025,6 +2053,7 @@ class CallResolver:
         language: cs.SupportedLanguage | None = None,
         call_point: int | None = None,
         constructing: bool = False,
+        implicit_receiver: bool = False,
     ) -> tuple[str, str] | None:
         call = _CallSite(
             call_name,
@@ -2037,6 +2066,7 @@ class CallResolver:
             language,
             call_point,
             constructing,
+            implicit_receiver,
         )
         handled, result = self._resolve_caller_scoped_stages(call)
         if handled:
@@ -2361,6 +2391,8 @@ class CallResolver:
             )
         ) and (not call.constructing or result[0] == cs.NodeLabel.CLASS.value):
             return True, result
+        if result := self._resolve_inherited_bare_call(call):
+            return True, result
 
         # `this.m()` inside a prototype-assigned function dispatches to a sibling
         # method of the same prototype target (Date.prototype.strftime calling
@@ -2382,6 +2414,64 @@ class CallResolver:
                 call.call_name, call.module_qn, call.language, call.call_point
             )
         return False, None
+
+    def _resolve_inherited_bare_call(self, call: _CallSite) -> tuple[str, str] | None:
+        # A method calling one its class inherits (`label()`, `this->label()`)
+        # names its own class's member first; only the class itself was
+        # searched, so the name-only fallback bound a same-named method of an
+        # unrelated class (aria2: 713 of 1,693 such calls; every bloc
+        # `Cubit.emit` -> `Bloc.emit`). Walk the class's bases before it.
+        name, class_qn = call.call_name, call.class_context
+        if (
+            call.language not in _INHERITED_BARE_CALL_LANGUAGES
+            or not class_qn
+            or call.constructing
+            or not call.implicit_receiver
+            or cs.SEPARATOR_DOT in name
+            or f"{class_qn}{cs.SEPARATOR_DOT}{name}" in self.function_registry
+        ):
+            return None
+        if call.language in _LEXICAL_FIRST_LANGUAGES and self._dart_bare_name_visible(
+            name, call.module_qn
+        ):
+            return None
+        hit = (
+            self._linearized_method(class_qn, name)
+            if call.language in _LINEARIZED_LANGUAGES
+            else self._resolve_inherited_method(class_qn, name)
+        )
+        if hit is None or hit[0] != cs.NodeLabel.METHOD.value:
+            return None
+        return hit
+
+    def _linearized_method(self, class_qn: str, name: str) -> tuple[str, str] | None:
+        # The first of the class's linearized bases defining `name`.
+        for base in self._linearized_bases(class_qn, frozenset({class_qn}), {}):
+            qn = f"{base}{cs.SEPARATOR_DOT}{name}"
+            if qn in self.function_registry:
+                return self.function_registry[qn], qn
+        return None
+
+    def _linearized_bases(
+        self, class_qn: str, seen: frozenset[str], memo: dict[str, list[str]]
+    ) -> list[str]:
+        # Scala's linearization, which Dart mixin application and PHP trait
+        # use match: the last recorded base first, each followed by its own
+        # bases, and a base two of them share kept only at its last place.
+        # `memo` keeps a diamond-heavy hierarchy from being walked once per
+        # path to each base.
+        if (known := memo.get(class_qn)) is not None:
+            return known
+        order: list[str] = []
+        for base in reversed(self.class_inheritance.get(class_qn, [])):
+            if base in seen:
+                continue
+            order.extend((base, *self._linearized_bases(base, seen | {base}, memo)))
+        last = {base: index for index, base in enumerate(order)}
+        memo[class_qn] = [
+            base for index, base in enumerate(order) if last[base] == index
+        ]
+        return memo[class_qn]
 
     def _go_local_in_scope(self, call: _CallSite) -> bool:
         # Only where the local is in scope: a `helper()` before an inner
@@ -6583,10 +6673,48 @@ class CallResolver:
         imported = set(processor.import_mapping.get(module_qn, {}).values())
         for libraries in processor.dart_import_aliases.get(module_qn, {}).values():
             imported.update(libraries)
-        visible = {module_qn, *imported}
-        frontier = list(imported)
+        return self._dart_with_exposed({module_qn, *imported}, imported)
+
+    def _dart_bare_name_visible(self, name: str, module_qn: str) -> bool:
+        # A top-level `name` a bare identifier in `module_qn` finds lexically:
+        # the library's own, or one its unprefixed imports and parts bring
+        # in, with what those hand on through `export` / `part`. A
+        # prefix-only import's names are reachable as `p.name` alone, so it
+        # is left out, unlike in _dart_visible_libraries.
+        roots = self.import_processor.dart_bare_imports.get(module_qn, [])
+        libraries = self._dart_with_exposed({module_qn, *roots}, roots)
+        if any(
+            f"{library}{cs.SEPARATOR_DOT}{name}" in self.function_registry
+            for library in libraries
+        ):
+            return True
+        # A `package:` or `dart:` URI is kept as written, so the guard cannot
+        # read what such an import brings in (`package:shapes/helpers.dart`
+        # is lib/helpers.dart). Where the project declares a top-level
+        # `name`, that import may bring it in, and the name search that runs
+        # instead can find it; where it declares none, no first-party
+        # function can be the target, so the inherited member stands.
+        modules = self.type_inference.module_qn_to_file_path
+        return any(
+            library not in modules for library in libraries
+        ) and self._dart_declares_top_level(name)
+
+    def _dart_declares_top_level(self, name: str) -> bool:
+        # Whether any Dart library of the project declares `name` at its top.
+        modules = self.type_inference.module_qn_to_file_path
+        return any(
+            (path := modules.get(self._parent_qn(qn))) is not None
+            and _file_language(path.suffix) == cs.SupportedLanguage.DART
+            for qn in self.function_registry.find_ending_with(name)
+        )
+
+    def _dart_with_exposed(self, visible: set[str], roots: Iterable[str]) -> set[str]:
+        # `visible` grown by what `roots` hand on through `export` / `part`,
+        # transitively.
+        exposed_by = self.import_processor.dart_exposed_libraries
+        frontier = list(roots)
         while frontier:
-            for exposed in processor.dart_exposed_libraries.get(frontier.pop(), ()):
+            for exposed in exposed_by.get(frontier.pop(), ()):
                 if exposed not in visible:
                     visible.add(exposed)
                     frontier.append(exposed)
@@ -6877,6 +7005,8 @@ class CallResolver:
             caller_qn,
             language,
             call_point,
+            # `make()` in `make().m()` has no receiver of its own.
+            implicit_receiver=True,
         )
         if resolved is not None:
             return_type = self._callee_return_type(resolved[1], language)

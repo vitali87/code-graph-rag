@@ -45,6 +45,8 @@ TS_PHP_PROPERTY_DECLARATION = "property_declaration"
 TS_PHP_PROPERTY_ELEMENT = "property_element"
 TS_PHP_DECLARATION_LIST = "declaration_list"
 TS_PHP_VARIABLE_NAME = "variable_name"
+# The receiver of `$this->m()`, as its `variable_name` node spells it.
+PHP_THIS_VARIABLE = "$this"
 TS_PHP_USE_DECLARATION = "use_declaration"
 
 # FLOWS_TO lean-walk node types (issue #1174). PHP variables carry a `$` prefix
