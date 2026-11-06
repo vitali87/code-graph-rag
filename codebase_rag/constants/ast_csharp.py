@@ -175,6 +175,47 @@ TS_CSHARP_PARAMETER_LIST = "parameter_list"
 # variable_declaration; a property_declaration exposes `type` and `name` directly.
 TS_CSHARP_VARIABLE_DECLARATION = "variable_declaration"
 TS_CSHARP_FOREACH_STATEMENT = "foreach_statement"
+# The declarations a field belongs to.
+CSHARP_TYPE_DECLARATION_NODES = frozenset(
+    {
+        TS_CSHARP_CLASS_DECLARATION,
+        TS_CSHARP_STRUCT_DECLARATION,
+        TS_CSHARP_RECORD_DECLARATION,
+        TS_CSHARP_INTERFACE_DECLARATION,
+    }
+)
+# Generic collections whose one type argument is the element a `foreach`
+# binds (issue #2938); any other generic (`Dictionary<K, V>`) is not read.
+CSHARP_ENUMERABLE_GENERICS = frozenset(
+    {
+        "IEnumerable",
+        "IAsyncEnumerable",
+        "ICollection",
+        "IList",
+        "IReadOnlyCollection",
+        "IReadOnlyList",
+        "ISet",
+        "IReadOnlySet",
+        "List",
+        "HashSet",
+        "SortedSet",
+        "LinkedList",
+        "Queue",
+        "Stack",
+        "Collection",
+        "ReadOnlyCollection",
+        "ObservableCollection",
+        "ImmutableArray",
+        "ImmutableList",
+        "ImmutableHashSet",
+        "IImmutableList",
+        "IImmutableSet",
+        "ConcurrentBag",
+        "ConcurrentQueue",
+        "ConcurrentStack",
+        "BlockingCollection",
+    }
+)
 TS_CSHARP_VARIABLE_DECLARATOR = "variable_declarator"
 TS_CSHARP_IMPLICIT_TYPE = "implicit_type"
 TS_CSHARP_FIELD_DECLARATION = "field_declaration"
@@ -226,6 +267,9 @@ TS_CSHARP_STATIC = "static"
 TS_CSHARP_GLOBAL = "global"
 # A `params T[]` tail parameter is an array type in the method signature.
 CSHARP_ARRAY_SUFFIX = "[]"
+# An array type's rank specifier: `T[]`, `T[,]`.
+CSHARP_ARRAY_RANK_OPEN = "["
+CSHARP_ARRAY_RANK_CLOSE = "]"
 
 # The name node inside a using directive: a dotted `qualified_name` or a bare
 # `identifier` (both the imported path and, in the alias form, the alias).
@@ -375,6 +419,12 @@ TS_CSHARP_DECLARATION_PATTERN = "declaration_pattern"
 TS_CSHARP_CATCH_DECLARATION = "catch_declaration"
 TS_CSHARP_FROM_CLAUSE = "from_clause"
 TS_CSHARP_LET_CLAUSE = "let_clause"
+# `o is Other[] { Length: 1 } items`, `join z in zs ...`, `... into g`, and a
+# lambda written with `delegate`.
+TS_CSHARP_RECURSIVE_PATTERN = "recursive_pattern"
+TS_CSHARP_JOIN_CLAUSE = "join_clause"
+TS_CSHARP_JOIN_INTO_CLAUSE = "join_into_clause"
+TS_CSHARP_ANONYMOUS_METHOD_EXPRESSION = "anonymous_method_expression"
 TS_CSHARP_EVENT_FIELD_DECLARATION = "event_field_declaration"
 # A top-level statement (C# 9); its locals are in scope across the file.
 TS_CSHARP_GLOBAL_STATEMENT = "global_statement"
