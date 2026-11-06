@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
-from collections.abc import Iterator, Sequence
+from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from typing import NamedTuple
@@ -104,7 +104,7 @@ class SqliteVectorClient:
         self._lock = threading.Lock()
 
     @contextmanager
-    def _write(self) -> Iterator[sqlite3.Connection]:
+    def _write(self) -> Generator[sqlite3.Connection]:
         # The connection's own context manager commits, or rolls back when
         # the block raises, so a failed batch leaves no half-written point.
         with self._lock, self._conn:
