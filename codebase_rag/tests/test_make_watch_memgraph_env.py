@@ -19,7 +19,15 @@ from codebase_rag import constants as cs
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
+_MAKE_OVERRIDES = frozenset({"HOST", "PORT", "BATCH_SIZE"})
+
 pytestmark = pytest.mark.skipif(shutil.which("make") is None, reason="needs make")
+
+
+def _inherited_env() -> dict[str, str]:
+    # Make reads the environment as variables, so a HOST or PORT the test
+    # process inherits (tcsh exports HOST) would act as `make HOST=...`.
+    return {k: v for k, v in os.environ.items() if k not in _MAKE_OVERRIDES}
 
 
 def _watch_command(*make_vars: str, env: dict[str, str] | None = None) -> str:
@@ -27,7 +35,7 @@ def _watch_command(*make_vars: str, env: dict[str, str] | None = None) -> str:
     result = subprocess.run(
         ["make", "-n", "watch", "REPO_PATH=/tmp/repo", *make_vars],
         cwd=_REPO_ROOT,
-        env={**os.environ, **(env or {})},
+        env={**_inherited_env(), **(env or {})},
         capture_output=True,
         text=True,
         encoding=cs.ENCODING_UTF8,
