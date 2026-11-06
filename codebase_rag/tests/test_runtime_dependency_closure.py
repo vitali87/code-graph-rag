@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import tomllib
 from pathlib import Path
 
@@ -44,3 +45,18 @@ def test_the_default_install_does_not_pull_logfire() -> None:
 def test_the_closure_reaches_the_llm_providers_in_use() -> None:
     closure = _runtime_closure()
     assert {"openai", "anthropic", "google-genai"} <= closure, closure
+
+
+def _declared_dependencies() -> set[str]:
+    config = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    return {
+        re.split(r"[\s\[<>=!~;]", requirement, maxsplit=1)[0].lower()
+        for requirement in config["project"]["dependencies"]
+    }
+
+
+def test_httpx_is_declared_directly() -> None:
+    # The embedder, health checks, token counter and web search import httpx
+    # themselves. Borrowed from the provider SDKs, it vanished from a fresh
+    # install once google-genai 3 moved to httpx2, and `cgr` stopped starting.
+    assert "httpx" in _declared_dependencies()
