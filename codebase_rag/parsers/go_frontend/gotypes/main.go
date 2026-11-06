@@ -64,6 +64,25 @@ type externalFact struct {
 	Line int    `json:"line"`
 	Col  int    `json:"col"`
 	Name string `json:"name"`
+	// Module is the path of the module providing the callee's package and
+	// Dir that module's source directory, both empty for the standard
+	// library, a callee with no package, or a vendored module (vendor mode
+	// names no directory). The tool sees one module at a time, so a sibling
+	// module of the same repository (`replace => ../liba`, `go.work`) is
+	// outside it too; the consumer, which knows every in-repo module, tells
+	// the two apart (issue #2809). The module, not the package path:
+	// `example.com/root/plugin` can be a separate dependency module under an
+	// in-repo module's path. And its directory: a published
+	// `example.com/liba` loads from the module cache, not the repository's
+	// copy of that module.
+	Module string `json:"module,omitempty"`
+	Dir    string `json:"dir,omitempty"`
+}
+
+// moduleRef is the module that provides a loaded package.
+type moduleRef struct {
+	path string
+	dir  string
 }
 
 // implementsFact is a position-join, never a name-map: Go reuses simple type
@@ -129,8 +148,11 @@ type variantTypes struct {
 }
 
 type collector struct {
-	root       string
-	mainPaths  map[string]bool
+	root      string
+	mainPaths map[string]bool
+	// Package path -> the module that provides it, for every loaded package
+	// that belongs to a module with a source directory.
+	modules    map[string]moduleRef
 	ignored    map[string]bool
 	out        *payload
 	namedTypes []typeEntry
@@ -162,7 +184,7 @@ func main() {
 	cfg := &packages.Config{
 		Mode: packages.NeedName | packages.NeedFiles | packages.NeedSyntax |
 			packages.NeedTypes | packages.NeedTypesInfo | packages.NeedImports |
-			packages.NeedDeps,
+			packages.NeedDeps | packages.NeedModule,
 		Dir:   root,
 		Tests: true,
 	}
@@ -181,9 +203,19 @@ func main() {
 			mainPaths[pkg.PkgPath] = true
 		}
 	}
+	modules := map[string]moduleRef{}
+	packages.Visit(pkgs, nil, func(pkg *packages.Package) {
+		if pkg.Module == nil {
+			return
+		}
+		if dir := moduleDir(pkg.Module); dir != "" {
+			modules[pkg.PkgPath] = moduleRef{path: pkg.Module.Path, dir: dir}
+		}
+	})
 	col := &collector{
 		root:      root,
 		mainPaths: mainPaths,
+		modules:   modules,
 		ignored:   ignoredDirs(),
 		out: &payload{
 			Calls:      []callFact{},
@@ -203,6 +235,16 @@ func main() {
 	col.out.Checked = sortedKeys(col.checked)
 	col.out.Compared = sortedPositions(col.compared)
 	emit(*col.out)
+}
+
+// moduleDir is a module's source directory: its replacement's when one
+// applies (vendor mode fills in only that one), else its own, which is the
+// module cache for a published version.
+func moduleDir(module *packages.Module) string {
+	if module.Replace != nil {
+		return module.Replace.Dir
+	}
+	return module.Dir
 }
 
 func sortedPositions(positions map[string]positionFact) []positionFact {
@@ -429,8 +471,13 @@ func (c *collector) collectCall(call *ast.CallExpr, pkg *packages.Package, fset 
 		return
 	}
 	if fn.Pkg() == nil || !c.mainPaths[fn.Pkg().Path()] {
+		var module moduleRef
+		if fn.Pkg() != nil {
+			module = c.modules[fn.Pkg().Path()]
+		}
 		c.out.Externals = append(c.out.Externals, externalFact{
 			File: rel, Line: line, Col: col, Name: name.Name,
+			Module: module.path, Dir: module.dir,
 		})
 		return
 	}
