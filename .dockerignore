@@ -3,6 +3,7 @@ __pycache__
 *.py[oc]
 .venv
 .env
+.env.*
 .envrc
 .ruff_cache
 .mypy_cache

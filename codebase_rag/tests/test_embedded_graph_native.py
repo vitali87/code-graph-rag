@@ -19,7 +19,7 @@ import sqlite3
 from collections.abc import Callable, Sequence
 from contextlib import closing
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -32,7 +32,7 @@ from codebase_rag.constants import (
     NODE_UNIQUE_CONSTRAINTS,
     EgDecode,
 )
-from codebase_rag.embedded_graph import executor, native
+from codebase_rag.embedded_graph import executor, limits, native
 from codebase_rag.embedded_graph import sql as sq
 from codebase_rag.embedded_graph.connection import EmbeddedConnection
 from codebase_rag.embedded_graph.executor import compile_read, decode
@@ -133,12 +133,19 @@ class TestGraphVersion:
         EmbeddedConnection(str(path)).close()
         assert _version(path) == "0"
 
-    def test_seconds_left_follows_the_running_deadline(self) -> None:
+    def test_seconds_left_follows_the_running_deadline(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # On a frozen clock: Windows' monotonic clock on Python 3.12 ticks
+        # every 15.6 ms, so both reads often agree, and a few minutes after
+        # boot `now + 60` crosses 256 and rounds up, a hair past 60.
+        now = [241.826]
+        monkeypatch.setattr(limits, "time", SimpleNamespace(monotonic=lambda: now[0]))
         assert seconds_left() is None
         with running_until(Deadline.after(60)):
-            left = seconds_left()
-            assert left is not None
-            assert 0 < left <= 60
+            assert seconds_left() == pytest.approx(60)
+            now[0] += 45
+            assert seconds_left() == pytest.approx(15)
 
 
 # ------------------------------------------------------------------ values

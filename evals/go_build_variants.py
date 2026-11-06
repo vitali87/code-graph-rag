@@ -48,7 +48,7 @@ import re
 import shutil
 import subprocess
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from graphlib import TopologicalSorter
@@ -504,7 +504,7 @@ class BuildFacts(NamedTuple):
 
 
 @contextmanager
-def _environment(**values: str) -> Iterator[None]:
+def _environment(**values: str) -> Generator[None]:
     old = {key: os.environ.get(key) for key in values}
     os.environ.update(values)
     try:
@@ -612,7 +612,7 @@ def index(root: Path, frontend: str) -> _StatefulIngestor:
 
 
 @contextmanager
-def _host() -> Iterator[None]:
+def _host() -> Generator[None]:
     yield
 
 
