@@ -40,6 +40,14 @@ SEMANTIC_EXTRA = "Semantic search requires 'semantic' extra: uv sync --extra sem
 # Input errors
 JSON_TOO_DEEP = "JSON nesting exceeds the decoder's recursion limit"
 
+# The Rust extension (rust/cgr_graph_rs), which cgr does not run without
+RUST_EXTENSION_MISSING = (
+    "code-graph-rag needs its Rust extension, cgr-graph-rs, and cannot import "
+    "it ({error}). It ships as wheels for CPython 3.12+ on Linux (x86_64, "
+    "aarch64), macOS and Windows x64; reinstall code-graph-rag there, or, in a "
+    "checkout, run `uv sync` with a Rust toolchain on PATH to build it."
+)
+
 # OpenAI-compatible embedding errors
 OPENAI_EMBEDDING_HTTP_ERROR = (
     "OpenAI-compatible embedding request failed with status {status}: {body}"
