@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -565,11 +565,15 @@ class DefinitionProcessor(
             f"{module_qn}{cs.SEPARATOR_DOT}{file_path.suffix.lstrip(cs.SEPARATOR_DOT)}"
         )
 
-    def emit_type_edges(self) -> int:
+    def emit_type_edges(
+        self, restore_imports: Callable[[str], None] | None = None
+    ) -> int:
         """Resolve queued return/parameter annotations into RETURNS/ACCEPTS.
 
         Runs once the registry holds every file's types (issue #1527); the
         queue empties, so a watch-mode re-parse only re-resolves its own.
+        `restore_imports` loads an unchanged module's imports, by its qn, for
+        the annotations requeued from it (#3007 review).
         """
         from .type_facts import (
             TypeReferenceResolver,
@@ -594,6 +598,7 @@ class DefinitionProcessor(
             self.csharp_class_generic_arity,
         )
         resolver.join_partial_groups(self.csharp_partial_groups)
+        resolver.join_unparsed(self.rehydrated_definition_paths, restore_imports)
         emitted = emit_type_edges(self.pending_type_facts, resolver, self.ingestor)
         # Parameter OF_TYPE edges resolve in the same pass, for the same
         # reason: the annotation may name a type from a later file.
