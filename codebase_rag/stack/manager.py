@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -17,6 +18,7 @@ from loguru import logger
 from .. import constants as root_cs
 from .. import logs as ls
 from ..config import settings
+from ..graph_dialects import DIALECT_MEMGRAPH
 from ..types_defs import JsonValue
 from . import constants as cs
 from .health import (
@@ -151,6 +153,114 @@ def _names_published_qdrant(url: str | None, bind: str, port: int) -> bool:
     if not bind or bind in cs.WILDCARD_BIND_HOSTS:
         return _is_local_address(host)
     return bind in _addresses_of(host)
+
+
+def _ps_containers(ps_output: str) -> list[JsonValue]:
+    """The containers in `docker compose ps` JSON output: an object per
+    line, or one array on older Compose."""
+    containers: list[JsonValue] = []
+    for line in ps_output.splitlines():
+        try:
+            parsed = json.loads(line)
+        except ValueError:
+            continue
+        containers.extend(parsed if isinstance(parsed, list) else [parsed])
+    return containers
+
+
+def _bolt_endpoint(publisher: JsonValue) -> tuple[str, int] | None:
+    """(bind address, port) of a `docker compose ps` publisher of Bolt."""
+    if not isinstance(publisher, dict):
+        return None
+    port = publisher.get(cs.COMPOSE_PS_PUBLISHER_PORT_KEY)
+    host = publisher.get(cs.COMPOSE_PS_PUBLISHER_HOST_KEY)
+    if (
+        publisher.get(cs.COMPOSE_PS_PUBLISHER_TARGET_KEY)
+        == cs.MEMGRAPH_CONTAINER_BOLT_PORT
+        and isinstance(port, int)
+        and port
+    ):
+        return host if isinstance(host, str) else "", port
+    return None
+
+
+def _published_bolt(ps_output: str) -> list[tuple[str, int]]:
+    """(bind address, port) of every Bolt publisher in `docker compose ps`
+    JSON output: an object per line, or one array on older Compose."""
+    endpoints: list[tuple[str, int]] = []
+    for container in _ps_containers(ps_output):
+        publishers = (
+            container.get(cs.COMPOSE_PS_PUBLISHERS_KEY)
+            if isinstance(container, dict)
+            else None
+        )
+        for publisher in publishers if isinstance(publishers, list) else []:
+            if (endpoint := _bolt_endpoint(publisher)) is not None:
+                endpoints.append(endpoint)
+    return endpoints
+
+
+# Where a socket connects: (host, port) for IPv4, with flow and scope for IPv6.
+_SocketAddress = tuple[str, int] | tuple[str, int, int, int] | tuple[int, bytes]
+
+
+def _addresses_to_try(host: str, port: int) -> list[tuple[int, _SocketAddress]]:
+    """The addresses a client of `host:port` tries, in its order: getaddrinfo's."""
+    try:
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except OSError:
+        return []
+    return [(family, address) for family, _, _, _, address in infos]
+
+
+def _publishes_on(bind: str, family: int, address: str) -> bool:
+    """Whether a port published on `bind` is the one at `address`.
+
+    A wildcard bind publishes on this machine's addresses of its own family
+    alone: beside `0.0.0.0`, another server can hold the port on `[::1]`.
+    """
+    if not bind:
+        return _is_local_address(address)
+    if bind in cs.WILDCARD_BIND_HOSTS:
+        own_family = socket.AF_INET6 if ":" in bind else socket.AF_INET
+        return family == own_family and _is_local_address(address)
+    return bind == address
+
+
+def _takes_connections(family: int, address: _SocketAddress) -> bool:
+    """Whether a server accepts connections at `address`.
+
+    One that does not answer in time may well, so it counts as one that
+    does, unless the address is this machine's: a server here accepts at
+    once, while Windows reports a refused connection only after retrying it
+    for about two seconds, so `localhost` as `::1` with nothing listening
+    there outlasts the probe and the client goes on to `127.0.0.1`.
+    """
+    try:
+        with socket.socket(family, socket.SOCK_STREAM) as probe:
+            probe.settimeout(cs.MEMGRAPH_ADDRESS_PROBE_TIMEOUT_S)
+            probe.connect(address)
+    except TimeoutError:
+        return not _is_local_address(str(address[0]))
+    except OSError:
+        return False
+    return True
+
+
+def _reaches_published(host: str, port: int, binds: list[str]) -> bool:
+    """Whether a client of `host:port` reaches the port published on `binds`.
+
+    The client keeps the first of the host's addresses that takes the
+    connection, so one address the port is published on is not enough: an
+    earlier one another server answers on wins (`localhost` as `::1` ahead
+    of `127.0.0.1`).
+    """
+    for family, address in _addresses_to_try(host, port):
+        if any(_publishes_on(bind, family, str(address[0])) for bind in binds):
+            return True
+        if _takes_connections(family, address):
+            return False
+    return False
 
 
 def _bundled_qdrant_api_key(bind: str, port: int) -> str | None:
@@ -492,9 +602,10 @@ class StackManager:
         """Whether the app's embeddings go to this stack's Qdrant.
 
         The choice `vector_store` makes: a QDRANT_URL naming where Compose
-        publishes Qdrant, or, with neither QDRANT_URL nor QDRANT_DB_PATH
-        chosen, a stack set up here. Then `cgr start` starts the stack even
-        for a graph backend that needs nothing from it.
+        publishes Qdrant, for which `cgr start` starts the stack even for a
+        graph backend that needs nothing else from it, or, with neither
+        QDRANT_URL nor QDRANT_DB_PATH chosen, a stack set up here when the
+        graph is in Memgraph.
         """
         if settings.VECTOR_STORE_BACKEND != root_cs.VectorStoreBackend.QDRANT:
             return False
@@ -507,7 +618,8 @@ class StackManager:
                 settings.QDRANT_URL, self._qdrant_bind, self.qdrant_port
             )
         return (
-            root_cs.SETTING_QDRANT_DB_PATH not in settings.model_fields_set
+            settings.GRAPH_BACKEND == DIALECT_MEMGRAPH
+            and root_cs.SETTING_QDRANT_DB_PATH not in settings.model_fields_set
             and self.compose_file.exists()
         )
 
@@ -639,6 +751,40 @@ class StackManager:
         if running is None:
             raise StackError(cs.ERR_COMPOSE_PS_FAILED)
         return bool(running)
+
+    def runs_configured_memgraph(self) -> bool:
+        """Whether this project's running Memgraph is the one the app uses.
+
+        Compose's resolved configuration cannot say: the port mapping
+        interpolates MEMGRAPH_PORT, so it follows whatever port the caller
+        set. Docker's publishers of the running container are where the
+        stack's Memgraph actually listens (issue #2878). StackError when
+        Compose cannot tell.
+        """
+        try:
+            result = subprocess.run(
+                self._compose_cmd(
+                    *cs.COMPOSE_PS_RUNNING_JSON_ARGS, cs.SERVICE_MEMGRAPH
+                ),
+                capture_output=True,
+                text=True,
+                encoding=root_cs.ENCODING_UTF8,
+                timeout=cs.DEFAULT_STATUS_TIMEOUT_S,
+                check=False,
+                env=self._compose_env(),
+            )
+        except OSError as e:
+            raise StackError(cs.ERR_COMPOSE_PS_FAILED) from e
+        if result.returncode != 0:
+            raise StackError(cs.ERR_COMPOSE_PS_FAILED)
+        binds = [
+            bind
+            for bind, port in _published_bolt(result.stdout)
+            if port == self.memgraph_port
+        ]
+        return bool(binds) and _reaches_published(
+            self.memgraph_host, self.memgraph_port, binds
+        )
 
     def raise_if_auth_not_enforced(self) -> None:
         """Refuse a running stack whose authentication differs from the settings.
@@ -1153,12 +1299,13 @@ def daemon_restart() -> StackStatus:
 def bundled_qdrant_url(home: Path | None = None) -> str | None:
     """Where the Qdrant `cgr daemon up` runs, when it takes the app's writes.
 
-    None unless the stack was set up here (its compose file exists), Docker
-    Compose reports this project's Qdrant container running, and what
-    answers where Compose publishes it identifies as Qdrant and takes a
-    data request without a key. The embeddings carry the indexed code, so
-    an endpoint whose owner is not proven gets none of them: with the stack
-    stopped, any process can answer on its port (CWE-200). QDRANT_API_KEY is
+    None unless the stack was set up here (its compose file exists), the
+    app's graph is the stack's own Memgraph, Docker Compose reports this
+    project's Qdrant container running, and what answers where Compose
+    publishes it identifies as Qdrant and takes a data request without a
+    key. The embeddings carry the indexed code, so an endpoint whose owner
+    is not proven gets none of them: with the stack stopped, any process
+    can answer on its port (CWE-200). QDRANT_API_KEY is
     never offered: it belongs to the server QDRANT_URL names, and the stack
     only configures its Qdrant with it when QDRANT_URL points there. A Qdrant
     that refuses anonymous requests is logged and left alone, since every
@@ -1168,6 +1315,17 @@ def bundled_qdrant_url(home: Path | None = None) -> str | None:
     if not manager.compose_file.exists():
         return None
     path = settings.QDRANT_DB_PATH
+    # The stack's Qdrant holds its own Memgraph's vectors, keyed by that
+    # graph's node ids: any other graph, in another engine or another
+    # Memgraph, would mix its own in, and its `--clean` would drop the stack
+    # graph's collection (issue #2878). The engine needs no word from Docker.
+    if settings.GRAPH_BACKEND != DIALECT_MEMGRAPH:
+        logger.info(
+            ls.QDRANT_BUNDLED_OTHER_GRAPH.format(
+                backend=settings.GRAPH_BACKEND, path=path
+            )
+        )
+        return None
     try:
         running = manager.locate_running_qdrant()
     except (StackError, subprocess.TimeoutExpired, OSError) as e:
@@ -1178,6 +1336,19 @@ def bundled_qdrant_url(home: Path | None = None) -> str | None:
         return None
     host, port = manager.qdrant_host, manager.qdrant_port
     url = qdrant_base_url(host, port)
+    try:
+        same_graph = manager.runs_configured_memgraph()
+    except (StackError, subprocess.TimeoutExpired) as e:
+        logger.info(ls.QDRANT_BUNDLED_UNVERIFIED.format(detail=e, path=path))
+        return None
+    if not same_graph:
+        memgraph = f"{manager.memgraph_host}:{manager.memgraph_port}"
+        logger.info(
+            ls.QDRANT_BUNDLED_OTHER_MEMGRAPH.format(
+                url=url, memgraph=memgraph, path=path
+            )
+        )
+        return None
     timeout = cs.BUNDLED_QDRANT_PROBE_TIMEOUT_S
     match qdrant_anonymous_access(port, timeout=timeout, host=host):
         case cs.AnonymousAccess.ALLOWED if qdrant_identifies(
