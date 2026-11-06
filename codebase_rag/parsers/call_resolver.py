@@ -100,6 +100,15 @@ _RS_OWNER_NODE_TYPES = frozenset(
 _PY_SELF_RECEIVERS = frozenset({cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS})
 
 
+# Languages whose `recv.name()` member syntax reaches only methods, so the
+# name fallback never binds it to a free function (issue #3176). C is left
+# out: `ops->open()` through a function-pointer table names a free function,
+# and C++ keeps that for a name some type declares a callable data member.
+_MEMBER_SYNTAX_METHOD_ONLY = frozenset(
+    {cs.SupportedLanguage.RUST, cs.SupportedLanguage.CPP}
+)
+
+
 class _PhpCasedIndex(NamedTuple):
     """PHP definitions declared with capitals, by ASCII-folded name."""
 
@@ -335,6 +344,7 @@ class CallResolver:
         "rehydrated_definition_paths",
         "rust_function_modules",
         "declared_module_qns",
+        "cpp_callable_fields",
         "go_package_names",
         "_php_class_namespaces",
         "_php_cased_index",
@@ -355,6 +365,7 @@ class CallResolver:
         rehydrated_interface_implementers: dict[str, set[str]] | None = None,
         go_package_names: Mapping[str, str] | None = None,
         go_links: GoLinkState | None = None,
+        cpp_callable_fields: set[str] | None = None,
     ) -> None:
         self.function_registry = function_registry
         self.import_processor = import_processor
@@ -382,6 +393,11 @@ class CallResolver:
         # cannot tell the two apart (issue #1093 review).
         self.declared_module_qns = (
             declared_module_qns if declared_module_qns is not None else set()
+        )
+        # Every C++ callable data member's name (shared ref): `ops->cb()`
+        # through one calls a free function, so member syntax keeps those.
+        self.cpp_callable_fields = (
+            cpp_callable_fields if cpp_callable_fields is not None else set()
         )
         # {interface_qn: [implementer_qns]} (shared ref, populated during
         # ingestion). Used to redirect an interface-typed call to the single
@@ -5051,6 +5067,20 @@ class CallResolver:
             possible_matches = [
                 qn for qn in possible_matches if not self._name_hidden_in_body(qn)
             ]
+        if (
+            language in _MEMBER_SYNTAX_METHOD_ONLY
+            and call_name[: -len(search_name)].endswith(cs.SEPARATOR_DOT)
+            and not self._cpp_callable_member(language, search_name)
+        ):
+            # `recv.name()` / `p->name()` can only call a method: a free
+            # function is never reachable with `.` syntax. With the receiver
+            # untyped, `s.is_none()` bound a `#[test] fn is_none` in another
+            # crate and `h->swap(x)` a namespace-level `swap` (issue #3176).
+            possible_matches = [
+                qn
+                for qn in possible_matches
+                if self.function_registry[qn] == cs.NodeLabel.METHOD.value
+            ]
         if language == cs.SupportedLanguage.RUST and search_name == call_name:
             # A bare Rust path NEVER names a method (inherent methods need
             # self./Self::/Type::), so a same-named method must not soak
@@ -5278,10 +5308,26 @@ class CallResolver:
         # (`String::new()` bound the file's own `fn new`, issue #2543).
         if language == cs.SupportedLanguage.RUST:
             return None
+        # Neither has C++: `obj.f()` / `p->f()` calls a member, never the
+        # file's namespace-level `f` (`h->swap(x)` bound `swap`, #3176),
+        # unless some type declares `f` a callable data member.
+        if (
+            language == cs.SupportedLanguage.CPP
+            and separator == cs.SEPARATOR_DOT
+            and not self._cpp_callable_member(language, method_name)
+        ):
+            return None
         resolved = self._try_resolve_module_method(method_name, call_name, module_qn)
         if resolved is not None:
             self.last_resolution = cs.EdgeResolution.HEURISTIC
         return resolved
+
+    def _cpp_callable_member(
+        self, language: cs.SupportedLanguage | None, name: str
+    ) -> bool:
+        # A function-pointer or `std::function` member: `ops->cb()` calls
+        # whatever free function was stored in it, as in C.
+        return language == cs.SupportedLanguage.CPP and name in self.cpp_callable_fields
 
     def _try_resolve_static_type_method(
         self, object_name: str, method_name: str, call_name: str, module_qn: str

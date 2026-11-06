@@ -39,7 +39,11 @@ from ..csharp.arity import CSharpArityIndex
 from ..dart import utils as dart_utils
 from ..dart.type_inference import DartTypeInferenceEngine
 from ..enum_variants import emit_declared_variants, is_python_enum
-from ..field_nodes import PendingFieldType, emit_declared_fields
+from ..field_nodes import (
+    PendingFieldType,
+    cpp_callable_field_names,
+    emit_declared_fields,
+)
 from ..go import GoTypeInferenceEngine
 from ..go import interfaces as go_ifaces
 from ..java import utils as java_utils
@@ -364,6 +368,7 @@ class ClassIngestMixin:
     dart_constructor_qns: set[str]
     dart_extension_on_types: dict[str, str]
     class_field_types: dict[str, dict[str, str]]
+    cpp_callable_fields: set[str]
     java_anon_overrides: list[tuple[str, str, str, str]]
     csharp_methods: set[str]
     csharp_override_methods: set[str]
@@ -1718,6 +1723,21 @@ class ClassIngestMixin:
             # to the real implementation, so no edge ever reaches it; only the
             # parse can tell dead code it is a declaration.
             class_props[cs.KEY_TYPE_CHECKING_ONLY] = True
+        elif language == cs.SupportedLanguage.CPP:
+            self._record_cpp_callable_fields(class_node, class_props)
+
+    def _record_cpp_callable_fields(
+        self, class_node: Node, class_props: PropertyDict
+    ) -> None:
+        # Stored on the node so an incremental run that does not re-parse
+        # this header still lets a re-parsed `o->cb()` reach a free `cb`. A
+        # templated class's members live on its inner class_specifier.
+        member_node = _cpp_type_spec(class_node)
+        if member_node is None:
+            return
+        if names := sorted(cpp_callable_field_names(member_node)):
+            class_props[cs.KEY_CALLABLE_FIELDS] = names
+            self.cpp_callable_fields.update(names)
 
     def _record_declared_type_members(
         self,
