@@ -137,3 +137,19 @@ def test_an_incremental_sync_keeps_to_go(temp_repo: Path) -> None:
         "encode_json.encode",
         "encode_msgpack.encode",
     }
+
+
+def test_a_go_file_sharing_the_python_functions_qn_does_not_make_it_go(
+    temp_repo: Path,
+) -> None:
+    # `gen.py`'s `render` is `<project>.tools.gen.render`, which is also the
+    # module qn of `gen/render.go`. Judged by that qn, the Python function
+    # read as Go and joined `main`'s build variants again.
+    (temp_repo / "tools/gen").mkdir(parents=True)
+    (temp_repo / "tools/gen/render.go").write_text(
+        "package gen\n\nfunc Render(s string) string {\n\treturn s\n}\n",
+        encoding="utf-8",
+    )
+    callees = _main_callees(temp_repo)
+    assert "render.render" in callees, callees
+    assert "gen.render" not in callees, callees
