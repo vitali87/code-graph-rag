@@ -63,12 +63,11 @@ const calls = [];
 // the difference — a `def` on line 2 reporting an end_line of 6, or a class in
 // a 10-line file ending at line 11. Ruby routinely carries non-ASCII in
 // comments and string literals, so this is ordinary input rather than an edge
-// case.
+// case. It is built over the same bytes Prism parsed, so the two cannot drift.
 //
 // `starts` holds the byte offset of each line start, so the 1-based line for an
 // offset is the count of line starts at or below it.
-function makeLineLookup(source) {
-  const bytes = Buffer.from(source, "utf8");
+function makeLineLookup(bytes) {
   const starts = [0];
   for (let i = 0; i < bytes.length; i++) {
     // 0x0A is "\n"; a UTF-8 continuation byte can never collide with it,
@@ -200,9 +199,12 @@ async function main() {
 
   for (const full of collect(root, [])) {
     const rel = path.relative(root, full).split(path.sep).join("/");
+    // From @ruby/prism 2.0 the parser takes the source as bytes: a JS string
+    // is not rejected, it parses as an empty program, so every definition
+    // would silently vanish.
     let source;
     try {
-      source = fs.readFileSync(full, "utf8");
+      source = fs.readFileSync(full);
     } catch {
       continue;
     }
