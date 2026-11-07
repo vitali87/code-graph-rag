@@ -76,6 +76,21 @@ FILES = {
         'import { renamed } from "./ext_esm_shadow.mjs";\n'
         "export function viaExtEsmShadow() {\n  return renamed();\n}\n"
     ),
+    # Bot review on PR #2994: `require("./target")` binds the whole module,
+    # whose qn `pkg.target` also spells the name `target` in `pkg/index.js`,
+    # which publishes another function under it. The whole-module import is
+    # not that export; a destructured require of the folder is.
+    "pkg/target.js": "module.exports = function target() { return 1; };\n",
+    "pkg/index.js": (
+        "function other() { return 2; }\nmodule.exports = { target: other };\n"
+    ),
+    "pkg/app.js": (
+        'const fn = require("./target");\nfunction runWhole() {\n  return fn();\n}\n'
+    ),
+    "pkg_user.js": (
+        'const { target } = require("./pkg");\n'
+        "function viaFolder() {\n  return target();\n}\n"
+    ),
 }
 
 
@@ -124,7 +139,21 @@ def test_an_unresolvable_published_binding_is_not_the_same_named_local(
     assert "exact" not in callees.values(), callees
 
 
+def test_a_whole_module_require_is_not_the_folders_export_of_its_name(
+    graph: RecordedGraph,
+) -> None:
+    callees = _callees(graph, "pkg.app.runWhole")
+    assert callees == {"pkg.target.target": "exact"}, callees
+
+
 # Negative: what must not change.
+
+
+def test_a_named_require_of_the_folder_still_gets_its_export(
+    graph: RecordedGraph,
+) -> None:
+    callees = _callees(graph, "pkg_user.viaFolder")
+    assert callees.get("pkg.index.other") == "exact", callees
 
 
 def test_a_shorthand_and_an_inline_export_still_bind(graph: RecordedGraph) -> None:

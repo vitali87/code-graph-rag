@@ -3626,6 +3626,7 @@ class CallResolver:
         call_name: str,
         import_map: dict[str, str],
         language: cs.SupportedLanguage | None,
+        module_qn: str,
     ) -> str | None:
         # `import { plus } from "./lib"` maps `plus` to `lib.plus`, where a
         # barrel registers nothing: its `export { add as plus } from` names
@@ -3634,6 +3635,12 @@ class CallResolver:
         # or only guessed the right `add` (issue #2464). None when the name
         # leads nowhere else.
         if language not in cs.JS_TS_LANGUAGES or call_name not in import_map:
+            return None
+        # `const fn = require("./lib")` maps `fn` to the module `pkg.lib`,
+        # which spells the same as `pkg/index.js`'s export `lib`: walked, the
+        # whole-module import reached that unrelated export (bot review on
+        # PR #2994).
+        if self.import_processor.binds_js_whole_module(module_qn, call_name):
             return None
         imported_qn = import_map[call_name]
         followed = self.import_processor.follow_js_reexports(
@@ -3683,7 +3690,9 @@ class CallResolver:
         # export there is still reached; when it resolves to nothing (an
         # external package), the module's own `renamed` is still not what
         # the import names, so the direct import of it is skipped.
-        if followed := self._followed_js_reexport(call_name, import_map, language):
+        if followed := self._followed_js_reexport(
+            call_name, import_map, language, module_qn
+        ):
             if result := self._try_resolve_direct_import(
                 call_name, {call_name: followed}, language, module_qn
             ):
