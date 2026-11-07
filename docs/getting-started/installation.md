@@ -313,6 +313,7 @@ This checks that all required dependencies and services are available.
 - **pyyaml**: YAML parser and emitter for Python
 - **pathspec**: Utility library for gitignore style pattern matching of file paths.
 - **pygments**: Pygments is a syntax highlighting package written in Python.
+- **httpx**: The next generation HTTP client.
 - **certifi**: Python package for providing Mozilla's CA Bundle.
 - **regex**: Alternative regular expression module, to replace re.
 - **cgr-graph-rs**: Native acceleration for code-graph-rag's embedded graph

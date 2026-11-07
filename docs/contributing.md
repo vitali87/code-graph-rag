@@ -84,11 +84,15 @@ All pull requests are validated by CI, which runs in parallel:
 
 ### Which number a merge bumps
 
-Every bump raises the patch number unless a pull request merged since the
-version last changed carries the `breaking change` label. Then the minor number
-goes up while the version is below 1.0, and the major number from 1.0 on. A
-breaking change counts once: a later bump does not count it again, even when
-the release that carried it was deferred, and a version set by hand already
+Every merge raises the patch number by one unless a pull request merged since
+the version last changed carries the `breaking change` label. Then the minor
+number goes up while the version is below 1.0, and the major number from 1.0
+on. Merges that land close together share one bump, which moves the patch
+number once for each of them: three merges bumped together take the version
+from 0.4.9 to 0.4.12, and only v0.4.12 is tagged, since no commit ever carried
+0.4.10 or 0.4.11. A breaking change counts once: a later bump does not count
+it again, even when the release that carried it was deferred, and a version
+set by hand already
 accounts for every pull request merged up to it. Nothing rolls over: the
 patch number keeps counting past 999, because a carry into the minor number
 would announce a breaking change that never happened. To pick a type by hand,
@@ -102,10 +106,12 @@ one is due, so a breaking change or security fix in it ships with it.
 `version-bump.yml` tags every version bump, but only some of those tags publish.
 A bump is not one per merge: runs are serialised, and only the run for the
 newest commit on `main` bumps, so merges that land close together share one
-bump and one tag. Each older run would still need a runner just to stand down,
-one after another, so `version-bump-supersede.yml` cancels every bump run that
-has not started yet for a commit the newest merge contains, and the newest
-run goes next. Which tags publish comes down to the CREDENTIAL used to push
+bump and one tag. The number still moves once per merge, so you can merge
+again while a bump or CI on `main` is still running without losing count.
+Each older run would still need a runner just to stand down, one after
+another, so `version-bump-supersede.yml` cancels every bump run that has not
+started yet for a commit the newest merge contains, and the newest run goes
+next. Which tags publish comes down to the CREDENTIAL used to push
 the tag, which is easy to miss when reading the workflows:
 
 ```yaml
@@ -124,7 +130,17 @@ events pushed with `GITHUB_TOKEN`. Interim tags therefore land on the remote and
 publish nothing, while release tags go out over the SSH deploy key and do trigger
 the publish.
 
-A release happens every 50 versions, or immediately when the `decide` step
+A release happens every 50 versions, which is every 50 merges however they
+were batched into bumps: the count is how far the patch number has moved since
+the latest release, plus the merges of the bump being made. A bump that takes
+the count past 50 releases all of its merges, so a release can hold a few more
+than 50 when merges land faster than bumps. A version set by hand counts the
+merges that brought it, not the numbers it skips: setting 0.0.1 to 0.0.50 in a
+pull request counts as one merge, or more when other merges share its bump.
+Version numbers alone cannot show that, so the bump records the count on its
+tag (`merge-count: <n> since <tag>`) and every later run reads it. A bump whose
+tag never reached GitHub is handled the same way: the next tag records the
+merges of both. A release also happens immediately when the `decide` step
 sees a security fix (a GHSA id in the commit message, an explicit `[security]`
 marker, or an associated PR labelled `security`) or a PR labelled
 `breaking change`, so the version that announces a breaking change is one
@@ -142,7 +158,7 @@ interim tag annotated `release-deferred:`, and the release moves to the next
 bump (the run's summary reads "Release: deferred"). The next run never starts
 its scan at such a tag, so it reads the deferred commits again and a security
 fix, breaking change or `release now` PR among them still releases without
-waiting for the 50-version cadence. The breaking change still bumps the number
+waiting for the 50-merge cadence. The breaking change still bumps the number
 only once.
 
 If you are ever debugging "the tag exists but PyPI did not update", check WHICH

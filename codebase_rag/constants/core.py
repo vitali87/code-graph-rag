@@ -348,7 +348,11 @@ CGR_INSTRUCTIONS_SEPARATOR = "\n\n---\n\n"
 # Read only from the environment cgr starts with, never from `.env` in the
 # working directory, which usually belongs to the repository being analysed.
 ENVIRONMENT_ONLY_SETTINGS = frozenset(
-    {"CGR_TRUST_PROJECT_INSTRUCTIONS", "CGR_ALLOW_SENSITIVE_READS"}
+    {
+        "CGR_TRUST_PROJECT_INSTRUCTIONS",
+        "CGR_ALLOW_SENSITIVE_READS",
+        "CGR_ALLOW_SENSITIVE_WRITES",
+    }
 )
 # Every file cgr keeps about one checkout. They live in that checkout's
 # directory under CGR_HOME / CGR_STATE_DIRNAME rather than in the working

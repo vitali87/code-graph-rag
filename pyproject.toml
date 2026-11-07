@@ -1,6 +1,6 @@
 [project]
 name = "code-graph-rag"
-version = "0.4.23"
+version = "0.5.8"
 description = "The ultimate RAG for your monorepo. Query, understand, and edit multi-language codebases with the power of AI and knowledge graphs"
 readme = "PYPI_README.md"
 requires-python = ">=3.12"
@@ -67,6 +67,10 @@ dependencies = [
     "pyyaml>=6.0",
     "pathspec>=1.0.4",
     "pygments>=2.20.0",
+    # Imported directly (embedder, health checks, token counting, web
+    # search). It used to arrive only through the provider SDKs, and
+    # google-genai 3 moved to httpx2, which a fresh install then took alone.
+    "httpx>=0.28.1",
     # certifi is the CA bundle httpx and requests verify against; 2026.10.23
     # is the first without the distrusted eMudhra roots. Declared so an
     # upgrade over an older install moves it too.

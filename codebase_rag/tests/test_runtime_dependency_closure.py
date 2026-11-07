@@ -48,14 +48,19 @@ def test_the_closure_reaches_the_llm_providers_in_use() -> None:
     assert {"openai", "anthropic", "google-genai"} <= closure, closure
 
 
-def _direct_dependencies() -> set[str]:
-    pyproject = tomllib.loads(
-        (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    )
+def _declared_dependencies() -> set[str]:
+    config = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     return {
-        re.split(r"[<>=!~\[;\s]", requirement, maxsplit=1)[0].lower()
-        for requirement in pyproject["project"]["dependencies"]
+        re.split(r"[\s\[<>=!~;]", requirement, maxsplit=1)[0].lower()
+        for requirement in config["project"]["dependencies"]
     }
+
+
+def test_httpx_is_declared_directly() -> None:
+    # The embedder, health checks, token counter and web search import httpx
+    # themselves. Borrowed from the provider SDKs, it vanished from a fresh
+    # install once google-genai 3 moved to httpx2, and `cgr` stopped starting.
+    assert "httpx" in _declared_dependencies()
 
 
 def test_the_default_install_does_not_pull_the_hugging_face_hub() -> None:
@@ -82,4 +87,4 @@ def test_pyyaml_is_declared_rather_than_inherited() -> None:
     # The CLI imports codebase_rag/stack/manager.py, which imports yaml at
     # module level, so every command needs it. It used to arrive only as a
     # dependency of huggingface-hub.
-    assert "pyyaml" in _direct_dependencies()
+    assert "pyyaml" in _declared_dependencies()

@@ -196,6 +196,12 @@ instead, with one warning; a copy of the encoding in the directory
 The [HTTP MCP server](https://github.com/vitali87/code-graph-rag/blob/main/codebase_rag/mcp/server.py)
 binds `127.0.0.1` by default and refuses a non-loopback bind without
 `MCP_HTTP_AUTH_TOKEN`. When configured, the token is checked even on loopback.
+Without a token, a request must name this server in its `Host` header
+(`127.0.0.1`, `localhost` or `[::1]` with its port), and an `Origin` header,
+when present, must be one of those too. A loopback bind keeps other machines
+out but not the browser on this one: a page the user opens can point its own
+domain at `127.0.0.1` (DNS rebinding), and its requests then carry that
+domain, so they are refused.
 This is a shared bearer credential, not per-user authorization. Authorized
 clients can use privileged tools, including file modification and project
 deletion; treat client access accordingly.
@@ -206,7 +212,17 @@ overwrite or delete files, a project or the database. A client that needs only
 queries should get a read-only server (`cgr mcp-server --read-only`, or
 `MCP_READ_ONLY=true`): the writers are then neither listed nor run, even when
 called by name. `read_file` refuses files that look like credentials in either
-mode (see below) unless `CGR_ALLOW_SENSITIVE_READS=true`.
+mode (see below) unless `CGR_ALLOW_SENSITIVE_READS=true`, and `write_file` and
+`surgical_replace_code` refuse to change them unless
+`CGR_ALLOW_SENSITIVE_WRITES=true`.
+
+The server serves the directory `TARGET_REPO_PATH` names. Without it, it serves
+the directory its client started it in, which the client chooses and can be
+`/`, so it refuses to start when that directory holds the
+user's home directory or is a disk root, unless the client names its project
+in `CLAUDE_PROJECT_ROOT` and that directory is narrower, which is then served
+instead. Naming such a directory
+in `TARGET_REPO_PATH` serves it, with a warning.
 
 ![cgr mcp-server --transport http refusing --host 0.0.0.0 without MCP_HTTP_AUTH_TOKEN, then serving on 127.0.0.1 by default](../assets/demos/security-mcp-bind.gif)
 
@@ -220,7 +236,14 @@ access and trust in the MCP client.
 
 The CLI can run commands and edit files. Default shell execution uses an
 allowlist, dangerous-pattern checks and approval checks; file tools validate
-paths against the target project root. YOLO mode relaxes approval and allowlist
+paths against the target project root. No file tool, in the CLI or over MCP,
+writes inside a `.git` directory (any case, at any depth, through a symlink
+too), or inside any other git directory git reports for the folder being
+written, such as one moved with `git init --separate-git-dir`, a worktree's,
+or a nested repository's (git is asked; where it cannot be, the root's
+`.git` file is read and any folder laid out as a git directory counts): git runs the commands its config (`core.fsmonitor`) and hooks name, and
+the graph refresh after every write runs git, so a write there ran code on the
+user's machine. YOLO mode relaxes approval and allowlist
 checks, while destructive-path screening remains.
 
 Graph queries written by the model are treated as untrusted and must stay
@@ -251,7 +274,7 @@ only when its current content was approved before.
 repository; use it only for CI on repositories you control. It counts only when
 exported in the environment cgr starts with: a `.env` in the working directory
 is usually the analysed repository's own file, so it cannot set this, nor
-`CGR_ALLOW_SENSITIVE_READS`. The prompt tells
+`CGR_ALLOW_SENSITIVE_READS` or `CGR_ALLOW_SENSITIVE_WRITES`. The prompt tells
 the model that these instructions cannot grant permissions or skip approvals,
 but approval of the file, not that wording, is the control: GHSA-2rr7-8xrw-gmhr
 was a `.cgr.md` that asked the agent to plant a git backdoor without asking.
@@ -265,7 +288,10 @@ that set: `.env` and `.env.*` (not templates such as `.env.example`), private
 keys and certificates (`id_rsa`, `*.pem`, `*.key`, `*.p12`, ...), `.npmrc`,
 `.pypirc`, `.netrc`, `.git-credentials`, `.git/config`, `.aws/credentials`,
 `.docker/config.json`, `.kube/config`, Terraform state, and anything under
-`.ssh/` or `.gnupg/`, judged by a symlink's target as well as its name. The
+`.ssh/` or `.gnupg/`, judged by a symlink's target as well as its name. MCP
+`write_file` and `surgical_replace_code` refuse to change them as well: an
+overwrite destroys the secret, and an edit's answers (target not found, the
+lines of each match) let a client guess it one character at a time. The
 chat asks before reading one, and a run with nobody to ask is denied; a shell
 read that names one, or an `rg` with `--hidden`, `-.`, `-u`, `--unrestricted`
 or a `--no-ignore` switch, needs approval the same way. This is a name-based list, not
