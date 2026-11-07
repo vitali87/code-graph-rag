@@ -2052,7 +2052,9 @@ class JavaMethodResolverMixin:
             return None
         return receiver
 
-    def _created_type_qn(self, creation: ASTNode, module_qn: str) -> str | None:
+    def _created_type_qn(
+        self, creation: ASTNode, module_qn: str, local_var_types: dict[str, str]
+    ) -> str | None:
         # The registered type a `new` names: generic arguments and the diamond
         # dropped (`new Box<>(1)`, `new Holder<T>.Slot()`), a member type
         # through its enclosing one (`new Request.Builder()`) or a supertype
@@ -2062,6 +2064,10 @@ class JavaMethodResolverMixin:
         if type_node is None or type_node.text is None:
             return None
         base = _erase_type_arguments(type_node.text.decode(cs.ENCODING_UTF8))
+        if (instance := self._creation_instance(creation)) is not None:
+            return self._instance_member_type_qn(
+                instance, base, module_qn, local_var_types
+            )
         ref = self._java_member_type_ref(base, module_qn)
         if self.function_registry.get(ref) in _JAVA_TYPE_NODE_TYPES:
             return ref
@@ -2073,6 +2079,42 @@ class JavaMethodResolverMixin:
         ):
             return inherited
         return self._static_import_class_qn(base, module_qn)
+
+    @staticmethod
+    def _creation_instance(creation: ASTNode) -> ASTNode | None:
+        # The enclosing instance of a qualified creation, `outer` in
+        # `outer.new Inner()`: whatever precedes the `new` keyword.
+        first = creation.children[0] if creation.children else None
+        if first is None or first.type == cs.TS_JAVA_NEW_KEYWORD:
+            return None
+        return first
+
+    def _instance_member_type_qn(
+        self,
+        instance: ASTNode,
+        member: str,
+        module_qn: str,
+        local_var_types: dict[str, str],
+    ) -> str | None:
+        # `outer.new Inner()` creates the member type `Inner` of `outer`'s
+        # class (JLS 15.9.1), never whatever `Inner` the file imports. An
+        # instance that cannot be typed leaves the call unresolved (#2700
+        # review).
+        if instance.text is None or not (
+            outer_type := self._resolve_java_object_type(
+                instance.text.decode(cs.ENCODING_UTF8),
+                local_var_types,
+                module_qn,
+                instance,
+            )
+        ):
+            return None
+        # A local's type is kept as written (`Outer`, `Outer<T>`), so it is
+        # placed the way a written type is before its members are read.
+        return self._inherited_member_type(
+            self._java_member_type_ref(_erase_type_arguments(outer_type), module_qn),
+            member,
+        )
 
     def _inherited_member_type(self, type_qn: str, member: str) -> str | None:
         # A member type a supertype declares, named through a subtype.
@@ -2164,7 +2206,7 @@ class JavaMethodResolverMixin:
             # `new Box(3).value()`: the receiver's type is the class it
             # creates (issue #2700). An unregistered type is a third-party
             # one, and the call is never `this.value()`.
-            created_type = self._created_type_qn(created, module_qn)
+            created_type = self._created_type_qn(created, module_qn, local_var_types)
             if created_type is None:
                 return None
             return self._resolve_instance_method(

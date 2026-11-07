@@ -51,6 +51,22 @@ _FILES = {
         "        Printer p = new Builder().pretty().build();\n"
         "        p.write();\n    }\n}\n"
     ),
+    # `outer.new Inner()` creates the member type of `outer`'s class, never
+    # the `other.Inner` this file imports (JLS 15.9.1).
+    _J + "other/Inner.java": (
+        "package other;\n\npublic class Inner {\n    public void m() {}\n}\n"
+    ),
+    _J + "app/Outer.java": (
+        "package app;\n\npublic class Outer {\n"
+        "    public class Inner {\n        public void m() {}\n    }\n\n"
+        "    void self() {\n        this.new Inner().m();\n    }\n}\n"
+    ),
+    _J + "app/Qualified.java": (
+        "package app;\n\nimport other.Inner;\n\npublic class Qualified {\n"
+        "    void run(Outer outer) {\n        outer.new Inner().m();\n    }\n\n"
+        "    void untyped() {\n        make().new Inner().m();\n    }\n\n"
+        "    Object make() {\n        return null;\n    }\n}\n"
+    ),
     # Negative: a construction of a type the project does not declare.
     _J + "app/Outside.java": (
         "package app;\n\npublic class Outside {\n"
@@ -120,3 +136,26 @@ def test_a_construction_of_an_outside_type_binds_no_own_method(
     assert not {
         callee for callee, _ in calls.get("app.Outside.Outside.run()", set())
     } & {"app.Outside.Outside.make()"}
+
+
+@pytest.mark.parametrize(
+    "caller",
+    ["app.Qualified.Qualified.run(Outer)", "app.Outer.Outer.self()"],
+    ids=["through-a-variable", "through-this"],
+)
+def test_a_qualified_construction_creates_the_enclosing_instances_member(
+    calls: dict[str, set[tuple[str, str]]], caller: str
+) -> None:
+    assert calls.get(caller, set()) == {("app.Outer.Outer.Inner.m()", _EXACT)}, (
+        calls.get(caller)
+    )
+
+
+def test_a_qualified_construction_on_an_untyped_instance_binds_nothing(
+    calls: dict[str, set[tuple[str, str]]],
+) -> None:
+    # Negative: with `make()`'s result untyped, the imported `other.Inner` is
+    # still not the type created, so `m()` gets no edge.
+    assert "other.Inner.Inner.m()" not in {
+        callee for callee, _ in calls.get("app.Qualified.Qualified.untyped()", set())
+    }
