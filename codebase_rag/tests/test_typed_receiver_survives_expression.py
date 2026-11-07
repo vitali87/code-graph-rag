@@ -29,6 +29,8 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from evals.cgr_graph import _StatefulIngestor
 
+pytestmark = pytest.mark.usefixtures("both_alias_walks")
+
 # The decoy defines a method whose NAME collides with pathlib.Path.resolve.
 # Nothing in the fixture ever calls it.
 _DECOY_COLLIDES = "class Engine:\n    def resolve(self) -> int:\n        return 1\n"
