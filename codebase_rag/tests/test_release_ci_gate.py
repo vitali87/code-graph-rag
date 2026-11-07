@@ -108,6 +108,9 @@ def _steps() -> list[Step]:
 MARKER = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))["env"][
     "DEFERRED_RELEASE_MARKER"
 ]
+COUNT_MARKER = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))["env"][
+    "MERGE_COUNT_MARKER"
+]
 
 
 def _execute(
@@ -185,6 +188,9 @@ def _execute(
             "RELEASE": str(release).lower(),
             "CI_GATE": "skipped",
             "DEFERRED_RELEASE_MARKER": MARKER,
+            "MERGE_COUNT_MARKER": COUNT_MARKER,
+            "MERGE_COUNT": "",
+            "MERGE_COUNT_FROM": "",
             "GITHUB_OUTPUT": os.devnull,
             "GITHUB_STEP_SUMMARY": os.devnull,
             **(env or {}),
@@ -488,10 +494,193 @@ def test_gate_is_required_between_bump_push_and_release_side_effects() -> None:
     assert gate["id"] == "ci_gate"
     assert tag["if"] == "steps.commit.outputs.pushed == 'true'"
     assert tag["env"]["CI_GATE"] == "${{ steps.ci_gate.outcome }}"
-    assert release["if"] == (RELEASE_PUSHED + " && steps.ci_gate.outcome == 'success'")
+    # A release the gate did not pass goes up as a draft, which publishes
+    # nothing; the tests below cover the draft.
+    assert release["if"] == RELEASE_PUSHED
+    assert release["env"]["CI_GATE"] == "${{ steps.ci_gate.outcome }}"
     assert gate["timeout-minutes"] == 50
     assert gate["env"]["CI_WAIT_ATTEMPTS"] == 90
     assert job["timeout-minutes"] >= 90
     assert job["permissions"]["actions"] == "read"
     assert "github.ref == 'refs/heads/main'" in job["if"]
     assert "workflow_run" not in workflow.get("on", workflow.get(True, {}))
+
+
+# gh lists the drafts from a fixture through the real jq, so the filter that
+# picks which ones to delete is exercised too. jq on Windows ends each line
+# with CRLF, which gh on the Ubuntu runner never does: left in, the CR sticks
+# to the tag name and the step deletes its own draft as an older one.
+RELEASE_STUBS = r"""
+gh() {
+  printf 'gh %s\n' "$*" >> calls
+  case "$1 $2" in
+    "release create" | "api -X") return 0 ;;
+    "api repos/$GITHUB_REPOSITORY/releases?per_page=100") jq -r "$4" releases.json | tr -d '\r' ;;
+    *) return 1 ;;
+  esac
+}
+"""
+BOT = "github-actions[bot]"
+
+
+def _release(
+    release_id: int, tag: str, *, draft: bool = True, author: str = BOT
+) -> dict[str, int | str | bool | dict[str, str]]:
+    return {
+        "id": release_id,
+        "tag_name": tag,
+        "draft": draft,
+        "author": {"login": author},
+    }
+
+
+def _create_release(
+    tmp_path: Path, gate: str, releases: list
+) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+    bash = shutil.which("bash")
+    if bash is None or shutil.which("jq") is None:
+        pytest.skip("the Ubuntu workflow requires bash and jq")
+    (tmp_path / "notes.md").write_text("notes\n", encoding="utf-8")
+    (tmp_path / "releases.json").write_text(json.dumps(releases), encoding="utf-8")
+    step = next(step for step in _steps() if step["name"] == "Create release")
+    result = subprocess.run(
+        [
+            bash,
+            "--noprofile",
+            "--norc",
+            "-e",
+            "-c",
+            RELEASE_STUBS + step["run"].replace("/tmp/", "./"),
+        ],
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "GITHUB_REPOSITORY": REPO,
+            "NEW_VERSION": "0.0.951",
+            "CI_GATE": gate,
+        },
+        capture_output=True,
+        text=True,
+        encoding=cs.ENCODING_UTF8,
+        check=False,
+        timeout=15,
+    )
+    calls = (tmp_path / "calls").read_text(encoding="utf-8").splitlines()
+    return result, calls
+
+
+@pytest.mark.parametrize("gate, draft", [("success", "false"), ("failure", "true")])
+def test_a_release_whose_ci_is_not_proven_is_created_as_a_draft(
+    tmp_path: Path, gate: str, draft: str
+) -> None:
+    result, calls = _create_release(tmp_path, gate, [])
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (
+        "gh release create v0.0.951 --title v0.0.951 --notes-file ./body.md"
+        f" --verify-tag --draft={draft}"
+    ) in calls
+
+
+def test_a_new_release_deletes_the_drafts_it_supersedes(tmp_path: Path) -> None:
+    result, calls = _create_release(
+        tmp_path,
+        "failure",
+        [
+            _release(5, "v0.0.950"),
+            _release(6, "v0.0.951"),
+            _release(4, "v0.0.940", author="vitali87"),
+            _release(3, "v0.0.930", draft=False),
+        ],
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    deleted = [call for call in calls if "-X DELETE" in call]
+    # Only the bump job's own older draft: a person's draft, a published
+    # release and this version's own draft stay.
+    assert deleted == [f"gh api -X DELETE repos/{REPO}/releases/5"]
+
+
+# A bump that carries a version set by hand records how many merges its tag
+# stands for, so the cadence counts those instead of the numbers the version
+# skipped (issue #3573).
+
+
+def test_an_interim_tag_set_by_hand_records_its_merges() -> None:
+    result = _execute(
+        _pages([]),
+        release=False,
+        env={"MERGE_COUNT": "3", "MERGE_COUNT_FROM": "v0.0.900"},
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (
+        f"git: tag -a v0.0.951 -m {COUNT_MARKER}: 3 since v0.0.900\n" in result.stdout
+    )
+    assert "git: push https://x-access-token:" in result.stdout
+    assert "git: push origin v" not in result.stdout
+
+
+def test_a_release_tag_set_by_hand_stays_plain() -> None:
+    # The next count starts after a release, and the publish workflows start
+    # from its plain tag as from any other.
+    result = _execute(
+        _pages([_make_ci_run()]),
+        env={"MERGE_COUNT": "3", "MERGE_COUNT_FROM": "v0.0.900"},
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "git: tag v0.0.951\n" in result.stdout
+    assert "git: push origin v0.0.951" in result.stdout
+
+
+def test_a_deferred_tag_set_by_hand_carries_only_the_deferral() -> None:
+    # A deferred release stays due whatever the count reads.
+    result = _execute(
+        _pages([]), env={"MERGE_COUNT": "3", "MERGE_COUNT_FROM": "v0.0.900"}
+    )
+
+    _assert_deferred(result)
+    assert COUNT_MARKER not in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("count", "since"),
+    [
+        ("0", "v0.0.900"),
+        ("x", "v0.0.900"),
+        ("3; touch pwned", "v0.0.900"),
+        ("3\n4", "v0.0.900"),
+        ("-1", "v0.0.900"),
+        ("3", ""),
+        ("3", "main"),
+        ("3", "v0.0.900; touch pwned"),
+        ("3", "v0.0.900\nv0.0.901"),
+    ],
+)
+def test_a_malformed_merge_count_tags_without_it(
+    tmp_path: Path, count: str, since: str
+) -> None:
+    pwned = str(tmp_path / "pwned")
+    result = _execute(
+        _pages([]),
+        release=False,
+        env={
+            "MERGE_COUNT": count.replace("pwned", pwned),
+            "MERGE_COUNT_FROM": since.replace("pwned", pwned),
+        },
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "git: tag v0.0.951\n" in result.stdout
+    assert "refusing malformed merge count" in result.stdout
+    assert not (tmp_path / "pwned").exists()
+
+
+def test_the_tag_step_reads_the_count_from_decide() -> None:
+    steps = _steps()
+    tag = next(step for step in steps if step["name"] == "Create git tag")
+    assert tag["env"]["MERGE_COUNT"] == "${{ steps.decide.outputs.merge_count }}"
+    assert (
+        tag["env"]["MERGE_COUNT_FROM"] == "${{ steps.decide.outputs.merge_count_from }}"
+    )

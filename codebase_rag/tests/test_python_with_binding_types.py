@@ -1016,4 +1016,10 @@ def test_reingesting_only_the_caller_types_the_target_like_a_clean_index(
     ).reingest(["app.py"])
     store.flush_all()
 
-    assert _app_calls(store)["use"] == {f"{PROJECT}.managers.Session.send": EXACT}
+    # `send` is typed through Pool.__enter__'s return; entering Pool also
+    # calls its own __enter__ and __exit__, as a clean index records them.
+    assert _app_calls(store)["use"] == {
+        f"{PROJECT}.managers.Session.send": EXACT,
+        f"{PROJECT}.managers.Pool.__enter__": EXACT,
+        f"{PROJECT}.managers.Pool.__exit__": EXACT,
+    }
