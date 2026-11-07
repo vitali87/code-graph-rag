@@ -5334,6 +5334,15 @@ class ImportProcessor:
             original=original_name,
         )
 
+    def binds_js_whole_module(self, module_qn: str, local_name: str) -> bool:
+        """Whether `local_name` in `module_qn` is a JS/TS whole-module binding.
+
+        A bare `require` or a namespace import maps the local to the module's
+        own qn, not to an export of the module that qn's prefix names.
+        """
+        site = self._import_sites.get(module_qn, {}).get(local_name)
+        return site is not None and _js_binds_whole_module(site)
+
     def follow_js_reexports(
         self,
         qn: str,
