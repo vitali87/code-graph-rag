@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import http.client
 from pathlib import Path
 
 import pytest
@@ -324,6 +325,26 @@ class TestDependencySummaryFallback:
             ["loguru", "typer"], {"loguru": "Python logging"}
         )
         assert rendered == "- **loguru**: Python logging\n- **typer**"
+
+    @pytest.mark.parametrize(
+        "failure",
+        [
+            http.client.IncompleteRead(b"{", 114996),
+            ConnectionResetError("reset by peer"),
+        ],
+        ids=["truncated_body", "connection_reset"],
+    )
+    def test_a_broken_response_counts_as_a_failed_fetch(
+        self, monkeypatch: pytest.MonkeyPatch, failure: Exception
+    ) -> None:
+        # A Windows CI job got a body cut short by PyPI, and the raise
+        # escaped the generator instead of falling back to the committed
+        # summary.
+        def broken(url: str, timeout: float) -> None:
+            raise failure
+
+        monkeypatch.setattr(readme_sections.urllib.request, "urlopen", broken)
+        assert readme_sections.fetch_pypi_summary("loguru", {}) == ""
 
     def test_a_fetched_summary_wins_over_the_committed_one(
         self, monkeypatch: pytest.MonkeyPatch
