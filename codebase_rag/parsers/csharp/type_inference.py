@@ -28,11 +28,15 @@ from .arity import spellings as arity_spellings
 from .utils import (
     _normalize_type_name,
     annotate_type_ref,
+    array_element_text,
+    collection_element_text,
     generic_arity_of_type_text,
     leaf_type_segment,
     split_type_ref,
     strip_generic_arguments,
     unique_carrier,
+    value_binder_at,
+    value_binders_at,
 )
 
 if TYPE_CHECKING:
@@ -220,6 +224,82 @@ def _extension_receiver_matches(
     return not ambiguous_unqualified
 
 
+# Binders that write their name's type in a `type` field.
+_TYPED_BINDERS = frozenset(
+    {
+        cs.TS_CSHARP_PARAMETER,
+        cs.TS_CSHARP_PARAMETER_LIST,
+        cs.TS_CSHARP_DECLARATION_PATTERN,
+        cs.TS_CSHARP_RECURSIVE_PATTERN,
+        cs.TS_CSHARP_DECLARATION_EXPRESSION,
+        cs.TS_CSHARP_CATCH_DECLARATION,
+        cs.TS_CSHARP_FROM_CLAUSE,
+        cs.TS_CSHARP_JOIN_CLAUSE,
+        cs.TS_CSHARP_PROPERTY_DECLARATION,
+    }
+)
+# Callables whose calls resolve with the enclosing method's type map.
+_INLINE_CALLABLES = frozenset(
+    {cs.TS_CSHARP_LAMBDA_EXPRESSION, cs.TS_CSHARP_ANONYMOUS_METHOD_EXPRESSION}
+)
+
+
+def _declarator_named(declarator: Node, name: str) -> bool:
+    return (
+        declarator.type == cs.TS_CSHARP_VARIABLE_DECLARATOR
+        and safe_decode_text(declarator.child_by_field_name(cs.FIELD_NAME)) == name
+    )
+
+
+def _written_type_text(owner: Node) -> str | None:
+    type_node = owner.child_by_field_name(cs.FIELD_TYPE)
+    if type_node is None or type_node.type == cs.TS_CSHARP_IMPLICIT_TYPE:
+        return None
+    return safe_decode_text(type_node)
+
+
+def _held_by_map(binder: Node) -> bool:
+    """Whether the method's type map models `binder`: a declared local, or a
+    parameter of the method itself or of a local function, whose calls get
+    their own map. A lambda's parameters are not in the map its calls use."""
+    owner = binder.parent
+    if owner is not None and owner.type == cs.TS_CSHARP_VARIABLE_DECLARATOR:
+        return True
+    if owner is not None and owner.type == cs.TS_CSHARP_PARAMETER:
+        owner = owner.parent
+    return (
+        owner is not None
+        and owner.type == cs.TS_CSHARP_PARAMETER_LIST
+        and (owner.parent is None or owner.parent.type not in _INLINE_CALLABLES)
+    )
+
+
+def _local_declarator_type_text(type_node: Node | None, declarator: Node) -> str | None:
+    """The declared type of a local's declarator, or for `var` the type its
+    initializer constructs (None when neither is read)."""
+    if type_node is not None and type_node.type != cs.TS_CSHARP_IMPLICIT_TYPE:
+        return safe_decode_text(type_node)
+    # Only a direct `new T(...)`: a creation among a call's arguments
+    # (`Make(new List<ISink>())`) is not what the call returns (bot review on
+    # PR #2990).
+    name_node = declarator.child_by_field_name(cs.FIELD_NAME)
+    value = next(
+        (c for c in reversed(declarator.named_children) if c != name_node),
+        None,
+    )
+    if value is not None and value.type == cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION:
+        return safe_decode_text(value.child_by_field_name(cs.FIELD_TYPE))
+    return None
+
+
+def _enclosing_type_body(node: Node) -> Node | None:
+    # The body of the type declaration that encloses `node`, if any.
+    owner = node.parent
+    while owner is not None and owner.type not in cs.CSHARP_TYPE_DECLARATION_NODES:
+        owner = owner.parent
+    return owner.child_by_field_name(cs.FIELD_BODY) if owner is not None else None
+
+
 class CSharpTypeInferenceEngine:
     __slots__ = (
         "import_processor",
@@ -402,12 +482,143 @@ class CSharpTypeInferenceEngine:
                 if declarator.type == cs.TS_CSHARP_VARIABLE_DECLARATOR:
                     self._record_local(declarator, declared, types, conflicted)
 
+    def site_types(self, site: Node, types: dict[str, str]) -> dict[str, str]:
+        """The method's type map as seen at `site`.
+
+        The map holds the method's parameters and declared locals, one type
+        per name for the whole method. Every other binder (a `foreach`,
+        pattern, out, deconstruction, `catch` or query variable, or a
+        lambda's parameter) holds its name in its own scope alone, so at a
+        site in that scope the name takes that binder's type, or none when
+        the binder gives none, and never a field's or another binder's
+        (issue #2938, bot review on PR #2990).
+        """
+        view = types
+        for name, binder in value_binders_at(site).items():
+            if _held_by_map(binder):
+                continue
+            if view is types:
+                view = dict(types)
+            if text := self._binder_type_text(binder):
+                view[name] = annotate_type_ref(text)
+            else:
+                view.pop(name, None)
+        return view
+
+    def _binder_type_text(self, binder: Node) -> str | None:
+        """The type `binder` gives its name: the written one, or for `var`
+        the one its value is read to have (None when neither is read)."""
+        owner = binder.parent
+        if owner is None:
+            return None
+        if owner.type == cs.TS_CSHARP_VARIABLE_DECLARATOR:
+            decl = owner.parent
+            return _local_declarator_type_text(
+                decl.child_by_field_name(cs.FIELD_TYPE) if decl is not None else None,
+                owner,
+            )
+        if owner.type == cs.TS_CSHARP_FOREACH_STATEMENT:
+            return _written_type_text(owner) or self._foreach_element_text(owner)
+        if owner.type in _TYPED_BINDERS:
+            return _written_type_text(owner)
+        return None
+
+    def _foreach_element_text(self, loop: Node) -> str | None:
+        # A `var` loop variable takes the element type of its collection's
+        # declared type, when the collection is a variable in scope at the
+        # loop or a field and that type is an array or a known collection
+        # (issue #2938).
+        collection = loop.child_by_field_name(cs.FIELD_RIGHT)
+        if collection is None:
+            return None
+        if collection.type == cs.TS_CSHARP_IDENTIFIER:
+            name = safe_decode_text(collection)
+            if not name:
+                return None
+            # Any binder of the name in scope hides the field, even one whose
+            # type is not read (bot review on PR #2990).
+            binder = value_binder_at(collection, name)
+            declared = (
+                self._field_type_text(loop, name)
+                if binder is None
+                else self._binder_type_text(binder)
+            )
+        elif (
+            collection.type == cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION
+            and (
+                receiver := collection.child_by_field_name(
+                    cs.TS_CSHARP_FIELD_EXPRESSION
+                )
+            )
+            is not None
+            and receiver.type == cs.TS_CSHARP_THIS
+            and (
+                name := safe_decode_text(collection.child_by_field_name(cs.FIELD_NAME))
+            )
+        ):
+            declared = self._field_type_text(loop, name)
+        else:
+            return None
+        return self._element_text(declared) if declared else None
+
+    def _element_text(self, declared: str) -> str | None:
+        # An array's element type is the array's own, whatever type it names.
+        # A project type named like a known collection (`Acme.List<T>`)
+        # enumerates whatever its own GetEnumerator yields, so only a name no
+        # registered type shares is read as the BCL one (bot review on PR
+        # #2990).
+        if (element := array_element_text(declared)) is not None:
+            return element
+        head, angle, _rest = declared.partition(cs.CHAR_ANGLE_OPEN)
+        if angle and self._may_name_project_type(head.strip()):
+            return None
+        return collection_element_text(declared)
+
+    def _may_name_project_type(self, written: str) -> bool:
+        # A path rooted at `System` (`System.Collections.Generic.List`)
+        # names the BCL type unless a project type is declared under that
+        # very path: a same-named type elsewhere does not hide it (bot review
+        # on PR #2990). A bare name, an alias or a project namespace may name
+        # any registered type of that simple name.
+        path = written.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT)
+        path = path.removeprefix(f"{cs.TS_CSHARP_GLOBAL}{cs.SEPARATOR_DOT}")
+        types = [
+            qn
+            for qn in self.simple_name_lookup.get(
+                path.rsplit(cs.SEPARATOR_DOT, 1)[-1], set()
+            )
+            if self.function_registry.get(qn) in _TYPE_DECLS
+        ]
+        if not path.startswith(cs.CSHARP_SYSTEM_PREFIX):
+            return bool(types)
+        return any(self.csharp_class_namespaced.get(qn) == path for qn in types)
+
+    @staticmethod
+    def _field_type_text(at: Node, name: str) -> str | None:
+        # A field of the type that declares the member holding `at`, read off
+        # the syntax: the per-class field map is keyed by class qn, unknown
+        # here.
+        body = _enclosing_type_body(at)
+        for member in body.named_children if body is not None else ():
+            if member.type != cs.TS_CSHARP_FIELD_DECLARATION:
+                continue
+            for decl in member.named_children:
+                if decl.type != cs.TS_CSHARP_VARIABLE_DECLARATION:
+                    continue
+                if any(
+                    _declarator_named(declarator, name)
+                    for declarator in decl.named_children
+                ):
+                    return safe_decode_text(decl.child_by_field_name(cs.FIELD_TYPE))
+        return None
+
     def _binds_local(self, node: Node, name: str) -> bool:
         """Whether a local in scope at `node` binds `name`.
 
         Two binders, both of which can leave the name out of
         `local_var_types` and so read as a TYPE: a `foreach (var name in
-        ...)` loop, whose element type is not inferred, and a local declared
+        ...)` loop whose element type is not read (a call's result, a
+        dictionary), and a local declared
         in an enclosing block whose initializer is not inferred
         (`var Config = Ext.Make();`, Copilot, #2011).
 
@@ -594,6 +805,9 @@ class CSharpTypeInferenceEngine:
         if receiver.type == cs.TS_CSHARP_BASE_EXPRESSION:
             return self._resolve_base_call(method_name, arg_count, caller_qn)
 
+        # A `foreach`, pattern or lambda variable holds its name only in its
+        # own scope, which the method-wide map cannot say (issue #2938).
+        local_var_types = self.site_types(call_node, local_var_types or {})
         receiver_class_qn = self._resolve_receiver_class_qn(
             receiver, local_var_types or {}, module_qn, caller_qn
         )
@@ -740,8 +954,8 @@ class CSharpTypeInferenceEngine:
         # on an untyped receiver resolves to System.Object.
         if method_name in cs.CSHARP_OBJECT_VIRTUALS:
             return True
-        # A `foreach (var x in ...)` binding is a LOCAL whose element type is
-        # not inferred, so it never reaches `local_var_types`. Left to the
+        # A `foreach (var x in ...)` binding is a LOCAL whose element type
+        # may not be read, so it may not reach `local_var_types`. Left to the
         # checks below it read as an external TYPE when PascalCase and fell
         # to the name trie otherwise, which bound the call to a registered
         # class of the same name: `foreach (var Config in items) {
@@ -791,7 +1005,8 @@ class CSharpTypeInferenceEngine:
     def _is_untyped_local(self, bound: Node, local_var_types: dict[str, str]) -> bool:
         # Only an IMPLICIT binding: `foreach (Item it in ...)` declares a
         # type, reaches local_var_types, and resolves normally -- this
-        # branch is never reached for it. Guarding on the `var` form
+        # branch is never reached for it, nor for a `var` binding whose
+        # element type was read (issue #2938). Guarding on the `var` form
         # keeps that path working.
         if bound.type != cs.TS_CSHARP_IDENTIFIER:
             return False
@@ -1646,14 +1861,15 @@ class CSharpTypeInferenceEngine:
         type_name = local_var_types.get(name)
         if type_name is not None:
             return self._type_name_to_qn(type_name, module_qn)
-        # A `foreach (var x in ...)` binding is a LOCAL whose type comes
-        # from the sequence and is not inferred, so it never reaches
-        # `local_var_types`. Falling through to the static branch below
-        # read the name as a TYPE: `foreach (var Config in items) {
-        # Config.Each(); }` emitted an edge to the registered class
-        # `N.Config` (Copilot, PR #1998). A local owns the name here
-        # whatever its type, so the receiver is unresolved, not static.
-        if self._binds_local(receiver, name):
+        # A `foreach (var x in ...)` binding is a LOCAL whose type may not be
+        # read, so it may not reach `local_var_types`. Falling through to the
+        # static branch below read the name as a TYPE: `foreach (var Config
+        # in items) { Config.Each(); }` emitted an edge to the registered
+        # class `N.Config` (Copilot, PR #1998), and a pattern or out variable
+        # named like a field took the field's type (bot review on PR #2990).
+        # A local owns the name here whatever its type, so the receiver is
+        # unresolved, neither a field nor static.
+        if value_binder_at(receiver, name) is not None:
             return None
         if class_qn := self._containing_class_qn(caller_qn):
             if ftype := self._field_type(class_qn, name):
