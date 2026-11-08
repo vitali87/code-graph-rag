@@ -66,6 +66,9 @@ SOURCE = (
     "    def pair(self) -> tuple['Thing', 'Thing']:\n"
     "        return Thing(), Thing()\n"
     "\n"
+    "    def clone(self) -> 'Thing':\n"
+    "        return Thing()\n"
+    "\n"
     "    def __enter__(self):\n"
     "        return self\n"
     "\n"
@@ -79,6 +82,9 @@ SOURCE = (
     "\n"
     "    def pair(self) -> tuple['Other', 'Other']:\n"
     "        return Other(), Other()\n"
+    "\n"
+    "    def clone(self) -> 'Other':\n"
+    "        return Other()\n"
     "\n"
     "\n"
     "class Inner:\n"
@@ -911,6 +917,37 @@ SOURCE = (
     "def mixed_factory_after_binding(flag):\n"
     "    t = Thing()\n"
     "    with mixed_yields(flag) as t:\n"
+    "        return t.go()\n"
+    "\n"
+    "\n"
+    "def mixed_factory_after_alias(flag):\n"
+    "    other = Inner()\n"
+    "    t = other\n"
+    "    t = Thing()\n"
+    "    with mixed_yields(flag) as t:\n"
+    "        return t.go()\n"
+    "\n"
+    "\n"
+    "@contextmanager\n"
+    "def receiver_before_argument_factory():\n"
+    "    t = Thing()\n"
+    "    resource = t.clone(t := Other())\n"
+    "    yield resource\n"
+    "\n"
+    "\n"
+    "def receiver_before_argument_factory_with():\n"
+    "    with receiver_before_argument_factory() as r:\n"
+    "        return r.go()\n"
+    "\n"
+    "\n"
+    "@contextmanager\n"
+    "def local_callable_factory():\n"
+    "    Thing = Other()\n"
+    "    yield Thing()\n"
+    "\n"
+    "\n"
+    "def local_callable_factory_with():\n"
+    "    with local_callable_factory() as t:\n"
     "        return t.go()\n"
     "\n"
     "\n"
@@ -1806,6 +1843,22 @@ def test_unknown_yield_drops_the_earlier_target_type(tmp_path: Path) -> None:
     assert "t" not in _local_types(tmp_path, "mixed_factory_after_binding")
 
 
+def test_alias_expansion_does_not_retype_a_dropped_target(tmp_path: Path) -> None:
+    """CodeRabbit review on #3585: after the factory leaves `t` untyped,
+    the earlier `t = other` alias must not give it `Inner` back."""
+    assert "t" not in _local_types(tmp_path, "mixed_factory_after_alias")
+    calls = _calls(tmp_path).get("mixed_factory_after_alias", {})
+    assert calls.get(INNER_GO) != EXACT
+
+
+def test_factory_call_of_a_typed_local_is_not_its_namesake(tmp_path: Path) -> None:
+    """CodeRabbit review on #3585: `Thing = Other()` makes `Thing()` a call
+    of an `Other` instance, not the module's `Thing` constructor, so the
+    yield types nothing."""
+    calls = _calls(tmp_path).get("local_callable_factory_with", {})
+    assert calls.get(THING_GO) != EXACT
+
+
 def test_factory_parameter_shadowing_a_class(tmp_path: Path) -> None:
     """CodeRabbit review on #3585: a factory's `Thing` parameter is not the
     module's class, whether the factory binds `Thing()` first or yields
@@ -1829,6 +1882,17 @@ def test_factory_target_binds_after_a_walrus_in_its_value(tmp_path: Path) -> Non
     """Greptile P1 on #3585: in `t = Thing(t := Other())` the walrus binds
     first and the assignment last, so `t` is a `Thing` at the yield."""
     calls = _calls(tmp_path)["thing_after_walrus_factory_with"]
+    assert calls.get(THING_GO) == EXACT
+    assert OTHER_GO not in calls
+
+
+def test_factory_value_reads_its_receiver_before_its_arguments(
+    tmp_path: Path,
+) -> None:
+    """Greptile P1 on #3585: in `t.clone(t := Other())` Python looks up
+    `Thing.clone` before the argument rebinds `t`, so the yielded
+    `resource` is a `Thing`."""
+    calls = _calls(tmp_path)["receiver_before_argument_factory_with"]
     assert calls.get(THING_GO) == EXACT
     assert OTHER_GO not in calls
 

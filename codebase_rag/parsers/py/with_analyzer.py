@@ -532,16 +532,19 @@ class PythonWithBindingMixin(_WithBase):
         body = definition.child_by_field_name(cs.FIELD_BODY)
         if body is None:
             return local_types
-        # Each entry says whether its value has been read: an assignment
-        # or walrus binds its target after its value runs, so a walrus
-        # inside the value binds first. `t = Thing(t := Other())` leaves a
-        # `Thing` (Greptile P1 on #3585), `result = consume(t := Other())`
-        # an `Other` (CodeRabbit review on #3585).
-        stack: list[tuple[Node, bool]] = [
-            (child, False) for child in reversed(body.children)
+        # An assignment or walrus runs in Python's order: its value's type
+        # is read first, as the callee and its receiver are evaluated
+        # before the arguments, so `t.clone(t := Other())` calls
+        # `Thing.clone`; the walruses inside the value bind next; the
+        # target binds last, so `t = Thing(t := Other())` leaves a `Thing`
+        # and `result = consume(t := Other())` an `Other` (Greptile P1s and
+        # CodeRabbit review on #3585). An entry whose value is read
+        # carries the type read for it.
+        stack: list[tuple[Node, tuple[str | None] | None]] = [
+            (child, None) for child in reversed(body.children)
         ]
         while stack:
-            node, value_read = stack.pop()
+            node, read = stack.pop()
             if before is not None and node.start_byte > before:
                 continue
             pair: tuple[Node | None, Node | None] | None = None
@@ -556,26 +559,31 @@ class PythonWithBindingMixin(_WithBase):
                     node.child_by_field_name(cs.FIELD_VALUE),
                 )
             name_node, value_node = pair if pair is not None else (None, None)
-            if value_node is not None and not value_read:
-                stack.append((node, True))
-                stack.append((value_node, False))
-                continue
-            if (
+            named = (
                 name_node is not None
                 and name_node.type == cs.TS_PY_IDENTIFIER
-                and (name := safe_decode_text(name_node))
-            ):
+                and safe_decode_text(name_node)
+            )
+            if value_node is not None and read is None:
+                inferred = (
+                    self._factory_value_type(
+                        value_node, factory_module_qn, local_types, shadowed
+                    )
+                    if named
+                    else None
+                )
+                stack.append((node, (inferred,)))
+                stack.append((value_node, None))
+                continue
+            if named:
                 # A bare annotation (`t: Thing`) has no value: it
                 # declares a type without rebinding, so it leaves the
                 # map alone. A value that cannot be inferred is a real
                 # rebinding to something unknown, and it clears the
                 # stale type instead of keeping it.
-                if value_node is not None:
-                    inferred = self._factory_value_type(
-                        value_node, factory_module_qn, local_types, shadowed
-                    )
+                if read is not None:
                     self._bind_factory_local(
-                        name, inferred, node, before, possible, local_types
+                        named, read[0], node, before, possible, local_types
                     )
                 continue
             # Every other binding form (`for t in xs`, `with ... as t`,
@@ -605,7 +613,7 @@ class PythonWithBindingMixin(_WithBase):
                 cs.TS_PY_LAMBDA,
             ):
                 continue
-            stack.extend((child, False) for child in reversed(node.children))
+            stack.extend((child, None) for child in reversed(node.children))
         return local_types
 
     def _factory_value_type(
@@ -616,19 +624,29 @@ class PythonWithBindingMixin(_WithBase):
         shadowed: frozenset[str],
     ) -> str | None:
         """The type a factory-local value has. A call through a name the
-        factory binds itself and has not typed (a parameter `Thing`, a
-        local class) calls that binding, not the module's namesake, so it
-        types nothing (CodeRabbit review on #3585). `self` and `cls` are
-        read through the class as everywhere else."""
+        factory binds itself is a call through that binding, not the
+        module's namesake (CodeRabbit reviews on #3585): it types nothing
+        when the binding is untyped (a parameter `Thing`, a local class)
+        or is the callee itself (`Thing = Other(); Thing()` calls an
+        instance), and is otherwise read through the binding's type
+        (`t.clone()`). `self` and `cls` are read through the class as
+        everywhere else."""
         head = call_head(value)
         head_name = safe_decode_text(head) if head is not None else None
         if (
-            head_name
+            head is not None
+            and head_name
             and head_name in shadowed
-            and head_name not in local_types
             and head_name not in (cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS)
         ):
-            return None
+            callee = value.child_by_field_name(cs.TS_FIELD_FUNCTION)
+            if head_name not in local_types or (
+                callee is not None and callee.id == head.id
+            ):
+                return None
+            return self._infer_type_from_expression_complex(
+                value, factory_module_qn, local_types
+            )
         return (
             self._infer_type_from_expression_simple(value, factory_module_qn)
             or self._infer_type_from_expression_complex(

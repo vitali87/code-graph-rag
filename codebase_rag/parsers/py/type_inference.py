@@ -423,7 +423,14 @@ class PythonTypeInferenceEngine(
             # a name a later `case` alias or capture decides gets that
             # decision back (CodeRabbit review on #3585).
             decisions.apply(local_var_types)
-            aliases = self._collect_local_aliases(caller_node)
+            # A decided name is settled: an earlier `t = other` must not
+            # retype one a decision left untyped (CodeRabbit review on
+            # #3585).
+            aliases = {
+                name: alias
+                for name, alias in self._collect_local_aliases(caller_node).items()
+                if name not in decisions.types
+            }
             self._expand_chained_attribute_types(local_var_types, module_qn, aliases)
             # The seed itself goes (a body binding that replaced it stays), and
             # so do the `cls.<field>` entries the chained-attribute pass
