@@ -1,5 +1,38 @@
 #!/bin/bash -eu
-# Builds one fuzz target per harness in fuzz/.
+# Builds one fuzz target per harness in fuzz/, or, for the `language: rust`
+# job, one per cargo-fuzz target in rust/cgr_graph_rs/fuzz.
+#
+# Each job builds only its own language's targets. ClusterFuzzLite's bad-build
+# check holds every target in $OUT to the job's language: under `python` it
+# checks the frozen `<target>.pkg` a native Rust binary does not have, and
+# under `rust` it wants a sanitizer runtime linked into the binary, which a
+# Python wrapper script gets through LD_PRELOAD instead.
+if [ "$FUZZING_LANGUAGE" = "rust" ]; then
+  cd "$SRC/code-graph-rag/rust/cgr_graph_rs"
+  # The linker base-builder-rust sets: libFuzzer comes in as OSS-Fuzz's
+  # prebuilt libFuzzingEngine.a, built against libc++.
+  export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=clang
+  # RUSTUP_TOOLCHAIN rather than `cargo +toolchain`, so `fuzz build` stays the
+  # first argument OSS-Fuzz's cargo wrapper sees: it rewrites that command for
+  # a coverage build. Debug assertions on, as OSS-Fuzz builds Rust targets, so
+  # an integer overflow is a crash.
+  export RUSTUP_TOOLCHAIN="$RUST_FUZZ_TOOLCHAIN"
+  cargo fuzz build -O --debug-assertions
+  for target in $(cargo fuzz list); do
+    cp "fuzz/target/x86_64-unknown-linux-gnu/release/$target" "$OUT/"
+    # As for the Python targets below: fail here, naming the target, rather
+    # than in the bad-build check after the whole job.
+    echo "Smoke-testing $target"
+    if ! "$OUT/$target" -runs=1 > /tmp/smoke.log 2>&1; then
+      echo "ERROR: $target failed to run a single input:" >&2
+      tail -25 /tmp/smoke.log >&2
+      exit 1
+    fi
+  done
+  exit 0
+fi
+
+# The rest is the Python build.
 #
 # The harnesses import the package under test, so the project and its parsing
 # extras must be installed into the image's interpreter before
@@ -53,6 +86,13 @@ if [ -z "$HIDDEN_IMPORTS" ]; then
   echo "and then fail on its first input." >&2
   exit 1
 fi
+
+# The Rust extension is imported the same way, by a name held in a constant
+# (`import_module(EG_RUST_MODULE)`), so PyInstaller misses it too, and
+# `import codebase_rag` refuses to go on without it: every target would die
+# on startup. Collect it whole, as the release binary does
+# (`PYINSTALLER_PACKAGES` in codebase_rag/constants/build.py).
+HIDDEN_IMPORTS="$HIDDEN_IMPORTS --collect-all=cgr_graph_rs"
 
 # `shell_command` imports pydantic_ai, and that chain reads its own package
 # metadata at import time (`importlib.metadata.version`), which PyInstaller
