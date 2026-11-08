@@ -130,6 +130,11 @@ CONTENT_EVENT_TYPES = frozenset(
     {EventType.MODIFIED, EventType.CREATED, EventType.DELETED}
 )
 
+# The events that can change an ignore rule's input. A read cannot, and
+# re-reading the rules reads those very files: a watcher that followed reads
+# re-read `.gitignore` forever after one `git status` (issue #3583).
+RULE_INPUT_EVENT_TYPES = CONTENT_EVENT_TYPES | {EventType.MOVED, EventType.CLOSED}
+
 
 WATCHER_SLEEP_INTERVAL = 1
 LOG_LEVEL_INFO = "INFO"
