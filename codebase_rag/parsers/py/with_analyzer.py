@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from typing import TYPE_CHECKING, NamedTuple
 
 from loguru import logger
@@ -175,6 +175,76 @@ def _constructs_by_name(manager: Node) -> bool:
     return bool(name) and name[0].isupper()
 
 
+_CensusEntry = tuple[Node, tuple[str | None] | None]
+
+
+class _FactoryCensus:
+    """The bindings a factory's own body makes, as `_factory_local_types`
+    walks it: each name's possible types and, while exactly one known
+    type is possible, that type. `before` is the yield position the
+    census is taken for, or None for the whole body."""
+
+    __slots__ = ("before", "local_types", "possible")
+
+    def __init__(self, before: int | None) -> None:
+        self.before = before
+        self.local_types: dict[str, str] = {}
+        self.possible: dict[str, set[str | None]] = {}
+
+    def bind(self, name: str, inferred: str | None, binding: Node) -> None:
+        """Record one binding of `name`: it replaces the earlier possible
+        types when it always runs before the yield, else adds to them (to
+        an unknown when the census has read no earlier binding), and the
+        name keeps a type only while exactly one known type remains
+        possible."""
+        if self.before is None or _always_runs_before(binding, self.before):
+            self.possible[name] = {inferred}
+        else:
+            # Skipped, the binding leaves the value the name held before
+            # it: a parameter's, or one this census never read, so an
+            # unknown stays possible (CodeRabbit review on #3585).
+            self.possible.setdefault(name, {None}).add(inferred)
+        types = self.possible[name]
+        if len(types) == 1 and (only := next(iter(types))):
+            self.local_types[name] = only
+        else:
+            self.local_types.pop(name, None)
+
+
+def _binding_pair(node: Node) -> tuple[Node | None, Node | None] | None:
+    """(target, value) of an assignment or walrus, else None."""
+    if node.type == cs.TS_PY_ASSIGNMENT:
+        return (
+            node.child_by_field_name(cs.TS_FIELD_LEFT),
+            node.child_by_field_name(cs.TS_FIELD_RIGHT),
+        )
+    if node.type == cs.TS_PY_NAMED_EXPRESSION:
+        return (
+            node.child_by_field_name(cs.FIELD_NAME),
+            node.child_by_field_name(cs.FIELD_VALUE),
+        )
+    return None
+
+
+def _decorator_qn(decorator: Node, import_map: dict[str, str]) -> str | None:
+    """The qualified name a decorator spells, resolved through the module's
+    import map: `contextmanager`, an alias of it, or a dotted
+    `contextlib.contextmanager`. A bare name the module does not import
+    resolves to nothing: an unrelated decorator of that name is not it."""
+    if not decorator.named_children:
+        return None
+    spelling = "".join(
+        (safe_decode_text(decorator.named_children[0]) or "").split()
+    ).split(cs.CHAR_PAREN_OPEN, 1)[0]
+    if not spelling:
+        return None
+    head, _, rest = spelling.partition(cs.SEPARATOR_DOT)
+    if head in import_map:
+        resolved = import_map[head]
+        return f"{resolved}{cs.SEPARATOR_DOT}{rest}" if rest else resolved
+    return spelling if rest else None
+
+
 def _is_class_path(type_name: str) -> bool:
     """A plain (dotted) name, not a union, a container marker or a subscript."""
     return all(part.isidentifier() for part in type_name.split(cs.SEPARATOR_DOT))
@@ -322,53 +392,69 @@ class PythonWithBindingMixin(_WithBase):
         if manager.type != cs.TS_PY_CALL:
             return None
         callee = manager.child_by_field_name(cs.TS_FIELD_FUNCTION)
-        if callee is None:
-            return None
-        if self._callee_bound_locally(callee, manager, module_qn):
+        if callee is None or self._callee_bound_locally(callee, manager, module_qn):
             return None
         if callee.type == cs.TS_PY_IDENTIFIER:
             name = safe_decode_text(callee)
-            if not name:
-                return None
-            candidates = [f"{module_qn}{cs.SEPARATOR_DOT}{name}"]
-            if imported := self.import_processor.import_mapping.get(module_qn, {}).get(
-                name
-            ):
-                candidates.append(
-                    follow_reexports(
-                        imported,
-                        self.import_processor.import_mapping,
-                        self.function_registry,
-                    )
-                )
-            for qn in candidates:
-                if self.function_registry.get(qn) != NodeType.FUNCTION:
-                    continue
-                if (definition := self._find_function_ast_node(qn)) is not None:
-                    return definition, qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
-            return None
+            return self._module_function_factory(name, module_qn) if name else None
         if callee.type != cs.TS_PY_ATTRIBUTE:
             return None
         parts = (safe_decode_text(callee) or "").split(cs.SEPARATOR_DOT)
         if len(parts) == 2 and parts[0] in (cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS):
-            enclosing = _enclosing_class_qn(manager, module_qn)
-            if enclosing is None:
-                return None
-            # An inherited `@contextmanager` method is found through the
-            # enclosing class's MRO, the way `_entered_type` finds an
-            # inherited `__enter__`.
-            for owner in self._get_mro(enclosing):
-                method_qn = f"{owner}{cs.SEPARATOR_DOT}{parts[1]}"
-                if (definition := self._find_method_ast_node(method_qn)) is not None:
-                    return definition, owner.rsplit(cs.SEPARATOR_DOT, 1)[0]
+            return self._own_method_factory(parts[1], manager, module_qn)
+        return self._imported_function_factory(parts, module_qn)
+
+    def _defined_function(self, qn: str) -> tuple[Node, str] | None:
+        """The definition of the indexed function `qn`, with its module."""
+        if self.function_registry.get(qn) != NodeType.FUNCTION:
             return None
+        if (definition := self._find_function_ast_node(qn)) is None:
+            return None
+        return definition, qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+
+    def _module_function_factory(
+        self, name: str, module_qn: str
+    ) -> tuple[Node, str] | None:
+        """The function a bare `name()` calls: the module's own, else the
+        one its import of `name` re-exports."""
+        candidates = [f"{module_qn}{cs.SEPARATOR_DOT}{name}"]
+        import_mapping = self.import_processor.import_mapping
+        if imported := import_mapping.get(module_qn, {}).get(name):
+            candidates.append(
+                follow_reexports(imported, import_mapping, self.function_registry)
+            )
+        for qn in candidates:
+            if (found := self._defined_function(qn)) is not None:
+                return found
+        return None
+
+    def _own_method_factory(
+        self, method: str, manager: Node, module_qn: str
+    ) -> tuple[Node, str] | None:
+        """The method a `self.method()` / `cls.method()` manager calls. An
+        inherited `@contextmanager` method is found through the enclosing
+        class's MRO, the way `_entered_type` finds an inherited
+        `__enter__`."""
+        enclosing = _enclosing_class_qn(manager, module_qn)
+        if enclosing is None:
+            return None
+        for owner in self._get_mro(enclosing):
+            method_qn = f"{owner}{cs.SEPARATOR_DOT}{method}"
+            if (definition := self._find_method_ast_node(method_qn)) is not None:
+                return definition, owner.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        return None
+
+    def _imported_function_factory(
+        self, parts: Sequence[str], module_qn: str
+    ) -> tuple[Node, str] | None:
+        """The function a dotted `pkg.contexts.opened()` calls through an
+        import. `import pkg.contexts` records `pkg` as
+        `<project>.pkg.contexts`, so the path is looked up under the
+        package as well as under the recorded target, the way a dotted
+        class path is (Codex review on #3585)."""
         import_map = self.import_processor.import_mapping.get(module_qn, {})
         if len(parts) < 2 or parts[0] not in import_map:
             return None
-        # `import pkg.contexts` records `pkg` as `<project>.pkg.contexts`,
-        # so `pkg.contexts.opened` is looked up under the package as well
-        # as under the recorded target, the way a dotted class path is
-        # (Codex review on #3585).
         rest = cs.SEPARATOR_DOT.join(parts[1:])
         for base in dotted_head_bases(parts[0], module_qn, import_map):
             qn = follow_reexports(
@@ -376,11 +462,8 @@ class PythonWithBindingMixin(_WithBase):
                 self.import_processor.import_mapping,
                 self.function_registry,
             )
-            if (
-                self.function_registry.get(qn) == NodeType.FUNCTION
-                and (definition := self._find_function_ast_node(qn)) is not None
-            ):
-                return definition, qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+            if (found := self._defined_function(qn)) is not None:
+                return found
         return None
 
     def _callee_bound_locally(
@@ -426,29 +509,11 @@ class PythonWithBindingMixin(_WithBase):
         if statement is None or statement.type != cs.TS_PY_DECORATED_DEFINITION:
             return False
         import_map = self.import_processor.import_mapping.get(factory_module_qn, {})
-        for child in statement.named_children:
-            if child.type != cs.TS_PY_DECORATOR or not child.named_children:
-                continue
-            spelling = "".join(
-                (safe_decode_text(child.named_children[0]) or "").split()
-            ).split(cs.CHAR_PAREN_OPEN, 1)[0]
-            if not spelling:
-                continue
-            parts = spelling.split(cs.SEPARATOR_DOT)
-            if parts[0] in import_map:
-                resolved = import_map[parts[0]]
-                if len(parts) > 1:
-                    resolved = (
-                        f"{resolved}"
-                        f"{cs.SEPARATOR_DOT}{cs.SEPARATOR_DOT.join(parts[1:])}"
-                    )
-            elif len(parts) == 1:
-                continue
-            else:
-                resolved = spelling
-            if resolved in cs.PY_CONTEXTMANAGER_DECORATOR_QNS:
-                return True
-        return False
+        return any(
+            _decorator_qn(child, import_map) in cs.PY_CONTEXTMANAGER_DECORATOR_QNS
+            for child in statement.named_children
+            if child.type == cs.TS_PY_DECORATOR
+        )
 
     def _contextmanager_yield_type(
         self, definition: Node, factory_module_qn: str
@@ -526,12 +591,11 @@ class PythonWithBindingMixin(_WithBase):
         earlier one, and a name left with more than one possible type
         is unknown: `t = Thing(); if flag: t = Other(); yield t` yields
         either (Greptile P1 on #3585)."""
-        local_types: dict[str, str] = {}
-        possible: dict[str, set[str | None]] = {}
+        census = _FactoryCensus(before)
         shadowed = self.locally_bound_names(definition, factory_module_qn)
         body = definition.child_by_field_name(cs.FIELD_BODY)
         if body is None:
-            return local_types
+            return census.local_types
         # An assignment or walrus runs in Python's order: its value's type
         # is read first, as the callee and its receiver are evaluated
         # before the arguments, so `t.clone(t := Other())` calls
@@ -540,81 +604,75 @@ class PythonWithBindingMixin(_WithBase):
         # and `result = consume(t := Other())` an `Other` (Greptile P1s and
         # CodeRabbit review on #3585). An entry whose value is read
         # carries the type read for it.
-        stack: list[tuple[Node, tuple[str | None] | None]] = [
-            (child, None) for child in reversed(body.children)
-        ]
+        stack: list[_CensusEntry] = [(child, None) for child in reversed(body.children)]
         while stack:
             node, read = stack.pop()
             if before is not None and node.start_byte > before:
                 continue
-            pair: tuple[Node | None, Node | None] | None = None
-            if node.type == cs.TS_PY_ASSIGNMENT:
-                pair = (
-                    node.child_by_field_name(cs.TS_FIELD_LEFT),
-                    node.child_by_field_name(cs.TS_FIELD_RIGHT),
-                )
-            elif node.type == cs.TS_PY_NAMED_EXPRESSION:
-                pair = (
-                    node.child_by_field_name(cs.FIELD_NAME),
-                    node.child_by_field_name(cs.FIELD_VALUE),
-                )
-            name_node, value_node = pair if pair is not None else (None, None)
-            named = (
-                name_node is not None
-                and name_node.type == cs.TS_PY_IDENTIFIER
-                and safe_decode_text(name_node)
+            stack.extend(
+                self._census_step(node, read, census, factory_module_qn, shadowed)
             )
-            if value_node is not None and read is None:
-                inferred = (
-                    self._factory_value_type(
-                        value_node, factory_module_qn, local_types, shadowed
-                    )
-                    if named
-                    else None
-                )
-                stack.append((node, (inferred,)))
-                stack.append((value_node, None))
-                continue
-            if named:
-                # A bare annotation (`t: Thing`) has no value: it
-                # declares a type without rebinding, so it leaves the
-                # map alone. A value that cannot be inferred is a real
-                # rebinding to something unknown, and it clears the
-                # stale type instead of keeping it.
-                if read is not None:
-                    self._bind_factory_local(
-                        named, read[0], node, before, possible, local_types
-                    )
-                continue
-            # Every other binding form (`for t in xs`, `with ... as t`,
-            # `t, u = pair`, `t += 1`, `except E as t`, a nested `def t`)
-            # rebinds to a value this census does not read, so it makes
-            # the name unknown rather than leaving the earlier type in
-            # place (CodeRabbit review on #3585).
-            for name in self.binder_names(node):
-                self._bind_factory_local(
-                    name, None, node, before, possible, local_types
-                )
-            # A `case ... as t` alias is kept out of `_binding_targets`,
-            # so it is read here.
-            if node.type == cs.TS_PY_AS_PATTERN and node.named_children:
-                alias = node.named_children[-1]
-                if alias.type == cs.TS_PY_IDENTIFIER and (
-                    name := safe_decode_text(alias)
-                ):
-                    self._bind_factory_local(
-                        name, None, node, before, possible, local_types
-                    )
-            if pair is not None:
-                continue
+        return census.local_types
+
+    def _census_step(
+        self,
+        node: Node,
+        read: tuple[str | None] | None,
+        census: _FactoryCensus,
+        factory_module_qn: str,
+        shadowed: frozenset[str],
+    ) -> list[_CensusEntry]:
+        """Record what one node of a factory body binds, and return the
+        entries to walk next, in the order they are pushed."""
+        pair = _binding_pair(node)
+        if pair is None:
+            self._bind_unread(node, census)
             if node.type in (
                 cs.TS_PY_FUNCTION_DEFINITION,
                 cs.TS_PY_CLASS_DEFINITION,
                 cs.TS_PY_LAMBDA,
             ):
-                continue
-            stack.extend((child, None) for child in reversed(node.children))
-        return local_types
+                return []
+            return [(child, None) for child in reversed(node.children)]
+        name_node, value_node = pair
+        named = (
+            safe_decode_text(name_node)
+            if name_node is not None and name_node.type == cs.TS_PY_IDENTIFIER
+            else None
+        )
+        if value_node is not None and read is None:
+            inferred = (
+                self._factory_value_type(
+                    value_node, factory_module_qn, census.local_types, shadowed
+                )
+                if named
+                else None
+            )
+            return [(node, (inferred,)), (value_node, None)]
+        if named:
+            # A bare annotation (`t: Thing`) has no value: it declares a
+            # type without rebinding, so it leaves the map alone. A value
+            # that cannot be inferred is a real rebinding to something
+            # unknown, and it clears the stale type instead of keeping it.
+            if read is not None:
+                census.bind(named, read[0], node)
+            return []
+        self._bind_unread(node, census)
+        return []
+
+    def _bind_unread(self, node: Node, census: _FactoryCensus) -> None:
+        """Every other binding form (`for t in xs`, `with ... as t`, `t, u
+        = pair`, `t += 1`, `except E as t`, a nested `def t`) rebinds to a
+        value the census does not read, so it makes the name unknown
+        rather than leaving the earlier type in place (CodeRabbit review
+        on #3585). A `case ... as t` alias is kept out of
+        `_binding_targets`, so it is read here."""
+        for name in self.binder_names(node):
+            census.bind(name, None, node)
+        if node.type == cs.TS_PY_AS_PATTERN and node.named_children:
+            alias = node.named_children[-1]
+            if alias.type == cs.TS_PY_IDENTIFIER and (name := safe_decode_text(alias)):
+                census.bind(name, None, node)
 
     def _factory_value_type(
         self,
@@ -658,33 +716,6 @@ class PythonWithBindingMixin(_WithBase):
                 else None
             )
         )
-
-    @staticmethod
-    def _bind_factory_local(
-        name: str,
-        inferred: str | None,
-        binding: Node,
-        before: int | None,
-        possible: dict[str, set[str | None]],
-        local_types: dict[str, str],
-    ) -> None:
-        """Record one binding of `name` in a factory's local census: it
-        replaces the earlier possible types when it always runs before
-        the yield, else adds to them (to an unknown when the census has
-        read no earlier binding), and the name keeps a type only while
-        exactly one known type remains possible."""
-        if before is None or _always_runs_before(binding, before):
-            possible[name] = {inferred}
-        else:
-            # Skipped, the binding leaves the value the name held before
-            # it: a parameter's, or one this census never read, so an
-            # unknown stays possible (CodeRabbit review on #3585).
-            possible.setdefault(name, {None}).add(inferred)
-        types = possible[name]
-        if len(types) == 1 and (only := next(iter(types))):
-            local_types[name] = only
-        else:
-            local_types.pop(name, None)
 
     def _yield_expression_type(
         self, definition: Node, factory_module_qn: str
