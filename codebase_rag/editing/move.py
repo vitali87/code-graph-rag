@@ -343,6 +343,51 @@ def _module_locals(
     return found
 
 
+def _dotted_name(node: ast.expr) -> str | None:
+    """`pkg.util` for the expression `pkg.util`, None for anything else."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        base = _dotted_name(node.value)
+        return None if base is None else f"{base}{cs.SEPARATOR_DOT}{node.attr}"
+    return None
+
+
+def _module_scope_uses(
+    tree: ast.Module, source: bytes, name: str, receivers: set[str]
+) -> dict[str, set[int]]:
+    """Where code at module scope spells `<receiver>.<name>`, by receiver,
+    as the offset the receiver starts at.
+
+    The graph has no call row for `TOTAL = pkg.util.helper()` or a call
+    in an `if __name__ == "__main__":` block, so those stayed on the old
+    module and the contract rolled the move back on the import they kept
+    (Greptile TREX). Function and lambda bodies are not walked: a local
+    there may shadow the receiver, and the graph's call rows cover them.
+    Decorators and defaults are, since they run at module scope.
+    """
+    found: dict[str, set[int]] = {}
+    stack: list[ast.AST] = list(tree.body)
+    while stack:
+        node = stack.pop()
+        if isinstance(node, ast.Lambda):
+            continue
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            stack.extend(node.decorator_list)
+            stack.extend(node.args.defaults)
+            stack.extend(d for d in node.args.kw_defaults if d is not None)
+            continue
+        if isinstance(node, ast.Attribute) and node.attr == name:
+            spelled = _dotted_name(node.value)
+            if spelled in receivers:
+                found.setdefault(spelled, set()).add(
+                    line_col_to_byte(source, node.value.lineno, node.value.col_offset)
+                )
+                continue
+        stack.extend(ast.iter_child_nodes(node))
+    return found
+
+
 def _ast_span(source: bytes, node: ast.stmt) -> tuple[int, int]:
     end_line = node.end_lineno or node.lineno
     end_col = node.end_col_offset if node.end_col_offset is not None else 0
@@ -1215,7 +1260,7 @@ class Mover:
         )
         # 3. Importers, and uses through a module import (`pkg.util.helper`).
         through_module = self._retarget_attribute_uses(
-            patcher, qn, old_spelled, new_spelled, name, language
+            patcher, qn, old_module, old_spelled, new_spelled, name, language
         )
         importers, unchanged = self._retarget_importers(
             patcher, old_module, old_spelled, new_spelled, new_path, name, language
@@ -2239,6 +2284,7 @@ class Mover:
         self,
         patcher: Patcher,
         qn: str,
+        old_module: str,
         old_spelled: str,
         new_spelled: str,
         name: str,
@@ -2252,6 +2298,10 @@ class Mover:
         util` or `import pkg.util as util` was left alone: the old module no
         longer had `helper`, so the contract rolled every such move back
         (Greptile TREX). It now goes through `_retarget_local_uses`.
+
+        The sites are the graph's call rows, plus what `_module_scope_uses`
+        finds in each importer of the old module: the graph records no call
+        made at module scope through a dotted path.
         """
         if language != cs.SupportedLanguage.PYTHON:
             return set()
@@ -2265,6 +2315,9 @@ class Mover:
             sites.setdefault(path, set()).add(
                 (line, col, row["end_line"] or line, row["end_col"] or col)
             )
+        for row in graph_query.importers(self.fetch_all, self.project, old_module):
+            if isinstance(row["path"], str):
+                sites.setdefault(row["path"], set())
         touched: set[str] = set()
         for path, spans in sorted(sites.items()):
             try:
@@ -2277,6 +2330,15 @@ class Mover:
             )
             dotted: set[int] = set()
             local_uses: dict[str, set[int]] = {}
+            if tree is not None:
+                receivers = set(module_locals)
+                text = source.decode(cs.ENCODING_UTF8, errors="replace")
+                if _module_bound(text, old_spelled):
+                    receivers.add(old_spelled)
+                found = _module_scope_uses(tree, source, name, receivers)
+                dotted |= found.pop(old_spelled, set())
+                for local, ats in found.items():
+                    local_uses.setdefault(local, set()).update(ats)
             for line, col, end_line, end_col in sorted(spans):
                 start = line_col_to_byte(source, line, col)
                 end = line_col_to_byte(source, end_line, end_col)

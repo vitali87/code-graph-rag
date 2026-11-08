@@ -83,6 +83,63 @@ def test_a_call_through_the_module_follows_the_move(
     assert run.stdout.strip() == "12.0"
 
 
+GUARD = "\nif __name__ == '__main__':\n    print({receiver}.discounted(10.0))\n"
+TOP = "\nTOTAL = {receiver}.discounted(10.0)\n"
+
+
+@pytest.mark.parametrize(
+    ("imports", "receiver", "expected", "body"),
+    [
+        pytest.param(
+            "import shop.util",
+            "shop.util",
+            "import shop.util\nimport shop.pricing\n",
+            TOP,
+            id="dotted-assignment",
+        ),
+        pytest.param(
+            "import shop.util",
+            "shop.util",
+            "import shop.util\nimport shop.pricing\n",
+            GUARD,
+            id="dotted-main-guard",
+        ),
+        pytest.param(
+            "from shop import util",
+            "util",
+            "from shop import pricing\n",
+            TOP,
+            id="from-assignment",
+        ),
+    ],
+)
+def test_a_call_at_module_scope_follows_the_move(
+    temp_repo: Path, imports: str, receiver: str, expected: str, body: str
+) -> None:
+    """The graph has no call row for a call made at module scope through
+    `shop.util`, so it was neither rewritten nor counted, and the import it
+    kept rolled the move back (Greptile TREX)."""
+    root, store, updater = _shop(
+        temp_repo, imports + "\n" + body.format(receiver=receiver)
+    )
+    preview = _move(root, store, updater, dry_run=True)
+    assert preview.importers == ("shop/a.py", "shop/b.py")
+    report = _move(root, store, updater)
+    assert report.applied, report.message
+    new_receiver = "shop.pricing" if receiver == "shop.util" else "pricing"
+    assert (root / "shop/b.py").read_text() == expected + body.format(
+        receiver=new_receiver
+    )
+    probe = (
+        "import runpy; runpy.run_module('shop.b', run_name='__main__')"
+        if body == GUARD
+        else "import shop.b; print(shop.b.TOTAL)"
+    )
+    run = _python(root, probe)
+    assert run.returncode == 0, run.stderr
+    assert run.stdout.strip() == "8.0"
+
+
 def test_two_names_for_the_module_in_one_statement(temp_repo: Path) -> None:
     """Both bindings go in one edit of their shared statement."""
     b = (
