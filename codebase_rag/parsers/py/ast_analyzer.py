@@ -254,6 +254,47 @@ def _pattern_aliases(pattern: Node) -> Iterator[Node]:
         stack.extend(node.children)
 
 
+def _case_patterns(case_clauses: list[Node]) -> list[tuple[Node, Node]]:
+    """(clause, pattern) for each `case` clause that has a pattern."""
+    found: list[tuple[Node, Node]] = []
+    for clause in case_clauses:
+        pattern = next(
+            (
+                child
+                for child in clause.named_children
+                if child.type == cs.TS_PY_CASE_PATTERN
+            ),
+            None,
+        )
+        if pattern is not None:
+            found.append((clause, pattern))
+    return found
+
+
+def _match_last_bindings(scope: Node, case_clauses: list[Node]) -> dict[str, int]:
+    """The latest byte at which `scope` binds each name, `case ... as`
+    aliases included, for the match passes' last-binding rule."""
+    last: dict[str, int] = {}
+    for _binder, identifier in _bindings_in(scope):
+        if name := safe_decode_text(identifier):
+            last[name] = max(last.get(name, -1), identifier.start_byte)
+    for name, position in _alias_positions(case_clauses).items():
+        last[name] = max(last.get(name, -1), position)
+    return last
+
+
+def _apply_decided(
+    decided: dict[str, str | None], local_var_types: dict[str, str]
+) -> None:
+    """Write back what the match passes decided for names whose last
+    binding is a `case` alias or capture: a type, or no type at all."""
+    for name, decided_type in decided.items():
+        if decided_type:
+            local_var_types[name] = decided_type
+        else:
+            local_var_types.pop(name, None)
+
+
 def _alias_positions(case_clauses: list[Node]) -> dict[str, int]:
     """The latest byte at which each name is bound by a `case ... as t`
     alias in `case_clauses`, for the last-binding rule. Kept out of
@@ -1400,11 +1441,10 @@ class PythonAstAnalyzerMixin(_AstBase):
         self._process_assignment_unpacking(
             node, assignments, local_var_types, module_qn
         )
-        for name, decided_type in decided.items():
-            if decided_type:
-                local_var_types[name] = decided_type
-            else:
-                local_var_types.pop(name, None)
+        _apply_decided(decided, local_var_types)
+        decided |= self._type_match_captures(
+            node, case_clauses, local_var_types, module_qn
+        )
 
         self.analyze_scoped_comprehensions(
             node, comprehensions, local_var_types, module_qn
@@ -1412,6 +1452,10 @@ class PythonAstAnalyzerMixin(_AstBase):
 
         for for_stmt in for_statements:
             self._analyze_for_loop(for_stmt, local_var_types, module_qn)
+        # A name whose last binding is a `case` alias or capture keeps
+        # what the match passes decided over the comprehension and `for`
+        # passes, which also write the map without the last-binding rule.
+        _apply_decided(decided, local_var_types)
 
         self._infer_instance_variable_types_from_assignments(
             assignments, local_var_types, module_qn
@@ -1671,11 +1715,11 @@ class PythonAstAnalyzerMixin(_AstBase):
         module_qn: str,
     ) -> dict[str, str | None]:
         """Type `case C(...) as t` aliases as `C`, resolved the way a
-        constructor name is, and a bare capture `case t:` as the matched
-        subject's type (#3340). Returns each name whose last binding an
-        alias or capture is, with the type it decided (None for none),
-        for the caller to re-apply over passes that write the map
-        without the last-binding rule. Only the alias or capture is typed:
+        constructor name is (#3340); `_type_match_captures` types the
+        bare captures. Returns each name whose last binding an alias is,
+        with the type it decided (None for none), for the caller to
+        re-apply over passes that write the map without the
+        last-binding rule. Only the alias or capture is typed:
         narrowing the matched subject, or a capture inside the pattern,
         is a flow-sensitive question this flat map cannot answer, and a
         union of different classes names no single class. A binding a
@@ -1688,12 +1732,7 @@ class PythonAstAnalyzerMixin(_AstBase):
         capture that is the last binding but types nothing drops the
         name's earlier type instead of leaving it to describe a value
         the pattern replaced (Codex review on #3585)."""
-        last: dict[str, int] = {}
-        for _binder, identifier in _bindings_in(scope):
-            if name := safe_decode_text(identifier):
-                last[name] = max(last.get(name, -1), identifier.start_byte)
-        for name, position in _alias_positions(case_clauses).items():
-            last[name] = max(last.get(name, -1), position)
+        last = _match_last_bindings(scope, case_clauses)
         # A class name the function binds itself (`Thing = Other`, a
         # parameter) is not the module's class: `case Thing()` matches
         # whatever the local holds, so such a pattern types nothing
@@ -1705,19 +1744,7 @@ class PythonAstAnalyzerMixin(_AstBase):
         )
         alias_types: dict[str, set[str | None]] = {}
         alias_last: dict[str, int] = {}
-        patterns: list[tuple[Node, Node]] = []
-        for clause in case_clauses:
-            pattern = next(
-                (
-                    child
-                    for child in clause.named_children
-                    if child.type == cs.TS_PY_CASE_PATTERN
-                ),
-                None,
-            )
-            if pattern is None:
-                continue
-            patterns.append((clause, pattern))
+        for _clause, pattern in _case_patterns(case_clauses):
             stack = [pattern]
             while stack:
                 node = stack.pop()
@@ -1746,10 +1773,25 @@ class PythonAstAnalyzerMixin(_AstBase):
                 logger.debug(lg.PY_TYPE_SIMPLE, var=name, type=typed)
             else:
                 local_var_types.pop(name, None)
-        # Captures run after the aliases: a nested `match t: case u:` in
-        # a `case Thing() as t` body reads `t`'s alias type, not the one
-        # an earlier binding left in the map (Greptile P1 on #3585).
-        for clause, pattern in patterns:
+        return decided
+
+    def _type_match_captures(
+        self,
+        scope: Node,
+        case_clauses: list[Node],
+        local_var_types: dict[str, str],
+        module_qn: str,
+    ) -> dict[str, str | None]:
+        """Type each bare capture `case t:` as its `match` subject's type,
+        returning what each capture that is its name's last binding
+        decided. Run once every pass that can type a subject has: an
+        alias (a nested `match t: case u:` in a `case Thing() as t` body,
+        Greptile P1 on #3585), an annotation, an unpacking
+        (`s, other = pair()` before `match s: case t:`, Greptile P1 on
+        #3585)."""
+        last = _match_last_bindings(scope, case_clauses)
+        decided: dict[str, str | None] = {}
+        for clause, pattern in _case_patterns(case_clauses):
             if captured := self._type_bare_capture(
                 clause, pattern, last, local_var_types, module_qn
             ):

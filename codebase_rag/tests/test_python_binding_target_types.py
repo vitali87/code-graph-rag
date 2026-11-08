@@ -803,6 +803,17 @@ SOURCE = (
     "            return a.go()\n"
     "\n"
     "\n"
+    "def make_pair() -> tuple[Thing, Other]:\n"
+    "    return Thing(), Other()\n"
+    "\n"
+    "\n"
+    "def unpacked_subject_capture():\n"
+    "    s, other = make_pair()\n"
+    "    match s:\n"
+    "        case t:\n"
+    "            return t.go()\n"
+    "\n"
+    "\n"
     "def matched_same_alias_twice(shape):\n"
     "    match shape:\n"
     "        case Thing(x=1) as t:\n"
@@ -1527,5 +1538,14 @@ def test_unpacking_in_a_case_body_reads_the_alias_type(tmp_path: Path) -> None:
     body unpacks `Thing.pair`'s tuple, so the alias must be typed before
     the unpacking pass reads `t`, not the earlier `t = Other()`."""
     calls = _calls_at(tmp_path, "matched_alias_then_unpack", "return a.go()")
+    assert calls.get(THING_GO) == EXACT
+    assert OTHER_GO not in calls
+
+
+def test_capture_of_an_unpacked_subject(tmp_path: Path) -> None:
+    """Greptile P1 on #3585: `s, other = make_pair()` types `s` in the
+    unpacking pass, so the bare capture `case t:` must be typed after
+    that pass to read `s` as `Thing`."""
+    calls = _calls_at(tmp_path, "unpacked_subject_capture", "return t.go()")
     assert calls.get(THING_GO) == EXACT
     assert OTHER_GO not in calls
