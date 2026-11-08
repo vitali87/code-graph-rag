@@ -18,12 +18,12 @@ import subprocess
 from pathlib import Path
 from typing import NamedTuple
 
-from defusedxml import DefusedXmlException, ElementTree
 from loguru import logger
 
 from ... import constants as cs
 from ... import logs as ls
 from ...config import settings
+from ...utils import safe_xml
 from ..build_lock import artifact_fresh, build_cached_artifact, newest_source_mtime
 from ..frontend_mode import resolve_frontend_mode
 
@@ -172,13 +172,13 @@ def _solution_member_projects(project: Path) -> set[Path]:
         return {(base / rel).resolve() for rel in rels}
     if suffix == ".slnx":
         try:
-            tree = ElementTree.parse(project)
-        except (ElementTree.ParseError, DefusedXmlException, OSError):
+            entries = safe_xml.find_all(project, "Project")
+        except (*safe_xml.XML_CONTENT_ERRORS, OSError):
             return set()
         return {
             (base / path.replace("\\", "/")).resolve()
-            for element in tree.iter("Project")
-            if (path := element.get("Path")) is not None
+            for entry in entries
+            if (path := entry.get("Path")) is not None
             and path.lower().endswith(".csproj")
         }
     return {project.resolve()}

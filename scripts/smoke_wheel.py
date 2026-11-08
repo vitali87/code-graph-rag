@@ -16,7 +16,6 @@ from __future__ import annotations
 import asyncio
 import inspect
 import sys
-from datetime import timedelta
 from importlib.metadata import version
 
 
@@ -99,9 +98,9 @@ def check_mcp_server_lists_tools() -> None:
     """Build the real MCP server and answer ``initialize`` + ``tools/list``.
 
     Issue #2519: mcp 2.x removed the ``Server.list_tools()`` decorator that
-    ``codebase_rag/mcp/server.py`` registers its handlers with, so
+    ``codebase_rag/mcp/server.py`` then registered its handlers with, so
     ``cgr mcp-server`` died on start for every fresh install. Importing the
-    module still worked, since the attribute is only read while the server is
+    module still worked, since the SDK is only called while the server is
     built, so this builds it and performs the handshake a host does, over an
     in-memory transport. Memgraph is only connected when the server is served,
     so the job needs no database.
@@ -117,7 +116,9 @@ def check_mcp_server_lists_tools() -> None:
 
     try:
         server, _ = create_server()
-    except AttributeError as exc:
+    # A removed decorator is an AttributeError, a constructor that no longer
+    # takes the `on_*` handlers a TypeError.
+    except (AttributeError, TypeError) as exc:
         raise SmokeFailure(
             f"codebase_rag/mcp/server.py cannot register its handlers on this "
             f"SDK: {exc} (mcp {version('mcp')})"
@@ -126,12 +127,12 @@ def check_mcp_server_lists_tools() -> None:
     # Imported only once the server is built: an SDK that also moved this
     # client helper must still fail on the server's own break, the one a user
     # hits, rather than on a test utility.
-    from mcp.shared.memory import create_connected_server_and_client_session
+    from mcp import Client
 
     async def list_tool_names() -> list[str]:
-        async with create_connected_server_and_client_session(
-            server, read_timeout_seconds=timedelta(seconds=30)
-        ) as client:
+        # "legacy" runs the initialize handshake over JSON-RPC streams, as a
+        # host does; the default would call the handlers directly.
+        async with Client(server, mode="legacy", read_timeout_seconds=30) as client:
             listed = await client.list_tools()
         return [tool.name for tool in listed.tools]
 

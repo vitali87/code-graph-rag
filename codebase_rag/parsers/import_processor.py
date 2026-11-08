@@ -1085,6 +1085,7 @@ class ImportProcessor:
         "csharp_global_static_imports",
         "java_static_imports",
         "commonjs_direct_exports",
+        "esm_default_exports",
         "conditional_imports",
         "python_import_rebinds",
         "php_function_imports",
@@ -1211,6 +1212,10 @@ class ImportProcessor:
         # exported function's qn, so a whole-module require alias called
         # directly (`const f = require('./m'); f(x)`) resolves to it.
         self.commonjs_direct_exports: dict[str, str] = {}
+        # JS/TS modules with an `export default`: module qn -> the definition
+        # it names, so a default import (mapped to `<module>.default`) called
+        # directly resolves to it (issue #2724).
+        self.esm_default_exports: dict[str, str] = {}
         # Names bound by a CONDITIONAL Python import (nested under if/try --
         # click's `if WIN: from ._winconsole import X`): the dead-code fan-out
         # treats a same-named local def as the mutually-exclusive fallback
@@ -1809,6 +1814,7 @@ class ImportProcessor:
         # A re-parsed module that no longer directly exports one function
         # must not leave the stale whole-module alias mapping behind.
         self.commonjs_direct_exports.pop(module_qn, None)
+        self.esm_default_exports.pop(module_qn, None)
         # Reset per-module PHP use-function state too, so a re-index that drops a
         # `use function` import does not leave a stale exemption behind.
         self.php_function_imports.pop(module_qn, None)
@@ -4938,16 +4944,31 @@ class ImportProcessor:
                 return import_path[: -len(ext)]
         return import_path
 
-    def _js_base_url_names_file(self, import_path: str, current_module: str) -> bool:
+    def _js_base_url_module_qn(
+        self, import_path: str, current_module: str
+    ) -> str | None:
         # A bare specifier the importing file's own `baseUrl` resolves to a
-        # project file is first-party even though no `paths` alias maps it.
-        # Its qn stays the bare path it always had; only the package flag
-        # needs the disk's answer, so resolution beyond this flag is unchanged.
+        # project file is first-party even though no `paths` alias maps it,
+        # and it names THAT module: with `"baseUrl": "src"`, `lib/format` is
+        # `src/lib/format.ts`. Keeping the bare path as the qn pointed the
+        # import at an ExternalModule `lib.format` and dropped every call
+        # through it (issue #2808).
         base = self._js_governing_base_url(current_module)
-        return (
-            base is not None
-            and self._js_module_rel_on_disk(f"{base}{import_path}") is not None
-        )
+        if base is None:
+            return None
+        # `"baseUrl": "./src"` or a nested config's `"../shared"` spell dot
+        # segments a module qn must not keep (#2808 review); a path that
+        # leaves the repo names no project file.
+        joined = posixpath.normpath(f"{base}{import_path}")
+        if joined == cs.PATH_PARENT_DIR or joined.startswith(
+            f"{cs.PATH_PARENT_DIR}{cs.SEPARATOR_SLASH}"
+        ):
+            return None
+        module_rel = self._js_module_rel_on_disk(joined)
+        if module_rel is None:
+            return None
+        dotted = module_rel.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT)
+        return f"{self.project_name}{cs.SEPARATOR_DOT}{dotted}"
 
     def _js_governing_base_url(self, current_module: str) -> str | None:
         # The `baseUrl` of the nearest tsconfig whose directory holds the
@@ -5060,21 +5081,31 @@ class ImportProcessor:
             import_path, current_module, require
         ).module_qn
 
+    def _resolve_js_bare_import_target(
+        self, import_path: str, current_module: str, require: bool
+    ) -> JsImportTarget:
+        if aliased := self._ts_alias_module_qn(import_path):
+            return JsImportTarget(aliased, False)
+        # TypeScript tries `baseUrl` after `paths` and before node_modules,
+        # which the workspace mapping stands in for.
+        if based := self._js_base_url_module_qn(import_path, current_module):
+            return JsImportTarget(based, False)
+        if workspace := self._map_js_workspace_import(import_path, require):
+            dotted = workspace.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT)
+            return JsImportTarget(
+                f"{self.project_name}{cs.SEPARATOR_DOT}{dotted}", False
+            )
+        return JsImportTarget(
+            import_path.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT),
+            not _has_aliased_scheme(import_path),
+        )
+
     def _resolve_js_import_target(
         self, import_path: str, current_module: str, require: bool = False
     ) -> JsImportTarget:
         if not import_path.startswith(cs.PATH_CURRENT_DIR):
-            if aliased := self._ts_alias_module_qn(import_path):
-                return JsImportTarget(aliased, False)
-            if workspace := self._map_js_workspace_import(import_path, require):
-                dotted = workspace.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT)
-                return JsImportTarget(
-                    f"{self.project_name}{cs.SEPARATOR_DOT}{dotted}", False
-                )
-            return JsImportTarget(
-                import_path.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT),
-                not _has_aliased_scheme(import_path)
-                and not self._js_base_url_names_file(import_path, current_module),
+            return self._resolve_js_bare_import_target(
+                import_path, current_module, require
             )
         return JsImportTarget(
             cs.SEPARATOR_DOT.join(

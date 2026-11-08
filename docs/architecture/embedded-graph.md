@@ -137,10 +137,11 @@ toolchain is needed, on:
 | Windows x64 | `win_amd64` |
 
 Each wheel is built against Python's stable ABI, so one per platform serves
-every CPython from 3.12 on. Anywhere else (PyPy, 32-bit or other
-architectures) code-graph-rag installs without it and the engine runs the
-Python twin of every part, which stays the reference: each Rust path is
-tested against it, and gives the same answers.
+every CPython from 3.12 on. code-graph-rag requires it everywhere and does
+not run without it, so it does not install anywhere else (PyPy, 32-bit or
+other architectures). Where the engine still has a Python twin of a part,
+it serves the inputs that part's Rust path declines, and each Rust path is
+tested against it.
 
 A checkout builds the crate it carries: `uv sync` compiles it with the Rust
 toolchain on your `PATH` (uv takes it as a path source), so a change to the
@@ -148,7 +149,7 @@ Python and Rust halves is tested together. `.github/workflows/rust-wheels.yml`
 builds the wheels. A release uploads any of the crate version's wheels PyPI
 does not have yet, then publishes code-graph-rag only once PyPI has every one
 of them (`scripts/check_cgr_graph_rs_on_pypi.py`). The crate has no sdist, so
-a platform without its wheel could not install that code-graph-rag. `make
+a platform without its wheel cannot install code-graph-rag. `make
 release`, which publishes from a workstation, cannot build every platform's
 wheel, so it stops until PyPI has them all.
 
@@ -207,6 +208,18 @@ Writing to the graph is now 1% to 4% of an index run; the rest is the
 indexer's own analysis, embedding inference and start-up. Which of those Rust
 could speed up, measured stage by stage, is in
 [the indexer's Rust plan](../reports/INDEXER_RUST_PLAN.md).
+
+The indexer uses the extension too. Each definition's anchor hash and
+clone-detection fingerprint, which names each Python function binds, each
+file's interface fingerprint (what the files that depend on it can see),
+which parameters each Python or JS/TS function calls, and what each Python
+local was assigned are computed in Rust on the very tree py-tree-sitter
+parsed: the extension reads the C node inside the Python `Node` and walks it
+with the same tree-sitter runtime, so nothing is parsed twice and no
+grammar is compiled into the wheel (`codebase_rag/parsers/native_trees.py`
+says how, and what guards it).
+The Python functions stay the reference, as everywhere else in the
+extension.
 
 ## Switching backends
 

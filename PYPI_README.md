@@ -91,10 +91,10 @@ The knowledge graph is an embedded SQLite file (`~/.cgr/graph.sqlite`), so there
 is no database server to run. Memgraph and Neo4j remain available as opt-in
 backends; see [Graph Backends](https://docs.code-graph-rag.com/architecture/embedded-graph/).
 
-The wheel is pure Python (`py3-none-any`), so it installs on any platform with
-Python 3.12 or newer. On Linux (x86_64, aarch64), macOS and Windows x64 it also
-pulls in `cgr-graph-rs`, a native extension that speeds up the embedded graph;
-elsewhere the same engine runs in pure Python.
+The wheel is pure Python (`py3-none-any`), and it requires `cgr-graph-rs`, the
+native extension that does the work behind it, which ships for CPython 3.12 or
+newer on Linux (x86_64, aarch64), macOS and Windows x64. cgr does not run
+without it, so it installs on those platforms only.
 
 Some distributions ship an older interpreter (Debian Bookworm, and so Raspberry
 Pi OS Bookworm, ships 3.11), which also explains the failed piwheels Bookworm
