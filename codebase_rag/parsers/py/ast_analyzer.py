@@ -1438,13 +1438,31 @@ class PythonAstAnalyzerMixin(_AstBase):
         self._process_assignment_annotation(
             node, assignments, local_var_types, module_qn
         )
+        _apply_decided(decided, local_var_types)
+        # Bare captures run on both sides of the unpacking pass: an
+        # unpacking in a case body (`a, b = t.pair()`) must read the
+        # capture's type, and a capture whose subject only the unpacking
+        # types (`s, other = make_pair()`) is typed after it. The
+        # unpacking pass fills only untyped names, so running it again
+        # once such a capture is typed fills what its body unpacks from
+        # it without overwriting anything (Greptile P1s on #3585).
+        captured = self._type_match_captures(
+            node, case_clauses, local_var_types, module_qn
+        )
+        decided |= captured
         self._process_assignment_unpacking(
             node, assignments, local_var_types, module_qn
         )
         _apply_decided(decided, local_var_types)
-        decided |= self._type_match_captures(
+        recaptured = self._type_match_captures(
             node, case_clauses, local_var_types, module_qn
         )
+        if recaptured != captured:
+            decided |= recaptured
+            self._process_assignment_unpacking(
+                node, assignments, local_var_types, module_qn
+            )
+            _apply_decided(decided, local_var_types)
 
         self.analyze_scoped_comprehensions(
             node, comprehensions, local_var_types, module_qn
@@ -1784,11 +1802,10 @@ class PythonAstAnalyzerMixin(_AstBase):
     ) -> dict[str, str | None]:
         """Type each bare capture `case t:` as its `match` subject's type,
         returning what each capture that is its name's last binding
-        decided. Run once every pass that can type a subject has: an
-        alias (a nested `match t: case u:` in a `case Thing() as t` body,
-        Greptile P1 on #3585), an annotation, an unpacking
-        (`s, other = pair()` before `match s: case t:`, Greptile P1 on
-        #3585)."""
+        decided. Run after the alias and annotation passes, so a nested
+        `match t: case u:` in a `case Thing() as t` body reads the alias
+        type, and again after the unpacking pass, for a subject only an
+        unpacking types (Greptile P1s on #3585)."""
         last = _match_last_bindings(scope, case_clauses)
         decided: dict[str, str | None] = {}
         for clause, pattern in _case_patterns(case_clauses):

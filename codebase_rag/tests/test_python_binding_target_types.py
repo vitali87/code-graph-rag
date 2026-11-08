@@ -814,6 +814,23 @@ SOURCE = (
     "            return t.go()\n"
     "\n"
     "\n"
+    "def capture_then_unpack():\n"
+    "    s = Thing()\n"
+    "    t = Other()\n"
+    "    match s:\n"
+    "        case t:\n"
+    "            a, b = t.pair()\n"
+    "            return a.go()\n"
+    "\n"
+    "\n"
+    "def unpacked_subject_capture_then_unpack():\n"
+    "    s, other = make_pair()\n"
+    "    match s:\n"
+    "        case t:\n"
+    "            a, b = t.pair()\n"
+    "            return a.go()\n"
+    "\n"
+    "\n"
     "def matched_same_alias_twice(shape):\n"
     "    match shape:\n"
     "        case Thing(x=1) as t:\n"
@@ -1547,5 +1564,23 @@ def test_capture_of_an_unpacked_subject(tmp_path: Path) -> None:
     unpacking pass, so the bare capture `case t:` must be typed after
     that pass to read `s` as `Thing`."""
     calls = _calls_at(tmp_path, "unpacked_subject_capture", "return t.go()")
+    assert calls.get(THING_GO) == EXACT
+    assert OTHER_GO not in calls
+
+
+def test_unpacking_in_a_capture_body_reads_the_capture_type(tmp_path: Path) -> None:
+    """Greptile P1 on #3585: `a, b = t.pair()` in a `case t:` body over a
+    `Thing` subject unpacks `Thing.pair`, not the `Other.pair` an
+    earlier `t = Other()` would give."""
+    calls = _calls_at(tmp_path, "capture_then_unpack", "return a.go()")
+    assert calls.get(THING_GO) == EXACT
+    assert OTHER_GO not in calls
+
+
+def test_unpacking_from_a_capture_of_an_unpacked_subject(tmp_path: Path) -> None:
+    """The subject is typed only by an unpacking and the capture's body
+    unpacks from the capture: the unpacking pass runs again once the
+    capture is typed."""
+    calls = _calls_at(tmp_path, "unpacked_subject_capture_then_unpack", "return a.go()")
     assert calls.get(THING_GO) == EXACT
     assert OTHER_GO not in calls
