@@ -1290,7 +1290,7 @@ class TypeInferenceEngine:
         if (
             target := self._rust_local_use(name, module_qn, call_point, scope)
         ) is not None:
-            return self._rust_imported_fn_return_type(target)
+            return self._rust_imported_fn_return_type(target, module_qn)
         # Each enclosing `mod`, innermost first, then the file module: a fn
         # defined in a scope, or a `use` there, shadows every outer one
         # (`mod tests { fn tmpdir() ... }`, issue #2942).
@@ -1299,7 +1299,7 @@ class TypeInferenceEngine:
             if (item := self._rust_scope_item(owner, name, call_point)) is not None:
                 return self._rust_fn_return_type(item)
             if target := import_mapping.get(owner, {}).get(name):
-                return self._rust_imported_fn_return_type(target)
+                return self._rust_imported_fn_return_type(target, module_qn)
         return None
 
     def _rust_scope_item(
@@ -1318,8 +1318,14 @@ class TypeInferenceEngine:
             return None
         return qn
 
-    def _rust_imported_fn_return_type(self, target: str) -> str | None:
+    def _rust_imported_fn_return_type(self, target: str, module_qn: str) -> str | None:
         if cs.SEPARATOR_DOUBLE_COLON in target:
+            # `use std::env::vars;` names a fn outside the repo, which the
+            # name search below would swap for a same-named project fn and
+            # type the local from it (Greptile, PR #3010).
+            head = target.split(cs.SEPARATOR_DOUBLE_COLON, 1)[0]
+            if self.import_processor.rust_crate_is_external(head, module_qn):
+                return None
             target = self._resolve_rust_import_path(
                 target, node_types=(NodeType.FUNCTION,)
             )

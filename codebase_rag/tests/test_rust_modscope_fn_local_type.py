@@ -550,3 +550,43 @@ pub fn external() -> u8 {
     )
     targets = _path_targets(mock_ingestor, f"{base}.walk.external")
     assert f"{base}.util.TempDir.path" not in targets, targets
+
+
+# A `use` of a toolchain crate's fn names no project fn, even when the project
+# has one of the same name: matching it by name typed the local as the
+# project's TempDir (Greptile, PR #3010).
+_SHADOWED_STD_USE = {
+    "body": """\
+use crate::util::TempDir;
+
+pub fn vars() -> TempDir { TempDir }
+
+pub fn external() -> u8 {
+    use std::env::vars;
+    let td = vars();
+    td.path()
+}
+""",
+    "module": """\
+mod helpers {
+    pub fn vars() -> crate::util::TempDir { crate::util::TempDir }
+}
+
+use std::env::vars;
+
+pub fn external() -> u8 {
+    let td = vars();
+    td.path()
+}
+""",
+}
+
+
+def test_a_std_use_never_takes_a_same_named_project_fns_type(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    for scope, walk_rs in _SHADOWED_STD_USE.items():
+        mock_ingestor.reset_mock()
+        base = _index(temp_repo, mock_ingestor, f"rs_modfn_std_{scope}", walk_rs)
+        targets = _path_targets(mock_ingestor, f"{base}.walk.external")
+        assert f"{base}.util.TempDir.path" not in targets, (scope, targets)

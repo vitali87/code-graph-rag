@@ -4665,12 +4665,7 @@ class CallResolver:
         )
 
     def _rust_crate_is_external(self, crate: str, module_qn: str) -> bool:
-        imports = self.import_processor
-        return crate in cs.RS_STDLIB_CRATES or (
-            not imports.rust_head_is_repo_crate(crate)
-            and not imports.rust_head_is_member_dep(crate, module_qn)
-            and imports.rust_head_is_external_dep(crate, module_qn)
-        )
+        return self.import_processor.rust_crate_is_external(crate, module_qn)
 
     def _rust_file_use_is_external(self, name: str, module_qn: str) -> bool:
         target = self.import_processor.import_mapping.get(module_qn, {}).get(name)
