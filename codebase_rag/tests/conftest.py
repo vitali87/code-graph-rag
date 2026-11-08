@@ -22,6 +22,7 @@ from codebase_rag import constants as rag_cs
 from codebase_rag import graph_audit
 from codebase_rag.capture import CaptureSelection
 from codebase_rag.checkout_state import state_file
+from codebase_rag.config import ModelConfig, settings
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.language_spec import LANGUAGE_SPECS, get_language_for_extension
 from codebase_rag.parser_loader import load_parsers
@@ -99,6 +100,18 @@ class MockNode:
 
     def child_by_field_name(self, name: str) -> MockNode | None:
         return self.node_fields.get(name)
+
+
+def patch_active_model(
+    monkeypatch: pytest.MonkeyPatch, name: str, config: ModelConfig | None
+) -> None:
+    # pydantic keeps private attributes out of the instance __dict__, and
+    # pytest 9.2's monkeypatch.setattr restores from that __dict__, so its undo
+    # deletes the attribute and every later test reading it fails. Patching
+    # the dict pydantic keeps them in restores the value it found.
+    private = settings.__pydantic_private__
+    assert private is not None
+    monkeypatch.setitem(private, name, config)
 
 
 def create_mock_node(
