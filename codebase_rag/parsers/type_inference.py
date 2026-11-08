@@ -1042,12 +1042,17 @@ class TypeInferenceEngine:
         # Read from the AST, as the ingest pass records a fn's own module
         # (`record_effective_module`), so the lookup agrees with the
         # resolver's `self::`/`super::` (issue #2942).
-        blocks = {
-            (start, end): uses
-            for start, end, uses, *_ in (
-                self.import_processor.rust_block_scope_imports.get(module_qn, ())
-            )
-        }
+        # One entry per `use`, so a block with several has several: merge
+        # them, or the last `use` hides the earlier ones from a nested fn
+        # (Greptile, PR #3010). rustc rejects two binding one name (E0252).
+        blocks: dict[tuple[int, int], dict[str, str]] = {}
+        for (
+            start,
+            end,
+            block_uses,
+            *_,
+        ) in self.import_processor.rust_block_scope_imports.get(module_qn, ()):
+            blocks.setdefault((start, end), {}).update(block_uses)
         uses: list[Mapping[str, str]] = []
         node: ASTNode | None = caller_node
         while node is not None and node.type not in (

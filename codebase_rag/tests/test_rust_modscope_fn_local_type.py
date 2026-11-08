@@ -590,3 +590,36 @@ def test_a_std_use_never_takes_a_same_named_project_fns_type(
         base = _index(temp_repo, mock_ingestor, f"rs_modfn_std_{scope}", walk_rs)
         targets = _path_targets(mock_ingestor, f"{base}.walk.external")
         assert f"{base}.util.TempDir.path" not in targets, (scope, targets)
+
+
+def test_every_use_of_a_block_reaches_its_nested_fn(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Each `use` of an initializer block is its own entry: keeping only the
+    # last one per block lost `use crate::util;`, and the nested fn's
+    # `util::tmpdir()` fell to the file's `util` alias for the decoy module
+    # (Greptile, PR #3010).
+    base = _index(
+        temp_repo,
+        mock_ingestor,
+        "rs_modfn_blockuses",
+        """\
+mod wrong {
+    pub fn tmpdir() -> crate::aaa::Ignore { crate::aaa::Ignore }
+}
+
+use self::wrong as util;
+
+pub const IN_CONST: fn() -> u8 = {
+    use crate::util;
+    use crate::aaa;
+    fn in_const() -> u8 {
+        let td = util::tmpdir();
+        td.path()
+    }
+    in_const
+};
+""",
+    )
+    targets = _path_targets(mock_ingestor, f"{base}.walk.in_const")
+    assert targets == {f"{base}.util.TempDir.path": cs.EdgeResolution.EXACT}, targets
