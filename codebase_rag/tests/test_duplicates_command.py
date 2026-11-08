@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from loguru import logger
 from rich.text import Text
 from typer.testing import CliRunner
 
@@ -377,3 +379,29 @@ def _group(*members: DuplicateMember) -> DuplicateGroup:
         node_count=24,
         members=list(members),
     )
+
+
+@pytest.fixture
+def quiet_restored(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]:
+    # `--quiet` sets a process-wide flag and swaps loguru's sinks.
+    monkeypatch.setattr(settings, "QUIET", settings.QUIET)
+    yield
+    logger.remove()
+
+
+@pytest.mark.usefixtures("quiet_restored")
+@pytest.mark.parametrize(("flags", "shown"), [([], True), (["--quiet"], False)])
+def test_quiet_hides_the_scanning_line(
+    runner: CliRunner, clone_rows: list[ResultRow], flags: list[str], shown: bool
+) -> None:
+    """--quiet hides the progress line on both streams (issue #3499); the
+    table is printed either way."""
+    mock_ingestor = _make_mock_ingestor(projects=["myproj"], rows=clone_rows)
+    with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+        result = runner.invoke(app, [*flags, "duplicates"])
+
+    assert result.exit_code == 0
+    # The console wraps long lines, so compare words, not line breaks.
+    output = " ".join(result.output.split())
+    assert (cs.CLI_DUPLICATES_CONNECTING in output) is shown
+    assert "total_price" in result.stdout
