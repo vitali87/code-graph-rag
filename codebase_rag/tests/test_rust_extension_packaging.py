@@ -1,10 +1,10 @@
 """cgr-graph-rs ships as wheels that code-graph-rag requires (issue #386).
 
-The Rust half of the embedded graph is published to PyPI and installed with
-code-graph-rag on the platforms it has wheels for. These pin the pieces that
-must agree for that to hold: the requirement and the crate's version, the
-platforms the requirement names and the wheels the workflow builds, and the
-licences and bundling that go with a compiled dependency.
+The Rust half that does the work behind cgr's Python interface is published
+to PyPI and required on every platform: cgr does not run without it. These
+pin the pieces that must agree for that to hold: the requirement and the
+crate's version, the wheels the workflow builds, and the licences and
+bundling that go with a compiled dependency.
 """
 
 from __future__ import annotations
@@ -51,8 +51,9 @@ TARGET_ENVIRONMENTS = {
     "universal2-apple-darwin": [("darwin", "arm64"), ("darwin", "x86_64")],
     "x86_64-pc-windows-msvc": [("win32", "AMD64")],
 }
-# Platforms with no wheel, where installing must skip the extension rather
-# than try to compile it.
+# Platforms with no wheel. The extension is required there too, so installing
+# code-graph-rag stops (there is no sdist to build) instead of running without
+# it.
 WITHOUT_WHEELS = [
     ("linux", "armv7l", "CPython"),
     ("linux", "s390x", "CPython"),
@@ -130,19 +131,22 @@ def test_every_platform_with_a_wheel_installs_it(
     target: str, platform: str, machine: str
 ) -> None:
     marker = _requirement().marker
-    assert marker is not None
-    assert marker.evaluate(_environment(platform, machine, "CPython")), target
+    assert marker is None or marker.evaluate(
+        _environment(platform, machine, "CPython")
+    ), target
 
 
 @pytest.mark.parametrize(("platform", "machine", "implementation"), WITHOUT_WHEELS)
-def test_a_platform_without_a_wheel_skips_it(
+def test_a_platform_without_a_wheel_still_requires_it(
     platform: str, machine: str, implementation: str
 ) -> None:
-    """No sdist is published, so requiring it where no wheel exists would make
-    code-graph-rag uninstallable there instead of running the Python twin."""
+    """cgr has no pure-Python stand-in for the extension, so no platform may
+    install it without the extension: a marker that skipped it would install
+    a cgr that cannot start."""
     marker = _requirement().marker
-    assert marker is not None
-    assert not marker.evaluate(_environment(platform, machine, implementation))
+    assert marker is None or marker.evaluate(
+        _environment(platform, machine, implementation)
+    )
 
 
 def test_a_checkout_builds_the_crate_it_carries() -> None:
