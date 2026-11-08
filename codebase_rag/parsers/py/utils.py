@@ -59,7 +59,7 @@ def resolve_dotted_class(
     bases = (
         [own_class]
         if own_class_rebinds
-        else _dotted_head_bases(head, module_qn, import_mapping.get(module_qn, {}))
+        else dotted_head_bases(head, module_qn, import_mapping.get(module_qn, {}))
     )
     for base in bases:
         qn = follow_reexports(
@@ -70,7 +70,7 @@ def resolve_dotted_class(
     return None
 
 
-def _dotted_head_bases(
+def dotted_head_bases(
     head: str, module_qn: str, import_map: dict[str, str]
 ) -> Iterator[str]:
     """What the first name of a dotted path can refer to, most specific first.

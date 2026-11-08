@@ -1609,7 +1609,14 @@ class PythonAstAnalyzerMixin(_AstBase):
         is a flow-sensitive question this flat map cannot answer, and a
         union of different classes names no single class. A binding a
         later binding of the same name supersedes is not typed: the map
-        holds one type per name, and a with target keeps the same rule."""
+        holds one type per name, and a with target keeps the same rule.
+        When the last binding of a name is an alias, every alias of that
+        name in the scope must name the same class: the body of an
+        earlier `case Thing() as t` reads the map too, so `Other` from a
+        later `case Other() as t` would be wrong there. An alias or
+        capture that is the last binding but types nothing drops the
+        name's earlier type instead of leaving it to describe a value
+        the pattern replaced (Codex review on #3585)."""
         last: dict[str, int] = {}
         for _binder, identifier in _bindings_in(scope):
             if name := safe_decode_text(identifier):
@@ -1625,6 +1632,8 @@ class PythonAstAnalyzerMixin(_AstBase):
             if scope.type == cs.TS_PY_FUNCTION_DEFINITION
             else frozenset()
         )
+        alias_types: dict[str, set[str | None]] = {}
+        alias_last: dict[str, int] = {}
         for clause in case_clauses:
             pattern = next(
                 (
@@ -1641,18 +1650,37 @@ class PythonAstAnalyzerMixin(_AstBase):
                 node = stack.pop()
                 if node.type == cs.TS_PY_AS_PATTERN:
                     children = node.named_children
-                    if len(children) >= 2 and children[-1].type == cs.TS_PY_IDENTIFIER:
-                        if (
-                            (name := safe_decode_text(children[-1]))
-                            and (last.get(name, -1) <= children[-1].start_byte)
-                            and (class_name := _match_pattern_class(children[0]))
-                            and class_name.split(cs.SEPARATOR_DOT, 1)[0] not in shadowed
-                        ):
-                            if typed := self._resolved_type(class_name, module_qn):
-                                local_var_types[name] = typed
-                                logger.debug(lg.PY_TYPE_SIMPLE, var=name, type=typed)
+                    if (
+                        len(children) >= 2
+                        and children[-1].type == cs.TS_PY_IDENTIFIER
+                        and (name := safe_decode_text(children[-1]))
+                    ):
+                        alias_types.setdefault(name, set()).add(
+                            self._alias_class_type(children[0], shadowed, module_qn)
+                        )
+                        alias_last[name] = max(
+                            alias_last.get(name, -1), children[-1].start_byte
+                        )
                 stack.extend(node.named_children)
             self._type_bare_capture(clause, pattern, last, local_var_types, module_qn)
+        for name, types in alias_types.items():
+            if last.get(name, -1) > alias_last[name]:
+                continue
+            if len(types) == 1 and (typed := next(iter(types))):
+                local_var_types[name] = typed
+                logger.debug(lg.PY_TYPE_SIMPLE, var=name, type=typed)
+            else:
+                local_var_types.pop(name, None)
+
+    def _alias_class_type(
+        self, pattern: Node, shadowed: frozenset[str], module_qn: str
+    ) -> str | None:
+        """The class a `case <pattern> as t` alias binds, or None when the
+        pattern names no single class, or one the function rebinds."""
+        class_name = _match_pattern_class(pattern)
+        if not class_name or class_name.split(cs.SEPARATOR_DOT, 1)[0] in shadowed:
+            return None
+        return self._resolved_type(class_name, module_qn)
 
     def _type_bare_capture(
         self,
@@ -1670,7 +1698,9 @@ class PythonAstAnalyzerMixin(_AstBase):
         flow pass. An untyped subject leaves the capture untyped, and
         so does a subject rebound after the `match`: the map holds the
         later type, and this pass runs after the assignment passes, so
-        the type at the `match` is not recoverable from it."""
+        the type at the `match` is not recoverable from it. Left
+        untyped as the name's last binding, the capture drops any
+        earlier type of the name, which describes a value it replaced."""
         children = pattern.named_children
         if len(children) != 1 or children[0].type != cs.TS_PY_DOTTED_NAME:
             return
@@ -1689,6 +1719,7 @@ class PythonAstAnalyzerMixin(_AstBase):
             else None
         )
         if subject is None or statement is None:
+            local_var_types.pop(name, None)
             return
         if (
             subject.type == cs.TS_PY_IDENTIFIER
@@ -1700,6 +1731,7 @@ class PythonAstAnalyzerMixin(_AstBase):
             # not the value the capture binds, so it stays untyped. A
             # walrus inside the subject itself binds before its end, so
             # it does not trigger the skip.
+            local_var_types.pop(name, None)
             return
         inferred = (
             self._infer_type_from_expression_simple(subject, module_qn)
@@ -1711,6 +1743,8 @@ class PythonAstAnalyzerMixin(_AstBase):
         if inferred:
             local_var_types[name] = inferred
             logger.debug(lg.PY_TYPE_SIMPLE, var=name, type=inferred)
+        else:
+            local_var_types.pop(name, None)
 
     def _type_comprehension_walrus(
         self,

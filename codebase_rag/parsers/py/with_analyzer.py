@@ -11,7 +11,12 @@ from ... import logs as lg
 from ...types_defs import FunctionRegistryTrieProtocol, NodeType
 from ..import_processor import ImportProcessor
 from ..utils import follow_reexports, safe_decode_text
-from .utils import resolve_class_name, resolve_dotted_class, split_top_level
+from .utils import (
+    dotted_head_bases,
+    resolve_class_name,
+    resolve_dotted_class,
+    split_top_level,
+)
 
 
 class WithTarget(NamedTuple):
@@ -346,10 +351,18 @@ class PythonWithBindingMixin(_WithBase):
                     return definition, owner.rsplit(cs.SEPARATOR_DOT, 1)[0]
             return None
         import_map = self.import_processor.import_mapping.get(module_qn, {})
-        if parts and parts[0] in import_map:
-            qn = (
-                f"{import_map[parts[0]]}"
-                f"{cs.SEPARATOR_DOT}{cs.SEPARATOR_DOT.join(parts[1:])}"
+        if len(parts) < 2 or parts[0] not in import_map:
+            return None
+        # `import pkg.contexts` records `pkg` as `<project>.pkg.contexts`,
+        # so `pkg.contexts.opened` is looked up under the package as well
+        # as under the recorded target, the way a dotted class path is
+        # (Codex review on #3585).
+        rest = cs.SEPARATOR_DOT.join(parts[1:])
+        for base in dotted_head_bases(parts[0], module_qn, import_map):
+            qn = follow_reexports(
+                f"{base}{cs.SEPARATOR_DOT}{rest}",
+                self.import_processor.import_mapping,
+                self.function_registry,
             )
             if (
                 self.function_registry.get(qn) == NodeType.FUNCTION

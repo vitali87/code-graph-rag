@@ -37,6 +37,7 @@ PROJECT = "proj"
 THING_GO = f"{PROJECT}.m.Thing.go"
 OTHER_GO = f"{PROJECT}.m.Other.go"
 HTHING_GO = f"{PROJECT}.helpers.HThing.go"
+PTHING_GO = f"{PROJECT}.pkg.contexts.PThing.go"
 THING = f"{PROJECT}.m.Thing"
 INNER = f"{PROJECT}.m.Inner"
 INNER_GO = f"{PROJECT}.m.Inner.go"
@@ -54,6 +55,7 @@ SOURCE = (
     "import collections.abc\n"
     "import collections.abc as cabc\n"
     "import typing\n"
+    "import pkg.contexts\n"
     "\n"
     "\n"
     "class Thing:\n"
@@ -615,6 +617,62 @@ SOURCE = (
     "    match shape:\n"
     "        case Thing() as t:\n"
     "            return t.go()\n"
+    "\n"
+    "\n"
+    "def dotted_package_factory_with():\n"
+    "    with pkg.contexts.p_opened() as t:\n"
+    "        return t.go()\n"
+    "\n"
+    "\n"
+    "def matched_unresolved_after_binding(shape, Pattern):\n"
+    "    t = Thing()\n"
+    "    match shape:\n"
+    "        case Pattern() as t:\n"
+    "            return t.go()\n"
+    "\n"
+    "\n"
+    "def matched_union_after_binding(shape):\n"
+    "    t = Thing()\n"
+    "    match shape:\n"
+    "        case Thing() | Other() as t:\n"
+    "            return t.go()\n"
+    "\n"
+    "\n"
+    "def matched_capture_after_binding(shape):\n"
+    "    t = Thing()\n"
+    "    match shape:\n"
+    "        case t:\n"
+    "            return t.go()\n"
+    "\n"
+    "\n"
+    "def matched_two_aliases(shape):\n"
+    "    match shape:\n"
+    "        case Thing() as t:\n"
+    "            return t.go()\n"
+    "        case Other() as t:\n"
+    "            return t.go()\n"
+    "\n"
+    "\n"
+    "def matched_same_alias_twice(shape):\n"
+    "    match shape:\n"
+    "        case Thing(x=1) as t:\n"
+    "            return t.go()\n"
+    "        case Thing() as t:\n"
+    "            return t.go()\n"
+)
+
+PKG_CONTEXTS = (
+    "from contextlib import contextmanager\n"
+    "\n"
+    "\n"
+    "class PThing:\n"
+    "    def go(self):\n"
+    "        return 4\n"
+    "\n"
+    "\n"
+    "@contextmanager\n"
+    "def p_opened():\n"
+    "    yield PThing()\n"
 )
 
 CHILD = (
@@ -663,6 +721,9 @@ def _build(tmp_path: Path) -> GraphUpdater:
     (repo / "m.py").write_text(SOURCE, encoding="utf-8")
     (repo / "helpers.py").write_text(HELPERS, encoding="utf-8")
     (repo / "child.py").write_text(CHILD, encoding="utf-8")
+    (repo / "pkg").mkdir(exist_ok=True)
+    (repo / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+    (repo / "pkg" / "contexts.py").write_text(PKG_CONTEXTS, encoding="utf-8")
     parsers, queries = load_parsers()
     updater = GraphUpdater(
         ingestor=_StatefulIngestor(), repo_path=repo, parsers=parsers, queries=queries
@@ -1148,3 +1209,47 @@ def test_match_class_parameter_stays_untyped(tmp_path: Path) -> None:
     calls = _calls(tmp_path).get("matched_parameter_class", {})
     assert calls.get(THING_GO) != EXACT
     assert _local_types(tmp_path, "matched_parameter_class").get("t") != THING
+
+
+def test_dotted_package_import_factory(tmp_path: Path) -> None:
+    """Codex review on #3585: `import pkg.contexts` records `pkg` as
+    `proj.pkg.contexts`, so appending `contexts.p_opened` to it doubled
+    the segment and missed the factory."""
+    assert _calls(tmp_path)["dotted_package_factory_with"].get(PTHING_GO) == EXACT
+
+
+def test_unresolved_alias_drops_the_earlier_type(tmp_path: Path) -> None:
+    """Codex review on #3585: `t = Thing()` then `case Pattern() as t`
+    with an unresolvable `Pattern` must not leave `t` typed as `Thing`
+    for the case body."""
+    calls = _calls(tmp_path).get("matched_unresolved_after_binding", {})
+    assert calls.get(THING_GO) != EXACT
+    assert "t" not in _local_types(tmp_path, "matched_unresolved_after_binding")
+
+
+def test_union_alias_drops_the_earlier_type(tmp_path: Path) -> None:
+    calls = _calls(tmp_path).get("matched_union_after_binding", {})
+    assert calls.get(THING_GO) != EXACT
+    assert calls.get(OTHER_GO) != EXACT
+
+
+def test_untyped_capture_drops_the_earlier_type(tmp_path: Path) -> None:
+    calls = _calls(tmp_path).get("matched_capture_after_binding", {})
+    assert calls.get(THING_GO) != EXACT
+    assert "t" not in _local_types(tmp_path, "matched_capture_after_binding")
+
+
+def test_aliases_of_different_classes_leave_the_name_untyped(
+    tmp_path: Path,
+) -> None:
+    """The first case body reads the flat map too, so typing `t` as the
+    last alias's `Other` would give it a wrong exact edge."""
+    calls = _calls(tmp_path).get("matched_two_aliases", {})
+    assert calls.get(THING_GO) != EXACT
+    assert calls.get(OTHER_GO) != EXACT
+
+
+def test_aliases_of_the_same_class_still_type(tmp_path: Path) -> None:
+    calls = _calls(tmp_path)["matched_same_alias_twice"]
+    assert calls.get(THING_GO) == EXACT
+    assert OTHER_GO not in calls
