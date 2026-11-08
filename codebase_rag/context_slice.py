@@ -172,8 +172,10 @@ def _hotness(fetch_all: QueryFn, project: str, qn: str) -> dict[str, int]:
     ):
         caller = str(row.get(cs.KEY_QUALIFIED_NAME) or "")
         count = row.get(cs.TRACE_PROP_CALL_COUNT)
+        # One row per call site, each carrying the pair's whole observation
+        # (issue #2429), so a caller counts once, not once per site (#3532).
         if caller and isinstance(count, int):
-            out[caller] = out.get(caller, 0) + count
+            out[caller] = max(out.get(caller, 0), count)
     return out
 
 

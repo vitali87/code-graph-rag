@@ -15,6 +15,7 @@ class CLICommandName(StrEnum):
     DEAD_CODE = "dead-code"
     DUPLICATES = "duplicates"
     DELETE_PROJECT = "delete-project"
+    PRUNE = "prune"
     DAEMON = "daemon"
     WORKSPACE = "workspace"
     TRACE = "trace"
@@ -201,7 +202,8 @@ HELP_RENAME_ALLOW_HEURISTIC = (
 )
 HELP_RENAME_DRY_RUN = "Print the plan and diff without writing anything."
 CMD_CHANGE_SIGNATURE = (
-    "Change a Python definition's parameter list and rewrite every call site "
+    "Change a Python or JavaScript definition's parameter list and rewrite "
+    "every call site "
     "the graph knows; sites the mapping cannot complete are listed, not touched; "
     "refuses on a graph a stopped sync left partial."
 )
@@ -692,7 +694,8 @@ HELP_DEADCODE_ENDPOINT_ROOTS = (
     "(RESOLVES_TO into it, or a direct READS_FROM/WRITES_TO for RPC and "
     "dispatch resources), so an endpoint nobody calls is reported. A handler "
     "registered by a call (Go HandleFunc, Express app.get) stays live "
-    "through that call."
+    "through that call. Endpoints are recorded only by the io capture group: "
+    "index the project with --capture io first, or the command refuses."
 )
 HELP_DEADCODE_MIN_RESOLUTION = (
     "Ignore call edges below this confidence when deciding liveness: "
@@ -741,6 +744,10 @@ HELP_DELETE_PROJECT_REPO_PATH = (
     "Repository whose project to delete when --project is not given. Its "
     "local hash cache is removed too."
 )
+HELP_PRUNE_DRY_RUN = "List the projects that would be pruned without deleting anything."
+HELP_PRUNE_YES = "Prune without asking for confirmation."
+CMD_PRUNE = "Prune projects whose repository root no longer exists"
+EXAMPLES_PRUNE = "EXAMPLE\n\n  cgr prune --dry-run\n\n  cgr prune --yes"
 HELP_COMMAND = "Command path to document, such as 'start' or 'daemon logs'."
 
 CMD_VERIFY_INDEX = "Verify a protobuf index against its provenance manifest"
@@ -758,6 +765,7 @@ CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.DEAD_CODE: CMD_DEAD_CODE,
     CLICommandName.DUPLICATES: CMD_DUPLICATES,
     CLICommandName.DELETE_PROJECT: CMD_DELETE_PROJECT,
+    CLICommandName.PRUNE: CMD_PRUNE,
     CLICommandName.LANGUAGE: CMD_LANGUAGE,
     CLICommandName.DAEMON: CMD_DAEMON,
     CLICommandName.TRACE: CMD_TRACE,

@@ -61,7 +61,10 @@ Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by c
 ## Latest News 🔥
 
 <!-- SECTION:latest_news -->
-- **MiniMax Models Added**: Current MiniMax text models have been included.
+- **Continuous Integration Improvements**: Enhanced release cadence tracking and ensured accurate green status for deferred releases.
+- **Code Quality & Clarity**: Resolved several code style and correctness issues including foreach loop variable typing and Python method receiver handling.
+- **Build Process Refinement**: Reduced the default install package count and improved makefile functionality for host/port watching.
+- **Feature Control**: Prevented the use of `--no-endpoint-roots` when endpoint data is absent.
 <!-- /SECTION:latest_news -->
 
 See [NEWS.md](NEWS.md) for the full history.
@@ -142,7 +145,7 @@ To upgrade an existing install, run `uv tool upgrade code-graph-rag` (with pipx,
 You also need Python 3.12+ and `ripgrep`. The graph lives in an embedded SQLite file by default, so there is no database server to run: no Docker and no `cmake`. Memgraph and Neo4j remain available as opt-in backends ([Graph Backends](docs/architecture/embedded-graph.md)). Full prerequisites, source installs, and environment setup are in the [Installation](docs/getting-started/installation.md) guide.
 
 > [!NOTE]
-> The wheel is pure Python (`py3-none-any`), so it installs on any platform with Python 3.12 or newer. Older system interpreters (Debian Bookworm ships 3.11) need the interpreter pinned explicitly; see [Installation](docs/getting-started/installation.md#older-system-interpreters) for the commands.
+> cgr requires its native extension, `cgr-graph-rs`, which ships for CPython 3.12 or newer on Linux (x86_64, aarch64), macOS and Windows x64, so it installs on those platforms only. Older system interpreters (Debian Bookworm ships 3.11) need the interpreter pinned explicitly; see [Installation](docs/getting-started/installation.md#older-system-interpreters) for the commands.
 
 ## Quick Start
 

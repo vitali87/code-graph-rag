@@ -622,6 +622,8 @@ class RetrievalCondition(StrEnum):
     GRAPH = "graph"
     GREP_NAME = "grep_name"
     GREP_CALL = "grep_call"
+    COLGREP_NAME = "colgrep_name"
+    COLGREP_CALL = "colgrep_call"
 
 
 RG_BIN = "rg"
@@ -653,6 +655,39 @@ RETRIEVAL_SCORES_FILENAME = "retrieval_scores.csv"
 RETRIEVAL_DIFF_FILENAME = "retrieval_diff.json"
 RETRIEVAL_DIFF_PREFIX = "retrieval:"
 RETRIEVAL_TITLE = "cgr retrieval eval: graph vs grep (file-level call localization)"
+RETRIEVAL_SAMPLE_SEED = 0
+
+# ColGrep (LightOn, lightonai/next-plaid) arm: a grep-shaped Rust CLI that ranks
+# code units with a late-interaction (ColBERT) model fused with an FTS5 trigram
+# keyword search by reciprocal rank fusion. It answers one query per process,
+# so the arm runs one search per sampled symbol and mode. Flags follow the
+# colgrep 1.8 CLI. The explicit `search` subcommand matters: the bare form
+# would parse a symbol named `init`, `status` or `update` as a subcommand.
+# `--force-cpu` because the question is whether it competes on CPU; the index
+# is built once by `init` so every query can skip the change scan with
+# `--no-update`. ColGrep keeps its settings (model, keyword/semantic balance,
+# pooling, ignore rules) in config.json beside its index directory, so pointing
+# COLGREP_DATA_DIR at a fresh temporary directory runs it on its defaults
+# whatever the machine's saved settings, and leaves the user's indexes alone. `-s` makes `-e` case-sensitive like ripgrep (colgrep defaults
+# to case-insensitive). Results are one per file, so `-l` lists the k files.
+COLGREP_BIN = "colgrep"
+COLGREP_DATA_DIR_ENV = "COLGREP_DATA_DIR"
+COLGREP_INDICES_DIR = "indices"
+COLGREP_TMP_PREFIX = "cgr-colgrep-"
+COLGREP_INIT = "init"
+COLGREP_SEARCH = "search"
+COLGREP_YES = "-y"
+COLGREP_FORCE_CPU = "--force-cpu"
+COLGREP_COLOR_FLAG = "--color"
+COLGREP_COLOR_NEVER = "never"
+COLGREP_FILES_ONLY = "-l"
+COLGREP_TOP_K_FLAG = "-k"
+COLGREP_INCLUDE_FLAG = "--include"
+COLGREP_NO_UPDATE = "--no-update"
+COLGREP_PATTERN_FLAG = "-e"
+COLGREP_CASE_SENSITIVE = "-s"
+COLGREP_END_OF_OPTIONS = "--"
+COLGREP_DEFAULT_TOP_K = 15
 
 # Incremental-update eval: index, apply a semantically neutral edit (a trailing
 # comment that changes the file hash but not its AST), run an incremental

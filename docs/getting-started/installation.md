@@ -56,11 +56,14 @@ description: "Install Code-Graph-RAG and choose a graph backend for multi-langua
 
 ### Older system interpreters
 
-The wheel is pure Python (`py3-none-any`), so it installs on any platform, but the
-interpreter floor is strict. Some distributions ship a Python below it: Debian
-Bookworm, and therefore Raspberry Pi OS Bookworm, ships Python 3.11. This is also why
-the [piwheels](https://www.piwheels.org/project/code-graph-rag/) Bookworm build shows
-as failed; it is the interpreter version, not a problem with the package.
+The wheel is pure Python (`py3-none-any`), but it requires `cgr-graph-rs`, the native
+extension that does the work behind it, which ships for CPython 3.12 or newer on Linux
+(x86_64, aarch64), macOS and Windows x64. cgr does not run without it, so it installs
+on those platforms only, and the interpreter floor is strict. Some distributions ship a
+Python below it: Debian Bookworm, and therefore Raspberry Pi OS Bookworm, ships Python
+3.11. This is also why the [piwheels](https://www.piwheels.org/project/code-graph-rag/)
+Bookworm build shows as failed; it is the interpreter version, not a problem with the
+package.
 
 Pin the interpreter explicitly on those systems. For a tool install, `uv` downloads
 Python 3.12 itself:
@@ -298,7 +301,6 @@ This checks that all required dependencies and services are available.
 - **pydantic-settings**: Settings management using Pydantic
 - **python-dotenv**: Read key-value pairs from a .env file and set them as environment variables
 - **tiktoken**: tiktoken is a fast BPE tokeniser for use with OpenAI's models
-- **tomli-w**: A lil' TOML writer
 - **tree-sitter-python**: Python grammar for tree-sitter
 - **tree-sitter**: Python bindings to the Tree-sitter parsing library
 - **watchdog**: Filesystem events monitoring
@@ -308,10 +310,10 @@ This checks that all required dependencies and services are available.
 - **diff-match-patch**: Repackaging of Google's Diff Match and Patch libraries.
 - **click**: Composable command line interface toolkit
 - **protobuf**
-- **defusedxml**: XML bomb protection for Python stdlib modules
-- **huggingface-hub**: Client library to download and publish models, datasets and other repos on the huggingface.co hub
+- **pyyaml**: YAML parser and emitter for Python
 - **pathspec**: Utility library for gitignore style pattern matching of file paths.
 - **pygments**: Pygments is a syntax highlighting package written in Python.
+- **httpx**: The next generation HTTP client.
 - **certifi**: Python package for providing Mozilla's CA Bundle.
 - **regex**: Alternative regular expression module, to replace re.
 - **cgr-graph-rs**: Native acceleration for code-graph-rag's embedded graph

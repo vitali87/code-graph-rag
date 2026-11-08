@@ -125,7 +125,8 @@ first-party symbol universe:
   cgr's property-as-call edges as false positives.
 
 Requires `rg` (ripgrep) on `PATH`; `evals.retrieval` exits cleanly if it is
-missing. Writes `evals/results/retrieval_scores.csv` and
+missing, and likewise if `--colgrep` is given without `colgrep` on `PATH`.
+Writes `evals/results/retrieval_scores.csv` and
 `evals/results/retrieval_diff.json`. The thesis and grep's two failure modes (a
 bare reference or import counts as a hit, and a definition site `def S(` is
 indistinguishable from a call) are pinned by
@@ -149,6 +150,65 @@ base-class edges); the recall tail is first-party names colliding with builtins
 (django's own `def super(self)` makes every builtin `super()` call look like a
 missed first-party edge), the same name-based limitation documented for the
 per-language retrieval evals below.
+
+### ColGrep conditions (optional)
+
+`--colgrep` adds two more conditions driven by
+[ColGrep](https://github.com/lightonai/next-plaid) (LightOn's grep-shaped Rust
+CLI that ranks code with the LateOn-Code late-interaction model, fused with an
+FTS5 trigram keyword search by reciprocal rank fusion). It asks the question a
+grep-like semantic tool has to answer to be worth shipping: when an agent
+searches for `S`, are the files it gets back the files that call `S`?
+
+```bash
+uv run python -m evals.retrieval --target codebase_rag --colgrep --sample 500
+```
+
+- **colgrep_name** (`retrieval.colgrep_call_edges`, `GrepMode.NAME`):
+  `colgrep search S`, the ranked keyword plus semantic search alone, the
+  counterpart of grep_name.
+- **colgrep_call** (`GrepMode.CALL`): `colgrep search -e '\bS\s*\(' S`, the
+  same call pattern grep_call uses narrowing the candidates, the model ranking
+  them.
+
+Each search returns the top `--colgrep-k` files (default 15, ColGrep's own
+default; ColGrep 1.8 merges its ranked code units into one result per file
+before it cuts at k), so this is a ranked retriever with a fixed budget: a
+symbol with no callers still gets up to k files back, and one with more than k
+caller files cannot reach full recall. The arm builds the index once (`colgrep init -y`),
+then runs every search with `--no-update` and `--force-cpu`, and logs the
+index time and the time per search, so the CPU cost sits next to the scores.
+ColGrep exits normally when a search finds nothing, so a search that exits with
+an error is a real failure. The run stops there, rather than score that
+symbol's callers as misses and quietly lower ColGrep's recall.
+
+ColGrep answers one query per process, so the arm runs one search per symbol
+and mode. On `codebase_rag` (about 29,000 symbols) that is too many, hence
+`--sample N`: every condition, the graph and grep included, is then scored on
+the same seeded random sample of `N` symbols (`--seed`, default 0), so the
+rows stay comparable. `--sample` works without `--colgrep` too. A sample whose
+symbols are never called leaves nothing to grade, so the run stops and says so.
+
+ColGrep keeps its saved settings (model, keyword versus semantic balance,
+pooling, ignore rules) next to its index directory, so the arm points
+`COLGREP_DATA_DIR` at a fresh temporary directory for each run: ColGrep runs
+on its defaults whatever the machine has saved, and your own indexes are left
+alone. The cost is a full index build per run, which the log times. The model
+and the ONNX runtime are cached elsewhere and are downloaded only once.
+
+Install ColGrep with `cargo install colgrep --locked`. On first use it
+downloads the ONNX runtime with its own HTTP client, which does not go through
+an `HTTPS_PROXY`. Behind a proxy that download fails, and the index build then
+stops with `Failed to initialize ONNX Runtime`. To fix it, fetch
+`onnxruntime-linux-x64-1.23.0.tgz` from the onnxruntime GitHub releases
+yourself. Then either copy its `lib/libonnxruntime.so.1.23.0` to
+`~/.cache/colgrep/onnxruntime/1.23.0/cpu/libonnxruntime.so`, or point
+`ORT_DYLIB_PATH` at it.
+
+The flags follow the colgrep 1.8 command line; the command the arm sends, the
+settings directory it passes and how it reads the answer are pinned in
+`codebase_rag/tests/test_retrieval_eval.py` against a stand-in binary, not the
+real model.
 
 ## Indexing-time benchmark — pinned corpora
 
@@ -1257,6 +1317,45 @@ of roughly 0.38 absolute (about 70% relative) over the strongest grep baseline.
 Bare-name grep, the common first attempt, scores far worse (F1 0.38). This is
 the decoupled retrieval result behind the intuition that a structural graph
 beats text search for code navigation.
+
+#### With ColGrep (`--colgrep --sample 500`)
+
+ColGrep 1.8.5 with its default model (`lightonai/LateOn-Code-edge`), on CPU
+(`--force-cpu`, 4 cores), k = 15. Every condition is scored on the same 500
+symbols (seed 0), sampled from the 29,281 in `codebase_rag`:
+
+| category | label | tp | fp | fn | precision | recall | f1 |
+|---|---|---|---|---|---|---|---|
+| retrieval | graph | 382 | 21 | 10 | 0.9479 | 0.9745 | 0.9610 |
+| retrieval | grep_name | 392 | 1549 | 0 | 0.2020 | 1.0000 | 0.3360 |
+| retrieval | grep_call | 371 | 422 | 21 | 0.4678 | 0.9464 | 0.6262 |
+| retrieval | colgrep_name | 214 | 7286 | 178 | 0.0285 | 0.5459 | 0.0542 |
+| retrieval | colgrep_call | 276 | 357 | 116 | 0.4360 | 0.7041 | 0.5385 |
+
+Cost on that machine:
+- **Index:** building ColGrep's index of `codebase_rag` took 685 s.
+- **Search:** each search took 1.00 s in name mode and 1.57 s in call mode, one process per search.
+- **ripgrep, for comparison:** both grep conditions together took under a second.
+
+ColGrep's plain ranked search (`colgrep_name`, keyword and semantic scores
+fused) is the weakest condition by far for this task. Being a ranked retriever,
+it returns its full 15 files for every symbol, including the many that nothing
+calls, so only 2.9% of what it returns is a caller. Even so, it finds just 55%
+of callers. Narrowing with the call pattern first (`colgrep_call`) makes it
+roughly as precise as `grep_call`, but with lower recall. Every caller it
+misses that `grep_call` finds is explained by one of two limits:
+
+- **The k = 15 cut.** It accounts for 81 of those misses. `count` has 59
+  caller files and `_build` has 22.
+- **The file-size cutoff.** ColGrep skips any file over 512 KB without a
+  warning (`MAX_FILE_SIZE` in its index code). That hides
+  `parsers/call_processor.py` (588 KB), which accounts for 15 more.
+
+A semantic tool is built for vague, natural-language questions, and "which
+files call `S`" is an exact, structural one. So this measures ColGrep on the
+graph's home ground, not on its own. For locating callers, the graph stays
+well ahead (F1 0.96), and the fused keyword plus semantic search does not beat
+plain grep.
 
 ### Incremental update — incremental vs clean re-index (`uv run python -m evals.incremental`)
 

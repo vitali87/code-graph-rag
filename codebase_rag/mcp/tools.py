@@ -4049,6 +4049,8 @@ class MCPToolsRegistry:
         self, file_path: str, target_code: str, replacement_code: str
     ) -> str:
         logger.info(lg.MCP_SURGICAL_REPLACE.format(path=file_path))
+        if refused := self._sensitive_write_refused(file_path):
+            return refused
         try:
             async with self._ingestor_lock:
                 result = await _plain_function(self._file_editor_tool)(
@@ -4098,8 +4100,17 @@ class MCPToolsRegistry:
             logger.error(lg.MCP_ERROR_READ.format(error=e))
             return te.failure(e)
 
+    def _sensitive_write_refused(self, file_path: str) -> te.ToolFailure | None:
+        if settings.ALLOW_SENSITIVE_WRITES or not self.file_reader.is_sensitive(
+            file_path
+        ):
+            return None
+        return te.failure(cs.MCP_WRITE_SENSITIVE_REFUSED.format(path=file_path))
+
     async def write_file(self, file_path: str, content: str) -> str:
         logger.info(lg.MCP_WRITE_FILE.format(path=file_path))
+        if refused := self._sensitive_write_refused(file_path):
+            return refused
         try:
             async with self._ingestor_lock:
                 result = await _plain_function(self._file_writer_tool)(

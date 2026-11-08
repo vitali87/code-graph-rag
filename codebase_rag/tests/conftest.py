@@ -205,6 +205,36 @@ def both_interface_walks(
     clear_scope_facts()
 
 
+@pytest.fixture(params=[True, False], ids=["rust_aliases", "python_aliases"])
+def both_alias_walks(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> Generator[None, None, None]:
+    """Runs a test once on the Rust alias walk and once on its Python twin,
+    so each alias form type inference reads holds on both. A build without
+    the walk skips the Rust run."""
+    if request.param and native_trees.alias_bridge() is None:
+        pytest.skip("cgr_graph_rs without the alias walk is installed")
+    monkeypatch.setattr(native_trees, "ENABLED", request.param)
+    clear_scope_facts()
+    yield
+    clear_scope_facts()
+
+
+@pytest.fixture(params=[True, False], ids=["rust_callables", "python_callables"])
+def both_callable_scans(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> Generator[None, None, None]:
+    """Runs a test once on the Rust callable-parameter scan and once on its
+    Python twin, so each way a parameter is called holds on both. A build
+    without the scan skips the Rust run."""
+    if request.param and native_trees.callable_bridge() is None:
+        pytest.skip("cgr_graph_rs without the callable-parameter scan is installed")
+    monkeypatch.setattr(native_trees, "ENABLED", request.param)
+    clear_scope_facts()
+    yield
+    clear_scope_facts()
+
+
 @pytest.fixture(autouse=True)
 def _disable_stack_autostart() -> Generator[None, None, None]:
     from unittest.mock import patch
@@ -388,6 +418,27 @@ def _isolate_cgr_home(
     home = tmp_path_factory.mktemp("cgr-home-iso")
     monkeypatch.setattr(settings, "CGR_HOME", home)
     return home
+
+
+@pytest.fixture
+def cgr_checkout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A code-graph-rag checkout the grammar loader runs from, under tmp_path.
+
+    The loader reads submodule grammars from cgr's own checkout only, so a
+    test that plants one does it here, not in the working directory.
+    """
+    root = tmp_path / "cgr-checkout"
+    package = root / "codebase_rag"
+    package.mkdir(parents=True)
+    (package / "language_spec.py").write_text("LANGUAGE_SPECS = {}\n", encoding="utf-8")
+    (root / ".git").mkdir()
+    (root / "pyproject.toml").write_text(
+        f'[project]\nname = "{rag_cs.PACKAGE_NAME}"\n', encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        "codebase_rag.parser_loader._package_dir", lambda: package, raising=False
+    )
+    return root
 
 
 def shared_session_dir(tmp_path_factory: pytest.TempPathFactory, name: str) -> Path:

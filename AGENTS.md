@@ -43,7 +43,9 @@ To move them:
    `RUST_TOOLCHAIN` in `.clusterfuzzlite/Dockerfile`, raise that too: the
    fuzz build compiles the crate with it and fails otherwise. The same goes
    for `RUST_FUZZ_TOOLCHAIN`, the nightly the crate's cargo-fuzz targets are
-   built with.
+   built with, and for the `rust` image in the root `Dockerfile`, which
+   builds the crate into the release image and must be no older than
+   `RUST_TOOLCHAIN` (`test_rust_extension_packaging.py` checks this).
 5. Run `codebase_rag/tests/test_native_trees.py` and
    `cargo test --manifest-path rust/cgr_graph_rs/Cargo.toml`.
 

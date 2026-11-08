@@ -488,6 +488,14 @@ EG_RUST_NOT_BORROWED = "NotBorrowed"
 # interface fingerprint, lacks.
 EG_RUST_SCOPE_FACTS = "scope_facts"
 EG_RUST_INTERFACE_FINGERPRINT = "interface_fingerprint"
+EG_RUST_CALLABLE_PARAMETER_INDICES = "callable_parameter_indices"
+EG_RUST_LOCAL_ALIASES = "local_aliases"
+# The file formats it reads and writes (utils/safe_xml.py,
+# utils/toml_writer.py), and what reading XML raises.
+EG_RUST_XML_FIND_ALL = "xml_find_all"
+EG_RUST_XML_SYNTAX_ERROR = "XmlSyntaxError"
+EG_RUST_XML_ENTITY_ERROR = "XmlEntityError"
+EG_RUST_TOML_DUMPS = "toml_dumps"
 
 
 class TreeBridgeCheck(StrEnum):
@@ -499,13 +507,16 @@ class TreeBridgeCheck(StrEnum):
     SCOPE_FACTS = "scope facts"
     INNER_SCOPE_NAMES = "inner scope names"
     INTERFACE_FINGERPRINT = "interface fingerprint"
+    CALLABLE_PARAMETERS = "callable parameters"
+    LOCAL_ALIASES = "local aliases"
 
 
 # The probe: definitions the two hashes walk, decorators, comments, f-strings,
 # non-ASCII text (byte and column offsets part ways there), every binding
 # form the scope walks read, bodies the interface fingerprint keeps whole and
-# one it summarises by its calls and returns (`relay`), and a syntax error
-# (ERROR and MISSING nodes).
+# one it summarises by its calls and returns (`relay`), every value an alias
+# reads through and parameters called directly or from a closure
+# (`aliases`), and a syntax error (ERROR and MISSING nodes).
 TREE_BRIDGE_PROBE = """\
 import os  # comment
 @decorator(arg=1)
@@ -565,6 +576,21 @@ def relay(r, cb):
     if r:
         return r.build()
     return [r.done]
+
+def aliases(self, a, b, cb, *rest, **kw):
+    x = a or b.c
+    y = a and Make()
+    z = (a if b else cb.d)
+    w = a / b
+    v = (a) @ (b or kw)
+    p = q = a
+    x = b
+    s = a + 1
+    cb(x)
+    def later(a):
+        a()
+        rest()
+    return lambda: kw()
 
 def broken(x:
     return x +

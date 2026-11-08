@@ -101,6 +101,13 @@ def test_bare_old_name_carries_the_old_spec_over() -> None:
     assert _parse_new_param(" c ", by_name) is by_name["c"]
 
 
+def test_a_bare_non_ascii_old_name_carries_the_old_spec_over() -> None:
+    # A Python identifier may open with any letter, so `élan` keeps its
+    # annotation and default just as `c` does.
+    spec = ParamSpec("élan", "élan: int = 1", "int", True)
+    assert _parse_new_param("élan", {"élan": spec}) is spec
+
+
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
