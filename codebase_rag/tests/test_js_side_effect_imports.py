@@ -239,6 +239,48 @@ def test_a_call_that_is_not_a_statement_is_no_side_effect_import(
 
 
 @pytest.mark.parametrize(
+    "source",
+    [
+        'function run(require) {\n  require("./db");\n}\nrun(() => {});\n',
+        'const run = (require) => {\n  require("./db");\n};\nrun(() => {});\n',
+        'function run() {\n  const require = () => {};\n  require("./db");\n}\nrun();\n',
+        'function run() {\n  function require() {}\n  require("./db");\n}\nrun();\n',
+        'try {\n  load();\n} catch (require) {\n  require("./db");\n}\n',
+    ],
+    ids=["parameter", "arrow-parameter", "local-const", "local-function", "catch"],
+)
+def test_a_call_to_a_local_named_require_is_no_import(
+    temp_repo: Path, mock_ingestor: MagicMock, source: str
+) -> None:
+    # Negative: a parameter or local that a scope around the call binds is
+    # whatever was passed or declared, not Node's loader (Greptile, PR #3284).
+    (temp_repo / "db.js").write_text("module.exports = {};\n", encoding="utf-8")
+    (temp_repo / "main.js").write_text(source, encoding="utf-8")
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    assert ("main", "db") not in _imports(temp_repo, mock_ingestor)
+
+
+def test_a_module_level_require_made_by_create_require_still_imports(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # An ES module's `const require = createRequire(import.meta.url)` is the
+    # loader itself, so a call to it still imports the module.
+    (temp_repo / "db.js").write_text("module.exports = {};\n", encoding="utf-8")
+    (temp_repo / "main.mjs").write_text(
+        'import { createRequire } from "node:module";\n'
+        "const require = createRequire(import.meta.url);\n"
+        'require("./db");\n',
+        encoding="utf-8",
+    )
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    props = _imports(temp_repo, mock_ingestor).get(("main", "db"))
+    assert props is not None, sorted(_imports(temp_repo, mock_ingestor))
+    assert props.get(cs.KEY_LINE) == 3, props
+
+
+@pytest.mark.parametrize(
     ("statement", "binds"),
     [
         ('import {} from "./instrument";\n', False),

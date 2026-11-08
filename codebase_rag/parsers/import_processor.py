@@ -59,7 +59,11 @@ from .dart import (
     discover_dart_packages,
 )
 from .go import discover_go_module_paths, resolve_go_import_path
-from .js_ts.commonjs_exports import commonjs_export_bindings, is_commonjs_module
+from .js_ts.commonjs_exports import (
+    LocalBindings,
+    commonjs_export_bindings,
+    is_commonjs_module,
+)
 from .js_ts.module_paths import (
     discover_js_workspace_packages,
     resolve_js_workspace_import,
@@ -502,9 +506,10 @@ def _js_clause_binds(clause: Node) -> bool:
     )
 
 
-def _js_side_effect_call(statement: Node) -> tuple[str, bool] | None:
-    # (specifier, is_require) of a statement that is only `require("./db")`
-    # or `import("./cache")`, awaited or not; None for anything else.
+def _js_side_effect_call(statement: Node) -> tuple[str, Node | None] | None:
+    # (specifier, the `require` callee or None for `import()`) of a statement
+    # that is only `require("./db")` or `import("./cache")`, awaited or not;
+    # None for anything else.
     if statement.type != cs.TS_EXPRESSION_STATEMENT:
         return None
     call = statement.named_child(0)
@@ -524,7 +529,7 @@ def _js_side_effect_call(statement: Node) -> tuple[str, bool] | None:
     arg = next((a for a in args.named_children if a.type == cs.TS_STRING), None)
     if arg is None:
         return None
-    return safe_decode_with_fallback(arg).strip("'\""), is_require
+    return safe_decode_with_fallback(arg).strip("'\""), func if is_require else None
 
 
 def _is_js_whole_module_import(entry: DeferredImportEdge) -> bool:
@@ -4982,11 +4987,20 @@ class ImportProcessor:
             if language_obj is not None
             else root_node.named_children
         )
+        bindings: LocalBindings | None = None
         for statement in statements:
             if (call := _js_side_effect_call(statement)) is None:
                 continue
-            specifier, is_require = call
-            target = self._resolve_js_import_target(specifier, module_qn, is_require)
+            specifier, require = call
+            if require is not None:
+                # `function run(require) { require("./db"); }` calls its
+                # parameter, which loads nothing (Greptile, PR #3284).
+                bindings = bindings or LocalBindings(root_node)
+                if bindings.bind(require):
+                    continue
+            target = self._resolve_js_import_target(
+                specifier, module_qn, require is not None
+            )
             self._note_unresolved_js_specifier(module_qn, specifier)
             if target.module_qn:
                 self._record_js_side_effect_import(

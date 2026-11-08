@@ -178,6 +178,19 @@ def commonjs_export_bindings(root: Node) -> dict[str, CommonjsBinding]:
     return published
 
 
+class LocalBindings:
+    """Whether a function, block, `catch` or `for` scope between a name and
+    the module's top level binds it, one module's scopes read once."""
+
+    __slots__ = ("_module",)
+
+    def __init__(self, root: Node) -> None:
+        self._module = _Module(root)
+
+    def bind(self, identifier: Node) -> bool:
+        return self._module.is_shadowed(identifier)
+
+
 def _is_export_assignment(statement: Node) -> bool:
     return any(
         child.type == cs.TS_EXPORT_ASSIGNMENT_TOKEN for child in statement.children
