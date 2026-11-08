@@ -113,6 +113,7 @@ _HOISTED_FUNCTIONS = frozenset(
     {cs.TS_FUNCTION_DECLARATION, cs.TS_GENERATOR_FUNCTION_DECLARATION}
 )
 _EXPORTS_NAMES = frozenset({cs.JS_EXPORTS_KEYWORD, cs.JS_MODULE_KEYWORD})
+_USE_STRICT = b"use strict"
 
 # The kinds of declaration that decide whether a published name is certain.
 _IMPORT = "import"
@@ -185,7 +186,7 @@ class LocalBindings:
     __slots__ = ("_module",)
 
     def __init__(self, root: Node) -> None:
-        self._module = _Module(root)
+        self._module = _Module(root, strict_blocks=True)
 
     def bind(self, identifier: Node) -> bool:
         return self._module.is_shadowed(identifier)
@@ -224,10 +225,23 @@ def _is_type_only_specifier(specifier: Node) -> bool:
 class _Module:
     """One module's tree, read for its CommonJS publications."""
 
-    __slots__ = ("_root", "_bound", "_declarations", "_reassigned")
+    __slots__ = (
+        "_root",
+        "_bound",
+        "_declarations",
+        "_reassigned",
+        "_strict_blocks",
+        "_module_strict",
+    )
 
-    def __init__(self, root: Node) -> None:
+    def __init__(self, root: Node, strict_blocks: bool = False) -> None:
         self._root = root
+        # Whether strict code keeps a function declared in a nested block to
+        # that block. The export reader counts it for the whole function,
+        # which can only drop a name; `LocalBindings` must not claim a
+        # `require` the block does not reach (Greptile, PR #3284).
+        self._strict_blocks = strict_blocks
+        self._module_strict: bool | None = None
         self._bound: dict[tuple[int, int, str], frozenset[str]] = {}
         self._declarations: dict[str, list[_Declaration]] | None = None
         self._reassigned: set[str] = set()
@@ -429,8 +443,26 @@ class _Module:
     def _names_bound_by(self, scope: Node) -> frozenset[str]:
         key = _key(scope)
         if (names := self._bound.get(key)) is None:
-            names = self._bound[key] = frozenset(_declared_names(scope))
+            strict = self._strict_blocks and self._is_strict(scope)
+            names = self._bound[key] = frozenset(_declared_names(scope, strict))
         return names
+
+    def _is_strict(self, scope: Node) -> bool:
+        # An ES module and a class body are strict code, as is code under a
+        # "use strict" directive of the file or of an enclosing function.
+        if self._module_strict is None:
+            self._module_strict = _is_es_module(self._root) or _has_use_strict(
+                self._root
+            )
+        node: Node | None = scope
+        while not self._module_strict and node is not None and node != self._root:
+            if node.type == cs.TS_CLASS_BODY or (
+                node.type in _FUNCTIONS
+                and _has_use_strict(node.child_by_field_name(cs.FIELD_BODY))
+            ):
+                return True
+            node = node.parent
+        return bool(self._module_strict)
 
     def _declarations_of(self, name: str) -> list[_Declaration]:
         if self._declarations is None:
@@ -737,7 +769,7 @@ def _is_callee(node: Node) -> bool:
     )
 
 
-def _declared_names(scope: Node) -> Iterator[str]:
+def _declared_names(scope: Node, strict: bool = False) -> Iterator[str]:
     # The names `scope` itself binds, exactly. A block (or a `switch` body)
     # binds its own `let`, `const`, `class` and function declarations, and
     # keeps them (Greptile, PR #3355). A function binds its name, its
@@ -758,10 +790,10 @@ def _declared_names(scope: Node) -> Iterator[str]:
         if initializer is not None:
             yield from _declarator_names(initializer)
         return
-    yield from _function_names(scope)
+    yield from _function_names(scope, strict)
 
 
-def _function_names(function: Node) -> Iterator[str]:
+def _function_names(function: Node, strict: bool = False) -> Iterator[str]:
     if function.type in (cs.TS_FUNCTION_EXPRESSION, cs.TS_GENERATOR_FUNCTION):
         yield from _pattern_names(function.child_by_field_name(cs.FIELD_NAME))
     yield from _pattern_names(function.child_by_field_name(cs.FIELD_PARAMETER))
@@ -771,18 +803,47 @@ def _function_names(function: Node) -> Iterator[str]:
         return
     # `var`, a `for (var ...)` head, and a function declaration even in a
     # nested block (sloppy mode binds it in the function too) all bind in the
-    # function; counting the last one there too can only drop a name.
-    pending = list(body.named_children)
+    # function; counting the last one there too can only drop a name. Strict
+    # code keeps the nested-block one to its block, whose scope reads it.
+    pending = [(node, True) for node in body.named_children]
     while pending:
-        node = pending.pop()
+        node, direct = pending.pop()
         if node.type in _HOISTED_FUNCTIONS:
-            yield from _pattern_names(node.child_by_field_name(cs.FIELD_NAME))
+            if direct or not strict:
+                yield from _pattern_names(node.child_by_field_name(cs.FIELD_NAME))
         elif node.type == cs.TS_VARIABLE_DECLARATION:
             yield from _declarator_names(node)
         elif node.type == cs.TS_JS_FOR_IN_STATEMENT and _declares_var(node):
             yield from _pattern_names(node.child_by_field_name(cs.FIELD_LEFT))
         if node.type not in _FUNCTIONS:
-            pending.extend(node.named_children)
+            pending.extend((child, False) for child in node.named_children)
+
+
+def _is_es_module(root: Node) -> bool:
+    return any(
+        child.type in (cs.TS_IMPORT_STATEMENT, cs.TS_EXPORT_STATEMENT)
+        for child in root.named_children
+    )
+
+
+def _has_use_strict(body: Node | None) -> bool:
+    # The directive prologue: the string-literal statements a program or a
+    # function body opens with, one of which may be "use strict".
+    if body is None:
+        return False
+    for statement in body.named_children:
+        if statement.type == cs.TS_COMMENT:
+            continue
+        literal = (
+            statement.named_child(0)
+            if statement.type == cs.TS_EXPRESSION_STATEMENT
+            else None
+        )
+        if literal is None or literal.type != cs.TS_STRING:
+            return False
+        if (literal.text or b"")[1:-1] == _USE_STRICT:
+            return True
+    return False
 
 
 def _declares_var(loop: Node) -> bool:

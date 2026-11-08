@@ -246,8 +246,16 @@ def test_a_call_that_is_not_a_statement_is_no_side_effect_import(
         'function run() {\n  const require = () => {};\n  require("./db");\n}\nrun();\n',
         'function run() {\n  function require() {}\n  require("./db");\n}\nrun();\n',
         'try {\n  load();\n} catch (require) {\n  require("./db");\n}\n',
+        'function boot() {\n  {\n    function require() {}\n  }\n  require("./db");\n}\n',
     ],
-    ids=["parameter", "arrow-parameter", "local-const", "local-function", "catch"],
+    ids=[
+        "parameter",
+        "arrow-parameter",
+        "local-const",
+        "local-function",
+        "catch",
+        "sloppy-block-function",
+    ],
 )
 def test_a_call_to_a_local_named_require_is_no_import(
     temp_repo: Path, mock_ingestor: MagicMock, source: str
@@ -259,6 +267,40 @@ def test_a_call_to_a_local_named_require_is_no_import(
     create_and_run_updater(temp_repo, mock_ingestor)
 
     assert ("main", "db") not in _imports(temp_repo, mock_ingestor)
+
+
+_BLOCK_FUNCTION = (
+    "function boot() {\n  {\n    function require() {}\n  }\n"
+    '  require("./db");\n}\nboot();\n'
+)
+
+
+@pytest.mark.parametrize(
+    ("name", "source"),
+    [
+        ("main.js", f'"use strict";\n{_BLOCK_FUNCTION}'),
+        ("main.js", _BLOCK_FUNCTION.replace("{\n  {", '{\n  "use strict";\n  {', 1)),
+        ("main.mjs", f"export const ready = true;\n{_BLOCK_FUNCTION}"),
+        (
+            "main.js",
+            "class App {\n  boot() {\n    {\n      function require() {}\n    }\n"
+            '    require("./db");\n  }\n}\n',
+        ),
+    ],
+    ids=["file-directive", "function-directive", "es-module", "class-method"],
+)
+def test_strict_code_keeps_a_block_s_function_to_the_block(
+    temp_repo: Path, mock_ingestor: MagicMock, name: str, source: str
+) -> None:
+    # Strict code scopes a function declared in a nested block to that block,
+    # so the `require` called after it is Node's loader (Greptile, PR #3284).
+    (temp_repo / "db.js").write_text("module.exports = {};\n", encoding="utf-8")
+    (temp_repo / name).write_text(source, encoding="utf-8")
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    assert ("main", "db") in _imports(temp_repo, mock_ingestor), sorted(
+        _imports(temp_repo, mock_ingestor)
+    )
 
 
 def test_a_module_level_require_made_by_create_require_still_imports(
