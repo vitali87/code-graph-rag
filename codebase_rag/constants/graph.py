@@ -9,6 +9,7 @@ KEY_LABELS = "labels"
 KEY_LABEL = "label"
 KEY_PROPERTIES = "properties"
 KEY_PURGED = "purged"
+KEY_EXPECTED_ROOT = "expected_root"
 KEY_FROM_ID = "from_id"
 KEY_TO_ID = "to_id"
 KEY_TYPE = "type"
@@ -270,11 +271,16 @@ KEY_LONGER_PROJECT_PREFIXES = "longer_project_prefixes"
 KEY_VERSION_SPEC = "version_spec"
 KEY_PREFIX = "prefix"
 KEY_PROJECT_NAME = "project_name"
+# The residual-node count `cgr prune` reads back after a purge (#2479).
+KEY_RESIDUAL_NODES = "residual"
 # Registered projects whose names extend this one (`svc.v2` under `svc`).
 KEY_NESTED_PROJECTS = "nested_projects"
 # The incomplete-run marker's phase (#1705 review): whether the run it records
 # had reached its first graph write when the marker was last updated.
 KEY_WRITING = "writing"
+# Whether a marker `CYPHER_PROJECT_IS_INCOMPLETE` returns records a run that
+# has not finished.
+KEY_RUN_INCOMPLETE = "run_incomplete"
 # Identifies ONE run's incomplete-run marker. Two registries can index the
 # same project concurrently (the ingestor lock is per instance), and a marker
 # keyed only by project let the second run's clear delete the first run's
@@ -283,7 +289,9 @@ KEY_RUN_ID = "run_id"
 # Who wrote the CLI sync's incomplete-run marker (PR #2532 review): the host
 # (machine and pid namespace) and pid of its process, and a token unique to
 # that one sync, so `delete-project` clears it only once that sync provably
-# stopped, and only if no newer sync has re-marked it since.
+# stopped, and only if no newer sync has re-marked it since. The MCP
+# server's and `cgr check`'s markers name the host and pid too, so a full
+# rebuild retires one only once its process exited (review of PR #3496).
 KEY_OWNER_HOST = "owner_host"
 KEY_OWNER_PID = "owner_pid"
 KEY_OWNER_TOKEN = "owner_token"
@@ -1504,6 +1512,84 @@ CYPHER_ALL_INHERITS = (
     "r.base_index AS base_index "
     "ORDER BY child_qn, base_index"
 )
+# Dispatch dependents for an incremental sync (issue #3338): a new subclass
+# override or Protocol conformer changes which CALLS edges unchanged callers
+# must hold, without any edge pointing at the new file and without leaving
+# an unresolved reference, so the affected-caller lookup never finds those
+# callers. These queries read the OLD graph, before the changed files'
+# subtrees are deleted: the hierarchy and method sets the new source is
+# judged against, and the CALLS edges whose targets the dispatch set
+# gained or lost. All six are emulated in evals/cgr_graph.py; a structural
+# edit here without a matching case there fails closed in the unit suite.
+# Every class and interface node the project owns. Base resolution
+# trusts only a project-prefixed base guess that names a class here or
+# in this run's scan: an import-resolved guess for an external base has
+# no node, and comparing it with the persisted bases invents a change
+# for a comment-only edit (issue #3338).
+CYPHER_DISPATCH_CLASS_QNS = (
+    "MATCH (n) "
+    "WHERE n.qualified_name STARTS WITH $project_prefix "
+    "AND ANY(label IN labels(n) WHERE label IN ['Class', 'Interface']) "
+    "RETURN n.qualified_name AS qualified_name"
+)
+# The classes a Protocol declares, with the methods each declares: a
+# Protocol is a class whose direct base is named Protocol, the same test
+# CallResolver._protocol_classes applies to the rehydrated hierarchy.
+CYPHER_DISPATCH_PROTOCOL_METHODS = (
+    "MATCH (p:Class)-[:INHERITS]->(proto) "
+    "WHERE proto.qualified_name IS NOT NULL "
+    "AND (proto.qualified_name ENDS WITH '.Protocol' "
+    "OR proto.qualified_name = 'Protocol') "
+    "AND p.qualified_name STARTS WITH $project_prefix "
+    "MATCH (p)-[:DEFINES_METHOD]->(m:Method) "
+    "RETURN p.qualified_name AS class_qn, m.qualified_name AS method_qn"
+)
+# Every method of the given names a project class defines. The caller
+# filters by leaf name in Python; the query keeps only the rows whose
+# qualified name ends at that leaf, plus the `@line` duplicate variants,
+# which a CALLS edge can also target.
+CYPHER_DISPATCH_CLASS_METHODS = (
+    "MATCH (c:Class)-[:DEFINES_METHOD]->(m:Method) "
+    "WHERE c.qualified_name STARTS WITH $project_prefix "
+    "AND ANY(name IN $names WHERE m.qualified_name ENDS WITH ('.' + name) "
+    "OR m.qualified_name CONTAINS ('.' + name + '@')) "
+    "RETURN c.qualified_name AS class_qn, m.qualified_name AS method_qn"
+)
+# Every method the named classes define, plus the `@line` duplicate
+# variants, which a CALLS edge can also target. Read only for the
+# hierarchy components of classes that changed bases: a descendant
+# override's name is not among the changed or Protocol method names
+# the filtered query above can ask for, and without it the detached
+# override's callers are never queued (issue #3338).
+CYPHER_DISPATCH_METHODS_FOR_CLASSES = (
+    "MATCH (c:Class)-[:DEFINES_METHOD]->(m:Method) "
+    "WHERE c.qualified_name IN $qns "
+    "RETURN c.qualified_name AS class_qn, m.qualified_name AS method_qn"
+)
+# Files holding a CALLS edge into one of the dispatch targets, plus the
+# `@line` variants of those targets. Files already in the re-parse set
+# ($paths) are excluded: they re-parse anyway. The target prefixes are
+# `ClassQn.method` strings; a target whose qualified name merely shares a
+# prefix (`Foo.getaway` for prefix `Foo.get`) never matches, because the
+# remainder after the prefix must be empty or a duplicate marker.
+CYPHER_DISPATCH_CALLER_PATHS = (
+    "MATCH (caller)-[:CALLS]->(target) "
+    "WHERE caller.path IS NOT NULL AND NOT caller.path IN $paths "
+    "AND caller.qualified_name STARTS WITH $project_prefix "
+    "AND target.qualified_name STARTS WITH $project_prefix "
+    "AND ANY(prefix IN $target_prefixes WHERE target.qualified_name = prefix "
+    "OR target.qualified_name STARTS WITH (prefix + '@')) "
+    "RETURN DISTINCT caller.path AS caller_path"
+)
+# The files defining the base classes a new subclass extends: the
+# base-defining file re-parses with the subclass, so a self-dispatch call
+# it holds is re-derived against the new hierarchy even when no CALLS edge
+# of its own names a dispatch target (issue #3338).
+CYPHER_DISPATCH_BASE_PATHS = (
+    "MATCH (base:Class) "
+    "WHERE base.qualified_name IN $qns AND base.path IS NOT NULL "
+    "RETURN DISTINCT base.path AS caller_path"
+)
 # Implementer -> interface/trait pairs for incremental runs (issue #2403):
 # parsing records them only for the files it reads, and the sole-implementer
 # dispatch and the override walk need every implementer.
@@ -1601,6 +1687,8 @@ CYPHER_ALL_METHOD_LOCATIONS = (
 KEY_CHILD_QN = "child_qn"
 KEY_BASE_QN = "base_qn"
 KEY_BASE_INDEX = "base_index"
+KEY_CLASS_QN = "class_qn"
+KEY_METHOD_QN = "method_qn"
 # Result columns of the location-rehydration and module-count queries. Named
 # so the readers and the eval double cannot drift apart on the spelling, which
 # is the failure these queries were already prone to (issue #1716).
@@ -1610,6 +1698,7 @@ KEY_COUNT = "count"
 
 CYPHER_PARAM_PATHS = "paths"
 CYPHER_PARAM_MODULE_NAMES = "module_names"
+CYPHER_PARAM_TARGET_PREFIXES = "target_prefixes"
 KEY_CALLER_PATH = "caller_path"
 KEY_CALLER_LABEL = "caller_label"
 KEY_CALLER_QN = "caller_qn"
@@ -1652,6 +1741,25 @@ KEY_TARGET_HASH = "target_hash"
 KEY_ANCHOR_STATE = "anchor_state"
 KEY_MENTIONS = "mentions"
 KEY_MENTION_QNS = "mention_qns"
+# Each mention's anchors, recorded at write time beside `mention_qns` and in
+# its order, so a renamed or moved mention is followed the way the subject is
+# (issue #3230). An empty string stands for "none": the wire carries string
+# lists, not lists with nulls. `mentions_lost` names the mentions the repair
+# could not place; they stay in `mention_qns` with no edge. One name can hold a
+# live entry and lost ones (`a` deleted, then `b` renamed to `a`): each keeps
+# its own slot and anchors, the live one first, and `mentions_lost` repeats
+# the name once per lost entry. Before that, names were unique and read the
+# same way.
+KEY_MENTION_HASHES = "mention_hashes"
+KEY_MENTION_QUOTES = "mention_quotes"
+KEY_MENTIONS_LOST = "mentions_lost"
+KEY_ATTACHED = "attached"
+KEY_ATTACH_QNS = "attach_qns"
+KEY_ATTACH_KEYS = "attach_keys"
+KEY_KEY_SEPARATOR = "key_separator"
+# Joins a followed mention's new name to the hash it was followed by, in one
+# string the write compares as a whole; a qualified name never holds it.
+GLOSS_MENTION_KEY_SEPARATOR = "\x1f"
 KEY_ANCHOR_HASH = "anchor_hash"
 # Written by the repair tiers (issue #1808, stage four). `moved_from` is the
 # name a MOVED gloss was written against, kept so the move stays visible;
