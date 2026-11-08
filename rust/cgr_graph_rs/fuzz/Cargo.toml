@@ -58,3 +58,10 @@ path = "fuzz_targets/sqlite_graph.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "xml_elements"
+path = "fuzz_targets/xml_elements.rs"
+test = false
+doc = false
+bench = false

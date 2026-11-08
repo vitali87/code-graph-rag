@@ -53,6 +53,9 @@ build-grammars: ## Build grammar submodules
 	git submodule update --init --recursive --depth 1
 	@echo "Grammars built!"
 
+# HOST/PORT set MEMGRAPH_HOST/MEMGRAPH_PORT for this run only; without them
+# the watcher reads those from the environment or .env, as cgr start does
+# (issue #2885).
 watch: ## Watch repository for changes and update graph in real-time
 	@if [ -z "$(REPO_PATH)" ]; then \
 		echo "Error: REPO_PATH is required. Usage: make watch REPO_PATH=/path/to/repo"; \
