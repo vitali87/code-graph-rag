@@ -658,9 +658,11 @@ def anyio_backend(request: pytest.FixtureRequest) -> str:
 
 
 def _registry(root: Path) -> MCPToolsRegistry:
-    _project, store = _graph(root)
+    project, store = _graph(root)
     ingestor = MagicMock()
     ingestor.fetch_all = _fetch_all(store)
+    # The server's root is indexed: an unindexed one is refused (#3193).
+    ingestor.list_projects.return_value = [project]
     return MCPToolsRegistry(
         project_root=str(root), ingestor=ingestor, cypher_gen=MagicMock()
     )

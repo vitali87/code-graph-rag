@@ -3,12 +3,57 @@ from __future__ import annotations
 from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
-from ...constants import SEPARATOR_DOT
+from ...constants import (
+    CHAR_COMMA,
+    SEPARATOR_DOT,
+    TS_FIELD_FUNCTION,
+    TS_FIELD_OBJECT,
+    TS_PY_ATTRIBUTE,
+    TS_PY_CALL,
+    TS_PY_IDENTIFIER,
+)
 from ...types_defs import FunctionRegistryTrieProtocol, NodeType
 from ..utils import follow_reexports
 
 if TYPE_CHECKING:
+    from tree_sitter import Node
+
     from ..import_processor import ImportProcessor
+
+
+def call_head(node: Node) -> Node | None:
+    """The identifier a call's callee starts with: `Thing` for `Thing()`,
+    `pkg` for `pkg.make()`, None for anything else. A scope that binds
+    that name itself calls its own binding, not the module's."""
+    if node.type != TS_PY_CALL:
+        return None
+    head = node.child_by_field_name(TS_FIELD_FUNCTION)
+    while head is not None and head.type == TS_PY_ATTRIBUTE:
+        head = head.child_by_field_name(TS_FIELD_OBJECT)
+    return head if head is not None and head.type == TS_PY_IDENTIFIER else None
+
+
+def split_top_level(inner: str, separator: str = CHAR_COMMA) -> list[str]:
+    """Split `A, dict[str, B], C` on the separators outside any brackets --
+    the commas between positions, or the `|` between union members, which a
+    plain `str.split` would also find INSIDE `tuple[Widget | None, Banner]`."""
+    parts: list[str] = []
+    depth = 0
+    current: list[str] = []
+    for char in inner:
+        if char in "[(":
+            depth += 1
+        elif char in "])":
+            depth = max(0, depth - 1)
+        if char == separator and depth == 0:
+            parts.append("".join(current).strip())
+            current = []
+        else:
+            current.append(char)
+    tail = "".join(current).strip()
+    if tail:
+        parts.append(tail)
+    return parts
 
 
 def resolve_dotted_class(
@@ -36,7 +81,7 @@ def resolve_dotted_class(
     bases = (
         [own_class]
         if own_class_rebinds
-        else _dotted_head_bases(head, module_qn, import_mapping.get(module_qn, {}))
+        else dotted_head_bases(head, module_qn, import_mapping.get(module_qn, {}))
     )
     for base in bases:
         qn = follow_reexports(
@@ -47,7 +92,7 @@ def resolve_dotted_class(
     return None
 
 
-def _dotted_head_bases(
+def dotted_head_bases(
     head: str, module_qn: str, import_map: dict[str, str]
 ) -> Iterator[str]:
     """What the first name of a dotted path can refer to, most specific first.

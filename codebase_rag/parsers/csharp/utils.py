@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from functools import lru_cache
 from types import MappingProxyType
+from typing import NamedTuple
 
 from tree_sitter import Node
 
@@ -168,6 +169,37 @@ def annotate_type_ref(text: str) -> str:
     # name always means arity 0, so simple-name twins stay distinguishable
     # through every stored type map without touching method signatures.
     return type_ref(_normalize_type_name(text), generic_arity_of_type_text(text))
+
+
+def array_element_text(type_text: str) -> str | None:
+    """The element type of an array type: `T[]` and `T[,]` give `T`, a
+    jagged `T[][]` gives `T[]`; a type that is no array gives None."""
+    text = type_text.strip().removesuffix(cs.CHAR_QUESTION_MARK)
+    if not text.endswith(cs.CSHARP_ARRAY_RANK_CLOSE):
+        return None
+    element, rank, _ = text.rpartition(cs.CSHARP_ARRAY_RANK_OPEN)
+    if not rank:
+        return None
+    return element.strip() or None
+
+
+def collection_element_text(type_text: str) -> str | None:
+    """The element type a `foreach` over a value of `type_text` binds: an
+    array's element type, and `T` for a known one-argument collection
+    (`List<T>`, `IEnumerable<T>`); anything else gives None (issue #2938)."""
+    if (element := array_element_text(type_text)) is not None:
+        return element
+    text = type_text.strip().removesuffix(cs.CHAR_QUESTION_MARK)
+    head, angle, rest = text.partition(cs.CHAR_ANGLE_OPEN)
+    if (
+        not angle
+        or not rest.endswith(cs.CHAR_ANGLE_CLOSE)
+        or head.strip().rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        not in cs.CSHARP_ENUMERABLE_GENERICS
+        or generic_arity_of_type_text(text) != 1
+    ):
+        return None
+    return rest[: -len(cs.CHAR_ANGLE_CLOSE)].strip() or None
 
 
 def type_ref(name: str, arity: int) -> str:
@@ -617,12 +649,20 @@ _NAME_BINDERS = frozenset(
         cs.TS_CSHARP_VARIABLE_DECLARATOR,
         cs.TS_CSHARP_PARAMETER,
         cs.TS_CSHARP_DECLARATION_PATTERN,
+        cs.TS_CSHARP_RECURSIVE_PATTERN,
         cs.TS_CSHARP_DECLARATION_EXPRESSION,
         cs.TS_CSHARP_CATCH_DECLARATION,
         cs.TS_CSHARP_PROPERTY_DECLARATION,
         cs.TS_CSHARP_FROM_CLAUSE,
         cs.TS_CSHARP_TUPLE_PATTERN,
+        # A `params T[] xs` tail sits in the list itself, not in a `parameter`.
+        cs.TS_CSHARP_PARAMETER_LIST,
     }
+)
+# Query clauses whose range variable has no `name` field: `let y = ...`,
+# `join z in zs ...` and `... into g`.
+_UNNAMED_QUERY_BINDERS = frozenset(
+    {cs.TS_CSHARP_LET_CLAUSE, cs.TS_CSHARP_JOIN_CLAUSE, cs.TS_CSHARP_JOIN_INTO_CLAUSE}
 )
 _TYPE_DECLARATIONS = frozenset(
     {
@@ -665,6 +705,21 @@ _EMBEDDING_STATEMENTS = frozenset(
 )
 # The scans hold a few trees' nodes at most: one file is parsed at a time.
 _SCOPE_CACHE_SIZE = 64
+# Query clauses that declare a range variable of their own.
+_QUERY_CLAUSES = frozenset(
+    {cs.TS_CSHARP_FROM_CLAUSE, cs.TS_CSHARP_LET_CLAUSE, cs.TS_CSHARP_JOIN_CLAUSE}
+)
+# `join z in zs on x equals z`: past its variable, a join holds its source,
+# then the outer and the inner key; any other count is a malformed parse.
+_JOIN_PARTS = 3
+
+
+class _Binder(NamedTuple):
+    """A binder of a value name and the bytes its name is in scope over."""
+
+    node: Node
+    start: int
+    end: int
 
 
 def _text(node: Node | None) -> str | None:
@@ -678,49 +733,65 @@ def _binding(node: Node) -> str | None:
     parent = node.parent
     if node.type != cs.TS_CSHARP_IDENTIFIER or parent is None:
         return None
+    return _text(node) if _binds_as_name(node, parent) else None
+
+
+def _binds_as_name(node: Node, parent: Node) -> bool:
     if parent.type in _NAME_BINDERS:
-        return (
-            _text(node) if node == parent.child_by_field_name(cs.FIELD_NAME) else None
-        )
+        # A deconstruction `var (a, b)` names each of its elements.
+        return node in parent.children_by_field_name(cs.FIELD_NAME)
     if parent.type == cs.TS_CSHARP_FOREACH_STATEMENT:
-        return (
-            _text(node) if node == parent.child_by_field_name(cs.FIELD_LEFT) else None
-        )
-    if parent.type == cs.TS_CSHARP_LET_CLAUSE:
+        return node == parent.child_by_field_name(cs.FIELD_LEFT)
+    if parent.type in _UNNAMED_QUERY_BINDERS:
+        written = parent.child_by_field_name(cs.FIELD_TYPE)
         first = next(
-            (c for c in parent.named_children if c.type == cs.TS_CSHARP_IDENTIFIER),
+            (
+                c
+                for c in parent.named_children
+                if c.type == cs.TS_CSHARP_IDENTIFIER and c != written
+            ),
             None,
         )
-        return _text(node) if node == first else None
-    return None
+        return node == first
+    # A query continuation's variable sits in the query itself: `into g`.
+    return parent.type == cs.TS_CSHARP_QUERY_EXPRESSION
 
 
 @lru_cache(maxsize=_SCOPE_CACHE_SIZE)
-def _member_values(member: Node) -> Mapping[str, tuple[Node, ...]]:
-    """Every value name bound inside one type member, nested types aside,
-    with the nodes it is in scope over: the scope nearest each binder."""
-    scopes: dict[str, list[Node]] = {}
+def _member_binders(member: Node) -> Mapping[str, tuple[_Binder, ...]]:
+    """Every value name bound inside one type member, nested types aside:
+    each binder of it, with the bytes of the scope nearest that binder."""
+    binders: dict[str, list[_Binder]] = {}
     stack = [(member, member)]
     while stack:
         node, scope = stack.pop()
         if (name := _binding(node)) is not None:
-            scopes.setdefault(name, []).append(scope)
+            start, end = _query_span(node) or (scope.start_byte, scope.end_byte)
+            binders.setdefault(name, []).append(_Binder(node, start, end))
         inner = node if node.type in _VALUE_SCOPES else scope
         stack.extend(
             (child, _child_scope(node, child, inner))
             for child in node.named_children
             if child.type not in _TYPE_DECLARATIONS
         )
-    return MappingProxyType({name: tuple(nodes) for name, nodes in scopes.items()})
+    return MappingProxyType({name: tuple(found) for name, found in binders.items()})
 
 
 def _child_scope(node: Node, child: Node, inner: Node) -> Node:
     """The scope `child` binds into, `inner` being the one inside `node`.
 
-    An embedded statement of an `if` or a `lock` is its own. A case label's
+    A `foreach` variable is in scope in the loop's body alone, so the
+    collection `foreach (var x in x.All())` still reads the outer `x`. An
+    embedded statement of an `if` or a `lock` is its own. A case label's
     pattern and `when` guard bind into their switch section alone, while
     the section's statements bind into the switch body (§7.3).
     """
+    if (
+        node.type == cs.TS_CSHARP_FOREACH_STATEMENT
+        and child == node.child_by_field_name(cs.FIELD_LEFT)
+    ):
+        body = node.child_by_field_name(cs.FIELD_BODY)
+        return body if body is not None else child
     if node.type in _EMBEDDING_STATEMENTS and (
         child.type == cs.TS_CSHARP_BLOCK
         or child.type.endswith(cs.CSHARP_STATEMENT_SUFFIX)
@@ -734,12 +805,118 @@ def _child_scope(node: Node, child: Node, inner: Node) -> Node:
     return inner
 
 
+def _query_clause(binder: Node) -> Node | None:
+    """The child of its query that declares the range variable `binder`."""
+    parent = binder.parent
+    if parent is None:
+        return None
+    if parent.type == cs.TS_CSHARP_QUERY_EXPRESSION:
+        return binder
+    if parent.type == cs.TS_CSHARP_JOIN_INTO_CLAUSE:
+        return parent.parent
+    return parent if parent.type in _QUERY_CLAUSES else None
+
+
+def _join_inner_key(join: Node, binder: Node) -> Node | None:
+    written = join.child_by_field_name(cs.FIELD_TYPE)
+    parts = [
+        c
+        for c in join.named_children
+        if c not in (written, binder) and c.type != cs.TS_CSHARP_JOIN_INTO_CLAUSE
+    ]
+    return parts[-1] if len(parts) == _JOIN_PARTS else None
+
+
+def _query_span(binder: Node) -> tuple[int, int] | None:
+    """The bytes a query's range variable is in scope over: the clauses
+    after the one declaring it, up to the next continuation (`... into g`),
+    which starts afresh. The declaring clause itself is not, so the source
+    of `from x in x.All()` still reads the outer `x` (bot review on PR
+    #2990). A `join` variable is in scope from its `equals` key on, and only
+    there when the join ends `into` a group."""
+    clause = _query_clause(binder)
+    query = clause.parent if clause is not None else None
+    if clause is None or query is None or query.type != cs.TS_CSHARP_QUERY_EXPRESSION:
+        return None
+    start = clause.end_byte
+    if clause.type == cs.TS_CSHARP_JOIN_CLAUSE and binder.parent == clause:
+        key = _join_inner_key(clause, binder)
+        if key is not None:
+            if _first_named_child(clause, cs.TS_CSHARP_JOIN_INTO_CLAUSE) is not None:
+                return key.start_byte, key.end_byte
+            start = key.start_byte
+    end = next(
+        (
+            c.start_byte
+            for c in query.named_children
+            if c.type == cs.TS_CSHARP_IDENTIFIER and c.start_byte >= clause.end_byte
+        ),
+        query.end_byte,
+    )
+    return start, end
+
+
+def _holds(start: int, end: int, site: Node) -> bool:
+    return start <= site.start_byte and site.end_byte <= end
+
+
 def _member_binds(member: Node, name: str, site: Node) -> bool:
     """Whether a binder of `name` in `member` is in scope at `site`."""
     return any(
-        scope.start_byte <= site.start_byte and site.end_byte <= scope.end_byte
-        for scope in _member_values(member).get(name, ())
+        _holds(binder.start, binder.end, site)
+        for binder in _member_binders(member).get(name, ())
     )
+
+
+def _value_member(site: Node) -> Node | None:
+    """The type member holding `site`, the file's root for a top-level
+    statement, or None in a type's own header."""
+    child, current = site, site.parent
+    while current is not None:
+        if current.type in _TYPE_DECLARATIONS:
+            return None
+        if (
+            current.type == cs.TS_CSHARP_DECLARATION_LIST
+            and current.parent is not None
+            and current.parent.type in _TYPE_DECLARATIONS
+        ):
+            return child
+        child, current = current, current.parent
+    return child
+
+
+def _innermost(found: tuple[_Binder, ...], site: Node) -> Node | None:
+    nearest: _Binder | None = None
+    for candidate in found:
+        if _holds(candidate.start, candidate.end, site) and (
+            nearest is None
+            or (nearest.start <= candidate.start and candidate.end <= nearest.end)
+        ):
+            nearest = candidate
+    return nearest.node if nearest is not None else None
+
+
+def value_binders_at(site: Node) -> dict[str, Node]:
+    """The innermost binder in scope at `site` of each value name that the
+    member holding it binds: a parameter, a local, or a `foreach`, pattern,
+    out, deconstruction, `catch`, lambda or query variable (bot review on PR
+    #2990). A field of the type is not among them."""
+    member = _value_member(site)
+    if member is None:
+        return {}
+    binders = {
+        name: _innermost(found, site) for name, found in _member_binders(member).items()
+    }
+    return {name: binder for name, binder in binders.items() if binder is not None}
+
+
+def value_binder_at(site: Node, name: str) -> Node | None:
+    """The innermost binder of `name` in scope at `site`, as in
+    `value_binders_at`."""
+    member = _value_member(site)
+    if member is None:
+        return None
+    return _innermost(_member_binders(member).get(name, ()), site)
 
 
 def _first_named_child(node: Node, node_type: str) -> Node | None:
