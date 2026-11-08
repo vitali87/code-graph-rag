@@ -40,6 +40,7 @@ Every top-level command, from the CLI's own help registry:
 | `cgr dead-code` | Report code that appears unreachable from known entry points |
 | `cgr duplicates` | Report structurally duplicated functions and methods |
 | `cgr delete-project` | Delete one project without changing other indexed projects |
+| `cgr prune` | Prune projects whose repository root no longer exists |
 | `cgr language` | Manage language grammars and parser metadata |
 | `cgr daemon` | Manage the shared Memgraph and Qdrant stack |
 | `cgr trace` | Ingest runtime call traces as dynamic CALLS edges |
@@ -47,7 +48,7 @@ Every top-level command, from the CLI's own help registry:
 | `cgr graph` | Deterministic graph queries (resolve, definition, callers, callees, implementors, overrides, importers, tests-reaching) as JSON, no LLM. |
 | `cgr check` | Report the structural delta of the working tree against a git ref: dangling callers and importers, arity findings, new duplicates, new import cycles, tests reaching the edited symbols. |
 | `cgr rename` | Rename a definition everywhere the graph references it (definition, call and reference sites, imports, overrides, __all__); refuses on guessed sites, on occurrences the graph has no site for, and on a graph a stopped sync left partial. |
-| `cgr change-signature` | Change a Python definition's parameter list and rewrite every call site the graph knows; sites the mapping cannot complete are listed, not touched; refuses on a graph a stopped sync left partial. |
+| `cgr change-signature` | Change a Python or JavaScript definition's parameter list and rewrite every call site the graph knows; sites the mapping cannot complete are listed, not touched; refuses on a graph a stopped sync left partial. |
 | `cgr context` | Print a graph-ranked context slice for a symbol, location or task within a token budget: source, caller lines, callee signatures, types, tests, docs. |
 | `cgr port` | Judge a port between languages: pair the functions of two implementations and compare their calls and arity, as JSON, no LLM. |
 | `cgr workspace` | Manage named groups of repositories |
@@ -252,7 +253,7 @@ cgr dead-code [OPTIONS]
 | `--output`, `-o` | Write the report to this file instead of stdout. |
 | `--fail-on-found` | Exit with status 1 when any candidate is found. Useful in CI. |
 | `--min-resolution` | Ignore call edges below this confidence when deciding liveness: heuristic &lt; overload &lt; exact &lt; trace_confirmed (dynamic counts as confirmed). |
-| `--endpoint-roots` / `--no-endpoint-roots` | Treat a decorator-routed handler (FastAPI, Flask) as reachable by its route decorator alone (default). With --no-endpoint-roots, such a handler is live only if some indexed call site resolves to its endpoint (RESOLVES_TO into it, or a direct READS_FROM/WRITES_TO for RPC and dispatch resources), so an endpoint nobody calls is reported. A handler registered by a call (Go HandleFunc, Express app.get) stays live through that call. [default: endpoint-roots] |
+| `--endpoint-roots` / `--no-endpoint-roots` | Treat a decorator-routed handler (FastAPI, Flask) as reachable by its route decorator alone (default). With --no-endpoint-roots, such a handler is live only if some indexed call site resolves to its endpoint (RESOLVES_TO into it, or a direct READS_FROM/WRITES_TO for RPC and dispatch resources), so an endpoint nobody calls is reported. A handler registered by a call (Go HandleFunc, Express app.get) stays live through that call. Endpoints are recorded only by the io capture group: index the project with --capture io first, or the command refuses. [default: endpoint-roots] |
 | `--public-roots` / `--no-public-roots` | Treat every public or exported symbol as a root (default), as suits a library whose API is called from outside the repository. With --no-public-roots, for an application or service, a symbol is a root only as an entry point, test, decorated handler or runtime hook, so unused public code is reported. Symbols in structural-tier languages stay roots, having no call graph. [default: public-roots] |
 <!-- /SECTION:cli_options_dead_code -->
 

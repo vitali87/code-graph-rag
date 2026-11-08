@@ -40,6 +40,14 @@ SEMANTIC_EXTRA = "Semantic search requires 'semantic' extra: uv sync --extra sem
 # Input errors
 JSON_TOO_DEEP = "JSON nesting exceeds the decoder's recursion limit"
 
+# The Rust extension (rust/cgr_graph_rs), which cgr does not run without
+RUST_EXTENSION_MISSING = (
+    "code-graph-rag needs its Rust extension, cgr-graph-rs, and cannot import "
+    "it ({error}). It ships as wheels for CPython 3.12+ on Linux (x86_64, "
+    "aarch64), macOS and Windows x64; reinstall code-graph-rag there, or, in a "
+    "checkout, run `uv sync` with a Rust toolchain on PATH to build it."
+)
+
 # OpenAI-compatible embedding errors
 OPENAI_EMBEDDING_HTTP_ERROR = (
     "OpenAI-compatible embedding request failed with status {status}: {body}"
@@ -213,6 +221,21 @@ INGESTOR_NOT_QUERYABLE = "{kind} has no graph to read."
 ACCESS_DENIED = "Access denied: Cannot access files outside the project root."
 
 
+DEADCODE_ENDPOINT_DATA_MISSING = (
+    "--no-endpoint-roots needs endpoint data: project '{project}' has "
+    "{handlers} route-decorated handler(s) but no recorded endpoint, so it was "
+    "indexed without the io capture group and each handler would stay live by "
+    "its decorator. Re-index it with --capture io (cgr start --repo-path <repo> "
+    "--update-graph --project-name {project} --capture io), or drop "
+    "--no-endpoint-roots."
+)
+
+
+# Tree bridge (used with raise NotBorrowed, which the caller catches and runs
+# the Python twin)
+NO_DESCENDANT = "no node at descendant index {index}"
+
+
 # Exception classes
 class NoTreeBridge(Exception):
     """Stands in for the Rust extension's `NotBorrowed` when it has no tree
@@ -270,6 +293,24 @@ class RepoPathError(ValueError):
     still catch it. Its own type is what lets `cgr mcp-server` add the
     `TARGET_REPO_PATH` hint to this error and no other (issue #2881).
     """
+
+
+class EndpointDataMissingError(Exception):
+    """Endpoint roots are off, but the project holds no endpoint to decide by.
+
+    Only the `io` capture group writes `EXPOSES`; without it every
+    route-decorated handler stays live by its decorator, so the scan would
+    read as a clean result on handlers it never judged (issue #2896).
+    """
+
+    def __init__(self, project_name: str, handlers: int) -> None:
+        self.project_name = project_name
+        self.handlers = handlers
+        super().__init__(
+            DEADCODE_ENDPOINT_DATA_MISSING.format(
+                project=project_name, handlers=handlers
+            )
+        )
 
 
 # Sync lock (issue #2441)

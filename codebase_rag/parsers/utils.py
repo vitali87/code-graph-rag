@@ -25,6 +25,7 @@ from ..types_defs import (
     TreeSitterNodeProtocol,
 )
 from ..utils.path_utils import cached_relative_path, cached_resolve_posix
+from . import native_trees
 from .anchor_hash import anchor_hash_props
 from .ast_fingerprint import fingerprint_props
 from .endpoints import emit_endpoints, queue_endpoints
@@ -1034,7 +1035,22 @@ def callable_parameter_indices(
 ) -> dict[str, int]:
     # Maps each parameter invoked as a call inside the function body to its
     # positional index in the call-site argument list (self/cls dropped so the
-    # index lines up with how bound methods are invoked).
+    # index lines up with how bound methods are invoked). The Rust tree bridge
+    # scans Python and JS/TS bodies; the twin below scans every language and
+    # stays the reference.
+    if language is not None and (bridge := native_trees.callable_bridge()):
+        try:
+            found = bridge.callable_parameter_indices(func_node, language)
+        except native_trees.NotBorrowed:
+            found = None
+        if found is not None:
+            return dict(found)
+    return python_callable_parameter_indices(func_node, language)
+
+
+def python_callable_parameter_indices(
+    func_node: Node, language: cs.SupportedLanguage | None
+) -> dict[str, int]:
     if (inputs := _callable_scan_inputs(func_node, language)) is None:
         return {}
     names = inputs.names

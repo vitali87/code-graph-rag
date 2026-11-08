@@ -588,6 +588,9 @@ MG_LIST_PROJECTS_FAILED = (
 )
 MG_DELETING_PROJECT = "--- Deleting project: {project_name} ---"
 MG_PROJECT_DELETED = "--- Project {project_name} deleted. ---"
+MG_PROJECT_NOT_DELETED = (
+    "--- Project {project_name} not deleted: its root no longer matches. ---"
+)
 MG_ENSURING_CONSTRAINTS = "Ensuring constraints..."
 MG_CONSTRAINTS_DONE = "Constraints checked/created."
 MG_LEGACY_PURGE = (
@@ -1174,6 +1177,10 @@ MCP_SERVER_NO_ROOT = (
     "[GraphCode MCP] No project root configured, using current directory: {path}"
 )
 MCP_SERVER_ROOT_RESOLVED = "[GraphCode MCP] Project root resolved to: {path}"
+MCP_SERVER_BROAD_ROOT = (
+    "[GraphCode MCP] TARGET_REPO_PATH is {path}, which holds your home "
+    "directory: every file tool can reach every file under it."
+)
 MCP_SERVER_USING_ROOT = "[GraphCode MCP] Using project root: {path}"
 MCP_SERVER_WORKSPACE = "MCP server scoped to workspace {name!r} ({count} repos)"
 MCP_SERVER_CONFIG_ERROR = "[GraphCode MCP] Configuration error: {error}"
@@ -1227,6 +1234,17 @@ STRANDED_RUNS_UNREADABLE = (
     "Could not read which earlier runs left project {project} partial "
     "({error}); their markers stay until a later full sync."
 )
+EXITED_RUNS_RETIRED = (
+    "Cleared {count} incomplete-run marker(s) of {project} left by runs whose "
+    "process has exited."
+)
+EXITED_RUNS_UNREADABLE = (
+    "Could not read which runs of {project} left markers ({error}); those markers stay."
+)
+EXITED_RUNS_NOT_RETIRED = (
+    "The incomplete-run markers of {project} left by exited runs could not be "
+    "cleared: {error}. cgr status may list it as interrupted."
+)
 STRANDED_RUNS_NOT_RETIRED = (
     "The rebuild of {project} finished, but the incomplete-run markers it "
     "superseded could not be cleared: {error}. The graph is complete; the next "
@@ -1237,6 +1255,7 @@ CLI_DELETE_MARKER_NOT_CLEARED = (
     "cleared: {error}. cgr status may list it as interrupted until it is synced "
     "again."
 )
+CLI_PRUNE_VECTORS_FAILED = "Embedding deletion failed for {project}: {error}"
 CLI_DELETE_GLOSS_SWEEP_SKIPPED = (
     "The delete of project {project} failed, and whether it still exists "
     "could not be read: {error}. Its notes (glosses) were not swept."

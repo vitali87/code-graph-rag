@@ -130,6 +130,11 @@ CONTENT_EVENT_TYPES = frozenset(
     {EventType.MODIFIED, EventType.CREATED, EventType.DELETED}
 )
 
+# The events that can change an ignore rule's input. A read cannot, and
+# re-reading the rules reads those very files: a watcher that followed reads
+# re-read `.gitignore` forever after one `git status` (issue #3583).
+RULE_INPUT_EVENT_TYPES = CONTENT_EVENT_TYPES | {EventType.MOVED, EventType.CLOSED}
+
 
 WATCHER_SLEEP_INTERVAL = 1
 LOG_LEVEL_INFO = "INFO"
@@ -348,7 +353,11 @@ CGR_INSTRUCTIONS_SEPARATOR = "\n\n---\n\n"
 # Read only from the environment cgr starts with, never from `.env` in the
 # working directory, which usually belongs to the repository being analysed.
 ENVIRONMENT_ONLY_SETTINGS = frozenset(
-    {"CGR_TRUST_PROJECT_INSTRUCTIONS", "CGR_ALLOW_SENSITIVE_READS"}
+    {
+        "CGR_TRUST_PROJECT_INSTRUCTIONS",
+        "CGR_ALLOW_SENSITIVE_READS",
+        "CGR_ALLOW_SENSITIVE_WRITES",
+    }
 )
 # Every file cgr keeps about one checkout. They live in that checkout's
 # directory under CGR_HOME / CGR_STATE_DIRNAME rather than in the working

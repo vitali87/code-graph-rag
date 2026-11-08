@@ -38,6 +38,15 @@ class FileAction(StrEnum):
     EDIT = "edit"
 
 
+class PruneOutcome(StrEnum):
+    """What `cgr prune` did with one candidate (#2479)."""
+
+    PRUNED = "pruned"
+    FAILED = "failed"
+    # Its root came back, or the graph no longer names the root checked.
+    SKIPPED = "skipped"
+
+
 HELP_ARG = "help"
 
 CLI_ERR_OUTPUT_REQUIRES_UPDATE = (
@@ -253,6 +262,7 @@ CLI_STATUS_SYNC_ROW = "  - {project}: {detail}"
 CLI_STATUS_SYNC_TIME = "last sync {time}"
 CLI_STATUS_SYNC_NOT_RECORDED = "last sync not recorded (the next sync records it)"
 CLI_STATUS_SYNC_MARKED = "({marker})"
+CLI_STATUS_SYNC_ROOT = "({root})"
 CLI_MSG_CLEANING_HASH_CACHE = "Removing hash cache: {path}"
 CLI_MSG_CLEAN_DONE = "Clean completed successfully!"
 CLI_WARN_CLEAN_OTHER_PROJECTS = (
@@ -287,6 +297,55 @@ CLI_ERR_PROJECT_NAME_REQUIRED = (
     "Error: name the project with --project, or pass --repo-path."
 )
 CLI_ERR_DELETE_PROJECT_FAILED = "Failed to delete project '{project_name}': {error}"
+CLI_MSG_PRUNE_NO_CANDIDATES = "No indexed project has a missing root: nothing to prune."
+CLI_MSG_PRUNE_CANDIDATES = "Projects whose root no longer exists:"
+CLI_MSG_PRUNE_CANDIDATE = "  - {project_name}: {root}"
+CLI_MSG_PRUNE_DRY_RUN = (
+    "Dry run: {count} project(s) would be pruned. "
+    "Run cgr prune without --dry-run to remove them."
+)
+CLI_MSG_PRUNING_PROJECT = (
+    "Pruning project '{project_name}': root {root} no longer exists..."
+)
+CLI_MSG_PROJECT_PRUNED = "Pruned project '{project_name}'."
+CLI_MSG_PRUNE_DONE = "Pruned {count} project(s)."
+CLI_WARN_PRUNE_ROOT_BACK = (
+    "Root of '{project_name}' is reachable again -- skipping, it is no longer "
+    "a prune candidate."
+)
+CLI_WARN_PRUNE_ROOT_CHANGED = (
+    "'{project_name}' changed while it was being pruned -- its root moved or "
+    "a sync of it began writing -- skipping it."
+)
+# `cgr prune`'s own incomplete-run marker, put down only when it takes over
+# from exited runs' markers (#2479).
+PRUNE_RUN_ID_PREFIX = "prune-"
+CLI_WARN_PRUNE_RUN_WRITING = (
+    "A sync of '{project_name}' may still be writing the graph (its "
+    "incomplete-run marker is up) -- skipping it. Re-run prune once that sync "
+    "has finished."
+)
+CLI_WARN_PRUNE_VECTORS_KEPT = (
+    "Vectors of '{project_name}' could not be deleted and remain in the "
+    "vector store -- the graph purge stands; clear the store if the orphans "
+    "matter."
+)
+CLI_ERR_PRUNE_FAILED = "Failed to prune project '{project_name}': {error}"
+CLI_ERR_PRUNE_RUN_FAILED = "Failed to prune: {error}"
+CLI_ERR_PRUNE_VERIFY_FAILED = (
+    "Project '{project_name}' could not be verified as fully removed; it may "
+    "still be present in the graph. Inspect it with 'cgr delete-project -p "
+    "{project_name}' before retrying."
+)
+CLI_PROMPT_PRUNE_CONFIRM = (
+    "Prune {count} project(s) whose root no longer exists from the graph?"
+)
+CLI_ERR_PRUNE_NEEDS_CONFIRMATION = (
+    "Refusing to prune without a terminal to confirm on. Re-run with --yes "
+    "to prune without asking."
+)
+CLI_MSG_PRUNE_ABORTED = "Aborted: the graph was left untouched."
+CLI_STATUS_ROOT_MISSING = "(missing)"
 CLI_MSG_EXPORTING_TO = "Exporting project '{project}' to: {path}"
 CLI_MSG_GRAPH_UPDATED = "Graph update completed!"
 CLI_MSG_APP_TERMINATED = "\nApplication terminated by user."
@@ -948,6 +1007,13 @@ RENAME_SITELESS = (
     "Cannot rename {qn}: {count} graph-known site(s) carry no rewrite location, "
     "so the rename would leave them under the old name"
 )
+# Go reads an identifier's first letter as its visibility (issue #2813).
+RENAME_GO_UNEXPORTS = (
+    "Refusing to rename {qn} to {name}: a Go name starting with a lower-case "
+    "letter is private to its package, and {count} site(s) are in another "
+    "package, where {name} would be undefined; keep the first letter upper-case "
+    "or move those uses into the package first"
+)
 RENAME_WRONG_ROOT = (
     "Project {project} was not indexed from this server's repository; "
     "rename it from the MCP server rooted at its source tree"
@@ -1015,9 +1081,9 @@ SIGNATURE_CLI_WRONG_ROOT = (
     "Project {project} was not indexed from {root}; "
     "pass the --repo-path it was indexed from"
 )
-SIGNATURE_NOT_PYTHON = (
-    "Cannot change the signature of {qn}: {path} is not Python, and only Python "
-    "definitions are supported for now (issue #{issue})"
+SIGNATURE_UNSUPPORTED_LANGUAGE = (
+    "Cannot change the signature of {qn}: {path} is in a language it does not "
+    "support yet; Python and JavaScript are supported (issue #{issue})"
 )
 SIGNATURE_DEFINITION_UNREADABLE = (
     "Cannot change the signature of {qn}: its file {path} cannot be read "
@@ -1098,7 +1164,7 @@ SIGNATURE_SITE_NO_LOCATION = "site carries no location ({resolution})"
 SIGNATURE_SITE_GUESSED = (
     "site was resolved by {resolution}; pass allow_heuristic to rewrite it"
 )
-SIGNATURE_SITE_NOT_PYTHON = "{path} is not Python"
+SIGNATURE_SITE_OTHER_LANGUAGE = "{path} is not in the definition's language"
 SIGNATURE_SITE_UNREADABLE_FILE = "file cannot be read ({error})"
 SIGNATURE_SITE_NO_CALL = "no call found at the recorded position"
 SIGNATURE_SITE_UNREADABLE = "arguments cannot be read positionally: `{text}`"
@@ -1116,6 +1182,70 @@ SIGNATURE_SITE_DROPS_EFFECT = (
 SIGNATURE_SITE_EXPLICIT_RECEIVER = (
     "reaches the method through its class and passes the receiver as an "
     "argument (`{text}`); rewrite it by hand"
+)
+SIGNATURE_SITE_REORDERS_EFFECTS = (
+    "its arguments run code, and the new order would run them in another "
+    "order: `{text}`"
+)
+SIGNATURE_JS_HEADER_PROBE = "function _{params} {{}}"
+SIGNATURE_JS_CALL_PROBE = "_({args});"
+SIGNATURE_JS_BAD_LITERAL = (
+    "The value `{literal}` mapped to {name} is not one JavaScript expression; "
+    "written into a call it would not be exactly one argument"
+)
+SIGNATURE_JS_UNSUPPORTED_PARAMS = (
+    "Cannot change the signature of {qn}: `{text}` is not a plain parameter "
+    "(a name, with or without a default), and only those can be remapped"
+)
+SIGNATURE_JS_BAD_PARAM = (
+    "Not one plain parameter: `{text}` (expected `name` or `name = default`)"
+)
+SIGNATURE_JS_INVALID_HEADER = (
+    "The new parameter list of {qn} is not valid JavaScript: `{text}`"
+)
+SIGNATURE_JS_CONSTRUCTOR = (
+    "Cannot change the signature of {qn}: a constructor is called through `new` "
+    "and `super(...)`, which are not listed as its call sites"
+)
+SIGNATURE_JS_ACCESSOR = (
+    "Cannot change the signature of {qn}: a getter or setter is read or "
+    "assigned, never called with arguments"
+)
+SIGNATURE_JS_CALLS_EVAL = (
+    "Cannot add or drop a parameter of {qn}: its body uses `eval`, which can "
+    "read any parameter through a name written in a string"
+)
+SIGNATURE_JS_READS_ARGUMENTS = (
+    "Cannot change the signature of {qn}: its body reads `arguments`, which "
+    "sees every value by position"
+)
+SIGNATURE_JS_RENAME = (
+    "Cannot rename parameter {old} of {qn} to {new}: renaming is not supported "
+    "for JavaScript yet (issue #{issue})"
+)
+SIGNATURE_JS_DROPPED_STILL_READ = (
+    "Cannot drop parameter {name} of {qn}: its body still uses `{name}`, which "
+    "would then reach an outer name or throw ReferenceError; remove that use by "
+    "hand first"
+)
+SIGNATURE_JS_DUPLICATE_PARAM = (
+    "Cannot change the signature of {qn}: it declares parameter {name} more "
+    "than once, and the body sees only the last of them"
+)
+SIGNATURE_JS_REORDERS_DEFAULTS = (
+    "Cannot change the signature of {qn}: the defaults of {first} and {second} "
+    "would run in the other order when a call leaves both out, and one of them "
+    "runs code the other can observe"
+)
+SIGNATURE_JS_DEFAULT_READS_LATER = (
+    "Cannot change the signature of {qn}: the default of {name} reads `{later}`, "
+    "which is not bound yet when that default runs, so a call leaving {name} "
+    "out would throw ReferenceError"
+)
+SIGNATURE_JS_STRICT_DEFAULTS = (
+    "Cannot change the signature of {qn}: its body opens with a 'use strict' "
+    "directive, and JavaScript refuses that directive in a function with a "
+    "default parameter, so the new header would not load"
 )
 SIGNATURE_PLANNED = "{count} site(s) would be rewritten, {skipped} left unmapped"
 SIGNATURE_PARSE_FAILED = "Signature change rolled back: {files} would no longer parse"
