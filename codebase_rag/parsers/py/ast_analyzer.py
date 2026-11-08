@@ -61,6 +61,23 @@ def _walrus_scope_id(node: Node) -> int | None:
     return current.id if current is not None else None
 
 
+def _walrus_belongs_to(walrus: Node, scope: Node) -> bool:
+    """Whether a walrus binds into `scope`'s own names: it sits in
+    `scope`'s body (a comprehension leaks into it), or in a nested def
+    that declares its name `nonlocal` and resolves to `scope`, the rule
+    `_belongs_to` applies to assignments (CodeRabbit review on #3585). A
+    walrus directly in a lambda binds the lambda's own name: a lambda
+    cannot declare `nonlocal`."""
+    scope_id = _walrus_scope_id(walrus)
+    if scope_id == scope.id:
+        return True
+    own = _own_scope(walrus)
+    if own is None or own.id != scope_id:
+        return False
+    name, _ = _walrus_parts(walrus)
+    return name is not None and name in _nonlocal_names(walrus, scope)
+
+
 def _walrus_parts(node: Node) -> tuple[str | None, Node | None]:
     """(name, value) of a `named_expression`, or (None, None) when the
     grammar gives it no fields: the name is then the first named child,
@@ -1297,7 +1314,7 @@ class PythonAstAnalyzerMixin(_AstBase):
         # here too (PEP 572): the comprehension is no scope for it. A
         # `case` arm's captures belong to the `match`'s own body the same way.
         named_expressions = [
-            w for w in named_expressions if _walrus_scope_id(w) == node.id
+            w for w in named_expressions if _walrus_belongs_to(w, node)
         ]
         case_clauses = [c for c in case_clauses if _scope_of(c) == node.id]
         # Every other writer into the map takes the same rule (#2124). A
@@ -1646,6 +1663,7 @@ class PythonAstAnalyzerMixin(_AstBase):
         )
         alias_types: dict[str, set[str | None]] = {}
         alias_last: dict[str, int] = {}
+        patterns: list[tuple[Node, Node]] = []
         for clause in case_clauses:
             pattern = next(
                 (
@@ -1657,6 +1675,7 @@ class PythonAstAnalyzerMixin(_AstBase):
             )
             if pattern is None:
                 continue
+            patterns.append((clause, pattern))
             stack = [pattern]
             while stack:
                 node = stack.pop()
@@ -1674,7 +1693,6 @@ class PythonAstAnalyzerMixin(_AstBase):
                             alias_last.get(name, -1), children[-1].start_byte
                         )
                 stack.extend(node.named_children)
-            self._type_bare_capture(clause, pattern, last, local_var_types, module_qn)
         for name, types in alias_types.items():
             if last.get(name, -1) > alias_last[name]:
                 continue
@@ -1683,6 +1701,11 @@ class PythonAstAnalyzerMixin(_AstBase):
                 logger.debug(lg.PY_TYPE_SIMPLE, var=name, type=typed)
             else:
                 local_var_types.pop(name, None)
+        # Captures run after the aliases: a nested `match t: case u:` in
+        # a `case Thing() as t` body reads `t`'s alias type, not the one
+        # an earlier binding left in the map (Greptile P1 on #3585).
+        for clause, pattern in patterns:
+            self._type_bare_capture(clause, pattern, last, local_var_types, module_qn)
 
     def _alias_class_type(
         self, pattern: Node, shadowed: frozenset[str], module_qn: str
@@ -1776,9 +1799,9 @@ class PythonAstAnalyzerMixin(_AstBase):
         so the enclosing-map type describes a different value and the
         scratch type wins. That win is only against the type the body
         held when the walrus runs: a binding of the same name after
-        the walrus already typed the map, and the deferred write must
-        not replace it. Walruses run in document order, each seeing
-        the ones before it."""
+        the walrus decides the map, typed or not, and the deferred
+        write must not replace it. Walruses run in document order,
+        each seeing the ones before it."""
         loop_names = _comprehension_names(comprehension)
         view = dict(scratch)
         for walrus in sorted(
@@ -1801,9 +1824,13 @@ class PythonAstAnalyzerMixin(_AstBase):
                 target_start = (
                     target.start_byte if target is not None else walrus.start_byte
                 )
-                if name not in local_var_types or (
-                    _references_any(value_node, loop_names)
-                    and last.get(name, -1) <= target_start
+                # A later binding of the name, typed or not, supersedes
+                # the walrus: `t = opaque()` after the comprehension
+                # leaves `t` unknown, not the loop variable's type
+                # (CodeRabbit review on #3585).
+                if last.get(name, -1) <= target_start and (
+                    name not in local_var_types
+                    or _references_any(value_node, loop_names)
                 ):
                     local_var_types[name] = inferred
                     logger.debug(lg.PY_TYPE_COMPLEX, var=name, type=inferred)

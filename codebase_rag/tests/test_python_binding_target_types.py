@@ -714,6 +714,33 @@ SOURCE = (
     "        return t.go()\n"
     "\n"
     "\n"
+    "def nested_capture_of_an_alias(shape):\n"
+    "    t = Other()\n"
+    "    match shape:\n"
+    "        case Thing() as t:\n"
+    "            match t:\n"
+    "                case u:\n"
+    "                    return u.go()\n"
+    "\n"
+    "\n"
+    "def comprehension_walrus_then_unknown(opaque):\n"
+    "    ys = [x for x in [Thing()] if (t := x) is not None]\n"
+    "    t = opaque()\n"
+    "    return t.go()\n"
+    "\n"
+    "\n"
+    "def nonlocal_walrus_rebinding():\n"
+    "    t = Thing()\n"
+    "\n"
+    "    def inner():\n"
+    "        nonlocal t\n"
+    "        if (t := Other()):\n"
+    "            pass\n"
+    "\n"
+    "    inner()\n"
+    "    return t.go()\n"
+    "\n"
+    "\n"
     "def matched_same_alias_twice(shape):\n"
     "    match shape:\n"
     "        case Thing(x=1) as t:\n"
@@ -807,6 +834,30 @@ def _calls(tmp_path: Path) -> dict[str, dict[str, str]]:
             continue
         resolution = ingestor.edge_props.get(edge, {}).get(cs.KEY_RESOLUTION)
         found.setdefault(str(src).rsplit(".", 1)[-1], {})[str(dst)] = str(resolution)
+    return found
+
+
+def _calls_at(tmp_path: Path, caller: str, statement: str) -> dict[str, str]:
+    """{callee qn: resolution} for the CALLS `caller` in `m.py` makes on
+    the first line after its `def` that reads exactly `statement`: the
+    call at one site, where `_calls` merges every call the caller makes
+    (CodeRabbit review on #3585)."""
+    lines = SOURCE.splitlines()
+    start = next(i for i, text in enumerate(lines) if text.startswith(f"def {caller}("))
+    line = next(i for i in range(start, len(lines)) if lines[i].strip() == statement)
+    ingestor = _build(tmp_path).ingestor
+    assert isinstance(ingestor, _StatefulIngestor)
+    found: dict[str, str] = {}
+    for edge in ingestor.keyed_edges:
+        _src_label, src, rel, _dst_label, dst, site = edge
+        if (
+            rel != cs.RelationshipType.CALLS
+            or str(src) != f"{PROJECT}.m.{caller}"
+            or dict(site or ()).get("line") != line + 1
+        ):
+            continue
+        resolution = ingestor.edge_props.get(edge, {}).get(cs.KEY_RESOLUTION)
+        found[str(dst)] = str(resolution)
     return found
 
 
@@ -1084,7 +1135,7 @@ def test_comprehension_walrus_yielded_to_a_later_rebinding(tmp_path: Path) -> No
     the same name: the comprehension pass runs after the assignment
     passes, so `t = Other()` is already in the map when the deferred
     write happens (CodeRabbit follow-up on #3528)."""
-    calls = _calls(tmp_path).get("comprehension_walrus_then_rebound", {})
+    calls = _calls_at(tmp_path, "comprehension_walrus_then_rebound", "return t.go()")
     assert calls.get(OTHER_GO) == EXACT
     assert THING_GO not in calls
     assert (
@@ -1122,7 +1173,9 @@ def test_comprehension_walrus_yielded_to_a_later_match_alias(
     """A loop-derived walrus write must not clobber a later `case ... as`
     alias either: pattern aliases are absent from `_bindings_in`, so
     the last-binding census has to merge them (Antigravity review)."""
-    calls = _calls(tmp_path).get("comprehension_walrus_then_match_alias", {})
+    calls = _calls_at(
+        tmp_path, "comprehension_walrus_then_match_alias", "return t.go()"
+    )
     assert calls.get(OTHER_GO) == EXACT
     assert THING_GO not in calls
     assert (
@@ -1345,3 +1398,30 @@ def test_decorated_factory_types_by_yield_not_return(tmp_path: Path) -> None:
 def test_factory_yielding_a_copied_local(tmp_path: Path) -> None:
     calls = _calls(tmp_path)["copied_local_factory_with"]
     assert calls.get(THING_GO) == EXACT
+
+
+def test_nested_capture_reads_the_alias_type(tmp_path: Path) -> None:
+    """Greptile P1 on #3585: a nested `match t: case u:` in a
+    `case Thing() as t` body must read `t` as `Thing`, not as the
+    `Other` an earlier binding left in the map."""
+    calls = _calls(tmp_path)["nested_capture_of_an_alias"]
+    assert calls.get(THING_GO) == EXACT
+    assert OTHER_GO not in calls
+
+
+def test_comprehension_walrus_then_unknown_rebinding(tmp_path: Path) -> None:
+    """CodeRabbit review on #3585: `t = opaque()` after the comprehension
+    supersedes its `(t := x)`, so the final `t.go()` must not take the
+    loop variable's `Thing`."""
+    calls = _calls(tmp_path).get("comprehension_walrus_then_unknown", {})
+    assert calls.get(THING_GO) != EXACT
+    assert "t" not in _local_types(tmp_path, "comprehension_walrus_then_unknown")
+
+
+def test_nonlocal_walrus_rebinds_the_enclosing_name(tmp_path: Path) -> None:
+    """CodeRabbit review on #3585: a walrus in a nested def that declares
+    `t` nonlocal rebinds the enclosing `t`, the way `t = Other()` there
+    does, so the later `t.go()` is `Other.go`."""
+    calls = _calls(tmp_path)["nonlocal_walrus_rebinding"]
+    assert calls.get(OTHER_GO) == EXACT
+    assert THING_GO not in calls
