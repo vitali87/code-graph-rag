@@ -2278,7 +2278,7 @@ class CallProcessor:
         cpp_out_of_class_methods: dict[tuple[str, int], tuple[str, str]] | None = None,
         function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
         macro_qns: set[str] | None = None,
-        cpp_callable_fields: set[str] | None = None,
+        cpp_callable_fields: dict[str, set[str]] | None = None,
         ast_cache: ASTCacheProtocol | None = None,
         go_package_names: Mapping[str, str] | None = None,
         sql_sources: Mapping[Path, bytes] | None = None,

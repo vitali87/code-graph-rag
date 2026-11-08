@@ -366,7 +366,7 @@ class CallResolver:
         rehydrated_interface_implementers: dict[str, set[str]] | None = None,
         go_package_names: Mapping[str, str] | None = None,
         go_links: GoLinkState | None = None,
-        cpp_callable_fields: set[str] | None = None,
+        cpp_callable_fields: dict[str, set[str]] | None = None,
     ) -> None:
         self.function_registry = function_registry
         self.import_processor = import_processor
@@ -398,7 +398,7 @@ class CallResolver:
         # Every C++ callable data member's name (shared ref): `ops->cb()`
         # through one calls a free function, so member syntax keeps those.
         self.cpp_callable_fields = (
-            cpp_callable_fields if cpp_callable_fields is not None else set()
+            cpp_callable_fields if cpp_callable_fields is not None else {}
         )
         # {interface_qn: [implementer_qns]} (shared ref, populated during
         # ingestion). Used to redirect an interface-typed call to the single

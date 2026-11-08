@@ -222,3 +222,33 @@ def test_an_incremental_run_keeps_callable_members_of_an_unchanged_header(
     assert sync(force=True) == expected
     (root / "main.cpp").write_text(_OPS_CALLER + "// touched\n", encoding="utf-8")
     assert sync(force=False) == expected
+
+
+def test_a_deleted_type_takes_its_callable_members_with_it(tmp_path: Path) -> None:
+    # Watch mode deletes or re-parses a header: the names its types declared
+    # stop letting `o->cb()` reach a free `cb`, unless another type still
+    # declares them (Greptile, PR #3220).
+    parsers, queries = load_parsers()
+    if cs.SupportedLanguage.CPP not in parsers:
+        pytest.skip("cpp parser not available")
+    root = tmp_path / "cbdel"
+    root.mkdir()
+    (root / "ops.h").write_text(_OPS_HEADER, encoding="utf-8")
+    (root / "hooks.h").write_text("struct Hooks { int (*cb)(); };\n", encoding="utf-8")
+    updater = GraphUpdater(
+        ingestor=MagicMock(), repo_path=root, parsers=parsers, queries=queries
+    )
+    updater.run()
+    fields = updater.factory.definition_processor.cpp_callable_fields
+    resolver = updater.factory.call_processor._resolver
+    assert resolver.cpp_callable_fields is fields
+    assert set(fields) == {"cb", "fn"}, fields
+
+    (root / "ops.h").unlink()
+    updater.remove_file_from_state(root / "ops.h")
+    assert set(fields) == {"cb"}, fields
+    assert not resolver._cpp_callable_member(cs.SupportedLanguage.CPP, "fn")
+
+    (root / "hooks.h").write_text("struct Hooks { int cb; };\n", encoding="utf-8")
+    updater.remove_file_from_state(root / "hooks.h")
+    assert not fields, fields

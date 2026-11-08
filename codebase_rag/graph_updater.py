@@ -90,7 +90,11 @@ from .parsers.endpoints import (
     parse_route_decorator,
 )
 from .parsers.factory import ProcessorFactory
-from .parsers.field_nodes import PendingFieldType
+from .parsers.field_nodes import (
+    PendingFieldType,
+    add_callable_fields,
+    drop_callable_fields,
+)
 from .parsers.frontends import (
     EMITTING_FRONTENDS,
     FRONTENDS,
@@ -1532,6 +1536,7 @@ def _drop_class_keyed_entry(
     """Drop one removed class's rows from the class-keyed maps."""
     processor.class_inheritance.pop(qn, None)
     processor.class_field_types.pop(qn, None)
+    drop_callable_fields(processor.cpp_callable_fields, qn)
     # A partial part leaves its group too. The group list is the
     # very list `_csharp_partial_index` holds under the syntactic
     # key, so removing the part there keeps both views in step;
@@ -4260,8 +4265,10 @@ class GraphUpdater:
             )
         # And an unchanged C++ type's callable data members (`int (*cb)()`),
         # or a re-parsed file's `o->cb()` loses the free `cb` it reaches.
-        self.factory.definition_processor.cpp_callable_fields.update(
-            _stored_strings(row.get(cs.KEY_CALLABLE_FIELDS))
+        add_callable_fields(
+            self.factory.definition_processor.cpp_callable_fields,
+            qn,
+            _stored_strings(row.get(cs.KEY_CALLABLE_FIELDS)),
         )
         # Restore the macro-namespace set for unchanged files: the Rust
         # macro/fn gate consults it, so a re-parsed file's invocation of a

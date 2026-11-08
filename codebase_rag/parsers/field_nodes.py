@@ -13,6 +13,7 @@ docstring extractor can be pointed at it once both land on main.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import NamedTuple
 
 from tree_sitter import Node
@@ -584,6 +585,24 @@ def _cpp_record(decl: Node, access: str, out: list[DeclaredField]) -> None:
 
 # `std::function<int()>`, `boost::function<...>`, `std::move_only_function<...>`.
 _CPP_FUNCTION_WRAPPER = "function<"
+
+
+def add_callable_fields(
+    fields: dict[str, set[str]], type_qn: str, names: Iterable[str]
+) -> None:
+    """Record that `type_qn` declares each callable data member in `names`."""
+    for name in names:
+        fields.setdefault(name, set()).add(type_qn)
+
+
+def drop_callable_fields(fields: dict[str, set[str]], type_qn: str) -> None:
+    """Forget `type_qn`'s callable data members, in place: the resolver reads
+    this same dict, and a name no remaining type declares leaves it."""
+    for name in [name for name, types in fields.items() if type_qn in types]:
+        types = fields[name]
+        types.discard(type_qn)
+        if not types:
+            del fields[name]
 
 
 def cpp_callable_field_names(class_node: Node) -> set[str]:

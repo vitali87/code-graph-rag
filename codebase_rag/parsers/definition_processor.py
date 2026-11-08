@@ -192,10 +192,12 @@ class DefinitionProcessor(
         # method resolves via the field's declared type. Populated at class
         # ingestion, read by the type-inference engine at call resolution.
         self.class_field_types: dict[str, dict[str, str]] = {}
-        # Names of C++ data members a call can invoke (function pointers,
-        # `std::function`s), so `ops->cb()` may still reach a free `cb`
-        # (#3176 review). Populated at class ingestion, read at resolution.
-        self.cpp_callable_fields: set[str] = set()
+        # {name of a C++ data member a call can invoke (a function pointer, a
+        # `std::function`): the types declaring it}, so `ops->cb()` may still
+        # reach a free `cb` (#3176 review). Keyed by type so a deleted or
+        # re-parsed one takes its names with it (Greptile, PR #3220).
+        # Populated at class ingestion, read at resolution.
+        self.cpp_callable_fields: dict[str, set[str]] = {}
         # Java anonymous-class override methods: (anon_method_qn, method_name,
         # base_type_name, module_qn). An anon class `new Base(){ @Override m(){} }`
         # is not modelled as a subclass, so its overrides register under the

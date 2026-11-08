@@ -41,6 +41,7 @@ from ..dart.type_inference import DartTypeInferenceEngine
 from ..enum_variants import emit_declared_variants, is_python_enum
 from ..field_nodes import (
     PendingFieldType,
+    add_callable_fields,
     cpp_callable_field_names,
     emit_declared_fields,
 )
@@ -368,7 +369,7 @@ class ClassIngestMixin:
     dart_constructor_qns: set[str]
     dart_extension_on_types: dict[str, str]
     class_field_types: dict[str, dict[str, str]]
-    cpp_callable_fields: set[str]
+    cpp_callable_fields: dict[str, set[str]]
     java_anon_overrides: list[tuple[str, str, str, str]]
     csharp_methods: set[str]
     csharp_override_methods: set[str]
@@ -1724,10 +1725,10 @@ class ClassIngestMixin:
             # parse can tell dead code it is a declaration.
             class_props[cs.KEY_TYPE_CHECKING_ONLY] = True
         elif language == cs.SupportedLanguage.CPP:
-            self._record_cpp_callable_fields(class_node, class_props)
+            self._record_cpp_callable_fields(class_node, class_qn, class_props)
 
     def _record_cpp_callable_fields(
-        self, class_node: Node, class_props: PropertyDict
+        self, class_node: Node, class_qn: str, class_props: PropertyDict
     ) -> None:
         # Stored on the node so an incremental run that does not re-parse
         # this header still lets a re-parsed `o->cb()` reach a free `cb`. A
@@ -1737,7 +1738,7 @@ class ClassIngestMixin:
             return
         if names := sorted(cpp_callable_field_names(member_node)):
             class_props[cs.KEY_CALLABLE_FIELDS] = names
-            self.cpp_callable_fields.update(names)
+            add_callable_fields(self.cpp_callable_fields, class_qn, names)
 
     def _record_declared_type_members(
         self,
