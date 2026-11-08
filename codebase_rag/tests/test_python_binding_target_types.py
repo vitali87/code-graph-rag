@@ -775,6 +775,20 @@ SOURCE = (
     "            return t.go()\n"
     "\n"
     "\n"
+    "def nonlocal_walrus_copying_an_inner_local():\n"
+    "    t = Other()\n"
+    "    x = Thing()\n"
+    "\n"
+    "    def inner():\n"
+    "        nonlocal t\n"
+    "        x = Other()\n"
+    "        if (t := x):\n"
+    "            pass\n"
+    "\n"
+    "    inner()\n"
+    "    return t.go()\n"
+    "\n"
+    "\n"
     "def matched_same_alias_twice(shape):\n"
     "    match shape:\n"
     "        case Thing(x=1) as t:\n"
@@ -1484,3 +1498,11 @@ def test_annotation_does_not_restore_a_dropped_alias_type(tmp_path: Path) -> Non
     calls = _calls(tmp_path).get("annotated_then_union_alias", {})
     assert calls.get(THING_GO) != EXACT
     assert "t" not in _local_types(tmp_path, "annotated_then_union_alias")
+
+
+def test_nonlocal_walrus_does_not_read_the_outer_scope(tmp_path: Path) -> None:
+    """Greptile P1 on #3585: `(t := x)` in a nested def reads the nested
+    def's own `x` (an `Other`), so the enclosing map must not copy the
+    enclosing `x`'s `Thing` into `t`."""
+    calls = _calls(tmp_path).get("nonlocal_walrus_copying_an_inner_local", {})
+    assert calls.get(THING_GO) != EXACT

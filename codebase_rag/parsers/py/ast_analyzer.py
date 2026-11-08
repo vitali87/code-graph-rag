@@ -1316,6 +1316,12 @@ class PythonAstAnalyzerMixin(_AstBase):
         named_expressions = [
             w for w in named_expressions if _walrus_belongs_to(w, node)
         ]
+        # A walrus a nested def rebinds through `nonlocal` reads its value
+        # in that def's scope, not this one, so it never reads this map
+        # (Greptile P1 on #3585).
+        nested_walruses = {
+            w.id for w in named_expressions if _walrus_scope_id(w) != node.id
+        }
         case_clauses = [c for c in case_clauses if _scope_of(c) == node.id]
         # Every other writer into the map takes the same rule (#2124). A
         # nested `for` target is the nested body's local unless declared
@@ -1338,6 +1344,8 @@ class PythonAstAnalyzerMixin(_AstBase):
         ):
             if binder.type == cs.TS_PY_ASSIGNMENT:
                 self._process_assignment_simple(binder, local_var_types, module_qn)
+            elif binder.id in nested_walruses:
+                self._process_nonlocal_walrus(binder, local_var_types, module_qn)
             else:
                 self._process_walrus_simple(binder, local_var_types, module_qn)
 
@@ -1353,7 +1361,7 @@ class PythonAstAnalyzerMixin(_AstBase):
         ):
             if binder.type == cs.TS_PY_ASSIGNMENT:
                 self._process_assignment_complex(binder, local_var_types, module_qn)
-            else:
+            elif binder.id not in nested_walruses:
                 self._process_walrus_complex(binder, local_var_types, module_qn)
         # The complex pass went by an assignment reading a target typed only
         # by the retry (`forked = session.fork()`), so it runs again whenever
@@ -1370,6 +1378,8 @@ class PythonAstAnalyzerMixin(_AstBase):
                     assignment, typed_now, local_var_types, module_qn
                 )
             for walrus in named_expressions:
+                if walrus.id in nested_walruses:
+                    continue
                 self._retype_walrus_after_with_targets(
                     walrus, typed_now, local_var_types, module_qn
                 )
@@ -1612,6 +1622,23 @@ class PythonAstAnalyzerMixin(_AstBase):
         if inferred_type:
             local_var_types[name] = inferred_type
             logger.debug(lg.PY_TYPE_SIMPLE, var=name, type=inferred_type)
+
+    def _process_nonlocal_walrus(
+        self, walrus_node: Node, local_var_types: dict[str, str], module_qn: str
+    ) -> None:
+        """Type a walrus a nested def rebinds through `nonlocal`: its value
+        is read in the nested def's scope, where this map's names may mean
+        something else, so only a value read without any local (a
+        constructor call) types it. Any other value makes the name
+        unknown rather than copying a type from the wrong scope."""
+        name, value_node = _walrus_parts(walrus_node)
+        if not name or value_node is None:
+            return
+        if inferred := self._infer_type_from_expression_simple(value_node, module_qn):
+            local_var_types[name] = inferred
+            logger.debug(lg.PY_TYPE_SIMPLE, var=name, type=inferred)
+        else:
+            local_var_types.pop(name, None)
 
     def _process_walrus_complex(
         self, walrus_node: Node, local_var_types: dict[str, str], module_qn: str
