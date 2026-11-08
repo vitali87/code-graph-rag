@@ -532,9 +532,16 @@ class PythonWithBindingMixin(_WithBase):
         body = definition.child_by_field_name(cs.FIELD_BODY)
         if body is None:
             return local_types
-        stack = list(reversed(body.children))
+        # Each entry says whether its value has been read: an assignment
+        # or walrus binds its target after its value runs, so a walrus
+        # inside the value binds first. `t = Thing(t := Other())` leaves a
+        # `Thing` (Greptile P1 on #3585), `result = consume(t := Other())`
+        # an `Other` (CodeRabbit review on #3585).
+        stack: list[tuple[Node, bool]] = [
+            (child, False) for child in reversed(body.children)
+        ]
         while stack:
-            node = stack.pop()
+            node, value_read = stack.pop()
             if before is not None and node.start_byte > before:
                 continue
             pair: tuple[Node | None, Node | None] | None = None
@@ -549,6 +556,10 @@ class PythonWithBindingMixin(_WithBase):
                     node.child_by_field_name(cs.FIELD_VALUE),
                 )
             name_node, value_node = pair if pair is not None else (None, None)
+            if value_node is not None and not value_read:
+                stack.append((node, True))
+                stack.append((value_node, False))
+                continue
             if (
                 name_node is not None
                 and name_node.type == cs.TS_PY_IDENTIFIER
@@ -566,10 +577,6 @@ class PythonWithBindingMixin(_WithBase):
                     self._bind_factory_local(
                         name, inferred, node, before, possible, local_types
                     )
-                    # A walrus inside the value binds too:
-                    # `result = consume(t := Other())` (CodeRabbit review
-                    # on #3585).
-                    stack.append(value_node)
                 continue
             # Every other binding form (`for t in xs`, `with ... as t`,
             # `t, u = pair`, `t += 1`, `except E as t`, a nested `def t`)
@@ -591,8 +598,6 @@ class PythonWithBindingMixin(_WithBase):
                         name, None, node, before, possible, local_types
                     )
             if pair is not None:
-                if value_node is not None:
-                    stack.append(value_node)
                 continue
             if node.type in (
                 cs.TS_PY_FUNCTION_DEFINITION,
@@ -600,7 +605,7 @@ class PythonWithBindingMixin(_WithBase):
                 cs.TS_PY_LAMBDA,
             ):
                 continue
-            stack.extend(reversed(node.children))
+            stack.extend((child, False) for child in reversed(node.children))
         return local_types
 
     def _factory_value_type(

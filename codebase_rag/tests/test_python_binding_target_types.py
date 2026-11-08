@@ -39,6 +39,7 @@ OTHER_GO = f"{PROJECT}.m.Other.go"
 HTHING_GO = f"{PROJECT}.helpers.HThing.go"
 PTHING_GO = f"{PROJECT}.pkg.contexts.PThing.go"
 THING = f"{PROJECT}.m.Thing"
+OTHER = f"{PROJECT}.m.Other"
 INNER = f"{PROJECT}.m.Inner"
 INNER_GO = f"{PROJECT}.m.Inner.go"
 
@@ -831,6 +832,62 @@ SOURCE = (
     "            return a.go()\n"
     "\n"
     "\n"
+    "def unpack_before_capture():\n"
+    "    s = Other()\n"
+    "    t = Thing()\n"
+    "    a, b = t.pair()\n"
+    "    match s:\n"
+    "        case t:\n"
+    "            return a.go()\n"
+    "\n"
+    "\n"
+    "def unpack_before_alias(shape):\n"
+    "    t = Thing()\n"
+    "    a, b = t.pair()\n"
+    "    match shape:\n"
+    "        case Other() as t:\n"
+    "            return a.go()\n"
+    "\n"
+    "\n"
+    "def unpack_in_an_earlier_agreeing_arm(shape):\n"
+    "    t = Other()\n"
+    "    match shape:\n"
+    "        case Thing(x=1) as t:\n"
+    "            a, b = t.pair()\n"
+    "            return a.go()\n"
+    "        case Thing() as t:\n"
+    "            return t.go()\n"
+    "\n"
+    "\n"
+    "def alias_then_capture():\n"
+    "    s = Other()\n"
+    "    match s:\n"
+    "        case Thing() as t:\n"
+    "            a, b = t.pair()\n"
+    "            return a.go()\n"
+    "        case t:\n"
+    "            return t.go()\n"
+    "\n"
+    "\n"
+    "def captures_disagree():\n"
+    "    x = Thing()\n"
+    "    y = Other()\n"
+    "    match x:\n"
+    "        case t:\n"
+    "            t.go()\n"
+    "    match y:\n"
+    "        case t:\n"
+    "            return t.go()\n"
+    "\n"
+    "\n"
+    "def loop_then_alias(shape):\n"
+    "    for t in [Other()]:\n"
+    "        pass\n"
+    "    match shape:\n"
+    "        case Thing() as t:\n"
+    "            return t.go()\n"
+    "\n"
+    "\n"
     "def nonlocal_walrus_shadowed_constructor():\n"
     "    t = Other()\n"
     "\n"
@@ -887,6 +944,28 @@ SOURCE = (
     "\n"
     "def walrus_in_value_factory_with(consume):\n"
     "    with walrus_in_value_factory(consume) as t:\n"
+    "        return t.go()\n"
+    "\n"
+    "\n"
+    "@contextmanager\n"
+    "def target_after_walrus_factory(wrap):\n"
+    "    t = wrap(t := Other())\n"
+    "    yield t\n"
+    "\n"
+    "\n"
+    "def target_after_walrus_factory_with(wrap):\n"
+    "    with target_after_walrus_factory(wrap) as t:\n"
+    "        return t.go()\n"
+    "\n"
+    "\n"
+    "@contextmanager\n"
+    "def thing_after_walrus_factory():\n"
+    "    t = Thing(t := Other())\n"
+    "    yield t\n"
+    "\n"
+    "\n"
+    "def thing_after_walrus_factory_with():\n"
+    "    with thing_after_walrus_factory() as t:\n"
     "        return t.go()\n"
     "\n"
     "\n"
@@ -1645,6 +1724,63 @@ def test_unpacking_from_a_capture_of_an_unpacked_subject(tmp_path: Path) -> None
     assert OTHER_GO not in calls
 
 
+def test_unpacking_before_a_capture_reads_the_earlier_type(tmp_path: Path) -> None:
+    """Greptile P1 on #3585: `a, b = t.pair()` runs while `t` is still
+    the `Thing()` bound before the `match`, so it unpacks `Thing.pair`,
+    not the `Other.pair` the later `case t:` over an `Other` would
+    give."""
+    calls = _calls_at(tmp_path, "unpack_before_capture", "return a.go()")
+    assert calls.get(THING_GO) == EXACT
+    assert OTHER_GO not in calls
+    assert _local_types(tmp_path, "unpack_before_capture").get("t") == "Other"
+
+
+def test_unpacking_before_an_alias_reads_the_earlier_type(tmp_path: Path) -> None:
+    """The same for a later `case Other() as t`: it decides `t` only from
+    the alias on."""
+    calls = _calls_at(tmp_path, "unpack_before_alias", "return a.go()")
+    assert calls.get(THING_GO) == EXACT
+    assert OTHER_GO not in calls
+    assert _local_types(tmp_path, "unpack_before_alias").get("t") == OTHER
+
+
+def test_unpacking_in_an_earlier_arm_reads_the_agreed_alias(tmp_path: Path) -> None:
+    """Both arms bind `t` as a `Thing`, so the unpacking in the first arm
+    reads `Thing.pair`, not the `Other()` bound before the `match`: a
+    match decision holds from the name's first `case` binding on."""
+    calls = _calls_at(tmp_path, "unpack_in_an_earlier_agreeing_arm", "return a.go()")
+    assert calls.get(THING_GO) == EXACT
+    assert OTHER_GO not in calls
+
+
+def test_capture_after_an_alias_of_another_class(tmp_path: Path) -> None:
+    """CodeRabbit review on #3585: `case Thing() as t` before `case t:`
+    over an `Other` binds `t` to a different class in each arm, so the
+    capture types nothing and the first arm's unpacking does not read
+    `Other.pair`."""
+    calls = _calls_at(tmp_path, "alias_then_capture", "return a.go()")
+    assert calls.get(OTHER_GO) != EXACT
+    assert "t" not in _local_types(tmp_path, "alias_then_capture")
+
+
+def test_captures_of_different_subjects_type_nothing(tmp_path: Path) -> None:
+    """Two `case t:` captures over a `Thing` and an `Other` agree on no
+    class: the first `match`'s `t.go()` is not `Other.go`."""
+    calls = _calls_at(tmp_path, "captures_disagree", "t.go()")
+    assert calls.get(OTHER_GO) != EXACT
+    assert "t" not in _local_types(tmp_path, "captures_disagree")
+
+
+def test_alias_survives_the_second_loop_pass(tmp_path: Path) -> None:
+    """CodeRabbit review on #3585: the loop pass that runs again after the
+    attribute passes must not give back the `Other` of an earlier
+    `for t in [Other()]` to a name a later `case Thing() as t` decides."""
+    calls = _calls_at(tmp_path, "loop_then_alias", "return t.go()")
+    assert calls.get(THING_GO) == EXACT
+    assert OTHER_GO not in calls
+    assert _local_types(tmp_path, "loop_then_alias").get("t") == THING
+
+
 def test_nonlocal_walrus_with_a_shadowed_constructor(tmp_path: Path) -> None:
     """CodeRabbit review on #3585: `Thing` is the nested def's own
     parameter, so `(t := Thing())` there does not construct the module's
@@ -1687,3 +1823,18 @@ def test_factory_walrus_inside_an_assignment_value(tmp_path: Path) -> None:
     calls = _calls(tmp_path)["walrus_in_value_factory_with"]
     assert calls.get(OTHER_GO) == EXACT
     assert THING_GO not in calls
+
+
+def test_factory_target_binds_after_a_walrus_in_its_value(tmp_path: Path) -> None:
+    """Greptile P1 on #3585: in `t = Thing(t := Other())` the walrus binds
+    first and the assignment last, so `t` is a `Thing` at the yield."""
+    calls = _calls(tmp_path)["thing_after_walrus_factory_with"]
+    assert calls.get(THING_GO) == EXACT
+    assert OTHER_GO not in calls
+
+
+def test_factory_target_after_a_walrus_reads_its_own_value(tmp_path: Path) -> None:
+    """`t = wrap(t := Other())` rebinds `t` to what `wrap` returns, which
+    names no type, so the walrus's `Other` does not reach the yield."""
+    calls = _calls(tmp_path)["target_after_walrus_factory_with"]
+    assert calls.get(OTHER_GO) != EXACT

@@ -284,16 +284,74 @@ def _match_last_bindings(scope: Node, case_clauses: list[Node]) -> dict[str, int
     return last
 
 
-def _apply_decided(
-    decided: dict[str, str | None], local_var_types: dict[str, str]
-) -> None:
-    """Write back what the match passes decided for names whose last
-    binding is a `case` alias or capture: a type, or no type at all."""
-    for name, decided_type in decided.items():
-        if decided_type:
-            local_var_types[name] = decided_type
-        else:
-            local_var_types.pop(name, None)
+class _BindingDecisions:
+    """What the match passes decided for a name whose last binding is a
+    `case` alias or capture, and what a with target a factory left
+    untyped decided: a type, or None for none. `last` is where each
+    name is last bound, `since` where each decision starts to hold: a
+    name's first `case` binding, every one of which agrees with the
+    decision, or the with target. A read before that (`a, b = t.pair()`
+    ahead of a later `case t:`) still sees the type the map holds from
+    the earlier binding (Greptile P1 on #3585). `apply` writes every
+    decision into the map."""
+
+    __slots__ = ("last", "since", "types")
+
+    def __init__(
+        self,
+        last: dict[str, int],
+        since: dict[str, int],
+        types: dict[str, str | None],
+    ) -> None:
+        self.last = last
+        self.since = since
+        self.types = types
+
+    def reads_at(
+        self, local_var_types: dict[str, str], position: int
+    ) -> dict[str, str]:
+        """The map as a read at `position` sees it. Read only: with
+        nothing decided it is the map itself."""
+        if not self.types:
+            return local_var_types
+        view = dict(local_var_types)
+        for name, decided in self.types.items():
+            if position < self.since.get(name, -1):
+                continue
+            if decided:
+                view[name] = decided
+            else:
+                view.pop(name, None)
+        return view
+
+    def apply(self, local_var_types: dict[str, str]) -> None:
+        for name, decided in self.types.items():
+            if decided:
+                local_var_types[name] = decided
+            else:
+                local_var_types.pop(name, None)
+
+
+def _match_binding_positions(case_clauses: list[Node]) -> dict[str, set[int]]:
+    """The bytes at which `case_clauses` bind each name, by an alias or a
+    capture at any depth of a pattern."""
+    positions: dict[str, set[int]] = {}
+    for _clause, pattern in _case_patterns(case_clauses):
+        stack = [pattern]
+        while stack:
+            node = stack.pop()
+            bound: list[Node] = []
+            if node.type == cs.TS_PY_CASE_PATTERN:
+                bound = list(_capture_targets(node))
+            elif node.type == cs.TS_PY_AS_PATTERN:
+                children = node.named_children
+                if len(children) >= 2 and children[-1].type == cs.TS_PY_IDENTIFIER:
+                    bound = [children[-1]]
+            for identifier in bound:
+                if name := safe_decode_text(identifier):
+                    positions.setdefault(name, set()).add(identifier.start_byte)
+            stack.extend(node.named_children)
+    return positions
 
 
 def _alias_positions(case_clauses: list[Node]) -> dict[str, int]:
@@ -1322,10 +1380,11 @@ class PythonAstAnalyzerMixin(_AstBase):
 
     def _traverse_single_pass(
         self, node: Node, local_var_types: dict[str, str], module_qn: str
-    ) -> tuple[list[Node], list[Node]]:
+    ) -> tuple[list[Node], list[Node], _BindingDecisions]:
         """Types locals in one traversal; returns (comprehensions, for
         statements) so the coordinator can re-run loop inference after the
-        attribute passes populate ``self.x`` types."""
+        attribute passes populate ``self.x`` types, and the match and
+        with decisions, which it applies again after that run."""
         (
             assignments,
             comprehensions,
@@ -1431,51 +1490,56 @@ class PythonAstAnalyzerMixin(_AstBase):
                 self._retype_walrus_after_with_targets(
                     walrus, typed_now, local_var_types, module_qn
                 )
-        # `case C(...) as t` types `t` as C (#3340). It runs after the
-        # assignment passes, the alias being a binding like a with
-        # target, and before the annotation and unpacking passes, so an
-        # unpacking in a case body (`a, b = t.pair()`) reads the alias's
-        # type (Greptile P1 on #3585). Those two passes write the map
-        # without the last-binding rule, so what the alias pass decided
-        # is applied again after them: an annotation must not restore a
-        # type an alias dropped (CodeRabbit review on #3585).
-        # A with target a `@contextmanager` factory left untyped is its
-        # name's last binding: the complex pass, which types names still
-        # untyped, must not give it an earlier binding's type, and the
-        # later passes are held to that the way match bindings are.
-        decided: dict[str, str | None] = dict.fromkeys(dropped_targets)
-        _apply_decided(decided, local_var_types)
-        decided |= self._type_match_aliases(
-            node, case_clauses, local_var_types, module_qn
+        # `case C(...) as t` types `t` as C (#3340), and a bare `case t:`
+        # as its subject's type. Like a with target a `@contextmanager`
+        # factory left untyped, such a binding decides its name's type
+        # only when it is the last binding, and only from the name's
+        # first `case` binding on: the decisions are kept aside until the
+        # comprehension and `for` passes, and the capture and unpacking
+        # passes read them by position. An unpacking in a case body
+        # (`a, b = t.pair()`) reads the alias's or capture's type, one
+        # before the `match` the earlier binding's (Greptile P1s on
+        # #3585).
+        last_bindings = _match_last_bindings(node, case_clauses)
+        decisions = _BindingDecisions(
+            last_bindings,
+            {
+                name: min(positions)
+                for name, positions in _match_binding_positions(case_clauses).items()
+            }
+            | {name: last_bindings.get(name, -1) for name in dropped_targets},
+            dict.fromkeys(dropped_targets),
         )
+        decisions.types |= self._type_match_aliases(node, case_clauses, module_qn)
         self._process_assignment_annotation(
             node, assignments, local_var_types, module_qn
         )
-        _apply_decided(decided, local_var_types)
-        # Bare captures run on both sides of the unpacking pass: an
-        # unpacking in a case body (`a, b = t.pair()`) must read the
-        # capture's type, and a capture whose subject only the unpacking
-        # types (`s, other = make_pair()`) is typed after it. The
-        # unpacking pass fills only untyped names, so running it again
-        # once such a capture is typed fills what its body unpacks from
-        # it without overwriting anything (Greptile P1s on #3585).
+        # Bare captures run on both sides of the unpacking pass: a capture
+        # whose subject only the unpacking types (`s, other =
+        # make_pair()`) is typed after it. The unpacking pass fills only
+        # untyped names, so running it again once such a capture is typed
+        # fills what its body unpacks from it without overwriting anything.
         captured = self._type_match_captures(
-            node, case_clauses, local_var_types, module_qn
+            node, case_clauses, decisions, local_var_types, module_qn
         )
-        decided |= captured
+        decisions.types |= captured
         self._process_assignment_unpacking(
-            node, assignments, local_var_types, module_qn
+            node, assignments, local_var_types, module_qn, decisions
         )
-        _apply_decided(decided, local_var_types)
         recaptured = self._type_match_captures(
-            node, case_clauses, local_var_types, module_qn
+            node, case_clauses, decisions, local_var_types, module_qn
         )
         if recaptured != captured:
-            decided |= recaptured
+            decisions.types |= recaptured
             self._process_assignment_unpacking(
-                node, assignments, local_var_types, module_qn
+                node, assignments, local_var_types, module_qn, decisions
             )
-            _apply_decided(decided, local_var_types)
+        # The decisions go into the map over whatever the passes above
+        # wrote, so an annotation cannot restore a type an alias dropped
+        # (CodeRabbit review on #3585). They go in again after the
+        # comprehension and `for` passes, which also write the map
+        # without the last-binding rule.
+        decisions.apply(local_var_types)
 
         self.analyze_scoped_comprehensions(
             node, comprehensions, local_var_types, module_qn
@@ -1483,15 +1547,12 @@ class PythonAstAnalyzerMixin(_AstBase):
 
         for for_stmt in for_statements:
             self._analyze_for_loop(for_stmt, local_var_types, module_qn)
-        # A name whose last binding is a `case` alias or capture keeps
-        # what the match passes decided over the comprehension and `for`
-        # passes, which also write the map without the last-binding rule.
-        _apply_decided(decided, local_var_types)
+        decisions.apply(local_var_types)
 
         self._infer_instance_variable_types_from_assignments(
             assignments, local_var_types, module_qn
         )
-        return comprehensions, for_statements
+        return comprehensions, for_statements, decisions
 
     def _retype_after_with_targets(
         self,
@@ -1754,15 +1815,14 @@ class PythonAstAnalyzerMixin(_AstBase):
         self,
         scope: Node,
         case_clauses: list[Node],
-        local_var_types: dict[str, str],
         module_qn: str,
     ) -> dict[str, str | None]:
         """Type `case C(...) as t` aliases as `C`, resolved the way a
         constructor name is (#3340); `_type_match_captures` types the
         bare captures. Returns each name whose last binding an alias is,
         with the type it decided (None for none), for the caller to
-        re-apply over passes that write the map without the
-        last-binding rule. Only the alias or capture is typed:
+        apply from the name's first `case` binding on, all of them
+        agreeing. Only the alias or capture is typed:
         narrowing the matched subject, or a capture inside the pattern,
         is a flow-sensitive question this flat map cannot answer, and a
         union of different classes names no single class. A binding a
@@ -1824,32 +1884,53 @@ class PythonAstAnalyzerMixin(_AstBase):
             typed = next(iter(types)) if len(types) == 1 else None
             decided[name] = typed
             if typed:
-                local_var_types[name] = typed
                 logger.debug(lg.PY_TYPE_SIMPLE, var=name, type=typed)
-            else:
-                local_var_types.pop(name, None)
         return decided
 
     def _type_match_captures(
         self,
         scope: Node,
         case_clauses: list[Node],
+        decisions: _BindingDecisions,
         local_var_types: dict[str, str],
         module_qn: str,
     ) -> dict[str, str | None]:
         """Type each bare capture `case t:` as its `match` subject's type,
         returning what each capture that is its name's last binding
-        decided. Run after the alias and annotation passes, so a nested
-        `match t: case u:` in a `case Thing() as t` body reads the alias
-        type, and again after the unpacking pass, for a subject only an
-        unpacking types (Greptile P1s on #3585)."""
-        last = _match_last_bindings(scope, case_clauses)
+        decided. As with aliases, every `case` binding of the name must
+        agree: an alias, a capture inside a larger pattern, or a capture
+        of a subject of another type leaves the name untyped (CodeRabbit
+        review on #3585). The subject is read where it sits, with what is
+        decided before it: a nested `match t: case u:` in a `case Thing()
+        as t` body reads the alias type, and one in a `case t:` body the
+        outer capture's, the captures being taken in document order. Run
+        again after the unpacking pass, for a subject only an unpacking
+        types (Greptile P1s on #3585)."""
+        last = decisions.last
+        seen = _BindingDecisions(last, decisions.since, dict(decisions.types))
+        types: dict[str, set[str | None]] = {}
+        bare: dict[str, set[int]] = {}
+        for clause, pattern in sorted(
+            _case_patterns(case_clauses), key=lambda found: found[1].start_byte
+        ):
+            capture = self._type_bare_capture(
+                clause, pattern, seen, local_var_types, module_qn
+            )
+            if capture is None:
+                continue
+            name, position, inferred = capture
+            types.setdefault(name, set()).add(inferred)
+            bare.setdefault(name, set()).add(position)
+            if last.get(name, -1) <= position:
+                seen.types[name] = inferred
+        bound = _match_binding_positions(case_clauses)
         decided: dict[str, str | None] = {}
-        for clause, pattern in _case_patterns(case_clauses):
-            if captured := self._type_bare_capture(
-                clause, pattern, last, local_var_types, module_qn
-            ):
-                decided[captured[0]] = captured[1]
+        for name, found in types.items():
+            if last.get(name, -1) > max(bare[name]):
+                continue
+            if bound.get(name, set()) - bare[name]:
+                found.add(None)
+            decided[name] = next(iter(found)) if len(found) == 1 else None
         return decided
 
     def _alias_class_type(
@@ -1866,10 +1947,10 @@ class PythonAstAnalyzerMixin(_AstBase):
         self,
         clause: Node,
         pattern: Node,
-        last: dict[str, int],
+        decisions: _BindingDecisions,
         local_var_types: dict[str, str],
         module_qn: str,
-    ) -> tuple[str, str | None] | None:
+    ) -> tuple[str, int, str | None] | None:
         """Type a bare capture `case t:` as the `match` subject's type:
         the capture binds the subject itself, so it takes whatever type
         the subject already has in the map. Only a whole-pattern single
@@ -1881,8 +1962,9 @@ class PythonAstAnalyzerMixin(_AstBase):
         the type at the `match` is not recoverable from it. Left
         untyped as the name's last binding, the capture drops any
         earlier type of the name, which describes a value it replaced.
-        Returns the capture's name and the type it decided when it is
-        the name's last binding, else None."""
+        Returns the capture's name, where it binds and its type, or None
+        for a pattern that is no bare capture; the map is only read."""
+        last = decisions.last
         children = pattern.named_children
         if len(children) != 1 or children[0].type != cs.TS_PY_DOTTED_NAME:
             return None
@@ -1890,8 +1972,9 @@ class PythonAstAnalyzerMixin(_AstBase):
         if len(parts) != 1 or parts[0].type != cs.TS_PY_IDENTIFIER:
             return None
         name = safe_decode_text(parts[0])
-        if not name or last.get(name, -1) > parts[0].start_byte:
+        if not name:
             return None
+        position = parts[0].start_byte
         statement = clause.parent
         while statement is not None and statement.type != cs.TS_PY_MATCH_STATEMENT:
             statement = statement.parent
@@ -1901,8 +1984,7 @@ class PythonAstAnalyzerMixin(_AstBase):
             else None
         )
         if subject is None or statement is None:
-            local_var_types.pop(name, None)
-            return name, None
+            return name, position, None
         if (
             subject.type == cs.TS_PY_IDENTIFIER
             and (subject_name := safe_decode_text(subject))
@@ -1913,21 +1995,16 @@ class PythonAstAnalyzerMixin(_AstBase):
             # not the value the capture binds, so it stays untyped. A
             # walrus inside the subject itself binds before its end, so
             # it does not trigger the skip.
-            local_var_types.pop(name, None)
-            return name, None
+            return name, position, None
+        reads = decisions.reads_at(local_var_types, subject.start_byte)
         inferred = (
             self._infer_type_from_expression_simple(subject, module_qn)
-            or self._infer_type_from_expression_complex(
-                subject, module_qn, local_var_types
-            )
-            or _identifier_type(subject, local_var_types)
+            or self._infer_type_from_expression_complex(subject, module_qn, reads)
+            or _identifier_type(subject, reads)
         )
         if inferred:
-            local_var_types[name] = inferred
             logger.debug(lg.PY_TYPE_SIMPLE, var=name, type=inferred)
-        else:
-            local_var_types.pop(name, None)
-        return name, inferred
+        return name, position, inferred
 
     def _type_comprehension_walrus(
         self,
@@ -2061,6 +2138,7 @@ class PythonAstAnalyzerMixin(_AstBase):
         assignments: list[Node],
         local_var_types: dict[str, str],
         module_qn: str,
+        decisions: _BindingDecisions | None = None,
     ) -> None:
         """`_ol, _oc, inner = parsed`: bind each target to its element type.
 
@@ -2076,7 +2154,8 @@ class PythonAstAnalyzerMixin(_AstBase):
         which is exactly what unpacking consumes position by position. The
         walk captures every assignment under the caller, including a nested
         def's, whose targets are that def's locals, not the caller's
-        (CodeRabbit).
+        (CodeRabbit). Each unpacking reads the map as `decisions` say it
+        stands where the unpacking is.
         """
         # `nonlocal` is the same exception the value passes make: an
         # unpacking in a nested body whose target is declared `nonlocal`
@@ -2093,8 +2172,13 @@ class PythonAstAnalyzerMixin(_AstBase):
         import_map = self.import_processor.import_mapping.get(module_qn, {})
         bound = _locally_bound_names(caller, import_map)
         for assignment in unpackings:
+            reads = (
+                decisions.reads_at(local_var_types, assignment.start_byte)
+                if decisions is not None
+                else local_var_types
+            )
             self._bind_unpacked_targets(
-                assignment, caller, bound, local_var_types, module_qn
+                assignment, caller, bound, reads, local_var_types, module_qn
             )
 
     def _bind_unpacked_targets(
@@ -2102,16 +2186,17 @@ class PythonAstAnalyzerMixin(_AstBase):
         assignment: Node,
         caller: Node,
         bound: frozenset[str],
+        reads: dict[str, str],
         local_var_types: dict[str, str],
         module_qn: str,
     ) -> None:
+        """Bind the targets in `local_var_types`, reading the value's
+        types from `reads`."""
         left = assignment.child_by_field_name(cs.TS_FIELD_LEFT)
         right = assignment.child_by_field_name(cs.TS_FIELD_RIGHT)
         if left is None or right is None:
             return
-        elements = self._unpacked_elements(
-            right, caller, bound, local_var_types, module_qn
-        )
+        elements = self._unpacked_elements(right, caller, bound, reads, module_qn)
         targets = [t for t in left.named_children if t.type != cs.TS_COMMENT]
         if len(elements) == 1 and elements[0][1]:
             elements = [elements[0]] * len(targets)  # `tuple[T, ...]`
