@@ -147,6 +147,13 @@ _TYPE_CHECKING_GUARDS = frozenset({_TYPE_CHECKING, f"typing.{_TYPE_CHECKING}"})
 _TYPE_CHECKING_IMPORT = f"from typing import {_TYPE_CHECKING}"
 _TYPE_CHECKING_HEAD = f"if {_TYPE_CHECKING}:\n"
 _PY_INDENT = "    "
+# Names that answer where the module itself lives. Code reading them (a data
+# file beside it through `Path(__file__).parent`, a sibling resource through
+# `__package__`) resolves against the destination once moved, so it passed
+# its contract and then read other files or none (Greptile).
+_PY_OWN_LOCATION = frozenset({"__file__", "__spec__", "__package__"})
+_JS_OWN_LOCATION = frozenset({"__dirname", "__filename"})
+_JS_IMPORT_META = "import.meta"
 
 
 class MoveRefused(ValueError):
@@ -239,6 +246,145 @@ def _module_bound(text: str, module: str) -> bool:
 
 def _uses(text: str, name: str) -> bool:
     return re.search(_IDENTIFIER % re.escape(name), text) is not None
+
+
+def _refuse_own_location(
+    qn: str,
+    text: str,
+    node: Node,
+    language: cs.SupportedLanguage | None,
+    old_path: str,
+    new_path: str,
+) -> None:
+    """Refuse a definition that reads its own module's location."""
+    if language == cs.SupportedLanguage.PYTHON:
+        tree = _py_tree(text.encode(cs.ENCODING_UTF8))
+        found = (
+            {
+                n.id
+                for n in ast.walk(tree)
+                if isinstance(n, ast.Name) and n.id in _PY_OWN_LOCATION
+            }
+            if tree is not None
+            else set()
+        )
+    else:
+        found = set()
+        stack = [node]
+        while stack:
+            current = stack.pop()
+            spelled = _text(current)
+            if (current.type == cs.TS_IDENTIFIER and spelled in _JS_OWN_LOCATION) or (
+                current.type == cs.TS_META_PROPERTY and spelled == _JS_IMPORT_META
+            ):
+                found.add(spelled)
+            stack.extend(current.children)
+    if found:
+        raise MoveRefused(
+            cs.MOVE_READS_OWN_LOCATION.format(
+                qn=qn,
+                names=cs.SEPARATOR_COMMA_SPACE.join(sorted(found)),
+                path=old_path,
+                new_path=new_path,
+            )
+        )
+
+
+def _py_tree(source: bytes) -> ast.Module | None:
+    # Parsed from text: a coding cookie would otherwise re-decode the UTF-8
+    # view the patcher holds, and the offsets would stop matching it.
+    try:
+        return ast.parse(source.decode(cs.ENCODING_UTF8, errors="replace"))
+    except SyntaxError:
+        return None
+
+
+def _absolute_from(node: ast.ImportFrom, path: str) -> str | None:
+    """The module a `from X import ...` in `path` names, dots resolved."""
+    module = node.module or ""
+    if not node.level:
+        return module
+    package = list(Path(path).parent.parts)
+    ups = node.level - 1
+    if ups > len(package):
+        return None
+    parts = package[: len(package) - ups] + [
+        p for p in module.split(cs.SEPARATOR_DOT) if p
+    ]
+    return cs.SEPARATOR_DOT.join(parts)
+
+
+def _module_locals(
+    tree: ast.Module, path: str, module: str
+) -> dict[str, ast.Import | ast.ImportFrom]:
+    """The single names `tree` binds to `module` itself at module level,
+    with the statement binding each.
+
+    `import pkg.util as u` binds `u`, and `from pkg import util` (or
+    `from . import util`) binds `util`. A bare `import pkg.util` binds
+    `pkg`, reached as `pkg.util.helper`, so it is not one of these.
+    """
+    found: dict[str, ast.Import | ast.ImportFrom] = {}
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.asname and alias.name == module:
+                    found[alias.asname] = node
+        elif isinstance(node, ast.ImportFrom):
+            base = _absolute_from(node, path)
+            if base is None:
+                continue
+            for alias in node.names:
+                spelled = (
+                    f"{base}{cs.SEPARATOR_DOT}{alias.name}" if base else alias.name
+                )
+                if spelled == module:
+                    found[alias.asname or alias.name] = node
+    return found
+
+
+def _ast_span(source: bytes, node: ast.stmt) -> tuple[int, int]:
+    end_line = node.end_lineno or node.lineno
+    end_col = node.end_col_offset if node.end_col_offset is not None else 0
+    return (
+        line_col_to_byte(source, node.lineno, node.col_offset),
+        line_col_to_byte(source, end_line, end_col),
+    )
+
+
+def _py_import_text(node: ast.Import | ast.ImportFrom, names: list[ast.alias]) -> str:
+    """`node` rewritten to bind only `names`."""
+    entries = cs.SEPARATOR_COMMA_SPACE.join(
+        f"{a.name} as {a.asname}" if a.asname else a.name for a in names
+    )
+    if isinstance(node, ast.Import):
+        return f"import {entries}"
+    return f"from {cs.SEPARATOR_DOT * node.level}{node.module or ''} import {entries}"
+
+
+def _drop_statement(
+    source: bytes, span: tuple[int, int]
+) -> tuple[tuple[int, int], str]:
+    """The edit removing the statement at `span`: its whole line when it has
+    the line to itself (a trailing comment goes with it), else `pass`, so
+    a `;` it shares a line with still parses."""
+    start, end = span
+    line_start = source.rfind(b"\n", 0, start) + 1
+    line_end = source.find(b"\n", end)
+    line_end = len(source) if line_end < 0 else line_end
+    rest = source[end:line_end].strip()
+    if source[line_start:start].strip() or (rest and not rest.startswith(b"#")):
+        return span, "pass"
+    return (line_start, min(line_end + 1, len(source))), ""
+
+
+def _starts_name(source: bytes, at: int) -> bool:
+    """Whether a dotted name at `at` is not the tail of a longer one:
+    `myutil.f` and `x.util.f` do not spell `util.f`."""
+    if at == 0:
+        return True
+    before = source[at - 1 : at]
+    return not (before.isalnum() or before in (b"_", b".") or before[0] >= 0x80)
 
 
 def _py_bound(node: ast.AST) -> set[str]:
@@ -905,6 +1051,9 @@ class Mover:
         # which changes its shape: the contract must then take the move's
         # word for the pairing.
         self._reshaped = False
+        # What the moved definition holds, as suffixes of its name, when
+        # `_reshaped`: those pairs are declared reshaped too.
+        self._nested: tuple[str, ...] = ()
 
     def _parse(
         self, path: str, source: bytes
@@ -944,12 +1093,19 @@ class Mover:
         if existing is not None:
             _language, target_root = self._parse(new_path, existing)
         cut = _cut_span(source, node)
+        _refuse_own_location(qn, cut.text, node, language, old_path, new_path)
         moved_text = (
             self._rebase_local_imports(source, top, cut, qn, old_path, new_path)
             if language == cs.SupportedLanguage.PYTHON
             else cut.text
         )
         self._reshaped = moved_text != cut.text
+        # A respelled import inside a method reshapes the method as well as
+        # its class, and only the pairs the move names are taken on its
+        # word: naming the class alone left the method unpaired, so the
+        # contract read it as removed and added and undid a correct move
+        # (Greptile).
+        self._nested = self._nested_suffixes(qn, old_path) if self._reshaped else ()
         # A JS definition exported by its own `export { helper }` lost the
         # export with the cut: the destination did not export it, and every
         # rewritten importer (and the old module's import of it back)
@@ -1058,12 +1214,15 @@ class Mover:
             patcher, new_path, existing, target_root, source, paste, language
         )
         # 3. Importers, and uses through a module import (`pkg.util.helper`).
-        self._retarget_attribute_uses(
+        through_module = self._retarget_attribute_uses(
             patcher, qn, old_spelled, new_spelled, name, language
         )
         importers, unchanged = self._retarget_importers(
             patcher, old_module, old_spelled, new_spelled, new_path, name, language
         )
+        # A file whose calls through the module were rewritten is rewired
+        # as much as one whose import was; the preview counted only these.
+        importers = sorted(set(importers) | through_module)
         files = sorted(set(patcher.pending) | {new_path})
         report = MoveReport(
             qualified_name=qn,
@@ -1663,6 +1822,35 @@ class Mover:
             out.setdefault(narrowed, _NeededImport(narrowed, target, bound))
         return list(out.values())
 
+    def _definitions_in(self, path: str) -> list[ResultRow]:
+        """The graph's definition rows for the file at `path`."""
+        return self.fetch_all(
+            cq.CYPHER_DELTA_DEFINITIONS,
+            {
+                cs.KEY_PROJECT_PREFIX: f"{self.project}{cs.SEPARATOR_DOT}",
+                cs.KEY_LONGER_PROJECT_PREFIXES: list(
+                    _longer_project_prefixes(self.fetch_all, self.project)
+                ),
+                cs.CYPHER_PARAM_PATHS: [path],
+            },
+        )
+
+    def _nested_suffixes(self, qn: str, path: str) -> tuple[str, ...]:
+        """What the graph defines inside `qn` (`run`, `Inner.go`), relative
+        to it."""
+        prefix = f"{qn}{cs.SEPARATOR_DOT}"
+        return tuple(
+            sorted(
+                {
+                    other[len(prefix) :]
+                    for row in self._definitions_in(path)
+                    if (other := str(row.get(cs.KEY_QUALIFIED_NAME) or "")).startswith(
+                        prefix
+                    )
+                }
+            )
+        )
+
     def _needed_from_old(
         self,
         old_path: str,
@@ -1677,18 +1865,8 @@ class Mover:
         instead; without it the move parsed, passed its contract, and died
         with a NameError the first time the moved code ran.
         """
-        rows = self.fetch_all(
-            cq.CYPHER_DELTA_DEFINITIONS,
-            {
-                cs.KEY_PROJECT_PREFIX: f"{self.project}{cs.SEPARATOR_DOT}",
-                cs.KEY_LONGER_PROJECT_PREFIXES: list(
-                    _longer_project_prefixes(self.fetch_all, self.project)
-                ),
-                cs.CYPHER_PARAM_PATHS: [old_path],
-            },
-        )
         names: set[str] = set()
-        for row in rows:
+        for row in self._definitions_in(old_path):
             other = row.get(cs.KEY_NAME)
             qn = str(row.get(cs.KEY_QUALIFIED_NAME) or "")
             if (
@@ -2065,32 +2243,133 @@ class Mover:
         new_spelled: str,
         name: str,
         language: cs.SupportedLanguage | None,
-    ) -> None:
-        """`pkg.util.helper(...)` through `import pkg.util` follows the move."""
+    ) -> set[str]:
+        """Calls reaching the moved name through its module follow the move;
+        returns the files rewritten.
+
+        `pkg.util.helper(...)` through `import pkg.util` becomes
+        `pkg.new.helper(...)`. `util.helper(...)` through `from pkg import
+        util` or `import pkg.util as util` was left alone: the old module no
+        longer had `helper`, so the contract rolled every such move back
+        (Greptile TREX). It now goes through `_retarget_local_uses`.
+        """
         if language != cs.SupportedLanguage.PYTHON:
-            return
+            return set()
         old_attr = f"{old_spelled}{cs.SEPARATOR_DOT}{name}".encode(cs.ENCODING_UTF8)
         new_attr = f"{new_spelled}{cs.SEPARATOR_DOT}{name}"
-        touched: set[str] = set()
+        sites: dict[str, set[tuple[int, int, int, int]]] = {}
         for row in graph_query.callers(self.fetch_all, self.project, qn):
             path, line, col = row["path"], row["line"], row["col"]
             if not isinstance(path, str) or line is None or col is None:
                 continue
+            sites.setdefault(path, set()).add(
+                (line, col, row["end_line"] or line, row["end_col"] or col)
+            )
+        touched: set[str] = set()
+        for path, spans in sorted(sites.items()):
             try:
                 source = patcher.source(path)
             except PatcherError:
                 continue
-            start = line_col_to_byte(source, line, col)
-            end = line_col_to_byte(
-                source, row["end_line"] or line, row["end_col"] or col
+            tree = _py_tree(source)
+            module_locals = (
+                _module_locals(tree, path, old_spelled) if tree is not None else {}
             )
-            at = self._qualified_use_at(source, start, end, old_attr, name)
-            if at is None:
-                continue
-            patcher.replace_span(path, (at, at + len(old_attr)), new_attr)
-            if path not in touched:
-                touched.add(path)
+            dotted: set[int] = set()
+            local_uses: dict[str, set[int]] = {}
+            for line, col, end_line, end_col in sorted(spans):
+                start = line_col_to_byte(source, line, col)
+                end = line_col_to_byte(source, end_line, end_col)
+                at = self._qualified_use_at(source, start, end, old_attr, name)
+                if at is not None:
+                    dotted.add(at)
+                    continue
+                for local in module_locals:
+                    attr = f"{local}{cs.SEPARATOR_DOT}{name}".encode(cs.ENCODING_UTF8)
+                    at = self._qualified_use_at(source, start, end, attr, name)
+                    if at is not None:
+                        local_uses.setdefault(local, set()).add(at)
+                        break
+            for at in sorted(dotted):
+                patcher.replace_span(path, (at, at + len(old_attr)), new_attr)
+            if dotted:
                 self._import_module(patcher, path, source, new_spelled)
+            if local_uses:
+                assert tree is not None
+                self._retarget_local_uses(
+                    patcher,
+                    path,
+                    source,
+                    tree,
+                    local_uses,
+                    module_locals,
+                    new_spelled,
+                    name,
+                )
+            if dotted or local_uses:
+                touched.add(path)
+        return touched
+
+    def _retarget_local_uses(
+        self,
+        patcher: Patcher,
+        path: str,
+        source: bytes,
+        tree: ast.Module,
+        local_uses: dict[str, set[int]],
+        module_locals: dict[str, ast.Import | ast.ImportFrom],
+        new_spelled: str,
+        name: str,
+    ) -> None:
+        """Point `util.helper` at the destination, `util` being a name the
+        file binds to the old module.
+
+        The receiver becomes the name the file already binds to the
+        destination, else the destination's last segment imported by name
+        (`from pkg import new`). A name the file uses for anything else is
+        refused rather than shadowed. A binding of the old module whose
+        every use was rewritten is dropped: left in place it is an import of
+        a module the move may have vacated, which the contract counts as
+        stale and rolls back.
+        """
+        names = [n.id for n in ast.walk(tree) if isinstance(n, ast.Name)]
+        dropped = [
+            local for local, ats in local_uses.items() if names.count(local) == len(ats)
+        ]
+        bound = _module_locals(tree, path, new_spelled)
+        parent, _dot, leaf = new_spelled.rpartition(cs.SEPARATOR_DOT)
+        statement: str | None = None
+        receiver = next(iter(bound), leaf)
+        if not bound:
+            if leaf not in dropped and _uses(
+                source.decode(cs.ENCODING_UTF8, errors="replace"), leaf
+            ):
+                raise MoveRefused(
+                    cs.MOVE_MODULE_NAME_TAKEN.format(path=path, name=name, local=leaf)
+                )
+            statement = f"from {parent} import {leaf}" if parent else f"import {leaf}"
+        for local, ats in local_uses.items():
+            for at in sorted(ats):
+                patcher.replace_span(path, (at, at + len(local)), receiver)
+        # One edit per statement: `from pkg import util, util as u` binds two.
+        statements = {
+            id(module_locals[local]): module_locals[local] for local in dropped
+        }
+        for node in statements.values():
+            span = _ast_span(source, node)
+            kept = [a for a in node.names if (a.asname or a.name) not in dropped]
+            if kept:
+                patcher.replace_span(path, span, _py_import_text(node, kept))
+            elif statement is not None:
+                # The new import takes the old one's place.
+                patcher.replace_span(path, span, statement)
+                statement = None
+            else:
+                patcher.replace_span(path, *_drop_statement(source, span))
+        if statement is not None:
+            _language, root = self._parse(path, source)
+            at = _import_block_end(source, root)
+            patcher.replace_span(path, (at, at), f"{statement}\n")
 
     @staticmethod
     def _qualified_use_at(
@@ -2098,15 +2377,20 @@ class Mover:
     ) -> int | None:
         """Where the call site spanning `start`..`end` spells `old_attr`
         (`pkg.util.helper`), or None when it does not."""
-        at = source.find(old_attr, start, end)
-        if at >= 0:
-            return at
         # A member call's site starts at its name (#3166), past the
-        # module path it is reached through.
+        # module path it is reached through. Checked first: a search of
+        # that span finds an inner call (`util.f(util.f(1))`) instead.
         at = start + len(name.encode(cs.ENCODING_UTF8)) - len(old_attr)
-        if at < 0 or source[at : at + len(old_attr)] != old_attr:
-            return None
-        return at
+        if (
+            at >= 0
+            and source[at : at + len(old_attr)] == old_attr
+            and _starts_name(source, at)
+        ):
+            return at
+        at = source.find(old_attr, start, end)
+        while at >= 0 and not _starts_name(source, at):
+            at = source.find(old_attr, at + 1, end)
+        return at if at >= 0 else None
 
     def _import_module(
         self, patcher: Patcher, path: str, source: bytes, module: str
@@ -2181,6 +2465,20 @@ class Mover:
     def _enforce_contract(self, report: MoveReport) -> MoveReport:
         assert self.reingest is not None
         renamed = (report.qualified_name, report.new_qualified_name)
+        reshaped = (
+            (
+                renamed,
+                *(
+                    (
+                        f"{renamed[0]}{cs.SEPARATOR_DOT}{suffix}",
+                        f"{renamed[1]}{cs.SEPARATOR_DOT}{suffix}",
+                    )
+                    for suffix in self._nested
+                ),
+            )
+            if self._reshaped
+            else ()
+        )
         try:
             delta = measure(
                 self.fetch_all,
@@ -2193,7 +2491,7 @@ class Mover:
                 # without it the move of one reads as a removal plus an
                 # addition.
                 declared_renames=(renamed,),
-                reshaped_renames=(renamed,) if self._reshaped else (),
+                reshaped_renames=reshaped,
             )
         # The move has landed; a graph that cannot be measured is reported,
         # never raised past the committed edit (as for change_signature).

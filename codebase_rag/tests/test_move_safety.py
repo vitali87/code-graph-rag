@@ -436,7 +436,9 @@ def test_an_importer_row_without_an_end_column_is_left_unchanged(
     report = move(
         root, fetch_all, PROJECT, _qn("pkg.util.helper"), "pkg.core", dry_run=True
     )
-    assert report.importers == ()
+    # c.py reaches the name as `pkg.util.helper(...)`, through its call
+    # rows rather than an import row, so it is rewritten all the same.
+    assert report.importers == ("pkg/c.py",)
     assert set(report.unchanged_importers) == {"pkg/a.py:2", "pkg/b.py:1"}
 
 

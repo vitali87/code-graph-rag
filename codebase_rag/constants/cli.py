@@ -1326,6 +1326,15 @@ MOVE_RELATIVE_IMPORT_ESCAPES = (
     "{statement} in {qn} climbs above the top-level package of {path}, so "
     "the move cannot respell it for the destination"
 )
+MOVE_READS_OWN_LOCATION = (
+    "{qn} reads {names}, the location of {path}; moved, it would resolve "
+    "against {new_path} instead, so the move would change which files it "
+    "reads"
+)
+MOVE_MODULE_NAME_TAKEN = (
+    "{path} calls {name} through its module and already uses the name "
+    "{local}, so the move cannot import the destination under it"
+)
 MOVE_PLANNED = "{importers} importer(s) would be rewritten, {unchanged} left unchanged"
 MOVE_PARSE_FAILED = "Move rolled back: {files} would no longer parse"
 MOVE_SOURCE_CHANGED = (

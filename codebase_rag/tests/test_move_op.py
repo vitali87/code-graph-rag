@@ -120,9 +120,13 @@ def test_move_updates_three_importers_without_a_cycle(
         .read_text()
         .startswith("from pkg.util import other\nfrom pkg.core import helper\n")
     )
-    assert set(report.importers) == {"pkg/a.py", "pkg/b.py"}
-    # `pkg.util.helper(...)` through a module import is not an import of
-    # the symbol: it is left alone and named.
+    # `pkg.util.helper(...)` through `import pkg.util` is rewritten too, so
+    # c.py counts with the two files whose import of the symbol was.
+    assert set(report.importers) == {"pkg/a.py", "pkg/b.py", "pkg/c.py"}
+    assert (root / "pkg/c.py").read_text() == (
+        "import pkg.util\nimport pkg.core\n\n\n"
+        "def via_module():\n    return pkg.core.helper(['q'])\n"
+    )
     assert report.unchanged_importers == ()
     assert report.copied_imports == ("import os",)
     assert report.verdict is not None

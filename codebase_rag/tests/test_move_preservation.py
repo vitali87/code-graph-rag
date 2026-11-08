@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import importlib
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -594,6 +595,35 @@ def test_a_relative_import_inside_the_moved_function_keeps_its_target(
     assert probe.stdout.strip() == expected
 
 
+def test_a_class_whose_method_respells_a_relative_import_moves(
+    temp_repo: Path,
+) -> None:
+    """Respelling `from .deps import X` inside `run` reshaped the method,
+    and the move named only the class as reshaped: the contract read `run`
+    as removed and added, and undid a correct move (Greptile)."""
+    fixture = {
+        **NESTED,
+        "pkg/sub/util.py": (
+            "class Helper:\n"
+            "    def run(self):\n        from .deps import X\n\n        return X\n\n"
+            "    class Inner:\n"
+            "        def go(self):\n            from .. import deps\n\n"
+            "            return deps.X\n" + OTHER
+        ),
+    }
+    root = _materialise(temp_repo, fixture)
+    store, updater = _index(root)
+    report = _move(root, store, updater, qn=f"{PROJECT}.pkg.sub.util.Helper")
+    assert report.applied, report.message
+    assert report.verdict is not None and report.verdict.ok
+    probe = _python(
+        root,
+        "from pkg.core import Helper; print(Helper().run(), Helper.Inner().go())",
+    )
+    assert probe.returncode == 0, probe.stderr
+    assert probe.stdout.strip() == "pkg.sub.deps pkg.deps"
+
+
 def test_a_relative_import_above_the_root_refuses_the_move(temp_repo: Path) -> None:
     """It names no module the destination could spell."""
     fixture = dict(FIXTURE)
@@ -810,3 +840,82 @@ def test_the_contract_counts_a_wildcard_importer_of_a_vacated_module(
     assert (root / "pkg/util.py").read_text() == util
     probe = _python(root, "from pkg.api import helper; print(helper(1))")
     assert probe.stdout.strip() == "2", probe.stderr
+
+
+# --- code that reads its own module's location stays put ---------------------------
+
+
+@pytest.mark.parametrize(
+    ("body", "names"),
+    [
+        pytest.param(
+            "    return (Path(__file__).parent / name).read_text()\n",
+            "__file__",
+            id="file",
+        ),
+        pytest.param(
+            "    return importlib.resources.files(__package__).joinpath(name)\n",
+            "__package__",
+            id="package",
+        ),
+    ],
+)
+def test_a_definition_reading_its_module_location_is_refused(
+    temp_repo: Path, body: str, names: str
+) -> None:
+    """Moved to another package, `Path(__file__).parent / "data.json"`
+    resolved beside the destination: the move passed its contract and the
+    function then read another file, or raised FileNotFoundError
+    (Greptile)."""
+    fixture = dict(FIXTURE)
+    fixture["pkg/util.py"] = (
+        "import importlib.resources\nfrom pathlib import Path\n\n\n"
+        "def helper(name):\n" + body + OTHER
+    )
+    root = _materialise(temp_repo, fixture)
+    store, updater = _index(root)
+    message = cs.MOVE_READS_OWN_LOCATION.format(
+        qn=f"{PROJECT}.pkg.util.helper",
+        names=names,
+        path="pkg/util.py",
+        new_path="other/core.py",
+    )
+    with pytest.raises(MoveRefused) as refused:
+        _move(root, store, updater, target="other.core")
+    assert str(refused.value) == message
+    assert (root / "pkg/util.py").read_text() == fixture["pkg/util.py"]
+    assert not (root / "other/core.py").exists()
+    assert load_history(root) == []
+
+
+def test_the_word_in_a_docstring_is_not_a_read(temp_repo: Path) -> None:
+    fixture = dict(FIXTURE)
+    fixture["pkg/util.py"] = (
+        'def helper(a):\n    """Unlike __file__, joins its arguments."""\n'
+        "    return '-'.join(a)\n" + OTHER
+    )
+    root = _materialise(temp_repo, fixture)
+    store, updater = _index(root)
+    report = _move(root, store, updater)
+    assert report.applied, report.message
+
+
+@pytest.mark.parametrize(
+    ("expression", "names"),
+    [
+        pytest.param("__dirname + '/' + name", "__dirname", id="dirname"),
+        pytest.param("new URL(name, import.meta.url)", "import.meta", id="meta"),
+    ],
+)
+def test_a_js_definition_reading_its_module_location_is_refused(
+    temp_repo: Path, expression: str, names: str
+) -> None:
+    root = temp_repo / PROJECT
+    _write(
+        root,
+        "pkg/util.js",
+        f"export function helper(name) {{\n  return {expression};\n}}\n",
+    )
+    store, updater = _index(root)
+    with pytest.raises(MoveRefused, match=f"reads {re.escape(names)}, the location"):
+        _move(root, store, updater, target="other/core.js", dry_run=True)

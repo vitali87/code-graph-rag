@@ -26,7 +26,10 @@ optional `keep_alias`, `dry_run` and `project`.
 1. **Cut.** The definition's whole lines, plus its decorators (or `export`
    wrapper), and the comment lines immediately above it, leave the old
    module together with the blank lines that separated it from what
-   follows. Methods are refused: move the class.
+   follows. Methods are refused: move the class. So is a definition that
+   reads its own module's location (`__file__`, `__spec__`, `__package__`;
+   `__dirname`, `__filename` or `import.meta` in JS/TS): moved, it would
+   resolve paths against the destination and read other files.
 2. **Paste with what it needs.** Of the old module's import statements
    (the graph's `IMPORTS` sites of that module), those binding a name the
    moved text uses are copied to the target, narrowed to that name and
@@ -35,9 +38,15 @@ optional `keep_alias`, `dry_run` and `project`.
 3. **Importers.** Every importer of the symbol is retargeted through the
    [import rewriter](patchers.md#import-rewriting-for-rename-and-move):
    `from pkg.util import helper, other` becomes two statements, one per
-   module. Python uses through a module import (`pkg.util.helper(...)`)
-   follow too, gaining `import pkg.core`. Importer statements the rewriter
-   cannot retarget are listed as `unchanged_importers`.
+   module. Python calls through a module import follow too:
+   `pkg.util.helper(...)` becomes `pkg.core.helper(...)` with
+   `import pkg.core`, and `util.helper(...)` (after `from pkg import util`
+   or `import pkg.util as util`) becomes `core.helper(...)` with
+   `from pkg import core`. An import of the old module left with no use is
+   dropped; a caller that already uses the name `core` for something else
+   is refused rather than shadowed. These files count as importers in the
+   report. Importer statements the rewriter cannot retarget are listed as
+   `unchanged_importers`.
 4. **The old module.** When it still uses the name it imports it back from
    the target. With `keep_alias` it always does, marked as a re-export
    (`# noqa: F401`; `export { helper } from './core'` in JS/TS), so the old
@@ -62,5 +71,9 @@ are held to the [postcondition contract](postcondition-contract.md) for a
 move: the symbol reported moved to its new home (the structural delta pairs
 a removed and an added definition across files by name and fingerprint),
 importers updated with no caller left dangling, call-site count unchanged,
-no new import cycle, no new duplicate. A failing contract undoes the
-transaction and re-ingests the restored files.
+no new import cycle, no new duplicate. When the move respelled a relative
+import inside the moved text, it declares the definition and everything
+defined inside it (a class's methods) as reshaped on purpose, so the
+contract pairs them by the move's word instead of reading them as removed
+and added. A failing contract undoes the transaction and re-ingests the
+restored files.

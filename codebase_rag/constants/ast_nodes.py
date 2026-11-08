@@ -419,6 +419,8 @@ TS_NAMED_IMPORTS = "named_imports"
 TS_IMPORT_SPECIFIER = "import_specifier"
 TS_NAMESPACE_IMPORT = "namespace_import"
 TS_IDENTIFIER = "identifier"
+# `import.meta` (and `new.target`): a module's own URL in ESM.
+TS_META_PROPERTY = "meta_property"
 TS_VARIABLE_DECLARATOR = "variable_declarator"
 TS_CALL_EXPRESSION = "call_expression"
 TS_EXPORT_CLAUSE = "export_clause"
